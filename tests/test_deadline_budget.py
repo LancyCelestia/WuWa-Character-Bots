@@ -256,7 +256,9 @@ def test_router_unifies_external_deadline_with_own_window() -> None:
 
 def test_onebot_sender_still_sends_after_request_deadline() -> None:
     """预算耗尽后发送照常执行（不再静默丢弃已生成的回复）。"""
-    from plugins.bot_unified_runtime.sender.onebot import send_onebot_v11
+    from plugins.bot_unified_runtime.domains.transport.sender.onebot import (
+        send_onebot_v11,
+    )
 
     class _OkBot:
         def __init__(self) -> None:
@@ -275,3 +277,110 @@ def test_onebot_sender_still_sends_after_request_deadline() -> None:
     receipt = asyncio.run(_run())
     assert bot.sent == 1
     assert receipt.state is ReceiptState.SENT
+
+
+# ---- 相位耗时可观测性（2026-09-23 停摆复盘）----
+# phases_ms 一直在累计但无人落盘，导致"每条消息 140-395 秒"只能靠回复总时长+CPU
+# 反推，连续三天没人能指认是哪一段慢。下列用例把"相位必须成为可查询诊断"钉死。
+
+def test_phase_tags_emits_each_stage_and_total() -> None:
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.deadline import (
+        DeadlineBudget,
+        phase_tags,
+    )
+
+    budget = DeadlineBudget(60.0)
+    budget.phases_ms = {"llm": 1234.567, "asr": 89.0}
+
+    tags = phase_tags(budget)
+
+    assert "phase_llm_ms:1235" in tags
+    assert "phase_asr_ms:89" in tags
+    assert "phase_total_ms:1324" in tags
+
+
+def test_phase_tags_with_no_recorded_stage_yields_nothing() -> None:
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.deadline import (
+        DeadlineBudget,
+        phase_tags,
+    )
+
+    assert phase_tags(DeadlineBudget(60.0)) == []
+    assert phase_tags(None) == []
+
+
+def test_phase_tags_never_leaks_user_content() -> None:
+    # 阶段名只允许固定字面量；异常值（含用户文本/换行）不得进入诊断标签。
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.deadline import (
+        DeadlineBudget,
+        phase_tags,
+    )
+
+    budget = DeadlineBudget(60.0)
+    budget.phases_ms = {"用户正文\n第二行": 12.0, "vision": 30.0}
+
+    tags = phase_tags(budget)
+
+    assert any(tag.startswith("phase_vision_ms:") for tag in tags)
+    assert not any("用户正文" in tag or "\n" in tag for tag in tags)
+
+
+# ----------------------------------------------------- LLM 相位归账活性锁（S4）
+
+
+def test_phase_llm_ms_reaches_final_audit_tags(tmp_path) -> None:
+    """`phase_llm_ms` 必须真的出现在成功回复的 audit_tags 里（活性锁，非存在性锁）。
+
+    病根（2026-09-23 S4 活性审计）：相位标签此前只在 `build_chat_result` 内贴一次，
+    而那一次**早于 LLM 归账** ⇒ 停摆复盘最想看的 LLM 一跳结构上永远进不了标签，
+    观测件半成而全部单测照绿。
+    注毒判据：删掉 `chat.py` 里 `record_phase("llm", ...)` 之后那次 `phase_tags` 注入
+    ⇒ 本用例当场红。
+    """
+    from plugins.bot_unified_runtime.contracts import BotDecision, IncomingMessage
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_chat_capability,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
+        NullCharacterContextProvider,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+        StaticLLMProvider,
+    )
+
+    capability = build_chat_capability(
+        NullCharacterContextProvider(),
+        StaticLLMProvider(text="我在。"),
+        generated_files_dir=str(tmp_path),
+    )
+    message = IncomingMessage(
+        platform="qq",
+        adapter="onebot",
+        bot_id="b",
+        session_id="private:u",
+        session_type=SessionType.PRIVATE,
+        sender_id="u",
+        plain_text="今天过得怎么样",
+        mentions_bot=True,
+    )
+    decision = BotDecision(
+        request_id=message.request_id,
+        should_respond=True,
+        mode="chat",
+        trigger="private",
+        capability_id="bot.chat",
+        target_scope=SessionType.PRIVATE,
+        context_budget=18000,
+        max_messages=0,
+        decision_reason="test",
+    )
+
+    result = capability(message, decision)
+    tags = [str(tag) for tag in result.audit_tags]
+
+    assert any(tag.startswith("phase_llm_ms:") for tag in tags), (
+        f"LLM 一跳没进诊断标签：{[t for t in tags if t.startswith('phase_')]}"
+    )
+    assert any(tag.startswith("phase_total_ms:") for tag in tags), tags
+    names = [tag.split(":", 1)[0] for tag in tags if tag.startswith("phase_")]
+    assert len(names) == len(set(names)), f"同一相位被贴了两枚：{names}"

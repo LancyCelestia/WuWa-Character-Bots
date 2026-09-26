@@ -86,8 +86,10 @@ class _ProfileNoteCaptureProvider:
 
 def _run_capability(sender_level: str | None) -> str:
     """驱动 chat capability 走完整上下文组装，返回捕获的画像分区文本。"""
-    from plugins.bot_unified_runtime.capabilities.chat import build_chat_capability
-    from plugins.bot_unified_runtime.character.providers import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_chat_capability,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
         NullCharacterContextProvider,
     )
     from plugins.bot_unified_runtime.llm import StaticLLMProvider

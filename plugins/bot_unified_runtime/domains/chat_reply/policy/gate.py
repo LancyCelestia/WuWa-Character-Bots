@@ -64,7 +64,11 @@ class PolicySettings:
     natural_chat_check: Callable[[str], bool] | None = None
     # 白名单1 的已支持链接判定：未提供时使用已注册内容解析器的规则。
     supported_url_check: Callable[[str], bool] | None = None
-    # 白名单1 图片消息的回复概率：独立于闲聊抽签（发图希望被看到时设 1.0）。
+    # （已退役为判定输入，2026-09-24 用户裁定：群聊图片/表情包/视频类与文字接话
+    # **同一个概率**）视觉抽签改读 `group_proactive_probability()` 唯一读点。
+    # 字段保留是因为装配层与 pipeline 仍透传该值；删掉会炸构造函数，但它**不再
+    # 参与任何判定**——生产 .env 里残留的 BOT_VISION_REPLY_PROBABILITY=1.0 因此
+    # 失效（诚实口径：想改视觉频率请改 BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY）。
     vision_reply_probability: float = 1.0
     # R4 场景化回应：策展昵称词表（开头称呼判定用）。
     mention_terms: tuple[str, ...] = ()
@@ -92,8 +96,23 @@ def _resolve_probability(value: float | Callable[[], float] | None) -> float:
         return 0.0
 
 
-def _message_has_image(message: IncomingMessage) -> bool:
-    """消息是否携带可识别的图片/表情包/视频段（供白名单1视觉回复概率判定）。"""
+def group_proactive_probability(settings: PolicySettings) -> float:
+    """「群主动接话概率」唯一读点（2026-09-24 用户裁定）。
+
+    文字抽签与图片/表情包/视频抽签**同源同值**（同一个 4‰），两处都必须经
+    本函数取值——禁在任何一侧另写一份数字，那正是"改一处漏一处"的漂移温床。
+    支持实时 callable（心情系数等），求值失败按 0 处理（不抽签=不误开火）。
+    """
+    return _resolve_probability(settings.group_auto_reply_probability)
+
+
+def message_has_visual_content(message: IncomingMessage) -> bool:
+    """消息是否携带可识别的图片/表情包/视频段。
+
+    单一真身谓词：门禁（白名单1 视觉回复抽签）与限流器（群节奏层的图类
+    独立最小间隔，policy/rate_limit.py `_message_is_visual`）共读此处——
+    段类型口径只有一份，改一处不会让另一处悄悄漂掉。
+    """
     from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
         extract_image_urls,
         extract_video_source,
@@ -205,7 +224,7 @@ def _has_supported_url(text: str, settings: PolicySettings) -> bool:
         except Exception:  # noqa: BLE001 - URL trigger failures stay silent.
             return False
     try:
-        from plugins.bot_unified_runtime.sources.parsers import (
+        from plugins.bot_unified_runtime.domains.link_parse.parsers import (
             build_content_parser_registry,
             build_source_input,
         )
@@ -335,14 +354,16 @@ def evaluate_policy(
             and not natural_triggered
             and not supported_url_triggered
         ):
-            # 白名单1 的图片/表情包：独立回复概率（默认 1.0，发图即被识别回应）；
-            # 与闲聊抽签分开，避免表情包多的群被 0.05 的闲聊概率淹没。
+            # 白名单1 的图片/表情包/视频：2026-09-24 用户裁定——与文字主动接话
+            # **同一个概率**（同一个 4‰，经 group_proactive_probability() 唯一读点），
+            # 不再 100% 必回。旧"图独立概率 1.0"正是群被表情包刷屏时的配额消费链
+            # （T6 报告成因 ii）。图类另受节奏层的独立最小间隔约束（rate_limit.py）。
             if (
                 white1_group
-                and _message_has_image(message)
+                and message_has_visual_content(message)
                 and deterministic_group_reply_lottery(
                     f"vision:{message.session_id}:{message.message_id or message.request_id}",
-                    active_settings.vision_reply_probability,
+                    group_proactive_probability(active_settings),
                 )
             ):
                 return PolicyEvaluation(
@@ -360,7 +381,7 @@ def evaluate_policy(
                 and active_settings.group_auto_reply_enabled
                 and deterministic_group_reply_lottery(
                     f"{message.session_id}:{message.message_id or message.request_id}",
-                    _resolve_probability(active_settings.group_auto_reply_probability),
+                    group_proactive_probability(active_settings),
                 )
             ):
                 # N4 亲和门：主动接话只对好感档 ≥ 亲近的用户；门未装配时不拦。

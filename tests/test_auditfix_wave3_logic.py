@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import threading
 
-from plugins.bot_unified_runtime.capabilities.epic import _format_games
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
     _FAILURE_MESSAGE_CURSOR,
@@ -27,6 +26,9 @@ from plugins.bot_unified_runtime.domains.media.capabilities.image_search import 
 from plugins.bot_unified_runtime.domains.schedule.auto_send.parser import (
     is_auto_send_command_text,
     parse_auto_send_command,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.epic import (
+    _format_games,
 )
 
 

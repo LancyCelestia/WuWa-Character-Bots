@@ -18,13 +18,13 @@ from __future__ import annotations
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.echo import (
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
     _IGNORE_GUIDE_LINES,
     IgnoreGuideGate,
     build_ignore_command_guidance,
     build_ignore_guide_result,
 )
-from plugins.bot_unified_runtime.runtime.base_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     RouteKind,
     classify_message_route,
     clear_route_decision_cache,

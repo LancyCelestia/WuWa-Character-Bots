@@ -22,6 +22,8 @@ C3 的「域外」（`plugins/**` 下不在 `domains/` 里的 py）在本算口�
 - **引用方数** := 全仓（`plugins/**`+`scripts/**`+`tests/**`+根 `bot.py`）AST 里按垫片点号名引用它的文件数。
   包垫片（`__init__.py`）按**父包点号前缀**计（引用父包或其任何子模块的写法运行期都会执行包壳）；
   相对导入按引用方所在包解析成绝对点号名；`importlib.import_module("…")` 字面量同样入册；
+  交给运行期导入机器的另一入口 —— `monkeypatch.setattr("a.b.c", …)` / `mock.patch("a.b.c")`
+  的字面量点号目标 —— 同样入册（同一把尺，TX319 补：旧版漏这一形 ⇒ `sources/parsers` 恒零假信号）；
   引用面不可解析 ⇒ fail-closed 点名 `文件:行`（S101 根修 S87 Critical-1 的恒零假信号）。
   账上存的是**上限**（`refs`），现算只准 `≤` 它 —— 迁走调用方让数变小是进展（放行），新增旧写法让它变大才判红。
 
@@ -50,6 +52,44 @@ S34 首版把「待退役」「待搬迁」**各自**只准降。这个判据在
 每枚审批带 `path/approved_by/reason/expiry`，过期自动失效（口径「临时停用要自动到期」）；
 `path` 必须命中当前现算垫片，否则该审批不生效（fail-closed 拒批）。⇒ 现在「裁行」可无审批独立执行
 （11 枚上限纹丝不动、门诚实红），「抬上限」必须逐枚署名且可过期，两件事终于可分离。
+
+## 撕裂读的台账腿防线（TX201 · 续 TX191，Critical）
+
+TX191 的双读完整性判据**只装在引用索引腿**（`_require_complete_reference_index` → `render_ledger` 的
+`min(prior_refs[rel], live)` 里的 `live`）；另一操作数 `prior_refs[rel]` 与四枚基线钳制仍走裸
+`LEDGER_PY.read_text` + 宽容解析（`load_ledger_rows` / `previous_baselines`）。喂空账 ⇒ `load_ledger_rows→0 行`、
+`previous_baselines→{}` **双双静默放行** ⇒ 每枚走「首次入账」分支 ⇒ `ceiling=live` 免审批抬上限并持久化。
+更糟：撕裂读的**生产方就是本工具自己** —— 旧 `--write-ledger` 用 `LEDGER_PY.write_text`（truncate+write 非原子）。
+本段把三条补齐：① 台账读侧同装完整性判据（`_read_ledger_source_with_integrity` 双读撕裂 + 空账/解析零行/语法坏
+⇒ `LedgerReadIncomplete`，不许当「没有历史」）；② `render_ledger` 在 `min()` 降账前先取「已确认完整 + 非空」的
+既有账，拿不到即抛、`main` 拒写保留旧值；③ 台账写改**原子**（`_atomic_write_text`：同目录临时文件 + `os.replace`）。
+回归锁见 `tests/test_ledger_read_integrity_tx201.py`（TX199 F-2：旧新测试件对 `load_ledger_rows|previous_baselines|
+prior_refs` 零提及＝该腿零锁）。
+
+## 路径解析读点的形态覆盖（S118 · CM-P-9 施工次序①，2026-09-24）
+
+「P2 垫片降为再导出」的目标形态是**域内真身 + 域外薄壳**，而本件的判据全建立在
+「路径 → 源码 → 派生真身点号名 → 盘上存在」这条读点上。壳的写法一变（星号 → 相对导入 →
+`_CANONICAL_PKG` → 显式名字表 + `__all__`），读点就会**认不出而静默丢件** —— 账上表现成"垫片少了几枚"，
+既不是红也不是进展，是假零（本仓记过的最坏失效形态）。本段把这条读点补齐并让它**可自证**：
+
+- `derive_canonical(src, shim_rel)` 现在把**相对形**星号导入按引用方所在包还原成绝对点号名
+  （level 算法与 `_build_reference_index` 一字同构，复用 `_referrer_package_dotted` —— 由
+  `_file_package_dotted` 派生的唯一「当前包」尺，S203 归位，禁第二套相对导入口径）；
+  旧版拿 `node.module` 直接当绝对名 ⇒ `from .sibling import *` 会被解析成仓根 `sibling.py`、盘上不存在
+  ⇒ 整枚隐形。**今日实测该形零命中**（域外 51 枚记号命中里 level>0 者为 0），故本改动逐值中性。
+- `classify_shim_candidate(rel, src)` 成为**唯一判定口**，`detect_shims`（合格集）与
+  `blind_marker_hits`（盲区点名）**都只从它取数**：记号命中集 == 合格集 + 盲区集，恒等式成立后，
+  "读点认不出的新形态"再也无法伪装成"确实不是垫片"。
+- `three_states()` 附 `marker_blind`（只读附账，不进三态恒等式、不改任何桶计数），`--report` 逐枚点名。
+- **塌陷锁** `_assert_no_detection_collapse`：域外非空、有记号命中、却零合格垫片 ⇒ 当场抛
+  `ShimDetectionCollapsed`（与常驻门的 `MIN_SHIM_FLOOR` 数值地板尺分工：那把量枚数地板，本把量形态塌陷）。
+
+**本席按「改前改后逐值等值」的硬界**没有落地的两件事（会动账，交门 owner 裁，见 SEAT-S147 §3 补丁文本）：
+① `_CANONICAL_PKG`（PEP 562 包壳形，实测 `audit/contracts/decision/llm` 四枚 `__init__.py` 今天正因名字
+差一枚 `_PKG` 而整枚隐形）；② 无任何记号的纯 `__all__` 显式再导出壳（实测 `output/`、`output/card_render/`、
+`sources/`、`character/`、`runtime/` 等）。二者一落地就把 N 枚从「已归类/待搬迁」挪进「待退役」，
+`UNLANDED_SUM_BASELINE`（只准降）当场红 —— 那是**真债现身**、不是本席改坏，须由 owner 带证据降账或先退役。
 """
 
 from __future__ import annotations
@@ -57,8 +97,11 @@ from __future__ import annotations
 import argparse
 import ast
 import functools
+import hashlib
 import json
+import os
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -88,11 +131,53 @@ def _rel_to_dotted(rel: str) -> str:
     return rel[:-3].replace("/", ".") if rel.endswith(".py") else rel.replace("/", ".")
 
 
-def derive_canonical(src: str) -> str | None:
-    """从垫片源码 AST 现算真身的**点号模块名**。
+def canonical_to_rel(dotted: str) -> tuple[str, ...]:
+    """点号模块名 → 可能落盘的真身相对路径（模块文件或包目录 __init__）。"""
+    base = dotted.replace(".", "/")
+    return (f"{base}.py", f"{base}/__init__.py")
 
-    两形态都认：① `_CANONICAL = "<dotted>"` 字面量（PEP 562 形）；② `from <mod> import *`（星号形）。
-    派生不出（例如只用相对导入的包命名空间 `__init__.py`）返回 None ⇒ 调用方据此判「非退役垫片」。
+
+def resolve_canonical(dotted: str) -> str | None:
+    """把派生出的点号真身解析成**实际存在**的相对路径；都不存在返回 None。"""
+    for rel in canonical_to_rel(dotted):
+        if (REPO_ROOT / rel).exists():
+            return rel
+    return None
+
+
+def _absolute_dotted_for_import(level: int, module: str | None, shim_rel: str | None) -> str | None:
+    """把 `from [. / ..] mod import …` 还原成**绝对点号名**（真身路径解析的锚点腿）。
+
+    level 算法与 `_build_reference_index` 里那段**一字同构**（同一把尺，禁第二套相对导入口径）：
+    `level=1` 锚在引用方所在包，每多一个点向上退一层，越过顶层即不可解析 ⇒ None。
+    这里刻意复用 `_referrer_package_dotted`（由 `_file_package_dotted` 派生的唯一「当前包」尺，
+    模块定义在后面，按名字运行期解析）而不是重算一遍路径，
+    因为「相对导入按引用方所在包解析」这件事在本件里只准有一个实现。
+    """
+    if level <= 0:
+        return module or None
+    if not shim_rel:
+        return None  # 没有引用方路径就无从定锚（调用方 detect_shims/blind_marker_hits 一律带 rel）
+    pkg = _referrer_package_dotted(shim_rel)
+    segs = pkg.split(".") if pkg else []
+    up = level - 1
+    if up > len(segs):
+        return None
+    anchor = ".".join(segs[: len(segs) - up])
+    return ".".join(p for p in (anchor, module) if p) or None
+
+
+def derive_canonical(src: str, shim_rel: str | None = None) -> str | None:
+    """从垫片源码 AST 现算真身的**绝对点号模块名**。
+
+    认两形态：① `_CANONICAL = "<dotted>"` 字面量（PEP 562 形）；② `from <mod> import *`（星号形，
+    **含相对形**：`from .sibling import *` / `from ..pkg.mod import *` 按 `shim_rel` 所在包还原成绝对名）。
+    派生不出（例如只用相对导入的包命名空间 `__init__.py`）返回 None ⇒ 调用方据此判「非退役垫片」，
+    并由 `blind_marker_hits` **点名**（S118：绝不再静默 continue —— 静默跳过就是假零的成因）。
+
+    `shim_rel` 缺省 None 时相对形按旧口径返回 None（既有调用方与合成夹具行为不变），
+    取数口 `detect_shims`/`blind_marker_hits` 一律带 rel ⇒ 目标形态「域内真身 + 域外再导出壳」
+    用相对导入时不再掉出账外。
     """
     try:
         tree = ast.parse(src)
@@ -117,22 +202,10 @@ def derive_canonical(src: str) -> str | None:
         ):
             return value.value
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module and any(a.name == "*" for a in node.names):
-            return node.module
-    return None
-
-
-def canonical_to_rel(dotted: str) -> tuple[str, ...]:
-    """点号模块名 → 可能落盘的真身相对路径（模块文件或包目录 __init__）。"""
-    base = dotted.replace(".", "/")
-    return (f"{base}.py", f"{base}/__init__.py")
-
-
-def resolve_canonical(dotted: str) -> str | None:
-    """把派生出的点号真身解析成**实际存在**的相对路径；都不存在返回 None。"""
-    for rel in canonical_to_rel(dotted):
-        if (REPO_ROOT / rel).exists():
-            return rel
+        if isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names):
+            dotted = _absolute_dotted_for_import(node.level, node.module, shim_rel)
+            if dotted:
+                return dotted
     return None
 
 
@@ -146,22 +219,97 @@ def outside_py(universe: list[str] | None = None) -> list[str]:
     )
 
 
+def _source_of(rel: str) -> str:
+    """域外相对路径 → 源码文本（路径解析读点的**唯一落点**；`--json`/门/盲区点名共用，禁两套读法）。"""
+    return (REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace")
+
+
+def classify_shim_candidate(rel: str, src: str | None = None) -> dict[str, Any]:
+    """一枚域外文件的**唯一判定口**（读点全串：路径 → 源码 → 记号 → 派生真身 → 真身存在）。
+
+    返回 `{path, marker_hit, dotted, canonical, stage}`，`stage` 穷尽且互斥：
+    - `not-marked`：没命中 `_SHIM_MARKERS`（记号面之外，另由盲区之外的账管）；
+    - `no-canonical-derived`：命中记号，但 `derive_canonical` 认不出该再导出形态；
+    - `canonical-not-on-disk`：认出了点号真身，但盘上不存在（坏桩形态）；
+    - `qualified`：三者全过 ⇒ 合格垫片，进「待退役」账。
+    `detect_shims` 与 `blind_marker_hits` **都只从本口取数**（禁第二份判据），二者合起来恰等于
+    命中记号的全集 —— 于是"读点认不出的新形态"与"确实不是垫片"再也混不起来。
+    """
+    source = _source_of(rel) if src is None else src
+    if not is_shim_text(source):
+        return {"path": rel, "marker_hit": False, "dotted": None, "canonical": None, "stage": "not-marked"}
+    dotted = derive_canonical(source, rel)
+    if not dotted:
+        return {"path": rel, "marker_hit": True, "dotted": None, "canonical": None,
+                "stage": "no-canonical-derived"}
+    canonical = resolve_canonical(dotted)
+    if not canonical:
+        return {"path": rel, "marker_hit": True, "dotted": dotted, "canonical": None,
+                "stage": "canonical-not-on-disk"}
+    return {"path": rel, "marker_hit": True, "dotted": dotted, "canonical": canonical, "stage": "qualified"}
+
+
 def detect_shims(outside: list[str] | None = None) -> dict[str, dict[str, Any]]:
-    """域外里所有**合格垫片**：命中记号 + 真身可派生 + 真身存在。返回 `{rel: {canonical_dotted, canonical}}`。"""
+    """域外里所有**合格垫片**（`classify_shim_candidate` 的 `qualified` 集）。返回 `{rel: {canonical_dotted, canonical}}`。
+
+    被派生/解析**淘汰**的命中件不在这里出现 —— 它们由 `blind_marker_hits` 逐枚点名（同一判定口）。
+    旧版把落选者静默丢掉，于是"记号认得出、真身解析不出"与"确实不是垫片"在账上长得一模一样
+    （S118 要堵的就是这一形）。
+    """
     outside = outside_py() if outside is None else outside
     out: dict[str, dict[str, Any]] = {}
     for rel in outside:
-        src = (REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace")
-        if not is_shim_text(src):
-            continue
-        dotted = derive_canonical(src)
-        if not dotted:
-            continue  # 记号命中但派生不出真身（包命名空间相对导入）⇒ 非退役垫片，归「已归类」
-        resolved = resolve_canonical(dotted)
-        if not resolved:
-            continue  # 真身不存在 ⇒ 非合格垫片（坏桩另有 ③ 自证覆盖）
-        out[rel] = {"canonical_dotted": dotted, "canonical": resolved}
+        verdict = classify_shim_candidate(rel)
+        if verdict["stage"] == "qualified":
+            out[rel] = {"canonical_dotted": verdict["dotted"], "canonical": verdict["canonical"]}
     return out
+
+
+#: `blind_marker_hits` 认得的两个落选阶段（`not-marked` 不叫盲区，它压根没命中记号）。
+BLIND_STAGES: frozenset[str] = frozenset({"no-canonical-derived", "canonical-not-on-disk"})
+
+
+def blind_marker_hits(outside: list[str] | None = None) -> list[dict[str, str]]:
+    """**读点盲区点名**：命中垫片记号却没进「待退役」账的域外件，逐枚给阶段与细节。
+
+    这是 S118（CM-P-9 施工次序①）的可见性腿：**桶账一字不动**（该枚仍按现判据留在「已归类」或
+    「待搬迁」，三态恒等式与降锁算术照旧成立），但"记号认得出、真身解析不出"从**静默 continue**
+    变成**具名清单**并随 `--report`/`compute()` 出到面上，于是"垫片换再导出形态 ⇒ 读点失效 ⇒ 假零"
+    至少当场可见、可逐枚点名，而不是等某次数目莫名少了几枚才发现。
+    """
+    outside = outside_py() if outside is None else outside
+    blind: list[dict[str, str]] = []
+    for rel in sorted(outside):
+        verdict = classify_shim_candidate(rel)
+        if verdict["stage"] not in BLIND_STAGES:
+            continue
+        detail = (
+            "" if verdict["dotted"] is None
+            else f"dotted={verdict['dotted']} candidates={'、'.join(canonical_to_rel(verdict['dotted']))}"
+        )
+        blind.append({"path": rel, "stage": verdict["stage"], "detail": detail})
+    return blind
+
+
+class ShimDetectionCollapsed(RuntimeError):
+    """域外里有垫片记号、却**一枚合格垫片都认不出** ⇒ 读点塌陷（CM-P-9 要的「塌陷锁」）。
+
+    与常驻门 `tests/test_shim_retirement_ledger.py::test_scan_scope_did_not_collapse` 的地板尺分工：
+    那把量"认出的枚数是否掉到地板下"（数值面，本席一字不改它），本枚量"记号还在、真身解析全灭"
+    （**形态面**：把 `_CANONICAL` 改错一个字母、或把 `resolve_canonical` 的锚点改歪，都能让枚数瞬间归零，
+    而地板尺只在跌破 MIN_SHIM_FLOOR 时才红）。抛在取数口 ⇒ 门与四本账第④本一起红，绝不静默出空账。
+    """
+
+
+def _assert_no_detection_collapse(outside: list[str], shims: dict[str, Any], blind: list[dict[str, str]]) -> None:
+    """塌陷锁（纯判据，不改任何计数）：有记号命中、却零合格垫片 ⇒ 当场抛，点名盲区。"""
+    if shims or not blind or not outside:
+        return
+    names = "、".join(item["path"] for item in blind[:5])
+    raise ShimDetectionCollapsed(
+        f"域外 {len(outside)} 件里 {len(blind)} 枚命中垫片记号却**一枚都没认出真身**"
+        f"（盲区前 5 枚：{names}）——读点塌陷，禁止把『解析不出』当成『不是垫片』出账"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -182,12 +330,156 @@ class ReferenceIndexError(RuntimeError):
     """
 
 
+class ReferenceIndexUnstable(RuntimeError):
+    """引用面某文件在**本轮读取窗口内发生变化**（撕裂读），半截索引不可信。
+
+    与 `ReferenceIndexError` 分家：那个是「文件读不动/读出来不是合法 Python」，本枚是
+    「文件读得动、甚至 parse 成功，但读到的是半截」。TX183/TX179/TX182 三席复现的正是这条
+    ——并发写者（`scripts/**`+`tests/**` 归本波各席）把某 `.py` 截成一个仍能 parse 的前缀，
+    旧实现 `ast.parse(read_text())` 零异常 ⇒ **半截索引进 `lru_cache`**，文件修好后同进程复调
+    仍半索引（键 1 vs 5）；更狠的是 `render_ledger` 的 `min(既有, 现算)` 把 refs 上限钉成 0
+    并写进退役台账，以「合法棘轮只降不升」形态**持久化**（清缓存也撤不回）。
+
+    判据（TX191 根修）：对每枚在架文件双读比对 `(len, sha256)`，两次不一致即判撕裂 ⇒
+    抛本枚、**且绝不进缓存**（`lru_cache` 异常不入缓存的既有语义，与 `bridge._load_icon_asset`
+    同一把尺，不造第二把量具）。台账侧另设 `_require_complete_reference_index()` 防线：
+    `min()` 降账前必须经它取「已确认完整」的索引，取不到就拒写、宁可保留旧值。
+    """
+
+
+class LedgerReadIncomplete(RuntimeError):
+    """台账（`board_shim_ledger.py`）本轮读到的是**空账 / 解析零行 / 撕裂读 / 语法坏** —— 不许当「没有历史」。
+
+    与引用腿的 `ReferenceIndexUnstable`/`ReferenceIndexError` 同哲学，只是受害面从「引用索引」换到
+    「既有账」这一侧（TX199 F-1 现算：双读完整性判据旧版**只装在索引腿**，`min(prior_refs, live)` 的另一
+    操作数仍走裸 `LEDGER_PY.read_text` + 宽容解析）。喂空账 ⇒ `load_ledger_rows→0 行`、
+    `previous_baselines→{}` 双双静默放行 ⇒ 每枚走「首次入账」分支 ⇒ `ceiling=live` 免审批抬上限并持久化。
+    台账读侧（`load_ledger_rows` / `previous_baselines`）与写入侧（`render_ledger` 的 `min()` 之前）**同装**
+    这条判据：拿不到「已确认完整 + 非空」的本轮读 ⇒ 抛本枚 ⇒ `main` 拒写、保留旧账。
+    """
+
+
+def _read_file_bytes(path: Path) -> bytes:
+    """单枚文件字节读取的**唯一落点**（撕裂检测的注入缝 —— 生产即 `path.read_bytes()`）。
+
+    刻意薄到只有一行，好让注毒用例能确定性地喂进「两读不一致」的字节，同时 `_read_source_with_integrity`
+    里的**比对逻辑本身**（size+sha256 双读核对）仍走真实码路 —— 测的是判据，不是测夹具。
+    """
+    return path.read_bytes()
+
+
+def _integrity_token(raw: bytes) -> tuple[int, str]:
+    """字节 → `(长度, sha256[:16])` 完整性凭据（与撕裂检测口径同源，禁另立一套）。"""
+    return (len(raw), hashlib.sha256(raw).hexdigest()[:16])
+
+
+def _read_source_with_integrity(path: Path, rel: str) -> str:
+    """双读校验地读入一枚引用面源码，返回文本；撕裂读 ⇒ `ReferenceIndexUnstable` 点名 `rel`。
+
+    序列＝读→取凭据→**再**读→取凭据→比对：只有两次完全一致才算「完整读」。
+    真实撕裂（另一进程在两次读之间改了文件）必然让两读不同 ⇒ 抛。抛之前**不**返回、
+    也不入缓存（调用方 `_build_reference_index` 是 `lru_cache`，异常天然不入缓存）。
+    解码只走一次（用第一读），`UnicodeDecodeError` 属「读出来不是合法源码」而非「撕裂」，
+    交由调用方既有 `except (..., UnicodeDecodeError, ...)` 归入 `ReferenceIndexError` 面，语义不变。
+    """
+    first = _read_file_bytes(path)
+    second = _read_file_bytes(path)
+    if _integrity_token(first) != _integrity_token(second):
+        raise ReferenceIndexUnstable(
+            f"{rel}: 撕裂读（两次读取不一致 size {len(first)}≠{len(second)}）"
+            "——半截索引不可信，既不当作合法计数、也不入缓存、更不写台账"
+        )
+    return first.decode("utf-8")
+
+
+def _read_ledger_source_with_integrity(path: Path | None = None) -> str:
+    """台账文件的**双读完整性读入**（TX201 任务① —— 台账腿与引用腿同装判据、复用同一把尺）。
+
+    与 `_read_source_with_integrity` 共用 `_read_file_bytes`（撕裂注毒缝）与 `_integrity_token`
+    （size+sha256 比对）：读→再读→两读凭据不一致 ⇒ 撕裂（并发写者/本工具旧版非原子写截断）⇒ 抛
+    `LedgerReadIncomplete`，绝不当作合法历史读进 `min()`。这里**只做撕裂检测**，空账/零行由
+    `load_ledger_rows` / `previous_baselines` 各自的「解析零行 ⇒ 抛」判据兜（分工：撕裂 vs 内容）。
+    """
+    target = LEDGER_PY if path is None else path
+    first = _read_file_bytes(target)
+    second = _read_file_bytes(target)
+    if _integrity_token(first) != _integrity_token(second):
+        raise LedgerReadIncomplete(
+            f"{target.name}: 台账撕裂读（两读不一致 size {len(first)}≠{len(second)}）"
+            "——半截账不可信，既不当作合法历史、更不写台账（宁可保留旧账）"
+        )
+    return first.decode("utf-8")
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """原子写：同目录临时文件 → flush+fsync → `os.replace` 顶替（TX201 任务③）。
+
+    撕裂读的**生产方就是本工具自己** —— 旧 `LEDGER_PY.write_text` 是 truncate+write 非原子，并发读者
+    （门/`--check`/另一席现算）可能读到 truncate 之后、write 完成之前的半档，正喂进 `load_ledger_rows`
+    的「空账」洞。`os.replace` 在同卷上是原子重命名 ⇒ 读者只会看到「旧完整版」或「新完整版」，永不见半档。
+    写失败（含 replace 抛）⇒ 删临时文件、目标文件逐字节保持旧值（任务④「原子写中断不留半档」）。
+    文本模式 `newline=None` 与旧 `write_text` 一致（Windows 上 `\n`→`\r\n`），生成物字节与既有台账同形。
+    """
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:  # newline=None：与 Path.write_text 默认一致
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
 def _file_package_dotted(rel: str) -> str:
-    """引用方文件所在**包**的点号名（`__init__.py` 的包就是它自己所在目录）。"""
+    """引用方文件**自身**的点号名（import 身份）：普通模块＝`目录链 + 模块名` 全串，
+    `__init__.py`＝其代表的包（去 `__init__` 段）。尺＝`tests/test_file_package_dotted_vs_stdlib.py`。
+
+    三史对账（S203 2026-09-24，证据全录 `.superpowers/sdd/2026-09-24-central-dispatch/SEAT-S203.md` §1–§2）：
+    - S146 前本函数就对普通模块返回此**自身点号名**，其病真实存在：level>=1 的相对导入锚点
+      整体深一级 ⇒ `control_plane/*.py` 的 `from ..llm...` 被错记成 `control_plane.llm...`，
+      4 枚垫片 9 条边被吞（ledger 5->6 / model_router 13->15 / providers 11->13 / plain_text 16->17；
+      前三枚修后 `refs_over_ceiling` 转红＝真债现形、非本改引入；ceiling 的 min() 钳制与
+      approvals 升账通道一字不动）。
+    - S146 把「去一段」的锚点运算**放错了位置**——直接改在本原语上（无脑返回父目录点号名）⇒
+      顶层非包目录 `scripts/`、`tests/`（无 `__init__.py`）派生出 round-trip 永不成立的
+      `scripts`/`tests` 包名：S197 尺实跑 721 枚幻影、1291→139 碰撞、两锁红；且**任何「包」语义
+      都永不可满足该锁的互异性**（同目录两文件必共享一个包名），修法不可能回到本原语上。
+      （简报曾提「沿目录上溯、遇无 `__init__.py` 即停」：S203 现算同样双红——136 互异/569 幻影，
+      且会把 `plugins/`（无 `__init__.py` 的 PEP 420 命名空间顶段）整段裁掉，令 plugins/** 全部
+      点分名不再 round-trip、引用边整体坠空——比现码更坏，不采。）
+    - S203 落点：本函数恢复自身点号名（与 S197 两锁逐文件等值），锚点「去一段」运算下沉到
+      `_referrer_package_dotted` —— 两处消费边取到的锚基底与 S146 修后**逐文件全等**
+      （现算 1291 枚 in-scope 差 0），9 条相对边与 approvals 五枚上限账零跟随。
+    PEP 420：`scripts`/`tests`/`plugins` 为合法命名空间包（`find_spec` 现算全部 resolve；
+    S197 判「严格包口径把正确名字当 bug＝判据选错」，S203 复核该判仍成立）。
+    """
     parts = rel[:-3].split("/") if rel.endswith(".py") else rel.split("/")
     if parts[-1] == "__init__":
         parts = parts[:-1]
     return ".".join(parts)
+
+
+def _referrer_package_dotted(rel: str) -> str:
+    """引用方文件的**当前包**点号名——level>=1 相对导入的唯一锚基底（单一派生口，禁第二套）。
+
+    由 `_file_package_dotted` 派生：普通模块去末段（模块名），`__init__.py` 恰代表其所在包、不去。
+    对一切在架路径，本函数 ≡ 父目录点号链 ≡ `tests/test_legacy_shim_import_ratchet._collect_over`
+    内联的 `".".join(rel.split("/")[:-1])`（S203 现算 1291/1291 等值；两尺不互 import、
+    同构性由各注毒形态自证——S146 原设计保留）。锚点语义取 **import 模式**（仓根在 sys.path 上、
+    `import scripts.foo` 的 `__package__` 即 `scripts`）；脚本模式下 level>=1 本就运行期报错，
+    越顶层的边仍走消费边既有 fail-closed `errors` 腿，绝不静默计。
+    """
+    pkg = _file_package_dotted(rel)
+    if not pkg:
+        return ""
+    if rel == "__init__.py" or rel.endswith("/__init__.py"):
+        return pkg
+    return pkg.rsplit(".", 1)[0] if "." in pkg else ""
 
 
 def _importlib_literal(node: ast.AST) -> str | None:
@@ -202,8 +494,43 @@ def _importlib_literal(node: ast.AST) -> str | None:
     return arg.value if isinstance(arg, ast.Constant) and isinstance(arg.value, str) else None
 
 
+def _patch_target_literal(node: ast.AST) -> str | None:
+    """`monkeypatch.setattr("a.b.c", …)` / `mock.patch("a.b.c")` 的**字面量**目标；动态目标返回 None。
+
+    与 `_importlib_literal` 是**同一把尺的两个入口**，不是第二把尺：两者量的都是「把点号字符串交给
+    运行期导入机器」这一形态 —— pytest `MonkeyPatch.setattr` 与 `unittest.mock.patch` 都会对目标串取
+    最长可导入前缀去 `import_module`，所以 `plugins…sources.parsers.http_util.http_get_json` 这种串
+    **运行期真的会执行父包壳**，删壳当场 AttributeError（与 `import a.b.c` 同害）。
+    旧版只认 `import_module`/`__import__` 两个口 ⇒ S101 反假零主锁里 `sources/parsers` 一枚恒报 0：
+    实测全树对它**只剩这一种串形态引用**（`tests/test_auditfix_subscriptions_capabilities.py:317`）。
+    只认**位置首参**的字面量串：`target=` 关键字形、以及变量拼接的动态目标一律返回 None ⇒ 不计，
+    口径与 `importlib` 那条一字同构 —— 本函数只补漏认的入口，不放宽任何既有判据、无白名单。
+    """
+    if not isinstance(node, ast.Call) or not node.args:
+        return None
+    func = node.func
+    name = func.attr if isinstance(func, ast.Attribute) else (func.id if isinstance(func, ast.Name) else None)
+    if name not in {"setattr", "patch"}:
+        return None
+    arg = node.args[0]
+    if not isinstance(arg, ast.Constant) or not isinstance(arg.value, str):
+        return None
+    return arg.value
+
+
 @functools.lru_cache(maxsize=1)
-def _build_reference_index() -> tuple[dict[str, frozenset[str]], tuple[str, ...]]:
+def _build_reference_index() -> dict[str, frozenset[str]]:
+    """全树引用索引构建口（TX172 R2 根修：**只有成功结果进缓存**）。
+
+    旧版把 `(index, errors)` 二元组一起进缓存 ⇒ 一发瞬时撕裂读就把「错误＋缺那枚文件的半截
+    索引」钉死在整个进程生命周期，文件改合法后同进程复调仍抛（TX170 §3-①：本波并发写者改的
+    正是 `scripts/**`+`tests/**`，误伤半径＝全进程）。`functools.lru_cache` 的既有语义是
+    **异常不进缓存** —— `domains/render/card_render/bridge.py::_load_icon_asset` 与
+    `tests/test_bridge_icon_cache.py` 已把该语义当契约用，本件复用同一把尺、不造第二把量具。
+    TX172 只删了「错误进缓存」这一形；TX191 再补**撕裂读完整性判据** —— 每枚在架文件走
+    `_read_source_with_integrity`（双读比对 size+sha256），半截读 ⇒ `ReferenceIndexUnstable` 上抛
+    且同样不入缓存。原「不可解析 ⇒ `ReferenceIndexError`」那条 fail-closed 口径保持不变。
+    """
     counts: dict[str, set[str]] = {}
     errors: list[str] = []
     for path in REPO_ROOT.rglob("*.py"):
@@ -213,11 +540,15 @@ def _build_reference_index() -> tuple[dict[str, frozenset[str]], tuple[str, ...]
         if not _reference_index_scopes(rel):
             continue
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            # 双读完整性校验读入（TX191）：撕裂读抛 ReferenceIndexUnstable（RuntimeError 子辈，
+            # 不被下面 except 捕获）→ 整个 _build_reference_index 当场中断且**不入 lru_cache**；
+            # 真正的「读不出/不是合法源码」(OSError/UnicodeDecodeError/SyntaxError/ValueError) 仍归
+            # errors → 末尾 ReferenceIndexError（口径一字未动）。
+            tree = ast.parse(_read_source_with_integrity(path, rel))
         except (SyntaxError, UnicodeDecodeError, ValueError, OSError) as exc:
             errors.append(f"{rel}:{getattr(exc, 'lineno', None) or 1}: {type(exc).__name__}: {exc}")
             continue
-        pkg = _file_package_dotted(rel)
+        pkg = _referrer_package_dotted(rel)
         touched: set[str] = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -243,31 +574,55 @@ def _build_reference_index() -> tuple[dict[str, frozenset[str]], tuple[str, ...]
                     if a.name != "*":
                         touched.add(f"{base}.{a.name}")
             else:
-                literal = _importlib_literal(node)
+                # 两个「把点号串交给运行期导入机器」的入口共用同一累加口径（同 `import a.b.c`）：
+                # `importlib.import_module`/`__import__` 与 monkeypatch/mock 的点号目标串。
+                literal = _importlib_literal(node) or _patch_target_literal(node)
                 if literal:
                     touched.add(literal)
                     touched.add(literal.rsplit(".", 1)[0] if "." in literal else literal)
         for name in touched:
             counts.setdefault(name, set()).add(rel)
-    return {k: frozenset(v) for k, v in counts.items()}, tuple(errors)
+    if errors:
+        raise ReferenceIndexError(
+            "引用面不可解析＝fail-closed（禁止把「读不到」当「没人引用」）: " + "; ".join(errors)
+        )
+    return {k: frozenset(v) for k, v in counts.items()}
 
 
 def reference_index() -> dict[str, frozenset[str]]:
     """全仓引用索引 `{点号名: 去重引用文件集合}` —— 唯一取数口，门/自测/`--report` 同源。
 
-    对 S34 旧版的四处加严（全在同一码路上，禁第二份扫描器）：
+    对 S34 旧版的加严（全在同一码路上，禁第二份扫描器）：
     - 值从 `int` 升为**文件集合** —— 包垫片按点号前缀并集数文件，必须能跨键去重（旧版 int 只能 `max` 近似）；
     - 相对导入（实测根 `__init__.py:3740 from .policy import (`）按引用方所在包解析成绝对点号名 ——
       旧版只记裸名 `policy`，生产对包垫片的 dotted 引用整体隐形；
     - `importlib.import_module("…")` / `__import__("…")` 的字面量目标入册（同 `import a.b.c` 口径）；
-    - 任一引用面文件不可解析 ⇒ `ReferenceIndexError` 点名 `文件:行`，绝不静默当「零引用」。
+    - `monkeypatch.setattr("a.b.c", …)` / `mock.patch("a.b.c")` 的字面量点号目标同样入册
+      （`_patch_target_literal`，与上一条同一把尺 —— 都是「把点号串交给运行期导入机器」，
+      父包壳运行期必被执行；TX319 补此形以根修 S87 Critical-1 的残余恒零）；
+    - 引用面两类坏读各归各的门，都不许静默退化成「零引用」（TX191 把 :276 的旧散文兑现为实况）：
+      ① **读不出/不是合法源码**（语法坏、字节坏、文件消失）⇒ `ReferenceIndexError` 点名 `文件:行`；
+      ② **读得动、甚至 parse 成功、但读到半截**（撕裂读，两遍比对 size+sha256 不一致）⇒
+         `ReferenceIndexUnstable` 点名该文件；
+      两者都**只在成功完整构建时**才进 `lru_cache`（异常天然不入缓存，TX172 R2 根修的同一把尺）
+      ⇒ 一发坏读/撕裂读都不钉死整进程，文件稳定后同进程复调即恢复。
+    - 返回**新构造的 dict 浅拷贝**（值本就是不可变 `frozenset`）：调用方增删键改不动缓存本体，
+      杜绝「拿返回值 .pop() 一下就把共享索引削薄」这条自伤路。
     """
-    index, errors = _build_reference_index()
-    if errors:
-        raise ReferenceIndexError(
-            "引用面不可解析＝fail-closed（禁止把「读不到」当「没人引用」）: " + "; ".join(errors)
-        )
-    return index
+    return dict(_build_reference_index())
+
+
+def _require_complete_reference_index() -> dict[str, frozenset[str]]:
+    """台账写入侧的「本轮读是否完整」闸门 —— 只认 `_build_reference_index` 的**成功完整**返回。
+
+    坏读两类都会在此抛（从而让 `render_ledger` 在建 `ceiling` 之前中断、`--write-ledger` 不落盘）：
+    - `ReferenceIndexUnstable`：撕裂读（双读 size+sha256 不一致），半截索引不可信；
+    - `ReferenceIndexError`：某引用面文件读不出/不是合法源码。
+    成功返回即意味**整轮是完整一致读**（lru_cache 只在无异常时缓存）——这是「可安全 `min()` 降账」的
+    唯一凭据。与 `reference_index()` 的分工：那个面向外部只读取数、返回**新拷贝**；本个面向写账、
+    直接把已验证的缓存对象交给调用方**只读**使用（`computed_refs` 内部不再改它）。
+    """
+    return _build_reference_index()
 
 
 def shim_target_dotted(shim_rel: str) -> str:
@@ -294,8 +649,8 @@ def computed_refs(shim_rel: str, index: dict[str, frozenset[str]] | None = None)
     """某个垫片 rel path 的引用方数 = 现算索引里命中其点号目标的去重文件数。
 
     包垫片（`__init__.py`）按**父包点号前缀**计：凡引用父包本体或其任何子模块
-    （`from plugins…sender import X` / `…sender.onebot import Y` / `importlib.import_module("…sender…")`，
-    含由相对导入解析出的绝对点号名）的文件都在数 —— 这些写法运行期都会执行包壳，删壳即打坏导入图。
+    （`from plugins…sender import X` / `…sender.onebot import Y` / `importlib.import_module("…sender…")` /
+    `monkeypatch.setattr("…sender.http_util.X", …)`，含由相对导入解析出的绝对点号名）的文件都在数 —— 这些写法运行期都会执行包壳，删壳即打坏导入图。
     旧实现拿 `<pkg>.__init__` 点号名去查索引 ⇒ 对七枚包垫片**恒报 0**（S87 Critical-1 假零）。
     同一函数、单一取数口，包垫片不走第二条码路；计数异常 ⇒ fail-closed 点名 `文件:行`（同 S94 哲学）。
     """
@@ -315,10 +670,17 @@ def three_states() -> dict[str, Any]:
     （判据与 G-P1 同源，见 `ppc.relocate_state_of`），随 `relocate_split` / `movable` 两个新键输出。
     顶层三态的桶账**一字未动**：`relocate` 仍是「被认领的域外件」全量（和锁 146/184、152/190 与
     三态分区恒等式都不因此改变），只是**派单可读的活性数**降为 `movable`（真可搬），假阳归位为具名形态。
+
+    `marker_blind`（S118 新增）是**只读附账**：命中垫片记号却没进「待退役」的域外件点名清单，
+    不参与三态归属、不进任何恒等式、不改任何计数；它唯一的作用是把"读点认不出的再导出形态"
+    从静默丢件变成面上可见。塌陷时（有记号命中却零合格垫片）由 `_assert_no_detection_collapse`
+    当场抛 `ShimDetectionCollapsed`，绝不出一张看起来"垫片已清零"的账。
     """
     claims = ppc.flatten_claims(ppc.feature_impl_paths())
     outside = outside_py()
     shims = detect_shims(outside)
+    blind = blind_marker_hits(outside)
+    _assert_no_detection_collapse(outside, shims, blind)  # 塌陷锁：只抛不改账（枚数/桶账一字不动）
     shim_paths = set(shims)
     relocate = [r for r in outside if r not in shim_paths and ppc.claiming_fids(r, claims, semantic="prefix")]
     classified = [r for r in outside if r not in shim_paths and r not in set(relocate)]
@@ -330,6 +692,7 @@ def three_states() -> dict[str, Any]:
         "classified": sorted(classified),
         "relocate_split": split,
         "movable": split["movable"],
+        "marker_blind": blind,
         "counts": {"retire_shims": len(shim_paths), "relocate": len(relocate), "classified": len(classified)},
         "relocate_counts": {state: len(paths) for state, paths in split.items()},
     }
@@ -339,9 +702,19 @@ def three_states() -> dict[str, Any]:
 # 账装载（AST 静态读声明源，不 import 插件包，避免拖起 NoneBot 初始化）
 # --------------------------------------------------------------------------
 def load_ledger_rows(ledger_source: str | None = None) -> list[dict[str, Any]]:
-    """解析 `board_shim_ledger.py` 的 `SHIM_ROWS`：每条 = 元组 (path, canonical, refs)。"""
-    source = LEDGER_PY.read_text(encoding="utf-8") if ledger_source is None else ledger_source
-    tree = ast.parse(source)
+    """解析 `board_shim_ledger.py` 的 `SHIM_ROWS`：每条 = 元组 (path, canonical, refs)。
+
+    台账腿完整性（TX201 任务①）：① 从磁盘读时走 `_read_ledger_source_with_integrity()`（双读撕裂校验）；
+    ② `ast.parse` 语法坏（含撕裂截断成非法前缀）⇒ `LedgerReadIncomplete`；③ 解析出**零行**
+    （找不到 `SHIM_ROWS` 声明、或 `SHIM_ROWS = ()`）⇒ `LedgerReadIncomplete`。三形一律抛，
+    绝不当「没有历史」放行 —— 那会让 `render_ledger` 里 `min(prior_refs, live)` 的 `prior_refs` 退化成 `{}`、
+    每枚走首次入账分支、`ceiling=live` 免审批抬上限并持久化（正是 TX199 F-1 兑现的洞）。
+    """
+    source = _read_ledger_source_with_integrity() if ledger_source is None else ledger_source
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        raise LedgerReadIncomplete(f"台账语法坏/撕裂截断 ⇒ 解析失败，本账拒读：{exc}") from exc
     rows: list[dict[str, Any]] = []
     for node in ast.walk(tree):
         targets: list[ast.expr]
@@ -383,6 +756,13 @@ def load_ledger_rows(ledger_source: str | None = None) -> list[dict[str, Any]]:
         for item in raw:
             path, canonical, refs = item[0], item[1], item[2]
             rows.append({"path": path, "canonical": canonical, "refs": int(refs)})
+    if not rows:
+        # 空账/解析零行 ⇒ 抛，不许当「没有历史」（TX201 任务①）。合法「无历史」只有一种形态：
+        # 台账文件根本不存在（render_ledger 以 LEDGER_PY.exists() 分诊、传 None 走首建分支，不经此口）。
+        raise LedgerReadIncomplete(
+            "台账解析出零行（找不到 SHIM_ROWS 声明或 SHIM_ROWS=()）= 空账/撕裂截断，"
+            "本账拒读；放行会把 prior_refs 读成 {} 使每枚抬到 live 上限并持久化"
+        )
     return rows
 
 
@@ -409,10 +789,25 @@ def previous_baselines(ledger_source: str | None = None) -> dict[str, int]:
 
     与 `load_ledger_baselines` 的分工是刻意的：执法口缺基线必须红（不许把缺失当 0 放行），
     而生成器面对 S34 首版只有两枚基线的旧账要能迁移（缺的那枚 = 无历史值 = 取现算值）。
+
+    台账腿完整性（TX201 任务①）：从磁盘读走双读撕裂校验；解析坏/撕裂 ⇒ `LedgerReadIncomplete`；
+    **一枚基线都读不到**（`{}`）⇒ `LedgerReadIncomplete` —— 「空账」绝不退化成「全取现算值」。
+    个别基线缺失仍按迁移语义放行（返回少于 4 枚），只有整体读空才拒。合法「无历史」唯一形态是
+    台账文件不存在，由 `render_ledger` 的 `LEDGER_PY.exists()` 分流，不经过本函数。
     """
-    source = LEDGER_PY.read_text(encoding="utf-8") if ledger_source is None else ledger_source
-    data = ppc._read_literals(source, set(LEDGER_BASELINE_NAMES))
-    return {k: int(v) for k, v in data.items() if isinstance(v, int)}
+    source = _read_ledger_source_with_integrity() if ledger_source is None else ledger_source
+    try:
+        data = ppc._read_literals(source, set(LEDGER_BASELINE_NAMES))
+    except SyntaxError as exc:
+        raise LedgerReadIncomplete(f"台账语法坏/撕裂截断 ⇒ 基线解析失败，本账拒读：{exc}") from exc
+    except ppc.PlacementDeclarationError as exc:
+        raise LedgerReadIncomplete(f"台账基线非可静态求值字面量 ⇒ 本账拒读：{exc}") from exc
+    result = {k: int(v) for k, v in data.items() if isinstance(v, int)}
+    if not result:
+        raise LedgerReadIncomplete(
+            "既有基线一枚都读不到 = 空账/无历史，本账拒读（放行会把四枚基线全刷成现算值＝变相升/降基线）"
+        )
+    return result
 
 
 # --------------------------------------------------------------------------
@@ -553,7 +948,8 @@ def cross_check(
     ② `not_a_shim`：登记了 path 但该文件现在存在且**不是**合格垫片（非垫片登记成垫片 ⇒ 红）。
        path 不存在视为已退役（进展，不算违规）—— 但「已退役被写回引用」由 ②b 补腿执法。
     ②b `retired_re_referenced`：S101 补腿（S87 Critical-2）—— 对「已登记但盘上不存在」的垫片，
-       反查其点号目标（包垫片=父包前缀，含相对导入解析出的绝对名与 importlib 字面量）是否重回
+       反查其点号目标（包垫片=父包前缀，含相对导入解析出的绝对名、importlib 字面量与
+       monkeypatch/mock 的点号目标串）是否重回
        `reference_index()`；有 ⇒ 判红并点名是谁在引。旧版对不存在路径**无条件放行**，
        「已删垫片被写回引用」这一形态只由导入图执法、不由账执法。
     ③ `canonical_missing`：账上真身路径在盘上不存在（真身不存在 ⇒ 红）。
@@ -639,19 +1035,41 @@ def render_ledger(states: dict[str, Any], *, approvals_path: Path | None = None)
     放行的枚，才取现算真值。这样**「裁滞后行」与「抬 refs 上限」被拆开**：
     无审批跑 `--write-ledger` ⇒ 11 枚被 S101 假零修复顶高的上限纹丝不动（门 `refs_over_ceiling` 继续红），
     但那 38 枚干净退役的滞后行照样能删（这才是可分离的正解，而非 §0 六禁的「靠调上限糊掉」）。
+
+    **写入侧防线（TX191 任务②）**：`min(既有, 现算)` 降账前，先经 `_require_complete_reference_index()`
+    取一份**已确认完整**的引用索引（撕裂读会在 `_build_reference_index` 内抛 `ReferenceIndexUnstable`）。
+    取不到完整读 ⇒ 本函数在算任何 `ceiling` 之前就抛出 ⇒ `main` 的写盘步骤根本不执行
+    ⇒ **宁可保留旧账，也绝不让一发撕裂读把某枚 refs 上限钉成 0 再持久化进退役台账**。
+    绕行面自查（TX199 会打）：`lru_cache` 一旦缓存过完整读，后续同进程只复用该份、不再重读，
+    「先完整后撕裂」改不动已缓存的索引；而若本轮首读即撕裂则抛错不入缓存 —— 两个方向都堵。
+
+    **台账腿防线（TX201 任务①②，补上 TX191 只装了引用腿那一半）**：`min()` 的另一操作数 `prior_refs`
+    旧版走裸 `LEDGER_PY.read_text` + 宽容解析，喂空账/撕裂账 ⇒ `prior_refs={}` ⇒ 每枚走首次入账分支、
+    `ceiling=live` 免审批抬上限并持久化。现在 min() 之前先经 `_read_ledger_source_with_integrity()`（双读撕裂）
+    + `load_ledger_rows`/`previous_baselines`（空账/零行/语法坏 ⇒ 抛）取一份「已确认完整 + 非空」的既有账，
+    拿不到就在此抛 ⇒ 与引用腿同向：两个方向（引用腿撕、台账腿撕/空）都堵，绝不落一份被抬 live 或钉 0 的账。
     """
+    index = _require_complete_reference_index()  # 引用腿完整读凭据：拿不到（撕裂/坏读）就在此抛，不往下写账
     detected = {rel: detect_shims([rel])[rel] for rel in states["retire_shims"]}
-    bl = clamped_baselines(previous_baselines() if LEDGER_PY.exists() else {}, states)
+    # 台账腿完整读凭据（TX201 任务②）：min() 降账前先把既有账读成「已确认完整 + 非空」——双读撕裂校验
+    # 走一次，同一份文本喂给 load_ledger_rows/previous_baselines（不再各自重读，避免两读之间再撕裂）。
+    # 撕裂/空账/语法坏 ⇒ 在 `_read_ledger_source_with_integrity` 或下游两函数内抛 LedgerReadIncomplete
+    # ⇒ 本函数在算任何 ceiling 之前中断 ⇒ main 不落盘、保留旧账（宁可旧值也不写一份被钉 0/抬 live 的账）。
+    ledger_source = _read_ledger_source_with_integrity() if LEDGER_PY.exists() else None
+    prior_rows = load_ledger_rows(ledger_source) if ledger_source is not None else []
+    bl = clamped_baselines(
+        previous_baselines(ledger_source) if ledger_source is not None else {}, states
+    )
     retire_baseline = bl["SHIM_RETIRE_BASELINE"]
     relocate_baseline = bl["RELOCATE_BASELINE"]
     unlanded_baseline = bl["UNLANDED_SUM_BASELINE"]
     outside_baseline = bl["OUTSIDE_BASELINE"]
-    prior_refs = {r["path"]: r["refs"] for r in (load_ledger_rows() if LEDGER_PY.exists() else [])}
+    prior_refs = {r["path"]: r["refs"] for r in prior_rows}
     approved = approved_refs_paths(detected, approvals_path)
     rows = []
     for rel in sorted(detected):
         canonical = detected[rel]["canonical"]
-        live = computed_refs(rel)
+        live = computed_refs(rel, index=index)
         if rel in approved:
             ceiling = live  # 显式审批放行：取现算真值（唯一可升路径，署名+理由+未过期）
         elif rel in prior_refs:
@@ -722,6 +1140,8 @@ def compute() -> dict[str, Any]:
         "ratchet": ratchet,
         "exemption": {"count": exemption_count()},
         "cross_check": problems,
+        # S118 只读附账：命中记号却未进待退役的盲区点名（不进三态恒等式、不参与任何降锁算术）。
+        "marker_blind": states["marker_blind"],
     }
 
 
@@ -763,6 +1183,14 @@ def report_lines(data: dict[str, Any]) -> list[str]:
     else:
         lines.append("  硬锁: 账未生成（先跑 --write-ledger）")
     lines.append(f"账上登记垫片: {data['ledger_rows']} 枚")
+    blind = data.get("marker_blind") or []
+    lines.append(
+        f"读点盲区（命中垫片记号却未进待退役，**只读附账·不改桶**）: {len(blind)} 枚"
+        + ("" if not blind else " —— " + "；".join(
+            f"{item['path']} [{item['stage']}]" + (f" ({item['detail']})" if item["detail"] else "")
+            for item in blind
+        ))
+    )
     ex = data.get("exemption") or {}
     lines.append(
         f"并列账·G-P2 豁免条数: {ex.get('count', '—')}（只读取数，本席不代改；同门记 29 上限）"
@@ -793,7 +1221,18 @@ def main() -> int:
     args = parser.parse_args()
     if args.write_ledger:
         states = three_states()
-        LEDGER_PY.write_text(render_ledger(states), encoding="utf-8")
+        try:
+            # render_ledger 第一步取「引用腿完整读凭据」、随后取「台账腿完整读凭据」；
+            # 撕裂读(ReferenceIndexUnstable)/坏读(ReferenceIndexError)/空账或台账撕裂(LedgerReadIncomplete)
+            # 在算任何 ceiling 之前抛出 ⇒ 下面写盘根本不执行，绝不落一份被钉 0 或抬 live 的上限（宁可保留旧账）。
+            ledger_text = render_ledger(states)
+        except (ReferenceIndexUnstable, ReferenceIndexError, LedgerReadIncomplete) as exc:
+            print(
+                f"本轮读不完整（引用腿或台账腿）⇒ 拒写台账、保留旧值：{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        _atomic_write_text(LEDGER_PY, ledger_text)  # 原子写（TX201 任务③）：读者永不见 truncate 后的半档
         print(f"已写账: {LEDGER_PY.relative_to(REPO_ROOT).as_posix()}  待退役 {len(states['retire_shims'])} 枚")
         return 0
     if args.check:

@@ -6,8 +6,9 @@
 惯例：SKIP 不假红）。
 
 顺序（依赖串行，无并行必要——三步都在同一棵树上）：
-  1. pre_restart_check   重启前置 10 项（含第 10 项 tts_voice 音色守望，
-                         T60 1b2860c）——`--json` 逐项取 PASS/SKIP/FAIL；
+  1. pre_restart_check   重启前置预检（项数以该文件 docstring 编号在册清单
+                         派生，含 tts_voice 音色守望，T60 1b2860c）——
+                         `--json` 逐项取 PASS/SKIP/FAIL；
   2. verify_chatbot_env  .env 配置面快查（T87 7e2fe36：判据走生产 Config
                          真身）——`--json` 逐 finding 取状态；
   3. 语料门              tests/test_tts_corpus_gate.py（存在才跑；pytest
@@ -168,14 +169,14 @@ def _step_pre_restart_check(project_root: Path) -> StepResult:
         detail = (err.strip() or out.strip() or f"exit {rc}").splitlines()[-1][:160]
         return StepResult(
             "pre_restart_check",
-            "重启前置 10 项预检",
+            "重启前置预检（项数以注册表派生）",
             FAIL,
             f"输出不可解析（{detail}）",
             "单独复跑 python scripts/pre_restart_check.py 看人读表定位；"
-            "十项口径见该文件 docstring。",
+            "项数与清单以该文件 docstring 编号在册清单派生（declared_item_ids）。",
         )
     step = _step_from_findings(
-        "pre_restart_check", "重启前置 10 项预检", items, "逐项按 pre_restart_check 输出指引处置"
+        "pre_restart_check", "重启前置预检（项数以注册表派生）", items, "逐项按 pre_restart_check 输出指引处置"
     )
     if step.status == PASS and rc != 0:
         return StepResult(step.id, step.name, FAIL, f"输出无 FAIL 但 exit={rc}", step.fix_hint)
@@ -263,7 +264,7 @@ def run_all(project_root: Path, dry_run: bool = False) -> SelfcheckReport:
                 "dry-run：子命令桩化，未执行",
             )
             for sid, sname in (
-                ("pre_restart_check", "重启前置 10 项预检"),
+                ("pre_restart_check", "重启前置预检（项数以注册表派生）"),
                 ("verify_env", ".env 配置面快查（T87）"),
                 ("corpus_gate", "语料门（参考音频语料一致性）"),
             )

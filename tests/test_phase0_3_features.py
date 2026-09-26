@@ -86,7 +86,9 @@ def test_public_group_output_review_blocks_generated_unsafe_text():
         CapabilityResult,
         SessionType,
     )
-    from plugins.bot_unified_runtime.output.reviewer import review_capability_result
+    from plugins.bot_unified_runtime.domains.render.reviewer import (
+        review_capability_result,
+    )
     result = CapabilityResult(request_id="unsafe", capability_id="bot.chat", kind="text", body="公开羞辱：你这个废物")
     decision = BotDecision(request_id="unsafe", should_respond=True, mode="chat", trigger="mention",
         capability_id="bot.chat", target_scope=SessionType.GROUP, decision_reason="test")
@@ -129,14 +131,16 @@ def test_incoming_event_keeps_quote_and_thread_context():
 
 
 def _real_chat(tmp_path, question, answer, captured=None, group=False):
-    from plugins.bot_unified_runtime.capabilities.chat import build_chat_capability
-    from plugins.bot_unified_runtime.character.providers import (
-        NullCharacterContextProvider,
-    )
     from plugins.bot_unified_runtime.contracts import (
         BotDecision,
         IncomingMessage,
         SessionType,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_chat_capability,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
+        NullCharacterContextProvider,
     )
     from plugins.bot_unified_runtime.llm import StaticLLMProvider
     class Provider(StaticLLMProvider):
@@ -200,8 +204,11 @@ def test_onebot_upload_api_not_fake_file_segment(tmp_path):
         SendRequest,
         SessionType,
     )
+    from plugins.bot_unified_runtime.domains.core.safety_exec import paths
+    from plugins.bot_unified_runtime.domains.transport.sender.onebot import (
+        send_onebot_v11,
+    )
     from plugins.bot_unified_runtime.output.renderer import render_reviewed_output
-    from plugins.bot_unified_runtime.sender.onebot import send_onebot_v11
     file_path = tmp_path / "generated.txt"
     file_path.write_text("潮水平静。\n", encoding="utf-8")
     result = CapabilityResult(request_id="upload", capability_id="bot.chat", kind="text", body="我已经整理成附件。", files=[{"file": str(file_path.resolve()), "name": file_path.name}])
@@ -211,7 +218,16 @@ def test_onebot_upload_api_not_fake_file_segment(tmp_path):
     class Bot:
         async def call_api(self, api, **kw): calls.append((api, kw)); return {"status": "ok", "retcode": 0}
         async def send_group_msg(self, **kw): calls.append(("send_group_msg", kw)); return {"message_id": 3}
-    receipt = asyncio.run(send_onebot_v11(Bot(), request))
+    # 夹具适配 SAFE-EXEC Wave 1 落在 file_gateway._stage_path 的取字节前判定（S-FILES-LAND）：
+    # 缺省策略按真身根解析 ⇒ tmp_path 下的样本被判 outside_allowed_roots、path_domain_denied。
+    # 这里把「以 tmp_path 为工作区根」的假根接上判定口（照 test_safety_exec_paths.wired_policy
+    # 先例，判定链全走生产路径），是夹具跟上门、不是把门调松——门的牙由该套件逐条钉着。
+    active = paths.build_policy(workspace_root=tmp_path)
+    paths.set_default_policy(active)
+    try:
+        receipt = asyncio.run(send_onebot_v11(Bot(), request))
+    finally:
+        paths.set_default_policy(None)
     assert receipt.state.value == "sent", (receipt, calls)
     assert calls[0][0] == "upload_group_file"
     assert not any(x["type"] == "file" for x in calls[-1][1]["message"])
@@ -233,7 +249,9 @@ def test_wiki_structured_game_brief_uses_story_not_release_chronology():
 def test_poke_limits_bot_target_and_global_cooldown():
     from types import SimpleNamespace
 
-    from plugins.bot_unified_runtime.capabilities.poke import PokeLimiter
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.poke import (
+        PokeLimiter,
+    )
     clock=[0.0]
     limiter=PokeLimiter(clock=lambda:clock[0])
     event=SimpleNamespace(notice_type='notify',sub_type='poke',target_id=10,user_id=20,group_id=30,self_id=10)

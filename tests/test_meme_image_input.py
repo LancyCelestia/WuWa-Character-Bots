@@ -6,14 +6,14 @@ import base64
 from pathlib import Path
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.meme import (
-    _collect_image_sources,
-    build_meme_capability,
-)
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     IncomingMessage,
     SessionType,
+)
+from plugins.bot_unified_runtime.domains.meme.capabilities.meme import (
+    _collect_image_sources,
+    build_meme_capability,
 )
 
 _DECISION = BotDecision(

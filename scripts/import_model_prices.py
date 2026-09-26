@@ -174,7 +174,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    from plugins.bot_unified_runtime.runtime.settings import (
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
         build_instance_settings_manager,
     )
 

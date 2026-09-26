@@ -9901,8 +9901,13 @@ def _register_nonebot_handlers() -> None:
     # 出口唯一复用既有中央告警件 alerts.build_alert_content_sink（300s 抑制器、
     # send_admin_alert_requests 投递——与 sync_drift/voice 探针同一本账，不另开通道）。
     # 门与上方 kb_wiki 调度器注册（_register_kb_wiki_sync_scheduler 调用点）同源：
-    # bot_kb_wiki_enabled ∧ root 非空；再叠 pipeline/超管名单两道缺件即不注入
+    # bot_kb_wiki_enabled ∧ root 非空；再叠 pipeline/管理员名单两道缺件即不注入
     # （回到"只打日志"的旧行为，绝不拿 None pipeline 造半个 sink）。
+    # 名单口径（S156 条1，覆盖 S139 §7.1 的"超管同集"临时口径）：收件人=运行态
+    # 告警同一枚字段 `bot_admin_user_ids`（本文件 `_operational_alert_targets` 的
+    # QQ 腿与凭据告警 :1768 都吃它）——内存门告警不另立一本名单账；超管字段
+    # 曾是 S139 的临时选择，裁定作废，回潮由 tests/test_kb_ops_parked_three_s156.py
+    # 的结构+行为双锁拦截。
     # 落点在 `_register_nonebot_handlers` 之尾、outbound_registry 全部在册坐标
     # （最大值 media_archive :9285）之下 ⇒ 零顶漂（campus/consent 等登记行号不动）。
     try:  # fail-open：观测装配故障绝不炸插件加载。
@@ -9918,7 +9923,7 @@ def _register_nonebot_handlers() -> None:
 
             _kb_sync_alert_admins = [
                 str(item).strip()
-                for item in (getattr(config, "bot_super_admin_user_ids", []) or [])
+                for item in (getattr(config, "bot_admin_user_ids", []) or [])
                 if str(item).strip()
             ]
             if pipeline is not None and _kb_sync_alert_admins:
@@ -9929,7 +9934,8 @@ def _register_nonebot_handlers() -> None:
                         log=logging.getLogger(__name__),
                     )
                 )
-    except Exception:  # noqa: BLE001 - sink 注不上 ⇒ kb-sync 回到只打日志的旧形态。
+    except Exception:  # sink 注不上 ⇒ kb-sync 回到只打日志的旧形态（BLE001 未在此
+        # 行发火，RUF100 现算摘掉哑 noqa，S156）。
         logging.getLogger(__name__).exception(
             "kb-sync 告警 sink 注入失败，已跳过（同步主链路不受影响）"
         )

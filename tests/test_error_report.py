@@ -35,6 +35,9 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+    RuntimePipeline,
+)
 from plugins.bot_unified_runtime.domains.ops.monitor import error_report
 from plugins.bot_unified_runtime.domains.ops.monitor.error_report import (
     ErrorCardGate,
@@ -45,9 +48,10 @@ from plugins.bot_unified_runtime.domains.ops.monitor.error_report import (
     maybe_submit_error_card,
     render_error_card_png,
 )
-from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
-from plugins.bot_unified_runtime.sender import InMemorySendQueue
-from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
+from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+    SQLiteSendRequestQueue,
+)
 
 
 class _NullAuditLogger:
@@ -269,11 +273,19 @@ def test_report_payload_sections_complete() -> None:
     assert report["method_pairs"][0] == {"label": "能力", "value": "bot.market"}
     assert report["method_pairs"][2] == {"label": "路由", "value": "RouteKind.MARKET"}
     versions = {row["label"]: row["value"] for row in report["version_pairs"]}
-    assert {"NoneBot", "OneBot 适配器", "插件包", "构建", "运行时长"} <= set(versions)
+    # ⑥适配器版本现在由「适配器」那一行给（全景列表含 nonebot-adapter-onebot 版本），
+    # 单列一行与它撞车（2026-09-25 真卡评审：合并同类项）。
+    assert {"NoneBot", "插件包", "构建", "运行时长"} <= set(versions)
+    # 适配器改成一行一个（2026-09-25 点名）：不再有单条「适配器」汇总行。
+    assert "适配器" not in versions
+    assert any(k.startswith("适配器 · ") for k in versions), sorted(versions)
+    assert any(k.endswith("onebot") for k in versions)
     assert re.search(r"\d+ 小时 \d+ 分|\d+ 分钟", versions["运行时长"])
     env = {row["label"]: row["value"] for row in report["env_pairs"]}
     assert env["平台"] == "qq"
-    assert env["会话"] == "私聊"
+    # 形态与会话键并成 IDs 里的一行「会话」，别在两处各写一遍（评审：复读三次）。
+    assert "会话" not in env
+    assert {r["label"]: r["value"] for r in report["id_pairs"]}["会话"].startswith("私聊")
     ids = {row["label"]: row["value"] for row in report["id_pairs"]}
     assert ids["message_id"] == "m-1"
     assert ids["request_id"] == message.request_id
@@ -286,7 +298,10 @@ def test_report_payload_sections_complete() -> None:
         config_getter=lambda name: None,
     )
     group_env = {row["label"]: row["value"] for row in group_report["env_pairs"]}
-    assert group_env["会话"] == "群聊 g1"
+    assert "会话" not in group_env
+    # 群聊会话在 IDs 那一行带上群号（形态+群号+会话键并成一格）。
+    group_ids = {row["label"]: row["value"] for row in group_report["id_pairs"]}
+    assert group_ids["会话"] == "群聊 g1 group:g1"
 
 
 def test_human_text_persona_tone_and_rotation() -> None:
@@ -423,14 +438,18 @@ def test_help_text_wording_honest_card_not_screenshot() -> None:
     # 旧指引句「把这张卡截图发给创造者」废除；如实写明「不是控制台截图」。
     assert "把这张卡截图" not in help_text
     assert "不是控制台截图" in help_text
-    assert "自动生成的诊断卡" in help_text
+    assert "自动生成" in help_text and "不是控制台截图" in help_text
     assert "runtime 事件日志" in help_text
-    for token in ("版本", "系统", "配置快照", "IDs"):
+    for token in ("runtime 事件日志",):
         assert token in help_text
+    # 2026-09-25 真卡评审：卡是按数据显隐的，旧句声称「版本、系统、配置快照和
+    # IDs 都在卡上」而空节整节不出＝无效引导。这三个词现在只准出现在
+    # "日志里"那个语境，不再被当作卡上内容的承诺。
+    assert "都在卡上" not in help_text
     fallback = build_text_fallback(report)
     assert "截图" not in fallback
     assert "这张图" not in fallback  # 无图场景不复用卡片口径。
-    assert "没带图" in fallback
+    assert "没能出" in fallback  # 2026-09-25 措辞重排
     assert "runtime 事件日志" in fallback
 
 
@@ -681,16 +700,18 @@ def test_version_pairs_runtime_facts_and_adapter_list() -> None:
         _message(), "bot.market", _captured_exc(), config_getter=lambda name: None
     )
     versions = {row["label"]: row["value"] for row in report["version_pairs"]}
-    assert {"Python", "系统", "适配器"} <= set(versions)
+    assert {"Python", "系统"} <= set(versions)
+    # 适配器一行一个（2026-09-25 点名：顿号长串读不动）。
+    assert any(k.startswith("适配器 · ") for k in versions), sorted(versions)
     assert versions["Python"].startswith("3.")
     assert platform.system().lower() in versions["系统"].lower()
     # venv 实装 nonebot-adapter-{onebot,telegram,mail,console,qq}，顿号合并列出。
-    assert versions["适配器"].startswith("nonebot-adapter-")
-    assert "nonebot-adapter-onebot" in versions["适配器"]
+    assert all(v and v != "unknown" for k, v in versions.items() if k.startswith("适配器 · "))
+    assert any(k.endswith("onebot") for k in versions), sorted(versions)
     # 通用 pairs 渲染：新字段自动进纯文本兜底（结构零改动）。
     fallback = build_text_fallback(report)
     assert "Python=" in fallback
-    assert "适配器=" in fallback
+    assert "适配器 ·" in fallback
 
 
 def test_adapter_dist_label_fail_open(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -759,21 +780,24 @@ def test_trigger_time_prefers_message_timestamp() -> None:
         message, "bot.market", _captured_exc(), config_getter=lambda name: None
     )
     ids = {row["label"]: row["value"] for row in report["id_pairs"]}
-    assert ids["触发时刻"] == ts.astimezone().isoformat(timespec="seconds")
+    # 2026-09-25 真卡评审：全卡一个时刻格式（`%Y-%m-%d %H:%M:%S UTC±HH:MM`），
+    # 顶行空格时区、底行 ISO `T` 的两种写法会被读成两个时刻。
+    assert ids["触发时刻"] == error_report.format_clock_label(ts)
 
 
 def test_trigger_time_falls_back_to_now_on_bad_timestamp() -> None:
     """E-07 fail-open：timestamp 不可解析/缺失退当前时刻，绝不抛错。"""
     # model_copy(update=...) 不做校验：故意把 datetime 字段换成坏字符串。
     broken = _message().model_copy(update={"timestamp": "not-a-date"})
-    parsed = datetime.fromisoformat(error_report._trigger_time_label(broken))
+    label = error_report._trigger_time_label(broken)
+    parsed = datetime.strptime(label, "%Y-%m-%d %H:%M:%S UTC%z")
     assert abs(datetime.now().astimezone() - parsed) < timedelta(seconds=10)
 
     class _Missing:
         timestamp = None
 
     missing = error_report._trigger_time_label(_Missing())  # type: ignore[arg-type]
-    assert "T" in missing
+    assert "UTC" in missing and "T+" not in missing  # 统一格式：不再是 ISO 的 T 分隔 + 裸偏移
 
 
 def test_config_snapshot_global_fallback_when_prefix_sparse() -> None:
@@ -814,6 +838,35 @@ def test_config_snapshot_global_fallback_when_prefix_sparse() -> None:
         ),
     )
     assert "C:/Users" not in repr(leaky["config_pairs"])
+
+
+def test_long_config_value_is_clamped_and_says_so() -> None:
+    """真卡实锤（2026-09-25 15:57 那张 tts 探针告警）：``bot_tts_ref_audios`` 存的是
+    整段参考语料，600+ 字原样上卡＝一屏正文，把该看的挤没了。钳住可以，
+    **静默钳不行**——必须标出还有多少字没显示，否则读卡的人以为那就是全部值。
+    """
+    long_value = "参考语音" + "甲" * 400
+
+    report = build_error_report(
+        _message(),
+        "bot.tts",
+        _captured_exc(),
+        config_getter=lambda name: long_value if name == "bot_tts_ref_audios" else None,
+    )
+    rows = {row["label"]: row["value"] for row in report["config_pairs"]}
+    shown = rows["bot_tts_ref_audios"]
+    assert len(shown) < len(long_value), "长值没被钳住"
+    assert shown.endswith("）") and "字未显示" in shown, f"截断没标出未显示字数: {shown!r}"
+    omitted = len(long_value) - error_report._CONFIG_VALUE_MAX_CHARS
+    assert f"另有 {omitted} 字未显示" in shown
+    # 短值一个字符都不许动（不因为加了钳制就顺手改写正常值）。
+    short = build_error_report(
+        _message(),
+        "bot.tts",
+        _captured_exc(),
+        config_getter=lambda name: "private" if name == "bot_tts_ref_audios" else None,
+    )
+    assert {r["label"]: r["value"] for r in short["config_pairs"]}["bot_tts_ref_audios"] == "private"
 
 
 # ==================== 审查 E-12（2026-09-14）：卡复用原 request_id ====================

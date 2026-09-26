@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import sqlite3
 from collections import deque
 from collections.abc import Iterable, Sequence
@@ -60,7 +61,12 @@ class RuntimeDiagnostic(StrictBaseModel):
     memory_facts: int = 0
     history_turns: int = 0
     emotion_signals: int = 0
+    # llm_status = **本轮这一条消息**的证据态（ok / error / not_run），只由审计标签派生。
+    # llm_probe_status = **配置探针**态（ok / not_configured），是配置的事实、不是消息的事实。
+    # 2026-09-24 之前两者挤在 llm_status 一列里（provider==static 直接写进逐消息字段），
+    # 于是 /bot why 把"配置没配好"渲染成"这条消息跑成功了"——同名列即第二真身，故分名分列。
     llm_status: str = "not_run"
+    llm_probe_status: str = ""
     llm_error_kind: str = ""
     llm_provider: str = ""
     llm_model: str = ""
@@ -162,6 +168,7 @@ class SQLiteDiagnosticsRepository:
                     history_turns,
                     emotion_signals,
                     llm_status,
+                    llm_probe_status,
                     llm_error_kind,
                     llm_provider,
                     llm_model,
@@ -181,7 +188,7 @@ class SQLiteDiagnosticsRepository:
                     why_summary,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(request_id) DO UPDATE SET
                     debug_id=excluded.debug_id,
                     session_id=excluded.session_id,
@@ -207,6 +214,7 @@ class SQLiteDiagnosticsRepository:
                     history_turns=excluded.history_turns,
                     emotion_signals=excluded.emotion_signals,
                     llm_status=excluded.llm_status,
+                    llm_probe_status=excluded.llm_probe_status,
                     llm_error_kind=excluded.llm_error_kind,
                     llm_provider=excluded.llm_provider,
                     llm_model=excluded.llm_model,
@@ -322,6 +330,7 @@ class SQLiteDiagnosticsRepository:
                     history_turns INTEGER NOT NULL DEFAULT 0,
                     emotion_signals INTEGER NOT NULL DEFAULT 0,
                     llm_status TEXT NOT NULL,
+                    llm_probe_status TEXT NOT NULL DEFAULT '',
                     llm_error_kind TEXT NOT NULL DEFAULT '',
                     llm_provider TEXT NOT NULL,
                     llm_model TEXT NOT NULL,
@@ -369,6 +378,7 @@ class SQLiteDiagnosticsRepository:
                 "ready_for_real_llm": "INTEGER NOT NULL DEFAULT 0",
                 "llm_readiness_status": "TEXT NOT NULL DEFAULT ''",
                 "llm_readiness_reasons": "TEXT NOT NULL DEFAULT '[]'",
+                "llm_probe_status": "TEXT NOT NULL DEFAULT ''",
             }.items():
                 self._ensure_column(connection, "runtime_diagnostics", column, definition)
             connection.execute(
@@ -428,6 +438,7 @@ class SQLiteDiagnosticsRepository:
             diagnostic.history_turns,
             diagnostic.emotion_signals,
             diagnostic.llm_status,
+            diagnostic.llm_probe_status,
             diagnostic.llm_error_kind,
             diagnostic.llm_provider,
             diagnostic.llm_model,
@@ -475,6 +486,7 @@ class SQLiteDiagnosticsRepository:
             history_turns=_row_int(row, "history_turns"),
             emotion_signals=_row_int(row, "emotion_signals"),
             llm_status=str(row["llm_status"]),
+            llm_probe_status=_row_text(row, "llm_probe_status"),
             llm_error_kind=str(row["llm_error_kind"])
             if "llm_error_kind" in row.keys()  # noqa: SIM118 - sqlite3.Row 的 in 按值匹配，必须用 keys()
             else "",
@@ -577,13 +589,22 @@ def build_runtime_diagnostic(
         send_request=send_request,
         audit_records=audit_record_list,
     )
-    llm_status = "not_run"
-    if send_request:
-        llm_status = "not_configured" if config.bot_chat_provider == "static" else "ok"
-        if infer_context_error_kind(audit_tags):
-            llm_status = "not_run"
-        if "llm_error" in send_request.audit_tags:
-            llm_status = "error"
+    # 逐消息 LLM 态：只由本轮审计证据派生（配置探针态另立 llm_probe_status 列）。
+    llm_served_model = infer_llm_served_model(audit_tags)
+    llm_probe_status = infer_llm_probe_status(
+        config,
+        send_request_created=bool(send_request),
+    )
+    if send_request is not None and "llm_error" in send_request.audit_tags:
+        # 既有判据保持：错误态只看本轮 send_request 的标签，不从历史标签推断。
+        llm_status = "error"
+    elif infer_context_error_kind(audit_tags):
+        llm_status = "not_run"
+    elif infer_llm_service_evidence(audit_tags):
+        llm_status = "ok"
+    else:
+        # 没有服务证据 ⇒ 明说没跑，不替本轮编一个"ok"。
+        llm_status = "not_run"
 
     llm_error_kind = infer_llm_error_kind(audit_tags)
     context_error_kind = infer_context_error_kind(audit_tags)
@@ -642,9 +663,12 @@ def build_runtime_diagnostic(
         history_turns=infer_int_tag(audit_tags, "context_history_turns"),
         emotion_signals=infer_int_tag(audit_tags, "context_emotion_signals"),
         llm_status=llm_status,
+        llm_probe_status=llm_probe_status,
         llm_error_kind=llm_error_kind,
         llm_provider=config.bot_chat_provider,
-        llm_model=infer_text_tag(audit_tags, "model") or config.bot_chat_model,
+        # 只报本轮真服务过的模型；没有证据就是空串，渲染层写"未参与／未知"。
+        # 旧写法 `infer_text_tag(...) or config.bot_chat_model` 拿缺省值顶替实测值。
+        llm_model=llm_served_model,
         ready_for_real_llm=bool(llm_readiness["ready_for_real_llm"]),
         llm_readiness_status=str(llm_readiness["llm_readiness_status"]),
         llm_readiness_reasons=[
@@ -797,13 +821,19 @@ def _format_why_body(diagnostic: RuntimeDiagnostic) -> str:
             f"history={diagnostic.history_turns}，"
             f"emotion={diagnostic.emotion_signals}"
         ),
-        f"LLM：{diagnostic.llm_status}，provider={diagnostic.llm_provider}，model={diagnostic.llm_model}",
-        (
-            f"LLM就绪：{diagnostic.llm_readiness_status or '-'}，"
-            f"ready_for_real_llm={str(diagnostic.ready_for_real_llm).lower()}"
-        ),
-        f"LLM原因：{_format_reasons(diagnostic.llm_readiness_reasons)}",
+        f"LLM：{diagnostic.llm_status}，provider={diagnostic.llm_provider}，model={describe_llm_model(diagnostic.llm_model)}",
     ]
+    # 归因行只在"本轮拿不出模型服务证据"时出现；有证据时返回空表 ⇒ 成功路径逐字节不变。
+    lines.extend(_llm_attribution_lines(diagnostic))
+    lines.extend(
+        [
+            (
+                f"LLM就绪：{diagnostic.llm_readiness_status or '-'}，"
+                f"ready_for_real_llm={str(diagnostic.ready_for_real_llm).lower()}"
+            ),
+            f"LLM原因：{_format_reasons(diagnostic.llm_readiness_reasons)}",
+        ]
+    )
     if diagnostic.llm_error_kind:
         lines.append(f"LLM 错误类型：{diagnostic.llm_error_kind}")
     if (
@@ -1119,6 +1149,122 @@ def infer_text_tag(audit_tags: Iterable[str], key: str) -> str:
         if _is_safe_reason(value):
             return value
     return ""
+
+
+# ---------------------------------------------------------------------------
+# LLM 归因（2026-09-24 W22）：本轮到底有没有模型服务过、服务的是谁、链走到哪一步断了。
+# 唯一教义＝**没有证据就说没有证据**：取不到真实服务模型就渲染"未参与／未知"，
+# 绝不拿 `config.bot_chat_model` 缺省值顶替——顶上去，链还没起跑的消息就会印成
+# "缺省模型炸了"，读的人据此去查一个从没被调用过的模型。
+# ---------------------------------------------------------------------------
+
+#: 模型名可渲染字符集。刻意**不复用** `_is_safe_reason`：那把尺只放 ASCII 字母数字
+#: 与下划线（原因码字符集），而真实模型名一律带点号或连字符（`gemini-3.8-flash`、
+#: `gpt-5.6-terra`），拿它当模型名字符集 ⇒ 每一条真实证据都判不安全 ⇒ 旧写法
+#: `infer_text_tag(audit_tags,"model") or config.bot_chat_model` 的兜底**每次**都生效
+#: （含成功路径），实测见 SEAT-W22 §0。仍然拒绝空白与控制字符，防用户内容进渲染面。
+_SAFE_MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+\-/]{0,79}$")
+
+#: 无服务证据时的渲染文案（管理员一眼看懂："没轮到模型"而不是"模型炸了"）。
+LLM_MODEL_NO_EVIDENCE_TEXT = "未参与／未知"
+LLM_NO_EVIDENCE_NOTE = "LLM归因：本轮无模型服务证据，未参与／未知不等于任何具体模型失败"
+
+LLM_BREAK_BEFORE_LLM = "before_llm"
+LLM_BREAK_DURING_LLM = "during_llm"
+#: 跳序真身＝`chat.py` 的 `llm_route_attempt:<hop>` 标签（来自 `route_trace=route_attempts`
+#: 的同一次采集），本格只读它，绝不新造第二套轨迹。
+LLM_ROUTE_ATTEMPT_TAG_PREFIX = "llm_route_attempt:"
+LLM_MAX_RENDERED_HOPS = 8
+
+
+def infer_llm_served_model(audit_tags: Iterable[str]) -> str:
+    """只从服务证据标签 `model:<name>` 取模型名，多条时取末条（本轮最后真服务者）。
+
+    取不到一律返回空串，调用方**禁止**再 `or 配置缺省值`。
+    """
+    served = ""
+    for tag in audit_tags:
+        if not tag.startswith("model:"):
+            continue
+        value = tag.removeprefix("model:").strip()
+        if _SAFE_MODEL_NAME_RE.fullmatch(value):
+            served = value
+    return served
+
+
+def infer_llm_service_evidence(audit_tags: Iterable[str]) -> bool:
+    """本轮是否有"模型真被调用过"的证据：服务标签在，或真实用量非零。"""
+    tags = list(audit_tags)
+    if infer_llm_served_model(tags):
+        return True
+    return any(
+        infer_int_tag(tags, key) > 0
+        for key in (
+            "llm_usage_total_tokens",
+            "llm_usage_prompt_tokens",
+            "llm_usage_completion_tokens",
+        )
+    )
+
+
+def infer_llm_break_stage(audit_tags: Iterable[str]) -> str:
+    """链断在哪一步（两态可辨）：`before_llm`＝请求预算在起跑前耗尽，`during_llm`＝起跑后才耗尽。"""
+    tags = list(audit_tags)
+    if "deadline_exceeded:before_llm" in tags:
+        return LLM_BREAK_BEFORE_LLM
+    if "deadline_exceeded:during_llm" in tags:
+        return LLM_BREAK_DURING_LLM
+    return ""
+
+
+def infer_llm_route_hops(audit_tags: Iterable[str]) -> list[str]:
+    """本轮实际走过的跳序（有序、原样、逐跳截断防长）。"""
+    hops: list[str] = []
+    for tag in audit_tags:
+        if not tag.startswith(LLM_ROUTE_ATTEMPT_TAG_PREFIX):
+            continue
+        hop = tag.removeprefix(LLM_ROUTE_ATTEMPT_TAG_PREFIX).strip()
+        if hop:
+            hops.append(hop[:80])
+    return hops
+
+
+def infer_llm_probe_status(config: Config, *, send_request_created: bool) -> str:
+    """配置探针态：说的是"这套配置能不能真调 LLM"，属配置、不属某一条消息。
+
+    旧代码把这个值直接写进逐消息的 `llm_status`，于是"配置是好的"被渲染成
+    "这条消息跑通了"。现在它有自己的列（`llm_probe_status`）。
+    """
+    if not send_request_created:
+        return ""
+    return "not_configured" if config.bot_chat_provider == "static" else "ok"
+
+
+def describe_llm_model(llm_model: str) -> str:
+    """渲染层：有证据报原值，没证据明说"未参与／未知"，永不猜测。"""
+    normalized = llm_model.strip()
+    return normalized or LLM_MODEL_NO_EVIDENCE_TEXT
+
+
+def _llm_attribution_lines(diagnostic: RuntimeDiagnostic) -> list[str]:
+    """无模型服务证据时补的归因行；**有证据时返回空表** ⇒ 成功路径渲染逐字节不变。"""
+    if diagnostic.llm_model.strip():
+        return []
+    lines = [f"LLM配置探针：{diagnostic.llm_probe_status or '-'}"]
+    stage = infer_llm_break_stage(diagnostic.audit_tags)
+    hops = infer_llm_route_hops(diagnostic.audit_tags)
+    if diagnostic.llm_status == "error" or stage or hops:
+        lines.append(LLM_NO_EVIDENCE_NOTE)
+    if stage:
+        lines.append(f"LLM断点：{stage}")
+    if hops:
+        shown = hops[:LLM_MAX_RENDERED_HOPS]
+        hidden = len(hops) - len(shown)
+        tail = f" …(+{hidden}跳未列)" if hidden > 0 else ""
+        lines.append(f"LLM跳序：n={len(hops)}，{' <- '.join(shown)}{tail}")
+    else:
+        lines.append("LLM跳序：n=0（无跳序证据标签）")
+    return lines
 
 
 def infer_prompt_truncated_sections(audit_tags: Iterable[str]) -> list[str]:

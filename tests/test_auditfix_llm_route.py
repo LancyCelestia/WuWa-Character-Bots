@@ -427,7 +427,7 @@ def test_get_store_singleton_ignores_mismatched_path(monkeypatch, tmp_path) -> N
 # ==================== D9：失败话术顺序轮换 ====================
 
 def test_persona_failure_message_rotates_without_repeat() -> None:
-    from plugins.bot_unified_runtime.capabilities.chat import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
         _FAILURE_MESSAGE_CURSOR,
         _PERSONA_FAILURE_MESSAGES,
         persona_failure_message,
@@ -494,7 +494,9 @@ class _ToolLoopProvider:
 
 
 def test_tool_loop_accumulates_raw_usage_across_rounds() -> None:
-    from plugins.bot_unified_runtime.capabilities.chat import _generate_with_tool_loop
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        _generate_with_tool_loop,
+    )
 
     provider = _ToolLoopProvider()
     reply = _generate_with_tool_loop(

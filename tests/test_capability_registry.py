@@ -38,13 +38,15 @@ import ast
 import re
 from pathlib import Path
 
-from plugins.bot_unified_runtime.capabilities.echo import (
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
     _HELP_CATEGORIES,
     _PUBLIC_HELP_TOPICS,
     HELP_ENTRIES,
 )
-from plugins.bot_unified_runtime.runtime import base_router as br
-from plugins.bot_unified_runtime.runtime import capability_registry as cr
+from plugins.bot_unified_runtime.domains.chat_reply.runtime import base_router as br
+from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+    capability_registry as cr,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE_ROUTER_PY = ROOT / "plugins" / "bot_unified_runtime" / "domains" / "chat_reply" / "runtime" / "base_router.py"
@@ -63,7 +65,8 @@ _SNAPSHOT_ROUTE_KINDS: tuple[tuple[str, str], ...] = (
     ("NORTHBOUND", "northbound"), ("FX", "fx"), ("NEWS", "news"),
     ("RANDPIC", "randpic"), ("REMINDER", "reminder"), ("MEDIA_ARCHIVE", "media_archive"),
     ("DAILY_ASSIST", "daily_assist"),
-    ("GROUP_INFO", "group_info"), ("EAT", "eat"), ("AFFINITY", "affinity"),
+    ("GROUP_INFO", "group_info"), ("HOST_STATE", "host_state"),
+    ("CONSENT", "consent"), ("EAT", "eat"), ("AFFINITY", "affinity"),
     ("DIVINATION", "divination"), ("TTS", "tts"), ("NATURAL_COMMAND", "natural_command"),
     ("CONTENT", "content"), ("CHAT", "chat"), ("EMERGENCY_INFO", "emergency_info"),
     ("IGNORE", "ignore"),
@@ -101,6 +104,8 @@ _SNAPSHOT_ROUTE_RULES: tuple[tuple[str, str, int, str, str, tuple[str, ...]], ..
     ("media_archive", "bot.media_archive", 43, "媒体归档", "媒体归档（收藏/归档/存图+媒体；存聊天记录）", ("base_route:media_archive",)),
     ("daily_assist", "bot.daily_assist", 42, "收件箱速记", "收件箱（收件箱 买牛奶/收件箱）", ("base_route:daily_assist",)),
     ("emergency_info", "bot.emergency_info", 44, "紧急信息", "紧急信息（外部预警与政务应急聚合：紧急信息｜紧急信息 待审）", ("base_route:emergency_info",)),
+    ("host_state", "bot.host_state", 41, "宿主机状态", "宿主机状态（机器状态/机器配置/宿主状态；超管视图卡片）", ("base_route:host_state",)),
+    ("consent", "bot.consent", 41, "书面同意", "书面同意（同意卡 待批/看/批/驳；危险参数改动的批准入口，仅管理员）", ("base_route:consent",)),
     ("group_info", "bot.group_info", 41, "群信息", "群信息（群信息/群主是谁/群人数/群公告/群精华/本群多大了）", ("base_route:group_info",)),
     ("moegirl_question", "bot.moegirl", 46, "二次元问句", "二次元问句（萌娘百科自动查询，未命中降级聊天）", ("base_route:moegirl_question",)),
     ("natural_command", "bot.natural_command", 45, "自然语言命令", "自然语言命令归一化", ("base_route:natural_command",)),
@@ -114,7 +119,7 @@ _SNAPSHOT_COMMAND_ROUTE_KINDS: frozenset[str] = frozenset(
         "MUSIC_MODE", "MUSIC", "TODAY_HISTORY", "WIKI", "MOEGIRL", "EPIC",
         "WEATHER", "MARKET", "STOCKS", "COMMODITIES", "BOND", "NORTHBOUND",
         "FX", "EAT", "DIVINATION", "TTS", "NEWS", "RANDPIC", "REMINDER",
-        "MEDIA_ARCHIVE", "DAILY_ASSIST", "GROUP_INFO", "NATURAL_COMMAND", "EMERGENCY_INFO",
+        "MEDIA_ARCHIVE", "DAILY_ASSIST", "GROUP_INFO", "HOST_STATE", "CONSENT", "NATURAL_COMMAND", "EMERGENCY_INFO",
     }
 )
 
@@ -137,6 +142,8 @@ _SNAPSHOT_INTERFACE_MANIFEST: tuple[tuple[str, str, str, str, int | None, str, s
     ("capability.game_live", "游戏直播状态", "reserved", "game_live", None, "预留：游戏内直播/活动事件接入", "", "预留：游戏直播事件接入，尚未实现"),
     ("capability.meme_absorb", "吸收表情包", "active", "meme_absorb", None, "监听群图片异步下载、MD5 去重、权重筛选、VLM 打标与 NSFW 过滤", "表情收库", ""),
     ("capability.group_info", "群信息", "active", "group_info", 41, "OneBot V11 群 API（get_group_info/成员列表/公告/精华）：群资料/人数全员，公告与精华仅管理员；诚实降级清单见 capabilities/group_info.py", "群信息", ""),
+    ("capability.host_state", "宿主机状态", "active", "host_state", 41, "本机运行时事实（版本族/硬件/占用率）经 host_metrics 单一取数口现读，Mica 卡片出图；仅超管视图，读数逐行脱敏", "宿主机状态", ""),
+    ("capability.consent", "书面同意命令面", "active", "consent", 41, "危险参数改动（R1/R2）签出的同意卡在这里批/驳/看：判定唯一住 safety_exec/settings_gate，同意账唯一住 safety_exec/consent，本接口只把一句入站消息交给它", "书面同意", ""),
     ("capability.daily_assist", "收件箱速记/早晚简报", "active", "daily_assist", 42, "收件箱随手记 + 定时吃什么推荐与早晚简报（BOT_DAILY_ASSIST_*，纯文本文件驱动）", "收件箱", ""),
     ("capability.tts", "语音合成", "active", "tts", 41, "本机 GPT-SoVITS v2ProPlus HTTP API（api_v2.py 的 /tts）：文本合成守岸人音色语音；参考音频与开关见 BOT_TTS_*", "语音", ""),
     ("capability.emotion", "情绪状态注入", "active", "context", None, "作为上下文能力注入，不单独占用文本路由", "", "内部：心情引擎，经上下文注入，不占文本路由"),
@@ -226,7 +233,7 @@ def test_registry_covers_every_route_kind() -> None:
     """声明行数 = RouteKind 成员数；成员名/取值/顺序逐一相等（含 IGNORE 兜底席）。"""
     live = [(member.name, member.value) for member in br.RouteKind]
     declared = [(decl.kind, decl.value) for decl in cr.ROUTE_CAPABILITY_DECLARATIONS]
-    assert len(cr.ROUTE_CAPABILITY_DECLARATIONS) == len(br.RouteKind) == 35
+    assert len(cr.ROUTE_CAPABILITY_DECLARATIONS) == len(br.RouteKind) == 37  # 36→37：CONSENT（书面同意命令面）
     assert declared == live
     assert live == [tuple(pair) for pair in _SNAPSHOT_ROUTE_KINDS]  # 枚举本体与改动前快照一致
 
@@ -247,7 +254,7 @@ def test_route_rules_data_columns_equal_registry() -> None:
     rules_by_kind = {rule.kind.name: rule for rule in br.ROUTE_RULES}
     rule_producing_decls = [decl for decl in cr.ROUTE_CAPABILITY_DECLARATIONS if decl.has_rule]
     assert {decl.kind for decl in rule_producing_decls} == set(rules_by_kind)
-    assert len(rule_producing_decls) == len(br.ROUTE_RULES) == 34
+    assert len(rule_producing_decls) == len(br.ROUTE_RULES) == 36  # 35→36：consent_match 一条路由规则
     for decl in rule_producing_decls:
         rule = rules_by_kind[decl.kind]
         assert rule.kind.value == decl.value
@@ -301,7 +308,7 @@ def test_command_route_kinds_derived_from_registry() -> None:
 def test_command_route_kinds_equal_pre_change_snapshot() -> None:
     """派生结果与改动前字面 frozenset 快照逐成员相等（零行为变化锚）。"""
     assert {member.name for member in br.COMMAND_ROUTE_KINDS} == set(_SNAPSHOT_COMMAND_ROUTE_KINDS)
-    assert len(br.COMMAND_ROUTE_KINDS) == 30
+    assert len(br.COMMAND_ROUTE_KINDS) == 32  # 31→32：书面同意命令面（bot.consent，裁定第 18 项放行腿）
     # 非命令路由席（让路档/兜底）确不在册：affinity 查询走 /bot 链与 matcher，
     # moegirl_question/content/chat 是被动路由，ignore 是兜底。
     excluded = {"AFFINITY", "MOEGIRL_QUESTION", "CONTENT", "CHAT", "IGNORE"}
@@ -316,7 +323,7 @@ def test_command_route_kinds_equal_pre_change_snapshot() -> None:
 
 def test_interface_manifest_equal_registry_field_by_field() -> None:
     entries = br.build_interface_manifest()
-    assert len(entries) == len(cr.INTERFACE_DECLARATIONS) == 20
+    assert len(entries) == len(cr.INTERFACE_DECLARATIONS) == 22  # 21→22：capability.consent（书面同意命令面）
     for entry, decl in zip(entries, cr.INTERFACE_DECLARATIONS):
         assert entry.interface_id == decl.interface_id
         assert entry.label == decl.label
@@ -400,10 +407,11 @@ def test_help_topics_equal_registry_book_order() -> None:
     本断言把声明源钉在同一口径上，两侧各自漂移都过不了这道门）。
     73→74：审查 P-03 新增「决策」topic（/bot decision 查询，2026-09-15）。
     76→77：语音能力批次新增「语音」topic（bot.tts，公开）。
+    78→79：亲密模式分级波新增「亲密模式」topic（公开，D 席登记，2026-09-24）。
     """
     live_topics = [str(entry["topic"]) for entry in HELP_ENTRIES]
     assert _HELP_DECLARED_TOPICS == live_topics
-    assert len(_HELP_DECLARED_TOPICS) == len(set(_HELP_DECLARED_TOPICS)) == 78
+    assert len(_HELP_DECLARED_TOPICS) == len(set(_HELP_DECLARED_TOPICS)) == 81  # 80→81：「书面同意」（admin_only）
 
 
 def test_help_visibility_and_capability_equal_registry() -> None:
@@ -429,7 +437,7 @@ def test_help_public_visibility_derived_from_declaration() -> None:
     declared_admin = {d.topic for d in cr.HELP_TOPIC_DECLARATIONS if d.admin_only}
     assert declared_public == set(_PUBLIC_HELP_TOPICS)
     assert declared_admin.isdisjoint(_PUBLIC_HELP_TOPICS)
-    assert len(declared_public) == 37 and len(declared_admin) == 41  # 语音批次 +1 公开主题
+    assert len(declared_public) == 38 and len(declared_admin) == 43  # 42→43：书面同意（admin_only，裁定第 18 项）  # 41→42：宿主机状态上线（2026-09-26 goal18 波，主代理接线）  # 37→38：亲密模式波新增公开主题（2026-09-24，D 席）
 
 
 def test_help_categories_reference_declared_topics() -> None:

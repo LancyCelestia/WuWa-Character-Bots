@@ -71,6 +71,29 @@ CAMPUS_DEDUPE_ANCHOR = "campus_fwd:"
 
 QUIET_END = datetime(2026, 9, 14, 6, 0, tzinfo=timezone.utc)
 
+# ---- 中央出口「被谁引用」的单一判据（S274 立，两侧对齐锚见 `central_entry_executable_hits`）----
+CENTRAL_ENTRY = "submit_active_push"
+#: 唯一出口的**定义处**（精确路径，不是名字子串——旧写法 `"outbound_gate.py" in path.name`
+#: 会让任何文件名含这串的生产件（`evil_outbound_gate.py`、`outbound_gate_v2.py`）整件免检，
+#: 那是本锁自带的一条自我豁免通道。现算全仓该名字只命中这一个文件，收紧为零行为变化。
+GATE_FILE = PLUGIN_ROOT / "domains" / "transport" / "sender" / "outbound_gate.py"
+
+#: 「只在名字层面提到中央出口、并没有伸手去够它」的生产件**点名册**（S274 立）。
+#: 立由：`submit_active_push` 这个名字有两种完全不同的出现——①**可执行引用**（import／调用／
+#: 别名／字符串派发，真能经或绕过唯一出口）；②**声明性提及**（docstring、注释、形↔缝投影表里
+#: 的字符串值）。把②当①判＝把名册当成旁路；把①当②放＝把旁路写成名册。本册只豁免②，
+#: 且豁免面是**显式闭集**：新长出一枚声明性提及当场红（要么改道、要么点名进册并写明理由），
+#: 册内件一旦长出可执行引用立刻落回越界面（反查腿在 T6 尾段，不只在这段散文里）。
+DECLARATIVE_NAMEPLATE: frozenset[str] = frozenset(
+    {
+        # 形↔缝单源投影表 `ARM_FORM_SEAMS` 的两枚**值位**（`active_push`/`voice_ack` →
+        # "submit_active_push"，字符串常量，不是调用）＋ 该表注释与字段 docstring 各一处。
+        # 它声明"这两形经由哪条中央汇缝"，逐臂 `seam_host` 由它投影；等值另由
+        # `tests/test_capability_manifest_gate.py` 腿㉓双向钉到入口活性件（在册无执法＝红）。
+        "domains/core/capability_manifest.py",
+    }
+)
+
 
 # --------------------------------------------------------------------- 测试替身
 def _utc(hour: int, minute: int, *, day: int = 14) -> datetime:
@@ -123,17 +146,24 @@ def _request(
 
 
 class RecordingQueue:
-    """假队列：原样记录每次 submit 的调用形态（裸调用 vs 带 deliver_after）。
+    """假队列：原样记录每次 submit 的调用形态（裸调用 vs 带 deliver_after）与**落库键**。
 
     生产语义复刻：同一 dedupe_key 第二次返回 SKIPPED 回执（幂等账在队列侧）。
+
+    `keys` 记录的是**抵达队列那一行**的 `dedupe_key`，不是调用方交来的那一枚——中央出口
+    会在过闸之前把键规范一次（`submit_active_push` 调 `wash_active_push_key`），本席的
+    三条不变量（过形 / 同身份收敛 / 不同身份不撞段）全部只能按队列侧真键来判，
+    拿调用方的脏串判＝判的是根本没发出去的东西。
     """
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.keys: list[str] = []
         self._seen: set[str] = set()
 
     def submit(self, send_request: SendRequest, **kwargs: Any) -> DeliveryReceipt:
         self.calls.append((send_request.request_id, dict(kwargs)))
+        self.keys.append(send_request.dedupe_key)
         if send_request.dedupe_key in self._seen:
             return DeliveryReceipt(
                 request_id=send_request.request_id,
@@ -252,6 +282,97 @@ def _push(
 
 def _events(audit: InMemoryAuditLogger, request_id: str | None = None) -> list[str]:
     return [record.event for record in audit.list_records(request_id)]
+
+
+# ------------------------------------------------ 出口洗段跟随件（S184，2026-09-24）
+# 新现实：`submit_active_push` 在 `gate.decide` **之前**把 `send_request.dedupe_key`
+# 交给 `domains/emergency_info/service/dedupe.py:wash_active_push_key` 规范一次，真被
+# 改写就留一行 WARNING。于是本文件的判据从「脏键 ⇒ 闸 skip」改成三条真不变量：
+#   ① 抵达队列那一行的键必过形（⇒ 结构上不存在「因键形而生的静默 skip」）；
+#   ② 同一身份的多种脏形在出口收敛成**逐字相同**的一条键（重发防护比 skip 更强）；
+#   ③ 不同身份绝不撞段（退化输入走摘要兜底，不塌成同一段）。
+# 判据是宪法、洗的是出口：读侧谓词（`dedupe_key_shape_ok` / `is_legal_segment`）对**原始
+# 串**的负样本断言一条不动，改的只是「过完出口之后会发生什么」。
+
+def _digest_segment(text: str) -> str:
+    """测试侧独立复算「洗完没有字母数字」时的摘要兜底段。
+
+    刻意不 import 被测实现来算期望值（LOCK-AUDIT 纪律：同源自比＝判据空转）。这里按
+    `dedupe.py:active_push_key_segment` 头注**写明**的规则（blake2b、digest_size=8、前缀
+    `h`）用标准库另算一遍——与本文件 `_expected_subject_hash` 同一个手法。兜底规则一换，
+    这里当场红，逼规格与判据一起跟随。
+    """
+    return "h" + hashlib.blake2b(text.encode("utf-8"), digest_size=8).hexdigest()
+
+
+#: 段合法字符集（与 `dedupe.py:_SEGMENT_RE` 的 `[A-Za-z0-9_.\-]` 同口径），供下方
+#: 独立复算用；测试侧另立一份是**故意的**——被测件规则漂移时这里当场红（`_digest_segment`
+#: 同一哲学：不复用被测实现算期望值，否则同源自比＝判据空转）。
+_LEGAL_SEGMENT_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"
+)
+_KEY_SEGMENT_MAX = 120
+
+
+def _rescued_segment(text: str) -> str:
+    """洗完仍含字母数字时的段：`washed + "_h" + digest`（S192 跟随洗段近似单射）。
+
+    按 `dedupe.py:active_push_key_segment` 头注写明的规则用标准库**独立复算**，不 import
+    被测实现：后缀 `_h` + blake2b(digest_size=8) 的 16 hex（共 18 字符），非法字符换成 `_`，
+    截断预算 `120 - len(suffix)`。任一规则（摘要/前缀/预算）改动都会让这里与真身分叉 → 红。
+    """
+    digest = hashlib.blake2b(text.encode("utf-8"), digest_size=8).hexdigest()
+    suffix = "_h" + digest
+    washed = "".join(
+        char if char in _LEGAL_SEGMENT_CHARS else "_" for char in text
+    )[: _KEY_SEGMENT_MAX - len(suffix)]
+    return washed + suffix
+
+
+def _naive_wash_without_digest(value: object) -> str:
+    """注毒体①：把「真身摘要后缀 + 退化兜底摘要」整个抹掉的塌段洗段（回到修前形态）。
+
+    只 `strip → 判合法 → 非法换 `_` → 截 120`，无 `_h<digest>` 后缀、无 `h<digest>` 兜底 ⇒
+    `11 08838060` 与 `11_08838060`、`中文群` 与 `：：：`、121/122 位长 id 全部塌成同段。
+    只在内存 monkeypatch 里用，绝不落盘改 `dedupe.py`。
+    """
+    text = str(value or "").strip()
+    if all(char in _LEGAL_SEGMENT_CHARS for char in text) and 1 <= len(text) <= _KEY_SEGMENT_MAX:
+        return text
+    return "".join(
+        char if char in _LEGAL_SEGMENT_CHARS else "_" for char in text
+    )[:_KEY_SEGMENT_MAX]
+
+
+def _open_gate(now: datetime | None = None) -> Any:
+    """开闸 + 静默关 + 双窗不限流：让「键形」成为唯一变量（0=该窗不生效，见上）。"""
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+    )
+
+    fixed = now or _utc(12, 0)
+    return _gate(
+        settings=OutboundGateSettings(
+            enabled=True, max_per_target_per_minute=0, max_per_target_per_hour=0
+        ),
+        quiet=_quiet(enabled=False),
+        store=FakeStore(),
+        now=fixed,
+    )
+
+
+def _exit_key_of(queue: RecordingQueue, index: int = 0) -> str:
+    """取第 `index` 次**抵达队列**那一行的 dedupe_key（出口处理之后的真键）。"""
+    assert len(queue.keys) > index, f"队列只收到 {len(queue.keys)} 行，取不到第 {index} 行"
+    return queue.keys[index]
+
+
+def _segments_all_legal(key: str) -> bool:
+    from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
+        is_legal_segment,
+    )
+
+    return all(is_legal_segment(segment) for segment in key.split(":"))
 
 
 # ------------------------------------------------------------------ T1 缺省即直通
@@ -1056,39 +1177,73 @@ def test_dedupe_key_shape_enforced() -> None:
     assert once_ok.verdict.action == "allow"
 
 
-@pytest.mark.parametrize(
-    ("bad_key", "why"),
-    [
+#: 脏键在「唯一出口先规范一次」之后的两种归类。判据＝洗段口的**能力边界**，不是
+#: 「哪种结论让我省事」：
+#:   "rescued" 段级脏（空段 / 段内段前段尾空白 / 非 ASCII / 超 120 长）⇒ 出口洗得动
+#:             ⇒ 必须 allow，且落库键逐字等于按规则手算的那一枚；
+#:   "skip"    结构级脏（命名空间不等值 / 段数越界 / 日期段形态）⇒ 洗段修不动
+#:             ⇒ 必须**响亮** skip（回执带机读原因），绝不静默。
+#: 两归类必须同时存在，由 `test_malformed_key_classes_are_both_populated` 钉死，
+#: 否则整张表会悄悄退化成「只测一种结论」。
+_MALFORMED_KEY_CASES: tuple[tuple[str, str, str, str | None], ...] = (
+    (
+        "digest_push:g-1:u-2:2026-09-14",
+        "skip",
         # 原实例写的是 `digest_push:g-1:2026-09-14`——只有三段，实际拦它的是**段数**
         # 规则，命名空间规则对它零判别（LOCK-AUDIT G10 删前缀校验 59 全绿）。
         # 改挂真身键形（四段、各段非空），让「非 emg 命名空间」这条规则单独受审。
-        ("digest_push:g-1:u-2:2026-09-14", "非 emg 命名空间（存量族键不得混入）"),
-        ("emg:qq::target", "空段"),
-        ("emg:qq:only-three", "段数不足"),
-        ("emg:qq:a:b:c:d", "段数超限"),
-        ("emgqqabcd", "无分隔"),
-    ],
+        "非 emg 命名空间（存量族键不得混入）",
+        None,
+    ),
+    ("emg:qq::target", "rescued", "空段（出口洗成摘要兜底段，不再整条判死）",
+     f"emg:qq:{_digest_segment('')}:target"),
+    ("emg:qq:only-three", "skip", "段数不足（洗段变不出一个段）", None),
+    ("emg:qq:a:b:c:d", "skip", "段数超限（洗段吃不掉一个段）", None),
+    ("emgqqabcd", "skip", "无分隔（首段不等值于 emg）", None),
 )
-def test_malformed_dedupe_keys_are_skipped(bad_key: str, why: str) -> None:
+
+
+@pytest.mark.parametrize(
+    ("bad_key", "expect", "why", "canonical"), list(_MALFORMED_KEY_CASES)
+)
+def test_malformed_dedupe_keys_are_skipped(
+    bad_key: str, expect: str, why: str, canonical: str | None
+) -> None:
+    """段级脏由出口救回、结构级脏必须响亮拒——两半都是「不静默」，只是方向不同。"""
     from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
-        OutboundGateSettings,
+        dedupe_key_shape_ok,
     )
 
     queue = RecordingQueue()
-    outcome = _push(
-        queue,
-        _request(dedupe_key=bad_key),
-        _gate(
-            settings=OutboundGateSettings(enabled=True),
-            quiet=_quiet(enabled=False),
-            store=FakeStore(),
-            now=_utc(12, 0),
-        ),
-        now=_utc(12, 0),
-    )
-    assert outcome.verdict.action == "skip", why
-    assert outcome.verdict.reason == "dedupe_key_shape"
-    assert queue.calls == []
+    outcome = _push(queue, _request(dedupe_key=bad_key), _open_gate(), now=_utc(12, 0))
+
+    if expect == "skip":
+        assert outcome.verdict.action == "skip", why
+        assert outcome.verdict.reason == "dedupe_key_shape"
+        assert queue.calls == []  # 绝不触队列
+        # 响亮而非静默：被拒的那一发自己带机读原因（skip 回执由闸自造，见 T5 那一条）。
+        assert outcome.receipt is not None
+        assert outcome.receipt.state is ReceiptState.SKIPPED
+        assert outcome.receipt.public_message == "dedupe_key_shape"
+        return
+
+    assert outcome.verdict.action == "allow", f"{why}：出口该救回却被判死"
+    assert queue.calls == [("req-emg-1", {})]
+    landed = _exit_key_of(queue)
+    assert landed == canonical, f"{why}：落库键与按规则手算的规范形不符"
+    # ① 的正半：抵达队列那一枚键**过形**（用读侧宪法谓词判，不用出口自己判自己）。
+    assert dedupe_key_shape_ok(landed) is True, f"{why}：落库键仍不过形：{landed!r}"
+    assert _segments_all_legal(landed), f"{why}：落库键含非法段：{landed!r}"
+    # 出口洗过＝必须可见（不许变成「消息发了但没人知道键被改过」）。
+    assert landed != bad_key, f"{why}：本该改写却逐字节未变，本行判据成空跑"
+
+
+def test_malformed_key_classes_are_both_populated() -> None:
+    """反空跑：`_MALFORMED_KEY_CASES` 两归类都得有人（只剩一种＝表被掏空，判据失明）。"""
+    classes = {case[1] for case in _MALFORMED_KEY_CASES}
+    assert classes == {"skip", "rescued"}, classes
+    assert sum(1 for case in _MALFORMED_KEY_CASES if case[1] == "rescued") >= 1
+    assert sum(1 for case in _MALFORMED_KEY_CASES if case[1] == "skip") >= 3
 
 
 # ------------------------------------- T5b 键命名空间与段字符集（LOCK-FIX F-1 补锁）
@@ -1137,22 +1292,41 @@ def test_namespace_only_violations_are_skipped(bad_key: str, why: str) -> None:
     assert queue.calls == []
 
 
-@pytest.mark.parametrize(
-    ("bad_key", "why"),
-    [
-        ("emg:qq:has space:g-1", "段内空白：配置串按逗号切开不 strip 的直达形态"),
-        ("emg:  qq:item-1:g-1", "段前空白：`strip()` 判空拦不住（段非空）"),
-        ("emg:qq:item-1:g-1 ", "尾段尾随空白：与干净键是两条队列行＝重发"),
-        ("emg:qq:预警:g-1", "段字符集只认 [A-Za-z0-9_.-]：条目号必须先消毒"),
-        ("emg:qq:item-1:private:3865067623", "目标未消毒带冒号：伪装成五段且日期段非法"),
-        ("emg:qq:item-1:g-1:2026-9-14", "日期段未补零：与 B4 规格 §1.3-3 形态不符"),
-        ("emg:qq:item-1:g-1:20260914", "日期段缺分隔符"),
-    ],
+#: 段字符集 / 日期段形态用例（S184 起带归类列，理由同 `_MALFORMED_KEY_CASES` 头注）。
+#: `canonical` 一律是**按规则手算**的字面量，不是拿出口算出来的自比对值。
+_SEGMENT_SHAPE_CASES: tuple[tuple[str, str, str | None, str], ...] = (
+    # 段内空白洗完仍含字母数字 ⇒ 走「真被洗过」分支带摘要后缀（洗段近似单射，S184 §3-①）；
+    # 期望值由本文件 `_rescued_segment` 独立复算，与 `_digest_segment` 同法，不 import 出口。
+    ("emg:qq:has space:g-1", "rescued", f"emg:qq:{_rescued_segment('has space')}:g-1",
+     "段内空白：配置串按逗号切开不 strip 的直达形态（洗完带 `_h<摘要>` 后缀防与裸 `has_space` 撞段）"),
+    ("emg:  qq:item-1:g-1", "rescued", "emg:qq:item-1:g-1",
+     "段前空白：`strip()` 判空拦不住（段非空）"),
+    ("emg:qq:item-1:g-1 ", "rescued", "emg:qq:item-1:g-1",
+     "尾段尾随空白：与干净键收敛成同一条（旧判据「两条队列行＝重发」由出口消除）"),
+    ("emg:qq:预警:g-1", "rescued", f"emg:qq:{_digest_segment('预警')}:g-1",
+     "段字符集只认 [A-Za-z0-9_.-]：非 ASCII 条目号退化成摘要段"),
+    ("emg:qq:item-1:private:3865067623", "skip", None,
+     "目标未消毒带冒号：伪装成五段且日期段非法（洗段修不了段数）"),
+    ("emg:qq:item-1:g-1:2026-9-14", "skip", None, "日期段未补零：与 B4 规格 §1.3-3 形态不符"),
+    ("emg:qq:item-1:g-1:20260914", "skip", None, "日期段缺分隔符"),
 )
-def test_segment_charset_and_date_key_shape_are_enforced(bad_key: str, why: str) -> None:
-    """段字符集与日期段形态：脏键过闸＝幂等失效，故闸侧必须逐段查字符。"""
+
+
+@pytest.mark.parametrize(
+    ("bad_key", "expect", "canonical", "why"), list(_SEGMENT_SHAPE_CASES)
+)
+def test_segment_charset_and_date_key_shape_are_enforced(
+    bad_key: str, expect: str, canonical: str | None, why: str
+) -> None:
+    """段字符集与日期段形态：读侧谓词照旧逐段查（判据是宪法），出口另救段级脏。
+
+    分工写死在这一条里：**判据是宪法、洗的是出口**。
+    - 读侧 `dedupe_key_shape_ok(原始脏串)` 永远 False——闸的形门一条没松，本文件下方
+      `test_dedupe_predicates_share_one_implementation` 继续钉死「闸侧不许长第二套规则」；
+    - 出口 `submit_active_push` 先把段级脏洗成规范形再送闸 ⇒ 落库键过形、且与干净形同键；
+    - 结构级脏（段数 / 日期形态）洗不动 ⇒ 仍旧响亮 skip，绝不变静默。
+    """
     from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
-        OutboundGateSettings,
         dedupe_key_shape_ok,
     )
 
@@ -1161,23 +1335,27 @@ def test_segment_charset_and_date_key_shape_are_enforced(bad_key: str, why: str)
     assert all(segment.strip() for segment in bad_key.split(":")), why
     assert bad_key.split(":")[0] == "emg", why
 
+    # 读侧（原始串）：一格都不许松。
     assert dedupe_key_shape_ok(bad_key) is False, why
     assert dedupe_key_shape_ok(bad_key, family="daily") is False, why
 
     queue = RecordingQueue()
-    outcome = _push(
-        queue,
-        _request(dedupe_key=bad_key),
-        _gate(
-            settings=OutboundGateSettings(enabled=True),
-            quiet=_quiet(enabled=False),
-            store=FakeStore(),
-            now=_utc(12, 0),
-        ),
-        now=_utc(12, 0),
-    )
-    assert outcome.verdict.action == "skip", why
-    assert queue.calls == []
+    outcome = _push(queue, _request(dedupe_key=bad_key), _open_gate(), now=_utc(12, 0))
+
+    if expect == "skip":
+        assert outcome.verdict.action == "skip", why
+        assert outcome.verdict.reason == "dedupe_key_shape"
+        assert queue.calls == []
+        assert outcome.receipt is not None
+        assert outcome.receipt.public_message == "dedupe_key_shape"
+        return
+
+    assert outcome.verdict.action == "allow", f"{why}：段级脏该被出口救回"
+    landed = _exit_key_of(queue)
+    assert landed == canonical, f"{why}：落库键 ≠ 手算规范形"
+    assert dedupe_key_shape_ok(landed) is True, f"{why}：落库键不过形：{landed!r}"
+    assert _segments_all_legal(landed), f"{why}：落库键含非法段：{landed!r}"
+
 
 
 def test_canonical_emg_keys_still_pass_after_charset_tightening() -> None:
@@ -1678,49 +1856,104 @@ def _under_directory(path: Path, roots: tuple[Path, ...]) -> bool:
     return directory_parts[0] in directory_names
 
 
-def _production_uses_of_central_entry() -> list[str]:
-    """生产面**真的**用上 `submit_active_push` 的文件（import 该符号或调用它）。
+def central_entry_executable_hits(path: Path) -> list[int]:
+    """文件里**真的伸手去够** `submit_active_push` 的行号（可执行引用；空＝没有）。
 
-    只按文本命中算的话，一句注释就能造假；这里走 AST：`ImportFrom` 里出现该符号，
-    或存在 `submit_active_push(...)` 调用点。闸自身（定义处）排除。
+    判据真身只有这一支：`test_submit_active_push_has_at_least_one_production_caller`
+    （活性侧）、`test_submit_active_push_production_importers_are_allowlisted`
+    （越界面）、以及 `tests/test_emergency_info_core.py::
+    test_domain_reaches_the_queue_only_through_the_central_gate` ① 段（域侧对齐锁，
+    它 `import test_outbound_gate` 复用本函数）三处共用，**禁另立第二把尺**。
+
+    收哪些形态（与 `tests/test_active_push_entry_teeth.py` 的 `_is_call_api_channel`
+    同一套「别名／动态派发也算够到了」的口径，那条先例已实证"只认字面调用"是瞎的）：
+
+    - `from x import submit_active_push`（含 `as 别名`）与 `import a.submit_active_push`；
+    - 名字出现在任何表达式位置：直接调用、**别名赋值** `f = submit_active_push`、
+      当实参交出去、`return`／`yield`、`submit_active_push.__doc__`；
+    - 属性形态 `mod.submit_active_push(...)`；
+    - **字符串派发**：字符串作为**调用实参**（`getattr(m, "submit_active_push")`）或
+      **下标索引**（`globals()["submit_active_push"]`）——这类没有名字节点可抓，
+      不认就等于给"用字符串绕过 import 扫描"留门。
+
+    不收的形态（诚实边界，别叙述成"动态引用全视"）：写在**字典键值／集合元素／普通赋值
+    右侧的字符串常量**里仍算声明性——`ARM_FORM_SEAMS` 这类投影表就长这样，把它判成可执行
+    等于判死名册自己。真要堵那一形态只能靠"禁止用字符串表派发中央出口"的硬规则，另案。
+    `foo(submit_active_push=...)` 这种**关键字名**同样不算引用（那是参数名，不是引用）。
+
+    fail-closed：文本含该名字但 `ast.parse` 失败 ⇒ 返回 `[-1]`，即"按可执行算"，
+    读不动的代码不配拿声明性豁免。
     """
-    gate_name = "outbound_gate.py"
+    source = path.read_text(encoding="utf-8")
+    if CENTRAL_ENTRY not in source:
+        return []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return [-1]
+    parents: dict[int, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+    hits: list[int] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if any(alias.name == CENTRAL_ENTRY for alias in node.names):
+                hits.append(int(node.lineno))
+        elif isinstance(node, ast.Import):
+            if any(
+                alias.name == CENTRAL_ENTRY or alias.name.endswith(f".{CENTRAL_ENTRY}")
+                for alias in node.names
+            ):
+                hits.append(int(node.lineno))
+        elif isinstance(node, ast.Name):
+            if node.id == CENTRAL_ENTRY:
+                hits.append(int(node.lineno))
+        elif isinstance(node, ast.Attribute):
+            if node.attr == CENTRAL_ENTRY:
+                hits.append(int(node.lineno))
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if CENTRAL_ENTRY not in node.value:
+                continue
+            parent = parents.get(id(node))
+            direct_call_arg = isinstance(parent, ast.Call) and any(
+                arg is node for arg in parent.args
+            )
+            subscript_index = isinstance(parent, ast.Subscript) and parent.slice is node
+            if direct_call_arg or subscript_index:
+                hits.append(int(node.lineno))
+    return hits
+
+
+def _production_uses_of_central_entry() -> list[str]:
+    """生产面**真的**用上 `submit_active_push` 的文件（判据＝`central_entry_executable_hits`）。
+
+    只按文本命中算的话，一句注释就能造假；这里走 AST 的可执行引用判据。
+    闸自身（定义处 `GATE_FILE`）排除。
+    """
     found: list[str] = []
     for path in sorted(PLUGIN_ROOT.rglob("*.py")):
-        if "__pycache__" in path.parts or path.name == gate_name:
+        if "__pycache__" in path.parts or path == GATE_FILE:
             continue
-        text = path.read_text(encoding="utf-8")
-        if "submit_active_push" not in text:
-            continue
-        tree = ast.parse(text)
-        imported = any(
-            isinstance(node, ast.ImportFrom)
-            and any(alias.name == "submit_active_push" for alias in node.names)
-            for node in ast.walk(tree)
-        )
-        called = any(
-            isinstance(node, ast.Call)
-            and (
-                (isinstance(node.func, ast.Name) and node.func.id == "submit_active_push")
-                or (
-                    isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "submit_active_push"
-                )
-            )
-            for node in ast.walk(tree)
-        )
-        if imported or called:
+        if central_entry_executable_hits(path):
             found.append(path.relative_to(PLUGIN_ROOT).as_posix())
     return found
 
 
 def test_submit_active_push_production_importers_are_allowlisted() -> None:
-    """T6：`submit_active_push` 的生产引用只允许出现在 transport 本体与紧急域。"""
+    """T6：`submit_active_push` 的生产**可执行引用**只允许出现在 transport 本体与紧急域。
+
+    两态分开判（S274 收口，别把这两件事再混回同一把尺）：
+    - **可执行引用**（import／调用／别名／字符串派发，判据真身 `central_entry_executable_hits`）
+      落在白名单之外 ⇒ 进 `offenders`，当场红；
+    - **声明性提及**（docstring／注释／形↔缝投影表里的字符串值）⇒ 不算旁路，但必须落在
+      `DECLARATIVE_NAMEPLATE` 这本显式点名册里，册子本身受等值反查腿执法。
+    """
     # 前缀必须是真身目录名 `emergency_info`：写成 `domains/emergency` 会同时放行任何
     # `domains/emergency*` 兄弟目录（过松）。另注：本锁在零消费者期是"空真"通过，
     # 接线落地后须由接线席补一条正向断言（生产 import 数 ≥ 1）才算闭合——那条正向
     # 断言在本文件 `test_submit_active_push_has_at_least_one_production_caller`
-    # （xfail strict=True），不是等接线席想起来。
+    # （WIRE-A2 后已摘牌转正，见该件上方转正记录），不是等接线席想起来。
     #
     # 形制纪律（两侧对齐锚，别随手改）：`test_emergency_info_core.py::
     # _gate_t6_allowed_roots` 用 AST 从**本函数体内**抓第一个名字含 `allowed` 的赋值，
@@ -1741,19 +1974,36 @@ def test_submit_active_push_production_importers_are_allowlisted() -> None:
     # 的两侧对齐锁按"第一个含 allowed 的赋值"提取根目录白名单。
     allowed_files = {PLUGIN_ROOT / "__init__.py"}
     offenders: list[str] = []
+    declarative_only: list[str] = []
     for path in PLUGIN_ROOT.rglob("*.py"):
         if "__pycache__" in path.parts:
             continue
-        if "outbound_gate.py" in path.name:
+        if path == GATE_FILE:  # 只放行定义处那一个文件（精确路径，见 `GATE_FILE` 注记）
             continue
-        if "submit_active_push" not in path.read_text(encoding="utf-8"):
+        if CENTRAL_ENTRY not in path.read_text(encoding="utf-8"):
             continue
         if path in allowed_files:
             continue
-        if not _under_directory(path, allowed_roots):
+        if _under_directory(path, allowed_roots):
+            continue
+        # 白名单之外还要分一刀：这个名字是「被伸手够到」还是「被名字提到」。
+        # 前者才是旁路（第二消费者／绕过唯一出口），后者是声明性名册，两件事
+        # 不该混在同一把尺里——但豁免面必须点名（见下方反查腿），不得凭"看起来是注释"放行。
+        if central_entry_executable_hits(path):
             offenders.append(path.relative_to(PLUGIN_ROOT).as_posix())
+        else:
+            declarative_only.append(path.relative_to(PLUGIN_ROOT).as_posix())
     assert offenders == [], (
         f"中央闸的唯一入口只允许紧急域（与 transport 本体）引用，越界：{offenders}"
+    )
+    # 反查腿（S274）：声明性提及的豁免面是**显式闭集**，只准点名进册、不准无声增长。
+    # ① 多一枚（新件在名字层面提到中央出口却没进册）→ 红：要么改道、要么带理由登记；
+    # ② 少一枚（在册件不再提这个名字）→ 红：册子不许攒"预授权豁免"等着将来用；
+    # ③ 在册件一旦长出可执行引用 → 它落进上面的 `offenders` 当场红（在册≠可以够它）。
+    # 这条腿的存在理由：没有它，"声明性"三个字就是一个可以无限装东西的口袋。
+    assert set(declarative_only) == set(DECLARATIVE_NAMEPLATE), (
+        f"中央出口的声明性提及册不匹配：实扫 {sorted(declarative_only)} ≠ 在册 "
+        f"{sorted(DECLARATIVE_NAMEPLATE)}（新增须点名并写明理由，撤销须同步删行）"
     )
     # 收紧只做一半的反证（LOCK-AUDIT PROBE-2 实测：`domains/transport_legacy`、
     # `domains/transporter` 用 startswith 判 **allowed=True**）：兄弟目录必须出局，
@@ -1791,6 +2041,9 @@ def test_submit_active_push_production_importers_are_allowlisted() -> None:
 #   ⇒ 当时的白名单锁是空集上的恒真。2026-09-20 WIRE-A2 落 `domains/emergency_info/
 #   service/push.py`（4-面11 规定的唯一主动投递触点）后条件成立，按纪律**删标记转正**，
 #   未改成 `assert True`、未 skip。
+#   S274 改版跟随：上面"AST 判 import 该符号或直接调用它"是**当时**的判据宽度；现役尺
+#   `central_entry_executable_hits` 另认别名赋值与字符串派发（形态清单见其 docstring）。
+#   只扩不缩——当年成立的转正在新尺下命中的文件集合不变（现算＝`push.py` 与根 `__init__.py`）。
 #   诚实边界：本条只证明「域内触点确实存在且只有它引用闸」；它**不**证明
 #   「已有一条预警真的投出去了」——那要等根 `__init__.py` 装配 + 用户提权重启。
 def test_submit_active_push_has_at_least_one_production_caller() -> None:
@@ -1885,7 +2138,15 @@ def test_outcome_models_reject_fourth_verdict() -> None:
 
 # ------------------------------------------------------------------ T13 G5 单一事实源
 def test_gate_reuses_quiet_hours_single_source() -> None:
-    """T13：quiet 设置与 HH:MM 解析唯一事实源 = policy/quiet_hours.py。"""
+    """T13：闸**不得自造任何时间解析**，两类解析各有一座唯一事实源。
+
+    - HH:MM 静默窗 → `domains/chat_reply/policy/quiet_hours.py`（G5 原判据）；
+    - ISO-8601 时刻 → `domains/core/moment_parsing.py::parse_moment`（S232 2026-09-25 补）。
+
+    第二腿是**更强的形、不是放宽**：旧判据只禁字面量 `fromisoformat`（禁了自造却没给
+    可去的家，TTL 一落地就必红），现在同时要求「import 真身 + 真身在 `parse_gate_ttl`
+    里被真调用」——退回直调标准库、或只 import 不使用，都当场红（注毒自证见本席日志）。
+    """
     gate_path = REPO_ROOT / GATE_MODULE
     tree = ast.parse(gate_path.read_text(encoding="utf-8"))
     imported: dict[str, set[str]] = {}
@@ -1895,17 +2156,62 @@ def test_gate_reuses_quiet_hours_single_source() -> None:
                 alias.name for alias in node.names
             )
     quiet_module = "plugins.bot_unified_runtime.domains.chat_reply.policy.quiet_hours"
+    moment_module = "plugins.bot_unified_runtime.domains.core.moment_parsing"
     assert quiet_module in imported, f"闸必须 import quiet_hours 设置族，实有 {sorted(imported)}"
     assert "QuietHoursSettings" in imported[quiet_module]
     assert "_parse_hhmm" in imported[quiet_module], (
         "HH:MM 解析必须复用 quiet_hours._parse_hhmm（唯一事实源），不得自造第二套"
     )
+    assert moment_module in imported, (
+        "闸必须 import ISO 时刻解析真身 domains/core/moment_parsing.py，"
+        f"实有 {sorted(imported)}"
+    )
+    assert "parse_moment" in imported[moment_module], (
+        "TTL 时刻解析必须复用 parse_moment（唯一事实源），不得自造第二套"
+    )
+
+    def _really_called(host_func: str, callee: str) -> bool:
+        """`callee` 是否是 `host_func` 体内的**真调用点**（死导入不算复用）。"""
+        host = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.FunctionDef) and node.name == host_func
+            ),
+            None,
+        )
+        if host is None:
+            return False
+        return any(
+            isinstance(call, ast.Call)
+            and (
+                (isinstance(call.func, ast.Name) and call.func.id == callee)
+                or (isinstance(call.func, ast.Attribute) and call.func.attr == callee)
+            )
+            for call in ast.walk(host)
+        )
+
+    assert _really_called("parse_gate_ttl", "parse_moment"), (
+        "parse_gate_ttl 必须真调用 parse_moment——只 import 不使用＝自造解析没拆干净"
+    )
     source = gate_path.read_text(encoding="utf-8")
-    assert "fromisoformat" not in source, "不得自造时间解析"
+    assert "fromisoformat" not in source, (
+        "不得自造时间解析（正解：走 domains/core/moment_parsing.parse_moment）"
+    )
     # 复用即证据：_parse_hhmm 不但要 import，还要真的被调用（自造解析则这里是死导入）。
     assert source.count("_parse_hhmm") >= 2, "quiet 窗必须真调用共享解析器"
-    for name in ("_parse_hhmm", "parse_hhmm", "_parse_time", "_parse_clock"):
-        assert f"def {name}(" not in source, "不得在本文件定义第二套 HH:MM 解析"
+    for name in (
+        "_parse_hhmm",
+        "parse_hhmm",
+        "_parse_time",
+        "_parse_clock",
+        "_parse_moment",
+        "parse_iso",
+        "_parse_iso",
+    ):
+        assert f"def {name}(" not in source, (
+            "不得在本文件定义第二套 HH:MM / ISO 时刻解析"
+        )
 
 
 def test_gate_does_not_import_schedule_engine() -> None:
@@ -2144,43 +2450,72 @@ def test_namespace_must_equal_first_segment(key: str, namespace: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("key", "namespace", "family"),
+    ("key", "namespace", "family", "expect", "canonical"),
     [
-        ("digest_push:631 785:2026-09-14", "digest_push", "daily"),  # 段内空白
-        ("daily_assist:inbox:386:2026-09:14", "daily_assist", "daily"),  # 段内冒号
-        ("cookie-expiry:3865067623", "cookie-expiry", "daily"),  # 按日族缺日期段
-        ("reminder:7c1f2a9b:20261345", "reminder", "daily"),  # 日期段形态假（无连字符）
+        (
+            "digest_push:631 785:2026-09-14",
+            "digest_push",
+            "daily",
+            "rescued",  # 段内空白 ⇒ 出口洗成 `631_785` 后照样过形，且带摘要后缀防撞段
+            f"digest_push:{_rescued_segment('631 785')}:2026-09-14",
+        ),
+        (
+            "daily_assist:inbox:386:2026-09:14",
+            "daily_assist",
+            "daily",
+            "skip",  # 段内冒号＝段数被撑开，末段不再是日期 ⇒ 洗段修不了
+            None,
+        ),
+        ("cookie-expiry:3865067623", "cookie-expiry", "daily", "skip", None),  # 按日族缺日期段
+        ("reminder:7c1f2a9b:20261345", "reminder", "daily", "skip", None),  # 日期段形态假（无连字符）
         # 注：**形态**核验不查历法真值——`2026-13-45` 与紧急域一样判过。口径同源优先，
         # 别在这里"顺手加严"造成两侧分叉；现役日期一律来自 `date().isoformat()`，恒为真值。
     ],
 )
 def test_non_emergency_shape_rules_still_bit(
-    key: str, namespace: str, family: str
+    key: str, namespace: str, family: str, expect: str, canonical: str | None
 ) -> None:
-    """放宽的只有「前缀必须是 emg」，段字符集与日期段形态**一条没松**（脏键=重发）。"""
+    """放宽的只有「前缀必须是 emg」，段字符集与日期段形态**一条没松**（读侧判据）。
+
+    新现实补记（S184）：段级脏在**出口**被规范掉，所以本条的 skip 半边只剩「结构级脏」
+    那三行；`digest_push` 那行段内空白改为验证「出口救回 + 落库键 = 手算规范形」。
+    两半都在，判据没被抹平。
+    """
     from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
-        OutboundGateSettings,
+        dedupe_key_shape_ok,
     )
+
+    # 读侧对原始脏串一律 False（这条是本用例的老本行，一字不动）。
+    assert dedupe_key_shape_ok(key, family=family, namespace=namespace) is False, key
 
     queue = RecordingQueue()
     now = _utc(12, 0)
-    gate = _gate(
-        settings=OutboundGateSettings(enabled=True),
-        quiet=_quiet(enabled=False),
-        store=FakeStore(),
-        now=now,
-    )
     outcome = _push(
         queue,
         _request(dedupe_key=key),
-        gate,
+        _open_gate(now),
         now=now,
         dedupe_family=family,
         dedupe_namespace=namespace,
     )
 
-    assert outcome.verdict.action == "skip"
-    assert outcome.verdict.reason == "dedupe_key_shape"
+    if expect == "skip":
+        assert outcome.verdict.action == "skip", key
+        assert outcome.verdict.reason == "dedupe_key_shape"
+        assert queue.calls == []
+        assert outcome.receipt is not None
+        assert outcome.receipt.public_message == "dedupe_key_shape"
+        return
+
+    assert outcome.verdict.action == "allow", (
+        f"{key}：段级脏该由出口救回，reason={outcome.verdict.reason}"
+    )
+    landed = _exit_key_of(queue)
+    assert landed == canonical, f"{key}：落库键 ≠ 手算规范形 {landed!r}"
+    assert (
+        dedupe_key_shape_ok(landed, family=family, namespace=namespace) is True
+    ), f"落库键不过形：{landed!r}"
+
 
 
 def test_default_namespace_keeps_emergency_rules_byte_identical() -> None:
@@ -2213,7 +2548,757 @@ def test_default_namespace_keeps_emergency_rules_byte_identical() -> None:
     assert queue.calls == [("req-emg-1", {})]
 
 
+# ======================= S184 出口洗段的三条真不变量 + 活性锁 + 注毒自证 ==========
+#: 现役投递族**真实可达**的脏键（逐条抄自两本欠账名册的输入形态：白名单裸群号、
+#: 推送名单裸用户号、逗号切人不 strip 的管理员号、TG 侧带空格会话键、超长 id）。
+#: 每一行都必须是「原始串过不了形门」的键——否则本条只是把干净键投了一遍，空跑。
+_EXIT_SHAPE_BATTERY: tuple[tuple[str, str, str, str], ...] = (
+    ("digest_push:湘潭群:2026-09-14", "digest_push", "daily", "中文群号（白名单裸值）"),
+    ("digest_push:11 08838060:2026-09-14", "digest_push", "daily", "带空格群键"),
+    ("digest_push:1108838060::2026-09-14", "digest_push", "daily", "尾随冒号→空段"),
+    ("digest_push:" + "9" * 121 + ":2026-09-14", "digest_push", "daily", "超长 id（>120）"),
+    ("daily_assist:morning:用户甲:2026-09-14", "daily_assist", "daily", "中文 user_id"),
+    ("daily_assist:evening:user one:2026-09-14", "daily_assist", "daily", "带空格 user_id"),
+    ("cookie-expiry: 3865067623:2026-09-14", "cookie-expiry", "daily", "逗号切人不 strip"),
+    ("emg:qq:预警-A1:g-1", "emg", "once", "非 ASCII 条目号混合法字符"),
+    ("ack:chat:chan nel:1:deadbeef", "ack", "once", "TG 侧带空格会话键"),
+)
+
+
+@pytest.mark.parametrize(("raw_key", "namespace", "family", "why"), list(_EXIT_SHAPE_BATTERY))
+def test_central_exit_leaves_no_shape_failing_key_behind_it(
+    raw_key: str, namespace: str, family: str, why: str
+) -> None:
+    """①：无论调用方交出什么键，**抵达队列那一行**必过形 ⇒ 键形不再产生静默 skip。
+
+    判据用读侧宪法谓词（`dedupe_key_shape_ok` 委托到 `dedupe.py` 那一份实现），
+    不是拿出口自己的输出判自己。
+    """
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        dedupe_key_shape_ok,
+    )
+
+    # 前置：这枚键在出口之前确实过不了形（不然本行什么都没考）。
+    assert (
+        dedupe_key_shape_ok(raw_key, family=family, namespace=namespace) is False
+    ), f"{why}：原始键本来就过形，本行是空跑，请换脏样本"
+
+    queue = RecordingQueue()
+    outcome = _push(
+        queue,
+        _request(dedupe_key=raw_key),
+        _open_gate(),
+        now=_utc(12, 0),
+        dedupe_family=family,
+        dedupe_namespace=namespace,
+    )
+
+    assert outcome.verdict.action == "allow", (
+        f"{why}：出口没能把它规范成过形键，reason={outcome.verdict.reason}"
+        "＝「开闸即静默丢」复发"
+    )
+    landed = _exit_key_of(queue)
+    assert (
+        dedupe_key_shape_ok(landed, family=family, namespace=namespace) is True
+    ), f"{why}：落库键仍不过形：{landed!r}"
+    assert _segments_all_legal(landed), f"{why}：落库键含非法段：{landed!r}"
+    assert queue.calls == [("req-emg-1", {})]
+
+
+def test_shape_battery_covers_every_active_push_namespace() -> None:
+    """反空跑：①的样本表必须**真的**覆盖到各申报族，不能全是 emg 一家。"""
+    namespaces = {row[1] for row in _EXIT_SHAPE_BATTERY}
+    assert {"digest_push", "daily_assist", "cookie-expiry", "emg", "ack"} <= namespaces
+    assert len({row[0] for row in _EXIT_SHAPE_BATTERY}) == len(_EXIT_SHAPE_BATTERY), (
+        "样本表出现重复原始键：某族被静默少测一行"
+    )
+
+
+def test_same_identity_dirty_forms_converge_to_one_key_at_the_exit() -> None:
+    """②：同一身份的多种脏形在出口产出**逐字相同**的键（旧判据「skip 挡重发」作废）。
+
+    旧用例说的是「带空格与不带空格是两条队列行＝重发」，靠闸把它 skip 掉来防重发；
+    新现实直接让两者收敛成同一枚键——收敛比 skip 强（消息照发，幂等照成立）。
+    """
+    clean = "emg:qq:item-1:g-1"
+    dirty_forms = (
+        "emg:qq:item-1:g-1 ",  # 尾随空白
+        "emg:  qq:item-1:g-1",  # 段前空白
+        "emg:qq: item-1:g-1",  # 段内前导空白
+        "emg:qq:item-1:g-1\t",  # 制表符同样是段级脏
+    )
+    landed: list[str] = []
+    for form in (clean,) + dirty_forms:
+        queue = RecordingQueue()
+        outcome = _push(
+            queue, _request(dedupe_key=form), _open_gate(), now=_utc(12, 0)
+        )
+        assert outcome.verdict.action == "allow", f"{form!r} 被拒收"
+        landed.append(_exit_key_of(queue))
+
+    assert set(landed) == {clean}, f"同身份未收敛成一枚键：{landed}"
+
+
+def test_converged_forms_land_in_one_idempotency_bucket_in_real_queue(
+    tmp_path: Path,
+) -> None:
+    """②的另一半（真队列）：干净键已占坑时，脏形同身份被 `ON CONFLICT` 判重复。
+
+    这条才叫「重发防护」——不是闸 skip（skip 是漏报），而是幂等真成立。
+    """
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+    )
+    from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+        SQLiteSendRequestQueue,
+    )
+
+    real_queue = SQLiteSendRequestQueue(
+        tmp_path / "send_queue.sqlite3", InMemoryAuditLogger()
+    )
+    gate = _gate(
+        settings=OutboundGateSettings(
+            enabled=True, max_per_target_per_minute=0, max_per_target_per_hour=0
+        ),
+        quiet=_quiet(enabled=False),
+        store=FakeStore(),
+        now=_utc(12, 0),
+    )
+    first = _push(real_queue, _request(dedupe_key="emg:qq:item-1:g-1"), gate, now=_utc(12, 0))
+    dirty_same = _push(
+        real_queue,
+        _request(request_id="req-dirty-same", dedupe_key="emg:qq:item-1:g-1 "),
+        gate,
+        now=_utc(12, 0),
+    )
+    dirty_other = _push(
+        real_queue,
+        _request(request_id="req-dirty-other", dedupe_key="emg:qq:item-2:g-1 "),
+        gate,
+        now=_utc(12, 0),
+    )
+    assert first.receipt is not None and first.receipt.state is ReceiptState.QUEUED
+    assert dirty_same.receipt is not None
+    assert dirty_same.receipt.state is ReceiptState.SKIPPED, (
+        "脏形没落进同一个幂等桶 ⇒ 同一推送发两遍（收敛失效）"
+    )
+    assert dirty_other.receipt is not None
+    assert dirty_other.receipt.state is ReceiptState.QUEUED, (
+        "不同身份被并进了同一桶 ⇒ 洗段把两件事当一件（撞段）"
+    )
+
+
+def test_closed_gate_path_is_normalised_too() -> None:
+    """关态同样过一遍出口洗段：闸没开≠没人治理（「本地测通、上线丢」的反打）。
+
+    这正是本波同型炸三次的病根——旧现实里关态 passthrough 照发脏键，开闸才判死；
+    新现实下两种状态落库的都是同一枚规范键。
+    """
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+    )
+
+    gate = _gate(
+        settings=OutboundGateSettings(enabled=False),
+        quiet=_quiet(enabled=False),
+        store=FakeStore(),
+        now=_utc(12, 0),
+    )
+    queue = RecordingQueue()
+    # 选「同一身份的段尾空白 vs 干净形」而不是「`631 785` vs `631_785`」：后者在洗段
+    # 近似单射（S184 §3-① 修复）后**本就是两个不同身份**（空格段带 `_h<摘要>` 后缀、下划线段
+    # 原样保留），再断它们收敛成同一枚就是断一条被刻意拆开的假命题。段尾空白 `strip()` 掉后
+    # 与干净段同值 ⇒ 仍是「同身份多形收敛」，且脏形（带空格）非经出口洗段不可归一，判据照有牙。
+    for form, request_id in (
+        ("digest_push:631_785:2026-09-14", "req-a"),
+        ("digest_push:631_785 :2026-09-14", "req-b"),
+    ):
+        outcome = _push(
+            queue,
+            _request(request_id=request_id, dedupe_key=form),
+            gate,
+            now=_utc(12, 0),
+            dedupe_family="daily",
+            dedupe_namespace="digest_push",
+        )
+        assert outcome.verdict.reason == "disabled"
+    assert queue.keys == ["digest_push:631_785:2026-09-14"] * 2, (
+        f"关态没洗段（或把两身份错并成一桶）：{queue.keys}"
+    )
+
+
+def test_distinct_identities_never_collide_into_one_key_at_the_exit() -> None:
+    """③：不同身份绝不撞段——尤其是「洗完只剩分隔符」走摘要兜底那两条路。
+
+    第二对是全角冒号 `：`（U+FF1A，**不是**段分隔符）与中文群号：两者按字符替换都会塌成
+    `___`，只有摘要兜底能让它们保持两枚不同的键。塌成同一段＝两件事共用一个幂等桶。
+    """
+    pairs: tuple[tuple[str, str], ...] = (
+        ("emg:qq:预警:g-1", "emg:qq:预警:g-2"),  # 同脏段、不同目标
+        ("digest_push:中文群:2026-09-14", "digest_push:\uff1a\uff1a\uff1a:2026-09-14"),
+        ("daily_assist:morning:用户甲:2026-09-14", "daily_assist:morning:用户乙:2026-09-14"),
+    )
+    for left, right in pairs:
+        left_queue, right_queue = RecordingQueue(), RecordingQueue()
+        namespace = left.split(":")[0]
+        family = "daily" if namespace != "emg" else "once"
+        for source, sink in ((left, left_queue), (right, right_queue)):
+            outcome = _push(
+                sink,
+                _request(dedupe_key=source),
+                _open_gate(),
+                now=_utc(12, 0),
+                dedupe_family=family,
+                dedupe_namespace=namespace,
+            )
+            assert outcome.verdict.action == "allow", source
+        assert left_queue.keys != right_queue.keys, (
+            f"两枚不同身份撞成同一键：{left_queue.keys} == {right_queue.keys}"
+        )
+        assert _segments_all_legal(left_queue.keys[0]), left_queue.keys
+        assert _segments_all_legal(right_queue.keys[0]), right_queue.keys
+
+
+def test_degenerate_segments_fall_back_to_a_digest_not_a_collapse() -> None:
+    """③的成因面：洗完只剩分隔符的退化段必须变成 `h`+摘要，且同一文本恒等、可复算。
+
+    期望值由本文件 `_digest_segment` 用标准库**独立复算**，不 import 出口实现。
+    """
+    queue = RecordingQueue()
+    _push(queue, _request(dedupe_key="emg:qq:预警:g-1"), _open_gate(), now=_utc(12, 0))
+    landed = _exit_key_of(queue)
+    segments = landed.split(":")
+    assert segments[0] == "emg" and segments[3] == "g-1", landed
+    assert segments[2] == _digest_segment("预警"), landed
+    assert segments[2] != "__", "退化段塌成纯分隔符＝不同身份必撞"
+
+    # 同一文本两次投递必须恒等（幂等只认整串，摘要一抖动桶就对不上）。
+    again = RecordingQueue()
+    _push(again, _request(dedupe_key="emg:qq:预警:g-1"), _open_gate(), now=_utc(12, 0))
+    assert again.keys == [landed]
+
+    # 空段同理：`emg:qq::target` 的第三段是「空串的摘要」，不是空串。
+    empty = RecordingQueue()
+    _push(empty, _request(dedupe_key="emg:qq::target"), _open_gate(), now=_utc(12, 0))
+    assert empty.keys == [f"emg:qq:{_digest_segment('')}:target"], empty.keys
+
+
+def test_washing_is_idempotent_so_construction_and_exit_double_wash_is_safe() -> None:
+    """构造侧已洗过（ack 族）+ 出口再洗一次 ⇒ 逐字节不变 ⇒ 双保险不是双重改写。
+
+    没有这条，「把 `ack_key_segment` 撤掉只留出口」与「两处都洗」看起来等价；
+    实际只有幂等成立时，名册里那两本账才能各自降、不互相顶替。
+    """
+    already_washed = f"emg:qq:{_digest_segment('湘潭')}:g-1"
+    queue = RecordingQueue()
+    outcome = _push(
+        queue, _request(dedupe_key=already_washed), _open_gate(), now=_utc(12, 0)
+    )
+    assert outcome.verdict.action == "allow"
+    assert _exit_key_of(queue) == already_washed, "已规范的键被二次改写＝幂等桶会漂"
+
+
+def test_dirty_key_at_the_exit_is_announced_and_clean_keys_stay_silent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """改写必留一行 WARNING（不静默），干净键一行都不许多（不刷日志）。
+
+    取**整行等值**（与本文件 `test_record_failure_still_allows_and_reports` 同一纪律）：
+    只钉短语会让「字段被涂值/被删词」溜过去。日志里只有长度与哈希，没有键原文。
+    """
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        _subject_hash,
+    )
+
+    raw = "digest_push:631 785:2026-09-14"
+    # 洗完带 `_h<摘要>` 后缀（近似单射）：canonical 由本文件独立复算，after_len/after_hash
+    # 随之跟随；断的是「播报的行 = 出口真正落库那一枚规范键」，不是把键原文写进日志。
+    canonical = f"digest_push:{_rescued_segment('631 785')}:2026-09-14"
+    with caplog.at_level("WARNING"):
+        _push(
+            RecordingQueue(),
+            _request(dedupe_key=raw),
+            _open_gate(),
+            now=_utc(12, 0),
+            dedupe_family="daily",
+            dedupe_namespace="digest_push",
+        )
+    messages = [
+        record.getMessage() for record in caplog.records if record.levelname == "WARNING"
+    ]
+    assert messages == [
+        (
+            "outbound_gate dedupe_key_normalized capability_id=bot.emergency"
+            " dedupe_family=daily"
+            f" before_len={len(raw)} after_len={len(canonical)}"
+            f" after_hash={_subject_hash(canonical)}"
+        )
+    ], messages
+    assert raw not in " ".join(messages)  # 键原文不入日志
+
+    caplog.records.clear()
+    with caplog.at_level("WARNING"):
+        _push(
+            RecordingQueue(),
+            _request(dedupe_key=canonical),
+            _open_gate(),
+            now=_utc(12, 0),
+            dedupe_family="daily",
+            dedupe_namespace="digest_push",
+        )
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "dedupe_key_normalized" in record.getMessage()
+    ] == [], "干净键也被播报＝每次投递刷一行，日志噪音会把真改写埋掉"
+
+
+def test_bypass_of_the_central_exit_ships_the_raw_dirty_key() -> None:
+    """出口洗段的作用域只有它自己：绕过去直调 `queue.submit`，脏键原样落库。
+
+    这条是两本欠账名册（`test_active_push_key_shape_ledger.py` /
+    `test_outbound_gate_opening_preconditions.py`）**不许被抹成零**的理由：
+    治理发生在 `submit_active_push`，直调点没有这层保护。判据只说事实——
+    「构造侧仍该洗段」，不说「已经安全」。
+    """
+    dirty = "digest_push:湘潭群:2026-09-14"
+    direct = RecordingQueue()
+    direct.submit(_request(request_id="req-bypass", dedupe_key=dirty))
+    assert direct.keys == [dirty], (
+        "直调队列竟也被洗段了——那出口的作用域锁要一起改写"
+    )
+    assert _segments_all_legal(direct.keys[0]) is False
+
+    through_exit = RecordingQueue()
+    _push(
+        through_exit,
+        _request(request_id="req-via-exit", dedupe_key=dirty),
+        _open_gate(),
+        now=_utc(12, 0),
+        dedupe_family="daily",
+        dedupe_namespace="digest_push",
+    )
+    assert through_exit.keys != [dirty], "同一枚脏键走出口却没被规范＝出口洗段不生效"
+    assert _segments_all_legal(through_exit.keys[0]) is True
+
+
+# ------------------------------------------------------------------ 活性锁（洗段↔判定顺序）
+def _wash_pipeline_findings(source: str) -> dict[str, bool]:
+    """静态判据：`submit_active_push` 里「洗段 → 改写请求 → 送闸」这条链是否成立。
+
+    只做**结构**判定（AST），不执行代码，因此注毒可以在内存里改源码文本来跑
+    （禁写面 `outbound_gate.py` 一个字节都不落盘）。
+    """
+    tree = ast.parse(source)
+    dedupe_module = (
+        "plugins.bot_unified_runtime.domains.emergency_info.service.dedupe"
+    )
+    findings = {
+        "import_wash": any(
+            isinstance(node, ast.ImportFrom)
+            and node.module == dedupe_module
+            and any(alias.name == "wash_active_push_key" for alias in node.names)
+            for node in ast.walk(tree)
+        ),
+        "function_present": False,
+        "call_wash": False,
+        "wash_before_decide": False,
+        "rebind_before_decide": False,
+        "decide_gets_the_request": False,
+        "update_carries_dedupe_key": False,
+        "warning_present": False,
+    }
+    fn = next(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "submit_active_push"
+        ),
+        None,
+    )
+    if fn is None:
+        return findings
+    findings["function_present"] = True
+
+    wash_lines: list[int] = []
+    decide_lines: list[int] = []
+    copy_update_keys: set[str] = set()
+    decide_first_args: set[str] = set()
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name) and node.func.id == "wash_active_push_key":
+            wash_lines.append(int(node.lineno))
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "decide":
+            decide_lines.append(int(node.lineno))
+            if node.args and isinstance(node.args[0], ast.Name):
+                decide_first_args.add(node.args[0].id)
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "model_copy":
+            for keyword in node.keywords:
+                if keyword.arg != "update" or not isinstance(keyword.value, ast.Dict):
+                    continue
+                for dict_key in keyword.value.keys:
+                    if isinstance(dict_key, ast.Constant) and isinstance(
+                        dict_key.value, str
+                    ):
+                        copy_update_keys.add(dict_key.value)
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "warning"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+            and "dedupe_key_normalized" in node.args[0].value
+        ):
+            findings["warning_present"] = True
+
+    rebind_lines = [
+        int(node.lineno)
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "send_request" for target in node.targets)
+    ]
+    findings["call_wash"] = bool(wash_lines)
+    findings["update_carries_dedupe_key"] = "dedupe_key" in copy_update_keys
+    findings["decide_gets_the_request"] = "send_request" in decide_first_args
+    if wash_lines and decide_lines:
+        findings["wash_before_decide"] = min(wash_lines) < min(decide_lines)
+        findings["rebind_before_decide"] = bool(rebind_lines) and min(rebind_lines) < min(
+            decide_lines
+        )
+    return findings
+
+
+def _gate_source() -> str:
+    return (REPO_ROOT / GATE_MODULE).read_text(encoding="utf-8")
+
+
+def test_central_exit_washes_the_key_before_the_gate_decides() -> None:
+    """活性锁：出口真的调了 `wash_active_push_key`，且发生在 `gate.decide` **之前**。
+
+    为什么必须是结构锁而不是「取值互比」：洗段与判定都在同一个函数里，只比最终落库键
+    的话，「先判后洗」（skip 已经发生、洗了也来不及）与「先洗后判」取值完全同形——
+    而恰恰是顺序决定了「静默丢」还是「规范后放行」。故钉 lineno 顺序 + 改写发生在
+    decide 之前 + decide 收到的就是那枚被改写过的 `send_request`。
+    """
+    findings = _wash_pipeline_findings(_gate_source())
+    assert findings and all(findings.values()), (
+        f"出口洗段链路断裂：{ {k: v for k, v in findings.items() if not v} }"
+    )
+
+
+def test_wash_before_decide_lock_has_teeth() -> None:
+    """注毒（结构面，两发）：删掉那行调用 / 把洗段口换成恒等 lambda ⇒ 本锁必红。
+
+    两发都是**内存里改源码文本**，生产件不落盘（`outbound_gate.py` 在禁写面上）。
+    """
+    source = _gate_source()
+    baseline = _wash_pipeline_findings(source)
+    assert baseline and all(baseline.values()), f"基线本就不干净：{baseline}"
+
+    dropped = source.replace(
+        "    canonical_key = wash_active_push_key(send_request.dedupe_key)\n", "", 1
+    )
+    assert dropped != source, (
+        "注毒点消失（出口那行洗段调用改了形态），须同步本自证——否则锁已失明"
+    )
+    poison_a = _wash_pipeline_findings(dropped)
+    assert not poison_a["call_wash"] and not poison_a["wash_before_decide"], poison_a
+
+    identity = source.replace(
+        "wash_active_push_key(send_request.dedupe_key)",
+        "(lambda _k: _k)(send_request.dedupe_key)",
+        1,
+    )
+    assert identity != source, "注毒点消失（洗段调用的写法变了），须同步本自证"
+    poison_b = _wash_pipeline_findings(identity)
+    assert not poison_b["call_wash"], poison_b
+
+    # 第三发：把改写挪到 decide **之后**（顺序病，取值面看不出来）。
+    swapped = source.replace(
+        "    canonical_key = wash_active_push_key(send_request.dedupe_key)\n"
+        "    if canonical_key != send_request.dedupe_key:\n",
+        "    if False:\n",
+        1,
+    )
+    if swapped != source:  # 结构对不上时不强求，前两发已各自咬到独立判据
+        assert not _wash_pipeline_findings(swapped)["wash_before_decide"]
+
+
+# ------------------------------------------------------------------ 注毒自证（行为面）
+def test_identity_wash_poison_brings_the_silent_drop_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    """注毒（行为面）：把洗段口换成恒等函数 ⇒ ①②当场退化，证明真不变量靠的是那一行。
+
+    「删掉调用」与「换成恒等」在行为上严格同形（键不变 ⇒ 不比较 ⇒ 不改写 ⇒ 不播报），
+    故行为面一发即覆盖两发；结构面对恒等 lambda 也能抓（调用名没了），两把尺互不替代。
+    """
+    from plugins.bot_unified_runtime.domains.transport.sender import outbound_gate as og
+
+    monkeypatch.setattr(og, "wash_active_push_key", lambda key: str(key))
+
+    dirty = "emg:qq:预警:g-1"
+    queue = RecordingQueue()
+    outcome = _push(queue, _request(dedupe_key=dirty), _open_gate(), now=_utc(12, 0))
+    assert outcome.verdict.action == "skip", (
+        "恒等洗段下居然还放行——那说明本锁考的形门根本没生效"
+    )
+    assert outcome.verdict.reason == "dedupe_key_shape"
+    assert queue.calls == [], "①被破：脏键仍会「开闸即静默丢」"
+
+    # ②的另一面：关态下两形各落一行＝重发（这正是本波炸过三次的原形）。
+    closed = _gate(
+        settings=og.OutboundGateSettings(enabled=False),
+        quiet=_quiet(enabled=False),
+        store=FakeStore(),
+        now=_utc(12, 0),
+    )
+    passthrough = RecordingQueue()
+    for form, request_id in (
+        ("digest_push:631 785:2026-09-14", "req-a"),
+        ("digest_push:631_785:2026-09-14", "req-b"),
+    ):
+        _push(
+            passthrough,
+            _request(request_id=request_id, dedupe_key=form),
+            closed,
+            now=_utc(12, 0),
+            dedupe_family="daily",
+            dedupe_namespace="digest_push",
+        )
+    assert passthrough.keys[0] != passthrough.keys[1], (
+        f"恒等洗段下两形仍同键（{passthrough.keys}）＝本发注毒没打到点上"
+    )
+
+
+def _naive_wash_without_digest_fallback(key: str) -> str:
+    """反事实洗段体：**只**把非法字符换成 `_`、没有摘要兜底（现役规则明令要避免的退化形）。
+
+    不是生产代码，只用来证明 ③ 那条用例有牙：塌段一发生，不同身份必撞同一键。
+    """
+    legal = set(
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"
+    )
+
+    def _segment(raw: str) -> str:
+        text = raw.strip()
+        if text and all(char in legal for char in text):
+            return text
+        return "".join(char if char in legal else "_" for char in text)
+
+    return ":".join(_segment(part) for part in str(key).split(":"))
+
+
+def test_digestless_wash_poison_collapses_distinct_identities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """注毒（③）：去掉摘要兜底 ⇒ `中文群` 与 `：：：` 同塌成 `___` ⇒ 两件事共用一个桶。
+
+    与上一条同一手法（内存替换出口符号），生产件零改动。
+    """
+    from plugins.bot_unified_runtime.domains.transport.sender import outbound_gate as og
+
+    left, right = "digest_push:中文群:2026-09-14", "digest_push:\uff1a\uff1a\uff1a:2026-09-14"
+    assert _naive_wash_without_digest_fallback(left.split(":")[1]) == (
+        _naive_wash_without_digest_fallback(right.split(":")[1])
+    ), "反事实体本身没造出塌段——本发注毒无从验证，请改写退化样本"
+
+    monkeypatch.setattr(og, "wash_active_push_key", _naive_wash_without_digest_fallback)
+    keys: list[str] = []
+    for raw in (left, right):
+        queue = RecordingQueue()
+        _push(
+            queue,
+            _request(dedupe_key=raw),
+            _open_gate(),
+            now=_utc(12, 0),
+            dedupe_family="daily",
+            dedupe_namespace="digest_push",
+        )
+        keys.append(_exit_key_of(queue))
+    assert keys[0] == keys[1], (
+        f"塌段注毒下两身份仍未撞（{keys}）＝③用例的判别力落空，须换样本"
+    )
+
+
+def test_wash_is_injective_on_the_two_s184_collapse_classes() -> None:
+    """正向锁（S192，接管 S184 §3-① 交回的「洗段非单射」缺陷）。
+
+    旧版本 `test_wash_residual_non_injective_punctuation_and_truncation` 是一枚**现状刻画锁**，
+    docstring 自证「修法落地之日就是本条翻红之时——届时请改成不撞段的正断言」。主代理已把
+    「真被洗过的段」统一带上原串 blake2b 摘要后缀（`dedupe.py:active_push_key_segment`），
+    那两类塌陷都被拆开，本条据此翻正：
+
+    - ①「非法字符映到合法字符」：`11 08838060`（空格）与 `11_08838060`（下划线）不再同段——
+      空格段走洗段分支带 `_h<摘要>`，下划线段本就合法原样保留，二者逐字不同；
+    - ②「超长截断」：第 121 位与第 122 位不同的长 id 不再同段——摘要算在**截断前的整串**上，
+      截断后的 `washed` 前缀虽相同，后缀却不同。
+
+    期望走**出口**（`submit_active_push` 真洗一遍再过闸落库），与 §2 的构造侧直测互补；
+    杀伤力由 `test_poison_nodigest_restores_the_s184_collisions` 反向验过。
+    """
+
+    def _landed(raw: str) -> str:
+        queue = RecordingQueue()
+        _push(
+            queue,
+            _request(dedupe_key=raw),
+            _open_gate(),
+            now=_utc(12, 0),
+            dedupe_family="daily",
+            dedupe_namespace="digest_push",
+        )
+        return _exit_key_of(queue)
+
+    left, right = (
+        _landed("digest_push:11 08838060:2026-09-14"),
+        _landed("digest_push:11_08838060:2026-09-14"),
+    )
+    assert left != right, f"①仍互撞（{left} == {right}）＝洗段可注入性回退"
+    long_a, long_b = (
+        _landed(f"digest_push:{'9' * 121}:2026-09-14"),
+        _landed(f"digest_push:{'9' * 122}:2026-09-14"),
+    )
+    assert long_a != long_b, f"②仍互撞（截断又吃掉了身份）：{long_a} == {long_b}"
+
+
+def test_active_push_key_segment_is_injective_legal_idempotent_and_bounded() -> None:
+    """构造侧四把尺（S192 §2 ③④⑤⑥）：退化输入两两不撞、幂等、合法逐字节不变、过谓词且 ≤120。
+
+    全部直接调用被测件，不走出口，把「洗段近似单射」的四条承诺钉在最内层：
+    - ③ `中文群` / `：：：` / `空段` 三类退化输入两两不撞；`""` 与 `"   "` **刻意同为空桶**
+      （`active_push_key_segment` 先 `strip()` 再算，空白变体本就是「同一枚空身份」——这正是
+      主代理修法的原话「先 strip() 再算，故 " x" 与 "x" 仍同为 x」，若断它们不等反而是造假红）；
+    - ④ 同输入两次调用逐字相同（幂等不被摘要破坏）；
+    - ⑤ 合法输入输出逐字节等于输入（现役键零变化的那条承诺要有机检）；
+    - ⑥ 洗完的段仍过中央谓词 `is_legal_segment` 且长度 ≤ `_KEY_SEGMENT_MAX`。
+    """
+    from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
+        active_push_key_segment,
+        is_legal_segment,
+    )
+
+    # ③ 三类真正承载不同信息的退化输入：两两不撞。
+    distinct_inputs = ["", "中文群", "：：："]
+    distinct_segments = [active_push_key_segment(x) for x in distinct_inputs]
+    assert len(set(distinct_segments)) == len(distinct_segments), distinct_segments
+    # 空段与纯空白同属「空身份」一桶（strip 语义），这是**设计**、不是塌陷：显式钉死，
+    # 免得有人误把它当第二个 S184 缺陷去「修」（真去修就会与 " x"=="x" 那条承诺打架）。
+    assert active_push_key_segment("") == active_push_key_segment("   ") == "h" + (
+        hashlib.blake2b(b"", digest_size=8).hexdigest()
+    ), "空/空白应同为空桶"
+    # ⑤+空白不变（`_h` 摘要前的 strip）：带前后空白的合法段与裸段同值。
+    assert active_push_key_segment(" x") == active_push_key_segment("x") == "x"
+    assert active_push_key_segment("  qq  ") == "qq"
+
+    # ④ 幂等：对退化/合法/脏样本各调两次都逐字相同；且洗过的段再喂回去仍不动（双洗同键）。
+    idempotent_inputs = distinct_inputs + [
+        " x", "中文群", "has space", "631 785", "group:1", "9" * 121, "3865067623",
+    ]
+    for sample in idempotent_inputs:
+        once = active_push_key_segment(sample)
+        assert active_push_key_segment(sample) == once, sample
+        assert active_push_key_segment(once) == once, f"双洗漂移：{sample!r}→{once!r}"
+
+    # ⑤ 合法输入逐字节不变（现役键零变化的机检，覆盖纯数字/含 ._-/恰 120 长）。
+    for legal in ["3865067623", "item-1", "gov_9.2", "chat.123", "a" * _KEY_SEGMENT_MAX]:
+        assert active_push_key_segment(legal) == legal, legal
+
+    # ⑥ 洗完一律是合法段且不超长（含边界：长 id 洗后恰 ≤120 且过谓词，否则开闸即判死）。
+    for sample in idempotent_inputs + ["digest_push", "预警", "！!xx！"]:
+        washed = active_push_key_segment(sample)
+        assert is_legal_segment(washed), (sample, washed)
+        assert 1 <= len(washed) <= _KEY_SEGMENT_MAX, (sample, len(washed))
+
+
+def test_poison_nodigest_restores_the_s184_collisions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """注毒①（不落盘）：把摘要后缀与退化兜底抹回裸形态 ⇒ ①②③三类塌陷全部复现。
+
+    反证「近似单射这条腿真的存在」：真身下 `11 08838060`/`11_08838060`、`中文群`/`：：：`、
+    121/122 位长 id 都不同段；换成 `_naive_wash_without_digest` 后逐对**同段**。若某对在注毒体下
+    仍未撞，说明正锁那一格是空跑（本席判据落空，须换样本）。monkeypatch 由 pytest 自动还原，
+    `dedupe.py` 一个字节未动。
+    """
+    import plugins.bot_unified_runtime.domains.emergency_info.service.dedupe as dedupe_mod
+
+    def _seg(value: object) -> str:
+        return dedupe_mod.wash_active_push_key(f"x:{value}")  # 借出口逐段洗，取洗后的身份段
+
+    monkeypatch.setattr(dedupe_mod, "active_push_key_segment", _naive_wash_without_digest)
+    assert _seg("11 08838060") == _seg("11_08838060"), "①腿不存在：无摘要也拆不开空格/下划线"
+    assert _seg("中文群") == _seg("：：："), "③腿不存在：无兜底摘要也拆不开中文/标点"
+    assert _seg("9" * 121) == _seg("9" * 122), "②腿不存在：无摘要截断也没吃回同段"
+
+
+def test_poison_truncate_at_budget_breaks_long_id_legality(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """注毒②（不落盘）：截断预算从 `120-len(suffix)` 改回 `120` ⇒ 长 id 洗完越界、不过谓词。
+
+    这咬的是 ⑥「洗后段仍 ≤120 且合法」那一格：后缀 `_h<16hex>` 占 18 字符，若 `washed` 仍截满
+    120，拼出的段就是 138 字符，`is_legal_segment` 判 False ⇒ 开闸态这枚键注定被 skip（又一例
+    「本地测通、上线丢」）。真身按 102 预算截，段恒 ≤120。
+    """
+    import plugins.bot_unified_runtime.domains.emergency_info.service.dedupe as dedupe_mod
+    from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
+        is_legal_segment,
+    )
+
+    def _overlong_wash(value: object) -> str:
+        text = str(value or "").strip()
+        if is_legal_segment(text):
+            return text
+        digest = hashlib.blake2b(text.encode("utf-8"), digest_size=8).hexdigest()
+        washed = "".join(
+            c if c in _LEGAL_SEGMENT_CHARS else "_" for c in text
+        )[:_KEY_SEGMENT_MAX]  # ← 毒：预算忘了减 len(suffix)
+        if is_legal_segment(washed) and any(c.isalnum() for c in washed):
+            return washed + "_h" + digest
+        return "h" + digest
+
+    monkeypatch.setattr(dedupe_mod, "active_push_key_segment", _overlong_wash)
+    long_wash = dedupe_mod.wash_active_push_key(f"digest_push:{'9' * 121}:2026-09-14")
+    seg = long_wash.split(":")[1]
+    assert len(seg) > _KEY_SEGMENT_MAX or not is_legal_segment(seg), (
+        "注毒未造出越界段 ⇒ ⑥的截断预算这一腿是空的（真身与毒同形），判据落空"
+    )
+
+
+def test_poison_nostrip_breaks_whitespace_invariance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """注毒③（不落盘）：去掉 `text.strip()` ⇒ `" x"` 与 `"x"` 不再同键（空白粘进段里）。
+
+    这咬的是「空/空白同为空桶、`" x"=="x"`」这条 strip 语义承诺（与 ①②③ 的近似单射配套）：
+    真身先 strip 再判/算，`" x"`→`"x"`；去掉 strip 后 `" x"` 被当脏段，`is_legal_segment` 因内部
+    又 strip 仍判 True ⇒ 直接原样返回带空格的 `" x"`，于是 `" x" != "x"`。若注毒后二者仍相等，
+    说明这一腿没被真正判到（判据落空）。
+    """
+    import plugins.bot_unified_runtime.domains.emergency_info.service.dedupe as dedupe_mod
+    from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
+        is_legal_segment,
+    )
+
+    def _no_strip(value: object) -> str:
+        text = str(value or "")  # ← 毒：漏了 .strip()
+        if is_legal_segment(text):
+            return text
+        digest = hashlib.blake2b(text.encode("utf-8"), digest_size=8).hexdigest()
+        suffix = "_h" + digest
+        washed = "".join(
+            c if c in _LEGAL_SEGMENT_CHARS else "_" for c in text
+        )[: _KEY_SEGMENT_MAX - len(suffix)]
+        if is_legal_segment(washed) and any(c.isalnum() for c in washed):
+            return washed + suffix
+        return "h" + digest
+
+    monkeypatch.setattr(dedupe_mod, "active_push_key_segment", _no_strip)
+    assert dedupe_mod.wash_active_push_key("ack:x: x") != dedupe_mod.wash_active_push_key(
+        "ack:x:x"
+    ), "注毒未打破空白不变 ⇒ 该腿判据落空（真身与注毒同形）"
+
+
 # ------------------------------------------- T10 申报与建键同源锁（R-CENTRAL-b I-2）
+
 _CENTRAL_PUSH_CALLS = frozenset({"submit_active_push", "_push_via_central_exit_now"})
 
 
@@ -2334,3 +3419,474 @@ def test_namespace_declaration_lock_has_teeth() -> None:
     dropped = source.replace(',\n            dedupe_namespace="reminder"', "", 1)
     assert dropped != source, "注毒点消失（提醒族调用参数形态变了），须同步本自证"
     assert _root_mismatch_names(dropped) - clean, "漏报命名空间没被抓＝锁无牙"
+
+
+
+# ================================================================== T15 TTL 执法（S260）
+# 用户 2026-09-25 裁定「开，A+B」＝开闸**带自动到期**（临时停用要自己下班，不留人工
+# 回滚债）。S231 落了 `enabled_until` 字段与判据函数，S232R 现算坐实它**四处断链**
+# （config 无键／投影不带／`enabled`+`decide` 读裸值／两枚告警 kind 零消费者）＝
+# 「在册未执法」（#49 那一族的本症）。席 S260 把四条腿一次接上，本节是它的**常驻锁**。
+#
+# 判据取向（为什么这么写）：
+# - **行为锁优先**，AST 只当防回潮的第二条腿。本波反复咬人的正是「存在性糊过活性判据」
+#   （#46 的 `nmc:A1`：静态可达性锁全绿而实际零投递；S232 的旧 G5 锁对 `strptime` 自造是瞎的）。
+# - **缺省必须逐字节中性**：无 TTL（空串）时有效开启==`enabled` 本身，且好沿零告警。
+# - 「关」的形态==既有 `REASON_DISABLED`（passthrough：直通裸 submit、零 store、零审计），
+#   不新造第四态——那会同时改掉 `submit_active_push` 的 passthrough 计算与一批关态锁。
+_TTL_NOW = datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)  # == _utc(12, 0)
+_TTL_PAST = "2026-09-14T00:00:00Z"
+_TTL_FUTURE = "2026-09-15T00:00:00Z"
+_TTL_GARBAGE = "2026-13-45"  # 月份 13：既不是「没配」也不是「已过期」，只可能是写错了
+
+
+def _ttl_gate(
+    *,
+    until: str,
+    enabled: bool = True,
+    store: FakeStore | None = None,
+    sink: Callable[[Any], None] | None = None,
+) -> Any:
+    """开闸 + 三门全不生效（限流 0／静默关）+ 一枚 TTL：让 TTL 成为唯一变量。"""
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+    )
+
+    return _gate(
+        settings=OutboundGateSettings(
+            enabled=enabled,
+            quiet_defer_enabled=False,
+            max_per_target_per_minute=0,
+            max_per_target_per_hour=0,
+            enabled_until=until,
+        ),
+        quiet=_quiet(enabled=False),
+        store=store or FakeStore(),
+        now=_TTL_NOW,
+        sink=sink,
+    )
+
+
+# ------------------------------------------------------------- 腿①+②：键与投影
+def test_ttl_absent_by_default_keeps_the_gate_byte_identical() -> None:
+    """缺省中性：无 TTL（空串）⇒ 有效开启==`enabled`，三门照跑，零告警。
+
+    这条是「新键一上就改变现网」的反证。现网 `bot_outbound_gate_enabled=False`，
+    所以本用例钉的是**开闸之后**那一格：开闸且没配到期 ⇒ 行为与 TTL 落地前逐字相同。
+    """
+    issues: list[Any] = []
+    store = FakeStore()
+    gate = _ttl_gate(until="", store=store, sink=issues.append)
+    assert gate.enabled is True
+    verdict = gate.decide(_request(), now=_TTL_NOW)
+    assert verdict.action == "allow" and verdict.reason == "allowed"
+    assert store.count_calls, "无 TTL 时三门应照跑（滑窗计数是判定前置）"
+    assert issues == [], f"好沿不该出声（否则缺省就改变了现网）：{[i.kind for i in issues]}"
+
+
+def test_projection_lands_ttl_from_config_field() -> None:
+    """腿②活性：值从 `Config` 字段一路走到 `OutboundGateSettings.enabled_until`。
+
+    刻意用真 `Config`（`model_copy` 改一枚字段）而不是直接造 settings——断链②的本症
+    就是「字段在、投影不带」，只比 settings 的话投影根本没被经过＝测了个寂寞。
+    """
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        build_outbound_gate_settings,
+    )
+
+    config = Config().model_copy(
+        update={"bot_outbound_gate_enabled_until": _TTL_FUTURE}
+    )
+    projected = build_outbound_gate_settings(config)
+    assert projected.enabled_until == _TTL_FUTURE, (
+        f"投影没带上 TTL（实得 {projected.enabled_until!r}）⇒ 判据永远只见「无到期」"
+    )
+    # 缺省值本身也钉死：空串（=无到期），不是 None、不是任何真值。
+    assert Config().bot_outbound_gate_enabled_until == ""
+
+
+def test_missing_ttl_key_while_siblings_present_is_loud() -> None:
+    """腿②的响亮半句：同族六枚在、TTL 键不在 ⇒ 抛，且经既有出口冒 unreadable 告警。
+
+    为什么不能静默当「无到期」：那正是用户否决的那笔债——一枚临时开关被读成永久开关。
+    为什么**又不**判成「任何读不到都抛」：`SimpleNamespace()`（零键）是全仓既有缺省形态，
+    `test_empty_config_projects_defaults_and_passes_through` 与四支在飞测试件都靠它造
+    关态闸 ⇒ 响亮只针对「像一份闸配置却落后一步」那一形。
+    """
+    from types import SimpleNamespace
+
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        build_outbound_gate_settings,
+    )
+
+    with pytest.raises(LookupError):
+        build_outbound_gate_settings(SimpleNamespace(bot_outbound_gate_enabled=True))
+    assert build_outbound_gate_settings(SimpleNamespace()).enabled_until == ""
+
+    # 端到端：抛出去之后必须冒**既有那枚** KIND_SETTINGS_UNREADABLE，不是静默关闸。
+    issues: list[Any] = []
+    gate = _gate(
+        settings=lambda: build_outbound_gate_settings(
+            SimpleNamespace(bot_outbound_gate_enabled=True)
+        ),
+        quiet=_quiet(enabled=False),
+        store=FakeStore(),
+        now=_TTL_NOW,
+        sink=issues.append,
+    )
+    assert gate.enabled is False, "读不到须回退缺省（关闭）"
+    assert [issue.kind for issue in issues] == ["outbound_gate_settings_unreadable"], (
+        f"读不到没冒既有那枚告警：{[i.kind for i in issues]}"
+    )
+
+
+# ------------------------------------------------------------- 腿③：判定入口
+def test_expired_ttl_closes_gate_on_all_three_read_points() -> None:
+    """到期即关：`enabled`／`decide`／中央出口三处**同判**，且形态==既有关态。
+
+    三处分开的理由：断链③原本就是「两处各读裸值」。只钉一处，另一处回潮照样绿
+    （#49 多入口活性锁同型判据）。关态必须逐字节等于 `enabled=False`：
+    直通裸 submit（零关键字）、零 store 触点。
+    """
+    store = FakeStore()
+    queue = RecordingQueue()
+    gate = _ttl_gate(until=_TTL_PAST, store=store)
+    assert gate.enabled is False
+
+    verdict = gate.decide(_request(), now=_TTL_NOW)
+    assert verdict.action == "allow" and verdict.reason == "disabled"
+
+    outcome = _push(queue, _request(request_id="req-ttl-1"), gate)
+    assert outcome.verdict.reason == "disabled"
+    assert queue.calls == [("req-ttl-1", {})], "关态必须是裸 submit（与现状同形）"
+    assert store.count_calls == [] and store.rows == [], (
+        "到期关闸后不得再触 store（passthrough 语义=零判定零计数）"
+    )
+
+
+def test_unparsable_ttl_fails_closed_never_passes() -> None:
+    """读不懂＝当作到期关闭并告警，**绝不**因「读不懂」当「没到期」继续放行。"""
+    gate = _ttl_gate(until=_TTL_GARBAGE)
+    assert gate.enabled is False
+    verdict = gate.decide(_request(), now=_TTL_NOW)
+    assert verdict.reason == "disabled"
+
+
+def test_future_ttl_still_enforces_the_three_doors() -> None:
+    """未到期⇒三门照跑（这里用键形门出 skip），证明 TTL 不是「一切直通」的旁路。"""
+    queue = RecordingQueue()
+    gate = _ttl_gate(until=_TTL_FUTURE)
+    verdict = gate.decide(
+        _request(request_id="req-ttl-shape", dedupe_key="脏/键:形"), now=_TTL_NOW
+    )
+    assert verdict.action == "skip" and verdict.reason == "dedupe_key_shape"
+    _push(queue, _request(request_id="req-ttl-shape", dedupe_key="脏/键:形"), gate)
+
+
+def test_ttl_state_words_and_effective_predicate_agree() -> None:
+    """判据表：五态逐一对号（纯函数面，防「状态词与实际结论分叉」）。"""
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        TTL_STATE_ABSENT,
+        TTL_STATE_ACTIVE,
+        TTL_STATE_EXPIRED,
+        TTL_STATE_INVALID,
+        TTL_STATE_OFF,
+        OutboundGateSettings,
+        effective_gate_enabled,
+    )
+
+    cases: tuple[tuple[bool, str, bool, str], ...] = (
+        (False, _TTL_FUTURE, False, TTL_STATE_OFF),
+        (True, "", True, TTL_STATE_ABSENT),
+        (True, _TTL_FUTURE, True, TTL_STATE_ACTIVE),
+        (True, _TTL_PAST, False, TTL_STATE_EXPIRED),
+        (True, _TTL_GARBAGE, False, TTL_STATE_INVALID),
+        (False, _TTL_GARBAGE, False, TTL_STATE_OFF),  # 关态下 TTL irrelevant
+    )
+    for enabled, until, expect_on, expect_state in cases:
+        on, state = effective_gate_enabled(
+            OutboundGateSettings(enabled=enabled, enabled_until=until), _TTL_NOW
+        )
+        assert (on, state) == (expect_on, expect_state), (
+            f"enabled={enabled} until={until!r} ⇒ 实得 {(on, state)}，应为 "
+            f"{(expect_on, expect_state)}"
+        )
+
+
+# ------------------------------------------------------------- 腿④：告警消费者
+def test_expired_ttl_emits_exactly_one_alert_per_edge() -> None:
+    """到期沿出恰一枚 `outbound_gate_ttl_expired`，且**五连判不刷**（边沿闩）。
+
+    「别新造第二套节流」的正解：本件只报边沿，时间折叠归中央 `AdminAlertSuppression`。
+    一次性静音（报完不再清账）同样不许——那是更糟的形态，故另有一发复位锁。
+    """
+    issues: list[Any] = []
+    gate = _ttl_gate(until=_TTL_PAST, sink=issues.append)
+    for index in range(5):
+        gate.decide(_request(request_id=f"req-edge-{index}"), now=_TTL_NOW)
+    kinds = [issue.kind for issue in issues]
+    assert kinds == ["outbound_gate_ttl_expired"], f"实得 {kinds}"
+    assert issues[0].stage == "outbound_gate"
+    assert "ttl_expired" in issues[0].safe_summary
+
+
+def test_unparsable_ttl_emits_its_own_distinct_kind() -> None:
+    """不可解析沿必须冒**另一枚** kind——与「到期」混成一枚就分不出「写错」与「到点」。"""
+    issues: list[Any] = []
+    gate = _ttl_gate(until=_TTL_GARBAGE, sink=issues.append)
+    for index in range(3):
+        gate.decide(_request(request_id=f"req-bad-{index}"), now=_TTL_NOW)
+    assert [issue.kind for issue in issues] == ["outbound_gate_ttl_invalid"]
+    # 零正文纪律：读不懂那枚不得把原值灌进 safe_summary（只许长度+摘要）。
+    assert _TTL_GARBAGE not in issues[0].safe_summary
+
+
+def test_ttl_edge_latch_relearms_after_recovery() -> None:
+    """坏→好→坏 必须再报一次（否则「报过=永远报过」＝一次性静音，比不报更糟）。
+
+    设置源用可变对象：同进程内「管理员续期之后又到期」的真实形状。
+    """
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+    )
+
+    mutable = OutboundGateSettings(
+        enabled=True,
+        quiet_defer_enabled=False,
+        max_per_target_per_minute=0,
+        max_per_target_per_hour=0,
+        enabled_until=_TTL_PAST,
+    )
+    issues: list[Any] = []
+    gate = _gate(
+        settings=mutable,
+        quiet=_quiet(enabled=False),
+        store=FakeStore(),
+        now=_TTL_NOW,
+        sink=issues.append,
+    )
+    gate.decide(_request(request_id="req-a"), now=_TTL_NOW)
+    mutable.enabled_until = _TTL_FUTURE  # 续期 ⇒ 好沿清账
+    gate.decide(_request(request_id="req-b"), now=_TTL_NOW)
+    mutable.enabled_until = _TTL_PAST    # 再次到期 ⇒ 必须再报
+    gate.decide(_request(request_id="req-c"), now=_TTL_NOW)
+    assert [issue.kind for issue in issues] == [
+        "outbound_gate_ttl_expired",
+        "outbound_gate_ttl_expired",
+    ], f"实得 {[i.kind for i in issues]}"
+
+
+# ------------------------------------------------------------- 结构腿（防回潮）
+def _function_node(tree: Any, name: str) -> Any:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    return None
+
+
+def _called_names(node: Any) -> set[str]:
+    called: set[str] = set()
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        if isinstance(child.func, ast.Name):
+            called.add(child.func.id)
+        elif isinstance(child.func, ast.Attribute):
+            called.add(child.func.attr)
+    return called
+
+
+def test_enabled_readpoints_delegate_to_single_judgment() -> None:
+    """结构腿：`enabled` 与 `decide` 必须**真调用**统一判据，且体内不再裸读 enabled。
+
+    与上面的行为锁分两把是刻意的：行为锁抓「判错了」；本锁抓「改回去读裸值、而今天
+    恰好没配 TTL」——后者在缺省态下与现状逐字同形，行为锁天生看不见（＝假绿的那条路）。
+    """
+    tree = ast.parse(_gate_source())
+    gate_class = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name == "OutboundGate"
+    )
+    report: dict[str, bool] = {}
+    for method in ("enabled", "decide"):
+        node = _function_node(gate_class, method)
+        assert node is not None, f"闸内找不到 {method}（判据面变了，须改写本锁而不是删）"
+        called = _called_names(node)
+        delegated = bool({"effective_enabled", "effective_gate_enabled"} & called)
+        bare_read = any(
+            isinstance(child, ast.Attribute)
+            and child.attr == "enabled"
+            and isinstance(child.value, ast.Name)
+            and child.value.id == "settings"
+            for child in node.body
+        )
+        report[method] = delegated and not bare_read
+    assert all(report.values()), f"enabled 读点未收敛到唯一判据：{report}"
+
+
+def _ttl_kind_definitions(tree: ast.AST) -> set[str]:
+    """模块级 `KIND_GATE_TTL_*` 常量赋值的目标名（在册清单）。"""
+    return {
+        node.targets[0].id
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id.startswith("KIND_GATE_TTL_")
+    }
+
+
+def _ttl_kind_producers(tree: ast.AST) -> set[str]:
+    """被**函数体**引用的 TTL kind（=会执行的代码）。
+
+    ⚠ 刻意只数函数体：`__all__` 里那两枚字符串是**导出面**、不是消费者——本席第一版
+    把全树 Name 都算生产者，注毒「把告警消费摘掉」当场假绿（`__all__` 还在就永远红不了）。
+    这正是 S232 对旧 G5 锁的同一批评：只抓字样、不抓活性。
+    """
+    used: set[str] = set()
+    for func in (
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    ):
+        names = {child.id for child in ast.walk(func) if isinstance(child, ast.Name)}
+        used |= names & _ttl_kind_definitions(tree)
+    return used
+
+
+def test_ttl_alert_kinds_have_production_producers() -> None:
+    """结构腿：两枚 TTL kind 必须被**函数体**引用（在册装饰≠消费者）。
+
+    断链④原样就是「常量在册、全树零引用」。本锁剔掉定义与导出面两类假命中，
+    否则「再补一行常量 / 塞进 `__all__`」就能把锁糊过去。
+    """
+    tree = ast.parse(_gate_source())
+    defined = _ttl_kind_definitions(tree)
+    assert defined == {"KIND_GATE_TTL_EXPIRED", "KIND_GATE_TTL_INVALID"}, (
+        f"两枚在册 kind 形态变了（实得 {sorted(defined)}）：本锁须同步改写"
+    )
+    used = _ttl_kind_producers(tree)
+    assert used == defined, f"这些 TTL kind 仍是装饰：缺 {sorted(defined - used)}"
+
+
+# ------------------------------------------------------------- 自证（注毒四发）
+def test_ttl_four_legs_are_each_load_bearing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """注毒四发，逐一对应简报四处断链：每摘一条腿，「到期必关」必须翻回「照样放行」。
+
+    全部**内存 monkeypatch**，生产件零落盘。每发独立 `undo()`：不 undo 的话后一发会踩在
+    前一发的残骸上，「四发各红」就退化成「一发红三次」（本波已自证过的假绿形态）。
+    """
+    from types import SimpleNamespace
+
+    import plugins.bot_unified_runtime.domains.transport.sender.outbound_gate as mod
+
+    config = SimpleNamespace(
+        bot_outbound_gate_enabled=True,
+        bot_outbound_gate_quiet_defer_enabled=False,
+        bot_outbound_gate_urgent_severities=["P0", "P1"],
+        bot_outbound_gate_max_per_target_per_minute=0,
+        bot_outbound_gate_max_per_target_per_hour=0,
+        bot_outbound_gate_db_path="data/outbound_gate.sqlite3",
+        bot_outbound_gate_enabled_until=_TTL_PAST,
+    )
+
+    def enabled_now() -> bool:
+        return mod.build_outbound_gate(config).enabled
+
+    assert enabled_now() is False, "基线：到期必关（本自证的前提）"
+
+    # ① 摘投影：值在 Config 里、投影不带 ⇒ 判据只见「无到期」⇒ 门照样开。
+    def _without_ttl(cfg: object) -> Any:
+        return mod.OutboundGateSettings(enabled=True, enabled_until="")
+
+    monkeypatch.setattr(mod, "build_outbound_gate_settings", _without_ttl)
+    assert enabled_now() is True, "摘投影仍关得住 ⇒ 投影那条腿是装饰"
+    monkeypatch.undo()
+
+    # ② 摘调用点：判据存在但没人调（回到读裸 `settings.enabled`）⇒ 门照样开。
+    def _bare_read(
+        self: Any, settings: Any = None, now: Any = None
+    ) -> tuple[bool, str]:
+        resolved = self.settings if settings is None else settings
+        return bool(resolved.enabled), mod.TTL_STATE_OFF
+
+    monkeypatch.setattr(mod.OutboundGate, "effective_enabled", _bare_read)
+    assert enabled_now() is True, "摘调用点仍关得住 ⇒ 判据函数是死码"
+    monkeypatch.undo()
+    assert enabled_now() is False, "undo 后基线没复原 ⇒ 本自证的前提不可信"
+
+    # ③ 摘告警消费：关闸仍成立，但坏沿不出声 ⇒ 观测腿单独承重（与①②不同判据）。
+    issues: list[Any] = []
+    monkeypatch.setattr(
+        mod.OutboundGate, "_note_ttl_state", lambda self, state, settings: None
+    )
+    _ttl_gate(until=_TTL_PAST, sink=issues.append).decide(_request(), now=_TTL_NOW)
+    assert issues == [], "摘掉告警消费仍有告警 ⇒ 本锁测的是别的东西"
+    monkeypatch.undo()
+    _ttl_gate(until=_TTL_PAST, sink=issues.append).decide(
+        _request(request_id="req-after"), now=_TTL_NOW
+    )
+    assert [issue.kind for issue in issues] == ["outbound_gate_ttl_expired"]
+
+    # ④ 把「不可解析」改回放行：写错的 TTL 被折成「无到期」⇒ 门永久开着。
+    original_parse = mod.parse_gate_ttl
+
+    def _fold_garbage_to_absent(value: object) -> Any:
+        if str(value or "").strip() == _TTL_GARBAGE:
+            return None
+        return original_parse(value)
+
+    monkeypatch.setattr(mod, "parse_gate_ttl", _fold_garbage_to_absent)
+    assert _ttl_gate(until=_TTL_GARBAGE).enabled is True, (
+        "把不可解析折成缺省后门仍关 ⇒ fail-closed 那条腿没被本判据管住"
+    )
+    monkeypatch.undo()
+    assert _ttl_gate(until=_TTL_GARBAGE).enabled is False
+
+
+def test_ttl_legs_locks_are_not_self_satisfying() -> None:
+    """两把结构锁各自的注毒：内存改源码文本⇒必红（不落盘）。
+
+    为什么还要这一节：`*_load_bearing` 注的是**运行时行为**，结构锁钉的是**源码形状**。
+    「改回裸读但今天没配 TTL」那一形只有结构锁看得见，所以结构锁的牙也得单独验一次
+    （否则它可能是一张贴在墙上的形状判据——项目失效形态册的「代理指标当结论」族）。
+    """
+    source = _gate_source()
+
+    def decide_delegation(src: str) -> bool:
+        tree = ast.parse(src)
+        gate_class = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ClassDef) and node.name == "OutboundGate"
+        )
+        node = _function_node(gate_class, "decide")
+        assert node is not None
+        return bool({"effective_enabled", "effective_gate_enabled"} & _called_names(node))
+
+    assert decide_delegation(source) is True
+    reverted = source.replace(
+        "gate_on, _ttl_state = self.effective_enabled(settings, current)",
+        "gate_on, _ttl_state = settings.enabled, TTL_STATE_OFF",
+        1,
+    )
+    assert reverted != source, "注毒点消失（decide 的判据调用形态变了）⇒ 本自证已失明"
+    assert decide_delegation(reverted) is False
+
+    def kind_producers(src: str) -> set[str]:
+        return _ttl_kind_producers(ast.parse(src))
+
+    assert kind_producers(source) == {
+        "KIND_GATE_TTL_EXPIRED",
+        "KIND_GATE_TTL_INVALID",
+    }
+    silenced = source.replace(
+        "kind = KIND_GATE_TTL_EXPIRED", 'kind = "outbound_gate_ttl_expired"', 1
+    )
+    assert silenced != source, "注毒点消失（到期那枚 kind 的引用形态变了）"
+    assert "KIND_GATE_TTL_EXPIRED" not in kind_producers(silenced), (
+        "摘掉告警消费后本锁仍认它有生产者 ⇒ 锁被 `__all__`/注释那类假命中糊住"
+    )

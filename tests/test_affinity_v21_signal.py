@@ -26,7 +26,7 @@ import sqlite3
 
 import pytest
 
-from plugins.bot_unified_runtime.character.affinity import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     _BEHAVIOR_DELTA,
     _NON_RELATIONSHIP_REASON_CODES,
     DynamicAffinityStore,

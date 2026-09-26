@@ -27,6 +27,9 @@ from typing import Any
 import pytest
 
 import plugins.bot_unified_runtime.domains.chat_reply.llm_engine.ledger as ledger_mod
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+    RuntimeSettingsStore,
+)
 from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
     _handle_model_command,
     _usage_channel_stats,
@@ -41,7 +44,6 @@ from plugins.bot_unified_runtime.output.card_render.usage_cards import (
     usage_card_accent,
     usage_report_mica_html,
 )
-from plugins.bot_unified_runtime.runtime.settings import RuntimeSettingsStore
 
 _ACCENT = "#318ce7"
 

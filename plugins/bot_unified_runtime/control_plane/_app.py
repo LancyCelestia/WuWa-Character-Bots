@@ -321,7 +321,7 @@ def create_control_plane_app(
     )
 
     if settings_store is None:
-        from plugins.bot_unified_runtime.runtime.settings import (
+        from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
             RuntimeSettingsStore,
             build_runtime_settings_store,
         )
@@ -532,7 +532,7 @@ def create_control_plane_app(
     # V2.1 S12：占卜/运势 REST 段（未配置持久化路径 = facade None = 503 诚实位，
     # 与 actions/config 服务缺装配同一前例；平台路由先例=独立 build_*_router）。
     from ..domains.divination.api.facet import build_divination_facade_from_config
-    from .api.divination import build_divination_router
+    from ..domains.divination.routes import build_divination_router
 
     divination_facade = build_divination_facade_from_config(config)
     app.state.divination_facade = divination_facade

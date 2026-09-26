@@ -21,18 +21,12 @@ import pytest
 
 from plugins.bot_unified_runtime.domains.render.card_render import bridge
 
-# 与 test_rendering_contract.CARD_TEMPLATES 同口径：显式枚举，禁止 glob。
-# 2026-09-18 v21r3 渲染统一：+= error_card.html（第 8 面入 E03 刻度管辖；
-# RED 即锚点——error 卡缺 tabular-nums/行高 1.65 出刻度由 wave-2 席修复）。
-CARD_TEMPLATES: tuple[str, ...] = (
-    "universal_card.html",
-    "market_card.html",
-    "affinity_card.html",
-    "mermaid_card.html",
-    "song_candidates.html",
-    "finance_card.html",
-    "error_card.html",
-)
+# 模板清单＝单一派生取数口 `bridge.card_template_names()`（S-T-VISUAL-1 归一，
+# 详见 tests/test_rendering_contract.py 同名注释；旧「显式枚举＝与
+# test_rendering_contract 同口径手抄副本」正是 news_digest 脱管数个波次的根因）。
+# 2026-09-18 v21r3：+= error 面；2026-09-25 S-T-NEWS-1：+= news 面（当时靠手抄，
+# 现由派生源恒保证「目录有它 ⇒ 门扫它」，本文件不再可能「清单没数到它」）。
+CARD_TEMPLATES: tuple[str, ...] = bridge.card_template_names()
 
 _TEMPLATES_DIR = Path(bridge.__file__).resolve().parent / "templates"
 
@@ -85,6 +79,11 @@ _NUMERIC_SELECTORS: dict[str, tuple[str, ...]] = {
         # mermaid 无业务数字字段；节点文本内的数字经继承吃到等宽数字。
         ".card .mermaid",
     ),
+    # 2026-09-25 S-T-NEWS-1：news_digest 面入册（条数徽章与条目时间戳都是数字件）。
+    "news_digest_card.html": (
+        ".badge",
+        ".time",
+    ),
 }
 
 # 小标签字距（区块小标/页脚署名/徽章）：0.06em 刻度（summary-tag 既有手法）。
@@ -95,6 +94,8 @@ _LABEL_TRACKING: dict[str, tuple[str, ...]] = {
     "affinity_card.html": (".dlabel",),
     "song_candidates.html": (".ttl",),
     "mermaid_card.html": (),
+    # S-T-NEWS-1：本面与 song 的 .ttl 是同位件（头部徽章），字距必须同档。
+    "news_digest_card.html": (".badge",),
 }
 
 # 行高统一刻度（1/1.1/1.15 = 紧排徽章与大数字档；1.2 = 展示标题档；
@@ -114,6 +115,71 @@ _TRACKING_CAP = 0.08
 
 # 契约白名单（与 test_rendering_contract 同源）：本批禁止新增任何 keyframes。
 _ALLOWED_KEYFRAMES = {"mica-drift-a", "mica-drift-b", "mica-drift-c"}
+
+# ==================== 单一派生源：元数据覆盖完备锁（S-T-VISUAL-1，2026-09-26） ====================
+# 清单已派生，「清单没数到它」型假绿被结构根除；剩下的是反向风险——**选择器级
+# 登记表欠覆盖却无人点名**（表没这张面的键，参数化只按表跑，整场静默空转）。
+# 判据：每枚欠覆盖名必须落在显式豁免册里带理由；豁免册只准减不准悄悄加新面
+# （新面进豁免=它同时不在任何表里，双红灯由下方注毒腿的形态先例拦截）。
+_NO_NUMERIC_SELECTORS: dict[str, str] = {
+    # 实况登记（现算 2026-09-26）：error 面在盘，但从未入 _NUMERIC_SELECTORS；
+    # 其 tabular-nums 存在性由 test_e03_template_has_tabular_nums 整面锁着，
+    # 选择器级欠账归诊断卡面 owner 补，本锁负责「点名」而非「代修」。
+    "error_card.html": "整面存在性有锁（下方全量 parametrize），选择器级登记欠账待诊断卡面 owner",
+}
+_NO_LABEL_TRACKING: dict[str, str] = {
+    # 同型实况：error 面有 letter-spacing（值受全局面 _ALLOWED_TRACKING 刻度门
+    # 覆盖），但小标签选择器未逐枚登记。
+    "error_card.html": "字距值受全局面刻度门覆盖，小标签选择器登记欠账待补",
+}
+
+
+def _coverage_diff(
+    inventory: tuple[str, ...],
+    table: dict[str, tuple[str, ...]],
+    exemptions: dict[str, str],
+    label: str,
+) -> list[str]:
+    """登记表+豁免册 对派生清单的双向对账（真值腿与注毒腿共用一把尺）。"""
+    problems: list[str] = []
+    inv = set(inventory)
+    unregistered = sorted(inv - set(table) - set(exemptions))
+    if unregistered:
+        problems.append(f"{label} 有面既未登记也未豁免（静默空转）: {unregistered}")
+    stale = sorted(set(exemptions) - inv)
+    if stale:
+        problems.append(f"{label} 豁免册指向不在清单的面（豁免应随面退役删除）: {stale}")
+    ghost = sorted(set(table) - inv)
+    if ghost:
+        problems.append(f"{label} 登记表指向不存在的模板: {ghost}")
+    return problems
+
+
+def test_selector_tables_cover_inventory_or_declared_exemption() -> None:
+    assert not _coverage_diff(
+        CARD_TEMPLATES, _NUMERIC_SELECTORS, _NO_NUMERIC_SELECTORS, "_NUMERIC_SELECTORS"
+    )
+    assert not _coverage_diff(
+        CARD_TEMPLATES, _LABEL_TRACKING, _NO_LABEL_TRACKING, "_LABEL_TRACKING"
+    )
+
+
+def test_e03_coverage_lock_bites_on_unregistered_face(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """注毒：多出一面未登记未豁免 ⇒ 判据必点名（否则完备锁是空跑的装饰）。"""
+    for name in ("ghost_card.html",):
+        (tmp_path / name).write_text("<html></html>", encoding="utf-8")
+    monkeypatch.setattr(bridge, "_TEMPLATES_DIR", tmp_path)
+    ghost = bridge.card_template_names()
+    assert ghost == ("ghost_card.html",)
+    problems = _coverage_diff(ghost, _NUMERIC_SELECTORS, _NO_NUMERIC_SELECTORS, "n")
+    assert any("ghost_card.html" in p for p in problems), f"注毒未咬住: {problems}"
+    # 豁免册的陈腐腿也咬：豁免指向已消失的面同样点名。
+    stale = _coverage_diff(
+        ("universal_card.html",), _NUMERIC_SELECTORS, _NO_NUMERIC_SELECTORS, "n"
+    )
+    assert any("error_card.html" in p for p in stale), f"陈腐豁免未点名: {stale}"
 
 
 def _tpl(name: str) -> str:

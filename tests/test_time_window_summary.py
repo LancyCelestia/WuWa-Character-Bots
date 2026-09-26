@@ -15,13 +15,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.chat import (
-    _time_window_summary_section,
-    build_chat_prompt_with_diagnostics,
-)
-from plugins.bot_unified_runtime.character.providers import (
-    NullCharacterContextProvider,
-)
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     ContextBundle,
@@ -32,9 +25,16 @@ from plugins.bot_unified_runtime.contracts import (
     SessionType,
     ToneProfile,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    _time_window_summary_section,
+    build_chat_prompt_with_diagnostics,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.character.history import (
     InMemoryConversationHistoryStore,
     SQLiteConversationHistoryRepository,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
+    NullCharacterContextProvider,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.time_window import (
     detect_time_window_summary,
@@ -491,7 +491,9 @@ def test_capability_without_intent_never_touches_window(tmp_path) -> None:
 
 
 def _build_capability(character_provider, llm):  # type: ignore[no-untyped-def]
-    from plugins.bot_unified_runtime.capabilities.chat import build_chat_capability
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_chat_capability,
+    )
 
     return build_chat_capability(character_provider, llm)
 

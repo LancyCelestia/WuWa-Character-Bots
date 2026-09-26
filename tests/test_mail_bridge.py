@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.mail_bridge import (
+from plugins.bot_unified_runtime.domains.transport.mail.mail_bridge import (
     MailBridgeState,
     mail_event_dedupe_id,
     send_mail_from_account,
@@ -62,7 +62,9 @@ class MailEvent:
 
 
 def test_mail_event_id_uses_message_id_stable_identifier() -> None:
-    from plugins.bot_unified_runtime.mail_bridge import mail_event_id
+    from plugins.bot_unified_runtime.domains.transport.mail.mail_bridge import (
+        mail_event_id,
+    )
 
     assert mail_event_id(MailEvent()) == "<message-3>"
 

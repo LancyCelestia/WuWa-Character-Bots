@@ -11,12 +11,22 @@ DEFAULT_VERB_MAP，并做行为级体检（探针实跑，非纸面词表比对�
    所属 capability。
 3. 词边界纪律：ASCII 触发词按 ``_alias_hit`` 模式（词边界）匹配——
    ``qq<word>`` / ``<word>qq`` 胶合探针不得命中自身能力。
+4. **跨能力撞词体检（S137，2026-09-24 自 ``test_trigger_word_copy_ratchet.py`` 的
+   ruleA 第 11 簇移交过来）**：两枚字面量真身词集全等、却**分属两个能力**且没有任何门
+   要求它们相等 ⇒ 这不是"同一份词抄了两遍"（副本账判的），这是**词义冲突**——按尺 B
+   自己写死的归属，它归本门。判据不另起一把尺：成员位与词集都由副本账的**同一个 AST
+   取数口**（``scan_tree``/``analyze``）现算，能力归属由中央件
+   ``classify_help_topics`` + RouteRule 检测器模块路径派生，零手工清单。
 
 现状红点以**台账制**管理（这是体检不是改造，不改源码凑绿）：
 - ``KNOWN_CONFLICT_WORDS`` / ``KNOWN_BOUNDARY_KEYS`` 登记基线实测红点
   （2026-09-12 基线，含并行 T1.2 英文触发在途改动），用例内
   ``pytest.xfail`` 标记，并带双向棘轮：台账条目被修复 → 强制失败提醒清
   台账；台账外新增红点 → 硬断言失败，自动浮出为规范化波工作清单。
+- ``KNOWN_CROSS_CAPABILITY_CLASHES`` 同哲学，但它是**静态腿不是行为腿**：A8 那枚
+  ``订阅/訂閱/subscribe`` 今天由路由优先级兜底，``is_*`` 探针实测**不**双命中（已现算核实），
+  塞进 ``KNOWN_CONFLICT_WORDS`` 会当场撞"红点已修复请清账"那条锁 ⇒ 另立一条静态台账，
+  两侧同棘轮：新撞词未登记 → 硬失败；登记在案的撞词已消除 → 强制失败要求清账。
 - 规格相关断言（七格矩阵：英文/简体/繁體/全拼/缩写/昵称/自然语言的
   全量覆盖与唯一性）待 T-Spec 终确认后启用，见文末 skip 占位。
 """
@@ -24,6 +34,7 @@ DEFAULT_VERB_MAP，并做行为级体检（探针实跑，非纸面词表比对�
 from __future__ import annotations
 
 import importlib
+from typing import Final, NamedTuple
 
 import pytest
 
@@ -31,6 +42,19 @@ from scripts.extract_trigger_words import (
     _ASCII_WORD_RE,
     _STRUCTURAL_KINDS,
     build_inventory,
+    classify_help_topics,
+    normalize_trigger_key,
+)
+from tests.test_trigger_word_copy_ratchet import (  # 单一 AST 取数口：本门不另起第二把尺
+    _UNEXISTENT_WORD,
+    HOME_CROSS_CAPABILITY_NOT_DEBT,
+    HOME_MIRROR_NOT_DEBT,
+    Occ,
+    _words_from_text,
+    account,
+    analyze,
+    scan_source,
+    scan_tree,
 )
 
 INV = build_inventory()
@@ -111,7 +135,9 @@ KNOWN_BOUNDARY_KEYS: frozenset[tuple[str, str, str]] = frozenset()
 
 def test_route_registry_matches_live_route_rules() -> None:
     """AST 提取的规则表必须与运行时 ROUTE_RULES 同构（防提取器脱册）。"""
-    from plugins.bot_unified_runtime.runtime.base_router import ROUTE_RULES
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
+        ROUTE_RULES,
+    )
 
     live = sorted(
         (rule.kind.name, rule.capability_id, rule.priority) for rule in ROUTE_RULES
@@ -212,6 +238,293 @@ def test_ascii_trigger_word_boundary(
         )
     assert not violated, (
         f"新增 ASCII 词边界违规（未登记台账）：{cap} {detector_name} 命中 {glued!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 跨能力撞词体检（S137，2026-09-24：副本账 ruleA 第 11 簇按裁定 9 移交至此）
+# ---------------------------------------------------------------------------
+
+#: 帮助册三个触发位的字段名。写成换行单串再切分：本文件在 ``SCAN_ROOTS`` 的 ``tests`` 里，
+#: 任何「字面量容器」都会成为副本账的 tier-2 候选（与 ``_KIND_VOCAB`` 同一条自扫纪律）。
+_HELP_TRIGGER_FIELD_VOCAB: Final[str] = "aliases\ntriggers_nl\ntriggers_nickname"
+_HELP_TRIGGER_FIELDS: Final[tuple[str, ...]] = tuple(_HELP_TRIGGER_FIELD_VOCAB.split("\n"))
+
+#: 真身文件 → 能力集合：RouteRule 的 ``is_*`` 检测器住在哪个模块，那个模块的模块级词表
+#: 就是那个能力的命令面（中央件派生，零手工清单）。
+_CAPS_BY_MODULE_FILE: Final[dict[str, frozenset[str]]] = {}
+for _cap_id, _item in INV["capabilities"].items():
+    for _report in _item["detectors"]:
+        _rel = _report["module"].replace(".", "/") + ".py"
+        _CAPS_BY_MODULE_FILE[_rel] = _CAPS_BY_MODULE_FILE.get(_rel, frozenset()) | {_cap_id}
+
+#: 帮助册**单个字段**的词集 → 该 topic 归属的能力集合。刻意按字段级比对而不是 topic 合并级：
+#: 副本账认出的一枚真身恰好就是一个字段位（``dict:aliases``），合并集永远不相等。
+_CAPS_BY_HELP_FIELD: Final[dict[frozenset[str], frozenset[str]]] = {}
+_CLASSIFIED_HELP: Final[dict[str, dict]] = classify_help_topics(INV["help_topics"])
+for _topic, _info in INV["help_topics"].items():
+    _topic_caps: frozenset[str] = frozenset(
+        _CLASSIFIED_HELP[_topic]["caps"] | _CLASSIFIED_HELP[_topic]["admin_caps"]
+    )
+    for _field in _HELP_TRIGGER_FIELDS:
+        _keys = frozenset(
+            key for word in _info.get(_field) or () if (key := normalize_trigger_key(word))
+        )
+        if _keys:
+            _CAPS_BY_HELP_FIELD[_keys] = _CAPS_BY_HELP_FIELD.get(_keys, frozenset()) | _topic_caps
+
+
+def _capabilities_of(occ: Occ) -> frozenset[str]:
+    """一枚真身词表归属哪些能力（模块路径 ∪ 帮助册字段位）。"""
+    module_caps = _CAPS_BY_MODULE_FILE.get(occ.file, frozenset())
+    keys = frozenset(key for word in occ.words if (key := normalize_trigger_key(word)))
+    return frozenset(module_caps | _CAPS_BY_HELP_FIELD.get(keys, frozenset()))
+
+
+class WordClash(NamedTuple):
+    """现算出的一枚跨能力撞词：词集＋成员位（不含行号，行号会漂）＋涉及能力。"""
+
+    words: frozenset[str]
+    sites: frozenset[tuple[str, str]]
+    caps: frozenset[str]
+
+
+class KnownClash(NamedTuple):
+    """台账条目：与 ``WordClash`` 同键（词集全等＋成员位集合），另写死应当涉及的能力与判据。"""
+
+    words_text: str
+    sites: tuple[tuple[str, str], ...]
+    caps: tuple[str, ...]
+    reason: str
+
+    @property
+    def words(self) -> frozenset[str]:
+        return _words_from_text(self.words_text)
+
+    def matches(self, clash: WordClash) -> bool:
+        return self.words == clash.words and frozenset(self.sites) == clash.sites
+
+
+#: **跨能力撞词台账**（自副本账移交的那一枚在此接住；新增必须逐枚点名＋写判据，禁止条款化）。
+#: 现算口径：全树字面量真身里「词集全等、成员分属 ≥2 个能力、且该能力对别的名册成员不成立」的簇。
+#: 2026-09-24 现算值＝1 簇（本台账 1 条），其余 10 簇成员归属同一能力＝在册镜像、由副本账豁免。
+KNOWN_CROSS_CAPABILITY_CLASHES: Final[tuple[KnownClash, ...]] = (
+    KnownClash(
+        words_text="subscribe、訂閱、订阅",
+        sites=(
+            ("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:aliases"),
+            ("plugins/bot_unified_runtime/domains/emergency_info/capabilities/emergency_info.py", "_SUBSCRIBE_WORDS"),
+        ),
+        caps=("bot.emergency_info", "bot.subscribe"),
+        reason="裁定 9 之 A8：帮助册 bot.subscribe 的 aliases 位与紧急信息域群内订阅命令面 _SUBSCRIBE_WORDS 词集全等，两枚真身分属两个能力、无共同上级册、也无双向门要求它们相等 ⇒ 属词义冲突而非副本。行为侧今天由路由优先级兜底（实测 is_* 探针不双命中，故另立静态腿而非塞进 KNOWN_CONFLICT_WORDS）；要消除本条须改两侧命令面词（行为变更，须重启验收），不许删本条换绿",
+    ),
+)
+
+
+def compute_cross_capability_clashes(
+    extra_homes: tuple[Occ, ...] = (),
+) -> tuple[list[WordClash], list[Occ]]:
+    """现算跨能力撞词（＋归属空位清单）。取数口＝副本账那把尺，判据腿长在本门。"""
+    _files, homes, _copies = scan_tree()
+    _rule_b, rule_a = analyze(list(homes) + list(extra_homes), [])
+    clashes: list[WordClash] = []
+    holes: list[Occ] = []
+    for cluster in rule_a:
+        per_member = [_capabilities_of(member) for member in cluster.members]
+        holes += [member for member, caps in zip(cluster.members, per_member) if not caps]
+        union = frozenset().union(*per_member) if per_member else frozenset[str]()
+        exclusive = {
+            cap
+            for index, own in enumerate(per_member)
+            for cap in own
+            if all(cap not in other for j, other in enumerate(per_member) if j != index)
+        }
+        if exclusive:
+            clashes.append(
+                WordClash(
+                    words=frozenset(cluster.words),
+                    sites=frozenset((m.file, m.label) for m in cluster.members),
+                    caps=union,
+                )
+            )
+    return clashes, holes
+
+
+def _clash_ledger_violations(
+    clashes: list[WordClash], ledger: tuple[KnownClash, ...]
+) -> list[str]:
+    """台账与现算的双向比对（同一函数既服务生产断言也服务注毒）。"""
+    problems: list[str] = []
+    spare = list(ledger)
+    for clash in clashes:
+        hit = next((i for i, entry in enumerate(spare) if entry.matches(clash)), None)
+        if hit is None:
+            problems.append(
+                f"新增跨能力撞词（未登记台账）：词 {sorted(clash.words)} 于 "
+                f"{sorted(clash.sites)}，涉及能力 {sorted(clash.caps)}"
+            )
+            continue
+        entry = spare.pop(hit)
+        if frozenset(entry.caps) != clash.caps:
+            problems.append(
+                f"台账把涉及能力写错了：词 {sorted(clash.words)} 现算 {sorted(clash.caps)}"
+                f" ≠ 登记 {sorted(entry.caps)}"
+            )
+    for entry in spare:
+        problems.append(
+            f"台账条目在盘上已不成立（撞词已消除、或换了位置/换了词集），请清账或重登记："
+            f"{entry.words_text}｜{sorted(entry.sites)}"
+        )
+    return problems
+
+
+def _handoff_lock_violations(
+    roster: tuple[object, ...], ledger: tuple[KnownClash, ...]
+) -> list[str]:
+    """两本账互锁（**不许只删不接**）：副本账摘出的每一枚都必须在这里登记，反之亦然。
+
+    键＝(词集全等, 成员位集合)——同一枚事实只在一本账上记一次：
+    副本账摘了而本门没接 ⇒ 本门红；本门登记了而副本账还在计账 ⇒ 同一枚红两遍，也算失衡。
+    """
+    roster_keys = {(entry.words, frozenset(entry.sites)) for entry in roster}  # type: ignore[attr-defined]
+    ledger_keys = {(entry.words, frozenset(entry.sites)) for entry in ledger}
+    problems: list[str] = []
+    for words, sites in sorted(roster_keys - ledger_keys, key=lambda k: (sorted(k[0]), sorted(k[1]))):
+        problems.append(
+            f"副本账把这一枚摘成了「不计账」，本门却没有登记＝红被搬走了没人接：词 {sorted(words)}"
+            f"｜成员位 {sorted(sites)}"
+        )
+    for words, sites in sorted(ledger_keys - roster_keys, key=lambda k: (sorted(k[0]), sorted(k[1]))):
+        problems.append(
+            f"本门登记了跨能力撞词，副本账却没把它摘出＝同一枚记两遍（或名册已漂移）："
+            f"词 {sorted(words)}｜成员位 {sorted(sites)}"
+        )
+    return problems
+
+
+def test_cross_capability_word_clash_matches_ledger() -> None:
+    """跨能力撞词双向棘轮：新撞词未登记即硬失败；登记在案的已消除则强制失败要求清账。"""
+    clashes, holes = compute_cross_capability_clashes()
+    assert not holes, (
+        "能力归属出现空位＝判据被改瞎（「归不到能力」绝不允许被读成「没有冲突」）："
+        + "、".join(f"{h.file}:{h.line}:{h.label}" for h in holes)
+    )
+    problems = _clash_ledger_violations(clashes, KNOWN_CROSS_CAPABILITY_CLASHES)
+    assert problems == [], "跨能力撞词体检失配：\n  " + "\n  ".join(problems)
+
+
+def test_cross_capability_clash_ledger_is_not_empty_by_accident() -> None:
+    """台账自证：本门今天必须真的算出过撞词，且现算枚数与台账条数同量级可核对。
+
+    空台账＋空现算＝这条腿可能已经瞎了（判据被改、或能力归属表整体失效）。
+    故这里既核对非空，也核对「现算值 == 登记值」这一当前读数（漂移即红，逼一次复核）。
+    """
+    clashes, _holes = compute_cross_capability_clashes()
+    assert clashes, "一枚跨能力撞词都没算出——先查归属表与取数口，别当成「大家都干净了」"
+    assert len(clashes) == len(KNOWN_CROSS_CAPABILITY_CLASHES), (
+        f"现算 {len(clashes)} 簇 ≠ 台账 {len(KNOWN_CROSS_CAPABILITY_CLASHES)} 条"
+        "（逐条内容另有双向棘轮核对，本条只拦「整块失踪」）"
+    )
+
+
+def test_handoff_from_copy_ratchet_is_registered_there() -> None:
+    """两本账互锁：A8 从副本账摘出的同时必须在本门登记，且副本账此刻确实没再计它。"""
+    problems = _handoff_lock_violations(HOME_CROSS_CAPABILITY_NOT_DEBT, KNOWN_CROSS_CAPABILITY_CLASHES)
+    assert problems == [], "副本账与本门的交接不对账：\n  " + "\n  ".join(problems)
+    _files, homes, copies = scan_tree()
+    rule_b, rule_a = analyze(list(homes), list(copies))
+    acct = account(rule_b, rule_a)
+    kept_sites = {frozenset((m.file, m.label) for m in cluster.members) for cluster in acct.kept_clusters}
+    for entry in KNOWN_CROSS_CAPABILITY_CLASHES:
+        assert frozenset(entry.sites) not in kept_sites, (
+            f"本门已登记，副本账却仍在计账＝同一枚记两遍：{entry.words_text}"
+        )
+    assert len(acct.exempt_handoffs) == len(KNOWN_CROSS_CAPABILITY_CLASHES), (
+        "副本账的移交豁免簇数与本门台账条数不等＝交接面漂移"
+    )
+    assert not acct.stale_handoff_entries, f"副本账移交名册虚设：{acct.stale_handoff_entries}"
+    assert rule_b or rule_a, "副本账两本账全空＝取数口坏了，本锁已无意义"
+
+
+# ---- 注毒自证（虚拟源喂同一个取数口，绝不往树里写东西；本文件因此零词面字面量）----
+
+
+def _virtual_home_src(rel: str, words: frozenset[str]) -> tuple[str, str]:
+    name = "S137_POISON_" + ("TRIGGER_WORDS" if "plugins/" in rel else "SAMPLE_WORDS")
+    body = ", ".join('"' + word + '"' for word in sorted(words))
+    return rel, f"{name} = ({body},)\n"
+
+
+def test_poison_unregistered_cross_capability_clash_is_red() -> None:
+    """注毒①（新撞词必浮出）：把媒体归档族的词整表抄进随机图能力的命令面 ⇒ 本门必红。
+
+    两枚真身分属 bot.media_archive 与 bot.randpic、词集全等、无门要求相等 ⇒ 这是一枚
+    **新的**跨能力撞词，台账里没有 ⇒ `_clash_ledger_violations` 必须点名"新增"。
+    """
+    archive = next(
+        entry
+        for entry in HOME_MIRROR_NOT_DEBT
+        if any("media_archive" in site_file for site_file, _label in entry.sites)
+    )
+    rel, src = _virtual_home_src(
+        "plugins/bot_unified_runtime/domains/meme/capabilities/randpic.py", archive.words
+    )
+    extra_homes, _extra_copies = scan_source(rel, src)
+    assert extra_homes, "注毒前提：虚拟真身没被认成 home（tier-1 命名口失效）"
+    clashes, _holes = compute_cross_capability_clashes(extra_homes=tuple(extra_homes))
+    problems = _clash_ledger_violations(clashes, KNOWN_CROSS_CAPABILITY_CLASHES)
+    assert any("新增跨能力撞词" in p for p in problems), (
+        f"抄进另一个能力的命令面却没算出新撞词＝归属判据对本门隐形：{problems}"
+    )
+
+
+def test_poison_resolved_clash_must_be_cleared_from_ledger() -> None:
+    """注毒②（反向棘轮）：撞词在盘上已不存在 ⇒ 台账条目必须被点名要求清账，不许静默绿。"""
+    problems = _clash_ledger_violations([], KNOWN_CROSS_CAPABILITY_CLASHES)
+    assert len(problems) == len(KNOWN_CROSS_CAPABILITY_CLASHES), (
+        f"清空现算却没逐条点名＝只删不查：{problems}"
+    )
+    assert all("请清账" in p for p in problems), problems
+
+
+def test_poison_unwired_handoff_is_red() -> None:
+    """注毒③（只删不接必红）：副本账摘了、本门台账清空 ⇒ 互锁必须红。"""
+    assert HOME_CROSS_CAPABILITY_NOT_DEBT, "前提：副本账今天确实摘了一枚移交（名册非空）"
+    problems = _handoff_lock_violations(HOME_CROSS_CAPABILITY_NOT_DEBT, ())
+    assert problems, "副本账摘了移交而本门空台账却不红＝互锁是装饰件"
+    assert any("没有登记" in p for p in problems), problems
+    reversed_problems = _handoff_lock_violations((), KNOWN_CROSS_CAPABILITY_CLASHES)
+    assert reversed_problems and all("记两遍" in p for p in reversed_problems), (
+        f"反方向（本门登记、副本账未摘）没牙：{reversed_problems}"
+    )
+
+
+def test_poison_attribution_hole_is_red() -> None:
+    """注毒④（判据不许装瞎）：真身归不到任何能力 ⇒ 必须进 holes，不能被读成「没有冲突」。
+
+    词面刻意用**任何能力都没有**的孤儿词（含 `_UNEXISTENT_WORD`，保证不被帮助册字段位捞走），
+    并在两个无名模块各抄一枚 ⇒ 成簇但零归属。首版写法（拿在册撞词的词抄进无名模块）会被
+    帮助册字段位捞出 `bot.subscribe`，测的其实是另一件事——这一版才真打到归属空洞。
+    """
+    orphan_words = frozenset({_UNEXISTENT_WORD, "zzz孤儿触发词甲", "zzz孤儿触发词乙"})
+    extra_homes: list[Occ] = []
+    orphan_files: list[str] = []
+    for suffix in ("a", "b"):
+        rel, src_text = _virtual_home_src(
+            f"plugins/bot_unified_runtime/domains/ops/_s137_poison_virtual_orphan_{suffix}.py",
+            orphan_words,
+        )
+        homes_here, _copies = scan_source(rel, src_text)
+        assert homes_here, f"注毒前提：虚拟孤儿真身没被认成 home（{rel}）"
+        extra_homes += homes_here
+        orphan_files.append(rel)
+    clashes, holes = compute_cross_capability_clashes(extra_homes=tuple(extra_homes))
+    assert {h.file for h in holes} == set(orphan_files), (
+        "无名模块的词表归属不到任何能力却没进 holes＝归属空洞会被读成「全干净」："
+        f"{[h.file for h in holes]}"
+    )
+    assert not any(c.words == orphan_words for c in clashes), (
+        "归不到能力却被算成撞词＝holes 与 clashes 两条判据串了位"
     )
 
 

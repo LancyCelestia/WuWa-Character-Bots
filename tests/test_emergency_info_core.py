@@ -998,6 +998,11 @@ NMC_ALARM_FILE = DOMAIN_DIR / "sources" / "nmc_alarm.py"
 KEY_BUILDER = "build_emergency_dedupe_key"
 GATE_T6_TEST = "test_submit_active_push_production_importers_are_allowlisted"
 
+import sys  # 只为下面这一行 sys.path 与兄弟件复用（ruff E402 放行 sys.path 前置）
+
+sys.path.insert(0, str(REPO_ROOT / "tests"))
+import test_outbound_gate as _gate_lock  # 复用闸侧「可执行引用」判据真身，禁第二把尺（S274）
+
 _MISSING = object()
 
 
@@ -1175,6 +1180,12 @@ def test_domain_reaches_the_queue_only_through_the_central_gate() -> None:
         # WAVE42-active-push-central-exit.md`）。本条与本文件上方 T6 侧的
         # `allowed_files` 逐文件同步，放开成整树即失效——两侧对齐由 ② 段执法。
         and _rel_to_plugin(path) != "__init__.py"
+        # S274 分态：这个名字「被伸手够到」（import／调用／别名／字符串派发）与「被名字
+        # 提到」（docstring／注释／形↔缝投影表的字符串值）是两件事，本锁钉前者。判据真身
+        # 复用闸侧 `_gate_lock.central_entry_executable_hits`（**不在这里再写一遍 AST**，
+        # 那是第二把尺）。豁免面不是自由文本：闸侧 T6 用 `DECLARATIVE_NAMEPLATE` 这本显式
+        # 点名册钉死"哪些文件只准提名字"，且在册件一旦长出可执行引用就落回本条的射程。
+        and _gate_lock.central_entry_executable_hits(path)
     ]
     assert offenders == [], f"`submit_active_push` 被闸与紧急域之外的生产件引用：{offenders}"
 

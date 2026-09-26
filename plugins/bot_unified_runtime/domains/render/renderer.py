@@ -16,9 +16,94 @@ from plugins.bot_unified_runtime.contracts import (
     ReviewResult,
     RiskLevel,
 )
-from plugins.bot_unified_runtime.domains.render.plain_text import naturalize_chat_text
+from plugins.bot_unified_runtime.domains.render.plain_text import (
+    naturalize_chat_text,
+    redact_local_secrets,
+)
 
 logger = logging.getLogger(__name__)
+
+# ==================== 出站文本统一打码咽喉（需求 17 / S-ANTATK，2026-09-27）====
+# 此前 `redact_local_secrets` 的**读点全散在能力层自己**：chat 回复在 chat.py 调、
+# 校园转发出站调、邮件附件的主题与正文调、creation/cookies 面板各自调——**凡是记得调
+# 的才罩**，共用的出站成形口一次都不过。后果是任何一条能力（卡片正文与
+# text_fallback、文件与预览回显、账单/状态页、合并转发节点、部件里的 caption）
+# 罩没罩，取决于写那条能力的人记不记得。AGENTS 铁律 3 写着「出站前
+# plain_text.redact_local_secrets 会打码盘符路径/BOT_XXX=/sk- 形态，不要绕过」，
+# 而流程图「output/plain_text → output/renderer」这一步在真码里从来没有统一落点。
+# 收在这里的理由：`render_reviewed_output` 是 review 之后、SendRequest 之前
+# **唯一**把 CapabilityResult 变成出站形态的函数（现算调用点＝
+# runtime/pipeline.py:988 一处），四条返回分支（text / chunks / mixed parts /
+# mermaid mixed）都从本函数出；`build_forward_output` 只吃它的 text_fallback，
+# 但转发节点自成一型嵌套（node→data→content），通用尺认不到那一层，
+# 故本波在它入口也打一次（切分**之前**，改切分策略不会开出新的漏网形态）。
+#
+# 只打**人读文本**，绝不打部件引用字段：`file` / `url` / `content_sha256` 是
+# 传输层要拿去开文件的字节定位符，`_LOCAL_PATH_RE` 一把就会把 `file:///C:/...`
+# 洗成占位符 ⇒ 媒体整条发不出去（那是「为安全把功能打断」，本仓纪律是不做
+# 这种交换——要拦就拦在**取值处**，见 safety_exec.paths 的落点判据）。
+_OUTBOUND_TEXT_KEYS = frozenset({"text", "caption", "prompt", "alt", "title"})
+
+
+def _redact_outbound_value(value: Any) -> Any:
+    """部件字典里的人读文本字段逐个打码，其余键（含 file/url）原样透传。"""
+    if not isinstance(value, dict):
+        return value
+    cleaned = dict(value)
+    for key in _OUTBOUND_TEXT_KEYS:
+        item = cleaned.get(key)
+        if isinstance(item, str) and item:
+            cleaned[key] = _redact_outbound_text(item)
+    return cleaned
+
+
+def _redact_outbound_text(text: str) -> str:
+    """出站文本咽喉：盘符路径 / `BOT_XXX=` / `sk-` / JWT / Bearer 统一打码。
+
+    幂等由 `redact_local_secrets` 自身保证（替换产物不再被任一形态命中），
+    所以 bot.chat 那条已在能力层打过一次的链路重复过一遍零成本、零二次伤害。
+    """
+    return redact_local_secrets(text or "")
+
+
+def _redact_rendered_content_ref(content_ref: dict[str, Any]) -> dict[str, Any]:
+    """按 content_type 形态打码 content_ref：chunks 逐条、parts 逐部件、text 单条。"""
+    cleaned = dict(content_ref)
+    chunks = cleaned.get("chunks")
+    if isinstance(chunks, list):
+        cleaned["chunks"] = [
+            _redact_outbound_text(chunk) if isinstance(chunk, str) else chunk
+            for chunk in chunks
+        ]
+    parts = cleaned.get("parts")
+    if isinstance(parts, list):
+        cleaned["parts"] = [
+            {
+                **_redact_outbound_value(part),
+                **(
+                    {"text": _redact_outbound_text(part["text"])}
+                    if isinstance(part, dict) and isinstance(part.get("text"), str)
+                    else {}
+                ),
+            }
+            if isinstance(part, dict)
+            else part
+            for part in parts
+        ]
+    text = cleaned.get("text")
+    if isinstance(text, str):
+        cleaned["text"] = _redact_outbound_text(text)
+    return cleaned
+
+
+def _redacted(rendered: RenderedOutput) -> RenderedOutput:
+    """对一条已成型出站产出做统一打码（model_copy 保留 debug_id 等既成身份）。"""
+    return rendered.model_copy(
+        update={
+            "content_ref": _redact_rendered_content_ref(rendered.content_ref),
+            "text_fallback": _redact_outbound_text(rendered.text_fallback),
+        }
+    )
 
 # ==================== 出站语音部件中央契约（M-19①③，Wave G/T80） ====================
 # 裂缝①：type="voice" 曾在渲染层放行、在传输层被丢（OneBot record 分支只认
@@ -316,6 +401,18 @@ def render_reviewed_output(
     result: CapabilityResult,
     review: ReviewResult,
 ) -> RenderedOutput:
+    """出站咽喉：能力产出 → 出站形态，**四条返回分支一律过统一打码**。
+
+    打码收在包装层而不是逐分支插，是为了让「以后多加一条返回分支」这件事
+    不可能悄悄绕过咽喉——分支少了会红（存量用例），分支多了不脱管。
+    """
+    return _redacted(_render_reviewed_output_inner(result, review))
+
+
+def _render_reviewed_output_inner(
+    result: CapabilityResult,
+    review: ReviewResult,
+) -> RenderedOutput:
     text = review.safe_text or result.body or result.summary or result.title
     is_chat = result.capability_id == "bot.chat"
     # G-MERMAID：检测/渲染先于自然化（naturalize 会剥掉围栏行导致无法
@@ -481,7 +578,14 @@ def build_forward_output(
     """把超长文本渲染成合并转发消息（OneBot node 格式），带文本兜底。
 
     如果 transport 不支持 forward，会按 ``text_fallback`` 降级。
+
+    入站文本先过统一打码：转发节点由这段文本切出来，节点里的 `data.text`
+    形态与本函数的切分策略强耦合（`_redact_rendered_content_ref` 认的是
+    chunks/parts/text 三种通用形态，不认 node 嵌套）。在**切分之前**打一次，
+    比在切分之后逐节点补一遍更稳——以后改切分策略不会开出新的漏网形态。
+    幂等：经 `render_reviewed_output` 的正常链路是第二次过，零二次伤害。
     """
+    text = _redact_outbound_text(text)
     chunks = split_text_chunks(text, node_chars=node_chars, max_nodes=max_nodes)
     nodes = [
         {

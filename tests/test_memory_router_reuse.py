@@ -42,9 +42,11 @@ def test_memory_uses_runtime_selection_and_multiple_keys_without_mutating_chat(m
     # 运行数据根隔离：缺省会回退源码树 data/（AGENTS.md 规则 2/6），显式指到 tmp。
     monkeypatch.setenv("BOT_RUNTIME_DATA_DIR", str(tmp_path))
     from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+        RuntimeSettingsStore,
+    )
     from plugins.bot_unified_runtime.llm import LLMProviderError
     from plugins.bot_unified_runtime.llm.model_router import build_model_router
-    from plugins.bot_unified_runtime.runtime.settings import RuntimeSettingsStore
 
     monkeypatch.delenv("BOT_API_KEY_AIPRC", raising=False)
     config = Config(bot_memory_enabled=True, bot_memory_db_path="unused.sqlite3",

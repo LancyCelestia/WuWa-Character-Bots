@@ -43,14 +43,18 @@ BRAND_NAME_EN = "Shorekeeper"
 
 _WASH_HUE_SHIFT = 30 / 360      # 平台色相对本命相的最大推幅
 _WASH_HUE_PULL = 0.5            # 平台色相 → 推幅的比例（本命相权重 3:1）
-_WASH_SAT_RATIO = 0.55          # pastel 化：输入饱和度保留比例
-_WASH_LIGHT = 0.88              # 洗色明度
+# 2026-09-25 澜汐点名「背景现在是灰色的，要在守岸人蓝标志色上做釉瑚飘逸渐变」。
+# 现算根因：守岸人蓝 #318ce7 的相**恰等于** _WASH_BASE_HUE(210°)，平台推力恒为 0，
+# 而 pastel 保留比 0.55 + 明度 0.88 把四支洗色压到 S≈3–11% ⇒ 全卡壳底读起来就是灰。
+# 所以动的是饱和度与明度（不是再新增一条渐变、更不是逐卡手抄色标）。
+_WASH_SAT_RATIO = 0.72          # pastel 化：输入饱和度保留比例（原 0.55＝压成近灰）
+_WASH_LIGHT = 0.852             # 洗色明度（原 0.88；降 0.028 换可见彩度）
 _WASH_MIST_LIGHT = 0.96         # 雾底明度 ≥94%
 _WASH_BASE_HUE = 210 / 360      # 守岸人淡蓝本命相
 _WASH_PURPLE_HUE = 265 / 360    # 星空紫
 _WASH_DEEP_HUE = 228 / 360      # 深蓝
 _WASH_MIST_HUE = 214 / 360      # 雾底淡蓝相
-_WASH_BASE_SAT = 0.42           # 本命洗基准饱和度（×0.55 后为柔和 pastel）
+_WASH_BASE_SAT = 0.55           # 本命洗基准饱和度（×0.72 后为淡彩，原 0.42×0.55）
 _WASH_GRAY_THRESHOLD = 0.10     # S 低于此值视为无有效色相的灰阶（推力归零）
 
 FONT_FAMILY_STACK = (
@@ -103,6 +107,7 @@ CARD_SHELL_WIDTHS: dict[str, int] = {
     "song_panel": 980,   # 点歌候选面板（透明壳内层）
     "mermaid_max": 840,  # mermaid 卡 fit-content 上限
     "error": 1080,       # 运行异常诊断卡（error_card.html）
+    "news_digest": 1080, # 新闻摘要卡（news_digest_card.html，B05 快讯域紧凑摘要）
     # v21r3 统一收尾波（C10 裁决）：四处直拼卡宽度入册（此前是卡内私有
     # 字面量，与值册脱钩；值与现行卡面逐字节一致，接入由直拼卡席执行）。
     "help": 940,         # 帮助手册卡（echo 直拼卡 .help-shell）
@@ -188,12 +193,12 @@ DEFAULT_WASH_TOKENS = derive_wash_tokens(UNKNOWN_PLATFORM_COLOR)
 #   目标态的壳层收口，本席落地）。
 SHELL_WASH_GRADIENT = (
     "linear-gradient(145deg, var(--wash-mist) 0%, "
-    "color-mix(in srgb, var(--wash-blob-1) 62%, var(--wash-mist)) 16%, "
-    "color-mix(in srgb, var(--wash-1) 72%, var(--wash-mist)) 34%, "
-    "color-mix(in srgb, var(--wash-2) 62%, var(--wash-mist)) 52%, "
-    "color-mix(in srgb, var(--wash-3) 55%, var(--wash-mist)) 70%, "
-    "color-mix(in srgb, var(--wash-2) 60%, var(--wash-mist)) 86%, "
-    "color-mix(in srgb, var(--wash-1) 70%, var(--wash-mist)) 100%)"
+    "color-mix(in srgb, var(--wash-blob-1) 78%, var(--wash-mist)) 15%, "
+    "color-mix(in srgb, var(--wash-1) 96%, var(--wash-mist)) 32%, "
+    "color-mix(in srgb, var(--wash-3) 88%, var(--wash-mist)) 50%, "
+    "color-mix(in srgb, var(--wash-2) 62%, var(--wash-mist)) 64%, "
+    "color-mix(in srgb, var(--wash-1) 94%, var(--wash-mist)) 82%, "
+    "color-mix(in srgb, var(--wash-3) 80%, var(--wash-mist)) 100%)"
 )
 
 # ==================== 层次化阴影 + 辉光 + 表面/分隔线/字号（vis4）====================
@@ -229,6 +234,12 @@ GLOW_ACCENT = (
     "color-mix(in srgb, var(--accent) 8%, transparent) 46%, transparent 74%)"
 )
 _BRAND_WASH = derive_wash_tokens(BRAND_ACCENT)
+#: 釉瑚渐变的**唯一派生锚点**＝守岸人本命蓝（2026-09-25 澜汐：背景要在守岸人
+#: 的蓝色标志色上做飘逸渐变彩色处理）。此前各卡 ``--wash-1..3`` 按各自
+#: ``--accent`` 派生，红系平台卡（点歌/账单）整张壳底被推成粉灰——平台身份
+#: 只应留在 accent 强调线与 ≤35% 的漂移色斑里，不该决定底色色相。
+#: 消费点：``bridge._card_root_tokens`` 与 ``usage_cards`` 直拼卡。
+BRAND_WASH_TOKENS: dict[str, str] = _BRAND_WASH
 # vis5 收官（2026-09-13 用户裁定「区分度拉高」）：三档表面按相邻可辨调参——
 # 对称合成 alpha≈0.83（液态玻璃质感与色斑透出保留）， onstage 混色（叠本命
 # wash 渐变中部）ΔE(a,b)≈3.8、对 neutral ≥7，text_sub 对比 ≥5:1。
@@ -245,16 +256,66 @@ SURFACE_TINTS: dict[str, str] = {
 # 次级文字统一灰（vis5）：全模板 --text-secondary 单一来源，取值在本批三档
 # 表面（含最暗 tint_b）上对比 ≥4.5:1（WCAG AA@12px）。旧散值 #7a828c/#8a919b/
 # #66727f/#7a8699 对比 2.8-4.8 不达 AA，全部收编。
-TEXT_SECONDARY = "#576272"
+# 次级文字灰：壳底洗色加深后，直接落在壳上的次级文字（卡头副标题、分区线旁
+# 的小注）对比会掉到 AA 以下——旧值 #576272 对**改版前**最深壳 stop 就只有
+# 4.37:1（本来就没过 4.5）。这里连同洗色一起下一档，把 AA 补回来而不是
+# 靠"次级文字别放壳上"绕过去。
+TEXT_SECONDARY = "#4e5866"
 # 区分线 token：清晰可见的平台色 22% 细线（替代旧 14% 淡线）。
 DIVIDER = "1px solid color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.65))"
 # 字号阶梯（px）：全模板字号只允许取本表值（契约测试锁定），小件下限 12。
+# goal-7 统一波（2026-09-25）：把各面**实际在用**的档位一次收编成单一阶梯，
+# 每一档一个角色名、一次定死；一次性孤值（18/19/21/22/23/28/30/44）全部向
+# 就近档位收敛（18→lead 17、19/21/22→title 20、23→heading 24、28→display 26、
+# 30→heading 24、44→hero 46），不在任何面留下表外字面量。新增的三档不是
+# 发明新字号——field 14 / metric 16 / hero 46 是既有面里已存在的最大副本值/
+# 钉过样张基线的展示值，登记即执法（门：tests/test_template_visual_audit.py
+# ::test_owned_faces_font_size_within_type_scale）。
 TYPE_SCALE_PX: dict[str, int] = {
-    "display": 26,
-    "title": 20,
-    "body": 15,
-    "label": 13,
-    "caption": 12,
+    "caption": 12,   # 最小注记/角标（下限档）
+    "label": 13,     # 徽章/胶囊/英文署名等标签件
+    "field": 14,     # 键值节字段名与次级正文（诊断/金融/宽卡通用字段档）
+    "body": 15,      # 正文
+    "metric": 16,    # 行内强调数字（tabular 小计/涨跌值）
+    "lead": 17,      # 人话主句/序号大字/汇总数字（诊断卡 2026-09-25 重排档）
+    "title": 20,     # 标准卡标题与统计大字
+    "heading": 24,   # 宽壳卡主标题（诊断卡 heading / 好感度卡头题，2026-09-25 由 30 收敛）
+    "display": 26,   # 展示大字（账单合计题等）
+    "hero": 46,      # 单卡一件的旗舰数字（好感度分值；媒体封面占位符由 44 并入）
+}
+# 字重档位（goal-7 统一波 2026-09-25）：全渲染面只允许取本表值。
+# 650 的 15 处手抄副本全部收敛为 semibold 600（本波退役账，门执法后不可回潮）；
+# 上限 FONT_WEIGHT_MAX=700 铁律不变。
+FONT_WEIGHT_STEPS: dict[str, int] = {
+    "regular": 400,
+    "semibold": 600,
+    "bold": 700,
+}
+# 边框粗细合法集（goal-7 统一波 2026-09-25，RADIUS_INNER_PX 同先例=「合法集」
+# 而非 CSS 变量）：hairline 1px 是全仓唯一描边/分隔线档（DIVIDER/GLASS_EDGE/
+# .glass 边框都是 1px）；ring 2px 只放行头像/图标高亮环这一种用途
+# （universal 视频壳头像环 3 处在册），其余粗细一票否决。
+BORDER_WIDTH_PX = frozenset({1, 2})
+
+# 诊断卡专用洗色（2026-09-25 澜汐点名，同日二轮收口）：只有**运行时告警卡**
+# 需要一条自有壳层渐变——语义就是"出事了"，收尾必须压到红。
+# 能力异常诊断卡不再另抄一支：它改用公共 SHELL_WASH_GRADIENT（多段彩漂），
+# 只把派生锚点搬到本命蓝（bridge._card_root_tokens 的 wash_color 形参）。
+# 旧 CARD_WASH_CALM 是一支四段直线蓝→蓝，把"釉瑚飘逸"做成了加深色块，已退役。
+CARD_WASH_ALERT = (
+    "linear-gradient(150deg, #e6f1fc 0%, #cfe3f8 24%, "
+    "color-mix(in srgb, #318ce7 30%, #ffffff) 48%, "
+    "color-mix(in srgb, #d54941 34%, #ffffff) 78%, "
+    "color-mix(in srgb, #d54941 56%, #ffffff) 100%)"
+)
+
+# 诊断卡色斑（``--wash-blob-1``）同批登记：``render_root_tokens`` 里这一枚恒与
+# ``var(--accent)`` 混（契约"平台色斑"的定义），而两档诊断卡的 accent 都是语义
+# 红——不覆盖就会在左上角顶出一块灰粉，正是她点名的"背景现在是灰色的"。
+# 两档都仍走「登记色 ≤24% 混白」，与 ``wash_blob_mix≤35%`` 的旧上限同口径。
+CARD_WASH_BLOBS: dict[str, str] = {
+    "calm": "color-mix(in srgb, #318ce7 24%, #f2f8ff)",
+    "alert": "color-mix(in srgb, #d54941 24%, #eaf2fb)",
 }
 
 
@@ -362,7 +423,10 @@ class ThemeTokens:
     shadow_primary: str = SHADOW_PRIMARY
     shadow_secondary: str = SHADOW_SECONDARY
     text_main: str = "#18191c"
-    text_sub: str = "#5b6069"
+    # 与 TEXT_SECONDARY 同批下一档（2026-09-25 洗色加深后 tint_b 掉到 4.45:1，
+    # 没过 AA）。两枚同语义 token 并轨是契约 §八 D-4 的待裁项，本行**不**合并
+    # 两 token，只把两枚都拉到合格对比。
+    text_sub: str = "#545b66"
     aliases: tuple[str, ...] = field(default=())
 
     def __post_init__(self) -> None:
@@ -533,10 +597,14 @@ PLATFORM_OFFICIAL_NAMES.setdefault("generic", "Web")
 __all__ = [
     "BLOB_COUNT",
     "BLOB_DURATIONS",
+    "BORDER_WIDTH_PX",
     "BRAND_ACCENT",
     "BRAND_NAME_EN",
     "BRAND_THEME",
+    "BRAND_WASH_TOKENS",
     "CARD_SHELL_WIDTHS",
+    "CARD_WASH_ALERT",
+    "CARD_WASH_BLOBS",
     "DEFAULT_THEME",
     "DEFAULT_WASH_TOKENS",
     "DIVIDER",
@@ -544,6 +612,7 @@ __all__ = [
     "ERROR_THEME",
     "FONT_FAMILY_STACK",
     "FONT_WEIGHT_MAX",
+    "FONT_WEIGHT_STEPS",
     "GAP_SCALE_PX",
     "GLASS_EDGE",
     "GLASS_FOOT",

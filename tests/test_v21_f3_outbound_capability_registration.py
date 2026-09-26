@@ -36,17 +36,17 @@ import pytest
 
 import plugins.bot_unified_runtime as runtime_module
 from plugins.bot_unified_runtime import _run_capability_through_pipeline
-from plugins.bot_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.control_plane.features import FeatureStateStore
+from plugins.bot_unified_runtime.control_plane.services import FeatureControlService
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+    RuntimePipeline,
+)
+from plugins.bot_unified_runtime.domains.core.contracts import (
     CapabilityResult,
     DeliveryReceipt,
     IncomingMessage,
     ReceiptState,
     SessionType,
-)
-from plugins.bot_unified_runtime.control_plane.features import FeatureStateStore
-from plugins.bot_unified_runtime.control_plane.services import FeatureControlService
-from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
-    RuntimePipeline,
 )
 from plugins.bot_unified_runtime.domains.ops.audit.logger import InMemoryAuditLogger
 from plugins.bot_unified_runtime.domains.ops.features.feature_catalog import (

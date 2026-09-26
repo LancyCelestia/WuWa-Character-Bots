@@ -35,8 +35,12 @@ from plugins.bot_unified_runtime.contracts import (
 )
 from plugins.bot_unified_runtime.domains.ops.monitor.alerts import AdminAlertSuppression
 from plugins.bot_unified_runtime.domains.transport.sender import worker as worker_module
-from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
-from plugins.bot_unified_runtime.sender.worker import drain_send_queue_once
+from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+    SQLiteSendRequestQueue,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.worker import (
+    drain_send_queue_once,
+)
 
 
 def _utc_now() -> datetime:

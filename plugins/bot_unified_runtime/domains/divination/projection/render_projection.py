@@ -150,7 +150,7 @@ def _default_card_renderer(
     render_backend: Any, item: Any, *, config: Any, card_dir: str
 ) -> dict[str, Any] | None:
     """既有 renderer 消费面（惰性导入，控制面无需常驻渲染依赖）。"""
-    from plugins.bot_unified_runtime.capabilities.content_parser import (
+    from plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser import (
         render_card_png,
     )
 

@@ -17,9 +17,9 @@ from urllib.parse import quote_plus
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.eat import _fetch_dish_image
 from plugins.bot_unified_runtime.contracts import SessionType
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
+from plugins.bot_unified_runtime.domains.food.capabilities.eat import _fetch_dish_image
 
 DISH = "宫保鸡丁"
 # 公网字面量 IP：过 SSRF 护栏（http + 非保留网段），字面量不做 DNS → 零网络。
@@ -188,7 +188,9 @@ def test_capability_text_fallback_unaffected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """封面候选全部失败 → 封面空串，菜谱文字照常输出（兜底链路零破坏）。"""
-    from plugins.bot_unified_runtime.capabilities.eat import build_eat_capability
+    from plugins.bot_unified_runtime.domains.food.capabilities.eat import (
+        build_eat_capability,
+    )
 
     url = f"http://{_HOST}/boom.png"
     _install_fake_net(monkeypatch, {url: OSError("网络失败")})
@@ -293,7 +295,7 @@ def test_tavily_candidates_without_key_returns_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """未配 key（且 CLI 态取不到 env）→ 兜底通道静默返回空表，零网络。"""
-    from plugins.bot_unified_runtime.capabilities.eat import (
+    from plugins.bot_unified_runtime.domains.food.capabilities.eat import (
         _tavily_image_candidates,
     )
 

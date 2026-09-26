@@ -14,7 +14,9 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from plugins.bot_unified_runtime.character.affinity import DynamicAffinityStore
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
+    DynamicAffinityStore,
+)
 
 _DAY_SECONDS = 86400.0
 

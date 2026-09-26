@@ -29,28 +29,6 @@ import argparse
 import sys
 from typing import Any, cast
 
-from plugins.bot_unified_runtime.capabilities.content_parser import (
-    build_content_capability,
-)
-from plugins.bot_unified_runtime.capabilities.download import (
-    build_download_capability,
-)
-from plugins.bot_unified_runtime.capabilities.epic import (
-    build_epic_capability,
-    is_epic_command,
-)
-from plugins.bot_unified_runtime.capabilities.music import (
-    build_music_capability,
-    is_music_command,
-)
-from plugins.bot_unified_runtime.capabilities.today_history import (
-    build_today_history_capability,
-    is_today_history_command,
-)
-from plugins.bot_unified_runtime.capabilities.weather import (
-    build_weather_capability,
-    is_weather_command,
-)
 from plugins.bot_unified_runtime.character import build_character_context_provider
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
@@ -97,7 +75,14 @@ from plugins.bot_unified_runtime.domains.core.credentials.credential_health impo
 from plugins.bot_unified_runtime.domains.core.search.web_search import (
     build_web_search_provider,
 )
+from plugins.bot_unified_runtime.domains.files.capabilities.download import (
+    build_download_capability,
+)
 from plugins.bot_unified_runtime.domains.files.sources.downloader import MediaDownloader
+from plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser import (
+    build_content_capability,
+)
+from plugins.bot_unified_runtime.domains.link_parse.parsers import extract_http_urls
 from plugins.bot_unified_runtime.domains.link_parse.support.parse_history import (
     build_parse_history_result,
     build_parse_history_store,
@@ -109,19 +94,37 @@ from plugins.bot_unified_runtime.domains.location.capabilities.wiki import (
 from plugins.bot_unified_runtime.domains.meme.sources.meme_search import (
     build_meme_search_provider,
 )
+from plugins.bot_unified_runtime.domains.music.capabilities.music import (
+    build_music_capability,
+    is_music_command,
+)
 from plugins.bot_unified_runtime.domains.ops.audit import InMemoryAuditLogger
 from plugins.bot_unified_runtime.domains.ops.audit.file_logger import (
     build_audit_with_file_log,
 )
 from plugins.bot_unified_runtime.domains.ops.smoke.smoke import load_smoke_config
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.epic import (
+    build_epic_capability,
+    is_epic_command,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.today_history import (
+    build_today_history_capability,
+    is_today_history_command,
+)
+from plugins.bot_unified_runtime.domains.transport.sender import (
+    InMemorySendQueue,
+    SendQueue,
+)
+from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
+    build_weather_capability,
+    is_weather_command,
+)
 from plugins.bot_unified_runtime.llm import (
     LLMProvider,
     OpenAICompatibleLLMProvider,
     StaticLLMProvider,
 )
 from plugins.bot_unified_runtime.output.render_backends import build_render_backend
-from plugins.bot_unified_runtime.sender import InMemorySendQueue, SendQueue
-from plugins.bot_unified_runtime.sources.parsers import extract_http_urls
 
 _BANNER = """\
 ============================================================

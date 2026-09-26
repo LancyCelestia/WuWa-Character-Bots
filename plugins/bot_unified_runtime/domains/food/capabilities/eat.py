@@ -517,10 +517,10 @@ def _eat_card(config: Any, render_backend: Any, dish: Dish, body: str) -> str:
     if render_backend is None or not getattr(render_backend, "available", False):
         return ""
     try:
-        from plugins.bot_unified_runtime.capabilities.content_parser import (
+        from plugins.bot_unified_runtime.contracts import build_parsed_content
+        from plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser import (
             render_card_png,
         )
-        from plugins.bot_unified_runtime.contracts import build_parsed_content
 
         cover = _dish_image(dish, config)
         item = build_parsed_content(
@@ -548,7 +548,7 @@ def _eat_card(config: Any, render_backend: Any, dish: Dish, body: str) -> str:
 def _llm_constrained(config: Any, raw_extra: str) -> str:
     """自然语言约束（忌口/食材/人数）→ 主路由生成菜谱；失败返回空串。"""
     try:
-        from plugins.bot_unified_runtime.capabilities.content_parser import (
+        from plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser import (
             _summarize_subtitle,  # 复用同一主路由调用范式
         )
 

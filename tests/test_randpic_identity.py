@@ -9,14 +9,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.randpic import (
-    build_randpic_capability,
-    is_randpic_command,
-    pick_random_image,
-)
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 from plugins.bot_unified_runtime.domains.chat_reply.character.session_identity import (
     SessionIdentityStore,
+)
+from plugins.bot_unified_runtime.domains.meme.capabilities.randpic import (
+    build_randpic_capability,
+    is_randpic_command,
+    pick_random_image,
 )
 
 # ---------- randpic：只读自定义文件夹，绝不自建 ----------

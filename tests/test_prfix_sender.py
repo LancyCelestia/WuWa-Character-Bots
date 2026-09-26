@@ -37,10 +37,12 @@ from plugins.bot_unified_runtime.domains.transport.sender import queue as queue_
 from plugins.bot_unified_runtime.domains.transport.sender import (
     receipts as receipts_module,
 )
+from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+    SQLiteSendRequestQueue,
+)
 from plugins.bot_unified_runtime.domains.transport.sender.receipts import (
     SQLiteReceiptRepository,
 )
-from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
 
 
 def _utc_now() -> datetime:

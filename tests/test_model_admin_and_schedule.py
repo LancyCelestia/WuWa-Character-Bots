@@ -5,19 +5,19 @@ from datetime import time as dt_time
 from pathlib import Path
 from types import SimpleNamespace
 
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_schedule import (
+    parse_model_schedule,
+    resolve_scheduled_model,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+    SETTABLE_KEYS,
+    RuntimeSettingsStore,
+)
 from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
     _handle_model_command,
 )
 from plugins.bot_unified_runtime.llm import LLMProviderError
 from plugins.bot_unified_runtime.llm.model_router import ModelRouter
-from plugins.bot_unified_runtime.runtime.model_schedule import (
-    parse_model_schedule,
-    resolve_scheduled_model,
-)
-from plugins.bot_unified_runtime.runtime.settings import (
-    SETTABLE_KEYS,
-    RuntimeSettingsStore,
-)
 
 
 def _temp_dir() -> Path:
@@ -192,7 +192,9 @@ def test_model_usage_aggregates_safe_diagnostics() -> None:
 
 
 def test_command_module_aliases_preserve_model_parameters() -> None:
-    from plugins.bot_unified_runtime.runtime.aliases import normalize_command_text
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.aliases import (
+        normalize_command_text,
+    )
 
     assert normalize_command_text("Model SET Terra") == "model set Terra"
     assert normalize_command_text("模型 添加 MyAPI model=Foo") == "model add MyAPI model=Foo"
@@ -201,7 +203,7 @@ def test_command_module_aliases_preserve_model_parameters() -> None:
 
 
 def test_model_help_is_unique_and_covers_runtime_controls() -> None:
-    from plugins.bot_unified_runtime.capabilities.echo import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
         _HELP_CATEGORIES,
         _HELP_ENTRIES,
         build_help_result,

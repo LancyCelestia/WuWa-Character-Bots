@@ -18,11 +18,11 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from plugins.bot_unified_runtime.character.shared_group import (
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.domains.chat_reply.character.shared_group import (
     NullSharedGroupContextProvider,
     build_shared_group_context_provider,
 )
-from plugins.bot_unified_runtime.config import Config
 
 _LISTED_GROUP = "1108838060"  # 与简报示例一致的真实群号（store 侧曾为 int）
 

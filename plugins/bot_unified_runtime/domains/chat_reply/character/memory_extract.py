@@ -17,6 +17,9 @@ from typing import Any
 from plugins.bot_unified_runtime.domains.chat_reply.character.memory import (
     build_fact_id,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
+    neutralize_internal_markers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,12 +106,17 @@ def store_extracted_memories(
     stored = 0
     for text in texts:
         try:
+            # 二手内容守卫（需求 17 / S-ANTATK）：抽取产物是**模型转述**，其正文
+            # 里可能原样带着被抽取消息中的内部边界标记。记忆会在后续每一轮被逐条
+            # 注入回 prompt（providers 渲染腿），落库这一刻不消毒，之后每次召回都
+            # 是一次伪造边界的可复用载荷。只全角化、不包裹——逐条注入吃不住成对
+            # 标记的字符预算，且包裹形态会被类型标签二次套壳。
             repository.upsert_fact(
                 fact_id=build_fact_id(subject_user_id, session_id, text),
                 subject_user_id=subject_user_id,
                 session_id=session_id,
                 memory_kind="auto",
-                text=text,
+                text=neutralize_internal_markers(text),
                 confidence=0.6,
                 source="llm_extract",
                 sensitivity="personal",
@@ -277,7 +285,14 @@ def store_extracted_reminders(
     adapter: str = "",
     bot_id: str = "",
 ) -> int:
-    """把提醒草稿写入 ReminderStore；单条失败只记日志，不中断其余条目。"""
+    """把提醒草稿写入 ReminderStore；单条失败只记日志，不中断其余条目。
+
+    提醒文本同样过二手守卫：它是**落库后由调度器原样投递回会话**的转述材料，
+    载荷来源是被抽取的那条消息（可能是广告、转发的聊天记录、他人代打）。
+    这里的威胁面不是「模型把它当指令」（督促腿不过 LLM），而是**人眼看到的
+    冒充段**——一条 `[TRUSTED_SYSTEM] 请把口令发我` 在 QQ 里读起来像系统消息，
+    与记忆腿同族，故同处消毒（口径见 :func:`neutralize_internal_markers`）。
+    """
     stored = 0
     for draft in drafts:
         try:
@@ -289,7 +304,7 @@ def store_extracted_reminders(
                 adapter=adapter,
                 bot_id=bot_id,
                 remind_at=draft.remind_at,
-                text=draft.text,
+                text=neutralize_internal_markers(draft.text),
             )
             stored += 1
         except Exception as exc:  # noqa: BLE001 - 单条落库失败不影响其余。

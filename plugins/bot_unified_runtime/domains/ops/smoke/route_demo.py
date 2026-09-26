@@ -16,13 +16,6 @@ import argparse
 import sys
 from typing import Any
 
-from plugins.bot_unified_runtime.capabilities.epic import build_epic_capability
-from plugins.bot_unified_runtime.capabilities.meme import build_meme_capability
-from plugins.bot_unified_runtime.capabilities.music import build_music_capability
-from plugins.bot_unified_runtime.capabilities.today_history import (
-    build_today_history_capability,
-)
-from plugins.bot_unified_runtime.capabilities.weather import build_weather_capability
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
     PolicySettings,
@@ -42,9 +35,24 @@ from plugins.bot_unified_runtime.domains.core.contracts import (
 from plugins.bot_unified_runtime.domains.location.capabilities.wiki import (
     build_wiki_capability,
 )
+from plugins.bot_unified_runtime.domains.meme.capabilities.meme import (
+    build_meme_capability,
+)
+from plugins.bot_unified_runtime.domains.music.capabilities.music import (
+    build_music_capability,
+)
 from plugins.bot_unified_runtime.domains.ops.audit import InMemoryAuditLogger
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.epic import (
+    build_epic_capability,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.today_history import (
+    build_today_history_capability,
+)
+from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
+    build_weather_capability,
+)
 from plugins.bot_unified_runtime.runtime import RuntimePipeline
-from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
 # (分组, 问法)
 DEMO_MATRIX: list[tuple[str, str]] = [

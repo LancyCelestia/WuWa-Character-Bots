@@ -42,12 +42,14 @@ from plugins.bot_unified_runtime.contracts import (
 from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
     pipeline as pipeline_module,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+    RuntimePipeline,
+)
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
     BotDecision,
     IncomingMessage,
 )
-from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
-from plugins.bot_unified_runtime.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
 
 _ROOT_INIT = Path(__file__).resolve().parents[1] / (
     "plugins/bot_unified_runtime/__init__.py"
@@ -370,6 +372,7 @@ def _enricher_with_failing_synthesize(
     bypass_gate: bool = False,
     **config_overrides: object,
 ):
+    import plugins.bot_unified_runtime.domains.media.tts.result_transform as rt
     import plugins.bot_unified_runtime.domains.media.voice_enricher as ve
 
     ref_file = tmp_path / "ref.wav"
@@ -379,7 +382,10 @@ def _enricher_with_failing_synthesize(
         # R8 专供：门链谓词归 tts.py 面（T75 席在飞改造，M-17 群面中央名单门
         # 已入 should_voice_reply）；本例测的是 issue 挂载与 A-19 不触发语义，
         # 旁路门链隔离他席在飞变化。键关纵深门（hook key/既有 issue）仍生效。
+        # S91 收编后门链在 hook（ve）与中央第三形（rt）两处判（should_voice_reply 纯谓词
+        # 幂等），故两处都钉，避免真身 re-gate 因群面名单缺位在测试里把它判否。
         monkeypatch.setattr(ve, "should_voice_reply", lambda *a, **k: True)
+        monkeypatch.setattr(rt, "should_voice_reply", lambda *a, **k: True)
     config = _hook_config(tmp_path, ref_file=ref_file, **config_overrides)
     return ve.build_voice_enricher(config), config
 
@@ -443,13 +449,18 @@ def test_r5c_missing_ref_audio_attaches_no_ref_issue(
 def test_r6_policy_refusal_no_issue_with_audit_tag(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """内容门拦（政策拒绝≠故障，T54 §4.1#2）：零 issue、留 audit_tag。"""
+    """内容门拦（政策拒绝≠故障，T54 §4.1#2）：零 issue、留 audit_tag。
+
+    S91 收编后取文/内容门在中央第三形真身 result_transform 里跑（不再是 hook 内联），
+    故替身钉在 rt 命名空间；产出步 seam（ve.synthesize）另插雷证明"政策拦就不触达合成"。
+    """
+    import plugins.bot_unified_runtime.domains.media.tts.result_transform as rt
     import plugins.bot_unified_runtime.domains.media.voice_enricher as ve
 
     monkeypatch.setattr(
-        ve,
+        rt,
         "resolve_speech_text",
-        lambda config, message, raw, *, max_chars=None: ("", "minors"),
+        lambda config, message, raw, **kw: ("", "minors"),
     )
     monkeypatch.setattr(
         ve, "synthesize", lambda **kwargs: pytest.fail("政策拒绝不得触达合成")

@@ -18,7 +18,9 @@ BOT_WEB_DECISION_*）当成"联网开关"，真正左右行为的是
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -98,6 +100,42 @@ def test_multi_chunk_corroboration_lifts_confidence() -> None:
     assert many > single, "多块佐证应提升置信度"
 
 
+def _confidence_without_production_clamp():
+    """进程内重建一枚**摘掉生产 clamp** 的同源函数（只用于自证本用例有牙）。
+
+    绝不写磁盘、绝不改动真身：取真身源码 → 把钳制表达式摘掉 → 在真身 globals 的
+    **副本**里编译执行。摘掉的正是
+    ``knowledge_confidence_from_evidence`` 末尾的 ``max(0.0, min(1.0, confidence))``。
+    """
+    source = textwrap.dedent(inspect.getsource(_qi.knowledge_confidence_from_evidence))
+    assert "max(0.0, min(1.0, confidence))" in source, (
+        "生产 clamp 已改形（或被删）——本文件的越界自证需按新形状重写，不得放宽"
+    )
+    namespace = dict(_qi.__dict__)
+    exec(  # noqa: S102 - 仅在本用例进程内编译摘毒版本，不落盘、不回填真身模块
+        compile(
+            source.replace("max(0.0, min(1.0, confidence))", "confidence"),
+            "<poison:confidence-clamp-removed>",
+            "exec",
+        ),
+        namespace,
+    )
+    return namespace["knowledge_confidence_from_evidence"]
+
+
+# 词面全命中的主题句 + 多条互相重叠的检索块：coverage 已到顶（1.0），
+# 佐证加分（cap 0.15）叠在其上 ⇒ 未钳制值最高 1.15，越界只可能由 clamp 挡住。
+_SATURATED_TOPIC = "守岸人负责保管声骸并引导共鸣者完成调律"
+
+
+def _saturated_evidence(chunk_count: int) -> list[str]:
+    tails = ["", "。", "，这条记录由泰缇斯系统保管。", "。调律由共鸣者执行。"]
+    return [
+        _SATURATED_TOPIC + (tails[index % len(tails)])
+        for index in range(max(1, chunk_count))
+    ]
+
+
 def test_confidence_is_deterministic_and_bounded() -> None:
     query = "弗洛洛 黑潮 残星会 是什么"
     evidence = ["弗洛洛隶属残星会，与黑潮事件相关。", "残星会是鸣潮中的组织。"]
@@ -105,6 +143,35 @@ def test_confidence_is_deterministic_and_bounded() -> None:
     second = knowledge_confidence_from_evidence(query, evidence)
     assert first == second, "同一输入必须逐次可复现（离线可复算）"
     assert 0.0 <= first <= 1.0
+
+    # ---- 越界加压（S13 验收补牙）：不用喂常量，靠自然输入把值顶出 1.0 ----
+    # 单块 = 纯覆盖度，天然恰好到顶，不经钳制；这一步先证明"到顶"不是 clamp 的功劳。
+    saturated_single = knowledge_confidence_from_evidence(_SATURATED_TOPIC, _saturated_evidence(1))
+    assert saturated_single == pytest.approx(1.0), saturated_single
+    # 两块起佐证加分开始叠在满格覆盖度之上（未钳制 = 1.05 / 1.10 / 1.15）。
+    assert knowledge_confidence_from_evidence(
+        _SATURATED_TOPIC, _saturated_evidence(2)
+    ) == pytest.approx(1.0)
+    many = knowledge_confidence_from_evidence(_SATURATED_TOPIC, _saturated_evidence(4))
+    assert many == pytest.approx(1.0), (
+        f"多块佐证把置信度顶出 1.0 时必须是 1.0，实测 {many} ⇒ 生产 clamp 失效"
+    )
+    assert 0.0 <= many <= 1.0
+
+
+def test_bound_is_a_real_clamp_not_a_vacuous_assertion() -> None:
+    """自证：上面那条越界分支真的只在 clamp 下成立（摘掉钳制即得 1.05/1.15）。
+
+    没有这一条，``<= 1.0`` 可能只是"输入本来就够不着 1"的假锁。
+    """
+    unclamped = _confidence_without_production_clamp()
+    assert unclamped(_SATURATED_TOPIC, _saturated_evidence(1)) == pytest.approx(1.0)
+    assert unclamped(_SATURATED_TOPIC, _saturated_evidence(2)) > 1.0
+    assert unclamped(_SATURATED_TOPIC, _saturated_evidence(4)) > 1.0
+    # 真身在同输入下必须被钳回 1.0（⇒ 摘毒后 test_confidence_is_deterministic_and_bounded 必红）。
+    assert knowledge_confidence_from_evidence(
+        _SATURATED_TOPIC, _saturated_evidence(4)
+    ) == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------

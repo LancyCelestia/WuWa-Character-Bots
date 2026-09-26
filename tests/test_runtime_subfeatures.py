@@ -10,10 +10,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.poke import resolve_poke_reply
 from plugins.bot_unified_runtime.control_plane.auth import Principal
 from plugins.bot_unified_runtime.control_plane.features import FeatureStateStore
 from plugins.bot_unified_runtime.control_plane.services import FeatureControlService
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.poke import (
+    resolve_poke_reply,
+)
 from plugins.bot_unified_runtime.domains.ops.features.feature_catalog import (
     build_product_descriptors,
 )
@@ -51,7 +53,25 @@ def test_subfeatures_have_executable_references_and_parent_state(control):
         tree = ast.parse(path.read_text(encoding="utf-8-sig"))
         assert any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == symbol for n in ast.walk(tree))
         assert descriptor.parent_id and descriptor.documentation_refs
-        assert store.get(descriptor.id).effective_enabled
+        # 缺省态判据从「一律 True」改成「等于自己声明的缺省档」：
+        # 2026-09-25 goal-12 波补登记 ``bot.plugin.chat.reactions.meme``（情绪时刻
+        # 发一张表情包）时显式 default_enabled=False —— 一条**新增的自动外发腿**
+        # 不许未经用户点头就自己上现网。旧断言把那枚合理登记判成失败（原红＝
+        # 常驻断言与"新增腿默认关"这条纪律互斥），改成本式后仍然执法两件事：
+        # ① 声明 True 的一旦被父链/依赖带关仍会红；② 声明与实况不符也红。
+        assert store.get(descriptor.id).effective_enabled == descriptor.default_enabled
+        if not descriptor.default_enabled:
+            # 默认关 ≠ 打不开：超管必须能把它拨到 True（否则登记是假的）。
+            service.change(
+                descriptor.id, True, principal=ADMIN,
+                expected_version=service.detail(descriptor.id)["state"]["version"],
+            )
+            assert store.get(descriptor.id).effective_enabled
+            service.change(
+                descriptor.id, False, principal=ADMIN,
+                expected_version=service.detail(descriptor.id)["state"]["version"],
+            )
+            assert not store.get(descriptor.id).effective_enabled
     disable(service, "bot.ingress")
     assert not store.get("bot.ingress.file_read").effective_enabled
     assert store.get("bot.plugin.chat").effective_enabled

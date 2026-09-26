@@ -6,6 +6,11 @@ tests/test_memory_service_v21.py（41 例契约）+ docs/db-owners.md §二登�
 
 表（均 ensure_schema 幂等建，WAL+busy_timeout=1000ms）：
 - memory_entries_v21：记忆行，永不 DELETE（遗忘=status 翻 forgotten）
+  - status 取值面：``active``（可召回）/ ``pending_review``（低置信归纳，写侧
+    可被确认与升格，但召回口不收）/ ``forgotten``（用户亲自抹掉，配墓碑）/
+    ``superseded``（S-T-MEM-1 写腿新增：身份属性类槽位「一个属性只有一个当前
+    值」，改口时旧行翻此值——**行不删、文本不改**，新行以 ``supersedes`` 指回
+    它并给它记一次 ``contradict_count``，故裁决留痕可审，不是静默覆盖）
 - memory_tombstones_v21：墓碑（遗忘/拒绝双记录），重建/恢复不复活的依据
 - memory_identity_bindings_v21：跨平台身份绑定（只增不改）
 - memory_index_v21：可再生投影（rebuild_projection 重建，可整表清）
@@ -497,11 +502,27 @@ class MemoryStoreV21:
             return False
         return self.update_entry(memory_id, writable)
 
-    def list_slot_rows(self, *, owner_id: str, slot_key: str) -> list[dict[str, Any]]:
-        """同 owner 同槽位的存活行（墓碑排除）——写入侧确认/矛盾判定的取数口。"""
-        with self._lock:
-            rows = self._connection.execute(
-                """
+    def list_slot_rows(
+        self,
+        *,
+        owner_id: str,
+        slot_key: str,
+        scope_kind: str | None = None,
+        scope_key: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """同 owner 同槽位的存活行（墓碑排除）——写入侧确认/矛盾判定的取数口。
+
+        ``scope_kind``/``scope_key`` 给定时按**列等值**把合并窗口收在本作用域内
+        （S-T-MEM-1 写腿修法）。不收窗会造出一个数据消失级缺陷：先在群 A 说
+        「我喜欢柠檬茶」落 group_member 作用域行，之后在私聊再说一次 → 同槽同
+        极性判「确认」→ 不建行，而那行的作用域是群 A；召回口按 scope_key 等值
+        取数（见 ``list_bus_candidates``），私聊这边结构上看不见它 ⇒ 用户第二
+        次说等于白说。跨作用域**不合并**才是可解释的一侧。
+
+        缺省 None=不限作用域，只留给既有只读调用方；总线写侧一律显式传值。
+        判据是列等值，绝不做前缀/包含猜键。
+        """
+        sql = """
                 SELECT e.* FROM memory_entries_v21 e
                 WHERE e.owner_id = ? AND e.slot_key = ?
                   AND e.status IN ('active', 'pending_review')
@@ -509,10 +530,17 @@ class MemoryStoreV21:
                       SELECT 1 FROM memory_tombstones_v21 t
                       WHERE t.memory_id = e.memory_id
                   )
-                ORDER BY e.created_at ASC, e.memory_id ASC
-                """,
-                (owner_id, slot_key),
-            ).fetchall()
+            """
+        params: list[Any] = [owner_id, slot_key]
+        if scope_kind is not None:
+            sql += " AND e.scope_kind = ?"
+            params.append(scope_kind)
+        if scope_key is not None:
+            sql += " AND e.scope_key = ?"
+            params.append(scope_key)
+        sql += " ORDER BY e.created_at ASC, e.memory_id ASC"
+        with self._lock:
+            rows = self._connection.execute(sql, tuple(params)).fetchall()
         return [dict(row) for row in rows]
 
     def list_forgotten_slot_rows(

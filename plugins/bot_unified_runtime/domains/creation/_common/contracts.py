@@ -27,7 +27,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from enum import Enum
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import (
     BaseModel,
@@ -289,10 +289,22 @@ class AssetRef(CreationContractBase):
 
     输入图获取走 DownloadBroker（对齐 SEARCH-002 面），不接任意 URL 抓取
     （指南 §11 L258）；``pixel_count`` 由资产元数据带入，超 20MP 拒绝。
+
+    ``weight``＝风格参考强度（八段第 2 段"参考图与权重"此前全域零命中的补齐位，
+    SEAT-S04 §1 判定为真缺）。仅对**输入**参考图（image_to_image/inpaint 的
+    ``assets``）有意义：值域 ``0.0..1.0``，``None``＝不给权重（沿用 provider 缺省，
+    绝不猜一个强度）。输出侧 ``asset_id`` 复用同一 DTO，其 ``weight`` 恒 ``None``
+    （产物没有"被参考的强度"这回事）——刻意共用同一真身而非另立 ``ImageInputRef``
+    子类，正是为守住"禁第二真身"：资产引用只此一家，多余字段靠语义而非克隆类型隔离。
+    它是幂等身份的一部分（``model_dump`` 逐层序列化，改权重即改请求身份），
+    故 parity 侧无需为它另开顶层用例。
     """
 
     asset_id: str = Field(min_length=1, max_length=128, pattern=ASSET_ID_PATTERN)
     pixel_count: int | None = Field(default=None, ge=1, le=IMAGE_MAX_INPUT_PIXELS)
+    #: 风格参考强度：0.0（几乎不参照）..1.0（强参照）；None=不给权重。
+    #: 值域由 ``ge``/``le`` 执法，基类 ``allow_inf_nan=False`` 已排除 NaN/Inf。
+    weight: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @field_validator("asset_id")
     @classmethod
@@ -368,6 +380,14 @@ CreationErrorCode = Literal[
     "budget_exceeded",
 ]
 
+#: 生成标识（水印）的**在册种类**，八段第 8 段"水印"半腿的唯一清单（SEAT-S89）。
+#: 封闭集而非自由字符串：自由字符串会让 "watermark"/"wm"/"已加水印" 三种写法各自为家，
+#: 下游想判"这张图标过没有"就只能猜。``"none"`` 是一个**明确的否定声明**，不是缺省占位。
+#: ⚠ 这里只有"种类"，没有任何打标实现——mandate 明禁"预留实现（未做写成做）"。
+MarkingKind = Literal["none", "visible_watermark", "implicit_metadata", "c2pa_manifest"]
+
+MARKING_KINDS: frozenset[str] = frozenset(get_args(MarkingKind))
+
 #: code → HTTP 状态（§9.1.1 参数校验与错误码段）。
 CREATION_ERROR_CATALOG: dict[CreationErrorCode, int] = {
     "unsupported_parameter": 422,
@@ -407,6 +427,93 @@ DECLARED_OUTPUT_PROTOCOL_DTO_FIELDS: Mapping[str, str] = {
 NON_TERMINAL_JOB_STATES: frozenset[CreationJobState] = frozenset(
     set(CreationJobState) - TERMINAL_JOB_STATES
 )
+
+
+class CreationProvenance(CreationContractBase):
+    """C2PA 式溯源位（八段第 8 段，SEAT-S04 §1-8 判定为唯一"加字段才算补全"的缺口）。
+
+    回答"这条产物是谁、用什么、依什么提示词、何时、按什么许可生成的"。为什么必须
+    是独立 DTO 而不是塞进 ``ImageAssetRecord`` 的散字段：EXIF 出站前被 ``exif_sanitized``
+    **强制 True 主动剥净**（image/contracts.py），嵌入元数据一条不留；若来源信息也只活
+    在嵌入位里，产物出站即"出处全盲"。本 DTO 就是那枚**旁车**——剥掉的归剥，来源另有
+    其位，``exif_stripped`` 显式声明"嵌入已清、来源在此"。
+
+    三条硬约束（都写成可执法形态，不只是散文）：
+    - **提示词只落摘要、绝不落原文**：``prompt_digest`` 收 64 hex（幂等 preimage 含
+      prompt 原文、绝不出站，与 :func:`idempotency_preimage` docstring 同一口径），
+      形态由 ``DIGEST64_PATTERN`` 钉死，原文塞不进这个字段；
+    - **生成时刻必带时区且归一 UTC**：``generated_at`` 与 ``CreationJob.updated_at``
+      语义分开——前者=产物生成时刻，后者=状态变更时刻，不可互相顶替；
+    - **许可声明不得为空**：``license_statement`` 至少一句话，禁止"出处全默认"。
+    """
+
+    generator_principal: str = Field(min_length=1, max_length=128)
+    provider: str = Field(min_length=1, max_length=128)
+    model: str = Field(min_length=1, max_length=128)
+    #: 提示词摘要（64 hex）；不收原文——原文只在幂等 preimage 内存里活一次，绝不出站。
+    prompt_digest: str = Field(pattern=DIGEST64_PATTERN)
+    generated_at: datetime
+    license_statement: str = Field(min_length=1, max_length=512)
+    #: 嵌入元数据是否已被剥净（现网硬约束=剥净，来源靠本 DTO 补回，二者必须同读）。
+    exif_stripped: bool = False
+    #: 生成标识的**种类**（八段第 8 段"水印"半腿）：只声明形态，不含任何打标实现。
+    marking: MarkingKind = "none"
+    #: 这张产物上**是否真的**应用了上述标识。与 ``marking`` 互为条件，见类体内注释。
+    marking_applied: bool = False
+    #: 标识的责任主体（谁打的标／按什么口径）；未打标时留空是诚实，不是漏填。
+    marking_actor: str = Field(default="", max_length=128)
+
+    @field_validator("generated_at")
+    @classmethod
+    def _aware_generated_at(cls, value: datetime) -> datetime:
+        return _require_aware_utc("generated_at", value)
+
+    @field_validator("prompt_digest")
+    @classmethod
+    def _digest_is_not_raw_prompt(cls, value: str) -> str:
+        # 双保险：pattern 已挡原文形态，这里再显式拒绝"看起来像整句提示词"的值，
+        # 防止有人日后放宽 DIGEST64_PATTERN 时悄悄把原文放进来。
+        if len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value):
+            raise ValueError("prompt_digest 必须是 64 位小写十六进制摘要，不得为提示词原文")
+        return value
+
+    # -- 八段第 8 段的**另一半**：水印/标识元数据（SEAT-S89 补，修前全域零载体）------
+    #
+    # 现算证据：``grep -ri "watermark|水印" domains/creation/`` 修前 = 0 命中。SEAT-S04
+    # 当年把第 8 段整段读成"C2PA 式溯源位"，只补了来源半腿，漏判了 mandate 原文里的
+    # "来源**与水印**元数据"半句——那条八段因此一直是"看起来齐了"的两半缺一。
+    #
+    # 为什么这必须是**可执法的数据契约**而不是一个字符串注释：AI 生成物的标识义务
+    # （可见水印／隐式元数据／C2PA 清单）与"产物出处"是两件事，且它的典型谎言形态恰好
+    # 是"声称标了其实没标"。所以两个字段必须**互为条件**，而不是各填各的：
+    #   marking_applied=True  ⇔  marking != "none"
+    # 只声明种类却没应用 ⇒ 拒；说应用了却选"none" ⇒ 拒。两头都堵在类型层。
+    #
+    # 缺省＝("none", False)＝"这张产物没有携带任何生成标识"——这是**生产者的一次明确声明**，
+    # 不是"未知"。真正的未知由上一层表达：provider 未接时 ``provenance is None``（诚实
+    # "无溯源可报"），故本 DTO 一旦被构造出来就没有"留空当没说过"这条路。
+    # ⚠ 本席**不**实现任何打标算法（那是"预留实现"，mandate 明禁）；本件只声明
+    # "有没有标、以何种方式标、由谁负责"这一事实形状，供执行面如实回填。
+    def _check_marking_pair(self) -> CreationProvenance:
+        if self.marking_applied and self.marking == "none":
+            raise ValueError(
+                "marking_applied=True 却选 marking='none'：声称打了标识却没有标识种类"
+            )
+        if not self.marking_applied and self.marking != "none":
+            raise ValueError(
+                f"声明了 marking={self.marking!r} 却 marking_applied=False："
+                "『有这种标记』与『这张图上真打了』是两件事，不得只填前者冒充后者"
+            )
+        if self.marking_applied and not self.marking_actor.strip():
+            raise ValueError(
+                "打了标识却不写责任主体 marking_actor：无人认领的标识声明不可归因"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _provenance_invariants(self) -> CreationProvenance:
+        """溯源与标识两条不变量的**唯一**出口（aware-UTC 由 field_validator 先把）。"""
+        return self._check_marking_pair()
 
 
 class CreationJob(CreationContractBase):
@@ -500,6 +607,7 @@ __all__ = [
     "IDEMPOTENCY_SELF_FIELD",
     "IMAGE_MAX_INPUT_PIXELS",
     "JOB_STATES",
+    "MARKING_KINDS",
     "NON_TERMINAL_JOB_STATES",
     "TERMINAL_JOB_STATES",
     "TOKEN_METRIC_NAMES",
@@ -511,6 +619,8 @@ __all__ = [
     "CreationErrorCode",
     "CreationJob",
     "CreationJobState",
+    "CreationProvenance",
+    "MarkingKind",
     "QuantityStatus",
     "UsageLine",
     "_require_aware_utc",

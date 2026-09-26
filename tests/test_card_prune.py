@@ -25,9 +25,6 @@ import pytest
 # v21r2 reorg W5：monkeypatch 必须打真身模块（垫片壳 setattr 进不去真身全局）。
 import plugins.bot_unified_runtime.domains.divination.capabilities.divination as divination_module
 import plugins.bot_unified_runtime.domains.subscribe.capabilities.today_history as today_history_module
-from plugins.bot_unified_runtime.capabilities.today_history import (
-    build_today_history_capability,
-)
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     IncomingMessage,
@@ -35,6 +32,9 @@ from plugins.bot_unified_runtime.contracts import (
 )
 from plugins.bot_unified_runtime.domains.divination.capabilities.divination import (
     build_divination_capability,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.today_history import (
+    build_today_history_capability,
 )
 from plugins.bot_unified_runtime.domains.subscribe.feeds.today_history import (
     HistoryEvent,

@@ -23,7 +23,8 @@ from plugins.bot_unified_runtime import (
     _push_daily_assist_private,
     _register_daily_assist_scheduler,
 )
-from plugins.bot_unified_runtime.capabilities.daily_assist import (
+from plugins.bot_unified_runtime.contracts import PrivacyLevel, SendPolicy, SessionType
+from plugins.bot_unified_runtime.domains.assistant.daily.capabilities.daily_assist import (
     _CAPTURE_VARIANTS,
     _HELP_VARIANTS,
     _QUERY_EMPTY_VARIANTS,
@@ -31,7 +32,6 @@ from plugins.bot_unified_runtime.capabilities.daily_assist import (
     build_daily_assist_capability,
     is_daily_assist_command,
 )
-from plugins.bot_unified_runtime.contracts import PrivacyLevel, SendPolicy, SessionType
 from plugins.bot_unified_runtime.domains.assistant.daily.store.daily_assist import (
     _EVENING_IDEA_NUDGES,
     _EVENING_INBOX_COUNTED_LINES,

@@ -57,7 +57,7 @@ def test_resolve_local_memory_hit_skips_remote(
     )
 
     url = asyncio.run(_resolve_bot_avatar_url(bot, config))
-    assert url == avatar_file.as_uri()  # 本地 file URI 直出
+    assert url == bot_avatar.inline_avatar_uri(avatar_file)  # 本地 file URI 直出
     assert calls == []  # 零远端调用：600s 周期回源被消灭
 
 
@@ -77,7 +77,7 @@ def test_resolve_disk_fallback_when_memory_empty(
     )
 
     url = asyncio.run(_resolve_bot_avatar_url(bot, config))
-    assert url == avatar_file.as_uri()  # 磁盘兜底发现并激活
+    assert url == bot_avatar.inline_avatar_uri(avatar_file)  # 磁盘兜底发现并激活
     assert calls == []
 
 
@@ -94,7 +94,7 @@ def test_discover_picks_newest_avatar_file(_isolated, tmp_path: Path) -> None:
     config = SimpleNamespace(
         bot_persona_avatar_url="", bot_runtime_data_dir=str(tmp_path)
     )
-    assert bot_avatar.bot_avatar_uri(config) == new_file.as_uri()  # 取最新 mtime
+    assert bot_avatar.bot_avatar_uri(config) == bot_avatar.inline_avatar_uri(new_file)  # 取最新 mtime
 
 
 def test_resolve_local_missing_goes_remote(_isolated, tmp_path: Path) -> None:
@@ -225,12 +225,12 @@ def test_file_appears_after_ttl_returns_uri_then_memory_shortcut(
     avatar_file.write_bytes(_PNG)  # 期间头像文件落盘
 
     clock.advance(301.0)  # TTL 过期 → 重探发现
-    assert bot_avatar.bot_avatar_uri(config) == avatar_file.as_uri()
+    assert bot_avatar.bot_avatar_uri(config) == bot_avatar.inline_avatar_uri(avatar_file)
     assert len(globs) == 2
 
     # 正结果登记内存后：内存短路，再推进时间也不探测（既有语义不变）。
     clock.advance(10_000.0)
-    assert bot_avatar.bot_avatar_uri(config) == avatar_file.as_uri()
+    assert bot_avatar.bot_avatar_uri(config) == bot_avatar.inline_avatar_uri(avatar_file)
     assert len(globs) == 2
 
 
@@ -284,12 +284,12 @@ def test_empty_bot_id_matches_legacy_chain_byte_identical(_avt1, tmp_path) -> No
     (avatar_file / "avatar").mkdir(parents=True)
     legacy = avatar_file / "avatar" / "bot_10000.png"
     legacy.write_bytes(_PNG)
-    assert bot_avatar.bot_identity("", cfg2).avatar_uri == legacy.as_uri()
-    assert bot_avatar.bot_avatar_uri(cfg2) == legacy.as_uri()
+    assert bot_avatar.bot_identity("", cfg2).avatar_uri == bot_avatar.inline_avatar_uri(legacy)
+    assert bot_avatar.bot_avatar_uri(cfg2) == bot_avatar.inline_avatar_uri(legacy)
 
     # 新槽位零经过：空 bot_id 不查注册表（注册键 10000 不命中）不叫解析器。
     assert seen == []
-    assert bot_avatar.bot_identity("   ", cfg2).avatar_uri == legacy.as_uri()  # 纯空白=空
+    assert bot_avatar.bot_identity("   ", cfg2).avatar_uri == bot_avatar.inline_avatar_uri(legacy)  # 纯空白=空
     assert seen == []
 
 
@@ -316,8 +316,8 @@ def test_per_instance_avatar_isolated_by_filename(_avt1, tmp_path) -> None:
     # 主号更新（旧「取最新」口径会先选中它）；逐实例口径必须按名命中。
     os.utime(main, (2_000_000_000, 2_000_000_000))
     os.utime(campus, (1_000_000_000, 1_000_000_000))
-    assert bot_avatar.bot_identity("2300230562", cfg).avatar_uri == campus.as_uri()
-    assert bot_avatar.bot_identity("10000", cfg).avatar_uri == main.as_uri()
+    assert bot_avatar.bot_identity("2300230562", cfg).avatar_uri == bot_avatar.inline_avatar_uri(campus)
+    assert bot_avatar.bot_identity("10000", cfg).avatar_uri == bot_avatar.inline_avatar_uri(main)
 
 
 def test_per_instance_zero_size_file_skipped_then_global(_avt1, tmp_path) -> None:
@@ -340,9 +340,9 @@ def test_non_numeric_bot_id_skips_disk_lookup(_avt1, tmp_path) -> None:
     adir.mkdir(parents=True)
     (adir / "bot_10000.png").write_bytes(_PNG)
     # 非 QQ 号形态（如 TG 侧键）不做 bot_<id>.png 拼接，直接全局回落。
-    assert bot_avatar.bot_identity("tg:42", cfg).avatar_uri == (
+    assert bot_avatar.bot_identity("tg:42", cfg).avatar_uri == bot_avatar.inline_avatar_uri(
         adir / "bot_10000.png"
-    ).as_uri()  # 磁盘兜底发现（旧链）而非 tg 专属文件
+    )  # 磁盘兜底发现（旧链）而非 tg 专属文件
 
 
 # ③ 名字四级链：显式登记 > 装配层解析器 > 人格配置名 > 空。
@@ -419,7 +419,7 @@ def test_registry_and_single_slot_isolation(_avt1, tmp_path) -> None:
         "2300230562", name="校园守", avatar_uri="file:///campus.png"
     )
     # 登记不碰全局槽位：旧链逐字节不变。
-    assert bot_avatar.bot_avatar_uri(cfg) == main_file.as_uri()
+    assert bot_avatar.bot_avatar_uri(cfg) == bot_avatar.inline_avatar_uri(main_file)
     assert bot_avatar._LOCAL_AVATAR_URI == main_file.as_uri()
     # 全局槽位不碰注册结果：注册头像优先于回落链。
     campus = bot_avatar.bot_identity("2300230562", cfg)
@@ -427,7 +427,7 @@ def test_registry_and_single_slot_isolation(_avt1, tmp_path) -> None:
     assert campus.avatar_uri == "file:///campus.png"
     # 空 bot_id 走全局槽位，不串注册表。
     legacy = bot_avatar.bot_identity("", cfg)
-    assert legacy.avatar_uri == main_file.as_uri()
+    assert legacy.avatar_uri == bot_avatar.inline_avatar_uri(main_file)
     assert legacy.name == _PERSONA
 
 
@@ -484,3 +484,66 @@ def test_bot_identity_is_frozen_value_object(_avt1) -> None:
     identity = bot_avatar.bot_identity()
     with pytest.raises(dataclasses.FrozenInstanceError):
         identity.name = "改不动"  # type: ignore[misc]
+
+# --- 公开读取口永不吐 file://（2026-09-25 真卡碎图根修） -------------------
+
+
+def test_no_public_getter_ever_returns_file_uri(_isolated, tmp_path: Path) -> None:
+    """卡片走 ``set_content`` 装页，Chromium 拒收 ``file://`` 子资源。
+
+    诊断卡先修过这件事（`error_report._card_avatar_uri`），help 卡没修，于是她
+    点名「左上角头像没加载出来，成了空白占位」。内联收进本模块的公开读取口后，
+    这条锁钉住**所有**出口：单实例、空 bot_id、逐实例三条路径一律 data URI。
+    内部槽位仍存 file URI（那是身份登记的稳定形态），所以这里同时钉住
+    「内部没被顺手改成 data URI」——两头都锁，防止日后有人把内联挪回调用方。
+    """
+    (tmp_path / "avatar").mkdir()
+    main = tmp_path / "avatar" / "bot_10000.png"
+    main.write_bytes(_PNG)
+    cfg = SimpleNamespace(bot_persona_avatar_url="", bot_runtime_data_dir=str(tmp_path))
+
+    single = bot_avatar.bot_avatar_uri(cfg)
+    empty_key = bot_avatar.bot_identity("", cfg).avatar_uri
+    per_instance = bot_avatar.bot_identity("10000", cfg).avatar_uri
+    for label, value in (
+        ("bot_avatar_uri", single),
+        ("bot_identity('')", empty_key),
+        ("bot_identity('10000')", per_instance),
+    ):
+        assert value.startswith("data:image/"), f"{label} 未内联：{value[:40]!r}"
+        assert not value.startswith("file:"), f"{label} 把 file URI 交给了卡片"
+    assert single == bot_avatar.inline_avatar_uri(main)  # 取的就是这个文件
+    assert bot_avatar._LOCAL_AVATAR_URI == main.as_uri()  # 内部槽位仍是路径
+
+
+def test_registered_value_that_cannot_be_inlined_survives(_avt1, tmp_path: Path) -> None:
+    """内联是机会主义不是裁决：读不到的登记值必须原样回，不许被抹成空串。
+
+    与上一条配对看——「卡片拿到的必须是能渲染的」不能靠牺牲「登记什么读出什么」
+    来换（AVT1 ⑤ 注册表隔离）。真文件走内联，登记来的标识符原样透传。
+    """
+    bot_avatar.register_identity("2300230562", name="校园守", avatar_uri="file:///nope.png")
+    cfg = SimpleNamespace(bot_persona_avatar_url="", bot_runtime_data_dir=str(tmp_path))
+    identity = bot_avatar.bot_identity("2300230562", cfg)
+    assert identity.avatar_uri == "file:///nope.png"
+    assert identity.name == "校园守"
+
+
+def test_http_and_data_values_pass_through_untouched(_isolated, tmp_path: Path) -> None:
+    """显式配置的 http／data 值原样透传——内联只治本地文件这一类。"""
+    cfg_http = SimpleNamespace(
+        bot_persona_avatar_url="https://example.com/a.png", bot_runtime_data_dir=str(tmp_path)
+    )
+    assert bot_avatar.bot_avatar_uri(cfg_http) == "https://example.com/a.png"
+    inline = "data:image/png;base64,AAAA"
+    assert bot_avatar.inline_avatar_uri(inline) == inline
+
+
+def test_oversize_and_non_image_files_return_empty_not_broken_uri(_isolated, tmp_path: Path) -> None:
+    """超大／非图片回空串（由模板回落「守」字圆点），绝不回一个渲染不出来的 URI。"""
+    big = tmp_path / "bot_10000.png"
+    big.write_bytes(b"x" * (bot_avatar._AVATAR_INLINE_MAX_BYTES + 1))
+    assert bot_avatar.inline_avatar_uri(big) == ""
+    txt = tmp_path / "bot_10000.txt"
+    txt.write_text("不是图", encoding="utf-8")
+    assert bot_avatar.inline_avatar_uri(txt) == ""

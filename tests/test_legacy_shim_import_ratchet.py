@@ -17,7 +17,10 @@ from __future__ import annotations
 
 import ast
 import collections
+import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LEGACY_PKG = "plugins.bot_unified_runtime.capabilities"
@@ -77,11 +80,26 @@ def live_shim_leaves() -> frozenset[str]:
     return frozenset(leaves)
 
 
-def _edges_in_tree(tree: ast.AST, leaves: frozenset[str]) -> int:
+def _edges_in_tree(tree: ast.AST, leaves: frozenset[str], *, source_pkg: str = "") -> int:
+    """同一把尺补「相对形态」腿（S146：旧版对 level>=1 的 `node.module` 是短名
+    （如 `capabilities.chat`），永不等 `LEGACY_PKG` => 相对 import 全盲）。
+
+    锚点口径与 `shim_retirement_census._file_package_dotted` 修后一字同构
+    （PEP 366：当前包=父目录；`__init__.py` 即其目录）。两尺不互 import——
+    防耦合；同构性由毒形③④+反向锁各测各的，改动任一尺必在另一尺当场失配现红。
+    """
     total = 0
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            module = node.module or ""
+            if node.level:
+                segs = source_pkg.split(".") if source_pkg else []
+                up = node.level - 1
+                if up > len(segs):
+                    continue  # 越过顶层＝该 import 本身非法，两把尺同口径不计
+                anchor = ".".join(segs[: len(segs) - up])
+                module = ".".join(p for p in (anchor, node.module) if p)
+            else:
+                module = node.module or ""
             if module == LEGACY_PKG:
                 total += sum(1 for a in node.names if a.name in leaves)
             elif module.startswith(LEGACY_PKG + ".") and module.rsplit(".", 1)[-1] in leaves:
@@ -93,9 +111,16 @@ def _edges_in_tree(tree: ast.AST, leaves: frozenset[str]) -> int:
     return total
 
 
-def edges_in_source(source: str, filename: str = "<memory>") -> int:
-    """单一取数口：既服务全树扫描，也服务注毒（内存源码即可，不碰树）。"""
-    return _edges_in_tree(ast.parse(source, filename=filename), live_shim_leaves())
+def edges_in_source(
+    source: str, filename: str = "<memory>", *, source_pkg: str = ""
+) -> int:
+    """单一取数口：既服务全树扫描，也服务注毒（内存源码即可，不碰树）。
+
+    `source_pkg`＝样本的当前包点号名（缺省空＝无相对锚，等价旧行为）。
+    """
+    return _edges_in_tree(
+        ast.parse(source, filename=filename), live_shim_leaves(), source_pkg=source_pkg
+    )
 
 
 def _collect_over(roots: tuple[str, ...], leaves: frozenset[str]) -> dict[str, int]:
@@ -105,7 +130,11 @@ def _collect_over(roots: tuple[str, ...], leaves: frozenset[str]) -> dict[str, i
             rel = path.as_posix()
             if rel.startswith("plugins/bot_unified_runtime/capabilities/"):
                 continue
-            count = _edges_in_tree(ast.parse(path.read_text(encoding="utf-8"), filename=rel), leaves)
+            count = _edges_in_tree(
+                ast.parse(path.read_text(encoding="utf-8"), filename=rel),
+                leaves,
+                source_pkg=".".join(rel.split("/")[:-1]),  # PEP 366 当前包（同 P1 修后口径）
+            )
             if count:
                 per_file[rel] = count
     return dict(per_file)
@@ -229,19 +258,62 @@ def test_scan_scope_did_not_collapse() -> None:
     files = scanned_file_count()
     assert files >= MIN_SCANNED_FILES, f"只扫到 {files} 个文件（下限 {MIN_SCANNED_FILES}）＝扫描面塌陷"
     per_file = collect_legacy_shim_edges()
-    assert per_file, "一条旧垫片 import 都没数到——要么全迁完了（那请同时删本门并留说明），要么取数口坏了"
     leaves = live_shim_leaves()
-    assert leaves, "垫片清单为空但上面还数得到边＝两份判据不一致，取数口必坏"
-    # 命中数与"逐文件明细"必须同源（防"总数另算一套"）
+    assert leaves, "垫片清单为空＝扫描不到任何在册 capabilities 垫片，取数口对垫片族失明"
+    # 生产侧旧写法 import 边**允许为 0**（2026-09-24 S188 现算核实：4 枚在册垫片
+    # auto_send/chat/content_parser/market 全树零 import 边＝真迁完的可摘牌前置态；旧断言
+    # 「必须数到东西」把这一正向进展误判成红，即 S136 §4 记过的存量红）。但「0」的可信度不能
+    # 白给——它绑在**正控**上：取数口必须仍能数到一段确含旧写法的合成源码，否则这个 0 究竟是
+    # 「真迁完」还是「取数口静默恒 0」根本不可判别。此正控**只走本尺自己的 `edges_in_source`**，
+    # 不去 import `shim_retirement_census` 求「跨册等值」——两尺不互 import 是本门既立的防耦合约束，
+    # 且册口径比尺宽（含 monkeypatch/importlib 点号串与非-init 相对边），硬对等会在真实树上假红
+    # （现算实证：`capabilities/content_parser` 被 `tests/test_eat_image_quality.py:198` 以
+    # monkeypatch 串引＝册 refs 1 而尺 import 边 0，属两尺量不同类，非取数口坏）。改道细节见 S188 报告 §3。
+    leaf0 = min(leaves)
+    assert edges_in_source(f"from {LEGACY_PKG}.{leaf0} import anything\n") >= 1, (
+        f"正控（合成 `from {LEGACY_PKG}.{leaf0} import ...`）只数到 0＝取数口对 capabilities 族失明，"
+        f"本门的『生产侧 0 边』不可信（要么真迁完要么坏了，先修取数口再谈摘门）"
+    )
+    # 命中数与"逐文件明细"必须同源（防"总数另算一套"）；per_file 为空时两侧同为 0，等值平凡成立。
     assert sum(per_file.values()) == sum(
-        edges_in_source((REPO_ROOT / rel).read_text(encoding="utf-8"), rel) for rel in per_file
+        edges_in_source(
+            (REPO_ROOT / rel).read_text(encoding="utf-8"),
+            rel,
+            # 与 collect_* 同口径带当前包，否则这条自洽锁对相对腿是**单边失明**：
+            # 今天靠「全树相对边恰好 0 条」蒙绿，明天加一枚相对 import 就两头不等。
+            source_pkg=".".join(rel.split("/")[:-1]),
+        )
+        for rel in per_file
     )
     # 第二本账同样要有扫描面地板，否则它也能被"改 glob"做没
     test_files = scanned_file_count(TESTS_SCAN_ROOTS)
     assert test_files >= MIN_SCANNED_TEST_FILES, (
         f"测试侧只扫到 {test_files} 个文件（下限 {MIN_SCANNED_TEST_FILES}）＝测试侧扫描面塌陷"
     )
-    assert collect_tests_legacy_shim_edges(), "测试侧一条都没数到＝取数口对 tests/ 失明"
+    # 测试侧旧写法 import 边**允许为 0**（2026-09-24 S188 现算：prod 与 tests 两侧命中面皆空
+    # ＝4 枚在册 capabilities 垫片旧 import 写法全迁完，可摘牌前置态）。旧断言「测试侧必须数到
+    # 东西」与生产侧同型、同样把正向迁移误判成红；但它不能换成永真式（那是放宽判据）。改钉与生产侧
+    # 同构的**非空转自洽锁**：命中数必须等于「从源码逐文件重算」的和——空则两侧同为 0（平凡成立），
+    # 一旦有边而两算不等当场红。真正防「取数口静默恒 0」的牙在共用的正控上（见
+    # `test_zero_edges_is_trusted_only_via_positive_control`），两本账走同一把尺，尺坏即现形。
+    tests_per_file = collect_tests_legacy_shim_edges()
+    assert sum(tests_per_file.values()) == sum(
+        edges_in_source(
+            (REPO_ROOT / rel).read_text(encoding="utf-8"),
+            rel,
+            source_pkg=".".join(rel.split("/")[:-1]),
+        )
+        for rel in tests_per_file
+    ), "测试侧命中总数与逐文件明细不等＝总数另算一套"
+
+
+def test_zero_edges_is_trusted_only_via_positive_control(monkeypatch: pytest.MonkeyPatch) -> None:
+    """给正控「有牙」：把本尺取数口对 capabilities 的判定改坏（`edges_in_source` 恒 0），
+    `test_scan_scope_did_not_collapse` 必须当场红——证明「生产侧允许 0 边」不等于「无条件放行 0」，
+    0 的可信度绑在正控上，取数口一坏即现形。此发只 stub 本尺内存函数，不碰树、不与他尺耦合。"""
+    monkeypatch.setattr(sys.modules[__name__], "edges_in_source", lambda *a, **k: 0)
+    with pytest.raises(AssertionError, match="正控"):
+        test_scan_scope_did_not_collapse()
 
 
 def test_new_legacy_import_is_caught() -> None:
@@ -251,5 +323,41 @@ def test_new_legacy_import_is_caught() -> None:
     poison_b = f"from {LEGACY_PKG} import {leaf}\n"
     assert edges_in_source(poison_a) == 1, "旧点号路径写法没被数到＝取数口对形态①失明"
     assert edges_in_source(poison_b) == 1, "从包里 import 垫片名（形态②）没被数到＝漏判"
+    # 形态③（S146）：包文件的相对 import 指到 capabilities 叶子——旧尺对此全盲，
+    # 修前此发必 ==0（反向锁），修后必 ==1。
+    poison_c = f"from .capabilities.{leaf} import anything\n"
+    assert (
+        edges_in_source(poison_c, source_pkg="plugins.bot_unified_runtime") == 1
+    ), "相对形态③没被数到＝取数口对 level=1 失明（S51 点号 grep 同型漏腿复辟）"
+    # 形态④a：住在 `domains/` 直下的文件写 `from ..capabilities import <leaf>`
+    # ⇒ level=2 上跳 1 段＝`plugins.bot_unified_runtime`，正落 LEGACY_PKG。
+    poison_d = f"from ..capabilities import {leaf}\n"
+    assert (
+        edges_in_source(poison_d, source_pkg="plugins.bot_unified_runtime.domains") == 1
+    ), "相对形态④a没被数到＝level=2 锚点解析坏"
+    # 形态④b：再深一层（`domains/<某域>/`）要 level=3 才到同一个根——锚点随深度走。
+    assert (
+        edges_in_source(
+            f"from ...capabilities import {leaf}\n",
+            source_pkg="plugins.bot_unified_runtime.domains.some_domain",
+        )
+        == 1
+    ), "相对形态④b没被数到＝level=3 锚点解析坏"
+    # 反向：同一串 `..capabilities` 放在更深包里**不该**命中（锚点错一位就串族）。
+    assert (
+        edges_in_source(
+            poison_d,
+            source_pkg="plugins.bot_unified_runtime.domains.some_domain",
+        )
+        == 0
+    ), "深包里的 level=2 被误计入账＝锚点少跳一段"
+    # 反向：无关相对 import 不得计数（放宽判据＝一票否决项，故常驻一条负样本）。
+    assert (
+        edges_in_source(
+            "from .helpers import anything\n",
+            source_pkg="plugins.bot_unified_runtime.domains.some_domain",
+        )
+        == 0
+    ), "无关相对形被误计入账＝扫描判据被放宽"
     # 反例：真身路径不计入（否则本门会把迁移动力也判成违规）
     assert edges_in_source(f"from plugins.bot_unified_runtime.domains.{leaf} import anything\n") == 0

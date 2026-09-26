@@ -44,12 +44,12 @@ from plugins.bot_unified_runtime.domains.link_parse.parsers import (
     platforms_taptap,
     platforms_weibo,
 )
+from plugins.bot_unified_runtime.domains.link_parse.parsers import (
+    wbi as wbi_mod,
+)
 from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
     DEFAULT_MAX_BYTES,
     ParseHttpError,
-)
-from plugins.bot_unified_runtime.sources.parsers import (
-    wbi as wbi_mod,
 )
 
 # ---------- E1-1 cookies ----------

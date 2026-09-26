@@ -28,6 +28,11 @@ from pathlib import Path
 from typing import cast
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "scripts") not in sys.path:  # 与 board_doc_sync 同形：同目录兄弟脚本直取
+    sys.path.insert(0, str(ROOT / "scripts"))
+
+import doc_sync as ds  # 塌陷锁唯一真身（`require_surface`），本件不自造第二把「读空即抛」的尺
+
 # v21r2 RWC3：echo 真身迁 domains/chat_reply/capabilities/（静态提取必指真身）。
 ECHO_SOURCE = (
     ROOT / "plugins" / "bot_unified_runtime" / "domains" / "chat_reply" / "capabilities" / "echo.py"
@@ -170,7 +175,8 @@ def _manifest_entries() -> list[dict[str, object]]:
                 if kw.arg and kw.arg in _MANIFEST_KEYS:
                     item[kw.arg] = _eval_literal(kw.value, constants, ())
             out.append(item)
-    return out
+    # S246R 塌陷锁：接口清单读空＝眼睛瞎了（件降为再导出壳或写法变了），不是"本仓没有接口"。
+    return ds.require_surface("接口清单取数口 _manifest_entries", out, ROUTER_SOURCE, ("InterfaceEntry",))
 
 
 def _internal_capability_notes() -> dict[str, str]:
@@ -181,18 +187,31 @@ def _internal_capability_notes() -> dict[str, str]:
 
 
 def _route_kind_values() -> list[str]:
-    """按声明顺序取 RouteKind 枚举成员的字符串取值。"""
+    """按声明顺序取 RouteKind 枚举成员的字符串取值。
+
+    S246B 补塌陷锁：本口是 AST 遍历，"没看见 `RouteKind` 类"（件降为再导出壳、类改名、
+    写法换成 `enum.auto()`）与"仓里真没有 kind"两件事在旧写法里被压成同一个 `[]`。
+    它的外部消费方（`tests/test_documentation_consistency.py` 的
+    `test_route_kind_values_complete` 与 `test_route_matrix_covers_every_route_kind`）
+    里后者是**对空表恒不报缺**的推导式 ⇒ 读空会退化成"绿得没意义"的空转，
+    而不是响亮失败。故读空必抛并点名声明源。
+    """
     values: list[str] = []
     for node in ast.walk(_module_tree(ROUTER_SOURCE)):
         if isinstance(node, ast.ClassDef) and node.name == "RouteKind":
             for stmt in node.body:
                 if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Constant):
                     values.append(str(stmt.value.value))
-    return values
+    return ds.require_surface(
+        "路由 kind 取值取数口 _route_kind_values", values, ROUTER_SOURCE, ("RouteKind",))
 
 
 def _route_kind_member_values() -> dict[str, str]:
-    """RouteKind 成员名 → 字符串取值，供路由规则行解析。"""
+    """RouteKind 成员名 → 字符串取值，供路由规则行解析。
+
+    S246B 补塌陷锁：理由同 `_route_kind_values`——本表读空时旧写法不响，
+    而是让 `_route_capabilities()` 落进"按名小写造值"的兜底（见该函数的点名说明）。
+    """
     pairs: dict[str, str] = {}
     for node in ast.walk(_module_tree(ROUTER_SOURCE)):
         if isinstance(node, ast.ClassDef) and node.name == "RouteKind":
@@ -201,7 +220,8 @@ def _route_kind_member_values() -> dict[str, str]:
                     for target in stmt.targets:
                         if isinstance(target, ast.Name):
                             pairs[target.id] = str(stmt.value.value)
-    return pairs
+    return ds.require_surface(
+        "路由 kind 成员表取数口 _route_kind_member_values", pairs, ROUTER_SOURCE, ("RouteKind",))
 
 
 def _route_capabilities() -> list[tuple[str, str]]:
@@ -222,10 +242,21 @@ def _route_capabilities() -> list[tuple[str, str]]:
         raise ValueError("build_route_rules not found")
     seen: list[tuple[str, str]] = []
     for member, capability_id in re.findall(r'RouteKind\.([A-Z_]+),\s*"([a-z_.]+)"', segment):
-        pair = (members.get(member, member.lower()), capability_id)
+        if member not in members:
+            # S246B：旧写法在这里是 `members.get(member, member.lower())`——成员表读空时
+            # 它**照样产出一整份 kind**，而且因为现网 35/35 枚成员的取值恰等于名小写，
+            # 造出来的值与真值逐字相同 ⇒ 上游塌陷被完全糊平（生成物字节不变、目录照样"对"）。
+            # 现算实证该兜底支今天零命中（`build_route_rules` 引用的 34 枚成员全在表内），
+            # 故改抛对现网生成物零改动，只把"以后取值 ≠ 名小写"或"表读空"那两种形态变响亮。
+            raise ValueError(
+                f"路由表引用 RouteKind.{member}，但成员取值表里没有这一枚——"
+                "成员表读空或该成员换了非字面量写法；禁按名小写造值顶替真值")
+        pair = (members[member], capability_id)
         if pair not in seen:
             seen.append(pair)
-    return seen
+    # S246R 塌陷锁：路由表读空＝本口瞎了（`RouteRule` 行换了写法、或该件已是再导出壳），
+    # 绝不允许把"读不到"投影成"本仓没有路由"的空目录。
+    return ds.require_surface("路由表取数口 _route_capabilities", seen, ROUTER_SOURCE, ("build_route_rules",))
 
 
 def _route_capability_ids() -> set[str]:
@@ -236,7 +267,8 @@ def _alias_capability_ids() -> set[str]:
     value = _literal_assign(_module_tree(ALIASES_SOURCE), "DEFAULT_VERB_MAP")
     if not isinstance(value, dict):
         raise TypeError("DEFAULT_VERB_MAP is not a dict")
-    return set(value.values())
+    return ds.require_surface(
+        "昵称动词取数口 _alias_capability_ids", set(value.values()), ALIASES_SOURCE, ("DEFAULT_VERB_MAP",))
 
 
 # echo.py 中「由 lines[] 派生 detail 的【指令与参数】段」这条链的**全部**模块级定义。

@@ -305,7 +305,7 @@ def test_async_chain_drills_down_via_lookup() -> None:
     """无嵌套对象时（QQ 常态）用 get_msg 反查继续下钻到更深层。"""
     import asyncio
 
-    from plugins.bot_unified_runtime.__init__ import _make_onebot_reply_lookup
+    from plugins.bot_unified_runtime import _make_onebot_reply_lookup
 
     store = {
         "44": {
@@ -338,7 +338,7 @@ def test_async_chain_stops_when_lookup_fails() -> None:
     """反查失败不得抛异常，链条降级为已读到的层数。"""
     import asyncio
 
-    from plugins.bot_unified_runtime.__init__ import _make_onebot_reply_lookup
+    from plugins.bot_unified_runtime import _make_onebot_reply_lookup
 
     bot = _FakeBot({})  # get_msg 返回空
     event = _event_with_nested_reply_ids(2)
@@ -353,7 +353,7 @@ def test_async_chain_does_not_call_lookup_without_nested_reply() -> None:
     """没有更深引用时不得产生任何反查请求（避免无谓网络开销）。"""
     import asyncio
 
-    from plugins.bot_unified_runtime.__init__ import _make_onebot_reply_lookup
+    from plugins.bot_unified_runtime import _make_onebot_reply_lookup
 
     bot = _FakeBot({"44": {"message_id": 44, "message": [{"type": "text", "data": {"text": "x"}}]}})
     event = _onebot_event(reply=_onebot_reply())  # 第一层没有 reply 段
@@ -368,7 +368,7 @@ def test_async_chain_respects_depth_cap() -> None:
     """反查链条同样受 REPLY_CHAIN_MAX_DEPTH 约束（不会无限下钻）。"""
     import asyncio
 
-    from plugins.bot_unified_runtime.__init__ import _make_onebot_reply_lookup
+    from plugins.bot_unified_runtime import _make_onebot_reply_lookup
 
     # 无限链：每层都指向下一层
     store = {

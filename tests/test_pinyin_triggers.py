@@ -192,7 +192,7 @@ def test_simplified_originals_still_hit(cap: str, probe: str) -> None:
 
 
 def _help_aliases() -> dict[str, tuple[str, ...]]:
-    from plugins.bot_unified_runtime.capabilities import echo
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities import echo
 
     return {str(entry["topic"]): tuple(entry.get("aliases", ())) for entry in echo._HELP_ENTRIES}
 

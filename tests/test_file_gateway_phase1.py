@@ -22,6 +22,8 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
+from plugins.bot_unified_runtime.domains.core.safety_exec import paths
+from plugins.bot_unified_runtime.domains.transport.sender import send_onebot_v11
 from plugins.bot_unified_runtime.domains.transport.sender.file_gateway import (
     FileSource,
     FileTicket,
@@ -34,8 +36,9 @@ from plugins.bot_unified_runtime.domains.transport.sender.file_gateway import (
     sanitize_file_name,
     set_default_file_gateway,
 )
-from plugins.bot_unified_runtime.sender import send_onebot_v11
-from plugins.bot_unified_runtime.sender.nonebot import send_nonebot_message
+from plugins.bot_unified_runtime.domains.transport.sender.nonebot import (
+    send_nonebot_message,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -44,6 +47,28 @@ def _isolated_gateway(tmp_path):
     set_default_file_gateway(gateway)
     yield gateway
     set_default_file_gateway(None)
+
+
+@pytest.fixture(autouse=True)
+def _wired_path_domain_policy(tmp_path):
+    """给本件的 path 来源接上「以 ``tmp_path`` 为工作区根」的假根缺省策略。
+
+    归属（S-FILES-LAND 四桶归因）：SAFE-EXEC Wave 1 在 ``file_gateway._stage_path``
+    装了全通道唯一的取字节前判定 ``check_sendable()``，但本件的夹具没跟上——
+    缺省策略按真身根解析，``tmp_path`` 下的样本一律 ``outside_allowed_roots``，
+    14 枚红全是**夹具坏**，不是门误伤（门自身的拒绝面/牙齿由
+    ``tests/test_safety_exec_paths.py`` 逐条钉着）。仿该件的 ``wired_policy``
+    先例：只换根坐标、判定链 ``check_sendable → default_policy() →
+    PathDomainPolicy.check_sendable`` 全走生产路径——这是夹具适配新门，
+    不是放宽门；门的牙在本套件内由
+    ``test_stage_path_outside_wired_roots_is_denied`` 反向钉住。
+    """
+    active = paths.build_policy(workspace_root=tmp_path)
+    paths.set_default_policy(active)
+    try:
+        yield active
+    finally:
+        paths.set_default_policy(None)
 
 
 def _send_request(
@@ -148,6 +173,24 @@ def test_stage_path_missing_file_is_classified(tmp_path: Path) -> None:
             request_id="req1",
         )
     assert caught.value.kind == "missing_file"
+
+
+def test_stage_path_outside_wired_roots_is_denied(tmp_path: Path) -> None:
+    """反向锁（防「夹具接根」退化成「夹具绕门」）：假根之外的文件照旧被拒。
+
+    上一条夹具把 ``tmp_path`` 登记成工作区根 ⇒ 本套件样本合法放行；根外一颗真实
+    存在的文件必须仍走 ``path_domain_denied``。哪天有人把接线改成「恒放行」，
+    这条先红。
+    """
+    outside = tmp_path.parent / "not-wired-root" / "not-in-root.bin"
+    outside.parent.mkdir(parents=True, exist_ok=True)
+    outside.write_bytes(b"must not stage")
+    with pytest.raises(FileTransferError) as caught:
+        get_default_file_gateway().stage(
+            FileSource(source_kind="path", path=str(outside.resolve())),
+            request_id="req-out",
+        )
+    assert caught.value.kind == "path_domain_denied"
 
 
 def test_stage_bytes_source_writes_staging(tmp_path: Path) -> None:
@@ -333,7 +376,9 @@ def test_deliver_onebot_failure_classification(tmp_path: Path) -> None:
 
 
 def test_deliver_onebot_honors_timeout_budget_slice(tmp_path: Path) -> None:
-    from plugins.bot_unified_runtime.sender.onebot import _TimeoutBudget
+    from plugins.bot_unified_runtime.domains.transport.sender.onebot import (
+        _TimeoutBudget,
+    )
 
     slices: list[float] = []
 
@@ -518,7 +563,14 @@ def test_golden_telegram_missing_attachment_is_final_before_send(tmp_path: Path)
     )
     assert receipt.state.value == "failed_final"
     assert receipt.operational_issue is not None
-    assert receipt.operational_issue.kind == "invalid generated attachment"
+    # 逐因归因（S-T-TGSEND · 台账 #29⑪ 同口径）：本行原断言
+    # "invalid generated attachment" —— 那是 sender/nonebot.py 把网关全部失败
+    # 分类压成一枚串的结果，与下一条「文件过大」的锁逐字相同，两条不同的病
+    # 在告警与诊断卡上长得一模一样。现透出网关自己的 kind（stage 阶段判出的
+    # missing_file），"发送前即判定、绝不发出" 这条黄金语义**未放宽**：
+    # state 仍是 failed_final、bot.calls 仍空。回滚点＝把本行改回
+    # "invalid generated attachment" 并把 nonebot.py 的 except 分支改回定串。
+    assert receipt.operational_issue.kind == "missing_file"
     assert bot.calls == []  # 发送前即判定，绝不发出
 
 
@@ -538,6 +590,15 @@ def test_golden_telegram_oversize_attachment_is_final(tmp_path: Path) -> None:
     )
     assert receipt.state.value == "failed_final"
     assert receipt.operational_issue is not None
+    # 残余一处（S-T-TGSEND 登记，未代修）：这条串来自
+    # ``file_gateway._deliver_telegram_document`` 自己抛的
+    # ``FinalTransferError("invalid generated attachment")`` —— 该函数把「不在场」
+    # 与「超 2MB」两因写成同一枚消息。改成 per-cause kind 要动 file_gateway.py
+    # 578-634 上方的行段，会顶漂 outbound_registry 在册坐标
+    # ``_deliver_onebot=578-634``（活性门
+    # tests/test_outbound_registry_coordinate_liveness.py 执法），本席按互斥纪律
+    # 只报坐标不动手。上条锁因此也从 "invalid generated attachment" 变成了
+    # "missing_file"：两条现在**不再**同串，正是本条要修的方向。
     assert receipt.operational_issue.kind == "invalid generated attachment"
     assert bot.calls == []
 

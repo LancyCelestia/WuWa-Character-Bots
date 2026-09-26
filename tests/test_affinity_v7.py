@@ -19,7 +19,7 @@ from itertools import pairwise
 
 import pytest
 
-from plugins.bot_unified_runtime.character.affinity import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     _ATTITUDE_TIERS,
     _TIER_RED_LINES,
     _V7_CONFIG_FIELDS,

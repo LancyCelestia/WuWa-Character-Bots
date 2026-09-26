@@ -148,7 +148,9 @@ def build_subscribe_capability(
     if registry is None:
         registry = build_subscription_registry()
 
-    from plugins.bot_unified_runtime.sources.parsers import build_cookie_provider
+    from plugins.bot_unified_runtime.domains.link_parse.parsers import (
+        build_cookie_provider,
+    )
 
     cookie_provider = build_cookie_provider(config)
     proxy = str(getattr(config, "bot_download_proxy", "") or "")

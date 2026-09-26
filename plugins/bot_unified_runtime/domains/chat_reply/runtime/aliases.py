@@ -266,6 +266,26 @@ def _load_persona_alias_file(config: object) -> list[str]:
     return [item.strip() for item in raw.replace("\n", "|").split("|") if item.strip()]
 
 
+def persona_alias_terms(config: object) -> tuple[str, ...]:
+    """守岸人称呼全集（**唯一对外口径**）：人格别名文件 ∪ 官方策展兜底。
+
+    为什么要有这个公共口：``_load_persona_alias_file`` 与
+    :data:`DEFAULT_PERSONA_NICKNAMES` 此前只被本模块的解析器内部消费，别的域
+    想用「哪些词算指代守岸人」就只能自己硬写人名——表情库的主体判定（收图时
+    「这张画的是不是她」）正是第二个消费者。收在这里 ⇒ 名单只有一份，
+    ``personas/shorekeeper/aliases.txt`` 一改处处跟随（AGENTS 铁律：禁第二真身）。
+
+    顺序稳定、去重、去空；文件不可读时只剩兜底表（与解析器同口径，不抛异常）。
+    """
+    collected: list[str] = []
+    persona_nicknames = getattr(config, "bot_persona_nicknames", []) or []
+    for item in [*persona_nicknames, *_load_persona_alias_file(config), *DEFAULT_PERSONA_NICKNAMES]:
+        text = str(item or "").strip()
+        if text and text not in collected:
+            collected.append(text)
+    return tuple(collected)
+
+
 # 官方策展昵称硬编码兜底：与 personas/shorekeeper/aliases.txt 保持一致。
 # 用户实际使用中的子昵称全集（含「我的蒙娜丽莎」「第二实例」）——
 # env 未配置任何昵称时也必须能被叫应（2026-09-11 昵称无响应问题根因修复）。

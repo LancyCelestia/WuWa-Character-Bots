@@ -25,16 +25,16 @@ from typing import Any
 import pytest
 
 from plugins.bot_unified_runtime import _incoming_from_nonebot_event
-from plugins.bot_unified_runtime.capabilities.divination import (
-    build_divination_capability,
-)
-from plugins.bot_unified_runtime.capabilities.today_history import (
-    build_today_history_capability,
-)
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     IncomingMessage,
     SessionType,
+)
+from plugins.bot_unified_runtime.domains.divination.capabilities.divination import (
+    build_divination_capability,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.today_history import (
+    build_today_history_capability,
 )
 from plugins.bot_unified_runtime.domains.subscribe.feeds.today_history import (
     HistoryEvent,

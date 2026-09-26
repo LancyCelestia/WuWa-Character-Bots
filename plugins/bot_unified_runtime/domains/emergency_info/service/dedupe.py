@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import datetime, timedelta
 
@@ -104,6 +105,53 @@ def is_legal_segment(value: str) -> bool:
 def is_legal_date_key(value: str) -> bool:
     """日期段形态（`_DATE_KEY_RE` 的公开读侧，与 `is_legal_segment` 成对）。"""
     return _DATE_KEY_RE.match(str(value or "")) is not None
+
+
+#: 洗段用：只删「不在合法字符集里的字符」，判据本身仍是 `_SEGMENT_RE` 一份。
+_ILLEGAL_KEY_SEGMENT_CHAR_RE = re.compile(r"[^A-Za-z0-9_.\-]")
+_KEY_SEGMENT_MAX = 120
+
+
+def active_push_key_segment(value: object) -> str:
+    """把一个外部标识洗成合法键段——**构造侧**唯一的洗段口（读侧谓词是 `is_legal_segment`）。
+
+    为什么需要：闸的键形核验只在**开闸态**执法，脏键整条判 `skip`＝静默丢消息，而关闭态
+    passthrough 照样发得出去——于是「本地测通」与「上线能发」不是一回事。本波同型炸过
+    三次：紧急域 `nmc:A1`（台账 #46，每条真实条目都抛 ValueError）、等待回执（#50）、
+    群摘要与日常助理两族（S177 现算：脏群号 ⇒ 整族静默丢）。参与量的形态由适配器与
+    `.env` 决定（OneBot 纯数字，TG 频道/guild 侧会出现冒号与其他符号；群号是自由字符
+    串），不由我们决定，故一律在出口洗。
+
+    洗完只剩分隔符（`"中文群"`→`"___"`）会让不同输入撞成同一段，那种退化改走摘要，
+    键仍然唯一可寻。
+
+    **洗必须近似单射（S184 实测否掉了本函数第一版）**：只把非法字符换成 `_` 再截 120，
+    会让 `11 08838060` 与 `11_08838060`、以及第 121 位与第 122 位不同的两个长 id **折成
+    同一段** ⇒ 两条真消息共用一个幂等桶＝换一种形态继续静默丢（QQ 纯数字打不到，
+    TG/guild 形态打得到）。故凡「真被洗过」的段一律带原串摘要后缀：同输入恒同输出
+    （幂等不受影响），不同输入靠摘要分开。空段与洗完只剩分隔符的退化输入同样走摘要。
+    """
+    text = str(value or "").strip()
+    if is_legal_segment(text):
+        return text
+    digest = hashlib.blake2b(text.encode("utf-8"), digest_size=8).hexdigest()
+    suffix = "_h" + digest
+    washed = _ILLEGAL_KEY_SEGMENT_CHAR_RE.sub("_", text)[: _KEY_SEGMENT_MAX - len(suffix)]
+    if is_legal_segment(washed) and any(char.isalnum() for char in washed):
+        return washed + suffix
+    return "h" + digest
+
+
+def wash_active_push_key(dedupe_key: str) -> str:
+    """整条主动投递键的规范形：按段分隔符切开逐段洗，再拼回。
+
+    幂等只认整串（`queue.py` 的 `ON CONFLICT(dedupe_key)`），故「每一段都合法」等价于
+    「整串过闸的键形核验」。已合法的键逐字节不变 ⇒ 现役各族行为零变化；只有脏段会被
+    改写，调用方须把改写当作**可见**事件（中央出口会打一行 warning），别让它变成
+    「消息没了但没人知道」的第三种结局。
+    """
+    raw = str(dedupe_key or "")
+    return ":".join(active_push_key_segment(part) for part in raw.split(":"))
 
 
 def active_push_key_shape_ok(
@@ -203,6 +251,7 @@ def is_within_validity(
 
 __all__ = [
     "EMERGENCY_DEDUPE_PREFIX",
+    "active_push_key_segment",
     "active_push_key_shape_ok",
     "build_emergency_dedupe_key",
     "date_key_of",
@@ -210,4 +259,5 @@ __all__ = [
     "is_legal_date_key",
     "is_legal_segment",
     "is_within_validity",
+    "wash_active_push_key",
 ]

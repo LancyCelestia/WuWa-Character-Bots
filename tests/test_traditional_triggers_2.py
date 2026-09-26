@@ -13,24 +13,6 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.divination import (
-    is_divination_command,
-    parse_divination_intent,
-)
-from plugins.bot_unified_runtime.capabilities.epic import is_epic_command
-from plugins.bot_unified_runtime.capabilities.fx import is_fx_command
-from plugins.bot_unified_runtime.capabilities.meme import is_meme_command
-from plugins.bot_unified_runtime.capabilities.meme_library import (
-    is_meme_library_command,
-)
-from plugins.bot_unified_runtime.capabilities.reminder import is_reminder_command
-from plugins.bot_unified_runtime.capabilities.subscribe import (
-    is_standalone_subscribe_command,
-    is_subscribe_command,
-    normalize_subscribe_text,
-)
-from plugins.bot_unified_runtime.capabilities.subscribe_v2 import _normalize
-from plugins.bot_unified_runtime.character.reminders import parse_reminder_intent
 from plugins.bot_unified_runtime.contracts import SessionType
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities.affinity import (
     is_affinity_command,
@@ -47,12 +29,38 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.natural_language imp
 from plugins.bot_unified_runtime.domains.core.credentials.platform_credentials import (
     is_cookie_command,
 )
+from plugins.bot_unified_runtime.domains.divination.capabilities.divination import (
+    is_divination_command,
+    parse_divination_intent,
+)
+from plugins.bot_unified_runtime.domains.finance.capabilities.fx import is_fx_command
 from plugins.bot_unified_runtime.domains.location.capabilities.moegirl import (
     normalize_entity_question,
+)
+from plugins.bot_unified_runtime.domains.meme.capabilities.meme import is_meme_command
+from plugins.bot_unified_runtime.domains.meme.capabilities.meme_library import (
+    is_meme_library_command,
 )
 from plugins.bot_unified_runtime.domains.schedule.auto_send.parser import (
     is_auto_send_command_text,
     parse_auto_send_command,
+)
+from plugins.bot_unified_runtime.domains.schedule.capabilities.reminder import (
+    is_reminder_command,
+)
+from plugins.bot_unified_runtime.domains.schedule.store.reminders import (
+    parse_reminder_intent,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.epic import (
+    is_epic_command,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.subscribe import (
+    is_standalone_subscribe_command,
+    is_subscribe_command,
+    normalize_subscribe_text,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.subscribe_v2 import (
+    _normalize,
 )
 
 # ---------------------------------------------------------------- meme：表情產生
@@ -98,6 +106,21 @@ def test_meme_library_simplified_controls_unchanged() -> None:
 @pytest.mark.parametrize("text", ["免費遊戲", "遊戲免費", "steam免費"])
 def test_epic_traditional_triggers_route(text: str) -> None:
     assert is_epic_command(text) is True
+
+
+@pytest.mark.parametrize("text", ["steam 免費", "/steam 免費", "！steam 免費"])
+def test_epic_traditional_spaced_steam_hits(text: str) -> None:
+    """简繁对称补齐：带空格繁体形 ``steam 免費`` 必须命中 epic 路由（真身 _COMMAND_RE）。
+
+    与 ``steam免费``/``steam 免费``/``steam免費`` 同权（S144 现算点名的唯一代码缺词）。
+    """
+    assert is_epic_command(text) is True
+
+
+@pytest.mark.parametrize("text", ["steam 免費领", "steam 免費 游戏", "steam免費了"])
+def test_epic_traditional_spaced_steam_near_miss_not_hit(text: str) -> None:
+    """近似非触发词不得命中：尾部带正文即脱离 ``\\s*$`` 锚，不落 epic。"""
+    assert is_epic_command(text) is False
 
 
 def test_epic_traditional_nl_question_reaches() -> None:

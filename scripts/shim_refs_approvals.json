@@ -1,0 +1,41 @@
+{
+  "_note": "垫片逐枚 refs 上限「显式升账」审批件（唯一可升通道，见 scripts/shim_retirement_census.py render_ledger/approved_refs_paths）。缺 approved_by/reason 或 expiry 过期 ⇒ 该枚不批、仍走只降钳、门诚实红。本件记录 2026-09-24 中央调度收编波·第5项物理归位「账跟随」（SEAT-S188）：参考尺修（CM-P-67 两处）现形的引用债 + 两枚 stale 行的真实引用，非实现变坏。2026-09-24 续：SEAT-S204 追加 providers 13→14 一枚（并发席新增读该垫片的消费者 tests/test_intimate_tier_wiring_v4.py，非退步），见本件 approvals 末条与 SEAT-S204.md。",
+  "approvals": [
+    {
+      "path": "plugins/bot_unified_runtime/llm/ledger.py",
+      "approved_by": "SEAT-S188 (delegated ledger-follow-through, physical-placement item #5)",
+      "reason": "尺修现形：_file_package_dotted off-by-one 修复后，control_plane 非-init 文件的 from ..llm.ledger 相对边可见（S146 §1-3；实测 owners=control_plane/_app.py 等）。真实引用数 5→6，非新增副本。",
+      "expiry": "2026-10-31T00:00:00+00:00"
+    },
+    {
+      "path": "plugins/bot_unified_runtime/llm/model_router.py",
+      "approved_by": "SEAT-S188 (delegated ledger-follow-through, physical-placement item #5)",
+      "reason": "尺修现形：control_plane/factory.py·llm_admin.py·sandbox.py 的 from ..llm.model_router 相对边修复后可见（S146 §1-3）。真实引用数 13→15，非新增副本。",
+      "expiry": "2026-10-31T00:00:00+00:00"
+    },
+    {
+      "path": "plugins/bot_unified_runtime/llm/providers.py",
+      "approved_by": "SEAT-S188 (delegated ledger-follow-through, physical-placement item #5)",
+      "reason": "尺修现形：control_plane/factory.py·sandbox.py 的 from ..llm.providers 相对边修复后可见（S146 §1-3）。真实引用数 11→13，非新增副本。",
+      "expiry": "2026-10-31T00:00:00+00:00"
+    },
+    {
+      "path": "plugins/bot_unified_runtime/policy/__init__.py",
+      "approved_by": "SEAT-S188 (delegated ledger-follow-through, physical-placement item #5)",
+      "reason": "stale 行现形（与参考尺修无关）：根 __init__.py 的 from .policy import 是 __init__ 引用方，新旧尺同值，一直为 1；账上 ceiling 停在旧首入账值 0。真实生产消费者存在，删壳即坏导入图，升 0→1。",
+      "expiry": "2026-10-31T00:00:00+00:00"
+    },
+    {
+      "path": "plugins/bot_unified_runtime/sources/parsers/__init__.py",
+      "approved_by": "SEAT-S188 (delegated ledger-follow-through, physical-placement item #5)",
+      "reason": "stale 行现形（与参考尺修无关）：tests/test_auditfix_subscriptions_capabilities.py 以点号串引用 sources.parsers，一直为 1；账上 ceiling 停在旧值 0。真实引用（测试点号目标），升 0→1；测试迁真身属后续项，不在本席账跟随范围。",
+      "expiry": "2026-10-31T00:00:00+00:00"
+    },
+    {
+      "path": "plugins/bot_unified_runtime/llm/providers.py",
+      "approved_by": "SEAT-S204 (纯账跟随·垫片引用上限 13→14 approvals 重录)",
+      "reason": "债现形非退步（尺身份：scripts/shim_retirement_census.py · 函数 computed_refs + _referencing_files · 命令 python scripts/shim_retirement_census.py --check）。providers 是包垫片（真身 domains/chat_reply/llm_engine/providers.py），账上 ceiling=13（S188 于 2026-09-24 记 11→13）。现算活体引用方 14（12:02:39Z 尺读，同刻 date -u=12:02Z），较 S188 多一枚＝并发席新增的读该垫片消费者 tests/test_intimate_tier_wiring_v4.py（mtime 2026-09-24 20:00:52 本地＝12:00:52Z，现算引用 providers=True）——新增一个引用方，非垫片实现变坏、非第二真身。S203 §4 早把该枚 ceiling 落后活体记为预存债并注明『须由门 owner 走 approvals 通道带证据重录、不代抬不代降』。dry-run 证 --write-ledger 对全 47 行仅改 providers 13→14 一行、四枚基线与其余 refs 逐值不动（未顺手改别的刻度）。",
+      "expiry": "2026-10-31T00:00:00+00:00"
+    }
+  ]
+}

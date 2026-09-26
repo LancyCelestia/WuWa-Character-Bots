@@ -40,8 +40,11 @@ def validate_version(version: int) -> None:
 
 
 def normalize_key(key: str, *, writable: bool = False) -> str:
-    # 延迟导入：runtime.settings 仅在选择 backend 时依赖本模块。
-    from ..runtime.settings import RESTART_REQUIRED_KEYS, SETTABLE_KEYS
+    # 延迟导入：settings 真身（domains.chat_reply.runtime.settings）仅在选择 backend 时依赖本模块。
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+        RESTART_REQUIRED_KEYS,
+        SETTABLE_KEYS,
+    )
 
     normalized = key.strip().upper()
     if normalized not in SETTABLE_KEYS and normalized not in RESTART_REQUIRED_KEYS:
@@ -248,7 +251,10 @@ class SQLiteConfigStateStore:
 
     def import_legacy(self, overrides: Mapping[str, Any]) -> bool:
         """只消费已加载的 legacy 覆盖；不读写 JSON，也不回填已封口的实例。"""
-        from ..runtime.settings import RESTART_REQUIRED_KEYS, SETTABLE_KEYS
+        from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+            RESTART_REQUIRED_KEYS,
+            SETTABLE_KEYS,
+        )
 
         with self._transaction(write=True) as conn:
             imported = conn.execute("SELECT legacy_imported FROM config_instances WHERE instance=?", (self.instance,)).fetchone()[0]

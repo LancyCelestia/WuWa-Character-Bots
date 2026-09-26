@@ -11,9 +11,12 @@ from .rate_limit import (
     RateLimitDecision,
     RateLimiter,
     RateLimitSettings,
+    RedriveSettings,
     SQLiteRateLimiter,
     build_rate_limit_settings,
     build_rate_limiter,
+    build_redrive_settings,
+    redrive_wait_seconds,
 )
 from .reply_budget import (
     ReplyBudget,
@@ -32,6 +35,7 @@ __all__ = [
     "RateLimitDecision",
     "RateLimitSettings",
     "RateLimiter",
+    "RedriveSettings",
     "ReplyBudget",
     "ReplyBudgetSettings",
     "RoleSettings",
@@ -40,8 +44,10 @@ __all__ = [
     "build_quiet_hours_settings",
     "build_rate_limit_settings",
     "build_rate_limiter",
+    "build_redrive_settings",
     "build_reply_budget_settings",
     "build_role_settings",
     "decide_reply_budget",
     "evaluate_policy",
+    "redrive_wait_seconds",
 ]

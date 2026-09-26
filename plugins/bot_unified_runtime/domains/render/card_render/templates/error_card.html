@@ -13,7 +13,33 @@
    该参数只作用于 :root 的 --wash-blob-1 token（bridge 对本卡 _card_root_tokens
    传 24，测试锁 test_mica_shell::test_root_tokens_wash_blob_mix_parametrizable），
    生成器 drift-a 渐变消费 var(--wash-blob-1)，混合比随 token 走，decor 键无需
-   参数化；壳层仍手写（归壳层席）。 #}
+   参数化；壳层仍手写（归壳层席）。
+   E9 草案（2026-09-25，双列紧凑排版，响应用户/管理员真卡反馈）：短值节
+   （定位与原因/配置快照/版本与构建/平台与协议/标识与时间）加 .compact
+   两列并排；长值行（>20 字符：归属路径、原因句、配置长值、ISO 时刻、
+   长 id）由模板按长度自动 .wide 占整行；zebra 改按「视觉行」取相（两列
+   短值对共享一档，整行各占一档；compact=false 时逐行取相=旧行为）。
+   拿不到的数据（unknown/— 占位）由 bridge._error_kv_rows 现读前剔除，
+   整节被剔空时 {% if pairs %} 自然整节消失——模板不为缺数据占视觉位。 #}
+{% macro kv_section(title, pairs, compact=false) -%}
+{% if pairs %}
+<div class="section{% if compact %} compact{% endif %}">
+    <div class="section-title">{{ title }}</div>
+    {# zebra 按视觉行取相：两列模式下两枚短值格共享一档（等同旧单列的一行），
+       整行长值各占一档；单列（compact=false）逐行取相=与旧 loop.index 奇偶同形。 #}
+    {% set zebra = namespace(v=0, pending=false) %}
+    <div class="grid">
+        {% for item in pairs %}
+        {% set long = (item.value | length) > 20 %}
+        {% set span2 = compact and not long %}
+        {% if (not span2) or (not zebra.pending) %}{% set zebra.v = zebra.v + 1 %}{% endif %}
+        {% set zebra.pending = span2 and not zebra.pending %}
+        <div class="row{% if compact and long %} wide{% endif %}{% if zebra.v is even %} alt{% endif %}"><span class="label">{{ item.label }}</span><span class="value">{{ item.value }}</span></div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+{%- endmacro -%}
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -31,7 +57,7 @@
     --surface-b: {{ surface_b }};
     --surface-neutral: {{ surface_neutral }};
     /* vis5 次级灰单源（theme_tokens.TEXT_SECONDARY）。 */
-    --text-secondary: #576272;
+    --text-secondary: #4e5866;
     /* 等宽字体（栈摘录/IDs 专用）：v21r3 C9 改消费 root tokens 单源
        （theme_tokens.MONO_FONT_STACK 经 render_root_tokens 注入 --font-mono）。 */
     --mono-family: var(--font-mono);
@@ -41,7 +67,7 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
     -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 .shell {
     position: relative; width: 1080px; overflow: hidden;
-    padding: 28px 30px 22px; border-radius: var(--r-shell); border: 1px solid transparent;
+    padding: 24px 28px 20px; border-radius: var(--r-shell); border: 1px solid transparent;
     {# VIS1（2026-09-20）：壳渐变/描边手抄退役，改 var(--mica-shell-wash)+
        var(--mica-glass-edge) 消费（值册单源，见 market_card 同段注释）。#}
     background: var(--mica-shell-wash) padding-box, var(--mica-glass-edge);
@@ -51,44 +77,48 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
 /* 渐变漂移色斑：整层单源=mica_shell.mica_decor_css（bridge._vis4_context
    注入 decor_css；wash_blob_mix=24 豁免走 :root token 面，见头注释）。 */
 {{ decor_css | safe }}
-.head { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+.head { display: flex; justify-content: space-between; align-items: center; gap: 16px;
     padding-bottom: 14px; border-bottom: var(--divider-line); }
-.head-id { display: flex; align-items: center; gap: 10px; }
-.sigil { width: 40px; height: 40px; border-radius: var(--r-circle); flex-shrink: 0;
+.head-id { display: flex; align-items: center; gap: 14px; }
+.sigil { width: 46px; height: 46px; border-radius: var(--r-circle); flex-shrink: 0;
     display: inline-flex; align-items: center; justify-content: center;
     font-size: 17px; font-weight: 700; color: #fff; background: var(--accent);
     box-shadow: var(--mica-shadow-soft); }
-.head-titles .title { font-size: 20px; font-weight: 700; color: var(--text-main); }
-.head-titles .subtitle { font-size: 12px; color: var(--text-secondary); margin-top: 3px;
+.head-titles .title { font-size: 24px; font-weight: 700; color: var(--text-main); }
+.head-titles .subtitle { font-size: 12px; color: var(--text-secondary); margin-top: 6px;
     letter-spacing: 0.06em; }
-.head-badge { font-size: 12px; font-weight: 650; color: var(--accent-dark);
+.head-badge { font-size: 13px; font-weight: 600; color: var(--accent-dark);
     padding: 3px 12px; border-radius: var(--r-pill);
     background: color-mix(in srgb, var(--accent) 10%, #fff);
     border: 1px solid color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.65)); }
-.human { margin-top: 14px; padding: 14px 16px; border-radius: var(--r-panel);
-    font-size: 15px; color: var(--text-main); line-height: 1.6;
+.human { margin-top: 12px; padding: 12px 14px; border-radius: var(--r-panel);
+    font-size: 17px; color: var(--text-main); line-height: 1.6;
     background: var(--mica-glass-main), var(--mica-glass-edge);
     border: 1px solid transparent;
     box-shadow: var(--mica-shadow-panel); }
-.human .hl { color: var(--accent-dark); font-weight: 650; }
-.section { margin-top: 14px; }
-.section-title { display: flex; align-items: center; gap: 8px; font-size: 13px;
+.human .hl { color: var(--accent-dark); font-weight: 600; }
+.section { margin-top: 12px; }
+.section-title { display: flex; align-items: center; gap: 8px; font-size: 15px;
     font-weight: 700; color: var(--accent-dark); letter-spacing: 0.06em; }
 .section-title::after { content: ""; flex: 1; border-bottom: var(--divider-line); }
-.echo { margin-top: 8px; padding: 10px 14px; border-radius: var(--r-tile);
-    font-family: var(--mono-family); font-size: 13px; color: var(--text-main);
+.echo { margin-top: 10px; padding: 12px 14px; border-radius: var(--r-tile);
+    font-family: var(--font-family); font-size: 17px; line-height: 1.6; color: var(--text-main);
     word-break: break-all;
     background: var(--surface-neutral);
     border: 1px solid color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.65)); }
-.stack { margin-top: 8px; padding: 12px 14px; border-radius: var(--r-tile);
+.stack { margin-top: 10px; padding: 12px 14px; border-radius: var(--r-tile);
     background: var(--mica-scrim-code); border: 1px solid transparent;
-    font-family: var(--mono-family); font-size: 12px; line-height: 1.6;
+    font-family: var(--mono-family); font-size: 13px; line-height: 1.6;
     color: #e6e8ee; white-space: pre-wrap; word-break: break-all;
     box-shadow: var(--mica-shadow-panel); }
-.stack .stack-head { color: #f2b8b5; font-weight: 650; }
-.grid { margin-top: 8px; display: grid; grid-template-columns: 1fr; gap: 7px; }
+.stack .stack-head { color: #f2b8b5; font-weight: 600; }
+.grid { margin-top: 8px; display: grid; grid-template-columns: 1fr; gap: 6px; }
+/* compact 节走两栏（2026-09-25 按超管反馈：卡片太挤了，换成两栏）。宏里的 span2/zebra
+   早就按两栏算，缺的是这一行 CSS——补上后短值对并排，长值整行占满。 */
+.section.compact .grid { grid-template-columns: 1fr 1fr; }
+.row.wide { grid-column: 1 / -1; }
 .row {
-    display: flex; align-items: baseline; gap: 12px; padding: 9px 14px;
+    display: flex; align-items: baseline; gap: 12px; padding: 6px 12px;
     border-radius: var(--r-tile);
     background:
         var(--surface-a) padding-box,
@@ -101,15 +131,32 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
         var(--surface-b) padding-box,
         linear-gradient(150deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.35) 55%, rgba(255, 255, 255, 0.72) 100%) border-box;
 }
-.row .label { flex: 0 0 128px; font-size: 12px; font-weight: 650;
+/* 标签轨：全卡**同一个**宽度，值才落在同一条竖直线上。旧写法在双列下把轨收到
+   92px，两套轨并排＝"属性名和值不对齐"的根因。轨宽按最长属性名定
+   （`bot_chat_failover_max_seconds` 这类配置键 29 字符），长键在轨内折行，
+   **绝不把值顶离那条竖线**（2026-09-25 评审点名：属性名与属性值都要左对齐）。 */
+.row .label { flex: 0 0 176px; font-size: 14px; font-weight: 600; word-break: break-all;
     color: var(--text-secondary); letter-spacing: 0.06em; }
-.row .value { flex: 1; min-width: 0; font-size: 13px; color: var(--text-main);
-    font-family: var(--mono-family); font-variant-numeric: tabular-nums; word-break: break-all; }
+/* 值与标签同字体（2026-09-25 评审「统一字体格式」）；数字仍走 tabular-nums
+   对齐。等宽只保留给 .stack（真代码块），那是另一回事。 */
+.row .value { flex: 1; min-width: 0; font-size: 17px; color: var(--text-main);
+    font-family: var(--font-family); line-height: 1.6; letter-spacing: 0;
+    font-variant-numeric: tabular-nums; word-break: break-all; }
+/* 双列（2026-09-25 三段恢复并锁定）：两栏短值对共享同一条 176px 左轨，
+   属性名与属性值各自成轴；长值经 .row.wide 独占整行、不被半格挤压。
+   旧「双列已撤掉/132px 轨」两段注记属同日二轮的历史态，E9 三段后失效，已删。 */
 /* CAP1 品牌胶囊（头像+中文名+英文名+功能名）：组件 CSS/DOM 由 mica_shell 单一
    产出、bridge 注入；本卡额外留求助文案（在胶囊右侧）。此前 .bot-foot 手抄
    副本（bf-avatar/bf-dot/bf-name/help-text 合体）退役。 */
-.bot-foot { margin-top: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.bot-foot .help-text { font-size: 12px; color: var(--text-secondary); line-height: 1.4; }
+/* 页脚统一放右下角（2026-09-25 评审）：求助文案在左、品牌胶囊收在右下角。 */
+.bot-foot { margin-top: 14px; display: flex; align-items: flex-end; justify-content: flex-end; gap: 16px; flex-wrap: wrap; text-align: right; }
+/* 求助文案独占一行、胶囊收在右下：真卡实测两者同行时，两行长句的末行会从胶囊
+   底下穿过去（1080px 壳宽减内边距放不下 260px 句 + 胶囊）。 */
+.bot-foot .help-text { order: -1; flex: 1 1 100%; text-align: right;
+    font-size: 14px; color: var(--text-secondary); line-height: 1.6; }
+.bot-foot .bf-name { color: var(--brand-ink); }
+.head-avatar { width: 46px; height: 46px; border-radius: var(--r-circle); object-fit: cover;
+    box-shadow: var(--mica-shadow-soft); }
 {{ capsule_css | safe }}
 </style>
 </head>
@@ -118,10 +165,10 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
     {{ blobs_html | safe }}
     <div class="head">
         <div class="head-id">
-            <span class="sigil">{{ card_text.static_err_17 }}</span>
+            {% if bot_avatar_url %}<img class="head-avatar" src="{{ bot_avatar_url }}" alt="">{% else %}<span class="sigil">{{ card_text.static_err_17 }}</span>{% endif %}
             <div class="head-titles">
                 <div class="title">{{ card_title }}</div>
-                <div class="subtitle">RUNTIME DIAGNOSTIC · {{ card_text.static_err_18 }}</div>
+                <div class="subtitle">{{ card_text.static_err_31 }} · {{ card_text.static_err_18 }}</div>
             </div>
         </div>
         <div class="head-badge">{{ exc_type | default('EXCEPTION', true) }}</div>
@@ -133,63 +180,23 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
         <div class="echo">{{ trigger_echo }}</div>
     </div>
     {% endif %}
-    {% if stack_lines %}
+    {% if stack_lines or exc_message %}
     <div class="section">
-        <div class="section-title">{{ card_text.static_err_20 }} {{ stack_lines | length }} {{ card_text.static_err_21 }}</div>
+        <div class="section-title">{% if stack_lines %}{{ card_text.static_err_20 }} {{ stack_lines | length }} {{ card_text.static_err_21 }}{% else %}{{ card_text.static_err_30 }}{% endif %}</div>
         <div class="stack"><span class="stack-head">{{ exc_type }}: {{ exc_message }}</span>
-{{ stack_lines | join('\n') }}</div>
+{% if stack_lines %}{{ stack_lines | join('\n') }}{% endif %}</div>
     </div>
     {% endif %}
-    {% if method_pairs %}
-    <div class="section">
-        <div class="section-title">{{ card_text.static_err_22 }}</div>
-        <div class="grid">
-            {% for item in method_pairs %}
-            <div class="row{% if loop.index is even %} alt{% endif %}"><span class="label">{{ item.label }}</span><span class="value">{{ item.value }}</span></div>
-            {% endfor %}
-        </div>
-    </div>
-    {% endif %}
-    {% if config_pairs %}
-    <div class="section">
-        <div class="section-title">{{ card_text.static_err_23 }} · {{ card_text.static_err_24 }}</div>
-        <div class="grid">
-            {% for item in config_pairs %}
-            <div class="row{% if loop.index is even %} alt{% endif %}"><span class="label">{{ item.label }}</span><span class="value">{{ item.value }}</span></div>
-            {% endfor %}
-        </div>
-    </div>
-    {% endif %}
-    {% if version_pairs %}
-    <div class="section">
-        <div class="section-title">{{ card_text.static_err_25 }}</div>
-        <div class="grid">
-            {% for item in version_pairs %}
-            <div class="row{% if loop.index is even %} alt{% endif %}"><span class="label">{{ item.label }}</span><span class="value">{{ item.value }}</span></div>
-            {% endfor %}
-        </div>
-    </div>
-    {% endif %}
-    {% if env_pairs %}
-    <div class="section">
-        <div class="section-title">{{ card_text.static_err_26 }}</div>
-        <div class="grid">
-            {% for item in env_pairs %}
-            <div class="row{% if loop.index is even %} alt{% endif %}"><span class="label">{{ item.label }}</span><span class="value">{{ item.value }}</span></div>
-            {% endfor %}
-        </div>
-    </div>
-    {% endif %}
-    {% if id_pairs %}
-    <div class="section">
-        <div class="section-title">IDs {{ card_text.static_err_27 }}</div>
-        <div class="grid">
-            {% for item in id_pairs %}
-            <div class="row{% if loop.index is even %} alt{% endif %}"><span class="label">{{ item.label }}</span><span class="value">{{ item.value }}</span></div>
-            {% endfor %}
-        </div>
-    </div>
-    {% endif %}
+    {# E9：七段键值节统一走 kv_section 宏（单一渲染口，防各节样式再漂移）。
+       compact=true 的五节=短值为主（长值自动整行）；自我审查/可以找两句子长、
+       保持整行阅读节奏。标题全部来自 card_text（模板零硬写中文）。 #}
+    {{ kv_section(card_text.static_err_22, method_pairs, true) }}
+    {{ kv_section(card_text.static_err_28, self_review_pairs, false) }}
+    {{ kv_section(card_text.static_err_29, contact_pairs, false) }}
+    {{ kv_section(card_text.static_err_23 ~ ' · ' ~ card_text.static_err_24, config_pairs, true) }}
+    {{ kv_section(card_text.static_err_25, version_pairs, true) }}
+    {{ kv_section(card_text.static_err_26, env_pairs, true) }}
+    {{ kv_section(card_text.static_err_32, id_pairs, true) }}
     {# CAP1：胶囊 DOM 由 bridge 注入（单一产出=mica_shell），求助文案摆在胶囊右侧。 #}
     <div class="bot-foot">{{ capsule_html | safe }}<span class="help-text">{{ help_text | default(card_text.error_help_fallback, true) }}</span></div>
 </div>

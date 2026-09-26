@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from plugins.bot_unified_runtime.runtime.reactions import (
+from plugins.bot_unified_runtime.domains.meme.reactions.engine import (
     QSID_FACE_NAMES,
     REACTION_INTENT_EMOJIS,
     ProactiveGate,
@@ -330,7 +330,7 @@ def test_maybe_react_after_reply_uses_warm_pool():
         config=_Cfg(), trigger="after_reply", gate=gate,
     )) is True
     emoji_id = bot.calls[0][1]["emoji_id"]
-    from plugins.bot_unified_runtime.runtime.reactions import (
+    from plugins.bot_unified_runtime.domains.meme.reactions.engine import (
         _REACTION_FALLBACK_INTENTS,
         REACTION_INTENT_EMOJIS,
     )
@@ -369,7 +369,7 @@ def test_react_telegram_wrapper_sends_official_payload():
 
 
 def _base_context():
-    from plugins.bot_unified_runtime.character.providers import (
+    from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
         NullCharacterContextProvider,
     )
 
@@ -379,7 +379,9 @@ def _base_context():
 
 
 def test_chat_prompt_injects_reactions_partition():
-    from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_chat_prompt,
+    )
 
     context = _base_context().model_copy(
         update={
@@ -396,7 +398,9 @@ def test_chat_prompt_injects_reactions_partition():
 
 
 def test_chat_prompt_hides_empty_reactions_partition():
-    from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_chat_prompt,
+    )
 
     prompt = build_chat_prompt(_base_context())[0]["content"]
     assert "【表情回应】" not in prompt
@@ -427,7 +431,7 @@ def test_c1_after_reply_skips_sad_messages():
 
 
 def test_c1_sad_word_list_coverage():
-    from plugins.bot_unified_runtime.runtime.reactions import is_sad_message
+    from plugins.bot_unified_runtime.domains.meme.reactions.engine import is_sad_message
 
     for text in (
         "好累", "心累了", "我好伤心", "傷心", "有點難過", "難受",
@@ -491,7 +495,9 @@ def test_double_trigger_b_fail_blocks_a_reroll():
 
 def test_i1_comfort_intent_maps_to_empathy_emoji():
     """I1：安慰 → 流泪(5) 共情同悲，不再用可爱(20) 卖萌脸。"""
-    from plugins.bot_unified_runtime.runtime.reactions import REACTION_INTENT_EMOJIS
+    from plugins.bot_unified_runtime.domains.meme.reactions.engine import (
+        REACTION_INTENT_EMOJIS,
+    )
 
     assert REACTION_INTENT_EMOJIS["安慰"] == 5
     bot = FakeBot()
@@ -544,7 +550,9 @@ def test_private_session_never_calls_set_msg_emoji_like():
 
 def test_i3_comfort_keywords_simplified_traditional():
     """I3：简体「伤心」与繁体裸「難過」命中安慰；繁体「謝謝」命中感动。"""
-    from plugins.bot_unified_runtime.runtime.reactions import infer_signal_intent
+    from plugins.bot_unified_runtime.domains.meme.reactions.engine import (
+        infer_signal_intent,
+    )
 
     assert infer_signal_intent("我好伤心") == "安慰"
     assert infer_signal_intent("有點難過") == "安慰"
@@ -620,7 +628,7 @@ def test_qsid_intent_face_semantics_closed_loop():
 def test_qsid_after_reply_pool_mild_faces_and_c1_intact():
     """兜底池=中性温和三脸（赞76/惊讶0/害羞6，tone-audit M2 的 QSid 平移）；
     C1 悲伤门换池后不回退。"""
-    from plugins.bot_unified_runtime.runtime.reactions import (
+    from plugins.bot_unified_runtime.domains.meme.reactions.engine import (
         _REACTION_FALLBACK_INTENTS,
         is_sad_message,
     )
@@ -662,7 +670,9 @@ def test_qsid_signal_posts_correct_face_end_to_end():
 def test_l02_window_keys_capped_at_4096():
     """L-02 回归①：_window 键数封顶 _REACTION_LRU_CAP=4096（对齐 _last/
     _reacted/_rolled 惯例），长跑不再随会话键无界增长。"""
-    from plugins.bot_unified_runtime.runtime.reactions import _REACTION_LRU_CAP
+    from plugins.bot_unified_runtime.domains.meme.reactions.engine import (
+        _REACTION_LRU_CAP,
+    )
 
     gate = ProactiveGate()
     kwargs = {

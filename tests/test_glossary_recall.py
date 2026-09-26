@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
 from plugins.bot_unified_runtime.contracts import (
     ContextBundle,
     GlossaryContext,
@@ -25,6 +24,9 @@ from plugins.bot_unified_runtime.contracts import (
     ToneProfile,
     TrendContext,
     TrendNote,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    build_chat_prompt,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.character import (
     glossary as glossary_mod,

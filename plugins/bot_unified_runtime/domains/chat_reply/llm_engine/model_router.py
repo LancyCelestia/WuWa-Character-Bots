@@ -43,7 +43,7 @@ import logging
 import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from datetime import time as dt_time
@@ -56,6 +56,16 @@ from plugins.bot_unified_runtime.domains.chat_reply.llm_engine import (
     OpenAICompatibleLLMProvider,
     should_failover,
 )
+from plugins.bot_unified_runtime.domains.core.channel_capability_tags import (
+    declared_native_media_kinds,
+)
+
+# 能力标签（``native-*``）的解释真身在 `domains/core/channel_capability_tags.py`
+# （T4 收编：前缀常量与「tags→kind」此前在这里是一份本地常量 + 一份本地函数，
+# 与声明源构成两张表——正是本波要根修的那一型）。本件只是再导出，既有
+# `from …model_router import declared_native_media_kinds` 的调用点与测试 import 面
+# 保持可用；活性锁见 tests/test_tag_presence_gate.py::
+# test_tag_interpreter_is_not_copied_into_the_router。
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +195,141 @@ def _intimate_mode_for_session(router: ModelRouter, session_id: str, text: str) 
         return isinstance(verdict, dict) and verdict.get("mode") == "intimate"
     except Exception:  # noqa: BLE001 - fail-open：判不了按非亲密处理。
         return False
+
+
+# ==================== 原生媒体部件 ⇄ 渠道声明（逐跳执法） ====================
+#
+# 渠道能不能整包原样吃某种媒体，由注册表 tags 里的 ``native-audio`` /
+# ``native-video`` / ``native-animation`` 声明（缺省不放行）。装配期问一次链首
+# 候选是**不够的**：请求体在能力层只构造一份，而故障转移与影子并发都会把同一份
+# messages **逐跳重发**，第二跳往往正是没声明的那一家。实跑依据（2026-09-23 评审席）：
+# grok-4.6 的网关对 ``input_audio`` 返 422、对 ``image_url`` 里的 gif 返 400
+# （`Downloaded response does not contain a valid JPG, PNG, WebP, or ICO image`）
+# ⇒ 首跳本来能答的媒体消息，只要首跳有一次瞬时问题，就变成**两跳皆败的整体失败**。
+#
+# 本节的判据与 `supports_native_media` **同源**（同一张标签解释函数），只多一条
+# 纪律：裁与不裁按**该候选自己的声明**算，不按"链上有谁没声明"一刀切，也不把
+# 候选从链上摘掉（摘候选会把"能答的文字轮"一起拖下水，见 `_messages_for_candidate`）。
+
+# 内容部件 type → 原生 kind：只在真身这一处映射，禁在调用点重抄字面量。
+_NATIVE_PART_KINDS: dict[str, str] = {"input_audio": "audio", "video_url": "video"}
+# 被裁掉的部件必须**留下痕迹**：否则该跳会自信地臆答它根本没收到的附件。
+# 措辞面向模型（不进用户可见文案），只陈述事实与要求诚实，不带人格口吻。
+_NATIVE_KIND_LABELS: dict[str, str] = {
+    "audio": "语音",
+    "video": "视频",
+    "animation": "动图/表情包",
+}
+
+# 「tags → 原生 kind」的解释规则**不在本件**：唯一真身 =
+# `domains/core/channel_capability_tags.declared_native_media_kinds`（T4 收编，
+# 见本件顶部 import）。前缀常量曾经这里是本地一份、核心件一份，那正是"两张表
+# 对撞"的开局形态；现在这里只是再导出（既有
+# `from …model_router import declared_native_media_kinds` 的调用点与测试 import 面
+# 保持可用），活性锁见
+# `tests/test_tag_presence_gate.py::test_tag_interpreter_is_not_copied_into_the_router`。
+
+
+def _image_part_is_animation(part: Mapping[str, Any]) -> bool:
+    """``image_url`` 部件属不属于动图族（gif 原字节 / 视频容器 / 未知非静态容器）。
+
+    容器判据的**真身在媒体层**（`vision_describe.requires_native_animation`）：
+    装配门按段组（sticker + animation）取数，`animation` 段的 http URL 是
+    **原样透传**的（`extract_image_urls` 的 http 分支根本不下载），Telegram 动图
+    落盘后缀恒 `.mp4` ⇒ 只认 gif 的旧判据对这一整批是瞎的，未声明动画的一跳照旧
+    收到同一发必败请求（评审席 S32 贰-2 实跑）。这里不另立一张容器表，只读那份
+    真身；惰性 import 是因为媒体层反过来 import `llm`，模块级互引会成环。
+    """
+    from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
+        requires_native_animation,
+    )
+
+    holder = part.get("image_url")
+    if isinstance(holder, Mapping):
+        return bool(requires_native_animation(holder.get("url")))
+    return bool(requires_native_animation(holder))
+
+
+def _native_kind_for_part(part: object) -> str | None:
+    if not isinstance(part, Mapping):
+        return None
+    part_type = str(part.get("type") or "").strip().lower()
+    kind = _NATIVE_PART_KINDS.get(part_type)
+    if kind:
+        return kind
+    if part_type == "image_url" and _image_part_is_animation(part):
+        return "animation"
+    return None
+
+
+def native_media_kinds_in_payload(
+    messages: Sequence[Mapping[str, Any]]
+) -> frozenset[str]:
+    """请求体里**实际**带着哪几种原生部件（以载荷为事实源，不靠调用方自报）。
+
+    判据取载荷而不是取 ``require_native_media`` 这类入参的理由：入参漏传一次，
+    泄露就回来了；载荷骗不了人——没有的部件不可能被收到。
+    """
+    kinds: set[str] = set()
+    for message in messages or ():
+        if not isinstance(message, Mapping):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            kind = _native_kind_for_part(part)
+            if kind:
+                kinds.add(kind)
+    return frozenset(kinds)
+
+
+def _native_media_notice(kinds: Sequence[str]) -> str:
+    names = "、".join(_NATIVE_KIND_LABELS.get(kind, str(kind)) for kind in kinds)
+    return (
+        f"[附件未送达：{names}的原生内容无法由当前渠道解析，未随本次请求发送；"
+        "需要其内容时请如实说明没收到，不要臆测或编造]"
+    )
+
+
+def shape_messages_for_native_media(
+    messages: Sequence[Mapping[str, Any]],
+    declared: Iterable[str],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """裁掉该候选没声明的原生部件；返回 (请求体, 被裁掉的 kind 列表)。
+
+    - 无可裁时逐条浅拷贝返回，结构与内容与入参**逐字节相等**（不追加任何说明、
+      不动内容列表）：纯文本与纯图片轮次不得被本函数波及，由用例锁死。
+    - 只裁该裁的那一枚：同一列表里的纯图片必须留下（grok 收 jpeg/png 是 200），
+      已声明的部件也留下。
+    - 裁掉时在该消息内容尾部追加一条"未送达"说明——转译面（文字上下文）因此
+      完整保留在非原生那一跳上，模型也被明确要求就"没收到"说实话。
+    """
+    carried = native_media_kinds_in_payload(messages)
+    allowed = set(declared)
+    missing = sorted(carried - allowed)
+    if not missing:
+        return [dict(message) for message in messages], []
+    notice = _native_media_notice(missing)
+    shaped: list[dict[str, Any]] = []
+    for message in messages:
+        body = dict(message)
+        content = body.get("content")
+        if isinstance(content, list):
+            kept: list[Any] = []
+            dropped = False
+            for part in content:
+                kind = _native_kind_for_part(part)
+                if kind is not None and kind not in allowed:
+                    dropped = True
+                    continue
+                kept.append(part)
+            if dropped:
+                kept.append({"type": "text", "text": notice})
+                body["content"] = kept
+        shaped.append(body)
+    return shaped, missing
+
 
 # ==================== 思考强度档位 ====================
 # 按模型名家族划分的思考强度档位；注册表 tags 直接使用这些档位字符串。
@@ -949,6 +1094,10 @@ class ModelRouter:
     # 实例（测试手法，见 tests/test_auditfix_llm_route.py::_bare_router）也能安全
     # 读到 None；否则 _spec_for 等处的裸访问会抛 AttributeError（2026-09-18 修复）。
     _credential_config: object | None = None
+    # 合并期判定为「同模型同端点重复」的兜底渠道 id（`_refresh_dynamic_registry`
+    # 每次重算并整体重绑，从不就地改）。同样是「裸 `__new__` 构造要读得到」的类级
+    # 缺省：缺省空 ⇒ 未刷新过=不排除任何渠道，行为与旧代码逐字节一致。
+    _duplicate_fallback_ids: frozenset[str] = frozenset()
 
     def __init__(
         self,
@@ -1044,6 +1193,28 @@ class ModelRouter:
             ):
                 self._providers.pop(cached_id, None)
         # Reassign only the ordering field: never drop alternate keys or metadata.
+        # 主配置兜底（BOT_CHAT_MODEL 派生的 default）只在 .env 注册表在场时才会被
+        # build_model_router 降为 manual；生产注册表来自运行时合并，那次判定看到的
+        # 是空表，于是 default 带着 strong 直接参战，与运行时里同模型同网关的渠道
+        # 凑成一发必败的重复请求（2026-09-23 实测全天组多出第 2 跳）。合并完成后在
+        # 此补上降位——但只降「真重复」的那类：兜底模型在别处已有同 base_url 的渠道，
+        # 否则降位会把该模型整个从链上抹掉。
+        fallback_id = self._fallback_spec.model_id if self._fallback_spec is not None else ""
+        fallback_spec = new_specs.get(fallback_id) if fallback_id else None
+        duplicate_fallbacks: set[str] = set()
+        if fallback_spec is not None and any(
+            spec.model_id != fallback_spec.model_id
+            and spec.model.lower() == fallback_spec.model.lower()
+            and spec.base_url == fallback_spec.base_url
+            for spec in new_specs.values()
+        ):
+            duplicate_fallbacks.add(fallback_spec.model_id)
+            new_specs[fallback_spec.model_id] = replace(
+                fallback_spec,
+                tags=tuple(dict.fromkeys([*fallback_spec.tags, "manual"])),
+                priority=2000,
+            )
+        self._duplicate_fallback_ids = frozenset(duplicate_fallbacks)
         ordered = sorted((spec for spec in new_specs.values() if "manual" not in spec.tags),
                          key=lambda spec: (spec.priority, spec.model_id))
         for rank, spec in enumerate(ordered, 1):
@@ -1169,6 +1340,70 @@ class ModelRouter:
             return False
         return "text-only" not in {tag.lower() for tag in spec.tags}
 
+    def supports_native_media(
+        self,
+        kind: str,
+        *,
+        message_text: str = "",
+        override: str = "",
+        session_key: str = "",
+    ) -> bool:
+        """**实际首跳**是否被声明可原生吃该种媒体（``native-audio``/``native-video``/
+        ``native-animation``）。
+
+        缺省不放行：必须渠道显式打标。依据是 2026-09-23 对 axonhub 的实测——
+        grok-4.6 收到 ``video_url`` 部件时返回 200 却答"没有附带任何视频"，即
+        HTTP 成功不代表模型真看见了内容，故绝不能用状态码反推能力，只认声明。
+
+        ``session_key`` 是**必答项**（缺省 ``""`` 只为兼容既有调用面）：内容路由在
+        INTIMATE 会话把候选头插换成 grok（``_auto_route_ids`` 的 content_head 段），
+        而真正决定请求体形状的是**这一跳收到什么**。不传键 ⇒ 门永远按默认链首回答
+        ⇒ 门说"能原生吃"、ASR/抽帧据此让路、真首跳却按自己的声明把部件裁掉
+        （见 `_messages_for_candidate`）⇒ 没声明的一家 200 抢跑、能答的那家永不被问
+        ⇒ 媒体内容**静默丢失**（评审席 S39 §一.3 生产注册表实跑
+        ``hop_for_intimate_head_content_types=["text"]``）。这与 S26 那条 P0 泄露是
+        同一条病根，只是这次由内容路由自己把链首换掉了。管理员 override 分支不传键
+        的既有语义保持（`route_ids` 在 override 分支本就不吃内容路由）。
+        """
+        wanted = (kind or "").strip().lower()
+        if not wanted:
+            return False
+        self._refresh_dynamic_registry()
+        candidate_ids = self.route_ids(
+            message_text=message_text, override=override, session_key=session_key
+        )
+        if not candidate_ids:
+            return False
+        spec = self._spec_for(candidate_ids[0])
+        if spec is None:
+            return False
+        return wanted in declared_native_media_kinds(spec.tags)
+
+    def _messages_for_candidate(
+        self, messages: Sequence[Mapping[str, Any]], model_id: str
+    ) -> list[dict[str, Any]]:
+        """本跳真正该发出去的请求体：按**该候选自己的**声明裁掉它解不开的原生部件。
+
+        与 `require_vision` 那条先例同源的候选侧执法（判据同一处：
+        ``declared_native_media_kinds``），但**不把候选从链上摘掉**——摘候选在
+        「首跳瞬时故障」这个恰好最需要兜底的场景里会让整条链一起没掉，用户拿到的
+        仍是安全失败话术；裁件既堵住了泄露（没声明的渠道永远收不到那个部件），
+        又保住了这一跳用文字作答的能力。判据以**载荷**为事实源，故调用方漏传
+        任何标志都不会重新打开泄露面。
+        """
+        spec = self._spec_for(model_id)
+        declared = declared_native_media_kinds(() if spec is None else spec.tags)
+        shaped, missing = shape_messages_for_native_media(messages, declared)
+        if missing:
+            # 逐跳可见的观测点：复盘"为什么这轮答得像没听见"时必须能 grep 到。
+            logger.warning(
+                "llm native media stripped model=%s stripped_kinds=%s declared_kinds=%s",
+                model_id,
+                ",".join(missing),
+                ",".join(sorted(declared)) or "-",
+            )
+        return shaped
+
     def channels_for_model(self, model_name: str) -> list[str]:
         """按实际模型名聚合全部渠道（v21r2 R1：严格注册表优先级）。
 
@@ -1191,6 +1426,17 @@ class ModelRouter:
             if spec.model.lower() == name
             or any(alias.lower() == name for alias in spec.aliases)
         ]
+        # 排除「本次合并里被判定为同端点重复」的那一条兜底（判据与打标签都在
+        # `_refresh_dynamic_registry` 一处）。**按身份排除、不按标签排除**：
+        # - 按 manual 标签一刀切，会把"端点不同的真兜底"一起抹掉——控制面
+        #   `/api/v1/llm/routes` 的投影要显示它（既有契约
+        #   tests/test_v21_s9_llm_api.py），管理员得看得见最后一棒是谁；
+        # - 按 (model, base_url) 折叠更不行：同名多渠道是本聚合的**目的**本身
+        #   （跨供应商故障转移），注毒实跑当场打出 6 条回归。
+        if self._duplicate_fallback_ids:
+            matched = [
+                spec for spec in matched if spec.model_id not in self._duplicate_fallback_ids
+            ]
         credential_config = getattr(self, "_credential_config", None)
         ema_map = _health_ema_latencies(credential_config)
         if not _strict_priority_enabled(credential_config):
@@ -1406,7 +1652,7 @@ class ModelRouter:
         self,
         race: _HedgeRace,
         model_id: str,
-        messages: list[dict[str, str]],
+        messages: Sequence[Mapping[str, Any]],
         *,
         global_effort: str,
         complex_task: bool,
@@ -1448,6 +1694,33 @@ class ModelRouter:
             )
             return
         effort = self._resolve_effort(spec, global_effort, complex_task)
+        # 逐跳裁件与串行路同源：影子 worker 同样是"按候选发同一份请求体"的地方，
+        # 只修串行路会在这条腿上原样泄露（生产缺省关影子，但这条腿今天在码里）。
+        #
+        # 这道守卫是纪律要求，不是可选项：本函数自己的注释写着"影子线程二次异常
+        # 不得炸线程：炸了等待方永远等不到 settle"（见下方去参重试那一支），而
+        # 等待方在无链预算时走的是 `race.cond.wait(None)`——裁件此前落在 try
+        # **之外**，一抛就是 `HANG-NO-RETURN-after-8s`（评审席 S32 贰-1 复现）。
+        # 死因照 worker 已有的口径结算成一跳 `provider_error` 失败（与"工厂/供应商
+        # 异常统一为可转移错误"那支同一措辞同一 kind，不另开错误通道），且**不发**
+        # 未裁的载荷——与 `spec is None`/空密钥两支同构：记账、return。
+        try:
+            hop_messages = self._messages_for_candidate(messages, model_id)
+        except Exception as exc:  # noqa: BLE001 - 炸线程＝等待方永久挂死。
+            logger.warning(
+                "llm native media shaping failed model=%s err=%s",
+                model_id,
+                type(exc).__name__,
+            )
+            self._hedge_record_failure(
+                race,
+                model_id,
+                LLMProviderError(
+                    f"model {model_id} failed: {type(exc).__name__}",
+                    error_kind="provider_error",
+                ),
+            )
+            return
         api_keys = spec.all_api_keys()
         for key_index, api_key in enumerate(api_keys):
             options = dict(base_options)
@@ -1482,7 +1755,7 @@ class ModelRouter:
             attempt_started = time.monotonic()
             try:
                 provider = self.provider_for(model_id, api_key)
-                reply = provider.generate(messages, **options)
+                reply = provider.generate(hop_messages, **options)
             except LLMProviderError as exc:
                 if (
                     exc.error_kind in _PARAM_STRIP_RETRY_KINDS
@@ -1491,7 +1764,7 @@ class ModelRouter:
                     retry_options = dict(options)
                     retry_options.pop("reasoning_effort", None)
                     try:
-                        reply = provider.generate(messages, **retry_options)
+                        reply = provider.generate(hop_messages, **retry_options)
                     except LLMProviderError as retry_exc:
                         exc = retry_exc
                     except Exception as retry_exc:  # noqa: BLE001 - 影子线程二次异常不得炸线程：炸了等待方永远等不到 settle。
@@ -1850,6 +2123,10 @@ class ModelRouter:
                 routing_group=spec.routing_group if spec is not None else "",
                 usage=usage,
                 attempts=attempts,
+                # 网关归因关联键（响应体 id）；失败轮次没有 reply，留空。
+                remote_request_id=(
+                    getattr(reply, "remote_request_id", "") if reply is not None else ""
+                ),
                 finish_reason=str(usage.get("finish_reason", "") or ""),
                 status=status,
                 error_kind=error_kind,
@@ -2216,6 +2493,11 @@ class ModelRouter:
                 # （未碰网络：既不累加也不打断连续网络失败计数）。
                 _health_record_config_missing(model_id, self._credential_config)
                 continue
+            # 逐跳裁件（2026-09-23 席位 S31）：同一份请求体在这里被**逐跳重发**，
+            # 而"能不能原样吃这份媒体"是**每候选自己**的事实。装配期只问链首一次
+            # 等于没问——第二跳正是没声明那一家时，网关按 400/422 拒掉，两跳皆败，
+            # 首跳本来能答的媒体消息整体失败。裁件同时保住这一跳用文字作答的能力。
+            hop_messages = self._messages_for_candidate(messages, model_id)
             for key_index, api_key in enumerate(api_keys):
                 attempt_options = dict(kwargs)
                 # 思考强度：条目显式设置（含 off）> 全局 > 家族基线最低档；
@@ -2256,7 +2538,7 @@ class ModelRouter:
                     # 真实 provider 尝试计数（止损判据）；provider_for 失败
                     # （工厂/配置洞）零网络成本不计。
                     provider_attempts += 1
-                    reply = provider.generate(messages, **attempt_options)
+                    reply = provider.generate(hop_messages, **attempt_options)
                 except LLMProviderError as exc:
                     if (
                         exc.error_kind in _PARAM_STRIP_RETRY_KINDS
@@ -2265,7 +2547,7 @@ class ModelRouter:
                         retry_options = dict(attempt_options)
                         retry_options.pop("reasoning_effort", None)
                         try:
-                            reply = provider.generate(messages, **retry_options)
+                            reply = provider.generate(hop_messages, **retry_options)
                         except LLMProviderError as retry_exc:
                             exc = retry_exc
                         else:

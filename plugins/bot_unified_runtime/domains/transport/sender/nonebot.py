@@ -12,7 +12,7 @@ from email.message import EmailMessage
 from email.utils import formataddr
 from html import escape as _html_escape
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from plugins.bot_unified_runtime.contracts import (
     DeliveryReceipt,
@@ -28,7 +28,9 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.deadline import (
 from plugins.bot_unified_runtime.domains.transport.sender.file_gateway import (
     FileSource,
     FileTransferError,
-    FinalTransferError,
+    # FinalTransferError 不在此导入：它是 FileTransferError 的子类，本文件只按
+    # ``exc.kind`` 归因，两型走同一条 except 分支（导入即 F401 未用）。
+    MailEnvelope,
     get_default_file_gateway,
 )
 from plugins.bot_unified_runtime.domains.transport.sender.timeout import (
@@ -326,6 +328,44 @@ def _build_mail_reply_message(bot: Any, event: Any, text: str) -> EmailMessage:
     return message
 
 
+def _build_mail_attachment_envelope(
+    bot: Any, event: Any, body_text: str
+) -> MailEnvelope:
+    """邮件附件腿的信封（需求 16(3) 三端对齐 · S-T-TGSEND）。
+
+    全部字段只从**事件与 bot 身份**取，没有一枚从会话正文或主题里扫出来——
+    与正文腿 ``_build_mail_reply_message`` 取的是同一个地址事实
+    （``event.sender.id``），因此附件的可达面**不超过**纯文本回复的可达面：
+    只能把附件回给写过信给我们的那个人，会话里写「顺便发到 attacker@…」
+    改不了投递面。
+
+    ``recipients_allowlisted`` 只有这一枚事件来源的地址，而不是配置名册：
+    名册需要 ``config.py`` 新键（本席禁写面），上交主会话，见席位报告 §伍。
+    在那之前，``FileTransferGateway._deliver_mail`` 的
+    ``resolve_mail_recipient`` 仍然真执法——它拿 ``send_request.target_id``
+    与本名册比对，两者不一致（管线把请求路由到了别处）就整件拒发，
+    **绝不静默改投**。
+
+    ``daily_count`` 留 ``None``：日限执法要跨进程计数状态，真身归装配层。
+    网关在 ``None`` 时放行但记一行日志，绝不把「没接计数器」读成「额度还剩」。
+    """
+    bot_info = getattr(bot, "bot_info", None)
+    sender_address = str(
+        getattr(bot_info, "id", "") or getattr(bot, "self_id", "") or ""
+    ).strip()
+    sender_name = str(getattr(bot_info, "name", "") or "").strip()
+    recipient = str(getattr(getattr(event, "sender", None), "id", "") or "").strip()
+    subject = str(getattr(event, "subject", "") or "").strip()
+    return MailEnvelope(
+        recipients_allowlisted=(recipient,) if recipient else (),
+        subject=f"Re: {subject}" if subject else "",
+        body_text=body_text,
+        sender_address=sender_address,
+        sender_name=sender_name,
+        daily_count=None,
+    )
+
+
 async def send_nonebot_message(
     bot: Any,
     event: Any,
@@ -374,7 +414,15 @@ async def send_nonebot_message(
         part.get("type") in {"image", "record", "voice", "file", "video"}
         for part in media_parts
     )
-    if not text and not has_tg_media:
+    # 无正文只带附件的邮件请求不得被当成空内容跳过（S-T-TGSEND · 需求 16(3)）：
+    # 旧判据只认 Telegram 有媒体，于是「只发一个文件到邮箱」当场 SKIPPED、
+    # 回执 SENT 语义皆无，附件无声消失。邮件侧只有**附件**这一条媒体腿
+    # （图片/语音/视频在邮件上没有真身），故这里只放宽 file 一族，
+    # 不顺手把邮件的图/音/视频也宣称为可发。
+    has_mail_file = adapter_name == "mail" and any(
+        part.get("type") == "file" for part in media_parts
+    )
+    if not text and not has_tg_media and not has_mail_file:
         return DeliveryReceipt(
             request_id=send_request.request_id,
             state=ReceiptState.SKIPPED,
@@ -394,8 +442,22 @@ async def send_nonebot_message(
         remaining = text
         files = [part for part in parts if part.get("type") == "file"]
         if files:
-            if adapter_name != "telegram":
-                raise RuntimeError("file attachments unsupported by this adapter")
+            if adapter_name not in {"telegram", "mail"}:
+                # 附件只有 Telegram 文档腿与邮件附件腿两条真身（file_gateway
+                # ._deliver_telegram_document / ._deliver_mail）。第三条通道必须
+                # 终态失败：旧写法抛 RuntimeError 落进通用 except ⇒
+                # FAILED_RETRYABLE，队列把一条**永远发不出去**的消息反复重投到
+                # 预算耗尽才记 result_unknown——用户等满超时、日志只有一行
+                # ``send_failed``（台账 #29⑪ 同口径的「失败被压成一行」）。
+                raise _FinalSendError("file_unsupported_adapter")
+            transport_name: Literal["telegram", "mail"] = (
+                "telegram" if adapter_name == "telegram" else "mail"
+            )
+            envelope = (
+                _build_mail_attachment_envelope(bot, event, remaining)
+                if transport_name == "mail"
+                else None
+            )
             result: Any = None
             # B3 阶段 1：附件统一经 FileTransferGateway 投递；缺失/超 2MB 的
             # 不可重试判定、caption 截 1000 字、读全量字节、回执缺失按失败
@@ -415,19 +477,35 @@ async def send_nonebot_message(
                         bot,
                         ticket,
                         target=send_request,
-                        transport="telegram",
+                        transport=transport_name,
                         part_index=part_index,
                         caption=remaining[:1000],
+                        mail_envelope=envelope,
                     )
-                except FinalTransferError as exc:
-                    # 附件缺失/超限在发送前即可判定，重试也不会成功。
-                    raise _FinalSendError(str(exc)) from exc
                 except FileTransferError as exc:
-                    raise _FinalSendError("invalid generated attachment") from exc
+                    # 逐因归因（S-T-TGSEND · 台账 #29⑪ 同口径）：旧写法在这里
+                    # 把网关的全部失败分类压成一枚定串 "invalid generated
+                    # attachment"，于是「路径域判定拒绝」（path_domain_denied）与
+                    # 「文件真的不在了」（missing_file）在管理员告警与诊断卡上
+                    # 长得一模一样，用户端也只看到一句含糊的「附件无效」。
+                    # 完整分类清单的真身＝``FileTransferError`` 自己的 docstring
+                    # （file_gateway.py:89-101，本处刻意不抄枚数——抄一次就过期一次）。
+                    # QQ 腿从来就是这样（sender/onebot.py:599 用 ``str(exc.kind)``）
+                    # ⇒ 同一条铁律两腿一执行一没执行，属实现漂移而非设计。
+                    # 行为影响面如实：``FinalTransferError`` 是子类、kind 同字段，
+                    # 故 _deliver_telegram_document 自抛的那枚串逐字不变；
+                    # **变掉的是 stage 阶段**——「文件不在场」从定串改为
+                    # "missing_file"，tests/test_file_gateway_phase1.py:525 的
+                    # 断言随之改判（黄金语义 failed_final ∧ 绝不发出未放宽）。
+                    raise _FinalSendError(str(exc.kind)) from exc
                 result = file_receipt.provider_result
                 delivered_parts += 1
-                if not file_receipt.provider_file_id:
+                if transport_name == "telegram" and not file_receipt.provider_file_id:
                     raise RuntimeError("telegram attachment receipt missing")
+                # 邮件腿**不得**照抄上一条：SMTP 出口本就不回消息号
+                # （适配器 ``send_mail`` 返回 None），拿「无 provider_file_id」
+                # 判失败会让邮件附件一次都发不出去（file_gateway:770 已点名）。
+            # 附件与随件正文已在这一条消息里一并投递，正文不得再单独发一轮。
             return result
         result = None
         if adapter_name == "telegram":

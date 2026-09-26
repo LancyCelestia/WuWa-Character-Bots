@@ -22,7 +22,9 @@ import sys
 import time
 from pathlib import Path
 
-from plugins.bot_unified_runtime.runtime.base_router import classify_message_route
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
+    classify_message_route,
+)
 
 _SAMPLES = [
     "占卜",

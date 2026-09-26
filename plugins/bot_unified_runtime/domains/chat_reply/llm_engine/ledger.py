@@ -31,6 +31,7 @@ import os
 import queue
 import sqlite3
 import threading
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -129,8 +130,13 @@ class LLMCallDraft:
     total_tokens: int | None = None
     input_cost_milli: int | None = None
     cache_read_cost_milli: int | None = None
+    cache_creation_cost_milli: int | None = None
     output_cost_milli: int | None = None
     total_cost_milli: int | None = None
+    # 微元（元 ×1e6）。存在这一列的理由不是"多一位精度好看"：单发短回复的
+    # 实测成本 0.000219 元 = 0.219 毫厘，按行取整到毫厘就是 0，而报表是把行相加的
+    # ⇒ 一天的账单会整体塌成接近零。取整只在**聚合那一步**做一次。
+    total_cost_micro: int | None = None
     currency: str = "CNY"
     pricing_source: str = "unknown"
     unpriced: int = 0
@@ -141,11 +147,27 @@ class LLMCallDraft:
     error_summary: str = ""
     source: str = "router"
     schema_ver: int = 1
+    # ---- 网关归因（B1，2026-09-25）：由写线程事后回填，回复路径不碰 ----
+    # 关联键＝响应体 id（走网关时等于 requests.external_id）。空 = 本轮没拿到键。
+    remote_request_id: str = ""
+    # '' = 没查过（无键或未启用）；matched / miss / unavailable。
+    # 三态必须可区分：缺了这一列，「没查到」会被读成「网关没记到渠道」。
+    attribution_status: str = ""
+    gateway_channel: str = ""
+    gateway_latency_ms: int | None = None
+    gateway_hops: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def attempts_json(self) -> str:
         try:
             return json.dumps(list(self.attempts), ensure_ascii=False)
+        except (TypeError, ValueError):
+            return "[]"
+
+    @property
+    def gateway_hops_json(self) -> str:
+        try:
+            return json.dumps(list(self.gateway_hops), ensure_ascii=False)
         except (TypeError, ValueError):
             return "[]"
 
@@ -156,6 +178,11 @@ class CallRecordSink(Protocol):
     def submit(self, draft: LLMCallDraft) -> None:
         """提交一条账本行草稿；实现必须自行吞异常（失败不阻塞聊天）。"""
         ...  # pragma: no cover
+
+
+# 网关归因批量反查口：给一批关联键，回 {键: Attribution}；**返回 None 表示
+# 这一批没查成**（库不可达/超时/熔断），与"查了但没有"区分开。
+AttributionLookup = Callable[[Sequence[str]], "Mapping[str, Any] | None"]
 
 
 # ==================== draft 组装 ====================
@@ -211,6 +238,7 @@ def build_call_draft(
     price_cache_read: float | None = None,
     price_cache_creation: float | None = None,
     price_per_call: float | None = None,
+    remote_request_id: str = "",
 ) -> LLMCallDraft:
     """从出口原语组装 draft；token 取自 raw_usage 归一化键，缺失即 NULL。
 
@@ -242,9 +270,27 @@ def build_call_draft(
     cache_read_cost_milli: int | None = None
     output_cost_milli: int | None = None
     total_cost_milli: int | None = None
+    total_cost_micro: int | None = None
     pricing_source = "unknown"
     unpriced = 1 if (total_tokens is not None and total_tokens > 0) else 0
-    if price_in is not None and price_out is not None:
+    # 网关成本优先（2026-09-24）：AxonHub 按**实际服务的那条渠道**算好成本并注入
+    # `usage.cost`（实测 136×0.3/1M + 116×1.5/1M == 返回的 0.0002148，逐位吻合）。
+    # 本仓注册表只有指向网关的少数条目，看不见网关内部选了谁，所以这个数一旦存在
+    # 就必须压过本地自算价；分项列留 NULL（网关只回合计，不回填假分项）。
+    # cost<=0 不当成本使用：未计价与零价必须可区分。
+    gateway_cost = usage.get("cost")
+    gateway_micro: int | None = None
+    if (isinstance(gateway_cost, (int, float))
+            and not isinstance(gateway_cost, bool)
+            and gateway_cost > 0):
+        gateway_micro = round(float(gateway_cost) * 1_000_000)
+    from_gateway = gateway_micro is not None
+    if gateway_micro is not None:
+        total_cost_micro = gateway_micro
+        total_cost_milli = round(gateway_micro / 1000)
+        pricing_source = "gateway_cost"
+        unpriced = 0
+    elif price_in is not None and price_out is not None:
         cached_read = cache_read_tokens or 0
         cached_write = cache_creation_tokens or 0
         prompt = prompt_tokens or 0
@@ -261,15 +307,28 @@ def build_call_draft(
         total_cost_milli = (
             input_cost_milli + cache_read_cost_milli + output_cost_milli
         )
+        # 微元按**未取整**的原式重算，不由毫厘 ×1000 反推（反推等于把已经丢掉的
+        # 精度假装找回来，报表上会凭空多出可信度）。价是 元/1M token，
+        # 所以「token 数 × 价」直接就是元×1e6＝微元。
+        total_cost_micro = round(
+            billed_input * price_in
+            + cached_write * creation_price
+            + cached_read * read_price
+            + (completion_tokens or 0) * price_out
+        )
         pricing_source = "channel_spec"
         unpriced = 0
     # 按次计费渠道（0.18元/请求类）：与 token 价并存则叠加，单独存在时
-    # 独立成账（token 列保持 NULL）。
+    # 独立成账（token 列保持 NULL）。网关成本已含按次，不再叠加以免双计。
     per_call_milli = (
         round(price_per_call * 1000) if price_per_call is not None else None
     )
-    if per_call_milli is not None:
+    if per_call_milli is not None and not from_gateway:
         total_cost_milli = (total_cost_milli or 0) + per_call_milli
+        if price_per_call is not None:
+            total_cost_micro = (total_cost_micro or 0) + round(
+                float(price_per_call) * 1_000_000
+            )
         pricing_source = "channel_spec"
         unpriced = 0
     return LLMCallDraft(
@@ -294,6 +353,7 @@ def build_call_draft(
         cache_read_cost_milli=cache_read_cost_milli,
         output_cost_milli=output_cost_milli,
         total_cost_milli=total_cost_milli,
+        total_cost_micro=total_cost_micro,
         pricing_source=pricing_source,
         unpriced=unpriced,
         attempts=list(attempts or []),
@@ -301,7 +361,129 @@ def build_call_draft(
         status=str(status or ""),
         error_kind=str(error_kind or ""),
         error_summary=redact_error_summary(error_summary),
+        remote_request_id=str(remote_request_id or ""),
     )
+
+
+# ==================== 网关归因回填（写线程侧） ====================
+
+# 账本新增列（B1）：迁移清单与 INSERT 顺序的共同真身，禁两处手抄。
+ATTRIBUTION_COLUMNS: tuple[str, ...] = (
+    "remote_request_id",
+    "attribution_status",
+    "gateway_channel",
+    "gateway_latency_ms",
+    "gateway_hops_json",
+    "cache_creation_cost_milli",
+)
+
+# 待补列的完整清单＝归因列 + 成本精度列。分开列名是为了语义不掺：
+# ``total_cost_micro`` 不是归因事实，是"整数毫厘装不下单发成本"的补偿。
+MIGRATED_COLUMNS: tuple[str, ...] = ATTRIBUTION_COLUMNS + ("total_cost_micro",)
+
+# 迁移用的列定义（与 _SCHEMA_SQL 内文逐字同源，只此一份）。
+_ATTRIBUTION_COLUMN_DDL = {
+    "remote_request_id": "remote_request_id TEXT NOT NULL DEFAULT ''",
+    "attribution_status": "attribution_status TEXT NOT NULL DEFAULT ''",
+    "gateway_channel": "gateway_channel TEXT NOT NULL DEFAULT ''",
+    "gateway_latency_ms": "gateway_latency_ms INTEGER",
+    "gateway_hops_json": "gateway_hops_json TEXT NOT NULL DEFAULT '[]'",
+    "cache_creation_cost_milli": "cache_creation_cost_milli INTEGER",
+    "total_cost_micro": "total_cost_micro INTEGER",
+}
+
+# 网关 cost_items 的 itemCode → 账本列（2026-09-25 实测四枚 itemCode 名）。
+_ATTRIBUTION_ITEM_COLUMNS = {
+    "prompt_tokens": "input_cost_milli",
+    "completion_tokens": "output_cost_milli",
+    "prompt_cached_tokens": "cache_read_cost_milli",
+    "prompt_write_cached_tokens": "cache_creation_cost_milli",
+}
+
+ATTRIBUTION_MATCHED = "matched"
+ATTRIBUTION_MISS = "miss"
+ATTRIBUTION_UNAVAILABLE = "unavailable"
+
+
+def apply_attribution(
+    draft: LLMCallDraft,
+    result: object,
+    *,
+    unavailable: bool = True,
+) -> None:
+    """把网关侧事实并进一条草稿；就地改，返回 None。
+
+    ``result`` 三种给法对应三种账：``None`` = 这一批根本没查成（库不在/超时）
+    ⇒ ``unavailable``；查了但没有这条 ⇒ ``miss``；命中 ⇒ ``matched``。
+    三态必须分开：只有 ``matched`` 才允许下游把 ``gateway_channel`` 读成
+    「网关说的实际渠道」，否则 NULL/空串会被当成「网关没记到渠道」。
+    单体（一个 ``Attribution``）与批量（``{关联键: Attribution}``）两种给法都收：
+    写线程走批量，调用方手上只有一条时不必自己再包一层 dict。
+
+    口径：
+    - **合计只信网关的 total_cost**，不由分项相加（分项各自取整到毫厘，
+      相加会与合计差 1–2 毫厘，对账时说不清是谁错）。
+    - 分项价到齐任一项 ⇒ ``pricing_source='gateway_cost_items'``：这是比
+      ``gateway_cost`` 更强的证据，允许覆盖本地自算价。
+    - ``duration_ms`` 不动：那是用户等的时间（含排队与 bot 侧开销）；
+      网关侧耗时另存 ``gateway_latency_ms``。
+    - 已有观测值不被后到的数改写（``first_token_latency_ms`` 只补空）。
+    """
+    key = str(draft.remote_request_id or "")
+    if not key:
+        return
+    if result is None:
+        draft.attribution_status = ATTRIBUTION_UNAVAILABLE
+        return
+    single_key = getattr(result, "remote_request_id", None)
+    if single_key is not None:  # 单体 Attribution 形态：键对得上就用
+        found = result if str(single_key) in {"", key} else None
+    else:
+        found = result.get(key) if isinstance(result, dict) else None
+    if found is None:
+        if unavailable and not result:
+            draft.attribution_status = ATTRIBUTION_UNAVAILABLE
+        else:
+            draft.attribution_status = ATTRIBUTION_MISS
+        return
+    draft.attribution_status = ATTRIBUTION_MATCHED
+    draft.gateway_channel = str(getattr(found, "gateway_channel", "") or "")
+    if draft.first_token_latency_ms is None:
+        draft.first_token_latency_ms = getattr(found, "first_token_latency_ms", None)
+    draft.gateway_latency_ms = getattr(found, "latency_ms", None)
+    # token 四列：bot 侧 `_extract_usage` 只在 >0 时写键，所以这里的 None 既是
+    # 「没缓存」也可能是「上游没报」。网关是计费方，它给的数就是入账依据，
+    # 因此**只补空、不覆盖**已有观测值（与首字耗时同一口径）。
+    for attr, field_name in (
+        ("prompt_tokens", "prompt_tokens"),
+        ("cache_read_tokens", "cache_read_tokens"),
+        ("cache_creation_tokens", "cache_creation_tokens"),
+        ("completion_tokens", "completion_tokens"),
+    ):
+        if getattr(draft, attr) is None:
+            value = getattr(found, field_name, None)
+            if isinstance(value, int):
+                setattr(draft, attr, value)
+    hops = getattr(found, "hops", None) or []
+    draft.gateway_hops = [
+        hop.as_dict() if hasattr(hop, "as_dict") else dict(hop) for hop in hops
+    ]
+    item_costs = getattr(found, "item_cost_milli", None) or {}
+    filled = False
+    for item_code, column in _ATTRIBUTION_ITEM_COLUMNS.items():
+        value = item_costs.get(item_code)
+        if isinstance(value, int):
+            setattr(draft, column, value)
+            filled = True
+    total = getattr(found, "total_cost_micro", None)
+    if isinstance(total, int):
+        draft.total_cost_micro = total
+        draft.total_cost_milli = round(total / 1000)
+        draft.unpriced = 0
+        # 分项到齐才升格为 cost_items；只有合计则维持 A 段的 gateway_cost 口径。
+        draft.pricing_source = (
+            "gateway_cost_items" if filled else "gateway_cost"
+        )
 
 
 # ==================== SQLite 落库服务 ====================
@@ -323,12 +505,17 @@ class LedgerService:
         flush_interval_seconds: float = DEFAULT_FLUSH_INTERVAL_SECONDS,
         max_pending: int = MAX_PENDING_RECORDS,
         writer_thread: threading.Thread | None = None,
+        attribution_lookup: AttributionLookup | None = None,
     ) -> None:
         self.db_path = str(db_path)
         self.flush_batch_size = max(1, int(flush_batch_size))
         self.flush_interval_seconds = max(0.05, float(flush_interval_seconds))
         self.dropped_count = 0
         self.write_error_count = 0
+        # 网关归因反查（B1）：None = 关闭，行为与加列前逐字节一致。
+        # 只在写线程里调用——回复路径零新增等待。
+        self._attribution_lookup = attribution_lookup
+        self.attribution_error_count = 0
         self._pending: queue.Queue[LLMCallDraft | None] = queue.Queue(
             maxsize=max(1, int(max_pending))
         )
@@ -484,12 +671,71 @@ class LedgerService:
             except sqlite3.Error:
                 pass  # 网络盘等不支持 WAL 时降级默认 journal。
             connection.executescript(_SCHEMA_SQL)
+            self._migrate_attribution_columns(connection)
             connection.commit()
+
+    @staticmethod
+    def _migrate_attribution_columns(connection: sqlite3.Connection) -> None:
+        """B1 新增列的自动补齐（家规先例＝affinity 三列 / memory_store_v21）。
+
+        生产库早已按旧 DDL 建好，``CREATE TABLE IF NOT EXISTS`` 对存量库是
+        空操作——不 ALTER 的话新列根本不存在，INSERT 当场报错，而那条错误
+        会被写线程吞成"账本没写进去"。迁移只加列、给缺省，绝不动存量行。
+        """
+        try:
+            existing = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(llm_call_records)")
+            }
+        except sqlite3.Error:
+            return
+        for column in MIGRATED_COLUMNS:
+            if column in existing:
+                continue
+            definition = _ATTRIBUTION_COLUMN_DDL[column]
+            try:
+                connection.execute(
+                    f"ALTER TABLE llm_call_records ADD COLUMN {definition}"
+                )
+            except sqlite3.Error:
+                logger.warning(
+                    "llm ledger attribution column %s migration failed", column,
+                    exc_info=True,
+                )
+
+    def _enrich_with_attribution(self, rows: list[LLMCallDraft]) -> None:
+        """写线程内的一次网关反查：只在有关联键且装了反查口时才发。
+
+        放在这里而不是回复路径上，是因为这一跳要等网络（本机 PG，但网关库
+        在别的机器上也一样）、且**每条消息都查一次**会把回复拖慢。账本写
+        线程本来就是异步攒批的，一批一次查询，代价与回复无关。
+        失败一律降级成 ``unavailable`` 标记，绝不向上抛——抛出会让整批
+        ``executemany`` 失败，等于归因故障连账本一起丢。
+        """
+        lookup = self._attribution_lookup
+        if lookup is None:
+            return
+        keyed = [row for row in rows if row.remote_request_id]
+        if not keyed:
+            return
+        ids = sorted({row.remote_request_id for row in keyed})
+        try:
+            result = lookup(ids)
+        except Exception:
+            self.attribution_error_count += 1
+            logger.debug("llm ledger attribution lookup failed", exc_info=True)
+            result = None
+        for row in keyed:
+            # 三态里 `miss` 与 `unavailable` 的分界就在这一行：`lookup` 返回 None
+            # ＝没查成（故障），返回 {}＝查成了但网关没有这些 id（真 miss）。
+            # 一律传缺省 unavailable=True 会把「网关没记到」写成「查不了」。
+            apply_attribution(row, result, unavailable=result is None)
 
     def _write_batch(self, rows: list[LLMCallDraft], *, timeout: float = 5.0) -> int:
         if not rows:
             return 0
         del timeout  # sqlite3 timeout 已在连接级设置；保留参数给调用方语义。
+        self._enrich_with_attribution(rows)
         payload = [
             (
                 row.request_id,
@@ -513,7 +759,9 @@ class LedgerService:
                 row.input_cost_milli,
                 row.cache_read_cost_milli,
                 row.output_cost_milli,
+                row.cache_creation_cost_milli,
                 row.total_cost_milli,
+                row.total_cost_micro,
                 row.currency,
                 row.pricing_source,
                 int(row.unpriced),
@@ -525,6 +773,11 @@ class LedgerService:
                 row.error_summary,
                 row.source,
                 int(row.schema_ver),
+                row.remote_request_id,
+                row.attribution_status,
+                row.gateway_channel,
+                row.gateway_latency_ms,
+                row.gateway_hops_json,
                 row.completed_at or row.started_at,
             )
             for row in rows
@@ -559,11 +812,15 @@ INSERT INTO llm_call_records (
     prompt_tokens, cache_creation_tokens, cache_read_tokens,
     completion_tokens, total_tokens,
     input_cost_milli, cache_read_cost_milli, output_cost_milli,
-    total_cost_milli, currency, pricing_source, unpriced,
+    cache_creation_cost_milli,
+    total_cost_milli, total_cost_micro, currency, pricing_source, unpriced,
     attempts_json, attempts_count, finish_reason,
     status, error_kind, error_summary,
-    source, schema_ver, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    source, schema_ver,
+    remote_request_id, attribution_status, gateway_channel,
+    gateway_latency_ms, gateway_hops_json,
+    created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 # DDL 与 docs/design/llm-billing-ledger.md §3/§5.2/§7.3 逐字段对齐。
@@ -591,7 +848,9 @@ CREATE TABLE IF NOT EXISTS llm_call_records (
     input_cost_milli      INTEGER,
     cache_read_cost_milli INTEGER,
     output_cost_milli     INTEGER,
+    cache_creation_cost_milli INTEGER,
     total_cost_milli      INTEGER,
+    total_cost_micro      INTEGER,
     currency              TEXT NOT NULL DEFAULT 'CNY',
     pricing_source        TEXT NOT NULL DEFAULT 'unknown',
     unpriced              INTEGER NOT NULL DEFAULT 0,
@@ -603,6 +862,11 @@ CREATE TABLE IF NOT EXISTS llm_call_records (
     error_summary  TEXT NOT NULL DEFAULT '',
     source     TEXT NOT NULL DEFAULT 'router',
     schema_ver INTEGER NOT NULL DEFAULT 1,
+    remote_request_id  TEXT NOT NULL DEFAULT '',
+    attribution_status TEXT NOT NULL DEFAULT '',
+    gateway_channel    TEXT NOT NULL DEFAULT '',
+    gateway_latency_ms INTEGER,
+    gateway_hops_json  TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL
 );
 
@@ -666,7 +930,11 @@ _CHANNEL_AGGREGATE_SQL = """
                        SUM(COALESCE(cache_read_tokens, 0))      AS cache_read_tokens,
                        SUM(COALESCE(completion_tokens, 0))      AS completion_tokens,
                        SUM(COALESCE(total_tokens, 0))           AS total_tokens,
-                       SUM(COALESCE(total_cost_milli, 0))       AS total_cost_milli,
+                       -- 取整只在聚合这一步做一次：逐行取整会把 0.219 毫厘这类单发成本
+                       -- 冲成 0，相加后一天的账单整体塌向零（2026-09-25 实测撞出）。
+                       CAST(ROUND(SUM(COALESCE(total_cost_micro,
+                            total_cost_milli * 1000, 0)) / 1000.0) AS INTEGER)
+                                                  AS total_cost_milli,
                        SUM(unpriced)                AS unpriced_calls
                 FROM llm_call_records
                 WHERE completed_at >= ? AND completed_at < ?
@@ -681,7 +949,11 @@ _CHANNEL_AGGREGATE_SINCE_SQL = """
                        SUM(COALESCE(cache_read_tokens, 0))      AS cache_read_tokens,
                        SUM(COALESCE(completion_tokens, 0))      AS completion_tokens,
                        SUM(COALESCE(total_tokens, 0))           AS total_tokens,
-                       SUM(COALESCE(total_cost_milli, 0))       AS total_cost_milli,
+                       -- 取整只在聚合这一步做一次：逐行取整会把 0.219 毫厘这类单发成本
+                       -- 冲成 0，相加后一天的账单整体塌向零（2026-09-25 实测撞出）。
+                       CAST(ROUND(SUM(COALESCE(total_cost_micro,
+                            total_cost_milli * 1000, 0)) / 1000.0) AS INTEGER)
+                                                  AS total_cost_milli,
                        SUM(unpriced)                AS unpriced_calls
                 FROM llm_call_records
                 WHERE completed_at >= ? AND completed_at < ?
@@ -768,13 +1040,19 @@ _GLOBAL_LOCK = threading.Lock()
 _GLOBAL_CLOSE_HOOK_REGISTERED = False
 
 
-def get_ledger_service(db_path: str = "") -> LedgerService:
-    """进程级单例（惰性创建）；显式传入不同 db_path 只告警并沿用现库。"""
+def get_ledger_service(db_path: str = "", *, config: object | None = None) -> LedgerService:
+    """进程级单例（惰性创建）；显式传入不同 db_path 只告警并沿用现库。
+
+    ``config`` 只用于**首次**构造时决定要不要接上网关归因反查口（B1）；
+    单例已存在时不重读——与"装配期读一次、热改当轮不生效"的全仓口径一致。
+    """
     global _GLOBAL_SERVICE, _GLOBAL_CLOSE_HOOK_REGISTERED
     with _GLOBAL_LOCK:
         resolved = str(db_path) if db_path else resolve_default_db_path()
         if _GLOBAL_SERVICE is None:
-            _GLOBAL_SERVICE = LedgerService(resolved)
+            _GLOBAL_SERVICE = LedgerService(
+                resolved, attribution_lookup=_build_attribution_lookup(config)
+            )
             if not _GLOBAL_CLOSE_HOOK_REGISTERED:
                 _GLOBAL_CLOSE_HOOK_REGISTERED = True
                 atexit.register(_close_global_service)
@@ -786,6 +1064,24 @@ def get_ledger_service(db_path: str = "") -> LedgerService:
                 resolved,
             )
         return _GLOBAL_SERVICE
+
+
+def _build_attribution_lookup(config: object | None) -> AttributionLookup | None:
+    """按配置构造批量反查口；开关关 / DSN 缺 / 建口失败 ⇒ None（不启用）。"""
+    if config is None:
+        return None
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine import (
+            axonhub_attribution,
+        )
+
+        resolver = axonhub_attribution.AttributionResolver.from_config(config)
+        if resolver is None:
+            return None
+        return axonhub_attribution.make_batch_lookup(resolver)
+    except Exception:
+        logger.warning("llm ledger attribution hookup failed", exc_info=True)
+        return None
 
 
 def _close_global_service() -> None:
@@ -806,7 +1102,7 @@ def resolve_call_record_sink(
         return injected
     if not ledger_enabled(config):
         return None
-    return get_ledger_service()
+    return get_ledger_service(config=config)
 
 
 def emit_call_record(
@@ -826,11 +1122,14 @@ def emit_call_record(
 
 
 __all__ = [
+    "ATTRIBUTION_COLUMNS",
     "MAX_PENDING_RECORDS",
+    "AttributionLookup",
     "CallRecordSink",
     "LLMCallDraft",
     "LedgerService",
     "aggregate_channel_usage",
+    "apply_attribution",
     "build_call_draft",
     "emit_call_record",
     "get_ledger_service",

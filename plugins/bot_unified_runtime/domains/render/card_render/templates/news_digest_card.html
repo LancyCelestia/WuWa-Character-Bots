@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<!-- news_digest_card.html · 新闻摘要卡（多源快讯的紧凑摘要呈现）。
+     质感语言完全沿用 song_candidates / market_card 的 mica-glass 家族：
+     釉瑚云母外壳（bridge 注入 root_tokens，--wash-mist 打底 + wash 多色交织）+
+     液态玻璃内容面板（--mica-glass-main + --mica-glass-edge 内高光描边，无 backdrop-filter）+
+     三枚漂移色斑（decor_css/blobs_html 由 mica_shell 生成器单源注入）+ 品牌胶囊。
+     token 全部经 bridge 从 theme_tokens 注入，模板零私有值（宽度 news_digest 已登记进 CARD_SHELL_WIDTHS）。
+     payload 契约：title/sub/badge/foot/items=[{source,time,name,snip}]，缺字段区块静默隐藏、
+     空 items 走「暂无」占位；任何输入都不抛异常（铁律 7：渲染失败→纯文本兜底）。
+     中文文案零硬编码：字面量唯一住 bridge._CARD_TEXT（键 static_news_*），
+     模板只留 card_text 键与 item 字段表达式（S79/S95 契约）。
+
+     ===== 2026-09-25/26 需求 18 项修复波 S-T-NEWS-1：规格统一 + 正式登记 =====
+     本面此前游离在 E03 排版门与 v21r3 九门之外（三本手抄模板清单都没数到它），
+     因此攒下了一批「只有它这么写」的脱族数值。逐条按**姊妹面 song_candidates
+     的现行值**对齐（同族卡就该同数值），不新造机制、不新增 token：
+       · 行高 1.55 → 1.6（全树唯一一处 1.55；E03 刻度 1.6=长正文档）；
+       · 徽章字距 0.04em → 0.06em（全树唯一一处 0.04；小标签标准档=0.06em，
+         与 song 的同位件 .ttl 逐字符一致）；
+       · 头区底衬 14px → 16px、条目内衬 11px 15px → 12px 16px、条目间距
+         gap 12 → 14、列表顶衬 14 → 16、摘要上间距 2px → 3px（2px 本就
+         不在 GAP_SCALE_PX 内）——五处全部取 song 的 .head/.row/.list/.meta 现值；
+       · 来源徽章的 color-mix 白底私调 0.86/0.22 → 收编为 song .top-chip 的
+         同一配方（14% + 0.78 底 / 24% + 0.88 描边），家族内少一套私有数值；
+       · 来源徽章摘掉 text-overflow: ellipsis（契约 §五 4b：省略号只放行定长
+         标识，来源名是站点显示名、长度由外部决定，切掉就是谎报）→ 改可换行
+         完整显示；本模板 ellipsis 现势为零；
+       · 条目列表按量切两栏（≥4 条走两栏，与 song 同日「卡片太挤」的同款裁定），
+         斑马纹改按**视觉行**取相 `(loop.index0 // columns) is even`（括号不可省，
+         Jinja 的 `is` 比 `//` 结合更紧——见列表处的注释；单栏下 //1 退化为逐行
+         交替，两栏下 //2 才不会跳成棋盘——song 面已踩过这个坑）；
+       · 条目内改 grid 定轨：来源列恒 104px、正文列 minmax(0,1fr)——来源缺位时
+         该列仍占轨（.src:empty 只停墨不撤轨），使「属性名一列、属性值一列」
+         在两栏下仍各自成轴，标题不再逐行抖动。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+/* ===== 新闻摘要卡（mica-glass 规范）=====
+   底色/色斑唯一来源：--wash-*（守岸人本命釉瑚云母洗，bridge._derive_wash_tokens 注入）；
+   --accent 仅作徽章/来源标/分隔线 accent，永不作底色。阴影走分级族 token（shell/panel/tile）。 */
+:root {
+    {# | safe 必需：token 块含 --font-family 的双引号，autoescape 会转成 &#34;，
+       而 <style> 内的实体不会被解码 → 字体族静默失效。#}
+    {{ root_tokens | safe }}
+    --accent-light: {{ platform_color_light }};
+    --accent-rgb: {{ platform_color_rgb }};
+    /* vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源经 bridge 注入）。 */
+    --mica-shadow-panel: {{ shadow_elev_panel }};
+    --glow-accent: {{ glow_accent }};
+    --divider-line: {{ divider_line }};
+    --surface-a: {{ surface_a }};
+    --surface-b: {{ surface_b }};
+    --surface-neutral: {{ surface_neutral }};
+    /* vis5 次级灰单源（theme_tokens.TEXT_SECONDARY，对三档表面 ≥4.5:1）。 */
+    --text-secondary: #4e5866;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: var(--font-family);
+    /* 渲染后端只截 .card 根元素，外部保持透明。 */
+    background: transparent;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+/* 零留白：元素截图 bbox = 可见卡本体。根骨架与 song_candidates 逐字符同形
+   （.card > .panel），非自造第五种形态。 */
+.card {
+    width: fit-content;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+}
+
+/* ===== 釉瑚云母外壳：雾底打底、wash 多色交织、色斑垫底、玻璃内容抬升 ===== */
+.panel {
+    position: relative;
+    width: 1080px;
+    overflow: hidden;
+    border-radius: var(--r-shell);
+    border: 1px solid transparent;
+    background: var(--mica-shell-wash) padding-box, var(--mica-glass-edge);
+    box-shadow: var(--mica-shadow);
+}
+.panel > :not(.drift-blobs) { position: relative; z-index: 1; }
+
+/* 渐变漂移色斑：整层单源=mica_shell.mica_decor_css（bridge._vis4_context 注入）。
+   构图跨卡不雷同的腿=本面的 face 盐 --phase（bridge.payload_phase(face="news_digest")），
+   由 tests/test_template_visual_audit.py::test_blob_phase_face_salt_pairwise_distinct 执法。 */
+{{ decor_css | safe }}
+
+/* ===== 液态玻璃面板通用层（与 song/market 同一配方，零私调） ===== */
+.glass {
+    background:
+        linear-gradient(150deg, rgba(255, 255, 255, 0.66) 0%, rgba(255, 255, 255, 0.44) 100%) padding-box,
+        linear-gradient(150deg,
+            rgba(255, 255, 255, 0.95) 0%,
+            rgba(255, 255, 255, 0.35) 55%,
+            rgba(255, 255, 255, 0.72) 100%) border-box;
+    border: 1px solid transparent;
+    box-shadow: var(--mica-shadow-panel);
+}
+
+/* ===== 头部 ===== */
+.head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 22px 26px 16px;
+    border-bottom: var(--divider-line);
+}
+.head-left { flex: 1; min-width: 0; }
+.title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-main);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+.sub {
+    margin-top: 5px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+.badge {
+    flex-shrink: 0;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent-dark);
+    letter-spacing: 0.06em;
+    font-variant-numeric: tabular-nums;
+    background:
+        linear-gradient(color-mix(in srgb, var(--accent) 14%, rgba(255, 255, 255, 0.72)), color-mix(in srgb, var(--accent) 14%, rgba(255, 255, 255, 0.72))) padding-box,
+        linear-gradient(150deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.35)) border-box;
+    border: 1px solid transparent;
+    padding: 4px 12px;
+    border-radius: var(--r-pill);
+    white-space: nowrap;
+}
+
+/* ===== 摘要条目列表 =====
+   两栏按量启用（≥4 条，模板侧 .two-col 开关）：默认 20 条的快报单栏会拉成
+   数屏高，两栏后一屏读完且每格仍有 367px 正文宽。两栏下格宽相等，
+   所以「来源列 / 正文列 / 时间右轨」在跨条目、跨栏都各自对齐。 */
+.list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding: 16px 18px 6px;
+}
+.list.two-col {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.item {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr);
+    align-items: start;
+    gap: 14px;
+    padding: 12px 16px;
+    border-radius: var(--r-tile);
+}
+/* 来源列（属性名列）：恒宽恒左对齐；缺来源时 :empty 只停墨不撤轨，
+   这样「有的条目有来源、有的没有」也不会让正文列逐行错位。 */
+.src {
+    width: 104px;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent-dark);
+    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+    background: color-mix(in srgb, var(--accent) 14%, rgba(255, 255, 255, 0.78));
+    border: 1px solid color-mix(in srgb, var(--accent) 24%, rgba(255, 255, 255, 0.88));
+    padding: 4px 10px;
+    border-radius: var(--r-inner-lg);
+    overflow-wrap: anywhere;
+    /* 来源名是站点显示名（长度由外部决定，不是定长标识），一律折行完整显示，
+       不用省略号——切掉的正是「这条是谁家的」这一判断可信度的信息。 */
+}
+.src:empty {
+    background: transparent;
+    border-color: transparent;
+}
+.info { min-width: 0; }
+.line1 {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+.name {
+    flex: 1;
+    min-width: 0;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-main);
+    line-height: 1.4;
+    /* 标题整行显示，不切尾（2026-09-25 点名「硬生生直接被截断」）。
+       快报的正文就是标题本身，省略号切掉的是信息而不是装饰。 */
+    overflow-wrap: anywhere;
+}
+.time {
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+}
+.snip {
+    margin-top: 3px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    /* 摘要不再钳两行（2026-09-25 点名）：钳位把整句切在半截上，读的人以为
+       机器人只抓到这么多。全文显示，长度由上游 fetch 时已裁过。 */
+    overflow-wrap: anywhere;
+}
+/* 空态占位 */
+.empty {
+    margin: 16px 18px 6px;
+    padding: 16px 14px;
+    border-radius: var(--r-tile);
+    text-align: center;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    /* 占位文案的长短由 bridge._CARD_TEXT 决定（本面零硬编码），
+       所以这一档也照正文档一样可折行，别默认不折。 */
+    overflow-wrap: anywhere;
+}
+
+/* ===== 页脚 ===== */
+.foot {
+    margin: 12px 18px 0;
+    padding: 10px 14px;
+    border-radius: var(--r-tile);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-sub);
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+.foot b { color: var(--accent-dark); }
+.foot.glass {
+    background:
+        var(--glow-accent) center top / 70% 220% no-repeat,
+        var(--mica-glass-foot),
+        var(--mica-glass-edge);
+}
+/* CAP1 品牌胶囊：组件 CSS/DOM 由 mica_shell 单一产出、bridge 注入。 */
+.capsule-foot {
+    margin: 10px 18px 16px;
+}
+{{ capsule_css | safe }}
+</style>
+</head>
+<body>
+<div class="card"><div class="panel">
+    {{ blobs_html | safe }}
+    <div class="head">
+        <div class="head-left">
+            <div class="title">{{ title or card_text.static_news_67 }}</div>
+            {% if sub %}<div class="sub">{{ sub }}</div>{% endif %}
+        </div>
+        {% if items %}<div class="badge">{{ items | length }} {{ card_text.static_news_68 }} · {{ card_text.static_news_69 }}</div>{% endif %}
+    </div>
+    {% if items %}
+    {# 栏数只由条目枚数决定（≥4 条两栏）；斑马纹必须按**视觉行**取相，
+       否则两栏下同一行两枚会跳成棋盘（song 面同日已踩过）。columns 同时喂给
+       类名与取相算式，两处永不可分别改动。
+       ⚠ 括号是必需的，不是排版：Jinja 里 `is` 结合得比 `//` 紧，
+       `loop.index0 // columns is even` 会被读成 `loop.index0 // (columns is even)`
+       ——columns=1 时除数是 False(0) 当场 ZeroDivisionError，columns=2 时除数是
+       True(1)、取相退化成逐条交替（棋盘）。姊妹面 song_candidates 正是这个写法，
+       已在 2026-09-26 报给主代理，本席禁改它。 #}
+    {% set columns = 2 if items | length >= 4 else 1 %}
+    <div class="list{{ ' two-col' if columns == 2 else '' }}">
+        {% for item in items %}
+        <div class="item glass"{% if (loop.index0 // columns) is even %} style="background:var(--surface-a) padding-box, var(--mica-glass-edge)"{% else %} style="background:var(--surface-b) padding-box, var(--mica-glass-edge)"{% endif %}>
+            <div class="src">{{ item.source }}</div>
+            <div class="info">
+                <div class="line1">
+                    <div class="name">{{ item.name }}</div>
+                    {% if item.time %}<div class="time">{{ item.time }}</div>{% endif %}
+                </div>
+                {% if item.snip %}<div class="snip">{{ item.snip }}</div>{% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty glass">{{ card_text.static_news_70 }}</div>
+    {% endif %}
+    {% if foot %}<div class="foot glass">{{ foot | safe }}</div>{% endif %}
+    {# CAP1：胶囊 DOM 由 bridge 从 mica_shell.brand_capsule_html 注入，模板零手写。 #}
+    <div class="capsule-foot">{{ capsule_html | safe }}</div>
+</div></div>
+</body>
+</html>

@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import hashlib
-import re
 import threading
 import time
 from collections.abc import Mapping
@@ -30,17 +29,37 @@ from plugins.bot_unified_runtime.domains.core.contracts import (
     new_request_id,
 )
 from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
-    is_legal_segment,
+    active_push_key_segment,
 )
 
 # 主动投递族的键命名空间（自报，不得漏）：闸按首段等值认族，漏报会回落紧急域
 # `emg` 口径 ⇒ 开闸态整族静默丢消息。规则本体唯一住 domains/emergency_info/service/dedupe.py。
 ACK_DEDUPE_NAMESPACE = "ack"
 
-# 键段合法字符集是 `^[A-Za-z0-9_.\-]{1,120}$`（见 dedupe.py 中央件）；这里只负责
-# 「把不在集合内的字符洗掉」，不复制判据——判定一律走 `is_legal_segment`。
-_ILLEGAL_SEGMENT_CHAR_RE = re.compile(r"[^A-Za-z0-9_.\-]")
-_KEY_SEGMENT_MAX = 120
+# ---------------------------------------------------------------------------
+# 阈值缺省值：**唯一一处**字面量（2026-09-25 需求项 6 收尾）。
+# 这些数字此前散在三处（本件 dataclass 缺省、本件 `from_config` 的 getattr 兜底、
+# `config.py` 的字段缺省），任何一处改口都不会被另一处发现——旧行为里 15.0 就写了
+# 两遍，"配置读不到"与"配置就是 15"这两件事在代码上长得一样。
+# 现在 dataclass 缺省与 getattr 兜底同源，`config.py` 那第三遍由
+# tests/test_progress_ack_thresholds.py 的 parity 锁现算比对（AST 读字段缺省，
+# 不 import 被测件），漂了当场红。
+# ---------------------------------------------------------------------------
+DEFAULT_ACK_DELAY_SECONDS = 15.0
+DEFAULT_ACK_COOLDOWN_SECONDS = 60.0
+# 自适应下限 15→30（2026-09-26 用户裁定 D2）：现网实测固定 15 秒地板下**每一轮都发**
+# （34 条里 19 条＝55.9%，其中 3 条 3.8–5.4 秒就答完了仍先发一句）——地板低于本轮
+# 耗时的常态，它就退化成「每条先开口」。30 秒实测仍盖住最慢的纯文本轮（28.2 秒），
+# 只砍掉真回执已经来得及的那一段。上限 90 不动（0 次命中＝它本就不是约束）。
+DEFAULT_ACK_DELAY_FLOOR_SECONDS = 30.0
+DEFAULT_ACK_DELAY_CAP_SECONDS = 90.0
+DEFAULT_ACK_LATENCY_MULTIPLIER = 2.0
+# 配置面的下限：阈值/冷却再小也留 1 秒，防止填 0 变成"每条消息都先发一句"。
+MIN_ACK_WINDOW_SECONDS = 1.0
+# 倍率下限：小于 1 意味着"比网关当下正常耗时还早开口"，那是把误触发写进配置。
+MIN_ACK_LATENCY_MULTIPLIER = 1.0
+# EWMA 的单位换算（健康库给毫秒，判定用秒）——只在 `effective_ack_delay_seconds` 用一次。
+MS_PER_SECOND = 1000.0
 
 # 最平实的一条：池子被冷却挡住时也要有得发，且它不像修辞，像说话。
 ACK_DEFAULT_TEXT = "这条我要想一想，答得准一点。"
@@ -115,12 +134,17 @@ class ProgressAckSettings:
     """回执的门禁配置快照。"""
 
     enabled: bool = False
-    delay_seconds: float = 15.0
-    cooldown_seconds: float = 60.0
+    delay_seconds: float = DEFAULT_ACK_DELAY_SECONDS
+    cooldown_seconds: float = DEFAULT_ACK_COOLDOWN_SECONDS
     group_whitelist: frozenset[str] = frozenset()
     group_blacklist: frozenset[str] = frozenset()
     private_whitelist: frozenset[str] = frozenset()
     private_blacklist: frozenset[str] = frozenset()
+    # 阈值随网关当下快慢浮动（2026-09-25 用户裁定：中转站一慢就必触发，误报过多）。
+    adaptive_enabled: bool = True
+    delay_floor_seconds: float = DEFAULT_ACK_DELAY_FLOOR_SECONDS
+    delay_cap_seconds: float = DEFAULT_ACK_DELAY_CAP_SECONDS
+    latency_multiplier: float = DEFAULT_ACK_LATENCY_MULTIPLIER
 
     @classmethod
     def from_config(cls, config: Any) -> ProgressAckSettings:
@@ -128,15 +152,34 @@ class ProgressAckSettings:
 
         与调度器族同口径（台账 #3 P3）：这是装配期读一次，热改 `.env` 当轮不生效，
         要生效须重启——不做成"看起来能热改"的样子。
+        ⚠ 兜底值与 `config.py` 的字段缺省同源（上面那组 `DEFAULT_*` 常量），且由
+        tests/test_progress_ack_thresholds.py 的 parity 锁 AST 现算比对：本件的
+        getattr 兜底意思是"配置面**没有**这枚键"（真缺，该红），而写字面量的兜底会把
+        它和"配置就是 15 秒"混成同一种形状——那正是需求项 6 说的"阈值散落"。
         """
         return cls(
             enabled=bool(getattr(config, "bot_chat_progress_ack_enabled", False)),
             delay_seconds=max(
-                1.0, float(getattr(config, "bot_chat_progress_ack_delay_seconds", 15.0) or 15.0)
+                MIN_ACK_WINDOW_SECONDS,
+                float(
+                    getattr(
+                        config,
+                        "bot_chat_progress_ack_delay_seconds",
+                        DEFAULT_ACK_DELAY_SECONDS,
+                    )
+                    or DEFAULT_ACK_DELAY_SECONDS
+                ),
             ),
             cooldown_seconds=max(
-                1.0,
-                float(getattr(config, "bot_chat_progress_ack_cooldown_seconds", 60.0) or 60.0),
+                MIN_ACK_WINDOW_SECONDS,
+                float(
+                    getattr(
+                        config,
+                        "bot_chat_progress_ack_cooldown_seconds",
+                        DEFAULT_ACK_COOLDOWN_SECONDS,
+                    )
+                    or DEFAULT_ACK_COOLDOWN_SECONDS
+                ),
             ),
             group_whitelist=_id_set(
                 getattr(config, "bot_chat_progress_ack_group_whitelist", None)
@@ -150,7 +193,78 @@ class ProgressAckSettings:
             private_blacklist=_id_set(
                 getattr(config, "bot_chat_progress_ack_private_blacklist", None)
             ),
+            adaptive_enabled=bool(
+                getattr(config, "bot_chat_progress_ack_adaptive_enabled", True)
+            ),
+            delay_floor_seconds=max(
+                MIN_ACK_WINDOW_SECONDS,
+                float(
+                    getattr(
+                        config,
+                        "bot_chat_progress_ack_delay_floor_seconds",
+                        DEFAULT_ACK_DELAY_FLOOR_SECONDS,
+                    )
+                    or DEFAULT_ACK_DELAY_FLOOR_SECONDS
+                ),
+            ),
+            delay_cap_seconds=max(
+                MIN_ACK_WINDOW_SECONDS,
+                float(
+                    getattr(
+                        config,
+                        "bot_chat_progress_ack_delay_cap_seconds",
+                        DEFAULT_ACK_DELAY_CAP_SECONDS,
+                    )
+                    or DEFAULT_ACK_DELAY_CAP_SECONDS
+                ),
+            ),
+            latency_multiplier=max(
+                MIN_ACK_LATENCY_MULTIPLIER,
+                float(
+                    getattr(
+                        config,
+                        "bot_chat_progress_ack_latency_multiplier",
+                        DEFAULT_ACK_LATENCY_MULTIPLIER,
+                    )
+                    or DEFAULT_ACK_LATENCY_MULTIPLIER
+                ),
+            ),
         )
+
+
+def effective_ack_delay_seconds(
+    settings: ProgressAckSettings, gateway_ema_ms: float | None
+) -> float:
+    """本轮该用多长的"算慢了"阈值——跟着网关当下的快慢走。
+
+    固定 15 秒之所以误报成灾：链上单跳 EWMA 实测就有 13.7 秒，网关稍一抖，
+    正常回复也必然跨过 15 秒 ⇒ 每次慢都先发一句"我在想"。这里改判据而不是
+    改阈值数字：**只有比当下这条路本来该有的耗时更慢，才算慢**。
+
+    缺测（健康库未启用、读失败、还没有样本 ⇒ None 或 0）一律退回既有固定值，
+    fail-open 到旧行为——观测面坏了不得把回执功能一起带走。
+
+    ⚠ 本函数**不**给 ``delay_seconds`` 兜下限（下限钳制在 ``from_config`` 装配时
+    已经做过一次）：在这里再夹一道 ``max(1.0, …)`` 会把配置值就地改写，
+    旧行为是"配多少判多少"，测试也按亚秒阈值跑。
+    """
+    static = float(settings.delay_seconds)
+    if not settings.adaptive_enabled or gateway_ema_ms is None:
+        return static
+    try:
+        ema_ms = float(gateway_ema_ms)
+    except (TypeError, ValueError):
+        return static
+    if ema_ms <= 0:
+        return static
+    floor = max(static, settings.delay_floor_seconds)
+    ceiling = max(floor, settings.delay_cap_seconds)
+    # 两条不变量（tests/test_progress_ack_thresholds.py 逐条现算）：
+    # ① 结果永远夹在 [floor, ceiling] ⇒ 网关抖动不会把开口时刻推到无穷远；
+    # ② `ceiling` 由 `max(floor, cap)` 派生 ⇒ 有人把 cap 配得比 floor 还小也不会倒挂
+    #    （倒挂时 `min(ceiling, max(floor, derived))` 会稳定落在 floor，而不是退回旧值）。
+    derived = (ema_ms / MS_PER_SECOND) * settings.latency_multiplier
+    return min(ceiling, max(floor, derived))
 
 
 def _id_set(value: Any) -> frozenset[str]:
@@ -197,9 +311,17 @@ def progress_ack_allowed(
         return bool(group_id) and group_id in settings.group_whitelist
     if sender_id and sender_id in settings.private_blacklist:
         return False
+    if not sender_id:
+        # 私聊侧也要"有身份可判"才开口——群侧一直是这个形状（`bool(group_id) and …`），
+        # 私聊侧旧写法在"白名单为空=放开"时连 sender_id 都不看就放行，于是：
+        # ① 黑名单对一个 sender_id 空掉的会话根本挡不住（挡的是号，号没有）；
+        # ② `build_progress_ack_request` 的 target 退成 `group_id or sender_id` = 空串，
+        #    这条回执必然投不出去，却已经占掉本会话 60 秒的冷却坑（同会话下一条真问
+        #    反而没声）。收不回来的成本比"少发一句"大，故 fail-closed。
+        return False
     if not settings.private_whitelist:
         return True
-    return bool(sender_id) and sender_id in settings.private_whitelist
+    return sender_id in settings.private_whitelist
 
 
 @dataclass
@@ -246,25 +368,13 @@ class ProgressAckThrottle:
 
 
 def ack_key_segment(value: Any) -> str:
-    """把任意会话/消息标识洗成合法的幂等键段。
+    """把任意会话/消息标识洗成合法的幂等键段（算法真身唯一住 `dedupe.py`）。
 
-    为什么必须洗而不是直接拼：闸的键形规则（唯一住
-    `domains/emergency_info/service/dedupe.py:is_legal_segment`）在**开闸态**会把脏键
-    整条判 skip＝静默丢回执，而关闭态是 passthrough 照样能发——于是「本地测通了」
-    和「上线能发」不是一回事。紧急域 2026-09-20 就炸过一次同型事故（`nmc:A1` 里的
-    `:` 是段分隔符，每条真实条目都抛 ValueError，被兜底 except 压成一行日志）。
-    入参来自适配器，形态不由我们定：OneBot 是纯数字，TG 频道/guild 侧可能出现
-    冒号与其他符号，故一律洗。
+    这里只是一个**本地名**：曾经在本文件另写一套洗段（`[^A-Za-z0-9_.\\-]` + 截断 +
+    blake2b 摘要），与中央件同形但两份规则会漂移—— ack 与其余投递族对同一个群号可能
+    算出不同的段，幂等桶就对不上。真身搬到中央后禁在此重写。
     """
-    text = str(value or "").strip()
-    if is_legal_segment(text):
-        return text
-    washed = _ILLEGAL_SEGMENT_CHAR_RE.sub("_", text)[:_KEY_SEGMENT_MAX]
-    # 洗完只剩分隔符（"中文群"→"___"）时不同输入会撞成同一段，宁可退化成摘要。
-    if is_legal_segment(washed) and any(char.isalnum() for char in washed):
-        return washed
-    # 洗完仍不合法（空段、或纯标点撞成一串下划线）⇒ 退化成摘要，键仍唯一可寻。
-    return "h" + hashlib.blake2b(text.encode("utf-8"), digest_size=8).hexdigest()
+    return active_push_key_segment(value)
 
 
 def build_progress_ack_request(

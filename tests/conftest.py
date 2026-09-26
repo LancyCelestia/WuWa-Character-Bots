@@ -130,6 +130,7 @@ def run_autosync(root: Path | None = None) -> list[str]:
                 cwd=str(root),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",  # S8：钉死解码，不吃 locale（GBK 机器上必崩）
                 timeout=120,
                 check=False,
                 # S144：会话级唯一的树内子进程出口显式带不写字节码的环境，

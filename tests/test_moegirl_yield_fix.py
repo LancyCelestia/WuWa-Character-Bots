@@ -25,17 +25,19 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.moegirl import normalize_entity_question
-from plugins.bot_unified_runtime.runtime.base_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     ROUTE_RULES,
     RouteKind,
     build_interface_manifest,
     classify_message_route,
     clear_route_decision_cache,
 )
-from plugins.bot_unified_runtime.runtime.natural_language import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.natural_language import (
     _CITY_FORBIDDEN_FRAGMENTS,
     detect_natural_command,
+)
+from plugins.bot_unified_runtime.domains.location.capabilities.moegirl import (
+    normalize_entity_question,
 )
 
 ROOT = Path(__file__).resolve().parents[1]

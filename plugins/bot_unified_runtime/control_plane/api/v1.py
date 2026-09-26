@@ -242,8 +242,22 @@ def build_v1_router(
     )
     router.include_router(build_llm_router(
         service=llm_service, read_dependency=read_dependency, write_dependency=write_dependency))
+    from plugins.bot_unified_runtime.domains.creation.image.routes import (
+        build_image_router,
+    )
+    from plugins.bot_unified_runtime.domains.creation.tts.routes import build_tts_router
+
     from .workspaces import build_workspaces_router
     router.include_router(build_workspaces_router(service=workspace_service, dependency=write_dependency))
+    # 语音合成 job 走中央能力缝（P4-C4）：本路由体内唯一执行出口是 default_invoker()，
+    # 禁直调 creation/media 两侧真身——第二通路即账面假绿（tests/test_control_plane_tts_api.py 执法）。
+    router.include_router(build_tts_router(
+        config=config, read_dependency=read_dependency, write_dependency=write_dependency))
+    # AI 绘图 job 走**同一条**中央能力缝（S262 面③ A 案，照语音同构）：唯一执行出口仍是
+    # default_invoker()，禁直调 image/engine_provider 或 provider_factory——第二通路即账面
+    # 假绿（tests/test_control_plane_image_api.py 执法）。缺 provider ⇒ 诚实 503 可见。
+    router.include_router(build_image_router(
+        config=config, read_dependency=read_dependency, write_dependency=write_dependency))
 
     return router
 

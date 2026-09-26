@@ -4,7 +4,9 @@ extract_learned_nickname 是被动感知的纯函数部分；停用词/长度/�
 等守卫在 __init__ 调用点，不在本文件范围。
 """
 
-from plugins.bot_unified_runtime.character.affinity import extract_learned_nickname
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
+    extract_learned_nickname,
+)
 
 
 def test_positive_nickname_learned_without_particle() -> None:

@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import re
 
-from plugins.bot_unified_runtime.capabilities.echo import (
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
     _help_index_body,
     _help_index_sections,
     _help_mica_html,
+    build_help_result,
 )
 from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
     GAP_SCALE_PX,
@@ -30,6 +31,21 @@ def _index_html() -> str:
         is_admin=is_admin,
         sections=_help_index_sections(is_admin),
     )
+
+
+def _detail_html() -> str:
+    """模块详情页（sections=None → 走正文解析那条路），裁字判据要连它一起扫。"""
+    result = build_help_result(query="记忆", is_admin=True)  # render_backend=None → 纯文本正文
+    body = str(getattr(result, "body", "") or "")
+    assert body, "详情页正文为空，判据会空跑"
+    return _help_mica_html(body, is_admin=True)
+
+
+def _strip_css_comments(css: str) -> str:
+    """剥掉 /* */ 注释——判据扫的是声明，注释里提到被禁词不该自己判红。"""
+    import re as _re
+
+    return _re.sub(r"/\*.*?\*/", "", css, flags=_re.DOTALL)
 
 
 def _css_of(html_text: str) -> str:
@@ -46,16 +62,24 @@ def test_index_fixture_is_real_directory_payload() -> None:
     assert row_count >= 60, f"管理员总览 topic 数异常：{row_count}"
 
 
-def test_masonry_command_list_two_columns() -> None:
+def test_index_page_is_two_columns_not_four() -> None:
+    """整页两栏，且**区内不再切第二道栏**（2026-09-25 澜汐：「太挤了，换成两栏」）。
+
+    旧形态是分区两栏 × 区内再两栏 = 四栏正文，每栏约 200px；摘要两行就放不下，
+    于是被 line-clamp 钳成省略号——她看到的"详细介绍不详细"大半是被切掉的。
+    这里钉两件事：外层恰两栏（栏距取刻度），区内 .command-list 不得再有 columns。
+    """
     css = _css_of(_index_html())
-    rule = re.search(r"\.help-grid\.masonry \.command-list\s*\{([^}]*)\}", css)
-    assert rule, "缺 masonry 目录两栏规则"
-    body = rule.group(1)
-    assert re.search(r"columns\s*:\s*2", body), f"目录未走两栏：{body}"
-    gap = re.search(r"column-gap\s*:\s*(\d+)px", body)
-    assert gap, f"缺栏距声明：{body}"
-    assert int(gap.group(1)) in GAP_SCALE_PX, (
-        f"栏距 {gap.group(1)}px 不在 GAP_SCALE_PX 刻度内"
+    outer = re.search(r"\.help-grid\.masonry\s*\{([^}]*)\}", css)
+    assert outer, "缺 masonry 外层栏规则"
+    count = re.search(r"column-count\s*:\s*(\d+)", outer.group(1))
+    assert count and int(count.group(1)) == 2, f"整页应为两栏：{outer.group(1)}"
+    gap = re.search(r"column-gap\s*:\s*(\d+)px", outer.group(1))
+    assert gap and int(gap.group(1)) in GAP_SCALE_PX, f"栏距不在刻度内：{outer.group(1)}"
+    inner = re.search(r"\.help-grid\.masonry \.command-list\s*\{([^}]*)\}", css)
+    assert inner, "缺 masonry 目录行容器规则"
+    assert not re.search(r"columns\s*:", inner.group(1)), (
+        f"区内又切了一道栏＝四栏正文回来了：{inner.group(1)}"
     )
 
 
@@ -67,17 +91,21 @@ def test_masonry_rows_break_inside_avoid() -> None:
     ), "topic 行缺 break-inside:avoid（两栏下会被腰斩）"
 
 
-def test_masonry_desc_clamped_two_lines() -> None:
-    """窄栏防溢出：目录摘要钳两行（-webkit-line-clamp），防 211px 栏宽下
-    长摘要多行折叠吃掉两栏收益；详情页 desc 不受影响。"""
-    css = _css_of(_index_html())
-    rule = re.search(
-        r"\.help-grid\.masonry \.command-row \.desc\s*\{([^}]*)\}", css
+def test_no_clamp_and_no_ellipsis_anywhere_in_help_css() -> None:
+    """帮助卡**一律不许裁字**（她：「硬生生直接被截断的情况」）。
+
+    钳位与省略号在这里不是防溢出手段，是丢信息手段：目录摘要被钳两行、
+    长命令被 62% 药丸省略号切断，用户在卡上永远看不到完整说明。
+    整条 CSS 扫一遍比逐条断言更严——新增一处截断当场红。
+    """
+    css = _strip_css_comments(_css_of(_index_html()) + _css_of(_detail_html()))
+    for banned in ("-webkit-line-clamp", "line-clamp", "text-overflow"):
+        assert banned not in css, f"帮助卡出现裁字声明 {banned}"
+    pill = re.search(r"\.command-row \.pill\s*\{([^}]*)\}", css)
+    assert pill, "缺 .pill 规则"
+    assert "white-space:nowrap" not in pill.group(1).replace(" ", ""), (
+        f"药丸又回到 nowrap（长命令会被省略号切掉）：{pill.group(1)}"
     )
-    assert rule, "缺目录摘要两行钳制规则"
-    body = rule.group(1)
-    assert re.search(r"-webkit-line-clamp\s*:\s*2", body), body
-    assert re.search(r"overflow\s*:\s*hidden", body), body
     # 基线 .command-row .desc（行首锚定，避开 .help-grid.masonry 前缀变体）不得被钳。
     base = re.search(r"(?m)^\s*\.command-row \.desc\s*\{([^}]*)\}", css)
     assert base, "缺基线 .command-row .desc 规则"
@@ -95,10 +123,10 @@ def test_narrow_card_media_query_falls_back_single_column() -> None:
     body = match.group("body")
     assert ".help-grid.masonry" in body, "媒体查询未覆盖外层 masonry 栏"
     assert re.search(r"column-count\s*:\s*1", body), body
-    assert re.search(r"\.command-list\s*\{[^}]*columns\s*:\s*1", body), body
+    assert re.search(r"\.command-list\s*\{[^}]*grid-template-columns\s*:\s*1fr", body), body
     # 媒体查询必须声明在基线两栏规则之后（覆盖才生效；此处校验源序）。
     base = re.search(
-        r"\.help-grid\.masonry \.command-list\s*\{[^}]*columns\s*:\s*2",
+        r"\.help-grid\.masonry \.command-list\s*\{[^}]*display\s*:\s*grid",
         _css_of(html_text),
     )
     assert base and base.start() < match.start(), "窄卡回退必须晚于基线两栏规则"

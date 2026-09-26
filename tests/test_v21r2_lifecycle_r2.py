@@ -57,14 +57,18 @@ from plugins.bot_unified_runtime.contracts import (
 )
 from plugins.bot_unified_runtime.domains.ops.monitor import error_report
 from plugins.bot_unified_runtime.domains.transport.mail import mail_adapter
+from plugins.bot_unified_runtime.domains.transport.mail.mail_adapter import (
+    search_unseen_with_backoff,
+)
 from plugins.bot_unified_runtime.domains.transport.sender import onebot as onebot_sender
-from plugins.bot_unified_runtime.mail_adapter import search_unseen_with_backoff
-from plugins.bot_unified_runtime.runtime import capability_protocols
-from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
-from plugins.bot_unified_runtime.sender.worker import (
+from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+    SQLiteSendRequestQueue,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.worker import (
     _notify_operational_issue_safely,
     drain_send_queue_once,
 )
+from plugins.bot_unified_runtime.runtime import capability_protocols
 
 telegram_resilience = importlib.import_module("scripts.telegram_resilience")
 

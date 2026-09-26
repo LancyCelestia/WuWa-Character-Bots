@@ -64,6 +64,10 @@ from plugins.bot_unified_runtime.domains.ops.smoke.diagnostics import (
     infer_llm_route_hops,
     llm_diagnostic_messages,
 )
+from plugins.bot_unified_runtime.domains.transport.sender import (
+    ReceiptRepository,
+    SendQueue,
+)
 from plugins.bot_unified_runtime.llm import (
     LLMProvider,
     LLMProviderError,
@@ -72,7 +76,6 @@ from plugins.bot_unified_runtime.llm import (
     safe_llm_finish_reason,
 )
 from plugins.bot_unified_runtime.runtime import RuntimeControlState
-from plugins.bot_unified_runtime.sender import ReceiptRepository, SendQueue
 
 
 # 审查 Q-02：权限拒绝入 user_copy 池（守岸人语气轮换）；改为延迟取句，
@@ -737,16 +740,16 @@ def _llm_setup_mica_html(payload: dict[str, Any]) -> str:
         shell_base_css,
     )
     from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
+        BRAND_WASH_TOKENS,
         SEMANTIC_DANGER,
         SEMANTIC_SUCCESS,
     )
     from plugins.bot_unified_runtime.output.card_render.bridge import (
-        _derive_wash_tokens,
         payload_phase,
     )
 
     accent, accent_dark = _llm_setup_accent(payload["config"])
-    wash = _derive_wash_tokens(accent)
+    wash = BRAND_WASH_TOKENS  # 底色锚点=本命蓝，见 theme_tokens.BRAND_WASH_TOKENS
     status_label = str(payload["status_label"])
     status_kind = str(payload["status_kind"])
     rows_html = "".join(

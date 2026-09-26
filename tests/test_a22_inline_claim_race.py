@@ -49,8 +49,12 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
-from plugins.bot_unified_runtime.sender.worker import drain_send_queue_once
+from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+    SQLiteSendRequestQueue,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.worker import (
+    drain_send_queue_once,
+)
 
 
 def _utc_now() -> datetime:

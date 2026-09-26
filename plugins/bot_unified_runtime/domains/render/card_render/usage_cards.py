@@ -56,7 +56,7 @@ _CHANNEL_SUBROW_CSS = """
 /* 渠道子行（家族行下拆渠道消耗；费用降序由 build_model_rows 排好）。 */
 .crow { margin-left:26px; display:flex; align-items:center; justify-content:space-between; gap:8px;
   padding:5px 12px; border-radius:var(--r-tile); font-size:12px; color:var(--muted); }
-.crow .cname { font-family:var(--font-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.crow .cname { font-family:var(--font-mono); min-width:0; line-height:1.4; overflow-wrap:anywhere; }
 .crow .cmeta { flex-shrink:0; font-variant-numeric:tabular-nums; }
 .crow .ccost { color:var(--accent-dark); font-weight:700; }
 """
@@ -104,12 +104,15 @@ def usage_report_mica_html(
     import html as _html
 
     from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
-        _derive_wash_tokens,
+        BRAND_WASH_TOKENS,
         payload_phase,
     )
 
     accent, accent_dark = usage_card_accent(config)
-    wash = _derive_wash_tokens(accent)
+    # 底色锚点=本命蓝（与 7 张模板同一条规则，见 _card_root_tokens 注释）：
+    # 本卡 accent 可由 bot_help_card_color 配成任意色，跟着它派生会把整张
+    # 账单卡染成该色的深浅，而不是守岸人的釉瑚渐变。
+    wash = BRAND_WASH_TOKENS
     kind = status_kind if status_kind in {"ok", "warn", "bad"} else "ok"
 
     def _model_cell(row: dict[str, Any]) -> str:
@@ -202,7 +205,9 @@ def usage_report_mica_html(
             "totals": totals,
             "model_rows": digest_rows,
             "note": note,
-        }
+        },
+        # goal-7（2026-09-25）：卡面身份做盐，保证与其它卡面构图不雷同。
+        face="usage",
     )
     unpriced_html = (
         f"<div class=\"unote\">{unpriced_note}</div>" if unpriced_note else ""
@@ -276,7 +281,7 @@ body {{ margin:0; font-family:var(--font-family); background:transparent; color:
 .totals {{ display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; padding:14px 14px 4px; }}
 .tile {{ border-radius:var(--r-panel); padding:10px 14px; }}
 .tile .k {{ font-size:12px; color:var(--muted); font-weight:600; letter-spacing:.06em; }}
-.tile .v {{ margin-top:4px; font-size:18px; font-weight:700; font-variant-numeric:tabular-nums; }}
+.tile .v {{ margin-top:4px; font-size:17px; font-weight:700; font-variant-numeric:tabular-nums; }}
 .tile .v .sub {{ margin-left:6px; font-size:12px; font-weight:400; color:var(--muted); }}
 .tile.cost .v {{ color:var(--accent-dark); }}
 .body {{ padding:10px 14px 14px; display:grid; gap:6px; }}
@@ -284,8 +289,8 @@ body {{ margin:0; font-family:var(--font-family); background:transparent; color:
   padding:8px 12px; border-radius:var(--r-tile); align-items:center; }}
 .mhead {{ font-size:12px; color:var(--muted); font-weight:700; letter-spacing:.02em; padding-bottom:2px; }}
 .mrow {{ font-size:12px; font-variant-numeric:tabular-nums; }}
-.mcell {{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
-.mcell.model {{ font-family:var(--font-mono); font-weight:650; }}
+.mcell {{ line-height:1.4; overflow-wrap:anywhere; }}
+.mcell.model {{ font-family:var(--font-mono); font-weight:600; }}
 .mcell.model .mnote {{ font-family:var(--font-family); font-weight:400; color:var(--muted); font-size:12px; margin-left:4px; }}
 .mcell.num {{ text-align:right; }}
 .mcell.cost {{ font-weight:700; color:var(--accent-dark); }}

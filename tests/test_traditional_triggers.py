@@ -7,16 +7,16 @@ traditional-mapping-draft.json（错位④/天氣預報/點唱 条目）。
 
 from __future__ import annotations
 
-from plugins.bot_unified_runtime.capabilities.affinity import (
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.affinity import (
     is_affinity_command,
     parse_affinity_query,
 )
-from plugins.bot_unified_runtime.capabilities.music import (
+from plugins.bot_unified_runtime.domains.music.capabilities.music import (
     extract_music_query,
     is_music_command,
     is_music_mode_command,
 )
-from plugins.bot_unified_runtime.capabilities.weather import (
+from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
     _WEATHER_RE,
     is_weather_command,
 )

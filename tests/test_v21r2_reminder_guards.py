@@ -10,10 +10,10 @@ import pytest
 
 import plugins.bot_unified_runtime.domains.schedule.capabilities.reminder as reminder_mod
 import plugins.bot_unified_runtime.domains.schedule.store.reminders as reminders_store_mod
-from plugins.bot_unified_runtime.capabilities.reminder import (
+from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.schedule.capabilities.reminder import (
     build_reminder_capability,
 )
-from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 from plugins.bot_unified_runtime.domains.schedule.store.reminders import ReminderStore
 
 _AD = (

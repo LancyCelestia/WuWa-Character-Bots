@@ -419,12 +419,16 @@ MISSING_FROM_CAPABILITY_DESCRIPTOR: frozenset[str] = frozenset({"bot.admin_alert
 #: 先例：`bot.divination` 于 prepared 批 B1 落了执行形 ⇒ 2026-09-22 冻结窗从此处摘出（非回退）。
 DESCRIPTOR_SHELL_ONLY_IDS: tuple[str, ...] = (
     "bot.music",
-    "bot.music_mode",
     "bot.status",
     "bot.logs",
     "bot.alert",
     "bot.runtime",
 )
+# 2026-09-24 P9 批（S63 图 §3.1，主代理落码）：`bot.music_mode` 由本名册**移出**——它已不再是
+# "壳行无编排事实"，`capability_registry.py` 的 MUSIC_MODE 行补了 execution（family=COMMAND／
+# adapter=prepared／timeout=30.0）⇒ 按本锁自述「已有 family ⇒ 编排侧已落，本锁需随迁更新」随迁。
+# ⚠ **不是缩扫描面**：移出后由下方 `test_music_mode_orchestration_facts_are_landed` 逐事实**反向**断言，
+# 名册 6 枚 → 5 枚壳 ＋ 1 枚已落，覆盖面 1:1 守恒（少断一条都会红）。
 
 
 def test_active_push_capability_ids_are_absent_from_unique_table() -> None:
@@ -451,6 +455,30 @@ def test_shell_only_domain_rows_have_no_orchestration_facts_yet() -> None:
         assert row.health_probe == "", f"{capability_id} 已有健康探测 ⇒ 同上"
         assert row.fallbacks == (), f"{capability_id} 已有降级链 ⇒ 同上"
         assert row.timeout_seconds is None, f"{capability_id} 已有 timeout ⇒ 同上"
+
+
+def test_music_mode_orchestration_facts_are_landed() -> None:
+    """`bot.music_mode` 从上方壳行名册移出后的**反向锁**（覆盖面 1:1 守恒，非缩扫描面）。
+
+    上面那条锁逐项断言"名册里的行**没有**编排事实（family／health_probe／fallbacks／timeout）"；
+    本条对移出的那一枚**逐项反向**断言"这些事实确实有、且值可核"。
+    两条例一加起来的判定面积 == 名册移出前（6 枚各有同形状断言）。
+    字段名现算自 `CapabilityRegistration`（该类**无** execution／adapter 字段——执行形住在
+    `capability_registry.py` 的声明侧，派生到这里只剩编排事实，别在此处假装断言 adapter）。
+    """
+    from plugins.bot_unified_runtime.runtime.capability_protocols import (
+        CAPABILITY_DESCRIPTOR,
+    )
+
+    row = CAPABILITY_DESCRIPTOR.get("bot.music_mode")
+    assert row is not None, "bot.music_mode 连派生行都没了 ⇒ P9 登记被回退"
+    assert row.family is not None, "family 仍空 ⇒ 名册移出无据＝缩扫描面"
+    assert row.family.value == "command", f"family 漂了：{row.family!r}"
+    assert row.timeout_seconds == 30.0, f"timeout 漂了：{row.timeout_seconds!r}（登记值 30.0）"
+    assert row.fallbacks, "降级链为空 ⇒ 登记侧 degrade_note 未流进派生行"
+    assert any("绝不静默改设置" in fb for fb in row.fallbacks), (
+        f"降级链语义漂移（应含『绝不静默改设置』）：{row.fallbacks!r}"
+    )
 
 
 def test_capability_family_has_no_home_for_these_three_domains() -> None:

@@ -107,14 +107,16 @@ def test_per_sentence_quotes_and_nested_quotes():
 
 
 def test_group_chat_cleanup_is_in_actual_capability():
-    from plugins.bot_unified_runtime.capabilities.chat import build_chat_capability
-    from plugins.bot_unified_runtime.character.providers import (
-        NullCharacterContextProvider,
-    )
     from plugins.bot_unified_runtime.contracts import (
         BotDecision,
         IncomingMessage,
         SessionType,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_chat_capability,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
+        NullCharacterContextProvider,
     )
     from plugins.bot_unified_runtime.llm import StaticLLMProvider
     msg = IncomingMessage(platform='qq', adapter='onebot', bot_id='b', session_id='group:g',
@@ -127,7 +129,7 @@ def test_group_chat_cleanup_is_in_actual_capability():
 
 def test_xhs_discovery_url_reaches_real_registry():
     from plugins.bot_unified_runtime.domains.core.contracts.media import SourceInput
-    from plugins.bot_unified_runtime.sources.parsers import (
+    from plugins.bot_unified_runtime.domains.link_parse.parsers import (
         build_content_parser_registry,
     )
     data = build_content_parser_registry()
@@ -207,7 +209,9 @@ def test_cookie_recovery_preserves_other_rows_and_never_writes_source(tmp_path, 
 
 
 def test_model_schedule_invalid_input_is_mapping():
-    from plugins.bot_unified_runtime.runtime.model_schedule import parse_model_schedule
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_schedule import (
+        parse_model_schedule,
+    )
     assert parse_model_schedule(None) == {}
 
 
@@ -378,7 +382,9 @@ def test_plain_chat_sends_natural_text_to_onebot():
         SendRequest,
         SessionType,
     )
-    from plugins.bot_unified_runtime.sender.onebot import send_onebot_v11
+    from plugins.bot_unified_runtime.domains.transport.sender.onebot import (
+        send_onebot_v11,
+    )
     payloads = []
     class Bot:
         async def send_group_msg(self, **kwargs):

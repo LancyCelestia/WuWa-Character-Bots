@@ -11,14 +11,6 @@ from datetime import datetime, timezone
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.divination import (
-    build_divination_capability,
-    hidden_stems_for_branch,
-    hidden_stems_section,
-)
-from plugins.bot_unified_runtime.capabilities.meme_library import (
-    build_meme_library_capability,
-)
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 from plugins.bot_unified_runtime.domains.chat_reply.character.memory_extract import (
     extract_reminder_drafts,
@@ -40,7 +32,15 @@ from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
     configure_proactive_affinity_gate,
     evaluate_policy,
 )
+from plugins.bot_unified_runtime.domains.divination.capabilities.divination import (
+    build_divination_capability,
+    hidden_stems_for_branch,
+    hidden_stems_section,
+)
 from plugins.bot_unified_runtime.domains.divination.data.ganzhi import CST, bazi_chart
+from plugins.bot_unified_runtime.domains.meme.capabilities.meme_library import (
+    build_meme_library_capability,
+)
 from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
     _family_baseline_effort,
 )

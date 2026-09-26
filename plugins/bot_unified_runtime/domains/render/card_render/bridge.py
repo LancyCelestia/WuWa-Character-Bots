@@ -90,12 +90,24 @@ _CARD_TEXT: dict[str, str] = {
     "static_err_19": '触发回显',
     "static_err_20": '栈摘录（末',
     "static_err_21": '帧，路径已脱敏）',
-    "static_err_22": '触发方法',
+    "static_err_22": '定位与原因',
     "static_err_23": '配置快照（白名单',
     "static_err_24": '值已脱敏）',
     "static_err_25": '版本与构建',
     "static_err_26": '平台与协议',
-    "static_err_27": '与时间',
+    # static_err_27（旧「与时间」，与模板侧 'IDs ' 拼接成机读节题）已由
+    # static_err_32「标识与时间」整词取代，零消费点后从表退役（不留死键）。
+    # 2026-09-25 诊断卡补要素：⑪自我审查＋⑫debug 建议、⑬超管联系方式两段落。
+    # 标题明写「推测」是刻意的——这格不是确诊，不许把没核过的归因摆成结论。
+    "static_err_28": '我自查的大概原因（推测）与建议',
+    "static_err_29": '可以找谁',
+    # 无栈那一支（运行时告警卡结构上没有 traceback）的节标题：详情行照样要出，
+    # 但标题不能写「栈摘录（末 0 帧）」。
+    "static_err_30": '报错详情',
+    # goal-7 说人话波（2026-09-25）：卡头英文机读标签与「IDs」节题中文化
+    #（模板侧只留参数引用，见 error_card.html 头注）。
+    "static_err_31": '运行诊断',
+    "static_err_32": '标识与时间',
     "static_fin_28": '数据时间',
     "static_mkt_29": '全球股指速览',
     "static_song_30": '找到',
@@ -135,9 +147,59 @@ _CARD_TEXT: dict[str, str] = {
     "static_uni_64": '加入:',
     "static_uni_65": '页面内容',
     "static_uni_66": '最近动态',
+    # news_digest_card.html（B05 快讯域新闻摘要卡）静态中文文案，键名沿用
+    # static_<模板缩写>_<全局序>，续上表全局序 67 起。
+    "static_news_67": '科技快讯摘要',
+    "static_news_68": '条',
+    "static_news_69": '每日快报',
+    "static_news_70": '暂无可展示的条目',
+    # S-T-VISUAL-1（2026-09-26 第 7 项收尾波）：快报卡此前有两枚卡面静态文案
+    # 住在**能力域**（domains/subscribe/capabilities/news.py 的 _CARD_FOOT /
+    # _CARD_FEATURE_LABEL 字面量）——不在本表＝契约 §二「字面量唯一落点
+    # = bridge._CARD_TEXT」对该面失守。值逐字符迁入本表，能力侧改经
+    # card_text_value() 取数（foot 的「只允许常量」安全性质不变：仍是
+    # 模块级常量，只是真身住这里；tests/test_news_card_outbound.py 的
+    # foot 常量锁按值等值断言，迁移两侧同文即绿）。
+    "static_news_71": '条目取自各来源的公开订阅源，标题与摘要按原文收录，未作核实。',
+    "static_news_72": '今日快报',
 }
 
 _ENV.globals["card_text"] = _CARD_TEXT
+
+
+def card_text_value(key: str) -> str:
+    """卡片静态文案登记表公共读口（S-T-VISUAL-1，2026-09-26）。
+
+    卡面静态中文文案的唯一落点是 `_CARD_TEXT`（契约 §二 S79/S95）；能力侧
+    需要把某枚文案带进 payload（如快报卡的页脚口径句与功能名）时，经此口
+    取数，**不许在自己模块里再抄一份字面量**——抄了就是第二真身，改表不跟随。
+    键写错 = 当场 KeyError 并点名可用键（fail-loud）：静默回退会把「没登记」
+    伪装成「登记了但为空」，正是模板侧 card_text 空渲染那类病的模块级复现。
+    """
+    try:
+        return _CARD_TEXT[key]
+    except KeyError:
+        raise KeyError(
+            f"卡片文案键未登记: {key!r}（唯一落点 bridge._CARD_TEXT，"
+            f"请先入册再引用；已登记 {len(_CARD_TEXT)} 键）"
+        ) from None
+
+
+def card_template_names() -> tuple[str, ...]:
+    """卡面模板清单**单一派生取数口**（S-T-VISUAL-1，第 7 项统一波收口）。
+
+    判据与 `scripts/doc_sync.py::_tpl_list` 完全同构：同一 `templates/` 目录、
+    同一 `*.html` glob、同一排序——机器册与契约门从此共用一份账。
+    背景：此前模板清单在 tests 里存过多本手抄副本（各契约门一本、E03 一本、
+    视觉审计一本、供给链与九门各一本 sid→文件名表），后增的 news_digest 面
+    没被任一清单数到，脱族数值在门外通行数个波次（「清单没数到它」型假绿，
+    见 test_news_digest_card_contract.py 头注）。归一后管辖面恒等于目录现走；
+    「模板名 → 面 id / 渲染入口 / 宽度键 / 数字选择器」这类**元数据**仍逐面
+    显式登记（不可派生），由各门完备锁执法：新模板入目录即触发登记要求。
+    """
+    return tuple(sorted(p.name for p in _TEMPLATES_DIR.glob("*.html")))
+
+
 _TEMPLATE = _ENV.get_template("universal_card.html")
 
 # ==================== 平台配色 / 官方名映射 ====================
@@ -146,6 +208,9 @@ _TEMPLATE = _ENV.get_template("universal_card.html")
 # echo/debug/usage_cards/templates 直接从本模块导入该私有名，勿删）。
 from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
     BRAND_THEME,
+    BRAND_WASH_TOKENS,
+    CARD_WASH_ALERT,
+    CARD_WASH_BLOBS,
     DEFAULT_THEME,
     DIVIDER,
     ERROR_THEME,
@@ -343,7 +408,7 @@ def _card_root_tokens(
     *,
     phase: float | str = 0.2,
     extras: dict[str, str] | None = None,
-    wash_blob_mix: int = 35,
+    wash_blob_mix: int = 18,
     include_phase: bool = True,
     include_wash: bool = True,
 ) -> str:
@@ -359,7 +424,12 @@ def _card_root_tokens(
     也与四张 f-string 直拼卡同语义——2026-09-18 用户裁定「统一成 dark」后，
     直拼卡侧原先的 ``--accent-ink`` 已退役，两边同名。
 
-    ``wash_blob_mix`` 默认 35；``error_card`` 的历史值是 24，按卡传入以保视觉不变。
+    ``wash_blob_mix`` 默认 18（2026-09-25 起全卡一致，见 render_root_tokens）。
+
+    ``--wash-1..3`` / ``--wash-mist`` 一律按 ``theme_tokens.BRAND_WASH_TOKENS``
+    （本命蓝派生）注入，**不跟随各卡 ``--accent``**（2026-09-25 澜汐：背景要在
+    守岸人的蓝色标志色上做釉瑚飘逸渐变）。此前按 accent 派生，红系平台卡整张
+    壳底被推成粉灰。平台身份仍留在 ``--accent`` 强调线与 ≤35% 的漂移色斑里。
 
     ``include_phase`` / ``include_wash`` 供 ``universal_card`` 的**基础块**使用：
     该模板有两个 ``:root``，而 ``test_phase_determinism*.py`` 断言全页恰好一处
@@ -369,7 +439,7 @@ def _card_root_tokens(
         accent=color,
         accent_dark=_rgb_to_hex(_darken(_hex_to_rgb(color))),
         phase=phase,
-        wash=_derive_wash_tokens(color) if include_wash else None,
+        wash=BRAND_WASH_TOKENS if include_wash else None,
         extras=extras,
         wash_blob_mix=wash_blob_mix,
         include_phase=include_phase,
@@ -1357,9 +1427,20 @@ def digest_phase(digest: str) -> str:
     return f"{spread / 10000:.4f}"
 
 
-def payload_phase(payload: Any) -> str:
-    """payload → 确定性相位串（各 render_* 的统一注入入口）。"""
-    return digest_phase(stable_payload_digest(payload))
+def payload_phase(payload: Any, *, face: str = "") -> str:
+    """payload（+卡面身份 ``face``）→ 确定性相位串（各 render_* 的统一注入入口）。
+
+    goal-7 统一波（2026-09-25）：相位原先只由 payload 决定，**同一 payload
+    投给两张不同卡面会得到逐字节同构的色斑构图**——「每张卡的颜色布局不得
+    雷同」缺一条腿。``face`` 是以卡面稳定标识（如 ``"market"``）做盐：同一面
+    同一 payload 仍恒定定格（双渲逐字节一致、样张基线不碎），跨面则保证
+    ``--phase`` 互异 → 钉帧下色斑的 animation-delay 互异 → 构图互异。
+    缺省 ``face=""`` 与旧行为逐字节一致（既有单参调用零改动零漂移）。
+    """
+    digest = stable_payload_digest(payload)
+    if face:
+        digest = digest + "\x1f" + face
+    return digest_phase(digest)
 
 
 # ==================== 渲染 ====================
@@ -1551,7 +1632,7 @@ def render_universal_card_html(payload_dict: dict[str, Any] | None = None) -> st
     topics_raw = data.get("topics") if isinstance(data.get("topics"), list) else detail_data.get("tags")
     context["topics"] = [str(tag) for tag in _as_list(topics_raw) if _as_str(tag)]
     # E01：漂移相位按 payload digest 确定注入（模板 :root --phase 直读）。
-    context["phase"] = payload_phase(data)
+    context["phase"] = payload_phase(data, face="universal")
     # vis4 六键 + CORE 值册（玻璃/遮罩/语义色/等宽/内径）同一管道注入——
     # 值全部出自 theme_tokens 单一登记（改一处=全模板自动生效）。
     context.update(_vis4_context())
@@ -1682,13 +1763,13 @@ def render_market_card_html(payload_dict: dict[str, Any] | None = None) -> str:
         # 品牌胶囊（CAP1）：CSS/DOM 单一产出经 mica_shell，模板摆位本地化。
         **_capsule_context(bot_name, bot_avatar_url, feature_label),
         # 漂移相位按 payload digest 确定注入（E01，D2→D1）。
-        phase=payload_phase(data),
+        phase=payload_phase(data, face="market"),
         # 釉瑚云母洗：与 --accent 同点注入（mica-glass v2 本命基底）。
         **_derive_wash_tokens(color),
         # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，同 universal 段）。
         **_vis4_context(),
         # :root 公共段单一产出（v21r3 步 5）：模板里只留 {{ root_tokens }} 与卡特有 token。
-        root_tokens=_card_root_tokens(color, phase=payload_phase(data)),
+        root_tokens=_card_root_tokens(color, phase=payload_phase(data, face="market")),
     )
 
 
@@ -1765,13 +1846,13 @@ def render_finance_card_html(payload_dict: dict[str, Any] | None = None) -> str:
         # 品牌胶囊（CAP1）：单一产出经 mica_shell（见 render_market_card_html 注）。
         **_capsule_context(bot_name, bot_avatar_url, feature_label),
         # 漂移相位按 payload digest 确定注入（E01，D2→D1）。
-        phase=payload_phase(data),
+        phase=payload_phase(data, face="finance"),
         # 釉瑚云母洗：与 --accent 同点注入（品牌 accent → 纯本命基底）。
         **_derive_wash_tokens(color),
         # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，同 universal 段）。
         **_vis4_context(),
         # :root 公共段单一产出（v21r3 步 5）。
-        root_tokens=_card_root_tokens(color, phase=payload_phase(data)),
+        root_tokens=_card_root_tokens(color, phase=payload_phase(data, face="finance")),
     )
 
 
@@ -1829,13 +1910,75 @@ def render_song_candidates_html(payload_dict: dict[str, Any] | None = None) -> s
         # 品牌胶囊（CAP1）：单一产出经 mica_shell（见 render_market_card_html 注）。
         **_capsule_context(bot_name, bot_avatar_url, feature_label),
         # 漂移相位按 payload digest 确定注入（E01，D2→D1）。
-        phase=payload_phase(data),
+        phase=payload_phase(data, face="song"),
         # 釉瑚云母洗：与 --accent 同点注入（mica-glass v1 2026-09-12）。
         **_derive_wash_tokens(color),
         # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，同 universal 段）。
         **_vis4_context(),
         # :root 公共段单一产出（v21r3 步 5）。
-        root_tokens=_card_root_tokens(color, phase=payload_phase(data)),
+        root_tokens=_card_root_tokens(color, phase=payload_phase(data, face="song")),
+    )
+
+
+def render_news_digest_card_html(payload_dict: dict[str, Any] | None = None) -> str:
+    """渲染新闻摘要卡 HTML（mica-glass 规范，B05 快讯域紧凑摘要，2026-09-23）。
+
+    payload_dict 字段：title（缺省回落 card_text.static_news_67）、sub（可空）、
+    foot（可空，能力侧带口径说明时传入）、items=[{source,time,name(或 title),
+    snip(或 summary)}]、platform_color（可空，缺省守岸人品牌 accent）、
+    bot_name、bot_avatar_url、feature_label。
+    质感与 song_candidates/market 同族（釉瑚云母底 + 液态玻璃浮层 + 漂移色斑 +
+    品牌胶囊）；无平台的快讯卡默认落本命蓝，不随内容漂移。空 items 出「暂无」占位，
+    任一字段缺失区块静默隐藏，任何输入都不抛异常（铁律 7：渲染失败→纯文本兜底）。
+    """
+    data = dict(payload_dict or {})
+    color = _safe_css_color(
+        _as_str(data.get("platform_color")) or BRAND_THEME.accent,
+        BRAND_THEME.accent,
+    )
+    rgb = _hex_to_rgb(color)
+    items_out: list[dict[str, Any]] = []
+    for item in _as_list(data.get("items")):
+        if not isinstance(item, dict):
+            continue
+        name = _as_str(item.get("name")) or _as_str(item.get("title"))
+        if not name:
+            continue
+        items_out.append(
+            {
+                "source": _as_str(item.get("source")),
+                "time": _as_str(item.get("time")),
+                "name": name,
+                "snip": _as_str(item.get("snip")) or _as_str(item.get("summary")),
+            }
+        )
+    template = _ENV.get_template("news_digest_card.html")
+    bot_name = _as_str(data.get("bot_name")) or BRAND_THEME.display_name
+    bot_avatar_url = _as_str(data.get("bot_avatar_url"))
+    # 功能名单一来源（CAPFIX-B 修 I-4 同口径）：只认调用方传入，缺省整段省略。
+    feature_label = _as_str(data.get("feature_label"))
+    return template.render(
+        title=_as_str(data.get("title")),
+        sub=_as_str(data.get("sub")),
+        foot=_as_str(data.get("foot")),
+        items=items_out,
+        platform_color=color,
+        platform_color_rgb=f"{rgb[0]},{rgb[1]},{rgb[2]}",
+        platform_color_dark=_rgb_to_hex(_darken(rgb)),
+        platform_color_light=_rgb_to_hex(_lighten(rgb)),
+        bot_name=bot_name,
+        bot_avatar_url=bot_avatar_url,
+        feature_label=feature_label,
+        # 品牌胶囊（CAP1）：单一产出经 mica_shell（见 render_market_card_html 注）。
+        **_capsule_context(bot_name, bot_avatar_url, feature_label),
+        # 漂移相位按 payload digest 确定注入（E01，D2→D1）。
+        phase=payload_phase(data, face="news_digest"),
+        # 釉瑚云母洗：与 --accent 同点注入（品牌 accent → 纯本命基底）。
+        **_derive_wash_tokens(color),
+        # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，同 universal 段）。
+        **_vis4_context(),
+        # :root 公共段单一产出（v21r3 步 5）。
+        root_tokens=_card_root_tokens(color, phase=payload_phase(data, face="news_digest")),
     )
 
 
@@ -1928,13 +2071,13 @@ def render_affinity_card_html(payload_dict: dict[str, Any] | None = None) -> str
         user_to_bot=_pair(data.get("user_to_bot")),
         rules=[rule for rule in (data.get("rules") or []) if isinstance(rule, dict)],
         # 漂移相位按 payload digest 确定注入（E01，D2→D1）。
-        phase=payload_phase(data),
+        phase=payload_phase(data, face="affinity"),
         # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，同 universal 段）。
         **_vis4_context(),
         # :root 公共段单一产出（v21r3 步 5）。pc 走 _safe_css_color 归一——
         # 模板侧已改用 |safe 注入，此处必须先把非法值挡在 CSS 之外。
         root_tokens=_card_root_tokens(
-            _safe_css_color(pc, UNKNOWN_PLATFORM_COLOR), phase=payload_phase(data)
+            _safe_css_color(pc, UNKNOWN_PLATFORM_COLOR), phase=payload_phase(data, face="affinity")
         ),
     )
 
@@ -1967,6 +2110,8 @@ def render_error_card_html(payload_dict: dict[str, Any] | None = None) -> str:
     （独立系统主题，不进平台注册表）；全字段缺省可渲染（空 payload 契约）。
     """
     data = dict(payload_dict or {})
+    # 卡种决定洗色档：``alert``＝运行时告警（蓝→红），其余＝诊断卡（浅蓝→蓝）。
+    card_variant = "alert" if str(data.get("card_variant") or "") == "alert" else "calm"
     rgb = _hex_to_rgb(ERROR_THEME.accent)
     bot_name = _as_str(data.get("bot_name")) or BRAND_THEME.display_name
     bot_avatar_url = _as_str(data.get("bot_avatar_url"))
@@ -1983,6 +2128,10 @@ def render_error_card_html(payload_dict: dict[str, Any] | None = None) -> str:
             if line
         ],
         method_pairs=_error_kv_rows(data.get("method_pairs")),
+        # ⑪⑫⑬ 三段（诊断卡补要素，2026-09-25）：走同一 _error_kv_rows 口径，
+        # 不新造第二套行渲染，空载荷下与既有段一样整段缺席。
+        self_review_pairs=_error_kv_rows(data.get("self_review_pairs")),
+        contact_pairs=_error_kv_rows(data.get("contact_pairs")),
         config_pairs=_error_kv_rows(data.get("config_pairs")),
         version_pairs=_error_kv_rows(data.get("version_pairs")),
         env_pairs=_error_kv_rows(data.get("env_pairs")),
@@ -1996,15 +2145,30 @@ def render_error_card_html(payload_dict: dict[str, Any] | None = None) -> str:
         # help_text 由模板摆在胶囊旁。
         **_capsule_context(bot_name, bot_avatar_url, _as_str(data.get("feature_label"))),
         # 漂移相位按 payload digest 确定注入（E01 同源语义）。
-        phase=payload_phase(data),
+        phase=payload_phase(data, face="error"),
         # 釉瑚云母洗：与 --accent 同点注入（红 accent 派生，mist 保持本命打底）。
         **_derive_wash_tokens(ERROR_THEME.accent),
         # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源）。
         **_vis4_context(),
-        # :root 公共段单一产出（v21r3 步 5）。本卡 --wash-blob-1 的历史混入比例是
-        # 24%（其余卡 35%）——按卡传参保留原值，不强行统一，否则色斑浓度会变。
+        # :root 公共段单一产出（v21r3 步 5）。
         root_tokens=_card_root_tokens(
-            ERROR_THEME.accent, phase=payload_phase(data), wash_blob_mix=24
+            ERROR_THEME.accent,
+            phase=payload_phase(data, face="error"),
+            # 洗色分档（2026-09-25 两轮点名）：两档的 --wash-* 都按本命蓝派生
+            # （见 _card_root_tokens），差别只在壳层——
+            #   calm  = 不覆盖壳层，走公共 SHELL_WASH_GRADIENT 多段彩漂。
+            #           旧写法在此另抄一条四段蓝→蓝直线渐变，把"飘逸"做成了
+            #           加深色块，已退役。
+            #   alert = 蓝→红是这张卡的语义本身，保留登记字面量。
+            extras={
+                # 色斑两档都要覆盖：render_root_tokens 里 --wash-blob-1 恒与
+                # var(--accent) 混（契约"平台色斑"的定义），诊断卡的 accent 是
+                # 语义红——不覆盖就会在左上角顶出一块灰粉。
+                **({"--mica-shell-wash": CARD_WASH_ALERT}
+                   if card_variant == "alert" else {}),
+                "--wash-blob-1": CARD_WASH_BLOBS[card_variant],
+                "--brand-ink": BRAND_THEME.accent,
+            },
         ),
     )
 
@@ -2148,14 +2312,14 @@ def render_mermaid_html(
         # 品牌胶囊（CAP1）：单一产出经 mica_shell（见 render_market_card_html 注）。
         **_capsule_context(bot_name, bot_avatar_url, feature_label),
         # 漂移相位按 mermaid 源码 digest 确定注入（E01，D2→D1）。
-        phase=payload_phase(code or ""),
+        phase=payload_phase(code or "", face="mermaid"),
         **_derive_wash_tokens(UNKNOWN_PLATFORM_COLOR),
         # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，同 universal 段）。
         **_vis4_context(),
         # :root 公共段单一产出（v21r3 步 5）。本卡主色恒为中性灰（模板原硬编码
         # #607080 = UNKNOWN_PLATFORM_COLOR），与 wash 同源。
         root_tokens=_card_root_tokens(
-            UNKNOWN_PLATFORM_COLOR, phase=payload_phase(code or "")
+            UNKNOWN_PLATFORM_COLOR, phase=payload_phase(code or "", face="mermaid")
         ),
     )
 
@@ -2216,6 +2380,8 @@ __all__ = [
     "ForwardPayload",
     "RenderPayload",
     "ThemeTokens",
+    "card_template_names",
+    "card_text_value",
     "derive_wash_tokens",
     "digest_phase",
     "flat_projection",
@@ -2228,6 +2394,7 @@ __all__ = [
     "render_market_card_html",
     "render_mermaid_html",
     "render_mermaid_png",
+    "render_news_digest_card_html",
     "render_song_candidates_html",
     "render_universal_card_html",
     "stable_payload_digest",

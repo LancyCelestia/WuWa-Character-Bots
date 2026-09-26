@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.content_parser import (
-    build_content_capability,
-)
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 from plugins.bot_unified_runtime.domains.core.contracts.media import (
     ParserRule,
@@ -15,6 +12,9 @@ from plugins.bot_unified_runtime.domains.core.contracts.media import (
 from plugins.bot_unified_runtime.domains.files.sources.downloader import (
     DownloadOutcome,
     MediaAnalysis,
+)
+from plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser import (
+    build_content_capability,
 )
 from plugins.bot_unified_runtime.sources.registry import ParserRegistry
 

@@ -13,21 +13,25 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import pathlib
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.meme import build_meme_capability
-from plugins.bot_unified_runtime.capabilities.meme_library import (
-    build_meme_library_capability,
-)
-from plugins.bot_unified_runtime.capabilities.poke import PokeLimiter
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     IncomingMessage,
     SessionType,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities import poke as poke_mod
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.poke import PokeLimiter
 from plugins.bot_unified_runtime.domains.meme.capabilities import (
     meme_library as meme_lib_mod,
+)
+from plugins.bot_unified_runtime.domains.meme.capabilities.meme import (
+    build_meme_capability,
+)
+from plugins.bot_unified_runtime.domains.meme.capabilities.meme_library import (
+    build_meme_library_capability,
 )
 from plugins.bot_unified_runtime.domains.meme.sources import (
     meme_library as meme_store_mod,
@@ -165,7 +169,11 @@ def test_meme_service_down_hint(tmp_path) -> None:
 
 def test_weighted_pick_scan_limit(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(meme_store_mod, "_PICK_SCAN_LIMIT", 5)
-    store = MemeLibraryStore(tmp_path / "lib.sqlite3", prefer=[])
+    # ``no_repeat=False``：本用例验的是**扫描行数有界**这一件事。20 行全用同一份
+    # 字节 b"png" ⇒ 内容哈希相同 ⇒ 反重复一开，第 2 次挑必然空手（那是另一条机制
+    # 在生效，会把本用例的判据糊成一团）。故按主题关掉账本、原判据原样保留；
+    # 「扫描上限内的候选同样受反重复约束」由 tests/test_meme_sticker_wave.py 负责。
+    store = MemeLibraryStore(tmp_path / "lib.sqlite3", prefer=[], no_repeat=False)
     md5s: list[str] = []
     for index in range(20):
         image = tmp_path / f"img{index}.png"
@@ -202,7 +210,11 @@ def test_absorb_event_images_persists(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(meme_library_listener, "_download_once", fake_download)
     store = SimpleNamespace(
         exists=lambda md5: False,
-        add=lambda *, md5, path, ext, group_id: added.append(md5),
+        # 真实 ``store.add`` 自 goal-12 起多一个 ``content_sha256``（内容身份）。
+        # 桩跟着长，并把拿到的值记下来顺手验真（不给就只能是空串）。
+        add=lambda *, md5, path, ext, group_id, content_sha256="": added.append(
+            (md5, content_sha256)
+        ),
         cleanup=lambda **kwargs: None,
     )
     event = SimpleNamespace(
@@ -228,7 +240,13 @@ def test_absorb_event_images_persists(tmp_path, monkeypatch) -> None:
         meme_library_listener.absorb_event_images(None, event, config, store)
     )
 
-    assert result == {"handled": True, "reason": "saved", "saved": 2}
+    # ``skipped`` 是 goal-12 新加的观测位（被墓碑拒绝/内容重复的原因代号）。
+    assert result == {"handled": True, "reason": "saved", "saved": 2, "skipped": []}
     assert len(added) == 2, "两张图都应入库"
+    for md5, digest in added:
+        stored = pathlib.Path(tmp_path / "lib" / f"{md5}.png").read_bytes()
+        assert digest == hashlib.sha256(stored).hexdigest(), (
+            "入库时必须带上**这张图自己**的内容哈希，不能是别人的"
+        )
     saved_files = list((tmp_path / "lib").glob("*.png"))
     assert len(saved_files) == 2 and all(f.stat().st_size for f in saved_files)

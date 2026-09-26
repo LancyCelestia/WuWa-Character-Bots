@@ -23,8 +23,10 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.debug import _llm_setup_mica_html
-from plugins.bot_unified_runtime.capabilities.echo import _help_mica_html
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+    _help_mica_html,
+)
+from plugins.bot_unified_runtime.domains.ops.admin.debug import _llm_setup_mica_html
 from plugins.bot_unified_runtime.domains.render.card_render.mica_shell import (
     _PUBLIC_TOKEN_ORDER,
 )

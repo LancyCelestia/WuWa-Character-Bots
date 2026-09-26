@@ -44,7 +44,7 @@ def _run_engine(engine: str, sample: str) -> tuple[int, str]:
     if engine == "isolated":
         env["PYTHONDONTWRITEBYTECODE"] = "1"
     result = subprocess.run(
-        cmd, cwd=str(ROOT), capture_output=True, text=True, timeout=1800, env=env,
+        cmd, cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8", timeout=1800, env=env,
         check=False,
     )
     tail = "\n".join((result.stdout or "").strip().splitlines()[-3:])

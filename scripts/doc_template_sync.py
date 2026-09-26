@@ -10,6 +10,20 @@
 - 机器段 `<!-- TEMPLATE-AUTO:BEGIN/END -->` 内归本脚本、段外归人（镜像 board_doc_sync 的
   BOARD-AUTO 语义）；写盘一律 UTF-8 + LF，渲染区零时间戳，列表按 schema 声明序输出 ⇒
   同输入两次 `--write` 字节相等（常驻用例断言 sha256）。
+- **写盘口 fail-closed 契约（席 TX181 立，判据真身＝`write_page`；席 TX241 补 CAS 与条件回滚）**：
+  写前重读盘上真实态——`before` 体检、`new` 基底与渲染用 `PageCtx.body_no_fm` 一律取自盘上态，
+  **任何情况下不用调用方传入的内存副本**；盘上态≠内存态 ⇒ 抛 `PageConcurrentMutation`（点名页与两态
+  sha256[:16]），一个字都不写；**紧邻落盘之前**再读一次盘上态、与本轮起点的 `_integrity_token`
+  比对（TX241 L1）⇒ 不等即**弃写**并用重读到的那份盘上态**重跑渲染**（有界 `_CAS_ATTEMPTS` 次，
+  超限抛 `PageConcurrentMutation`，绝不拿陈旧派生值顶掉他席提交）；写后从盘上重读再 `check_page`，
+  **双向**差分——新增违规 ⇒ 回滚（TX171），违规凭空消失且可见标记份数变化不可解释 ⇒ 同样回滚
+  （TX179 T4 洗白形）。**三条回滚腿一律先重读**（TX241 L0）：盘上仍是本席刚写的那份才抬回写前态，
+  已是他人提交的字节 ⇒ **只放弃、不回滚**（旧写法把别人提交一起吃掉）。落盘与回滚都走
+  `_atomic_write_bytes`（临时名 + `os.replace`，读者永不见半档）。
+  ⚠ **残余窗口（必须与"已修"同段读）**：CAS 仍是 check-then-act——窗口从「整段渲染」缩到
+  「最后一次 `read_bytes` → `os.replace`」两发系统调用之间，**①型丢更新的概率降到极低但不为零**。
+  要严格归零只有 L2（**所有**写者同一把持仓锁跨读→改→写全段；现算本仓页面写者 ≥3 枚、无一持锁），
+  本波未装 ⇒ 见 `SEAT-TX241.md` §5 施工单，账面不得叙述为"锁已落"。
 - 类别注册表住 `scripts/doc_templates.py`（唯一真身；本席 T-TPL0 曾暂住本文件，
   2026-09-22 席 T-GATES 按 GATE-PLAN §二 搬迁完毕，本文件不再持有第二份注册表）。
 - **明令不进 conftest autosync 链**（GATE-PLAN §五 C6：不扩「洗绿通道」），漂移靠常驻门红兜底：
@@ -29,8 +43,10 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import os
 import re
 import sys
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -229,9 +245,18 @@ def parse_schema_text(text: str, template_id: str) -> Schema:
 
 
 def extract_auto_zone(text: str) -> str | None:
-    if TPL_AUTO_BEGIN not in text or TPL_AUTO_END not in text:
+    """本页**真**机器段的段内文本；无成对可见标记 ⇒ None。
+
+    TX171 根修（同族盲区之一）：旧版按裸子串 `TPL_AUTO_BEGIN in text` 认段，写在围栏里的
+    示例串（教程/配方页常见）会被当成本页的机器段拿去比对 ⇒ `AUTO_DRIFT`，且当示例串先于
+    真段时还会把真段整个看漏。判据改走 `_human_body_position_view` —— 与 `_human_body`
+    （即 `check_sections` 那把尺）**同一次行走**，围栏外的独立标记行对才算数。
+    """
+    view = _human_body_position_view(text)
+    if view.zone is None:
         return None
-    return text.split(TPL_AUTO_BEGIN, 1)[1].split(TPL_AUTO_END, 1)[0]
+    begin, end = view.zone
+    return text[begin.end:end.start]
 
 
 #: 席 S153：自由槽资格的取数口（只点名符号，判据一份不抄）。
@@ -394,7 +419,13 @@ def _provider_page_stat(arg: str | None, ctx: PageCtx) -> str:
 # ---------------------------------------------------------------------------
 _SDD_WAVE_RE = re.compile(r"\.superpowers/sdd/([^/]+)/")
 _HANDOFF_DATE_RE = re.compile(r"^HANDOFF-.+-(\d{8})\.md$")
-_SEAT_ID_RE = re.compile(r"^SEAT-(.+)\.md$")
+# 席 TX151（2026-09-23）：seat_id 取数口扩到「与 `_provider_seat_class`/`classify`
+# 完全同族」的机械可判形态——`_provider_seat_class`（:344）认四形（SEAT-/report-/
+# progress- 前缀 + -log.md 后缀）即判 seat-report 类，那么这四形页都该派生得出席位号；
+# 旧口只认 `^SEAT-(.+)\.md$` ⇒ 同族 report-/progress-/*-log.md 过程件全被 `no_ground_source`
+# 拒挂（现算 227 枚）。**不许改页名**（重命名＝毁归属链），只放宽取数口到整族、
+# 仍是「一条正则、不逐页手抄」。空主干/占位符形在 provider 层照旧抛（见下方守卫）。
+_SEAT_ID_RE = re.compile(r"^(?:(?:SEAT|report|progress)-(.+)|(.+)-log)\.md$")
 _STATUS_LINE_RE = re.compile(
     r"^Status:[ \t]*(STARTED|RUNNING|BLOCKED|DONE)\b", re.MULTILINE
 )
@@ -453,10 +484,23 @@ def _provider_filename_date(arg: str | None, ctx: PageCtx) -> str:
 
 
 def _provider_seat_id_from_name(arg: str | None, ctx: PageCtx) -> str:
-    m = _SEAT_ID_RE.match(_stem(ctx.rel))
+    name = _stem(ctx.rel)
+    m = _SEAT_ID_RE.match(name)
     if not m:
-        raise ValueError(f"文件名不合 ^SEAT-(.+)\\.md$，无法派生席位号：{_stem(ctx.rel)}")
-    return m.group(1)
+        raise ValueError(
+            "文件名不合席位族 "
+            "^(?:SEAT|report|progress)-(.+)\\.md$ 或 ^(.+)-log\\.md$，"
+            f"无法派生席位号：{name}"
+        )
+    # 前缀形命中 group(1)、-log 后缀形命中 group(2)；二者互斥（正则只走一支）。
+    seat = (m.group(1) or m.group(2)).strip()
+    # 席 TX151 约束②：空主干/占位符形照旧抛（不因放宽取数口而放行垃圾）——
+    # 与 `_provider_filename_stem` 同一套占位符集合、判定口径一致。
+    if not seat:
+        raise ValueError(f"席位主干为空，无法派生席位号：{name}")
+    if seat.lower() in _PLACEHOLDER_STEMS or seat in _PLACEHOLDER_STEMS_CN:
+        raise ValueError(f"席位主干是占位符形 {seat!r}，拒绝用作席位号：{name}")
+    return seat
 
 
 def _provider_body_status(arg: str | None, ctx: PageCtx) -> str:
@@ -464,6 +508,47 @@ def _provider_body_status(arg: str | None, ctx: PageCtx) -> str:
     if not m:
         raise ValueError("页体无 `Status: (STARTED|RUNNING|BLOCKED|DONE)` 行，无法派生 status")
     return m.group(1)
+
+
+#: 占位符形的"作用域名"一律拒收（席 TX45 ③注毒实证：真身 `_PLACEHOLDER_LITERALS`
+#: 今日不含 `"0"`，若 provider 返回 `"0"` 会绿着过 G-T4 —— 反面先例＝`ledger_events`
+#: 用 `"0"` 掩盖 572 枚"压根没记账目"的页）。
+_PLACEHOLDER_STEMS = frozenset({"0", "na", "n/a", "none", "null", "tbd", "todo", "-"})
+#: 中文占位形（小写集合不上，单独一枚集合；真身 `_PLACEHOLDER_LITERALS` 有 `待填`
+#: 但那在下游 PROVIDER_EMPTY 腿，provider 层不拦＝"0" 同款绿洞，席 TX76②点名）。
+_PLACEHOLDER_STEMS_CN = frozenset({"待填", "待定", "未填", "占位", "示例"})
+
+
+def _provider_filename_stem(arg: str | None, ctx: PageCtx) -> str:
+    """页面作用域名：文件名主干（保大小写、不折叠分隔符）。
+
+    一次解锁 `ledger_scope`/`brief_scope`/`guide_scope`/`convention_scope`/
+    `handbook_scope`/`runbook_scope`/`spec_id` 七枚同构必填参的**来源**问题（席 TX17、
+    TX19、TX20、TX13、TX21 四席独立复算同判：文件名是它们唯一 100% 可派生的真身来源）。
+    ⚠ 「可派生」不等于「类内单射」——席 TX76 现算推翻本函数旧注释的那句断言：
+    `ledger_scope` 池 5 键撞 23 页、`brief_scope` 池 2 键撞 4 页，且真身 G-T4 没有
+    跨页唯一性腿（TX45①／TX74④）⇒ 单射问题另案（PARKED P-80），本函数不假称已解决。
+
+    形态口径（席 TX74②/TX76①/TX88 三席独立实算同一结论：首版在此写错）：真身
+    `_stem()` 返回**带 `.md`** 的文件名，而在册 60 枚已驱动页的 `*_scope` 值全部
+    **去扩展名**（60/60 不等）⇒ 必须先 strip 再判，否则翻 `auto:` 当场 60 枚 `AUTO_DRIFT`。
+    占位符判定同样要在 strip 之后做：`_PLACEHOLDER_STEMS` 存的是无扩展名 token，
+    旧写法对任何 `X.md` 永不命中＝死代码（TX76②注毒实跑）。
+
+    派生不出即抛 `PROVIDER_FAIL`，绝不发明值；`"0"`/`待填`/`TBD` 等占位形在 provider
+    层即抛（TX45③：真身 `_PLACEHOLDER_LITERALS` 今日不含 `"0"`，不自己拦就会绿着过）。
+    """
+    name = _stem(ctx.rel)
+    for suffix in (".md", ".markdown"):
+        if name.lower().endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    stripped = name.strip()
+    if not stripped:
+        raise ValueError(f"文件名主干为空，无法派生作用域名：{ctx.rel}")
+    if stripped.lower() in _PLACEHOLDER_STEMS or stripped in _PLACEHOLDER_STEMS_CN:
+        raise ValueError(f"文件名主干是占位符形 {stripped!r}，拒绝用作作用域名：{ctx.rel}")
+    return name
 
 
 # —— 板块归属／代码家目录（桶级常量，注册表在册）——————
@@ -568,6 +653,9 @@ PROVIDERS: dict[str, Callable[[str | None, PageCtx], str]] = {
     "filename_date": _provider_filename_date,
     "seat_id_from_name": _provider_seat_id_from_name,
     "body_status": _provider_body_status,
+    # 席 TX17/TX19/TX20/TX13/TX21 四定案 → 主会话单点落地：七枚同构 `*_scope`/
+    # `spec_id` 必填参的真身来源（此前 1252 枚页因无 provider 只能瞎填或不挂头）。
+    "filename_stem": _provider_filename_stem,
     "category_owner_board": _provider_category_owner_board,
     "category_code_home": _provider_category_code_home,
     "card_list_id": _provider_card_list_id,
@@ -592,8 +680,9 @@ PROVIDER_SOURCES: dict[str, str] = {
     "page_stat": "page:页体 `## 账目` 节 `- ` 条数",
     "path_wave": "page:路径 sdd 波次段／HANDOFF 文件名日期段",
     "filename_date": "page:文件名 ^HANDOFF-.+-(\\d{8})\\.md$",
-    "seat_id_from_name": "page:文件名 ^SEAT-(.+)\\.md$",
+    "seat_id_from_name": "page:文件名族 ^(?:SEAT|report|progress)-(.+)\\.md$ 或 ^(.+)-log\\.md$（与 seat_class 同族；空主干/占位符形必抛）",
     "body_status": "page:页体 ^Status: 行",
+    "filename_stem": "page:文件名主干（_stem，保大小写；空主干与占位符形必抛）",
     "category_owner_board": "scripts/doc_templates.py:CategoryDef.owner_board",
     "category_code_home": "scripts/doc_templates.py:CategoryDef.code_home",
     "card_list_id": "scripts/doc_sync.py:_tpl_list",
@@ -977,31 +1066,145 @@ def _match_slot(schema: Schema, heading: str) -> int | None:
     return None
 
 
-def _human_body(text: str) -> str:
-    """剥 front-matter、剥机器段、（标题抽取侧）剥围栏——与 SHAPE-STATS 测量纪律同口径。"""
+@dataclass(frozen=True)
+class _ZoneMark:
+    """一条**围栏外、独立成行**的机器段标记行，及其在全文里的字符区间。"""
+
+    line: int  # `splitlines()` 口径的行号（0 起）
+    start: int  # 标记文本在 `text` 中的起始偏移（不含行首空白）
+    end: int  # 标记文本在 `text` 中的结束偏移（不含行尾空白）
+    kind: str  # "B" = BEGIN / "E" = END
+
+
+@dataclass(frozen=True)
+class PositionView:
+    """`_human_body` 的**带位置**形态——同一支尺，多记「哪一行才算数」的账。
+
+    TX171 立此件的目的只有一个：机器段的「判定」与「剥除」必须出自**同一次行走**，
+    否则 `extract_auto_zone`／`_apply_block` 按裸子串认段、`check_sections` 按剥围栏认段，
+    写在围栏里的 `TEMPLATE-AUTO` 示例串就会被当成真段（TX163 对该页实证过 `AUTO_DRIFT`
+    与「示例被 replace 撕掉」两种破坏形）。
+
+    - `kept` 逐字节等于 `_human_body(text)`（两者由本函数同一次行走产出，长不歪）。
+    - `marks` 只收**围栏外**的独立标记行；围栏内的 `TEMPLATE-AUTO` 字面量是**示例**，
+      永不是段界（TX163 教义：尺外成对独立标记行才算真机器段）。
+    - `zone` = 首个可见 BEGIN 与其后首个可见 END；无成对 ⇒ `None`。
+    - `raw_first_line`／`raw_first_fence_open`：全文**首个裸子串标记**所在行号，与该行所属
+      围栏的开启行号（不在围栏内 = −1）。这两个数只服务注入口「把示例整块留在 tail」的切点
+      选择（`batch_frontmatter_convert._apply_machine_zone`），不参与任何判据。
+    """
+
+    kept: str
+    marks: tuple[_ZoneMark, ...]
+    zone: tuple[_ZoneMark, _ZoneMark] | None
+    raw_first_line: int
+    raw_first_fence_open: int
+
+
+def _line_starts(text: str, lines: list[str]) -> list[int]:
+    """每行首字符在全文中的偏移（`splitlines()` 丢掉行尾 `\n`，故每行 +1 还原）。"""
+    starts: list[int] = []
+    pos = 0
+    for ln in lines:
+        starts.append(pos)
+        pos += len(ln) + 1
+    return starts
+
+
+def _fence_open_of_line(lines: list[str]) -> list[int]:
+    """每行所属围栏的**开启行号**（不在围栏内 = −1）。只认 `_FENCE_RE` 的开/闭交替。
+
+    围栏开启行本身按 −1（它不是被围内容）；闭合行按其所闭合围栏的开启行号——与 TX163
+    镜像在同一位置取样时的口径一致（切点要提到「整块示例」之前，就得知道那块示例从哪开）。
+    """
+    out: list[int] = []
+    infence = False
+    fence_open = -1
+    for idx, ln in enumerate(lines):
+        if _FENCE_RE.match(ln):
+            out.append(fence_open if infence else -1)
+            if infence:
+                infence = False
+                fence_open = -1
+            else:
+                infence = True
+                fence_open = idx
+        else:
+            out.append(fence_open if infence else -1)
+    return out
+
+
+def _human_body_position_view(text: str) -> PositionView:
+    """机器段与围栏的**唯一**一次行走（判据侧与注入口共用，禁第二把尺）。
+
+    与 TX163 之前的 `_human_body` 相比只改一件事、且是**顺序**：先判围栏、再判段界。
+    旧版把「机器段判定」排在「剥围栏」之前 ⇒ 围栏里一枚落单/成对的 `BEGIN` 字面量会把
+    `in_auto` 拨起来，随后**围栏闭合行被 `in_auto` 吞掉**，`infence` 就此卡在 True，
+    该示例之后的整篇人写正文从视图里消失（少几枚 H2 ⇒ 门与注入口都看不见真内容）。
+    """
     lines = text.splitlines()
+    starts = _line_starts(text, lines)
     body_from = 0
     if lines and lines[0].strip() == "---":
-        end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), 0)
-        body_from = end + 1 if end else 0
-    out: list[str] = []
+        fm_end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), 0)
+        body_from = fm_end + 1 if fm_end else 0
+    raw = min(
+        (x for x in (text.find(TPL_AUTO_BEGIN), text.find(TPL_AUTO_END)) if x != -1),
+        default=-1,
+    )
+    raw_first_line = text.count("\n", 0, raw) if raw != -1 else -1
+    fence_of = _fence_open_of_line(lines)
+    kept: list[str] = []
+    marks: list[_ZoneMark] = []
     infence = False
     in_auto = False
-    for ln in lines[body_from:]:
-        if ln.strip() == TPL_AUTO_BEGIN:
-            in_auto = True
-            continue
-        if ln.strip() == TPL_AUTO_END:
-            in_auto = False
-            continue
-        if in_auto:
-            continue
+    for idx in range(body_from, len(lines)):
+        ln = lines[idx]
+        # ① 围栏优先（TX171 根修点）。机器段内部的围栏行不翻转视图状态——段内一切皆产物。
         if _FENCE_RE.match(ln):
-            infence = not infence
+            if not in_auto:
+                infence = not infence
             continue
-        if not infence:
-            out.append(ln)
-    return "\n".join(out)
+        stripped = ln.strip()
+        marker = (
+            TPL_AUTO_BEGIN if stripped == TPL_AUTO_BEGIN
+            else (TPL_AUTO_END if stripped == TPL_AUTO_END else None)
+        )
+        # ② 只有**围栏外**的独立标记行才算段界；围栏内的字面量是示例文本，随 infence 一起丢弃。
+        if marker is not None and not infence:
+            lead = len(ln) - len(ln.lstrip())
+            m_start = starts[idx] + lead
+            marks.append(
+                _ZoneMark(idx, m_start, m_start + len(marker),
+                          "B" if marker == TPL_AUTO_BEGIN else "E")
+            )
+            in_auto = marker == TPL_AUTO_BEGIN
+            continue
+        if in_auto or infence:
+            continue
+        kept.append(ln)
+    zone: tuple[_ZoneMark, _ZoneMark] | None = None
+    begin = next((m for m in marks if m.kind == "B"), None)
+    if begin is not None:
+        closer = next((m for m in marks if m.kind == "E" and m.line > begin.line), None)
+        if closer is not None:
+            zone = (begin, closer)
+    return PositionView(
+        kept="\n".join(kept),
+        marks=tuple(marks),
+        zone=zone,
+        raw_first_line=raw_first_line,
+        raw_first_fence_open=fence_of[raw_first_line] if raw_first_line != -1 else -1,
+    )
+
+
+def _human_body(text: str) -> str:
+    """剥 front-matter、剥机器段、剥围栏——与 SHAPE-STATS 测量纪律同口径。
+
+    TX171：本函数降为 `_human_body_position_view` 的投影（一次行走、零第二尺），
+    并随之修掉「机器段判定排在剥围栏之前」的顺序盲区。
+    """
+    return _human_body_position_view(text).kept
 
 
 #: 席 S153 反「万能吞」硬边界②：自由槽的标题长度上限（语料实测 H2 名 ≤ 40 字符，
@@ -1383,10 +1586,21 @@ def naked_fact_findings(
 
 
 def _apply_block(text: str, block: str) -> str:
-    if TPL_AUTO_BEGIN in text and TPL_AUTO_END in text:
-        head, rest = text.split(TPL_AUTO_BEGIN, 1)
-        _, tail = rest.split(TPL_AUTO_END, 1)
-        return f"{head}{block}{tail}"
+    """就地更新 / 首次注入机器段。**只认围栏外的成对可见标记**（TX171 根修）。
+
+    旧版判据是裸子串 `TPL_AUTO_BEGIN in text and TPL_AUTO_END in text`，两处病：
+    ① 围栏里的示例串（教程/配方页成对写出 `TEMPLATE-AUTO`）会被当成本页机器段，
+      `split` 一撕就把**示例字节改写成渲染结果**（`--write` 对 `HEADER-RECIPE.md`
+      这类页是破坏性改写，且示例先于真段时真段被看漏）；
+    ② 只出现 END 在其前、BEGIN 在其后（错序形）时 `rest.split(END,1)` 直接
+      `ValueError: not enough values to unpack` —— 崩在写盘口里。
+    现在二者都由 `_human_body_position_view` 的 `zone` 决定：有成对可见段 ⇒ 按其字符区间
+    精确替换（与旧版在合法页上逐字节同形）；无 ⇒ 走下面的插入分支。
+    """
+    zone = _human_body_position_view(text).zone
+    if zone is not None:
+        begin, end = zone
+        return text[:begin.start] + block + text[end.end:]
     lines = text.splitlines(keepends=True)
     insert_at = len(lines)
     seen_h1 = False
@@ -1415,19 +1629,567 @@ def _apply_block(text: str, block: str) -> str:
     return pre + block + "\n\n" + "".join(lines[insert_at:])
 
 
+class PageWriteRejected(RuntimeError):
+    """写后体检不通过 ⇒ 本席已把文件回滚到写前盘上字节并拒写（TX171 fail-closed，TX181 升为双向）。
+
+    登记成 `main --write` 的 `refused` 之外的一枚**硬失败**：`--write` 撞到它应当停手，
+    而不是把被撕坏的示例正文留在树上（旧版写后零校验 ⇒ 破坏性改写只在下次 `--check` 才现形，
+    而 `HEADER-RECIPE.md` 那类页的示例串已被改写字节、`AUTO_DRIFT` 只是它的影子）。
+
+    TX181 起本异常覆盖**两条**写后拒写腿（`introduced` 装逐枚因由原文）：
+    ① 新增违规（既有）；② 「违规凭空消失 + 可见标记份数变化」的洗白形（TX179 T4 一族）——
+    后者在 `write_page` 里合成 `MARKER_LAUNDERING` 因由入册，不新增判据码表。
+
+    TX241 L0：本异常不再自陈「一定已回滚」——回滚腿先重读，盘上已是他人提交时本席**只放弃不回滚**
+    （抬回写前态等于吃掉别人的合法提交）。`preserved` 装的就是这一轮的真实处置，进消息原文。
+    """
+
+    def __init__(self, rel: str, introduced: list[str], *, preserved: str) -> None:
+        super().__init__(
+            f"WRITE_AFTER_CHECK_FAILED {rel}：写后体检不通过（{len(introduced)} 项因由），"
+            f"{preserved} —— " + " | ".join(introduced)
+        )
+        self.rel = rel
+        self.introduced = introduced
+        self.preserved = preserved
+
+
+class PageConcurrentMutation(RuntimeError):
+    """盘上真实态与本席内存态不一致 ⇒ **不覆盖**、保留盘上态并点名两态指纹（TX181 立，A 案）。
+
+    病根（TX179 T5 实测）：旧 `write_page` 的 `new` 与 `before` 都取自采集期的内存副本、
+    落盘直盖盘上真实态 ⇒ 采集之后任何并发写者刚写的字节被静默吃掉，而写后 `check_page`
+    照绿——这是数据丢失，不是误报；且与 `PageWriteRejected`/`_drive` 自陈的
+    「页字节零改动可复核」正相反。
+
+    本异常在三处抛出（TX241 起）：
+    ① 写前重读盘上态 ≠ 调用方传入的内存态（页面在采集后被改动）⇒ 一个字都不写；
+    ② **紧邻写入前**的 CAS 重读与本轮起点凭据不等，且重跑渲染已耗尽 ⇒ 弃写、盘上态原样；
+    ③ 写后读回字节 ≠ 本席刚落盘的字节（写入窗口内被并发竞写）⇒ 走 L0 条件回滚
+      （盘上仍是本席写值才回滚，否则只放弃）。
+    消息点名页与两态的 `sha256[:16]`；**不**自动合并、**不**静默以内存态为准。
+    CLI 侧由 `_drive()` 记成 `concurrent_rejected` + 非零退出。
+    """
+
+    def __init__(
+        self, rel: str, memory_sha16: str, disk_sha16: str, *, phase: str,
+        preserved: str = "拒写，盘上态原样保留",
+    ) -> None:
+        super().__init__(
+            f"CONCURRENT_MUTATION {rel}：{phase}"
+            f"（内存态 sha256[:16]={memory_sha16} ≠ 盘上态 sha256[:16]={disk_sha16}）"
+            f" ⇒ {preserved}"
+        )
+        self.rel = rel
+        self.memory_sha16 = memory_sha16
+        self.disk_sha16 = disk_sha16
+        self.phase = phase
+        self.preserved = preserved
+
+
+def _sha16(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
+#: CAS 弃写后「用重读到的盘上态重跑渲染」的有界次数（TX241 L1 · 照 `render_ledger` 案 A 口径：
+#: 不等 ⇒ 弃写重跑、超限非零退出保留盘上态）。缺省 2＝一轮真并发里最多让一次路，不空转。
+_CAS_ATTEMPTS = 2
+
+
+def _integrity_token_of(raw: bytes) -> tuple[int, str]:
+    """盘上字节 → 完整性凭据 `(长度, sha256[:16])`——**尺子不自造**。
+
+    唯一来源＝`scripts/shim_retirement_census.py::_integrity_token`（在册那支，与撕裂判据同源；
+    TX226 §4.2 L1 明令「禁另造第二把尺」）。延迟 import 是为避开
+    `shim_retirement_census → physical_placement_census → board_doc_sync` 与本模块的导入环；
+    导不到 ⇒ 直接抛（fail-closed），**绝不**退化成"没有凭据也照写"。
+    """
+    if str(ROOT / "scripts") not in sys.path:
+        sys.path.insert(0, str(ROOT / "scripts"))
+    from shim_retirement_census import _integrity_token
+
+    return _integrity_token(raw)
+
+
+def _render_inputs_token(
+    page_bytes: bytes, template_src: bytes
+) -> tuple[tuple[int, str], tuple[int, str]]:
+    """渲染输入的**合成凭据**：`(页面字节凭据, 模板源字节凭据)` 双联（TX261 ②·TX252 硬约束1）。
+
+    只比页面字节挡不住「第二输入换版」（TX252 E1-2：模板在采集与落盘之间被他席改走 ⇒
+    页面 CAS 全绿、盘上却是按旧模板烤的页＝真丢更新，且写后 `check_page` 吃同一份陈旧
+    schema＝自洽失明）。每半尺仍走 `_integrity_token_of`（唯一真身＝
+    `shim_retirement_census._integrity_token`，TX241 用例的注毒口旁路它一枚即整闸失效）。
+    覆盖范围如实：本尺是「渲染的两枚直接输入」；page-provider 在渲染期旁读的文件
+    （`_read_script` 等）不在本尺内——那是残余窗口的一部分，写进 `write_page` 诚实边界。
+    """
+    return (_integrity_token_of(page_bytes), _integrity_token_of(template_src))
+
+
+def _encode_preserving_newlines(text: str, original: bytes | None) -> bytes:
+    """渲染文本 → 落盘字节，**保持盘上原行尾形**（TX261 ③·TX252 硬约束2/3）。
+
+    读侧尺子（`_page_text_from_bytes`）把 CRLF/CR 折成 LF；写侧若无条件发 LF 字节，一轮驱动
+    就把一枚在盘 CRLF 页**整篇静默翻行尾**（TX252 E3-4 实测：台账那支 `_atomic_write_text`
+    默认 `newline=None` 把 `a\\nb` 落成 `a\\r\\nb`；`docs/**` 抽样 200 枚里 31 枚含 CRLF）——
+    内部判据全绿而哈希册／普查／纯加法自证三处同炸。契约＝「不改行尾」：
+    原页含 CRLF ⇒ 发 CRLF；新建页／纯 LF 页 ⇒ 发 LF。单 `\\r` 老 Mac 形不还原（本仓无此形，
+    出现再议——如实登记于此）。
+    """
+    if original is not None and b"\r\n" in original:
+        return text.replace("\n", "\r\n").encode("utf-8")
+    return text.encode("utf-8")
+
+
+def fresh_template_source(template_id: str) -> tuple[bytes | None, Schema | None, str]:
+    """**逐页现读**一枚模板：返回 `(源字节, 解析 Schema, 失败因由)`（TX261 ②）。
+
+    读法与守卫和 `_collect()` 同一支尺（`errors="replace"` + 通用换行 + `parse_schema_text` +
+    单模板 `freeform_guard`），不建第二装载真身。分工：`_collect()` 的批级装载继续服务采集/
+    记红/报告（只读路无竞态问题）；**写侧**每轮渲染前经本函数拿盘上现值——旧形整批装载一份
+    schemas 后写完全部页面都不再看模板一眼（TX252 E1-4 实锤），本函数就是那一「眼」。
+    源字节交调用方进 `_render_inputs_token`。读不到／解析失败／失格 ⇒ `(bytes|None, None, 因由)`，
+    调用方 fail-closed 拒写，**绝不**退回批级陈旧份。**唯一例外**（在册夹具形）：因由以
+    `missing:` 起头＝该模板本无盘上件（测试合成 schema 由调用方声明交入），此时调用方以手里
+    `schemas` 那份为声明输入、指纹半尺取空字节——TX241 语义逐字保持，不是旁路。
+    """
+    path = TEMPLATE_DIR / f"{template_id}.md"
+    try:
+        src = path.read_bytes()
+    except FileNotFoundError:
+        return None, None, f"missing:{template_id}（无盘上模板，声明输入归调用方）"
+    except OSError as exc:
+        return None, None, f"模板现读失败 {type(exc).__name__}: {exc}"
+    try:
+        sch = parse_schema_text(
+            _normalize_newlines(src.decode("utf-8", errors="replace")), path.stem
+        )
+    except SchemaError as exc:
+        return src, None, f"SCHEMA_ERROR {exc}"
+    guard = freeform_guard({path.stem: sch})
+    if guard:
+        return src, None, "; ".join(guard)
+    return src, sch, ""
+
+
+#: 落盘临时件的**固定名后缀**（TX261 ④·TX252 硬约束4）：`mkstemp` 随机名在「`mkstemp` 之后、
+#: `os.replace` 之前被硬杀」的崩溃路径下每轮泄一枚、且 `rglob("*.md")` 两把尺全盲（TX252 E3-3
+#: 实测两枚不同名残留）。固定名 ⇒ 每个目标至多泄一枚**可预期**的 `.tx-write.tmp`，
+#: 下一次写同一目标时进门口先扫走（自我回收，不需要额外清洁席认账）。
+_TMP_SUFFIX = ".tx-write.tmp"
+#: `os.replace` 撞「目标正被并发读者占用」时的短重试上限：Windows 上目标被以非 delete-share
+#: 打开时顶替返回 `PermissionError`（TX241 自建用例实测必现，200KB 页 + 常驻读者）。读者都是
+#: 毫秒级短打开，10×20ms 足够覆盖；仍失败就照抛、**绝不**降级回 truncate+write（那等于把刚
+#: 堵上的半档洞重新打开）。上限本身＝TX252 硬约束④「重试设上限」，取值沿用 TX241。
+_REPLACE_RETRIES = 10
+_REPLACE_RETRY_SECONDS = 0.02
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """字节级原子写（TX241 L1 第三发注毒：非原子写不留半档；TX261 ④：固定临时名 + 陈旧清扫）。
+
+    固定临时名 `<目标名>.tx-write.tmp`（同目录）→ 进门口先 `unlink(missing_ok=True)` 回收
+    上一轮崩溃/被杀留下的同名陈旧件 → 写字节 + `flush` + `os.fsync` → `os.replace` 顶替。
+    **按字节写**、不经过任何文本模式换行翻译（E3-4 那形翻行尾在此闸外，行尾契约见
+    `_encode_preserving_newlines`）。任一步失败 ⇒ 删临时名后原样上抛，目标文件逐字节保持旧值。
+    买到的是**可见性原子**（读者永不见 truncate 之后的半档）；**买不到序原子**（不丢更新），
+    那一半靠 `_render_inputs_token` 的 CAS（页面+模板双凭据），两轴正交（TX226 §4.1）。
+    ⚠ Windows 特有的两发残余（TX241 实测，非推测）：
+    ① 顶替**进行中**，并发读者的 `open()` 可能瞬态返回 `PermissionError [Errno 13]`（内容永远
+      是完整旧版或完整新版、绝不半档，但那一发 open 会失败）；读者侧要免疫须自带短重试
+      （本仓门与现算都是短读，实测未受影响）；
+    ② 反方向也成立：**占空比 100% 的热循环读者**（一刻不停地 open 同一页）能把 `os.replace`
+      饿死到重试预算用尽 ⇒ 本口抛错、临时名回收、目标逐字节不变。勿把"原子写"叙述成无条件成功。
+    ③（TX261 新增如实账）固定名让**同目标并发写者**共享一枚临时件：截断互踩的后果是
+      顶替上去的字节可能混拼 ⇒ 必被写后读回腿（第五道）抓到 ⇒ 拒写/放弃，**响而不静默**；
+      彻底闭窗只有 L2 共锁（本波不自装，见 `write_page` 诚实边界）。
+    """
+    tmp = path.parent / (path.name + _TMP_SUFFIX)
+    try:
+        tmp.unlink(missing_ok=True)  # 陈旧回收（TX252 E3-3 泄漏族的自我闭环）；被持有则不强拆
+    except OSError:
+        pass
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        for attempt in range(_REPLACE_RETRIES):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if attempt + 1 == _REPLACE_RETRIES:
+                    raise
+                time.sleep(_REPLACE_RETRY_SECONDS)  # 让短读者先散场，再抢这一次顶替
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass  # 临时名已被 replace 收走或本就被删：不掩盖原始异常
+        raise
+
+
+def _rollback_or_abandon(path: Path, original: bytes, written: bytes) -> str:
+    """L0 条件回滚（TX241；TX261 ① 把三条腿的定性**分开写明**，TX252 硬约束5）。
+
+    旧三条回滚腿一律 `write_bytes(original)`：窗口内他席的合法提交会被整个抬回去，
+    而异常文案还写着「盘上态原样保留」——在该序下为假。现在回滚前先重读盘上态：
+
+    - 盘上 **== 本席刚落盘的字节** ⇒ 无人中途提交 ⇒ 原子回滚到写前盘上态；
+    - 盘上 **!= 本席写值** ⇒ **他人已提交，本席无权覆写别人的提交** ⇒ 只放弃、不回滚，
+      残页留在盘上由写后差分的下一轮 / 常驻门现形（绝不静默）。
+    - 重读失败（文件被删/不可读）⇒ 同样只放弃，不猜。
+
+    三腿分开定性（判据成立即刻的盘上态各不相同，故本函数在不同腿上的语义不同）：
+    - **正向差分腿 / 反向差分腿**：判据成立即刻盘上**仍是**本席写值（读回等值在前）——
+      坏页是我烤的 ⇒ 本函数重读多半等值 ⇒ 抬回写前态＝清理自己，安全（该回滚）。
+    - **第五道读回腿**：判据成立即刻盘上**已不是**本席写值——那份不是我写的 ⇒
+      本函数重读若仍非本席写值即只放弃+点名、**不抬**（TX242 §4.2 `rollback_clobbers`
+      形由此闭合）；仅当重读证明盘上又回到本席写值（竞写为瞬态假象／同字节 ABA）才抬回
+      ——该形态由在册锁 `test_readback_mismatch_rolls_back_even_when_violation_diff_would_pass`
+      钉着（纯「永不回滚」会翻掉该既有断言＝动主会话独占面，故采「判据＝盘上真值」的现行形）。
+
+    返回人话一句，进异常消息与 CLI 点名（本函数**不**抛，抛由调用方按各自判据决定）。
+    """
+    try:
+        current = path.read_bytes()
+    except OSError as exc:
+        return f"未回滚（写后重读失败 {type(exc).__name__}），盘上态与本席写值已不可比"
+    if current != written:
+        return (
+            "未回滚（盘上已是他席提交：本席若抬回写前态等于吃掉别人的合法提交，"
+            "故只放弃；残页由下一轮现算与常驻门点名）"
+        )
+    _atomic_write_bytes(path, original)
+    return "已回滚到写前盘上态"
+
+
+def _normalize_newlines(text: str) -> str:
+    """通用换行归一（`\\r\\n` 与单 `\\r` 都折成 `\\n`），即 `read_text(newline=None)` 的那一半。"""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _page_text_from_bytes(raw: bytes) -> str:
+    """盘上字节 → 字符串，与 `walk_content_pages` **同一支尺**：utf-8 + errors=replace +
+    通用换行归一。不同尺的比对会把手写 CRLF 的合法页误判成「盘内存不一致」而拒写。
+
+    ⚠ 只收 bytes（TX261 ⑥）：TX253 实咬形态＝str 喂进来当场
+    `AttributeError: 'str' object has no attribute 'decode'`、一次带走 12 枚写口测试；
+    从此死在门口、死成点名 `TypeError`（类型一致性锁见
+    `tests/test_doc_template_write_port_cas_tx261.py`）。
+    """
+    if isinstance(raw, str):
+        raise TypeError(
+            "_page_text_from_bytes 只收 bytes（盘上真实态）；str 请直走文本尺——"
+            "TX253 那形 AttributeError 从此改名点名"
+        )
+    return _normalize_newlines(raw.decode("utf-8", errors="replace"))
+
+
+def _decode_universal_newlines(raw: bytes) -> str:
+    """字节 → 文本，与 `Path.read_text(encoding="utf-8")` **逐字等价**（严格 UTF-8 + 通用换行）。
+
+    写侧（三处写口）必须用这支、而不是上面那支：坏字节要**照旧抛** `UnicodeDecodeError`
+    （挂头口有 `not_utf8` 这个在册拒因桶），而采集侧的 `errors="replace"` 是有意的宽容。
+    两支尺的差别只在坏字节，正常页面上逐字相同——行尾归一这一半两边共用，禁三处写口各抄一份。
+    只收 bytes 的理由与 TX253 注毒同（TX261 ⑥）。
+    """
+    if isinstance(raw, str):
+        raise TypeError(
+            "_decode_universal_newlines 只收 bytes（盘上真实态）——写侧判据的输入必须是字节"
+        )
+    return _normalize_newlines(raw.decode("utf-8"))
+
+
+def tail_append(path: Path, lines: list[str]) -> str:
+    """台账尾附口的 CAS 真身（TX261 ⑦）：`OWNERSHIP.md` 那类共享尾附面的唯一正确写法。
+
+    旧形＝各席手抄的「读 → 拼 → 整册写」（TX242 §8.4 实测它自己就是丢更新族：一次窗口内
+    他席整册重写把本席尾附抹掉、且 crlf 0→2 带出整册重写痕迹）。先例取
+    `dispatch_gate_ticket.append_ticket`（整册重写 + `os.replace` 原子替换）再补一条
+    「写前重读比凭据」成 CAS——本函数**不重排不改写既有行**：payload＝原字节原样 + 追加块，
+    非目标字节零改动（行尾形随文件现值：末行 CRLF ⇒ 追加 CRLF；LF/空文件 ⇒ LF）。
+
+    防重（批 61 前言第 5 条「按行首 `| TX<号> |` 防重」）：行首格＝`|...|` 的第一格（非表格行
+    取整行），任一重复 ⇒ **全有或全无、一枚都不写**。
+
+    返回人话结局（`appended` / `duplicate:...` / `cas-conflict(...)` / `unreadable(...)`），
+    由 CLI 点名进退出码；本波各席尾附请改走
+    `python scripts/doc_template_sync.py --tail-append <路径> --append-line '<行>'`。
+    """
+    for _attempt in range(1, _CAS_ATTEMPTS + 1):
+        try:
+            raw = path.read_bytes() if path.exists() else b""
+        except OSError as exc:
+            return f"unreadable（尾附重读失败 {type(exc).__name__}: {exc}）"
+        token = _integrity_token_of(raw)
+        head_cells: list[str] = []
+        for ln in _normalize_newlines(raw.decode("utf-8", errors="replace")).splitlines():
+            head_cells.append(ln.split("|")[1].strip() if ln.startswith("|") and ln.count("|") >= 2 else ln)
+        seen: list[str] = []
+        for ln in lines:
+            cell = ln.split("|")[1].strip() if ln.startswith("|") and ln.count("|") >= 2 else ln
+            if cell in head_cells or cell in seen:
+                return f"duplicate:行首格 {cell!r} 已在册或本批重复 ⇒ 全批一枚不写（防重＝批61前言第5条）"
+            seen.append(cell)
+        pad = b"" if (not raw or raw.endswith(b"\n")) else (b"\r\n" if raw.endswith(b"\r") else b"\n")
+        eol = b"\r\n" if raw.endswith(b"\r\n") else b"\n"
+        payload = raw + pad + eol.join(ln.encode("utf-8") for ln in lines) + eol
+        try:
+            if _integrity_token_of(path.read_bytes() if path.exists() else b"") != token:
+                continue  # 拼接期间有人动过整册 ⇒ 拿新那份重拼，绝不盲写
+        except OSError as exc:
+            return f"unreadable（尾附 CAS 重读失败 {type(exc).__name__}: {exc}）"
+        _atomic_write_bytes(path, payload)
+        try:
+            if path.read_bytes() == payload:
+                return "appended"
+        except OSError:
+            pass
+        # 读回不等＝第五道同定性（TX261 ①）：盘上那份不是我写的 ⇒ 只放弃+点名、不回滚不覆写。
+        return "cas-conflict（写后读回≠拼接结果；盘上已是他席整册 ⇒ 只放弃，不抬不回写）"
+    return f"cas-conflict（重跑 {_CAS_ATTEMPTS} 次仍有他席抢先提交，本席尾附不落地）"
+
+
+def _visible_marker_counts(text: str) -> tuple[int, int]:
+    """**围栏外可见**的 `TEMPLATE-AUTO` BEGIN/END 独立标记行数——与判据/注入口同尺
+    （`_human_body_position_view`，禁第二把尺）。写后差分只认这支：围栏里的示例字面量
+    是文档不是机器段，注入使**裸**计数 1→2 属合法首挂（TX171 的 `HEADER-RECIPE` 同型正解），
+    而盘上本有可见标记又叠一段＝洗白形（TX179 T4/孤儿竞写族）⇒ 必拦。"""
+    marks = _human_body_position_view(text).marks
+    return (
+        sum(1 for m in marks if m.kind == "B"),
+        sum(1 for m in marks if m.kind == "E"),
+    )
+
+
+def _marker_transition_explained(
+    before: tuple[int, int], after: tuple[int, int]
+) -> bool:
+    """标记份数变化的「可解释」白名单，只有两种：
+    ① 不变（就地替换机器段，或本就没动标记）；
+    ② `(0,0) -> (1,1)`——**无可见标记**的页首次注入机器段（恰一枚成对标记）。
+    其余一切变化（含在有可见孤儿/成对标记的页上再叠一段）都不可解释。"""
+    return before == after or (before == (0, 0) and after == (1, 1))
+
+
+def _introduced_by_write(before: set[str], after: set[str]) -> list[str]:
+    """本次写盘**新增**的违规（写前既有债不重复计账，故判据是集合差而非"after 为空"）。
+
+    为什么不是「after 非空即拒」：真树在册 17 项违规全挂在别席在飞的过程页上（`--check` 现值），
+    那些页的 SECTION_* 债与本次注入的机器段无关；按"非空即拒"会让 `--write` 对整批在飞页
+    一律罢工＝把破坏性改写换成拒绝服务，既不清债也不加判据（简报判据＝写后体检不过即回滚抛错，
+    取"这次写不得让页面变差"这一支，方向只准加严、不借道缩面）。
+
+    ⚠ 单向差分只是**下界**：它永远放行让违规「消失」的写（TX179 §4.2），故 `write_page`
+    另有反向腿（vanished + 标记份数不可解释变化 ⇒ 同样回滚），两条腿合起来才是双向。
+    """
+    return sorted(after - before)
+
+
+class _CasDiscard(Exception):
+    """内部信号：CAS 重读凭据 ≠ 本轮起点凭据 ⇒ **弃写**，用重读到的盘上态重跑渲染。
+
+    只在 `write_page` 的重试环内部流转，绝不出仓（出仓即等于把"该重试"这件事甩给调用方）。
+    """
+
+    def __init__(self, disk_sha16: str) -> None:
+        super().__init__(disk_sha16)
+        self.disk_sha16 = disk_sha16
+
+
 def write_page(pg: PageInfo, schemas: dict[str, Schema]) -> bool:
+    """驱动一页机器段，写盘口整体 fail-closed（TX181 根修 + TX241 补 CAS 与条件回滚）。
+
+    一轮尝试（`_write_page_once`）的四道契约，全部以**盘上真实态**为唯一输入：
+    ① 写前重读盘上字节、并**逐页现读本页模板**（`fresh_template_source`，TX261 ②——旧形吃
+       `_collect()` 批级一份 schemas 写完全部页）取**合成完整性凭据**
+       （`_render_inputs_token(页面字节, 模板源字节)`）：`before` 体检、渲染所需的
+       `PageCtx.body_no_fm`、`new` 的基底与所用 schema 一律取自本轮现读，任何情况下不用
+       调用方传入的内存副本（`pg.text` 只当「采集期快照」用于②的比对）；
+    ② 盘上态 ≠ 内存态 ⇒ 抛 `PageConcurrentMutation`（点名页与两态 sha256[:16]），
+       一个字都不写，盘上态原样保留——他席在采集后改的字节绝不许被陈旧快照吃掉（T5 病根）；
+    ③ **CAS（TX241 L1·TX261 ②扩面）**：渲染做完、**紧邻落盘之前**页面与模板**各再读一次**
+       并与①的合成凭据比对（每半尺的唯一真身＝`shim_retirement_census._integrity_token`）；
+       任一输入不等 ⇒ 本席手里那份已经不是盘上态 ⇒ **弃写**（连临时名都不落）⇒ 本函数用
+       重读到的盘上态与模板**重跑整轮渲染**，至多 `_CAS_ATTEMPTS` 次；仍不等 ⇒ 抛
+       `PageConcurrentMutation`（phase 点名「CAS 弃写重跑」），盘上态是**最后那位提交者**的、
+       不是本席的陈旧派生值。这一腿正是 TX213 case1（双方四道门全过、双双 `return True`）
+       与 TX252 E1-2（页面 ABA + 模板换版那支**真丢更新**）的共同闭合处。
+    ④ 写后校验从**盘上重读**再 `check_page`（不比内存串；所用 schema＝①现读那份，与渲染
+       同刻同源，治「体检吃陈旧 schema＝自洽失明」），且**双向**差分：
+       新增违规 ⇒ 回滚（TX171 既有）；违规凭空消失且可见标记份数变化不落在白名单
+       {不变／(0,0)→(1,1) 首注入} ⇒ 同样回滚并合成 `MARKER_LAUNDERING` 因由（T4 病根：
+       旧版单向差分让「把证据改成绿」的写永远放行）。
+    另有第五道（同属④的读回腿）：写后读回字节 ≠ 本席刚落盘的字节 ⇒ `PageConcurrentMutation`。
+
+    三处回滚腿**分开定性**（TX261 ①，判据成立即刻的盘上态不同）：
+    - ④的正向/反向**差分两腿**：坏页是本席刚烤的（读回等值在前）⇒ `_rollback_or_abandon`
+      抬回写前态＝清理自己，该回滚；
+    - 第五道**读回腿**：判据成立即刻盘上那份**不是**本席写的 ⇒ 只放弃+点名+**不抬**，
+      仅当函数内重读证明盘上又回到本席写值（瞬态假象/同字节 ABA）才抬回——该形态由在册
+      tx181 锁③钉住，纯「永不回滚」会翻掉那条既有断言（断言面＝主会话独占），
+      故判据取「盘上真值」这一支，语义已在 `_rollback_or_abandon` docstring 逐腿写明。
+    落盘与回滚都走 `_atomic_write_bytes`（固定临时名 + `os.replace`，读者永不见半档）；
+    payload 经 `_encode_preserving_newlines`——**不改行尾**是契约（TX261 ③）。
+
+    诚实边界（不写＝按未修记账，TX226 §4.2 L1 原话）：
+    - ③的 CAS 仍是 check-then-act——窗口从「整段渲染」**缩到「最后一发页面 `read_bytes` +
+      一发模板现读 → `os.replace`」几发系统调用之间**，①型丢更新的概率极低但**不为零**；
+      一句话口径（TX252 硬约束6，可 grep）：**比对-写入之间无持仓锁，本件只保证「不丢晚到的
+      提交」，不保证「不丢早到的提交」；后者需所有写者同一把锁（现算 ≥3 枚裸写口）**；
+    - 合成凭据覆盖「渲染两枚直接输入」；page-provider 在渲染期旁读的文件（`_read_script`
+      等）与事实册**不在本尺内**——那一族换版仍按陈旧旁读输入烤页，残余如实登记（交回 L2 面）；
+    - 页面+模板**双双**回到同字节的 ABA 判不出（TX252 E1-1：净字节差 0＝无内容可丢，放行
+      是设计语义），本闸**不是**活性锁；④写后读回窗口内，「本席写值原样躺在盘上」这一判据由
+      `_rollback_or_abandon` 的重读兜住，它防的是"吃掉别人"，不防"别人把本席的顶掉"
+      （那一发由④的差分与下一轮现算显形）；
+    - 真正把它归零只有 L2：**所有**页面写者共用一把持仓锁、持锁区间覆盖读→改→写→读回→差分→
+      回滚全段。现算本仓页面写者 ≥3 枚（本件 `write_page` / `batch_frontmatter_convert` /
+      `board_doc_sync`）无一持锁 ⇒ 只在本件加锁等于装饰品，故本波**不自装**，方案与写者名册
+      不变量交回主会话（`SEAT-TX241.md` §5 + `SEAT-TX261.md`）。
+    """
     if pg.fm is None or not pg.fm.template or pg.fm.template not in schemas:
         return False
-    schema = schemas[pg.fm.template]
-    ctx = PageCtx(rel=pg.rel, body_no_fm=pg.text)
-    values, viol = resolve_params(schema, pg.fm, ctx)
+    last_conflict: str | None = None
+    for attempt in range(1, _CAS_ATTEMPTS + 1):
+        try:
+            return _write_page_once(pg, schemas, attempt=attempt)
+        except _CasDiscard as exc:
+            last_conflict = exc.disk_sha16
+    raise PageConcurrentMutation(
+        pg.rel,
+        _sha16(pg.text.encode("utf-8")),
+        last_conflict or "unreadable",
+        phase=(
+            f"CAS 弃写重跑渲染 {_CAS_ATTEMPTS} 次仍有其他写者抢先落盘"
+            "（本席手里那份已不是盘上态 ⇒ 拒写，盘上留最后那位提交者的字节）"
+        ),
+    )
+
+
+def _write_page_once(pg: PageInfo, schemas: dict[str, Schema], *, attempt: int) -> bool:
+    """`write_page` 的**单轮**尝试：读→判据→渲染→CAS→原子写→读回→双向差分（可弃写重跑）。"""
+    assert pg.fm is not None and pg.fm.template in schemas  # 调用方 write_page 已判，此处非缺省守卫
+    # TX261 ②：模板「第二输入」**逐页现读**（旧形吃 `_collect()` 批级一份陈旧 schemas 写完全部页）。
+    # 现读失败/失格＝批内模板被动过 ⇒ 按并发同闸弃写重跑，绝不退回批级陈旧份渲染。
+    tpl_src, schema, why = fresh_template_source(pg.fm.template)
+    if schema is None or tpl_src is None:
+        if why.startswith("missing:") and pg.fm.template in schemas:
+            # 无盘上模板的在册夹具形：声明输入＝调用方交来的那份（TX241 语义），指纹半尺＝空字节。
+            schema, tpl_src = schemas[pg.fm.template], b""
+        else:
+            raise _CasDiscard(f"template-unreadable:{why}")
+    try:
+        original = pg.path.read_bytes()
+    except OSError as exc:
+        # 采集后页面被删/不可读：盘上态已不是那份内存副本能对上的东西 ⇒ 同②拒写口径。
+        raise PageConcurrentMutation(
+            pg.rel,
+            _sha16(pg.text.encode("utf-8")),
+            "unreadable",
+            phase=f"写前重读失败（{type(exc).__name__}: {exc}）",
+        ) from exc
+    # TX261 ②：本轮起点凭据＝合成凭据（页面字节 + 模板源字节），尺子仍逐半走唯一真身。
+    token = _render_inputs_token(original, tpl_src)
+    disk_text = _page_text_from_bytes(original)
+    if disk_text != pg.text:
+        raise PageConcurrentMutation(
+            pg.rel,
+            _sha16(pg.text.encode("utf-8")),
+            _sha16(original),
+            phase=(
+                "页面在采集后被其他写者改动（盘上态≠本席内存态）"
+                + (
+                    f"；本轮此前已因写前 CAS 弃写 {attempt - 1} 次 ⇒ 与写后读回不等同属"
+                    "「窗口内被并发竞写」一族，两发窗口拦的是同一件事，一律拒写、不碰盘"
+                    if attempt > 1
+                    else ""
+                )
+            ),
+        )
+    fm = parse_front_matter(disk_text)
+    if fm is None or not fm.template or fm.template not in schemas:
+        return False  # 双保险：等值门前这不可达；真不可达了也绝不带病渲染
+    ctx = PageCtx(rel=pg.rel, body_no_fm=disk_text)
+    values, viol = resolve_params(schema, fm, ctx)
     if viol:
         return False  # 参数不合法=不许带病渲染（缺参页机器段保持原样）
-    new = _apply_block(pg.text, render_page_text(schema, values))
-    if new != pg.text:
-        pg.path.write_text(new, encoding="utf-8", newline="\n")
-        return True
-    return False
+    new = _apply_block(disk_text, render_page_text(schema, values))
+    if new == disk_text:
+        return False
+    # ---- TX241 L1 + TX261 ②：紧邻写入前的 CAS 重读——**页面与模板各现读一次、比对合成凭据**
+    #      （窗口＝这一发页面 read_bytes + 一发模板现读 → 下面那一发 os.replace；
+    #      「第二输入换版」＝TX252 E1-2 真丢更新那形，从此在 CAS 上必拦）
+    try:
+        pre_write = pg.path.read_bytes()
+    except OSError as exc:
+        raise PageConcurrentMutation(
+            pg.rel,
+            _sha16(pg.text.encode("utf-8")),
+            "unreadable",
+            phase=f"CAS 写前重读失败（{type(exc).__name__}: {exc}）",
+        ) from exc
+    tpl_src2, _schema2, why2 = fresh_template_source(pg.fm.template)
+    if tpl_src2 is None and not why2.startswith("missing:"):
+        raise _CasDiscard(_sha16(pre_write))  # 「第二输入」中途失守＝输入不齐 ⇒ 弃写重跑，不带病落盘
+    if _render_inputs_token(
+        pre_write, tpl_src2 if tpl_src2 is not None else b""
+    ) != token:
+        raise _CasDiscard(_sha16(pre_write))
+    before = set(check_page(schema, disk_text, fm, ctx))
+    before_marks = _visible_marker_counts(disk_text)
+    # TX261 ③：payload 行尾形随盘上原页（CRLF 页不被一轮驱动整篇翻成 LF；契约见
+    # `_encode_preserving_newlines` docstring）。
+    written = _encode_preserving_newlines(new, original)
+    _atomic_write_bytes(pg.path, written)
+    after_bytes = pg.path.read_bytes()
+    if after_bytes != written:
+        # 第五道·读回腿（TX261 ①分开定性）：此刻盘上≠本席写值——那份不是我写的 ⇒
+        # `_rollback_or_abandon` 只在重读证明盘上**又**回到本席写值（瞬态/同字节 ABA）时才抬回，
+        # 真被他席占据 ⇒ 只放弃+点名、不抬（TX242 §4.2 `rollback_clobbers` 形的闭合点）。
+        preserved = _rollback_or_abandon(pg.path, original, written)
+        raise PageConcurrentMutation(
+            pg.rel,
+            _sha16(written),
+            _sha16(after_bytes),
+            phase=f"写后读回字节≠本席落盘字节（写入窗口内被并发竞写；{preserved}）",
+            preserved=preserved,
+        )
+    after_text = _page_text_from_bytes(after_bytes)
+    fm_after = parse_front_matter(after_text)
+    if fm_after is None:
+        after = {"HEADER_UNPARABLE 写后 front-matter 不被真身解析器认可"}
+    else:
+        after = set(
+            check_page(
+                schema, after_text, fm_after,
+                PageCtx(rel=pg.rel, body_no_fm=after_text),
+            )
+        )
+    introduced = _introduced_by_write(before, after)
+    if introduced:
+        preserved = _rollback_or_abandon(pg.path, original, written)  # L0 条件回滚（正向腿）
+        raise PageWriteRejected(pg.rel, introduced, preserved=preserved)
+    vanished = sorted(before - after)
+    after_marks = _visible_marker_counts(after_text)
+    if vanished and not _marker_transition_explained(before_marks, after_marks):
+        # 反向腿：让违规「消失」的写只有标记结构可解释时才可信。
+        preserved = _rollback_or_abandon(pg.path, original, written)  # L0 条件回滚（反向腿）
+        raise PageWriteRejected(
+            pg.rel,
+            [
+                (
+                    f"MARKER_LAUNDERING 违规凭空消失且可见标记份数变化："
+                    f"消失={vanished} 标记(B,E) {before_marks}->{after_marks}"
+                    "（唯一可解释形态：标记结构不变，或无标记页首注入 (0,0)->(1,1)）"
+                )
+            ],
+            preserved=preserved,
+        )
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -1464,7 +2226,20 @@ def main(argv: list[str] | None = None) -> int:
     flag_group.add_argument("--check", action="store_true")
     flag_group.add_argument("--write", action="store_true")
     flag_group.add_argument("--report", action="store_true")
+    flag_group.add_argument("--tail-append", metavar="PATH",
+                            help="台账尾附口（TX261 ⑦·CAS+原子+防重），与 --append-line 连用")
+    parser.add_argument("--append-line", action="append", default=[], metavar="LINE",
+                        help="要尾附的行（可多次）；仅与 --tail-append 连用")
     args = parser.parse_args(argv)
+
+    if args.tail_append:
+        # 纯尾附路：不采集、不驱动，写面只有那一个台账文件（OWNERSHIP 那类共享尾附的在册正解）。
+        if not args.append_line:
+            print("TAIL-APPEND 需要至少一枚 --append-line", file=sys.stderr)
+            return 2
+        outcome = tail_append(Path(args.tail_append), list(args.append_line))
+        print(f"TAIL-APPEND {args.tail_append}: {outcome}")
+        return 0 if outcome == "appended" else 1
 
     pages, schema_errors, schemas = _collect()
     driven = [p for p in pages if p.fm is not None]
@@ -1515,6 +2290,29 @@ def main(argv: list[str] | None = None) -> int:
         # 不改面 A 上限、不删正文充数、不加豁免、不建第二套分类表（判据只复用 S78 那一支函数）。
         changed = 0
         refused: list[str] = []
+        rolled_back: list[str] = []  # 写后体检拒写（TX171；TX261 ①）：抬回写前态还是只放弃，
+        #                             由 `_rollback_or_abandon` 的回滚前重读定夺、逐页进点名原文
+        concurrent_rejected: list[str] = []  # 并发拒写（TX181）：盘上态从未被本席触碰、或按腿处置
+
+        def _drive(p: PageInfo) -> bool:
+            """`write_page` 的 CLI 包装：拒写异常 ⇒ 记账 + 非零退出，绝不当已更新。
+
+            不吞判据：`write_page` 的两类拒写都保证「本轮不得把陈旧派生值留在盘上」——
+            `PageConcurrentMutation`（TX181/TX241）要么一个字都没写、要么走 L0 条件回滚；
+            `PageWriteRejected`（TX171）同理。**回滚是有条件的**（TX241 L0）：盘上仍是本席
+            写值才抬回写前态，已被他席提交 ⇒ 只放弃不回滚，具体处置在 `exc.preserved` 里
+            逐页点名并跟着 stderr 一起出（旧文案一律自称「已回滚」，在他席提交的序下为假）。
+            本处只把「抛错」翻成 stderr 点名 + `EXIT 1`（`rolled_back` /
+            `concurrent_rejected` 计入返回值判据）。
+            """
+            try:
+                return write_page(p, schemas)
+            except PageWriteRejected as exc:
+                rolled_back.append(f"{exc.rel}：{exc.introduced}｜{exc.preserved}")
+                return False
+            except PageConcurrentMutation as exc:
+                concurrent_rejected.append(str(exc))
+                return False
         vocab = _load_fact_vocab()
         if not vocab:
             # 席 S83（P-S70-2）：词表读不到＝枚举尺子失能，**整轮拒写**（旧版静默降级继续驱动）。
@@ -1532,10 +2330,13 @@ def main(argv: list[str] | None = None) -> int:
             import spec_gates_census as sgc
 
             for p in driven:
-                # driven_non_generated=True：模拟「本页驱动后」的分流落点（我们正是在决定是否驱动）。
-                if sgc.face_of_history_page(p, driven_non_generated=True) != "line":
+                # 席 S201（裁定 3.A）：这里问的是「**假如**挂上驱动，这页该按哪面清零」——
+                # 记账判据 `face_of_history_page` 已改为只看路径/登记，不再接受「驱动与否」当输入，
+                # 故前置换用同一支桶表派生的 `face_if_migrated`（现役对外类别⇒恒 line：
+                # 挂驱动前必须先把裸事实清到零，S105/S78 原语义一字不松）。
+                if sgc.face_if_migrated(p) != "line":
                     # 历史台账/过程件类：驱动不顶行级面 A ⇒ 放行挂驱动（其行级账按 S78 口径走）。
-                    if write_page(p, schemas):
+                    if _drive(p):
                         changed += 1
                     continue
                 # 现役规格 / 板块人工区类：照旧要求「裸事实=0 才准驱动」，一行都不放过。
@@ -1547,10 +2348,12 @@ def main(argv: list[str] | None = None) -> int:
                 if facts:
                     refused.append(f"{p.rel}：裸事实 {len(facts)} 行")
                     continue
-                if write_page(p, schemas):
+                if _drive(p):
                     changed += 1
         print(
             f"--write 完成：更新 {changed} 页；拒绝驱动 {len(refused)} 页（现役规格裸事实未清）；"
+            f"写后体检拒写 {len(rolled_back)} 页（回滚或只放弃，逐页点名见 stderr——TX261 ① 不写「已回滚」）；"
+            f"并发拒写 {len(concurrent_rejected)} 页（盘上态保留/按腿处置）；"
             f"管辖页 {len(pages)}；违规 {len(bad)} 项"
         )
         for r in refused:
@@ -1558,9 +2361,15 @@ def main(argv: list[str] | None = None) -> int:
                 "PREWRITE_NAKED_FACT 拒绝挂模板驱动（现役规格页：先清裸事实再挂驱动）：" + r,
                 file=sys.stderr,
             )
+        for r in rolled_back:
+            print("WRITE_AFTER_CHECK_FAILED 写后体检不通过、拒写（回滚与否逐页点名）：" + r,
+                  file=sys.stderr)
+        for r in concurrent_rejected:
+            print("CONCURRENT_MUTATION 盘上态与本席内存态不一致、拒写保盘：" + r,
+                  file=sys.stderr)
         for b in bad:
             print(f"VIOLATION {b}", file=sys.stderr)
-        return 1 if (bad or refused) else 0
+        return 1 if (bad or refused or rolled_back or concurrent_rejected) else 0
 
     # 缺省与 --check 同义
     if bad:

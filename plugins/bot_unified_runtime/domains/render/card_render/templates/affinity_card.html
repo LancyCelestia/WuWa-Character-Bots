@@ -37,7 +37,7 @@
     --surface-a: {{ surface_a }};
     --surface-b: {{ surface_b }};
     --surface-neutral: {{ surface_neutral }};
-    --text-secondary: #576272;
+    --text-secondary: #4e5866;
     /* 语义色（非品牌底色）：亲近/疏离评分的红绿语义，不随 --accent 派生。
        v21r3 C4：值本已合规（=SCORE_HOT/SCORE_COLD），本地私设删除，
        改消费 root tokens 单源（render_root_tokens 注入 --score-hot/--score-cold）。 */
@@ -99,7 +99,7 @@ body {
     flex: none;
 }
 .head-text { flex: 1; min-width: 0; }
-.title { font-size: 30px; font-weight: 700; color: var(--text-main); line-height: 1.2; }
+.title { font-size: 24px; font-weight: 700; color: var(--text-main); line-height: 1.2; }
 .subtitle { font-size: 14px; color: var(--text-sub); margin-top: 4px; }
 .pill {
     flex: none; padding: 9px 20px; border-radius: var(--r-pill);
@@ -121,8 +121,10 @@ body {
 }
 .tile .who { min-width: 0; }
 .tile .name {
-    font-size: 14px; font-weight: 600; color: var(--text-main);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px;
+    font-size: 14px; font-weight: 600; color: var(--text-main); line-height: 1.4;
+    /* 群友昵称不截断（2026-09-25 点名硬截断）：昵称是这格唯一的身份信息，
+       切掉尾巴等于认不出是谁。长昵称在格内折行，min-width:0 已保证不撑破。 */
+    overflow-wrap: anywhere;
 }
 .tile .sid { font-size: 12px; color: var(--text-secondary); margin-top: 2px; font-variant-numeric: tabular-nums; }
 .tile .score { font-size: 17px; font-weight: 700; color: var(--text-main); flex: none; font-variant-numeric: tabular-nums; }

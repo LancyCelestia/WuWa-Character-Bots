@@ -217,7 +217,7 @@ def test_extract_video_frames_with_real_ffmpeg(tmp_path: Path) -> None:
 
 
 def test_direct_vision_builder_accepts_data_urls() -> None:
-    from plugins.bot_unified_runtime.capabilities.chat import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
         build_direct_vision_messages,
     )
 
@@ -240,8 +240,11 @@ def test_visual_segments_include_video() -> None:
 
 
 def test_gate_message_has_media_with_local_video(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 真身谓词：policy.gate 里图片/视频统一判据是 `message_has_visual_content`
+    # （旧名 `_message_has_image` 已由门禁/限流器收编为单一真身公共口，见 gate.py:109）；
+    # 其内部延迟 import extract_video_source，故对 vision_describe 的 monkeypatch 仍生效。
     from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
-        _message_has_image,
+        message_has_visual_content,
     )
 
     monkeypatch.setattr(
@@ -250,8 +253,8 @@ def test_gate_message_has_media_with_local_video(monkeypatch: pytest.MonkeyPatch
         lambda segments: "C:\\fake\\clip.mp4" if segments else None,
     )
     message = SimpleNamespace(raw_segments=[{"type": "video", "data": {"file": "c.mp4"}}])
-    assert _message_has_image(message) is True
-    assert _message_has_image(SimpleNamespace(raw_segments=[])) is False
+    assert message_has_visual_content(message) is True
+    assert message_has_visual_content(SimpleNamespace(raw_segments=[])) is False
 
 
 def test_extract_image_urls_gif_filmstrip_carries_motion(tmp_path: Path) -> None:

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import RouteKind
 from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
     ParseHttpError,
 )
@@ -23,7 +24,6 @@ from plugins.bot_unified_runtime.domains.location.data.moegirl import (
     MoegirlHit,
     parse_search_payload,
 )
-from plugins.bot_unified_runtime.runtime.base_router import RouteKind
 
 # ---------------------------------------------------------------- 问句归一化
 
@@ -301,7 +301,7 @@ def _router_config(**overrides):
 
 
 def test_router_question_routes_to_moegirl_question():
-    from plugins.bot_unified_runtime.runtime.base_router import (
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
         RouteKind,
         classify_message_route,
     )
@@ -312,7 +312,7 @@ def test_router_question_routes_to_moegirl_question():
 
 
 def test_router_explicit_command_routes_to_moegirl():
-    from plugins.bot_unified_runtime.runtime.base_router import (
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
         RouteKind,
         classify_message_route,
     )
@@ -334,7 +334,7 @@ def test_router_explicit_command_routes_to_moegirl():
     ],
 )
 def test_router_no_hijack(raw, expected):
-    from plugins.bot_unified_runtime.runtime.base_router import (
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
         classify_message_route,
     )
 
@@ -342,7 +342,7 @@ def test_router_no_hijack(raw, expected):
 
 
 def test_router_disabled_flags():
-    from plugins.bot_unified_runtime.runtime.base_router import (
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
         RouteKind,
         classify_message_route,
     )

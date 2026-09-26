@@ -17,10 +17,8 @@ from __future__ import annotations
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.eat import is_recipe_command
-from plugins.bot_unified_runtime.capabilities.stocks import is_stocks_command
 from plugins.bot_unified_runtime.domains.chat_reply.runtime import base_router
-from plugins.bot_unified_runtime.runtime.base_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     ROUTE_RULES,
     RouteDecision,
     RouteKind,
@@ -28,6 +26,10 @@ from plugins.bot_unified_runtime.runtime.base_router import (
     classify_message_route,
     clear_route_decision_cache,
 )
+from plugins.bot_unified_runtime.domains.finance.capabilities.stocks import (
+    is_stocks_command,
+)
+from plugins.bot_unified_runtime.domains.food.capabilities.eat import is_recipe_command
 
 
 class _DefaultConfig:

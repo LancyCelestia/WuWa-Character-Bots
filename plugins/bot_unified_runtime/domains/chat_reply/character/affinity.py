@@ -20,6 +20,15 @@ v7 潜变量重写（用户裁定 2026-09-21「算法全部重写：一次加减
 事件 |Δz| 上限 + 每人日位移上限 + 同类事件熔断三道护栏。存量分数经
 z = atanh(clamp(score/100, ±bound)) 惰性映射，绝不重置任何人（表示变换，非重算）。
 灰度开关 bot_affinity_v7_enabled 缺省 False ⇒ v5/v6 路径逐字节不变、可一键回退。
+跨版本不变量（需求项 13 + 裁定 D3，2026-09-25 S-T-AFFIN-GUARD 席）：「禁瞬间巨变」
+对**今天真在跑的 v5/v6 路**与 v7 路同尺成立——两路各自的位移界（v5/v6 滚动预算 /
+v7 三道护栏 + tanh 域）之外，`delta_override` 与 `observe_points(points)` 这两个
+「权威信号入口」经唯一消毒口 `coerce_override_delta` 收口：非有限脏值（NaN/±inf）
+一律计 0（本次不动分、不落增量日志、不占冷却），落库前另有 `affinity_after_move`
+末道闸兜住任何非有限残差。根因形态：`min/max` 对 NaN 的比较恒 False，
+`min(z_hard, z+nan)` 会返回 z_hard 本身——一发脏 override 即可把展示分顶到
+±98.5（v7 路实测）或触发 NOT NULL 拒绑异常（v5 路实测）。机器锁：
+tests/test_affinity_no_instant_swing_all_versions.py（含牙齿自证）。
 所有数值常量集中在文件顶部，注释指向文档对应章节。
 """
 
@@ -489,19 +498,107 @@ _V7_CONTEXT_REF_RE = re.compile(r"(上次|之前|你说的|你说过的|刚才|�
 _V7_ANSWER_MARKER_RE = re.compile(r"^(是|对|不是|不对|因为|其实|我觉得|我认为|我觉得|就是|还好|可以|不行)")
 
 
+def _finite_float_or(raw: Any, default: float) -> float:
+    """把任意来源值洗成**有限** float，洗不出来（None / 非数文本 / NaN / ±inf）回退 default。
+
+    为什么必须连 NaN 与 ±inf 一起拦：`min`/`max` 对 NaN 的比较恒 False，
+    `max(-b, min(b, nan))` 会**静默产出 +b**——一条脏行因此被读成"独一份"顶格好感，
+    这正是本模块结构上要杜绝的"瞬间巨变"；±inf 同型（且会顺着 `new_z - z` 反噬成
+    -inf 写进增量日志）。数值规范零触碰：合法有限值逐字节恒等返回。
+    """
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return float(default)
+    if math.isnan(value) or math.isinf(value):  # NaN / ±inf
+        return float(default)
+    return value
+
+
+def coerce_affinity_fraction(raw: Any, *, default: float = _AFFINITY_BASE) -> float:
+    """库内 `affinity` 列（内部展示值 ∈ [-1,1]）的唯一消毒读口。
+
+    旧形态是两处裸 `float(row["affinity"])`：脏值当场抛 TypeError/ValueError，
+    而 `snapshot()` 是每轮对话的 prompt 注入面、`_observe()` 在入站链路上——
+    一行脏数据等于把整条聊天链路打挂。本口判据：非数→default、NaN/±inf→default、
+    合法有限值（含越界的 1.375 这类历史脏形）原样透传，由下游既有钳位处理，
+    故正常行的行为逐字节不变（守恒锁 test_v7_legacy_rows_conserve_scores 不破）。
+    """
+    return _finite_float_or(raw, default)
+
+
+def coerce_optional_float(raw: Any) -> float | None:
+    """可空实数列（`z_latent` / `first_impression`）的唯一消毒读口。
+
+    返回 None 的语义就是"这一格没有可用值"——与列本身为 NULL 时**完全同一条路**：
+    `z_latent` 走 §三.1 惰性补齐（按 affinity 列现推，绝不重置），`first_impression`
+    走"未定盘"（建档窗口继续收集）。旧形态是 `if raw is not None: float(raw)`——
+    NULL 挡住了，非数文本与 NaN/±inf 没挡住，当场抛进 `_observe`（入站链路）。
+    """
+    if raw is None:
+        return None
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(value) or math.isinf(value):
+        return None
+    return value
+
+
+def coerce_override_delta(raw: Any) -> float | None:
+    """`delta_override`（权威信号）的唯一消毒口（需求项 13 + 裁定 D3）。
+
+    None＝调用方本来就带自然行为分，原样透传；非有限脏值（NaN/±inf/非数文本）
+    ⇒ 0.0＝**本次不计分**——与「预算耗尽记 0」既有语义同族：计数器/标签照常，
+    不落增量日志、不占冷却坑。绝不沿用旧形态：NaN 顺流进 `min/max` 比较链
+    （NaN 的一切比较恒 False）会静默产出错误的钳制结果——v7 路 `min(z_hard,
+    z+nan)` 返回 z_hard 本身（一发顶到 +98.5），v5 路把 NaN 绑进 NOT NULL 的
+    delta 列当场 IntegrityError。合法有限值逐字节恒等返回 ⇒ 任何人的现存
+    分数与既有行为零变化。
+    """
+    if raw is None:
+        return None
+    return _finite_float_or(raw, 0.0)
+
+
+def affinity_after_move(current: float, delta: float) -> float:
+    """落库前的末道闸：`clamp(current + delta, ±1)`，且**非有限残差 ⇒ 原地不动**。
+
+    对合法输入与旧式 `max(-1.0, min(1.0, current + delta))` 逐字节等价（含边界
+    钳位）；只有当上游某道消毒被绕开、和式仍非有限时，本闸才改变结果——此时
+    诚实的行为是"这一发没发生"（保持 current），而不是让 NaN 的比较陷阱把
+    钳制翻成 ±1（= 展示 ±100 的瞬间巨变）或把脏值写进库里。
+    """
+    moved = float(current) + float(delta)
+    if not math.isfinite(moved):
+        return max(-1.0, min(1.0, float(current)))
+    return max(-1.0, min(1.0, moved))
+
+
 def v7_z_to_display_fraction(z: float) -> float:
     """v7 §2.1 映射：潜变量 z → 内部展示值 a=tanh(z)（×100 仍走 normalize_legacy_points）。"""
-    return math.tanh(float(z))
+    return math.tanh(_finite_float_or(z, 0.0))
 
 
-def v7_display_fraction_to_z(affinity: float, bound: float = _V7_DEFAULT_Z_HARD_BOUND) -> float:
+def v7_display_fraction_to_z(
+    affinity: Any, bound: Any = _V7_DEFAULT_Z_HARD_BOUND
+) -> float:
     """v7 §三.1 惰性迁移映射：z = atanh(clamp(score/100 内部值, −bound, +bound))。
 
     存量 ±1 极端值被钳到 ±atanh(bound)（±98.5 展示分）——设计写明的域上界，
     其余值逐点守恒（atanh 单调），绝不重置任何人。
+
+    本函数是全模块唯一"分数量纲 → z 量纲"的入口，故三态在此一次收口（T-AFF-1）：
+    ① `bound` 自身先钳进 [0.5, 0.999999] ⇒ `atanh` 的定义域**结构上永不触边**
+    （旧形态：调用方直传 bound=1.0 会当场 `ValueError: math domain error`）；
+    ② 非数输入（None/文本）与 ③ NaN/±inf 一律按基数档 `default=_AFFINITY_BASE` 处理
+    （= 友善基准 10 分），**不抛、不产 ±inf、也不钳成顶格 +98.5**——与
+    :func:`coerce_affinity_fraction` 同一口径，两条读库路径不会给出两个答案。
     """
-    value = max(-bound, min(bound, float(affinity)))
-    return math.atanh(value)
+    safe_bound = min(0.999999, max(0.5, _finite_float_or(bound, _V7_DEFAULT_Z_HARD_BOUND)))
+    value = _finite_float_or(affinity, _AFFINITY_BASE)
+    return math.atanh(max(-safe_bound, min(safe_bound, value)))
 
 
 def v7_novelty_factor(prior_count: float, ratio: float = _V7_DEFAULT_NOVELTY_RATIO) -> float:
@@ -666,8 +763,13 @@ class V7Settings:
 
     @property
     def z_hard(self) -> float:
-        """Z_HARD = atanh(z_hard_bound)：潜变量定义域护栏（永不实际触边）。"""
-        bound = min(0.999999, max(0.5, float(self.z_hard_bound)))
+        """Z_HARD = atanh(z_hard_bound)：潜变量定义域护栏（永不实际触边）。
+
+        域钳制与 `v7_display_fraction_to_z` 同一条（[0.5, 0.999999]）+ 同一个非抛式
+        消毒口：本属性被 `max(-v7.z_hard, min(v7.z_hard, …))` 用作硬界，若它自己
+        能抛/能产出 inf，硬界就成了"瞬间巨变"的现场而不是防线。
+        """
+        bound = min(0.999999, max(0.5, _finite_float_or(self.z_hard_bound, _V7_DEFAULT_Z_HARD_BOUND)))
         return math.atanh(bound)
 
     def novelty_tau_days_for(self, behavior: str) -> float:
@@ -677,6 +779,41 @@ class V7Settings:
         except (TypeError, ValueError, AttributeError):
             value = float(self.novelty_halo_days)
         return max(0.5, value)
+
+
+def coerce_json_list(raw: Any) -> list[Any]:
+    """JSON 列表列（`impression_tags` / `profile_notes` / `first_signals`）消毒读口。
+
+    与分数列同一条判据：这些列的读点也在**每轮对话**的 `snapshot()`/`_observe()`
+    上，一行 `'['` 就能把入站链路打断。解析失败或形状不是 list ⇒ 空表，
+    语义 = "该维度没有记录"，与列本就为 `'[]'` 时同形。
+    """
+    try:
+        data = json.loads(str(raw or "[]"))
+    except (ValueError, TypeError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def coerce_json_mapping(raw: Any) -> dict[str, Any]:
+    """JSON 字典列（`day_counters` / `impression_tag_times`）消毒读口，同 `coerce_json_list`。"""
+    try:
+        data = json.loads(str(raw or "{}"))
+    except (ValueError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def coerce_int(raw: Any, default: int = 0) -> int:
+    """整数列（各计数与 `counter_day_index`）消毒读口；非数回退 default，绝不抛。
+
+    合法整数逐字节恒等（`int(x)` 对 int 是恒等），故既有回归口径零变化。
+    """
+    value = _finite_float_or(raw, float(default))
+    try:
+        return int(value)
+    except (OverflowError, ValueError):  # pragma: no cover - ±inf 已在上一行挡掉
+        return int(default)
 
 
 def _v7_coerce_bool(raw: Any, default: bool) -> bool:
@@ -743,7 +880,19 @@ _V7_WARNED_KEYS: set[str] = set()
 _V7_WARNED_LOCK = threading.Lock()
 
 
-def _v7_warn_once(key: str, detail: str) -> None:
+def _v7_warn_once(
+    key: str,
+    detail: str,
+    *,
+    problem: str = "非法",
+    outcome: str = "按代码缺省执行",
+) -> None:
+    """配置面点名口（进程内每键只报一次，避免每条消息刷日志）。
+
+    `problem`/`outcome` 单独成参，是因为并非所有点名都以"取值非法 → 回退缺省"收场：
+    需求项 13 的位移上限越界只点名、不改值（值本身合法，越界的是它带来的结构性
+    性质）。两个参数都取旧措辞为缺省，既有五个调用点的输出逐字节不变。
+    """
     with _V7_WARNED_LOCK:
         first = key not in _V7_WARNED_KEYS
         if first:
@@ -752,7 +901,7 @@ def _v7_warn_once(key: str, detail: str) -> None:
         import logging
 
         logging.getLogger(__name__).warning(
-            "好感度 v7 配置键 %s 非法（%s），按代码缺省执行", key, detail
+            "好感度 v7 配置键 %s %s（%s），%s", key, problem, detail, outcome
         )
 
 
@@ -822,7 +971,7 @@ def resolve_v7_settings(config: Any) -> V7Settings:
             return default
         return value if value >= 1 else default
 
-    return V7Settings(
+    settings = V7Settings(
         enabled=_v7_coerce_bool(value_of("bot_affinity_v7_enabled", False), False),
         base_step=positive_float("bot_affinity_base_step", _V7_DEFAULT_BASE_STEP),
         novelty_ratio=min(0.999, max(0.05, positive_float(
@@ -841,6 +990,20 @@ def resolve_v7_settings(config: Any) -> V7Settings:
         quality_weights=weights or _V7_DEFAULT_QUALITY_WEIGHTS,
         decay_tau_days={**_V7_DEFAULT_DECAY_TAU_DAYS, **(decay or {})},
     )
+    # T-AFF-1（需求项 13）：位移护栏一旦被调到"一次就能跨两档"的量级，本模块的
+    # 逐档性就不再成立——**点名一次，但不静默改值**（配置面是该尺的唯一真身，
+    # 代码偷偷夹回来等于造第二真身）。缺省 0.10/0.12 远低于临界 atanh(0.25)≈0.2554，
+    # 故此分支在现网与全部在册测试形态下都不触发；判据见 v7_structural_guard_report。
+    if not (report := v7_structural_guard_report(settings))["ok"]:
+        _v7_warn_once(
+            "v7_move_cap_beyond_one_tier",
+            "位移上限越过单档临界值，档号可能一次跳档："
+            f"{report['caps']}（临界 cap<={report['one_tier_ceiling_z']:.4f}）"
+            f"→ 最大跨档 {report['max_tier_step']}",
+            problem="取值过松（数值本身合法）",
+            outcome="仅点名、不静默改值——配置面是这把尺的唯一真身",
+        )
+    return settings
 
 
 def v7_raw_delta_z(
@@ -1006,6 +1169,64 @@ def tier_for_affinity(affinity: float) -> int:
     """
     display = float(affinity) * 100.0
     return max(_TIER_MIN_ID, min(_TIER_MAX_ID, int(display // _TIER_WIDTH_DISPLAY)))
+
+
+# ---- T-AFF-1（需求项 13）：「瞬间巨变结构性不可能」的**可计算判据** -------------
+# 需求 13 的验收语义不是"步长调小了"，而是"**跨档只能逐档**"。这条性质可以从
+# 两处真身**派生**出来，不必手写常数：
+#   ① 档宽 = `_TIER_WIDTH_DISPLAY`（本文件 §4，八档各宽 25 展示分）；
+#   ② 位移上界 = v7 两道护栏 `daily_move_cap_z` / `negative_event_cap_z`。
+# `|Δz| ≤ cap` 时**展示分**位移的全局最坏值：g(a)=tanh(a)−tanh(a−δ) 的唯一驻点在
+# 区间中点（sech² 关于 0 严格偶且单峰 ⇒ a=δ/2），故上确界在**跨原点的对称区间**
+# 上取到，= `2·100·tanh(cap/2)`。旧口径 `100·tanh(cap)` 会低估（cap=0.12 时
+# 11.943 < 真实 11.979）——S-T-AFF-1 的 10^4 fuzz 实测单事件 11.958 分撞穿旧上界
+# （差分证据见 tests/test_affinity_no_instant_swing.py 交卷记录），判据函数低估
+# 上界＝机器锁自身有洞，故此处按真确界修正。
+# 于是"一天/一次至多变一档" ⟺ `2·100·tanh(cap/2) < 档宽` ⟺ `cap < 2·atanh(档宽/200)`
+# ≈ 0.25067；执法判据 `v7_max_tier_step_for_z_cap` 直接对修正后的界取 ceil，恒正确。
+# `_V7_ONE_TIER_Z_CEILING = atanh(档宽/100) ≈ 0.2554` 是旧推导语义的在册锚点，
+# 被 tests/test_affinity_v7_structural_locks.py 以 1e-15 钉死数值（跨席锁面，
+# 本波不动它）；两数相差 0.0047z、仅出现在越界点名文案的"临界"字样里，
+# 逐档性判定本身不吃该常数（吃的是 ceil）。
+_V7_ONE_TIER_Z_CEILING = math.atanh(_TIER_WIDTH_DISPLAY / 100.0)
+
+
+def v7_display_move_for_z_cap(cap_z: float) -> float:
+    """`|Δz| ≤ cap_z` 时展示分位移的**全局最坏值**（=200·tanh(cap/2)，跨 0 对称区间取到）。"""
+    delta = max(0.0, _finite_float_or(cap_z, 0.0))
+    return 200.0 * math.tanh(delta / 2.0)
+
+
+def v7_max_tier_step_for_z_cap(cap_z: float) -> int:
+    """`|Δz| ≤ cap_z` 时档号的**最大可能变化**（跨档界数为 `ceil(最坏位移/档宽)`）。
+
+    返回 1 = "至多挪一档"，即需求项 13 要的结构性质；返回 ≥2 表示该上限已松到
+    可以一次跳档。非有限输入按 0 处理（保守：不宣称安全，也不虚报危险——0 档）。
+    """
+    span = v7_display_move_for_z_cap(cap_z)
+    if span <= 0.0:
+        return 0
+    return math.ceil(span / _TIER_WIDTH_DISPLAY)
+
+
+def v7_structural_guard_report(settings: V7Settings) -> dict[str, Any]:
+    """两道位移护栏的"逐档性"体检结果（只读派生量，不改任何数值口径）。
+
+    用于 `resolve_v7_settings` 的越界点名与本席的机器锁：`ok=True` 意味着
+    **任何**信号序列下、任意单日与单次调用的档号变化都被数学上限制在 1 以内。
+    """
+    caps = {
+        "daily_move_cap_z": _finite_float_or(settings.daily_move_cap_z, 0.0),
+        "negative_event_cap_z": _finite_float_or(settings.negative_event_cap_z, 0.0),
+    }
+    steps = {name: v7_max_tier_step_for_z_cap(value) for name, value in caps.items()}
+    return {
+        "caps": caps,
+        "worst_display_move": {n: v7_display_move_for_z_cap(v) for n, v in caps.items()},
+        "max_tier_step": steps,
+        "one_tier_ceiling_z": _V7_ONE_TIER_Z_CEILING,
+        "ok": all(step <= 1 for step in steps.values()),
+    }
 
 
 _LINEAR_TRANSITION_BAND_DISPLAY = 6.0  # 展示分距档界 ±6 分内视为线性过渡带
@@ -1398,9 +1619,13 @@ class DynamicAffinityStore:
         ``source_cap_24h_points`` 提供时，再按 (source, 24h) 滚动和钳一层
         （如 poke 的每日来源专项预算）；全局增益预算始终兜底。
         ``bot_id``/``source_event_id`` 语义同 :meth:`observe`。
+        S-T-AFFIN-GUARD：points 先过一次 `_finite_float_or`（脏值 ⇒ 0＝不动分）。
+        旧形态 `max(-100, min(100, nan)) == 100.0` 把 NaN 读成**顶格授权**、
+        恰好打满当日全部增益额度（fail-open；触发面=BOT_POKE_AFFINITY_DELTA
+        写成非数——poke 侧 `grant=min(nan, …)` 原样流到这里）。
         返回更新后的 affinity。
         """
-        bounded_points = max(-100.0, min(100.0, float(points)))
+        bounded_points = max(-100.0, min(100.0, _finite_float_or(points, 0.0)))
         return self._observe(
             sender_id,
             behavior,
@@ -1433,7 +1658,13 @@ class DynamicAffinityStore:
         （下次聚合即含本事件）。预算纯时间窗聚合，不用 day_index——重启、
         跨午夜均不重置；>48h 行顺手 prune。零增量不占预算、不落日志、
         也不触发冷却（避免每条中性消息冻结后续计分）。
+
+        S-T-AFFIN-GUARD（需求项 13 + 裁定 D3）：入口与聚合读行各过一次
+        `_finite_float_or`——门面 `coerce_override_delta` 之外的第二道，判据同一条：
+        非有限值 ⇒ 0（本次不计分）。NaN 顺 `min/max` 比较链（一切比较恒 False）
+        会把钳制翻成顶格或把脏值绑进 NOT NULL 列，两种都不是"保守"。
         """
+        delta = _finite_float_or(delta, 0.0)
         if delta == 0.0:
             return 0.0
         window_6h_start = now - 6 * 3600.0
@@ -1446,8 +1677,8 @@ class DynamicAffinityStore:
             " AND COALESCE(source, '') <> 'v7'",
             (sender_id, bot_id, window_24h_start),
         ):
-            applied = float(row["delta"])
-            applied_at = float(row["applied_at"])
+            applied = _finite_float_or(row["delta"], 0.0)
+            applied_at = _finite_float_or(row["applied_at"], 0.0)
             if applied < 0:
                 loss_24h -= applied
                 if applied_at >= window_6h_start:
@@ -1551,7 +1782,8 @@ class DynamicAffinityStore:
         last_applied_at = last_row[0] if last_row is not None else None
         if (
             last_applied_at is not None
-            and now - float(last_applied_at) < _INTERACTION_COOLDOWN_SECONDS
+            # 脏行读回按「刚计过分」处理（冻结=保守不放行），与 v5 路聚合读行同判据。
+            and now - _finite_float_or(last_applied_at, now) < _INTERACTION_COOLDOWN_SECONDS
         ):
             return done(0.0, z)
 
@@ -1559,7 +1791,11 @@ class DynamicAffinityStore:
         if delta_override is not None:
             # 权威信号：z 域直用（负向同样受单事件上限），不占每日额度、
             # 不喂新鲜度（v5 override "不占每日额度"语义保持）。
-            raw = float(delta_override)
+            # S-T-AFFIN-GUARD：执法体内的第二道消毒——门面被绕开（直调本体的
+            # 在册锁与未来调用方）时，非有限 override 同样 ⇒ 0.0＝本次不动。
+            # 旧形态 `float(delta_override)` 放行 NaN：`min(z_hard, z+nan)` 因
+            # NaN 比较恒 False 返回 z_hard ⇒ 一发顶到 ±98.5（实测 +88.4 分）。
+            raw = _finite_float_or(delta_override, 0.0)
             if raw < 0.0:
                 raw = max(raw, -v7.negative_event_cap_z)
             repair = False
@@ -1665,6 +1901,9 @@ class DynamicAffinityStore:
     ) -> float:
         if not sender_id:
             return _AFFINITY_BASE
+        # 需求项 13 + 裁定 D3：权威信号入口一次消毒（v5/v6 与 v7 两条路共用），
+        # 非有限 delta_override ⇒ 0.0（本次不计分）。执法体内部另有同判据的第二道。
+        delta_override = coerce_override_delta(delta_override)
         now = float(self._clock())
         now_text = _format_utc(now)
         # 每日计数按进程本地时区自然日（bot_timezone），对用户体感即「北京时间每日重置」。
@@ -1683,7 +1922,11 @@ class DynamicAffinityStore:
                         "SELECT affinity FROM user_affinity WHERE sender_id = ?",
                         (sender_id,),
                     ).fetchone()
-                    return float(existing["affinity"]) if existing is not None else _AFFINITY_BASE
+                    return (
+                        coerce_affinity_fraction(existing["affinity"])
+                        if existing is not None
+                        else _AFFINITY_BASE
+                    )
             row = connection.execute(
                 "SELECT affinity, interaction_count, positive_count, negative_count, tease_count, insult_count,"
                 " nickname, impression_tags, impression_tag_times, profile_notes,"
@@ -1709,38 +1952,47 @@ class DynamicAffinityStore:
                 first_impression: float | None = None
                 created_at = now_text
             else:
-                affinity = float(row["affinity"])
+                # T-AFF-1：本 else 分支是**每轮对话**都会走的入站读口，旧形态在这里
+                # 有 9 处裸 `int()` / `json.loads()`——一行脏数据（NULL 计数、`'['`
+                # 截断的标签列、非数的日索引）就把整条聊天链路打成异常，且症状是
+                # "某人从此再也发不出消息"，最难归因。全部改走消毒读口，合法值恒等。
+                affinity = coerce_affinity_fraction(row["affinity"])
                 counters = {
-                    "positive": int(row["positive_count"]),
-                    "negative": int(row["negative_count"]),
-                    "tease": int(row["tease_count"]),
-                    "insult": int(row["insult_count"]),
+                    "positive": coerce_int(row["positive_count"]),
+                    "negative": coerce_int(row["negative_count"]),
+                    "tease": coerce_int(row["tease_count"]),
+                    "insult": coerce_int(row["insult_count"]),
                 }
-                tags = json.loads(str(row["impression_tags"] or "[]"))
+                tags = coerce_json_list(row["impression_tags"])
                 # G-11：标签打标时间（存量行可能缺条目，快照侧回退 updated_at 锚点）
-                tag_times = json.loads(str(row["impression_tag_times"] or "{}"))
+                tag_times = coerce_json_mapping(row["impression_tag_times"])
                 nickname = str(row["nickname"] or "")
-                notes = json.loads(str(row["profile_notes"] or "[]"))
-                interactions = int(row["interaction_count"])
+                notes = coerce_json_list(row["profile_notes"])
+                interactions = coerce_int(row["interaction_count"])
                 last_seen = {
                     "positive": row["last_positive_at"],
                     "negative": row["last_negative_at"],
                     "insult": row["last_insult_at"],
                 }
-                first_signals = json.loads(str(row["first_signals"] or "[]"))
-                first_impression = (
-                    float(row["first_impression"])
-                    if row["first_impression"] is not None
-                    else None
-                )
+                first_signals = [
+                    _finite_float_or(item, 0.0) for item in coerce_json_list(row["first_signals"])
+                ]
+                first_impression = coerce_optional_float(row["first_impression"])
                 created_at = str(row["created_at"] or row["updated_at"] or now_text)
                 # 每日计数仅当日有效；跨日自动清零（row_day != day_index 视为新的一天）。
-                row_day = int(row["counter_day_index"] if row["counter_day_index"] is not None else -1)
+                row_day = coerce_int(row["counter_day_index"], -1)
                 day_counters = (
-                    json.loads(str(row["day_counters"] or "{}")) if row_day == day_index else {}
+                    {
+                        str(key): max(0, coerce_int(value))
+                        for key, value in coerce_json_mapping(row["day_counters"]).items()
+                    }
+                    if row_day == day_index
+                    else {}
                 )
                 # v7 列透传（v7-off 路径不得丢态：flag 来回切换可续跑）。
-                z_keep = float(row["z_latent"]) if row["z_latent"] is not None else None
+                # T-AFF-1：脏 z（非数/NaN/±inf）一律当"尚未派生"→ 由 affinity 列现推，
+                # 绝不带着非有限值进入 `new_z - z`（那会算出 -inf 位移并写进增量日志）。
+                z_keep = coerce_optional_float(row["z_latent"])
                 v7_state_keep = str(row["v7_state"] or "{}")
             # 惰性回归：闲置 ≥7 天起每天向基数 0.1（10 分）回归 0.01，不超过剩余距离。
             # V2.1 §2.3 passive_decay_enabled=false（缺席不默认扣分）：旧 v5 §3 回归体
@@ -1829,7 +2081,9 @@ class DynamicAffinityStore:
                     source_cap_24h_internal, source_event_id or "",
                 )
             # §1 v4：写入路径全部 clamp 到 [-1, +1]（存量 [0,1] 旧值恒等沿用，无迁移）。
-            affinity = max(-1.0, min(1.0, affinity + delta))
+            # S-T-AFFIN-GUARD：改走 affinity_after_move——合法输入逐字节等价，
+            # 唯一差别是非有限残差时保持原地（末道闸，绝不把 NaN/顶格写进库）。
+            affinity = affinity_after_move(affinity, delta)
             if behavior in counters:
                 counters[behavior] += 1
             if behavior in last_seen:
@@ -1943,7 +2197,7 @@ class DynamicAffinityStore:
             ).fetchall()
         result: list[dict[str, Any]] = []
         for row in rows:
-            affinity = float(row["affinity"])
+            affinity = coerce_affinity_fraction(row["affinity"])
             prev = _parse_utc(str(row["updated_at"]))
             idle_days = max(0.0, now - prev) / _DAY_SECONDS if prev is not None else 0.0
             # 展示层折算：闲置按半衰期向基数收敛（30 天减半），真实值不变、不落库。
@@ -1989,15 +2243,15 @@ class DynamicAffinityStore:
             return max(0, count) * 0.5 ** (age_days / half_life_days)
 
         eff_positive = _decayed(
-            int(row["positive_count"]), row["last_positive_at"],
+            coerce_int(row["positive_count"]), row["last_positive_at"],
             _SENTIMENT_HALF_LIFE_DAYS["positive"],
         )
         eff_negative = _decayed(
-            int(row["negative_count"]), row["last_negative_at"],
+            coerce_int(row["negative_count"]), row["last_negative_at"],
             _SENTIMENT_HALF_LIFE_DAYS["negative"],
         )
         eff_insult = _decayed(
-            int(row["insult_count"]), row["last_insult_at"],
+            coerce_int(row["insult_count"]), row["last_insult_at"],
             _SENTIMENT_HALF_LIFE_DAYS["insult"],
         )
         denom = eff_positive + eff_negative + 2 * eff_insult
@@ -2031,13 +2285,13 @@ class DynamicAffinityStore:
                 "tier": tier_for_affinity(_AFFINITY_BASE),
                 "attitude": attitude_for_affinity(_AFFINITY_BASE),
             }
-        affinity = float(row["affinity"])
+        affinity = coerce_affinity_fraction(row["affinity"])
         # G-11 注入判据（审查 G-11，2026-09-15）：超龄标签不再注入，库内保留可溯。
         # providers（prompt 注入）、好感度卡、指令回显等全部消费 snapshot()，
         # 过滤在本出口一次闭环；数值规范零触碰（docs/affinity-design.md 为权威）。
         fresh_tags = _filter_fresh_impression_tags(
-            [str(t) for t in json.loads(str(row["impression_tags"] or "[]"))],
-            json.loads(str(row["impression_tag_times"] or "{}")),
+            [str(t) for t in coerce_json_list(row["impression_tags"])],
+            coerce_json_mapping(row["impression_tag_times"]),
             now=float(self._clock()),
             anchor=_parse_utc(str(row["updated_at"])),
         )
@@ -2045,7 +2299,7 @@ class DynamicAffinityStore:
             "affinity": affinity,
             "nickname": str(row["nickname"] or ""),
             "tags": fresh_tags,
-            "profile_notes": json.loads(str(row["profile_notes"] or "[]")),
+            "profile_notes": [str(n) for n in coerce_json_list(row["profile_notes"])],
             "tier": tier_for_affinity(affinity),
             "attitude": attitude_for_affinity(affinity),
         }
@@ -2067,12 +2321,8 @@ class DynamicAffinityStore:
         created = _parse_utc(str(row["created_at"] or row["updated_at"] or ""))
         known_days = max(0.0, now - created) / _DAY_SECONDS if created is not None else 0.0
         return {
-            "first_impression": (
-                float(row["first_impression"])
-                if row["first_impression"] is not None
-                else None
-            ),
-            "interaction_count": int(row["interaction_count"]),
+            "first_impression": coerce_optional_float(row["first_impression"]),
+            "interaction_count": coerce_int(row["interaction_count"]),
             "known_days": round(known_days, 1),
         }
 
@@ -2088,7 +2338,7 @@ class DynamicAffinityStore:
                 "SELECT profile_notes FROM user_affinity WHERE sender_id = ?",
                 (sender_id,),
             ).fetchone()
-            existing = json.loads(str(row["profile_notes"] or "[]")) if row else []
+            existing = coerce_json_list(row["profile_notes"]) if row else []
             merged = [str(f) for f in existing]
             for fact in facts:
                 if fact not in merged:

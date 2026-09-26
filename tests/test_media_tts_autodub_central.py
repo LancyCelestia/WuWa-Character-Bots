@@ -189,18 +189,29 @@ def test_policy_refusal_never_reaches_the_central_capability(
 
     monkeypatch.setattr(cp.CapabilityInvoker, "invoke", spy_invoke)
     monkeypatch.setattr(ve, "should_voice_reply", lambda *a, **k: True)
-    # 内容政策在层 1 拦下（resolve_speech_text 返回 blocked），合成原语若被触达即炸。
+    import plugins.bot_unified_runtime.domains.media.tts.result_transform as rt
+
+    # 门链在 hook（ve）与真身（rt）两处判（should_voice_reply 纯谓词幂等）；本例测政策面，
+    # 放行两处门链以隔离他席在飞的门链逻辑，直达取文/政策判定。
+    monkeypatch.setattr(rt, "should_voice_reply", lambda *a, **k: True)
+    # S91 收编：门链过（should_voice_reply=True）后 hook 派一次中央第三形 result_transform，
+    # 取文/内容政策在真身里判（rt.resolve_speech_text 返回 blocked）⇒ 政策拦下 ⇒ 零 dub、
+    # 零合成原语、零 issue；合成原语若被触达即炸。mandate「所有内容走中央」后，"该不该配"
+    # 的政策判定本身也可被中央审计（此前完全在层 1 内联、零来路记录）——本锁据实反映。
     monkeypatch.setattr(
-        ve, "resolve_speech_text", lambda *a, **k: ("", "minors")
+        rt, "resolve_speech_text", lambda *a, **k: ("", "minors")
     )
     monkeypatch.setattr(
         ve,
         "synthesize",
-        lambda **k: pytest.fail("政策拒绝不得触达合成/中央"),
+        lambda **k: pytest.fail("政策拒绝不得触达合成/中央产出步"),
     )
 
     config = _config(tmp_path, with_ref=True)
     config.bot_tts_voice_hook_enabled = True
+    # 真身纪律①：长度键按名字现读、缺省不在本件抄（生产 Config 恒有此键）；本最小夹具补齐，
+    # 使流程直达取文/政策判定（0=不限，与命令半同义）。
+    config.bot_tts_auto_reply_max_chars = 0
     enrich = ve.build_voice_enricher(config)
 
     message = IncomingMessage(
@@ -219,8 +230,11 @@ def test_policy_refusal_never_reaches_the_central_capability(
 
     enriched = enrich(message, decision, result)
 
-    # 政策拒绝≠故障：不进中央（calls 空）、不挂 issue、只留 blocked_by_policy 留痕。
-    assert calls == [], f"政策拒绝不得触发中央 invoke（实得 {calls}）"
+    # 政策拒绝≠故障：不触达产出步/合成（无 autodub invoke、无合成）、不挂 issue、只留
+    # blocked_by_policy 留痕；S91 收编后 hook 仍会派一次第三形（政策判定本身入中央审计）。
+    assert calls == ["media.tts.autodub_transform"], (
+        f"政策拒绝只准派一次中央第三形、绝不触达产出步/合成（实得 {calls}）"
+    )
     assert enriched.operational_issue is None, "政策拒绝不得挂 issue"
     assert "blocked_by_policy" in enriched.audit_tags, enriched.audit_tags
     assert enriched.audio == []  # 不配音、文字照发

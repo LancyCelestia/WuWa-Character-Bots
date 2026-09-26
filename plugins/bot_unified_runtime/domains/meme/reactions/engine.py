@@ -268,25 +268,53 @@ def reaction_meme_search_terms(intent: str) -> tuple[str, ...]:
     return _REACTION_MEME_INTENT_TERMS.get(str(intent or "").strip(), ())
 
 
-def pick_reaction_meme(store: Any, *, intent: str, nsfw_max: float = 0.2) -> str | None:
+def reaction_meme_intent_vocabulary() -> tuple[str, ...]:
+    """意图词表展平视图（**只读派生**）：选图打分件借它当主题词表的一部分。
+
+    存在理由：``meme_selection.default_vocabulary`` 需要「情绪词」这一族，而那族
+    词的本体是这张意图表。给它一个函数而不是让它复制一份常量元组——
+    否则就是「哪算情绪词」出现第二真身（AGENTS 禁第二真身）。
+    """
+    return tuple(dict.fromkeys(term for terms in _REACTION_MEME_INTENT_TERMS.values() for term in terms))
+
+
+def pick_reaction_meme(
+    store: Any, *, intent: str, nsfw_max: float = 0.2, scope: str | None = None
+) -> str | None:
     """按意图检索词序加权抽一张表情包；全部落空退无关键词兜底；库空 None。
 
     检索/选取任何异常逐词吞掉（fail-open）——表情包层绝不影响聊天链路。
+
+    反重复**不需要**本函数配合：它落在 ``store.weighted_pick`` 里（三条腿的共同
+    咽喉）。``scope`` 只是把去重面从「全局发过即不再发」细化到「该会话/群 + 全局」，
+    传不传都仍在防重复；旧桩不认识这个形参时自动退回旧调用（见 ``_pick_kwargs``）。
     """
     if store is None:
         return None
+
+    def _pick(**extra: Any) -> dict[str, Any] | None:
+        kwargs: dict[str, Any] = {"nsfw_max": nsfw_max, **extra}
+        if scope is None:
+            return store.weighted_pick(**kwargs)
+        try:
+            return store.weighted_pick(scope=scope, **kwargs)
+        except TypeError as exc:
+            if "unexpected keyword argument" not in str(exc):
+                raise
+            return store.weighted_pick(**kwargs)
+
     for term in reaction_meme_search_terms(intent):
         if not term:
             continue
         try:
-            picked = store.weighted_pick(keyword=term, nsfw_max=nsfw_max)
+            picked = _pick(keyword=term)
         except Exception as exc:  # noqa: BLE001 - 单词检索失败记日志继续下一词。
             logger.debug("reaction meme keyword pick failed term=%s error=%s", term, type(exc).__name__)
             continue
         if picked and str(picked.get("path") or "").strip():
             return str(picked["path"])
     try:
-        picked = store.weighted_pick(keyword="", nsfw_max=nsfw_max)
+        picked = _pick(keyword="")
     except Exception:  # noqa: BLE001 - 兜底失败诚实放弃。
         return None
     if picked and str(picked.get("path") or "").strip():

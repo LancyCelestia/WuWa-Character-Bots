@@ -44,7 +44,7 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_PKG = REPO_ROOT / "plugins" / "bot_unified_runtime"
@@ -89,16 +89,16 @@ Q03_SCOPE_FILES: frozenset[str] = frozenset(
         # v21r2 RWC3 chat_reply/capabilities 重组：group_info 真身迁
         # domains/chat_reply/capabilities/，门锚同波随迁指真身（旧路径已是垫片）。
         "plugins/bot_unified_runtime/domains/chat_reply/capabilities/group_info.py",
-        # reminder/weather/moegirl 旧路径锚=各自域重组波（W10/W3/W16）已登记遗留，
-        # 非本波文件零触碰。
-        *(
-            f"plugins/bot_unified_runtime/capabilities/{name}.py"
-            for name in (
-                "reminder",
-                "weather",
-                "moegirl",
-            )
-        ),
+        # reminder/weather/moegirl：三枚 capabilities/{name}.py re-export 垫片已在
+        # 垫片退役波整段删除（现盘 FileNotFoundError：旧路径不存在），旧「门锚保留
+        # 遗留路径」的前提（垫片尚在、扫垫片=防回潮）已消失 ⇒ 门锚按本文件既有惯例
+        # （media_archive/group_info/randpic/meme_library 皆「随迁指真身」）改指各自域
+        # 真身。作用域文件数不增不减（仍 3 枚），只是从死路径改扫真身；已现算核实三枚
+        # 真身零拖尾语气符命中，故不新暴露欠账（非预填）。
+        # 复跑：pytest tests/test_user_copy_unification_gate.py::test_q03_whitelist_integrity
+        "plugins/bot_unified_runtime/domains/schedule/capabilities/reminder.py",
+        "plugins/bot_unified_runtime/domains/weather/capabilities/weather.py",
+        "plugins/bot_unified_runtime/domains/location/capabilities/moegirl.py",
         # v21r2 W6 meme 重组：randpic/meme_library 真身迁 domains/meme/capabilities/，
         # 门锚同波随迁指真身（旧路径已是 re-export 垫片，扫垫片=防回潮静默失效）。
         "plugins/bot_unified_runtime/domains/meme/capabilities/randpic.py",

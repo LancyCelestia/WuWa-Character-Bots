@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from plugins.bot_unified_runtime.character.affinity import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     _ATTITUDE_TIERS,
     _TIER_RED_LINES,
     DynamicAffinityStore,

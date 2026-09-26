@@ -139,6 +139,14 @@ class IncomingMessage(StrictBaseModel):
     group_id: str | None = None
     raw_segments: list[dict[str, Any]] = Field(default_factory=list)
     plain_text: str = ""
+    # 派生只读：去掉**开头**对本机器人称呼后的指令文本（摄取层经
+    # `runtime.mentions.strip_leading_name_mention` 在"引用拼接之前"的那份原文上
+    # 算出）。它**不覆盖也不等于** plain_text——路由判定、诊断标签、好感感知等
+    # 既有消费方继续读 plain_text；本字段只给带 `^...$` 锚的自然语言命令判据
+    # （如 L4「亲密模式 开」）用，让"@守岸人 亲密模式 开"这类群内习惯句式命中。
+    # 缺省空串安全：未填的构造点（smoke/console/admin/campus 等）语义为
+    # "没有可剥的点名"，消费方按 `command_text or plain_text` 回退即可。
+    command_text: str = ""
     mentions_bot: bool = False
     # True=mentions_bot 仅由软触发（文本昵称/小名）贡献，无硬 @/回复 bot；
     # white2 门用它把“写了名字”与“真 @”区分开。
@@ -165,6 +173,10 @@ class IncomingMessage(StrictBaseModel):
     # 媒体归档：回复的合并转发被 get_forward_msg 展开后的逐条正文；空 = 非转发。
     chat_record_text: str = ""
     sender_roles: list[str] = Field(default_factory=lambda: ["user"])
+    # 这条消息已被「期后补回」重投过几次（2026-09-25 用户裁定第 2 项）。
+    # 被限流拦下的明确请求不再静默丢弃，而是等解禁后补跑一次；本字段就是
+    # 那条补跑的计数上限，缺省 0=从未补过（既有构造点零改动、零行为变更）。
+    redrive_count: int = 0
     risk_level: RiskLevel = RiskLevel.LOW
     privacy_level: PrivacyLevel | None = None
     debug_id: str = Field(default_factory=new_debug_id)

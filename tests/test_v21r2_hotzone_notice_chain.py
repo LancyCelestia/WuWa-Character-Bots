@@ -37,8 +37,10 @@ from plugins.bot_unified_runtime.contracts import (
     DeliveryReceipt,
     ReceiptState,
 )
-from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
-from plugins.bot_unified_runtime.sender.queue import InMemorySendQueue
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+    RuntimePipeline,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.queue import InMemorySendQueue
 
 
 class _FakePokeNoticeEvent:

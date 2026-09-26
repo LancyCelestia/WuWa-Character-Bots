@@ -9,39 +9,41 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-from plugins.bot_unified_runtime.capabilities.content_parser import (
-    build_content_capability,
-)
-from plugins.bot_unified_runtime.capabilities.subscribe import (
-    build_subscribe_capability,
-    is_standalone_subscribe_command,
-)
-from plugins.bot_unified_runtime.capabilities.subscribe_v2 import (
-    build_subscribe_capability_v2,
-)
 from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SessionType,
     SubscriptionTarget,
     build_parsed_content,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+    RuntimeSettingsStore,
+)
 from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionCursor,
     SubscriptionDestination,
     SubscriptionSpec,
+)
+from plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser import (
+    build_content_capability,
 )
 
 # v21r2 W2：music 真身已迁 domains/music/capabilities/；monkeypatch/私有状态
 # 必须打在真身模块对象上（旧位仅剩 re-export 垫片，补丁打不进真身）。
 from plugins.bot_unified_runtime.domains.music.capabilities import music as music_module
 from plugins.bot_unified_runtime.domains.ops.admin import runtime_admin as ra
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.subscribe import (
+    build_subscribe_capability,
+    is_standalone_subscribe_command,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.subscribe_v2 import (
+    build_subscribe_capability_v2,
+)
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store import (
     SubscriptionStore,
 )
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store_v2 import (
     SubscriptionStoreV2,
 )
-from plugins.bot_unified_runtime.runtime.settings import RuntimeSettingsStore
 
 
 def _message(

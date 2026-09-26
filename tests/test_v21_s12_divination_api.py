@@ -37,9 +37,6 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from plugins.bot_unified_runtime.control_plane.api import ControlPlaneError
-from plugins.bot_unified_runtime.control_plane.api.divination import (
-    build_divination_router,
-)
 from plugins.bot_unified_runtime.control_plane.api.protocol import envelope
 from plugins.bot_unified_runtime.control_plane.audit import ControlPlaneAuditStore
 from plugins.bot_unified_runtime.control_plane.auth import Principal
@@ -59,6 +56,9 @@ from plugins.bot_unified_runtime.domains.divination.projection import (
     build_tarot_title,
     pick_pending_line,
     render_draw_card,
+)
+from plugins.bot_unified_runtime.domains.divination.routes import (
+    build_divination_router,
 )
 from plugins.bot_unified_runtime.domains.divination.service.divination_service import (
     DISCLAIMER_TEXT,

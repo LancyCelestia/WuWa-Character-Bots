@@ -43,7 +43,8 @@ ENV_EXAMPLE = ROOT / ".env.example"
 # 本席只加门、不为凑绿乱改 `.env.example` 的值，故按仓内既有「增量有门、存量挂账」
 # 口径（见 test_doc_sync_gates.py 的 KNOWN_MISSING 先例，三期清零）整批登记。
 # 补录任一项后**必须把它从本台账摘掉**（否则 test_documented_keys_must_leave_ledger 红）。
-LEDGER_BASELINE = 114
+LEDGER_BASELINE = 110  # 现算 @2026-09-24T07:01Z：裁定 R-4 退役四枚 *_via_queue 键（114→110，只减不增）
+
 
 UNDOCUMENTED_FIELD_LEDGER: frozenset[str] = frozenset(
     {
@@ -56,12 +57,12 @@ UNDOCUMENTED_FIELD_LEDGER: frozenset[str] = frozenset(
         "bot_channel_adaptive_timeout", "bot_channel_probe_jitter_seconds", "bot_channel_probe_manual_threads",
         "bot_channel_probe_threads", "bot_channel_slow_ema_ms", "bot_chat_hedge_delay_seconds",
         "bot_chat_hedge_max_candidates", "bot_control_plane_actions_db", "bot_control_plane_platform_db",
-        "bot_cookie_expiry_reminder_via_queue", "bot_cookie_qr_via_queue", "bot_daily_assist_enabled",
+        "bot_daily_assist_enabled",
         "bot_decision_engine_mode", "bot_dirty_guard_delete", "bot_dirty_guard_enabled",
-        "bot_divination_enabled", "bot_eat_enabled", "bot_file_export_via_queue",
+        "bot_divination_enabled", "bot_eat_enabled",
         "bot_group_digest_blacklist", "bot_group_digest_list_mode", "bot_group_digest_push_enabled",
         "bot_group_digest_push_time", "bot_group_digest_whitelist", "bot_group_welcome_enabled",
-        "bot_group_welcome_via_queue", "bot_master_love_admins", "bot_master_love_enabled",
+        "bot_master_love_admins", "bot_master_love_enabled",
         "bot_media_archive_db_path", "bot_media_archive_dir", "bot_media_archive_max_file_mb",
         "bot_media_archive_per_message_limit", "bot_media_archive_summary_enabled", "bot_media_archive_video_frames",
         "bot_moegirl_max_candidates", "bot_moegirl_summary_max_chars", "bot_mood_baseline_arousal",

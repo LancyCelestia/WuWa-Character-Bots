@@ -87,6 +87,203 @@ def test_analyze_and_store_passes_deadline_to_brief_builder(
     assert captured["deadline_seconds"] == 42.0
 
 
+# ==================== S134·A：语音段最小预算预留（CM-P-40 R1） ====================
+
+
+def _budget_with_remaining(remaining: float) -> DeadlineBudget:
+    """造一枚"剩余恰好 ≈remaining 秒"的预算（用 started_at 偏移，确定性好复算）。"""
+    total = remaining + 40.0
+    return DeadlineBudget(total, started_at=time.monotonic() - (total - remaining))
+
+
+@pytest.mark.parametrize(
+    ("raw", "want"),
+    [
+        (20.0, 20.0),      # 缺省：预留＝语音自己那一次调用的超时
+        (5.0, 5.0),        # 小于夹顶：照单收下
+        (600.0, 30.0),     # 夹顶：调大配置也不许把视觉相位饿死（反向互压）
+        (0.0, 0.0),        # 关掉预留＝退回改动前形态
+        ("abc", 0.0),      # 非数
+        (float("nan"), 0.0),
+        (-1.0, 0.0),
+    ],
+)
+def test_asr_reserve_value_tracks_config_with_a_cap(raw: object, want: float) -> None:
+    assert chat_module._asr_reserve_seconds(raw) == want
+
+
+def test_asr_stage_timeout_is_clamped_by_remaining_budget() -> None:
+    """剩余不足时语音**不再吃掉主回复的份额**：这是 R1 的第一半（此前完全无闸）。"""
+    # 剩余 ≈25s、LLM 保留 60s ⇒ 可用为负 ⇒ 钳到 1s 且判"被饿"。
+    timeout, starved = chat_module._asr_deadline_seconds(
+        _budget_with_remaining(25.0), asr_timeout_seconds=20.0
+    )
+    assert timeout == 1.0 and starved is True
+    # 剩余 ≈75s ⇒ 可用 ≈15s < 预留 20s ⇒ 仍判被饿，但不再吃满 20s。
+    timeout, starved = chat_module._asr_deadline_seconds(
+        _budget_with_remaining(75.0), asr_timeout_seconds=20.0
+    )
+    assert 13.0 < timeout <= 15.0 and starved is True
+    # 充裕预算 ⇒ 拿满自己的超时、不算被饿。
+    timeout, starved = chat_module._asr_deadline_seconds(
+        _budget_with_remaining(250.0), asr_timeout_seconds=20.0
+    )
+    assert timeout == 20.0 and starved is False
+
+
+@pytest.mark.parametrize("budget", [None, DeadlineBudget(0)])
+def test_asr_stage_timeout_defaults_when_budget_inactive(budget: object) -> None:
+    """预算未启用 ⇒ 逐字节退回旧行为（默认 20s、不算饿）。"""
+    assert chat_module._asr_deadline_seconds(
+        budget, asr_timeout_seconds=20.0  # type: ignore[arg-type]
+    ) == (20.0, False)
+
+
+def test_video_deadline_now_also_subtracts_the_asr_reserve() -> None:
+    """视频相位那侧的同一规则：多扣一枚语音预留，且**缺省参数不改旧值**。"""
+    plain = chat_module._video_deadline_seconds(_budget_with_remaining(200.0))
+    reserved = chat_module._video_deadline_seconds(
+        _budget_with_remaining(200.0), asr_reserve_seconds=20.0
+    )
+    assert plain is not None and reserved is not None
+    assert 138.0 < plain <= 140.0, "缺省（0.0）必须等于改动前的 B-1 语义"
+    assert 118.0 < reserved <= 120.0, f"预留没进扣减：plain={plain} reserved={reserved}"
+    assert plain - reserved == pytest.approx(20.0, abs=1e-6)
+    # 下限仍在：预算极小时钳到 30s 不下探（旧 B-1 语义优先于预留）。
+    floored = chat_module._video_deadline_seconds(
+        _budget_with_remaining(100.0), asr_reserve_seconds=20.0
+    )
+    assert floored == 30.0
+
+
+def test_vision_stage_timeout_reserves_for_pending_voice() -> None:
+    """旧抽帧分支（`describe_video`）同一条规则；预留 0 时＝旧值 30s。"""
+    assert chat_module._vision_stage_timeout_seconds(
+        _budget_with_remaining(250.0), default_seconds=30.0, asr_reserve_seconds=0.0
+    ) == 30.0
+    tight = chat_module._vision_stage_timeout_seconds(
+        _budget_with_remaining(100.0), default_seconds=30.0, asr_reserve_seconds=20.0
+    )
+    assert 18.0 < tight <= 20.0, tight
+    assert chat_module._vision_stage_timeout_seconds(
+        _budget_with_remaining(30.0), default_seconds=30.0, asr_reserve_seconds=20.0
+    ) == 5.0
+
+
+def test_reservation_only_exists_when_a_voice_is_actually_pending(tmp_path) -> None:
+    """没带语音却切走 20s＝把一条互压换成反向那一条（本席自查后补的门）。"""
+    from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+
+    clip = tmp_path / "voice.mp3"
+    clip.write_bytes(b"ID3\x04" + b"\x00" * 128)
+
+    def message(segments: list[dict]) -> IncomingMessage:
+        return IncomingMessage(
+            platform="qq",
+            adapter="onebot",
+            bot_id="10000",
+            session_id="private:u1",
+            session_type=SessionType.PRIVATE,
+            sender_id="u1",
+            plain_text="在吗",
+            raw_segments=segments,
+        )
+
+    provider = SimpleNamespace(_config=SimpleNamespace(bot_asr_timeout_seconds=20.0))
+    assert chat_module._asr_pending_on_message(message([]), provider) is False
+    assert chat_module._asr_pending_on_message(
+        message([{"type": "record", "data": {"file": str(clip)}}]), provider
+    ) is True
+    # provider 没装配 ⇒ 语音侧根本没活，预留必须为 0。
+    assert chat_module._asr_pending_on_message(
+        message([{"type": "record", "data": {"file": str(clip)}}]), None
+    ) is False
+
+
+class _RecordingAsrConfig:
+    """ASR 替身：记下单次调用真正拿到的超时（牙齿在 kwargs，不在返回值）。"""
+
+    def __init__(self, timeout: float = 20.0) -> None:
+        self._config = SimpleNamespace(bot_asr_timeout_seconds=timeout)
+        self.timeouts: list[object] = []
+
+    def generate(self, audio_bytes: bytes, filename: str, **kwargs: object) -> str:
+        self.timeouts.append(kwargs.get("timeout_seconds"))
+        return "帮我看看明天的天气"
+
+
+def _voice_message(tmp_path, text: str = "听听这个"):
+    from plugins.bot_unified_runtime.contracts import (
+        BotDecision,
+        IncomingMessage,
+        SessionType,
+    )
+
+    clip = tmp_path / "voice.mp3"
+    clip.write_bytes(b"ID3\x04" + b"\x00" * 128)
+    message = IncomingMessage(
+        platform="qq",
+        adapter="onebot",
+        bot_id="10000",
+        session_id="private:u1",
+        session_type=SessionType.PRIVATE,
+        sender_id="u1",
+        plain_text=text,
+        raw_segments=[{"type": "record", "data": {"file": str(clip)}}],
+    )
+    decision = BotDecision(
+        request_id=message.request_id,
+        should_respond=True,
+        mode="chat",
+        trigger="private",
+        capability_id="bot.chat",
+        target_scope=SessionType.PRIVATE,
+        decision_reason="test",
+    )
+    return message, decision
+
+
+def _run_voice_turn(tmp_path, budget_seconds: float):
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_chat_capability,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
+        NullCharacterContextProvider,
+    )
+    from plugins.bot_unified_runtime.llm.providers import StaticLLMProvider
+
+    asr = _RecordingAsrConfig()
+    capability = build_chat_capability(
+        NullCharacterContextProvider(),
+        StaticLLMProvider(text="好的，我看看"),
+        asr_provider=asr,
+        asr_enabled=True,
+        request_budget_seconds=budget_seconds,
+    )
+    message, decision = _voice_message(tmp_path)
+    result = capability(message, decision)
+    return asr, result
+
+
+def test_tight_budget_clamps_the_real_asr_call_and_leaves_a_trace(tmp_path) -> None:
+    """**端到端主锁**（真能力层 → 真 transcribe_audio → 真 provider 记账）：
+    预算只剩刚够 LLM 时，语音段拿到的超时被夹住，且审计面出现饿死留痕。"""
+    asr, result = _run_voice_turn(tmp_path, 61.0)
+    assert asr.timeouts, "一次转写都没发起：本用例退化成空跑"
+    received = asr.timeouts[0]
+    assert isinstance(received, float) and received <= 2.0, (
+        f"紧预算下语音仍按裸 config 拿 20s ⇒ 预留/夹顶没接上：{received}"
+    )
+    assert "asr_budget_starved" in result.audit_tags, result.audit_tags
+
+
+def test_generous_budget_keeps_the_old_timeout_and_stays_silent(tmp_path) -> None:
+    """反向格（防"永远夹到最小"的过修）：预算充裕 ⇒ 超时照旧 20s、不留饿死痕。"""
+    asr, result = _run_voice_turn(tmp_path, 300.0)
+    assert asr.timeouts == [20.0], asr.timeouts
+    assert "asr_budget_starved" not in result.audit_tags
+
+
 # ==================== B-3：多 query 并发检索 ====================
 
 

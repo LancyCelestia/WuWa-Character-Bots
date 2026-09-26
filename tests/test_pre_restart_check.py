@@ -305,10 +305,10 @@ def test_main_exit_code_and_json_structure(monkeypatch: pytest.MonkeyPatch, tmp_
     assert prc.main(["--json", "--project-root", str(root)]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["exit_code"] == 0
-    assert [r["id"] for r in payload["results"]] == [
-        "env_paths", "persona_sync", "hash_ledger", "doc_sync", "kb_drift", "ruff", "napcat",
-        "webui", "control_plane", "tts_voice",
-    ]
+    # 项数与逐项 id 序现算自真身声明侧（S146）：这里曾手写死 10→11→12→13 枚
+    # 字面量清单，每长一项就要来跟一次账；改为 declared_item_ids()（= docstring
+    # 编号清单派生）后，正确加项零跟随成本，文档与代码漂移则当场红。
+    assert [r["id"] for r in payload["results"]] == prc.declared_item_ids()
     assert all(r["status"] in (PASS, SKIP, FAIL) for r in payload["results"])
 
     # 注入一个 FAIL（ruff 挂）→ exit 1，且 JSON 里能定位到 FAIL 项与修复指引
@@ -483,23 +483,28 @@ def test_control_plane_enabled_false_value_visible_and_noted(tmp_path: Path) -> 
 
 
 # ---------------------------------------------------------------------------
-# 汇总（10 项）：run_all 顺序、缺资产/缺配置=SKIP 不致 fail（向后兼容）
+# 汇总（项数以 prc.declared_item_ids() 派生）：run_all 顺序、缺资产/缺配置=SKIP
+# 不致 fail（向后兼容）
+# （函数名留 eleven 系历史命名，账实以真身声明侧派生为准、不再手抄 id 清单——
+#  S146 把本处的 13 枚字面量清单换成派生式；改名会变更节点 id，非必需不动，
+#  残留命名债记 SEAT-S206 §4。）
 # ---------------------------------------------------------------------------
 
-def test_run_all_ten_checks_and_new_items_skip_keeps_exit_zero(
+def test_run_all_eleven_checks_and_new_items_skip_keeps_exit_zero(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    root = make_project(tmp_path)  # 无 webui/dist、无控制面三键、无 TTS 配置
+    root = make_project(tmp_path)  # 无 webui/dist、无控制面三键、无 TTS 配置、无注册表、无 MCP_SERVERS
     all_subproc_ok(monkeypatch)
     monkeypatch.setattr(prc, "probe_tcp", lambda host, port, timeout=2.0: True)
     results = prc.run_all(root)
     ids = [r.id for r in results]
-    assert ids == [
-        "env_paths", "persona_sync", "hash_ledger", "doc_sync", "kb_drift", "ruff", "napcat",
-        "webui", "control_plane", "tts_voice",
-    ]
+    assert ids == prc.declared_item_ids()
     assert next(r for r in results if r.id == "webui").status == SKIP
     assert next(r for r in results if r.id == "control_plane").status == SKIP
     assert next(r for r in results if r.id == "tts_voice").status == SKIP
-    # 既有 9 项行为不变：SKIP 不致 fail，exit 仍为 0
+    assert next(r for r in results if r.id == "channel_tags").status == SKIP
+    assert next(r for r in results if r.id == "mcp_server_spec").status == SKIP
+    # ann_pair：假环境没有 wiki 库 ⇒ NOT_APPLICABLE → SKIP（没建过库不算红）
+    assert next(r for r in results if r.id == "ann_pair").status == SKIP
+    # 在册各项行为不变：SKIP 不致 fail，exit 仍为 0
     assert prc.main(["--json", "--project-root", str(root)]) == 0

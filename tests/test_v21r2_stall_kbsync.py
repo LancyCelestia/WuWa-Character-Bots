@@ -82,7 +82,7 @@ class FakeStore:
     def document_count(self) -> int:
         return 75683
 
-    def build_ann_index(self, on_progress=None) -> dict:
+    def build_ann_index(self, on_progress=None, *, force_low_memory=False) -> dict:
         self.build_ann_calls += 1
         return {"built": True, "vectors": 238453, "reason": ""}
 

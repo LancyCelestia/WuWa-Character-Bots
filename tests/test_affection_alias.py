@@ -8,7 +8,7 @@
    本名本身不是爱称。
 """
 
-from plugins.bot_unified_runtime.character.affinity import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     _CHARACTER_AFFECTION_ALIASES,
     extract_learned_nickname,
     resolve_affection_alias,

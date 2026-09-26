@@ -256,20 +256,20 @@ def test_root_tokens_carry_unified_comment() -> None:
     assert "mica_shell.render_root_tokens" in _tokens()
 
 
-def test_root_tokens_wash_blob_mix_defaults_to_35() -> None:
-    """``--wash-blob-1`` 默认混 35% 主色（四张直拼卡与 7 模板中六张的历史值）。"""
-    assert "var(--accent) 35%, var(--wash-1)" in _tokens()
+def test_root_tokens_wash_blob_mix_defaults_to_18() -> None:
+    """``--wash-blob-1`` 默认混 18% 主色（2026-09-25 起全卡一致）。
+
+    旧缺省 35 在红/粉系平台卡上把漂移斑连同壳层一起顶成玫瑰色，底色不再读作
+    守岸人蓝。契约侧另有 ≤35 的上限锁（test_rendering_contract），本枚钉缺省值。
+    """
+    assert "var(--accent) 18%, var(--wash-1)" in _tokens()
 
 
 def test_root_tokens_wash_blob_mix_parametrizable() -> None:
-    """``error_card`` 的历史值是 24%——经参数保留原值，不得被「统一」抹平。
-
-    这是步 5 的前置设施：模板接入统一生成器时，若强行把 24 拉成 35，
-    色斑浓度会变，违反「视觉不变」硬约束。
-    """
-    tokens = _tokens(wash_blob_mix=24)
-    assert "var(--accent) 24%, var(--wash-1)" in tokens
-    assert "var(--accent) 35%, var(--wash-1)" not in tokens
+    """单卡要更浓的平台斑仍可经参数覆盖（设施保留，缺省值已改）。"""
+    tokens = _tokens(wash_blob_mix=30)
+    assert "var(--accent) 30%, var(--wash-1)" in tokens
+    assert "var(--accent) 18%, var(--wash-1)" not in tokens
 
 
 def test_root_tokens_can_omit_phase_and_wash() -> None:

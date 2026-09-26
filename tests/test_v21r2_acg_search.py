@@ -327,7 +327,9 @@ def test_honesty_line_constant() -> None:
 
 
 def test_web_search_lines_carries_timeliness_note() -> None:
-    from plugins.bot_unified_runtime.capabilities import chat as chat_module
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities import (
+        chat as chat_module,
+    )
 
     context = SimpleNamespace(
         web_search_context=SimpleNamespace(
@@ -349,7 +351,9 @@ def test_web_search_lines_carries_timeliness_note() -> None:
 
 
 def test_web_search_lines_no_hits_unchanged() -> None:
-    from plugins.bot_unified_runtime.capabilities import chat as chat_module
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities import (
+        chat as chat_module,
+    )
 
     context = SimpleNamespace(web_search_context=SimpleNamespace(hits=[]))
     rendered = chat_module._web_search_lines(context)  # type: ignore[arg-type]

@@ -18,12 +18,12 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.epic import (
-    build_epic_capability,
-)
 from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SessionType,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.epic import (
+    build_epic_capability,
 )
 
 _EPIC_GAMES = [

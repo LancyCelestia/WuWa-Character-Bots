@@ -20,8 +20,8 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
 )
 from plugins.bot_unified_runtime.domains.files.sources.downloader import MediaDownloader
+from plugins.bot_unified_runtime.domains.link_parse.parsers import extract_http_urls
 from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
-from plugins.bot_unified_runtime.sources.parsers import extract_http_urls
 
 _COMMAND_RE = re.compile(
     r"^(?:/bot\s+)?(?:下载|download)\s+(?P<url>https?://\S+)$",

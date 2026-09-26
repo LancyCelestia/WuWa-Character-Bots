@@ -31,7 +31,6 @@ from pypinyin import Style, lazy_pinyin, pinyin
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ECHO_PATH = REPO_ROOT / "plugins" / "bot_unified_runtime" / "capabilities" / "echo.py"
 BASE_ROUTER_PATH = REPO_ROOT / "plugins" / "bot_unified_runtime" / "domains" / "chat_reply" / "runtime" / "base_router.py"
-CAPABILITIES_DIR = REPO_ROOT / "plugins" / "bot_unified_runtime" / "capabilities"
 DEFAULT_OUT = (
     REPO_ROOT
     / ".superpowers"
@@ -172,12 +171,12 @@ def _base_router_capability_targets() -> dict[str, list[str]]:
     """解析 base_router 的 import：capability 模块文件 → is_* 函数名列表。"""
     tree = ast.parse(BASE_ROUTER_PATH.read_text(encoding="utf-8"), filename=str(BASE_ROUTER_PATH))
     targets: dict[str, list[str]] = {}
-    prefix = "plugins.bot_unified_runtime.capabilities."
+    prefix = "plugins.bot_unified_runtime."
     for node in ast.walk(tree):
         if not (isinstance(node, ast.ImportFrom) and node.module and node.module.startswith(prefix)):
             continue
-        rel = node.module[len(prefix):].replace(".", "/")
-        candidate = CAPABILITIES_DIR / f"{rel}.py"
+        rel = node.module.replace(".", "/")
+        candidate = REPO_ROOT / f"{rel}.py"
         if not candidate.is_file():
             continue
         names = [alias.name for alias in node.names if alias.name.startswith("is_")]

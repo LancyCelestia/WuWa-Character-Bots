@@ -96,7 +96,7 @@ def _run_capability(monkeypatch: pytest.MonkeyPatch, recorder: _Recorder) -> Cap
 # ---------------------------------------------------------------------------
 def _legacy_expected(message: IncomingMessage, recorder: _Recorder) -> dict[str, Any]:
     del message  # 旧直呼渲染器不读 message（只读真身返回），保留形参以对照旧调用形状
-    from plugins.bot_unified_runtime.capabilities import user_copy
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 
     hits, error_kind = recorder(_IMAGE_URL)
     if error_kind == "no_key":
@@ -281,15 +281,24 @@ def test_media_descriptor_family_is_what_the_shell_says() -> None:
     assert live == expected, f"编排侧 media 族在册面漂移：缺 {sorted(expected - live)}"
     for cid in expected:
         assert registry.get(cid).family is CapabilityFamily.MEDIA  # type: ignore[union-attr]
-    # 哨兵改判「只准这一枚 TTS descriptor，且必须真接线」：SEAT-V1 §柒 当年登记的
+    # 哨兵改判「只准这两枚 TTS descriptor，且必须真接线」：SEAT-V1 §柒 当年登记的
     # 「TTS 候选、未接线」状态已随 VOICE-V12 撤销——handler 在册、层 1 唯一 invoke 点在
     # domains/media/voice_enricher.py（现算：`media.tts.autodub` 的 handler 与描述符同源）。
+    # S91（中央调度收编波）并入第二枚 `media.tts.autodub_transform`（结果变换形，S36 落件通电）：
+    # 中央注册 descriptor+handler + 唯一 invoke 点同在 voice_enricher（按本哨兵"同规格完成接线
+    # 并同步本锁"的明文指令更新名单，不是放宽判据）。
     tts_family = {
         cid for cid in CAPABILITY_DESCRIPTOR if cid.startswith(("media.tts", "media.voice"))
     }
-    assert tts_family == {"media.tts.autodub"}, (
+    assert tts_family == {"media.tts.autodub", "media.tts.autodub_transform"}, (
         f"TTS/voice descriptor 面漂移（实得 {sorted(tts_family)}）——"
         "新增者须按 VOICE-V12 同规格完成接线并同步本锁，否则不许在册"
     )
     assert registry.get("media.tts.autodub").family is CapabilityFamily.MEDIA  # type: ignore[union-attr]
+    assert (
+        registry.get("media.tts.autodub_transform").family is CapabilityFamily.MEDIA  # type: ignore[union-attr]
+    )
+    assert default_invoker().handlers.get("media.tts.autodub_transform") is not None, (
+        "第三形在册却无 handler＝在册未执法"
+    )
     assert "search_saucenao_ex" in registry.get("media.vision.anime_ip").implementation_ref  # type: ignore[union-attr]

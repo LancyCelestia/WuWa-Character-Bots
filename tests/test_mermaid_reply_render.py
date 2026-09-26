@@ -372,7 +372,9 @@ def test_playwright_backend_without_wait_js_unchanged(monkeypatch: pytest.Monkey
 
 # ==================== 发送段适配：base64:// 图片部件可被 OneBot 段化 ====================
 def test_mixed_image_part_maps_to_onebot_segment() -> None:
-    from plugins.bot_unified_runtime.sender.onebot import _segment_from_mixed_part
+    from plugins.bot_unified_runtime.domains.transport.sender.onebot import (
+        _segment_from_mixed_part,
+    )
 
     part = {
         "type": "image",

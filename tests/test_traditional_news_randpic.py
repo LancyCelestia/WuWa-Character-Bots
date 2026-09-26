@@ -11,8 +11,12 @@ from __future__ import annotations
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.news import is_news_command
-from plugins.bot_unified_runtime.capabilities.randpic import is_randpic_command
+from plugins.bot_unified_runtime.domains.meme.capabilities.randpic import (
+    is_randpic_command,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.news import (
+    is_news_command,
+)
 
 # ---------------------------------------------------------------- news（错位①：快報族繁體路由缺失）
 

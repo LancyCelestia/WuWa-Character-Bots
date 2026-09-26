@@ -785,8 +785,9 @@ def test_capability_success_emits_audio_only(
         )
     )
     result = capability(_msg("说 今天的潮汐很安静"), None)
-    # `review_text` 是给中央审核看的（媒体能力 title/body 必须留空，否则 renderer
-    # 的兜底链会把朗读文本再发成一条文字消息）；`record` 段只把 `file` 交给平台。
+    # 出站形态＝「原文本 + 语音音频」（2026-09-25 用户裁定第 8 项）。
+    # `review_text` 仍随件出门（M-02 中央审核看不见 body 之外的部件文本时用它），
+    # `record` 段只把 `file` 交给平台，审查用键不外发。
     # T120 S2 棘轮翻转（M-64，蓝图 §3.3）：部件随件携带落盘字节摘要（恰三键）。
     assert result.audio == [
         {
@@ -795,9 +796,12 @@ def test_capability_success_emits_audio_only(
             "content_sha256": media_digest(wav.read_bytes()),
         }
     ]
-    # 与 randpic 同口径：只发媒体本体，避免 renderer 兜底链把标题当文案发出。
+    # 正文=**实际念出的那串字**（已过内容门与有损变换），不是用户原文的复读：
+    # 两者不一致时以「念了什么就写什么」为准，否则文字与语音互相矛盾。
+    assert result.body == "今天的潮汐很安静"
+    # title 仍留空：renderer 的兜底链是 body→summary→title，正文在位时
+    # title 一旦有值就是纯冗余（不会多发一条，但没有存在必要）。
     assert result.title == ""
-    assert result.body == ""
     assert "sent" in result.audit_tags
 
 
@@ -1167,7 +1171,9 @@ def test_attach_voice_reply_matches_maybe_attach_voice_output(
 
 def _tts_rule():
     """从路由规则表取出 bot.tts 规则（matcher 是 build_route_rules 内的闭包）。"""
-    from plugins.bot_unified_runtime.runtime.base_router import build_route_rules
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
+        build_route_rules,
+    )
 
     for rule in build_route_rules():
         if rule.capability_id == "bot.tts":

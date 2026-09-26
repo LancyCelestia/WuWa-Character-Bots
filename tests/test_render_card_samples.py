@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from plugins.bot_unified_runtime.domains.render.card_render import bridge
 from scripts import render_card_samples as rcs
 
 # ==================== 假后端 ====================
@@ -155,7 +156,7 @@ def test_mermaid_payload_matches_production_ready_gate() -> None:
 
 
 def bridge_ready_js() -> str:
-    from plugins.bot_unified_runtime.output.card_render.bridge import (
+    from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
         _MERMAID_READY_JS,
     )
 
@@ -184,14 +185,16 @@ def test_error_card_red_accent_and_full_sections() -> None:
     assert f"--accent:{ERROR_ACCENT}" in html  # 红强调（ERROR_THEME 注入，非平台色）。
     for marker in (
         "运行异常",
-        "RUNTIME DIAGNOSTIC",
+        bridge._CARD_TEXT["static_err_31"],  # goal-7 说人话波：旧手抄 "RUNTIME DIAGNOSTIC"（本文件自带教训：节题单一事实源=_CARD_TEXT）
         "触发回显",
         "栈摘录",
-        "触发方法",
+        # 分区标题的单一事实来源是 `_CARD_TEXT`（2026-09-25「触发方法」改名
+        # 「定位与原因」时，手抄这张表的用例当场假红过一次）。
+        bridge._CARD_TEXT["static_err_22"],
         "配置快照",
         "版本与构建",
         "平台与协议",
-        "IDs 与时间",
+        bridge._CARD_TEXT["static_err_32"],  # 旧手抄 "IDs 与时间"，同指 _CARD_TEXT 单一源
         "TimeoutError",
         "weather.py:120",
         "bot_weather_api_key",

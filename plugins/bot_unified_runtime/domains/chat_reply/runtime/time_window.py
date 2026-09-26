@@ -17,6 +17,8 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from plugins.bot_unified_runtime.domains.core.temporal_words import TODAY_ADVERB_WORDS
+
 DEFAULT_WINDOW_MINUTES = 30
 
 # 总结触发词（简繁；「梳理」留给识图看图意图门控，避免双通道抢占）。
@@ -41,7 +43,8 @@ _NUM_MAP = {"一": 1, "两": 2, "兩": 2, "三": 3, "五": 5}
 _MINUTES_RE = re.compile(rf"({_NUM})\s*(?:个|個)?\s*(?:分钟|分鐘|min(?:ute)?s?)")
 _HOURS_RE = re.compile(rf"({_NUM})\s*(?:个|個)?\s*(?:小时|小時|钟头|鐘頭|hours?|hrs?)")
 _HALF_HOUR_RE = re.compile(r"半\s*(?:个|個)?\s*(?:小时|小時|钟头|鐘頭|钟|鐘)")
-_TODAY_RE = re.compile(r"(?:今天|今日)")
+# 今天/今日 字形真身在 domains/core/temporal_words.py（S-TRIG 收编 2026-09-26）：模式拼装、不手抄。
+_TODAY_RE = re.compile("(?:" + "|".join(TODAY_ADVERB_WORDS) + ")")
 _RECENT_N_RE = re.compile(r"(?:最近|近|剛才|刚才|刚)\s*(\d{1,4})\s*(?:条|條|句|則|则|发言|發言)")
 
 

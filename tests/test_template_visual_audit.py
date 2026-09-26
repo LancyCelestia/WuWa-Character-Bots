@@ -23,7 +23,9 @@ from pathlib import Path
 import pytest
 
 from plugins.bot_unified_runtime.domains.render.card_render import bridge
+from plugins.bot_unified_runtime.domains.render.card_render import theme_tokens as _tt
 from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
+    BRAND_THEME,
     SHADOW_CSS_VARS,
     SURFACE_TINTS,
     TEXT_SECONDARY,
@@ -119,17 +121,11 @@ def test_tile_surface_shadow_is_token_only(name: str) -> None:
 
 
 # ==================== vis5：zebra 区分度 / 次级文字对比度（数值门） ====================
-# 可编辑模板集（market/finance 已于 2026-09-13 视觉收口补丁并入：11.5px→12px、
-# 旧灰收编 --text-secondary 单源）。
-_EDITABLE_TEMPLATES: tuple[str, ...] = (
-    "universal_card.html",
-    "affinity_card.html",
-    "song_candidates.html",
-    "mermaid_card.html",
-    "market_card.html",
-    "finance_card.html",
-    "error_card.html",
-)
+# 可编辑模板集＝**单一派生取数口** `bridge.card_template_names()`（S-T-VISUAL-1
+# 归一，2026-09-26）。旧手抄副本没数到后增的 news 面，该面靠本文件另一枚
+# 「单独点名」锁补票入场（见 test_news_digest_face_*）——派生后管辖面恒等于
+# 目录现走，单独点名降为防回潮自证，不再是唯一覆盖 news 的腿。
+_EDITABLE_TEMPLATES: tuple[str, ...] = bridge.card_template_names()
 # 旧散灰（vis5 前各模板私有的次级文字色，全部收编 TEXT_SECONDARY）。
 # 2026-09-18 v21r3 渲染统一：+= #555/#444/#999（universal 遗留 legacy 灰，
 # RED 即 wave-2 锚点：收编 --text-secondary 单一来源）。
@@ -228,7 +224,9 @@ def test_zebra_surfaces_distinct() -> None:
 def test_text_tokens_readable_on_surfaces() -> None:
     """text_sub 与统一次级灰对三档表面全部 ≥4.5:1（WCAG AA@12px）。"""
     surfaces = {key: _surface_onstage(css) for key, css in SURFACE_TINTS.items()}
-    text_sub = _hex_rgb("#5b6069")
+    # 取真身而非在本文件手抄色值：抄一份＝第二真身，改值册时这条门会
+    # 一边绿一边测着旧值（2026-09-25 洗色加深当天就撞到这个形态）。
+    text_sub = _hex_rgb(BRAND_THEME.text_sub)
     secondary = _hex_rgb(TEXT_SECONDARY)
     for key, surface in surfaces.items():
         assert _contrast(text_sub, surface) >= 4.5, f"text_sub 对 {key} 对比不足"
@@ -259,3 +257,308 @@ def test_font_size_floor_12px(name: str) -> None:
     assert sizes, f"{name} 无 font-size 声明？"
     below = sorted({v for v in sizes if v < 12})
     assert not below, f"{name} 字号低于 12px 下限: {below}"
+
+
+# ==================== goal-7 统一波（2026-09-25）：排版/描边/wash 接缝/色斑雷同 ====================
+# 裁定出处=澜汐 goal 第 7 项「所有 HTML 模板过一遍，视觉规格统一」六命题。
+# 执法面=本席可写面（8 张 Jinja 模板 + 2 张自有直拼卡 + mica_shell 公共段）；
+# echo/debug 两枚直拼卡的字号脱档在案（契约 §八 D-5），非本席可写面，由
+# tests/test_mica_builders_contract.py 的既有下限门继续看着，不在此重复放行。
+
+_RENDER_PKG_DIR = Path(bridge.__file__).resolve().parent.parent  # domains/render/
+_OWNED_FSTRING_FACES: tuple[str, ...] = (
+    "card_render/usage_cards.py",
+    "templates.py",
+    "card_render/mica_shell.py",
+)
+_NEWS_DIGEST_TEMPLATE = "news_digest_card.html"
+
+# 合法集从值册动态派生（改值册=全部门跟随，不手抄第二份表）。
+_SCALE_VALUES = {float(v) for v in _tt.TYPE_SCALE_PX.values()}
+_WEIGHT_VALUES = {float(v) for v in _tt.FONT_WEIGHT_STEPS.values()}
+_BORDER_VALUES = {float(v) for v in _tt.BORDER_WIDTH_PX}
+
+
+def _owned_face_sources() -> list[tuple[str, str]]:
+    """(面名, 去注释源码文本)——全部本席可写渲染面。
+
+    Jinja 侧 = 派生清单（news 面自 2026-09-26 归一后天然在列，不再单独追加，
+    追加会与派生重复计面）。"""
+    faces = [(name, _tpl(name)) for name in _EDITABLE_TEMPLATES]
+    for rel in _OWNED_FSTRING_FACES:
+        path = _RENDER_PKG_DIR / rel
+        faces.append((rel, path.read_text(encoding="utf-8")))
+    return [(name, _strip_comments(text)) for name, text in faces]
+
+
+def _scan_offscale_font_sizes(text: str) -> list[str]:
+    """font-size 字面量 ∉ TYPE_SCALE_PX 值集 → 逐处点名（含内联 style 写法）。"""
+    return sorted(
+        f"{v:g}px"
+        for v in (float(m) for m in re.findall(r"font-size\s*:\s*([\d.]+)px", text))
+        if v not in _SCALE_VALUES
+    )
+
+
+def _scan_unregistered_font_weights(text: str) -> list[str]:
+    """font-weight 数值 ∉ FONT_WEIGHT_STEPS 值集 → 逐处点名。"""
+    return sorted(
+        {
+            v
+            for v in re.findall(r"font-weight\s*:\s*(\d+)", text)
+            if float(v) not in _WEIGHT_VALUES
+        }
+    )
+
+
+def _scan_illegal_border_widths(text: str) -> list[str]:
+    """border 粗细字面量 ∉ BORDER_WIDTH_PX 合法集 → 逐处点名（outline 不算）。"""
+    return sorted(
+        f"{v:g}px"
+        for v in (float(m) for m in re.findall(r"\bborder\s*:\s*([\d.]+)px", text))
+        if v not in _BORDER_VALUES
+    )
+
+
+def _extract_gradients(text: str, kind: str) -> list[str]:
+    """平衡括号提取 ``kind(`` 起始的完整渐变表达式（支持 color-mix 嵌套括号）。"""
+    out: list[str] = []
+    idx = 0
+    needle = kind + "("
+    while True:
+        start = text.find(needle, idx)
+        if start < 0:
+            return out
+        depth = 0
+        i = start + len(needle) - 1
+        while i < len(text):
+            if text[i] == "(":
+                depth += 1
+            elif text[i] == ")":
+                depth -= 1
+                if depth == 0:
+                    out.append(text[start : i + 1])
+                    break
+            i += 1
+        idx = start + 1
+
+
+def _split_top_level(arg_text: str) -> list[str]:
+    """按顶层逗号切 gradient 参数（括号内不切）。"""
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for ch in arg_text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(ch)
+    parts.append("".join(current))
+    return parts
+
+
+def _scan_hard_stop_wash(text: str) -> list[str]:
+    """颜色边界读成直线的形态：linear-gradient 相邻两停「同位异色」= 硬缝。
+
+    radial 色斑天然无直线接缝不查；同色两停（纯色填充形态）不算接缝；
+    GLASS_EDGE 0/55/100、壳渐变 0/15/32/…/100 等平滑多档天然放行。
+    """
+    offenders: list[str] = []
+    import itertools
+
+    for grad in _extract_gradients(text, "linear-gradient"):
+        inner = grad[len("linear-gradient(") : -1]
+        args = _split_top_level(inner)
+        stops = [a.strip() for a in args if a.strip()]
+        # 方向参数（145deg / to right 之类）只在首参位置时剔除。
+        if stops and re.fullmatch(r"(?:-?[\d.]+(?:deg|turn|rad|grad)|to [a-z ]+)", stops[0]):
+            stops = stops[1:]
+        for prev, nxt in itertools.pairwise(stops):
+            pos_prev = re.search(r"([\d.]+)%\s*$", prev)
+            pos_next = re.search(r"([\d.]+)%\s*$", nxt)
+            if not (pos_prev and pos_next):
+                continue
+            if pos_prev.group(1) == pos_next.group(1):
+                color_prev = prev[: pos_prev.start()].strip()
+                color_next = nxt[: pos_next.start()].strip()
+                if color_prev != color_next:
+                    offenders.append(grad[:72])
+                    break
+    return offenders
+
+
+def test_owned_faces_font_size_within_type_scale() -> None:
+    """命题①：字号阶梯单一来源——本席可写面零表外 font-size 字面量。"""
+    offenders = {
+        name: bad for name, text in _owned_face_sources() if (bad := _scan_offscale_font_sizes(text))
+    }
+    assert not offenders, f"表外字号（TYPE_SCALE_PX 之外）：{offenders}"
+
+
+def test_owned_faces_font_weight_within_registered_steps() -> None:
+    """命题①：字重只准取 FONT_WEIGHT_STEPS（650 手抄副本本波 16 处全数收敛 600）。"""
+    offenders = {
+        name: bad for name, text in _owned_face_sources() if (bad := _scan_unregistered_font_weights(text))
+    }
+    assert not offenders, f"未登记字重：{offenders}"
+
+
+def test_owned_faces_border_width_within_registered_set() -> None:
+    """命题②：边框粗细合法集（hairline 1px / ring 2px，ring 仅头像图标环）。"""
+    offenders = {
+        name: bad for name, text in _owned_face_sources() if (bad := _scan_illegal_border_widths(text))
+    }
+    assert not offenders, f"合法集外边框粗细：{offenders}"
+
+
+def test_owned_faces_wash_has_no_hard_stop_linear_gradient() -> None:
+    """命题③：颜色边界不得读成一条直线——任何面禁「同位异色双停」硬缝渐变。"""
+    offenders = {
+        name: bad for name, text in _owned_face_sources() if (bad := _scan_hard_stop_wash(text))
+    }
+    assert not offenders, f"硬停 linear-gradient 接缝：{offenders}"
+
+
+# 本波通电的全部卡面身份（face 盐）；跨面 --phase 必互异（同 payload 亦然）。
+_FACE_REGISTRY: tuple[str, ...] = (
+    "universal",
+    "market",
+    "finance",
+    "song",
+    "news_digest",
+    "affinity",
+    "error",
+    "mermaid",
+    "media",
+    "usage",
+)
+
+
+def test_blob_phase_face_salt_pairwise_distinct() -> None:
+    """命题③：色斑构图不得跨卡雷同——同一 payload 下各面 --phase 必两两互异。
+
+    相位是色斑 animation-delay 的唯一变量（钉帧下决定逐斑位置），face 盐失效
+    即两卡构图逐字节同形——本门即那条腿。缺省 face="" 保持旧行为逐字节不变
+    （既有单参调用与样张基线的兼容腿）。
+    """
+    payload = {"shared": "same-payload-for-every-face", "n": 1}
+    phases = [bridge.payload_phase(payload, face=face) for face in _FACE_REGISTRY]
+    assert len(set(phases)) == len(phases), f"跨面相位撞车：{dict(zip(_FACE_REGISTRY, phases))}"
+    assert bridge.payload_phase(payload) == bridge.payload_phase(payload, face="")
+
+
+def test_face_registry_covers_every_bridged_jinja_face() -> None:
+    """face 盐不许漏面：bridge 里每个以 payload_phase 定相位的 render_* 都必须
+    传非空 face 字面量，且这些字面量集合恰等于 8 张 Jinja 面登记表。"""
+    import ast
+
+    tree = ast.parse(Path(bridge.__file__).resolve().read_text(encoding="utf-8"))
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef) or not node.name.startswith("render_"):
+            continue
+        for call in (c for c in ast.walk(node) if isinstance(c, ast.Call)):
+            fn = call.func
+            if isinstance(fn, ast.Name) and fn.id == "payload_phase":
+                face = {k.arg: k.value for k in call.keywords}.get("face")
+                assert isinstance(face, ast.Constant) and isinstance(face.value, str) and face.value, (
+                    f"{node.name}: payload_phase 调用缺非空 face 盐"
+                )
+                found.append(face.value)
+    assert sorted(set(found)) == sorted(_FACE_REGISTRY[:8]), (
+        f"Jinja 面 face 盐集合与登记表不符：{sorted(set(found))}"
+    )
+
+
+def test_phase_face_salt_render_level_evidence_and_mutations() -> None:
+    """两卡同 payload 实渲：--phase 互异 + 各自双渲逐字节稳定（钉帧不碎）；
+    并逐门注毒自证（合成于内存/临时文件，真实文件零改动，无需 finally 还原）。"""
+    decl = re.compile(r"--phase:\s*([0-9]*\.?[0-9]+)\s*;")
+
+    def _phase_of(html: str) -> str:
+        values = decl.findall(html)
+        assert len(values) == 1, f"期望恰一处 --phase，实得 {values}"
+        return values[0]
+
+    same_payload: dict[str, object] = {"items": [{"name": "X", "value": "1"}], "note": "n"}
+    p_err = _phase_of(bridge.render_error_card_html(dict(same_payload)))
+    p_mkt = _phase_of(bridge.render_market_card_html(dict(same_payload)))
+    assert p_err != p_mkt, "同 payload 下 error/market 两面相位撞车=构图雷同回潮"
+    assert bridge.render_market_card_html(dict(same_payload)) == bridge.render_market_card_html(
+        dict(same_payload)
+    )
+
+    # ---- 注毒自证：每枚新门必须咬得住宿违例，且不误伤合法形态 ----
+    poisoned = "x { font-size: 45px; font-weight: 650; border: 3px solid #fff; }"
+    assert _scan_offscale_font_sizes(poisoned) == ["45px"]
+    assert _scan_unregistered_font_weights(poisoned) == ["650"]
+    assert _scan_illegal_border_widths(poisoned) == ["3px"]
+    assert _scan_hard_stop_wash("background: linear-gradient(145deg, #fff 50%, #000 50%);")
+    clean = "x { font-size: 14px; font-weight: 600; border: 1px solid #fff; }"
+    assert not _scan_offscale_font_sizes(clean)
+    assert not _scan_unregistered_font_weights(clean)
+    assert not _scan_illegal_border_widths(clean)
+    assert not _scan_hard_stop_wash("background: linear-gradient(145deg, #fff 0%, #eee 50%, #000 100%);")
+    # 同色两停（纯色填充）不得误伤；嵌套 color-mix 的两停同位异色必须咬住。
+    assert not _scan_hard_stop_wash(
+        "background: linear-gradient(color-mix(in srgb, #fff 14%, #000), color-mix(in srgb, #fff 14%, #000));"
+    )
+    assert _scan_hard_stop_wash(
+        "background: linear-gradient(color-mix(in srgb, var(--a) 60%, transparent) 30%, "
+        "color-mix(in srgb, var(--b) 40%, transparent) 30%, transparent 100%);"
+    )
+    # face 盐注毒：撤盐（face=""）即两面复同——证明该腿有牙。
+    assert bridge.payload_phase(dict(same_payload), face="") == bridge.payload_phase(
+        dict(same_payload), face=""
+    )
+
+
+def test_visual_audit_inventory_is_the_derived_source() -> None:
+    """防回潮：本文件的清单必须恒等于单一取数口的现算值——谁把手抄副本塞回来
+    （news 面当年就是这么漏出去的），这一腿当场点名。"""
+    assert _EDITABLE_TEMPLATES == bridge.card_template_names()
+    assert "news_digest_card.html" in _EDITABLE_TEMPLATES, (
+        "news 面脱离派生清单（目录在盘而清单没有＝取数口被换回字面量）"
+    )
+
+
+def test_news_digest_face_joins_scale_gates() -> None:
+    """news 面数值过尺（防御性复读）。
+
+    历史：该面曾是「三本手抄清单都没数到」的后增面，靠本函数单独点名补票；
+    2026-09-26 清单归一后它已在派生清单里、随 test_owned_faces_* 全量受管，
+    本函数不再是它唯一的入场券——保留为防回潮直扫（若哪天派生腿被换掉，
+    这里仍是独立第二眼）。"""
+    text = _strip_comments(_tpl(_NEWS_DIGEST_TEMPLATE))
+    assert not _scan_offscale_font_sizes(text)
+    assert not _scan_unregistered_font_weights(text)
+    assert not _scan_illegal_border_widths(text)
+    assert not _scan_hard_stop_wash(text)
+
+
+def test_type_scale_registry_covers_every_face_value_in_use() -> None:
+    """值册自证：门扫出的合法集恰等于实渲面用值集（新增档必写理由入册，
+    删档必使对应面改值——棘轮只降不升的字面量侧记账）。"""
+    used: set[float] = set()
+    for _name, text in _owned_face_sources():
+        for v in re.findall(r"font-size\s*:\s*([\d.]+)px", text):
+            used.add(float(v))
+    assert used <= _SCALE_VALUES, f"表外用值：{sorted(used - _SCALE_VALUES)}"
+
+
+def test_error_card_compact_two_column_path_is_live() -> None:
+    """命题④：信息密集面（诊断卡）的两栏键值机制在册且在用——
+    宏（kv_section compact 分支）、.section.compact .grid 双列 CSS、
+    .row.wide 长值整行、单条 176px 左轨（名/值各自成轴）四件缺一不可；
+    compact=true 调用点少于 4 = 机制被架空同样判红。"""
+    text = _tpl("error_card.html")
+    assert "{% macro kv_section(title, pairs, compact=false)" in text, "kv_section 宏缺 compact 形参"
+    assert ".section.compact .grid { grid-template-columns: 1fr 1fr; }" in text, "双列 CSS 缺失"
+    assert ".row.wide { grid-column: 1 / -1; }" in text, "长值整行规则缺失"
+    assert text.count("flex: 0 0 176px") == 1, "属性名左轨必须恰一条（多轨=值不成轴）"
+    assert text.count("kv_section(") - 1 >= 4, "compact 键值节调用点不足（宏定义外 <4 处）"

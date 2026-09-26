@@ -347,11 +347,11 @@ def test_personal_scope_auto_activates_and_owner_scoped(tmp_path) -> None:
 
 
 def test_personal_preference_bridges_memory_service(tmp_path) -> None:
-    from plugins.bot_unified_runtime.character.memory_service import (
+    from plugins.bot_unified_runtime.domains.chat_reply.character.memory_service import (
         MemoryKind,
         MemoryServiceV21,
     )
-    from plugins.bot_unified_runtime.character.memory_store_v21 import (
+    from plugins.bot_unified_runtime.domains.chat_reply.character.memory_store_v21 import (
         MemoryStoreV21,
     )
 

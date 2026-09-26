@@ -13,10 +13,6 @@
 
 from __future__ import annotations
 
-from plugins.bot_unified_runtime.capabilities.chat import (
-    build_chat_prompt_with_diagnostics,
-    build_chat_result,
-)
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     ContextBundle,
@@ -30,6 +26,10 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     SessionType,
     ToneProfile,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    build_chat_prompt_with_diagnostics,
+    build_chat_result,
 )
 from plugins.bot_unified_runtime.llm.providers import LLMReply
 

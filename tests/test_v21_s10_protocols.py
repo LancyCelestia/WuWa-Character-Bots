@@ -17,6 +17,7 @@ V21-IMAGE-001）：
 
 from __future__ import annotations
 
+import sys
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -37,6 +38,7 @@ from plugins.bot_unified_runtime.runtime.capability_protocols import (
     CapabilityInvoker,
     CapabilityRegistry,
     CapabilityRequest,
+    CapabilityTimeout,
     FallbackRegistry,
     HandlerRegistry,
     HealthProbeRegistry,
@@ -75,6 +77,26 @@ class _RecordingHook:
 
     def __call__(self, record: Any) -> None:
         self.records.append(record)
+
+
+def _image_job_payload() -> dict[str, Any]:
+    """过契约自验的最小绘图请求载荷（P5 收编后必需）。
+
+    绘画有了执行体 ⇒ 空载荷的诚实终态从「没执行体所以 unavailable」变成「请求形不对
+    ⇒ failed」。守卫「未接线必须 unavailable」若还喂空载荷，测的就是契约而不是接线闸，
+    所以这里喂**契约通过**的载荷，让请求真走到 provider 接线闸（更贴原判据，不放宽）。
+    """
+    return {
+        "job": {
+            "task": "text_to_image",
+            "prompt": "守岸人的海",
+            "provider": "unconfigured-test-provider",
+            "model": "unconfigured-test-model",
+            "size": "1024x1024",
+            "workspace_id": "ws-test",
+            "version": "v1",
+        }
+    }
 
 
 def _mini_invoker() -> CapabilityInvoker:
@@ -130,7 +152,11 @@ class TestDescriptorCompleteness:
         # 自动配音产出步收编中央调度层，`capability_protocols.py` 注册 +
         # voice_enricher 唯一 invoke 点；现算真值 = `default_invoker().registry.iter(MEDIA)`
         # 长度，与本锁同源）。计数只随交付跟随，未改判据形状。
-        assert len(invoker.registry.iter(CapabilityFamily.MEDIA)) == 9
+        # 10（2026-09-24 中央调度收编波 S91）：再加一枚 `media.tts.autodub_transform`——
+        # 自动配音**第二条腿**由 voice_enricher 内联变换退役为中央第三形（descriptor+handler
+        # 注册于 `capability_protocols.py:1939`，执行体 `domains/media/tts/result_transform.py#handle`），
+        # 同家法「计数只随交付跟随」，判据形状未动。
+        assert len(invoker.registry.iter(CapabilityFamily.MEDIA)) == 10
         # COMMAND＝bot.* 路由能力的执行面族（A 案）。单列一族是刻意的：上面四族是
         # 内容契约能力普查口径，bot.tts 混进去会污染 media 成员清单（R-A/C-01）。
         # 数量**不手写快照**（S-FILL7 一登记就得跟着改数，那是纯漂移税）：
@@ -170,6 +196,8 @@ class TestDescriptorCompleteness:
             "media.video.frame_extract",  # 抽帧
             # VOICE-V12（2026-09-22）自动配音产出步 descriptor，与上列 8 枚同族在册：
             "media.tts.autodub",
+            # S91（2026-09-24）第二腿退役成的中央第三形，同族在册第 10 枚：
+            "media.tts.autodub_transform",
         } == ids
 
     def test_files_contract_capabilities_present(self) -> None:
@@ -382,13 +410,39 @@ class TestInvocationGates:
         result = invoker.invoke(_make_request("media.test.slow"))
         assert result.status is InvocationStatus.TIMEOUT
         assert result.via == "invoker"
+        # 中央调度收编波 P3：超时必须把异常交回层 1（`_step` 见 BaseException 即 raise），
+        # 否则「能力挂死满预算」这条路永远出不了诊断卡（AGENTS #49 在册未执法条）。
+        carried = result.data.get(INVOKER_ERROR_DATA_KEY)
+        assert isinstance(carried, CapabilityTimeout), f"超时未交回异常＝卡仍不出现：{result.data!r}"
+        assert result.capability_id in str(carried), "交回的异常未点名能力＝卡上查不到是谁挂死"
 
     def test_not_wired_capability_is_unavailable_never_ok(self) -> None:
+        """两形各锁一条：①在册**连执行体都没有** ⇒ unavailable not_wired；②有执行体但
+        provider 未接 ⇒ 域内诚实 unavailable（P5 收编后绘画落进这一形）。"""
+        # ① 合成一枚"在册无 handler"的描述符：守卫不依赖生产表里恰好还有谁没挂头，
+        #    否则哪天 73 枚全挂上，这条锁就悄悄变成空跑（存在性糊过活性判据的同族形态）。
+        synthetic = "test.only.registered.without.handler"
+        mini = _mini_invoker()
+        _register_custom(mini, synthetic, handler=None)  # type: ignore[arg-type]
+        assert mini.handlers.get(synthetic) is None, "注册助手没按预期留空＝本锁前提失效"
+        empty = mini.invoke(_make_request(synthetic))
+        assert empty.status is InvocationStatus.UNAVAILABLE
+        assert "not_wired" in empty.detail
+
+        # ② 绘画：执行体在、provider 不在 ⇒ 契约过闸后仍须诚实 unavailable，绝不假成功。
         invoker = default_invoker()
-        for cid in ("creation.tts.synthesize", "creation.image.generate"):
-            result = invoker.invoke(_make_request(cid))
-            assert result.status is InvocationStatus.UNAVAILABLE
-            assert "not_wired" in result.detail or "未接线" in result.detail
+        result = invoker.invoke(_make_request("creation.image.generate", _image_job_payload()))
+        assert result.status is InvocationStatus.UNAVAILABLE
+        assert "未接线" in result.detail, f"诚实原因未点名未接线：{result.detail!r}"
+        # 空载荷不再等价于"未接线"：那是请求形不对，必须落 FAILED（禁把契约错误伪装成未接线）。
+        malformed = invoker.invoke(_make_request("creation.image.generate"))
+        assert malformed.status is InvocationStatus.FAILED
+        assert "job" in malformed.detail
+        # creation.tts.synthesize 已于 P4-C2/C3 接上执行体（不再是 not_wired）；
+        # 「空载荷绝不许冒充 OK」这条守卫同等强度保留，只是终态从 UNAVAILABLE 变 FAILED。
+        result = invoker.invoke(_make_request("creation.tts.synthesize"))
+        assert result.status is not InvocationStatus.OK
+        assert result.status is InvocationStatus.FAILED and "缺少 text" in result.detail
 
     def test_async_handler_bridged(self) -> None:
         invoker = _mini_invoker()
@@ -503,7 +557,11 @@ class TestAuditHooks:
         invoker.audit_hooks.register(hook)
         try:
             invoker.invoke(_make_request("media.vision.image", {}, roles=("user",)))
-            invoker.invoke(_make_request("creation.tts.synthesize"))
+            # UNAVAILABLE 这一格由绘画的 **provider 接线闸**供（契约过、provider 未配）；
+            # 语音已于 P4-C2/C3 接上执行体，不再产 UNAVAILABLE。
+            invoker.invoke(
+                _make_request("creation.image.generate", _image_job_payload())
+            )
             invoker.invoke(_make_request("no.such"))
         finally:
             pass
@@ -544,7 +602,10 @@ class TestAuditHooks:
 
         invoker = default_invoker()
         invoker.audit_hooks.register(_bomb)
-        result = invoker.invoke(_make_request("creation.tts.synthesize"))
+        # 取绘画的 provider 接线闸（契约过、provider 未配）：坏钩子下仍须拿到确定终态且不被吞。
+        result = invoker.invoke(
+            _make_request("creation.image.generate", _image_job_payload())
+        )
         assert result.status is InvocationStatus.UNAVAILABLE
 
 
@@ -640,15 +701,41 @@ class TestFilesFamilyRealChains:
         assert result.data["kind"] == "document"
         assert "泰缇斯" in result.data["text"]
 
-    def test_pdf_parser_unavailable_degrades_honestly(self, tmp_path: Any) -> None:
-        """pypdf 缺失或解析失败时，PDF 走诚实 parser_unavailable（本 venv 现状）。"""
+    def test_corrupt_pdf_says_damage_not_missing_parser(self, tmp_path: Any) -> None:
+        """坏 PDF 说「损坏」，不说「无适配器」。
+
+        旧断言写作 ``parser_unavailable``，前提是「本 venv 未装 pypdf」——那条前提
+        已于 2026-09-25 作废（用户裁定装 pypdf）。装完之后这份字节流是真·坏文件，
+        归因必须是 parse_failed，否则用户拿去查一个根本不存在的「缺依赖」。
+        环境缺失那一态由 ``test_missing_pypdf_still_says_parser_unavailable`` 分押。
+        """
         target = tmp_path / "minimal.pdf"
         target.write_bytes(b"%PDF-1.4\ntrailer\n%%EOF\n")
         result = default_invoker().invoke(
             _make_request("files.read.pdf", {"path": str(target)})
         )
         assert result.status is InvocationStatus.DEGRADED
-        assert "parser_unavailable" in result.detail
+        assert "parse_failed" in result.detail
+        assert "损坏" in result.detail
+
+    def test_missing_pypdf_still_says_parser_unavailable(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """环境缺失那一态仍是 parser_unavailable：两态不得互相顶替。
+
+        判据只认「pypdf 导不进来」这一条，所以直接把 ``sys.modules['pypdf']`` 置
+        None（Python 对此抛 ImportError），再走一次同一份坏字节流——同一输入在两态
+        下必须给出不同归因，否则这条锁与上一条是同义反复。
+        """
+        target = tmp_path / "any.pdf"
+        target.write_bytes(b"%PDF-1.4\ntrailer\n%%EOF\n")
+        monkeypatch.setitem(sys.modules, "pypdf", None)  # type: ignore[arg-type]
+
+        direct = file_reader.read_supported_file(target)
+
+        assert direct.metadata is not None
+        assert direct.metadata["status"] == "parser_unavailable"
+        assert "pypdf" in direct.metadata["format"]
 
     def test_textless_pdf_degrades_honestly(self, tmp_path: Any) -> None:
         pypdf = pytest.importorskip("pypdf")

@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.market import is_market_command
-from plugins.bot_unified_runtime.runtime.base_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     RouteKind,
     classify_message_route,
+)
+from plugins.bot_unified_runtime.domains.finance.capabilities.market import (
+    is_market_command,
 )
 
 
@@ -153,7 +155,9 @@ def test_pinyin_commodity_hijack_routes_to_commodities(text: str) -> None:
 @pytest.mark.parametrize("text", _PINYIN_COMMODITY_HIJACK_SAMPLES)
 def test_pinyin_word_still_hits_own_commodity_predicate(text: str) -> None:
     """拼音词在无「行情」时命中商品卡判定（正向对照，非 market 劫持面）。"""
-    from plugins.bot_unified_runtime.capabilities.market import is_commodity_command
+    from plugins.bot_unified_runtime.domains.finance.capabilities.market import (
+        is_commodity_command,
+    )
 
     bare = text.replace("行情", "")
     assert is_commodity_command(bare) is True, bare

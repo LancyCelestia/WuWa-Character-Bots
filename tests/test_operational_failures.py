@@ -34,6 +34,7 @@ from plugins.bot_unified_runtime.contracts import (
     SessionType,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    _LLM_ISSUE_SUMMARY_MAX,
     _execute_mcp_tool_call,
     _llm_error_result,
     build_chat_result,
@@ -51,16 +52,18 @@ from plugins.bot_unified_runtime.domains.ops.monitor import alerts as alerts_mod
 from plugins.bot_unified_runtime.domains.ops.monitor.runtime_event_log import (
     RuntimeEventLog,
 )
-from plugins.bot_unified_runtime.domains.transport.sender.receipts import (
-    SQLiteReceiptRepository,
+from plugins.bot_unified_runtime.domains.transport.sender.nonebot import (
+    send_nonebot_message,
 )
-from plugins.bot_unified_runtime.sender.nonebot import send_nonebot_message
-from plugins.bot_unified_runtime.sender.onebot import send_onebot_v11
-from plugins.bot_unified_runtime.sender.queue import (
+from plugins.bot_unified_runtime.domains.transport.sender.onebot import send_onebot_v11
+from plugins.bot_unified_runtime.domains.transport.sender.queue import (
     QueuedSendRequest,
     SQLiteSendRequestQueue,
 )
-from plugins.bot_unified_runtime.sender.worker import (
+from plugins.bot_unified_runtime.domains.transport.sender.receipts import (
+    SQLiteReceiptRepository,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.worker import (
     _call_transport_safely,
     _update_queue_state,
     drain_send_queue_once,
@@ -400,7 +403,9 @@ def test_pipeline_group_operational_failure_replies_throttled_pool_notice() -> N
     from plugins.bot_unified_runtime.domains.chat_reply.capabilities.user_copy import (
         GROUP_FAILURE_ACK_TEMPLATES,
     )
-    from plugins.bot_unified_runtime.sender.queue import InMemorySendQueue
+    from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+        InMemorySendQueue,
+    )
 
     queue = InMemorySendQueue(audit)
     pipeline = RuntimePipeline(queue, audit)
@@ -435,7 +440,9 @@ def test_pipeline_group_operational_failure_replies_throttled_pool_notice() -> N
 def test_private_operational_result_creates_one_typed_send_request() -> None:
     message = _message(SessionType.PRIVATE)
     audit = InMemoryAuditLogger()
-    from plugins.bot_unified_runtime.sender.queue import InMemorySendQueue
+    from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+        InMemorySendQueue,
+    )
 
     queue = InMemorySendQueue(audit)
     pipeline = RuntimePipeline(queue, audit)
@@ -817,7 +824,9 @@ def test_role_settings_keep_qq_and_telegram_admin_ids_separate() -> None:
 
 def test_credential_alert_enqueuing_returns_explicit_request_ids() -> None:
     audit = InMemoryAuditLogger()
-    from plugins.bot_unified_runtime.sender.queue import InMemorySendQueue
+    from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+        InMemorySendQueue,
+    )
 
     queue = InMemorySendQueue(audit)
     pipeline = RuntimePipeline(queue, audit)
@@ -1085,7 +1094,9 @@ def test_runtime_logging_handler_redacts_and_bounds_message(tmp_path) -> None:
 
 def test_credential_alert_request_uses_onebot_adapter_and_recovery_wildcard() -> None:
     audit = InMemoryAuditLogger()
-    from plugins.bot_unified_runtime.sender.queue import InMemorySendQueue
+    from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+        InMemorySendQueue,
+    )
 
     queue = InMemorySendQueue(audit)
     pipeline = RuntimePipeline(queue, audit)
@@ -1147,3 +1158,180 @@ def test_all_pipeline_helper_calls_provide_operational_notifier() -> None:
         any(keyword.arg == "operational_notifier" for keyword in call.keywords)
         for call in calls
     )
+
+
+# ===== 2026-09-24 语音双发根修波（inline 首投绕过 part 记账）=====
+# 事故（生产 02:01:40「说 今天天气不错」）：inline 首投 mixed 语音 15s 超时
+# （上游实际已送达）→ FAILED_RETRYABLE 且 part 从未规划 → worker 首轮认领
+# 视作从未发送 → 整发重投成功 = 用户听到第二遍；同请求 queued 回执经
+# should_finish_nonebot_matcher 泄漏「queued」到 QQ。判据源=worker.
+# _deliver_atomic_mixed_parts 既有分类表（R1/R2 绿锁所钉）——本波把同一
+# 分类下沉到 inline 持久化，sender/worker 零改动。
+
+
+def _mixed_voice_request() -> SendRequest:
+    from helpers.voice_queue_sim import build_mixed_request
+
+    return build_mixed_request(
+        "req-mixed-inline", text="今天天气不错。", record_file="voice-inline.wav"
+    )
+
+
+def _retryable_issue_receipt(request: SendRequest, kind: str) -> DeliveryReceipt:
+    return DeliveryReceipt(
+        request_id=request.request_id,
+        state=ReceiptState.FAILED_RETRYABLE,
+        transport="onebot.v11",
+        public_message="",
+        operational_issue=_issue(stage="onebot", kind=kind),
+    )
+
+
+def test_queued_receipt_never_finishes_nonebot_matcher() -> None:
+    # Fix A：队列受理回执的 "queued" 是内部哨兵串，绝不允许被 matcher.finish
+    # 当兜底文案回会话（02:02:11 事故「queued」直接上屏 QQ）。
+    assert not should_finish_nonebot_matcher(
+        DeliveryReceipt(
+            request_id="req-queued-leak",
+            state=ReceiptState.QUEUED,
+            transport="sqlite_queue",
+            public_message="queued",
+        )
+    )
+
+
+def test_inline_mixed_timeout_books_parts_unknown_and_parks_partial(tmp_path) -> None:
+    # Fix B：inline 首投 mixed「结果未知」类可重试失败 → 复制 worker 分类：
+    # 全 part 记 UNKNOWN、行置 PARTIAL 断点（issue 原样保留末次真实 kind）。
+    audit = InMemoryAuditLogger()
+    queue = SQLiteSendRequestQueue(tmp_path / "send.sqlite3", audit)
+    request = _mixed_voice_request()
+    queue.submit(request)
+    receipt = _retryable_issue_receipt(request, "timeout_zero_part_delivered")
+
+    _record_transport_receipt(receipt, request, audit, send_queue=queue)
+
+    progress = queue.part_progress(request.request_id)
+    assert progress is not None
+    assert progress.pending_indexes() == []
+    assert sorted(progress.unknown_indexes()) == [0, 1]
+    assert [
+        entry.send_request.request_id for entry in queue.list_partial_requests()
+    ] == [request.request_id]
+
+
+def test_inline_mixed_explicit_rejection_keeps_retryable_without_part_rows(
+    tmp_path,
+) -> None:
+    # 负形态：retcode_failure=平台明确拒绝（零投递、重发安全）→ 维持旧语义
+    # （请求级 retryable、part 不记账），worker 续轮整发重投是正确行为。
+    audit = InMemoryAuditLogger()
+    queue = SQLiteSendRequestQueue(tmp_path / "send.sqlite3", audit)
+    request = _mixed_voice_request()
+    queue.submit(request)
+    receipt = _retryable_issue_receipt(request, "retcode_failure")
+
+    _record_transport_receipt(receipt, request, audit, send_queue=queue)
+
+    assert queue.part_progress(request.request_id) is None
+    assert queue.list_partial_requests() == []
+    assert queue.safe_summary()[ReceiptState.FAILED_RETRYABLE.value] == 1
+
+
+def test_inline_text_timeout_keeps_legacy_retryable(tmp_path) -> None:
+    # scope 门：文本/chunks 的 inline 失败维持旧语义逐字节不变（A-03 家族锁
+    # 覆盖的形态），本波只收编 mixed 原子整发形态。
+    audit = InMemoryAuditLogger()
+    queue = SQLiteSendRequestQueue(tmp_path / "send.sqlite3", audit)
+    request = _send_request(_issue(stage="telegram", kind="send_exception"))
+    queue.submit(request)
+    receipt = DeliveryReceipt(
+        request_id=request.request_id,
+        state=ReceiptState.FAILED_RETRYABLE,
+        transport="telegram",
+        public_message="",
+        operational_issue=request.operational_issue,
+    )
+
+    _record_transport_receipt(receipt, request, audit, send_queue=queue)
+
+    assert queue.part_progress(request.request_id) is None
+    assert queue.list_partial_requests() == []
+    assert queue.safe_summary()[ReceiptState.FAILED_RETRYABLE.value] == 1
+
+
+@pytest.mark.asyncio
+async def test_inline_mixed_timeout_then_worker_round_never_redispatches(
+    tmp_path,
+) -> None:
+    # 事故复现（端到端）：inline 超时记账后，worker 到期轮**零再投**、行停在
+    # PARTIAL。现状 dispatched==["req-mixed-inline"]（重投成功=第二遍语音）
+    # ⇒ 本例即双发的直接 RED 判据。
+    audit = InMemoryAuditLogger()
+    queue = SQLiteSendRequestQueue(tmp_path / "send.sqlite3", audit)
+    request = _mixed_voice_request()
+    queue.submit(request)
+    receipt = _retryable_issue_receipt(request, "timeout_zero_part_delivered")
+    _record_transport_receipt(receipt, request, audit, send_queue=queue)
+
+    dispatched: list[str] = []
+
+    async def transport(_request: SendRequest) -> DeliveryReceipt:
+        dispatched.append(_request.request_id)
+        return DeliveryReceipt(
+            request_id=_request.request_id,
+            state=ReceiptState.SENT,
+            transport="onebot.v11",
+            public_message="sent",
+        )
+
+    # PARTIAL(resumable) 带 90s 补偿退避；+120s 保证两种形态下都已到期。
+    now = datetime.now(timezone.utc) + timedelta(seconds=120)
+    await drain_send_queue_once(queue, transport, now=now, audit_logger=audit)
+
+    assert dispatched == []
+    assert [
+        entry.send_request.request_id for entry in queue.list_partial_requests()
+    ] == [request.request_id]
+
+
+def test_llm_alert_summary_keeps_last_hop_when_hop_string_is_long() -> None:
+    """链耗尽的告警必须答得出"最后卡在谁身上"——归因不许被整串截断吃掉。
+
+    旧写法把整句 `[:60]` 一刀切：`timeout chain=17 last=<渠道:模型:错误码>` 里
+    最先被切掉的恰好是末站，告警只剩 `chain=17跳全败`，于是"不知道哪个模型炸了"
+    在告警面上同样成立（诊断卡那一路另有锁，见 test_diagnostic_llm_attribution）。
+    """
+    message = _message(SessionType.PRIVATE)
+    decision = _decision(message)
+    context = _context(message.request_id, SessionType.PRIVATE)
+    long_hop = "axon-gemini-38-flash:timeout:read-timed-out-after-30-seconds:" + "x" * 80
+    result = _llm_error_result(
+        message=message,
+        decision=decision,
+        context=context,
+        diagnostic_tags=[],
+        error_kind="timeout",
+        attempts=17,
+        route_trace=["earlier-hop:network", long_hop],
+    )
+    issue = result.operational_issue
+    assert issue is not None
+    summary = issue.safe_summary
+    assert summary.startswith("timeout")
+    assert "chain=17" in summary
+    assert "last=axon-gemini-38-flash" in summary, f"归因被截断：{summary!r}"
+    # 报的是**末**站，不是第一跳。
+    assert "earlier-hop" not in summary
+    assert len(summary) <= _LLM_ISSUE_SUMMARY_MAX
+    # 无跳序证据时不许编造末站。
+    bare = _llm_error_result(
+        message=message,
+        decision=decision,
+        context=context,
+        diagnostic_tags=[],
+        error_kind="network",
+    )
+    assert bare.operational_issue is not None
+    assert "last=" not in bare.operational_issue.safe_summary
+    assert bare.operational_issue.safe_summary == "network chain=1"

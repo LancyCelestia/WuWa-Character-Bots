@@ -58,11 +58,17 @@ from plugins.bot_unified_runtime.domains.link_parse.parsers.ssrf_guard import (
 guard_user_url = _default_guard
 
 __all__ = [
+    "ANSWER_SOURCE_LADDER_BACKGROUND",
+    "ANSWER_SOURCE_LADDER_LATEST",
+    "BACKGROUND_AUTHORITY_WEIGHTS",
     "CACHE_KEY_VERSION",
     "CACHE_TTL_HOT_SECONDS",
     "CACHE_TTL_NORMAL_SECONDS",
     "DEFAULT_LIMIT",
+    "KB_SOURCE_PERSONA",
+    "KB_SOURCE_WIKI",
     "LIMIT_MAX",
+    "LOCAL_KB_SOURCE_IDS",
     "PER_SOURCE_CONCURRENCY",
     "PER_SOURCE_DEADLINE_SECONDS",
     "QUERY_MAX_CHARS",
@@ -71,9 +77,12 @@ __all__ = [
     "SOURCE_REGISTRY",
     "TOTAL_DEADLINE_SECONDS",
     "TOTAL_TIMEOUT_SECONDS",
+    "AnswerOrder",
     "ContentLevel",
     "CursorPrincipalMismatchError",
     "FetchedReference",
+    "KnowledgeHitView",
+    "KnowledgeMissDeclarationError",
     "MalformedCursorError",
     "OverallStatus",
     "ProviderAuthError",
@@ -98,19 +107,30 @@ __all__ = [
     "SourceRunStatus",
     "SourceTask",
     "UnifiedSearchService",
+    "answer_source_rank",
     "authorize_sources",
     "check_fetch_landing",
     "deduplicate_hits",
+    "existence_denial_hit",
     "fetch_reference",
+    "format_knowledge_citation",
+    "format_knowledge_hit_lines",
     "guard_user_url",
     "issue_cursor",
+    "knowledge_context_block",
+    "knowledge_hit_view",
     "list_sources",
     "make_cache_key",
     "normalize_hit",
+    "order_answer_sources",
+    "order_retrievers",
     "plan_search",
     "query_fingerprint",
     "rank_hits",
+    "resolve_answer_order",
     "search_provider",
+    "source_library_label",
+    "validate_miss_declaration",
 ]
 
 # ===========================================================================
@@ -1410,3 +1430,484 @@ class UnifiedSearchService:
     @staticmethod
     def _new_request_id() -> str:
         return f"sreq_{uuid.uuid4().hex[:12]}"
+
+
+# ===========================================================================
+# 本地知识命中的身份呈现 + 跨源先后单一判据
+# （2026-09-25 S-T-ACG-1：用户第 3 项后半「库里已有的内容要稳定命中，
+#  并且把检索到的信息准确无误反馈给用户」的机器形态）
+# ===========================================================================
+#
+# 本段解决的三件事，各只有**一处**真身：
+# ① 命中可核对：每条送进提示词的知识块都带「来源库 + 条目标题 + 条目 id」，
+#    正文缺块/被裁剪必须显式说出来——「准确无误」的可机检定义就是
+#    「给出的每一句都能追到一条命中，且看不全时说看不全」。
+# ② 零命中只说「本轮没检索到」：措辞真身**不在这里**（见
+#    ``validate_miss_declaration`` 的文档串），本模块只执法"两半俱全"，
+#    绝不另写第二套话术。
+# ③ 哪个库先答、何时降级到网络：唯一一份阶梯 ``ANSWER_SOURCE_LADDER_*``
+#    与唯一一个判据函数 ``resolve_answer_order``；「要不要联网」的阈值判据
+#    仍住在既有真身 ``question_intent.decide_web_search``（本段只**消费**
+#    它算好的布尔值，绝不重算一遍阈值）。
+#
+# 分层：本段是纯函数 + 严格 DTO，零网络、零 LLM、零配置读取；调用点（chat
+# 层渲染与装配层的检索器顺序）在禁写面内，坐标见本席报告的「需要主代理代接」。
+
+#: 本地向量库源名——与装配层既有 bindings 同名（``providers.py`` 的
+#: ``MergedKnowledgeRetriever`` 传入序、``knowledge_service`` 的 binding 名），
+#: 这里只是把它们变成可声明、可排序的常量，不新建第二套命名。
+KB_SOURCE_PERSONA = "persona"
+KB_SOURCE_WIKI = "kb_wiki"
+
+#: 「哪个库先答」的唯一声明表：背景档（角色/剧情/设定/人事物）。
+#: 本地库先答——库里已有的内容不该被一条随手抓来的网页盖过去。
+ANSWER_SOURCE_LADDER_BACKGROUND: tuple[str, ...] = (
+    KB_SOURCE_PERSONA,
+    KB_SOURCE_WIKI,
+    "moegirl",
+    "bangumi",
+    "bilibili",
+    "general",
+)
+
+#: 同一批源，时效档（最新动态/卡池/更新到第几集）：本地库退到"背景参考"位。
+#: 库里的设定不会写着昨天发生了什么，让本地库先答会稳定地产出过期答案。
+ANSWER_SOURCE_LADDER_LATEST: tuple[str, ...] = (
+    "bilibili",
+    "moegirl",
+    "bangumi",
+    "general",
+    KB_SOURCE_WIKI,
+    KB_SOURCE_PERSONA,
+)
+
+#: 只含本地知识库的档位集合（判「降级到网络」与「本地是否答上了」用）。
+LOCAL_KB_SOURCE_IDS: frozenset[str] = frozenset({KB_SOURCE_PERSONA, KB_SOURCE_WIKI})
+
+#: 背景档「竖源 vs 通用网页」权威度加权表——从本波起只有这一份。
+#: ``acg_search`` 的融合权重由它派生（旧实现是竖源模块里另一张字面量表，
+#: 与本表同义不同身，改一处必漏一处）。数值沿用落地前实况，零行为变更。
+BACKGROUND_AUTHORITY_WEIGHTS: dict[str, float] = {
+    "moegirl": 1.2,
+    "bangumi": 1.1,
+    "bilibili": 1.0,
+    "general": 1.0,
+}
+
+#: 来源库的中文显示名（进提示词用；键与 ladder 同源，不另立枚举）。
+_SOURCE_LIBRARY_LABELS: dict[str, str] = {
+    KB_SOURCE_PERSONA: "人格资料库",
+    KB_SOURCE_WIKI: "百科知识库",
+    "moegirl": "萌娘百科",
+    "bangumi": "Bangumi",
+    "bilibili": "B站",
+    "general": "通用网页",
+}
+
+
+def source_library_label(source_id: str) -> str:
+    """来源库显示名；不认识的名字原样返回（绝不编一个中文名）。"""
+    sid = str(source_id or "").strip()
+    return _SOURCE_LIBRARY_LABELS.get(sid, sid)
+
+
+def answer_source_rank(source_id: str, *, wants_latest: bool) -> int:
+    """某个来源在「谁先答」阶梯上的位置；未登记的源一律排最后（同权）。
+
+    **本函数是全仓唯一的跨源先后判据**。任何"要不要把 A 排在 B 前"的新需求
+    都必须改这张阶梯，不得在调用方另写 if——测试件里有 grep/AST 锁在看着。
+    """
+    ladder = (
+        ANSWER_SOURCE_LADDER_LATEST if wants_latest else ANSWER_SOURCE_LADDER_BACKGROUND
+    )
+    sid = str(source_id or "").strip()
+    try:
+        return ladder.index(sid)
+    except ValueError:
+        return len(ladder)
+
+
+def order_answer_sources(
+    source_ids: Iterable[str], *, wants_latest: bool
+) -> tuple[str, ...]:
+    """按单一阶梯给来源排序（稳定：同秩保持传入序，重复只留第一次）。"""
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for raw in source_ids:
+        sid = str(raw or "").strip()
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        ordered.append(sid)
+    return tuple(sorted(ordered, key=lambda sid: answer_source_rank(sid, wants_latest=wants_latest)))
+
+
+def order_retrievers(
+    retrievers: Sequence[tuple[str, object]], *, wants_latest: bool
+) -> list[object]:
+    """把「(源名, 检索器)」按阶梯排成检索器列表。
+
+    存在的意义只有一个：让装配层（``providers.py`` 构造
+    ``MergedKnowledgeRetriever`` 的地方）不再靠"手写参数的先后"表达优先级
+    ——先后由判据算出来，改阶梯即处处跟随，不会出现两处的顺序各说各话。
+    """
+    pairs = sorted(
+        ((str(name or "").strip(), retriever) for name, retriever in retrievers),
+        key=lambda item: answer_source_rank(item[0], wants_latest=wants_latest),
+    )
+    return [item[1] for item in pairs]
+
+
+@dataclass(frozen=True)
+class AnswerOrder:
+    """一次「谁先答」的判定结果（纯数据，不含任何执行权）。"""
+
+    ordered: tuple[str, ...]
+    degrade_to_web: bool
+    reason: str
+
+    @property
+    def first_answer_source(self) -> str:
+        """第一优先应答源；一个都没命中时是空串（调用方须如实说没检索到）。"""
+        return self.ordered[0] if self.ordered else ""
+
+    @property
+    def local_answered(self) -> bool:
+        """本地知识库是否至少命中一条（与"够不够好"无关，那是置信度的活）。"""
+        return any(source in LOCAL_KB_SOURCE_IDS for source in self.ordered)
+
+
+def resolve_answer_order(
+    *,
+    hits_by_source: Mapping[str, int],
+    wants_latest: bool,
+    web_search_intended: bool,
+) -> AnswerOrder:
+    """跨源先后的**唯一**入口：谁先答 + 要不要降级到网络检索。
+
+    参数口径（每条都刻意不做的事，写在这里防后来者"顺手加一套"）：
+    - ``hits_by_source``：各源命中条数。条数 ≤0 的源不进阶梯（不占位）。
+    - ``wants_latest``：时效档旗标，来自既有真身
+      ``search_intent.AcgIntent.wants_latest``，本函数不重新判意图。
+    - ``web_search_intended``：**调用方已经问过的** ``decide_web_search`` 结果。
+      阈值/置信度/硬底线那套判据唯一住在
+      ``domains/chat_reply/runtime/question_intent.py``，这里绝不重算——
+      否则就是"两个函数各写一套 if"，正是本判据要消灭的东西。
+
+    降级规则只有一条新东西：**本地一条都没命中 ⇒ 必须走网络**（在联网总闸
+    允许的前提下）。这条与"本地有块但置信度低"是两回事，后者不归本函数管。
+    """
+    counted: dict[str, int] = {}
+    for raw_id, count in (hits_by_source or {}).items():
+        sid = str(raw_id or "").strip()
+        if not sid:
+            continue
+        try:
+            hits = int(count)
+        except (TypeError, ValueError):
+            hits = 0
+        if hits > 0:
+            counted[sid] = hits
+    ordered = order_answer_sources(counted.keys(), wants_latest=wants_latest)
+    order = AnswerOrder(
+        ordered=ordered,
+        degrade_to_web=False,
+        reason="no_hits" if not ordered else "local_hit_first",
+    )
+    local_hit = any(sid in LOCAL_KB_SOURCE_IDS for sid in ordered)
+    if bool(web_search_intended):
+        return AnswerOrder(
+            ordered=ordered,
+            degrade_to_web=True,
+            reason="web_intended" if local_hit else "web_intended_no_local_hit",
+        )
+    if not local_hit:
+        return AnswerOrder(
+            ordered=ordered,
+            degrade_to_web=True,
+            reason="no_local_hit" if ordered else "no_hits",
+        )
+    return order
+
+
+# ---------------------------------------------------------------------------
+# ① 命中身份：知识块 → 可核对的提示词行
+# ---------------------------------------------------------------------------
+
+#: 单条正文的默认上限（字符）。旧实现是 300 且**静默**截断到残句；
+#: 本表放宽到 520 并要求裁剪必须显式标注（见 ``_clip_body``）。
+KNOWLEDGE_HIT_MAX_CHARS = 520
+
+#: 正文裁剪时优先落点的句子终止符（含中文全角）。
+_SENTENCE_ENDINGS: tuple[str, ...] = ("。", "！", "？", "；", "\n", ". ", "! ", "? ", "; ")
+
+#: 表格分隔行（|---|:--:|）与"只剩骨架"的行（|、--、: 组成）——只有这类行
+#: 允许整行丢弃，数据行不丢。
+_MD_SKELETON_ONLY_RE = re.compile(r"^[\s|:-]*$")
+_MD_TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
+_MD_BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
+_MD_HEADER_RE = re.compile(r"^#{1,6}\s*")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+#: 引用/禁式检测用的引号跨度：被「」『』"" 包住的内容是**被引述的话**，
+#: 不是本 bot 自己的断言（未命中声明里"不要说「记录里没有这个人」"正属此类）。
+_QUOTED_SPAN_RE = re.compile(r"「[^」]{0,80}」|『[^』]{0,80}』|“[^”]{0,80}”")
+
+#: 「把没查到说成不存在」型存在性断言。检测口径与用户已批准的禁式同源
+#: （chat 层 ``_RUNTIME_CONTEXT_USAGE`` 与本模块的未命中声明执法同一族词），
+#: 本表只用于**判别**，不用于生成任何话术。
+_EXISTENCE_DENIAL_RE = re.compile(
+    r"(不存在|并未存在|查无此人|没有这个(?:角色|人物|人|作品|设定|词条|条目)"
+    r"|记录里没有|资料里没有|库里没有|从未有过|官方从未公布)"
+)
+
+#: 否认/禁说标记与它的可视窗口：命中词左侧出现这些连接词时，那句话是
+#: **"不代表它不存在"**（对否定的否认），不是否定本身。窗口取 24 字覆盖
+#: "不代表你问的人、作品、设定或事件不存在" 这类带列举的句式。
+_DISCLAIM_CUES: tuple[str, ...] = (
+    "不代表",
+    "不等于",
+    "并不意味着",
+    "不能说明",
+    "不是",
+    "不要说",
+    "别说",
+    "不该说",
+    "不要",
+    "禁止",
+    "切勿",
+)
+_DISCLAIM_WINDOW = 24
+
+
+class KnowledgeMissDeclarationError(ValueError):
+    """未命中声明缺半边（装配期程序错，不是运行时用户错）。"""
+
+
+def existence_denial_hit(text: object) -> str:
+    """返回文本里第一处「存在性否定」断言（先剥掉被引述的跨度）。
+
+    用途是**执法**：未命中块必须不含它——否则"本轮没检索到"会被模型（或被
+    后来改文案的人）写成"这件事不存在"，正是她点名的那类错误。
+
+    两个必要的豁免（都不是放宽，是把"否定"与"对否定的否认"分开）：
+    - 被 「」『』"" 引述的内容（"不要说「记录里没有这个人」"是在**禁**这句）；
+    - 命中词左侧一小段里带否认/禁止连接词的（"不代表你问的作品不存在"）。
+    """
+    stripped = _QUOTED_SPAN_RE.sub(" ", str(text or ""))
+    for match in _EXISTENCE_DENIAL_RE.finditer(stripped):
+        left = stripped[max(0, match.start() - _DISCLAIM_WINDOW) : match.start()]
+        if any(cue in left for cue in _DISCLAIM_CUES):
+            continue
+        return match.group(0)
+    return ""
+
+
+#: 未命中声明必须自带的两半：①"本轮没有资料接入"的事实陈述；
+#: ② 明确否认"没资料 ⇒ 不存在"的连接句。缺一半即判不合格。
+_MISS_STATEMENT_ANCHORS: tuple[str, ...] = (
+    "没接到",
+    "没检索",
+    "没查到",
+    "未能核实",
+    "没有命中",
+    "零命中",
+    "未启用",
+    "本轮没有",
+)
+_MISS_DISCLAIM_CONNECTIVES: tuple[str, ...] = ("不代表", "不等于", "并不意味着", "不能说明", "不是")
+
+
+def validate_miss_declaration(declaration: object) -> str:
+    """校验调用方交来的未命中声明是否"两半俱全"，合格则**原样**返回。
+
+    措辞真身不在本模块——它是 chat 层 ``_KB_UNAVAILABLE_LINE``（2026-09-25
+    事故驱动的既有件，与已批准的禁式同口径）。这里只执法结构：
+    - 必须出现"本轮没接到/没检索到"这一半；
+    - 必须出现"不代表/不等于……"这一半（把没查到与不存在切开）。
+    任何一半缺失都抛 ``KnowledgeMissDeclarationError``：宁可装配期红，
+    也不要上线后悄悄把「没查到」讲成「没有这个人」。
+    """
+    text = str(declaration or "").strip()
+    if not text:
+        raise KnowledgeMissDeclarationError("未命中声明为空：零命中必须显式说出来，不许静默缺块")
+    if not any(anchor in text for anchor in _MISS_STATEMENT_ANCHORS):
+        raise KnowledgeMissDeclarationError("未命中声明缺『本轮没有资料接入』这一半")
+    if not any(conn in text for conn in _MISS_DISCLAIM_CONNECTIVES):
+        raise KnowledgeMissDeclarationError("未命中声明缺『不代表不存在』那一半（否则等于换句否定）")
+    if existence_denial_hit(text):
+        raise KnowledgeMissDeclarationError(
+            f"未命中声明自含存在性否定断言：{existence_denial_hit(text)!r}"
+        )
+    return text
+
+
+class KnowledgeHitView(_StrictModel):
+    """一条知识命中的最小可核对身份（呈现层，不改检索契约）。
+
+    ``id_derived=True`` 表示这条命中没带库内 id，本模块按正文摘要现算了一枚
+    ——**摘要 id 只能核对内容，不能回查库表**，所以呈现时用 ``id≈`` 而不是
+    ``id=``，让下游与人都看得出这枚 id 的来历。
+    """
+
+    library: str = Field(min_length=1, max_length=64)
+    chunk_id: str = Field(min_length=1, max_length=256)
+    source_id: str = Field(default="", max_length=256)
+    title: str = Field(default="", max_length=256)
+    content: str = ""
+    id_derived: bool = False
+
+
+def knowledge_hit_view(*, library: str, chunk: object) -> KnowledgeHitView:
+    """把一个检索块（duck-typed ``KnowledgeChunk``）收成带身份的视图。
+
+    刻意不做 pydantic 强转：装配层递来的块可能来自不同契约代际（本仓已有
+    两个同名 ``WebSearchHit`` 的前车），这里只按字段名取值，缺什么就如实
+    标什么，绝不拿标题冒充 id、也绝不因为缺 id 就把整条丢掉。
+    """
+    lib = str(library or "").strip()
+    if not lib:
+        raise ValueError("知识命中必须点名来源库（persona/kb_wiki/…），否则无法核对")
+    chunk_id = str(getattr(chunk, "chunk_id", "") or "").strip()
+    derived = not chunk_id
+    if derived:
+        body = str(getattr(chunk, "content", "") or "")
+        chunk_id = f"digest:{hashlib.sha256(body.encode('utf-8')).hexdigest()[:12]}"
+    return KnowledgeHitView(
+        library=lib,
+        chunk_id=chunk_id,
+        source_id=str(getattr(chunk, "source_id", "") or "").strip(),
+        title=str(getattr(chunk, "title", "") or "").strip(),
+        content=str(getattr(chunk, "content", "") or ""),
+        id_derived=derived,
+    )
+
+
+def _identity_parts(hit: KnowledgeHitView) -> tuple[str, str, str]:
+    """一条命中的三段身份（库名 / 标题 / 条目号）——**只在这里拼一次**。
+
+    ``id≈`` 与 ``id=`` 的区别必须一路带到提示词里：前者是本模块现算的内容
+    摘要（能核对"是不是这段文字"），后者才是库里那条记录的可回查主键。
+    """
+    label = source_library_label(hit.library)
+    title = hit.title or hit.source_id or "(无标题条目)"
+    id_part = f"id≈{hit.chunk_id}" if hit.id_derived else f"id={hit.chunk_id}"
+    return label, title, id_part
+
+
+def format_knowledge_citation(hit: KnowledgeHitView) -> str:
+    """一条命中的可核对身份串：``库 人格资料库 · 标题 · id=xxx``（引用面用）。"""
+    label, title, id_part = _identity_parts(hit)
+    return f"库 {label} · {title} · {id_part}"
+
+
+def _shape_knowledge_body(text: object) -> str:
+    """正文整形：**保结构、不丢内容**。
+
+    与旧实现（chat 层 ``_clean_knowledge_chunk``）的实质差别：旧实现把每一行
+    ``|...|`` 表格行整行删掉——百科里角色属性/命座/发售表常常**全是**表格行，
+    于是"命中了但正文被洗成空"，模型面对一条自己看不见内容的命中，最容易
+    开始补全（=编）。这里改成：分隔线（|---|）仍丢，数据行折成 ``单元格｜单元格``。
+    """
+    kept: list[str] = []
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line or line in {"---", "***", "___"}:
+            continue
+        if _MD_SKELETON_ONLY_RE.match(line):
+            # 只剩 | : - 空白的行（分隔行、断掉的表格骨架）：确实无内容可留。
+            continue
+        if _MD_TABLE_ROW_RE.match(line):
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            cells = [cell for cell in cells if cell and not _MD_SKELETON_ONLY_RE.match(cell)]
+            if cells:
+                kept.append("｜".join(cells))
+            continue
+        line = _MD_BOLD_RE.sub(r"\1", line)
+        line = _MD_HEADER_RE.sub("", line)
+        if line:
+            kept.append(line)
+    return _WHITESPACE_RE.sub(" ", " ".join(kept)).strip()
+
+
+def _clip_body(body: str, budget: int) -> tuple[str, bool, int]:
+    """裁剪到句子终止符，返回 ``(文本, 是否裁过, 未展示字数)``。
+
+    地板取预算的 55%：找不到终止符才退回硬切——但**硬切也必须标注**，
+    静默截断才是"把命中洗成残句"的根因。
+    """
+    if len(body) <= budget:
+        return body, False, 0
+    window = body[:budget]
+    floor = int(budget * 0.55)
+    cut = -1
+    for token in _SENTENCE_ENDINGS:
+        index = window.rfind(token)
+        if index >= floor:
+            cut = max(cut, index + len(token.rstrip()))
+    if cut > 0:
+        clipped = window[:cut].strip()
+        return clipped, True, len(body) - len(clipped)
+    return window.strip(), True, len(body) - len(window)
+
+
+def format_knowledge_hit_lines(
+    hits: Sequence[KnowledgeHitView],
+    *,
+    max_chars: int = KNOWLEDGE_HIT_MAX_CHARS,
+    sanitizer: Callable[[str], str] | None = None,
+) -> list[str]:
+    """知识命中 → 提示词行（每行自带可核对身份，正文看不全就说看不全）。
+
+    行形：``- [标题｜库 人格资料库｜id=chunk_id] 正文…（另有 N 字未展示，可回查该条目）``
+
+    ``sanitizer`` 是调用方注入的消毒口（chat 层的
+    ``_sanitize_untrusted_context_text`` 与注入行剥离留在原咽喉，本模块不
+    复制一套正则）；未注入则原样呈现——安全面由调用点负责，这是刻意的分工，
+    写清在这里免得后来者以为这里漏了。
+    """
+    budget = max(80, int(max_chars))
+    lines: list[str] = []
+    for hit in hits:
+        label, title, id_part = _identity_parts(hit)
+        identity = f"[{title}｜库 {label}｜{id_part}]"
+        body = _shape_knowledge_body(hit.content)
+        if not body:
+            # 命中了却拿不出可读正文：显式说出来，绝不让模型对着空壳自由发挥。
+            lines.append(f"- {identity} （条目已命中，但本轮取到的正文无可读文本，未展示内容）")
+            continue
+        clipped, truncated, hidden = _clip_body(body, budget)
+        if sanitizer is not None:
+            clipped = sanitizer(clipped)
+        if truncated:
+            lines.append(
+                f"- {identity} {clipped}…（另有约 {hidden} 字未展示，可回查该条目）"
+            )
+        else:
+            lines.append(f"- {identity} {clipped}")
+    return lines
+
+
+def knowledge_context_block(
+    *,
+    chunks: Sequence[object],
+    library: str,
+    miss_declaration: str,
+    max_chars: int = KNOWLEDGE_HIT_MAX_CHARS,
+    sanitizer: Callable[[str], str] | None = None,
+) -> str:
+    """【知识库】区的单一组装口：命中→带身份的行；零命中→既有未命中声明。
+
+    ``library`` 为来源库名；一次调用只对应一路来源（多路由调用方合并后传，
+    或按 ``order_retrievers`` 的先后逐路传入并各自保留身份）——本函数不猜库名。
+    未命中时**原样**返回调用方交来的声明（先过两半校验），因此提示词里那句
+    "本轮没检索到"的措辞真身仍然只有一处。
+    """
+    views = [
+        knowledge_hit_view(library=library, chunk=chunk) for chunk in (chunks or ())
+    ]
+    if not views:
+        text = validate_miss_declaration(miss_declaration)
+        return text if sanitizer is None else sanitizer(text)
+    lines = format_knowledge_hit_lines(views, max_chars=max_chars, sanitizer=sanitizer)
+    return "\n".join(lines)

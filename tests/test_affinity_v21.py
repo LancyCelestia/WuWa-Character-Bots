@@ -24,7 +24,7 @@ import time
 
 import pytest
 
-from plugins.bot_unified_runtime.character.affinity import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     _FACTOR_PRODUCT_MAX,
     _FACTOR_PRODUCT_MIN,
     DynamicAffinityStore,
@@ -117,7 +117,9 @@ def test_direct_abuse_category_still_punished_as_insult(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_refusal_behavior_is_neutral_for_mood(tmp_path) -> None:
-    from plugins.bot_unified_runtime.character.mood import BotMoodStore
+    from plugins.bot_unified_runtime.domains.chat_reply.character.mood import (
+        BotMoodStore,
+    )
 
     clock = _Clock()
     mood = BotMoodStore(tmp_path / "mood.sqlite3", clock=clock)

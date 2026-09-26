@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import random
+import re
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -38,7 +39,16 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.history import (
 from plugins.bot_unified_runtime.domains.chat_reply.character.memory import (
     MemoryProvider,
     NullMemoryProvider,
-    build_memory_provider,
+    build_memory_read_path,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.memory_bus_v2 import (
+    DEGRADED_REASON_BUS_RECALL_FAILED,
+    DEGRADED_REASON_LEGACY_NEWEST_N,
+    DEGRADED_REASON_MEMORY_LEG_FAILED,
+    PROVENANCE_REFLECTED,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.memory_service import (
+    MemoryKind,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.character.persona_set import (
     PersonaSelector,
@@ -68,6 +78,9 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge i
     build_keyword_knowledge_provider,
     build_vector_knowledge_provider,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.question_intent import (
+    knowledge_confidence_from_evidence,
+)
 from plugins.bot_unified_runtime.domains.core.contracts.character import (
     ContextBundle,
     ConversationHistoryResult,
@@ -82,6 +95,32 @@ from plugins.bot_unified_runtime.domains.core.contracts.character import (
 logger = logging.getLogger(__name__)
 
 LLM_SAFE_MEMORY_SENSITIVITIES = frozenset({"public", "group", "personal"})
+
+# ---- 需求11 · 记忆类型标签渲染层（S-T-MEM-3）----
+# 类型词表真身 = memory_service.MemoryKind（存储层封闭枚举）。本层只提供
+# 「枚举成员 → 中文显示名」的展示映射：dict 键型注解使幽灵键（枚举里不存在
+# 的字符串）在类型层写不进来，词表增删永远以枚举为准，不构成第二真身。
+# 枚举扩充而此表未登记显示名时，该值按「原样点名」降级（见
+# _memory_kind_label），不编造中文标签；「昵称/身份/性格」类细分依赖写腿
+# （S-T-MEM-1）把细分类型升格进 MemoryKind，此层随后补一行显示名即可。
+_MEMORY_KIND_DISPLAY_ZH: dict[MemoryKind, str] = {
+    MemoryKind.PREFERENCE: "爱好与偏好",
+    MemoryKind.FACT: "事实信息",
+    MemoryKind.EVENT: "近期动态",
+    MemoryKind.REFLECTION: "回顾归纳",
+    MemoryKind.PROPOSAL: "待确认提案",
+}
+
+# 「原样点名」只接受短英文标识形态：kind 值来自写侧自由文本（LLM 抽取的
+# category 也可能落这里），渲染层不假定它干净——形状不符一律按缺失处理、
+# 不打标签，杜绝任意字符串进标签位（注入面收口）。
+_RAW_MEMORY_KIND_TOKEN_RE = re.compile(r"[A-Za-z0-9_\-]{1,24}")
+
+# 截断哨兵/回执共用的特殊 fact_id（非模型可见行；渲染层统一换算成一行回执）。
+MEMORY_TRUNCATION_FACT_ID = "memory_render_truncation"
+_MEMORY_TRUNCATION_TEMPLATE_ZH = "另有 {count} 条未列出"
+# 回执自身占字：按最大形态「另有 9999 条未列出」预留，计数增长不击穿预算。
+_MEMORY_TRUNCATION_RESERVE_CHARS = len(_MEMORY_TRUNCATION_TEMPLATE_ZH.format(count="9999"))
 
 # docs/affinity-design.md §5 人格自守条款：追加在档位态度文本之后（独立一句，
 # 任何档位生效）；触发形态见 §6 软类别 persona_degradation（贬低不改变扣分路径）。
@@ -539,16 +578,19 @@ class FileCharacterContextProvider:
                 max_chunks=self.knowledge_max_chunks,
                 chunk_chars=self.knowledge_chunk_chars,
             )
-        memory_results = _filter_llm_safe_memory_results(
-            self.memory_provider.retrieve(
-                request_id=request_id,
-                requester_id=sender_id,
-                subject_user_id=sender_id,
-                session_id=session_id,
-                query_text=query_text,
-                max_items=self.memory_max_items,
-                max_chars=self.memory_max_chars,
-            )
+        memory_results = _render_memory_results_with_kind_labels(
+            _filter_llm_safe_memory_results(
+                self.memory_provider.retrieve(
+                    request_id=request_id,
+                    requester_id=sender_id,
+                    subject_user_id=sender_id,
+                    session_id=session_id,
+                    query_text=query_text,
+                    max_items=self.memory_max_items,
+                    max_chars=self.memory_max_chars,
+                )
+            ),
+            max_chars=self.memory_max_chars,
         )
         conversation_history = self.conversation_history_provider.retrieve(
             request_id=request_id,
@@ -579,7 +621,12 @@ class FileCharacterContextProvider:
                 request_id=request_id,
                 chunks=knowledge_chunks,
                 answerable=bool(knowledge_chunks),
-                confidence=0.8 if knowledge_chunks else 0.0,
+                # S13：由「有块即恒定 0.8」改为可复现的真实覆盖度信号，
+                # 使一次偶然词面命中不再被当成「本地知识够用」而压制联网。
+                confidence=knowledge_confidence_from_evidence(
+                    query_text,
+                    [chunk.content for chunk in knowledge_chunks],
+                ),
             ),
             current_message=query_text,
             sender_id=sender_id,
@@ -600,15 +647,110 @@ class FileCharacterContextProvider:
 
 
 from plugins.bot_unified_runtime.domains.chat_reply.character.reflection import (
+    ReflectionStore,
     build_reflection_memory_provider,
 )
 
 
-class _MergedMemoryProvider:
-    """合并多路记忆召回（主记忆库 + 反思事实库）：fact_id 去重 + 预算截断。"""
+def _leg_recall_mode(provider: object) -> str:
+    """读一条腿自报的取数口径。
 
-    def __init__(self, providers: list[MemoryProvider]) -> None:
+    ``recall_mode`` **不在 ``MemoryProvider`` 协议上**（协议只有 ``retrieve``），
+    所以这里按「读到什么算什么」取：认不出就按关态口径 ``legacy_newest_n`` 记
+    ——宁可把一轮读成「没按话题打分」，也不许把它误报成总线打过分。
+    """
+    return str(getattr(provider, "recall_mode", "") or "") or DEGRADED_REASON_LEGACY_NEWEST_N
+
+
+def _leg_failure_reason(provider: object) -> str:
+    """挂掉的这条腿该报哪枚理由（归因单一判据，不看位置看身份）。
+
+    只有「本轮的统一打分器」= 总线那条腿挂了才许报 ``bus_recall_failed``；
+    旧归纳腿/旧仓储腿挂了报 ``memory_leg_failed``。判据取腿自己的
+    ``recall_mode``（``MemoryBusProvider`` 的类属性），不取列表下标——
+    下标是装配顺序的巧合，装配口一改顺序归因就会跟着错。
+    """
+    if str(getattr(provider, "recall_mode", "") or "") == "memory_bus":
+        return DEGRADED_REASON_BUS_RECALL_FAILED
+    return DEGRADED_REASON_MEMORY_LEG_FAILED
+
+
+class _MergedMemoryProvider:
+    """记忆消费腿：把**打过分的**候选按预算并进 prompt，本层不再二次排序。
+
+    预算/名额之外的**新候选**不再静默丢弃：条数经哨兵 fact 交给渲染层
+    （`_render_memory_results_with_kind_labels`）统一出一行「另有 N 条未列出」
+    （需求11 渲染腿；哨兵 kind/text 皆空，模型面只见回执一行）。
+
+    两种形态由 ``build_memory_read_provider`` 这道闸决定，**永不同时成立**：
+
+    - ``ranker="memory_bus"``：总线是唯一打分器，``_providers`` 只有一条腿；
+      未迁进总线的旧归纳表经 ``bus.attach_candidate_source`` 并进同一打分池
+      （见 ``memory_bus_v2`` 的候选池文档）。``_fallback`` 只在总线抛异常时被调用
+      一次，并必须落一条降级审计——静默降级是漏报的谎。
+    - ``ranker="legacy_newest_n"``：总线没开，旧主库腿按 ``updated_at DESC`` 取
+      最近 N 条、**不看本轮查询**，反思腿自选自己的池子。关态逐字节旧行为，
+      但这句"本轮没按话题打分"必须可读出来（``recall_mode`` + 装配期点名一次）。
+      **关态没有审计通道**：降级审计落在总线的 ``memory_recall_audit_v21``，
+      而关态根本不建总线（``build_memory_read_path`` 的既有不变量：不开新连接、
+      不建 v2 表，由 ``test_bus_off_writes_nothing_into_the_v2_store`` 锁着）；
+      返回契约 ``MemoryRetrievalResult`` 是 StrictBaseModel、无空闲字段可挂标记，
+      所以关态这一轮的可读出口只有「装配期一行日志 + 腿自报的 ``recall_mode``」
+      两处，本席不为此偷偷开一条写库路径（要成真字段需改 contracts，见交接）。
+    """
+
+    def __init__(
+        self,
+        providers: list[MemoryProvider],
+        *,
+        ranker: str,
+        audit_bus: Any | None = None,
+        fallback: MemoryProvider | None = None,
+    ) -> None:
         self._providers = providers
+        self._audit_bus = audit_bus
+        self._fallback = fallback
+        #: **装配期事实**：本实例这一条腿是按话题打分（``memory_bus``）还是按时间
+        #: 取最近几条（``legacy_newest_n``）。per-request 的降级**不改写它**（改写
+        #: =并发会话互相污染彼此的口径），只走日志与召回审计。
+        self.recall_mode = ranker
+
+    def _note_degraded(
+        self,
+        *,
+        reason: str,
+        subject_user_id: str,
+        session_id: str,
+        request_id: str,
+        detail: str,
+    ) -> None:
+        """降级留痕：日志一行 +（有总线时）一条注入审计；观测失败绝不外抛。
+
+        返回值只用于「审计有没有真落账」这一件事：``record_degraded_recall``
+        自己吞异常返回 False，调用方不读它就等于把「留痕失败」读成「留痕成功」
+        （S-T-MEM-5 首版即栽在这里）。留痕失败时补一行日志，仍不阻断回复。
+        """
+        logger.warning(
+            "memory recall degraded reason=%s mode=%s type=%s",
+            reason,
+            self.recall_mode,
+            detail,
+        )
+        if self._audit_bus is None:
+            return
+        try:
+            landed = self._audit_bus.record_degraded_recall(
+                owner_id=subject_user_id,
+                session_id=session_id,
+                request_id=request_id,
+                reason=reason,
+                detail=detail,
+            )
+        except Exception as exc:  # noqa: BLE001 - 观测面挂了也不许影响回复
+            logger.warning("memory degrade audit failed type=%s", type(exc).__name__)
+            return
+        if landed is False:
+            logger.warning("memory degrade audit failed reason=%s", reason)
 
     def retrieve(
         self,
@@ -623,31 +765,93 @@ class _MergedMemoryProvider:
     ) -> MemoryRetrievalResult:
         merged: dict[str, dict[str, str]] = {}
         order: list[str] = []
+        seen_ids: set[str] = set()
         used_chars = 0
-        for provider in self._providers:
-            try:
-                result = provider.retrieve(
-                    request_id=request_id,
-                    requester_id=requester_id,
-                    subject_user_id=subject_user_id,
-                    session_id=session_id,
-                    query_text=query_text,
-                    max_items=max_items,
-                    max_chars=max_chars,
-                )
-            except Exception:  # noqa: BLE001, S112 - 单路记忆失败静默降级（纯 provider 层无日志面），不断链。
-                continue
+        dropped_candidates = 0
+
+        def absorb(result: MemoryRetrievalResult) -> None:
+            nonlocal used_chars, dropped_candidates
             for fact in result.facts:
                 fact_id = str(fact.get("fact_id", ""))
                 text_len = len(str(fact.get("text", "")))
-                if not fact_id or fact_id in merged:
+                if not fact_id or fact_id in seen_ids:
+                    # 无 id=契约残行（不进账也不计数）；同 id 再见=去重而非截断。
                     continue
+                seen_ids.add(fact_id)
                 if len(merged) >= max_items or used_chars + text_len > max_chars:
+                    dropped_candidates += 1
                     continue
                 merged[fact_id] = fact
                 order.append(fact_id)
                 used_chars += text_len
-        return MemoryRetrievalResult(request_id=request_id, facts=[merged[k] for k in order])
+
+        legs = list(self._providers)
+        for index, provider in enumerate(legs):
+            try:
+                absorb(
+                    provider.retrieve(
+                        request_id=request_id,
+                        requester_id=requester_id,
+                        subject_user_id=subject_user_id,
+                        session_id=session_id,
+                        query_text=query_text,
+                        max_items=max_items,
+                        max_chars=max_chars,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - 单路故障不断链，但必须留痕
+                # 归因必须分得清：只有「统一打分器那一条腿」挂了才叫
+                # ``bus_recall_failed``。反思腿/旧仓储腿挂了报成同名，运维就会
+                # 去查一个今天根本没开的总线（S-T-MEM-5 首版对所有腿共用一枚理由）。
+                self._note_degraded(
+                    reason=_leg_failure_reason(provider),
+                    subject_user_id=subject_user_id,
+                    session_id=session_id,
+                    request_id=request_id,
+                    detail=f"{type(provider).__name__}:{type(exc).__name__}",
+                )
+                if index > 0 or self._fallback is None:
+                    continue
+                # 只有主打分器挂了才启用兜底腿：本轮明确降级为「按时间取最近 N 条」，
+                # 且这条事实必须被读出来（审计已落 + 日志点名兜底腿顶上）。
+                # **不写回 self.recall_mode**：那是装配期事实，被一次 per-request
+                # 故障改掉会让并发会话互相污染彼此的口径（谁读到的都是最后一个
+                # 倒霉蛋的状态），降级只在本轮的日志与审计里说话。
+                try:
+                    absorb(
+                        self._fallback.retrieve(
+                            request_id=request_id,
+                            requester_id=requester_id,
+                            subject_user_id=subject_user_id,
+                            session_id=session_id,
+                            query_text=query_text,
+                            max_items=max_items,
+                            max_chars=max_chars,
+                        )
+                    )
+                    logger.warning(
+                        "memory recall served from fallback leg mode=%s instead=%s",
+                        DEGRADED_REASON_LEGACY_NEWEST_N,
+                        type(self._fallback).__name__,
+                    )
+                except Exception as fallback_exc:  # noqa: BLE001 - 兜底也挂=本轮没记忆
+                    logger.warning(
+                        "memory fallback leg also failed type=%s",
+                        type(fallback_exc).__name__,
+                    )
+        facts = [merged[k] for k in order]
+        if dropped_candidates > 0:
+            facts = facts + [
+                {
+                    "fact_id": MEMORY_TRUNCATION_FACT_ID,
+                    "kind": "",
+                    "text": "",
+                    "sensitivity": "personal",
+                    "scope_key": "global",
+                    "truncated_items": str(dropped_candidates),
+                }
+            ]
+        return MemoryRetrievalResult(request_id=request_id, facts=facts)
 
 
 _ADDRESSING_STORES_LOCK = threading.Lock()
@@ -685,6 +889,116 @@ def build_addressing_preference_store(config: object) -> AddressingPreferenceSto
     """公开入口：进程级共享称谓偏好 store（供命令面读写用户显式偏好）。"""
     return _shared_addressing_preferences(config)
 
+
+
+# ---------------------------------------------------------------------------
+# 记忆消费腿的**唯一闸**（需求 11 · S-T-MEM-5）
+# ---------------------------------------------------------------------------
+
+#: 注入总线的旧归纳候选源名（进 fact_id 前缀，与总线原生行/``legacy:`` 互不碰撞）。
+REFLECTED_CANDIDATE_SOURCE = "reflected"
+#: 折进打分池前的候选窗（合并层的 max_items/max_chars 才是最终预算）。
+_REFLECTED_CANDIDATE_LIMIT = 40
+_REFLECTED_CANDIDATE_CHARS = 6000
+
+_LEGACY_RANKER_WARNED: set[str] = set()
+_LEGACY_RANKER_LOCK = threading.Lock()
+
+
+def _warn_legacy_ranker_once(db_path: str) -> None:
+    """关态点名一次：召回没按本轮话题打分。
+
+    这不是告警噪音，而是让「记忆质量差」这个症状能被子系统归因——今天生产
+    ``BOT_MEMORY_BUS_ENABLED`` 缺省关，症状（每轮塞最近几条、与话题无关）在线上没有
+    任何一处自己承认过。每库一次，重启后重来。
+    """
+    with _LEGACY_RANKER_LOCK:
+        if db_path in _LEGACY_RANKER_WARNED:
+            return
+        _LEGACY_RANKER_WARNED.add(db_path)
+    logger.warning(
+        "memory recall ranker=%s: 统一打分器没开（BOT_MEMORY_BUS_ENABLED=false），"
+        "本轮注入按时间取最近几条，可能混进与话题无关的话；库=%s",
+        DEGRADED_REASON_LEGACY_NEWEST_N,
+        db_path,
+    )
+
+
+def _reflection_candidate_source(config: object) -> Any | None:
+    """把「尚未迁进总线的旧归纳表」包成总线候选源；反思未启用则 None。
+
+    读取口只认既有真身 ``ReflectionStore.facts_for``（主体 + 会话 + 置信度三道闸
+    都在它里面，本函数不复制判据、也不放宽一寸）。门形与
+    ``reflection.build_reflection_memory_provider`` 一致，由
+    ``test_memory_bus_read_leg.py::test_reflection_gate_agrees_with_the_leg`` 锁住
+    两态一致——两处判据不能各说各话。
+    """
+    if not bool(getattr(config, "bot_reflection_enabled", False)):
+        return None
+    db_path = str(getattr(config, "bot_reflection_db_path", "") or "").strip()
+    if not db_path:
+        return None
+    store = ReflectionStore(db_path)
+
+    def read(owner_id: str, session_id: str) -> list[dict[str, Any]]:
+        facts = store.facts_for(
+            owner_id,
+            limit=_REFLECTED_CANDIDATE_LIMIT,
+            max_chars=_REFLECTED_CANDIDATE_CHARS,
+            session_id=session_id,
+        )
+        return [
+            {
+                "fact_id": fact.fact_id,
+                "subject_user_id": fact.sender_id,
+                "session_id": fact.session_key,
+                "text": fact.fact_text,
+                "confidence": fact.confidence,
+                "created_at": fact.created_at,
+            }
+            for fact in facts
+        ]
+
+    return read
+
+
+def build_memory_read_provider(config: object) -> MemoryProvider:
+    """记忆读取路径的唯一装配口：总线开=一条腿一个打分器，总线关=旧形态原样。
+
+    ``build_character_context_provider`` 只经这一个函数装配 ``memory_provider``
+    （由 ``test_memory_bus_read_leg.py`` 的 AST 锁执法：仓里不得有第二处
+    ``_MergedMemoryProvider(`` 构造点）。
+
+    - 总线开：主腿 ``MemoryBusProvider``；旧归纳表 ``attach_candidate_source``
+      并进同一打分池（仅当归纳还没落总线，否则同一条会以两个身份并池），
+      反思腿**不再并列进合并层**——两路各排各的再按列表顺序抢预算，
+      正是「高分旧事实被低分新事实挤掉」的病根；
+      兜底腿=同一份旧仓储，只在总线抛异常时被调用一次并落降级审计。
+    - 总线关：主腿旧仓储 + 反思腿，与开本席之前**逐字节同形**（预算、去重、
+      哨兵回执一概不动），只多一行装配期点名。
+    """
+    primary, fallback = build_memory_read_path(config)
+    bus = getattr(primary, "bus", None)
+    if bus is None:
+        _warn_legacy_ranker_once(
+            str(getattr(config, "bot_memory_db_path", "") or "").strip() or "unset"
+        )
+        return _MergedMemoryProvider(
+            [primary, build_reflection_memory_provider(config)],
+            ranker=DEGRADED_REASON_LEGACY_NEWEST_N,
+        )
+    if not bus.settings().writes_to_bus:
+        source = _reflection_candidate_source(config)
+        if source is not None:
+            bus.attach_candidate_source(
+                REFLECTED_CANDIDATE_SOURCE, source, provenance=PROVENANCE_REFLECTED
+            )
+    return _MergedMemoryProvider(
+        [primary],
+        ranker=_leg_recall_mode(primary),
+        audit_bus=bus,
+        fallback=fallback,
+    )
 
 def build_character_context_provider(
     config: object,
@@ -802,12 +1116,7 @@ def build_character_context_provider(
         tone_warmth=float(getattr(config, "bot_tone_warmth", 0.7)),
         tone_directness=float(getattr(config, "bot_tone_directness", 0.5)),
         tone_message_count_limit=int(getattr(config, "bot_tone_message_count_limit", 0)),
-        memory_provider=_MergedMemoryProvider(
-            [
-                build_memory_provider(config),
-                build_reflection_memory_provider(config),
-            ]
-        ),
+        memory_provider=build_memory_read_provider(config),
         memory_max_items=int(getattr(config, "bot_memory_max_items", 5)),
         memory_max_chars=int(getattr(config, "bot_memory_max_chars", 1200)),
         conversation_history_provider=(
@@ -864,6 +1173,104 @@ def _filter_llm_safe_memory_results(
     return MemoryRetrievalResult(
         request_id=result.request_id,
         facts=safe_facts,
+        raw_message_refs=result.raw_message_refs,
+        confidence=result.confidence,
+        privacy_level=result.privacy_level,
+    )
+
+
+def _memory_kind_label(kind_value: object) -> str:
+    """把记忆条目的 kind 映射为人话类型标签（词表派生自 MemoryKind 枚举）。
+
+    - 枚举在册且本层登记了显示名 → 中文标签；
+    - 枚举在册但未登记显示名（写腿刚扩充的细分类型）、或枚举外的短英文标识
+      （存量 "manual"/"auto" 等散落字面量）→ 原样点名，不编造中文；
+    - kind 缺失/空白/形状可疑（含空格、换行、任意串）→ 返回空串=不打标签，
+      宁缺毋滥：给没把握的条目猜类型，比不标更易误导模型复述。
+    """
+    raw = str(kind_value or "").strip()
+    if not raw:
+        return ""
+    try:
+        display = _MEMORY_KIND_DISPLAY_ZH.get(MemoryKind(raw))
+    except ValueError:
+        display = None
+    if display:
+        return display
+    if _RAW_MEMORY_KIND_TOKEN_RE.fullmatch(raw):
+        return raw
+    return ""
+
+
+def _memory_truncation_notice_fact(dropped_count: int) -> dict[str, str]:
+    """截断回执行：静默截断=谎报，丢了几条就必须点名几条。"""
+    return {
+        "fact_id": MEMORY_TRUNCATION_FACT_ID,
+        "kind": "",
+        "text": _MEMORY_TRUNCATION_TEMPLATE_ZH.format(count=max(0, int(dropped_count))),
+        "sensitivity": "personal",
+        "scope_key": "global",
+    }
+
+
+def _render_memory_results_with_kind_labels(
+    result: MemoryRetrievalResult,
+    *,
+    max_chars: int,
+) -> MemoryRetrievalResult:
+    """渲染腿：每条记忆注入前带「【类型标签】正文」成对形态，并重算字符预算。
+
+    契约（需求11 渲染腿，测试件 tests/test_memory_kind_rendering.py 逐条锁）：
+    1. 类型标签与条目正文永远成对进上下文；标签派生自存储层枚举，未知值
+       原样点名或不打标，绝不编造；
+    2. 预算按渲染后正文（含标签）计：注入条目文本总长 ≤ max_chars；被丢
+       候选（含上游 `_MergedMemoryProvider` 以哨兵 fact 交来的计数）合并
+       成唯一一行「另有 N 条未列出」，N 恒为真实丢弃数；
+    3. 隐私过滤在上游 `_filter_llm_safe_memory_results` 已完成：被过滤的
+       credentialed 条目**不计入 N**——「存在一条不能说的事」本身就是敏感
+       信息（per-sender 归属与群摘要隔离口径不放宽）。
+    """
+    dropped = 0
+    rendered: list[dict[str, str]] = []
+    used = 0
+    for fact in result.facts:
+        if str(fact.get("fact_id") or "") == MEMORY_TRUNCATION_FACT_ID:
+            # 合并层哨兵只带计数不带正文：并账后由本函数统一出一行回执。
+            try:
+                dropped += max(0, int(str(fact.get("truncated_items") or "0")))
+            except ValueError:
+                pass
+            continue
+        text = str(fact.get("text") or fact.get("summary") or "")
+        label = _memory_kind_label(fact.get("kind")) if text else ""
+        labeled_text = f"【{label}】{text}" if label else text
+        cost = len(labeled_text) + 1  # +1 = 行间换行，预算按实际注入形态计
+        if used + cost > max_chars:
+            dropped += 1
+            continue
+        new_fact = dict(fact)
+        new_fact["text"] = labeled_text
+        rendered.append(new_fact)
+        used += cost
+    if dropped > 0:
+        # 回执也要进预算：逐条从尾部腾位（腾掉的同样记进 N），保证
+        # 「注入正文 + 回执行」总长 ≤ max_chars。腾到只剩回执是预算小到
+        # 装不下正文的退化态——那一行仍出（宁超几个字，不虚报为零）。
+        while rendered:
+            notice = _memory_truncation_notice_fact(dropped)
+            total = sum(len(item["text"]) + 1 for item in rendered) + len(notice["text"]) + 1
+            if total <= max_chars:
+                rendered.append(notice)
+                break
+            rendered.pop()
+            dropped += 1
+        else:
+            rendered.append(_memory_truncation_notice_fact(dropped))
+    if not rendered and not result.facts:
+        return result
+    return MemoryRetrievalResult(
+        request_id=result.request_id,
+        facts=rendered,
         raw_message_refs=result.raw_message_refs,
         confidence=result.confidence,
         privacy_level=result.privacy_level,

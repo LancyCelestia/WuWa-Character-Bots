@@ -9,7 +9,7 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict
 
@@ -678,6 +678,54 @@ def _is_definitive_media_rejection(receipt: DeliveryReceipt) -> bool:
     """终败回执是否源自平台明确拒绝（媒体确定未送达，文本回退安全）。"""
     issue = receipt.operational_issue
     return issue is not None and str(issue.kind) == _DEFINITIVE_REJECTION_KIND
+
+
+def book_inline_unknown_parts(send_queue: Any, send_request: SendRequest, issue: Any) -> bool:
+    """inline 首投路径的 mixed「结果未知」失败 part 级记账（防盲重投）。
+
+    2026-09-24 语音双发根修：inline 首投（`_record_transport_receipt`）此前
+    只做请求级 mark_retryable_failure，part 从未规划 ⇒ worker 首轮认领时把
+    mixed 当作从未发送整发重投；首投实际已送达（超时≠未送达）即成第二遍。
+    本件把 `_deliver_atomic_mixed_parts` 的同一分类下沉到 inline 持久化
+    （单一真身：分类语义只在 worker，inline 调用之）：
+    - kind ∈ {retcode_failure, bot_unavailable}=明确拒绝（SnowLuma 原子拒绝
+      =零投递，重发安全）/ 环境挂起 ⇒ 返回 False，交调用方走既有请求级
+      retryable 语义；
+    - 其余可重试失败（超时/断连/传输异常=结果未知）⇒ 全部 PENDING part 记
+      UNKNOWN、行置 PARTIAL 断点（resumable=True，与 worker 有进展轮同语义：
+      UNKNOWN 确认协议照常，生产 confirmer=None 时停 PARTIAL 待人工）。
+    返回 True=已记账，调用方不再 mark_retryable_failure。非 mixed、无 part
+    面队列（内存版/测试替身）或规划失败一律 False=既有行为逐字节不变。
+    """
+    if issue is None:
+        return False
+    if str(getattr(issue, "kind", "")) in {_DEFINITIVE_REJECTION_KIND, "bot_unavailable"}:
+        return False
+    if not _is_atomic_part_delivery(send_request):
+        return False
+    chunks = _chunk_part_plan(send_request)
+    if not chunks:
+        return False
+    if not all(
+        hasattr(send_queue, name)
+        for name in (
+            "ensure_parts_planned",
+            "mark_part_unknown",
+            "mark_partial",
+        )
+    ):
+        return False
+    request_id = send_request.request_id
+    planned = send_queue.ensure_parts_planned(
+        request_id, [_payload_digest(chunk) for chunk in chunks]
+    )
+    if planned is None:
+        return False
+    kind = str(issue.kind)
+    for part_index in planned.pending_indexes():
+        send_queue.mark_part_unknown(request_id, part_index, error_kind=kind)
+    send_queue.mark_partial(request_id, resumable=True, operational_issue=issue)
+    return True
 
 
 # 摘要层 S4：content_sha256 形态门（与 renderer canonicalize 同一口径：

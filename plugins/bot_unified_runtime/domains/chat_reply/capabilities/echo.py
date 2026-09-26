@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import html
 import random
@@ -21,10 +22,15 @@ from plugins.bot_unified_runtime.contracts import (
 )
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
+    ROLE_SUPER_ADMIN,
     build_role_settings,
 )
 from plugins.bot_unified_runtime.domains.core.config.config_readiness import (
     run_config_smoke,
+)
+from plugins.bot_unified_runtime.domains.creation.reserved_health_alert import (
+    creation_status_line,
+    flush_reserved_issues_to_alerts,
 )
 from plugins.bot_unified_runtime.domains.media.voice_health_alert import (
     flush_probe_issue_to_alerts,
@@ -84,16 +90,78 @@ def build_status_result(
             send_policy=SendPolicy.IMMEDIATE,
         )
     status_config = config or Config()
+    body = _build_status_body(status_config, runtime_control or RuntimeControlState())
+    # 第 5 项（2026-09-25 接线）：超管在 /bot status 里附带宿主机快照行 + 状态卡。
+    # 非超管路径不进入本分支 ⇒ 输出与接线前逐字节一致（回归锁见
+    # tests/test_host_status.py::test_non_super_admin_status_body_is_unchanged）。
+    host_lines, host_card_path = _host_status_extension(actor_roles)
+    if host_lines:
+        body = body + "\n" + "\n".join(host_lines)
     return CapabilityResult(
         request_id=request_id or new_request_id("status"),
         capability_id="bot.status",
         kind="text",
         title="状态",
-        body=_build_status_body(status_config, runtime_control or RuntimeControlState()),
+        body=body,
         risk_level=RiskLevel.LOW,
         privacy_level=PrivacyLevel.PUBLIC,
         send_policy=SendPolicy.IMMEDIATE,
+        images=[{"file": host_card_path}] if host_card_path else [],
     )
+
+
+def _running_loop_here() -> bool:
+    """当前线程是否跑着事件循环（能力被线程池 offload 时返回 False）。"""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+def _host_status_extension(
+    actor_roles: list[str] | None,
+) -> tuple[list[str], str]:
+    """超管专属的宿主机附块：返回（标注行列表，卡片 PNG 路径或空串）。
+
+    判据复用唯一角色源（roles.ROLE_SUPER_ADMIN，命令入口已随 decision.actor_roles
+    带来），**零新配置键、零新名单**。非超管直接回空——调用方因此逐字节不变。
+
+    线程口径（第 5 项 b）：`bot.status` 今天**不在**根 `__init__.py` 的
+    ``OFFLOADED_CAPABILITY_IDS`` 里，``pipeline.handle`` 在事件循环线程同步调用
+    能力（pipeline.py:1396,:1411）⇒ 本函数被 loop 调用时绝不做秒级的事：
+    读数只吃缓存（`allow_blocking=False`）、不出卡（Playwright 渲染要秒级，
+    压到 loop 上就是全会话卡死）。根把 "bot.status" 加进 offload 名单后（NEEDS-MAIN），
+    这里自动走现取+出卡分支，零改动。
+    """
+    roles = {str(role).strip().lower() for role in (actor_roles or [])}
+    if ROLE_SUPER_ADMIN not in roles:
+        return [], ""
+    from plugins.bot_unified_runtime.domains.ops.monitor import host_card, host_status
+
+    off_loop = not _running_loop_here()
+    groups, taken_at = host_status.cached_host_snapshot(allow_blocking=off_loop)
+    rows = [row for items in groups.values() for row in items]
+    if not rows:
+        return (
+            [
+                (
+                    "宿主机（超管视图）：这会儿拿不到读数——采集器没有可用数据源"
+                    "（psutil 缺席，或本路径尚未在线程池里跑过一次现取）。"
+                )
+            ],
+            "",
+        )
+    lines = [f"宿主机（超管视图，取样 {taken_at}）："]
+    lines += [f"{label}：{value}" for label, value in rows]
+    if not off_loop:
+        # 诚实说明为什么只见字不见图——不是"图坏了"，是这条路今天不许渲染。
+        lines.append("宿主机卡图片本轮未生成：/bot status 尚未接入线程池 offload。")
+        return lines, ""
+    card_png = host_card.render_host_card_png(groups, taken_at=taken_at)
+    if not card_png:
+        lines.append("宿主机卡未出图（渲染后端不可用），以上读数即全部结果。")
+    return lines, card_png
 
 
 # ==================== 决策影子痕迹查询（审查 P-03 消费侧） ====================
@@ -278,7 +346,7 @@ _PUBLIC_HELP_TOPICS = frozenset(
         "订阅", "点歌", "表情", "天气", "行情", "个股行情", "商品行情", "国债收益率", "北向资金", "汇率", "占卜", "快报", "维基", "萌娘百科",
         "历史上的今天", "下载", "昵称", "链接", "Epic", "好感度", "吃什么", "偷表情",
         "随机图", "提醒", "笔记", "收件箱", "语音", "搜图", "记忆", "路由", "草稿",
-        "帮助", "聊天", "戳一戳", "表情收库", "自然语言", "群信息",
+        "帮助", "聊天", "戳一戳", "表情收库", "自然语言", "群信息", "亲密模式",
     }
 )
 
@@ -298,6 +366,7 @@ _HELP_CATEGORIES = (
             "暂停", "回复", "设置", "凭据", "群策略", "群文件", "文件",
             "身份", "怪癖", "限流", "合并转发", "群摘要", "视频理解", "运行开关",
             "邮件", "Telegram", "供应商", "忽略", "媒体归档", "决策", "功能管理", "紧急信息",
+            "宿主机状态", "书面同意",
         },
     ),
     ("大模型相关", {"模型", "用量", "搜索"}),
@@ -307,10 +376,33 @@ _HELP_CATEGORIES = (
             "订阅", "点歌", "表情", "偷表情", "搜图", "Epic", "历史上的今天",
             "天气", "行情", "个股行情", "商品行情", "国债收益率", "北向资金", "汇率", "占卜", "快报", "维基", "萌娘百科", "下载",
             "昵称", "链接", "吃什么", "好感度", "随机图", "提醒", "笔记", "收件箱", "语音", "记忆", "路由",
-            "草稿", "帮助", "聊天", "戳一戳", "表情收库", "自然语言", "群信息",
+            "草稿", "帮助", "聊天", "戳一戳", "表情收库", "自然语言", "群信息", "亲密模式",
         },
     ),
 )
+
+
+def _help_grouped(entries: list[HelpEntry]) -> list[tuple[str, list[HelpEntry]]]:
+    """按分类分组，但**行序一律跟 ``_HELP_ENTRIES`` 的声明序**。
+
+    ``_HELP_CATEGORIES`` 的成员是 ``set`` 字面量，直接 ``for topic in topics``
+    会把哈希序带进帮助页——字符串哈希默认随机化，于是每次重启 bot，命令手册
+    的行序都会重洗一次（2026-09-25 澜汐要"看得懂"，第一条就是别每次不一样）。
+    分类表在这里只当成员判定用，顺序由条目声明序派生。
+    """
+    grouped: dict[str, list[HelpEntry]] = {}
+    for entry in entries:
+        topic = str(entry["topic"])
+        for name, topics in _HELP_CATEGORIES:
+            if topic in topics:
+                grouped.setdefault(name, []).append(entry)
+                break
+        else:
+            grouped.setdefault("更多", []).append(entry)
+    ordered = [(name, grouped[name]) for name, _ in _HELP_CATEGORIES if grouped.get(name)]
+    if grouped.get("更多"):
+        ordered.append(("更多", grouped["更多"]))
+    return ordered
 
 
 def _help_index_body(*, page: int, is_admin: bool) -> str:
@@ -319,7 +411,6 @@ def _help_index_body(*, page: int, is_admin: bool) -> str:
     每行末尾附二级展开引导：回复 /bot help <模块> 查看该模块逐参数说明。
     """
     entries = _visible_help_entries(is_admin)
-    by_topic = {str(entry["topic"]): entry for entry in entries}
     title = "管理员帮助总览" if is_admin else "功能帮助总览"
     lines = [title, "（回复 /bot help 模块名 看该模块子功能与参数）"]
 
@@ -331,18 +422,9 @@ def _help_index_body(*, page: int, is_admin: bool) -> str:
             return index
         return f"{index}｜详情：/bot help {topic}"
 
-    categorized: set[str] = set()
-    for category, topics in _HELP_CATEGORIES:
-        category_entries = [by_topic[topic] for topic in topics if topic in by_topic]
-        if not category_entries:
-            continue
-        categorized.update(entry["topic"] for entry in category_entries)
+    for category, category_entries in _help_grouped(entries):
         lines.extend(("", f"【{category}】"))
         lines.extend(_index_line(entry) for entry in category_entries)
-    orphans = [entry for topic, entry in by_topic.items() if topic not in categorized]
-    if orphans:
-        lines.extend(("", "【更多】"))
-        lines.extend(_index_line(entry) for entry in orphans)
     return "\n".join(lines)
 
 
@@ -483,7 +565,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "index": '【状态】查看运行状态摘要：/bot status',
             "title_line": '【状态】查看运行状态摘要',
             "lines": [
-                '/bot status：作用=查看运行状态摘要；参数=无；内容=软暂停状态/原因、角色计数、人格与知识文件缺失数、记忆/历史/诊断/审计/回执/队列的开关与存储（sqlite/memory）、限速与安静时间、LLM provider/model/key 状态与就绪下一步；意义=排障第一入口，出问题先看状态再 /bot why。',
+                '/bot status：作用=查看运行状态摘要；参数=无；内容=软暂停状态/原因、角色计数、人格与知识文件缺失数、记忆/历史/诊断/审计/回执/队列的开关与存储（sqlite/memory）、限速与安静时间、LLM provider/model/key 状态与就绪下一步；超管另附宿主机快照行（处理器/显卡/内存/磁盘/占用/版本）与状态卡图片；意义=排障第一入口，出问题先看状态再 /bot why。',
             ],
             "detail": (
                 '【板块介绍】\n'
@@ -505,7 +587,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "index": '【记忆】管理我的长期记忆：/bot memory add|list|delete',
             "title_line": '【记忆】管理我交给机器人的长期记忆',
             "lines": [
-                '/bot memory add <内容>：作用=记住一句话；参数=内容（必填，建议 ≤1200 字）＋--sensitivity=（可选，personal|group|public|credentialed，默认 personal）；内容=回显已记住的正文与 fact_id、sensitivity；意义=让机器人长期记住你的偏好与事实。',
+                '/bot memory add <内容>：作用=记住一句话；参数=内容（必填，建议 ≤1200 字），或加 --sensitivity=（可选，personal|group|public|credentialed，默认 personal）；内容=回显已记住的正文与 fact_id、sensitivity；意义=让机器人长期记住你的偏好与事实。',
                 '/bot memory list：作用=列出我的记忆；参数=无；内容=fact_id＋sensitivity＋正文的清单（私聊=全部个人记忆，群聊=仅 public/group 两级）；意义=核对机器人到底记住了什么。',
                 '/bot memory delete <fact_id>：作用=删除一条记忆；参数=fact_id（必填，来自 add/list 输出）；内容=成功回显已删除，找不到会明说；意义=撤回不想被记住的内容。',
                 '权限=全员（只增删查“你本人”的记忆，别人的看不到也删不掉）。',
@@ -904,7 +986,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "index": '【设置】运行时参数：/bot runtime set|get|list|reset|nickname|persona|instance',
             "title_line": '【设置】运行时参数管理（管理员）',
             "lines": [
-                '/bot runtime set <KEY> <VALUE>：作用=热改一个参数；参数=KEY（必填，可写键见 get 列表）＋VALUE（必填，按键校验）＋--instance <名称>（可选，定位实例）；内容=已设置 KEY = 值（已持久化）；意义=不改 .env 立即生效，重启保留。',
+                '/bot runtime set <KEY> <VALUE>：作用=热改一个参数；参数=KEY（必填，可写键见 get 列表）＋VALUE（必填，按键校验），或加 --instance <名称>（可选，定位实例）；内容=已设置 KEY = 值（已持久化）；意义=不改 .env 立即生效，重启保留。',
                 '/bot runtime get <KEY>：作用=读参数实际生效值；参数=KEY（必填）；内容=值＋（覆盖值）/（.env 默认值）来源标注；意义=确认运行时覆盖与 .env 谁在生效。',
                 '/bot runtime list：作用=列出全部覆盖项；参数=无；内容=KEY=VALUE 清单；意义=盘点改过哪些。',
                 '/bot runtime reset [KEY]：作用=恢复默认；参数=KEY（可选，省略=清空全部覆盖）；内容=清除项数；意义=撤销热改。',
@@ -1078,7 +1160,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '身份',
             "admin_only": True,
             "aliases": ('身份', 'identity', '会话身份'),
-            "index": '【身份】会话身份记忆：/bot identity show|set|tag|clear｜自助称谓偏好：set-name|set-gender|unset-name|unset-gender',
+            "index": '【身份】会话身份记忆：/bot identity show|set|tag|clear｜自助称谓偏好：set-name|set-gender|unset-name|unset-gender｜自助关系档：set-relation|unset-relation|show-relation',
             "title_line": '【身份】会话级身份记忆（管理员）＋用户自助称谓偏好',
             "lines": [
                 '/bot identity show：作用=查看本会话身份；参数=无；内容=称呼/标签/设置人/更新时间（未设置会明说）；意义=核对当前会话的身份设定。',
@@ -1090,7 +1172,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '/bot identity set-gender <male|female|nonbinary|custom|unknown>：作用=登记你的性别自述；参数=五个值之一（大小写不敏感）；内容=已记下确认；意义=让语气分寸更合适；非法值不记录并列出可接受值。',
                 '/bot identity unset-name：作用=清除称谓偏好；参数=无；内容=已清除/本就没有；意义=恢复自动称呼。',
                 '/bot identity unset-gender：作用=清除性别自述；参数=无；内容=已清除/本就没有；意义=恢复 unknown。',
-                '自助子命令权限=所有用户（只能操作自己的偏好，无他人参数）；unset 为整条记录清除（称谓与性别自述一并移除）；称谓偏好与上方管理员会话身份是两套数据，自助偏好优先级更高。',
+                '自助子命令权限=所有用户（只能操作自己的偏好，无他人参数）；unset-name/unset-gender 为整条记录清除（称谓与性别自述一并移除），unset-relation 只清关系档那一列；称谓偏好与上方管理员会话身份是两套数据，自助偏好优先级更高；关系档的开关语义与词表口径见「亲密模式」模块（/bot help 亲密模式）。',
             ],
             "detail": (
                 '【板块介绍】\n'
@@ -1678,7 +1760,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '维基',
             "admin_only": False,
             "aliases": ('维基', 'wiki', '百科', 'weiji', 'wjbk'),
-            "index": '【维基】查询百科词条：维基 <词条>',
+            "index": '【维基】查通用百科（MediaWiki）：维基 <词条>',
             "title_line": '【维基】查询百科词条',
             "lines": [
                 '维基 <词条>：作用=查 MediaWiki 百科；参数=词条名（必填，省略回用法）；内容=词条摘要（游戏类词条自动精简）；意义=快速百科查询。',
@@ -1697,7 +1779,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '萌娘百科',
             "admin_only": False,
             "aliases": ('萌娘百科', '萌百', 'moegirl', 'mengbai', 'mb', '是誰', '是什麼', '介紹一下', '是谁', '是什么', '介绍一下'),
-            "index": '【萌娘百科】查询萌娘百科：萌娘百科 <词条>｜直接问 XX是谁',
+            "index": '【萌娘百科】查 ACG 向百科：萌娘百科 <词条>｜直接问 XX是谁',
             "title_line": '【萌娘百科】查询萌娘百科词条',
             "lines": [
                 '萌娘百科 <词条>：作用=查萌百词条；参数=词条名（必填）；内容=词条摘要；意义=二次元知识库。',
@@ -1873,23 +1955,93 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '群信息',
             "admin_only": False,
-            "aliases": ('群信息', '本群信息', '群资料', '群主是谁', '谁是群主', '群人数', '群公告', '群精华', '精华消息', '本群多大了'),
-            "index": '【群信息】查本群资料：群信息｜群主是谁｜群人数｜群公告｜群精华',
-            "title_line": '【群信息】本群资料、群主、人数、公告与精华',
+            # 词表**必须写字面量**：`scripts/command_catalog.py::_eval_literal` 只解析
+            # 同模块的简单常量赋值（跨模块引用当场 ValueError「无法解析的模块级名字」，
+            # 2026-09-25 实测），所以「引用真身」这条路对本文件不成立。新增词形必须
+            # 与 group_info._INTENT_OF_WORD 同步，由触发词双向门执法。
+            "aliases": ('群信息', '本群信息', '群资料', '群主是谁', '谁是群主', '群人数', '群公告', '群精华', '精华消息', '本群多大了', '群相册', '本群相册', '群相册列表', '群待办', '本群待办', '群待办列表', '群里都有谁', '本群都有谁', '群里谁说过话', '本群谁说过话', '群参与者', '本群参与者', '都有谁说过话', '我都跟谁聊过', '跟谁聊过'),
+            "index": '【群信息】查本群资料：群信息｜群主是谁｜群人数｜群公告｜群相册｜群里都有谁',
+            "title_line": '【群信息】本群资料、群主、人数、公告、精华、相册、待办与参与者',
             "lines": [
                 '群信息：作用=查本群小档案；参数=无；内容=群名/群主/人数/上限/管理员数，管理员另附公告首段与精华条数；意义=一问就知道群概况。',
                 '群主是谁｜群人数｜本群多大了：作用=单点直问；参数=无；内容=只答问的那一项（建群时长依赖协议字段，没有就直说）；意义=口语直问直答。',
                 '群公告｜群精华：作用=看公告首段/精华条数；参数=无；内容=仅管理员，其余成员收到权限提示；意义=群务信息分级可见。',
-                '边界（诚实降级）：群链接/群分享、群等级/群标签、群相册——协议无标准 API，不做不假装；接口失败如实说拿不到不编数；成员名单不整列（隐私+防刷屏）；仅群聊生效。',
+                '群相册｜群待办：作用=看本群相册概览与挂着的待办；参数=无；内容=相册只到「哪个相册多少张」这一层、不列单张照片，待办最多列 5 条并显式说另有几条；意义=群务一眼看全。',
+                '群里都有谁｜群参与者｜谁说过话：作用=说清这个群里都有谁在说话；参数=无；内容=按记忆里的说话人给名字（不是协议成员名单），人多的群给前若干名并显式说还有多少，读过记录却一条都没取到时直说「没读到记录」而不是「没人说过话」；意义=知道自己在跟谁聊。',
+                '边界（诚实降级）：群链接/群分享、群等级/群标签仍无对应动作，不做不假装；相册与待办的字段名认不出时只报条数、不编名字；接口失败如实说拿不到（≠本群没有）；成员名单不整列（隐私+防刷屏）；参与者来自记忆而非协议名单，两者不是一回事；仅群聊生效。',
             ],
             "detail": (
                 '【板块介绍】\n'
-                '  在群里直接问「群信息 / 群主是谁 / 群人数 / 群公告 / 群精华」，\n'
-                '  守岸人走 OneBot V11 群接口（群资料/成员列表/公告/精华）现查现答；\n'
-                '  资料带进程内缓存（资料 600s/成员 900s/公告 600s），不刷屏不慢等。\n'
+                '  在群里直接问「群信息 / 群主是谁 / 群人数 / 群公告 / 群精华 / 群相册 / 群待办 / 群里都有谁」，\n'
+                '  守岸人走 OneBot V11 群接口（群资料/成员列表/公告/精华/相册/待办）现查现答；\n'
+                '  资料带进程内缓存（资料 600s/成员 900s/公告 600s/相册 600s/待办 120s），\n'
+                '  待办缓存刻意给得短——刚设好的待办不该被旧表盖住。\n'
+                '【参与者这一项】\n'
+                '  「群里都有谁 / 群参与者 / 谁说过话」这一族不查协议名单，答的是记忆里真的说过话的人；\n'
+                '  同一份判据在群聊与私聊各自成腿，看的范围就是当前这个会话；没读到记录时如实说没读到。\n'
                 '【权限与效果】\n'
-                '  权限=群资料/人数全员；公告与精华仅管理员。仅群聊生效，私聊回提示。\n'
-                '【示例】群信息｜群主是谁｜群人数｜本群多大了｜群公告｜群精华'
+                '  权限=群资料/人数/相册/待办/参与者全员；公告与精华仅管理员。仅群聊生效，私聊回提示。\n'
+                '【示例】群信息｜群主是谁｜群人数｜本群多大了｜群公告｜群精华｜群里都有谁'
+            ),
+        },
+        {
+            "topic": '宿主机状态',
+            "admin_only": True,
+            # 词表必须写字面量（command_catalog 的静态求值只认同模块常量），
+            # 且与 host_state.DEFAULT_TRIGGER_WORDS 逐字同集，由触发词双向门执法。
+            "aliases": ('宿主机状态', '机器状态', '机器配置', '宿主状态', '宿主機狀態', '機器狀態', 'hoststate', 'jiqizhuangtai', 'jizhuangtai', 'jiqipeizhi'),
+            "index": '【宿主机状态】超管看本机：机器状态｜机器配置｜版本与占用',
+            "title_line": '【宿主机状态】这台机器的配置、占用与运行版本（仅超管）',
+            "lines": [
+                '机器状态：作用=报本机实况；参数=无；内容=CPU/内存/磁盘占用、显卡与显存、系统版本，附守岸人自己的运行版本族；意义=一句话知道机器现在累不累。',
+                '机器配置：作用=报硬件；参数=无；内容=型号/核心数/总内存/磁盘分区容量；意义=区分「配置」与「此刻占用」两件事。',
+                '读数来源：全部本机现算（版本走包元数据，占用走系统计数器），不是背下来的一段话；拿不到的项直说拿不到，绝不补一个看起来合理的数。',
+                '出图：能出图时发一张超管视图卡片（属性名与属性值各自左对齐）；渲染后端不可用时退成纯文本，并把「卡未出图」那句话说明白。',
+                '边界：这是超管专属视图，非超管问到只会得到一句温和的「这台机器我不对外报」，不会泄露盘符路径或任何密钥形态；本能力只读，不碰任何设置与文件。',
+            ],
+            "detail": (
+                '【板块介绍】\n'
+                '  说「机器状态 / 机器配置 / 宿主机状态」，守岸人现读本机事实：\n'
+                '  版本族（NoneBot、OneBot 适配器、协议端、插件、Python）走包元数据，\n'
+                '  硬件与占用走系统计数器，两路都汇到 domains/ops/host_metrics.py 这一个取数口。\n'
+                '【权限与效果】\n'
+                '  权限=仅超级管理员（其余角色得到一句温和的拒绝，不报错、不泄露）。\n'
+                '  效果=一张 Mica 卡片图 + 一份纯文本台账；渲染后端缺席时只剩文本，且卡上那行「未出图」会直说。\n'
+                '  读数 90 秒内复用缓存，连续追问不重复扫机器；每行出卡前过打码口。\n'
+                '【示例】机器状态｜机器配置｜宿主状态｜hoststate'
+            ),
+        },
+        {
+            "topic": '书面同意',
+            "admin_only": True,
+            # 词表必须写字面量（command_catalog 的静态求值只认同模块常量），
+            # 且与 consent_admin.DEFAULT_TRIGGER_WORDS 逐字同集，由触发词双向门执法。
+            "aliases": ('同意卡', '书面同意', '同意單', '書面同意', 'consentcard', 'yijika', 'shumiantongyi'),
+            "index": '【书面同意】危险参数的批准入口：同意卡 待批｜看｜批｜驳（仅管理员）',
+            "title_line": '【书面同意】哪些参数改动在等谁点头，以及怎么点这个头（仅管理员）',
+            "lines": [
+                '同意卡 待批：作用=列出还没人批的工单；参数=无；内容=每张卡的工单号、短码、要改哪枚参数、旧值→新值、风险档、申请人、签出与过期时刻；意义=点头之前先把要改的东西看完整，不靠别人转述。',
+                '同意卡 看 <工单号>：作用=单看一张卡的全文；参数=工单号（卡面上那一串，必填）；内容=与待批页同一套字段，多一个「状态」；意义=群里传话传了一半时，以账上的原文为准。',
+                '同意卡 批 <工单号> <短码>：作用=照卡面批准这一件；参数=工单号 + 卡上短码（两个都必填，短码必须逐字对上）；内容=批语已记下，并说清接下来该谁做什么；意义=危险的参数改动要的是有权限的人亲手的一句话，不是模型顺手的一个字。',
+                '同意卡 驳 <工单号> <短码>：作用=驳回并作废这张卡；参数=工单号 + 短码；内容=已驳回，这张卡不再有效；意义=不想改就明说不改，别让它挂到过期还占着待办。',
+                '认不下的句子一律不当命令：触发词后面跟了我看不懂的东西，我就当没听见，绝不「大概像」就把它读成一次批准。',
+            ],
+            "detail": (
+                '【板块介绍】\n'
+                '  需要书面同意的参数被改动时，设置咽喉不落笔，先签一张同意卡；这一族命令就是把那张卡批掉或驳回的那句话。\n'
+                '  分级表唯一住 domains/core/safety_exec/config_risk.py，同意账唯一住 domains/core/safety_exec/consent.py，\n'
+                '  执法点唯一住 domains/core/safety_exec/settings_gate.py——本命令面零判定、零第二本账，只把一句入站消息交给它。\n'
+                '【档位是什么】\n'
+                '  R0 不问就改（每次照记一行流水）；R1 由管理员在原会话里确认；R2 要超级管理员在私聊里亲口批；\n'
+                '  R3 连批都不给，只允许出待审补丁，部署由主人亲手做。\n'
+                '【权限与效果】\n'
+                '  权限=管理员可看单；一张具体的卡够不够格批，由账上的阶梯判：可信级、私聊门、原会话门、\n'
+                '  发起人不得批自己发起的那张、一次性、到点作废（不可续）。判据只有一处，这里不复制。\n'
+                '  效果=改动的真身在批之前一个字节都不动；短码对不上不算批也不算驳，那张卡照旧待批，但这次尝试会落一条流水。\n'
+                '【批了之后】\n'
+                '  批准只记下「谁批的、批的是哪件事」；真正落笔要原来发起这件事的人用同一参数再说一次，凭证一次有效。\n'
+                '  账本装不上、值与当初批的对不上、没有热改路径的，一律不改，并且明说为什么没改——不做「看起来改了」那种回显。\n'
+                '【示例】同意卡 待批｜同意卡 看 3f2a1b｜同意卡 批 3f2a1b 8c1d4e7a｜书面同意 驳 3f2a1b 8c1d4e7a'
             ),
         },
         {
@@ -1922,7 +2074,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": 'Epic',
             "admin_only": False,
-            "aliases": ('epic', 'epic free', 'epic 免费', '免费游戏', '免費遊戲', '遊戲免費', 'steam免費', '游戏免费', 'steam免费', 'steam 免费'),
+            "aliases": ('epic', 'epic free', 'epic 免费', '免费游戏', '免費遊戲', '遊戲免費', 'steam免費', 'steam 免費', '游戏免费', 'steam免费', 'steam 免费'),
             "index": '【Epic】每周免费游戏：epic 或 Epic 免费',
             "title_line": '【Epic】查询每周免费游戏',
             "lines": [
@@ -1943,10 +2095,12 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "admin_only": False,
             # 隨機圖/來張圖（tra2 波入 DEFAULT_TRIGGER_WORDS）help 同步入册。
             "aliases": ('随机图', '来张图', '隨機圖', '來張圖', 'randpic', 'suijitu', 'sjt', 'laizhangtu', 'lzt'),
-            "index": '【随机图】从图库随机发一张：随机图 / 来张图',
+            "index": '【随机图】从图库随机发一张：随机图 / 来张图（也可回复后主动发）',
             "title_line": '【随机图】图库随机发图',
             "lines": [
                 '随机图 / 来张图：作用=从你配置的图库文件夹随机发一张图；参数=无；内容=一张图片（jpg/jpeg/png/gif/webp/bmp，单张 ≤20MB）；意义=自建图库的抽卡玩法。',
+                '回复后主动发图（P14）：bot 答完一句就有概率补一张图；BOT_RANDPIC_DISPATCH_ENABLED、BOT_RANDPIC_DISPATCH_PROBABILITY、BOT_RANDPIC_DISPATCH_COOLDOWN_SECONDS、BOT_RANDPIC_DISPATCH_MAX_PER_HOUR（缺省关）。戳 bot 那条走戳一戳的 randpic 臂（见「戳一戳」页），三触发共用同一条读目录路径与同一本窗账。',
+                '窗内不重发：BOT_RANDPIC_NO_REPEAT_WINDOW_SECONDS（按会话记账，0=关=旧行为可重样）；开态下指令路整库都在窗内时退「最久没发」那张（不拒不发），主动路宁可不发也不刷屏。',
                 '配置：图库目录写在 BOT_RANDPIC_DIRS（可多个、递归扫描、只读绝不自建目录）；触发词可用 BOT_RANDPIC_TRIGGER_WORDS 换成自己的（默认 随机图/来张图）。',
                 '随机图|来张图：作用=发图；参数=无（触发词后跟标点/语气词也可命中；「随机图片库」这类包含关系词不误触发）；内容=图片或图库为空的配置提示；意义=娱乐。',
             ],
@@ -1954,12 +2108,15 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '【板块介绍】\n'
                 '  借鉴 nonebot-plugin-randpic 的“指令→随机图”玩法但只吸收思路：\n'
                 '  不建目录、不建数据库、不做上传，一把随机梭哈。目录清单 30 秒 TTL\n'
-                '  缓存，改文件夹半分钟内生效。\n'
+                '  缓存，改文件夹半分钟内生效。P14 波把「谁开口要图才发」扩成\n'
+                '  三触发：指令 / 回复完用户消息后 / 用户戳 bot 后（后两条缺省关）。\n'
                 '【取值范围】\n'
                 '  BOT_RANDPIC_DIRS：文件夹路径列表；扩展名 jpg/jpeg/png/gif/webp/bmp；\n'
-                '  单文件 ≤20MB；目录不存在/为空时给友好提示不报错。\n'
+                '  单文件 ≤20MB；目录不存在/为空/图被移走时给友好提示不报错、不发死引用。\n'
+                '  BOT_RANDPIC_NO_REPEAT_WINDOW_SECONDS：≥0 秒，0=不记账按纯随机。\n'
                 '【权限与效果】\n'
-                '  权限=全员（bot_randpic_enabled 可关）。\n'
+                '  权限=全员（bot_randpic_enabled 可关）。主动发图那条腿同样吃安静时间\n'
+                '  窗与 blocked 名单两道硬门，拨开概率也越不过。\n'
                 '【示例】随机图｜来张图'
             ),
         },
@@ -2040,10 +2197,12 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "index": '【语音】让我用声音念一段话：说 <文本>',
             "title_line": '【语音】用守岸人的声音念出来',
             "lines": [
-                '说 <文本>：作用=把文本合成为守岸人音色的语音消息；参数=文本（必填，默认上限 200 字，BOT_TTS_MAX_CHARS=0 为不限）；内容=一条语音；意义=让回复带上声音。',
+                '说 <文本>：作用=把文本合成为守岸人音色的语音消息；参数=文本（必填，默认上限 200 字，BOT_TTS_MAX_CHARS=0 为不限）；内容=一段声音连同它所读的那串字（声音在前、文字在后，同一条消息里一起发出）；意义=让回复带上声音。',
                 '语音 <文本>｜念 <文本>｜朗读 <文本>｜tts <文本>：触发词等价，繁體 說/語音/唸/朗讀/語音合成 同（正文保留繁體用字）；BOT_TTS_TRIGGER_WORDS 可自定义。',
-                '对话自动配音：BOT_TTS_AUTO_REPLY_ENABLED 开启后，人格回复会连同语音一起发出，范围由 BOT_TTS_AUTO_REPLY_SCOPE 决定（private/group/all）。',
-                '配音概率：默认只有 5% 的回复会带语音（BOT_TTS_AUTO_REPLY_PROBABILITY）；BOT_TTS_AUTO_REPLY_ALWAYS=true 可临时改成条条都配，方便验收听音。',
+                '对话自动配音：两闸串联才会发声——总闸 BOT_TTS_ENABLED 与自动配音闸 BOT_TTS_AUTO_REPLY_ENABLED 都得开着，人格回复才连同语音一起发出；范围由 BOT_TTS_AUTO_REPLY_SCOPE 决定（private/group/all）。',
+                '配音走哪条腿：BOT_TTS_VOICE_HOOK_ENABLED 只选路、不是开关。开=新链，正文先过审再拿去合成，合成失败会留一条运营故障（进中央告警与诊断卡）；关=旧包装路径，失败就不带语音、正文照发，只在结果上留机读留痕。该键装配期读死，改后要重启。',
+                '配音概率：默认有 10% 的回复会带语音（BOT_TTS_AUTO_REPLY_PROBABILITY）；BOT_TTS_AUTO_REPLY_ALWAYS=true 可临时改成条条都配，方便验收听音。',
+                '长句拆条：BOT_TTS_AUTO_REPLY_SPLIT_MAX_CHARS>0 时，超字数自动按句末标点切成多条语音随同一条消息发出（0=不拆；语速 0.85 时 60 秒≈150~180 字）。',
                 '预设与硬顶：合成参数以中央预设表为唯一缺省源（BOT_TTS_PRESET，其余数值键=管理员覆盖）；单次文本硬顶 2000 字、产物 8 MiB（BOT_TTS_HARD_MAX_CHARS / BOT_TTS_MAX_AUDIO_BYTES，超限拒绝并留痕）；群聊自动配音另受内容群白名单安全门约束（黑名单永远赢，白名单空=群面不配音绝不猜群）。',
             ],
             "detail": (
@@ -2108,21 +2267,33 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '戳一戳',
             "admin_only": False,
             "aliases": ('戳一戳', 'poke'),
-            "index": '【戳一戳】戳机器人有概率收到回应（有冷却）',
+            "index": '【戳一戳】被戳回一个（六臂轮换）+ 跟戳 + 说完顺手戳（都有冷却）',
             "title_line": '【戳一戳】戳一戳互动回应',
             "lines": [
                 '触发=QQ「戳一戳」头像互动；行为=按概率回应，默认有冷却防骚扰。',
+                '被戳回一个（六臂确定性轮换，只出一个）：反戳 / 自然语言回复 / 语音+文本 / 表情包 / 随机图 / 固定话术；BOT_POKE_REPLY_MODE 显式指名任一臂，mix=轮换（扩臂要 BOT_POKE_EXTRA_ARMS_ENABLED=true，缺省停在旧三臂=旧行为）。',
+                '跟戳：群里 A 戳 B 时按概率跟着戳 B；BOT_POKE_FOLLOW_ENABLED、BOT_POKE_FOLLOW_PROBABILITY、BOT_POKE_FOLLOW_COOLDOWN_SECONDS、BOT_POKE_FOLLOW_MAX_PER_HOUR（缺省关；独立于回戳的冷却与每小时账）。',
+                '说完顺手戳：bot 回复完、群内主动接话、入群欢迎之后按概率戳一下对方；BOT_POKE_AFTER_REPLY_ENABLED、_PROBABILITY、_COOLDOWN_SECONDS、_MAX_PER_HOUR（缺省关）。',
+                '硬门：安静时间窗内、blocked 名单里的人一律不戳也不主动发图——拨开概率开关也越不过这两道。',
+                '语音臂复用 bot.tts 那条「文本+语音」能力（BOT_TTS_ENABLED 且引擎在线才有声，合成不成只留文本腿）；随机图臂吃 BOT_RANDPIC_DIRS（图库空则温和回退固定话术，绝不静默空回）。',
                 '可调：BOT_POKE_ENABLED（开关）、BOT_POKE_*_COOLDOWN_SECONDS（冷却）、BOT_POKE_PROBABILITY（概率）。',
                 '权限=全员；无文字命令，属互动事件。',
-                '无指令：作用=头像互动回应；参数=无；内容=概率性一句回应；意义=轻互动。配置经 .env 或 /bot runtime set（可写键以 runtime 白名单为准）。',
+                '无指令：作用=头像互动回应与轻量主动接触；参数=无；内容=六臂之一（一句回应 / 语音+文本 / 一张图 / 回戳）；意义=轻互动。配置经 .env 或 /bot runtime set（可写键以 runtime 白名单为准，本族多为改 .env+重启）。',
             ],
             "detail": (
                 '【板块介绍】\n'
-                '  戳一戳是轻量互动：群友戳机器人头像，机器人按概率回一句话。\n'
-                '  冷却与概率防止连戳刷屏。\n'
+                '  戳一戳是轻量互动：群友戳机器人头像，机器人按概率回应一个表达。\n'
+                '  冷却与概率防止连戳刷屏。P14 波把「回应」扩成六臂矩阵，并补了\n'
+                '  跟戳（A 戳 B 时跟着戳）与「说完话顺手戳一下」两条主动腿。\n'
+                '【取值范围】\n'
+                '  BOT_POKE_REPLY_MODE：fixed/llm/meme/voice/randpic/poke 六值显式指名，\n'
+                '  或 mix=按 (会话,戳者,时间桶) 的 SHA-256 摘要确定性轮换（同戳同果，\n'
+                '  不用随机数）；轮换池缺省三臂，BOT_POKE_EXTRA_ARMS_ENABLED=true 才扩到六臂。\n'
+                '  概率类键取值 0..1；冷却与每小时上限各自独立记账。\n'
                 '【权限与效果】\n'
-                '  权限=全员。开关关闭时戳一戳无任何回应。\n'
-                '【示例】戳一戳守岸人的头像 → 有概率收到回应'
+                '  权限=全员。开关关闭时戳一戳无任何回应；安静时间窗与 blocked 名单\n'
+                '  是硬门，主动腿（跟戳/说完顺手戳/主动发图）全部缺省关。\n'
+                '【示例】戳一戳守岸人的头像 → 有概率收到回应（话术 / 语音 / 一张图 / 被戳回来）'
             ),
         },
         {
@@ -2244,6 +2415,44 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '【权限与效果】查询与审核=管理员（审核人名单 BOT_EMERGENCY_INFO_REVIEWER_IDS，名单空=审核面关闭，缺省拒绝）；\n'
                 '  设/退订阅=超级管理员、管理员或本群群主（仅 QQ 侧；别的平台的号存下来会送错地方，故不收）。\n'
                 '【示例】紧急信息｜紧急信息 订阅 area=湘潭 kinds=暴雨 橙色以上｜紧急信息 订阅 看｜紧急信息 退订｜紧急信息 待审'
+            ),
+        },
+        {
+            "topic": '亲密模式',
+            "admin_only": False,
+            "aliases": ('亲密模式', '亲密档位', 'intimate', 'qinmimoshi'),
+            "index": '【亲密模式】整句开关：亲密模式 开|深开|关｜关系档自助设定：/bot identity set-relation|unset-relation|show-relation',
+            "title_line": '【亲密模式】这一阵用什么语气相处，你们自己说（整句开关＋关系档）',
+            "lines": [
+                '亲密模式 开（同义：亲密模式开／开启亲密模式／打开亲密模式／亲密模式 on）：作用=把当前会话上到亲密档的**浅档**（只给关系语气，不改默认模型）；参数=无（整句才算命令，句子中间带这几个字不算）；内容=一句守岸人语气的确认；意义=想被更柔软地对待就说一句，不必念名单。',
+                '亲密模式 深开（同义：亲密模式 开 深／亲密模式 开 二档／亲密模式 开 grok／二档／深档）：作用=浅档之上再允许把首跳换到在册的成人内容通道（grok 优先）；参数=无（整句才算命令，三条深档判据先于浅档匹配）；内容=深档确认一句；意义=「档成立」与「该换模型」自此分家——要哪种自己说。',
+                '亲密模式 关（同义：亲密模式关闭／解除亲密模式／亲密模式 off）：作用=深浅两档一起解除；参数=无；内容=回到平时语气的确认；意义=说完就撤，不粘着。',
+                '自动退出：作用=亲密档从**激活那一刻**起 60 分钟后自然退出；参数=BOT_CONTENT_ROUTE_INTIMATE_TTL_MINUTES（.env+重启）；内容=会话活跃不续期、再说一次「开」即重置；意义=不会有哪句话把你永久钉在亲密档上。',
+                '好感度自动进浅档：作用=相处到某一档的人不必开口也拿到浅档语气；参数=BOT_CONTENT_ROUTE_L1_AUTO_ENABLED（总闸）/ BOT_CONTENT_ROUTE_L1_AUTO_MIN_TIER（门槛档号，真身 character/affinity.py 的 _ATTITUDE_TIERS）；内容=只给档、不换模型，与 Master Love 同类；意义=亲密语气不该只发给名单里那两位。两枚改 .env 后要重启（合并层未登记，/bot runtime set 明确拒绝）。',
+                '/bot identity set-relation <关系>：作用=告诉守岸人你们是什么关系，让这一档有具体的形状；参数=受控词表内的关系或其口语别名（词表与每档语气指令的真身=character/relationships.py，本册零抄录）；内容=已记下的档号；意义=同一句「亲密模式 开」，关系不同语气就该不同；词表外的值不落档也不清档，并把整张词表回给你。',
+                '/bot identity unset-relation：作用=只清关系档那一列；参数=无；内容=已清除（带原先记的档号）；意义=称谓偏好与性别自述不受牵连——这与 unset-name 的整行删除是两件事。',
+                '/bot identity show-relation：作用=看自己当前的关系档；参数=无；内容=档号，或明说「没设定过，按相处深浅自然来」；意义=先核对再改，不靠猜。',
+                '权限=全员：任何人对自己说一句就生效，无需管理员。群聊里成员说的只对自己（个人档），要把整群钉上得管理员；群聊整面还受黑白名单约束（白名单为空=整群关闭，绝不猜群；黑名单永远赢）。',
+                '硬线：内容放行面不因关系档而改变，仍由会话门 explicit_allowed_for_session 判；六条硬线任何关系、任何开关、任何设定都压不过（security/content_safety.py）。',
+            ],
+            "detail": (
+                '【板块介绍】\n'
+                '  亲密档=「这一阵用什么语气相处」的会话状态，分深浅两档：浅档只改称呼、\n'
+                '  语气与投入度；深档才允许把首跳换到在册的成人内容通道。档**为什么**成立只\n'
+                '  记一处（runtime/content_route.py 的 pin_source）：本人显式开关、管理员钉、\n'
+                '  内容信号三类有权换模型，Master Love 与好感度自动腿属于「给档不换模型」。\n'
+                '  关系档（恋人/情侣/夫妻/长辈/晚辈/家人/挚友/master…）给这一档具体的形状。\n'
+                '【取值范围】\n'
+                '  档位=浅(l1)/深(l2)；退出=一句「亲密模式 关」或 60 分钟 TTL 自然退出（按\n'
+                '  激活时刻起算、活跃不续期、重开即重置）；显式钉与管理员钉不再被第二道\n'
+                '  max_ttl 悄悄截掉（2026-09-24 裁定 R4 A）。关系档取值由受控词表决定，\n'
+                '  词表外一律不落档；同时命中两档按歧义不记录，不替谁编一个方向。\n'
+                '【权限与效果】\n'
+                '  权限=全员（任何人对自己拨）。会话准入门链：总闸 BOT_CONTENT_ROUTE_ENABLED\n'
+                '  → 私聊/群聊黑白名单（私聊白名单空=放开、群聊白名单空=整群关闭，刻意不对称；\n'
+                '  黑名单永远赢）→ 群内成员个人档总闸 BOT_CONTENT_ROUTE_GROUP_PER_USER_ENABLED。\n'
+                '  只改变称呼与投入度，不推翻任何既有的身份与称谓事实；六条硬线压不过。\n'
+                '【示例】亲密模式 开｜亲密模式 深开｜亲密模式 关｜/bot identity set-relation 恋人'
             ),
         },
     ]
@@ -2476,6 +2685,33 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "chat_scope": "在哪个群/私聊执行就对哪个会话生效，各会话互不影响",
         "config_vars": ("BOT_SESSION_IDENTITY_DB_PATH",),
         "examples": ("/bot identity set 岸宝｜/bot identity tag 早起,秃头,干饭人",),
+    },
+    # 亲密模式（2026-09-24 R1/R2/R3/R4 裁定的门面）：tests 只登记**今天在盘上**的
+    # 回归件——`test_meta_test_paths_exist` 对不存在的路径直接判红，把另两枚
+    # （tests/test_intimate_tier_wiring_v4.py、tests/test_relationships.py）写进来
+    # 等于本席凭空造两条红。它们落地后由收口席补登记（同先例见 S38/T84 的补录口径）。
+    "亲密模式": {
+        "capability": "bot.chat（整句「亲密模式 开/深开/关」；关系档子命令见 /bot identity）",
+        "network": False,
+        "chat_scope": "私聊按本人；群聊成员说的只对自己（个人档），管理员拨上去的才是整群钉",
+        "triggers_nl": ("亲密模式 开", "亲密模式 深开", "亲密模式 关"),
+        "config_vars": (
+            "BOT_CONTENT_ROUTE_ENABLED",
+            "BOT_CONTENT_ROUTE_INTIMATE_TTL_MINUTES",
+            "BOT_CONTENT_ROUTE_L1_AUTO_ENABLED",
+            "BOT_CONTENT_ROUTE_L1_AUTO_MIN_TIER",
+            "BOT_CONTENT_ROUTE_GROUP_PER_USER_ENABLED",
+            "BOT_CONTENT_ROUTE_GROUP_WHITELIST",
+            "BOT_CONTENT_ROUTE_GROUP_BLACKLIST",
+            "BOT_CONTENT_ROUTE_PRIVATE_WHITELIST",
+            "BOT_CONTENT_ROUTE_PRIVATE_BLACKLIST",
+        ),
+        "examples": (
+            "亲密模式 开", "亲密模式 深开", "亲密模式 关",
+            "/bot identity set-relation 恋人", "/bot identity show-relation",
+        ),
+        "tests": ("tests/test_intimate_tiers_v4.py",),
+        "outputs": ("文本确认（语气与首跳资格的变化，不改内容放行面）",),
     },
     "怪癖": {
         "capability": "/bot quirk",
@@ -2812,10 +3048,28 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "capability": "bot.group_info",
         "network": True,
         "outputs": ("文本",),
-        "triggers_nickname": ("群信息", "本群信息", "群资料", "群主是谁", "谁是群主", "群人数", "群公告", "群精华", "精华消息", "本群多大了"),
-        "chat_scope": "仅群聊生效（私聊回守岸人提示）；群资料/人数全员，公告与精华仅管理员；成员名单不整列（隐私+防刷屏）",
+        "triggers_nickname": ("群信息", "本群信息", "群资料", "群主是谁", "谁是群主", "群人数", "群公告", "群精华", "精华消息", "本群多大了", "群相册", "本群相册", "群相册列表", "群待办", "本群待办", "群待办列表", "群里都有谁", "本群都有谁", "群里谁说过话", "本群谁说过话", "群参与者", "本群参与者", "都有谁说过话", "我都跟谁聊过", "跟谁聊过"),
+        "chat_scope": "仅群聊生效（私聊回守岸人提示）；群资料/人数/相册/待办/参与者全员，公告与精华仅管理员；成员名单不整列（隐私+防刷屏），参与者族读记忆里的说话人而非协议名单",
         "examples": ("群信息｜群主是谁｜群人数｜群公告｜群精华｜本群多大了",),
         "tests": ("tests/test_group_info.py",),
+    },
+    "宿主机状态": {
+        "capability": "bot.host_state",
+        "network": False,
+        "outputs": ("文本", "图片"),
+        "triggers_nickname": ("宿主机状态", "机器状态", "机器配置", "宿主状态", "宿主機狀態", "機器狀態", "hoststate", "jiqizhuangtai", "jizhuangtai", "jiqipeizhi"),
+        "chat_scope": "仅超级管理员（其余角色得到一句温和拒绝）；群聊与私聊同面可问；读数本机现算、逐行打码，只读不改任何设置",
+        "examples": ("机器状态｜机器配置｜宿主状态｜hoststate",),
+        "tests": ("tests/test_host_state_card.py", "tests/test_host_metrics.py", "tests/test_host_status.py"),
+    },
+    "书面同意": {
+        "capability": "bot.consent",
+        "network": False,
+        "outputs": ("文本",),
+        "triggers_nickname": ("同意卡", "书面同意", "同意單", "書面同意", "consentcard", "yijika", "shumiantongyi"),
+        "chat_scope": "仅管理员及其以上；看单不分群聊私聊，批一张具体的卡按同意账的阶梯判（R2=超管私聊亲批）；发起人不批自己发起的卡；只回显账上事实，本命令面自己绝不改参数",
+        "examples": ("同意卡 待批｜同意卡 看 3f2a1b｜同意卡 批 3f2a1b 8c1d4e7a｜书面同意 驳 3f2a1b 8c1d4e7a",),
+        "tests": ("tests/test_consent_command_surface.py", "tests/test_safety_exec_throat_wire.py"),
     },
     "好感度": {
         "capability": "bot.affinity",
@@ -2832,7 +3086,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "fallback": "单源挂文本尾注；双源全挂回文本「拉取失败，稍后再试」",
         "chat_scope": _CHAT_SCOPE_CONSISTENT,
 
-        "triggers_nickname": ("epic", "epicfree", "epic免费", "epic free", "免费游戏", "免費遊戲", "游戏免费", "遊戲免費", "steam免费", "steam免費", "steam free", "steam 免费"),
+        "triggers_nickname": ("epic", "epicfree", "epic免费", "epic free", "免费游戏", "免費遊戲", "游戏免费", "遊戲免費", "steam免费", "steam免費", "steam 免費", "steam free", "steam 免费"),
         "network": True,
         "triggers_nl": ("epic", "免费游戏", "免費遊戲"),
         "examples": ("epic",),
@@ -2845,9 +3099,22 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "network": False,
         "triggers_nl": ("随机图", "来张图", "隨機圖", "來張圖"),
         "outputs": ("图片",),
-        "config_vars": ("BOT_RANDPIC_DIRS", "BOT_RANDPIC_TRIGGER_WORDS"),
+        "config_vars": (
+            "BOT_RANDPIC_DIRS",
+            "BOT_RANDPIC_TRIGGER_WORDS",
+            "BOT_RANDPIC_ENABLED",
+            "BOT_RANDPIC_MAX_FILE_MB",
+            "BOT_RANDPIC_NO_REPEAT_WINDOW_SECONDS",
+            "BOT_RANDPIC_DISPATCH_ENABLED",
+            "BOT_RANDPIC_DISPATCH_PROBABILITY",
+            "BOT_RANDPIC_DISPATCH_COOLDOWN_SECONDS",
+            "BOT_RANDPIC_DISPATCH_MAX_PER_HOUR",
+        ),
         "examples": ("随机图｜来张图",),
-        "tests": ("tests/test_randpic_identity.py",),
+        "tests": (
+            "tests/test_randpic_identity.py",
+            "tests/test_randpic_dispatch.py",
+        ),
     },
     "提醒": {
         "capability": "bot.reminder",
@@ -2917,6 +3184,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
             "BOT_TTS_AUTO_REPLY_ENABLED",
             "BOT_TTS_AUTO_REPLY_SCOPE",
             "BOT_TTS_AUTO_REPLY_MAX_CHARS",
+            "BOT_TTS_AUTO_REPLY_SPLIT_MAX_CHARS",
             "BOT_TTS_AUTO_REPLY_PROBABILITY",
             "BOT_TTS_AUTO_REPLY_ALWAYS",
             "BOT_TTS_VOICE_HOOK_ENABLED",
@@ -2952,8 +3220,31 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
     "戳一戳": {
         "capability": "on_notice:戳一戳",
         "network": False,
-        "outputs": ("文本回应",),
-        "config_vars": ("BOT_POKE_ENABLED", "BOT_POKE_PROBABILITY"),
+        "outputs": ("文本回应", "语音+文本", "表情包图片", "随机图片", "回戳"),
+        "config_vars": (
+            "BOT_POKE_ENABLED",
+            "BOT_POKE_PROBABILITY",
+            "BOT_POKE_REPLY_ENABLED",
+            "BOT_POKE_REPLY_MODE",
+            "BOT_POKE_POKE_BACK",
+            "BOT_POKE_EXTRA_ARMS_ENABLED",
+            "BOT_POKE_PRIVATE_COOLDOWN_SECONDS",
+            "BOT_POKE_GROUP_COOLDOWN_SECONDS",
+            "BOT_POKE_GROUP_TEXT",
+            "BOT_POKE_PRIVATE_TEXT",
+            "BOT_POKE_FOLLOW_ENABLED",
+            "BOT_POKE_FOLLOW_PROBABILITY",
+            "BOT_POKE_FOLLOW_COOLDOWN_SECONDS",
+            "BOT_POKE_FOLLOW_MAX_PER_HOUR",
+            "BOT_POKE_AFTER_REPLY_ENABLED",
+            "BOT_POKE_AFTER_REPLY_PROBABILITY",
+            "BOT_POKE_AFTER_REPLY_COOLDOWN_SECONDS",
+            "BOT_POKE_AFTER_REPLY_MAX_PER_HOUR",
+            "BOT_POKE_AFFINITY_ENABLED",
+            "BOT_POKE_AFFINITY_DELTA",
+            "BOT_POKE_AFFINITY_DAILY_MAX",
+        ),
+        "tests": ("tests/test_poke_v2.py", "tests/test_poke_arms_v3.py"),
     },
     "表情收库": {
         "capability": "meme_absorb（群图自动收库，无命令）",
@@ -3094,6 +3385,52 @@ def _split_command_row(row: str) -> tuple[str, str]:
     return row, ""
 
 
+_FACET_PAIR_RE = re.compile(r"^([^；=：]{1,6})=(.*)$")
+
+
+def _facet_pair(text: str) -> tuple[str, str] | None:
+    """「作用=列出能力节点」→ ("作用", "列出能力节点")；不是要素行返回 None。"""
+    matched = _FACET_PAIR_RE.match(text.strip())
+    if matched is None:
+        return None
+    label, value = matched.group(1).strip(), matched.group(2).strip()
+    return (label, value) if label and value else None
+
+
+def _help_card_rows(row: str) -> list[tuple[str, str]]:
+    """正文一行 → 卡片若干「属性名｜属性值」行（2026-09-25 澜汐：每个值一行）。
+
+    正文侧四要素早就由 ``_split_facets`` 拆成一行一个，但卡片把整行喂给
+    ``_split_command_row``：像「　参数=无」这种行里没有「：」，于是**整行变成了
+    药丸标签**，而 ``.pill`` 是 nowrap + 62% 宽省略号——参数、内容、意义在图上被
+    悄悄切掉。这里把要素行拆成「标签｜正文」，正文落进可换行的说明列；命令行
+    则拆成"命令名单独一行 ＋ 其后逐行属性"，属性名与属性值各自左对齐。
+    没有要素的普通行照旧（首个人称分隔前作药丸、其后作说明）。
+    """
+    line = row.strip().strip("\u3000").strip()
+    if not line:
+        return []
+    own = _facet_pair(line)
+    if own is not None:
+        return [own]
+    head, sep, tail = line.partition("：")
+    if sep and head.strip() and tail.strip():
+        parts = [p.strip() for p in _FACET_SPLIT_RE.split(tail) if p.strip()]
+        pairs = [_facet_pair(p) for p in parts]
+        if parts and all(pair is not None for pair in pairs):
+            rows: list[tuple[str, str]] = [(head.strip(), "")]
+            for pair in pairs:
+                if pair is not None:
+                    rows.append(pair)
+            return rows
+    cmd, desc = _split_command_row(line)
+    if not desc:
+        # 没有「：」可切的整句（【示例】行、板块介绍行）落**说明列**：药丸是
+        # nowrap+62%+省略号，长句会在图上被静默截掉——正文一个字都不该丢。
+        return [("", line)]
+    return [(cmd, desc)]
+
+
 def _resolve_help_accent(accent_color: str) -> tuple[str, str]:
     """把配置主色归一成 (accent, accent_dark)；非法/留空回退中性灰。"""
     from plugins.bot_unified_runtime.output.card_render.bridge import (
@@ -3108,30 +3445,17 @@ def _resolve_help_accent(accent_color: str) -> tuple[str, str]:
 
 def _help_index_sections(is_admin: bool) -> list[tuple[str, list[tuple[str, str]]]]:
     """结构化索引：分类 → (药丸标签, 说明)。供帮助卡网格布局消费。"""
-    visible = {str(entry["topic"]): entry for entry in _visible_help_entries(is_admin)}
     hint_re = re.compile(r"｜详情：/bot help .*?$")
     sections: list[tuple[str, list[tuple[str, str]]]] = []
-    for category, topics in _HELP_CATEGORIES:
+    for category, category_entries in _help_grouped(_visible_help_entries(is_admin)):
         rows: list[tuple[str, str]] = []
-        for topic in topics:
-            entry = visible.get(topic)
-            if entry is None:
-                continue
+        for entry in category_entries:
+            topic = str(entry["topic"])
             desc = hint_re.sub("", re.sub(r"^【[^】]+】", "", str(entry["index"])).strip())
             desc = desc.strip("；;｜| ").strip()
             rows.append((str(entry["aliases"][0]) if entry["aliases"] else topic, desc or topic))
         if rows:
             sections.append((category, rows))
-    categorized = {topic for _, topics in _HELP_CATEGORIES for topic in topics}
-    orphans = [entry for topic, entry in visible.items() if topic not in categorized]
-    if orphans:
-        sections.append(("更多", [
-            (
-                str(entry["aliases"][0]) if entry["aliases"] else str(entry["topic"]),
-                hint_re.sub("", re.sub(r"^【[^】]+】", "", str(entry["index"])).strip()).strip("；;｜| ").strip(),
-            )
-            for entry in orphans
-        ]))
     return sections
 
 
@@ -3160,13 +3484,17 @@ def _help_mica_html(
         render_root_tokens,
         shell_base_css,
     )
+    from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
+        BRAND_WASH_TOKENS,
+    )
     from plugins.bot_unified_runtime.output.card_render.bridge import (
-        _derive_wash_tokens,
         payload_phase,
     )
 
     accent, accent_dark = _resolve_help_accent(accent_color)
-    wash = _derive_wash_tokens(accent)
+    # 底色锚点=本命蓝（2026-09-25 点名：背景要在守岸人的蓝色标志色上做渐变）。
+    # accent 仍可被 bot_help_card_color 配走，但它只管强调线与色斑。
+    wash = BRAND_WASH_TOKENS
     detail_title = ""
     if sections is None:
         sections = []
@@ -3178,7 +3506,12 @@ def _help_mica_html(
                 continue
             if line.startswith("【") and line.endswith("】"):
                 if current_rows:
-                    sections.append((current_title, [_split_command_row(r) for r in current_rows]))
+                    sections.append(
+                        (
+                            current_title,
+                            [(p, d) for r in current_rows for (p, d) in _help_card_rows(r)],
+                        )
+                    )
                 current_title, current_rows = line[1:-1], []
                 continue
             if detail_title:
@@ -3187,7 +3520,12 @@ def _help_mica_html(
                 detail_title = line.rstrip("：:")
                 current_title = detail_title
         if current_rows:
-            sections.append((current_title or "用法", [_split_command_row(r) for r in current_rows]))
+            sections.append(
+                (
+                    current_title or "用法",
+                    [(p, d) for r in current_rows for (p, d) in _help_card_rows(r)],
+                )
+            )
         if sections and not detail_title:
             detail_title = sections[0][0]
 
@@ -3213,7 +3551,9 @@ def _help_mica_html(
         )
         grid_cls = "single"
         header_title = f"{bot_name} · {detail_title}"
-        header_sub = "参数标注：<> 必填、[] 可选；把命令复制到聊天即可使用，具体取值见各行说明。"
+        # 详情页不再重复"参数标注/怎么用"——那两句已经在页脚和右上角，逐行标签
+        # （作用/参数/内容/意义）本身就是读法说明（2026-09-25 澜汐：别复读）。
+        header_sub = ""
     else:
         cards = "".join(
             "<section class=\"help-section glass" + (" wide" if len(rows) >= 40 else "") + "\">"
@@ -3223,7 +3563,7 @@ def _help_mica_html(
         )
         grid_cls = "masonry"
         header_title = f"{bot_name} · 命令手册"
-        header_sub = "按模块分类汇总；回复「/bot help 模块名」展开该模块的子命令、参数与示例（如 /bot help 点歌、/bot help 订阅）。"
+        header_sub = "回复「/bot help 模块名」看这个模块的逐条命令与参数，例：/bot help 点歌。"
     role = "管理员帮助" if is_admin else "公开帮助"
     # E01 二批：漂移相位 = 内容 digest 钉帧（同 payload 双渲一致、零 JS 随机源）。
     phase = payload_phase({"sections": sections, "detail_title": detail_title})
@@ -3232,6 +3572,10 @@ def _help_mica_html(
         if bot_avatar_url else ""
     )
     avatar_block = avatar or f"<span class=\"avatar-fallback\">{_esc((bot_name or '守')[:1])}</span>"
+    # 副标题为空时整块不渲染，不留一条只有 margin 的空行（详情页已无副标题）。
+    subtitle_html = (
+        f"<div class=\"help-subtitle\">{_esc(header_sub)}</div>" if header_sub else ""
+    )
     # :root 单一产出（v21r3 渲染统一步 3）：公共 token 子集、顺序、书写风格
     # 与其余三张直拼卡及七张 Jinja 卡一致，改一处全项目同步。
     root_tokens = render_root_tokens(
@@ -3264,42 +3608,40 @@ body {{ margin:0; padding:0; font-family:var(--font-family); background:transpar
 .avatar-wrap img {{ width:100%; height:100%; object-fit:cover; }}
 .avatar-fallback {{ font-size:24px; font-weight:700; color:var(--accent-dark); }}
 .head-main {{ flex:1 1 auto; min-width:0; }}
-.help-kicker {{ color:var(--accent-dark); font-size:12px; font-weight:700; letter-spacing:.06em; }}
-.help-title {{ margin-top:6px; font-size:27px; font-weight:700; letter-spacing:.02em; }}
-.help-subtitle {{ margin-top:6px; color:var(--muted); font-size:12.5px; line-height:1.5; }}
-.help-chip {{ flex:0 0 auto; padding:7px 14px; border-radius:999px; color:var(--accent-dark); background:color-mix(in srgb, var(--accent) 8%, rgba(255,255,255,.80)); border:1px solid rgba(255,255,255,.90); font-size:12px; font-weight:650; }}
+.help-kicker {{ color:var(--accent-dark); font-size:13px; font-weight:700; letter-spacing:.06em; }}
+.help-title {{ margin-top:6px; font-size:26px; font-weight:700; letter-spacing:.02em; }}
+.help-subtitle {{ margin-top:6px; color:var(--muted); font-size:13px; line-height:1.5; }}
+.help-chip {{ flex:0 0 auto; padding:7px 14px; border-radius:999px; color:var(--accent-dark); background:color-mix(in srgb, var(--accent) 8%, rgba(255,255,255,.80)); border:1px solid rgba(255,255,255,.90); font-size:13px; font-weight:650; }}
 .help-body {{ padding:14px; }}
-.help-grid.masonry {{ column-count:2; column-gap:12px; }}
-.help-grid.masonry .help-section {{ break-inside:avoid; margin-bottom:12px; }}
+.help-grid.masonry {{ column-count:2; column-gap:14px; }}
+.help-grid.masonry .help-section {{ break-inside:avoid; margin-bottom:14px; }}
 .help-grid.masonry .help-section.wide {{ column-span:all; }}
-/* 帮助目录两栏（台账 #13 残余）：总览页 topic 行在分区内再走两栏 CSS columns
-   （栏距取 GAP_SCALE_PX 刻度 8；行 break-inside:avoid 防腰斩、摘要钳两行防
-   窄栏溢出），72 topic 卡高实测显著下降（admin -35% / public -37%）。
-   行样式不变（药丸名+一句摘要）。 */
-.help-grid.masonry .command-list {{ display:block; columns:2; column-gap:8px; }}
-.help-grid.masonry .command-row {{ break-inside:avoid; margin-bottom:3px; padding:6px 9px; }}
-/* 窄栏防溢出：目录摘要钳两行（-webkit-line-clamp，Chromium 渲染后端原生支持），
-   治 211px 栏宽下长摘要 3 行折叠吃掉两栏收益；详情页不受影响。 */
-.help-grid.masonry .command-row .desc {{ display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }}
+/* 目录页两栏（2026-09-25 澜汐：「太挤了，换成两栏」）——旧形态是**分区两栏 ×
+   区内再两栏 = 四栏正文**，每栏 ~200px，摘要两行就放不下，于是被 line-clamp
+   钳成省略号：她看到的「详细介绍不详细」大半是被切了，不是文案短（现算：
+   79 个 topic 里按结构判据真算「薄」的只有 8 个，而目录行超 34 字的有 38 个）。
+   现在整页就两栏，区内行铺满栏宽，钳位与省略号一并撤掉。 */
+.help-grid.masonry .command-list {{ display:grid; gap:6px; }}
+.help-grid.masonry .command-row {{ break-inside:avoid; padding:7px 10px; }}
 .help-grid.single {{ display:grid; grid-template-columns:1fr; gap:12px; }}
 .help-section {{ border-radius:16px; overflow:hidden; }}
-.help-section h2 {{ display:flex; align-items:center; gap:8px; margin:0; padding:10px 14px; color:var(--accent-dark); background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, rgba(255,255,255,.62)), color-mix(in srgb, var(--accent) 12%, rgba(255,255,255,.48))); border-bottom:1px solid rgba(255,255,255,.85); font-size:14.5px; font-weight:700; letter-spacing:.02em; }}
+.help-section h2 {{ display:flex; align-items:center; gap:8px; margin:0; padding:10px 14px; color:var(--accent-dark); background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, rgba(255,255,255,.62)), color-mix(in srgb, var(--accent) 12%, rgba(255,255,255,.48))); border-bottom:1px solid rgba(255,255,255,.85); font-size:15px; font-weight:700; letter-spacing:.02em; }}
 .help-section h2 .dot {{ flex:0 0 auto; width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:var(--mica-shadow-soft); }}
 .command-list {{ padding:9px; display:grid; gap:6px; }}
-.command-row {{ display:flex; align-items:flex-start; gap:8px; padding:7px 10px; border-radius:12px; background:rgba(255,255,255,.62); font-size:12px; line-height:1.5; }}
-.command-row .pill {{ flex:0 0 auto; max-width:62%; padding:2px 10px; border-radius:999px; color:var(--accent-dark); background:color-mix(in srgb, var(--accent) 13%, rgba(255,255,255,.82)); font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.command-row {{ display:flex; align-items:flex-start; gap:8px; padding:7px 10px; border-radius:12px; background:rgba(255,255,255,.62); font-size:13px; line-height:1.5; }}
+.command-row .pill {{ flex:0 0 auto; max-width:100%; padding:2px 10px; border-radius:999px; color:var(--accent-dark); background:color-mix(in srgb, var(--accent) 13%, rgba(255,255,255,.82)); font-weight:700; white-space:normal; overflow-wrap:anywhere; }}
 .command-row .desc {{ color:var(--muted); min-width:0; overflow-wrap:anywhere; }}
 .help-foot {{ display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 16px; background:rgba(255,255,255,.46); border-top:1px solid rgba(255,255,255,.80); }}
-.help-foot .tip {{ color:var(--muted); font-size:12px; }}
+.help-foot .tip {{ color:var(--muted); font-size:13px; }}
 .help-bot-pill {{ display:flex; align-items:center; gap:8px; padding:5px 13px 5px 6px; border-radius:999px; color:var(--accent-dark); background:color-mix(in srgb, var(--accent) 6%, rgba(255,255,255,.72)); border:1px solid #fff; box-shadow:var(--mica-shadow-soft); font-size:13px; font-weight:600; }}
 .help-bot-avatar {{ width:27px; height:27px; object-fit:cover; border-radius:50%; }}
 /* 窄卡（<560px）：目录两栏退回单栏，防挤压（.card 内媒体查询合规，无 viewport
    meta 铁律不受影响；置于样式块末尾保证覆盖基线规则）。 */
 @media (max-width:559px) {{ .help-grid.masonry {{ column-count:1; }}
-  .help-grid.masonry .command-list {{ columns:1; }} }}
+.help-grid.masonry .command-list {{ grid-template-columns:1fr; }} }}
 </style></head><body><div class="help-stage card"><section class="help-shell">
 {blobs_html}
-<header class="help-head"><div class="avatar-wrap">{avatar_block}</div><div class="head-main"><div class="help-kicker">{_esc(role)}</div><div class="help-title">{_esc(header_title)}</div><div class="help-subtitle">{_esc(header_sub)}</div></div><div class="help-chip">发 /bot help 获取本图</div></header><main class="help-body"><div class="help-grid {grid_cls}">{cards}</div></main><footer class="help-foot"><span class="tip">参数标注：&lt;&gt; 必填，[] 可选；群里直接发命令即可触发。</span><div class="help-bot-pill">{avatar}<span>{_esc(bot_name)} · 命令手册</span></div></footer></section></div>
+<header class="help-head"><div class="avatar-wrap">{avatar_block}</div><div class="head-main"><div class="help-kicker">{_esc(role)}</div><div class="help-title">{_esc(header_title)}</div>{subtitle_html}</div><div class="help-chip">发 /bot help 获取本图</div></header><main class="help-body"><div class="help-grid {grid_cls}">{cards}</div></main><footer class="help-foot"><span class="tip">参数标注：&lt;&gt; 必填，[] 可选；群里直接发命令即可触发。</span><div class="help-bot-pill">{avatar}<span>{_esc(bot_name)}</span></div></footer></section></div>
 </body></html>"""
 
 
@@ -3531,8 +3873,14 @@ def build_help_result(
 
 _ADDRESSING_GENDER_VALUES = ("male", "female", "nonbinary", "custom", "unknown")
 _ADDRESSING_NAME_MAX_CHARS = 32
+# 用户自助面（绕管理员门、只能动自己的记录）。关系档三枚（2026-09-24 裁定 R2 A）
+# 与称谓/性别同权：词表真身住 character/relationships.py，本处只列**子命令名**，
+# 不抄第二份关系名单（抄了就是第二真身，"零副本"纪律）。
 _IDENTITY_PREFERENCE_SUBCOMMANDS = frozenset(
-    {"set-name", "set-gender", "unset-name", "unset-gender"}
+    {
+        "set-name", "set-gender", "unset-name", "unset-gender",
+        "set-relation", "unset-relation", "show-relation",
+    }
 )
 
 
@@ -3540,6 +3888,7 @@ def _identity_preference_usage() -> str:
     return (
         "用法：/bot identity set-name <称呼> | set-gender <male|female|nonbinary|custom|unknown>"
         " | unset-name | unset-gender"
+        " | set-relation <关系> | unset-relation | show-relation"
         "（只能设置你自己的称谓偏好，无需管理员；set 即记录、unset 即清除）"
     )
 
@@ -3561,6 +3910,92 @@ def _identity_preference_result(
     )
 
 
+def _identity_relation_result(
+    store: Any,
+    request_id: str,
+    sub: str,
+    command_text: str,
+    *,
+    session_type: str,
+    session_id: str,
+    sender: str,
+) -> CapabilityResult:
+    """/bot identity set-relation|unset-relation|show-relation —— 用户自助关系档。
+
+2026-09-24 用户裁定 R2 A：亲密档浅档不再由 Master Love 独占，用户可以直接说
+「我们是恋人/夫妻/我妈的孩子…」这类关系。词的**真身**只住
+`character/relationships.py`（受控词表 + 每档语气指令），本函数只做命令面：
+
+- 词表外的输入（打错字、没裁过的关系）**不落档也不清档**，回话给
+  `relationship_vocabulary_text()` 的投影——绝不在 echo 里再抄一份名单；
+- 只改称呼、语气与投入度：内容放行面仍由 `content_route.explicit_allowed_for_session`
+  会话门决定，六条硬线任何关系压不过（`security/content_safety.py`）；
+- 作用域键与称谓偏好同一位（群里=这个群+你，私聊=你），仅本人可动自己的。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.character.relationships import (
+        relationship_vocabulary_text,
+    )
+
+    lookup: dict[str, str] = {
+        "session_type": session_type,
+        "session_id": session_id,
+        "sender_id": sender,
+    }
+    if sub == "show-relation":
+        current = store.get_relationship(**lookup)
+        if not current:
+            return _identity_preference_result(
+                request_id,
+                "这一档你还没设定过，守岸人按相处深浅自然来。想直说就发"
+                " /bot identity set-relation <关系>。",
+            )
+        return _identity_preference_result(
+            request_id,
+            f"当前关系档：{current}。只改变你们之间的称呼、语气与投入度，"
+            "不改变内容放行面，也不推翻任何既有的身份与称谓事实。",
+        )
+    if sub == "unset-relation":
+        current = store.get_relationship(**lookup)
+        if not current:
+            return _identity_preference_result(
+                request_id, "你还没有设定过关系档，没有要清的东西（称谓偏好与性别自述照旧）。"
+            )
+        store.set_relationship(**lookup, relationship="")
+        return _identity_preference_result(
+            request_id,
+            f"已清除关系档（原先记的是「{current}」），回到按相处深浅自然来；"
+            "称谓偏好与性别自述没有动。",
+        )
+    raw = command_text.removeprefix("set-relation")
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in raw):
+        return _identity_preference_result(
+            request_id,
+            "关系须为一行普通文字（不含换行/制表），例如 /bot identity set-relation 恋人。",
+            risk_level=RiskLevel.MEDIUM,
+        )
+    value = " ".join(raw.split())
+    if not value:
+        return _identity_preference_result(
+            request_id,
+            "用法：/bot identity set-relation <关系>。可填的档："
+            + relationship_vocabulary_text(),
+        )
+    stored = store.set_relationship(**lookup, relationship=value)
+    if not stored:
+        return _identity_preference_result(
+            request_id,
+            "这一档词表里没有，原有的关系档一个字都没动。可填的档："
+            + relationship_vocabulary_text()
+            + "（口语别名也认；一次只认一档，同时命中两档按歧义不记录）。",
+            risk_level=RiskLevel.MEDIUM,
+        )
+    return _identity_preference_result(
+        request_id,
+        f"已记下：这一档按「{stored}」相处。它只改变称呼、语气与投入度，"
+        "内容放行面与六条红线一格都没动。",
+    )
+
+
 def build_identity_preference_result(
     config: object,
     *,
@@ -3571,6 +4006,8 @@ def build_identity_preference_result(
 ) -> CapabilityResult:
     """/bot identity set-name|set-gender|unset-name|unset-gender —— 用户自助称谓偏好。
 
+    关系档三枚（set-relation/unset-relation/show-relation）同面同权，转
+    `_identity_relation_result` 处理（同一存储、同一作用域键，只是列不同）。
     与管理员会话身份（session_identity）不同：这里写的是「用户显式声明」，
     存进 AddressingPreferenceStore，被聊天人格上下文优先读取
     （键位与读取端 providers.build_context 完全一致：群=group_id，私聊=空）。
@@ -3649,7 +4086,23 @@ def build_identity_preference_result(
         return _identity_preference_result(
             request_id, f"已记下你的性别自述：{value}。仅用于称呼与语气分寸。"
         )
+    # 关系档三枚（2026-09-24 用户裁定 R2 A）：走 AddressingPreferenceStore 的
+    # set_relationship/get_relationship 两条口，与称谓偏好同一行记录、同一作用域键
+    # （群里=「这个群+你」、私聊=你）。**不许在 echo 里抄一份关系名单**——非法值回显
+    # 用 character/relationships.py::relationship_vocabulary_text() 投影（第二真身纪律）。
+    if sub in ("set-relation", "unset-relation", "show-relation"):
+        return _identity_relation_result(
+            store,
+            request_id,
+            sub,
+            command_text,
+            session_type=session_type,
+            session_id=session_id,
+            sender=sender,
+        )
     # unset-name / unset-gender：store.clear 为整行清除（称谓与性别自述一并移除）。
+    # ⚠ 关系档**不走**这里——unset-relation 只清关系那一列（见上分支），因为这两个
+    # 子命令的历史语义就是"整行删除"，把它们拆开各自可撤销才是用户要的。
     before_preference, before_gender = store.get(
         session_type=session_type, session_id=session_id, sender_id=sender
     )
@@ -3726,6 +4179,37 @@ def _capability_health_line(config: Config) -> str:
     return (
         f"中央能力态：probed={len(readings)}，{summary}，"
         f"verdict={verdict}，待关注={preview}"
+    )
+
+
+def _orchestration_execution_line() -> str:
+    """中央调度层「管线管理形」在册一行（第三种执行形态，2026-09-22 本波新立）。
+
+    只调用中央件 `capability_protocols.pipeline_managed_execution_cids()` 现算，不复制枚举、
+    不手抄名单（对齐 AGENTS 铁律 10：叙述面不写会过期的计数）。
+
+    「含义升级」的落点：这几枚层 1 直呼面（bot.chat 主链 / 订阅 outbox / campus 转发 /
+    运维告警）以前只在册、没有执行体；现在中央描述符表里各有一枚管线管理形描述符 + 信封
+    handler，`default_invoker().invoke` 认得并能真跑（包裹 `pipeline.handle_async`）。
+    诚实边界：**生产根尚未把 handle_async 改道经中央出口**（根文件另一波在改）⇒ 现网仍走
+    泛型直呼，缺口账对它们按 generic/not_wired 现算、不记通电——「能跑」不等于「已接」。
+    fail-open：读不到中央面出诚实降级行，绝不让 status 整体失败、绝不把"没读到"说成"没问题"。
+    """
+    try:
+        from plugins.bot_unified_runtime.runtime import capability_protocols
+
+        ids = capability_protocols.pipeline_managed_execution_cids()
+    except Exception as exc:  # noqa: BLE001 - 中央面坏了也不能拖死状态查询
+        return (
+            f"中央调度层·管线管理形：unavailable，reason={type(exc).__name__}"
+            "（中央面未读到，不作判定）"
+        )
+    if not ids:
+        return "中央调度层·管线管理形：在册 0 枚（第三种执行形态尚未登记）"
+    preview = "、".join(sorted(ids))
+    return (
+        f"中央调度层·管线管理形：在册 {len(ids)} 枚（{preview}），"
+        "执行形=管线管理(pipeline.handle_async)，待生产根改道通电"
     )
 
 
@@ -3851,6 +4335,17 @@ def _build_status_body(config: Config, runtime_control: RuntimeControlState) -> 
             ),
             f"LLM下一步：{llm_readiness['llm_next_action']}",
             f"LLM原因：{llm_reasons}",
+            # 中央调度层「管线管理形」在册行（第三种执行形态，2026-09-22 本波新立）：
+            # 只读中央件现算、fail-open；这几枚直呼面已登记真实执行形、invoke 认得能跑，
+            # 但生产根未改道 ⇒ 行内如实标"待通电"。刻意放在语音/健康两行**之前**——
+            # `test_capability_health_readout` 钉死语音行=lines[-2]、健康行=lines[-1]，
+            # 追加在其后会顶漂那两条既有末行判据（属行为回归，禁改测试）。
+            # 中央调度收编波 P5-E3：绘画/语音对接点缺位行（**同一判据源** reserved_provider，
+            # 禁在本文件另算一遍）。刻意插在 `_orchestration_execution_line()` 之前：
+            # `test_capability_health_readout` 钉死语音行=lines[-2]、健康行=lines[-1]，
+            # 追加到末尾会顶漂那两条既有末行判据（同上方编排行的处理）。
+            creation_status_line(config),
+            _orchestration_execution_line(),
             # U-17=C 语音健康探针接线（T79 清单，触发点 1=status 查询）：
             # health 缺省=惰性探测（开关关时绝不真探）；≤2s 超时钳制、fail-open。
             # 管理门已在本能力上游，健康态不出普通成员面。注意：探针构造的
@@ -3869,6 +4364,9 @@ def _build_status_body(config: Config, runtime_control: RuntimeControlState) -> 
     # fail-open、无 sink=诚实 no-op、投一次清一次；不贴本结果的 operational_issue 面
     # （贴附会触发 pipeline A-19 群聊吞体，见上方注释与 voice_health_probe docstring）。
     flush_probe_issue_to_alerts()
+    # P5-E3 同构：状态查询同样是 creation 缺位告警的触发点（上面 creation_status_line
+    # 已现算并整体替换 pending）。共用 root 注入的同一个 sink，投一次清一次。
+    flush_reserved_issues_to_alerts()
     return body
 
 

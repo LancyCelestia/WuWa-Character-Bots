@@ -28,7 +28,7 @@ probe = importlib.util.module_from_spec(_spec)
 sys.modules.setdefault("probe_intimate_route", probe)
 _spec.loader.exec_module(probe)
 
-from plugins.bot_unified_runtime.runtime.content_route import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
     ContentRouteEngine,
     explicit_allowed_for_session,
     match_manual_command,

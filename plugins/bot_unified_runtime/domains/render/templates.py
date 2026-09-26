@@ -14,9 +14,6 @@ import html
 from typing import Any
 
 from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
-    _derive_wash_tokens,
-)
-from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
     flat_projection as _flat_projection,
 )
 from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
@@ -40,6 +37,7 @@ from plugins.bot_unified_runtime.domains.render.card_render.mica_shell import (
     shell_base_css,
 )
 from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
+    BRAND_WASH_TOKENS,
     DIVIDER,
     GLOW_ACCENT,
     SURFACE_TINTS,
@@ -81,11 +79,11 @@ _CARD_CSS = (
   background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, #ffffff) 0%, color-mix(in srgb, var(--accent) 18%, #ffffff) 100%); }
 .cover-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .cover-fallback { position: absolute; inset: 0; display: flex;
-  align-items: center; justify-content: center; font-size: 44px; color: var(--accent); }
+  align-items: center; justify-content: center; font-size: 46px; color: var(--accent); }
 .badge { position: absolute; left: 12px; top: 12px; background: rgba(38,46,56,.75);
   color: #fff; font-size: 12px; padding: 3px 10px; border-radius: 999px; }
 .body { padding: 14px 18px 16px; }
-.title { font-size: 19px; font-weight: 700; color: var(--text-main); line-height: 1.4; }
+.title { font-size: 20px; font-weight: 700; color: var(--text-main); line-height: 1.4; }
 .author { margin-top: 6px; font-size: 13px; color: var(--text-sub); }
 .stats { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
 /* vis5 收口（2026-09-13）：平台色只做文字 accent 不做底色——基规则底色改
@@ -137,7 +135,7 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
     pc = _esc(payload.get("platform_color")) or "#607080"
     pc_dark = _esc(payload.get("platform_color_dark")) or "#4a5866"
     pc_rgb = _esc(payload.get("platform_color_rgb")) or "96,112,128"
-    wash = _derive_wash_tokens(pc)
+    wash = BRAND_WASH_TOKENS  # 底色锚点=本命蓝，见 theme_tokens.BRAND_WASH_TOKENS
     # :root 单一产出（v21r3 渲染统一步 2）。media 卡原本**没有** --accent-dark /
     # --ink / --muted 三项，接入后补齐——三者均未被本卡 CSS 引用，故视觉零变化；
     # 补齐的意义是让四张直拼卡的公共 token 子集完全一致（改一处全卡生效）。
@@ -145,7 +143,7 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
         accent=pc,
         # 与 usage/debug 同语义取「深一档主色」（本卡不消费，仅供公共子集完整）。
         accent_dark=pc_dark,
-        phase=_payload_phase(payload),
+        phase=_payload_phase(payload, face="media"),
         wash=wash,
         extras={
             # 2026-09-18 命名统一：--accent-dark 已入固定段，此处不再重复声明

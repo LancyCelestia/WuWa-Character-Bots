@@ -28,6 +28,15 @@ def translate_env_keys(values: dict[str, Any]) -> dict[str, Any]:
     return translated
 
 
+# 群主动接话概率的唯一数值源（2026-09-24 用户裁定：图片/表情包/视频类与文字
+# 接话同一个 4‰——「与文字接话同一个概率，禁两处各写一份数字」）。
+# bot_group_chat_auto_reply_probability 与 bot_vision_reply_probability 的缺省
+# 都取自这里；行为面上抽签只经 policy/gate.py::group_proactive_probability()
+# 这一个读点取值（vision_reply_probability 字段已退役为判定输入）。
+# 数值沿革：2026-09-12 实弹反馈把 5%/条 调到这里——"频繁主动接话并自我触发限流"。
+GROUP_PROACTIVE_REPLY_PROBABILITY = 0.004
+
+
 # 语音预设白名单（G-2 契约层）：=domains/media/tts_presets.py 的
 # PRESET_REGISTRY 键集。此处用字面量而非 import，保持 config.py 零包内依赖
 # （根 __init__ → config 装载顺序下 import domains 有初始化环风险）；
@@ -301,11 +310,25 @@ class Config(BaseModel):
     bot_outbound_gate_max_per_target_per_minute: int = 2
     bot_outbound_gate_max_per_target_per_hour: int = 6
     bot_outbound_gate_db_path: str = "data/outbound_gate.sqlite3"
+    # TTL（开闸 A 案第二腿，用户 2026-09-25 裁定「开，A+B」）：闸的**自动到期时刻**，
+    # ISO-8601 字面量。到期即等同 enabled=False 并响亮留痕，不需要谁记得回来手工关掉
+    # ——「临时停用要自动到期、不留人工回滚债」。缺省空串=**无到期**，此时有效开启
+    # 逐字节等于 `bot_outbound_gate_enabled` 本身 ⇒ 新键落地不改变任何现网读数。
+    # 判据唯一真身 outbound_gate.py::effective_gate_enabled（读不到/解不出=宁关不猜）；
+    # 解析真身 domains/core/moment_parsing.py::parse_moment。热改档位=需重启（本族键
+    # 不在 _RUNTIME_HOT_OVERRIDE_FIELDS 里，登记见 runtime/settings.py RESTART_REQUIRED_KEYS）。
+    bot_outbound_gate_enabled_until: str = ""
     # 送达核验总开关（B4-spec §3.2 Tier1-a）：开启时 OneBot 本地摘段会给回执挂
     # OperationalIssue(kind=segment_dropped_local)——治「谎报送达」。消费方在
     # domains/transport/sender/onebot.py（B4b 席独占面），SnowLuma 侧未取证前生产不开；
     # 缺省 False=现状字节级不动。config.py 本波唯一登记人=B4a，故该键在此落账。
     bot_outbound_verify_enabled: bool = False
+    # SAFE-EXEC 裁定第 18 项（2026-09-26）：书面同意执法门总闸（唯一读点
+    # =domains/core/safety_exec/consent.py::ConsentPolicy.from_config 装配期快照，
+    # 装载链 runtime/settings.py::configure_safety_gate）。缺省 True＝执法开——
+    # 她要的是真门不是货架（「危险的参数设置需要经过超级管理员的书面同意」）；
+    # 关它必须改 .env + 重启（本键在 RESTART_REQUIRED_KEYS，护栏不可被一条命令热关）。
+    bot_safetyexec_enabled: bool = True
     # 发送层单次请求硬超时（秒）：OneBot/Telegram/Mail 发送共用；
     # 合法范围 (0, 600]，0/负数/NaN/Infinity/超大值在启动校验时直接报错
     # （与 _validate_transport_timeout_seconds 一致，无"回退 15"的隐式兜底）。
@@ -385,6 +408,16 @@ class Config(BaseModel):
     bot_randpic_dirs: list[str] = []
     bot_randpic_trigger_words: list[str] = []
     bot_randpic_max_file_mb: int = 25
+    # ---- 随机发图派发（P14 波，2026-09-25「回复完用户消息 / 用户戳 bot /
+    # 特定指令」三触发）。指令触发一直是既有那条；本批加的是「回复完主动发图」
+    # 一条（戳 bot 那条走 BOT_POKE_REPLY_MODE=randpic 臂，同一取图口同一本窗账）。
+    # 缺省全关=只在用户开口要图时发；开态也过安静时间/blocked 两道硬门。
+    bot_randpic_dispatch_enabled: bool = False
+    bot_randpic_dispatch_probability: float = 0.1
+    bot_randpic_dispatch_cooldown_seconds: float = 600.0
+    bot_randpic_dispatch_max_per_hour: int = 2
+    # 窗内不重发同一张（按会话记账）。0=关=旧行为逐字节同形（纯随机、可重样）。
+    bot_randpic_no_repeat_window_seconds: float = 0.0
     # 语音合成（bot.tts）：对接本机 GPT-SoVITS v2ProPlus 的 api_v2.py HTTP 接口，
     # 把文本合成为守岸人音色的语音消息。缺省全关——语音服务需先单独启动，
     # 未启动时开了也只会得到一句降级文案，故不默认占用。
@@ -433,17 +466,31 @@ class Config(BaseModel):
     bot_tts_auto_reply_scope: str = "private"
     # 自动配音文本上限；**0=不限**（同 max_chars 语义，过硬顶）。
     bot_tts_auto_reply_max_chars: int = Field(default=120, ge=0)
-    # 配音概率门：每条符合条件的回复按此概率决定是否配音（默认 5%）。
+    # 长回复拆条的每段音频文本上限（0=不拆条=缺省逐字节现状）：超过此值的
+    # 可朗读文本按句末标点切成多块、逐块合成、多段音频随同一条回复发出。
+    # 60 秒 ≈ 150~180 字（守岸人语速偏慢，speed 0.85，2026-09-23 按听感校准）。
+    bot_tts_auto_reply_split_max_chars: int = Field(default=0, ge=0)
+    # 配音概率门：每条符合条件的回复按此概率决定是否配音（默认 10%，
+    # 2026-09-25 用户裁定第 8 项由 5% 上调）。
     # 用确定性哈希实现（seed = session_id:message_id），同一条消息结果恒定，
     # 可复现可审计；置 1.0 等价于全量配音。always 置真则直接跳过概率门，
     # 供调试/真机验收时逐条听音。
-    bot_tts_auto_reply_probability: float = Field(default=0.05, ge=0.0, le=1.0)
+    # ⚠ 改这里只动「没写这一行时」的缺省：生产 `.env` 显式写着
+    # BOT_TTS_AUTO_REPLY_PROBABILITY=0.05，那一行不改则线上仍是 5%。
+    bot_tts_auto_reply_probability: float = Field(default=0.10, ge=0.0, le=1.0)
     bot_tts_auto_reply_always: bool = False
     # G-3 配音出站路径开关（M-10/M-13 根修，T54 规格 §4.2）：true=自动配音走
     # pipeline post-review hook（review 批准后的正文才合成；合成失败挂
     # OperationalIssue 走中央告警链）；false=旧能力包装路径（字节级现状）。
     # 双态互斥；装配期冻结（/bot runtime set 不可热改），改后需重启生效。
     bot_tts_voice_hook_enabled: bool = False
+    # creation 对接点的 provider 选择器（中央调度收编波 P5/S09 §7 待登记清单）：
+    # 空串=未配 ⇒ 域内 `reserved_provider.provider_configured` 判 False ⇒ 诚实 UNAVAILABLE。
+    # ⚠ 落地这两键只是把"根本没这个键"改成"有键、待填、待接工厂"：**不**等于绘画可用——
+    # provider 适配器工厂尚未存在（填了值也仍诚实 UNAVAILABLE，探测面转为 DEGRADED）。
+    # 装配期快照（描述符/探针读点在建表时），故两键登记进 RESTART_REQUIRED_KEYS，不做"看着能热改"。
+    bot_creation_image_provider: str = ""
+    bot_creation_tts_provider: str = ""
     # 时间点提醒（bot.reminder）：记住"几点要做什么"，到点主动督促。
     bot_reminder_enabled: bool = True
     bot_reminder_db_path: str = "data/reminders.sqlite3"
@@ -616,6 +663,10 @@ class Config(BaseModel):
     bot_web_search_fetch_max_chars: int = 3000
     # 管理员私聊可选显示联网检索提示；仅有真实结果链接时才追加。
     bot_web_search_admin_notice: bool = False
+    # 链尾免 key 兜底（DuckDuckGo → Bing）：有 key 的供应商全部失败/未配置时接管，
+    # 永不抢在前面。缺省关——开启会让检索面依赖公开搜索引擎 HTML，结果质量与配额不可控。
+    # 只在装配期读一次（链构造即固化），改动需重启。
+    bot_web_search_keyfree_fallback_enabled: bool = False
     # ACG 专项竖源检索（v21r2 SEARCH 席）：Bangumi(bgm.tv 无 key)/萌娘百科/B站公开搜索。
     # 总开关默认关（对齐 bot_web_search_enabled 保守缺省）；开启后仅当查询命中二次元意图
     # （番剧/漫画/B站梗/二次元游戏）且未触发安全红线（显式不联网/闲聊/创作等）时并发查竖源，
@@ -633,6 +684,15 @@ class Config(BaseModel):
     bot_web_intent_telemetry_max_items: int = 10000
     # 开启后同时记录旧版分类标签，用于影子对比；不改变新算法线上决策。
     bot_web_classifier_shadow_enabled: bool = False
+    # ↓ 以下是「行为」阈值，直接左右是否联网检索（区别于上方只记录不决策的遥测）。
+    # 总闸仍是 bot_web_search_enabled；这两个键只在联网已开时决定 FALLBACK（本地
+    # 世界观优先）一类问题是否补搜：置信度 = 查询主题词被知识库覆盖的比例（S13 真身）。
+    # knowledge_threshold：本地知识可答的门槛，低于它才补搜；默认 0.60 偏高但配合真实
+    # 置信度不再压制搜索，须用遥测影子期数据校准。
+    bot_web_search_knowledge_threshold: float = 0.60
+    # confidence_floor：硬底线安全阀，本地知识近乎空白时无条件补搜一次，独立于可被
+    # 调高的 knowledge_threshold，防止误判成「不用搜」。
+    bot_web_search_confidence_floor: float = 0.20
 
     # 表情包生成能力（bot.meme）：对接本地 meme-generator-rs HTTP API。
     # 命令开关：/表情 列表、/表情 <key> <文字>、/meme help（大小写均可）。
@@ -709,6 +769,29 @@ class Config(BaseModel):
     bot_meme_library_vlm_timeout_seconds: float = 20.0
     # 识图模型预制接口：预设名 + 注册表，未来换新模型只需加一条 preset。
     bot_meme_library_vlm_preset: str = "deepseek-vision"
+    # ---- goal-12 表情包子系统波（2026-09-25）：打标取数 / 本命吸收 / 选图口径 ----
+    # 预设名落空时退到注册表里真实存在的第一组。现网实况：.env 把
+    # BOT_MEME_LIBRARY_VLM_PRESET 写成空串、注册表里只有 myvlm 一组，旧实现两侧
+    # 都取不到 ⇒ 打标静默不跑 ⇒ 库里的图全没标签（表现是「选图像随机」）。
+    # 关掉本键即逐字节回到旧行为。注册表真为空时两档都不打标（不猜端点）。
+    bot_meme_library_vlm_fallback_first_preset: bool = True
+    # 自动吸收「主体是守岸人」的贴纸：VLM 主体判定命中中央别名（personas/
+    # shorekeeper/aliases.txt）⇒ 标本命、吃本命加权、默认豁免按龄裁剪。
+    # 不放宽任何收库门（群黑白名单与总闸照旧在调用方）。
+    bot_meme_shorekeeper_absorb_enabled: bool = True
+    # 本命贴纸豁免「按天」裁剪（bot_meme_library_max_age_days 那一刀）；
+    # 按量上限（max_files）仍然生效，否则全标本命就能让库无界增长。
+    bot_meme_shorekeeper_protect_from_prune: bool = True
+    # 相关性地板：比的是**合格分**（库权重 × 主题相关度），不是排序分。
+    # 所以被地板拦下的只有两类：库自己判「不算表情/高危」的（权重 0.25/0.0）与
+    # 离题且不熟的（相关度 0.0）；心情降权、口味与本命加成只影响先后顺序，
+    # **不参与地板**——否则「低落 × 中性档」=0.175 会被吃掉，软偏置就成了硬开关
+    # （旧能力层「全部吵闹也照发」的语义会被本轮悄悄改掉）。
+    # 0.35 落在中性档 0.5 之下、非表情 0.25 之下。
+    bot_meme_relevance_min: float = 0.35
+    # 反重复的作用域口径：global=本机发过即不再发（缺省，钉「同一张绝不发两次」）；
+    # session=同时再按会话/群各记一本账（并集判定，比 global 更严，不会更松）。
+    bot_meme_sticker_scope_mode: str = "global"
     bot_vision_model_registry: dict[str, Any] = {}
     # 聊天图片/表情包识别开关：启用且注册表里有可用模型时才会调用 VLM。
     bot_vision_enabled: bool = False
@@ -720,8 +803,12 @@ class Config(BaseModel):
     bot_vision_max_chars: int = 500
     # 视频识别抽帧数：ffmpeg 均匀抽帧后单次 VLM 摘要；0 视同 1。
     bot_vision_video_frames: int = 4
-    # 白名单1 群里图片/表情包的回复概率：1.0=发图即识别回应；0=仅 @ 时看图。
-    bot_vision_reply_probability: float = 1.0
+    # 白名单1 群里图片/表情包/视频的回复概率：**2026-09-24 用户裁定并入文字
+    # 接话同一个概率**——门禁抽签实际只读 `group_proactive_probability()`
+    # （policy/gate.py 唯一读点），本键自 此 不 再 参 与 判定，仅为兼容 .env
+    # 旧行保留（生产 .env 仍写着 1.0，现已失效，建议用户删除该行）。
+    # 缺省与文字同源（GROUP_PROACTIVE_REPLY_PROBABILITY），禁两处各写一份数字。
+    bot_vision_reply_probability: float = GROUP_PROACTIVE_REPLY_PROBABILITY
     # 语音转写（record 段）：OpenAI 兼容 /audio/transcriptions 接口，
     # registry 格式与 vision 相同（id -> 条目或条目列表，支持 env: 引用 key）。
     bot_asr_model_registry: dict[str, Any] = {}
@@ -825,9 +912,9 @@ class Config(BaseModel):
     # 群聊自动接话：enabled=true 时按 probability 对未点名的群消息
     # 抽签回复（确定性哈希，不是随机数）；默认关闭，点名/命令不受影响。
     bot_group_chat_auto_reply_enabled: bool = False
-    bot_group_chat_auto_reply_probability: float = 0.004  # 2026-09-12 实弹反馈调低：5%/条 会频繁主动接话并自我触发限流
+    # 数值唯一真身在模块头 GROUP_PROACTIVE_REPLY_PROBABILITY（图片类同源同值）。
+    bot_group_chat_auto_reply_probability: float = GROUP_PROACTIVE_REPLY_PROBABILITY
     bot_group_welcome_enabled: bool = True  # 审查 B-05：入群欢迎语（退群/管理变更只记事件不发言）
-    bot_group_welcome_via_queue: bool = False  # S0 收编②：True=欢迎语走统一管线（缺省 False=旧直连）
     bot_group_proactive_max_replies_per_hour: int = 6
     bot_group_proactive_cooldown_seconds: int = 90
     # N4：主动搭话亲和门——群聊抽签主动接话只对好感档 ≥ 亲近（close）的用户
@@ -855,6 +942,24 @@ class Config(BaseModel):
     bot_poke_affinity_enabled: bool = True
     bot_poke_affinity_delta: float = 0.1
     bot_poke_affinity_daily_max: float = 0.5
+    # ---- 戳一戳臂矩阵扩臂（P14 波，2026-09-25 用户裁定「被戳→反戳/自然语言/
+    # 语音+文本/表情包/随机图 任意一个」）。缺省 False=mix 轮换池停在旧三臂
+    # （fixed/llm/meme）⇒ 与 P14 之前逐字节同形；True=池扩到六臂（多
+    # voice/randpic/poke 三臂）。BOT_POKE_REPLY_MODE 显式指名任一臂不受本档影响。
+    bot_poke_extra_arms_enabled: bool = False
+    # ---- 跟戳：用户 A 在群里戳用户 B 时 bot 有概率跟着戳 B（P14）。缺省关；
+    # 独立冷却/每小时上限（QQ 戳很便宜但极刷屏，故与回戳分账，不共用门）。
+    bot_poke_follow_enabled: bool = False
+    bot_poke_follow_probability: float = 0.2
+    bot_poke_follow_cooldown_seconds: float = 120.0
+    bot_poke_follow_max_per_hour: int = 4
+    # ---- 回复后/主动发言后戳人（P14）：bot 把话说完（含群内主动接话、入群
+    # 欢迎这类「bot 先开口」）后按概率戳一下对方。缺省关；两触发共用本族旋钮、
+    # 各自独立掷骰。安静时间与 blocked 名单是硬门，拨开开关也越不过。
+    bot_poke_after_reply_enabled: bool = False
+    bot_poke_after_reply_probability: float = 0.15
+    bot_poke_after_reply_cooldown_seconds: float = 300.0
+    bot_poke_after_reply_max_per_hour: int = 3
     # R-18 内容感知路由（runtime/content_route.py）：本地信号 L1 强词表 +
     # L2 上下文累积 + L4「亲密模式 开/关」手动钉死（2026-09-17：模型自评
     # 标签层移除——gemini/grok 都把它当注入攻击整轮拒答）；INTIMATE 时自动
@@ -896,6 +1001,19 @@ class Config(BaseModel):
     # v21r5 个人级开关总闸：群成员能否对自己拨「亲密模式 开」（开关一）。
     # False=群聊仅管理员全群开关（开关二）有效，成员指令不受理。
     bot_content_route_group_per_user_enabled: bool = True
+    # 亲密档浅档（L1）自动腿总闸（2026-09-24 用户裁定 R1 A）：好感度达标的用户
+    # 自动进浅档——只给关系语气，**绝不换模型**（换模型只由显式开/管理员钉/
+    # 内容信号触发，判据唯一住 content_route._MODEL_SWITCH_SOURCES）。
+    # 消费点=runtime/content_route.py 的 _knobs()（每次判定现读传入的 config）。
+    bot_content_route_l1_auto_enabled: bool = True
+    # 自动腿门槛：好感度**档号**（tier id）达到该档及以上才自动进浅档。档号真身
+    # 住 character/affinity.py 的 ``_ATTITUDE_TIERS``（取数口 attitude_tiers()），
+    # 本仓不在此抄一份档位表；缺省对应「亲近」那一档（id=+1），调高=更严、
+    # 调到最低档号=对全体建档用户开放、负得离谱等于关（另有上一行的总闸）。
+    # ⚠ 热改档位=需重启：这两枚不在根 __init__.py 的 _RUNTIME_HOT_OVERRIDE_FIELDS
+    # 合并表里，`/bot runtime set` 写了也进不了判定用的 config ⇒ 已在
+    # settings.RESTART_REQUIRED_KEYS 登记，改 .env 后重启生效（不做成"看着能热改"）。
+    bot_content_route_l1_auto_min_tier: int = 1
     # Master Love（2026-09-17 用户裁定）：master 恋人语境——名单内用户的会话
     # 自动进入亲密档（无需手动拨「亲密模式」），并注入恋人语气指令；群聊同样
     # 受亲密面准入门约束（普通群不生效）。条目格式："qq"=全域 / "群号:qq"=仅该群
@@ -929,11 +1047,9 @@ class Config(BaseModel):
     bot_cookies_file: str = ""
     # S0 直连收编配置门（v21r4-b2-direct-collect-plan §3.1/§3.3）：缺省 False=
     # 旧直连路径逐字节等价；True=走统一出站路径。
-    bot_cookie_expiry_reminder_via_queue: bool = False
     # 凭证过期每日提醒总开关：job 侧 getattr 读本键而 Config 无 ⇒ 提醒永远注册、.env 关不掉。
     # 缺省 True = 与补键前逐字节同行为（旧 getattr 缺省就是 True）。
     bot_cookie_expiry_reminder_enabled: bool = True
-    bot_cookie_qr_via_queue: bool = False
     # 链接解析历史：默认开启并落盘（data/ 已被 git 忽略）。
     bot_parse_history_enabled: bool = True
     bot_parse_history_db_path: str = "data/parse_history.sqlite3"
@@ -945,7 +1061,6 @@ class Config(BaseModel):
     # 自动下载并以视频段随卡片发送；失败/超限静默降级为「下载：」提示。
     bot_content_video_auto_send: bool = True
     bot_download_dir: str = "data/downloads"
-    bot_file_export_via_queue: bool = False  # S0 收编④：True=文档导出上传走统一管线 files 件（缺省 False=旧直连）
     bot_download_max_bytes: int = 1073741824
     bot_download_max_height: int = 0
     bot_download_timeout_seconds: int = 600
@@ -1076,6 +1191,85 @@ class Config(BaseModel):
     # 链预算止损（秒，v21r2 R1）：故障转移链上除首个真实尝试外，剩余预算低于
     # 该值时不再发起新跳（残秒尝试注定超时）；0=关闭止损。
     bot_chat_failover_min_hop_seconds: float = 3.0
+    # ---- LLM 计费账本 + 网关归因（B5 M1 / B1，2026-09-25）----
+    # 账本总开关。此前只以 `_ENABLED_CONFIG_KEY` 常量名住在 ledger.py 里、Config 上
+    # 没有这枚字段 ⇒ `extra="ignore"` 会把 .env 里的 BOT_LLM_BILLING_ENABLED 静默丢掉，
+    # 「写在 .env 却永远关不上/打不开」（读点幽灵登记项，本次销账）。
+    # 缺省 False = 与历史行为逐字节一致（不建库、不写行）。
+    bot_llm_billing_enabled: bool = False
+    # 网关归因（B1）：bot 侧注册表只指向 AxonHub，看不见网关内部实际选了哪条上游
+    # 渠道，也拿不到缓存创建 token 与四项分项价。开启后由**账本写线程**按响应体 id
+    # （== requests.external_id，实测关联键）去网关库只读反查并回填。
+    # 刻意放在写线程而非回复路径：那条查询要等网络，挂在回复前面就是拿延迟换报表。
+    bot_axonhub_attribution_enabled: bool = False
+    # 只读账号连接面。真实口令只在 .env（铁律 3），代码零硬编码；host/user 任一为空
+    # ⇒ from_config 直接返回 None（fail-closed），不存在"看着开了其实没连"。
+    # 必须用只读角色（本机已建 axonhub_ro，仅五张表 SELECT）：账本侧对网关库
+    # 没有任何写需求，给写权限等于把故障半径扩到她的生产网关。
+    bot_axonhub_db_host: str = ""
+    bot_axonhub_db_port: int = 5432
+    bot_axonhub_db_database: str = "axonhub"
+    bot_axonhub_db_user: str = ""
+    bot_axonhub_db_password: str = ""
+    # 单批反查超时（秒）：到点就放弃这一批、标 unavailable，绝不拖慢落库。
+    bot_axonhub_attribution_timeout_seconds: float = 3.0
+    # 协议端（SnowLuma）安装目录：诊断卡要素⑤「协议端版本」读它自己的
+    # package.json 的 version 字段（OneBot V11 的 get_version 本仓从未调用过，
+    # 而卡片在渲染线程里同步组装，不能为一个版本号往主循环发异步 RPC）。
+    # 缺省空＝走内置探测路径（见 error_report._protocol_client_version_label）；
+    # 读不到就在卡上写「未取到」，绝不拿 nonebot-adapter-onebot 的版本顶替。
+    bot_protocol_client_dir: str = ""
+    # 慢回复先行回执（选项 C，2026-09-23 用户裁定）：真回复仍在跑，先补一句守岸人
+    # 口吻的等待短句。缺省关；开启与否按会话走四名单（见下方两对键）。
+    # 装配期读一次，热改当轮不生效——与调度器族同口径（台账 #3 P3），不做成"看起来能热改"。
+    bot_chat_progress_ack_enabled: bool = False
+    # 判定"慢"的阈值（秒）：能力在此时间内出结果就什么都不发，不发第二条、也不撤回。
+    # 缺省 15.0 —— 2026-09-23 用户裁定「15 秒内出结果时不发」。
+    bot_chat_progress_ack_delay_seconds: float = 15.0
+    # 同一会话两次回执的最小间隔（秒），防刷屏；只在回执真发成功时占用额度。
+    bot_chat_progress_ack_cooldown_seconds: float = 60.0
+    # 群聊名单：白名单为空 = 群聊整面关闭（绝不猜群）；黑名单永远赢。
+    bot_chat_progress_ack_group_whitelist: list[str] = []
+    bot_chat_progress_ack_group_blacklist: list[str] = []
+    # 私聊名单：白名单为空 = 私聊放开（刻意不对称，同 bot_content_route_*）。
+    bot_chat_progress_ack_private_whitelist: list[str] = []
+    bot_chat_progress_ack_private_blacklist: list[str] = []
+    # 回执阈值随网关当下快慢浮动（2026-09-25 用户裁定：中转站一慢就必触发，误报太多）。
+    # 开时按「链上各跳 EWMA 延迟 × 倍率」抬高质量阈值，并夹在 floor~cap 之间；
+    # 关时逐字节回到上面那枚固定的 delay_seconds。
+    bot_chat_progress_ack_adaptive_enabled: bool = True
+    # 自适应的下限（秒）：网关很快时也不早于此值发回执。2026-09-26 由 15 抬到 30——
+    # 15 秒实测「每一轮都发」（34 条里 19 条），地板低于本轮耗时常态时它就退化成
+    # 每条先开口；缺省值唯一真身在 progress_ack.DEFAULT_ACK_DELAY_FLOOR_SECONDS，
+    # 这枚字段由 tests/test_progress_ack_thresholds.py 的 AST parity 锁现算比对。
+    bot_chat_progress_ack_delay_floor_seconds: float = 30.0
+    # 自适应的上限（秒）：网关再慢也不能让用户无限期等不到一句提示。
+    bot_chat_progress_ack_delay_cap_seconds: float = 90.0
+    # 倍率：阈值 = 链上最慢一跳的 EWMA × 此倍率。取「最慢一跳」而不是「当值那一跳」，
+    # 理由是回执压的是整轮（检索+联网+LLM），任何一条路慢都可能是本轮走的那条。
+    # 现网实测（gemini ema 4.5s / grok ema 13.7s、grok 单跳最大 19.9s）下
+    # 2.0 把阈值从 15s 抬到约 27s——仍在「真等久了」的量级，不再一抖就报。
+    bot_chat_progress_ack_latency_multiplier: float = 2.0
+    # 折句窗口（2026-09-25 用户裁定）：一句话按逗号拆成两三条发时合成一轮、只回一次。
+    # 只有「本身像半句话」的消息才会等下一条，完整句子零额外延迟。
+    bot_chat_message_coalescing_enabled: bool = True
+    # 停口多久算这句话说完了（秒）——这是分句发送者唯一付出的额外延迟。
+    bot_chat_message_coalescing_quiet_seconds: float = 1.8
+    # 封顶等待（秒）：有人逐字蹦也必须在这时开口，绝不允许一直不回。
+    bot_chat_message_coalescing_max_hold_seconds: float = 8.0
+    bot_chat_message_coalescing_max_messages: int = 6
+    bot_chat_message_coalescing_max_chars: int = 1500
+    # 被限流挡下的「明确找我说话」的消息改为期后补回，不再静默吞掉
+    # （2026-09-25 用户裁定第 2 项：冷却与条数帽把消息吃掉了）。
+    bot_chat_rate_limit_redrive_enabled: bool = True
+    # 最多延后多久补回（秒）；还要等更久的不补（避免隔半小时突然冒一句）。
+    # 180 = 4×点名间隔缺省 45：连发 5 条 @bot 排队补回装得下整轮
+    # （2026-09-25 用户裁定第 2 项「可以延后，不可以丢弃」；
+    # `policy/redrive_ledger.py` 给同人多条被拦消息排开回位后，
+    # 上一档 90 秒只容 2 个回位、第 3 条起仍被丢）。
+    bot_chat_rate_limit_redrive_max_wait_seconds: float = 180.0
+    # 一条消息最多补回几次，防重放循环。
+    bot_chat_rate_limit_redrive_max_attempts: int = 1
     bot_chat_fast_embedding_timeout_seconds: float = 3.0
     bot_chat_fast_skip_web_pages: bool = True
     bot_chat_fast_disable_vector_knowledge: bool = False
@@ -1113,6 +1307,20 @@ class Config(BaseModel):
     bot_reply_detail: str = "auto"
     bot_generated_files_dir: str = "data/generated_files"
     bot_file_read_max_chars: int = 120000
+    # ---- 文件写盘口（需求 16(2)，2026-09-26 S-FILES-LAND 收编波）----
+    # 六枚缺省值**逐字节等于** restricted_runner 内建缺省（8MiB/60/120、白名单回落
+    # bot_download_dir/export、总闸今日在岗）⇒ 现网零变更；「保守」体现在口本身：
+    # 白名单空＝什么都不许写（fail-closed），可执行扩展名永远拦。
+    # 读点唯一住 domains/files/capabilities/file_exchange.py 的装配函数；根 matcher
+    # 交装配期快照 config、六枚未进运行时覆盖合并表 ⇒ 全进 RESTART_REQUIRED_KEYS，
+    # 不做「看着能热改」（C-09 形态）。缺省常量与运行器同名常量的等值由
+    # tests/test_files_write_side_assembly.py 现场对账（改其一必看到另一处红）。
+    bot_files_write_enabled: bool = True
+    bot_files_write_allowed_dirs: list[str] = []
+    bot_files_write_max_bytes: int = 8 * 1024 * 1024
+    bot_files_write_daily_create: int = 60
+    bot_files_write_daily_replace: int = 120
+    bot_files_read_confined_max_bytes: int = 8 * 1024 * 1024
     bot_reply_default_context_budget: int = 2048
     bot_reply_support_context_budget: int = 2560
     bot_reply_deep_help_context_budget: int = 3072
@@ -1126,9 +1334,31 @@ class Config(BaseModel):
     bot_rate_limit_chat_sender_min_interval_seconds: int = 45
     bot_rate_limit_target_min_interval_seconds: int = 0
     # 群聊专属句数帽（用户口径：每小时 60 句、每分钟 3 句）。0 = 该帽不生效。
-    bot_rate_limit_group_max_per_hour: int = 0
+    # 2026-09-24 裁定：群小时额度 60 上线（缺省 0→60）；**仅群聊生效**，
+    # 私聊不设小时额度（"有问必回"教义不变，反向锁见
+    # tests/test_rate_limit_pacing.py::test_group_hour_cap_never_reaches_private_chat）。
+    bot_rate_limit_group_max_per_hour: int = 60
     bot_rate_limit_group_max_per_minute: int = 0
-    # 用户情绪低落时的限流豁免：安抚不该被句数帽挡住。
+    # ---- 群聊节奏层（2026-09-24 T7，采纳 T6 令牌桶主干；根治"开局瞬间打光后
+    # 整段静默"：旧滑动小时窗 2 分钟打光 30 句、随后静默 58 分钟，节奏层把最坏
+    # 静默压到 3600/x 秒）。消费点 policy/rate_limit.py，经装配期 settings_provider
+    # 每轮现读**本 Config 的值**；但 .env 只在进程启动时装载，且这五枚键未登记进
+    # 热改合并层（根 __init__ 冻结、禁插行），改这些键 = 改 .env + 重启（需重启）。
+    # 每小时补充令牌 x 句（0 = 整个节奏层不生效，含分钟帽与最小间隔）。
+    bot_rate_limit_group_pacing_tokens_per_hour: int = 60
+    # 桶容量 B = 开局可连发句数（"绝不瞬间打光"的红线；T6 建议值 5 起步）。
+    bot_rate_limit_group_pacing_burst_capacity: int = 5
+    # 节奏层分钟外骨架（她自己的口径"每分钟 3 句"）。0 = 不设。
+    bot_rate_limit_group_pacing_max_per_minute: int = 3
+    # 群非点名两句之间的最小间隔（秒）。0 = 不设。情绪/好感豁免只免这类间隔。
+    bot_rate_limit_group_pacing_min_interval_seconds: int = 20
+    # 图片/表情包/视频类**自己的**独立最小间隔（秒）：与文字并入同一个桶，
+    # 另加这道更宽的间隔（120s，2026-09-24 裁定采纳）。0 = 不设。
+    bot_rate_limit_group_vision_min_interval_seconds: int = 120
+    # 用户情绪低落时的限流豁免：**2026-09-24 裁定收窄**——只免最小间隔
+    # （节奏层间隔/图类间隔/target 间隔），**不免任何句数额度**（小时帽、
+    # 分钟帽、令牌桶、session/sender/global 照常且照常记账）——否则一条
+    # 难过消息能连开整点额度。覆盖面仍是群聊非点名流量，不扩大。
     bot_rate_limit_emotion_exempt: bool = True
     bot_rate_limit_bypass_roles: list[str] = ["admin"]
     bot_rate_limit_db_path: str = ""
@@ -1420,6 +1650,9 @@ class Config(BaseModel):
             "bot_knowledge_files",
             "bot_trend_files",
             "bot_glossary_files",
+            # 文件写盘口白名单根＝路径值，逐条走同一 resolve（铁律 6：源码树零
+            # data/）；缺省空表 ⇒ resolve([])＝[]，装配层按「空＝回落 export」处理。
+            "bot_files_write_allowed_dirs",
         ):
             setattr(self, name, [resolve(item) for item in getattr(self, name)])
         return self
@@ -1434,6 +1667,9 @@ class Config(BaseModel):
         # 参考音频项含 "|" 与可能的中文逗号，故走 file_list 解析（只按 ";" 与
         # JSON 数组切分），不能走 id_list（那边会 replace 逗号导致正文被切断）。
         "bot_tts_ref_audios",
+        # 写盘白名单根＝路径值，目录名可能含逗号，同样只按 ";" / JSON 数组切；
+        # 绝不走 id_list（那会把带逗号的目录名切开）。
+        "bot_files_write_allowed_dirs",
         mode="before",
     )
     @classmethod
@@ -1483,6 +1719,10 @@ class Config(BaseModel):
         "bot_content_route_group_blacklist",
         "bot_content_route_private_whitelist",
         "bot_content_route_private_blacklist",
+        "bot_chat_progress_ack_group_whitelist",
+        "bot_chat_progress_ack_group_blacklist",
+        "bot_chat_progress_ack_private_whitelist",
+        "bot_chat_progress_ack_private_blacklist",
         "bot_master_love_admins",
         mode="before",
     )

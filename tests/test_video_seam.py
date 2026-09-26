@@ -18,7 +18,6 @@ from types import SimpleNamespace
 import pytest
 
 import plugins.bot_unified_runtime as runtime
-from plugins.bot_unified_runtime.capabilities import chat as chat_module
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     ContextBundle,
@@ -28,6 +27,9 @@ from plugins.bot_unified_runtime.contracts import (
     RetrievalResult,
     SessionType,
     ToneProfile,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import (
+    chat as chat_module,
 )
 from plugins.bot_unified_runtime.domains.media.ingest import video_understanding as vu
 from plugins.bot_unified_runtime.domains.media.video import video_pipeline

@@ -65,32 +65,6 @@ from urllib.parse import urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
-from plugins.bot_unified_runtime.capabilities.content_parser import (
-    build_content_capability,
-)
-from plugins.bot_unified_runtime.capabilities.divination import (
-    build_divination_capability,
-    is_divination_command,
-)
-from plugins.bot_unified_runtime.capabilities.fx import build_fx_capability
-from plugins.bot_unified_runtime.capabilities.market import (
-    build_market_capability,
-    is_market_command,
-)
-from plugins.bot_unified_runtime.capabilities.meme_library import (
-    build_meme_library_capability,
-)
-from plugins.bot_unified_runtime.capabilities.music import build_music_capability
-from plugins.bot_unified_runtime.capabilities.news import build_news_capability
-from plugins.bot_unified_runtime.capabilities.randpic import build_randpic_capability
-from plugins.bot_unified_runtime.capabilities.reminder import (
-    build_reminder_capability,
-)
-from plugins.bot_unified_runtime.capabilities.stocks import (
-    build_stocks_capability,
-    is_stocks_command,
-)
-from plugins.bot_unified_runtime.capabilities.weather import build_weather_capability
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
@@ -134,16 +108,56 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
 from plugins.bot_unified_runtime.domains.core.decision.trace import (
     InMemoryDecisionTraceSink,
 )
+from plugins.bot_unified_runtime.domains.divination.capabilities.divination import (
+    build_divination_capability,
+    is_divination_command,
+)
+from plugins.bot_unified_runtime.domains.finance.capabilities.fx import (
+    build_fx_capability,
+)
+from plugins.bot_unified_runtime.domains.finance.capabilities.market import (
+    build_market_capability,
+    is_market_command,
+)
+from plugins.bot_unified_runtime.domains.finance.capabilities.stocks import (
+    build_stocks_capability,
+    is_stocks_command,
+)
+from plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser import (
+    build_content_capability,
+)
+from plugins.bot_unified_runtime.domains.link_parse.parsers import (
+    build_cookie_provider,
+    music_candidate_providers,
+)
+from plugins.bot_unified_runtime.domains.meme.capabilities.meme_library import (
+    build_meme_library_capability,
+)
+from plugins.bot_unified_runtime.domains.meme.capabilities.randpic import (
+    build_randpic_capability,
+)
 from plugins.bot_unified_runtime.domains.meme.sources.meme_library import (
     MemeLibraryStore,
 )
+from plugins.bot_unified_runtime.domains.music.capabilities.music import (
+    build_music_capability,
+)
 from plugins.bot_unified_runtime.domains.ops.smoke.smoke import load_smoke_config
-from plugins.bot_unified_runtime.output.render_backends import build_render_backend
-from plugins.bot_unified_runtime.sender import InMemorySendQueue
-from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
-from plugins.bot_unified_runtime.sources.parsers import (
-    build_cookie_provider,
-    music_candidate_providers,
+from plugins.bot_unified_runtime.domains.render.render_backends import (
+    build_render_backend,
+)
+from plugins.bot_unified_runtime.domains.schedule.capabilities.reminder import (
+    build_reminder_capability,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.news import (
+    build_news_capability,
+)
+from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+    SQLiteSendRequestQueue,
+)
+from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
+    build_weather_capability,
 )
 
 BILI_SAMPLE_URL = "https://www.bilibili.com/video/BV1GJ411x7h7"
@@ -244,7 +258,9 @@ def choose_send_queue(
             "BOT_SEND_QUEUE_DB_PATH），否则入队请求没有任何进程会投递。"
             "请先在 .env 启用发送队列并重启 bot。"
         )
-    from plugins.bot_unified_runtime.sender.queue import build_send_queue
+    from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+        build_send_queue,
+    )
 
     queue = build_send_queue(config, audit_logger=audit_logger)
     if not isinstance(queue, SQLiteSendRequestQueue):

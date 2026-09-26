@@ -24,8 +24,6 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from plugins.bot_unified_runtime.capabilities.chat import build_chat_capability
-from plugins.bot_unified_runtime.character.providers import NullCharacterContextProvider
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     IncomingMessage,
@@ -33,6 +31,12 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
     SendPolicy,
     SessionType,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    build_chat_capability,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
+    NullCharacterContextProvider,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
     InjectionAction,

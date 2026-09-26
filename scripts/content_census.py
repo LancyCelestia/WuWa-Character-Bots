@@ -30,6 +30,8 @@ S10 准绳普查（`SEAT-S10.md` §陆-5）实证：简报点名的 `scripts/con
 ----
     python scripts/content_census.py --write    # 重生成 CENSUS.md
     python scripts/content_census.py --check    # 与盘上文件比对（结构+数字，不含生成时间行）
+    python scripts/content_census.py --config-declarations
+        # 席 TX200（P-93 ①步）：只读打印「配置声明」通道两栏账，零写盘、不影响上两出口
 """
 
 from __future__ import annotations
@@ -727,6 +729,310 @@ def family_rollup(rows: list[FaceRow]) -> dict[str, tuple[int, int, int]]:
         a[1] += r.driven
         a[2] += r.undriven
     return {k: (v[0], v[1], v[2]) for k, v in agg.items()}
+
+
+# ---------------------------------------------------------------------------
+# 席 TX200（2026-09-23，BRIEFS-BATCH57《TX200》）＝ `P-93` 工单**第①步**：
+# 「配置声明」通道的**只读派生腿**——从 `config.py` 一趟现读全部 `bot_*` 字段的
+# `description`／类型／缺省，与 `code_face_ledger()` 的 `config-field` 在册件**逐件对齐**，
+# 产出「可派生／不可派生＋各为什么」两栏账。
+#
+# 本段**只做第①步**：不登记 `CODE_B_CHANNELS`、不投影进 `render()`（⇒ `CENSUS.md` 零改动）、
+# 不动任何门与判据。②步（热更三档由 `settings.py` 两表派生）与③步（catalog 机器段＋唯一写口）
+# 按 `B_WORK_ORDERS["config-field"]` 归各面 owner，齐了才谈逐件认 (b)。
+#
+# 为什么本段自己**不写**类型/缺省的 AST 规则：`scripts/config_catalog_generator_pilot.py`
+# （席 S182 原型件）已有 `load_config_fields(source)` —— 一趟源码文本 AST、形态不认识就抛
+# `UnrepresentableField` fail-closed。本席**复用**它（准绳一：禁第二真身），只补它没有、
+# 且 `P-93` ①步唯一缺的那一列：**`description` 是否已有码上真身**。
+# 两处枚数若漂移 ⇒ 抛 `ConfigDeclarationDrift`（冗余必带锁，绝不让两把尺各算各的）。
+# ---------------------------------------------------------------------------
+
+CONFIG_CATALOG_PILOT = "scripts/config_catalog_generator_pilot.py::load_config_fields()"
+
+#: 说明列的「空/占位」形态——**逐字白名单**，不做关键词模糊匹配（宽词表会误杀真说明；
+#: 本波 R4 已因「靠词混过」翻红一批，这里反过来靠词**拦**人同样不许）。
+DESCRIPTION_PLACEHOLDERS: frozenset[str] = frozenset(
+    {
+        "-", "--", "—", "──", "待补", "待定", "待填", "暂无", "无", "略", "同上", "如题",
+        "描述", "说明", "配置", "参数", "todo", "tbd", "n/a", "na", "none", "null",
+        "description", "config", "param", "value",
+    }
+)
+
+# 不可派生的**理由码**（互斥不重复计入分栏；一枚字段可挂多码，但每码必有 ≥1 枚，见闭包式）。
+BLOCK_ROSTER_ONLY = "roster_entry_has_no_config_binding"        # 名册有、类体无绑定（锚点无源）
+BLOCK_ITEM_SHAPE = "roster_item_shape_unrecognized"             # 在册件串形不对（取数口变了）
+BLOCK_STRUCT_ABORTED = "structural_pass_aborted_unrepresentable"  # 结构趟 fail-closed 中止（整批点名）
+BLOCK_NO_FIELD_CALL = "no_field_call"                           # 裸 `x: t = 值`，连 `Field(...)` 都没有
+BLOCK_FIELD_NO_DESC = "field_call_without_description"          # 有 `Field(...)`，只差 `description=`
+BLOCK_DESC_NON_LITERAL = "description_not_string_literal"       # description 非字符串字面量＝不可信真身
+BLOCK_DESC_BLANK = "description_blank"                          # 空串/纯空白（工单明禁）
+BLOCK_DESC_PLACEHOLDER = "description_placeholder"              # 占位词（工单明禁＝发明数据源）
+BLOCK_DESC_SAME_AS_KEY = "description_equals_key_name"          # 说明＝键名本身（零信息）
+
+DESCRIPTION_BLOCK_CODES: tuple[str, ...] = (
+    BLOCK_NO_FIELD_CALL,
+    BLOCK_FIELD_NO_DESC,
+    BLOCK_DESC_NON_LITERAL,
+    BLOCK_DESC_BLANK,
+    BLOCK_DESC_PLACEHOLDER,
+    BLOCK_DESC_SAME_AS_KEY,
+)
+STRUCTURAL_BLOCK_CODES: tuple[str, ...] = (
+    BLOCK_ROSTER_ONLY,
+    BLOCK_ITEM_SHAPE,
+    BLOCK_STRUCT_ABORTED,
+)
+
+
+class ConfigDeclarationDrift(RuntimeError):
+    """派生腿自身的完整性被破坏（类体找不到／两把尺枚数不一／闭包式不成立）⇒ 拒绝出账。
+
+    与 `ByteChannel` 的 fail-closed 同一哲学：**宁可不给数，也不给一个糊过去的数**。"""
+
+
+@dataclasses.dataclass(frozen=True)
+class ConfigFieldDeclaration:
+    """一枚 `bot_*` 字段的代码侧事实（全部 AST 现读，零散文、零 import 执行）。"""
+
+    name: str
+    item: str
+    type_src: str
+    default_src: str
+    bounds_src: str
+    declared_via: str
+    line: int
+    description: str | None
+    blockers: tuple[str, ...]
+
+    @property
+    def derivable(self) -> bool:
+        """三列（键名/类型/缺省/**说明**）是否都有码上真身 ⇒ ①步口径下的「可派生」。"""
+        return not self.blockers
+
+    @property
+    def structurally_derivable(self) -> bool:
+        """类型＋缺省两列是否已可派生（①步施工前就有的底子，与说明列分账报）。"""
+        return not any(b in STRUCTURAL_BLOCK_CODES for b in self.blockers)
+
+
+@dataclasses.dataclass(frozen=True)
+class ConfigDeclarationLedger:
+    """两栏账：`derivable` ／ `not_derivable` ＋ `blocker_counts`（各为什么）。"""
+
+    source: str
+    total: int
+    derivable: int
+    not_derivable: int
+    structurally_derivable: int
+    description_derivable: int
+    blocker_counts: dict[str, int]
+    blocker_items: dict[str, tuple[str, ...]]
+    roster_only: tuple[str, ...]
+    ast_only: tuple[str, ...]
+    duplicate_description_groups: tuple[tuple[str, tuple[str, ...]], ...]
+    structural_error: str
+
+    def closure(self) -> list[str]:
+        """闭包式（不成立 ⇒ 出账即抛，绝不印一份不平的账）。"""
+        out: list[str] = []
+        if self.derivable + self.not_derivable != self.total:
+            out.append(f"{self.derivable}+{self.not_derivable} != 在册 {self.total}")
+        for code, n in self.blocker_counts.items():
+            if n == 0:
+                out.append(f"理由码 {code} 空转（0 枚仍挂在账上）")
+            if len(self.blocker_items.get(code, ())) != n:
+                out.append(f"理由码 {code} 计数与点名枚数不等")
+        if self.not_derivable and not self.blocker_counts:
+            out.append("有不可派生枚数却零理由码＝静默放行")
+        return out
+
+
+def _config_body_declaration_pass(
+    tree: ast.Module,
+) -> dict[str, tuple[str | None, bool, bool, int]]:
+    """一趟类体扫描 → `字段名 → (说明字面量, 非字面量说明, 有 Field, 行号)`。
+
+    只回答「`description=` 在不在、是不是可信真身」这一件事；类型/缺省**不在本函数**判
+    （走 `CONFIG_CATALOG_PILOT` 既有口）。返回枚数由调用方与既有口比对，不等 ⇒ 抛
+    `ConfigDeclarationDrift`（＝两把尺不许各算各的）。"""
+    cls = next((n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Config"), None)
+    if cls is None:
+        raise ConfigDeclarationDrift("config.py 里找不到 `class Config` —— 派生腿形状已变，拒绝出账")
+    out: dict[str, tuple[str | None, bool, bool, int]] = {}
+    for stmt in cls.body:
+        if not isinstance(stmt, ast.AnnAssign) or not isinstance(stmt.target, ast.Name):
+            continue
+        name = stmt.target.id
+        if not name.startswith("bot_"):
+            continue
+        value = stmt.value
+        via_field = isinstance(value, ast.Call) and getattr(value.func, "id", "") == "Field"
+        desc: str | None = None
+        non_literal = False
+        if via_field and value is not None:
+            for kw in value.keywords:
+                if kw.arg != "description":
+                    continue
+                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    desc = kw.value.value
+                else:
+                    non_literal = True
+                break
+        out[name] = (desc, non_literal, via_field, stmt.lineno)
+    return out
+
+
+def _config_declaration_pass(source: str | None = None) -> tuple[dict[str, ConfigFieldDeclaration], str]:
+    """**一次跑完**现读 `config.py` 全部 `bot_*` 字段的 description／类型／缺省 → （逐件事实, 结构趟错误）。
+
+    `source` 传入源码文本即用该文本派生（注毒在内存演算、不落盘不污染真身，R3 同口径）；
+    省略即读 `plugins/bot_unified_runtime/config.py`。绝不 `import` 配置模块（护栏二：不执行、
+    不在源码树写 `__pycache__`）。结构趟（既有口）失败 ⇒ 不抛、逐件挂
+    `BLOCK_STRUCT_ABORTED` 并把错误原文带回：账照出，但**每枚都被点名**，绝不折成空账。"""
+    import config_catalog_generator_pilot as pilot
+
+    text = (ROOT / CONFIG_PY).read_text(encoding="utf-8", errors="replace") if source is None else source
+    tree = ast.parse(text)
+    body = _config_body_declaration_pass(tree)
+    struct_error = ""
+    infos: dict[str, pilot.FieldInfo] = {}
+    try:
+        infos = pilot.load_config_fields(text)
+    except pilot.UnrepresentableField as exc:  # fail-closed：点名中止，绝不折成「少几枚照样出账」
+        struct_error = f"{type(exc).__name__}: {exc}"
+    if not struct_error and set(infos) != set(body):
+        only_pilot = sorted(set(infos) - set(body))
+        only_body = sorted(set(body) - set(infos))
+        raise ConfigDeclarationDrift(
+            f"两把尺枚数不等（既有口 {len(infos)} · 说明趟 {len(body)}）"
+            f"：只在既有口={only_pilot[:5]} 只在说明趟={only_body[:5]}"
+        )
+    out: dict[str, ConfigFieldDeclaration] = {}
+    for name in sorted(set(infos) | set(body)):
+        info = infos.get(name)
+        desc, non_literal, via_field, line = body.get(name, (None, False, False, 0))
+        blockers: list[str] = [BLOCK_STRUCT_ABORTED] if struct_error else []
+        if info is None or not via_field:
+            blockers.append(BLOCK_NO_FIELD_CALL)
+        elif non_literal:
+            # 必须先于「desc 为 None」判：非字面量说明**也是**在场，只是不可信 ⇒ 不能折成「没写」
+            blockers.append(BLOCK_DESC_NON_LITERAL)
+        elif desc is None:
+            blockers.append(BLOCK_FIELD_NO_DESC)
+        elif not desc.strip():
+            blockers.append(BLOCK_DESC_BLANK)
+        elif desc.strip().casefold() in DESCRIPTION_PLACEHOLDERS:
+            blockers.append(BLOCK_DESC_PLACEHOLDER)
+        elif desc.strip().casefold() == name.casefold():
+            blockers.append(BLOCK_DESC_SAME_AS_KEY)
+        out[name] = ConfigFieldDeclaration(
+            name=name,
+            item=f"{CONFIG_PY}::{name}",
+            type_src=info.type_text if info else "—",
+            default_src=info.default_text if info else "—",
+            bounds_src=info.bounds_text if info else "",
+            declared_via="Field(...)" if via_field else "plain",
+            line=line,
+            description=desc,
+            blockers=tuple(blockers),
+        )
+    return out, struct_error
+
+
+def config_field_declarations(source: str | None = None) -> dict[str, ConfigFieldDeclaration]:
+    """公开单件读口（`名称 → 代码侧事实`）。结构趟错误由每枚的 `BLOCK_STRUCT_ABORTED` 承载；
+    要**错误原文**请用 `config_declaration_ledger().structural_error`。"""
+    return _config_declaration_pass(source)[0]
+
+
+def config_declaration_ledger(
+    items: list[str] | None = None, source: str | None = None
+) -> ConfigDeclarationLedger:
+    """P-93 ①步交付形＝**两栏账**（可派生枚数／不可派生枚数及各为什么），与在册件逐件对齐。
+
+    `items` 默认取 `code_surface_items()["config-field"]` —— 与 `code_face_ledger()` 的
+    `config-field` 行**同一支取数口**（同一份名册，禁第二本账）。三件事分开报、绝不混一格：
+      · `structurally_derivable`：类型＋缺省可派生的枚数（①步施工前就有的底子）；
+      · `description_derivable`：说明列有码上真身**且非空非占位**的枚数（＝①步要种的种子，今日 0）；
+      · `derivable`：三列齐 ⇒ 该件将来能被通道**逐件**认账的上限。
+    名册有而类体无绑定 ⇒ 单列 `roster_only` 点名（③步的逐件锚点会缺源）；
+    类体有而名册无 ⇒ 单列 `ast_only` 点名（＝P-93 风险(iii)「两本账双漂」的现算哨兵）。
+    闭包式不成立 ⇒ 抛 `ConfigDeclarationDrift`，绝不印一份不平的账。"""
+    if items is None:
+        items = code_surface_items()["config-field"][0]
+    decls, struct_error = _config_declaration_pass(source)
+    rows: list[ConfigFieldDeclaration] = []
+    roster_only: list[str] = []
+    blocker_counts: dict[str, int] = {}
+    blocker_items: dict[str, list[str]] = {}
+    seen: set[str] = set()
+
+    def _add(code: str, item: str) -> None:
+        blocker_counts[code] = blocker_counts.get(code, 0) + 1
+        blocker_items.setdefault(code, []).append(item)
+
+    for item in items:
+        if not item.startswith(f"{CONFIG_PY}::"):
+            _add(BLOCK_ITEM_SHAPE, item)
+            rows.append(
+                ConfigFieldDeclaration(
+                    name="—", item=item, type_src="—", default_src="—", bounds_src="—",
+                    declared_via="—", line=0, description=None, blockers=(BLOCK_ITEM_SHAPE,),
+                )
+            )
+            continue
+        name = item.rsplit("::", 1)[-1]
+        decl = decls.get(name)
+        if decl is None:
+            roster_only.append(item)
+            _add(BLOCK_ROSTER_ONLY, item)
+            rows.append(
+                ConfigFieldDeclaration(
+                    name=name, item=item, type_src="—", default_src="—", bounds_src="—",
+                    declared_via="—", line=0, description=None, blockers=(BLOCK_ROSTER_ONLY,),
+                )
+            )
+            continue
+        seen.add(name)
+        rows.append(decl)
+        for code in decl.blockers:
+            _add(code, item)
+    if len(rows) != len(items):
+        raise ConfigDeclarationDrift(f"名册 {len(items)} 枚只落账 {len(rows)} 行 ⇒ 有件被静默丢掉")
+    dup_groups: list[tuple[str, tuple[str, ...]]] = []
+    by_desc: dict[str, list[str]] = {}
+    for r in rows:
+        if r.derivable and r.description:
+            by_desc.setdefault(r.description.strip(), []).append(r.name)
+    for d, names in sorted(by_desc.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        if len(names) > 1:
+            dup_groups.append((d[:60], tuple(names)))
+    ledger = ConfigDeclarationLedger(
+        source=CONFIG_CATALOG_PILOT,
+        total=len(rows),
+        derivable=sum(1 for r in rows if r.derivable),
+        not_derivable=sum(1 for r in rows if not r.derivable),
+        structurally_derivable=sum(1 for r in rows if r.structurally_derivable),
+        description_derivable=sum(
+            1 for r in rows
+            if r.structurally_derivable
+            and not any(b in DESCRIPTION_BLOCK_CODES for b in r.blockers)
+        ),
+        blocker_counts=blocker_counts,
+        blocker_items={k: tuple(v) for k, v in blocker_items.items()},
+        roster_only=tuple(roster_only),
+        ast_only=tuple(sorted(d.item for n, d in decls.items() if n not in seen)),
+        duplicate_description_groups=tuple(dup_groups),
+        structural_error=struct_error,
+    )
+    bad = ledger.closure()
+    if bad:
+        raise ConfigDeclarationDrift("两栏账闭包式不成立：" + "；".join(bad))
+    return ledger
+
+
 def _category_rows() -> list[str]:
     """§一 类别名：**逐枚在册类别一行**，全部由 `doc_templates.CONTENT_CATEGORIES` 现算投影，
     本册不抄第二份名字表（席 S73 收掉旧的「board-l1/l2/l3 合一行」手写形状）。
@@ -1217,12 +1523,43 @@ def _book_line(stats: dict[str, object]) -> str:
     )
 
 
+def _print_config_declaration_ledger() -> int:
+    """席 TX200：`P-93` ①步两栏账的**唯一复跑出口**（只读到 stdout，零写盘、不碰 `CENSUS.md`）。"""
+    led = config_declaration_ledger()
+    print(f"配置声明通道·第①步两栏账（尺＝{led.source} ＋ 名册＝board_doc_sync.load_config_fields()）")
+    print(f"  在册枚数={led.total} 可派生={led.derivable} 不可派生={led.not_derivable}")
+    print(f"  其中 类型＋缺省已可派生={led.structurally_derivable} · 说明列有码上真身={led.description_derivable}")
+    if led.structural_error:
+        print(f"  结构趟 fail-closed 中止：{led.structural_error}")
+    print("  不可派生逐码点名（各为什么）：")
+    for code in (*STRUCTURAL_BLOCK_CODES, *DESCRIPTION_BLOCK_CODES):
+        n = led.blocker_counts.get(code, 0)
+        if not n:
+            continue
+        sample = "、".join(i.rsplit("::", 1)[-1] for i in led.blocker_items[code][:3])
+        print(f"    {code} = {n} 枚（例：{sample}）")
+    print(f"  名册有而类体无绑定（③步锚点会缺源）={len(led.roster_only)} · "
+          f"类体有而名册无（两本账双漂哨兵）={len(led.ast_only)}")
+    if led.duplicate_description_groups:
+        print(f"  说明雷同的分组（诊断，不判占位）={len(led.duplicate_description_groups)}："
+              + "；".join(f"「{d}」×{len(names)}" for d, names in led.duplicate_description_groups[:5]))
+    print(f"  闭包式：可派生+不可派生={led.derivable + led.not_derivable} == 在册={led.total}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--write", action="store_true", help="重生成 CENSUS.md")
     g.add_argument("--check", action="store_true", help="现算结果与盘上文件比对（不含生成时间行）")
+    g.add_argument(
+        "--config-declarations",
+        action="store_true",
+        help="只读打印配置声明通道第①步两栏账（不写盘、不碰 CENSUS.md）",
+    )
     args = ap.parse_args(argv)
+    if getattr(args, "config_declarations", False):
+        return _print_config_declaration_ledger()
     text, stats = render()
     if args.write:
         CENSUS_MD.parent.mkdir(parents=True, exist_ok=True)

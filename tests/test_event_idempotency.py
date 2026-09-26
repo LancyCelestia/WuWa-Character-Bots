@@ -14,9 +14,11 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.event_idempotency im
     build_event_dedupe_key,
     build_event_idempotency_table,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+    RuntimePipeline,
+)
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
-from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
-from plugins.bot_unified_runtime.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
 
 
 class _FakeClock:

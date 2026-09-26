@@ -41,7 +41,7 @@ from plugins.bot_unified_runtime.contracts import (
     SessionType,
 )
 from plugins.bot_unified_runtime.domains.transport.sender import onebot as onebot_sender
-from plugins.bot_unified_runtime.sender.onebot import send_onebot_v11
+from plugins.bot_unified_runtime.domains.transport.sender.onebot import send_onebot_v11
 
 
 def _chunk_request(request_id: str, chunks: list[str]) -> SendRequest:

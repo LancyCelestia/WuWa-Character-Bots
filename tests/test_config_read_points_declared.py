@@ -34,14 +34,16 @@ from scripts.config_read_point_census import (  # 判据单一真身：门不另
 # 销账记录：本波主会话给 8 个读点（7 枚键：cookie 提醒开关、视频深挖冷却、
 # 运势密钥×2、订阅 outbox 四枚）补上了 Config 字段，缺省逐枚等于原 getattr 缺省
 # ⇒ 现网零行为变更，登记项随之删除（留着本门会红，那是它设计的用途，不是例外）。
+# 2026-09-25（B1 网关归因波）再销一枚：`bot_llm_billing_enabled` 已在 config.py
+# 声明为真字段（缺省 False＝历史行为逐字节一致）。它不是"看着没人读"而是
+# **读得到但 .env 进不来**——生产 os.environ 不含 BOT_*（NoneBot dotenv 只把
+# 已声明字段落进 Config），所以账本开关此前**无论 .env 写什么都不生效**。
 # 形态清一色是 getattr 带宽容缺省；note 记的是"不设字段会怎样"，供裁定补字段还是改读点。
 # ---------------------------------------------------------------------------
 GHOST = "plugins/bot_unified_runtime/"
 REGISTERED_GHOSTS: dict[tuple[str, str], str] = {
     (GHOST + "domains/chat_reply/llm_engine/channel_health.py", "bot_channel_health_latency_first"):
         "缺省 None 后紧跟裸 os.environ 兜底 ⇒ env 面活、Config 校验面死",
-    (GHOST + "domains/chat_reply/llm_engine/ledger.py", "bot_llm_billing_enabled"):
-        "键名藏在模块常量 _ENABLED_CONFIG_KEY；裸 os.environ 兜底 ⇒ 同上一枚",
     (GHOST + "domains/chat_reply/llm_engine/model_router.py", "bot_llm_model_price_overrides"):
         "缺省 None ⇒ 逐模型改价覆盖不可用，:396 注释的承诺是假的（他席审计 F-14 同指）",
     (GHOST + "domains/divination/store/draw_store.py", "bot_control_plane_divination_db"):

@@ -24,8 +24,15 @@ Wave 2（2026-09-21 统一接入波）· 本文件四张表在「能力在册」
 另立注册**；执法=``tests/test_capability_single_registration.py``（D-a 唯一在册 +
 D-f gate 读同一处）。本四张表的字面形态不可改为运行时构造（四处静态解析器依赖，见下）。
 
-依赖方向（防循环）：本模块**只声明数据，不 import 包内任何模块**；
-``base_router`` 在 import 时从本表构造 ``COMMAND_ROUTE_KINDS``。
+依赖方向（防循环）：本模块除**一枚叶子**（`domains/core/capability_manifest.py`，其顶层只
+import 标准库、且不被任何被依赖者反向 import ⇒ 无环）外不 import 包内模块；`base_router` 在
+import 时从本表构造 ``COMMAND_ROUTE_KINDS``。这枚叶子边专供 ``config_keys_for(id)`` 把配置键
+声明降为读册（S186 收编波 P2，见文件头注）。
+⚠ 副作用如实报备：经包路径 import 该叶子会连带执行父包 ``plugins/bot_unified_runtime/__init__.py``
+（其顶层 import nonebot），故 ``test_generic_executor_facets`` 之类"按文件 spec 装载、想绕开插件装配"
+的取数件，装载本表时会触发一次父包装配（父包 ``sys.modules`` 全局缓存 ⇒ 只装配一次、不重复注册驱动、
+实测 import 成功）——"绕开装配"这条便利自此对本表不再严格成立，是收编"配置键单一真身"换来的代价，
+由该件实跑绿背书，不留"以为仍纯数据可裸装载"的旧假设。
 
 与 base_router 字面表的关系：``scripts/doc_sync.py``、
 ``scripts/command_catalog.py``、``tests/test_doc_sync_gates.py`` 与
@@ -47,6 +54,16 @@ command_catalog.py 与 doc_sync.py 的 AST/正则静态提取而保持字面形�
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+# S186 中央调度收编波 P2：配置键声明降为读唯一真身册。
+# 本模块其余四表的路由四要素（kind/value/capability_id/priority/has_rule…）仍保持字面形态
+# （见上方纪律——command_catalog/doc_sync 等静态解析器按字面读那些字段）。
+# 唯 `execution.config_keys` / `PipelineManagedExecution.config_keys` 两处例外：改由
+# `config_keys_for(id)` 从 `domains/core/capability_manifest.py::FACETS` 现读，使「这枚能力读
+# 哪几枚 Config 字段」只有一个真身。该 import 是本模块**唯一**的包内依赖，且被依赖者＝叶子
+# （capability_manifest 顶层只 import 标准库），故不构成环、亦不改「只声明数据」的下游纯度：
+# 本模块仍不被 capability_manifest 反向 import，base_router 在 import 期从本表构造 COMMAND_ROUTE_KINDS 不破。
+from plugins.bot_unified_runtime.domains.core.capability_manifest import config_keys_for
 
 
 @dataclass(frozen=True)
@@ -76,6 +93,56 @@ class CapabilityExecution:
 
     degrade_note: str = "真身异常/依赖缺失=诚实降级，不冒充成功"
     config_keys: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PipelineManagedExecution:
+    """一条「管线管理形」（pipeline_managed）能力的执行面（第三种形态，2026-09-22）。
+
+    与前两形的分野（见 docs/design/capability-orchestration-execution-morphology.md）：
+    - 命令形（command）：builder 只吃 config，返回 `(message, decision) -> CapabilityResult`；
+    - 预备形（prepared）：执行体由装配现场把**已装配**成品交来，壳绝不按 ref 自建；
+    - 管线管理形（pipeline_managed）：执行体**不是**一个纯能力闭包，而是层 1 的
+      `RuntimePipeline.handle_async(message, capability, capability_id)`——它自带门禁/
+      审核/渲染/投递，返回 `DeliveryReceipt` 而非呈现契约。bot.chat 主链、订阅 outbox
+      推送、campus 转发这几条「层 1 直呼面」正是这种形态（运维告警 bot.alert 走的是**同步**
+      `pipeline.handle` 且被禁改的现状锁钉住，本波不登记，见下表内联注记）。
+
+    为什么另立一张表、**不写进 `ROUTE_CAPABILITY_DECLARATIONS.execution`**：
+    常驻缺口账门 `test_descriptor_wiredness_ledger.py`（禁改）的 `execution_shape_cids()`
+    直读 `_route_execution_adapters()`，并要求其中**每一枚**都在根里有 `_run_simple_capability`
+    / `_run_capability_through_pipeline` 汇缝字面量站点（⑤入口耐久锁）。而这几条直呼面
+    今天走的是**裸 `pipeline.handle_async`**、不经那两个汇合函数（根文件正被另一波并发修改、
+    本席禁动），把它们塞进 route 执行形会**当场把「登记即通电」的假账坐实**——账面翻绿而
+    生产零变化。故本表把管线管理形单独登记，由壳经独立 builder 派生描述符 + 挂 handler，
+    使 `default_invoker().invoke` 认得并能真跑它们，同时**不进** `_route_execution_adapters()`
+    / `seam_registered_cids()`，缺口账对它们的现算归位（generic / not_wired）一寸不动。
+    """
+
+    capability_id: str
+    """能力 id（须与根直呼面上 `handle_async(..., capability_id=X)` 的字面量同串）。"""
+
+    title: str
+    """人类标题（`validate_registry` 承重面，非空）。"""
+
+    implementation_ref: str
+    """执行真身，指向层 1 管线（`plugins/bot_unified_runtime/domains/chat_reply/runtime/pipeline.py#RuntimePipeline.handle_async`）。"""
+
+    adapter: str = "pipeline_managed"
+    """形态名（在册标记；壳按此挂 `_make_pipeline_managed_handler` 信封，不进 command/prepared 派发）。"""
+
+    family: str = "pipeline"
+    """能力族（描述符 family）：单独一族，避免污染 COMMAND 族计数锁（`len(iter(COMMAND))==len(_route_execution_rows())`）。"""
+
+    roles: tuple[str, ...] = ("user",)
+    timeout_seconds: float = 60.0
+    degrade_note: str = "能力体/管线异常=诚实降级，不冒充投递成功"
+    config_keys: tuple[str, ...] = ()
+    input_protocol: str = (
+        "pipeline.v1 {payload.message; context{pipeline,capability,decision?}}"
+    )
+    output_protocol: str = "delivery.v1 DeliveryReceipt{request_id,state,transport}"
+    notes: str = ""
 
 
 @dataclass(frozen=True)
@@ -195,6 +262,26 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         label="点歌模式", reason="点歌输出模式设置",
         tags=("base_route:music_mode",), command=True, has_rule=True,
         matcher_name="music_mode_match",
+        # prepared 形 P9 批（S63 施工图 §3.1 试点，主代理落码 2026-09-24T00:15Z）：
+        # 命令入口早已汇进层 2 主缝（根 :7013 `_run_capability_through_pipeline(...,
+        # capability_id="bot.music_mode")`），执行体是根内联闭包——它吃运行期
+        # `runtime_settings` 与从 event 解析出的 mode ⇒ 只能 prepared（自建=丢注入=第二通路）。
+        # 根零改动、净 0 行 ⇒ campus 与全部登记坐标零位移。
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/music/capabilities/music.py"
+                "#build_music_mode_result"
+            ),
+            family="command",
+            adapter="prepared",
+            # roles 用本表缺省 ("user",)——与全部路由行同口径。**故意不写 admin**：
+            # 点歌模式的权限真身在 `build_music_mode_result(..., actor_roles=...)` 自己判，
+            # 层 2 再叠一道更严的 role 门＝本批凭空收紧现网行为（行为等值优先于猜测）。
+            timeout_seconds=30.0,  # 本地设置读写，无网络出口；取保守缺省
+            health_probe="",  # 无在册探针映射，诚实留空
+            degrade_note="模式非法=诚实拒绝，绝不静默改设置",
+            config_keys=(),
+        ),
     ),
     RouteCapabilityDecl(
         kind="MUSIC", value="music", capability_id="bot.music", priority=41,
@@ -247,7 +334,7 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
             timeout_seconds=60.0,  # bot_moegirl_timeout_seconds=5.0/请求 × 重试+问句降级链，兜底取宽
             health_probe="",  # 在册探针无一映射萌百，诚实留空
             degrade_note="无条目/网络失败区分说明，绝不硬答",
-            config_keys=("bot_moegirl_timeout_seconds",),
+            config_keys=config_keys_for("bot.moegirl"),
         ),
     ),
     RouteCapabilityDecl(
@@ -452,7 +539,7 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
             timeout_seconds=30.0,  # 本地盘读，无网络；体积帽走 config，时限兜底即可
             health_probe="",  # 在册探针无一映射随机图目录，诚实留空
             degrade_note="目录空/图坏=一句说明，不重编码不假发",
-            config_keys=("bot_randpic_dirs", "bot_randpic_max_file_mb"),
+            config_keys=config_keys_for("bot.randpic"),
         ),
     ),
     RouteCapabilityDecl(
@@ -470,7 +557,7 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
             timeout_seconds=30.0,  # 本地 sqlite；LLM 抽取缺省关，时限兜底即可
             health_probe="",  # 在册探针无一映射提醒库，诚实留空
             degrade_note="时间解析不确定=问不清，绝不猜点位",
-            config_keys=("bot_reminder_enabled", "bot_reminder_db_path"),
+            config_keys=config_keys_for("bot.reminder"),
         ),
     ),
     RouteCapabilityDecl(
@@ -494,7 +581,7 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
             timeout_seconds=30.0,  # 纯文本文件 IO（收件箱速记），无网络无 LLM，兜底即可
             health_probe="",  # 在册探针无一映射助理目录，诚实留空
             degrade_note="目录不可写=诚实失败，绝不丢用户速记",
-            config_keys=("bot_daily_assist_enabled", "bot_daily_assist_dir"),
+            config_keys=config_keys_for("bot.daily_assist"),
         ),
     ),
     RouteCapabilityDecl(
@@ -502,6 +589,18 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         label="群信息", reason="群信息（群信息/群主是谁/群人数/群公告/群精华/本群多大了）",
         tags=("base_route:group_info",), command=True, has_rule=True,
         matcher_name="group_info_match",
+    ),
+    RouteCapabilityDecl(
+        kind="HOST_STATE", value="host_state", capability_id="bot.host_state", priority=41,
+        label="宿主机状态", reason="宿主机状态（机器状态/机器配置/宿主状态；超管视图卡片）",
+        tags=("base_route:host_state",), command=True, has_rule=True,
+        matcher_name="host_state_match",
+    ),
+    RouteCapabilityDecl(
+        kind="CONSENT", value="consent", capability_id="bot.consent", priority=41,
+        label="书面同意", reason="书面同意（同意卡 待批/看/批/驳；危险参数改动的批准入口，仅管理员）",
+        tags=("base_route:consent",), command=True, has_rule=True,
+        matcher_name="consent_match",
     ),
     RouteCapabilityDecl(
         kind="EAT", value="eat", capability_id="bot.eat", priority=41,
@@ -599,7 +698,7 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
             degrade_note="合成失败/无参考音频=守岸人温和降级，绝不冒充发声",
             # 生效硬顶的唯一家是 domains/media/tts_presets.resolve_*（config 显式值优先，
             # 0/未配⇒内置常量）；此处只声明读哪两把键，**不在描述符里留数值**。
-            config_keys=("bot_tts_hard_max_chars", "bot_tts_max_audio_bytes"),
+            config_keys=config_keys_for("bot.tts"),
         ),
     ),
     RouteCapabilityDecl(
@@ -798,6 +897,18 @@ INTERFACE_DECLARATIONS: tuple[InterfaceDecl, ...] = (
         help_topic="群信息",
     ),
     InterfaceDecl(
+        interface_id="capability.host_state", label="宿主机状态", status="active",
+        route_kind="host_state", priority=41,
+        description="本机运行时事实（版本族/硬件/占用率）经 host_metrics 单一取数口现读，Mica 卡片出图；仅超管视图，读数逐行脱敏",
+        help_topic="宿主机状态",
+    ),
+    InterfaceDecl(
+        interface_id="capability.consent", label="书面同意命令面", status="active",
+        route_kind="consent", priority=41,
+        description="危险参数改动（R1/R2）签出的同意卡在这里批/驳/看：判定唯一住 safety_exec/settings_gate，同意账唯一住 safety_exec/consent，本接口只把一句入站消息交给它",
+        help_topic="书面同意",
+    ),
+    InterfaceDecl(
         interface_id="capability.daily_assist", label="收件箱速记/早晚简报", status="active",
         route_kind="daily_assist", priority=42,
         description="收件箱随手记 + 定时吃什么推荐与早晚简报（BOT_DAILY_ASSIST_*，纯文本文件驱动）",
@@ -906,6 +1017,8 @@ HELP_TOPIC_DECLARATIONS: tuple[HelpTopicDecl, ...] = (
     HelpTopicDecl(topic="吃什么", admin_only=False, capability="bot.eat"),
     HelpTopicDecl(topic="媒体归档", admin_only=True, capability="bot.media_archive"),
     HelpTopicDecl(topic="群信息", admin_only=False, capability="bot.group_info"),
+    HelpTopicDecl(topic="宿主机状态", admin_only=True, capability="bot.host_state"),
+    HelpTopicDecl(topic="书面同意", admin_only=True, capability="bot.consent"),
     HelpTopicDecl(topic="好感度", admin_only=False, capability="bot.affinity"),
     HelpTopicDecl(topic="Epic", admin_only=False, capability="bot.epic"),
     HelpTopicDecl(topic="随机图", admin_only=False, capability="bot.randpic"),
@@ -921,6 +1034,13 @@ HELP_TOPIC_DECLARATIONS: tuple[HelpTopicDecl, ...] = (
     HelpTopicDecl(topic="忽略", admin_only=True, capability="matcher:IGNORE（空消息静默；未知命令形态回引导）"),
     HelpTopicDecl(topic="决策", admin_only=True, capability="/bot decision"),
     HelpTopicDecl(topic="紧急信息", admin_only=True, capability="bot.emergency_info"),
+    # 2026-09-24 亲密模式分级波（D 席登记）：位置必须与 echo._HELP_ENTRIES 同序
+    # （tests/test_capability_registry.py 逐行 zip 比对，含 topic/admin_only/capability）。
+    HelpTopicDecl(
+        topic="亲密模式",
+        admin_only=False,
+        capability="bot.chat（整句「亲密模式 开/深开/关」；关系档子命令见 /bot identity）",
+    ),
 )
 
 # 入站/管理/通知链里显式使用、尚不属于 RouteKind 主表的能力。
@@ -950,4 +1070,72 @@ CONTROLLED_INTERNAL_CAPABILITIES: tuple[str, ...] = (
     "bot.quirk", "bot.readiness", "bot.receipt", "bot.recent", "bot.reply",
     "bot.roles", "bot.route", "bot.routes", "bot.runtime", "bot.search",
     "bot.send_queue_worker", "bot.setup.llm", "bot.why",
+)
+
+
+# ===========================================================================
+# 管线管理形（pipeline_managed）执行面 —— 第三种形态，2026-09-22 本波新立
+#
+# 一句话：这几条「层 1 直呼面」在根里走的是裸 `pipeline.handle_async(...)`（自带门禁/
+# 审核/渲染/投递，返回 DeliveryReceipt），不是纯能力闭包。把它们登记成管线管理形，
+# 让中央 invoker **认得并真能跑**（走 default_invoker().invoke）；但生产根尚未改道
+# （根 __init__.py 正被另一波并发修改、本席禁动），所以它们**不进** route 执行形、
+# **不被** seam_registered_cids / execution_shape_cids 认成通电——缺口账对它们的现算
+# 归位一寸不动（诚实：真接线要等根把那处 handle_async 换成经中央出口）。
+# 判据单一真身见类 `PipelineManagedExecution` 与
+# docs/design/capability-orchestration-execution-morphology.md（含「禁第二通路」红线）。
+# 指针（Wave 2 同哲学）：本表=管线管理形执行面的唯一 authoring 家；勿在别处为同 id 另立。
+# ===========================================================================
+PIPELINE_MANAGED_CAPABILITY_DECLARATIONS: tuple[PipelineManagedExecution, ...] = (
+    PipelineManagedExecution(
+        capability_id="bot.chat",
+        title="人格对话（主链）",
+        implementation_ref=(
+            "plugins/bot_unified_runtime/domains/chat_reply/runtime/pipeline.py"
+            "#RuntimePipeline.handle_async"
+        ),
+        timeout_seconds=120.0,
+        config_keys=config_keys_for("bot.chat"),
+        notes=(
+            "层 1 直呼面（root handle_async 主聊天 / 复读短答 / 萌百未命中回落）。"
+            "管线管理形在册：invoker 能跑；生产根未改道 ⇒ 缺口账仍按 generic 现算。"
+        ),
+    ),
+    PipelineManagedExecution(
+        capability_id="bot.subscribe",
+        title="订阅 outbox 推送",
+        implementation_ref=(
+            "plugins/bot_unified_runtime/domains/chat_reply/runtime/pipeline.py"
+            "#RuntimePipeline.handle_async"
+        ),
+        timeout_seconds=120.0,
+        config_keys=config_keys_for("bot.subscribe"),
+        notes=(
+            "订阅 outbox 推送 job 走裸 handle_async（root 内联投递）。管线管理形在册；"
+            "生产根未改道 ⇒ 缺口账仍按 generic 现算。"
+        ),
+    ),
+    PipelineManagedExecution(
+        capability_id="bot.campus_forward",
+        title="校园自动转发",
+        implementation_ref=(
+            "plugins/bot_unified_runtime/domains/chat_reply/runtime/pipeline.py"
+            "#RuntimePipeline.handle_async"
+        ),
+        timeout_seconds=60.0,
+        config_keys=("bot_campus_enabled",),
+        notes=(
+            "U17 收编走层 1 管线（回执用于 BLOCK 告警），无 RouteKind 宿主行 ⇒ "
+            "结构上无处填 command/prepared execution，正属管线管理形。纯监听红线：绝不向学校群发。"
+        ),
+    ),
+    # ⚠ 运维告警 bot.alert **本波不登记为管线管理形**（两处硬约束叠加）：
+    # ① alerts.py 走的是**同步** `pipeline.handle`，不是 `handle_async` ⇒ 不在
+    #    「包裹现有的 pipeline.handle_async 调用」这一 adapter 的字面范围内（要接需另立
+    #    同步形适配器）。
+    # ② 常驻现状锁 `tests/test_orchestration_callsite_wave3_c.py`（本波禁改）把 bot.alert
+    #    钉在 `DESCRIPTOR_SHELL_ONLY_IDS`：一旦给它任何编排事实（family/timeout/…）即红。
+    #    该锁自述为「要求随迁」信号（先例：bot.divination 于 prepared B1 摘出），但摘它=改
+    #    禁改测试，且本席禁动根文件去把直发改经中央出口。⇒ bot.alert 保持现状（在册无执行体），
+    #    待能改测试的 owner 随迁后再补登记。详见 logs/WP3-IMPL-handoff.md「受阻项」。
 )

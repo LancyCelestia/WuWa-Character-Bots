@@ -87,6 +87,15 @@ class ProductFeatureGate:
         return await asyncio.to_thread(self.snapshot)
 
     def __call__(self, message: IncomingMessage, capability_id: str) -> FeatureAccess:
+        # 判定**全文不读 message**（历史签名带它，真身只用 capability_id）。层 2
+        # （``CapabilityInvoker``）拿不到 IncomingMessage，因此经 ``check_capability``
+        # 复用同一真身，而不是抄第二份门序。谁要往这里加 message 依赖，必须同时把
+        # 层 2 的谓词形参改掉——由
+        # ``tests/test_feature_gate_layer2.py::test_call_is_pure_forward`` 锁死。
+        return self.check_capability(capability_id)
+
+    def check_capability(self, capability_id: str) -> FeatureAccess:
+        """capability_id → 放行判定（层 1 与层 2 共用的唯一真身）。"""
         # 控制恢复仍走后续 Role/Policy；这里只保证故障时仍可诊断/恢复。
         if capability_id in RECOVERY_CAPABILITIES:
             return FeatureAccess(True, "protected_recovery")

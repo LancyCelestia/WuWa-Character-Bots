@@ -15,15 +15,15 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.character.vector_knowledge import (
-    SqliteVectorKnowledgeStore,
-    _rrf_fuse,
-    _rrf_scores,
-)
 from plugins.bot_unified_runtime.domains.chat_reply.character.knowledge_service import (
     KnowledgeService,
     KnowledgeSourceBinding,
     ReindexError,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge import (
+    SqliteVectorKnowledgeStore,
+    _rrf_fuse,
+    _rrf_scores,
 )
 
 # ---------------------------------------------------------------- 假嵌入链

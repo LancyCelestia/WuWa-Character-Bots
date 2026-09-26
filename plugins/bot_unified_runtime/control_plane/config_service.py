@@ -10,11 +10,12 @@ import json
 import sqlite3
 from typing import Any
 
-from ..runtime.settings import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
     RESTART_REQUIRED_KEYS,
     SETTABLE_KEYS,
     RuntimeSettingsStore,
 )
+
 from .auth import Principal
 from .config_store import (
     ConfigSnapshot,

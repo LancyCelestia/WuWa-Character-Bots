@@ -17,7 +17,8 @@ from plugins.bot_unified_runtime.domains.files.sources.downloader import (
     RejectedUrlError,
     check_download_url,
 )
-from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
+from plugins.bot_unified_runtime.domains.meme.sources import shorekeeper_absorb
+from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +34,12 @@ TAG_PROMPT = (
     '"scene_tags":["场景标签1","场景标签2"],'
     '"persona_hint": "common", "nsfw_score":0.0}'
     "字段说明：is_meme 是否为表情包（带文字/配文的图片、表情包、梗图等），"
-    "普通照片/风景/人物写真/截图/二次元/美女填 false；description 简短描述；"
-    "emotion_tags 情绪标签；scene_tags 场景标签；persona_hint 建议人格归属，"
-    "不确定填 common；nsfw_score 0.0~1.0。只返回JSON，不要有其他文字。"
+    "普通照片/风景/人物写真/截图/二次元/美女填 false；description 简短描述"
+    "（先说画面主体是谁/是什么）；emotion_tags 情绪标签；scene_tags 场景标签；"
+    "persona_hint 是**画面主体（主角）**的角色归属：仅当某个角色是图片主体时"
+    "写其名字（例如守岸人）；主体是别的角色时写那个角色的名字——即使守岸人只是"
+    "背景、角落出现或客串，也不要写她；没有角色主体或判不出主体填 common；"
+    "nsfw_score 0.0~1.0。只返回JSON，不要有其他文字。"
 )
 
 _EXT_BY_CONTENT_TYPE = {
@@ -154,13 +158,75 @@ async def _download_once(url: str, *, max_bytes: int, proxy: str) -> tuple[bytes
         return None
 
 
+def _pick_vision_entry(
+    entries: dict[str, dict[str, Any]],
+    *,
+    preset_name: str,
+    allow_fallback: bool,
+) -> dict[str, Any] | None:
+    """从「已展平、已筛掉缺 model/base_url」的条目里挑一枚：同组按 priority 最小者。
+
+    组名匹配的是 ``#`` **之前**的那段（真身把列表形态展平成 ``组名#序号``），
+    所以 ``myvlm`` 能命中 ``myvlm#1/#2/#3``；展平形态与筛选规则都不在这里重做。
+    """
+    if not entries:
+        return None
+
+    def group_of(entry_id: str) -> str:
+        return str(entry_id).split("#", 1)[0]
+
+    def rank(entry_id: str) -> tuple[float, str]:
+        try:
+            priority = float(entries[entry_id].get("priority", 100))
+        except (TypeError, ValueError):
+            priority = 100.0
+        return (priority, str(entry_id))
+
+    pool = list(entries)
+    if preset_name:
+        named = [entry_id for entry_id in pool if group_of(entry_id) == preset_name]
+        if named:
+            return entries[min(named, key=rank)]
+    if not allow_fallback or not pool:
+        return None
+    return entries[min(pool, key=rank)]
+
+
 def _resolve_vision_config(config: Any) -> dict[str, str]:
-    """识图模型预制接口：优先注册表预设，兼容旧字段；api_key 支持 env:VAR。"""
+    """识图模型预制接口：注册表优先（形态交中央件判），兼容旧三字段；api_key 支持 env:VAR。
+
+    **为什么不在这件里读注册表的结构**：`BOT_VISION_MODEL_REGISTRY` 的合法形态有
+    两种——``组名 -> 单条目`` 与 ``组名 -> 条目列表``（生产 ``.env`` 用的是后者：
+    ``{"myvlm":[{...},{...},{...}]}``）。「把注册表展平成条目并按 model/base_url
+    齐不齐筛掉」这件事在本仓的唯一真身是
+    ``domains/media/ingest/vision_describe.py::_flatten_vision_entries``（识图主链
+    就走它）。本件此前自己按 dict 形态 ``registry.get(name)`` 读 ⇒ **读的是第二种
+    形态、判的是第一种**：生产注册表里明明有可用的视觉组，取回来却是 list，
+    ``isinstance(entry, dict)`` 恒 False ⇒ 兜底整个是空操作 ⇒ ``model/base_url``
+    双空 ⇒ :func:`_tag_with_vlm` 第一轮就 ``return``。表现是「库里有图但都像随机」
+    而不是报错——与「配置键在册却无人读」同型的静默死路。现改为**只在真身之上选组**。
+
+    预设名落空时退到注册表里**真实存在、priority 最小的一条**
+    （``bot_meme_library_vlm_fallback_first_preset`` 缺省开；为什么必须有：现网
+    ``BOT_MEME_LIBRARY_VLM_PRESET`` 是空串，而注册表里只有 ``myvlm`` 一组）。
+    诚实边界：注册表真为空 / 全组都缺端点时照旧不打标（不猜端点、不造第二份默认值）。
+    """
     import os
 
-    preset_name = str(getattr(config, "bot_meme_library_vlm_preset", "deepseek-vision") or "")
+    from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
+        # 有意引私有名：这是「注册表形态」的唯一真身，复制它=立刻产生第二真身，
+        # 而它没有公共别名。把它升成公共口归该域 owner（见交接 §5）。
+        _flatten_vision_entries,
+    )
+
+    preset_name = str(getattr(config, "bot_meme_library_vlm_preset", "deepseek-vision") or "").strip()
     registry = getattr(config, "bot_vision_model_registry", None) or {}
-    preset = registry.get(preset_name) if isinstance(registry, dict) else None
+    entries = _flatten_vision_entries(registry, resolve_key=True, config=config)
+    preset = _pick_vision_entry(
+        entries,
+        preset_name=preset_name,
+        allow_fallback=bool(getattr(config, "bot_meme_library_vlm_fallback_first_preset", True)),
+    )
     model = str((preset or {}).get("model") or getattr(config, "bot_meme_library_vlm_model", "") or "")
     base_url = str((preset or {}).get("base_url") or getattr(config, "bot_meme_library_vlm_base_url", "") or "").rstrip("/")
     api_key = str((preset or {}).get("api_key") or getattr(config, "bot_meme_library_vlm_api_key", "") or "")
@@ -169,8 +235,27 @@ def _resolve_vision_config(config: Any) -> dict[str, str]:
     return {"model": model, "base_url": base_url, "api_key": api_key}
 
 
-async def _tag_with_vlm(store: Any, config: Any, md5: str, image_bytes: bytes) -> None:
-    """异步打标（失败静默）：更新描述/标签/NSFW 与权重；高危 NSFW 直接删除。"""
+def _quarantine_ledger(store: Any, config: Any) -> Any:
+    """内容级隔离墓碑账本：与发送史同库（表情库 db 同目录），拿不到就返回 None。
+
+    ``None`` 只影响「同图重发不复活」这一层（退化为旧行为），绝不因此把整张图
+    拒收或把打标带走——增益层不许反噬主链路。
+    """
+    try:
+        from plugins.bot_unified_runtime.domains.meme.sources.send_history import (
+            MemeQuarantineLedger,
+        )
+
+        db_path = getattr(store, "db_path", None)
+        if not db_path:
+            return None
+        return MemeQuarantineLedger(Path(db_path).parent / "meme_send_history.sqlite3")
+    except Exception:  # noqa: BLE001 - 账本不可用诚实降级。
+        return None
+
+
+async def _tag_with_vlm(store: Any, config: Any, md5: str, image_bytes: bytes) -> Any:
+    """异步打标（失败静默）：更新描述/标签/NSFW 与权重；高危 NSFW 删除并立墓碑。"""
     import httpx
 
     vision = _resolve_vision_config(config)
@@ -214,27 +299,36 @@ async def _tag_with_vlm(store: Any, config: Any, md5: str, image_bytes: bytes) -
     try:
         match = re.search(r"\{.*\}", content, re.DOTALL)
         if not match:
-            return
+            return None
         tags = json.loads(match.group(0))
-        nsfw_score = max(0.0, min(1.0, float(tags.get("nsfw_score", 0.0) or 0.0)))
-        delete_threshold = float(
-            getattr(config, "bot_meme_library_nsfw_delete", 0.8) or 0.8
-        )
-        if nsfw_score >= delete_threshold:
-            # 淫秽色情直接删除，不存储也不可被发送。
-            store.remove(md5)
-            return
-        store.apply_tags(
-            md5,
-            is_meme=bool(tags.get("is_meme", True)),
-            description=str(tags.get("description", ""))[:60],
-            emotion_tags=[str(item) for item in (tags.get("emotion_tags") or [])][:6],
-            scene_tags=[str(item) for item in (tags.get("scene_tags") or [])][:6],
-            persona_hint=str(tags.get("persona_hint", "common"))[:24],
-            nsfw_score=nsfw_score,
-        )
-    except Exception:  # noqa: BLE001 - 入库异常静默忽略。
-        return
+    except Exception:  # noqa: BLE001 - 打标返回不可解析按放弃本张处理。
+        return None
+    from plugins.bot_unified_runtime.domains.meme.sources import shorekeeper_absorb
+
+    delete_threshold = float(getattr(config, "bot_meme_library_nsfw_delete", 0.8) or 0.8)
+    decision = shorekeeper_absorb.apply_tagged_outcome(
+        store=store,
+        ledger=_quarantine_ledger(store, config),
+        md5=md5,
+        content_sha256_value=shorekeeper_absorb.content_sha256(image_bytes),
+        tags=tags if isinstance(tags, dict) else {},
+        nsfw_delete=delete_threshold,
+        persona_terms=shorekeeper_absorb.persona_subject_terms(config),
+        persona_absorb_enabled=bool(
+            getattr(config, "bot_meme_shorekeeper_absorb_enabled", True)
+        ),
+    )
+    # 「不标」不是静默事：三种真因（主体是别人/判不出/开关关）随结论代号进日志，
+    # 事后能回答「这张为什么没成她的收藏」。只记 md5 与代号——不记描述原文、
+    # 不记用户内容（出站打码红线在入库侧同样成立）。
+    logger.info(
+        "meme absorb outcome md5=%s action=%s persona_owned=%s audit=%s",
+        md5,
+        decision.action,
+        decision.persona_owned,
+        ",".join(decision.audit),
+    )
+    return decision
 
 
 async def backfill_meme_tags(store: Any, config: Any, *, limit: int = 20) -> int:
@@ -242,7 +336,20 @@ async def backfill_meme_tags(store: Any, config: Any, *, limit: int = 20) -> int
 
     每轮最多 limit 张防打爆；逐张读文件 → 复用 _tag_with_vlm（含 NSFW
     删除语义）。返回实际处理张数；未配置视觉端点时直接返回 0。
+
+    **开关归属（S-T-STK-2，2026-09-26 现算实锤）**：本函数此前只看「端点能不能
+    解析」，不吃 ``bot_meme_library_vlm_enabled``——而它唯一的调用方（根装配 on_
+    bot_connect 注册的 ``backfill_meme_tags_loop``）又只被 ``bot_meme_library_enabled``
+    门控。goal-12 修好注册表形态解析（F-1）之后，这条补标道在**总开关关着**的
+    现网真实跑起来了（盘上 description 计数以约每张/分钟内递增、SQLite 只读复核）。
+    「开关关而路在跑」＝台账里那族最贵的假绿反例，且每补一张=一发真实视觉调用
+    （花费与 NSFW 自动删除权都在她那句「开关在她手」的裁定里）。现把开关补成
+    本函数的第一道门：**关 ⇒ 直接 0 张**，循环拿到 0<batch 自然收束。开不起打标
+    不再是缺省态的副作用；她要开，就开 BOT_MEME_LIBRARY_VLM_ENABLED（零新键、
+    不改任何缺省值）。
     """
+    if not bool(getattr(config, "bot_meme_library_vlm_enabled", False)):
+        return 0
     vision = _resolve_vision_config(config)
     if not (vision["model"] and vision["base_url"]):
         return 0
@@ -315,12 +422,12 @@ async def absorb_event_images(bot: Any, event: Any, config: Any, store: Any) -> 
         return {"handled": False, "reason": "no_image"}
 
     target_dir = Path(str(getattr(config, "bot_meme_library_dir", "data/meme_library") or ""))
-    target_dir.mkdir(parents=True, exist_ok=True)
     max_bytes = int(getattr(config, "bot_meme_library_max_file_bytes", 5242880) or 5242880)
     proxy = str(getattr(config, "bot_meme_library_proxy", "") or "")
 
     saved = 0
-    pending: list[tuple[str, str, bytes]] = []  # (md5, ext, image_bytes)
+    downloaded: list[tuple[str, str, bytes]] = []  # (md5, ext, image_bytes)
+    skipped: list[str] = []
     for url in urls[:4]:
         result = await _download_once(url, max_bytes=max_bytes, proxy=proxy)
         if not result:
@@ -331,11 +438,37 @@ async def absorb_event_images(bot: Any, event: Any, config: Any, store: Any) -> 
         if not ext:
             match = _URL_EXT_RE.search(url)
             ext = (match.group(1) if match else "png").lower()
-        pending.append((md5, ext, image_bytes))
+        downloaded.append((md5, ext, image_bytes))
+
+    def _admit() -> list[tuple[str, str, bytes]]:
+        """准入判定整段离环跑：sha256(全图字节) + 墓碑查 + ``store.exists`` 都是同步 IO。
+
+        顺序不变（**落盘之前**先判：墓碑优先、其次内容去重；被隔离过的图不写盘、
+        不入库、不打标——写盘后再删会留一次可观测的 IO 抖动，也更难解释）。
+        变只有一处：这一段从前在事件循环上跑（本函数其余的写盘/裁剪都已 ``to_thread``），
+        于是每张图最坏 5MB 的哈希 + 两次 SQLite 读（含墓碑库首次建表的
+        ``executescript``）**压在 bot 的主循环上**——群聊连发四张图就是四次串行阻塞，
+        与「吸收/下载绝不占事件循环」这条硬约束相抵。放线程池里做，判定语义逐字不变。
+        """
+        ledger = _quarantine_ledger(store, config)
+        admitted: list[tuple[str, str, bytes]] = []
+        for md5, ext, image_bytes in downloaded:
+            intake = shorekeeper_absorb.decide_intake(
+                store=store, ledger=ledger, md5=md5, data=image_bytes
+            )
+            if intake.action != "accepted":
+                skipped.append(intake.action)
+                continue
+            admitted.append((md5, ext, image_bytes))
+        return admitted
+
+    pending: list[tuple[str, str, bytes]] = await asyncio.to_thread(_admit) if downloaded else []
     if pending:
 
         def _persist() -> list[tuple[str, bytes]]:
             # 写盘 + SQLite 入库是同步 IO，挪到线程池避免占用事件循环。
+            # 目录创建也在这一段的线程里：它同样是文件系统写。
+            target_dir.mkdir(parents=True, exist_ok=True)
             saved_items: list[tuple[str, bytes]] = []
             for md5, ext, image_bytes in pending:
                 if store.exists(md5):
@@ -345,7 +478,13 @@ async def absorb_event_images(bot: Any, event: Any, config: Any, store: Any) -> 
                     path.write_bytes(image_bytes)
                 except OSError:
                     continue
-                store.add(md5=md5, path=str(path), ext=ext, group_id=group_id)
+                store.add(
+                    md5=md5,
+                    path=str(path),
+                    ext=ext,
+                    group_id=group_id,
+                    content_sha256=shorekeeper_absorb.content_sha256(image_bytes),
+                )
                 saved_items.append((md5, image_bytes))
             return saved_items
 
@@ -359,10 +498,20 @@ async def absorb_event_images(bot: Any, event: Any, config: Any, store: Any) -> 
         store.cleanup(
             max_files=int(getattr(config, "bot_meme_library_max_files", 20000) or 0),
             max_age_days=int(getattr(config, "bot_meme_library_max_age_days", 30) or 0),
+            protect_persona=bool(
+                getattr(config, "bot_meme_shorekeeper_protect_from_prune", True)
+            ),
         )
+        history = getattr(store, "history", None)
+        if history is not None:
+            # 发送史只裁「库里已经没有的图」，不裁仍在线的账 ⇒ 反重复不随时间松动。
+            try:
+                history.prune(live_hashes=store.live_content_hashes())
+            except Exception:  # noqa: BLE001, S110 - 裁剪失败不影响收库结果。
+                pass
 
     try:
         await asyncio.to_thread(_cleanup)
     except Exception:  # noqa: BLE001, S110 - 清理失败不影响入库结果。
         pass
-    return {"handled": True, "reason": "saved", "saved": saved}
+    return {"handled": True, "reason": "saved", "saved": saved, "skipped": skipped}

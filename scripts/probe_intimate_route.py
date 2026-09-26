@@ -32,15 +32,15 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from plugins.bot_unified_runtime.llm.model_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
     build_model_registry,
     build_model_router,
 )
-from plugins.bot_unified_runtime.llm.providers import (
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
     LLMProviderError,
     OpenAICompatibleLLMProvider,
 )
-from plugins.bot_unified_runtime.runtime.content_route import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
     ContentRouteEngine,
     build_router_cb,
     match_manual_command,

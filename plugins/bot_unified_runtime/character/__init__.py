@@ -20,7 +20,7 @@ from ..domains.chat_reply.character.memory import (
     SQLiteMemoryRepository,
     build_memory_provider,
 )
-from .providers import (
+from ..domains.chat_reply.character.providers import (
     CharacterContextProvider,
     FileCharacterContextProvider,
     NullCharacterContextProvider,

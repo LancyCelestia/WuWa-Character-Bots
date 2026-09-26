@@ -35,7 +35,7 @@
     --surface-a: {{ surface_a }};
     --surface-b: {{ surface_b }};
     --surface-neutral: {{ surface_neutral }};
-    --text-secondary: #576272;
+    --text-secondary: #4e5866;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -107,17 +107,15 @@ body {
     font-weight: 700;
     color: var(--text-main);
     line-height: 1.4;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    /* 卡题含用户查询原串，长查询不再整尾切掉（2026-09-25 点名硬截断）。 */
+    overflow-wrap: anywhere;
 }
 .sub {
     margin-top: 5px;
     font-size: 12px;
     color: var(--text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
 }
 .ttl {
     flex-shrink: 0;
@@ -137,8 +135,11 @@ body {
 
 /* ===== 候选行 ===== */
 .list {
-    display: flex;
-    flex-direction: column;
+    /* 两栏候选表（2026-09-25 按超管反馈：卡片太挤了，换成两栏）：单栏时 980px 宽
+       的卡每行只用掉左半边，四首歌拉成一列反而更挤。窄屏无 viewport 概念
+       （卡宽固定），故不做媒体查询。 */
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 10px;
     padding: 16px 18px 6px;
 }
@@ -157,7 +158,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 700;
     color: var(--accent-dark);
     font-variant-numeric: tabular-nums;
@@ -186,17 +187,16 @@ body {
     font-weight: 700;
     color: var(--text-main);
     line-height: 1.4;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    /* 歌名不截断（2026-09-25 点名"硬生生被截断"）：带版本后缀/feat. 列表的
+       长歌名整尾切掉等于把用户要点的那首歌藏起来。改可换行完整显示。 */
+    overflow-wrap: anywhere;
 }
 .meta {
     margin-top: 3px;
     font-size: 12px;
     color: var(--text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
 }
 
 /* ===== 页脚 ===== */
@@ -238,7 +238,7 @@ body {
     </div>
     <div class="list">
         {% for cand in candidates %}
-        <div class="row{{ ' top' if cand.is_top else '' }} glass"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, var(--mica-glass-edge)"{% else %} style="background:var(--surface-b) padding-box, var(--mica-glass-edge)"{% endif %}>
+        <div class="row{{ ' top' if cand.is_top else '' }} glass"{% if (loop.index0 // 2) is even %} style="background:var(--surface-a) padding-box, var(--mica-glass-edge)"{% else %} style="background:var(--surface-b) padding-box, var(--mica-glass-edge)"{% endif %}>
             <div class="num">{{ cand.index_label }}</div>
             {% if cand.is_top %}<span class="top-chip">Top</span>{% endif %}
             <div class="info">

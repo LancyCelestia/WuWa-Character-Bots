@@ -16,16 +16,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities import user_copy
-from plugins.bot_unified_runtime.capabilities.market import (
-    build_market_capability,
-    is_market_command,
-    market_filter_secids,
-)
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     IncomingMessage,
     SessionType,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.finance.capabilities.market import (
+    build_market_capability,
+    is_market_command,
+    market_filter_secids,
 )
 from plugins.bot_unified_runtime.domains.finance.data import market_data
 from plugins.bot_unified_runtime.domains.finance.data.market_data import (

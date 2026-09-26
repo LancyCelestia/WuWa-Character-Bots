@@ -10,7 +10,8 @@
   漂移（新增未审直呼点 / 第二 invoker 点 / 同模块半迁移）当场红。
 - **注毒自证**：喂合成树证明每条不变量真的会红（防"存在性糊过活性判据"式假门）。
 - **端到端等值**：files.read.code / search.web 经 invoker 产出 vs 直呼真身，逐字段相等；
-  creation.tts.synthesize 未注册 handler → invoke 诚实 UNAVAILABLE（回落旧直调不崩）。
+  「descriptor 在册但执行体未注册」→ invoke 诚实 UNAVAILABLE（回落旧直调不崩；2026-09-25
+  P4-C2 语音接真后该样本已非生产 cid 实况，机制腿改由真 descriptor 册 + 空 handler 册装配自证）。
 
 全离线：真身读文件 / 联网搜索全部 monkeypatch 为确定性替身，零真实 I/O、零消息发送。
 """
@@ -303,9 +304,29 @@ KNOWN_DIRECT_ALLOWLIST: dict[str, set[str]] = {
     # 识图/转写/视频理解三条：真身直呼全在 **root 消费方 chat.py** 与 **control_plane**，
     # 两者都不在 V1 独占面（chat_reply 属 Wave3 末席、control_plane 属控制面席）⇒
     # 逐条评审登记为待翻面，V1 不越界代改（交接段 SEAT-V1 §柒）。
-    "media.vision": {"domains/chat_reply/capabilities/chat.py", "control_plane/api/platform.py"},
-    "media.asr": {"domains/chat_reply/capabilities/chat.py", "control_plane/api/platform.py"},
-    "media.video_brief": {"domains/chat_reply/capabilities/chat.py"},
+    # 2026-09-25 S220 逐条评审补登记（账跟随真值；AGENTS #50 台账段已归因"该件致本门直呼面漂移"、
+    # 当时按纪律不代修，本条是那次归因的跟随补账）：`domains/vision/capabilities/
+    # modality_preprocessing.py`（五段"多模态原生矩阵"接货件）的委托 handler 直呼三真身——
+    # transcribe_audio(:394)=media.asr、build_video_brief(:438)=media.video_brief、
+    # describe_images(:475)=media.vision。**非第二真身**：该文件自声明的 implementation_ref
+    # 恰指这些真身（"不指本模块新写的第二实现"，禁平行造轮子裁定的产物）；三枚接货能力
+    # 现算**不在** descriptor 册（49 枚之外：creation.audio.transcribe / creation.video.understand /
+    # creation.image.upscale 未转录），通电坐标=该文件自声明 WIRING_COORDINATES，注册面归其 owner，
+    # 届时直呼应改 invoker ⇒ 与 chat.py/control_plane 两线同格＝待翻面，不是豁免。
+    "media.vision": {
+        "domains/chat_reply/capabilities/chat.py",
+        "control_plane/api/platform.py",
+        "domains/vision/capabilities/modality_preprocessing.py",
+    },
+    "media.asr": {
+        "domains/chat_reply/capabilities/chat.py",
+        "control_plane/api/platform.py",
+        "domains/vision/capabilities/modality_preprocessing.py",
+    },
+    "media.video_brief": {
+        "domains/chat_reply/capabilities/chat.py",
+        "domains/vision/capabilities/modality_preprocessing.py",
+    },
     # 反搜：V1 已翻面 ⇒ 直呼清零（见 WIRED）。
     "media.anime_ip": set(),
     # 抽帧两处直呼**故意保留**（V1 逐条核过＝切换不等值，证据见 SEAT-V1 §伍-2）：
@@ -612,14 +633,28 @@ def test_e2e_search_web_equals_direct(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_unwired_capability_falls_back_to_unavailable() -> None:
-    """未注册 handler 的能力 invoke 诚实 UNAVAILABLE（不崩），生产据此回落旧直调。"""
+    """「descriptor 在册、执行体未注册」的能力 invoke 诚实 UNAVAILABLE（不崩），生产据此回落旧直调。
+
+    2026-09-25 S220 真值跟随：原版直接拿 `creation.tts.synthesize` 当"未注册 handler"样本，
+    该前提已被本波 P4-C2「语音接真」作废（执行体注册在 `capability_protocols.py:2716`，接真后
+    总开关关闭态回诚实 NOT_CONFIGURED——那面行为由 `tests/test_tts_creation_gate_reality.py`
+    执法，本例不重复断言、也不据它改期望值）。现算 descriptor 与 handler 两册 49/49 等值，
+    生产已无"在册却缺执行体"的 cid 可当样本 ⇒ 本例改用**真 descriptor 册 + 空 handler 册**
+    装配一台 invoker，直接钉住机制那条腿（缺执行体分支见 `capability_protocols.py:745-752`；
+    对照：descriptor 都不在册的 id 走 FAILED「未登记能力」，两分支各归各，不得混同）。
+    """
     from plugins.bot_unified_runtime.runtime.capability_protocols import (
+        CapabilityInvoker,
         CapabilityRequest,
+        HandlerRegistry,
         InvocationStatus,
         default_invoker,
     )
 
-    result = default_invoker().invoke(
+    unwired = CapabilityInvoker(
+        registry=default_invoker().registry, handlers=HandlerRegistry()
+    )
+    result = unwired.invoke(
         CapabilityRequest(capability_id="creation.tts.synthesize", payload={"text": "hi"}, principal="u", roles=("user",))
     )
     assert result.status is InvocationStatus.UNAVAILABLE

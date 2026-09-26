@@ -19,7 +19,7 @@ import sqlite3
 import pytest
 
 import plugins.bot_unified_runtime.domains.chat_reply.character.affinity as affinity_module
-from plugins.bot_unified_runtime.character.affinity import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     _BUDGET_MAX_LOSS_6H_POINTS,
     _BUDGET_MAX_LOSS_24H_POINTS,
     _INTERACTION_COOLDOWN_SECONDS,

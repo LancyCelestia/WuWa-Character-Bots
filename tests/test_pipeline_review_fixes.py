@@ -25,20 +25,21 @@ from plugins.bot_unified_runtime.domains.chat_reply.policy.quiet_hours import (
 from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
     pipeline as pipeline_module,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+    RuntimePipeline,
+    _BoundedSubmissionGate,
+    _resolve_chat_pool_workers,
+    inflight_scope_of,
+    offload_capability,
+)
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
     BotDecision,
     IncomingMessage,
     SessionType,
 )
+from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
 from plugins.bot_unified_runtime.llm.model_router import ModelRouter, ModelSpec
 from plugins.bot_unified_runtime.llm.providers import LLMProviderError, LLMReply
-from plugins.bot_unified_runtime.runtime.pipeline import (
-    RuntimePipeline,
-    _BoundedSubmissionGate,
-    _resolve_chat_pool_workers,
-    offload_capability,
-)
-from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
 # ==================== 修复 #3：vision 双门槛统一 ====================
 
@@ -161,13 +162,13 @@ def _message() -> IncomingMessage:
     )
 
 
-def _decision() -> BotDecision:
+def _decision(capability_id: str = "bot.chat") -> BotDecision:
     return BotDecision(
         request_id="req-1",
         should_respond=True,
         mode="command",
         trigger="你好",
-        capability_id="bot.chat",
+        capability_id=capability_id,
         target_scope=SessionType.PRIVATE,
         decision_reason="test",
     )
@@ -202,6 +203,112 @@ def test_bounded_gate_denies_over_permits_and_recovers() -> None:
     gate.release()
     gate.release()
     assert gate.in_flight == 0
+
+
+# -------------------- S134·B：在途闸跨族不共计数器（裁定 3 项 B / CM-P-40 R2）
+
+_SCOPES = ("visual", "audio")
+
+
+def test_reserved_layer_is_per_family_not_shared_across_families() -> None:
+    """通用层被一族占满后，另一族仍可取**自己**的保留格（改动前＝0 格）。"""
+    gate = _BoundedSubmissionGate(4, reserved_permits=2, reserved_scopes=_SCOPES)
+
+    visual = sum(1 for _ in range(50) if gate.try_acquire("visual"))
+    audio = sum(1 for _ in range(50) if gate.try_acquire("audio"))
+
+    assert visual == 6, f"视觉应拿到通用 4 + 自身保留 2，实拿 {visual}"
+    assert audio == 2, f"语音只该拿到自己的保留位，实拿 {audio}（跨族又共用了计数器？）"
+    assert gate.scope_in_flight("visual") == 2 and gate.scope_in_flight("audio") == 2
+    assert gate.general_in_flight() == 4
+    # 族外（如 bot.chat）不进保留层：只吃通用层，取不到就是取不到。
+    assert gate.try_acquire("") is False
+    assert gate.try_acquire("audio") is False
+    assert gate.in_flight == 8
+
+
+def test_reserved_layer_is_released_back_and_never_overissues() -> None:
+    """成对取/还必须精确归零，且归零后容量与初值一致（防"保留层只进不出"）。"""
+    gate = _BoundedSubmissionGate(4, reserved_permits=2, reserved_scopes=_SCOPES)
+    held = ["visual"] * 6 + ["audio"] * 2
+    for scope in held:
+        assert gate.try_acquire(scope)
+    assert gate.in_flight == 8 and gate.try_acquire("audio") is False
+    for scope in held:
+        gate.release(scope)
+    assert (gate.in_flight, gate.general_in_flight()) == (0, 0)
+    assert (gate.scope_in_flight("visual"), gate.scope_in_flight("audio")) == (0, 0)
+    assert sum(1 for _ in range(6) if gate.try_acquire("audio")) == 6  # 完全恢复
+
+
+def test_zero_reserved_permits_reproduces_the_old_single_counter() -> None:
+    """缺省（reserved=0）＝逐字节旧形态：既给既有回归锁背书，也自证注毒样本可信。"""
+    legacy = _BoundedSubmissionGate(4)
+    assert sum(1 for _ in range(10) if legacy.try_acquire("visual")) == 4
+    assert sum(1 for _ in range(10) if legacy.try_acquire("audio")) == 0
+
+
+def test_inflight_scope_follows_the_ownership_roster() -> None:
+    """族籍唯一真身＝族册：在册成员按族、族外与垃圾输入一律空串（fail-closed）。"""
+    from plugins.bot_unified_runtime.domains.core import (
+        capability_resource_ownership as ro,
+    )
+
+    assert inflight_scope_of("bot.tts") == "audio"
+    assert inflight_scope_of("media.vision.image") == "visual"
+    assert inflight_scope_of("bot.chat") == ""
+    assert inflight_scope_of("") == "" and inflight_scope_of(None) == ""
+    for cid in ro.FAMILY_MEMBERS["audio"]:
+        assert inflight_scope_of(cid) == "audio", cid
+    for cid in ro.FAMILY_MEMBERS["visual"]:
+        assert inflight_scope_of(cid) == "visual", cid
+
+
+@pytest.mark.asyncio
+async def test_offload_admits_other_family_via_reserved_layer() -> None:
+    """**活体端到端**：视觉占满在途 ⇒ 语音仍被放行（走 offload 真出口，不是手搓闸）。
+
+    这是 CM-P-40 R2 那条"任一族占满即静默否决另一族"的正面对撞用例：改动前
+    第三次的结果必为 `pipeline_busy`（`$TEMP/s134_probe_before.py` 实跑 0 格）。
+    """
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-family-pool")
+    gate = _BoundedSubmissionGate(2, reserved_permits=1, reserved_scopes=_SCOPES)
+    original = (pipeline_module._chat_pool, pipeline_module._chat_pool_gate)
+    pipeline_module._chat_pool, pipeline_module._chat_pool_gate = pool, gate
+
+    def fast(message: IncomingMessage, decision: BotDecision) -> str:
+        return "done"
+
+    def busy(result: object) -> bool:
+        return getattr(result, "audit_tags", None) == ["pipeline_busy:v1"]
+
+    try:
+        # 前提自证（确定性地，不靠 sleep）：把通用层 2 格 + 视觉自己的保留格全占住。
+        held = ["visual"] * 3
+        assert all(gate.try_acquire("visual") for _ in held)
+        assert gate.general_in_flight() == 2 and gate.scope_in_flight("visual") == 1
+        # 同族再取必须被拒（保留层不是一族的多倍额度）。
+        assert gate.try_acquire("visual") is False
+
+        wrapper = offload_capability(fast)
+        audio = await wrapper(_message(), _decision("media.asr.speech"))
+        assert not busy(audio), "语音被视觉的洪峰静默否决＝跨族共计数器又回来了"
+        assert audio == "done"
+
+        # 反向格：语音自己的保留位也被占满 ⇒ 照旧快败（分族不等于放开上界）。
+        assert gate.try_acquire("audio") is True
+        second = await wrapper(_message(), _decision("media.asr.speech"))
+        assert busy(second), f"两族额度都占满却仍放行＝闸被写成了无界：{second!r}"
+        # 族外（bot.chat 一类）永远只吃通用层：这里必然被拒。
+        assert busy(await wrapper(_message(), _decision("bot.chat")))
+        gate.release("audio")
+        for _ in held:
+            gate.release("visual")
+        assert gate.in_flight == 0 and gate.general_in_flight() == 0
+    finally:
+        pipeline_module._chat_pool, pipeline_module._chat_pool_gate = original
+        pool.shutdown(wait=False, cancel_futures=True)
+
 
 
 @pytest.mark.asyncio

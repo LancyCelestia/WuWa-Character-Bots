@@ -14,9 +14,6 @@ from __future__ import annotations
 import time
 
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
-from plugins.bot_unified_runtime.capabilities.user_copy import (
-    GROUP_FAILURE_ACK_TEMPLATES,
-)
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -28,8 +25,13 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     SessionType,
 )
-from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
-from plugins.bot_unified_runtime.sender.queue import InMemorySendQueue
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.user_copy import (
+    GROUP_FAILURE_ACK_TEMPLATES,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+    RuntimePipeline,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.queue import InMemorySendQueue
 
 # 节流窗（与 pipeline._GROUP_FAILURE_NOTICE_WINDOW_SECONDS 同口径的测试镜像，
 # 仅用于把时间戳拨回窗外；真值仍以 pipeline 模块常量为真相源）。

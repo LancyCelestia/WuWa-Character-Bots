@@ -12,14 +12,16 @@ from types import SimpleNamespace
 import pytest
 
 from plugins.bot_unified_runtime.domains.chat_reply.runtime import base_router
-from plugins.bot_unified_runtime.runtime.base_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     RouteDecision,
     RouteKind,
     RouteRule,
     classify_message_route,
     clear_route_decision_cache,
 )
-from plugins.bot_unified_runtime.runtime.settings import RuntimeSettingsStore
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+    RuntimeSettingsStore,
+)
 
 _TEXT = "今天天气不错"
 

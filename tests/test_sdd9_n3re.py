@@ -15,15 +15,6 @@ import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.chat import (
-    _knowledge_lines,
-    _meme_search_lines,
-    _web_search_lines,
-)
-from plugins.bot_unified_runtime.character.vector_knowledge import (
-    SqliteVectorKnowledgeStore,
-    _title_exact_hit,
-)
 from plugins.bot_unified_runtime.contracts import (
     ContextBundle,
     KnowledgeChunk,
@@ -35,6 +26,15 @@ from plugins.bot_unified_runtime.contracts import (
     ToneProfile,
     WebSearchContext,
     WebSearchHit,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    _knowledge_lines,
+    _meme_search_lines,
+    _web_search_lines,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge import (
+    SqliteVectorKnowledgeStore,
+    _title_exact_hit,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.question_intent import (
     DOMAIN_TERMS,
@@ -137,7 +137,7 @@ def test_shorekeeper_question_hits_persona_entry_first(tmp_path: Path) -> None:
 
 
 def test_merged_retrieval_persona_entry_stays_first(tmp_path: Path) -> None:
-    from plugins.bot_unified_runtime.character.vector_knowledge import (
+    from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge import (
         _VectorKnowledgeRetriever,
     )
 

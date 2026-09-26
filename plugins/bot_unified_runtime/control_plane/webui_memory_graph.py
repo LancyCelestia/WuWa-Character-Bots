@@ -5,8 +5,11 @@
 - ``history`` ← 对话史 SQLite（``conversation_turns``）：窗口内 turns 聚合
   出 人物×会话发言边（speaks_in）、群聊-会话 hosts 边（session id 按
   OneBot 约定 ``group_<gid>_<uid>`` 解析群号）；
-- ``memory`` ← 长期记忆 SQLite（``memory_facts``）：人物-记忆归属边
-  （about），窗口按 updated_at（缺省回退 created_at）；
+- ``memory`` ← 长期记忆 SQLite：经**唯一**读侧入口
+  ``capabilities/memory.current_memory_rows`` 取「这个库里物理存在的记忆表」
+  （旧 ``memory_facts`` 与总线 ``memory_entries_v21`` 同在一个库文件里），人物-
+  记忆归属边（about），窗口按 updated_at（缺省回退 created_at）；本件**不判总线
+  开关**——开关唯一的真身在装配层，这里只如实列举存储里有什么；
 - ``quirks`` ← 小习惯 SQLite（``persona_quirks``，仅 active）：规则节点；
   user 作用域（scope_key=人物）连人物-规则边（learned_rule），global 条目
   无人物归属事实 → 只给节点不硬造边；窗口按 created_at；
@@ -31,6 +34,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.memory import (
+    MEMORY_BUS_TABLE,
+    MEMORY_LEGACY_TABLE,
+    current_memory_rows,
+    echo_safe_rows,
+    memory_tables_with_columns,
+)
+
 from .factory import _path
 
 __all__ = [
@@ -49,6 +60,15 @@ _HISTORY_COLUMNS = frozenset({"session_id", "sender_id", "created_at"})
 _MEMORY_COLUMNS = frozenset(
     {"fact_id", "subject_user_id", "text", "created_at", "updated_at"}
 )
+#: 总线表的「渲染得起」列集：与 ``_MEMORY_COLUMNS`` 一一对应（memory_id→fact_id、
+#: owner_id→subject_user_id），少任一列这张表整张跳过，不拿默认值糊一行。
+_BUS_MEMORY_COLUMNS = frozenset(
+    {"memory_id", "owner_id", "text", "created_at", "updated_at"}
+)
+_GRAPH_MINIMUM_COLUMNS = {
+    MEMORY_LEGACY_TABLE: _MEMORY_COLUMNS,
+    MEMORY_BUS_TABLE: _BUS_MEMORY_COLUMNS,
+}
 _QUIRK_COLUMNS = frozenset(
     {"quirk_id", "quirk_text", "status", "created_at", "scope_kind", "scope_key"}
 )
@@ -218,21 +238,26 @@ class MemoryGraphService:
                 return "missing", []
             with closing(_read_only_connect(path)) as connection:
                 connection.execute("BEGIN")
-                if not _table_ready(connection, "memory_facts", _MEMORY_COLUMNS):
-                    return "unreadable", []
-                rows: list[tuple[str, str, str]] = []
-                for row in connection.execute(
-                    "SELECT fact_id, subject_user_id, text, created_at, updated_at"
-                    " FROM memory_facts"
+                # 记忆行只经由**一个**中央入口取（capabilities/memory 的读侧投影）：
+                # 库里物理存在哪几张记忆表就看哪几张，本件不判总线开关、不写
+                # 「if 开则读 v21」——那个判定唯一的真身在装配层，图谱是只读消费面。
+                # 关态（只有 memory_facts 的库）逐字节等价于旧实现：同一张表、同一
+                # 列集要求、同一时间戳回退口径；旧实现「表缺列 ⇒ unreadable」也原样
+                # 保留（没有任何一张可渲染的记忆表时如实 unreadable，不造空图）。
+                if not memory_tables_with_columns(
+                    connection, minimum_columns=_GRAPH_MINIMUM_COLUMNS
                 ):
-                    stamp = _parse_utc(row["updated_at"]) or _parse_utc(row["created_at"])
+                    return "unreadable", []
+                out: list[tuple[str, str, str]] = []
+                for row in echo_safe_rows(
+                    current_memory_rows(connection, minimum_columns=_GRAPH_MINIMUM_COLUMNS)
+                ):
+                    stamp = _parse_utc(row.updated_at) or _parse_utc(row.created_at)
                     if not _in_window(stamp, cutoff):
                         continue
-                    fact_id = str(row["fact_id"] or "")
-                    subject = str(row["subject_user_id"] or "")
-                    if fact_id and subject:
-                        rows.append((fact_id, subject, str(row["text"] or "")))
-                return "ok", rows
+                    if row.row_id and row.subject_user_id:
+                        out.append((row.row_id, row.subject_user_id, row.text))
+                return "ok", out
         except (sqlite3.Error, OSError, ValueError, TypeError):
             return "unreadable", []
 

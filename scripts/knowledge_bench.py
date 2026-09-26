@@ -24,7 +24,7 @@ except Exception as exc:  # noqa: BLE001
 
 from runtime_paths import runtime_path
 
-from plugins.bot_unified_runtime.character.vector_knowledge import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge import (
     OpenAICompatibleEmbeddingProvider,
     SqliteVectorKnowledgeStore,
 )

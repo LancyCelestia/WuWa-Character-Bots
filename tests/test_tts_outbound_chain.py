@@ -20,8 +20,12 @@
    （`说 X`）无文字可保 ⇒ 不派发平台、直接 FAILED_FINAL（诚实终败，
    零自拼文案）。
 
-另外锁死一条**能力层约定**：发媒体时必须把 ``title``/``body`` 留空，否则
-renderer 的 ``body → summary → title`` 兜底链会把标题当文案一起发出去。
+另锁死一条**出站形态**（2026-09-25 用户裁定第 8 项）：语音命令发的是
+「原文本 + 语音音频」——``body`` 带念过的那串字，renderer 的
+``body → summary → title`` 兜底链因此只取到**一条**正文，落在 ``record``
+部件之后。旧口径「媒体能力必须把 title/body 留空」的**理由**仍然成立
+（兜底链会把它当文案发出），只是今日要的正是那条文案，于是从「留空」
+改判为「只留 body、title 仍空」——两者都只发一条文本，不会重复。
 """
 
 from __future__ import annotations
@@ -46,13 +50,13 @@ from plugins.bot_unified_runtime.contracts import (
     ReceiptState,
     ReviewResult,
 )
-from plugins.bot_unified_runtime.output.renderer import render_reviewed_output
-from plugins.bot_unified_runtime.sender.onebot import (
+from plugins.bot_unified_runtime.domains.transport.sender.onebot import (
     _mixed_segments,
     _resolve_local_file_ref,
     _segment_from_mixed_part,
     send_onebot_v11,
 )
+from plugins.bot_unified_runtime.output.renderer import render_reviewed_output
 
 
 def _review() -> ReviewResult:
@@ -385,7 +389,7 @@ def test_tts_result_reaches_onebot_record_end_to_end(tmp_path: Path) -> None:
         capability_id="bot.tts",
         kind="text",
         title="",
-        body="",
+        body="今天的潮汐很安静",
         audio=[{"file": str(wav)}],
     )
 
@@ -395,9 +399,33 @@ def test_tts_result_reaches_onebot_record_end_to_end(tmp_path: Path) -> None:
     segments = _mixed_segments(
         rendered.content_ref, text_fallback=rendered.text_fallback
     )
-    assert segments == [{"type": "record", "data": {"file": str(wav.resolve())}}]
-    # 纯语音出站：不应混入任何 text 段。
-    assert all(segment["type"] == "record" for segment in segments)
+    # 第 8 项口径：语音音频在前、原文本在后，且文本**只有一条**。
+    assert segments == [
+        {"type": "record", "data": {"file": str(wav.resolve())}},
+        {"type": "text", "data": {"text": "今天的潮汐很安静"}},
+    ]
+    assert sum(1 for segment in segments if segment["type"] == "text") == 1
+
+
+@pytest.mark.asyncio
+async def test_dead_audio_leaves_the_text_leg_delivered(tmp_path: Path) -> None:
+    """改判的第二重收益：音频是死件时，`说 X` 不再「一个字都不发」。
+
+    旧形态 body 留空 ⇒ 死 record 被跳过后没有任何部件可保，直接
+    FAILED_FINAL（见 ``test_say_x_dead_record_fails_final_without_dispatch``）；
+    新形态带原文本 ⇒ 文字照送、SENT 挂 missing_file 留痕。
+    """
+    bot = SimulatedOneBotBot(behavior="ok")
+    request = build_mixed_request(
+        "new-shape-dead-audio",
+        text="今天的潮汐很安静",
+        record_file=str(tmp_path / "gone.wav"),
+    )
+    receipt = await send_onebot_v11(bot, request, timeout_seconds=1.0)
+    assert receipt.state is ReceiptState.SENT
+    assert receipt.operational_issue is not None
+    assert receipt.operational_issue.kind == "missing_file"
+    assert bot.sent_texts == ["今天的潮汐很安静"]
 
 
 def test_segment_from_mixed_part_returns_none_for_unknown_type() -> None:

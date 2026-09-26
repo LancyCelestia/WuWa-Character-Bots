@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import pytest
 
-from plugins.bot_unified_runtime.runtime.natural_language import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.natural_language import (
     FUNCTION_KEY_MAP,
     SETTING_CAPABILITY_ID,
     detect_natural_command,
 )
-from plugins.bot_unified_runtime.runtime.settings import SETTABLE_KEYS
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+    SETTABLE_KEYS,
+)
 
 # ---- ① 口语矩阵：把/将/帮我 X 功能 开/关/打开/关闭/关掉/启用/停用 ----
 
@@ -128,7 +130,9 @@ def test_function_key_map_keys_all_exist_in_settings_registry() -> None:
     派发层 set_override 会明确拒绝并提示「改 .env + 重启」——这比写入
     成功却行为不变的死开关诚实。
     """
-    from plugins.bot_unified_runtime.runtime.settings import RESTART_REQUIRED_KEYS
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+        RESTART_REQUIRED_KEYS,
+    )
 
     assert FUNCTION_KEY_MAP, "映射表不应为空"
     for word, (key, label) in FUNCTION_KEY_MAP.items():
@@ -142,7 +146,7 @@ def test_function_key_map_values_are_boolean_toggle_keys() -> None:
     # 映射层只收布尔开关键：口语开/关方向必须能被 _bool_converter 解析。
     # 审查 C-09：重启键不在 SETTABLE_KEYS（set 在转换前就拒绝），跳过
     # 转换器断言——其 config.py 对应字段本身即 bool。
-    from plugins.bot_unified_runtime.runtime.settings import (
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
         RESTART_REQUIRED_KEYS,
         _bool_converter,
     )
@@ -184,7 +188,7 @@ def test_legacy_seven_branches_unchanged() -> None:
 
 def test_runtime_set_command_text_format() -> None:
     """C-02 契约：映射结果拼成 runtime set 子命令体，派发层直喂管理员门。"""
-    from plugins.bot_unified_runtime.runtime.natural_language import (
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.natural_language import (
         runtime_set_command_text,
     )
 

@@ -560,3 +560,74 @@ def test_router_fork_carries_sink() -> None:
     sink = SimpleNamespace()
     router = _router({"ch-a": _spec("ch-a", 1)}, {}, sink)
     assert router.fork()._call_record_sink is sink
+
+
+def test_gateway_cost_wins_over_registry_prices(tmp_path) -> None:
+    """AxonHub 已按实际服务渠道算好成本并注入 usage.cost（实测逐位吻合）。
+
+    bot 侧注册表只有 2 条指向网关的条目，看不见网关内部选了哪条渠道，
+    所以 usage.cost 一旦存在就必须优先于本地自算价，否则账单按假定渠道计价。
+    """
+    service = _service(tmp_path)
+    draft = build_call_draft(
+        request_id="req-gw-1",
+        started_at="2026-09-24T20:00:00.000+08:00",
+        completed_at="2026-09-24T20:00:12.000+08:00",
+        model_id="axon-grok-46",
+        usage={"prompt_tokens": 8032, "completion_tokens": 713,
+               "total_tokens": 8745, "cost": 0.0004002},
+        attempts=["axon-grok-46:success"],
+        status="success",
+        price_in=999.0,   # 故意给一个会被网关成本压过的本地价
+        price_out=999.0,
+    )
+    service.submit(draft)
+    service.flush()
+    row = _fetch_row(service.db_path)
+    assert row["pricing_source"] == "gateway_cost"
+    assert row["total_cost_milli"] == 0, "0.0004002 元 = 0 毫厘（四舍五入）"
+    assert row["unpriced"] == 0
+    service.close()
+
+
+def test_gateway_cost_absent_falls_back_to_registry(tmp_path) -> None:
+    service = _service(tmp_path)
+    draft = build_call_draft(
+        request_id="req-gw-2",
+        started_at="2026-09-24T20:00:00.000+08:00",
+        completed_at="2026-09-24T20:00:02.000+08:00",
+        model_id="ch-a",
+        usage={"prompt_tokens": 1_000_000, "completion_tokens": 1_000_000,
+               "total_tokens": 2_000_000},
+        attempts=["ch-a:success"],
+        status="success",
+        price_in=2.0,
+        price_out=8.0,
+    )
+    service.submit(draft)
+    service.flush()
+    row = _fetch_row(service.db_path)
+    assert row["pricing_source"] == "channel_spec"
+    assert row["total_cost_milli"] == 10000
+    service.close()
+
+
+def test_gateway_cost_zero_is_not_a_cost(tmp_path) -> None:
+    """cost=0 不能当「网关说这发免费」——未计价与零价必须可区分。"""
+    service = _service(tmp_path)
+    draft = build_call_draft(
+        request_id="req-gw-3",
+        started_at="2026-09-24T20:00:00.000+08:00",
+        completed_at="2026-09-24T20:00:01.000+08:00",
+        model_id="ch-a",
+        usage={"prompt_tokens": 10, "completion_tokens": 10,
+               "total_tokens": 20, "cost": 0},
+        attempts=["ch-a:success"],
+        status="success",
+    )
+    service.submit(draft)
+    service.flush()
+    row = _fetch_row(service.db_path)
+    assert row["pricing_source"] == "unknown"
+    assert row["unpriced"] == 1
+    service.close()

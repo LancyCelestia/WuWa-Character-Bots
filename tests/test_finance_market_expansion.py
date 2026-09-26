@@ -503,10 +503,12 @@ class TestH07Triggers:
         ["茅台股价", "腾讯控股市值", "美团股价", "小米集团股价", "港交所市值"],
     )
     def test_new_companies_ride_existing_context_gate(self, text: str) -> None:
-        from plugins.bot_unified_runtime.capabilities.stocks import is_stocks_command
         from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
             RouteKind,
             classify_message_route,
+        )
+        from plugins.bot_unified_runtime.domains.finance.capabilities.stocks import (
+            is_stocks_command,
         )
 
         assert is_stocks_command(text) is True
@@ -522,7 +524,9 @@ class TestH07Triggers:
         ],
     )
     def test_bare_aliases_still_yield_to_chat(self, text: str) -> None:
-        from plugins.bot_unified_runtime.capabilities.stocks import is_stocks_command
+        from plugins.bot_unified_runtime.domains.finance.capabilities.stocks import (
+            is_stocks_command,
+        )
 
         assert is_stocks_command(text) is False
 
@@ -533,7 +537,9 @@ class TestH07Triggers:
         劫持到股指面板（H-02 新增 控股 系公司名后才可达）；真「股市」语境
         （股市股价/全球股市/A股市场行情）零回归。
         """
-        from plugins.bot_unified_runtime.capabilities.market import is_market_command
+        from plugins.bot_unified_runtime.domains.finance.capabilities.market import (
+            is_market_command,
+        )
 
         assert is_market_command("腾讯控股市值") is False
         assert is_market_command("股市股价") is True  # 既有真命令对照

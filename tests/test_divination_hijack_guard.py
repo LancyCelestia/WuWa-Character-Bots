@@ -23,14 +23,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.divination import (
-    is_divination_command,
-    parse_divination_intent,
-)
-from plugins.bot_unified_runtime.runtime.base_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     RouteKind,
     classify_message_route,
     clear_route_decision_cache,
+)
+from plugins.bot_unified_runtime.domains.divination.capabilities.divination import (
+    is_divination_command,
+    parse_divination_intent,
 )
 
 # 探针 §① 八条劫持样例（probe-hijack-report 实测 8/8 HIJACKED → 应落 chat）。

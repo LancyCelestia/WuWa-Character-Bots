@@ -18,37 +18,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.auto_send import is_auto_send_command_text
-from plugins.bot_unified_runtime.capabilities.divination import (
-    is_divination_command,
-    parse_divination_intent,
-)
-from plugins.bot_unified_runtime.capabilities.eat import (
-    is_eat_command,
-    is_recipe_command,
-)
-from plugins.bot_unified_runtime.capabilities.epic import is_epic_command
-from plugins.bot_unified_runtime.capabilities.fx import is_fx_command
-from plugins.bot_unified_runtime.capabilities.market import is_market_command
-from plugins.bot_unified_runtime.capabilities.meme import is_meme_command
-from plugins.bot_unified_runtime.capabilities.meme_library import (
-    is_meme_library_command,
-)
-from plugins.bot_unified_runtime.capabilities.music import (
-    is_music_command,
-    is_music_mode_command,
-)
-from plugins.bot_unified_runtime.capabilities.news import is_news_command
-from plugins.bot_unified_runtime.capabilities.randpic import is_randpic_command
-from plugins.bot_unified_runtime.capabilities.reminder import is_reminder_command
-from plugins.bot_unified_runtime.capabilities.stocks import is_stocks_command
-from plugins.bot_unified_runtime.capabilities.subscribe import (
-    is_standalone_subscribe_command,
-)
-from plugins.bot_unified_runtime.capabilities.today_history import (
-    is_today_history_command,
-)
-from plugins.bot_unified_runtime.capabilities.weather import is_weather_command
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities.affinity import (
     is_affinity_command,
 )
@@ -60,11 +29,58 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     classify_message_route,
     clear_route_decision_cache,
 )
+from plugins.bot_unified_runtime.domains.divination.capabilities.divination import (
+    is_divination_command,
+    parse_divination_intent,
+)
+from plugins.bot_unified_runtime.domains.finance.capabilities.fx import is_fx_command
+from plugins.bot_unified_runtime.domains.finance.capabilities.market import (
+    is_market_command,
+)
+from plugins.bot_unified_runtime.domains.finance.capabilities.stocks import (
+    is_stocks_command,
+)
+from plugins.bot_unified_runtime.domains.food.capabilities.eat import (
+    is_eat_command,
+    is_recipe_command,
+)
 from plugins.bot_unified_runtime.domains.location.capabilities.moegirl import (
     is_moegirl_command,
 )
 from plugins.bot_unified_runtime.domains.location.capabilities.wiki import (
     is_wiki_command,
+)
+from plugins.bot_unified_runtime.domains.meme.capabilities.meme import is_meme_command
+from plugins.bot_unified_runtime.domains.meme.capabilities.meme_library import (
+    is_meme_library_command,
+)
+from plugins.bot_unified_runtime.domains.meme.capabilities.randpic import (
+    is_randpic_command,
+)
+from plugins.bot_unified_runtime.domains.music.capabilities.music import (
+    is_music_command,
+    is_music_mode_command,
+)
+from plugins.bot_unified_runtime.domains.schedule.auto_send import (
+    is_auto_send_command_text,
+)
+from plugins.bot_unified_runtime.domains.schedule.capabilities.reminder import (
+    is_reminder_command,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.epic import (
+    is_epic_command,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.news import (
+    is_news_command,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.subscribe import (
+    is_standalone_subscribe_command,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.today_history import (
+    is_today_history_command,
+)
+from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
+    is_weather_command,
 )
 
 
@@ -267,7 +283,9 @@ def test_divination_english_parses_intent() -> None:
 
 def test_reminder_english_maps_to_list_view() -> None:
     """reminder 英文触发承接列表查询（自然语言建提醒的 NLP 在 character 域，不在本批范围）。"""
-    from plugins.bot_unified_runtime.capabilities.reminder import _LIST_RE
+    from plugins.bot_unified_runtime.domains.schedule.capabilities.reminder import (
+        _LIST_RE,
+    )
 
     for sample in ("reminder", "reminders", "my reminders", "reminder list"):
         assert _LIST_RE.search(sample), f"提醒列表正则未覆盖 {sample!r}"

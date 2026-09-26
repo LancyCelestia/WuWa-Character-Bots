@@ -33,8 +33,10 @@ from plugins.bot_unified_runtime.domains.chat_reply.policy.quiet_hours import (
     QuietHoursChecker,
     QuietHoursSettings,
 )
-from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
-from plugins.bot_unified_runtime.sender.queue import InMemorySendQueue
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+    RuntimePipeline,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.queue import InMemorySendQueue
 
 _QUIET_NOW = datetime(2026, 9, 17, 23, 30, tzinfo=timezone.utc)
 

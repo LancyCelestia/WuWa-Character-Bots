@@ -46,7 +46,7 @@ def test_fetch_context_sanitizes_credentials_only_for_diagnostics() -> None:
 
 
 def test_parse_matched_url_invokes_parser_once() -> None:
-    from plugins.bot_unified_runtime.capabilities.content_parser import (
+    from plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser import (
         parse_matched_url,
     )
 

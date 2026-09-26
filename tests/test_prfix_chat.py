@@ -20,7 +20,8 @@ from types import SimpleNamespace
 import pytest
 
 import plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat as chat_module
-from plugins.bot_unified_runtime.capabilities.chat import (
+from plugins.bot_unified_runtime.contracts import WebSearchHit
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
     _MCP_NEGATIVE_CACHE_TTL_SECONDS,
     _generate_with_tool_loop,
     _search_queries_concurrently,
@@ -28,7 +29,6 @@ from plugins.bot_unified_runtime.capabilities.chat import (
     clear_mcp_tools_schema_cache,
     strip_outer_speech_quotes,
 )
-from plugins.bot_unified_runtime.contracts import WebSearchHit
 from plugins.bot_unified_runtime.llm.providers import LLMReply
 
 # ==================== B-1：视频 deadline 与请求预算协调 ====================

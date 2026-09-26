@@ -37,9 +37,13 @@ from plugins.bot_unified_runtime.domains.ops.monitor.alerts import (
     AdminTarget,
     notify_operational_issue,
 )
-from plugins.bot_unified_runtime.sender.onebot import send_onebot_v11
-from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
-from plugins.bot_unified_runtime.sender.worker import drain_send_queue_once
+from plugins.bot_unified_runtime.domains.transport.sender.onebot import send_onebot_v11
+from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+    SQLiteSendRequestQueue,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.worker import (
+    drain_send_queue_once,
+)
 
 
 def _utc_now() -> datetime:

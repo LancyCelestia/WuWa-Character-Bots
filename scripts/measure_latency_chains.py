@@ -64,7 +64,9 @@ _ROUTE_SAMPLES = [
 
 
 def measure_route(n: int = 2000) -> None:
-    from plugins.bot_unified_runtime.runtime.base_router import classify_message_route
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
+        classify_message_route,
+    )
 
     texts = [_ROUTE_SAMPLES[i % len(_ROUTE_SAMPLES)] for i in range(n)]
     # 预热：首次调用含模块级惰性装配。
@@ -95,7 +97,7 @@ _BENCH_HTML = (
 
 
 def measure_render(n: int = 6) -> None:
-    from plugins.bot_unified_runtime.output.render_backends import (
+    from plugins.bot_unified_runtime.domains.render.render_backends import (
         PlaywrightRenderBackend,
     )
 

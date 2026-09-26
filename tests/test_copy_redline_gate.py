@@ -5,13 +5,18 @@
 「所有文本统一口径/风格/话术，前后不矛盾」+ 人格红线（不攻击/不强硬/不 R-18/
 不愧疚话术）。本门把人工纪律固化为常驻 pytest 门，防未来批次回潮。
 
-扫描范围（gate_scope()）：capabilities/*.py + capabilities/auto_send/ 子目录
-（2026-09-14 主会话批准扩面；扩面前对 auto_send/ 预扫 0 命中）+
-character/*.py + runtime/usage_monitor.py + runtime/error_report.py
-（2026-09-14 二次扩面，A69-I1）+ personas/**/*.md + personas/**/*.txt +
+扫描范围：由「扫描面坐标」三组常量唯一派生（SCOPE_PY_GLOBS / SCOPE_ANCHOR_FILES /
+SCOPE_PERSONA_GLOBS，逐条来历与 2026-09-25 S263 根修说明见其上方注释）——
+capabilities 族（含 auto_send/ 子目录，2026-09-14 扩面）+ character 族 +
+monitor 族锚点（2026-09-14 二次扩面，A69-I1）+ 已点名跟进的
+domains/{schedule,chat_reply,ops} 三域 + 2026-09-25 S263 起按族派生的
+domains/*/{capabilities,character,monitor} 真身族（其余 17 域的能力真身此前
+整批不在面上）+ personas/**/*.md + personas/**/*.txt +
 生产人格副本 ChatBot_Runtime/data/persona/守岸人_核心人格.md
 （2026-09-14 三次扩面，人格矛盾修复批 G-08；扩面纪律=先修人格文本
 G-01/G-02/G-03 再扩门，门绿为验收；副本缺失时优雅跳过并注明）。
+面的只增不减由 test_gate_scope_coordinates_are_live + test_scan_surface_floor_is_live
+执法；坐标失效不再被 exists() 静默吞掉。
 
 扫描器：Python 文件走纯 AST + 字符串字面量（零 import 被扫模块）；人格资产
 md/txt 无 AST，按「非空行 = 一个用户可见单元」逐行过同一套规则。用户可见字符串单元 =
@@ -19,7 +24,8 @@ md/txt 无 AST，按「非空行 = 一个用户可见单元」逐行过同一套
 ``+`` 链（合并为单元）。排除：注释（AST 天然排除）、日志调用（logger/log/
 logging 及 getLogger 链的常见级别方法）、``audit_tags=`` 关键字、URL 串、
 ``re.*`` 正则模式（位置 0 参与任意调用的 ``pattern=`` 关键字；re.sub 的
-repl/原文仍属用户可见面，不豁免）、docstring。
+repl/原文仍属用户可见面，不豁免）、docstring。面上任何一件读不动（语法破损等）
+= 它等于没被扫过，由 test_scan_surface_is_parseable 点名执法，不在本门内做容忍。
 
 规则分级：
 - Critical（命中即红）：
@@ -61,6 +67,56 @@ RUNTIME_COPY_PATH = (
 )
 # 人格资产是 md/txt（无 AST），走按行扫描的文本路径。
 _TEXT_SUFFIXES = frozenset({".md", ".txt"})
+
+# ---------------------------------------------------------------------------
+# 扫描面坐标（唯一真身：gate_scope() 与「坐标活性锁」共用同一份，不建第二本账）
+#
+# 2026-09-25 S263 根修说明（必读）：本波之前这道门的坐标里钉着四枚**盘上不存在**的
+# 旧路径——capabilities/echo.py、character/addressing.py（断言侧两枚 pin）与
+# runtime/usage_monitor.py、runtime/error_report.py（构造侧两枚 append）。构造侧那两枚
+# 被 gate_scope() 末尾的 exists() 过滤**静默丢掉**，断言侧那两枚里只有恰好在跑的那条
+# 会红，另一条与它同族的失效一概不响。真实代价不是「一行红」，而是 v21r2 域重组把
+# 能力/人格/监控三族搬进 domains/<域>/ 之后，除当时点过名的 schedule / chat_reply /
+# ops 三个域以外，其余 17 个域的能力真身（现算 41 个文件）**整批不在这道门的扫描面上**
+# 而门照旧绿——文案红线（不攻击口径 / 守岸人语气 / R-18 词表 / 创造者双名）正是它守的。
+#
+# 三件事一起做的次序：①坐标改指真身；②族按 `domains/<域>/<层>` **派生**而不是逐域
+# 点名（逐域点名必然随下一次重组过期，那正是本条红今天的来历）；③补一把活性锁
+# test_gate_scope_coordinates_are_live——今后再钉一枚不存在的路径 / 匹配不到任何文件的
+# 族，当场红，不再静默缩面。扫描面只增不减：旧路径的退役语义改到断言侧作证（不删）。
+# ---------------------------------------------------------------------------
+
+# RUNTIME_PKG 下的 Python 族（glob 形态，相对 RUNTIME_PKG）。
+SCOPE_PY_GLOBS: tuple[str, ...] = (
+    # 旧布局层：v21r2 重组后只余再导出垫片，仍留在面上（垫片文案同样用户可见）。
+    "capabilities/*.py",
+    "capabilities/auto_send/**/*.py",
+    "character/*.py",
+    # 2026-09-18 起逐域点过名的三个域（覆盖面比单层族更宽：store/ data/ runtime/ 全含）。
+    "domains/schedule/**/*.py",
+    "domains/chat_reply/**/*.py",
+    "domains/ops/**/*.py",
+    # 2026-09-25 S263：按「族」派生补齐其余域的真身，杜绝逐域点名随重组再失效。
+    "domains/*/capabilities/**/*.py",
+    "domains/*/character/**/*.py",
+    "domains/*/monitor/**/*.py",
+)
+
+# 必须真实存在且必须被扫到的锚点文件（相对 RUNTIME_PKG）。
+SCOPE_ANCHOR_FILES: tuple[str, ...] = (
+    # 2026-09-14 二次扩面原钉 runtime/usage_monitor.py 与 runtime/error_report.py，
+    # 二者真身已迁 domains/ops/monitor/（S263 把坐标改指真身；旧路径退役在断言侧作证）。
+    "domains/ops/monitor/usage_monitor.py",
+    "domains/ops/monitor/error_report.py",
+)
+
+# 人格资产族（glob 形态，相对 REPO_ROOT）。
+SCOPE_PERSONA_GLOBS: tuple[str, ...] = ("personas/**/*.md", "personas/**/*.txt")
+
+# 能力族贡献下限：S263 扩面后现算 `domains/*/capabilities/**/*.py` 匹配 51（当时值）。
+# 地板取 40 是刻意留出「垫片退役/模块合并」的正常波动，但整族从面上消失必红。
+# 只准上调；确需下调由主会话裁定并在提交信息里写明理由，勿在本门内悄悄改小。
+_CAPABILITY_FAMILY_FLOOR = 40
 
 # ---------------------------------------------------------------------------
 # 规则常量
@@ -419,32 +475,47 @@ def allowlist_problems(allowlist: dict[str, dict[str, str]], scope_rel_paths: se
 
 
 def gate_scope() -> list[Path]:
-    """任务口径扫描面：capabilities/*.py（含 capabilities/auto_send/ 子目录，
-    2026-09-14 扩面）+ character/*.py + runtime/usage_monitor.py +
-    runtime/error_report.py（2026-09-14 二次扩面，A69-I1）+
-    domains/schedule/**/*.py（2026-09-18 v21r2 W10 随真身扩面：reminder/reminders/
-    auto_send 真身迁入 domains/schedule/，旧路径只余垫片，扫描面同步跟进防假豁免）+
-    domains/chat_reply/**/*.py（2026-09-18 v21r2 W15a 随真身扩面：character 人格侧
-    真身迁入 domains/chat_reply/character/，旧路径只余垫片，扫描面同步跟进防假豁免）+
-    domains/ops/**/*.py（2026-09-18 v21r2 RWOC 随真身扩面：usage_monitor/error_report
-    真身迁入 domains/ops/monitor/，旧路径只余垫片，扫描面同步跟进防假豁免）+
-    personas/**/*.md + personas/**/*.txt + 生产人格副本（2026-09-14 三次扩面，
-    G-08；扩面前已完成 G-01/G-02/G-03 人格文本修复；副本缺失优雅跳过）。"""
-    files = (
-        sorted(RUNTIME_PKG.glob("capabilities/*.py"))
-        + sorted(RUNTIME_PKG.glob("capabilities/auto_send/**/*.py"))
-        + sorted(RUNTIME_PKG.glob("character/*.py"))
-        + sorted(RUNTIME_PKG.glob("domains/schedule/**/*.py"))
-        + sorted(RUNTIME_PKG.glob("domains/chat_reply/**/*.py"))
-        + sorted(RUNTIME_PKG.glob("domains/ops/**/*.py"))
-    )
-    files.append(RUNTIME_PKG / "runtime" / "usage_monitor.py")
-    files.append(RUNTIME_PKG / "runtime" / "error_report.py")
-    # 人格资产入扫描面：仓库内源（personas/**）+ 仓库外生产副本（存在才扫）。
-    files.extend(sorted(REPO_ROOT.glob("personas/**/*.md")))
-    files.extend(sorted(REPO_ROOT.glob("personas/**/*.txt")))
+    """任务口径扫描面：由 SCOPE_PY_GLOBS / SCOPE_ANCHOR_FILES / SCOPE_PERSONA_GLOBS
+    三份坐标唯一派生（族与锚点的来历见文件头「扫描面坐标」注释）。
+
+    personas/**/*.md + personas/**/*.txt（2026-09-14 三次扩面，G-08；扩面前已完成
+    G-01/G-02/G-03 人格文本修复）+ 生产人格副本 RUNTIME_COPY_PATH（仓库外运行数据，
+    缺失时按 CI 语义优雅跳过，由 test_gate_scope_sanity 显式注明）。
+
+    末尾的 exists() 过滤只为「生产副本这一枚可选件」服务；锚点与族一旦失效**不该**
+    在这里被静默吞掉——那份工由 test_gate_scope_coordinates_are_live 执法，
+    本函数不重复做判断（判断有两处，就有一处会说谎）。"""
+    files: list[Path] = []
+    for pattern in SCOPE_PY_GLOBS:
+        files.extend(sorted(RUNTIME_PKG.glob(pattern)))
+    for rel in SCOPE_ANCHOR_FILES:
+        files.append(RUNTIME_PKG / rel)
+    for pattern in SCOPE_PERSONA_GLOBS:
+        files.extend(sorted(REPO_ROOT.glob(pattern)))
     files.append(RUNTIME_COPY_PATH)
     return [f for f in files if f.exists()]
+
+
+def scope_coordinate_problems(
+    py_globs: tuple[str, ...],
+    anchors: tuple[str, ...],
+    persona_globs: tuple[str, ...],
+) -> list[str]:
+    """坐标活性体检（纯函数，返回问题清单不抛异常，便于注毒自证复用同一判据）。
+
+    两种「钉了不存在的东西」都算问题，且都必须响：
+    - 锚点文件不在盘上 → 该件今天根本没被扫（本波真实病灶）。
+    - 族 glob 匹配 0 个文件 → 整族从面上消失（下一次重组就会踩到）。
+    """
+    problems: list[str] = []
+    for pattern in (*py_globs, *persona_globs):
+        anchor = RUNTIME_PKG if pattern in py_globs else REPO_ROOT
+        if not any(anchor.glob(pattern)):
+            problems.append(f"族坐标匹配 0 个文件（扫描面已静默缩没）：{pattern}")
+    for rel in anchors:
+        if not (RUNTIME_PKG / rel).exists():
+            problems.append(f"锚点坐标指向不存在的文件：plugins/bot_unified_runtime/{rel}")
+    return problems
 
 
 def scan_scope(
@@ -470,11 +541,17 @@ def scan_scope(
 def test_gate_scope_sanity() -> None:
     scope = gate_scope()
     assert len(scope) >= 60, f"扫描面异常收缩：仅 {len(scope)} 个文件"
-    assert (RUNTIME_PKG / "capabilities" / "echo.py") in scope
-    assert (RUNTIME_PKG / "character" / "addressing.py") in scope
+    # --- 2026-09-25 S263：两枚失效坐标改指真身（pin 数不减，只把路径换到盘上真有的件） ---
+    # echo 真身在 domains/chat_reply/capabilities/（旧 capabilities/echo.py 已随域重组退役，
+    # 其退役事实在下方「退役断言」里作证，不靠钉一条不存在的路径来记）。
+    assert (RUNTIME_PKG / "domains" / "chat_reply" / "capabilities" / "echo.py") in scope
+    assert (
+        RUNTIME_PKG / "domains" / "chat_reply" / "character" / "addressing.py"
+    ) in scope
     # 2026-09-18 v21r2 RWOC 随真身迁移：usage_monitor 真身迁 domains/ops/monitor/，
     # 旧路径 runtime/usage_monitor.py 已不存在（gate_scope 的 exists() 过滤即退役），pin 随迁。
     assert (RUNTIME_PKG / "domains" / "ops" / "monitor" / "usage_monitor.py") in scope
+    assert (RUNTIME_PKG / "domains" / "ops" / "monitor" / "error_report.py") in scope
     # 2026-09-14 扩面：capabilities/auto_send/ 子目录入扫描面。
     assert (RUNTIME_PKG / "capabilities" / "auto_send" / "__init__.py") in scope
     # 2026-09-19：legacy capabilities/auto_send/parser.py 已随 v21r2 迁 schedule 域
@@ -485,11 +562,27 @@ def test_gate_scope_sanity() -> None:
     assert (RUNTIME_PKG / "domains" / "schedule" / "auto_send" / "parser.py") in scope
     # 2026-09-18 v21r2 W15a 随真身扩面：chat_reply/character 真身在扫描面内（垫片不算数）。
     assert (
-        RUNTIME_PKG / "domains" / "chat_reply" / "character" / "addressing.py"
-    ) in scope
-    assert (
         RUNTIME_PKG / "domains" / "chat_reply" / "character" / "providers.py"
     ) in scope
+    # --- 2026-09-25 S263 新纳入的「其余域能力真身族」必须有 pin，否则这一族又只是一句承诺 ---
+    for newly_covered in (
+        "domains/weather/capabilities/weather.py",
+        "domains/finance/capabilities/fx.py",
+        "domains/notes/capabilities/notes.py",
+        "domains/media/capabilities/media_archive.py",
+        "domains/emergency_info/capabilities/emergency_info.py",
+    ):
+        assert (RUNTIME_PKG / newly_covered) in scope, f"S263 扩面后新纳入的真身不在面上：{newly_covered}"
+    # --- 退役断言（原为「钉住不存在路径」的 scope pin，按简报③挪到断言侧作证） ---
+    # 语义：这三枚旧坐标是**历史路径**，钉在扫描面上只会造成静默缩面（见文件头注释）；
+    # 它们该证明的是「旧布局确实不再有余留件」，那是断言侧的活，不是面上的活。
+    for retired in (
+        RUNTIME_PKG / "capabilities" / "echo.py",
+        RUNTIME_PKG / "character" / "addressing.py",
+        RUNTIME_PKG / "runtime" / "usage_monitor.py",
+        RUNTIME_PKG / "runtime" / "error_report.py",
+    ):
+        assert not retired.exists(), f"旧布局路径复活（退役断言被打破，先查是谁把它写回来）：{retired}"
     # 2026-09-14 三次扩面（G-08）：人格资产入扫描面。
     assert (REPO_ROOT / "personas" / "shorekeeper" / "identity.md") in scope
     assert (
@@ -502,6 +595,92 @@ def test_gate_scope_sanity() -> None:
             "生产人格副本不存在（CI 无 Runtime），副本扫描面优雅跳过并注明",
             stacklevel=1,
         )
+
+
+def test_gate_scope_coordinates_are_live() -> None:
+    """坐标活性锁（2026-09-25 S263 立）：钉不存在的路径＝静默缩面，从此当场红。
+
+    本波根因不是「少扫了一个文件」而是「门不知道自己少扫了」——旧坐标被
+    gate_scope() 的 exists() 过滤吞掉，主门照样绿。这条腿把「坐标必须真实可达」
+    升成判据，并带两发注毒自证（失效锚点、空转族各一发），否则锁本身可能是假的。
+    """
+    problems = scope_coordinate_problems(SCOPE_PY_GLOBS, SCOPE_ANCHOR_FILES, SCOPE_PERSONA_GLOBS)
+    assert not problems, "扫描面坐标失效（改指真身，别把判据放宽）：\n" + "\n".join(problems)
+
+    # 注毒①：塞一枚不存在的锚点 → 必被点名（本波真实病灶的形态）。
+    poisoned_anchor = scope_coordinate_problems(
+        SCOPE_PY_GLOBS, (*SCOPE_ANCHOR_FILES, "runtime/usage_monitor.py"), SCOPE_PERSONA_GLOBS
+    )
+    assert len(poisoned_anchor) == 1 and "runtime/usage_monitor.py" in poisoned_anchor[0], (
+        f"注毒未被抓住=锁是空跑：{poisoned_anchor}"
+    )
+    # 注毒②：塞一枚匹配不到任何文件的族 → 必被点名（整族静默消失的形态）。
+    poisoned_glob = scope_coordinate_problems(
+        (*SCOPE_PY_GLOBS, "domains/no_such_domain/**/*.py"), SCOPE_ANCHOR_FILES, SCOPE_PERSONA_GLOBS
+    )
+    assert len(poisoned_glob) == 1 and "no_such_domain" in poisoned_glob[0], (
+        f"注毒未被抓住=锁是空跑：{poisoned_glob}"
+    )
+
+
+def test_scan_surface_floor_is_live() -> None:
+    """只增不减的一腿：新纳入的能力真身族一旦整族掉出扫描面，本条红。
+
+    地板值 _CAPABILITY_FAMILY_FLOOR 的含义与余量见其定义处注释。
+    """
+    scope = set(gate_scope())
+    family = sorted(RUNTIME_PKG.glob("domains/*/capabilities/**/*.py"))
+    on_surface = [p for p in family if p in scope]
+    assert len(on_surface) >= _CAPABILITY_FAMILY_FLOOR, (
+        f"能力真身族在扫描面上的贡献只剩 {len(on_surface)}（地板 {_CAPABILITY_FAMILY_FLOOR}）"
+    )
+
+
+def test_scan_surface_is_parseable() -> None:
+    """面上每一件都必须真的读得动（2026-09-25 S263 立）。
+
+    扩面把 41 枚新件拉进来，面越宽越可能被别席在飞的语法破损件顶到——先例见
+    docs/design/v21r2-reorg-woc-log.md §七①（domains/ops/incident/service.py 硬
+    SyntaxError 顶红当时新扩的 ops 面）。那条腿的做法是「让主门崩」，本条把它变成
+    点名的断言：读不动=这件压根没被扫过=与「钉不存在路径」同一类假绿，必须红且报清是谁。
+    """
+    broken: list[str] = []
+    for path in gate_scope():
+        try:
+            scan_file(path)
+        except Exception as exc:  # noqa: BLE001 - 这里要的就是把任何读取失败点名收集
+            broken.append(f"{path} → {type(exc).__name__}: {exc}")
+    assert not broken, "扫描面存在读不动的件（它等于不在面上）：\n" + "\n".join(broken)
+
+
+def test_newly_covered_family_is_actually_caught(tmp_path: Path) -> None:
+    """杀伤力证明（只读生产件）：新纳入真身的**原文**加一条踩红线文案，门必红。
+
+    写生产件不在本门的权限内，所以按「真身原文 + 注入行 → tmp 副本 + 真身 rel_path」
+    过同一套扫描器：内容与语义路径都是真身的那一份，唯一变量是「有没有这一条」。
+    再叠一条面上事实（真身确在 gate_scope() 里），两件事同时成立才等于「门会红」。
+    注毒在 finally 之外（只写 tmp），因此不需要还原；生产件一次都没有被打开写过。
+    """
+    target_rel = "domains/weather/capabilities/weather.py"
+    real = RUNTIME_PKG / target_rel
+    assert real.exists() and real in set(gate_scope()), f"前置不成立：{target_rel} 不在扫描面上"
+    rel_path = f"plugins/bot_unified_runtime/{target_rel}"
+    # 先证现状干净（否则下面「命中」是既有的，不是注毒造成的）。
+    base_criticals, _ = scan_file(real, rel_path=rel_path)
+    assert not base_criticals, "真身现网已有命中，注毒证据会被既有红混淆：\n" + "\n".join(
+        f.render() for f in base_criticals
+    )
+    poisoned = tmp_path / "weather_poisoned.py"
+    poisoned.write_text(
+        real.read_text(encoding="utf-8") + '\nS263_PROBE = "作为一个AI助手，对此深表歉意。"\n',
+        encoding="utf-8",
+    )
+    criticals, _ = scan_file(poisoned, rel_path=rel_path)
+    hit_rules = {f.rule for f in criticals}
+    assert {"banned_self_intro", "banned_formal_apology"} <= hit_rules, (
+        f"注毒未被抓住=新纳入的族只是名义在面上：{hit_rules}"
+    )
+    assert all(f.rel_path == rel_path for f in criticals)
 
 
 def test_current_tree_no_critical_redline() -> None:

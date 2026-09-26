@@ -18,7 +18,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.character.reminders import (
+from plugins.bot_unified_runtime.domains.schedule.store.reminders import (
     LATE_DELIVERY_GRACE,
     ReminderStore,
     build_reminder_text,

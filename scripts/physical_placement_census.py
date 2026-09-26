@@ -574,11 +574,565 @@ def report_lines(data: dict[str, Any]) -> list[str]:
     ]
 
 
+# ==========================================================================
+# S11 四本账（物理归位）——一次跑完「域外 py／页级未归位／垫片／名册真债」
+# --------------------------------------------------------------------------
+# 纪律（本席硬边界＝只读只量、零生产改动）：
+#   ① 判据一律**复用既有单一取数口**（`c_table_measure` 的 m_c3/m_c3_git/m_c0c、
+#      `spec_gates_census.compute`、`shim_retirement_census.{outside_py,detect_shims,three_states,
+#      load_ledger_rows,computed_refs}`、`tests/test_legacy_shim_import_ratchet` 的两本账），
+#      本块**绝不复制判定逻辑**（禁第二真身）。上面 G-P1/G-P2/compute/relocate_* 一字未动，
+#      三把常驻门（`test_physical_placement_gate` / `test_placement_relocate_split_lock` /
+#      `test_file_package_dotted_vs_stdlib`）对本件的 import 与 AST 形状锁全部照旧成立。
+#   ② 每本账给「起点值／现算值／带符号差」，起点值一律**现解析**自本波 BASELINE.md（回贴行号）或
+#      各棘轮件的在册常数，实测值一律调真身现算——脚本绝不把字面数字写进实测列。
+#   ③ 域外 py 强制双尺交叉：磁盘尺（rglob/find）∥ git 尺（`git ls-files` + `git status --porcelain`
+#      复原工作树口径），两尺不一致**必须显式报不一致数与逐条差集**，并按 untracked / deleted /
+#      大小写归一 分形归因（历史上「NTFS 大小写」「未跟踪件」「gitfile 指向 Runtime」皆造过单尺假账）。
+#   ④ 全表禁「达标」二字；起点数值==实测数值一律判「未做」；方向 down（越小越好），
+#      带符号差＝实测−起点，负数记「较起点改善」、正数记「较起点退步」。
+#   ⑤ 任一真身读不出来 ⇒ 该格降级「不可判（缺证据/读失败）」并点名原因，绝不折零、绝不崩。
+#   复现（与本仓 c_table_measure 同一环境咒语）：
+#     PYTHONDONTWRITEBYTECODE=1 BOT_AUTOSYNC=0 PYTHONIOENCODING=utf-8 \
+#       ../ChatBot_Runtime/venv/Scripts/python.exe scripts/physical_placement_census.py --four-accounts
+# ==========================================================================
+_WAVE_DIR = REPO_ROOT / ".superpowers" / "sdd" / "2026-09-24-central-dispatch"
+_S11_BASELINE = _WAVE_DIR / "BASELINE.md"
+_S11_SHIM_RATCHET = REPO_ROOT / "tests/test_legacy_shim_import_ratchet.py"
+
+
+def _s11_board_ledger_path() -> Path:
+    """台账路径**唯一取自真身声明** `shim_retirement_census.LEDGER_PY`（S118：不再抄第二份字面量）。
+
+    旧写法在本件里另写死一遍 `plugins/.../domains/core/board_shim_ledger.py`。真身搬家（P2 退役/物理
+    归位正是干这个的）时，取数口跟着改、这本抄件不跟 ⇒ 第④本账会去读一枚**不存在或已废弃**的旧路径，
+    读失败被 a4 的兜底 except 压成一行"取数失败"，而账面看起来只是"这格不可判"——又一例路径读点各说各话。
+    延迟 import（本件被 `shim_retirement_census` 反向 import，模块级 import 会成环）。
+    """
+    import shim_retirement_census as src
+
+    return src.LEDGER_PY
+
+
+def _s11_read(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _s11_run_git(args: list[str], timeout: int = 90) -> Any:
+    # cwd=REPO_ROOT：本仓 .git 是 gitfile 指向 ../ChatBot_Runtime/git，显式钉 cwd 防目录漂移
+    import subprocess
+
+    return subprocess.run(
+        ["git", *args], capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=timeout, cwd=str(REPO_ROOT), check=False,
+    )
+
+
+def _s11_load_test_ruler(name: str, path: Path):
+    """内存加载既有门件取判据（同 c_table_measure::m_c9_gate 手法），不 import 插件包。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"取不到判据真身：{path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _s11_start_from_baseline(*patterns: str) -> dict[str, Any]:
+    """现解析本波 BASELINE.md 的起点数（回贴行号）；命中失败 → (None, 原因)。"""
+    import re
+
+    if not _S11_BASELINE.exists():
+        return {"found": False, "why": f"起点册不存在：{_S11_BASELINE}"}
+    lines = _s11_read(_S11_BASELINE).splitlines()
+    for idx, line in enumerate(lines):
+        for rx in patterns:
+            m = re.search(rx, line)
+            if m:
+                nums = [int(g) for g in m.groups() if g is not None and g.isdigit()]
+                return {"found": True, "line": idx + 1, "raw": line.strip()[:90], "nums": nums}
+    return {"found": False, "why": f"起点册内未锚到（样式 {patterns}）"}
+
+
+def _s11_literal_from_ledger(names: set[str]) -> dict[str, Any]:
+    """AST 静态读 `board_shim_ledger.py` 顶层整数字面量（不 import 包，防拖起 NoneBot 初始化）。"""
+    import ast
+
+    out: dict[str, Any] = {}
+    tree = ast.parse(_s11_read(_s11_board_ledger_path()))
+    for node in tree.body:
+        targets: list[ast.expr]
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        for t in targets:
+            if isinstance(t, ast.Name) and t.id in names and isinstance(node.value, ast.Constant):
+                out[t.id] = node.value.value
+    return out
+
+
+def _s11_find_outside_set() -> set[str]:
+    import shim_retirement_census as src
+
+    return set(src.outside_py())  # 唯一域外尺：plugins/** 不在 domains/ 下（与 m_c3 同判据）
+
+
+def _s11_git_outside_sets() -> tuple[set[str], set[str], set[str]]:
+    """git 尺三集合：tracked(ls-files) / untracked(porcelain `??`) / deleted(porcelain `D`)，
+    一律只取 `plugins/` 下、`.py`、且在**声明的** `DOMAINS_ROOT` 前缀之外（与磁盘尺同判据谓词）。"""
+    import re
+
+    # 域外判据与磁盘尺（`shim_retirement_census.outside_py`）**同源**：都用 `board_placement.DOMAINS_ROOT`
+    # 这一枚声明前缀走 `_under`。旧写法在这里另抄了一份**路径形状**规则 `"/domains/" not in "/"+rel`——
+    # 声明一改（域根搬家/改名）或仓里出现第二处 `…/domains/…` 目录（如 `plugins/x/domains/`、
+    # `plugins/bot_unified_runtime/domains_backup/`），两把尺就会各数各的，而这本账要报的恰恰是两尺之差。
+    domains_root = str(load_placement()["DOMAINS_ROOT"])
+
+    def _is_outside_py(rel: str) -> bool:
+        return rel.startswith("plugins/") and rel.endswith(".py") and not _under(rel, domains_root)
+
+    ls = _s11_run_git(["ls-files", "plugins"], 90)
+    tracked = {f for f in ls.stdout.splitlines() if _is_outside_py(f)}
+    untracked: set[str] = set()
+    deleted: set[str] = set()
+    st = _s11_run_git(["status", "--porcelain"], 90)
+    for line in st.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        xy, pathspec = line[:2], line[3:]
+        if " -> " in pathspec:  # rename：取箭头右侧（工作树形态）
+            pathspec = pathspec.split(" -> ", 1)[1]
+        pathspec = pathspec.strip().strip('"').replace("\\", "/")
+        if not _is_outside_py(pathspec):
+            continue
+        if "?" in xy:
+            untracked.add(pathspec)
+        if re.search(r"[D]", xy) or "U" in xy:
+            deleted.add(pathspec)
+    # 工作树口径 = tracked − deleted + untracked（present-on-disk 的 git 视图）
+    worktree = (tracked - deleted) | untracked
+    return tracked, worktree, deleted | untracked
+
+
+def _s11_classify_diff(only: set[str], other_ci: dict[str, str], untracked: set[str]) -> dict[str, list[str]]:
+    """把「只在此尺、不在彼尺」的差集按成因分形：未跟踪 / 大小写归一伪差 / 其它（含已删仍被跟踪、被移走）。"""
+    buckets: dict[str, list[str]] = {"case_only": [], "untracked": [], "other": []}
+    for item in sorted(only):
+        low = item.lower()
+        if low in other_ci and other_ci[low] != item:
+            buckets["case_only"].append(item)
+        elif item in untracked:
+            buckets["untracked"].append(item)
+        else:
+            buckets["other"].append(item)
+    return buckets
+
+
+def _named_snapshot(items: Any, *, scalar: Any, display_limit: int | None = None) -> dict[str, Any]:
+    """把一份账的**具名全集**编成可逐枚点名的快照，落进既有 JSON 结构（不另起第二本账本文件）。
+
+    反截断教义（S96，承 S87 Q-A：面B 160→170 的 +10「看得见数看不见名」根因＝账只存 `len()`）：
+    - `items` 一律**全量入册**——取证不截断；`count` 恒等全集长度，`matches_scalar` 断言快照与标量账
+      逐值对得上（不等＝要么动到了判据、要么快照漏抄，两种都该红）。
+    - `display_limit` 只截**展示**用的 `head`；截了一定标 `truncated=True`。`items` 永远是全集，
+      `truncated` 只描述 `head`，绝不用它去糊 `count`（"截断只准截展示，不准截取证"）。
+    - `items is None`（尺取数失败）→ 诚实 `available=False`，绝不以空清单冒充"零成员"（P-S60-2 同族：
+      把"读不到"当"空"是账具失明，不是零）。
+    """
+    if items is None:
+        return {"available": False, "count": None, "matches_scalar": None, "items": None,
+                "note": "尺取数失败，具名快照不可得（诚实降级，不以空清单冒充无成员）"}
+    ordered = sorted(str(x) for x in items)
+    snap: dict[str, Any] = {
+        "available": True,
+        "count": len(ordered),
+        "matches_scalar": (len(ordered) == scalar),
+        "scalar": scalar,
+        "items": ordered,
+    }
+    if display_limit is not None:
+        snap["head"] = ordered[:display_limit]
+        snap["truncated"] = len(ordered) > display_limit
+    return snap
+
+
+def _edge_snapshot(edges: dict[str, int]) -> dict[str, Any]:
+    """垫片两本账的具名快照：边是 `{文件: 条数}`，标量账是 `sum(条数)`。
+    全量入册（取证不截断），并额外报**成员名**（谁还挂着垫片边）——`top_files` 的 `[:5]` 降为纯展示。"""
+    ordered = sorted(edges.items())
+    return {
+        "available": True,
+        "members": len(ordered),          # 挂着边的文件数（成员）
+        "sum_edges": sum(edges.values()),  # 边总数（== 该账 current 标量）
+        "edges": [[k, v] for k, v in ordered],
+    }
+
+
+def _snapshot_integrity(acct: dict[str, Any]) -> dict[str, Any]:
+    """反截断 / 反空账的**可执法判据**：逐本账核具名快照与标量账是否逐值对得上、展示截断是否显式标注、
+    取证全集是否被裁。任一不符即列入 `problems`（消费方/门据此判红；本函数只报不修，绝不为过门改标量）。
+
+    牙齿三形（对应 S96 注毒三发）：
+    ① 快照被清空/截断到少数 → `len(items) != count` 或 `count != scalar`；
+    ② 净增里塞一枚不存在的名字 → `count != scalar`（多出来）；
+    ③ 快照出口退回只存标量 → 该账 `names`/`edges_full` 槽位缺失。
+    """
+    problems: list[str] = []
+
+    def _check_named(tag: str, snap: Any, scalar: Any) -> None:
+        if not isinstance(snap, dict):
+            problems.append(f"{tag}: 具名快照槽缺失（只存标量的旧形态复辟）")
+            return
+        if not snap.get("available"):
+            return  # 尺取数失败已诚实标 available=False，非快照造假
+        items = snap.get("items")
+        if not isinstance(items, list):
+            problems.append(f"{tag}: items 非全集数组")
+            return
+        if snap.get("count") != len(items):
+            problems.append(f"{tag}: count={snap.get('count')} ≠ len(items)={len(items)}（取证被裁）")
+        if snap.get("count") != scalar:
+            problems.append(f"{tag}: count={snap.get('count')} ≠ 标量账={scalar}（快照与账不符）")
+        if snap.get("truncated") and len(items) != snap.get("count"):
+            problems.append(f"{tag}: 标了 truncated 但全集 items 也被裁（截断只准截展示 head）")
+
+    a1 = acct.get("a1_outside_py_dual_ruler") or {}
+    cur1 = a1.get("current")
+    for slot in ("find_disk", "git_ls_files", "git_worktree_reconciled"):
+        # find_disk 须等 current；其余两尺各自的 count 已在 rulers 里，快照 scalar 用 len 自证。
+        _check_named(f"a1.names.{slot}", (a1.get("names") or {}).get(slot),
+                     cur1 if slot == "find_disk" else (a1.get("rulers", {}).get(slot, {}) or {}).get("count"))
+
+    a2 = acct.get("a2_page_unplaced") or {}
+    cur2 = a2.get("current") or {}
+    a2n = a2.get("names") or {}
+    _check_named("a2.names.t3_managed", a2n.get("t3_managed"), cur2.get("面A_managed"))
+    _check_named("a2.names.t3_unmoved", a2n.get("t3_unmoved"), cur2.get("面B_unmoved"))
+
+    a3 = acct.get("a3_shims_two_ledgers") or {}
+    for led in ("prod_ledger", "tests_ledger"):
+        L = a3.get(led) or {}
+        ef = L.get("edges_full")
+        if not isinstance(ef, dict):
+            problems.append(f"a3.{led}.edges_full: 具名快照槽缺失（垫片边只报 top_files[:5] 的旧形态复辟）")
+            continue
+        if ef.get("sum_edges") != L.get("current"):
+            problems.append(f"a3.{led}.edges_full.sum_edges={ef.get('sum_edges')} ≠ current={L.get('current')}")
+        if len(ef.get("edges") or []) != ef.get("members"):
+            problems.append(f"a3.{led}.edges_full: edges 全集长度 ≠ members（边取证被裁）")
+        if ef.get("members", 0) > 5 and not L.get("top_files_truncated"):
+            problems.append(f"a3.{led}: top_files 截到 5 却没标 top_files_truncated（展示截断未显式化）")
+
+    a4 = acct.get("a4_roster_vs_real_debt") or {}
+    a4n = a4.get("names") or {}
+    _check_named("a4.names.roster", a4n.get("roster"), a4.get("roster_count"))
+    _check_named("a4.names.real_debt", a4n.get("real_debt"), a4.get("real_count"))
+
+    return {"ok": not problems, "problems": problems}
+
+
+def compute_four_accounts() -> dict[str, Any]:
+    """四本账一次跑完（起点／现算／带符号差；①双尺交叉；④名册真债双向差集）。"""
+    import datetime
+
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    acct: dict[str, Any] = {}
+
+    def _verdict(start: int | None, measured: int | None) -> tuple[str, int | None]:
+        if start is None or measured is None:
+            return ("不可判（缺证据/读失败）", None)
+        if measured == start:
+            return ("未做（起点==实测）", 0)
+        delta = measured - start
+        word = "改善" if delta < 0 else "退步"
+        sign = f"{'−' if delta < 0 else '+'}{abs(delta)}"
+        return (f"较起点{word} {sign}（{start}→{measured}）", delta)
+
+    # ---------------------------------------------------------------- ① 域外 py（双尺）
+    try:
+        start1 = _s11_start_from_baseline(r"域外 py.*?\|\s*(\d+)", r"域外.*?(\d+)\s*∥")
+        s1 = start1["nums"][0] if start1.get("found") and start1["nums"] else None
+    except Exception as exc:  # noqa: BLE001
+        start1, s1 = {"found": False, "why": f"{type(exc).__name__}: {exc}"}, None
+    find_set: set[str] | None = None
+    git_tracked: set[str] | None = None
+    git_worktree: set[str] | None = None
+    git_reconcile: set[str] | None = None
+    acct_error_1: Any = None
+    m_c3: Any = None
+    m_c3_git: Any = None
+    try:
+        import c_table_measure as c
+
+        m_c3, m_c3_git = int(c.m_c3()), int(c.m_c3_git())
+    except Exception as exc:  # noqa: BLE001
+        m_c3 = f"读失败 {type(exc).__name__}: {exc}"
+    try:
+        find_set = _s11_find_outside_set()
+        git_tracked, git_worktree, git_reconcile = _s11_git_outside_sets()
+    except Exception as exc:  # noqa: BLE001
+        acct_error_1 = f"{type(exc).__name__}: {exc}"
+    else:
+        acct_error_1 = None
+
+    a1: dict[str, Any] = {
+        "start": s1,
+        "start_anchor": start1,
+        "rulers": {
+            "find_disk": {"count": None if find_set is None else len(find_set),
+                           "crosscheck_c_table_m_c3": m_c3,
+                           "command": "find plugins -name '*.py' -not -path '*/domains/*' | wc -l  # 尺＝scripts/c_table_measure.py::m_c3"},
+            "git_ls_files": {"count": None if git_tracked is None else len(git_tracked),
+                             "crosscheck_c_table_m_c3_git": m_c3_git,
+                             "command": "git ls-files plugins | grep '\\.py$' | grep -v '/domains/' | wc -l  # 尺＝c_table_measure.py::m_c3_git"},
+            "git_worktree_reconciled": {"count": None if git_worktree is None else len(git_worktree),
+                                        "command": "git ls-files ∪ (git status --porcelain ??) − deleted"},
+        },
+        "dual_ruler_error": acct_error_1,
+        "note_gitdir": "本仓 .git 为 gitfile→../ChatBot_Runtime/git；命令一律钉 cwd=REPO_ROOT",
+    }
+    if find_set is not None and git_tracked is not None:
+        only_find = find_set - git_tracked
+        only_git = git_tracked - find_set
+        ci_git = {p.lower(): p for p in git_tracked}
+        ci_find = {p.lower(): p for p in find_set}
+        a1["mismatch_count"] = len(only_find) + len(only_git)
+        a1["consistent"] = not only_find and not only_git
+        a1["only_in_find"] = _s11_classify_diff(only_find, ci_git, git_reconcile or set())
+        a1["only_in_git"] = _s11_classify_diff(only_git, ci_find, set())
+        primary = len(find_set)
+        v, d = _verdict(s1, primary)
+        a1["current"] = primary
+        a1["signed_delta_vs_start"] = d
+        a1["verdict"] = v
+        # 具名快照（S96）：三把尺各存全集，使「今值−基线」净增项可逐枚点名；标量口径一律不动。
+        a1["names"] = {
+            "find_disk": _named_snapshot(find_set, scalar=primary),
+            "git_ls_files": _named_snapshot(git_tracked, scalar=len(git_tracked)),
+            "git_worktree_reconciled": _named_snapshot(git_worktree, scalar=len(git_worktree or ())),
+        }
+    else:
+        a1["current"] = None
+        a1["verdict"] = "不可判（双尺至少一把取不到）"
+        a1["names"] = {k: _named_snapshot(v, scalar=None) for k, v in
+                       (("find_disk", find_set), ("git_ls_files", git_tracked),
+                        ("git_worktree_reconciled", git_worktree))}
+    acct["a1_outside_py_dual_ruler"] = a1
+
+    # ---------------------------------------------------------------- ② 页级未归位（面A/面B）
+    try:
+        start2 = _s11_start_from_baseline(r"面A／面B\s*\|\s*(\d+).*?／(\d+)")
+        s2a = start2["nums"][0] if start2.get("found") and len(start2["nums"]) >= 1 else None
+        s2b = start2["nums"][1] if start2.get("found") and len(start2["nums"]) >= 2 else None
+    except Exception as exc:  # noqa: BLE001
+        start2, s2a, s2b = {"found": False, "why": str(exc)}, None, None
+    a2: dict[str, Any] = {"start": {"面A_managed": s2a, "面B_unmoved": s2b}, "start_anchor": start2}
+    try:
+        import spec_gates_census as sgc
+
+        res = sgc.compute(REPO_ROOT)
+        cur_a = len(res["t3_managed"])
+        cur_b = len(res["t3_unmoved"])
+        a2["current"] = {"面A_managed": cur_a, "面B_unmoved": cur_b}
+        va, da = _verdict(s2a, cur_a)
+        vb, db = _verdict(s2b, cur_b)
+        a2["signed_delta_vs_start"] = {"面A_managed": da, "面B_unmoved": db}
+        a2["verdict"] = {"面A_managed": va, "面B_unmoved": vb}
+        a2["ruler"] = "scripts/spec_gates_census.py::compute()['t3_managed'/'t3_unmoved']（与 BASELINE 同行）"
+        # 具名快照（S96，承 S87 Q-A）：面A 逐行、面B 逐页都全量入册，令"+N/−N"可逐枚 diff；
+        # 底层 res 本就产全名，旧账只存 len() 才致面B +10 到名不可判。计数仍走 current，此处不改标量。
+        a2["names"] = {
+            "t3_managed": _named_snapshot(res["t3_managed"], scalar=cur_a),
+            "t3_unmoved": _named_snapshot(res["t3_unmoved"], scalar=cur_b),
+        }
+    except Exception as exc:  # noqa: BLE001
+        a2["current"] = None
+        a2["verdict"] = f"不可判（spec_gates_census 读失败 {type(exc).__name__}: {exc}）"
+        a2["names"] = {"t3_managed": _named_snapshot(None, scalar=None),
+                       "t3_unmoved": _named_snapshot(None, scalar=None)}
+    # 附尺（另一把「页级」尺，如实并列、不与面A/面B混算）：G-P2 未认领 py
+    try:
+        gp2 = compute()["g_p2_semantic_a"]
+        a2["adjacent_ruler_gp2_unclaimed_py"] = {"unclaimed": gp2["unclaimed"], "violations": gp2["violations"]}
+    except Exception as exc:  # noqa: BLE001
+        a2["adjacent_ruler_gp2_unclaimed_py"] = f"读失败 {type(exc).__name__}: {exc}"
+    acct["a2_page_unplaced"] = a2
+
+    # ---------------------------------------------------------------- ③ 垫片（两本独立账，各只准降）
+    a3: dict[str, Any] = {}
+    try:
+        ratch = _s11_load_test_ruler("tsr", _S11_SHIM_RATCHET)
+        prod_edges = ratch.collect_legacy_shim_edges()
+        tests_edges = ratch.collect_tests_legacy_shim_edges()
+        prod_cur = sum(prod_edges.values())
+        tests_cur = sum(tests_edges.values())
+        prod_start = int(ratch.SHIM_EDGE_CEILING)
+        tests_start = int(ratch.TESTS_SHIM_EDGE_CEILING)
+        prod_last = int(ratch.AUDIT_HISTORY[-1][1])
+        tests_last = int(ratch.TESTS_AUDIT_HISTORY[-1][1])
+        vp, dp = _verdict(prod_start, prod_cur)
+        vt, dt = _verdict(tests_start, tests_cur)
+        a3["prod_ledger"] = {"start_ceiling": prod_start, "last_audit": prod_last,
+                             "current": prod_cur, "signed_delta_vs_ceiling": dp, "verdict": vp,
+                             "top_files": sorted(prod_edges.items(), key=lambda kv: -kv[1])[:5]}
+        a3["tests_ledger"] = {"start_ceiling": tests_start, "last_audit": tests_last,
+                              "current": tests_cur, "signed_delta_vs_ceiling": dt, "verdict": vt,
+                              "top_files": sorted(tests_edges.items(), key=lambda kv: -kv[1])[:5]}
+        # 反截断（S96）：top_files 的 [:5] 只是展示，取证全量另入 edges_full；
+        # 一旦成员多于 5 就显式标 truncated=True，杜绝"数看得见、名看不见"。标量 current 不动。
+        a3["prod_ledger"]["edges_full"] = _edge_snapshot(prod_edges)
+        a3["prod_ledger"]["top_files_truncated"] = len(prod_edges) > 5
+        a3["tests_ledger"]["edges_full"] = _edge_snapshot(tests_edges)
+        a3["tests_ledger"]["top_files_truncated"] = len(tests_edges) > 5
+        overlap = sorted(set(prod_edges) & set(tests_edges))
+        a3["separation_lock"] = {"disjoint": not overlap, "overlap": overlap,
+                                 "note": "两本账扫描根必须互斥（斥离锁 test_two_ledgers_are_disjoint）"}
+        # 代理指标尺（存在≠活性）：在册待退役清单长度 / 磁盘上真存在的活垫片叶 / 五目录标记文件数
+        markers: Any = None
+        try:
+            import c_table_measure as c
+
+            markers = int(c.m_c0c())
+        except Exception as exc:  # noqa: BLE001
+            markers = f"读失败 {exc}"
+        a3["proxy_indicators"] = {
+            "shim_marker_files_m_c0c": markers,
+            "live_shim_leaves": len(ratch.live_shim_leaves()),
+            "ruler": "c_table_measure.py::m_c0c（标记 py 数）与 live_shim_leaves（磁盘存在垫片叶名数）——均**存在性代理**，非活性结论",
+            "warning": (
+                "禁把「标记文件还在」当「垫片边还在」；import-edge 账才是活性判据"
+                f"（现 prod={prod_cur}/tests={tests_cur}）"
+            ),
+        }
+        try:
+            mstart = _s11_start_from_baseline(r"垫片标记 py（五目录）\s*\|\s*(\d+)")
+            a3["m_c0c_start"] = mstart["nums"][0] if mstart.get("found") and mstart["nums"] else None
+        except Exception:  # noqa: BLE001
+            a3["m_c0c_start"] = None
+    except Exception as exc:  # noqa: BLE001
+        a3["error"] = f"垫片两本账取数失败 {type(exc).__name__}: {exc}"
+        a3["verdict"] = "不可判（缺证据）"
+    acct["a3_shims_two_ledgers"] = a3
+
+    # ---------------------------------------------------------------- ④ 名册与真债差集（双向）
+    a4: dict[str, Any] = {}
+    try:
+        import shim_retirement_census as src
+
+        roster_rows = src.load_ledger_rows()  # 在册名册（SHIM_ROWS：垫片 path 全集）
+        roster = {str(r["path"]) for r in roster_rows}
+        real = set(src.three_states()["retire_shims"])  # 本轮实测真债（磁盘上合格的活垫片）
+        paid_off = sorted(roster - real)     # (a) 在册已还清 → 该降基线
+        blind = sorted(real - roster)        # (b) 不在册却是真债 → 门瞎
+        a4["roster_count"] = len(roster)
+        a4["real_count"] = len(real)
+        a4["in_roster_paid_off"] = paid_off
+        a4["real_not_in_roster"] = blind
+        # (c) 代理指标型：真债里「存在但零活性」的（computed_refs==0 ⇒ 没人 import，不是活跃债）
+        not_alive = []
+        for p in sorted(real):
+            try:
+                refs = src.computed_refs(p)
+            except Exception as exc:  # noqa: BLE001
+                not_alive.append({"path": p, "refs": f"读失败 {type(exc).__name__}"})
+                continue
+            if refs == 0:
+                not_alive.append({"path": p, "refs": 0})
+        a4["existence_not_alive"] = not_alive
+        a4["register_baselines"] = _s11_literal_from_ledger({"OUTSIDE_BASELINE", "SHIM_RETIRE_BASELINE"})
+        # 具名快照（S96）：名册与真债两套全量入册，使在册/真债的净增项可逐枚点名（差集账本就有名，
+        # 但 roster_count/real_count 两标量此前无名册可对）。计数仍走既有 *_count，此处不改标量。
+        a4["names"] = {"roster": _named_snapshot(roster, scalar=len(roster)),
+                       "real_debt": _named_snapshot(real, scalar=len(real))}
+        a4["verdict"] = {
+            "paid_off_count": len(paid_off),
+            "blind_count": len(blind),
+            "not_alive_count": len(not_alive),
+            "summary": "在册−真债=已还清(该降基线)；真债−在册=门瞎；真债∧零活性=存在≠活性(代理)",
+        }
+    except Exception as exc:  # noqa: BLE001
+        a4["error"] = f"名册真债差集取数失败 {type(exc).__name__}: {exc}"
+        a4["verdict"] = "不可判（缺证据）"
+    acct["a4_roster_vs_real_debt"] = a4
+
+    return {"stamp_utc": stamp, "baseline_source": _S11_BASELINE.relative_to(REPO_ROOT).as_posix(),
+            "accounts": acct, "snapshot_integrity": _snapshot_integrity(acct)}
+
+
+def _s11_four_lines(data: dict[str, Any]) -> list[str]:
+    """把四本账排成人读行（机读走 --four-accounts 的 JSON）。"""
+    out: list[str] = [f"取数时刻(UTC)：{data['stamp_utc']}  起点册：{data['baseline_source']}"]
+    acc = data["accounts"]
+    a1 = acc["a1_outside_py_dual_ruler"]
+    r = a1["rulers"]
+    out.append(
+        f"① 域外 py：起点={a1.get('start')} 磁盘尺={r['find_disk']['count']} git-tracked尺={r['git_ls_files']['count']} "
+        f"git-工作树尺={r['git_worktree_reconciled']['count']} 判定={a1.get('verdict')}"
+    )
+    if a1.get("dual_ruler_error"):
+        out.append(f"   ⚠ 双尺取数异常：{a1['dual_ruler_error']}")
+    else:
+        out.append(f"   双尺一致={a1.get('consistent')} 不一致数={a1.get('mismatch_count')}")
+        for tag, key in (("只在磁盘(未跟踪/大小写/被移走)", "only_in_find"), ("只在git(已删仍跟踪/大小写/移动未记)", "only_in_git")):
+            b = a1.get(key) or {}
+            out.append(f"   {tag}：case_only={len(b.get('case_only',[]))} untracked={len(b.get('untracked',[]))} other={len(b.get('other',[]))}")
+    a2 = acc["a2_page_unplaced"]
+    cur2 = a2.get("current")
+    out.append(f"② 页级未归位：起点 面A={a2['start']['面A_managed']} 面B={a2['start']['面B_unmoved']} 现算 {cur2} 判定 {a2.get('verdict')}")
+    a3 = acc["a3_shims_two_ledgers"]
+    if "prod_ledger" in a3:
+        out.append(
+            f"③ 垫片（两本独立账·各只准降）：生产侧 上限{a3['prod_ledger']['start_ceiling']}/末记{a3['prod_ledger']['last_audit']} "
+            f"→现算 {a3['prod_ledger']['current']}（{a3['prod_ledger']['verdict']}）；"
+            f"测试侧 上限{a3['tests_ledger']['start_ceiling']}/末记{a3['tests_ledger']['last_audit']} →现算 {a3['tests_ledger']['current']}（{a3['tests_ledger']['verdict']}）"
+        )
+        out.append(f"   斥离锁 disjoint={a3['separation_lock']['disjoint']} 交集={a3['separation_lock']['overlap']}")
+        px = a3.get("proxy_indicators", {})
+        out.append(f"   代理指标（存在≠活性，禁当结论）：标记文件={px.get('shim_marker_files_m_c0c')} 活垫片叶={px.get('live_shim_leaves')}")
+    else:
+        out.append(f"③ 垫片：{a3.get('verdict','不可判')} {a3.get('error','')}")
+    a4 = acc["a4_roster_vs_real_debt"]
+    if "roster_count" in a4:
+        v = a4["verdict"]
+        out.append(
+            f"④ 名册真债差集：名册={a4['roster_count']} 真债={a4['real_count']} "
+            f"(a)在册已还清={v['paid_off_count']} (b)门瞎={v['blind_count']} (c)存在零活性={v['not_alive_count']}  在册基线={a4.get('register_baselines')}"
+        )
+    else:
+        out.append(f"④ 名册真债：{a4.get('verdict','不可判')} {a4.get('error','')}")
+    integ = data.get("snapshot_integrity") or {}
+    if integ.get("ok"):
+        out.append("⑤ 具名快照体检（S96）：OK —— 四本账快照逐值对上标量、展示截断已显式标、取证全集未被裁")
+    else:
+        out.append(f"⑤ 具名快照体检（S96）：DIRTY —— {integ.get('problems')}")
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", action="store_true", help="打印两扇门的现算值")
     parser.add_argument("--json", metavar="OUT", help="把明细写成 JSON（写到指定路径，不落源码树默认位置）")
+    parser.add_argument("--four-accounts", action="store_true",
+                        help="S11 四本账（域外py双尺／页级未归位／垫片两本账／名册真债差集）——JSON 打到 stdout")
+    parser.add_argument("--four-accounts-out", metavar="OUT", help="四本账 JSON 落盘到指定路径（不落源码树默认位置）")
+    parser.add_argument("--four-accounts-human", action="store_true", help="四本账打印成人读行（配合 --four-accounts 时并入 stderr 前）")
     args = parser.parse_args()
+    if args.four_accounts or args.four_accounts_out:
+        four = compute_four_accounts()
+        if args.four_accounts_human or args.four_accounts_out:
+            for line in _s11_four_lines(four):
+                print(line, file=sys.stderr)
+        if args.four_accounts:
+            print(json.dumps(four, ensure_ascii=False, indent=1))
+        if args.four_accounts_out:
+            Path(args.four_accounts_out).write_text(json.dumps(four, ensure_ascii=False, indent=1), encoding="utf-8")
+            print(f"四本账明细已写: {args.four_accounts_out}", file=sys.stderr)
+        return 0
     data = compute()
     for line in report_lines(data):
         print(line)

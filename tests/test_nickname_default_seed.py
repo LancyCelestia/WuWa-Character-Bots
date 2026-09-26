@@ -10,12 +10,12 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.domains.chat_reply.runtime.mentions import (
-    detect_name_mention,
-)
-from plugins.bot_unified_runtime.runtime.aliases import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.aliases import (
     DEFAULT_PERSONA_NICKNAMES,
     build_command_alias_resolver,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.mentions import (
+    detect_name_mention,
 )
 
 

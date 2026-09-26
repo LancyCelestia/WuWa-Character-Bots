@@ -21,13 +21,22 @@
   台账红点被修复 → 强制失败提醒清账。
 - 可红性由**变异测试**常驻锁死：测试内构造缺口（删别名/删动词）→ 门必须
   变红，防门退化成永真的摆设。
+3. 台账行不等于实物：``LEDGER_HELP_TO_ROUTE_EVIDENCE`` 给「已登记放行」的词逐枚
+   钉住**由谁消化**（函数 + 函数体内的调用名，AST 取数不吃行号）与今天的实测
+   结果；``test_ledger_entries_still_backed_by_real_objects`` 双向反查——词被从
+   帮助册删掉而台账还留着 ⇒ 红，登记的消化者改名/摘掉 ⇒ 红。登记与实物分家即
+   是这张台账最坏的失效形态（2026-09-25 S266 立，起因＝亲密模式七枚新台账）。
 """
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+from typing import Any
+
 import pytest
 
-from plugins.bot_unified_runtime.runtime.aliases import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.aliases import (
     CommandAliasResolver,
     normalize_command_text,
 )
@@ -35,10 +44,12 @@ from scripts.extract_trigger_words import (
     build_help_trigger_side,
     build_inventory,
     build_route_trigger_side,
+    classify_help_topics,
     flat_verb_map,
     gate_help_to_route,
     gate_route_to_help,
     live_detectors_by_capability,
+    normalize_trigger_key,
 )
 
 INV = build_inventory()
@@ -90,6 +101,13 @@ LEDGER_ROUTE_TO_HELP: frozenset[tuple[str, str]] = frozenset({
     ('bot.fx', '换汇'),
     ('bot.fx', '換匯'),
     # bot.group_info（C：口语问句族）
+    # 参与者族九枚（2026-09-26 S-T-GRP-2「参与者按记忆算」那条腿）：路由侧谓词
+    # ``is_group_info_command`` 收词即生效（``base_router.group_info_match`` 直调它，
+    # 零路由改动），help 侧词条归 ``echo.py`` 的「群信息」topic。**2026-09-26 主会话清账**：
+# 参与者九枚（群里都有谁/本群都有谁/群里谁说过话/本群谁说过话/群参与者/本群参与者/
+# 都有谁说过话/我都跟谁聊过/跟谁聊过）已补进 ``_HELP_ENTRIES['群信息'].aliases`` 与
+# ``_HELP_ENTRY_META['群信息'].triggers_nickname``，本门「台账红点被修复 ⇒ 强制提醒清账」
+# 那一把当场打红提醒后删掉；其余九枚（本群人数/本群公告/群主…）**仍是缺口**，继续挂账。
     ('bot.group_info', '本群人数'),
     ('bot.group_info', '本群公告'),
     ('bot.group_info', '本群多大'),
@@ -336,7 +354,174 @@ LEDGER_HELP_TO_ROUTE: frozenset[tuple[str, str]] = frozenset({
     ('身份', '身份'),
     ('队列', 'queue'),
     ('队列', '队列'),
+    # 亲密模式（2026-09-24 晚「亲密档分级二批」新建 topic、本波 2026-09-25 逐枚现算补登记）
+    # ⚠ 这七枚**不是一件事**，分两档登记、反查腿也分两档（见
+    # LEDGER_HELP_TO_ROUTE_EVIDENCE）：
+    #   甲·三枚开关词＝「真生效、但没有 RouteKind 宿主」——话说到整句时消息经
+    #     base_router 的 chat_match 落到 bot.chat，之后由 **bot.chat 能力体内**
+    #     `build_chat_result` 吃 content_route.match_intimate_command 上钉/解钉并
+    #     直接回确认句（chat.py:2468-2523 当时坐标）。本门的三个面（昵称动词 /
+    #     行为检测器 / 自然语言归一）都只到「消息交给谁」这一层，看不见能力体内的
+    #     第四面，所以判「不可达」是门的视野所限，不是词失效——实测 verdict 会变：
+    #     开→(intimate,l1)、深开→(intimate,l2 且首跳换 grok 优先)、关→(normal,"")。
+    #     ⚠ 「真生效」是有条件的：总闸 bot_content_route_enabled ∧ 会话准入
+    #     （explicit_allowed_for_session）两支都得成立；群聊白名单为空时整群不准入
+    #     ⇒ 这一句既不上钉也不回确认句，只当普通对话。登记的是「消化点在真件里、
+    #     且在它自己的准入门内确实改行为」，不是「谁说了都管用」（逐枚实测读数见
+    #     .superpowers/sdd/2026-09-24-central-dispatch/probes/s266-probe2-e2e.py 的
+    #     C_private/D_group 两列，与 SEAT-S266 §2 的表同源）。
+    #     另一处门的视野所限顺带记下：face2 在 bot.chat 上是**空表**（现算
+    #     live_detectors_by_capability()['bot.chat'] == []，全仓有检测器的能力里
+    #     没有 bot.chat），所以任何宿主为 bot.chat 的帮助词都只能从 face1/face3
+    #     求通行——既有台账里 ('聊天','chat') 那一族就是这么进来的。
+    #   乙·四枚帮助检索词＝**设计上就不是命令**，与既登记的同型条目（('聊天','chat')、
+    #     ('快报','ainews')、('维基','百科')）同类：只在 echo._HELP_ALIAS_MAP 里当
+    #     `/bot help <词>` 的落点。帮助正文从未把它们写成可说的命令（index 只列
+    #     「整句开关：亲密模式 开|深开|关」），故非「页面骗人」。
+    # 反查腿（test_ledger_entries_still_backed_by_real_objects）执法两件事：
+    # 词还在帮助册里 + 登记的消化者还真在消化——词被删而台账还在＝红。
+    ('亲密模式', '亲密模式开'),      # 甲：上钉浅档
+    ('亲密模式', '亲密模式深开'),    # 甲：上钉深档（换首跳）
+    ('亲密模式', '亲密模式关'),      # 甲：两档齐解
+    ('亲密模式', '亲密模式'),        # 乙：本 topic 自身检索键
+    ('亲密模式', '亲密档位'),        # 乙：中文别名检索键
+    ('亲密模式', 'intimate'),        # 乙：英文检索键
+    ('亲密模式', 'qinmimoshi'),      # 乙：拼音检索键
 })
+
+# ---------------------------------------------------------------------------
+# 台账行的「实物凭证」（S266，2026-09-25 现算）：逐枚写清由谁消化、住在哪一行
+# ---------------------------------------------------------------------------
+# 为什么要有这张表：LEDGER_HELP_TO_ROUTE 只是「允许这些词不可达」的一句许可，
+# 它自己不证明任何东西——词被从帮助册删掉、或消化它的代码被搬走/摘掉，许可都会
+# 变成一张空头账（门照样绿）。本表把每条许可钉到**可反查的实物**上：
+#   kind="capability-body" → 消化者 = (模块, 函数, 函数内必须存在的调用名)，
+#                             并钉住该词今天的实测结果（mode/tier）。
+#   kind="help-search-key" → 消化者 = echo._HELP_ALIAS_MAP 的落点（topic 名），
+#                             且必须**仍然不是**亲密档开关（否则分类该重判）。
+# ⚠ 只登记「亲密模式」这一批（本波现算过七枚）。其余既有台账行本波未核，
+#   不为其背书——将来谁核谁补，别拿这张表当全量已审的证据。
+
+# 甲·三枚开关词的凭证＝手写字面键（消化点住 bot.chat 能力体，正则真身 content_route.py:134-153）。
+_EVIDENCE_INTIMATE_BODY: dict[tuple[str, str], dict[str, Any]] = {
+    ("亲密模式", "亲密模式开"): {
+        "kind": "capability-body",
+        "module": "plugins/bot_unified_runtime/domains/chat_reply/capabilities/chat.py",
+        "function": "build_chat_result",
+        "call": "match_intimate_command",
+        "expects": ("intimate", "l1"),
+    },
+    ("亲密模式", "亲密模式深开"): {
+        "kind": "capability-body",
+        "module": "plugins/bot_unified_runtime/domains/chat_reply/capabilities/chat.py",
+        "function": "build_chat_result",
+        "call": "match_intimate_command",
+        "expects": ("intimate", "l2"),
+    },
+    ("亲密模式", "亲密模式关"): {
+        "kind": "capability-body",
+        "module": "plugins/bot_unified_runtime/domains/chat_reply/capabilities/chat.py",
+        "function": "build_chat_result",
+        "call": "match_intimate_command",
+        "expects": ("normal", ""),
+    },
+}
+
+# S-TRIG 收编（2026-09-26）：乙档凭证原先在此手抄一枚四词元组——那是本文件台账行「乙：…检索键」
+# 四行之外、对同一词集的**同文件第二份字面量**，被 tests/test_trigger_word_copy_ratchet.py 点名
+# 为 44>42 越界副本之一（D1）。现改为从 LEDGER_HELP_TO_ROUTE 派生（该 topic 的台账行减甲档字面键）：
+# 词面在文件里只声明一次，凭证覆盖面由台账结构保证。台账行本身仍是本门对 echo 真身的独立声明
+# （整账若从 echo 派生才会拆双向检查＝恒真；同文件去重不放宽任何门的判据）。
+LEDGER_HELP_TO_ROUTE_EVIDENCE: dict[tuple[str, str], dict[str, Any]] = {
+    **_EVIDENCE_INTIMATE_BODY,
+    # 乙·帮助检索词＝台账里该 topic 除甲档三枚开关词外的全部行（_HELP_ALIAS_MAP 由 echo.py 派生，
+    # 唯一读点 echo.normalize_help_topic）。
+    **{
+        row: {
+            "kind": "help-search-key",
+            "module": "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py",
+            "function": "normalize_help_topic",
+            "resolves_to": row[0],
+        }
+        for row in LEDGER_HELP_TO_ROUTE
+        if row[0] == "亲密模式" and row not in _EVIDENCE_INTIMATE_BODY
+    },
+}
+
+
+def _function_call_names(module_path: str, function_name: str) -> set[str]:
+    """AST 取某函数体内的调用名集合（行号会漂，函数与调用名不会）。
+
+    路径按仓库根解析，不靠 pytest 的当前工作目录。
+    """
+    source = (Path(__file__).resolve().parents[1] / module_path).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == function_name:
+            return {
+                str(getattr(call.func, "id", None) or getattr(call.func, "attr", ""))
+                for call in ast.walk(node)
+                if isinstance(call, ast.Call)
+            }
+    raise AssertionError(f"函数 {function_name} 不在 {module_path}（凭证坐标已失效）")
+
+
+def _ledger_evidence_problems(
+    evidence: dict[tuple[str, str], dict[str, Any]],
+    *,
+    ledger: set[tuple[str, str]],
+    help_words: dict[str, set[str]],
+    resolve_help_topic: Any,
+    match_command: Any,
+    call_names: Any,
+) -> list[str]:
+    """纯函数版反查腿：返回「台账行已失去实物」的人话清单（空＝逐枚对得上）。
+
+    四个面的失效形态各不同，缺一面就有一条空头账能活下来：
+    ①有凭证却没进台账 / 台账里留着凭证没有的行 ⇒ 两本账分家；
+    ②词已从帮助册消失而台账与凭证还在 ⇒ 为不存在的词放行；
+    ③登记的消化函数里再没有那个调用名（改名、搬走、整段摘除）⇒ 真生效已失真；
+    ④检索键不再是检索键（帮助落点漂了，或被做成了命令）⇒ 归类已失真。
+    参数全部注入（`resolve_help_topic`/`match_command`/`call_names`），所以本函数
+    可以在测试里被注毒复跑，而不是只在「一切正常」时被自证。
+    """
+    problems: list[str] = []
+    covered_topics = {topic for topic, _ in evidence}
+    for key in sorted(set(evidence) - ledger):
+        problems.append(f"凭证有、台账没有：{key}（该词未被登记放行，不该悄悄存在）")
+    for topic in sorted(covered_topics):
+        for key in sorted({k for k in ledger if k[0] == topic} - set(evidence)):
+            problems.append(f"台账有、凭证没有：{key}（放行却没有实物可反查）")
+    for (topic, word), record in sorted(evidence.items()):
+        if word not in help_words.get(topic, set()):
+            problems.append(f"{topic}/{word}：帮助册里已无此词，台账与凭证成空头账")
+            continue
+        kind = str(record.get("kind") or "")
+        if kind == "capability-body":
+            if str(record.get("call") or "") not in call_names(
+                str(record.get("module") or ""), str(record.get("function") or "")
+            ):
+                problems.append(
+                    f"{topic}/{word}：{record.get('function')}() 里已无 "
+                    f"{record.get('call')} 调用（消化者已被摘掉或改名）"
+                )
+            verdict = match_command(word)
+            if verdict != tuple(record.get("expects") or ()):
+                problems.append(
+                    f"{topic}/{word}：实测结果 {verdict!r} 与登记的 "
+                    f"{tuple(record.get('expects') or ())!r} 不符（词不再改行为？）"
+                )
+        elif kind == "help-search-key":
+            if resolve_help_topic(word) != record.get("resolves_to"):
+                problems.append(
+                    f"{topic}/{word}：帮助落点漂到 "
+                    f"{resolve_help_topic(word)!r}（不再是 {record.get('resolves_to')!r}）"
+                )
+            if match_command(word) is not None:
+                problems.append(f"{topic}/{word}：已变成开关命令，凭证的 help-search-key 归类失效")
+        else:
+            problems.append(f"{topic}/{word}：未知 kind={kind!r}")
+    return problems
 
 
 # ---------------------------------------------------------------------------
@@ -484,3 +669,135 @@ def test_feature_help_gate_catches_removed_route_without_exemption() -> None:
     assert {(item["topic"], item["word"]) for item in violations} == {
         ("功能管理", "功能管理"), ("功能管理", "feature"),
     }
+
+
+# ---------------------------------------------------------------------------
+# 台账行的实物反查腿（S266）：登记 ≠ 实物，逐枚反查「词还在 + 消化者还在」
+# ---------------------------------------------------------------------------
+
+
+def _live_evidence_inputs(
+    topics: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """把反查腿的四个注入位接到今天的真件上（生产代码，非夹具）。
+
+    `topics` 缺省取 `INV["help_topics"]`（echo._HELP_ENTRIES 的机械提取），注毒用例
+    可以传一份改过的注册表进来——注在**注册表层**而不是预先算好的词集上，才真的
+    把 `echo 帮助册 → classify_help_topics → 反查腿` 这条链走一遍（本仓为「把毒注
+    在不会被执行的路径上、测试却绿」那型假绿烧过两次，见台账 #50）。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities import echo
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime import content_route
+
+    source = INV["help_topics"] if topics is None else topics
+    return {
+        "ledger": set(LEDGER_HELP_TO_ROUTE),
+        "help_words": {
+            topic: set(parsed["words"])
+            for topic, parsed in classify_help_topics(source).items()
+        },
+        "resolve_help_topic": echo.normalize_help_topic,
+        "match_command": content_route.match_intimate_command,
+        "call_names": _function_call_names,
+    }
+
+
+def test_ledger_entries_still_backed_by_real_objects() -> None:
+    """反查腿实跑：每条凭证都对得上今天的实物（词在帮助册、消化者还在吃它）。"""
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities import echo
+
+    # 先自证尺没瞎：本腿读的 `INV["help_topics"]` 必须逐字等于 echo 的活注册表，
+    # 否则「词还在」这条判据测的是提取器缓存、不是生产件（注毒注在不会被执行的路径
+    # 上＝本仓烧过两次的假绿形态，见台账 #50）。
+    live_entries = {str(entry["topic"]): entry for entry in echo._HELP_ENTRIES}
+    assert set(live_entries) >= {topic for topic, _ in LEDGER_HELP_TO_ROUTE_EVIDENCE}
+    for (topic, word), record in sorted(LEDGER_HELP_TO_ROUTE_EVIDENCE.items()):
+        # 归一口与门自身完全一致（classify_help_topics 也用 normalize_trigger_key）：
+        # 帮助册写「亲密模式 关」，台账写归一后的「亲密模式关」，两侧不同尺就永远对不上。
+        live_words = {
+            normalize_trigger_key(item)
+            for item in (
+                *live_entries[topic]["aliases"],
+                *(echo._HELP_ENTRY_META.get(topic, {}).get("triggers_nl") or ()),
+                *(echo._HELP_ENTRY_META.get(topic, {}).get("triggers_nickname") or ()),
+            )
+        }
+        assert word in live_words, f"尺与生产件脱钩：{topic} 的活注册表里已无 {word}"
+        if str(record.get("kind") or "") == "help-search-key":
+            assert echo.normalize_help_topic(word) == topic
+    problems = _ledger_evidence_problems(LEDGER_HELP_TO_ROUTE_EVIDENCE, **_live_evidence_inputs())
+    assert not problems, "台账与实物分家：" + "；".join(problems)
+
+
+def test_ledger_leg_catches_help_word_removed() -> None:
+    """注毒①：从**帮助注册表**删一枚在册真身词（qinmimoshi）⇒ 陈旧台账腿必红。
+
+    毒注在注册表层（`INV["help_topics"]` 的一份副本）而不是预先算好的词集上，
+    于是 `echo 帮助册 → classify_help_topics → 反查腿` 整条链被走一遍。
+    """
+    mutated = {topic: dict(info) for topic, info in INV["help_topics"].items()}
+    entry = dict(mutated["亲密模式"])
+    before = tuple(entry["aliases"])
+    entry["aliases"] = tuple(word for word in before if word != "qinmimoshi")
+    assert entry["aliases"] != before, "注毒前提失效：这枚词本不在帮助册 aliases 里"
+    mutated["亲密模式"] = entry
+    problems = _ledger_evidence_problems(LEDGER_HELP_TO_ROUTE_EVIDENCE, **_live_evidence_inputs(mutated))
+    assert len(problems) == 1, f"注毒①应只引入一条破绽，实际：{problems}"
+    assert "qinmimoshi" in problems[0] and "空头账" in problems[0], problems[0]
+
+
+def test_ledger_leg_catches_consumer_stripped() -> None:
+    """注毒②：把消化点换成「函数里不再调用 match_intimate_command」⇒ 开关词逐枚报红。
+
+    这条是老棘轮**看不见**的那一格：词仍留在帮助册、仍不可路由 ⇒ `LEDGER == 缺口`
+    照常成立，双向门全绿，而「这枚词真改行为」的登记理由已经死了。
+    期望发数由凭证表自己派生（不硬编码），以后谁补登记不必回来改这里。
+    """
+    expect_stripped = {
+        word for (_topic, word) in LEDGER_HELP_TO_ROUTE_EVIDENCE
+        if str(LEDGER_HELP_TO_ROUTE_EVIDENCE[(_topic, word)].get("kind") or "") == "capability-body"
+    }
+    assert expect_stripped, "注毒②前提失效：凭证表里没有 capability-body 形态的行"
+    inputs = _live_evidence_inputs()
+    inputs["call_names"] = lambda _module, _function: set()
+    problems = _ledger_evidence_problems(LEDGER_HELP_TO_ROUTE_EVIDENCE, **inputs)
+    assert len(problems) == len(expect_stripped), (
+        f"注毒②应恰红 {len(expect_stripped)} 枚开关词，实际：{problems}"
+    )
+    assert all("消化者已被摘掉或改名" in problem for problem in problems), problems
+
+
+def test_ledger_leg_catches_category_drift() -> None:
+    """注毒③：让「帮助检索键」那批突然变成开关命令 ⇒ 归类失效必须浮出。"""
+    drift_words = {
+        word for (_topic, word) in LEDGER_HELP_TO_ROUTE_EVIDENCE
+        if str(LEDGER_HELP_TO_ROUTE_EVIDENCE[(_topic, word)].get("kind") or "") == "help-search-key"
+    }
+    assert drift_words, "注毒③前提失效：凭证表里没有 help-search-key 形态的行"
+    inputs = _live_evidence_inputs()
+    original = inputs["match_command"]
+
+    def poisoned(word: str) -> Any:
+        if word in drift_words:
+            return ("intimate", "l1")
+        return original(word)
+
+    inputs["match_command"] = poisoned
+    problems = _ledger_evidence_problems(LEDGER_HELP_TO_ROUTE_EVIDENCE, **inputs)
+    assert len(problems) == len(drift_words), (
+        f"注毒③应恰红 {len(drift_words)} 枚检索键，实际：{problems}"
+    )
+    assert all("help-search-key 归类失效" in problem for problem in problems), problems
+
+
+def test_ledger_leg_catches_ledger_evidence_split() -> None:
+    """注毒④：台账撤掉一行而凭证留着（两本账分家）⇒ 当场红。"""
+    victim = min(
+        key for key, record in LEDGER_HELP_TO_ROUTE_EVIDENCE.items()
+        if str(record.get("kind") or "") == "capability-body"
+    )
+    inputs = _live_evidence_inputs()
+    inputs["ledger"] = inputs["ledger"] - {victim}
+    problems = _ledger_evidence_problems(LEDGER_HELP_TO_ROUTE_EVIDENCE, **inputs)
+    assert any("凭证有、台账没有" in problem for problem in problems), problems
+    assert any(repr(victim[1]) in problem or victim[1] in problem for problem in problems), problems

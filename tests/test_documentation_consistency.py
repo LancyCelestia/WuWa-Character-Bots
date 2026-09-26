@@ -588,37 +588,115 @@ _NARRATIVE_DOCS: tuple[str, ...] = (
 )
 
 # 形如「633 个 bot_* 字段」「77 topics」「501 别名」「20 域」「26 库」的手写总数。
+# 数字进一等捕获组：R4 结构判据②要拿这个数去真身机器册核对（「当时值」是否已消失）。
 _VOLATILE_COUNT_RE = re.compile(
-    r"(?<![\w./-])\d{1,5}\s*(?:个|条|枚|张|项|余)?\s*"
+    r"(?<![\w./-])(\d{1,5})\s*(?:个|条|枚|张|项|余)?\s*"
     r"(?:bot_\*\s*)?(?:字段|topics?|主题数|别名|模板|域|路由|交付物|库)(?!\w)"
 )
-# 放行条件＝同行给了权威指针，或明说是历史/当时值。
-_AUTHORITY_MARKER_RE = re.compile(
-    r"auto-facts|机器册|为准|当时|历史|曾核|实测|以目录|不手写|勿手写|数量不在此|现值|真身"
-)
+
+# ---- R4（裁定件 ADDENDUM-USER-RULINGS-20260923 §R4）：放行「只认结构不认词」 ----
+# 旧尺用词法放行（`历史|实测|当时|曾核|现值|真身|为准` 等**词**）整行橡皮章放行——
+# 审计实测现放行 21 条里 18 条靠词混。本尺**废除词法放行**，只保留三条结构判据，
+# 满足其一才放行：
+#   ① 明确指向真身路径或机器册 `docs/auto-facts.md` 的指针（结构：机器册文件名，
+#      或反引号行内码里一个**确实存在**的仓内路径）；
+#   ② 同行写了「当时值」**且**被记的数在真身（机器册）里已确实不存在（真去查、不看文案）；
+#   ③ 该计数落在 fenced code block 或行内代码内（位置判据）。
+# ⚠ 与 G-T3 宽尺（`scripts/doc_fact_discipline.py::AUTHORITY_PHRASE_RE`）是两面尺子：
+#   宽尺按「以…为准」分段摘除，为板块/税务门所依赖（见 test_board_taxonomy_gate.py、
+#   test_taxonomy_spec_gates.py 对纯指针句放行的断言），本席**不动**其执法地位；R4 针对
+#   的「裸计数门」即本函数管辖的叙述文档规则 10，其词法放行本体是**旧 `_AUTHORITY_MARKER_RE`**，
+#   已由下面三条结构判据取代（该正则在退役后不再被引用）。
+_MACHINE_LEDGER_REL = "docs/auto-facts.md"
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+_INLINE_CODE_SPAN_RE = re.compile(r"``[^`\n]+``|`[^`\n]+`")
+
+
+def _machine_ledger_text(root: Path) -> str:
+    """真身机器册文本（判据②的核对面）；不存在则空串（此时任何数都算「已不在真身」）。"""
+    ledger = root / _MACHINE_LEDGER_REL
+    return ledger.read_text(encoding="utf-8") if ledger.exists() else ""
+
+
+def _points_to_true_source(line: str, root: Path) -> bool:
+    """结构判据①：指向机器册文件名，或行内码里一个真实存在的仓内路径。"""
+    if "auto-facts" in line:
+        return True
+    for span in _INLINE_CODE_SPAN_RE.finditer(line):
+        tok = span.group(0).strip("`").strip().lstrip("./").rstrip("，,。;；:：/ ")
+        if tok and (root / tok).exists():
+            return True
+    return False
+
+
+def _as_history_absent_from_ledger(line: str, ledger: str) -> bool:
+    """结构判据②：写了「当时值」且每个被记的数在真身机器册里都已不存在。
+
+    只认「当时值」这一显式历史标记 + 真身反查，不再认「历史/实测/曾核/当时」等泛词——
+    数字仍在真身者判为「假历史、实为当前值漂移」，不放行。
+    """
+    if "当时值" not in line:
+        return False
+    nums = _VOLATILE_COUNT_RE.findall(line)
+    return bool(nums) and all(n not in ledger for n in nums)
+
+
+def _inside_code(lines: list[str], index: int, line: str) -> bool:
+    """结构判据③：整行在围栏代码块内，或该行的每个裸计数都落在行内码内。"""
+    in_fence = False
+    for i, ln in enumerate(lines):
+        if _FENCE_RE.match(ln):
+            if i == index:
+                return True
+            in_fence = not in_fence
+            continue
+        if in_fence and i == index:
+            return True
+    matches = list(_VOLATILE_COUNT_RE.finditer(line))
+    if not matches:
+        return False
+    spans = [c.span() for c in _INLINE_CODE_SPAN_RE.finditer(line)]
+    return all(
+        any(s <= m.start() and m.end() <= e for s, e in spans) for m in matches
+    )
+
+
+def _volatile_release(line: str, lines: list[str], index: int, root: Path, ledger: str) -> bool:
+    """R4 三条结构判据的合取放行口（满足其一即放行）。"""
+    return (
+        _points_to_true_source(line, root)
+        or _as_history_absent_from_ledger(line, ledger)
+        or _inside_code(lines, index, line)
+    )
 
 
 def _volatile_count_findings(
     root: Path, files: tuple[str, ...] = _NARRATIVE_DOCS
 ) -> list[str]:
-    """叙述文档里「手写可过期计数且无权威指针/历史限定」的行，逐条 `文件:行号 片段`。"""
+    """叙述文档里「手写可过期计数且不满足 R4 三条结构放行」的行，逐条 `文件:行号 片段`。"""
     findings: list[str] = []
+    ledger = _machine_ledger_text(root)
     for rel in files:
         path = root / rel
         if not path.exists():
             continue
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if _VOLATILE_COUNT_RE.search(line) and not _AUTHORITY_MARKER_RE.search(line):
-                findings.append(f"{rel}:{number} -> {line.strip()[:90]}")
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for number, line in enumerate(lines, 1):
+            if not _VOLATILE_COUNT_RE.search(line):
+                continue
+            if _volatile_release(line, lines, number - 1, root, ledger):
+                continue
+            findings.append(f"{rel}:{number} -> {line.strip()[:90]}")
     return findings
 
 
 def test_narrative_docs_defer_volatile_counts_to_machine_ledger() -> None:
-    """叙述文档不许手写会随代码漂移的总数；要写就得指向机器册/真身或标明是历史当时值。"""
+    """叙述文档不许手写会随代码漂移的总数；要放行只认三条结构判据（R4：不认词）。"""
     findings = _volatile_count_findings(ROOT)
     assert not findings, (
-        "以下叙述文档写了会过期的手写计数，且没有权威指针/历史限定"
-        "（改法：指向 docs/auto-facts.md 或真身定义处，或在同行标明「当时值」）：\n"
+        "以下叙述文档写了会过期的手写计数，且不满足 R4 的三条结构放行"
+        "（①指向真身路径/机器册 docs/auto-facts.md ②「当时值」且该数已不在真身 "
+        "③位于代码块/行内码；改法：改写为指向真身或机器册，或确为历史值则标「当时值」）：\n"
         + "\n".join(findings)
     )
 
@@ -636,5 +714,34 @@ def test_volatile_count_gate_detects_planted_line(tmp_path: Path) -> None:
         "该席当时值为 529 字段（现值以机器册为准）。\n",
         encoding="utf-8",
     )
-    assert not _volatile_count_findings(tmp_path, ("docs/CODE-MAP.md",)), "带权威指针的行被误拦"
+    assert not _volatile_count_findings(tmp_path, ("docs/CODE-MAP.md",)), "带真身指针的行被误拦"
+
+
+def test_volatile_count_gate_requires_structure_not_words(tmp_path: Path) -> None:
+    """R4 反证（新尺自证）：光有「历史/实测/当时」等词不再放行；只认三条结构判据。"""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "auto-facts.md").write_text(
+        "config.py bot_* 字段数：689\n", encoding="utf-8"
+    )
+    doc = tmp_path / "docs" / "CODE-MAP.md"
+
+    # (a) 词混必杀：句中含「历史/实测」等旧放行词，但无机器册指针、无代码、无「当时值」。
+    doc.write_text("字段数历史上是 689 字段（实测）。\n", encoding="utf-8")
+    assert _volatile_count_findings(tmp_path, ("docs/CODE-MAP.md",)), "词法放行未废除＝仍可靠词混过"
+
+    # (b) 「当时值」但数字仍在真身 ⇒ 判红（假历史，实为当前值漂移）。
+    doc.write_text("该数当时值为 689 字段。\n", encoding="utf-8")
+    assert _volatile_count_findings(tmp_path, ("docs/CODE-MAP.md",)), "数字仍在真身却按历史放行"
+
+    # (c) 结构放行①：指向机器册文件名。
+    doc.write_text("字段数以机器册 docs/auto-facts.md 为准。\n", encoding="utf-8")
+    assert not _volatile_count_findings(tmp_path, ("docs/CODE-MAP.md",)), "机器册指针被误拦"
+
+    # (d) 结构放行②：「当时值」且该数已不在真身（689 在册、700 不在）。
+    doc.write_text("旧口径当时值为 700 字段。\n", encoding="utf-8")
+    assert not _volatile_count_findings(tmp_path, ("docs/CODE-MAP.md",)), "确已消失的当时值被误拦"
+
+    # (e) 结构放行③：裸计数落在行内代码内。
+    doc.write_text("示例写法：`26 库`。\n", encoding="utf-8")
+    assert not _volatile_count_findings(tmp_path, ("docs/CODE-MAP.md",)), "行内代码被误拦"
 

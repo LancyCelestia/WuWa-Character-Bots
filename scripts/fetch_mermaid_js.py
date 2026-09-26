@@ -33,7 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from plugins.bot_unified_runtime.output.render_backends import (
+from plugins.bot_unified_runtime.domains.render.render_backends import (
     mermaid_asset_dir,
     validate_mermaid_asset_bytes,
 )

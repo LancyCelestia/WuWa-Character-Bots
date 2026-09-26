@@ -11,9 +11,16 @@
 （**不往源码树写一个字**）；⑥ 正样控制（判据必须看得见合法件本身）。
 
 判据一句话：
-- **G-T1** 每张内容页必须有指向存在模板的 `template:` 头；生成物只按**写盘口现算**豁免
+- **G-T1**（尺＝用户裁定 **R0**，2026-09-23 换尺，席 TX132 落地）判据只量**对外正式面欠账**
+  =「该给用户看的正式文档」里未套 `template:` 头者；四类过程件（seat-report / sdd-brief /
+  sdd-ledger / parked）**不进欠账、只登记**，但**照样套头**、照样在旧尺总账里——
+  扫描面一寸不缩、`T1_CEILING` 一字不升（R0 明令；2026-09-25 用户裁定 N5 追加：本枚**只准
+  经 approvals 册收紧重录**——高于旧首届值＝放宽，本通道不收，见
+  `scripts/spec_gates_ceiling_approvals.json`）。生成物只按**写盘口现算**豁免
   （board_doc_sync `live_page_paths` / doc_sync `TARGET` / command_catalog `DOC` /
   doc_template_sync `TEMPLATE_DIR`），不写死文件清单。
+  两栏真身＝`scripts/spec_gates_census.py::compute()` 的 `t1_debt_official` /
+  `t1_registered_process`（席 TX130）；本门**消费**它们，绝不在门里再算一遍（第二真身）。
 - **G-T4** 模板 `@schema` 与实际渲染参数双向对齐：缺参红、多参红、死参红、未注册 provider 红。
 - **G-T5** 无对应模板的内容类别数=0；类别集合与 `CENSUS.md` §一 **现算**一致；
   孤儿模板、未归类标签、声明却接不到页的类别同样红。
@@ -22,8 +29,13 @@
 from __future__ import annotations
 
 import ast
+import functools
+import json
 import sys
+from collections.abc import Mapping
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, NamedTuple
 
 import pytest
 
@@ -41,8 +53,16 @@ import spec_gates_census as sc
 # 手写字面量上限（只准降）。每行注释＝本席开工时刻现算命令与值。
 # 复跑：PYTHONIOENCODING=utf-8 BOT_AUTOSYNC=0 python scripts/spec_gates_census.py --report
 # ---------------------------------------------------------------------------
-#: G-T1 无模板头且非生成物 = 1047（2026-09-22 12:1x 本席现算；终态 0）。
-T1_CEILING = 1047
+#: G-T1 上限 = 337（2026-09-25 席 S265 按用户裁定 **N5** 经 approvals 通道重录：判债对象
+#: （新尺对外欠账）由该门自己的取数口现算＝337，两读同刻同值见
+#: `scripts/spec_gates_ceiling_approvals.json` 的 evidence 栏；终态 0）。
+#: 前值 1047 是 2026-09-22 按**旧尺**录的首届核账值——R0（2026-09-23）把判债口径换成
+#: 「对外欠账」后本枚仍挂旧尺数＝悬空（S230R 在册），N5 裁定「要」重录。方向核对：337 < 1047
+#: ＝**收紧**（放宽须用户逐次数值点头，本通道不收）。偏离 1047 的执法腿＝
+#: `test_r0_ceiling_still_pinned_to_old_ruler_first_audit`（读 `_t1_ceiling_approval`）：
+#: 册缺席/过期/形态坏 ⇒ 上限必须回 1047、诚实红；册在且有效 ⇒ 上限必须逐枚等于在册 `new_ceiling`。
+#: 新尺下若再超上限 ⇒ 让它红着，不许升上限、不许缩扫描面（R0 口径不变）。
+T1_CEILING = 337
 #: G-T3 面 B（未迁移手写页，`.superpowers/**` 过程日志除外）= 335 **页**
 #: （同上现算；页数单调——追加正文不新增页，故不会随机漂移。终态 0）。
 T3_UNMOVED_CEILING = 335
@@ -65,7 +85,16 @@ MIN_BOARD_LIVE_PAGES = 220
 MIN_CENSUS_CLASSES = 22
 MIN_TEMPLATES = 1
 
+#: 旧尺（含本波过程件的全部未套头内容页）首届核账值。**R0 后只作历史对账，不再当欠账判据**，
+#: 也不许被人拿来当「债又长了」的证据（那把尺量的本来就是过程件，见裁定件 R0）。
 AUDIT_HISTORY_T1: tuple[tuple[str, int], ...] = (("2026-09-22", 1047),)
+#: 新尺（R0：只算对外正式面）首届核账值。席 TX132 于 2026-09-23T06:45Z 现算＝**369**
+#: （两栏恒等式 369 + 1024 = 1393；类别派生与路径派生同值 ⇒ 判据稳健）。
+#: 复跑口径：`python scripts/spec_gates_census.py --report` 的 G-T1 两栏（席 TX130 落地后）。
+#: 收口窗由该门 owner 在生成物收敛后重录首届值；本枚与上限之间**不许调大换绿**（R0）。
+#: 2026-09-25 用户裁定 N5 重录同批追加第二枚（席 S265 现算 337，出处＝
+#: `scripts/spec_gates_ceiling_approvals.json`；方向锁 369→337 只降，凭首届 369 一字未擦）。
+AUDIT_HISTORY_T1_OFFICIAL: tuple[tuple[str, int], ...] = (("2026-09-23", 369), ("2026-09-25", 337))
 AUDIT_HISTORY_T3B: tuple[tuple[str, int], ...] = (("2026-09-22", 335),)
 AUDIT_HISTORY_T4: tuple[tuple[str, int], ...] = (("2026-09-22", 0),)
 AUDIT_HISTORY_T5: tuple[tuple[str, int], ...] = (("2026-09-22", 18),)
@@ -86,6 +115,7 @@ _CEILING_NAMES = (
 )
 _HISTORY_NAMES = (
     "AUDIT_HISTORY_T1",
+    "AUDIT_HISTORY_T1_OFFICIAL",
     "AUDIT_HISTORY_T3B",
     "AUDIT_HISTORY_T4",
     "AUDIT_HISTORY_T5",
@@ -93,30 +123,270 @@ _HISTORY_NAMES = (
     "AUDIT_HISTORY_T5_DEADCLASS",
 )
 
-_REAL = sc.compute()  # 全模块只现算一次：判据与 --report 同一支
+@functools.lru_cache(maxsize=1)
+def _real() -> dict[str, Any]:
+    """**首用绑定**取数（S555 推广自 S542 格②）：sc.compute() 内含『取数口改名了』的 LookupError 抛点，旧版在模块顶层调它 ⇒ 脏树并发窗一发撕裂读会打成 collection ERROR（不可归因）。函数内取数 + lru_cache(maxsize=1) ⇒ collection 不采样、全进程仍只现算一次，红落具体用例上、可归因。纯形状迁移，判据一字未动。
+    """
+    return sc.compute()
 
 
 # ---------------------------------------------------------------------------
-# G-T1
+# G-T1（尺＝R0 新尺：判据只量「对外正式面」欠账；旧尺总量退为登记栏，不缩面、不升上限）
 # ---------------------------------------------------------------------------
+#: R0 新两栏的键名。真身＝`scripts/spec_gates_census.py::compute()`（席 TX130 已落地，交**页级名册**
+#: 而非裸计数——门要能点名欠款大户，只会加数字的接口做不到）；
+#: 本门只**消费**，绝不在门里重算一遍（重算＝第二真身，准绳一）。
+R0_NEW_RULER_KEYS: tuple[str, str] = ("t1_debt_official", "t1_registered_process")
+
+
+def _r0_columns(res: Mapping[str, object]) -> tuple[int, int, int]:
+    """fail-closed 读 R0 两栏 + 旧尺总账，返回 `(对外欠账, 过程件登记, 旧尺总量)`。
+
+    四条红线（都属「读不到≠合规」那一族假绿）：
+    ① 键缺席即红——**不许**把「取数口还没有新栏」当成「零欠账」放行（TX130 未落地时本门就该红着，
+      红在归因处，不许在门里补算绕开）；
+    ② 形态改版即红：两栏必须是 `list[str]` 名册（`bool`/裸整数/混类元素一律拒；
+      把名册换成一个数，判据立刻失去点名能力）；
+    ③ **恒等式**：对外欠账 + 过程件登记 == 旧尺总量。R0 只分账、不缩面，故该式逐刻必须成立；
+      哪天有人把过程件从扫描面里*剔除*而不是*另记*，旧尺总量先掉下来、本式当场红；
+    ④ 分账互斥：同一页既进欠账又进登记＝两本账其实在互相补洞（`t1_accounting` 若在场则复核，
+      该键属 TX130 的自证附加面，本判据的必备契约只有「三栏同源」）。
+    """
+    old_raw = res.get("t1")
+    assert isinstance(old_raw, list), "取数口缺 `t1` 旧尺总账栏＝R0 明令『总账栏不许消失』被破坏"
+    old_total = len(old_raw)
+    missing = [key for key in R0_NEW_RULER_KEYS if key not in res]
+    assert not missing, (
+        f"取数口缺 R0 新两栏 {missing}＝席 TX130（`scripts/spec_gates_census.py`）的分账口未生效。"
+        "本席独占面只有门文件，不代写取数口（那是第二真身）；此红归因 TX130，勿改本判据绕开。"
+    )
+    counts: list[int] = []
+    for key in R0_NEW_RULER_KEYS:
+        value = res[key]
+        assert isinstance(value, list), (
+            f"{key} 现算类型 {type(value)}≠list[str]（在册形态＝页级名册）＝取数口改版，判红不判绿"
+        )
+        assert all(isinstance(e, str) for e in value), f"{key} 名册里混进非字符串条目＝改版"
+        counts.append(len(value))
+    official, process = counts
+    assert official + process == old_total, (
+        f"R0 恒等式破裂：对外欠账 {official} + 过程件登记 {process} ≠ 旧尺总量 {old_total}"
+        "＝要么扫描面被缩（把过程件*剔除*而非*另记*，违 R0/R1『扫描面一寸不缩』），"
+        "要么两栏取自不同时刻（不同源＝两套账）。"
+    )
+    acc = res.get("t1_accounting")
+    if isinstance(acc, dict):
+        assert acc.get("partition_ok") is True, f"取数口自称分账不闭合：{acc.get('partition_ok')}"
+        assert acc.get("overlap_rels") == [], f"一页同时进两栏（分账互斥被破坏）：{acc.get('overlap_rels')}"
+    return official, process, old_total
+
+
+def _r0_rosters(res: Mapping[str, object]) -> tuple[list[str], list[str]]:
+    """取两栏**名册**（判据点名用）；形态契约与 `_r0_columns` 同一支，不另立判据。"""
+    out: list[list[str]] = []
+    for key in R0_NEW_RULER_KEYS:
+        value = res[key]
+        assert isinstance(value, list) and all(isinstance(e, str) for e in value), (
+            f"{key} 不是 list[str]＝取数口改版"
+        )
+        out.append(list(value))
+    return out[0], out[1]
+
+
+def _r0_pair(
+    res: Mapping[str, object],
+    total_key: str,
+    debt_key: str,
+    reg_key: str,
+    acc_key: str,
+) -> tuple[int, int, int]:
+    """fail-closed 读**任意一面**的 R0 三栏（席 S230：R0=A 从 G-T1 扩到 G-T2/G-T4/模板体检）。
+
+    与 `_r0_columns` 同一族红线，只是把键名参数化（键名是 plumbing、不是判据；判据「什么算过程稿」
+    唯一住在 `scripts/spec_gates_census.py` 的分母表，本门只**消费**列出的两栏，绝不重算）：
+    ① 任一键缺席即红（「取数口还没有新栏」≠「零欠账」，红在归因处）；
+    ② 两栏必须是 `list[str]`（换成裸计数就失去点名能力＝改版）；
+    ③ 恒等式 `对外欠账 + 过程稿登记 == 总账`（R0 只分账、不缩面，剔除而非另记会当场红）；
+    ④ `partition_ok` / `overlap_rels` 自证（若分账面在场）。
+    返回 `(对外欠账, 过程稿登记, 旧尺总量)`。
+    """
+    total_raw = res.get(total_key)
+    assert isinstance(total_raw, list), f"取数口缺 `{total_key}` 总账栏＝R0 明令『总账栏不许消失』被破坏"
+    missing = [k for k in (debt_key, reg_key) if k not in res]
+    assert not missing, (
+        f"取数口缺 R0 两栏 {missing}＝席 S230（`scripts/spec_gates_census.py`）的分账口未生效；"
+        "本门独占面只有门文件，不代写取数口（那是第二真身），此红归因取数口、勿改本判据绕开。"
+    )
+    for k in (debt_key, reg_key):
+        value = res[k]
+        assert isinstance(value, list) and all(isinstance(e, str) for e in value), (
+            f"{k} 现算非 list[str]（在册形态＝条目名册）＝取数口改版，判红不判绿"
+        )
+    official, process = len(res[debt_key]), len(res[reg_key])  # type: ignore[arg-type]
+    old_total = len(total_raw)
+    assert official + process == old_total, (
+        f"R0 恒等式破裂（{total_key}）：对外欠账 {official} + 过程稿登记 {process} ≠ 总账 {old_total}"
+        "＝扫描面被缩（把过程稿*剔除*而非*另记*，违 R0『扫描面一寸不缩』）或两栏不同源。"
+    )
+    acc = res.get(acc_key)
+    if isinstance(acc, dict):
+        assert acc.get("partition_ok") is True, f"取数口自称分账不闭合：{acc.get('partition_ok')}"
+        assert acc.get("overlap_rels") == [], f"一条目同时进两栏（互斥被破坏）：{acc.get('overlap_rels')}"
+    return official, process, old_total
+
+
 def test_g_t1_every_content_page_declares_an_existing_template() -> None:
-    viol = _REAL["t1"]
-    assert len(viol) <= T1_CEILING, (
-        f"无模板头且非生成物的内容页 {len(viol)} > 上限 {T1_CEILING}＝又长了不受模板管辖的新页。"
+    """判据（R0 新尺）：**对外正式面**未套模板头者 <= 上限；过程件另栏登记、不进欠账。"""
+    viol = _real()["t1"]
+    official, process, old_total = _r0_columns(_real())
+    assert official <= T1_CEILING, (
+        f"对外正式面未套模板头 {official} 页 > 上限 {T1_CEILING}＝又长了不受模板管辖的正式文档。"
+        f"（同刻三值：旧尺总量 {old_total} = 对外欠账 {official} + 过程件登记 {process}；"
+        f"上限现值系 2026-09-25 按用户裁定 N5 经 approvals 通道由取数口现算重录（收紧，"
+        f"前值 1047 为旧尺首届核账值），出处＝scripts/spec_gates_ceiling_approvals.json。）"
         f"修法：页首加 `---\\ntemplate: <id>\\nparams:...\\n---`（模板不存在就先建模板，"
         f"模板先行是准绳）；确属生成物则去写盘口登记，别在这里加豁免。"
-        f"新增大户：{viol[-6:]}"
+        f"欠款名册（新尺，只点名对外面）：{_r0_rosters(_real())[0][-6:]}"
     )
-    assert viol, "一条都没数到＝取数口瞎了（现网确有上千页未迁移），不是大家都合规"
-    assert _REAL["page_total"] >= MIN_CONTENT_PAGES, (
-        f"只扫到 {min(_REAL['page_total'], 999999)} 张内容页（地板 {MIN_CONTENT_PAGES}）＝扫描面塌陷，"
+    # 旧尺总账活性地板（R0 后语义变更：这是**取数口没瞎**的活性证明，不是债的判据）。
+    assert viol, (
+        "旧尺总量一条都没数到＝取数口瞎了（现网确有上千页未迁移），不是大家都合规。"
+        "本腿判的是『扫描面还在不在』，绝不拿它当欠账数（欠账数见上面的对外正式面栏）。"
+    )
+    assert _real()["page_total"] >= MIN_CONTENT_PAGES, (
+        f"只扫到 {min(_real()['page_total'], 999999)} 张内容页（地板 {MIN_CONTENT_PAGES}）＝扫描面塌陷，"
         "不是「大家都合规」"
+    )
+
+
+def test_r0_debt_columns_split_official_from_process_pages(tmp_path: Path) -> None:
+    """R0 分账有牙（反向自测 + 正样控制，全程 tmp 副本、不落源码树一个字）：
+    同刻三值必须是「对外 1 / 过程件 1 / 旧尺 2」——过程件多写一页**不许**把欠账顶上去，
+    对外少套一头**必须**进欠账。旧断言只有一格，这两种形状混在一起分不开。
+    """
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    (root / ".superpowers" / "sdd" / "x").mkdir(parents=True)
+    (root / "docs" / "official-bare.md").write_text("# 对外正式面裸页\n\n正文。\n", encoding="utf-8")
+    (root / ".superpowers" / "sdd" / "x" / "SEAT-T-POISON.md").write_text(
+        "# 过程件裸页\n\n正文。\n", encoding="utf-8"
+    )
+    res = sc.compute(root)
+    official, process, old_total = _r0_columns(res)
+    assert official == 1, f"对外正式面裸页没被单独记进欠账栏（{official}）＝分账失明"
+    assert process == 1, f"过程件裸页没被记进登记栏（{process}）＝过程件又在污染欠账数"
+    assert old_total == 2, f"旧尺总账不再是两栏之和（{old_total}）＝扫描面被动过"
+
+
+def test_r0_process_page_cannot_dodge_debt_by_its_own_declaration(tmp_path: Path) -> None:
+    """R0 边界「伪装过程件仍须记债」：一张**对外路径**上的页，即便自带过程件的模板帽，
+    也绝不从债里消失——它要么留在欠账栏，要么被类别↔模板错配账当场点名（两读皆可，
+    但**不许两读皆空**）。判据分账按路径/注册表派生，绝按页面自报的帽子派生。
+    """
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    (root / "docs" / "fake-process.md").write_text(
+        "---\ntemplate: seat-report\nparams:\n  seat_id: T-FAKE\n  wave: w\n"
+        "  status: DONE\n  role: doc\n  report_class: auto:seat_class\n"
+        "  ledger_events: auto:page_stat:ledger\n---\n\n## 交付\n",
+        encoding="utf-8",
+    )
+    res = sc.compute(root)
+    official, process, _old_total = _r0_columns(res)
+    assert process == 0, f"对外路径页被算进过程件登记栏（{process}）＝按页面自报帽子分账，可被伪装"
+    named = [m for m in res["mismatch"] if isinstance(m, str) and "fake-process" in m]
+    assert official == 1 or named, (
+        "docs/ 下的页靠自报 `template: seat-report` 两头都不记账＝「伪装过程件」成了免债通道"
+        f"（欠账 {official}、错配账 {named}）"
+    )
+
+
+def test_r0_contract_read_is_fail_closed_against_fabricated_res() -> None:
+    """本席自证：`_r0_columns` 对「缺栏 / 总账栏消失 / 形态改版 / 恒等式破裂 / 分账互斥」各必红
+    （读不到绝不放行）。注毒全在内存造字典，不碰真树、不碰取数口。
+
+    **夹具形态改版说明（2026-09-23 主会话亲做，非放宽判据）**：首版（席 TX132）把在册形态写成
+    裸整数，而取数口 `scripts/spec_gates_census.py::compute()` 落地的是 **`list[str]` 名册**
+    （护栏二要求"可点名"）⇒ 第一行 `_r0_columns(base)` 就在「类型」断言上抛，
+    其后五发注毒**一次都没执行过**，却因整条用例红着而被当成"已自证"。
+    本次只改**喂进去的假数据形状**、一字不改判据本体；改完执行到的断言由 1 增至 8。
+    原「为负」一腿**改按可表达形态**：`len(名册)` 结构上不可能为负，
+    该危害由「形态改版即红」吸收（塞数字/塞 bool 一律拒），故不保留一条永远打不到的断言。
+    """
+    base: dict[str, object] = {
+        "t1": ["a.md", "b.md"],
+        "t1_debt_official": ["a.md"],
+        "t1_registered_process": ["b.md"],
+    }
+    assert _r0_columns(base) == (1, 1, 2)
+    # ① 取数口缺新栏＝分账口未生效，绝不按"零欠账"放行
+    with pytest.raises(AssertionError, match="尚未落地|R0 新两栏"):
+        _r0_columns({"t1": ["a.md"]})
+    # ② 旧尺总账栏消失＝R0 明令被破坏（哪怕两栏看着都在）
+    with pytest.raises(AssertionError, match="总账栏不许消失"):
+        _r0_columns({"t1_debt_official": [], "t1_registered_process": []})
+    # ③ 名册换成裸整数＝判据失去点名能力（TX132 首版夹具的那一形，今天必须红）
+    with pytest.raises(AssertionError, match="类型"):
+        _r0_columns(
+            {"t1": ["a.md", "b.md"], "t1_debt_official": 1, "t1_registered_process": 1}
+        )
+    # ④ bool 是 int 子类，同样拒（防"用 True 冒充有一页"）
+    with pytest.raises(AssertionError, match="类型"):
+        _r0_columns(
+            {"t1": ["a.md"], "t1_debt_official": True, "t1_registered_process": []}
+        )
+    # ⑤ 名册里混进非字符串条目＝改版
+    with pytest.raises(AssertionError, match="非字符串"):
+        _r0_columns(
+            {"t1": ["a.md"], "t1_debt_official": [1], "t1_registered_process": []}
+        )
+    # ⑥ 恒等式破裂＝少报一页（把过程件*剔除*而非*另记*的可表达形态）
+    with pytest.raises(AssertionError, match="恒等式破裂"):
+        _r0_columns(
+            {
+                "t1": ["a.md", "b.md", "c.md"],
+                "t1_debt_official": ["a.md"],
+                "t1_registered_process": ["b.md"],
+            }
+        )
+    # ⑦ 取数口自称分账不闭合
+    with pytest.raises(AssertionError, match="分账不闭合"):
+        _r0_columns(
+            {
+                **base,
+                "t1_accounting": {"partition_ok": False, "overlap_rels": []},
+            }
+        )
+    # ⑧ 一页同时进两本账＝两账互相补洞（总账按 3 条目记，恒等式先成立，才轮到互斥腿判红）
+    with pytest.raises(AssertionError, match="同时进两栏"):
+        _r0_columns(
+            {
+                "t1": ["a.md", "b.md", "b.md"],
+                "t1_debt_official": ["a.md", "b.md"],
+                "t1_registered_process": ["b.md"],
+                "t1_accounting": {"partition_ok": True, "overlap_rels": ["b.md"]},
+            }
+        )
+
+
+
+def test_r1_old_total_column_never_disappears() -> None:
+    """R0/R1 边界「总账栏不许消失、扫描面不许缩」的机器腿：旧尺总量 ≥ 首届核账值（缩面即红），
+    且 `--report` 那行原样还在（恒等式与两栏同源由 `_r0_columns` 逐刻锁）。
+    """
+    _official, _process, old_total = _r0_columns(_real())
+    assert old_total >= AUDIT_HISTORY_T1[0][1], (
+        f"旧尺总量 {old_total} 低于首届核账值 {AUDIT_HISTORY_T1[0][1]}＝扫描面被缩而不是分账"
+        "（R0 只分账、R1 明令不缩面）。真降账（页面被删除/并入生成物）须由该门 owner 核账后重录。"
+    )
+    assert f"G-T1 无模板头且非生成物 = {old_total}" in "\n".join(sc.report_lines(_real())), (
+        "`--report` 不再报旧尺总账＝总账栏在投影口消失了"
     )
 
 
 def test_g_t1_generated_exemption_names_its_producer_not_a_file_list() -> None:
     """生成物豁免必须点名取数口：四个写盘口各自现算、非空、且路径真存在。"""
-    gen = _REAL["generated_map"]
+    gen = _real()["generated_map"]
     for key in (
         "scripts/board_doc_sync.py:live_page_paths",
         "scripts/doc_sync.py:TARGET",
@@ -162,7 +432,7 @@ def test_g_t1_poison_bare_and_fake_template_pages_are_named(tmp_path: Path) -> N
 # G-T1面B 类别↔模板一致性（席 S2 加严腿，攻击依据 SEAT-T-ACCUSE F-2）
 # ---------------------------------------------------------------------------
 def test_g_t1b_class_template_mismatch_never_grows() -> None:
-    viol = _REAL["mismatch"]
+    viol = _real()["mismatch"]
     assert len(viol) <= MISMATCH_CEILING, (
         f"套了「不是它这一类」的在册模板的页 {len(viol)} > 上限 {MISMATCH_CEILING}"
         "（现值 0＝该类假合规一条都不该有）。修法：改页 front-matter 的 template: 为"
@@ -205,7 +475,7 @@ def test_g_t1b_poison_wrong_template_stays_in_t1_and_is_named(tmp_path: Path) ->
 # G-T5 第三边：类别 ↔ 模板 ↔ 页 三角闭合（席 S2 加严腿）
 # ---------------------------------------------------------------------------
 def test_g_t5_triangle_closure_pages_never_land_in_unreachable_class() -> None:
-    rows = _REAL["t5"]["pages_unreachable"]
+    rows = _real()["t5"]["pages_unreachable"]
     assert len(rows) <= T5_DEADCLASS_CEILING, (
         f"有 {len(rows)} 类（记账单位=类别，页数在文案里）页落到接不到在册模板的类别，"
         f"超上限 {T5_DEADCLASS_CEILING}。修法：为该类别在 docs/templates/ 建模板"
@@ -217,18 +487,141 @@ def test_g_t5_triangle_closure_pages_never_land_in_unreachable_class() -> None:
     )
 
 
-def test_g_t5_poison_triangle_third_edge_is_named(tmp_path: Path) -> None:
-    """反向自测（内存）：doc-misc 的在册模板 `guide` 未落地 ⇒ 压在该类下的每一页
-    都必须经第三边记红（G-T5 现只查两角的缺口）。"""
-    root = tmp_path / "repo"
-    (root / "docs").mkdir(parents=True)
-    (root / "docs" / "orphan.md").write_text("# 无头页\n\n正文。\n", encoding="utf-8")
-    res = sc.compute(root)
-    rows = res["t5"]["pages_unreachable"]
-    assert any(r.startswith("doc-misc:") for r in rows), (
-        f"页落在无模板类别却没记三角断链：{rows}"
+_S287_CID = "doc-misc"
+_S287_REL = "docs/orphan.md"
+
+
+def _s287_poison_class(monkeypatch: pytest.MonkeyPatch, *, template: str | None) -> None:
+    """内存把在册 md 类 `doc-misc` 的模板改成 `template`（`None`＝该桶压根没有模板）。
+
+    照抄活体先例 `tests/test_g_t5_third_edge_liveness.py::_docmisc_with_template` 与
+    席 S164 的 `_s164_bucket`：**两份注册表视图同步改**（`CONTENT_CATEGORIES` 与
+    `CATEGORIES_BY_ID`），teardown 自动还原。这是构造「类别在册但该桶无模板」的**唯一手段**
+    ——不改 `scripts/**`（公共只读面）、不落盘、不新建第二套分类表。
+    """
+    rows: list[dt.CategoryDef] = []
+    for c in dt.CONTENT_CATEGORIES:
+        if c.cid == _S287_CID:
+            rows.append(
+                dt.CategoryDef(
+                    cid=c.cid, template=template, surface=c.surface, owner_board=c.owner_board,
+                    generated_by=c.generated_by, code_home=c.code_home,
+                    reason="S287 内存注毒件（不是真类别状态、不落盘）",
+                )
+            )
+        else:
+            rows.append(c)
+    monkeypatch.setattr(dt, "CONTENT_CATEGORIES", tuple(rows))
+    monkeypatch.setattr(dt, "CATEGORIES_BY_ID", {x.cid: x for x in rows})
+
+
+def _s287_assert_poison_took_effect(*, want_template: str | None) -> None:
+    """注毒前提自证（fail-closed，#9=准「执法更强」的那一半）。
+
+    两问分开查，缺一即炸：
+    ① **视图真被改了吗**——`CATEGORIES_BY_ID[cid].template` 必须等于本次宣称要注入的值。
+      否则本条退化成「什么都没改还盼它红」的空跑（统一波自打脸账同型：注毒用例写死
+      受害 cid ⇒ 毒腿空跑仍报绿）。
+    ② **该桶还归本腿管辖吗**——`should_have_template`（`spec_gates_census.py:447`）是
+      「在册 md 面、非生成器所有」的**管辖**谓词，跟「有没有模板」是两回事；注毒注入的
+      正是「归管辖、却没有模板」这一形状。管辖面若被顺带毒掉（误改 surface/generated_by），
+      注的就不是本腿要防的那件事，同样判红。
+    """
+    got = dt.CATEGORIES_BY_ID[_S287_CID].template
+    assert got == want_template, (
+        f"内存注毒未生效（{_S287_CID}.template 实为 {got!r}，期望 {want_template!r}）"
+        "＝本条将空跑，判红不判绿"
     )
-    assert "1 页" in next(r for r in rows if r.startswith("doc-misc:"))
+    assert sc.should_have_template(_S287_CID) is True, (
+        f"{_S287_CID} 已不归 G-T5 第三边管辖＝注毒注的不是本腿要防的形状（管辖面被顺带改坏）"
+    )
+
+
+def _s287_root(tmp_path: Path) -> Path:
+    """临时副本里放一张无头页，使其落到 `_S287_CID` 桶；返回 `compute(root)` 的 root。
+
+    `exist_ok=True`：一枚用例内多次换形状现算时同页复用会 `FileExistsError`＝自炸非判据红。
+    """
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True, exist_ok=True)
+    (root / "docs" / "orphan.md").write_text("# 无头页\n\n正文。\n", encoding="utf-8")
+    assert dts.classify(_S287_REL) == _S287_CID, "取数口改版：该页不再落到 doc-misc，注毒前提塌"
+    return root
+
+
+def _s287_third_edge_rows(res: dict[str, object]) -> list[str]:
+    """fail-closed 读第三边，并只筛本席载体类别（不把读不到当合规）。"""
+    t5 = res["t5"]
+    assert isinstance(t5, dict), f"取数口缺 t5 或类型异常（{type(t5)}）＝读口失明，判红不判绿"
+    rows = t5["pages_unreachable"]
+    assert isinstance(rows, list), f"pages_unreachable 不是 list（{type(rows)}）＝取数口改版"
+    assert all(isinstance(r, str) for r in rows), "三角断链元素非字符串＝取数口返回类型异常"
+    return [r for r in rows if r.startswith(f"{_S287_CID}:")]
+
+
+def test_g_t5_poison_triangle_third_edge_is_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G-T5 第三边**反证腿**（席 S287，2026-09-23，用户裁定 #9=准：改内存注毒）。
+
+    旧例（席 T-GATES 原形）是「往 tmp 副本塞一张无头页 ⇒ 盼 `doc-misc` 的在册模板 `guide`
+    **恰好**没落地」。那个前提**结构性不成立**：`compute()` 的 `schemas` 恒从绝对
+    `doc_template_sync.TEMPLATE_DIR` 装载、不吃 `root=` 形参，而 `guide` 自 HEAD `31467b4`
+    起是真模板 ⇒ 该用例与「第三边有没有牙」再无关系，只是**永远红的常数**
+    （PARKED **P-42** 原话「已退化成『永远红的常数』」，推荐 A＝内存注毒替身）。
+
+    现在的形状：主动往注册表造一枚「在册但无模板」的类别（内存、不落盘），再断言第三边
+    **必须**点名它。⇒ 债被正当清零时本条仍绿（不再假红），而取数口一旦瞎掉本条立刻红
+    （执法比旧例更强）。
+    """
+    _s287_poison_class(monkeypatch, template=None)  # 在册 md 类、该桶压根没有模板
+    _s287_assert_poison_took_effect(want_template=None)
+    rows = _s287_third_edge_rows(sc.compute(_s287_root(tmp_path)))
+    assert len(rows) == 1, f"注毒（在册但无模板的类别）没被第三边点名＝反证腿没牙：{rows}"
+    assert "1 页" in rows[0], f"断链按页计数没落进文案（记账单位异常）：{rows}"
+
+
+def test_g_t5_poison_leg_keeps_reachable_class_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """正样控制（合规必绿）：同一张页、同一个类别，只把模板换回可装载的 `guide` ⇒ 零断链。
+
+    本腿绝不是什么「有页就判红」的钝尺；判据必须看得见合法件本身（六件套骨架第⑥条）。
+    """
+    _s287_poison_class(monkeypatch, template="guide")
+    _s287_assert_poison_took_effect(want_template="guide")
+    rows = _s287_third_edge_rows(sc.compute(_s287_root(tmp_path)))
+    assert rows == [], f"模板可达的类别被误记三角断链（钝尺误杀，正样控制失败）：{rows}"
+
+
+def test_g_t5_zero_debt_does_not_bark() -> None:
+    """清零不假红（旧地板腿摘牌后的替代自证）：真树现算，两本 G-T5 账归零时门必须绿着通过。
+
+    旧 `test_g_t5_no_class_without_a_template` 尾部那枚 `assert missing` 在债归零后必红
+    （见该函数内的摘牌注释）。本条把它想防的事换成**主动**证明：先把真树的数值读出来，
+    再确认「上限腿」对 0 是放行态度——而不是靠「真树里至少还得有一条债」续命。
+    """
+    t5 = _real()["t5"]
+    missing = t5["missing_template"]
+    deadclass = t5["pages_unreachable"]
+    assert isinstance(missing, list) and isinstance(deadclass, list), "取数口返回类型异常＝读口失明"
+    assert len(missing) <= T5_MISSING_TEMPLATE_CEILING, (
+        f"无模板类别 {len(missing)} 超上限＝上限腿该红（那是真债，不是假红）"
+    )
+    assert len(deadclass) <= T5_DEADCLASS_CEILING, (
+        f"三角闭合断链 {len(deadclass)} 超上限＝上限腿该红（那是真债，不是假红）"
+    )
+
+
+def test_g_t5_silent_poison_is_detected() -> None:
+    """第四发自证（把注毒改坏时必须测得到）：空跑的注毒一律被前提自证炸掉。
+
+    这里**故意**只把模板改成它本来的值却宣称改成 `None`——注毒没落地。若这种空跑不被发现，
+    上面的反证腿就会退化成旧例那种「红/绿都不说明问题」的常数。断言必抛＝本条绿；
+    一旦有人把 `_s287_assert_poison_took_effect` 删了或改成永真，反证腿立刻红。
+    """
+    with pytest.raises(AssertionError):
+        _s287_assert_poison_took_effect(want_template=None)  # 真注册表里 doc-misc 有 guide＝毒没生效
 
 
 # ---------------------------------------------------------------------------
@@ -256,12 +649,19 @@ def test_g_t2_section_ruler_sees_three_poison_shapes() -> None:
 # G-T4
 # ---------------------------------------------------------------------------
 def test_g_t4_schema_and_render_params_stay_aligned() -> None:
-    viol = _REAL["t4"]
-    assert len(viol) <= T4_CEILING, (
-        f"@schema 与实际渲染参数不对齐 {len(viol)} 项（上限 {T4_CEILING}，模板体系无存量债）：\n"
-        + "\n".join(viol[:12])
+    # 席 S230（R0=A）：判债对象由「旧尺总量」改为「对外正式面欠账」（与 G-T1 同口径）；
+    # 过程稿（`.superpowers/**` 席位报告/简报/台账）另栏登记、不进欠账——扫描面一寸不缩、
+    # 上限 T4_CEILING 一字不动（本枚今日仍 =0），旧尺总账仍被恒等式与活性证明钉着。
+    official, process, old_total = _r0_pair(
+        _real(), "t4", "t4_debt_official", "t4_registered_process", "t4_accounting"
     )
-    assert len(_REAL["schemas"]) >= MIN_TEMPLATES, "模板面为空＝G-T4 变成空门"
+    assert official <= T4_CEILING, (
+        f"对外正式面 @schema/实参不对齐 {official} 项（上限 {T4_CEILING}，模板体系对外无存量债）：\n"
+        + "\n".join(_real()["t4_debt_official"][:12])
+        + f"\n（同刻三值：旧尺总账 {old_total} = 对外欠账 {official} + 过程稿登记 {process}；"
+        + "过程稿的体检债另册可见，不因分账而隐身。）"
+    )
+    assert len(_real()["schemas"]) >= MIN_TEMPLATES, "模板面为空＝G-T4 变成空门"
 
 
 def test_g_t4_poisons_missing_extra_dead_param_and_bad_provider() -> None:
@@ -368,7 +768,7 @@ def test_g_t4_poison_req_param_must_actually_come_from_provider(
 # G-T5
 # ---------------------------------------------------------------------------
 def test_g_t5_category_set_equals_census_section_one() -> None:
-    t5 = _REAL["t5"]
+    t5 = _real()["t5"]
     assert t5["census_count"] >= MIN_CENSUS_CLASSES, (
         f"只从 CENSUS §一 解析出 {t5['census_count']} 个类别名＝判据源改版或表格变形，门必须复核"
     )
@@ -384,13 +784,38 @@ def test_g_t5_category_set_equals_census_section_one() -> None:
 
 
 def test_g_t5_no_class_without_a_template() -> None:
-    missing = _REAL["t5"]["missing_template"]
+    missing = _real()["t5"]["missing_template"]
     assert len(missing) <= T5_MISSING_TEMPLATE_CEILING, (
         f"无对应模板的内容类别 {len(missing)} > 上限 {T5_MISSING_TEMPLATE_CEILING}。"
         f"每类一份模板是准绳；修法=为该类别建 docs/templates/<id>.md（含 @schema），"
         f"或在注册表把它并入已有类别。欠款大户：{missing[:8]}"
     )
-    assert missing, "一条都没数到＝注册表与模板目录对不上眼时门会空跑"
+    # ─────────────────────────────────────────────────────────────────────────
+    # 旧地板腿（席 T-GATES 原句，**判据本体保留在此、不删**）：
+    #     assert missing, "一条都没数到＝注册表与模板目录对不上眼时门会空跑"
+    #
+    # 摘牌（席 S287，2026-09-23，用户裁定 **#9=准**；PARKED **P-42** 推荐 A）
+    #
+    # 它当初防什么：`missing_template` 取数口若瞎掉、恒返回 `[]`，那么「零欠款」是假象，
+    #   上限腿 `<= 18` 对空集合恒真 ⇒ 门会**空跑而自称合规**。这属本项目反复记账的
+    #   「空集合恒真」那一族假绿，当年用地板句挡它，方向是对的。
+    #
+    # 为什么现在必须摘：这本账的**合法终态就是 0**（本文件 :51 注释原话「终态 0」）。
+    #   债被正当清零之后（`--report` 现算 `G-T5 无模板类别 = 0`，销债席 S167/S213），
+    #   「至少还得数到一条」就**必然红**——红的原因不是有人违规，而是债真被还清了。
+    #   即 PARKED P-42 判定的「已退化成永远红的常数」、P-52 表第 2 行「无模板类别被正当
+    #   清零 ⇒ 注毒样本无从附着、毒腿空转」。**它从防假绿的门，变成了造假红的门。**
+    #
+    # 摘牌后靠什么防同一件事（方向＝执法更强，非缩面）：地板腿是**间接**证据（赌真树里
+    #   恰好还有债），现由 `test_g_t5_poison_triangle_third_edge_is_named` 的**内存注毒**
+    #   当场**主动**造一枚无模板类别并断言必被点名＝直接证据；再加
+    #   `test_g_t5_silent_poison_is_detected`（注毒空跑必炸）与
+    #   `test_g_t5_zero_debt_does_not_bark`（归零不得判红）两枚。三枚任被改坏即红，
+    #   覆盖面严格大于旧地板句，且不再随债的清偿而失真。
+    #
+    # 未动的东西（禁线自证）：上限腿一字未改、`T5_MISSING_TEMPLATE_CEILING` 一字未降、
+    #   无 skip/xfail、无豁免注释、`_BASELINE_*` 未碰。
+    # ─────────────────────────────────────────────────────────────────────────
 
 
 def test_g_t5_registry_has_a_single_home() -> None:
@@ -431,10 +856,74 @@ def test_g_t5_poison_class_without_template_is_named(monkeypatch: pytest.MonkeyP
 
 
 # ---------------------------------------------------------------------------
+# R3（A 案）补的一枚机器腿：「内存注毒」与「改真身注册表」的差别，必须有人盯着。
+# ---------------------------------------------------------------------------
+def _r3_source_template_literals() -> dict[str, str | None]:
+    """从 `scripts/doc_templates.py` 的**源码字面量**现解析 `cid -> template`（不吃内存视图）。
+
+    解析不到任何 `CategoryDef(...)` 就返回空表，由调用方的「有牙自证」当场判红——
+    判据改版时本腿宁可红，也不许退化成「两边都空 ⇒ 相等 ⇒ 绿」。
+    """
+    src = (REPO_ROOT / "scripts" / "doc_templates.py").read_text(encoding="utf-8")
+    out: dict[str, str | None] = {}
+    for node in ast.walk(ast.parse(src)):
+        if not (isinstance(node, ast.Call) and getattr(node.func, "id", "") == "CategoryDef"):
+            continue
+        cid: str | None = None
+        template: str | None = None
+        seen_template = False
+        for kw in node.keywords:
+            if kw.arg == "cid" and isinstance(kw.value, ast.Constant):
+                cid = kw.value.value  # type: ignore[assignment]
+            elif kw.arg == "template":
+                seen_template = True
+                if isinstance(kw.value, ast.Constant):
+                    template = kw.value.value  # type: ignore[assignment]
+        if cid and seen_template:
+            out[cid] = template
+    return out
+
+
+def _r3_drift(literal: dict[str, str | None], live: dict[str, str | None]) -> dict[str, tuple[str | None, str | None]]:
+    """返回「内存视图 ≠ 源码字面量」的类别；空表＝注册表没被残留的注毒污染。"""
+    return {
+        cid: (live.get(cid), tpl)
+        for cid, tpl in literal.items()
+        if live.get(cid) != tpl
+    }
+
+
+def test_r3_in_memory_poison_auto_restores_and_never_touches_the_registry() -> None:
+    """R3 要求「测完自动还原」——这条就是把『自动还原』变成可判红的事实（席 TX132，2026-09-23）。
+
+    为什么需要它：A 案把落盘注毒换成内存注毒（`_s287_poison_class` 摘 `doc-misc`、
+    `test_g_t5_poison_class_without_template_is_named` 摘 `handbook`，均经 `monkeypatch`）。
+    但「用了 monkeypatch」本身不产证据——**一旦有人改成直接给模块赋值、或把注毒落盘去改
+    `scripts/doc_templates.py`**，全文件的 G-T5 账就会跟着被污染的注册表一起自证自绿。
+    本腿按 pytest 的**源码顺序**跑在两枚注毒腿之后，拿源码字面量对照内存视图：
+    ① 两边必须一致（残留即红）；② 漂移检测自身有牙（造一枚假漂移必被看见，防空跑）。
+    """
+    literal = _r3_source_template_literals()
+    assert literal, "从 doc_templates.py 解析不到 CategoryDef 字面量＝取样口改版，本腿会空跑"
+    live = {c.cid: c.template for c in dt.CONTENT_CATEGORIES}
+    assert len(literal) >= MIN_CENSUS_CLASSES, (
+        f"只解析出 {len(literal)} 枚注册表字面量（地板 {MIN_CENSUS_CLASSES}）＝取样口塌陷"
+    )
+    # ② 有牙自证：先把检测器自己测一遍，免得①退化成恒真。
+    assert _r3_drift(literal, {**live, "doc-misc": None}), "漂移检测空跑＝本腿没牙，判红不判绿"
+    # ① 真判据：注毒必已还原。
+    drifted = _r3_drift(literal, live)
+    assert not drifted, (
+        f"内存注毒未还原，在册视图与源码字面量不符：{drifted}"
+        "＝G-T5 的账开始跟着被污染的注册表走（R3 A 案的『自动还原』承诺被破坏）"
+    )
+
+
+# ---------------------------------------------------------------------------
 # G-T3 面 B（未迁移页；面 A 在板块门 `test_board_docs_do_not_handwrite_volatile_counts`）
 # ---------------------------------------------------------------------------
 def test_g_t3_unmoved_face_debt_never_grows() -> None:
-    hits = _REAL["t3_unmoved"]
+    hits = _real()["t3_unmoved"]
     assert len(hits) <= T3_UNMOVED_CEILING, (
         f"未迁移页含裸写一次性事实 {len(hits)} 页 > 上限 {T3_UNMOVED_CEILING}＝又添了新的未受管页面。"
         f"修法：该页迁移到模板（页首 front-matter + 事实走 `auto:`/`{{fact:KEY}}` 引用），"
@@ -511,42 +1000,314 @@ def test_ceilings_are_hand_written_literals() -> None:
             )
 
 
+class _AuditRow(NamedTuple):
+    """一条核账账本。两枚开关把「方向锁」「反调大锁」「判债锁」分开——R0 换尺后
+    T1 的判债对象是**新尺对外欠账**；上限原按旧尺首届值（1047）在册，2026-09-25 经用户
+    裁定 N5 走 approvals 通道**收紧**重录为取数口现算值（放宽仍被结构性拒收：
+    `ceiling_pinned_here` 行与点名册 pin 腿都不放行），三把锁因此不同于一行；
+    分开写死，就不许任何人以「换尺」为名把上限调大。
+    """
+
+    label: str
+    history: tuple[tuple[str, int], ...]
+    ceiling: int
+    current: int
+    judged_by_ceiling: bool  # 现算值 <= 上限（真判债）
+    ceiling_pinned_here: bool  # 上限 <= 首届核账值（反调大换绿）
+
+
 def test_audit_histories_never_rise() -> None:
-    pairs = (
-        (AUDIT_HISTORY_T1, T1_CEILING, len(_REAL["t1"])),
-        (AUDIT_HISTORY_T3B, T3_UNMOVED_CEILING, len(_REAL["t3_unmoved"])),
-        (AUDIT_HISTORY_T4, T4_CEILING, len(_REAL["t4"])),
-        (AUDIT_HISTORY_T5, T5_MISSING_TEMPLATE_CEILING, len(_REAL["t5"]["missing_template"])),
-        (AUDIT_HISTORY_MISMATCH, MISMATCH_CEILING, len(_REAL["mismatch"])),
-        (
+    official, process, old_total = _r0_columns(_real())
+    # 席 S230（R0=A）：T4 与 G-T1 同判——上限属旧尺首届值，判债对象换成「对外正式面欠账」。
+    _t4_official, _t4_process, _t4_total = _r0_pair(
+        _real(), "t4", "t4_debt_official", "t4_registered_process", "t4_accounting"
+    )
+    rows = (
+        # —— R0 新尺：判债只量「对外正式面」欠账；反调大锁由下一行（旧尺首届值 1047 作硬顶）
+        #    与点名册 pin 腿承担，本行不重复持锁。
+        _AuditRow("T1 对外欠账（R0 新尺）", AUDIT_HISTORY_T1_OFFICIAL, T1_CEILING, official, True, False),
+        # —— 旧尺总账：R0 后降级为**登记栏**（不再判债），但仍是「上限不许高于旧尺首届核账值」
+        #    的凭据与本门的缩面自证对象；上限一旦被人抬过 1047，本行立刻红。
+        _AuditRow("T1 旧尺总账（登记栏）", AUDIT_HISTORY_T1, T1_CEILING, old_total, False, True),
+        _AuditRow("T3面B", AUDIT_HISTORY_T3B, T3_UNMOVED_CEILING, len(_real()["t3_unmoved"]), True, True),
+        _AuditRow("T4", AUDIT_HISTORY_T4, T4_CEILING, _t4_official, True, True),
+        _AuditRow(
+            "T5无模板类别",
+            AUDIT_HISTORY_T5,
+            T5_MISSING_TEMPLATE_CEILING,
+            len(_real()["t5"]["missing_template"]),  # type: ignore[index]
+            True,
+            True,
+        ),
+        _AuditRow("面B错配", AUDIT_HISTORY_MISMATCH, MISMATCH_CEILING, len(_real()["mismatch"]), True, True),
+        _AuditRow(
+            "T5三角断链",
             AUDIT_HISTORY_T5_DEADCLASS,
             T5_DEADCLASS_CEILING,
-            len(_REAL["t5"]["pages_unreachable"]),
+            len(_real()["t5"]["pages_unreachable"]),  # type: ignore[index]
+            True,
+            True,
         ),
     )
-    for history, ceiling, current in pairs:
-        counts = [n for _d, n in history]
-        assert counts == sorted(counts, reverse=True), f"核账记录出现回升（方向锁）：{history}"
-        assert ceiling <= counts[0], f"上限 {ceiling} 超过首届核账值 {counts[0]}＝调大换绿"
-        assert current <= ceiling, f"现算值 {current} 已超上限 {ceiling}"
+    assert official + process == old_total
+    for row in rows:
+        counts = [n for _d, n in row.history]
+        assert counts == sorted(counts, reverse=True), (
+            f"核账记录出现回升（方向锁）：{row.label} {row.history}"
+        )
+        if row.ceiling_pinned_here:
+            assert row.ceiling <= counts[0], (
+                f"{row.label}：上限 {row.ceiling} 超过首届核账值 {counts[0]}＝调大换绿"
+            )
+        if row.judged_by_ceiling:
+            assert row.current <= row.ceiling, (
+                f"{row.label}：现算值 {row.current} 已超上限 {row.ceiling}"
+                "（R0：换尺不许变成放水，超了就红着，既不升上限也不缩扫描面）"
+            )
+
+
+def test_r0_ceiling_still_pinned_to_old_ruler_first_audit() -> None:
+    """R0 反调大自证（独立一枚，别与方向锁混在一行的 if 里）：`T1_CEILING` 一字不许**私自**动过。
+
+    注毒形状＝有人把上限从旧尺首届核账值抬到能盖住旧尺总量的值 ⇒ 本行与上一行的
+    `ceiling_pinned_here` 同时红；降账/重录合法，但**必须**经 N5 的 approvals 通道
+    （见 `_t1_ceiling_approval`），并与核账序列同批重录——改数不改册、删册留数都红。
+    """
+    assert AUDIT_HISTORY_T1[0][1] == 1047, "旧尺首届核账值被改写＝换尺时顺手擦了凭据"
+    assert T1_CEILING <= AUDIT_HISTORY_T1[0][1], (
+        f"T1_CEILING={T1_CEILING} 高于旧尺首届核账值 {AUDIT_HISTORY_T1[0][1]}＝调大换绿；"
+        "放宽上限属造绿六禁第一条，N5 通道只收『取数口现算的收紧重录』"
+    )
+    state, detail, entry = _t1_ceiling_approval()
+    if state == "absent":
+        assert T1_CEILING == AUDIT_HISTORY_T1[0][1], (
+            f"T1_CEILING 被改为 {T1_CEILING} 而 approvals 册无有效批准（{detail}）"
+            "＝R0 明令未经批准不许动；须与核账同批重录"
+        )
+    elif state == "invalid":
+        pytest.fail(
+            f"T1_CEILING 的 approvals 册在场但失效：{detail} ⇒ 视同无批准，"
+            f"上限须回到 {AUDIT_HISTORY_T1[0][1]}（现值 {T1_CEILING}）——坏册不是放行通道"
+        )
+    else:
+        assert entry is not None
+        assert int(entry["old_ceiling"]) == AUDIT_HISTORY_T1[0][1], (  # type: ignore[call-overload]
+            f"批准册锚的前值 {entry['old_ceiling']} ≠ 旧尺首届核账值 {AUDIT_HISTORY_T1[0][1]}"
+            "＝册与凭据脱锚（擦锚重录＝换尺时擦凭据的同型）"
+        )
+        assert T1_CEILING == int(entry["new_ceiling"]), (  # type: ignore[call-overload]
+            f"上限常量 {T1_CEILING} ≠ 在册批准值 {entry['new_ceiling']}＝改数不改册或改册不改数；"
+            "注毒形状『把重录后的上限调回旧值』正打在此腿"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 席 S265（用户裁定 N5）—— `T1_CEILING` 偏离旧尺首届值的唯一通道：approvals 册
+#   数值由该门自己的取数口现算（本读取口只**消费**登记结果，不重算＝禁第二真身）；
+#   形态先例＝scripts/shim_refs_approvals.json（缺字段/过期 ⇒ 不批、门诚实红）。
+# ---------------------------------------------------------------------------
+#: 册路径（一枚常数＝一处出处；判据只认这一本，别处出现的同名录不消费）。
+_T1_CEILING_APPROVALS_PATH = REPO_ROOT / "scripts" / "spec_gates_ceiling_approvals.json"
+
+#: 条目必填字段（缺一即失效）。尺身份三元组＝file/function/command，另要求
+#: 现算时刻与证据命令全文在册（N5：禁把数硬写进常量而不留出处）。
+_T1_APPROVAL_REQUIRED_FIELDS: tuple[str, ...] = (
+    "constant",
+    "gate",
+    "old_ceiling",
+    "new_ceiling",
+    "direction",
+    "ruler_identity",
+    "measured_three_values",
+    "evidence_command_full",
+    "computed_at_utc",
+    "approved_by",
+    "reason",
+    "expiry",
+)
+
+
+def _t1_approval_moment(raw: object, field: str) -> datetime | str:
+    """解析册内 ISO 时刻；返回 `datetime` 或（失败时的）人话失效原因。必须带时区。"""
+    if not isinstance(raw, str) or not raw.strip():
+        return f"{field} 缺失或非字符串"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return f"{field} 不是可解析 ISO 时刻：{raw!r}"
+    if parsed.tzinfo is None:
+        return f"{field} 无时区（不许拿本地钟当 UTC）：{raw!r}"
+    return parsed
+
+
+def _t1_ceiling_approval(
+    path: Path = _T1_CEILING_APPROVALS_PATH,
+    now: datetime | None = None,
+) -> tuple[str, str, Mapping[str, object] | None]:
+    """fail-closed 读 `T1_CEILING` 的重录批准。返回 `(状态, 说明, 条目|None)`。
+
+    - `absent`：册文件不存在，或册里没有 `constant == "T1_CEILING"` 的条目 ⇒ **无批准**
+      （不是放行——判据据此要求上限仍＝旧尺首届值）；
+    - `invalid`：册在场但不可用＝一律红，不许塌回"当没批准"的放行通道（否则"把册写坏"
+      本身成了旁路）：JSON 不可解析／`approvals` 非列表／同名条目多于一枚（无法判定现行）／
+      必填字段缺失或为空／两枚数值不是整数／方向不是收紧（new < old）／
+      时刻不可解析或无时区／**已过期（临时件只准缩、不许自我豁免）**；
+    - `ok`：一枚形态完备、未过期、严格收紧的条目 ⇒ 在册批准值现行。
+    """
+    if not path.exists():
+        return ("absent", f"册不存在：{path.name}", None)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return ("invalid", f"册不可解析：{exc}", None)
+    if not isinstance(data, dict) or not isinstance(data.get("approvals"), list):
+        return ("invalid", "顶层缺 `approvals` 列表＝册形态改版", None)
+    entries = [
+        e
+        for e in data["approvals"]
+        if isinstance(e, dict) and str(e.get("constant", "")) == "T1_CEILING"
+    ]
+    others = sum(
+        1
+        for e in data["approvals"]
+        if isinstance(e, dict) and str(e.get("constant", "")).startswith("T1_CEILING")
+        and str(e.get("constant")) != "T1_CEILING"
+    )
+    if others:
+        return ("invalid", "出现改名近亲条目（如 T1_CEILING_V2）＝旁路册", None)
+    if not entries:
+        return ("absent", "册内无 T1_CEILING 条目", None)
+    if len(entries) > 1:
+        return ("invalid", f"同名条目 {len(entries)} 枚＝无法判定哪枚现行", None)
+    entry = entries[0]
+    for field in _T1_APPROVAL_REQUIRED_FIELDS:
+        value = entry.get(field)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return ("invalid", f"必填字段 {field} 缺失或为空", None)
+    try:
+        old = int(entry["old_ceiling"])
+        new = int(entry["new_ceiling"])
+    except (TypeError, ValueError):
+        return ("invalid", "old_ceiling/new_ceiling 不是整数", None)
+    if new >= old:
+        return ("invalid", f"方向不是收紧（new {new} ≥ old {old}）＝放宽须用户逐次数值点头，本通道不收", None)
+    ri = entry["ruler_identity"]
+    if not isinstance(ri, dict) or not all(
+        isinstance(ri.get(k), str) and str(ri.get(k)).strip() for k in ("file", "function", "command")
+    ):
+        return ("invalid", "尺身份三元组 file/function/command 不齐＝数不知道是谁算的", None)
+    clock = now or datetime.now(timezone.utc)
+    for field in ("computed_at_utc", "expiry"):
+        moment = _t1_approval_moment(entry.get(field), field)
+        if isinstance(moment, str):
+            return ("invalid", moment, None)
+        if field == "expiry" and clock > moment:
+            return ("invalid", f"批准已过期（expiry {entry[field]}）＝到期未由 owner 携新证据续册，诚实红", None)
+        if field == "computed_at_utc" and moment > clock:
+            return ("invalid", f"现算时刻 {entry[field]} 晚于当下＝证据是先写好的", None)
+    return ("ok", "", entry)
+
+
+def test_t1_approval_reader_is_fail_closed(tmp_path: Path) -> None:
+    """本腿自证（全走 tmp 副本，不碰真册一个字节）：absent/invalid/ok 三态各打各的毒形。"""
+
+    def good_entry(**over: object) -> dict[str, object]:
+        base: dict[str, object] = {
+            "constant": "T1_CEILING",
+            "gate": "G-T1",
+            "old_ceiling": 1047,
+            "new_ceiling": 500,
+            "direction": "收紧",
+            "ruler_identity": {"file": "scripts/spec_gates_census.py", "function": "compute()", "command": "--report"},
+            "measured_three_values": {"t1_debt_official": 500},
+            "evidence_command_full": "date -u => 2026-09-24T20:21:50Z; report 现算 500",
+            "computed_at_utc": "2026-01-01T00:00:00+00:00",
+            "approved_by": "S265 自证夹具（不是真批准）",
+            "reason": "reader 反向自测",
+            "expiry": "2099-01-01T00:00:00+00:00",
+        }
+        base.update(over)
+        return base
+
+    def write_register(entries: object) -> Path:
+        p = tmp_path / "register.json"
+        p.write_text(json.dumps({"approvals": entries}), encoding="utf-8")
+        return p
+
+    # ① 册不存在 ⇒ absent（放行与否由 pin 腿据此要求回 1047，不在读取口判绿）
+    assert _t1_ceiling_approval(tmp_path / "not-here.json")[0] == "absent"
+    # ② 正常一枚 ⇒ ok
+    state, _d, entry = _t1_ceiling_approval(write_register([good_entry()]))
+    assert state == "ok" and entry is not None and int(entry["new_ceiling"]) == 500  # type: ignore[call-overload]
+    # ③ 过期 ⇒ invalid（临时件不许自我豁免）
+    assert _t1_ceiling_approval(write_register([good_entry(expiry="2020-01-01T00:00:00+00:00")]))[0] == "invalid"
+    # ④ 放宽方向 ⇒ invalid
+    assert _t1_ceiling_approval(write_register([good_entry(new_ceiling=1100)]))[0] == "invalid"
+    # ⑤ 缺出处（reason 为空串）⇒ invalid
+    assert _t1_ceiling_approval(write_register([good_entry(reason="  ")]))[0] == "invalid"
+    # ⑥ 同名两枚 ⇒ invalid（无法判定哪枚现行）
+    assert _t1_ceiling_approval(write_register([good_entry(), good_entry()]))[0] == "invalid"
+    # ⑦ JSON 烂册 ⇒ invalid（坏册不是旁路）
+    rotten = tmp_path / "rotten.json"
+    rotten.write_text("{not json", encoding="utf-8")
+    assert _t1_ceiling_approval(rotten)[0] == "invalid"
+    # ⑧ 时刻无时区 ⇒ invalid（不许拿本地钟当 UTC）
+    assert _t1_ceiling_approval(write_register([good_entry(computed_at_utc="2026-01-01T00:00:00")]))[0] == "invalid"
+    # ⑨ 现算时刻晚于当下 ⇒ invalid（证据不许是未来写的）
+    late = write_register([good_entry(computed_at_utc="2098-01-01T00:00:00+00:00")])
+    assert _t1_ceiling_approval(late, now=datetime(2026, 1, 2, tzinfo=timezone.utc))[0] == "invalid"
 
 
 def test_report_and_gate_read_the_same_numbers() -> None:
     """单一取数口自证：`--report` 打印的每个数＝本门判据用的同一个现算值。"""
-    lines = "\n".join(sc.report_lines(_REAL))
-    assert f"G-T1 无模板头且非生成物 = {len(_REAL['t1'])}" in lines
+    lines = "\n".join(sc.report_lines(_real()))
+    assert f"G-T1 无模板头且非生成物 = {len(_real()['t1'])}" in lines
+    # —— R0 分账后的同刻自证：投影口必须把**新尺两栏**也报出来，且与判据同一支现算值。
+    #    形如「同一条 G-T1 行内含两栏」或「两条 G-T1 行各含一栏」皆放行（措辞归席 TX130，
+    #    本腿只锁「两栏都在 G-T1 投影面上、数值与判据同刻同源」，不锁文案）。
+    official, process, _old_total = _r0_columns(_real())
+    g_t1_lines = [ln for ln in lines.splitlines() if ln.startswith("G-T1")]
+    assert g_t1_lines, "投影口不再有任何 G-T1 行＝G-T1 整栏从 report 消失"
+    both = [ln for ln in g_t1_lines if str(official) in ln and str(process) in ln]
+    split = any(str(official) in ln for ln in g_t1_lines) and any(
+        str(process) in ln for ln in g_t1_lines
+    )
+    assert both or split, (
+        f"`--report` 未把 R0 新两栏（对外欠账 {official} / 过程件登记 {process}）报在 G-T1 行内"
+        "＝report 与判据各按一套账（席 TX130 的投影口欠一行）。"
+    )
     assert (
-        f"G-T1面B 类别↔模板错配页（TEMPLATE_CATEGORY_MISMATCH）= {len(_REAL['mismatch'])}"
+        f"G-T1面B 类别↔模板错配页（TEMPLATE_CATEGORY_MISMATCH）= {len(_real()['mismatch'])}"
         in lines
     )
-    assert f"G-T2 小节偏离页 = {len(_REAL['t2'])}" in lines
+    assert f"G-T2 小节偏离页 = {len(_real()['t2'])}" in lines
     assert (
-        f"面 A 管辖 {len(_REAL['t3_managed'])} 行 / 面 B 未迁移 {len(_REAL['t3_unmoved'])} 页"
+        f"面 A 管辖 {len(_real()['t3_managed'])} 行 / 面 B 未迁移 {len(_real()['t3_unmoved'])} 页"
         in lines
     )
-    assert f"G-T4 参数不对齐 = {len(_REAL['t4'])}" in lines
-    assert f"G-T5 无模板类别 = {len(_REAL['t5']['missing_template'])}" in lines
-    assert f"三角闭合断链 {len(_REAL['t5']['pages_unreachable'])} 类" in lines
+    assert f"G-T4 参数不对齐 = {len(_real()['t4'])}" in lines
+    # —— 席 S230（R0=A）：G-T2 / G-T4 / 模板体检三面的分账也必须同刻报在 report 上（总账栏不消失）。
+    for _tk, _prefix, dk, rk, _ak in (
+        ("t2", "G-T2", "t2_debt_official", "t2_registered_process", "t2_accounting"),
+        ("t4", "G-T4", "t4_debt_official", "t4_registered_process", "t4_accounting"),
+        ("tcheck", "模板体检", "tcheck_debt_official", "tcheck_registered_process", "tcheck_accounting"),
+    ):
+        _o, _p, _tot = _r0_pair(_real(), _tk, dk, rk, _ak)
+        face_lines = [ln for ln in lines.splitlines() if ln.startswith(_prefix)]
+        assert any(str(_o) in ln and str(_p) in ln for ln in face_lines), (
+            f"`--report` 未把 {_tk.upper()} 的 R0 两栏（对外 {_o} / 过程稿 {_p}）报出来＝总账栏被换没了"
+        )
+    assert "R0 欠账分母定义域体检" in lines, (
+        "`--report` 丢了 R0 分母定义域体检行＝那把锁从投影面消失（查不到≠没问题）"
+    )
+    # —— 席 S230R（R0=A 反缩水腿）：过程稿人口必须同刻报在 report 上（否则「整桶消失」只在门里可见、
+    #    命令行查不到＝本窗「存在性糊过活性判据」的同型事故）。数值与判据同一支现算，不另起一套。
+    assert (
+        f"全扫描过程稿人口 {_real()['r0_process_page_total']} ／ "
+        f"G-T2 比对面 {_real()['t2_pages']}（其中过程稿 {_real()['t2_pages_process']}）"
+    ) in lines, "`--report` 丢了 R0=A 反缩水腿的人口行＝过程稿从投影面消失（查不到≠没问题）"
+    assert f"G-T5 无模板类别 = {len(_real()['t5']['missing_template'])}" in lines
+    assert f"三角闭合断链 {len(_real()['t5']['pages_unreachable'])} 类" in lines
 
 
 # ---------------------------------------------------------------------------
@@ -685,7 +1446,7 @@ def test_s20_g_t4_three_forms_red_via_synthetic_schema(
 def test_s46_generated_page_must_actually_reproduce_not_just_be_listed(tmp_path: Path) -> None:
     """机制 (b) 反向自测：在册生成页**声称可复现却当场重渲染不等值** ⇒ 必红（带因入债）；
     逐字节复制真页回同一位置 ⇒ 放行（还原必绿）。旧账按路径成员隐形豁免，此形全绿＝空跑。"""
-    rel = next(r for r in sorted(_REAL["b_ok"]) if r.startswith("docs/boards/"))
+    rel = next(r for r in sorted(_real()["b_ok"]) if r.startswith("docs/boards/"))
     real = (REPO_ROOT / rel).read_text(encoding="utf-8")
     assert bds.AUTO_BEGIN in real and bds.AUTO_END in real, "前提塌了：真页没有板块机器段"
 
@@ -713,14 +1474,14 @@ def test_s46_generated_page_must_actually_reproduce_not_just_be_listed(tmp_path:
 def test_s46_generated_listing_never_silently_exempt() -> None:
     """不变量（真树）：任何进入生成物名单的在册页，要么当场复现（b_ok），要么带因入债——
     不存在「在名单里却不检查」的第三态（那正是 K-2 同型的隐形绿）。"""
-    gen_all = _REAL["generated_all"]
-    b_ok = _REAL["b_ok"]
-    schemas = _REAL["schemas"]
-    mismatched = {str(m).split()[1] for m in _REAL["mismatch"] if len(str(m).split()) > 1}
-    t1 = {str(r).split("#", 1)[0] for r in _REAL["t1"]}
-    page_rels = {p.rel for p in _REAL["pages"]}
+    gen_all = _real()["generated_all"]
+    b_ok = _real()["b_ok"]
+    schemas = _real()["schemas"]
+    mismatched = {str(m).split()[1] for m in _real()["mismatch"] if len(str(m).split()) > 1}
+    t1 = {str(r).split("#", 1)[0] for r in _real()["t1"]}
+    page_rels = {p.rel for p in _real()["pages"]}
     # 有 (a) 形模板头（在册且不错配）的生成页走 (a) 销籍，不在这条不变量的射程
-    a_ok = {p.rel for p in _REAL["pages"] if p.fm is not None and p.fm.template in schemas
+    a_ok = {p.rel for p in _real()["pages"] if p.fm is not None and p.fm.template in schemas
             and p.rel not in mismatched}
     silent = {r for r in gen_all if r in page_rels and r not in b_ok and r not in t1 and r not in a_ok}
     assert not silent, f"名单在册、既未复现又没记债的生成页（静默豁免）：{sorted(silent)[:6]}"
@@ -796,14 +1557,28 @@ def _pi(rel: str, category: str, text: str = "", fm: object = None) -> dts.PageI
 
 
 def test_s78_face_of_history_page_is_category_based_and_driven_symmetric() -> None:
-    """① 分流判据是**纯函数 + 按类别 + 驱动同权**（矩阵锁）：
-    - 现役规格/杂项页：驱动且非生成物⇒line(面A)，未驱动⇒page(面B)；
-    - 板块人工区恒 line（生成物+人写混合，按行治理）；
-    - 过程日志三cid恒 skip（两面都不记，债只在 G-T1）；
-    - 根层/活文档历史页恒 page（**驱动与否同权**，永不翻 line）——旧前缀码路的病灶正在这。"""
+    """① 分流判据是**纯函数 + 按路径派生类别 + 驱动同权**（矩阵锁）：
+
+    席 S78 立这组断言时的语义（非台账页「驱动⇒line／未驱动⇒page」）已被 **席 S201
+    用户裁定 3.A** 取代：「驱动与否」＝本页戴没戴 `template:` 头，让被检者的头来挑尺子，
+    正是 09-23 批量套头把 23 枚过程件顶进面A（0→460 行）的那条通道。
+    现在「同权」升级为**头彻底不参与**：同一页传 True / 传 False / 不传，读数必须一模一样。
+    - 板块人工区恒 line（生成器与人写混合，逐行治理）；
+    - 过程日志三 cid 恒 skip（两面都不记，债只在 G-T1）；
+    - 根层/活文档历史页恒 page（历史数字删不得）；
+    - 其余对外类别恒 page（与 HEAD 同面：HEAD 这些页无头，本就逐页记账）；
+      升 line 只走 `GOVERNED_LINE_PATHS` 名录（门侧登记，页自己改不动）。
+    """
     line, page, skip = "line", "page", "skip"
-    assert sc.face_of_history_page(_pi("docs/design/x.md", "design-spec"), driven_non_generated=True) == line
+    # 非名录的现役规格页：戴不戴头都是 page（旧写法在这里会因 driven 翻成 line——那正是被废的通道）
+    assert sc.face_of_history_page(_pi("docs/design/x.md", "design-spec"), driven_non_generated=True) == page
     assert sc.face_of_history_page(_pi("docs/design/x.md", "design-spec"), driven_non_generated=False) == page
+    # 名录在册的现役件：路径/登记判 line，且同样与头无关
+    roster = min(sc.GOVERNED_LINE_PATHS)
+    assert sc.face_of_history_page(
+        _pi(roster, dts.classify(roster)), driven_non_generated=True
+    ) == line
+    assert sc.face_of_history_page(_pi(roster, dts.classify(roster))) == line
     assert sc.face_of_history_page(_pi("docs/boards/B01/f/e.md", "board-l3"), driven_non_generated=False) == line
     for cid in ("seat-report", "sdd-ledger", "sdd-brief"):  # 过程日志：两面都不记
         assert sc.face_of_history_page(_pi(f".superpowers/sdd/t/{cid}.md", cid), driven_non_generated=True) == skip
@@ -811,8 +1586,10 @@ def test_s78_face_of_history_page_is_category_based_and_driven_symmetric() -> No
     for cid in ("root-handoff", "root-report", "handbook", "acceptance"):  # 历史页：驱动与否都 page
         assert sc.face_of_history_page(_pi("HANDOFF-x.md", cid), driven_non_generated=True) == page
         assert sc.face_of_history_page(_pi("HANDOFF-x.md", cid), driven_non_generated=False) == page
-    # 反向：非台账的驱动页绝不因这条函数被踢出 line（防分流误伤真治理面）
-    assert sc.face_of_history_page(_pi("docs/g.md", "doc-misc"), driven_non_generated=True) == line
+    # 反向：非台账的驱动页不再因这条函数被顶进 line（头拨面＝3.A 禁路），也不被踢出它该在的面
+    assert sc.face_of_history_page(_pi("docs/g.md", "doc-misc"), driven_non_generated=True) == page
+    # 名录只准加严：同一枚 doc-misc 路径进名录前 page、进名录后 line（方向自查）
+    assert sc.face_by_category_strict("doc-misc") == page
 
 
 def test_s78_driven_ledger_page_stays_off_faceA_and_audited_in_faceB(tmp_path: Path) -> None:
@@ -879,7 +1656,7 @@ def test_s78_relabel_to_ledger_category_is_cross_checked_not_dodged(tmp_path: Pa
 def test_s78_poison_extra_board_auto_zone_with_bare_fact_is_unverified(tmp_path: Path) -> None:
     """⑤ P-41 反向自测 a：往一枚真·板块生成页**再嵌一对 BOARD-AUTO 注释**、段内写裸计数，
     行级面 A 必须记 `UNVERIFIED_AUTO_ZONE`（旧页级 `p.rel in b_ok` 会让第二段隐身＝225 枚静默的洞）。"""
-    rel = next(r for r in sorted(_REAL["b_ok"]) if r.startswith("docs/boards/"))
+    rel = next(r for r in sorted(_real()["b_ok"]) if r.startswith("docs/boards/"))
     real = (REPO_ROOT / rel).read_text(encoding="utf-8")
     assert bds.AUTO_BEGIN in real and bds.AUTO_END in real, "前提塌了：真页没有板块机器段"
     root = tmp_path / "repo"
@@ -910,9 +1687,9 @@ def test_s78_inline_marker_quoting_board_page_not_false_flagged() -> None:
     text = (REPO_ROOT / rel).read_text(encoding="utf-8")
     # 前置：这页确有 ≥2 处标记字面量（首段真身 + 正文行内码引用），且它是正常复现的生成页。
     assert text.count(bds.AUTO_BEGIN) >= 2, "取样前提变了：这页不再是引用标记字面量的正常板块页"
-    assert rel in _REAL["b_ok"], f"引用标记字面量的正常板块页没被判已复现（⑤过度改动回归）：{rel}"
+    assert rel in _real()["b_ok"], f"引用标记字面量的正常板块页没被判已复现（⑤过度改动回归）：{rel}"
     assert not any(
-        m.startswith(f"{rel}: UNVERIFIED_AUTO_ZONE") for m in _REAL["t3_managed"]
+        m.startswith(f"{rel}: UNVERIFIED_AUTO_ZONE") for m in _real()["t3_managed"]
     ), "正常板块页正文引用 BOARD-AUTO 字面量被误记 UNVERIFIED_AUTO_ZONE（把讲解当藏事实）"
 
 
@@ -930,16 +1707,16 @@ def _s119_stems() -> set[str]:
 
 def test_s119_orphan_leg_names_every_zero_page_template_in_disjoint_classes() -> None:
     """正向账 + 扫描面地板：驱动 0 页的在册模板**一枚都不许漏**，且两类分开点名。"""
-    orph = _REAL["t5"]["templates_without_pages"]
+    orph = _real()["t5"]["templates_without_pages"]
     assert set(orph) == set(sc.ORPHAN_CLASS_ORDER), f"孤儿腿分类集改版：{sorted(orph)}"
     per_class = {k: _s119_names(orph[k]) for k in sc.ORPHAN_CLASS_ORDER}
     all_names = [n for rows in per_class.values() for n in rows]
     assert len(all_names) == len(set(all_names)), f"一枚模板被记进两类（混账）：{all_names}"
 
     # 正样控制（判据必须看得见合法件）：驱动 >0 的模板不得进账。取数与函数同判据。
-    schemas = _REAL["schemas"]
+    schemas = _real()["schemas"]
     driven: dict[str, int] = {}
-    for p in _REAL["pages"]:
+    for p in _real()["pages"]:
         if p.fm is None or p.fm.template not in schemas:
             continue
         if sc.category_mismatch(p, schemas) is not None:
@@ -1007,7 +1784,7 @@ def test_s119_poison_zero_page_template_enters_ledger_and_delists_when_driven(
     )
     monkeypatch.setattr(dt, "CONTENT_CATEGORIES", (*dt.CONTENT_CATEGORIES, synth_cat))
     monkeypatch.setattr(dt, "CATEGORIES_BY_ID", {**dt.CATEGORIES_BY_ID, synth_cat.cid: synth_cat})
-    schemas = {**_REAL["schemas"], "s119-synth": _REAL["schemas"]["handbook"]}
+    schemas = {**_real()["schemas"], "s119-synth": _real()["schemas"]["handbook"]}
     stems = _s119_stems() | {"s119-synth"}
     bare_page = dts.PageInfo(
         rel="s119-synth.md",
@@ -1017,7 +1794,7 @@ def test_s119_poison_zero_page_template_enters_ledger_and_delists_when_driven(
         category=synth_cat.cid,
         violations=(),
     )
-    out_a = sc.orphan_templates([*_REAL["pages"], bare_page], schemas, stems)
+    out_a = sc.orphan_templates([*_real()["pages"], bare_page], schemas, stems)
     assert "s119-synth" in _s119_names(out_a["real_debt"]), (
         f"新造的零页模板没进真债账（桶里有页无人驱动却看不见）：{ {k: _s119_names(v) for k, v in out_a.items()} }"
     )
@@ -1030,7 +1807,7 @@ def test_s119_poison_zero_page_template_enters_ledger_and_delists_when_driven(
         category=synth_cat.cid,
         violations=(),
     )
-    out_b = sc.orphan_templates([*_REAL["pages"], driven_page], schemas, stems)
+    out_b = sc.orphan_templates([*_real()["pages"], driven_page], schemas, stems)
     still = [k for k, rows in out_b.items() if "s119-synth" in _s119_names(rows)]
     assert still == [], f"驱动页已到位仍未摘牌（说明账按名字写死）：{still}"
     assert len(out_a["real_debt"]) == len(out_b["real_debt"]) + 1, "摘牌没体现在枚数上＝两本账不同源"
@@ -1055,15 +1832,15 @@ def test_s119_poison_class_label_is_registry_driven_not_a_name_list(
     monkeypatch.setattr(
         dt, "CATEGORIES_BY_ID", {c.cid: c for c in relabel_to_code}
     )
-    out = sc.orphan_templates(_REAL["pages"], _REAL["schemas"], _s119_stems())
+    out = sc.orphan_templates(_real()["pages"], _real()["schemas"], _s119_stems())
     assert "handbook" not in _s119_names(out["real_debt"]), "改标代码件后仍记真债＝分类写死在名字表"
     assert "handbook" in _s119_names(out["code_surface"]), "改标代码件没落到 code_surface＝分类判据不跟注册表"
 
 
 def test_s119_report_line_and_gate_read_the_same_numbers() -> None:
     """单一取数口自证（新增腿同权）：`--report` 那行的每个数＝判据用的同一支现算值。"""
-    orph = _REAL["t5"]["templates_without_pages"]
-    lines = "\n".join(sc.report_lines(_REAL))
+    orph = _real()["t5"]["templates_without_pages"]
+    lines = "\n".join(sc.report_lines(_real()))
     assert f"在册却驱动 0 页 = {sum(len(v) for v in orph.values())} 枚" in lines
     for k in sc.ORPHAN_CLASS_ORDER:
         assert f"{k}={len(orph[k])}" in lines, f"report 缺 {k} 的数＝report 自成一套账"
@@ -1076,16 +1853,22 @@ def test_s119_report_line_and_gate_read_the_same_numbers() -> None:
 # 反向自测三发（③a/③b/③c）+ K-1 半腿活性双锁，全部 tmp 临时副本、不落源码树。
 # ---------------------------------------------------------------------------
 def _s131_faceA_page(tmp_path: Path) -> tuple[Path, str, str]:
-    """搭一枚「必落行级面 A」的最小 tmp 页（类别↔模板↔页三角一致＝driven 且非生成物）。
+    """搭一枚「必落行级面 A」的最小 tmp 页。返回（页文件路径, rel, 该页类别的在册模板 id）。
 
-    返回（页文件路径, rel, 该页类别的在册模板 id）。前提塌陷当场点名，不静默改判面。
+    席 S201（用户裁定 3.A）随判据跟随：旧写法取 `docs/live-guide.md` 并靠「driven 且非生成物」
+    顶进面A——那条通道就是「戴头换尺子」本身，已被废。现在改从**门侧名录**取坐标
+    （`GOVERNED_LINE_PATHS`，路径/登记派生即 line，与头无关），并现算把前提钉死：
+    哪天名录或桶表改了、这一枚不再判 line，当场点名而非静默换面。
     """
-    rel = "docs/live-guide.md"
+    rel = min(sc.GOVERNED_LINE_PATHS)
     root = tmp_path / "repo"
-    (root / "docs").mkdir(parents=True)
+    (root / Path(rel).parent).mkdir(parents=True, exist_ok=True)
     tpl = sc.registered_template(dts.classify(rel))
     assert tpl, f"前提塌了：{rel!r} 的类别 {dts.classify(rel)!r} 无在册模板可挂"
-    return root / "docs" / "live-guide.md", rel, tpl
+    assert sc.face_of_page_by_path(
+        dts.PageInfo(rel=rel, path=root / rel, text="", category=dts.classify(rel))
+    ) == "line", f"前提塌了：名录枚 {rel} 已不被判为行级面 A（分流又变了）"
+    return root / rel, rel, tpl
 
 
 def _s131_write_page(page: Path, tpl: str, body: str) -> None:
@@ -1229,11 +2012,11 @@ def _s152_filled(body: str, filler: str) -> str:
 
 def test_s152_ledger_covers_every_board_page_exactly_once() -> None:
     """正向账 + 缩面自证：板块管辖面每一页恰落一档，枚数与页集**同源**（不写死页数）。"""
-    bc = _REAL["body_completeness"]
+    bc = _real()["body_completeness"]
     assert isinstance(bc, dict)
     rows = bc["rows"]
     assert isinstance(rows, list)
-    all_pages = _REAL["pages"]
+    all_pages = _real()["pages"]
     assert isinstance(all_pages, list) and all(isinstance(p, dts.PageInfo) for p in all_pages), (
         "管辖面取样元素不再是 PageInfo：取样口改版，本锁必须复核（绝不静默缩面）"
     )
@@ -1255,9 +2038,9 @@ def test_s152_tiers_are_self_consistent_with_the_four_columns() -> None:
 
     这条不变量同时是 ④c 的探针：判据被改成「恒返回完整」时它必红。
     """
-    bc = _REAL["body_completeness"]
+    bc = _real()["body_completeness"]
     assert isinstance(bc, dict)
-    b_ok = _REAL["b_ok"]
+    b_ok = _real()["b_ok"]
     assert isinstance(b_ok, set)
     for r in bc["rows"]:  # type: ignore[index]
         row = r  # type: dict[str, object]
@@ -1324,7 +2107,7 @@ def test_s152_poison_ruler_blinded_to_incompleteness_is_caught(
         skeleton_page, b_ok=set(), canon=sc.BOARD_CANON["board-l3"]
     )["tier"] == "骨架残留", "前提塌了：骨架页在真判据下都不算空壳，注毒样本无从证伪"
     monkeypatch.setattr(sc, "board_body_completeness_row", blinded)
-    bc = sc.board_body_completeness([*list(_REAL["pages"]), skeleton_page], b_ok=_REAL["b_ok"])
+    bc = sc.board_body_completeness([*list(_real()["pages"]), skeleton_page], b_ok=_real()["b_ok"])
     bad = [
         r["rel"]
         for r in bc["rows"]
@@ -1336,11 +2119,11 @@ def test_s152_poison_ruler_blinded_to_incompleteness_is_caught(
 
 def test_s152_report_line_and_gate_read_the_same_numbers() -> None:
     """单一取数口自证（新腿同权）：`--report` 那行的每个数＝判据用的同一支现算值。"""
-    bc = _REAL["body_completeness"]
+    bc = _real()["body_completeness"]
     assert isinstance(bc, dict)
     tiers = bc["tiers"]
     assert isinstance(tiers, dict)
-    lines = "\n".join(sc.report_lines(_REAL))
+    lines = "\n".join(sc.report_lines(_real()))
     for t in sc.BODY_TIER_ORDER:
         assert f"{t}={tiers[t]}" in lines, f"report 缺 {t} 的数＝report 自成一套账"
     assert f"板块管辖页 {bc['page_total']}" in lines
@@ -1560,8 +2343,8 @@ def test_s175_pure_split_partitions_without_dropping_any_page() -> None:
 
 def test_s175_real_tree_identity_and_zero_exclusion() -> None:
     """真树：恒等式成立、无两栖、无排除（两栏并集是 t1 的一个置换）、扫描面未塌。"""
-    sw = _REAL["t1_wave_split"]
-    t1 = _REAL["t1"]
+    sw = _real()["t1_wave_split"]
+    t1 = _real()["t1"]
     assert sw["identity_ok"] is True, "拆栏恒等式被破坏＝判据被写坏（缩了扫描面）"
     assert sw["stock_count"] + sw["new_count"] == len(t1), "两栏之和≠甲账⇒有页被吞"
     assert sw["amphibious"] == [], "两栖页非空⇒同一页被判进两栏，账会重复"
@@ -1571,7 +2354,8 @@ def test_s175_real_tree_identity_and_zero_exclusion() -> None:
     assert sum(sw["per_cat_stock"].values()) == sw["stock_count"]
     assert sum(sw["per_cat_new"].values()) == sw["new_count"]
     assert len(t1) >= 1000, "甲账现算塌陷（<1000）＝取数口瞎了，不是拆栏出错"
-    # 方向锁：拆栏只加数，t1 本体不因本席而变（G-T1 上限仍 1047、甲账现值仍受同一门管）
+    # 方向锁：拆栏只加数，t1 本体不因本席而变（甲账现值仍受同一门管；上限一枚属点名册腿记账，
+    # 其 2026-09-25 N5 收紧重录走 approvals 通道，与本席无关、本席一字未碰）
     assert len(t1) <= T1_CEILING or len(t1) > T1_CEILING  # 恒真占位：本席不碰 t1/上限
 
 

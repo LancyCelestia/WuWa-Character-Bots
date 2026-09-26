@@ -12,9 +12,13 @@
   截断、"有副作用绝不整体重投"的外层契约全部原样保留。
 
 阶段 1 不实现（规格后续阶段/开放问题留待裁决）：URL 下载代理生产接线、
-staging 配额（enforce_quota）、Mail 附件通道、FileTransferReceipt 落库、
+staging 配额（enforce_quota）、FileTransferReceipt 落库、
 bytes 内存上限策略、NapCat 频控/平台 file id 实测（Q1-Q7）。
-``upload_group_file`` / ``upload_private_file`` / ``send_document`` 等平台
+**Mail 附件通道已于 2026-09-25 由 S-T-FILE-2 二段落地**（需求 16(3) 三端对齐的
+最后一端）：见本文件 ``MailEnvelope`` / ``build_mail_attachment_message`` /
+``FileTransferGateway._deliver_mail``；装配接线点归 ``sender/nonebot.py``（本席禁写面，
+坐标见席位报告 §伍）。
+``upload_group_file`` / ``upload_private_file`` / ``send_document`` / ``send_mail`` 等平台
 API 字样从此只允许出现在 ``sender/`` 目录内。
 """
 
@@ -25,9 +29,11 @@ import logging
 import tempfile
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from email.message import EmailMessage
+from email.utils import formataddr, parseaddr
 from pathlib import Path
 from typing import Any, Literal
 
@@ -40,18 +46,39 @@ from plugins.bot_unified_runtime.contracts import (
     new_debug_id,
 )
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import StrictBaseModel
+from plugins.bot_unified_runtime.domains.core.safety_exec.paths import (
+    VERDICT_NEEDS_REVIEW,
+    check_sendable,
+)
 from plugins.bot_unified_runtime.domains.media.digest import (
     media_digest,
     media_digest_file,
 )
+from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 
 # 文件维度回执 transport 标记（与消息级 transport 命名区分）。
 ONEBOT_FILE_TRANSPORT = "onebot.file"
 TELEGRAM_DOCUMENT_TRANSPORT = "telegram.document"
+MAIL_ATTACHMENT_TRANSPORT = "mail.attachment"
 
 # Telegram sendDocument 现行硬上限（2MB，与 sender/nonebot.py 同值；超限
 # 策略属规格开放问题 Q1，本阶段保持"超限即拒绝"的既有行为不变）。
 TELEGRAM_MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
+
+# ---------------------------------------------------------------------------
+# 邮件附件腿（需求 16(3)「QQ / Telegram / 邮箱三端收发」缺的那一端 · S-T-FILE-2 二段）
+# ---------------------------------------------------------------------------
+
+# 单件字节上限：**直接引用 Telegram 那一枚的同一个常量对象**，不是抄数值。
+# 「新增腿不得宽于既有腿」由这条引用保证——日后收紧一处即两腿同宽。
+MAIL_MAX_ATTACHMENT_BYTES = TELEGRAM_MAX_DOCUMENT_BYTES
+# 单条件数 / 每日件数上限：取值**不宽于**归档侧既有缺省
+# （`config.py:854-856` `bot_media_archive_per_message_limit=4`、
+# `bot_media_archive_daily_limit=50`；那一枚单文件 100MB 宽于 2MiB，故本腿用更严的
+# 2MiB）。本席不新建配置键（`config.py` 属禁写面），专用出站键作为建议上交，
+# 见 `.superpowers/sdd/2026-09-25-goal18-wave/logs/S-T-FILE-2.md` §陆。
+MAIL_MAX_ATTACHMENTS_PER_MESSAGE = 4
+MAIL_MAX_ATTACHMENTS_PER_DAY = 50
 
 FileSourceKind = Literal["path", "url", "bytes"]
 
@@ -64,7 +91,13 @@ class FileTransferError(Exception):
     missing_file / upload_rejected / upload_failed_or_unknown /
     unsupported_file_target / upload_api_unavailable / url_rejected /
     url_download_failed / url_download_unavailable / staging_unavailable /
-    invalid_source。
+    path_domain_denied / invalid_source。
+
+    邮件附件腿新增（一因一码，绝不塌成一枚兜底串）：
+    mail_envelope_missing / mail_recipients_unconfigured /
+    mail_recipient_not_allowlisted / mail_attachment_too_large /
+    mail_attachment_count_exceeded / mail_daily_quota_exceeded /
+    mail_send_api_unavailable / mail_send_timeout / mail_send_failed_or_unknown。
     ``sender/onebot.py`` 的编排层负责把它翻回 ``_NonRetryableActionError``。
     """
 
@@ -219,6 +252,174 @@ def _sha256_of_file(path: Path) -> str:
     return digest
 
 
+# ---------------------------------------------------------------------------
+# 邮件附件腿的取数与组装（真身仅此一处；装配层只递数据，不再自己拼 MIME）
+# ---------------------------------------------------------------------------
+
+#: 本能力会产出的文件族 → MIME。**表外一律 `application/octet-stream`，绝不猜一个
+#: 像样的类型**（猜错=收件端按错类型打开＝谎报）。刻意不走 `mimetypes.guess_type`
+#: 兜底：Windows 上它读注册表，同一份文件在两台机器上可能拿到不同媒体类型＝不确定行为。
+#: 2026-09-26 跟随更新（S-FILESLAND-2）：能力层曾有第二张同义表
+#: ``domains/files/sender/restricted_runner.py::MEDIA_TYPES_BY_EXTENSION``（2026-09-25
+#: 同号两席并行撞出的），现已连同其消费方 ``build_aligned_file_outbound`` 一族整体
+#: 出账（零生产调用点，判为删优于接）⇒ 媒体类型的唯一真身就是下面这一张。
+#: 防回潮锁也随之从旧的「两表逐名对表」换成「第二张不许再长」＝
+#: `tests/test_file_outbound_channels.py::test_runner_keeps_no_second_media_type_table`
+#: （旧文案点名的那枚对表锁已随被删的表一起不存在了）。
+_MAIL_ATTACHMENT_MIME: dict[str, tuple[str, str]] = {
+    ".md": ("text", "markdown"),
+    ".markdown": ("text", "markdown"),
+    ".txt": ("text", "plain"),
+    ".csv": ("text", "csv"),
+    ".tsv": ("text", "tab-separated-values"),
+    ".json": ("application", "json"),
+    ".yaml": ("application", "yaml"),
+    ".yml": ("application", "yaml"),
+    ".toml": ("application", "toml"),
+    ".py": ("text", "x-python"),
+    ".pdf": ("application", "pdf"),
+    ".docx": (
+        "application",
+        "vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ),
+    ".xlsx": (
+        "application",
+        "vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ),
+    ".pptx": (
+        "application",
+        "vnd.openxmlformats-officedocument.presentationml.presentation",
+    ),
+    ".zip": ("application", "zip"),
+    ".png": ("image", "png"),
+    ".jpg": ("image", "jpeg"),
+    ".jpeg": ("image", "jpeg"),
+    ".gif": ("image", "gif"),
+    ".bmp": ("image", "bmp"),
+    ".webp": ("image", "webp"),
+    ".wav": ("audio", "wav"),
+}
+
+
+def mail_attachment_mime(name: str) -> tuple[str, str]:
+    """文件名 → (maintype, subtype)；表外不猜，落 octet-stream。"""
+    suffix = Path(str(name or "")).suffix.lower()
+    known = _MAIL_ATTACHMENT_MIME.get(suffix)
+    if known is not None:
+        return known
+    return ("application", "octet-stream")
+
+
+def normalize_mail_address(value: object) -> str:
+    """地址归一（**只为名册比对**，不产用户可见文案）。
+
+    与 `domains/transport/mail/mail_bridge.py::_email_address` 的分工是刻意的：
+    那一枚负责「校验 + 抛中文报错」，输入必须是裸地址；本枚负责把任意形态
+    （`名字 <a@b>` / 大小写混写 / 带空格）折成可比较的小写地址，不抛异常。
+    两枚合并为单一真身待裁（席位报告 §陆），此处**不复制它的校验语义**。
+    """
+    raw = "" if value is None else str(value).strip()
+    if not raw:
+        return ""
+    _display, address = parseaddr(raw)
+    candidate = (address or raw).strip()
+    return candidate.lower()
+
+
+def resolve_mail_recipient(target_id: str, allowed_recipients: Sequence[object]) -> str:
+    """邮件收件人**只认配置名册**（需求 16(3) 的安全半边：外泄面收口）。
+
+    三条不变式：
+
+    1. 名册空 ⇒ 拒（`mail_recipients_unconfigured`）——绝不猜人，与校园/紧急域
+       「白名单为空=整链关闭」同一口径。
+    2. 目标不在名册 ⇒ 拒（`mail_recipient_not_allowlisted`）。会话正文里写
+       「发到 attacker@evil.com」改不了投递面：本函数的入参只有
+       `target_id`（装配层从配置/事件里的**地址事实**取）与名册，
+       **从不扫正文、从不扫主题**。
+    3. 比对在归一之后做（大小写/显示名不参与），避免「换个写法就出了名册」。
+    """
+    allowlist = {
+        normalized
+        for normalized in (
+            normalize_mail_address(item) for item in allowed_recipients or ()
+        )
+        if normalized
+    }
+    if not allowlist:
+        raise FileTransferError("mail_recipients_unconfigured")
+    wanted = normalize_mail_address(target_id)
+    if not wanted or wanted not in allowlist:
+        raise FileTransferError("mail_recipient_not_allowlisted")
+    return wanted
+
+
+@dataclass(frozen=True)
+class MailEnvelope:
+    """邮件附件腿的信封：每枚字段都由**装配层/配置面**交进来，没有一枚从会话正文取。
+
+    `daily_count` 是当日已投件数的读值（计数器真身在装配层：日限执法需要跨进程状态，
+    本席不建第二本账）。传 `None` = 尚未接线 ⇒ 本腿放行但**记一行日志**，
+    绝不把「没接计数器」读成「今天还剩 50 件」。
+    """
+
+    recipients_allowlisted: tuple[str, ...] = ()
+    subject: str = ""
+    body_text: str = ""
+    sender_address: str = ""
+    sender_name: str = ""
+    daily_count: int | None = None
+
+
+def attach_bytes_to_mail_message(
+    message: EmailMessage, *, name: str, data: bytes
+) -> tuple[str, str]:
+    """把文件字节**真挂上**邮件（`multipart/mixed` + `Content-Disposition: attachment`）。
+
+    返回实际使用的 (maintype, subtype)，供调用方/测试断言 MIME 形状。
+    `filename` 走 `sanitize_file_name` 已经剥过分隔符的票据名，不回本地目录。
+    """
+    maintype, subtype = mail_attachment_mime(name)
+    message.add_attachment(
+        data, maintype=maintype, subtype=subtype, filename=name or "file"
+    )
+    return (maintype, subtype)
+
+
+def build_mail_attachment_message(
+    *,
+    recipient: str,
+    name: str,
+    data: bytes,
+    subject: str = "",
+    body_text: str = "",
+    sender_address: str = "",
+    sender_name: str = "",
+) -> EmailMessage:
+    """组装「正文 + 一个附件」的邮件（正文过打码，附件字节**不打码**）。
+
+    两条刻意的不对称：
+
+    - 主题与正文先过 `redact_local_secrets`——盘符路径 / `BOT_XXX=` / `sk-` 形态
+      一律不得出现在会话外发的**文字**里（铁律 3：不绕过出站打码）。
+    - 附件字节原样：文件内容被"打码"就是损坏的交付物，宁可整件不发（由限额与
+      路径域判定在挂载前拦）。
+    """
+    message = EmailMessage()
+    display = str(sender_name or "").strip()
+    if display:
+        message["From"] = formataddr((display, sender_address))
+    else:
+        message["From"] = sender_address
+    message["To"] = recipient
+    message["Subject"] = redact_local_secrets(str(subject or "").strip() or name)
+    message.set_content(
+        redact_local_secrets(str(body_text or "")) or "文件见附件。"
+    )
+    attach_bytes_to_mail_message(message, name=name, data=data)
+    return message
+
+
 class FileTransferGateway:
     """统一文件出站网关：stage（来源→票据）+ deliver（票据→平台通道）。"""
 
@@ -246,6 +447,20 @@ class FileTransferGateway:
         if not path.is_file():
             # 与既有 _send_file_parts / TG files 分支的缺失判定同语义。
             raise FileTransferError("missing_file")
+        # 路径域判定（SAFE-EXEC Wave 1 · 规格 §3 硬规则 1）：本行是**全通道唯一的
+        # 取字节前判定**。此前只判 is_file() ⇒ 任何在允许名单里的能力给一个绝对
+        # 路径（`C:\Windows\win.ini`）或 `..\..\` 穿越，就能把本机任意文件发给
+        # QQ 对面的人。判定真身在 domains/core/safety_exec/paths.py，禁第二副本。
+        decision = check_sendable(path)
+        if decision.denied:
+            # 拒绝原因进日志（打码形态，无盘符明文）供审计/诊断卡消费；对外只给
+            # 稳定分类串，不把本地路径结构回给会话侧。
+            logger.warning("file stage denied request path_domain %s", decision.audit_line())
+            raise FileTransferError("path_domain_denied")
+        if decision.verdict == VERDICT_NEEDS_REVIEW:
+            # Wave 1 无同意回路（consent 归 S-T-CONS-1）⇒ 记账放行，留待收紧；
+            # 这不是"没问题"，是"有账可查的已知面"。
+            logger.warning("file stage needs_review %s", decision.audit_line())
         resolved = path.resolve()
         name = src.name or path.name
         return FileTicket(
@@ -326,14 +541,24 @@ class FileTransferGateway:
         ticket: FileTicket,
         *,
         target: SendRequest,
-        transport: Literal["onebot", "telegram"] = "onebot",
+        transport: Literal["onebot", "telegram", "mail"] = "onebot",
         part_index: int = 0,
         budget: Any = None,
         caption: str = "",
+        mail_envelope: MailEnvelope | None = None,
     ) -> FileTransferReceipt:
         if transport == "telegram":
             return await self._deliver_telegram_document(
                 bot, ticket, target=target, part_index=part_index, caption=caption
+            )
+        if transport == "mail":
+            return await self._deliver_mail(
+                bot,
+                ticket,
+                target=target,
+                part_index=part_index,
+                caption=caption,
+                envelope=mail_envelope,
             )
         return await self._deliver_onebot(
             bot, ticket, target=target, part_index=part_index, budget=budget
@@ -346,7 +571,7 @@ class FileTransferGateway:
         if callable(slice_for):
             return float(slice_for(calls))
         if budget is None:
-            from plugins.bot_unified_runtime.sender.timeout import (
+            from plugins.bot_unified_runtime.domains.transport.sender.timeout import (
                 resolve_transport_timeout,
             )
 
@@ -429,21 +654,127 @@ class FileTransferGateway:
             or path.stat().st_size > TELEGRAM_MAX_DOCUMENT_BYTES
         ):
             raise FinalTransferError("invalid generated attachment")
+        # 三通道对齐修正（S-T-FILE-2 二段 · 需求 16(3)）：件名取**票据名**，
+        # 不取暂存盘上的落盘名。`bytes` 来源的文件在 staging 里叫
+        # `ft_<票号>_<名>`，旧写法让 Telegram 端看到的文件名与 QQ / 邮件两端不一致
+        # （收件人拿到 `ft_ef2f84_report.md`）。`path` 来源两值本就相同 ⇒ 既有
+        # golden 锁（tests/test_file_gateway_phase1.py:386-395、:505）逐字仍绿。
+        delivered_name = ticket.name or path.name
         result = await bot.send_document(
             chat_id=target.target_id,
-            document=(path.name, path.read_bytes()),
+            document=(delivered_name, path.read_bytes()),
             caption=caption[:1000],
         )
         return FileTransferReceipt(
             request_id=target.request_id,
             ticket_id=ticket.ticket_id,
             state=ReceiptState.SENT,
-            name=path.name,
+            name=delivered_name,
             size=ticket.size,
             sha256=ticket.sha256,
             part_index=part_index,
             provider_file_id=extract_provider_message_id(result),
             transport=TELEGRAM_DOCUMENT_TRANSPORT,
+            provider_result=result,
+        )
+
+    async def _deliver_mail(
+        self,
+        bot: Any,
+        ticket: FileTicket,
+        *,
+        target: SendRequest,
+        part_index: int,
+        caption: str,
+        envelope: MailEnvelope | None,
+    ) -> FileTransferReceipt:
+        """邮件附件腿：与 QQ / Telegram 同权、同限额、**逐因可归因**。
+
+        门序（每一步失败都有自己的 kind，绝不塌成一枚 broad except）：
+        信封在场 → 收件人过配置名册 → 单条件数 → 每日件数 → 文件在场 → 单件字节
+        → 挂载与组装 → 适配器出口 → 发送失败分类。
+        """
+        if envelope is None:
+            raise FileTransferError("mail_envelope_missing")
+        # ① 收件人只来自配置名册：名册空 / 不在册一律拒（详见 resolve_mail_recipient）。
+        recipient = resolve_mail_recipient(
+            target.target_id, envelope.recipients_allowlisted
+        )
+        # ② 单条件数：与归档侧既有缺省同值，不放宽；超限在发送前即可判定 ⇒ Final。
+        if part_index >= MAIL_MAX_ATTACHMENTS_PER_MESSAGE:
+            raise FinalTransferError("mail_attachment_count_exceeded")
+        # ③ 每日件数：计数器归装配层（本席不建第二本账）。None = 未接线 ⇒
+        #    放行但记一行，绝不把「没计数器」读成「额度还剩」。
+        if envelope.daily_count is None:
+            logger.warning(
+                "mail attachment daily quota not wired: limit %s unenforced",
+                MAIL_MAX_ATTACHMENTS_PER_DAY,
+            )
+        elif envelope.daily_count >= MAIL_MAX_ATTACHMENTS_PER_DAY:
+            raise FinalTransferError("mail_daily_quota_exceeded")
+        path = ticket.local_path
+        if path is None or not path.is_file():
+            raise FileTransferError("missing_file")
+        # ④ 单件上限：引用 Telegram 同一枚常量（宽严一致），stat 先拒、读后复核，
+        #    防 stat 与 read 之间文件被换大（TOCTOU 面最小化）。
+        if ticket.size > MAIL_MAX_ATTACHMENT_BYTES:
+            raise FinalTransferError("mail_attachment_too_large")
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            logger.warning(
+                "mail attachment read failed type=%s detail=%s",
+                type(exc).__name__,
+                str(exc)[:120],
+            )
+            raise FileTransferError("missing_file") from exc
+        if len(data) > MAIL_MAX_ATTACHMENT_BYTES:
+            raise FinalTransferError("mail_attachment_too_large")
+        sender = str(envelope.sender_address or "").strip() or str(
+            getattr(bot, "self_id", "") or ""
+        ).strip()
+        if not sender:
+            raise FileTransferError("mail_envelope_missing")
+        message = build_mail_attachment_message(
+            recipient=recipient,
+            name=ticket.name or path.name,
+            data=data,
+            subject=envelope.subject,
+            body_text=envelope.body_text or caption,
+            sender_address=sender,
+            sender_name=envelope.sender_name,
+        )
+        send_mail = getattr(bot, "send_mail", None)
+        if not callable(send_mail):
+            raise FileTransferError("mail_send_api_unavailable")
+        try:
+            result = await send_mail(message)
+        except FileTransferError:
+            raise
+        except asyncio.TimeoutError:
+            # SMTP 侧超时：件**可能已发出**，故上层不得整体重投（与既有
+            # 「有副作用绝不整体重投」外层契约同语义）。
+            raise FileTransferError("mail_send_timeout") from None
+        except Exception as exc:  # 分类为未知失败，不外泄适配器异常原文。
+            logger.warning(
+                "mail send call failed type=%s detail=%s",
+                type(exc).__name__,
+                str(exc)[:120],
+            )
+            raise FileTransferError("mail_send_failed_or_unknown") from exc
+        return FileTransferReceipt(
+            request_id=target.request_id,
+            ticket_id=ticket.ticket_id,
+            state=ReceiptState.SENT,
+            name=ticket.name or path.name,
+            size=len(data),
+            sha256=ticket.sha256,
+            part_index=part_index,
+            # SMTP 出口不回消息号（适配器 `send_mail` 返回 None）⇒ 诚实留 None。
+            # 装配层**不得**照抄 Telegram 那段「无 provider_file_id 即抛」的检查，
+            # 否则邮件腿一次都发不出去（席位报告 §伍 已点名）。
+            provider_file_id=None,
+            transport=MAIL_ATTACHMENT_TRANSPORT,
             provider_result=result,
         )
 

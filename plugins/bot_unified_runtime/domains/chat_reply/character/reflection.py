@@ -29,6 +29,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -38,6 +39,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.memory_bus_v2 impo
     MemoryBus,
     canonical_fact_text,
     derive_scope,
+    fact_signature,
     settings_from_config,
 )
 
@@ -984,6 +986,102 @@ def gather_turns_by_date(
 
 # ---- 记忆召回接入 ----
 
+# ---- 召回腿打分基元（需求 11「需要时能调出来」；总线公式的反思腿投影）----
+#
+# 为什么反思腿要有自己的一份排序：生产 `.env` 未开 `BOT_MEMORY_BUS_ENABLED`
+# 时，`ReflectionMemoryProvider` 是今天真实在跑的召回面之一，而它的旧行为
+# 是「不管问什么都回最近 N 条」——`query_text` 收了不用。本段把总线
+# `MemoryBus.recall` 已写好的打分口径（w_rel·relevance + w_str·strength +
+# w_rec·recency，零相关地板）接到真实查询上；权重经公开件
+# ``settings_from_config`` 现读（缺省即总线 ``_DEFAULT_WEIGHTS``），词元化走
+# 公开件 ``fact_signature().tokens``，本文件不另造第二套分词。
+#
+# 有依据的两处偏差（其余逐字同式）：
+# 1. strength=confidence：反思行的"印证次数"在写侧由 keep-newest 去重消化，
+#    旧表没有 confirm_count 列，confidence 是现存唯一证据强度读数。
+# 2. recency 半衰常数 30 天与总线 ``_RECALL_RECENCY_HALF_LIFE_DAYS`` 同值；
+#    该常量为总线私有符号，此处登记为「改总线必同步本处」的镜像常数，
+#    tests/test_memory_recall_query_aware.py 用等值锁钉住两处的公式同形。
+_RECALL_RECENCY_HALF_LIFE_DAYS = 30.0  # 镜像 memory_bus_v2._RECALL_RECENCY_HALF_LIFE_DAYS
+_MIN_QUERY_CANONICAL_CHARS = 2
+_CANDIDATE_LIMIT_FACTOR = 4
+_CANDIDATE_CHARS_SLACK = 400
+
+
+def query_is_recall_worthy(query_text: str) -> bool:
+    """空/极短查询（「嗯」「好」「。」）不配触发记忆注入（需求 2）。
+
+    判据打在归一化正文长度上（剥空白标点、casefold 后）：单字符上限档，
+    两字符起放行——「嗯嗯」这类重叠式语气词过了门也会被零相关地板拦下，
+    地板是第二道闸。
+    """
+    return len(canonical_fact_text(query_text)) >= _MIN_QUERY_CANONICAL_CHARS
+
+
+def token_similarity(left: frozenset[str], right: frozenset[str]) -> float:
+    """词面相似度基元：交集 ÷ 较小集合基数（纯函数，仅标准库）。
+
+    与总线私有 ``_similarity`` 逐字同式——不直接 import 私有符号（跨文件私有
+    依赖比 3 行副本更糟），由测试件拿真样本对两处等值核身，防口径漂移。
+    """
+    if not left or not right:
+        return 0.0
+    return len(left & right) / max(1, min(len(left), len(right)))
+
+
+def _fact_recency(created_at: str, now: datetime) -> float:
+    """created_at 的半衰减新近度；解析失败按 0 分（不因缺证据白拿加分）。"""
+    raw = str(created_at or "").strip()
+    try:
+        moment = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    age_days = max(0.0, (now - moment).total_seconds()) / 86400.0
+    return 0.5 ** (age_days / _RECALL_RECENCY_HALF_LIFE_DAYS)
+
+
+def rank_facts_by_query(
+    facts: Sequence[ReflectionFact],
+    query_text: str,
+    *,
+    weights: dict[str, float],
+    now: datetime,
+) -> list[ReflectionFact]:
+    """按「本轮查询」给反思事实排序：相关性主导 + 证据强度 + 新近度。
+
+    零相关地板（本腿取比总线更严的保守档）：查询有词元时，与本轮话题
+    零重合的一律出局；一条都不相关 ⇒ 返回空列表——总线那侧「全不相关时
+    退回按强度给」是为统一注入面保底，反思腿只是旁路面，「每轮都塞无关
+    记忆」正是本波要治的病根（需求 4：宁缺勿滥）。
+    无词元查询（空串——正常入口被 ``query_is_recall_worthy`` 挡下，这里只
+    服务显式无查询调用与反向锁注毒）⇒ 原序返回=旧「最近 N 条」行为。
+    """
+    query_tokens = fact_signature(query_text).tokens
+    if not query_tokens:
+        return list(facts)
+    scored: list[tuple[float, ReflectionFact]] = []
+    for fact in facts:
+        relevance = token_similarity(
+            query_tokens, fact_signature(fact.fact_text).tokens
+        )
+        if relevance <= 0.0:
+            continue
+        score = (
+            weights["w_rel"] * relevance
+            + weights["w_str"] * max(0.0, min(1.0, fact.confidence))
+            + weights["w_rec"] * _fact_recency(fact.created_at, now)
+        )
+        scored.append((score, fact))
+    # 稳定排序：同分保持 facts_for 的 created_at DESC 原序（新者在前）。
+    scored.sort(key=lambda item: -item[0])
+    return [fact for _score, fact in scored]
+
+
+def _recall_now() -> datetime:
+    return datetime.now(UTC)
+
 
 class ReflectionMemoryProvider:
     """把反思事实接入 MemoryProvider 协议（character/memory.py:14-26）。
@@ -992,15 +1090,30 @@ class ReflectionMemoryProvider:
     NullMemoryProvider 一致，返回空结果；facts dict 形状对齐
     SQLiteMemoryRepository.retrieve 的键（fact_id/kind/text/source/
     sensitivity/scope_key），可直接走 providers.py 的 LLM 安全过滤。
+
+    召回腿（需求 11）：``query_text`` 是选择判据而不是摆设——先过
+    ``query_is_recall_worthy`` 门（空/极短查询零注入），再经
+    ``rank_facts_by_query`` 按相关性排序并落下零相关地板，最后才进
+    max_items / max_chars 预算。可见性闸（同会话+全局）原样下推给
+    ``facts_for``，本类只在已可见候选内做取舍，结构上不可能放宽红线。
     """
 
     def __init__(
-        self, store: ReflectionStore | None = None, *, bus_enabled: bool = False
+        self,
+        store: ReflectionStore | None = None,
+        *,
+        bus_enabled: bool = False,
+        config: object | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._store = store
         # 单一真身闸（WP6）：总线开启且归纳确实落总线时，本 provider 必须让位，
         # 否则同一条事实会以「旧表 + 总线」两个身份同时进 prompt。
         self._bus_enabled = bus_enabled
+        # 打分权重来源（settings_from_config 现读；None=总线代码缺省）。
+        self._config = config
+        # recency 计算用的"现在"；缺省 UTC 系统钟，测试注入定值防挂时钟。
+        self._clock = clock
 
     def retrieve(
         self,
@@ -1023,29 +1136,53 @@ class ReflectionMemoryProvider:
         # 与 SQLiteMemoryRepository.retrieve 相同的隐私闸：只向本人开放。
         if requester_id != subject_user_id:
             return MemoryRetrievalResult(request_id=request_id)
-        facts = self._store.facts_for(
+        if not query_is_recall_worthy(query_text):
+            # 需求 2：空/极短查询（「嗯」「好」）不得触发记忆注入——
+            # 旧行为下这些消息同样会把最近 N 条事实塞进每一轮 prompt。
+            return MemoryRetrievalResult(request_id=request_id)
+        # 超取候选再排序：旧行为「取最近 max_items 条」意味着与本轮相关的
+        # 旧事实根本进不了打分面——这正是要治的病，候选窗先放大 4 倍。
+        candidates = self._store.facts_for(
             subject_user_id,
-            limit=max_items,
-            max_chars=max_chars,
+            limit=max_items * _CANDIDATE_LIMIT_FACTOR,
+            max_chars=max_chars * _CANDIDATE_LIMIT_FACTOR + _CANDIDATE_CHARS_SLACK,
             session_id=session_id,
         )
-        payload = [
-            {
-                "fact_id": fact.fact_id,
-                "kind": "reflection",
-                "text": fact.fact_text,
-                "source": "reflection",
-                "sensitivity": "personal",
-                "scope_key": (
-                    f"session:{fact.session_key}" if fact.session_key else "global"
-                ),
-            }
-            for fact in facts
-        ]
+        weights = settings_from_config(
+            self._config if self._config is not None else object()
+        ).weights
+        now = (self._clock or _recall_now)()
+        ranked = rank_facts_by_query(candidates, query_text, weights=weights, now=now)
+        payload: list[dict[str, str]] = []
+        picked: list[ReflectionFact] = []
+        chars_used = 0
+        for fact in ranked:
+            if len(picked) >= max_items:
+                break
+            remaining = max_chars - chars_used
+            if remaining <= 0:
+                break
+            text = fact.fact_text
+            if len(text) > remaining:
+                text = _clip(text, remaining)
+            picked.append(fact)
+            payload.append(
+                {
+                    "fact_id": fact.fact_id,
+                    "kind": "reflection",
+                    "text": text,
+                    "source": "reflection",
+                    "sensitivity": "personal",
+                    "scope_key": (
+                        f"session:{fact.session_key}" if fact.session_key else "global"
+                    ),
+                }
+            )
+            chars_used += len(text)
         return MemoryRetrievalResult(
             request_id=request_id,
             facts=payload,
-            confidence=max((fact.confidence for fact in facts), default=0.0),
+            confidence=max((fact.confidence for fact in picked), default=0.0),
             privacy_level=PrivacyLevel.PERSONAL,
         )
 
@@ -1062,6 +1199,7 @@ def build_reflection_memory_provider(config: object) -> ReflectionMemoryProvider
     return ReflectionMemoryProvider(
         ReflectionStore(db_path),
         bus_enabled=settings.enabled and settings.writes_to_bus,
+        config=config,
     )
 
 

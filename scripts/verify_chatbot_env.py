@@ -1,10 +1,11 @@
 """verify_chatbot_env — .env 配置快查（全 Config 可装载性 + TTS 段深查）.
 
 定位（分工声明）：**手动快查工具**——改完 .env 后秒级离线核对，不是重启门。
-重启前置一键预检（10 项，含第 10 项引擎侧音色守望 tts_voice）=
-``scripts/pre_restart_check.py``；两者零重叠：本工具守 **bot 侧配置面**
+重启前置一键预检 = ``scripts/pre_restart_check.py``（项数以该文件 docstring
+编号在册清单派生、即其 ``declared_item_ids()``，此处不手写——旧版写死「10 项」
+已随体检长项过期一次）；两者零重叠：本工具守 **bot 侧配置面**
 （.env → 生产 pydantic Config 装载语义 + TTS 段深查），pre_restart_check
-第 10 项守 **引擎面**（tts_infer.yaml / 权重 / sha256 身份对表）。
+的 tts_voice 项守 **引擎面**（tts_infer.yaml / 权重 / sha256 身份对表）。
 
 范围声明（不假绿）：音频时长/采样率/声道（T24 ①②）= 引擎侧产物体检闸与
 用户裁点（ffprobe/soundfile），端口存活（⑤）= 运维探针 / pre_restart_check

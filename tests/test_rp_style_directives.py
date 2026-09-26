@@ -16,13 +16,6 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.chat import (
-    _DANGER_COMFORT_EXAMPLES,
-    INTIMATE_RP_STYLE_INSTRUCTION,
-    NORMAL_NO_ACTION_INSTRUCTION,
-    _danger_style_line,
-    build_chat_result,
-)
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     ContextBundle,
@@ -37,10 +30,17 @@ from plugins.bot_unified_runtime.contracts import (
     SessionType,
     ToneProfile,
 )
-from plugins.bot_unified_runtime.llm.providers import LLMReply
-from plugins.bot_unified_runtime.runtime.content_route import (
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    _DANGER_COMFORT_EXAMPLES,
+    INTIMATE_RP_STYLE_INSTRUCTION,
+    NORMAL_NO_ACTION_INSTRUCTION,
+    _danger_style_line,
+    build_chat_result,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
     SHARED_CONTENT_ROUTE_ENGINE,
 )
+from plugins.bot_unified_runtime.llm.providers import LLMReply
 
 _REPO = Path(__file__).resolve().parents[1]
 
@@ -212,7 +212,9 @@ def test_repeat_trio_absent_from_persona_source_fixed_forms() -> None:
 
 
 def test_runtime_answer_rules_no_longer_carry_fixed_example() -> None:
-    from plugins.bot_unified_runtime.capabilities.chat import _RUNTIME_ANSWER_RULES
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        _RUNTIME_ANSWER_RULES,
+    )
 
     assert "我在这里" not in _RUNTIME_ANSWER_RULES
     assert "不用怕。" not in _RUNTIME_ANSWER_RULES

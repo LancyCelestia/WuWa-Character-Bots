@@ -8,7 +8,9 @@ import io
 import pytest
 from PIL import Image
 
-from plugins.bot_unified_runtime.capabilities.chat import build_direct_vision_messages
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    build_direct_vision_messages,
+)
 from plugins.bot_unified_runtime.domains.media.ingest import vision_describe as V
 
 

@@ -11,16 +11,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from plugins.bot_unified_runtime.domains.ops.monitor.usage_monitor import (
-    build_model_rows,
-    build_report_text,
-)
-from plugins.bot_unified_runtime.runtime.pricing import (
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.pricing import (
     format_milli_yuan,
     lookup_model_price,
     model_call_cost_milli,
     model_family_key,
     parse_model_prices,
+)
+from plugins.bot_unified_runtime.domains.ops.monitor.usage_monitor import (
+    build_model_rows,
+    build_report_text,
 )
 
 # ---------- ① 家族键归一化 ----------
@@ -328,7 +328,9 @@ def test_model_call_cost_milli_bills_cache_read_at_cache_price() -> None:
 
 
 def test_registry_model_prices_projects_registry_entries() -> None:
-    from plugins.bot_unified_runtime.runtime.pricing import registry_model_prices
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.pricing import (
+        registry_model_prices,
+    )
 
     registry = {
         "axon-gemini": {
@@ -355,7 +357,9 @@ def test_registry_model_prices_projects_registry_entries() -> None:
 
 
 def test_merge_model_prices_later_sources_override_and_fill() -> None:
-    from plugins.bot_unified_runtime.runtime.pricing import merge_model_prices
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.pricing import (
+        merge_model_prices,
+    )
 
     merged = merge_model_prices(
         {"m": {"input": 1.0, "output": 2.0, "cache_read": 0.1}},

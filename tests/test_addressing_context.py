@@ -53,8 +53,10 @@ def test_group_super_admin_is_master_exception():
 
 
 def test_null_provider_and_prompt_receive_group_boundary():
-    from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
-    from plugins.bot_unified_runtime.character.providers import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_chat_prompt,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
         NullCharacterContextProvider,
     )
 
@@ -103,11 +105,11 @@ def test_addressing_preference_store_roundtrip(tmp_path):
 
 
 def test_file_provider_prefers_stored_preference(tmp_path):
-    from plugins.bot_unified_runtime.character.providers import (
-        FileCharacterContextProvider,
-    )
     from plugins.bot_unified_runtime.domains.chat_reply.character.addressing import (
         AddressingPreferenceStore,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
+        FileCharacterContextProvider,
     )
 
     store = AddressingPreferenceStore(tmp_path / "addressing.sqlite3")
@@ -142,7 +144,7 @@ def test_file_provider_prefers_stored_preference(tmp_path):
 def test_group_digest_keeps_members_as_group_friends(tmp_path):
     import sqlite3
 
-    from plugins.bot_unified_runtime.character.shared_group import (
+    from plugins.bot_unified_runtime.domains.chat_reply.character.shared_group import (
         OpenAICompatibleGroupSummarizer,
         SQLiteGroupDigestProvider,
     )

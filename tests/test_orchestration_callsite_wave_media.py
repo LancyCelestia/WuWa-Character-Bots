@@ -95,7 +95,9 @@ def _load_real_index() -> dict[str, str]:
 #   synthesize：VOICE-V12 前唯一跨文件直呼=voice_enricher.py:175，现该直呼段改走
 #       default_invoker().invoke(capability_id="media.tts.autodub") → synthesize 直呼面归零。
 #   media.tts.autodub：自动配音产出步，直呼面空（真身 synthesize_autodub 只在 tts 定义文件+
-#       中央 shell handler 出现，两处均豁免/跳过），invoker 面恰一处=voice_enricher.py → WIRED。
+#       中央 shell handler 出现，两处均豁免/跳过）。invoker 面恰一处：S270 归位后，全树唯一
+#       一处字面 invoke 住在单一组合口 result_transform.dub_via_central（voice_enricher 的 dub
+#       闭包与 creation/tts/engine_provider 都改调该组合口，不再各持一份 invoke/直呼）→ WIRED。
 #   bot.image_search / bot.media_archive：各自独立 root handler 直呼 factory（Wave1 可逐能力翻面）。
 # ---------------------------------------------------------------------------
 KNOWN_DIRECT_ALLOWLIST_MEDIA: dict[str, set[str]] = {
@@ -108,7 +110,7 @@ KNOWN_DIRECT_ALLOWLIST_MEDIA: dict[str, set[str]] = {
 }
 WIRED_MEDIA: set[str] = {"media.tts.autodub"}
 KNOWN_INVOKER_SITES_MEDIA: dict[str, set[str]] = {
-    "media.tts.autodub": {"domains/media/voice_enricher.py"},
+    "media.tts.autodub": {"domains/media/tts/result_transform.py"},
 }
 
 
@@ -401,3 +403,100 @@ def test_default_invoker_governs_bot_tts_from_route_execution_facet() -> None:
     )
     assert result.status is cp.InvocationStatus.FAILED
     assert "payload.message" in result.detail
+
+
+# ---------------------------------------------------------------------------
+# S270 单一组合口归位后，中央 autodub handler 的两处语义代价修必须常驻执法
+# （组合口把产出步唯一 invoke 收在 result_transform.dub_via_central，voice 路与 creation 路
+#  同时经它 ⇒ 这两处修不再是"只有某条腿受益"，而是全树产出步的共同契约）。
+# ---------------------------------------------------------------------------
+def _ad_config(tmp_path, *, with_ref: bool):
+    from types import SimpleNamespace
+
+    ref_audios = [f"{tmp_path / 'ref.wav'}|参考文本|zh"] if with_ref else []
+    return SimpleNamespace(
+        bot_tts_enabled=True,
+        bot_tts_api_url="http://127.0.0.1:9880",
+        bot_tts_gptsovits_dir="",
+        bot_tts_ref_audios=ref_audios,
+        bot_tts_output_dir=str(tmp_path / "tts_out"),
+        bot_tts_preset="shorekeeper",
+        bot_tts_max_chars=200,
+        bot_tts_hard_max_chars=2000,
+        bot_tts_max_audio_bytes=0,
+        bot_tts_cache_enabled=False,
+        bot_tts_cache_max_bytes=0,
+        bot_tts_cache_max_age_days=0,
+        bot_tts_timeout_seconds=60.0,
+        bot_tts_speed_factor=0.85,
+        bot_tts_temperature=0.9,
+        bot_tts_top_k=15,
+        bot_tts_top_p=1.0,
+        bot_tts_text_lang="zh",
+        bot_tts_text_split_method="cut5",
+    )
+
+
+def _ad_invoke(config, text, synth):
+    """私有 invoker 复用 default 的 descriptor+handler（只读、绝不往单例写探针，防跨门假红）。"""
+    from plugins.bot_unified_runtime.runtime import capability_protocols as cp
+
+    central = cp.default_invoker()
+    inv = cp.CapabilityInvoker(registry=central.registry, handlers=cp.HandlerRegistry())
+    inv.handlers.register("media.tts.autodub", central.handlers.get("media.tts.autodub"))
+    return inv.invoke(
+        cp.CapabilityRequest(
+            capability_id="media.tts.autodub",
+            payload={"text": text},
+            principal="u1",
+            roles=("user",),
+            context={"config": config, "synthesize": synth},
+        )
+    )
+
+
+def test_autodub_handler_failure_detail_is_redacted(tmp_path) -> None:
+    """中央修②（detail 打码腿）：合成失败原文带密钥/本机路径时，信封 detail 必须先过
+    redact_local_secrets 再落——invoker 把 detail[:300] 直写审计库 private_debug，
+    不打码＝密钥入审计（S267 现算语义代价②）。摘掉 handler 的 redact ⇒ 本锁当场红。"""
+    from plugins.bot_unified_runtime.runtime import capability_protocols as cp
+
+    (tmp_path / "ref.wav").write_bytes(b"RIFFref")
+    secret = "服务返回 500：Authorization: Bearer sk-abcdefghij123456 参考 C:/Users/x/.env"
+
+    def _fail_synth(**_kw):
+        return None, secret
+
+    result = _ad_invoke(_ad_config(tmp_path, with_ref=True), "说一句", _fail_synth)
+    assert result.status is cp.InvocationStatus.FAILED, result.status
+    assert "sk-abcdefghij123456" not in result.detail, f"密钥泄漏进 detail：{result.detail!r}"
+    assert "C:/Users/x/.env" not in result.detail, f"本机路径泄漏进 detail：{result.detail!r}"
+    # 归因不被打码吃掉：可重试前缀仍在头部，层 1 前缀表照常分类。
+    assert result.detail.startswith("服务返回"), result.detail
+
+
+def test_autodub_handler_no_ref_detail_is_config_aware_two_tier(tmp_path) -> None:
+    """中央修①（no_ref 文案透传）：no_ref 的 detail 必须是 tts._no_ref_audio_hint(config) 的
+    **两档 config-aware** 文案，不是一枚常量——否则「未配置」与「配了但读不到」并成一档、
+    丢失待配键点名与 GPTSOVITS_DIR 基准提示（S267 现算语义代价①）。"""
+    from plugins.bot_unified_runtime.runtime import capability_protocols as cp
+
+    def _boom_synth(**_kw):  # 两档都在打引擎前短路，绝不该被触达
+        raise AssertionError("no_ref 不得触达合成")
+
+    # 档①：BOT_TTS_REF_AUDIOS 未配置 → 点名"还没有给我配参考音频"。
+    empty = _ad_invoke(_ad_config(tmp_path, with_ref=False), "说一句", _boom_synth)
+    assert empty.status is cp.InvocationStatus.NOT_CONFIGURED, empty.status
+    assert "BOT_TTS_REF_AUDIOS" in empty.detail, empty.detail
+
+    # 档②：配了路径但文件读不到 → 点名"找不到"+ GPTSOVITS_DIR 基准提示。
+    missing = tmp_path / "gone.wav"
+    cfg2 = _ad_config(tmp_path, with_ref=False)
+    cfg2.bot_tts_ref_audios = [f"{missing}|参考|zh"]
+    unreadable = _ad_invoke(cfg2, "说一句", _boom_synth)
+    assert unreadable.status is cp.InvocationStatus.NOT_CONFIGURED, unreadable.status
+    assert "BOT_TTS_GPTSOVITS_DIR" in unreadable.detail, (
+        f"no_ref 文案退化成常量/单档（丢 config-aware 第二档）：{unreadable.detail!r}"
+    )
+    assert empty.detail != unreadable.detail, "两档并成一档＝config-aware 退化"
+

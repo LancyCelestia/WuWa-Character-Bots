@@ -26,6 +26,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
 
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
+    ROUTE_RULES,
+    RouteDecision,
+    RouteKind,
+    classify_message_route,
+    extract_http_urls,
+)
 from plugins.bot_unified_runtime.domains.core.contracts import (
     IncomingMessage,
     RiskLevel,
@@ -33,13 +40,6 @@ from plugins.bot_unified_runtime.domains.core.contracts import (
 from plugins.bot_unified_runtime.domains.core.decision.trace import (
     DecisionStageRow,
     new_trace_id,
-)
-from plugins.bot_unified_runtime.runtime.base_router import (
-    ROUTE_RULES,
-    RouteDecision,
-    RouteKind,
-    classify_message_route,
-    extract_http_urls,
 )
 
 # classify_message_route 的 route 缓存按 config 对象身份命中；未注入真实

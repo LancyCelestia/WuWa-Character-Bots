@@ -233,7 +233,7 @@ def test_voice_identity_fail_baseline_missing_field(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 接线：run_all 第 10 项 + main exit 码与 --json 沿既有门风格
+# 接线：run_all 在册注册（派生式判据）+ main exit 码与 --json 沿既有门风格
 # ---------------------------------------------------------------------------
 
 def all_subproc_ok(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -265,17 +265,42 @@ def _make_full_project(tmp_path: Path, yaml_text: str) -> tuple[Path, Path]:
     return root, engine
 
 
+def _assert_voice_wiring(mod: object, root: Path) -> None:
+    """派生式判据（S146）：锁「tts_voice 已接进 run_all、在册次序可预期」，
+
+    **不锁「总共恰好 N 项」**——N 是随体检项增长漂移的计数（历史 7→10→11→12→13，
+    写死过一次就红过一次；本件旧判据 len(ids)==10 正是第 11/12 项那两席没做
+    「处处跟随」留下的存量红）。项数与 id 序一律现算自被测真身的声明侧清单
+    ``mod.declared_item_ids()``（= pre_restart_check docstring 编号节），
+    与 AGENTS.md 铁律 10 / test_narrative_docs_defer_volatile_counts 同哲学。
+
+    三条腿：
+      (c) run_all 注册序 == 声明侧派生值（存在性+次序+项数一次性对账，非字面量）；
+      (a) 目标项 tts_voice 在其中；
+      (b) 相对次序符合既有约定：文档序里 tts_voice 紧跟前邻 control_plane。
+    """
+    results = mod.run_all(root)  # type: ignore[attr-defined]
+    ids = [r.id for r in results]
+    declared = mod.declared_item_ids()  # type: ignore[attr-defined]
+    assert declared and len(declared) == len(set(declared)), f"声明侧清单可疑：{declared}"
+    assert ids == declared, f"run_all 注册序与 docstring 在册清单漂移：{ids} != {declared}"
+    assert "tts_voice" in ids, "tts_voice 没有接进 run_all（或 id 被改名）"
+    assert ids.index("tts_voice") == ids.index("control_plane") + 1, (
+        f"tts_voice 不再紧跟 control_plane（在册相邻约定被打破）：{ids}"
+    )
+    voice = next(r for r in results if r.id == "tts_voice")
+    assert voice.status == PASS
+
+
 def test_run_all_wires_tts_voice_as_tenth_item(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    # 函数名保留历史命名（"tenth" 是它入册时的序号；节点 id 被文档引用过，
+    # 改名会漂测试坐标——同 tests/test_pre_restart_check.py:489 的先例口径）。
     root, _ = _make_full_project(tmp_path, CANONICAL_YAML)
     all_subproc_ok(monkeypatch)
     monkeypatch.setattr(prc, "probe_tcp", lambda host, port, timeout=2.0: True)
-    results = prc.run_all(root)
-    ids = [r.id for r in results]
-    assert len(ids) == 10
-    assert ids[-1] == "tts_voice"
-    assert next(r for r in results if r.id == "tts_voice").status == PASS
+    _assert_voice_wiring(prc, root)
 
 
 def test_main_exit_code_propagates_voice_fail(
@@ -293,3 +318,85 @@ def test_main_exit_code_propagates_voice_fail(
     failed = [r for r in payload["results"] if r["status"] == FAIL]
     assert [r["id"] for r in failed] == ["tts_voice"]
     assert failed[0]["fix_hint"]
+
+
+# ---------------------------------------------------------------------------
+# 注毒自证（S146）：证明上面的派生判据是活锁，不是「改完 10 换 13」的恒真空锁
+# ---------------------------------------------------------------------------
+
+def _load_poisoned_copy(tmp_path: Path, name: str, source: str) -> object:
+    """把注毒后的 pre_restart_check 源码装成独立模块——只打副本，真身零接触.
+
+    write_bytes 钉字节落盘（文本模式在 Windows 会翻行尾——本窗刚有人栽过）；
+    模块名不带 scripts 前缀避免覆盖 sys.modules 里的真身，副本内部的
+    `from scripts…` 绝对导入仍解析到仓库真件，桩环境行为一致。
+    """
+    import importlib.util
+
+    copy_path = tmp_path / f"{name}.py"
+    copy_path.write_bytes(source.encode("utf-8"))
+    spec = importlib.util.spec_from_file_location(name, copy_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # dataclass 建类时按 __module__ 反查 sys.modules——不入册则 CheckResult/
+    # RegistryView/AnnPairVerdict 三枚 frozen dataclass 当场炸（实跑撞过）；
+    # exec 完即摘，不在 sys.modules 里给其他测试留幽灵模块。
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(name, None)
+    return module
+
+
+def test_voice_wiring_lock_is_live_not_vacuous(tmp_path: Path) -> None:
+    """三发注毒（全在 tmp 副本上）：①摘掉 tts_voice 注册必红；②挪到队尾必红；
+    ③文档清单与 run_all 同步长出第 14 项必绿（下一席正确加项不再踩雷——这正是
+    把写死的 len==10 换成派生式要买到的东西）。真身文件全程只读，前后 sha256
+    自证零接触。"""
+    import hashlib
+
+    real = PROJECT_ROOT / "scripts" / "pre_restart_check.py"
+    before = hashlib.sha256(real.read_bytes()).hexdigest()
+    source = real.read_text(encoding="utf-8")
+
+    voice_call = "        check_tts_voice_identity(env, project_root),\n"
+    tail_call = "        check_ann_generation_pair(env, project_root),\n"
+    doc_anchor = "\n用法：\n"
+    for label, needle in (("voice_call", voice_call), ("tail_call", tail_call), ("doc_anchor", doc_anchor)):
+        assert source.count(needle) == 1, f"注毒锚点失配（{label}）：体检注册面已变形，请同步更新本锁"
+
+    root, _ = _make_full_project(tmp_path, CANONICAL_YAML)
+
+    def wired(module: object) -> object:
+        module.run_cmd = lambda args, cwd, timeout=600: (0, "[绿] OK", "")  # type: ignore[attr-defined]
+        module.probe_tcp = lambda host, port, timeout=2.0: True  # type: ignore[attr-defined]
+        return module
+
+    # ① 目标项被摘掉（注册面删一行，声明侧不动）→ 必须红
+    removed = _load_poisoned_copy(tmp_path, "s146_poison_removed", source.replace(voice_call, ""))
+    with pytest.raises(AssertionError):
+        _assert_voice_wiring(wired(removed), root)
+
+    # ② 次序被打乱（tts_voice 挪到队尾，声明侧不动）→ 必须红
+    scrambled_src = source.replace(voice_call, "").replace(tail_call, tail_call + voice_call)
+    scrambled = _load_poisoned_copy(tmp_path, "s146_poison_scrambled", scrambled_src)
+    with pytest.raises(AssertionError):
+        _assert_voice_wiring(wired(scrambled), root)
+
+    # ③ 一致扩展（docstring 编号清单 + run_all 同步长出第 14 项）→ 必须绿
+    extended_src = (
+        source.replace(doc_anchor, "  14. dummy_probe  注毒用例附加项（S146 一致性扩展自证，非真检查）\n" + doc_anchor)
+        .replace(tail_call, tail_call + "        check_dummy_probe(env, project_root),\n")
+        .replace(
+            "def run_all(",
+            "def check_dummy_probe(env: dict[str, str], project_root: Path) -> CheckResult:\n"
+            "    return CheckResult(\"dummy_probe\", \"注毒附加项\", PASS, \"x\")\n\n\n"
+            "def run_all(",
+        )
+    )
+    extended = _load_poisoned_copy(tmp_path, "s146_poison_extended", extended_src)
+    _assert_voice_wiring(wired(extended), root)  # 不抛=绿；抛了说明雷只是换了个埋法
+
+    after = hashlib.sha256(real.read_bytes()).hexdigest()
+    assert after == before, "真身在注毒过程中被改动——立即停手排查"

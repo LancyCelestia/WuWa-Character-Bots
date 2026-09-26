@@ -17,7 +17,7 @@ import scripts.e2e_acceptance as e2e
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import ReceiptState, SessionType
-from plugins.bot_unified_runtime.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
 
 EXPECTED_KEYS = {
     # ①文本/长文本/多段

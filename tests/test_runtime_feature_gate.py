@@ -10,8 +10,10 @@ from plugins.bot_unified_runtime.contracts import (
     ReceiptState,
     SessionType,
 )
-from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
-from plugins.bot_unified_runtime.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+    RuntimePipeline,
+)
+from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
 
 
 def test_disabled_feature_blocks_before_policy_or_capability():
@@ -44,12 +46,12 @@ def test_failed_feature_lookup_is_fail_closed():
 
 def test_catalog_registers_all_declared_route_capabilities():
     from plugins.bot_unified_runtime.control_plane.features import FeatureRegistry
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.capability_registry import (
+        ROUTE_CAPABILITY_DECLARATIONS,
+    )
     from plugins.bot_unified_runtime.domains.ops.features.feature_catalog import (
         build_product_descriptors,
         capability_feature_bindings,
-    )
-    from plugins.bot_unified_runtime.runtime.capability_registry import (
-        ROUTE_CAPABILITY_DECLARATIONS,
     )
     registry = FeatureRegistry(build_product_descriptors())
     bindings = capability_feature_bindings()
@@ -177,11 +179,11 @@ def test_config_api_and_command_share_live_consumers(tmp_path):
     from plugins.bot_unified_runtime.control_plane import create_control_plane_app
     from plugins.bot_unified_runtime.control_plane.audit import ControlPlaneAuditStore
     from plugins.bot_unified_runtime.control_plane.auth import hash_token
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+        build_instance_settings_manager,
+    )
     from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
         build_runtime_admin_result,
-    )
-    from plugins.bot_unified_runtime.runtime.settings import (
-        build_instance_settings_manager,
     )
     config = SimpleNamespace(
         bot_control_plane_config_db=str(tmp_path / "config.sqlite3"),

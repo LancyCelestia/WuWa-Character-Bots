@@ -18,7 +18,7 @@ import json
 
 import pytest
 
-from plugins.bot_unified_runtime.runtime.settings import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
     RESTART_REQUIRED_KEYS,
     SETTABLE_KEYS,
     RuntimeSettingsStore,

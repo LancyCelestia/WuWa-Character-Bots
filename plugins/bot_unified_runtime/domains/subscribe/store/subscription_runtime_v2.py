@@ -67,7 +67,9 @@ def build_subscription_runtime_v2(
 ) -> dict[str, Any]:
     """按配置构造独立 V2 Store、adapter 列表和调度器。"""
     if context_factory is None:
-        from plugins.bot_unified_runtime.sources.parsers import build_cookie_provider
+        from plugins.bot_unified_runtime.domains.link_parse.parsers import (
+            build_cookie_provider,
+        )
 
         cookie_provider = build_cookie_provider(config)
         proxy = str(getattr(config, "bot_download_proxy", "") or "")

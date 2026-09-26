@@ -17,8 +17,10 @@ import pytest
 pytestmark = pytest.mark.slow
 
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
-from plugins.bot_unified_runtime.character.affinity import DynamicAffinityStore
 from plugins.bot_unified_runtime.contracts import PrivacyLevel, SendPolicy, SessionType
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
+    DynamicAffinityStore,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.event_idempotency import (
     EventIdempotencyTable,
 )
@@ -26,7 +28,9 @@ from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
     RenderedOutput,
     SendRequest,
 )
-from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
+from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+    SQLiteSendRequestQueue,
+)
 
 _BEHAVIORS = ("positive", "neutral", "tease", "negative", "insult", "unknown_kind", "")
 

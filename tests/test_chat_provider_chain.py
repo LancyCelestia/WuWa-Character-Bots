@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from plugins.bot_unified_runtime.capabilities.chat import build_chat_result
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     ContextBundle,
@@ -16,6 +15,9 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     SessionType,
     ToneProfile,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    build_chat_result,
 )
 from plugins.bot_unified_runtime.llm.providers import LLMProviderError
 
@@ -77,7 +79,9 @@ def test_chat_failure_keeps_fallback_but_exposes_sanitized_route_attempt_tags() 
         model_router=FailingRouter(),
     )
 
-    from plugins.bot_unified_runtime.capabilities.chat import _PERSONA_FAILURE_MESSAGES
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        _PERSONA_FAILURE_MESSAGES,
+    )
     assert result.body in _PERSONA_FAILURE_MESSAGES
     assert result.operational_issue is not None
     assert result.operational_issue.stage == "llm"

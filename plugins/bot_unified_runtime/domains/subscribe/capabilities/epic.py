@@ -25,7 +25,7 @@ from plugins.bot_unified_runtime.domains.subscribe.feeds.steamfree import (
     fetch_steam_free_games,
 )
 
-_COMMAND_RE = re.compile(r"^[/!！]?(?:epic|epicfree|epic free|epic 免费|epic免费|免费游戏|游戏免费|免費遊戲|遊戲免費|steam免费|steam 免费|steam免費|steamfree)\s*$", re.IGNORECASE)
+_COMMAND_RE = re.compile(r"^[/!！]?(?:epic|epicfree|epic free|epic 免费|epic免费|免费游戏|游戏免费|免費遊戲|遊戲免費|steam免费|steam 免费|steam免費|steam 免費|steamfree)\s*$", re.IGNORECASE)
 
 
 def is_epic_command(text: str) -> bool:
@@ -63,10 +63,10 @@ def build_epic_capability(
         if render_backend is None or not getattr(render_backend, "available", False):
             return ""
         try:
-            from plugins.bot_unified_runtime.capabilities.content_parser import (
+            from plugins.bot_unified_runtime.contracts import build_parsed_content
+            from plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser import (
                 render_card_png,
             )
-            from plugins.bot_unified_runtime.contracts import build_parsed_content
 
             covers = [str(g.get("image") or "") for g in games if g.get("image")]
             item = build_parsed_content(

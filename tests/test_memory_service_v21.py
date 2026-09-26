@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from plugins.bot_unified_runtime.character.memory_service import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.memory_service import (
     DEFAULT_INJECTION_BUDGET_CHARS,
     ExclusionReason,
     InjectionItem,
@@ -37,7 +37,7 @@ from plugins.bot_unified_runtime.character.memory_service import (
     MemoryServiceV21,
     OwnerScope,
 )
-from plugins.bot_unified_runtime.character.memory_store_v21 import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.memory_store_v21 import (
     MemoryStoreUnavailable,
     MemoryStoreV21,
 )

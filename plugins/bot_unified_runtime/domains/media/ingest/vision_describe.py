@@ -53,18 +53,65 @@ _VIDEO_SYSTEM_PROMPT = (
     "文字：<画面/字幕中出现的关键文字，逐字转写；没有写“无”>\n"
     "细节：<值得回应的显著细节、动作或情绪>"
 )
-# 图片段类型：OneBot 用 image/mface；Telegram 用 photo；动图/贴纸/圆形视频
-# 也按"可看的图"处理（此前缺 animation/sticker/photo/video_note，Telegram 侧
-# 这些一律只剩占位文本，评审需求 4）。
-_IMAGE_SEGMENT_TYPES = {
-    "image",
-    "mface",
-    "photo",
-    "sticker",
-    "animation",
-    "video_note",
+# 图片段类型：OneBot 用 image/mface；Telegram 用 photo；动图/贴纸按"可看的图"处理
+# （此前缺 animation/sticker/photo，Telegram 侧这些一律只剩占位文本，评审需求 4）。
+# ⚠ `video_note` 不在本族：它的落盘容器恒为 mp4（`telegram_media.py:61` 兜底后缀），
+# PIL 打不开 ⇒ 走图片族时两条支路皆空、零日志（2026-09-23 席位 S7 实跑坐实），
+# 归视频族才有下游可接。`animation` 两可（gif 形态图片路有效、mp4 形态同样瞎），
+# 一次只改一个语义面，mp4 animation 单列挂账。
+#
+# 图片族内部再按「能不能整包原生交给模型」分三组（2026-09-23 用户多模态矩阵裁定）：
+# 纯图片任何视觉渠道都原生；**表情包与动图只有被声明 `native-animation` 的渠道才原生**，
+# 其余渠道必须先经 VLM 转成文字。依据不是推测而是实跑：grok-4.6 的网关对 `image_url`
+# 里的 gif 直接 400（`Downloaded response does not contain a valid JPG, PNG, WebP, or
+# ICO image`），即动图对它根本不可原生；而 gemini 收到 gif 时 HTTP 200。
+_PHOTO_SEGMENT_TYPES = {"image", "photo"}
+# ⚠ 组里必须带 `emoji`：QQ 侧 `face`/`mface`/`marketface` 在归一层
+# （`domains/chat_reply/ingest/message_context.py:53-56`）就被改写成 `{"type":"emoji"}`，
+# 而 `raw_segments` 存的就是归一后的段——只写 mface 等于给 QQ 表情包留了个空列
+# （2026-09-23 席位 S26 实跑揭穿，此前测试夹具手写 `mface` 把它锁成绿）。
+_STICKER_SEGMENT_TYPES = {"mface", "face", "marketface", "sticker", "emoji"}
+_ANIMATION_SEGMENT_TYPES = {"animation"}
+_IMAGE_SEGMENT_TYPES = (
+    _PHOTO_SEGMENT_TYPES | _STICKER_SEGMENT_TYPES | _ANIMATION_SEGMENT_TYPES
+)
+# 组名 → 段类型集合：调用方按组取数，禁在调用点重抄段类型字面量（第二真身）。
+IMAGE_GROUPS: dict[str, set[str]] = {
+    "photo": _PHOTO_SEGMENT_TYPES,
+    "sticker": _STICKER_SEGMENT_TYPES,
+    "animation": _ANIMATION_SEGMENT_TYPES,
 }
-_VIDEO_SEGMENT_TYPES = {"video"}
+DEFAULT_IMAGE_GROUPS: tuple[str, ...] = ("photo", "sticker", "animation")
+
+def split_animated_segments(
+    raw_segments: list[dict[str, Any]] | None,
+    *,
+    groups: tuple[str, ...] = DEFAULT_IMAGE_GROUPS,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """按容器把图片段分成 (动画, 静态) 两堆——两堆都是原段的子集，顺序稳定。
+
+    调用方据此决定"哪堆可以原样进模型、哪堆必须先转译"，判据与 `requires_native_animation`
+    同源，不在任何调用点复制后缀表。
+    """
+    wanted: set[str] = set()
+    for name in groups:
+        wanted |= set(IMAGE_GROUPS.get(str(name), ()))
+    animated: list[dict[str, Any]] = []
+    static: list[dict[str, Any]] = []
+    for segment in raw_segments or []:
+        if not isinstance(segment, dict):
+            continue
+        if str(segment.get("type", "")).lower() not in wanted:
+            continue
+        data = segment.get("data")
+        data = data if isinstance(data, dict) else {}
+        refs = [data.get(key) for key in ("url", "file", "path")]
+        bucket = animated if any(requires_native_animation(ref) for ref in refs) else static
+        bucket.append(segment)
+    return animated, static
+
+
+_VIDEO_SEGMENT_TYPES = {"video", "video_note"}
 _DEFAULT_MAX_IMAGES = 2
 _DEFAULT_MAX_CHARS = 500
 _MAX_VISION_FAILOVER_ATTEMPTS = 3
@@ -84,6 +131,49 @@ _SUFFIX_MIME = {
     ".webp": "image/webp",
     ".bmp": "image/bmp",
 }
+# 动图的字面容器后缀。此前 "gif" 在盘上有三处独立拼写（本模块的 `.gif` 判定、
+# 本模块的 `image/gif` 字面量、路由器裁件的 `data:image/gif`），改一处即让裁件
+# 静默瞎掉而两侧各自仍绿（评审席 S32 贰-2）。后缀真身收在本模块，路由器只读判据。
+_GIF_SUFFIX = ".gif"
+_GIF_MIME = "image/gif"
+
+
+def _animation_container_suffixes() -> frozenset[str]:
+    """动图族容器后缀：gif + **全部**已登记的视频容器。
+
+    视频容器不在这里重抄——真身是 `video_understanding._VIDEO_SUFFIX_MIME`，
+    惰性 import 而非模块级：那个模块本来就 import 本模块，模块级互引会成环。
+    """
+    from plugins.bot_unified_runtime.domains.media.ingest.video_understanding import (
+        _VIDEO_SUFFIX_MIME,
+    )
+
+    return frozenset({_GIF_SUFFIX}) | frozenset(_VIDEO_SUFFIX_MIME)
+
+
+def requires_native_animation(url: object) -> bool:
+    """这个图片源属不属于"渠道没声明 `native-animation` 就不能原样发"的动图族。
+
+    判据真身只在此处：装配门按**段组**（`IMAGE_GROUPS` 的 sticker+animation）
+    决定挂不挂，裁件按**载荷形态**决定裁不裁，两边若各写一张容器表就是第二真身
+    （评审席 S32 贰-2 复现的那副差集：`animation` 段的 http URL 被原样透传成
+    `.mp4`，只认 gif 的裁件看不见它 ⇒ 未声明动画的一跳照旧收到必败请求）。
+
+    - data URL：容器写在 MIME 里。本模块只产 `_SUFFIX_MIME` 登记过的静态图与
+      gif 原字节，故"不在静态图表里"即动图族（`data:video/…` 同理），无需新表。
+    - http/裸路径：按路径尾判定（查询串/片段里出现后缀不算）。**认不出的后缀
+      不算动图**——QQ 图片签名 URL 常无扩展名，退化成"未知即动图"会把纯照片一起
+      从非声明那一跳上裁掉（那是误伤，不是收窄）。
+    """
+    text = str(url or "").strip()
+    if not text:
+        return False
+    head = text.split(";", 1)[0].strip().lower()
+    if head.startswith("data:"):
+        return head[len("data:") :].strip() not in set(_SUFFIX_MIME.values())
+    path = text.split("?", 1)[0].split("#", 1)[0].strip().lower()
+    return any(path.endswith(suffix) for suffix in _animation_container_suffixes())
+
 
 
 def _local_path_from_value(value: str) -> Path | None:
@@ -198,8 +288,16 @@ def _gif_strip_from_image(image: Any) -> str | None:
     return _encode_image_bytes(buffer.getvalue(), "image/jpeg")
 
 
-def _image_file_to_data_url(file_ref: str) -> str | None:
-    """本机图片文件 → data URL；GIF 取首帧，超大/未知格式经 PIL 重编。"""
+def _image_file_to_data_url(
+    file_ref: str, *, keep_animation_raw: bool = False
+) -> str | None:
+    """本机图片文件 → data URL；GIF 取首帧，超大/未知格式经 PIL 重编。
+
+    ``keep_animation_raw``：gif 不再拼静态条，原字节直发。动图本身就是帧序列，
+    PIL 再拼一次是**二次有损**（时序与帧数全丢，模型只看见并排的四格）。
+    超过 ``_MAX_DIRECT_IMAGE_BYTES`` 仍回退拼条——宁可读不到"它在动"，
+    也不发一发必败的请求体。
+    """
     path = _local_path_from_value(file_ref)
     if path is None:
         return None
@@ -215,7 +313,14 @@ def _image_file_to_data_url(file_ref: str) -> str | None:
         )
         return None
     suffix = path.suffix.lower()
-    if suffix == ".gif":
+    if suffix == _GIF_SUFFIX:
+        if keep_animation_raw:
+            try:
+                raw = path.read_bytes()
+            except OSError:
+                raw = b""
+            if raw and len(raw) <= _MAX_DIRECT_IMAGE_BYTES:
+                return _encode_image_bytes(raw, _GIF_MIME)
         return _gif_filmstrip_data_url(path) or _pil_normalize(
             path, first_frame_only=True
         )
@@ -335,16 +440,30 @@ def prepare_vision_image_urls(
     return prepared
 
 
-def extract_image_urls(raw_segments: list[dict[str, Any]] | None) -> list[str]:
+def extract_image_urls(
+    raw_segments: list[dict[str, Any]] | None,
+    *,
+    groups: tuple[str, ...] = DEFAULT_IMAGE_GROUPS,
+    keep_animation_raw: bool = False,
+) -> list[str]:
     """从消息原始段提取图片源：本机路径（file://、绝对路径）转 data URL，http URL 透传。
 
     image 与 mface（QQ 表情包）都算；GIF 取首帧。解析不了的段静默跳过。
+
+    ``groups`` 只取 ``IMAGE_GROUPS`` 的组名（缺省三组全取=旧行为逐字节不变）：
+    调用方按「这张图能不能原样给模型」选组，段类型字面量不留第二份副本。
+    ``keep_animation_raw`` 见 `_image_file_to_data_url`。
     """
+    wanted: set[str] = set()
+    for name in groups:
+        types = IMAGE_GROUPS.get(str(name))
+        if types:
+            wanted |= set(types)
     urls: list[str] = []
     for segment in raw_segments or []:
         if not isinstance(segment, dict):
             continue
-        if str(segment.get("type", "")).lower() not in _IMAGE_SEGMENT_TYPES:
+        if str(segment.get("type", "")).lower() not in wanted:
             continue
         data = segment.get("data") or {}
         if not isinstance(data, dict):
@@ -370,7 +489,12 @@ def extract_image_urls(raw_segments: list[dict[str, Any]] | None) -> list[str]:
                 http_url = candidate
                 continue
             if not local_url:
-                local_url = _image_file_to_data_url(candidate) or ""
+                local_url = (
+                    _image_file_to_data_url(
+                        candidate, keep_animation_raw=keep_animation_raw
+                    )
+                    or ""
+                )
         resolved = local_url or http_url
         if resolved and resolved not in urls:
             urls.append(resolved)

@@ -19,9 +19,11 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.sender.nonebot import send_nonebot_message
-from plugins.bot_unified_runtime.sender.onebot import send_onebot_v11
-from plugins.bot_unified_runtime.sender.queue import QueuedSendRequest
+from plugins.bot_unified_runtime.domains.transport.sender.nonebot import (
+    send_nonebot_message,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.onebot import send_onebot_v11
+from plugins.bot_unified_runtime.domains.transport.sender.queue import QueuedSendRequest
 
 
 def test_non_onebot_handlers_use_transport_dispatcher() -> None:

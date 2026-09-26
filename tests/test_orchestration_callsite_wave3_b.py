@@ -360,14 +360,16 @@ def _real_spec(family: str, tmp_path, monkeypatch: pytest.MonkeyPatch):
     """返回 (builder 真身, config, 逐字转给 builder 的 context 依赖, 消息)，并打好本域 IO 叶子。"""
     if family == "weather":
         # 叶子=nmc_weather_query（NMC HTTP）/fetch_city_alerts（预警 HTTP）/render_card_png
-        # （weather 函数级 import 消费的垫片属性=出图）。码表/变体链/报告文本/审计 tags 全真。
+        # （weather 函数级 import 消费的真身属性=出图）。码表/变体链/报告文本/审计 tags 全真。
         import plugins.bot_unified_runtime.domains.weather.capabilities.weather as weather_mod
-        from plugins.bot_unified_runtime.capabilities import content_parser as card_shim
+        from plugins.bot_unified_runtime.domains.link_parse.capabilities import (
+            content_parser as card_body,
+        )
 
         monkeypatch.setattr(weather_mod, "nmc_weather_query",
                             lambda query, proxy="": f"【{query}天气】晴 25℃")
         monkeypatch.setattr(weather_mod, "fetch_city_alerts", lambda query, proxy="": [])
-        monkeypatch.setattr(card_shim, "render_card_png",
+        monkeypatch.setattr(card_body, "render_card_png",
                             lambda backend, item, **kw: {"file": str(tmp_path / "weather.png")})
         config = SimpleNamespace(bot_download_proxy="", bot_card_render_dir=str(tmp_path / "cards"))
         deps = {"render_backend": SimpleNamespace(available=True, name="stub-renderer")}

@@ -51,11 +51,11 @@ from plugins.bot_unified_runtime.domains.ops.smoke.console_chat import (
     _reconfigure_stdio,
     load_smoke_config,
 )
+from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
 from plugins.bot_unified_runtime.llm import (
     OpenAICompatibleLLMProvider,
     StaticLLMProvider,
 )
-from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
 
 def _build_llm_provider(config: Config) -> Any:

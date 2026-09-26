@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities import chat as chat_module
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import (
+    chat as chat_module,
+)
 from plugins.bot_unified_runtime.message_context import (
     INTERNAL_MARKER_PATTERN,
     _neutralize_markers,

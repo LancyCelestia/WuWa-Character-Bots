@@ -10,17 +10,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.reminder import (
+from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.schedule.capabilities.reminder import (
     build_reminder_capability,
     clear_checkoff_pending_for_tests,
 )
-from plugins.bot_unified_runtime.character.reminders import (
+from plugins.bot_unified_runtime.domains.schedule.store.reminders import (
     Reminder,
     ReminderStore,
     build_reminder_text,
     classify_reminder_kind,
 )
-from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 
 
 @pytest.fixture(autouse=True)
@@ -146,7 +146,7 @@ def test_checkoff_confirmation_copy_keeps_shorekeeper_voice(tmp_path, monkeypatc
 
 def test_delivery_template_table_covers_all_kinds() -> None:
     """A-13：到点文案模板表必须覆盖全部分型，每条模板都带 {text} 占位。"""
-    from plugins.bot_unified_runtime.character.reminders import (
+    from plugins.bot_unified_runtime.domains.schedule.store.reminders import (
         _REMINDER_TEXT_TEMPLATES,
         REMINDER_KINDS,
     )

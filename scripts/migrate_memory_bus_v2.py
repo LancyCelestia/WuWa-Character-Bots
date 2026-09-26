@@ -8,8 +8,11 @@
   回滚粒度=「停止写总线 + 新列闲置」；
 - **不复活已删事实**：用户显式遗忘过的行（有墓碑）即便幂等键再次出现也只跳过；
 - **守恒断言**：迁移后「旧表未作废行的按人分组数 == 总线 reflected-migration 行的
-  按人分组数」且「旧表总行数分毫未动」，任一不满足即**整事务回滚**并报错——
-  宁可零迁移，不可半迁移。
+  按人分组数」且「旧表总行数分毫未动」，任一不满足即报 ``ConservationError`` 中止。
+  如实口径（2026-09-26 S-T-MEMBUS 合成库实证）：store 层逐操作提交，断言**只检测、
+  不回滚**——中毒跑的半迁移会留在盘上；收口方式是拿 %TEMP% 备份 **幂等续跑**把
+  差额补到守恒期望（回归锁 test_resume_after_conservation_failure_completes_migration），
+  绝不静默放行半迁移，也绝不假装能整事务撤回。
 
 用法：
     python scripts/migrate_memory_bus_v2.py                      # dry-run（默认，不写库）
@@ -86,7 +89,10 @@ class MigrationReport:
             ),
             f"  反思库行：总计 {self.legacy_total}，未作废 {self.legacy_active}",
             f"  计划投递：{self.planned} 条；本次落库 {self.migrated} 条",
-            f"  已存在跳过 {self.skipped_existing} 条；已遗忘跳过 {self.skipped_forgotten} 条",
+            (
+                f"  已存在跳过 {self.skipped_existing} 条；"
+                f"正当拒收跳过（已遗忘/硬线/无作用域）{self.skipped_forgotten} 条"
+            ),
             (
                 "  作用域未能从会话表还原（按原复合键落库，跨键不可见）："
                 f"{self.unresolved_scope} 条"
@@ -184,7 +190,13 @@ def plan_migration(
             # 迁过去等于把作废的旧说法重新变成候选（语义倒退）。
             continue
         if fact.session_key in _GLOBAL_SCOPE_KEYS:
-            scope = derive_scope("")  # global：写侧对 global 候选允许空 scope_key
+            # 旧 global 形态 → global 空作用域。总线归纳侧「空作用域不配全局可见」
+            # 闸（memory_bus_v2.absorb 的 unscoped_candidate 分支）会把这类行**正当
+            # 拒收**——它们留在旧表、经旧路径/候选源仍可见，但结构上迁不进总线
+            # （回归锁 test_legacy_global_rows_are_refused_not_faked）。生产现算 0 行
+            # （2026-09-26）；切 target=bus 前必须复核此形态计数仍为 0，否则这批旧
+            # 归纳行会从召回面消失。
+            scope = derive_scope("")
             unresolved = False
         else:
             bare = composite_index.get(fact.session_key, "")

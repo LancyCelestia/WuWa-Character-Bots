@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.music import (
+from plugins.bot_unified_runtime.contracts import SessionType, build_parsed_content
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
+from plugins.bot_unified_runtime.domains.music.capabilities.music import (
     build_music_capability,
     clear_music_candidate_sessions,
 )
-from plugins.bot_unified_runtime.contracts import SessionType, build_parsed_content
-from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
 
 
 def _message(text: str, session_id: str = "private:u1") -> IncomingMessage:

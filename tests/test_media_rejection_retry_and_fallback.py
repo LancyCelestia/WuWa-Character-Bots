@@ -36,9 +36,13 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.sender.onebot import send_onebot_v11
-from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
-from plugins.bot_unified_runtime.sender.worker import drain_send_queue_once
+from plugins.bot_unified_runtime.domains.transport.sender.onebot import send_onebot_v11
+from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+    SQLiteSendRequestQueue,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.worker import (
+    drain_send_queue_once,
+)
 
 T0 = datetime(2026, 9, 15, 5, 0, 0, tzinfo=timezone.utc)
 
@@ -322,7 +326,9 @@ def test_worker_retryable_rounds_do_not_fallback_early(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("content_type", ["mixed", "image"])
 def test_fallback_text_extraction(content_type: str) -> None:
-    from plugins.bot_unified_runtime.sender.worker import _fallback_text_for_media
+    from plugins.bot_unified_runtime.domains.transport.sender.worker import (
+        _fallback_text_for_media,
+    )
 
     request = _mixed_image_text_request()
     if content_type == "image":

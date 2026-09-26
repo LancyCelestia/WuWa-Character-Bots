@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.character.mood import BotMood, BotMoodStore
+from plugins.bot_unified_runtime.domains.chat_reply.character.mood import (
+    BotMood,
+    BotMoodStore,
+)
 
 
 class _MutableClock:

@@ -39,8 +39,11 @@
   出自 ``bot.chat`` / 会话范围（``BOT_TTS_AUTO_REPLY_SCOPE``，**礼仪维度**）/
   群面中央名单门（M-17：群聊必须过 ``explicit_allowed_for_session``——
   黑名单永远赢、群白名单空=群面关闭绝不猜群，**安全维度**，与 chat 主链
-  同一事实源）/ 概率门（``BOT_TTS_AUTO_REPLY_PROBABILITY``，默认 5%，
+  同一事实源）/ 概率门（``BOT_TTS_AUTO_REPLY_PROBABILITY``，默认 10%，
   确定性哈希实现，同一条消息结果恒定可复现）。
+- **命令路出站形态**：``说 X`` 发的是「**原文本 + 语音音频**」两条部件
+  （2026-09-25 用户裁定第 8 项）——正文取实际念出的那串字（已过内容门与
+  有损变换），与音频同源同值；音频是死引用时文字腿照送，不再一个字都不发。
 - **有损变换可观测（M-14）**：``resolve_speech_text`` 的打码/markdown 剥除/
   截断/占位符替换/词典替换每一步都产出机读结论（``audit`` 出参 + audit_tags
   ``truncated=true``/``kept_ratio=0.42`` 等），零文本行为变更——「语音只念了
@@ -398,6 +401,72 @@ def _truncate_at_sentence(text: str, limit: int) -> str:
         if window[index] in _SENTENCE_END:
             return window[: index + 1]
     return window
+
+
+# 长文拆条的次级切分面（单句仍超限时兜底）：逗号/顿号/空白。
+_CLAUSE_BREAK = "，,、 　\t"
+
+
+def _split_sentences(text: str) -> list[str]:
+    """按句末标点切句（标点留在句尾）。零宽 lookbehind 分割，无第二套切点表。"""
+    parts = re.split(f"(?<=[{_SENTENCE_END}])", text)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _clause_break_index(piece: str, limit: int) -> int:
+    """超限长句内从 limit 往回找逗号/空白切点；找不到返回 0（调用方硬切）。"""
+    for index in range(min(limit, len(piece)) - 1, -1, -1):
+        if piece[index] in _CLAUSE_BREAK:
+            return index + 1
+    return 0
+
+
+def _join_speech_atom(current: str, atom: str) -> str:
+    """拼块：两端都是字母/数字（硬切断词）时补一个空格，其余直连不加空隙。"""
+    if current and atom and current[-1].isalnum() and atom[0].isalnum():
+        return f"{current} {atom}"
+    return current + atom
+
+
+def split_speech_chunks(text: str, max_chars: int) -> list[str]:
+    """把长朗读文本按句末标点切成 ≤max_chars 的若干块（>60s 自动配音拆条）。
+
+    ``max_chars<=0`` 或文本未超限 ⇒ 原样单块返回（与拆条引入前逐字节同构）；
+    空文本 ⇒ ``[]``。切点优先句末标点（``_SENTENCE_END``，与
+    ``_truncate_at_sentence`` 同一真身字符集）；单句仍超限退到逗号/空白；
+    再无标点长串按 ``max_chars`` 硬切。贪心装填：句子装得进当前块就继续装。
+    注意「段落」在本路不可按换行识别——``resolve_speech_text`` 的清洗已把
+    换行压平为空格，所以主切面只能是句末标点而非 ``\\n``。
+    """
+    stripped = str(text or "").strip()
+    if not stripped:
+        return []
+    if max_chars <= 0 or len(stripped) <= max_chars:
+        return [stripped]
+    atoms: list[str] = []
+    for sentence in _split_sentences(stripped):
+        piece = sentence
+        while len(piece) > max_chars:
+            cut = _clause_break_index(piece, max_chars) or max_chars
+            atoms.append(piece[:cut].strip())
+            piece = piece[cut:].strip()
+        if piece:
+            atoms.append(piece)
+    chunks: list[str] = []
+    current = ""
+    for atom in atoms:
+        if not current:
+            current = atom
+            continue
+        candidate = _join_speech_atom(current, atom)
+        if len(candidate) <= max_chars:
+            current = candidate
+        else:
+            chunks.append(current)
+            current = atom
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def _ref_fingerprint(ref_path: str) -> str:
@@ -1146,8 +1215,14 @@ def build_tts_capability(config: Any | None = None) -> Any:
                 audit_tags=["tts", "synthesize_failed"],
                 operational_issue=_failure_issue(message, reason),
             )
-        # 与 randpic 同口径：title/body 留空，只发媒体本体，
-        # 否则 renderer 的 body→summary→title 兜底链会把标题当文案一起发出去。
+        # 出站形态＝「原文本 + 语音音频」（2026-09-25 用户裁定第 8 项）。
+        # 正文放 body 而 **title 仍留空**：renderer 的外发正文是
+        # ``safe_text or body or summary or title`` 一条链，只产出一段文字部件，
+        # 因此不会「念一遍再发两遍」；title 在正文已带值时纯属冗余。
+        # 带的是**实际念出的那串字**（已过内容门与有损变换），不是用户原文——
+        # 文字与语音必须互相印证，不能一个说 A 一个念 B。
+        # 第二重收益：音频是死引用时 record 段被跳过，旧形态（body 空）会
+        # 落得一个字都不发，现在文字腿照送。
         # audit_tags 记 preset/seed（G2-R3：确定性可审计，波末向用户报备
         # 「同句恒同音色」语义变更）与有损变换事实（M-14）。
         # M-64/S2（蓝图 §3.3）：出站部件随件携带落盘字节摘要（content_sha256），
@@ -1163,7 +1238,7 @@ def build_tts_capability(config: Any | None = None) -> Any:
             capability_id="bot.tts",
             kind="text",
             title="",
-            body="",
+            body=speech,
             audio=[audio_part],
             audit_tags=[
                 "tts",

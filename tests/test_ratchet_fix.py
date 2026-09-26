@@ -18,16 +18,20 @@ from collections.abc import Callable
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.affinity import is_affinity_command
-from plugins.bot_unified_runtime.capabilities.meme import is_meme_command
-from plugins.bot_unified_runtime.capabilities.meme_library import (
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.affinity import (
+    is_affinity_command,
+)
+from plugins.bot_unified_runtime.domains.meme.capabilities.meme import is_meme_command
+from plugins.bot_unified_runtime.domains.meme.capabilities.meme_library import (
     is_meme_library_command,
 )
-from plugins.bot_unified_runtime.capabilities.music import (
+from plugins.bot_unified_runtime.domains.music.capabilities.music import (
     is_music_command,
     is_music_mode_command,
 )
-from plugins.bot_unified_runtime.capabilities.weather import is_weather_command
+from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
+    is_weather_command,
+)
 
 # ---------------------------------------------------------------------------
 # 跨能力冲突 ×4：mode 词族裸词唯一归 bot.music_mode

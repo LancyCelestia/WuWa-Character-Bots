@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import math
 import sqlite3
 import threading
 import time
 from collections import defaultdict, deque
 from collections.abc import Callable
 from contextlib import closing
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import ClassVar, Protocol
 
@@ -18,8 +20,47 @@ from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
     new_debug_id,
 )
 
+from . import redrive_ledger
+
 CHAT_CAPABILITY_IDS = {"bot.chat"}
 DEFAULT_BYPASS_ROLES = ["admin"]
+
+# 群节奏层的桶名（InMemory 与 SQLite 共用同一组 scope，判定序也共用）。
+PACING_SCOPE_TOKENS = "group_pacing_tokens"
+PACING_SCOPE_MINUTE = "group_pace_minute"
+PACING_SCOPE_LAST = "group_pace_last"
+PACING_SCOPE_VISION_LAST = "group_pace_vision_last"
+PACING_MINUTE_WINDOW_SECONDS = 60
+
+
+def interval_wait_seconds(interval_seconds: float, elapsed_seconds: float) -> int:
+    """「还剩几秒解禁」的唯一真身：**向上取整**、至少 1 秒。
+
+    旧写法 `int(间隔 - elapsed)` 向下截断——报出去的值最多比解禁点短 1 秒，
+    而 pipeline 只睡报出来的秒数（`_schedule_rate_limit_redrive` →
+    `_redrive_after`），睡完仍差零点几秒被拦，补回额度（`max_attempts=1`）
+    恰好在当场用光 ⇒ 连发消息静默丢弃（2026-09-25 用户裁定第 2 项）。
+    向上取整是唯一安全方向：至多多等一秒，不会等完还进不去。
+
+    点名最小间隔（InMemory/SQLite 两把尺）、群主动接话冷却、节奏层文字/图类
+    独立间隔与分钟窗全部共读这一枚算式；AST 锁
+    `tests/test_policy_queue_not_drop.py::test_interval_arithmetic_has_a_single_truth_source`
+    禁止第二份截断副本回流。
+    """
+    return max(1, math.ceil(float(interval_seconds) - float(elapsed_seconds)))
+
+
+def sender_interval_ledger_key(capability_id: str, sender_id: str) -> str:
+    """冷却桶键＝补回账本键的单一格式（两后端与 `redrive_wait_seconds` 共用）。"""
+    return f"{capability_id}:sender_interval:{sender_id}"
+
+
+@dataclass
+class _TokenState:
+    """一处令牌桶状态：剩余令牌 + 上次回血时刻（epoch 秒）。"""
+
+    tokens: float
+    updated_at: float
 
 
 class RateLimitDecision(StrictBaseModel):
@@ -47,6 +88,23 @@ class RateLimitSettings(StrictBaseModel):
     # 群聊专属句数帽（用户口径：每小时 60 句、每分钟 3 句）。0 = 该帽不生效。
     group_hourly_max_requests: int = 0
     group_minute_max_requests: int = 0
+    # ---- 群聊节奏层（2026-09-24 T7，采纳 T6 令牌桶主干）--------------------
+    # 她描述的问题：**想设"1 小时 30 句"，但刚开始就能把限额飞速跑光，之后整段
+    # 沉默**。滑动对数窗天然不防突发（T6 实测：只开小时帽 30 ⇒ 2 分钟放 30 条、
+    # 随后静默 58 分钟）。令牌桶把"团块配额"换成"匀速额度"：容量 B 决定开局连发
+    # 上限，速率 x/小时决定长期额度，桶空后每 3600/x 秒必回一句 ⇒ **最坏静默
+    # 从"整窗"降为 3600/x 秒**。
+    # x = 每小时补充多少句（0 = 整个节奏层不生效，含下面的分钟帽与最小间隔）。
+    group_pacing_tokens_per_hour: int = 0
+    # B = 桶容量（可连发上限；开局最多连发 B 句，不会一把打光小时额度）。
+    group_pacing_burst_capacity: int = 5
+    # 节奏层的分钟外骨架（与上面的小时桶是两道独立的帽，缺一都可能被突发绕过）。
+    group_pacing_max_per_minute: int = 3
+    # 相邻两句群非点名回复的最小间隔（0 = 不设间隔）。
+    group_pacing_min_interval_seconds: int = 20
+    # 图片/表情包类**自己的**独立最小间隔（用户裁定：群聊接图必须跟主动回复频率
+    # 走，不再每条必回；与文字共用同一个小时桶，另加这道更宽的间隔）。0 = 不设。
+    group_vision_min_interval_seconds: int = 120
     # 用户情绪低落时的豁免：安抚不该被句数帽挡住（"要紧的事不受限制"）。
     emotion_exempt_enabled: bool = True
     bypass_roles: list[str] = Field(default_factory=lambda: list(DEFAULT_BYPASS_ROLES))
@@ -91,6 +149,29 @@ class RateLimitSettings(StrictBaseModel):
             raise ValueError("group request caps must not be negative")
         return value
 
+    @field_validator(
+        "group_pacing_tokens_per_hour",
+        "group_pacing_max_per_minute",
+        "group_pacing_min_interval_seconds",
+        "group_vision_min_interval_seconds",
+    )
+    @classmethod
+    def require_non_negative_pacing(cls, value: int) -> int:
+        # 与群帽同口径：0 = 该项不生效（节奏层整体由 tokens_per_hour>0 点火），
+        # 负数是写错了，绝不允许（min(n, 负数) 会把帽反向变成"不限"）。
+        if value < 0:
+            raise ValueError("group pacing parameters must not be negative")
+        return value
+
+    @field_validator("group_pacing_burst_capacity")
+    @classmethod
+    def require_positive_burst_capacity(cls, value: int) -> int:
+        # 容量 0 会让节奏层"点火却一句都发不出"（tokens_per_hour>0 时永久静默），
+        # 属自相矛盾的参数 ⇒ 装载期就拒，不留到运行期哑掉。
+        if value < 1:
+            raise ValueError("group pacing burst capacity must be at least 1")
+        return value
+
     @field_validator("bypass_roles")
     @classmethod
     def normalize_bypass_roles(cls, values: list[str]) -> list[str]:
@@ -116,13 +197,17 @@ class RateLimiter(Protocol):
 
 
 # R3 记账可能携带的放行型 reason（allowed 之外）。审查 A-04 序下 R3 记账
-# 先于 interactive/role_bypass/emotion_exempt 各早退执行，这些路径返回时
-# sender_interval 桶已 +1——rollback 必须同样覆盖，否则能力失败后管理员的
-# 下一次点名/情绪豁免消息会被残留记账误拦。其余 reason（disabled/
-# non_chat_capability/各拦截）在 R3 门之前或 R3 门未命中，零记账。
-_R3_RECORD_CARRYING_REASONS = frozenset(
-    {"interactive_bypass", "role_bypass", "emotion_exempt"}
-)
+# 先于 interactive/role_bypass 各早退执行，这些路径返回时 sender_interval
+# 桶已 +1——rollback 必须同样覆盖，否则能力失败后管理员的下一次点名会被
+# 残留记账误拦。其余 reason（disabled/non_chat_capability/各拦截）在 R3 门
+# 之前或 R3 门未命中，零记账。
+# 2026-09-24 裁定 3 后 emotion_exempt 不再属于本集合：豁免改判为"只免最小
+# 间隔、句数额度照常且照常记账"，它走 _FULL_RECORD_REASONS 的全额回滚。
+_R3_RECORD_CARRYING_REASONS = frozenset({"interactive_bypass", "role_bypass"})
+
+# 「放行即全额记账」的 reason 集合：allowed 与 emotion_exempt（裁定 3 后
+# 豁免消息同样消耗句数额度并落全部账，rollback 必须对称退还）。
+_FULL_RECORD_REASONS = frozenset({"allowed", "emotion_exempt"})
 
 
 def _sender_interval_record_applies(
@@ -150,10 +235,10 @@ def _group_windows_record_applies(
     settings: RateLimitSettings,
     message: IncomingMessage,
 ) -> bool:
-    """群句数帽在 allowed 路径「已记账」的条件（rollback 用）。
+    """群句数帽在放行路径「已记账」的条件（rollback 用）。
 
-    情绪豁免命中时 check_and_record 直接以 reason=emotion_exempt 返回且
-    零记账，走不到 allowed，故此处无需复判豁免。
+    2026-09-24 裁定 3：情绪豁免不再早退零记账——豁免消息照常过句数帽并落账，
+    只免最小间隔。所以 allowed 与 emotion_exempt 两条放行 reason 都命中本条件。
     """
     return bool(
         is_group_session(message)
@@ -164,7 +249,9 @@ def _group_windows_record_applies(
     )
 
 
-# 情绪低落标签集合：命中即豁免群句数帽（"要紧的事不受限制"）。
+# 情绪低落标签集合：命中即豁免最小间隔（"要紧的事不被节奏拖住"）。
+# 2026-09-24 裁定 3：豁免面从"免句数帽"收窄为"只免最小间隔"，
+# 小时/分钟额度与令牌桶对豁免消息照常生效、照常记账。
 _DISTRESS_LABELS = frozenset({"support_needed", "lonely", "low_energy", "frustrated"})
 
 
@@ -175,6 +262,56 @@ def is_group_session(message: IncomingMessage) -> bool:
     if str(value).strip().lower() == "group":
         return True
     return bool(getattr(message, "group_id", None))
+
+
+def group_pacing_applies(settings: RateLimitSettings, message: IncomingMessage) -> bool:
+    """群节奏层对这条消息是否生效：只建桶时点火（x<=0 = 整层关）、只罩群聊。
+
+    私聊与「@ 点名/命令」流量走不到这里（``interactive_bypass`` 早退在它之前），
+    这正是 T6 §伍 Q1 推荐并被采纳的口径——"每小时 x 句"只罩**非点名**流量，
+    @ 必回是人格教义，不动。
+    """
+    return bool(
+        settings.enabled
+        and settings.group_pacing_tokens_per_hour > 0
+        and is_group_session(message)
+    )
+
+
+def refilled_tokens(
+    *, tokens: float, updated_at: float, now_epoch: float, per_hour: int, capacity: int
+) -> float:
+    """按秒回血后的令牌数（**纯函数**：只算不写，判定与落账分离＝B-1 的教训）。"""
+    gained = max(0.0, now_epoch - updated_at) * (per_hour / 3600.0)
+    return min(float(capacity), max(0.0, tokens) + gained)
+
+
+def tokens_wait_seconds(*, available: float, needed: float, per_hour: int) -> int:
+    """还差 ``needed-available`` 格令牌 ⇒ 按回血节拍还要等几秒（x 句/小时 = 每 3600/x 秒 1 格）。"""
+    if per_hour <= 0 or available >= needed:
+        return 0
+    return max(1, math.ceil((needed - available) * 3600.0 / per_hour))
+
+
+def pacing_consumption(amount: int, capacity: int) -> int:
+    """一次放行扣掉几格令牌：**按桶容量封顶**。
+
+    ``amount`` 来自 reply_budget（一条消息可拆多句外送）。若允许 amount > 容量，
+    门槛永远跨不过去 ⇒ 该群从此刻起一句都发不出（参数写小只该显得迟钝，
+    不该把路堵死）。
+    """
+    return max(1, min(int(amount), int(capacity)))
+
+
+def _message_is_visual(message: IncomingMessage) -> bool:
+    """图片/表情包/视频段判定：复用门禁的同一个公共谓词，不留第二份段类型副本。
+
+    延迟导入的理由与 ``distress_exemption`` 同口径——policy 包内两个模块互引，
+    放模块顶层会把 import 顺序变成硬约束。
+    """
+    from .gate import message_has_visual_content
+
+    return message_has_visual_content(message)
 
 
 def distress_exemption(message: IncomingMessage) -> RateLimitDecision | None:
@@ -220,6 +357,30 @@ def distress_exemption(message: IncomingMessage) -> RateLimitDecision | None:
     )
 
 
+def emotion_interval_exemption(
+    settings: RateLimitSettings, message: IncomingMessage
+) -> RateLimitDecision | None:
+    """情绪/好感豁免是否触发；返回豁免决定（含标签）或 None。
+
+    2026-09-24 裁定 3：豁免只免**最小间隔**（节奏层间隔、图类独立间隔、
+    target 间隔），不免任何句数额度——小时帽/分钟帽/令牌桶/session/sender/
+    global 对豁免消息照常判定、照常记账（否则一条难过消息能连开 60 句）。
+    覆盖面沿用既有口径、不扩大：仅群聊，且仅当至少一道群数量面（小时帽/
+    分钟帽/节奏层）在运行时才询问——旧实现里豁免只在群窗判定里被咨询，
+    两帽皆 0 时该判定整体不存在，豁免也无从触发。
+    InMemory 与 SQLite 共用本函数：两把尺的豁免语义必须同源。
+    """
+    if not settings.emotion_exempt_enabled or not is_group_session(message):
+        return None
+    if not (
+        settings.group_hourly_max_requests > 0
+        or settings.group_minute_max_requests > 0
+        or group_pacing_applies(settings, message)
+    ):
+        return None
+    return distress_exemption(message)
+
+
 class InMemoryRateLimiter:
     # 桶清扫间隔：只访问被命中的桶会让未再命中的桶永久滞留（键集合无界增长）。
     _SWEEP_INTERVAL_SECONDS = 600.0
@@ -229,13 +390,25 @@ class InMemoryRateLimiter:
         settings: RateLimitSettings | Callable[[], RateLimitSettings] | None = None,
         *,
         clock: Callable[[], datetime] | None = None,
+        monotonic: Callable[[], float] | None = None,
     ) -> None:
         # settings 可以是静态对象，也可以是**每次判定实时求值**的 callable——
         # 后者让 /bot runtime set 改的群句数帽/情绪豁免立刻生效，而不是等重启。
         self._settings_source = settings or RateLimitSettings()
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        # 节流用**单调钟**，与上面的墙钟分开，而且缺省就是 `time.monotonic`
+        # ⇒ 不注入时与历史形态逐字节相同。开这一枚缝的唯一理由见 `_maybe_sweep`
+        # 的注释（PX-9：清扫体 600 秒才执行一次，离线套件永不进树，
+        # 体内一枚未定义名要到"重启约 10 分钟后的第一条群消息"才炸）。
+        # 刻意**不**改吃 `self.clock`（墙钟）：本仓有 NTP 授时
+        # （`runtime/timesync.py`，重启后 ~65s 起每 10 分钟校时），节流若吃墙钟，
+        # 一次向后的校时跳变就会把清扫无限推后（键集合无界增长）——
+        # 为了可测性把生产语义改差，属"变绿手段"，不做。
+        self._monotonic: Callable[[], float] = monotonic or time.monotonic
         self._buckets: dict[str, deque[datetime]] = defaultdict(deque)
-        self._last_sweep = time.monotonic()
+        # 群节奏桶的令牌状态（每群一格，键同 _buckets 命名口径）。
+        self._pacing_tokens: dict[str, _TokenState] = {}
+        self._last_sweep = self._monotonic()
 
     @property
     def settings(self) -> RateLimitSettings:
@@ -250,14 +423,24 @@ class InMemoryRateLimiter:
         return source
 
     def _maybe_sweep(self, now: datetime) -> None:
-        """低频清扫空/过期桶，防止长期运行下键集合无界增长。"""
-        if time.monotonic() - self._last_sweep < self._SWEEP_INTERVAL_SECONDS:
+        """低频清扫空/过期桶，防止长期运行下键集合无界增长。
+
+        节流吃 `self._monotonic`（缺省 `time.monotonic`）：测试注入假单调钟即可
+        把「跨过 600 秒」这一件事演出来，**600 这个业务值一字未动**。
+        """
+        if self._monotonic() - self._last_sweep < self._SWEEP_INTERVAL_SECONDS:
             return
-        self._last_sweep = time.monotonic()
+        self._last_sweep = self._monotonic()
+        settings = self.settings
         horizon = max(
-            self.settings.window_seconds,
-            self.settings.target_min_interval_seconds,
-            self.settings.proactive_window_seconds,
+            settings.window_seconds,
+            settings.target_min_interval_seconds,
+            settings.proactive_window_seconds,
+            settings.group_pacing_min_interval_seconds,
+            settings.group_vision_min_interval_seconds,
+            PACING_MINUTE_WINDOW_SECONDS
+            if settings.group_pacing_max_per_minute > 0
+            else 0,
         )
         for key in list(self._buckets.keys()):
             bucket = self._buckets.get(key)  # .get 不触发 defaultdict 建桶
@@ -267,6 +450,30 @@ class InMemoryRateLimiter:
                 bucket.popleft()
             if not bucket:
                 del self._buckets[key]
+        # 令牌桶状态：一整轮容量都没回满过（即早已封顶）就可以扔，重建成满桶
+        # 与保留它在判定上等价（首见即满桶），却省一份常驻内存。
+        # ⚠ 这里曾写成一枚**本作用域内不存在的名字** ``pacing``（ruff F821/mypy
+        # name-defined 都抓得到，测试抓不到）：本函数只在 ``_SWEEP_INTERVAL_SECONDS``
+        # （600 秒）之后才执行，而 ``_last_sweep`` 在构造时就置为当下 ⇒
+        # **离线套件永远跑不到这一行，生产则在重启约 10 分钟后的第一条群消息上抛
+        # NameError**。现按上面已经解析好的 ``settings`` 取数，口径不变。
+        # 2026-09-24 S-W12：这条分支的可达性现在有设计过的缝（构造参数 ``monotonic``）
+        # 与公开入口锁兜着 —— 旧形态只能靠手拨 `_last_sweep` 再**直调本私有方法**，
+        # 一旦将来新增一条不经过清扫的公开路径，那把锁会照样绿。
+        idle_cap_seconds = (
+            3600.0 * max(1, settings.group_pacing_burst_capacity)
+            / max(1, settings.group_pacing_tokens_per_hour)
+            if settings.group_pacing_tokens_per_hour > 0
+            else 0.0
+        )
+        if idle_cap_seconds > 0:
+            now_epoch = now.timestamp()
+            for key in list(self._pacing_tokens.keys()):
+                state = self._pacing_tokens.get(key)
+                if state is None:
+                    continue
+                if now_epoch - state.updated_at >= idle_cap_seconds:
+                    del self._pacing_tokens[key]
 
     def check_and_record(
         self,
@@ -326,14 +533,31 @@ class InMemoryRateLimiter:
 
         now = self.clock()
         self._maybe_sweep(now)
-        # 群聊专属句数帽（用户口径：每小时 60 句、每分钟 3 句）。情绪低落时豁免。
-        group_limited = self._check_group_windows(
-            capability_id, message, now, safe_amount
+        # 判定与落账分离（B-1 根修，2026-09-24 T7）：每一条帽只负责"判"，判定通过
+        # 时把**该帽要写的账**登记进 commits；只有全部帽都放行才统一执行。
+        # 旧序是群窗口先判先记、之后才轮到 target/session/sender 帽拒绝 ⇒
+        # 一句都没回的消息照样占掉群小时额度（T6 实测 22 真回占满 30 额度）。
+        commits: list[Callable[[], None]] = []
+        # 情绪/好感豁免（2026-09-24 裁定 3）：只免最小间隔、不免句数额度。
+        # 判一次、把结果透传给节奏层与 target 间隔门；句数帽照常判定照常记账。
+        exemption = emotion_interval_exemption(self.settings, message)
+        interval_exempt = exemption is not None
+        # 群聊专属句数帽（用户口径：每小时 60 句、每分钟 3 句）。
+        group_limited = self._evaluate_group_windows(
+            capability_id, message, now, safe_amount, commits
         )
         if group_limited is not None:
             return group_limited
+        pacing_limited = self._evaluate_group_pacing(
+            capability_id, message, now, safe_amount, commits,
+            interval_exempt=interval_exempt,
+        )
+        if pacing_limited is not None:
+            return pacing_limited
         target_key = self._target_bucket_key(capability_id, message)
-        if self.settings.target_min_interval_seconds > 0:
+        # target 最小间隔也是"间隔"：豁免时放行，但下面照常落一格时间戳
+        #（豁免只救这一条消息自己，不给后续消息铺路）。
+        if self.settings.target_min_interval_seconds > 0 and not interval_exempt:
             target_bucket = self._buckets[target_key]
             self._prune_for_interval(target_bucket, now)
             if target_bucket:
@@ -383,6 +607,8 @@ class InMemoryRateLimiter:
                     ],
                 )
 
+        for commit in commits:
+            commit()
         for _scope, key, _limit in scoped_buckets:
             bucket = self._buckets[key]
             for _ in range(safe_amount):
@@ -390,6 +616,14 @@ class InMemoryRateLimiter:
         if self.settings.target_min_interval_seconds > 0:
             self._buckets[target_key].append(now)
 
+        if exemption is not None:
+            # 裁定 3 后豁免是"全额记账的放行"，reason 保留 emotion_exempt
+            # 供审计识别，rollback 按 _FULL_RECORD_REASONS 对称退还。
+            return RateLimitDecision(
+                allowed=True,
+                reason="emotion_exempt",
+                audit_tags=[*exemption.audit_tags, "rate_limit:ok"],
+            )
         return RateLimitDecision(
             allowed=True,
             reason="allowed",
@@ -432,19 +666,22 @@ class InMemoryRateLimiter:
                 1,
             )
             return
-        if reason != "allowed" and reason not in _R3_RECORD_CARRYING_REASONS:
+        if reason != "proactive_allowed" and (
+            reason not in _FULL_RECORD_REASONS
+            and reason not in _R3_RECORD_CARRYING_REASONS
+        ):
             return
         if _sender_interval_record_applies(self.settings, message, capability_id):
             self._pop_recent(
                 self._buckets.get(self._sender_interval_key(capability_id, message)),
                 1,
             )
-        if reason != "allowed":
+        if reason not in _FULL_RECORD_REASONS:
             return
         if _group_windows_record_applies(self.settings, message):
             group_key = str(message.group_id or message.session_id)
             for scope in ("group_hour", "group_minute"):
-                # 镜像 _check_group_windows 的 active 判定：帽 <=0 的窗口没记账。
+                # 镜像 _evaluate_group_windows 的 active 判定：帽 <=0 的窗口没记账。
                 if scope == "group_hour" and self.settings.group_hourly_max_requests <= 0:
                     continue
                 if scope == "group_minute" and self.settings.group_minute_max_requests <= 0:
@@ -453,6 +690,8 @@ class InMemoryRateLimiter:
                     self._buckets.get(self._bucket_key(capability_id, scope, group_key)),
                     safe_amount,
                 )
+        if group_pacing_applies(self.settings, message):
+            self._rollback_group_pacing(capability_id, message, safe_amount)
         if self.settings.target_min_interval_seconds > 0:
             self._pop_recent(
                 self._buckets.get(self._target_bucket_key(capability_id, message)),
@@ -479,7 +718,7 @@ class InMemoryRateLimiter:
             bucket.pop()
 
     def _sender_interval_key(self, capability_id: str, message: IncomingMessage) -> str:
-        return self._bucket_key(capability_id, "sender_interval", message.sender_id)
+        return sender_interval_ledger_key(capability_id, message.sender_id)
 
     def _check_sender_min_interval(
         self, message: IncomingMessage, capability_id: str, now: datetime
@@ -487,18 +726,50 @@ class InMemoryRateLimiter:
         bucket = self._buckets[self._sender_interval_key(capability_id, message)]
         if bucket:
             elapsed = (now - bucket[-1]).total_seconds()
-            if elapsed < self.settings.chat_sender_min_interval_seconds:
-                return RateLimitDecision(
+            interval = self.settings.chat_sender_min_interval_seconds
+            if elapsed < interval:
+                retry_after = interval_wait_seconds(interval, elapsed)
+                decision = RateLimitDecision(
                     allowed=False,
                     reason="sender_min_interval",
-                    retry_after_seconds=max(
-                        1,
-                        int(self.settings.chat_sender_min_interval_seconds - elapsed),
-                    ),
+                    retry_after_seconds=retry_after,
                     audit_tags=["rate_limit:blocked", "rate_limit:sender_min_interval"],
                 )
-        bucket.append(now)
+                # 排队账本（第 2 项 B 路根修）：同人同轮多条被拦的消息如果都
+                # 约在同一解禁瞬间，头一条通过会把冷却钟重新拨走、其余当场再
+                # 被拦且补回额度只有 1 次 ⇒ 集体陪葬。拒绝即登记（debug_id
+                # 与交出的 decision 同枚——读侧按它精确认领），后到的排队
+                # 位自动让开一个完整间隔。
+                redrive_ledger.reserve_slot(
+                    sender_interval_ledger_key(capability_id, message.sender_id),
+                    debug_id=decision.debug_id,
+                    now=now.timestamp(),
+                    base_wait=float(retry_after),
+                    interval_seconds=float(interval),
+                )
+                return decision
+        # 放行。补回到访的那一条（redrive_count≥1）消耗最早成熟的预留，并把
+        # 冷却钟拨到 max(now, 回位时刻)——"占坑即销"：比回位早醒也要占掉这个
+        # 槽位，否则同人下一条会挤进同一格；槽位销账后不留幽灵槽推后新人
+        # （test_stale_slot_never_inflates_a_later_question 锁死两头）。
+        advanced_to = self._consume_redrive_slot(message, capability_id, now)
+        bucket.append(advanced_to if advanced_to is not None else now)
         return None
+
+    @staticmethod
+    def _consume_redrive_slot(
+        message: IncomingMessage, capability_id: str, now: datetime
+    ) -> datetime | None:
+        """补回到访放行时销账并回交应拨到的冷却钟时刻（无需移动时 None）。"""
+        if int(getattr(message, "redrive_count", 0) or 0) < 1:
+            return None
+        slot = redrive_ledger.consume_earliest_matured(
+            sender_interval_ledger_key(capability_id, message.sender_id),
+            now=now.timestamp(),
+        )
+        if slot is None or slot <= now.timestamp():
+            return None
+        return now + timedelta(seconds=slot - now.timestamp())
 
     def _check_proactive(self, message: IncomingMessage, capability_id: str) -> RateLimitDecision:
         if not self.settings.enabled:
@@ -524,9 +795,8 @@ class InMemoryRateLimiter:
                 return RateLimitDecision(
                     allowed=False,
                     reason="proactive_cooldown",
-                    retry_after_seconds=max(
-                        1,
-                        int(self.settings.proactive_group_cooldown_seconds - elapsed),
+                    retry_after_seconds=interval_wait_seconds(
+                        self.settings.proactive_group_cooldown_seconds, elapsed
                     ),
                     audit_tags=[
                         "rate_limit:proactive_blocked",
@@ -554,16 +824,18 @@ class InMemoryRateLimiter:
         bypass_roles = set(self.settings.bypass_roles)
         return any(role.strip().lower() in bypass_roles for role in message.sender_roles)
 
-    def _check_group_windows(
+    def _evaluate_group_windows(
         self,
         capability_id: str,
         message: IncomingMessage,
         now: datetime,
         amount: int,
+        commits: list[Callable[[], None]],
     ) -> RateLimitDecision | None:
-        """群聊每小时/每分钟滑动窗口判定；通过则记账并返回 None。
+        """群聊每小时/每分钟滑动窗口判定；**只判不记**，通过后登记落账动作给 commits。
 
-        只作用于群聊；两个窗口任一超限即拒绝（先判后记，避免部分记账）。
+        只作用于群聊；两个窗口任一超限即拒绝（拒绝时一格都不写，见 B-1 根修说明）。
+        情绪豁免命中即放行且不记账——覆盖面按既有口径不变（只免群帽）。
         """
         if not is_group_session(message):
             return None
@@ -601,10 +873,225 @@ class InMemoryRateLimiter:
                     retry_after_seconds=retry_after,
                     audit_tags=["rate_limit:blocked", f"rate_limit:{scope}_exceeded"],
                 )
-        for _scope, bucket, _limit, _window in active:
-            for _range in range(amount):
-                bucket.append(now)
+
+        def _commit() -> None:
+            for _scope, bucket, _limit, _window in active:
+                for _ in range(amount):
+                    bucket.append(now)
+
+        commits.append(_commit)
         return None
+
+    def _evaluate_group_pacing(
+        self,
+        capability_id: str,
+        message: IncomingMessage,
+        now: datetime,
+        amount: int,
+        commits: list[Callable[[], None]],
+        *,
+        interval_exempt: bool = False,
+    ) -> RateLimitDecision | None:
+        """群节奏层（令牌桶 + 分钟帽 + 最小间隔，含图类独立间隔）判定：**只判不记**。
+
+        与 ``_evaluate_group_windows`` 同一套哲学——通过时把落账动作登记给
+        ``commits``，由调用方在**全部帽都放行之后**统一执行；任一帽拒绝则一格不写
+        （B-1 幽灵扣减的根修口径，节奏层自己也不许再犯一次）。
+        顺序：间隔位（图类那道先判、文字那道后判——宽者先判才能让
+        ``retry_after_seconds`` 报真正卡住的那道，而不是预告 20 秒后再撞第二次）
+        → 分钟帽 → 令牌桶（先便宜后贵，且被拦原因更贴近用户感受）。
+        图类间隔不是第 4 层：它与文字间隔同在间隔位、同用一条帽、共用同一个
+        ``_message_is_visual`` 谓词，只是各自一格账（scope 不同）。
+        """
+        settings = self.settings
+        if not group_pacing_applies(settings, message):
+            return None
+        group_key = str(message.group_id or message.session_id)
+        now_epoch = now.timestamp()
+        capacity = settings.group_pacing_burst_capacity
+        needed = pacing_consumption(amount, capacity)
+
+        interval = settings.group_pacing_min_interval_seconds
+        last_key = self._bucket_key(capability_id, PACING_SCOPE_LAST, group_key)
+        # 图类独立间隔（用户裁定「图片 120 秒」）。判定/记账/退账三面共用同一枚
+        # ``_message_is_visual`` 谓词（真身在 policy/gate.py 的
+        # ``message_has_visual_content``），本处不写第二套段类型判据。
+        # ⚠ ``vision_interval > 0`` 写在 ``and`` 左边是有意的短路：参数为 0 时连谓词
+        # 都不调用 ⇒ 整层惰性、逐字节回到本格落地前的形态。
+        vision_interval = settings.group_vision_min_interval_seconds
+        visual = vision_interval > 0 and _message_is_visual(message)
+        # 取 max：图类间隔不窄于文字间隔。两条帽各自成账（不同 scope），max 不会
+        # 让文字间隔变宽；反过来若把图配得比文字还窄，这道门自然由文字间隔兜住。
+        vision_gap = max(interval, vision_interval) if visual else 0
+        vision_key = self._bucket_key(capability_id, PACING_SCOPE_VISION_LAST, group_key)
+        # 宽者先判：这样 retry_after_seconds 报的是真正卡住的那道，而不是让调用方
+        # 按 20 秒白等一轮、再被 120 秒那道第二次拦下（预告失真）。
+        if visual and not interval_exempt:
+            vision_bucket = self._buckets[vision_key]
+            while vision_bucket and (
+                now - vision_bucket[0]
+            ).total_seconds() >= vision_gap:
+                vision_bucket.popleft()
+            if vision_bucket:
+                vision_elapsed = (now - vision_bucket[-1]).total_seconds()
+                return RateLimitDecision(
+                    allowed=False,
+                    reason="group_pacing_vision_min_interval",
+                    retry_after_seconds=interval_wait_seconds(vision_gap, vision_elapsed),
+                    audit_tags=[
+                        "rate_limit:blocked",
+                        "rate_limit:group_pacing_vision_min_interval",
+                    ],
+                )
+        if interval > 0 and not interval_exempt:
+            last = self._buckets[last_key]
+            while last and (now - last[0]).total_seconds() >= interval:
+                last.popleft()
+            if last:
+                elapsed = (now - last[-1]).total_seconds()
+                return RateLimitDecision(
+                    allowed=False,
+                    reason="group_pacing_min_interval",
+                    retry_after_seconds=interval_wait_seconds(interval, elapsed),
+                    audit_tags=[
+                        "rate_limit:blocked",
+                        "rate_limit:group_pacing_min_interval",
+                    ],
+                )
+
+        minute_limit = settings.group_pacing_max_per_minute
+        minute_key = self._bucket_key(capability_id, PACING_SCOPE_MINUTE, group_key)
+        if minute_limit > 0:
+            minute_bucket = self._buckets[minute_key]
+            while minute_bucket and (
+                now - minute_bucket[0]
+            ).total_seconds() >= PACING_MINUTE_WINDOW_SECONDS:
+                minute_bucket.popleft()
+            if len(minute_bucket) + needed > minute_limit:
+                elapsed_oldest = (now - minute_bucket[0]).total_seconds()
+                return RateLimitDecision(
+                    allowed=False,
+                    reason="group_pacing_minute_exceeded",
+                    retry_after_seconds=interval_wait_seconds(
+                        PACING_MINUTE_WINDOW_SECONDS, elapsed_oldest
+                    ),
+                    audit_tags=[
+                        "rate_limit:blocked",
+                        "rate_limit:group_pacing_minute_exceeded",
+                    ],
+                )
+
+        state = self._pacing_tokens.get(
+            self._bucket_key(capability_id, PACING_SCOPE_TOKENS, group_key)
+        )
+        # 首见即满桶：开局最多连发 B 句，之后按 3600/x 秒一句回血（"绝不瞬间打光"）。
+        available = (
+            float(capacity)
+            if state is None
+            else refilled_tokens(
+                tokens=state.tokens,
+                updated_at=state.updated_at,
+                now_epoch=now_epoch,
+                per_hour=settings.group_pacing_tokens_per_hour,
+                capacity=capacity,
+            )
+        )
+        if available + 1e-9 < needed:
+            return RateLimitDecision(
+                allowed=False,
+                reason="group_pacing_tokens_exhausted",
+                retry_after_seconds=tokens_wait_seconds(
+                    available=available,
+                    needed=float(needed),
+                    per_hour=settings.group_pacing_tokens_per_hour,
+                ),
+                audit_tags=[
+                    "rate_limit:blocked",
+                    "rate_limit:group_pacing_tokens_exhausted",
+                ],
+            )
+
+        def _commit() -> None:
+            token_key = self._bucket_key(
+                capability_id, PACING_SCOPE_TOKENS, group_key
+            )
+            current = self._pacing_tokens.get(token_key)
+            if current is None:
+                current = _TokenState(tokens=float(capacity), updated_at=now_epoch)
+                self._pacing_tokens[token_key] = current
+            current.tokens = max(0.0, available - needed)
+            current.updated_at = now_epoch
+            if minute_limit > 0:
+                bucket = self._buckets[minute_key]
+                for _ in range(needed):
+                    bucket.append(now)
+            if interval > 0:
+                last_bucket = self._buckets[last_key]
+                last_bucket.clear()  # 只留"上一句"一格：间隔判定不需要历史
+                last_bucket.append(now)
+            if visual:
+                # 图类那一格的账。条件与退账侧（``_rollback_group_pacing``）逐字同形
+                # （``vision_interval > 0 ∧ 含视觉段``），否则退账退错桶。
+                # 豁免只免"判"、不免"记"——与上面文字间隔同一语义：被豁免的这一句
+                # 照样把图类钟拨走，别人下一句该等还得等。
+                vision_bucket = self._buckets[vision_key]
+                vision_bucket.clear()
+                vision_bucket.append(now)
+
+        commits.append(_commit)
+        return None
+
+    def _rollback_group_pacing(
+        self, capability_id: str, message: IncomingMessage, amount: int
+    ) -> None:
+        """退掉一次节奏记账（A-18）：令牌按容量封顶退回，分钟/间隔戳各回一格。
+
+        与 check 侧共用同一套 scope 命名与"上一句只留一格"的语义；多退一格的方向
+        是放宽（与 ``_pop_recent`` 既有取舍同口径），不会误拦别人。
+        """
+        settings = self.settings
+        group_key = str(message.group_id or message.session_id)
+        needed = pacing_consumption(amount, settings.group_pacing_burst_capacity)
+        if settings.group_pacing_max_per_minute > 0:
+            self._pop_recent(
+                self._buckets.get(
+                    self._bucket_key(capability_id, PACING_SCOPE_MINUTE, group_key)
+                ),
+                needed,
+            )
+        if settings.group_pacing_min_interval_seconds > 0:
+            self._pop_recent(
+                self._buckets.get(
+                    self._bucket_key(capability_id, PACING_SCOPE_LAST, group_key)
+                ),
+                1,
+            )
+        if settings.group_vision_min_interval_seconds > 0 and _message_is_visual(message):
+            self._pop_recent(
+                self._buckets.get(
+                    self._bucket_key(
+                        capability_id, PACING_SCOPE_VISION_LAST, group_key
+                    )
+                ),
+                1,
+            )
+        state = self._pacing_tokens.get(
+            self._bucket_key(capability_id, PACING_SCOPE_TOKENS, group_key)
+        )
+        if state is None:
+            return
+        now_epoch = self.clock().timestamp()
+        available = refilled_tokens(
+            tokens=state.tokens,
+            updated_at=state.updated_at,
+            now_epoch=now_epoch,
+            per_hour=settings.group_pacing_tokens_per_hour,
+            capacity=settings.group_pacing_burst_capacity,
+        )
+        state.tokens = min(
+            float(settings.group_pacing_burst_capacity), available + needed
+        )
+        state.updated_at = now_epoch
 
     def _prune(self, bucket: deque[datetime], now: datetime) -> None:
         cutoff_seconds = self.settings.window_seconds
@@ -650,18 +1137,44 @@ class SQLiteRateLimiter:
     def __init__(
         self,
         db_path: str | Path,
-        settings: RateLimitSettings | None = None,
+        settings: RateLimitSettings | Callable[[], RateLimitSettings] | None = None,
         *,
         clock: Callable[[], datetime] | None = None,
+        monotonic: Callable[[], float] | None = None,
     ) -> None:
         self.db_path = Path(db_path)
-        self.settings = settings or RateLimitSettings()
+        # settings 与 InMemory 版同型：静态对象或**每轮现读**的 callable。
+        # 旧装配口把 callable 当场烘成快照（"SQLite 版不支持热改"的根因，
+        # AGENTS 台账 #3 限流面），现在原样透传——/bot runtime set 改的
+        # 冷却窗口/句数帽在重启前就到得了 SQLite 这一把尺。
+        self._settings_source = settings or RateLimitSettings()
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        # 与 InMemory 同一枚缝、同一套理由（见 InMemoryRateLimiter.__init__）。
+        # 缺省 `time.monotonic` ⇒ 生产逐字节现状。注意 `_last_cleanup` **保持 0.0**
+        # （首访即清，历史语义）——把它改成"当下"会让清理推迟 300 秒，是行为变更，
+        # 本席不动；测试要驱动它就把假单调钟往前拨。
+        self._monotonic: Callable[[], float] = monotonic or time.monotonic
         # APScheduler 线程与事件循环并发调用 check：进程内锁串行化，
         # 跨进程并发由 SQLite 文件锁 + busy_timeout 兜底，避免
         # "database is locked" 直接变成用户可见失败。
         self._lock = threading.Lock()
         self._last_cleanup = 0.0
+
+    @property
+    def settings(self) -> RateLimitSettings:
+        """当前限流设置（callable 时实时求值；失败回退默认，保持限流不放开）。
+
+        与 ``InMemoryRateLimiter.settings`` 逐字同语义——两把尺的热改面是同一件事，
+        任何一把独走都会让「/bot runtime set」按注入路径给出两种答案。
+        """
+        source = self._settings_source
+        if callable(source):
+            try:
+                resolved = source()
+            except Exception:  # noqa: BLE001 - 求值失败回退默认设置。
+                return RateLimitSettings()
+            return resolved if isinstance(resolved, RateLimitSettings) else RateLimitSettings()
+        return source
 
     def check_and_record(
         self,
@@ -731,31 +1244,44 @@ class SQLiteRateLimiter:
             return None  # 仅点名回复防刷屏；主动接话/图片路径不受限
         self._ensure_schema()
         now_epoch = self.clock().timestamp()
-        key = self._bucket_key(capability_id, "sender_interval", message.sender_id)
+        key = sender_interval_ledger_key(capability_id, message.sender_id)
         with closing(self._connect()) as connection, connection:
             self._cleanup_expired(connection, now_epoch)
             latest = self._latest_created_at(connection, key)
             if latest is not None:
                 elapsed = now_epoch - latest
-                if elapsed < self.settings.chat_sender_min_interval_seconds:
-                    return RateLimitDecision(
+                interval = self.settings.chat_sender_min_interval_seconds
+                if elapsed < interval:
+                    retry_after = interval_wait_seconds(interval, elapsed)
+                    decision = RateLimitDecision(
                         allowed=False,
                         reason="sender_min_interval",
-                        retry_after_seconds=max(
-                            1,
-                            int(
-                                self.settings.chat_sender_min_interval_seconds
-                                - elapsed
-                            ),
-                        ),
+                        retry_after_seconds=retry_after,
                         audit_tags=[
                             "rate_limit:blocked",
                             "rate_limit:sender_min_interval",
                         ],
                     )
+                    # 排队账本：与 InMemory 版同一本、同一键形、同一语义
+                    # （拒绝即登记，读侧按 decision.debug_id 精确认领）。
+                    redrive_ledger.reserve_slot(
+                        key,
+                        debug_id=decision.debug_id,
+                        now=now_epoch,
+                        base_wait=float(retry_after),
+                        interval_seconds=float(interval),
+                    )
+                    return decision
+            insert_epoch = now_epoch
+            if int(getattr(message, "redrive_count", 0) or 0) >= 1:
+                # 补回到访放行：销掉最早成熟的预留；若比回位时刻早醒，把记账
+                # 点拨到回位时刻（占坑即销，与 InMemory 同语义）。
+                slot = redrive_ledger.consume_earliest_matured(key, now=now_epoch)
+                if slot is not None and slot > now_epoch:
+                    insert_epoch = slot
             connection.execute(
                 "INSERT INTO rate_limit_events (bucket_key, created_at) VALUES (?, ?)",
-                (key, now_epoch),
+                (key, insert_epoch),
             )
         return None
 
@@ -792,14 +1318,33 @@ class SQLiteRateLimiter:
             self._cleanup_expired(connection, now_epoch)
             for _scope, key, _limit in scoped_buckets:
                 self._prune(connection, key, cutoff_epoch)
-            # 群聊专属句数帽（语义对齐 InMemoryRateLimiter._check_group_windows）：
-            # 先判后记，豁免/拒绝都直接返回、不写入任何桶。
-            group_limited = self._check_group_windows(
-                connection, message, capability_id, now_epoch, safe_amount
+            # 判定与落账分离（B-1 根修，与 InMemory 同序同语义）：群句数帽/target
+            # /session/sender 各帽全部只判，通过者把要写的账登记进 commits；
+            # 任一帽拒绝 ⇒ 一格都不写。
+            commits: list[Callable[[], None]] = []
+            # 豁免判一次、透传给节奏层与 target 间隔门，与 InMemory 同源同语义
+            # （裁定 3：只免最小间隔，句数帽照常判定照常记账）。
+            exemption = emotion_interval_exemption(self.settings, message)
+            interval_exempt = exemption is not None
+            # 群聊专属句数帽（语义对齐 InMemoryRateLimiter._evaluate_group_windows）：
+            # 豁免/拒绝都直接返回、不写入任何桶。
+            group_limited = self._evaluate_group_windows(
+                connection, message, capability_id, now_epoch, safe_amount, commits
             )
             if group_limited is not None:
                 return group_limited
-            if self.settings.target_min_interval_seconds > 0:
+            pacing_limited = self._evaluate_group_pacing(
+                connection,
+                message,
+                capability_id,
+                now_epoch,
+                safe_amount,
+                commits,
+                interval_exempt=interval_exempt,
+            )
+            if pacing_limited is not None:
+                return pacing_limited
+            if self.settings.target_min_interval_seconds > 0 and not interval_exempt:
                 self._prune(connection, target_key, target_cutoff_epoch)
                 latest_target_event = self._latest_created_at(connection, target_key)
                 if latest_target_event is not None:
@@ -833,6 +1378,8 @@ class SQLiteRateLimiter:
                         ],
                     )
 
+            for commit in commits:
+                commit()
             for _scope, key, _limit in scoped_buckets:
                 connection.executemany(
                     """
@@ -874,6 +1421,7 @@ class SQLiteRateLimiter:
         """
         safe_amount = max(1, int(amount))
         deletes: list[tuple[str, int]] = []
+        refund: tuple[str, int] | None = None
         if reason == "proactive_allowed":
             deletes.append(
                 (
@@ -912,6 +1460,18 @@ class SQLiteRateLimiter:
                     deletes.append(
                         (self._bucket_key(capability_id, "group_minute", group_key), safe_amount)
                     )
+            if group_pacing_applies(self.settings, message):
+                deletes.extend(self._group_pacing_rollback_deletes(message, capability_id, safe_amount))
+                refund = (
+                    self._bucket_key(
+                        capability_id,
+                        PACING_SCOPE_TOKENS,
+                        str(message.group_id or message.session_id),
+                    ),
+                    pacing_consumption(
+                        safe_amount, self.settings.group_pacing_burst_capacity
+                    ),
+                )
             if self.settings.target_min_interval_seconds > 0:
                 deletes.append(
                     (self._target_bucket_key(capability_id, message), 1)
@@ -924,16 +1484,62 @@ class SQLiteRateLimiter:
                 deletes.append(
                     (self._bucket_key(capability_id, scope, value), safe_amount)
                 )
-        if not deletes:
+        if not deletes and refund is None:
             return
-        self._apply_deletes(deletes)
+        self._apply_deletes(deletes, refund=refund)
 
-    def _apply_deletes(self, deletes: list[tuple[str, int]]) -> None:
+    def _group_pacing_rollback_deletes(
+        self, message: IncomingMessage, capability_id: str, amount: int
+    ) -> list[tuple[str, int]]:
+        """节奏层**事件侧**退账（SQLite 版），与 InMemory ``_rollback_group_pacing`` 同条同款。
+
+        三个 scope 名与 InMemory 逐字一致（同一把尺的两面）：分钟帽退 ``needed`` 格、
+        最小间隔退 1 格（"上一句"只留一格）、图类独立间隔仅在该消息确实含视觉段时退。
+        方向与 InMemory 同：宁可多退一格（放宽），不可少退（误拦别人）。
+        令牌本身**不在这张表里**，由调用方带 ``refund`` 走 ``_refund_pacing_state``。
+        """
+        settings = self.settings
+        group_key = str(message.group_id or message.session_id)
+        needed = pacing_consumption(amount, settings.group_pacing_burst_capacity)
+        deletes: list[tuple[str, int]] = []
+        if settings.group_pacing_max_per_minute > 0:
+            deletes.append(
+                (self._bucket_key(capability_id, PACING_SCOPE_MINUTE, group_key), needed)
+            )
+        if settings.group_pacing_min_interval_seconds > 0:
+            deletes.append(
+                (self._bucket_key(capability_id, PACING_SCOPE_LAST, group_key), 1)
+            )
+        if settings.group_vision_min_interval_seconds > 0 and _message_is_visual(message):
+            deletes.append(
+                (
+                    self._bucket_key(capability_id, PACING_SCOPE_VISION_LAST, group_key),
+                    1,
+                )
+            )
+        return deletes
+
+    def _apply_deletes(
+        self, deletes: list[tuple[str, int]], *, refund: tuple[str, int] | None = None
+    ) -> None:
         with self._lock:
             self._ensure_schema()
             with closing(self._connect()) as connection, connection:
                 for bucket_key, count in deletes:
                     self._delete_latest(connection, bucket_key, count)
+                if refund is not None:
+                    # 令牌桶是**另一张表**（rate_limit_pacing_tokens），不在事件流里。
+                    # 旧代码把 refund 算出来却从不消费 ⇒ "拒绝要退还额度"这条裁定
+                    # 在 SQLite 侧等于没做（InMemory 侧一直是做的）。
+                    refund_key, refund_amount = refund
+                    self._refund_pacing_state(
+                        connection,
+                        refund_key,
+                        amount=float(refund_amount),
+                        now_epoch=self.clock().timestamp(),
+                        per_hour=self.settings.group_pacing_tokens_per_hour,
+                        capacity=self.settings.group_pacing_burst_capacity,
+                    )
 
     @staticmethod
     def _delete_latest(
@@ -981,9 +1587,9 @@ class SQLiteRateLimiter:
                         return RateLimitDecision(
                             allowed=False,
                             reason="proactive_cooldown",
-                            retry_after_seconds=max(
-                                1,
-                                int(self.settings.proactive_group_cooldown_seconds - elapsed),
+                            retry_after_seconds=interval_wait_seconds(
+                                self.settings.proactive_group_cooldown_seconds,
+                                elapsed,
                             ),
                             audit_tags=[
                                 "rate_limit:proactive_blocked",
@@ -1014,18 +1620,20 @@ class SQLiteRateLimiter:
         bypass_roles = set(self.settings.bypass_roles)
         return any(role.strip().lower() in bypass_roles for role in message.sender_roles)
 
-    def _check_group_windows(
+    def _evaluate_group_windows(
         self,
         connection: sqlite3.Connection,
         message: IncomingMessage,
         capability_id: str,
         now_epoch: float,
         amount: int,
+        commits: list[Callable[[], None]],
     ) -> RateLimitDecision | None:
         """群聊每小时/每分钟滑动窗口判定（SQLite 版，语义对齐 InMemory 实现）。
 
-        只作用于群聊；两个窗口任一超限即拒绝且不记账（先判后记，避免部分记账）；
-        情绪低落豁免命中时直接放行，同样不记账。判定通过才写入时间戳行。
+        只作用于群聊；两个窗口任一超限即拒绝且不记账（**只判不记**，见 B-1 根修）；
+        情绪低落豁免命中时直接放行，同样不记账。判定通过时把时间戳行的写入登记进
+        commits，由调用方在全部帽都放行后统一执行。
         """
         if not is_group_session(message):
             return None
@@ -1060,15 +1668,250 @@ class SQLiteRateLimiter:
                     ),
                     audit_tags=["rate_limit:blocked", f"rate_limit:{scope}_exceeded"],
                 )
-        for _scope, bucket_key, _limit, _window in active:
+
+        rows = [
+            (bucket_key, now_epoch)
+            for _scope, bucket_key, _limit, _window in active
+            for _ in range(amount)
+        ]
+
+        def _commit() -> None:
             connection.executemany(
                 """
                 INSERT INTO rate_limit_events (bucket_key, created_at)
                 VALUES (?, ?)
                 """,
-                [(bucket_key, now_epoch) for _ in range(amount)],
+                rows,
             )
+
+        commits.append(_commit)
         return None
+
+    def _evaluate_group_pacing(
+        self,
+        connection: sqlite3.Connection,
+        message: IncomingMessage,
+        capability_id: str,
+        now_epoch: float,
+        amount: int,
+        commits: list[Callable[[], None]],
+        *,
+        interval_exempt: bool = False,
+    ) -> RateLimitDecision | None:
+        """群节奏层（SQLite 版）：**只判不记**，与 InMemory 同序同算术。
+
+        间隔/分钟帽用既有事件表（scope 与 InMemory 同名），令牌状态单独一行；
+        判定通过的账登记进 commits，由调用方在全部帽放行后统一写。
+        """
+        settings = self.settings
+        if not group_pacing_applies(settings, message):
+            return None
+        group_key = str(message.group_id or message.session_id)
+        capacity = settings.group_pacing_burst_capacity
+        needed = pacing_consumption(amount, capacity)
+
+        interval = settings.group_pacing_min_interval_seconds
+        last_key = self._bucket_key(capability_id, PACING_SCOPE_LAST, group_key)
+        # 图类独立间隔（SQLite 版）：与 InMemory 同条同算术同顺序（宽者先判）。
+        # 谓词短路方向也一致——参数为 0 时不调用 ``_message_is_visual``。
+        vision_interval = settings.group_vision_min_interval_seconds
+        visual = vision_interval > 0 and _message_is_visual(message)
+        vision_gap = max(interval, vision_interval) if visual else 0
+        vision_key = self._bucket_key(capability_id, PACING_SCOPE_VISION_LAST, group_key)
+        if visual and not interval_exempt:
+            self._prune(connection, vision_key, now_epoch - vision_gap)
+            latest_vision = self._latest_created_at(connection, vision_key)
+            if latest_vision is not None:
+                return RateLimitDecision(
+                    allowed=False,
+                    reason="group_pacing_vision_min_interval",
+                    retry_after_seconds=interval_wait_seconds(
+                        vision_gap, now_epoch - latest_vision
+                    ),
+                    audit_tags=[
+                        "rate_limit:blocked",
+                        "rate_limit:group_pacing_vision_min_interval",
+                    ],
+                )
+        if interval > 0 and not interval_exempt:
+            self._prune(connection, last_key, now_epoch - interval)
+            latest = self._latest_created_at(connection, last_key)
+            if latest is not None:
+                return RateLimitDecision(
+                    allowed=False,
+                    reason="group_pacing_min_interval",
+                    retry_after_seconds=interval_wait_seconds(
+                        interval, now_epoch - latest
+                    ),
+                    audit_tags=[
+                        "rate_limit:blocked",
+                        "rate_limit:group_pacing_min_interval",
+                    ],
+                )
+
+        minute_limit = settings.group_pacing_max_per_minute
+        minute_key = self._bucket_key(capability_id, PACING_SCOPE_MINUTE, group_key)
+        if minute_limit > 0:
+            self._prune(
+                connection, minute_key, now_epoch - PACING_MINUTE_WINDOW_SECONDS
+            )
+            if self._count(connection, minute_key) + needed > minute_limit:
+                oldest = self._oldest_created_at(connection, minute_key)
+                elapsed_oldest = (
+                    now_epoch - oldest if oldest is not None else 0.0
+                )
+                return RateLimitDecision(
+                    allowed=False,
+                    reason="group_pacing_minute_exceeded",
+                    retry_after_seconds=interval_wait_seconds(
+                        PACING_MINUTE_WINDOW_SECONDS, elapsed_oldest
+                    ),
+                    audit_tags=[
+                        "rate_limit:blocked",
+                        "rate_limit:group_pacing_minute_exceeded",
+                    ],
+                )
+
+        token_key = self._bucket_key(capability_id, PACING_SCOPE_TOKENS, group_key)
+        state = self._read_pacing_state(connection, token_key)
+        # 首见即满桶（与 InMemory 同一条教义：开局最多连发 B 句，之后按节拍回血）。
+        available = (
+            float(capacity)
+            if state is None
+            else refilled_tokens(
+                tokens=state.tokens,
+                updated_at=state.updated_at,
+                now_epoch=now_epoch,
+                per_hour=settings.group_pacing_tokens_per_hour,
+                capacity=capacity,
+            )
+        )
+        if available + 1e-9 < needed:
+            return RateLimitDecision(
+                allowed=False,
+                reason="group_pacing_tokens_exhausted",
+                retry_after_seconds=tokens_wait_seconds(
+                    available=available,
+                    needed=float(needed),
+                    per_hour=settings.group_pacing_tokens_per_hour,
+                ),
+                audit_tags=[
+                    "rate_limit:blocked",
+                    "rate_limit:group_pacing_tokens_exhausted",
+                ],
+            )
+
+        def _commit() -> None:
+            self._write_pacing_state(
+                connection, token_key, max(0.0, available - needed), now_epoch
+            )
+            if minute_limit > 0:
+                connection.executemany(
+                    """
+                    INSERT INTO rate_limit_events (bucket_key, created_at)
+                    VALUES (?, ?)
+                    """,
+                    [(minute_key, now_epoch) for _ in range(needed)],
+                )
+            if interval > 0:
+                # 只留"上一句"一格：与 InMemory 的 clear()+append() 同语义。
+                connection.execute(
+                    "DELETE FROM rate_limit_events WHERE bucket_key = ?",
+                    (last_key,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO rate_limit_events (bucket_key, created_at)
+                    VALUES (?, ?)
+                    """,
+                    (last_key, now_epoch),
+                )
+            if visual:
+                # 图类那一格的账（SQLite 版）：DELETE-then-INSERT 一格，与 InMemory
+                # 的 clear()+append() 同语义；条件与退账侧
+                # ``_group_pacing_rollback_deletes`` 逐字同形。豁免同样只免判不免记。
+                connection.execute(
+                    "DELETE FROM rate_limit_events WHERE bucket_key = ?",
+                    (vision_key,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO rate_limit_events (bucket_key, created_at)
+                    VALUES (?, ?)
+                    """,
+                    (vision_key, now_epoch),
+                )
+
+        commits.append(_commit)
+        return None
+
+    def _read_pacing_state(
+        self, connection: sqlite3.Connection, bucket_key: str
+    ) -> _TokenState | None:
+        cursor = connection.execute(
+            "SELECT tokens, updated_at FROM rate_limit_pacing_tokens WHERE bucket_key = ?",
+            (bucket_key,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return _TokenState(tokens=float(row[0]), updated_at=float(row[1]))
+
+    def _write_pacing_state(
+        self,
+        connection: sqlite3.Connection,
+        bucket_key: str,
+        tokens: float,
+        updated_at: float,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO rate_limit_pacing_tokens (bucket_key, tokens, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(bucket_key) DO UPDATE SET
+                tokens = excluded.tokens,
+                updated_at = excluded.updated_at
+            """,
+            (bucket_key, tokens, updated_at),
+        )
+
+    def _refund_pacing_state(
+        self,
+        connection: sqlite3.Connection,
+        bucket_key: str,
+        *,
+        amount: float,
+        now_epoch: float,
+        per_hour: int,
+        capacity: int,
+    ) -> None:
+        """回滚时把令牌退回去（先按节拍补算到当下，再封顶在容量内）。"""
+        state = self._read_pacing_state(connection, bucket_key)
+        if state is None:
+            return
+        available = refilled_tokens(
+            tokens=state.tokens,
+            updated_at=state.updated_at,
+            now_epoch=now_epoch,
+            per_hour=per_hour,
+            capacity=capacity,
+        )
+        self._write_pacing_state(
+            connection,
+            bucket_key,
+            min(float(capacity), available + max(0.0, amount)),
+            now_epoch,
+        )
+
+    def _oldest_created_at(
+        self, connection: sqlite3.Connection, bucket_key: str
+    ) -> float | None:
+        cursor = connection.execute(
+            "SELECT MIN(created_at) FROM rate_limit_events WHERE bucket_key = ?",
+            (bucket_key,),
+        )
+        oldest = cursor.fetchone()[0]
+        return float(oldest) if oldest is not None else None
 
     def _ensure_schema(self) -> None:
         try:
@@ -1097,6 +1940,17 @@ class SQLiteRateLimiter:
                     ON rate_limit_events (bucket_key, created_at)
                     """
                 )
+                # 群节奏桶的令牌状态：每群一行 (tokens, updated_at)，比逐条插事件行
+                # 更省；与 InMemory 的 _pacing_tokens 同一套算术（共用模块级纯函数）。
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS rate_limit_pacing_tokens (
+                        bucket_key TEXT PRIMARY KEY,
+                        tokens REAL NOT NULL,
+                        updated_at REAL NOT NULL
+                    )
+                    """
+                )
             SQLiteRateLimiter._schema_ready_paths.add(schema_key)
 
     def _cleanup_expired(
@@ -1105,9 +1959,9 @@ class SQLiteRateLimiter:
         now_epoch: float,
     ) -> None:
         """低频全表过期清理：删除超过所有限制窗口的旧事件行。"""
-        if time.monotonic() - self._last_cleanup < self._CLEANUP_INTERVAL_SECONDS:
+        if self._monotonic() - self._last_cleanup < self._CLEANUP_INTERVAL_SECONDS:
             return
-        self._last_cleanup = time.monotonic()
+        self._last_cleanup = self._monotonic()
         horizon = max(
             self.settings.window_seconds,
             self.settings.target_min_interval_seconds,
@@ -1217,6 +2071,116 @@ class SQLiteRateLimiter:
         return cls._bucket_key(capability_id, "target", target)
 
 
+@dataclass(frozen=True)
+class RedriveSettings:
+    """被限流挡下的消息「期后补回」的参数（2026-09-25 用户裁定第 2 项）。
+
+    旧行为是一刀静默丢弃：同人 45 秒最小间隔拦掉的那几条既不重投、也不进会话
+    历史，用户看到的是「喊三声只应一次，后两声凭空消失」。这里改成：等到解禁
+    那一刻再补跑一次，补不起（还要等太久/已补过）才维持原样静默。
+    """
+
+    enabled: bool = True
+    # 还要等这么久以内才补（秒）：超过就说明是小时级帽在拦，隔半小时突然冒一句
+    # 比不更糟。缺省 180 = 4×点名间隔缺省（45 秒）——连发 5 条 @bot 排队补回
+    # 恰好装得下整轮（2026-09-25 用户裁定第 2 项「可以延后，不可以丢弃」）。
+    # 与 config.py 的 bot_chat_rate_limit_redrive_max_wait_seconds 缺省同值。
+    max_wait_seconds: float = 180.0
+    # 一条消息最多补几次（防重放循环）。
+    max_attempts: int = 1
+
+
+# 只对这些拒绝原因补回：都是「同一时刻太密」类，等一小会儿就该放行。
+# 刻意不含 proactive_*（那是 bot 自己找话，拦掉是本分）与 quiet_hours
+# （安静时间补回等于凌晨攒到早上集体轰炸）。
+_REDRIVE_REASONS = frozenset(
+    {
+        "sender_min_interval",
+        "target_min_interval",
+        "sender_window_exceeded",
+        "session_window_exceeded",
+        "global_window_exceeded",
+        "group_minute_exceeded",
+        "group_hour_exceeded",
+        "group_pacing_min_interval",
+        "group_pacing_vision_min_interval",
+        "group_pacing_minute_exceeded",
+        "group_pacing_tokens_exhausted",
+    }
+)
+
+
+def _is_directed_request(message: IncomingMessage, capability_id: str) -> bool:
+    """这条是不是「用户明确找 bot 说话」——只有这种才欠他一个回复。
+
+    群聊里没点名的闲聊本就该只观察不回（门禁已按 passive_group_message 拦过
+    一道），到这里再被限流拦下不该补回；私聊与点名/命令一律算明确请求。
+    """
+    if capability_id not in CHAT_CAPABILITY_IDS:
+        return True  # 非聊天能力都是命令类（/bot xxx、点歌、天气…）。
+    if message.session_type.value != "group":
+        return True
+    return bool(message.mentions_bot)
+
+
+def redrive_wait_seconds(
+    settings: RedriveSettings,
+    message: IncomingMessage,
+    capability_id: str,
+    decision: RateLimitDecision,
+) -> float | None:
+    """这条被拦的消息该不该补、要等几秒；不该补返回 None。
+
+    只判不排程（排程在 pipeline）。点名间隔类拒绝读补回排队账本：同人同轮的
+    多条被拦消息由账本给出各自的排队回位（互差≥一个间隔），读的是限流器在
+    拒绝当场登记的预留、按 ``decision.debug_id`` 精确认领——外来/陈旧的决定
+    读不到账，一律按原判秒数走，行为逐字节等于旧口径。
+    """
+    if not settings.enabled or decision.allowed:
+        return None
+    if decision.reason not in _REDRIVE_REASONS:
+        return None
+    if not _is_directed_request(message, capability_id):
+        return None
+    if int(getattr(message, "redrive_count", 0) or 0) >= max(0, settings.max_attempts):
+        return None
+    wait = max(0.0, float(decision.retry_after_seconds or 0))
+    if wait <= 0:
+        return None
+    if decision.reason == "sender_min_interval":
+        reserved = redrive_ledger.reserved_wait_for(
+            sender_interval_ledger_key(capability_id, str(message.sender_id or "")),
+            debug_id=str(decision.debug_id or ""),
+        )
+        if reserved is not None:
+            wait = reserved
+    if wait > max(1.0, settings.max_wait_seconds):
+        return None
+    return wait
+
+
+def build_redrive_settings(config: object) -> RedriveSettings:
+    """装配补回参数；读不到 Config 的替身一律回落到保守缺省。"""
+    defaults = RedriveSettings()
+    return RedriveSettings(
+        enabled=bool(getattr(config, "bot_chat_rate_limit_redrive_enabled", True)),
+        max_wait_seconds=float(
+            getattr(
+                config,
+                "bot_chat_rate_limit_redrive_max_wait_seconds",
+                defaults.max_wait_seconds,
+            )
+        ),
+        max_attempts=int(
+            getattr(
+                config,
+                "bot_chat_rate_limit_redrive_max_attempts",
+                defaults.max_attempts,
+            )
+        ),
+    )
+
+
 def build_rate_limit_settings(config: object) -> RateLimitSettings:
     return RateLimitSettings(
         enabled=bool(getattr(config, "bot_rate_limit_enabled", True)),
@@ -1229,6 +2193,12 @@ def build_rate_limit_settings(config: object) -> RateLimitSettings:
         ),
         chat_sender_max_requests=int(
             getattr(config, "bot_rate_limit_chat_sender_max_requests", 4)
+        ),
+        # R3 同人点名最小间隔此前是**读点幽灵**：键在 config.py 在册、装配口却从不
+        # 搬 ⇒ 实际生效值恒等于 dataclass 缺省 45，改 .env 与 /bot runtime set 全无效
+        # （2026-09-25 现算坐实）。补上读点，这一刀才真的可调。
+        chat_sender_min_interval_seconds=int(
+            getattr(config, "bot_rate_limit_chat_sender_min_interval_seconds", 45)
         ),
         target_min_interval_seconds=int(
             getattr(config, "bot_rate_limit_target_min_interval_seconds", 0)
@@ -1246,6 +2216,28 @@ def build_rate_limit_settings(config: object) -> RateLimitSettings:
         group_minute_max_requests=int(
             getattr(config, "bot_rate_limit_group_max_per_minute", 0) or 0
         ),
+        # 节奏层五枚参数此前在这里**没有读点**（2026-09-24 T7 落地席根修）：
+        # 键在 config.py 与 RESTART_REQUIRED_KEYS 都在册，但装配口不搬 ⇒ 模型字段
+        # 停在缺省 0 ⇒ group_pacing_applies() 恒 False ⇒ 用户裁定的整套节奏
+        # （桶容量/分钟帽/最小间隔/图类独立间隔）在 .env 里填了也不生效。
+        # 缺省取 0（= 整层关）而不是 config.py 的 60：**属性缺失只该发生在
+        # 非 Config 替身上**，那种场合按 fail-closed 处理，绝不让"读不到"变成
+        # "自动开始限流"。真 Config 永远带字段，行为由 .env 决定。
+        group_pacing_tokens_per_hour=int(
+            getattr(config, "bot_rate_limit_group_pacing_tokens_per_hour", 0) or 0
+        ),
+        group_pacing_burst_capacity=int(
+            getattr(config, "bot_rate_limit_group_pacing_burst_capacity", 5)
+        ),
+        group_pacing_max_per_minute=int(
+            getattr(config, "bot_rate_limit_group_pacing_max_per_minute", 3)
+        ),
+        group_pacing_min_interval_seconds=int(
+            getattr(config, "bot_rate_limit_group_pacing_min_interval_seconds", 20)
+        ),
+        group_vision_min_interval_seconds=int(
+            getattr(config, "bot_rate_limit_group_vision_min_interval_seconds", 120)
+        ),
         emotion_exempt_enabled=bool(
             getattr(config, "bot_rate_limit_emotion_exempt", True)
         ),
@@ -1259,16 +2251,20 @@ def build_rate_limiter(
     config: object,
     *,
     settings_provider: Callable[[], RateLimitSettings] | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> RateLimiter:
     """构造限流器。
 
-    传 ``settings_provider`` 时每次判定实时求值（群句数帽/情绪豁免可热改）；
-    否则退回启动期快照（旧行为）。
+    传 ``settings_provider`` 时每次判定实时求值（群句数帽/情绪豁免/点名间隔
+    可热改，两把尺同权）；否则退回启动期快照（旧行为）。
+    ``clock`` 缺省 None=真实墙钟；注入假钟只为确定性测试（两后端构造器本已
+    支持，装配口此前不转发 ⇒ 经装配口构造的用例没法把"过了几秒"演出来）。
     """
     settings = settings_provider if settings_provider is not None else build_rate_limit_settings(config)
     db_path = str(getattr(config, "bot_rate_limit_db_path", "")).strip()
     if db_path:
-        # SQLite 版目前不支持 callable settings（其判定走 SQL 窗口），传静态快照。
-        resolved = settings() if callable(settings) else settings
-        return SQLiteRateLimiter(db_path, settings=resolved)
-    return InMemoryRateLimiter(settings)
+        # SQLite 版如今同样吃 callable（每轮现读——AGENTS 台账 #3 的限流面根修，
+        # `test_sqlite_limiter_reads_settings_hot_from_the_provider` 锁死）；
+        # 不传 provider 时拿到的是静态对象，行为与旧快照逐字节相同。
+        return SQLiteRateLimiter(db_path, settings=settings, clock=clock)
+    return InMemoryRateLimiter(settings, clock=clock)

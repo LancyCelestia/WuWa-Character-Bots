@@ -1,13 +1,15 @@
 """token 供给链常驻门（SUPPLY 席，2026-09-18 v21r3 统一收尾波）。
 
-背景（PRECHECK 席预警）：7 张 Jinja 模板引用 50 个 ``var(--*)``，而
+背景（PRECHECK 席预警）：7 张 Jinja 模板引用 50 个 ``var(--*)``（2026-09-18 当时值，
+面数与变量数一律以本文件两张登记表与语料现算为准），而
 mica_shell 单文件只产出 33 个定义——其余由 bridge 注入键 /
 theme_tokens.theme_to_css_vars() / 各模板自有 :root / 直拼卡自带 CSS 供给。
 当前供给链通但无共享锁：任一席单边增删 token，渲染面即出现未定义变量
 （浏览器静默回退 = 视觉静默漂移）。本文件把该缺口变成常驻回归锁。
 
-语料（11 面，取串方式与 test_v21r3_visual_gates 同口径）：
-  - 7 张 Jinja 模板（domains/render/card_render/templates/*.html）：
+语料（面清单以 `_TEMPLATE_SURFACES` / `_BUILTIN_SURFACES` 现算为准，本册不抄总数；
+取串方式与 test_v21r3_visual_gates 同口径）：
+  - Jinja 模板全家（domains/render/card_render/templates/*.html，逐张显式登记）：
     剥注释源文件全分支文本 + bridge 渲染后 HTML 双语料；
   - 4 张直拼卡（echo_help / debug_llm / usage_report / media_card）：
     import 构建函数离线取最终 HTML（零网络零渲染后端）。
@@ -51,8 +53,10 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.debug import _llm_setup_mica_html
-from plugins.bot_unified_runtime.capabilities.echo import _help_mica_html
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+    _help_mica_html,
+)
+from plugins.bot_unified_runtime.domains.ops.admin.debug import _llm_setup_mica_html
 from plugins.bot_unified_runtime.domains.render.card_render import (
     bridge,
     mica_shell,
@@ -65,9 +69,10 @@ from plugins.bot_unified_runtime.output.templates import render_media_card_html
 
 _TEMPLATES_DIR = Path(bridge.__file__).resolve().parent / "templates"
 
-# ==================== 11 面登记表（7 模板 + 4 直拼卡） ====================
-# 与 test_rendering_contract / test_v21r3_visual_gates 同口径显式枚举；
-# S-D 门强制 templates/*.html 全量登记（新模板不登记即红）。
+# ============ 面登记表（Jinja 模板全家 + 直拼卡；枚数以两张表现算为准） ============
+# **文件名的账本住派生源** `bridge.card_template_names()`（S-T-VISUAL-1 归一，
+# 与 scripts/doc_sync.py::_tpl_list 同判据）；面 id→文件名属显式登记，完备性
+# 由下方 S-D 门对派生清单双向执法（新模板不登记即红）。
 _TEMPLATE_SURFACES: dict[str, str] = {
     "universal": "universal_card.html",
     "market": "market_card.html",
@@ -76,6 +81,7 @@ _TEMPLATE_SURFACES: dict[str, str] = {
     "song": "song_candidates.html",
     "finance": "finance_card.html",
     "error": "error_card.html",
+    "news_digest": "news_digest_card.html",
 }
 _BUILTIN_SURFACES: tuple[str, ...] = (
     "echo_help",
@@ -153,6 +159,17 @@ def _error_payload(i: int) -> dict[str, Any]:
     }
 
 
+def _news_digest_payload(i: int) -> dict[str, Any]:
+    return {
+        "title": f"今日快讯{i}",
+        "sub": f"来源聚合{i}",
+        "foot": f"数据口径 {i}",
+        "items": [
+            {"source": "V2EX", "time": "09:00", "name": f"条目{i}", "snip": f"摘要{i}"},
+        ],
+    }
+
+
 def _build_builtin(sid: str) -> str:
     """四张直拼卡：import 构建函数直接取最终 HTML（离线零渲染）。"""
     if sid == "echo_help":
@@ -227,7 +244,7 @@ def _build_builtin(sid: str) -> str:
 
 
 def _build_template(sid: str) -> str:
-    """七张 Jinja 模板：走 bridge 渲染入口取最终 HTML（:root 注入值进入语料）。"""
+    """登记的 Jinja 模板：走 bridge 渲染入口取最终 HTML（:root 注入值进入语料）。"""
     if sid == "universal":
         return bridge.render_universal_card_html(_universal_payload(1))
     if sid == "market":
@@ -242,6 +259,8 @@ def _build_template(sid: str) -> str:
         return bridge.render_mermaid_html("graph TD; A1-->B1")
     if sid == "error":
         return bridge.render_error_card_html(_error_payload(1))
+    if sid == "news_digest":
+        return bridge.render_news_digest_card_html(_news_digest_payload(1))
     raise AssertionError(f"未知模板面: {sid}")
 
 
@@ -281,7 +300,7 @@ def _surface_refs(sid: str) -> frozenset[str]:
 
 
 def _corpus_definitions() -> frozenset[str]:
-    """S1：全部 11 面语料文内 ``--x:`` 定义并集。"""
+    """S1：全部面语料文内 ``--x:`` 定义并集。"""
     return frozenset(
         name
         for sid in ALL_SURFACES
@@ -438,7 +457,7 @@ def test_sb_bridge_injected_keys_land() -> None:
         ("--wash-2", "bridge._derive_wash_tokens(accent) → render_root_tokens"),
         ("--wash-3", "bridge._derive_wash_tokens(accent) → render_root_tokens"),
         ("--wash-mist", "bridge._derive_wash_tokens(accent) → render_root_tokens"),
-        ("--wash-blob-1", "render_root_tokens（--accent 35% color-mix 入 --wash-1）"),
+        ("--wash-blob-1", "render_root_tokens（--accent 18% color-mix 入 --wash-1）"),
     ],
 )
 def test_sc_injection_supplied_vars_defined(name: str, channel: str) -> None:
@@ -452,8 +471,8 @@ def test_sc_injection_supplied_vars_defined(name: str, channel: str) -> None:
 
 # ==================== 门 S-D：模板登记完备 ====================
 def test_sd_template_registry_covers_directory() -> None:
-    """templates/*.html 每一张都必须登记进 _TEMPLATE_SURFACES（双向）。"""
-    actual = {path.name for path in _TEMPLATES_DIR.glob("*.html")}
+    """派生清单每一张都必须登记进 _TEMPLATE_SURFACES（双向）。"""
+    actual = set(bridge.card_template_names())  # 单一取数口，不再各自 glob
     registered = set(_TEMPLATE_SURFACES.values())
     unregistered = sorted(actual - registered)
     assert not unregistered, (

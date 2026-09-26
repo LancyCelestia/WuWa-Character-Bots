@@ -3,14 +3,14 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.domains.meme.sources.reaction_store import (
-    ReactionStore,
-)
-from plugins.bot_unified_runtime.runtime.reactions import (
+from plugins.bot_unified_runtime.domains.meme.reactions.engine import (
     is_sad_message,
     normalize_onebot_emoji_like,
     pick_reaction_meme,
     reaction_meme_search_terms,
+)
+from plugins.bot_unified_runtime.domains.meme.sources.reaction_store import (
+    ReactionStore,
 )
 
 # ---------------------------------------------------------------- store
@@ -86,7 +86,7 @@ def test_is_add_false_is_cancellation_not_reaction() -> None:
 # ---------------------------------------------------------------- 扩展名表锚点
 
 def test_extended_face_name_anchors() -> None:
-    from plugins.bot_unified_runtime.runtime.reactions import emoji_display
+    from plugins.bot_unified_runtime.domains.meme.reactions.engine import emoji_display
 
     assert emoji_display("49") == "「拥抱」"
     assert emoji_display("364") == "「超级赞」"

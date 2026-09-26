@@ -4,11 +4,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.content_parser import (
-    build_subscription_push_capability,
-    render_subscription_push_card,
-    subscription_item_to_parse,
-)
 from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SessionType,
@@ -17,6 +12,11 @@ from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     NormalizedSubscriptionItem,
     PushCandidate,
     SubscriptionSpec,
+)
+from plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser import (
+    build_subscription_push_capability,
+    render_subscription_push_card,
+    subscription_item_to_parse,
 )
 
 _TEXT = "[订阅] bilibili 某UP主 发布新视频《标题》：https://example.com/v"

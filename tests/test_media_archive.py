@@ -21,6 +21,11 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     SessionType,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
+    RouteKind,
+    classify_message_route,
+    clear_route_decision_cache,
+)
 from plugins.bot_unified_runtime.domains.files.sources.downloader import (
     RejectedUrlError,
 )
@@ -36,11 +41,6 @@ from plugins.bot_unified_runtime.domains.media.capabilities.media_archive import
     build_media_archive_capability,
     is_media_archive_command,
     parse_archive_args,
-)
-from plugins.bot_unified_runtime.runtime.base_router import (
-    RouteKind,
-    classify_message_route,
-    clear_route_decision_cache,
 )
 
 # ---------------------------------------------------------------------------

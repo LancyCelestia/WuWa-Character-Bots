@@ -18,16 +18,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.chat import (
-    INTIMATE_RP_STYLE_INSTRUCTION,
-    MANUAL_OFF_REPLY,
-    MANUAL_ON_REPLY,
-    NORMAL_NO_ACTION_INSTRUCTION,
-    _manual_command_scope_key,
-    build_chat_result,
-)
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
+    CapabilityResult,
     ContextBundle,
     ConversationHistoryResult,
     IncomingMessage,
@@ -40,8 +33,23 @@ from plugins.bot_unified_runtime.contracts import (
     SessionType,
     ToneProfile,
 )
-from plugins.bot_unified_runtime.llm.providers import LLMReply
-from plugins.bot_unified_runtime.runtime.content_route import (
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    INTIMATE_RP_STYLE_INSTRUCTION,
+    MANUAL_DEEP_ON_REPLY,
+    MANUAL_OFF_REPLY,
+    MANUAL_ON_REPLY,
+    NORMAL_NO_ACTION_INSTRUCTION,
+    _manual_command_scope_key,
+    build_chat_result,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
+    INTIMATE_SOURCE_ADMIN_PIN,
+    INTIMATE_SOURCE_CONTENT_SIGNAL,
+    INTIMATE_SOURCE_MANUAL,
+    INTIMATE_SOURCE_MASTER_LOVE,
+    INTIMATE_SOURCE_NONE,
+    MASTER_LOVE_INSTRUCTION,
+    SHARED_CONTENT_ROUTE_ENGINE,
     ContentRouteEngine,
     explicit_allowed_for_session,
     match_manual_command,
@@ -49,6 +57,14 @@ from plugins.bot_unified_runtime.runtime.content_route import (
     resolve_intimate_context,
     split_member_session_key,
 )
+from plugins.bot_unified_runtime.domains.core.session_keys import (
+    FORM_BARE,
+    FORM_UNDERSCORE,
+    build_session_key,
+    parse_session_key,
+    private_session_key,
+)
+from plugins.bot_unified_runtime.llm.providers import LLMReply
 
 
 def _config(**overrides: object) -> SimpleNamespace:
@@ -152,14 +168,20 @@ def test_ttl_config_override() -> None:
 
 
 def test_max_ttl_hard_cap_still_applies_below_ttl() -> None:
-    """既有 max_ttl=120 保留为硬上限：max_ttl < TTL 时小者先到。"""
+    """既有 max_ttl=120 保留为硬上限：max_ttl < TTL 时小者先到。
+
+    2026-09-24 用户裁定 R4 A 把「显式开/管理员钉」移出封顶面 ⇒ 本锁改用**不在豁免面**
+    的 ML 自动钉来执法"上限仍然先到"（豁免与执法两面见 `test_intimate_tiers_v4.py`）。
+    """
     now = [100.0]
     engine = _engine(now)
     cfg = _config(
         bot_content_route_max_ttl_minutes=10.0,
         bot_content_route_intimate_ttl_minutes=60.0,
     )
-    assert engine.apply_manual("private:u1", "intimate", cfg)
+    assert engine.apply_manual(
+        "private:u1", "intimate", cfg, source=INTIMATE_SOURCE_MASTER_LOVE
+    )
     now[0] += 11 * MIN
     assert engine.route_verdict("private:u1", cfg)["mode"] == "normal"
 
@@ -696,3 +718,426 @@ def test_private_blacklist_blocks_intimacy_end_to_end() -> None:
         content_route_config=cfg_ok,
     )
     assert result_ok.body == MANUAL_ON_REPLY
+
+
+# ============================ S40 缺陷 D2：Master Love 逐消息重钉续掉了 TTL ==========
+#
+# 人类的规则（2026-09-23 在册）：**亲密模式一小时到点自动关，不靠活动续期**。
+# Master Love 的自动钉此前在**每条消息**上重跑 `apply_manual`，守卫只挡 `normal` 钉
+# ⇒ 每次重钉都把 `activated_at` 归零；而 `max_ttl`（120 分钟）那道对钉死态本就空转
+# （每次判定都刷 `state.updated`）⇒ 名单内那两个号**永不退出**（评审席 S39 实跑：
+# 61/90/121/130 分钟全部 intimate）。
+#
+# 夹具纪律（本席简报点名：这一族漏口就是因为夹具手写了生产不产出的前提）：
+# - 会话键只由中央件产出——私聊=裸 QQ 号（`private_session_key`），并自证
+#   `parse_session_key(...).form == FORM_BARE`；`private:456` 那类形态一律挡在门外。
+# - 时钟走引擎自己的注入缝（`ContentRouteEngine(clock=…)` 的进程级单例实例属性），
+#   不 patch 全局 `time`。
+# - 钉与判定全部经真入口 `build_chat_result`：亲密档由 ML 分支自己产生，
+#   测试不手写一次 `apply_manual`。
+
+_MINUTE = 60.0
+
+
+def _private_ingest_key(uid: str) -> str:
+    """私聊会话键（摄取层真形=裸 QQ 号），并自证形态。"""
+    key = private_session_key(uid)
+    parsed = parse_session_key(key)
+    assert parsed.form == FORM_BARE, parsed
+    assert parsed.user_id == uid, parsed
+    return key
+
+
+def _group_ingest_key(group_id: str, uid: str) -> str:
+    """群会话键（摄取层真形 `group_<群号>_<发送者>`），并自证形态。"""
+    key = build_session_key(group_id, uid)
+    parsed = parse_session_key(key)
+    assert parsed.form == FORM_UNDERSCORE, parsed
+    assert (parsed.group_id, parsed.user_id) == (group_id, uid), parsed
+    return key
+
+
+def _run_master_turn(
+    session_key: str, uid: str, text: str, cfg: SimpleNamespace
+) -> CapabilityResult:
+    """把一条 master 消息交给付**真入口**（ML 自动钉就发生在它里面）。"""
+    message = _private_message(session_key, uid, text)
+    return build_chat_result(
+        message,
+        _private_decision(message),
+        _group_context(message),
+        llm_provider=_CapturingProvider(),
+        content_route_config=cfg,
+    )
+
+
+def _mode_of(session_key: str, cfg: SimpleNamespace) -> str:
+    return str(SHARED_CONTENT_ROUTE_ENGINE.route_verdict(session_key, cfg)["mode"])
+
+
+def test_master_love_repin_does_not_extend_intimate_ttl(monkeypatch) -> None:
+    """D2 主锁：逐消息重钉不得续期——到点（无新消息）必须看得见地退出。"""
+    uid = "900000001"
+    key = _private_ingest_key(uid)
+    cfg = _config(bot_master_love_enabled=True, bot_master_love_admins=[uid])
+    now = [1000.0]
+    monkeypatch.setattr(SHARED_CONTENT_ROUTE_ENGINE, "clock", lambda: now[0])
+
+    _run_master_turn(key, uid, "今天也想你", cfg)  # t0：ML 自动钉（真入口产生）
+    assert SHARED_CONTENT_ROUTE_ENGINE.pinned_mode(key, cfg) == "intimate"
+    assert _mode_of(key, cfg) == "intimate"
+
+    now[0] += 40 * _MINUTE
+    _run_master_turn(key, uid, "还在忙吗", cfg)
+    assert _mode_of(key, cfg) == "intimate"
+
+    now[0] += 15 * _MINUTE  # t0+55：仍在窗口内，再来一条常规消息
+    _run_master_turn(key, uid, "再等等我", cfg)
+    assert _mode_of(key, cfg) == "intimate"
+
+    now[0] += 6 * _MINUTE  # t0+61：越过 60 分钟 TTL，此间**没有新消息**
+    assert _mode_of(key, cfg) == "normal", (
+        "Master Love 逐消息重钉把计时起点续掉了 ⇒ 亲密模式永不自动关"
+    )
+
+
+def test_master_love_reenters_intimate_after_expiry_for_one_more_hour(monkeypatch) -> None:
+    """到点退出后仍会**重新进入**（"master 常在"），但每一轮至多 1 小时。"""
+    uid = "900000002"
+    key = _private_ingest_key(uid)
+    cfg = _config(bot_master_love_enabled=True, bot_master_love_admins=[uid])
+    now = [1000.0]
+    monkeypatch.setattr(SHARED_CONTENT_ROUTE_ENGINE, "clock", lambda: now[0])
+
+    _run_master_turn(key, uid, "在吗", cfg)  # t0：进入第一小时
+    assert _mode_of(key, cfg) == "intimate"
+    now[0] += 61 * _MINUTE  # 到点：没有新消息时先退出
+    assert _mode_of(key, cfg) == "normal"
+
+    now[0] += 1 * _MINUTE  # t0+62：新消息 ⇒ 重新进入，计时起点=现在
+    _run_master_turn(key, uid, "我回来啦", cfg)
+    assert _mode_of(key, cfg) == "intimate"
+
+    now[0] += 38 * _MINUTE  # t0+100：第二小时内的常规消息（旧实现正是在这里续命）
+    _run_master_turn(key, uid, "继续陪我", cfg)
+    assert _mode_of(key, cfg) == "intimate"
+
+    now[0] += 24 * _MINUTE  # t0+124：距**重开** 62 分钟（距首条 124 分钟）⇒ 必须再退一次
+    assert _mode_of(key, cfg) == "normal", (
+        "第二轮仍被逐消息续期 ⇒ 复刻评审席 S39 的 121/130 分钟仍亲密态"
+    )
+
+
+def test_explicit_open_command_still_resets_intimate_clock(monkeypatch) -> None:
+    """显式「亲密模式 开」重置计时（在册语义，本次修法不得把它一起削掉）。"""
+    uid = "900000003"
+    key = _private_ingest_key(uid)
+    cfg = _config(bot_master_love_enabled=True, bot_master_love_admins=[uid])
+    now = [1000.0]
+    monkeypatch.setattr(SHARED_CONTENT_ROUTE_ENGINE, "clock", lambda: now[0])
+
+    _run_master_turn(key, uid, "在吗", cfg)  # t0：ML 自动钉
+    assert _mode_of(key, cfg) == "intimate"
+
+    now[0] += 50 * _MINUTE
+    result = _run_master_turn(key, uid, "亲密模式 开", cfg)
+    assert result.body == MANUAL_ON_REPLY  # 显式指令回执，且计时起点=现在
+
+    now[0] += 11 * _MINUTE  # 距首条 61 分钟，但距显式重开仅 11 分钟
+    assert _mode_of(key, cfg) == "intimate"
+    now[0] += 50 * _MINUTE  # 距显式重开 61 分钟
+    assert _mode_of(key, cfg) == "normal"
+
+
+def test_master_love_does_not_reopen_after_explicit_off(monkeypatch) -> None:
+    """显式「亲密模式 关」的 normal 钉不被 ML 逐消息重钉架空（旧语义保持）。"""
+    uid = "900000004"
+    key = _private_ingest_key(uid)
+    cfg = _config(bot_master_love_enabled=True, bot_master_love_admins=[uid])
+    now = [1000.0]
+    monkeypatch.setattr(SHARED_CONTENT_ROUTE_ENGINE, "clock", lambda: now[0])
+
+    _run_master_turn(key, uid, "在吗", cfg)
+    assert SHARED_CONTENT_ROUTE_ENGINE.pinned_mode(key, cfg) == "intimate"
+    off = _run_master_turn(key, uid, "亲密模式 关", cfg)
+    assert off.body == MANUAL_OFF_REPLY
+    assert SHARED_CONTENT_ROUTE_ENGINE.pinned_mode(key, cfg) == "normal"
+
+    now[0] += 5 * _MINUTE
+    _run_master_turn(key, uid, "还是聊聊别的吧", cfg)
+    assert SHARED_CONTENT_ROUTE_ENGINE.pinned_mode(key, cfg) == "normal"
+    assert _mode_of(key, cfg) == "normal"
+
+
+def test_group_master_love_pin_is_per_member_and_still_expires(monkeypatch) -> None:
+    """白名单群里的 master：钉落在**本人成员键**上，到点同样自动关，且不泄漏给全群。"""
+    uid = "900000005"
+    other = "900000006"
+    group_id = "9000000050"
+    session_key = _group_ingest_key(group_id, uid)
+    member_key = member_session_key(session_key, uid)
+    cfg = _config(
+        bot_content_route_group_whitelist=[group_id],
+        bot_master_love_enabled=True,
+        bot_master_love_admins=[uid],
+    )
+    now = [1000.0]
+    monkeypatch.setattr(SHARED_CONTENT_ROUTE_ENGINE, "clock", lambda: now[0])
+
+    def _turn(sender: str, text: str) -> None:
+        # 摄取层真形：session_id 与 group_id/sender_id 各自独立且互相自洽
+        # （旧 `_group_message` 夹具按冒号形 split 出 group_id，这里不借它）。
+        message = IncomingMessage(
+            platform="qq",
+            adapter="onebot",
+            bot_id="bot-1",
+            session_id=build_session_key(group_id, sender),
+            session_type=SessionType.GROUP,
+            sender_id=sender,
+            group_id=group_id,
+            sender_roles=["user"],
+            plain_text=text,
+        )
+        build_chat_result(
+            message,
+            _group_decision(message),
+            _group_context(message),
+            llm_provider=_CapturingProvider(),
+            content_route_config=cfg,
+        )
+
+    _turn(uid, "在吗")
+    assert SHARED_CONTENT_ROUTE_ENGINE.pinned_mode(member_key, cfg) == "intimate"
+    now[0] += 40 * _MINUTE
+    _turn(uid, "陪我聊会")  # 窗口内的常规消息：不得续期
+    assert SHARED_CONTENT_ROUTE_ENGINE.pinned_mode(member_key, cfg) == "intimate"
+    now[0] += 21 * _MINUTE  # 距进入 61 分钟
+    assert _mode_of(member_key, cfg) == "normal"
+    # 同群另一成员从未进过亲密档（不泄漏）。
+    assert _mode_of(member_session_key(build_session_key(group_id, other), other), cfg) == (
+        "normal"
+    )
+
+
+# ============================ S42 跟进 A：语气注入守卫与路由判定必须同源 ==========
+#
+# S40 把 Master Love 自动钉的守卫由 `!= "normal"` 收严为 `is None`（D2，TTL 到点
+# 看得见地退出），但恋人语气注入守卫（chat.py 的 `MASTER_LOVE_INSTRUCTION` 追加处）
+# 仍是 `pinned_mode(...) != "normal"` ⇒ 钉过期（值 None）或键形分叉（per_user 关闭
+# 时钉落成员键、注入面读的是路由键）的那一刻起，**路由按普通走而恋人语气照注入**。
+# 修法不设新判据：注入与否一律改读 `resolve_intimate_context` 的 mode——与
+# generate 交给 `route_ids` 的判定同一事实源（S41 复核 §3 点名的门与门不齐）。
+
+
+def _ml_group_turn(
+    group_id: str, sender: str, text: str, cfg: SimpleNamespace
+) -> _CapturingProvider:
+    """master 在白名单群的一条常规消息（真入口、摄取层真形键）。"""
+    message = IncomingMessage(
+        platform="qq",
+        adapter="onebot",
+        bot_id="bot-1",
+        session_id=build_session_key(group_id, sender),
+        session_type=SessionType.GROUP,
+        sender_id=sender,
+        group_id=group_id,
+        sender_roles=["user"],
+        plain_text=text,
+    )
+    provider = _CapturingProvider()
+    build_chat_result(
+        message,
+        _group_decision(message),
+        _group_context(message),
+        llm_provider=provider,
+        content_route_config=cfg,
+    )
+    return provider
+
+
+def test_master_love_tone_never_outruns_routing_verdict(monkeypatch) -> None:
+    """A 主锁：per_user 关闭时 ML 钉落成员键，而注入面/路由面读的是群键——
+    该轮路由判定为 normal，恋人语气注入必须**不**发生（旧守卫 None != "normal"
+    ⇒ 每轮都注入，正是 S41 点名的门与门不齐）。"""
+    uid = "900000007"
+    group_id = "9000000070"
+    session_key = _group_ingest_key(group_id, uid)
+    cfg = _config(
+        bot_content_route_group_whitelist=[group_id],
+        bot_content_route_group_per_user_enabled=False,
+        bot_master_love_enabled=True,
+        bot_master_love_admins=[uid],
+    )
+    now = [1000.0]
+    monkeypatch.setattr(SHARED_CONTENT_ROUTE_ENGINE, "clock", lambda: now[0])
+
+    provider = _ml_group_turn(group_id, uid, "今天也辛苦了", cfg)
+    # 前提自证（公共入口现算）：ML 钉确实落到了成员键上，而**这一轮路由读的那把
+    # 键**（群键 = generate 交给 route_ids 的 session_id）判定为 normal。
+    assert SHARED_CONTENT_ROUTE_ENGINE.pinned_mode(
+        member_session_key(session_key, uid), cfg
+    ) == "intimate"
+    assert _mode_of(session_key, cfg) == "normal"
+    # 注入面与路由面同值：路由 normal ⇒ 无恋人语气。
+    joined = _system_join(provider)
+    assert MASTER_LOVE_INSTRUCTION not in joined, (
+        "路由已按普通走而恋人语气仍在注入 ⇒ 守卫与路由不同源（S42-A）"
+    )
+    # 再来一条（旧实现里每次小时重钉后此格都复现）：依旧不注入。
+    now[0] += 5 * _MINUTE
+    provider2 = _ml_group_turn(group_id, uid, "晚上吃什么好呢", cfg)
+    assert MASTER_LOVE_INSTRUCTION not in _system_join(provider2)
+
+
+def test_master_love_tone_still_injected_while_routing_intimate(monkeypatch) -> None:
+    """A 反向格（防过修成"干脆不注入"）：per_user 开启（缺省）时 ML 首钉当轮
+    路由判定即 intimate，恋人语气照注入。"""
+    uid = "900000008"
+    group_id = "9000000080"
+    cfg = _config(
+        bot_content_route_group_whitelist=[group_id],
+        bot_master_love_enabled=True,
+        bot_master_love_admins=[uid],
+    )
+    now = [1000.0]
+    monkeypatch.setattr(SHARED_CONTENT_ROUTE_ENGINE, "clock", lambda: now[0])
+
+    provider = _ml_group_turn(group_id, uid, "在吗", cfg)
+    member_key = member_session_key(_group_ingest_key(group_id, uid), uid)
+    assert _mode_of(member_key, cfg) == "intimate"  # 前提：真入口自己钉上的档
+    assert MASTER_LOVE_INSTRUCTION in _system_join(provider)
+
+    now[0] += 61 * _MINUTE  # 到点退出：路由与语气同轮一起回普通
+    provider2 = _ml_group_turn(group_id, uid, "我回来啦", cfg)
+    # 重钉当轮 mode=intimate（"master 常在"语义保持），语气照注入。
+    assert _mode_of(member_key, cfg) == "intimate"
+    assert MASTER_LOVE_INSTRUCTION in _system_join(provider2)
+
+
+# ================== T1 裁定（2026-09-24）：亲密档必须带上"为什么亲密" =================
+#
+# 用户裁定原文：**Master Love 不得改变默认模型**——名单用户的默认模型仍是原本默认的
+# gemini-3.8-flash，ML 只授予"亲密档"的语气与内容放行，**不触发 grok 头插**；显式
+# 「亲密模式 开」/管理员钉才允许换模型。因此"档成立"与"该换模型"是两件事，判据落在
+# 档位的**来源**上，且来源只住一处（引擎里的 `_SessionState.pin_source`）——chat.py 只在
+# 自己上钉的那一刻交出一个标签，不另写第二套来源判定，也不新增任何配置键。
+#
+# 夹具纪律（与 S40 同一套）：钉一律由**真入口**产生（`build_chat_result` 里的 ML 分支、
+# 显式「亲密模式 开」指令），键一律由中央件产出；测试不手写一次 `apply_manual` 来伪造
+# "ML 会话"——那正是把 ML 与显式开启混成同一条路的写法。
+
+
+def _verdict_of(session_key: str, cfg: SimpleNamespace) -> dict[str, object]:
+    return SHARED_CONTENT_ROUTE_ENGINE.route_verdict(session_key, cfg)
+
+
+def test_master_love_pin_carries_its_source_and_claims_no_model_switch() -> None:
+    """ML 派生：档成立（语气/放行照旧）但**不**主张换模型。"""
+    uid = "930000001"
+    key = _private_ingest_key(uid)
+    cfg = _config(bot_master_love_enabled=True, bot_master_love_admins=[uid])
+
+    _run_master_turn(key, uid, "今天也想你", cfg)  # 真入口自己钉上 ML 档
+
+    verdict = _verdict_of(key, cfg)
+    assert verdict["mode"] == "intimate", verdict  # 亲密档本身不变（放行与语气仍要它）
+    assert verdict.get("source") == INTIMATE_SOURCE_MASTER_LOVE, verdict
+    # 本裁定本体：头插必须由来源关掉，而不是由 mode 关掉。
+    assert verdict["head_models"] == [], verdict
+
+    # 合成面（chat 注入缝读的那把口）也带上同一个来源，供下游判别与观测。
+    ctx = resolve_intimate_context(
+        SHARED_CONTENT_ROUTE_ENGINE,
+        session_type="private",
+        group_id="",
+        sender_id=uid,
+        session_key=key,
+        config=cfg,
+    )
+    assert ctx["eligible"] is True and ctx["mode"] == "intimate"
+    assert ctx.get("source") == INTIMATE_SOURCE_MASTER_LOVE
+
+
+def test_explicit_open_in_the_same_master_love_session_switches_the_model() -> None:
+    """判别格（与上格成对）：**同一会话**被显式「亲密模式 深开」之后才允许换模型。
+
+    两格缺一格就是没把 ML 与显式深开拆开——那正是本裁定要修的东西。
+    （2026-09-24 R3 A 追记：浅档「亲密模式 开」只给语气与放行、不换真实首跳；
+    这一格要的从来是"换模型"，故触发词随之改成深档形态，断言一字未动。）
+    """
+    uid = "930000002"
+    key = _private_ingest_key(uid)
+    cfg = _config(bot_master_love_enabled=True, bot_master_love_admins=[uid])
+
+    _run_master_turn(key, uid, "在吗", cfg)  # 先由 ML 自动钉上：此时不换模型
+    first = _verdict_of(key, cfg)
+    assert first["head_models"] == [], first
+
+    opened = _run_master_turn(key, uid, "亲密模式 深开", cfg)  # 本人显式深开
+    assert opened.body == MANUAL_DEEP_ON_REPLY
+
+    second = _verdict_of(key, cfg)
+    assert second["mode"] == "intimate", second
+    assert second.get("source") == INTIMATE_SOURCE_MANUAL, second
+    assert second["head_models"] == ["grok-4.6", "gemini-3.8-flash"], second
+
+
+def test_admin_group_pin_is_labeled_as_a_pin_and_switches_the_model() -> None:
+    """管理员钉（群级作用域）：与成员本人开关同权，可换模型，但来源可分辨。
+
+    2026-09-24 R3 A 追记：换模型是**深档**的权利，故触发词取深档形态；断言一字未动。
+    """
+    uid = "930000003"
+    group_id = "9300000030"
+    session_key = _group_ingest_key(group_id, uid)
+    cfg = _config(bot_content_route_group_whitelist=[group_id])
+    message = IncomingMessage(
+        platform="qq",
+        adapter="onebot",
+        bot_id="bot-1",
+        session_id=session_key,
+        session_type=SessionType.GROUP,
+        sender_id=uid,
+        group_id=group_id,
+        sender_roles=["admin"],
+        plain_text="亲密模式 深开",
+    )
+    result = build_chat_result(
+        message,
+        _group_decision(message),
+        _group_context(message),
+        llm_provider=_CapturingProvider(),
+        content_route_config=cfg,
+    )
+    assert result.body == MANUAL_DEEP_ON_REPLY
+
+    verdict = _verdict_of(session_key, cfg)  # 管理员指令落在群键作用域上
+    assert verdict["mode"] == "intimate", verdict
+    assert verdict.get("source") == INTIMATE_SOURCE_ADMIN_PIN, verdict
+    assert verdict["head_models"] == ["grok-4.6", "gemini-3.8-flash"], verdict
+
+
+def test_content_signal_intimacy_is_labeled_and_still_switches_the_model() -> None:
+    """内容信号派生（L1 强词越阈）：这是 R-18 直切 grok 的在册裁定，**不得**被
+    "只让显式/钉死换模型"顺手削掉——故它有自己的来源标签且照旧换模型（防过修格）。
+    """
+    now = [1000.0]
+    engine = _engine(now)
+    cfg = _config()
+    engine.observe_turn("member-by-central-930000004", message_text="给我讲个色情故事", config=cfg)
+    verdict = engine.route_verdict("member-by-central-930000004", cfg)
+    assert verdict["mode"] == "intimate", verdict
+    assert verdict.get("source") == INTIMATE_SOURCE_CONTENT_SIGNAL, verdict
+    assert verdict["head_models"] == ["grok-4.6", "gemini-3.8-flash"], verdict
+
+
+def test_normal_sessions_carry_no_intimate_source_at_all() -> None:
+    """未进档的会话来源为空串（观测面不得凭空造出"为什么亲密"）。"""
+    now = [1000.0]
+    engine = _engine(now)
+    cfg = _config()
+    engine.observe_turn("s-normal-930000005", message_text="今天天气不错", config=cfg)
+    verdict = engine.route_verdict("s-normal-930000005", cfg)
+    assert verdict["mode"] == "normal"
+    assert verdict.get("source") == INTIMATE_SOURCE_NONE, verdict
+    assert verdict["head_models"] == []

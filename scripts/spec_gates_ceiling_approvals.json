@@ -1,0 +1,28 @@
+{
+  "_note": "规格门上限「重录」审批件（G-T1 `T1_CEILING` 偏离旧尺首届核账值 1047 的唯一通道；消费方 `tests/test_taxonomy_spec_gates.py::_t1_ceiling_approval`，fail-closed：缺册／缺字段／形态改版／解析失败／过期／放宽方向 ⇒ 一律不批，上限须仍＝1047，门诚实红）。批准只覆盖『按门自己的取数口现算、把上限重录为不高于旧首届值的新尺读数』＝收紧方向；高于旧值＝放宽，本通道不收，须用户逐次数值点头。数值由取数口现算，本件是登记证据副本、不是第二取数口；临时件只准缩不许自我豁免，expiry 到期未由 owner 携新证据续册 ⇒ 该腿诚实红。形态先例＝scripts/shim_refs_approvals.json（S188/S204 两枚）。",
+  "approvals": [
+    {
+      "constant": "T1_CEILING",
+      "gate": "G-T1（判据 tests/test_taxonomy_spec_gates.py::test_g_t1_every_content_page_declares_an_existing_template，判债对象＝t1_debt_official 对外欠账）",
+      "old_ceiling": 1047,
+      "new_ceiling": 337,
+      "direction": "收紧（337 < 1047；亦 <= 在册最近核账值 369，AUDIT_HISTORY_T1_OFFICIAL 方向锁不伤）",
+      "ruler_identity": {
+        "file": "scripts/spec_gates_census.py",
+        "function": "compute() -> 键 t1_debt_official（与 --report 的 G-T1 口径分账行同一支，单一取数口）",
+        "command": "PYTHONIOENCODING=utf-8 BOT_AUTOSYNC=0 ../ChatBot_Runtime/venv/Scripts/python.exe scripts/spec_gates_census.py --report"
+      },
+      "measured_three_values": {
+        "t1_old_total": 1504,
+        "t1_debt_official": 337,
+        "t1_registered_process": 1167,
+        "identity": "337 + 1167 = 1504 成立（扫描面未缩、总账栏未删；R0 只分账）"
+      },
+      "evidence_command_full": "一发 `date -u`=2026-09-24T20:21:50Z 后 `PYTHONIOENCODING=utf-8 BOT_AUTOSYNC=0 PYTHONDONTWRITEBYTECODE=1 ../ChatBot_Runtime/venv/Scripts/python.exe scripts/spec_gates_census.py --report`，G-T1 分账行现算「旧尺总量 1504 ｜ 新尺对外欠账 337 ｜ 新尺过程件登记 1167（恒等式成立；重叠 rel 0 枚）」，分账指纹行取数时刻 2026-09-24T20:21:53Z、管辖页 2404、页字节总指纹 sha256=15826dec5250679349c42e6fa8ed19a7ca46d62ffcd5deb07ca0600182f00fdd、读盘异常页 []；二发（同码路直读列名册）`python -c \"import sys; sys.path.insert(0,'scripts'); import spec_gates_census as sc; res=sc.compute(); ...\"` `date -u`=2026-09-24T20:25:44Z 现算 old_total=1504 / official=337 / process=1167 / identity_ok=True，stamp taken_at_utc=2026-09-24T20:25:47Z、pages_bytes_digest sha256=5dbb2409f65f0ffd5953187186ed0416d80ded16f4a114352041385902c50a6c（两读间隔 ~4 分钟同值＝读数非瞬态）",
+      "computed_at_utc": "2026-09-24T20:25:47+00:00",
+      "approved_by": "用户裁定 N5=要（RULINGS-20260924.md :52「走 approvals 通道，带证据与到期日、数值由该门取数口现算，禁手填、禁顺手改别的上限」；批次 G 简报 BRIEFS-250925-G.md §S265）——席 S265 执行重录",
+      "reason": "失效根由：R0（2026-09-23 裁定）把 G-T1 判债对象由「旧尺总量」换为「新尺对外欠账」，上限 1047 仍按旧尺首届核账值在册——旧尺总账今天 1504 已超 1047 但总账栏只登记不判债，新尺欠账 337 对 1047 又形同虚设，S230R 现算在册（三值同场 1472/337/1135，建议 owner 按对外欠账口径重录、本席不碰）。本次按 N5 以该门自己的取数口现算 337 重录，方向收紧；T2/T4/模板体检上限与其余棘轮基线一枚未动。",
+      "expiry": "2026-10-31T00:00:00+00:00"
+    }
+  ]
+}

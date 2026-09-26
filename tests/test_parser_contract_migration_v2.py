@@ -3,7 +3,9 @@ from __future__ import annotations
 from plugins.bot_unified_runtime.domains.core.contracts.media import (
     ParsedContent,
 )
-from plugins.bot_unified_runtime.sources.parsers import build_content_parser_registry
+from plugins.bot_unified_runtime.domains.link_parse.parsers import (
+    build_content_parser_registry,
+)
 
 
 def test_registered_parser_functions_use_parsed_content_return_contract() -> None:

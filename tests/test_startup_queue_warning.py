@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from plugins.bot_unified_runtime.sender.queue import InMemorySendQueue
+from plugins.bot_unified_runtime.domains.transport.sender.queue import InMemorySendQueue
 
 
 class _FakeAudit:
@@ -31,7 +31,9 @@ def test_memory_queue_detected_for_warning_gate(caplog) -> None:
 
 def test_sqlite_queue_not_flagged(tmp_path) -> None:
     """持久化队列不应触发内存告警（真 SQLite 实例形态）。"""
-    from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
+    from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+        SQLiteSendRequestQueue,
+    )
 
     queue = SQLiteSendRequestQueue(str(tmp_path / "q.sqlite3"), audit_logger=_FakeAudit())
     assert isinstance(queue, InMemorySendQueue) is False

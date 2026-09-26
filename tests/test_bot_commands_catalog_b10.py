@@ -10,12 +10,14 @@
 
 from __future__ import annotations
 
-from plugins.bot_unified_runtime.capabilities.echo import (
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
     build_commands_catalog_body,
     build_help_result,
     resolve_help_query,
 )
-from plugins.bot_unified_runtime.runtime.base_router import list_route_rules_for_audit
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
+    list_route_rules_for_audit,
+)
 
 
 def test_resolve_help_query_maps_commands_variants() -> None:

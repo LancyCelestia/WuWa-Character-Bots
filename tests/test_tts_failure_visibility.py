@@ -181,7 +181,9 @@ def test_group_failure_hands_over_to_central_notice(
     from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
         RuntimePipeline,
     )
-    from plugins.bot_unified_runtime.sender.queue import InMemorySendQueue
+    from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+        InMemorySendQueue,
+    )
 
     message = _group_msg().model_copy(update={"session_type": session_type})
     if session_type is SessionType.PRIVATE:

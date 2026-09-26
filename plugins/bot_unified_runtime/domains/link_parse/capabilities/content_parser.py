@@ -12,11 +12,6 @@ import threading
 import time
 from typing import Any
 
-from plugins.bot_unified_runtime.capabilities.music import (
-    _media_parts_from_item,
-    music_audio_url,
-    music_cover_url,
-)
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -42,6 +37,11 @@ from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
 )
 from plugins.bot_unified_runtime.domains.link_parse.parsers.ssrf_guard import (
     guard_user_url,
+)
+from plugins.bot_unified_runtime.domains.music.capabilities.music import (
+    _media_parts_from_item,
+    music_audio_url,
+    music_cover_url,
 )
 
 

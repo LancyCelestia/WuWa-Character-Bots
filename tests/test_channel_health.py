@@ -12,6 +12,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health im
 )
 from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
     ModelRouter,
+    ModelSpec,
     _price_rank,
 )
 
@@ -134,7 +135,7 @@ def _router_with(specs: dict[str, dict]) -> ModelRouter:
             base_url=item.get("base_url", ""),
             api_key="k",
             api_keys=("k",),
-            tags=("fast",),
+            tags=tuple(item.get("tags", ("fast",))),
             aliases=item.get("aliases", ()),
             priority=item.get("priority", 100),
             routing_group="",
@@ -173,6 +174,116 @@ def test_channels_for_model_orders_by_price_then_priority(monkeypatch) -> None:
     assert router.channels_for_model("Gemini-X") == ["cheap-late", "expensive"]
     assert router.channels_for_model("glm-9") == ["other"]
     assert router.channels_for_model("不存在") == []
+
+
+def test_manual_tag_alone_never_hides_a_channel_from_aggregation(monkeypatch) -> None:
+    """反向守卫（本席 2026-09-23 自造回归的锁）：排除只认「合并期判定的同端点重复」，
+    **不认 manual 标签**。
+
+    本席首版按标签一刀切，当场打红 `tests/test_v21_s9_llm_api.py` 两条既有契约
+    （`/api/v1/llm/models` 与 `/llm/routes` 的投影要把"端点不同的兜底"作为垫底
+    一行显示给管理员——管理员必须看得见最后一棒是谁）。标签是"不参与抢位"的
+    排序语义（priority 2000 已达成），不是"从观测面消失"；真要把某一跳摘掉，
+    判据是它与另一条渠道同 model 同 base_url，见
+    `test_runtime_registry_landing_demotes_main_config_fallback`。
+    """
+    monkeypatch.delenv("BOT_CHANNEL_HEALTH_ENABLED", raising=False)
+    router = _router_with(
+        {
+            "axon-gemini": {"model": "gemini-3.8-flash", "priority": 1},
+            "other-gateway": {
+                "model": "gemini-3.8-flash",
+                "priority": 2000,
+                "tags": ("manual",),
+            },
+            "axon-grok": {"model": "grok-4.6", "priority": 2},
+        }
+    )
+    assert router.channels_for_model("gemini-3.8-flash") == ["axon-gemini", "other-gateway"]
+    assert router.channels_for_model("grok-4.6") == ["axon-grok"]
+
+
+def test_channels_for_model_keeps_two_real_channels_of_same_model(monkeypatch) -> None:
+    # 反向守卫：排除只针对 manual，真实的多渠道（未打 manual）绝不被折叠。
+    monkeypatch.delenv("BOT_CHANNEL_HEALTH_ENABLED", raising=False)
+    router = _router_with(
+        {
+            "axon-luna": {"model": "gpt-5.6-luna", "priority": 1},
+            "potccv-luna": {"model": "gpt-5.6-luna", "priority": 110},
+        }
+    )
+    assert router.channels_for_model("gpt-5.6-luna") == ["axon-luna", "potccv-luna"]
+
+
+def test_runtime_registry_landing_demotes_main_config_fallback(monkeypatch) -> None:
+    # 生产形态复现（2026-09-23 实测 3 跳）：.env 里 BOT_MODEL_REGISTRY 是空的，
+    # 真渠道由运行时覆盖文件合并进来。build_model_router 只在 .env 注册表在场时
+    # 才把主配置兜底降为 manual，所以这种形态下 default 带着 strong + p=1 直接
+    # 参战，与同模型同网关的 axon 渠道凑成一发必败的重复请求。
+    monkeypatch.delenv("BOT_CHANNEL_HEALTH_ENABLED", raising=False)
+    fallback = ModelSpec(
+        model_id="default",
+        model="gemini-3.8-flash",
+        base_url="http://127.0.0.1:8090/v1",
+        api_key="k",
+        tags=("strong",),
+        priority=1,
+        routing_group="default",
+    )
+    router = ModelRouter(
+        {"default": fallback},
+        provider_factory=lambda spec: None,
+        fallback_spec=fallback,
+        dynamic_registry=lambda: {
+            "axon-gemini-38-flash": {
+                "model": "gemini-3.8-flash",
+                "base_url": "http://127.0.0.1:8090/v1",
+                "api_key": "k",
+                "priority": 1,
+            },
+            "axon-grok-46": {
+                "model": "grok-4.6",
+                "base_url": "http://127.0.0.1:8090/v1",
+                "api_key": "k",
+                "priority": 2,
+            },
+        },
+    )
+    # 生产顺序：路由前先有一次公开求值触发运行时合并（generate/supports_vision
+    # 内部各调一次 _refresh_dynamic_registry），channels_for_model 自身不刷新。
+    router.supports_vision()
+    ids = router.channels_for_model("gemini-3.8-flash")
+    assert ids == ["axon-gemini-38-flash"], f"兜底未被降位，重复跳仍在：{ids}"
+
+
+def test_unique_main_config_model_is_not_demoted_by_runtime_merge(monkeypatch) -> None:
+    # 守卫：降位只针对「真重复」。若 BOT_CHAT_MODEL 在运行时注册表里没有同模型
+    # 同网关的渠道，把它降成 manual 等于将该模型整个从自动链上抹掉。
+    monkeypatch.delenv("BOT_CHANNEL_HEALTH_ENABLED", raising=False)
+    fallback = ModelSpec(
+        model_id="default",
+        model="gemini-3.8-flash",
+        base_url="http://127.0.0.1:8090/v1",
+        api_key="k",
+        tags=("strong",),
+        priority=1,
+        routing_group="default",
+    )
+    router = ModelRouter(
+        {"default": fallback},
+        provider_factory=lambda spec: None,
+        fallback_spec=fallback,
+        dynamic_registry=lambda: {
+            "axon-grok-46": {
+                "model": "grok-4.6",
+                "base_url": "http://127.0.0.1:8090/v1",
+                "api_key": "k",
+                "priority": 2,
+            }
+        },
+    )
+    router.supports_vision()
+    assert router.channels_for_model("gemini-3.8-flash") == ["default"]
 
 
 def test_channels_for_model_prefers_measured_latency(tmp_path, monkeypatch) -> None:

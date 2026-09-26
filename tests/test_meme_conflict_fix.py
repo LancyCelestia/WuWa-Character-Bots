@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.meme import (
+from plugins.bot_unified_runtime.domains.meme.capabilities.meme import (
     is_meme_command,
     parse_meme_command,
 )
-from plugins.bot_unified_runtime.capabilities.meme_library import (
+from plugins.bot_unified_runtime.domains.meme.capabilities.meme_library import (
     is_meme_library_command,
     parse_meme_library_command,
 )

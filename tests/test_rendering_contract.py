@@ -27,7 +27,10 @@ from plugins.bot_unified_runtime.domains.render.card_render import bridge
 from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
     BLOB_COUNT,
     BLOB_DURATIONS,
+    BRAND_ACCENT,
+    BRAND_WASH_TOKENS,
     CARD_SHELL_WIDTHS,
+    CARD_WASH_BLOBS,
     DEFAULT_THEME,
     DEFAULT_WASH_TOKENS,
     FONT_WEIGHT_MAX,
@@ -63,16 +66,17 @@ from plugins.bot_unified_runtime.output.render_backends import (
     PlaywrightRenderBackend,
 )
 
-# 显式枚举全部既有模板（禁止 glob：新增模板入列时逐个登记）。
-CARD_TEMPLATES: tuple[str, ...] = (
-    "universal_card.html",
-    "market_card.html",
-    "affinity_card.html",
-    "mermaid_card.html",
-    "song_candidates.html",
-    "finance_card.html",
-    "error_card.html",
-)
+#: ``--wash-blob-1`` 的登记族内取值（诊断卡按卡种覆盖壳层色斑时用）。
+#: 从登记表**派生**，绝不在测试里另抄一份色值——那会变成第二真身。
+CARD_WASH_BLOB_VALUES: frozenset[str] = frozenset(CARD_WASH_BLOBS.values())
+
+# 模板清单＝单一派生取数口 `bridge.card_template_names()`（templates/*.html glob，
+# 与 scripts/doc_sync.py::_tpl_list 同判据）。旧写法「显式枚举、禁止 glob」是
+# 手抄副本源——后增的 news_digest 面没进副本，脱族数值在门外通行数个波次
+# （「清单没数到它」型假绿，见 tests/test_news_digest_card_contract.py 头注）。
+# 派生之后：管辖面恒等于目录现走；「逐枚登记」的负担转移到下方两张**元数据**
+# 注册表（渲染入口/宽度键不可派生），由 registration 完备锁执法（注毒腿在案）。
+CARD_TEMPLATES: tuple[str, ...] = bridge.card_template_names()
 
 # 模板名 → CARD_SHELL_WIDTHS 登记键（宽度按内容族分化，但必须登记）。
 _SHELL_WIDTH_KEYS: dict[str, str] = {
@@ -83,6 +87,7 @@ _SHELL_WIDTH_KEYS: dict[str, str] = {
     "song_candidates.html": "song_panel",
     "finance_card.html": "finance",
     "error_card.html": "error",
+    "news_digest_card.html": "news_digest",
 }
 
 
@@ -111,7 +116,51 @@ _RENDER_ENTRIES: dict[str, Any] = {
     "song_candidates.html": lambda: bridge.render_song_candidates_html({}),
     "finance_card.html": lambda: bridge.render_finance_card_html({}),
     "error_card.html": lambda: bridge.render_error_card_html({}),
+    "news_digest_card.html": lambda: bridge.render_news_digest_card_html({}),
 }
+
+
+# ==================== 单一派生源的注册完备锁（S-T-VISUAL-1，2026-09-26） ====================
+def _registration_diff(inventory: tuple[str, ...]) -> list[str]:
+    """元数据注册表 vs 派生清单的双向对账（真值腿与注毒腿共用同一把尺）。"""
+    problems: list[str] = []
+    inv = set(inventory)
+    for label, table in (
+        ("_SHELL_WIDTH_KEYS", _SHELL_WIDTH_KEYS),
+        ("_RENDER_ENTRIES", _RENDER_ENTRIES),
+    ):
+        missing = sorted(inv - set(table))
+        dangling = sorted(set(table) - inv)
+        if missing:
+            problems.append(f"{label} 缺登记（新模板须入表，缺一即 KeyError 盲跑）: {missing}")
+        if dangling:
+            problems.append(f"{label} 指向不存在的模板: {dangling}")
+    return problems
+
+
+def test_registration_tables_cover_derived_inventory() -> None:
+    """派生清单与两张不可派生的元数据注册表逐名对账（双向）。"""
+    problems = _registration_diff(CARD_TEMPLATES)
+    assert not problems, "; ".join(problems)
+
+
+def test_inventory_is_derived_and_registration_lock_bites(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """注毒自证：①换目录即换清单（证明取数真是 glob 派生、不是藏了份字面量）；
+    ②凭空多出的一面若不去登记，完备判据必须点名两处（证明锁有牙）。"""
+    for name in ("ghost_card.html", "aaa_card.html"):
+        (tmp_path / name).write_text("<html></html>", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("非模板，不得入列", encoding="utf-8")
+    monkeypatch.setattr(bridge, "_TEMPLATES_DIR", tmp_path)
+    assert bridge.card_template_names() == ("aaa_card.html", "ghost_card.html")
+    problems = _registration_diff(bridge.card_template_names())
+    # 缺一腿：两张注册表都点名幽灵面；对偶腿：真面在幽灵清单下全变「悬空」，
+    # 双向同时触发（=登记表与目录一旦分家，两个方向都藏不住）。
+    missing = [p for p in problems if "缺登记" in p]
+    dangling = [p for p in problems if "指向不存在" in p]
+    assert len(missing) == 2 and all("ghost_card.html" in p for p in missing), problems
+    assert len(dangling) == 2 and all("universal_card.html" in p for p in dangling), problems
 
 
 @functools.cache
@@ -130,6 +179,37 @@ def _card_accent(name: str) -> str:
     match = re.search(r"--accent:([^;]+);", _root_blocks_of(name))
     assert match, f"{name} 渲染产物缺 --accent"
     return match.group(1)
+
+
+#: 釉瑚渐变的派生锚点＝守岸人本命蓝，**全卡一致**（2026-09-25 澜汐：背景要在
+#: 守岸人的蓝色标志色上做飘逸渐变彩色处理）。此前按各卡 ``--accent`` 派生，
+#: 红系平台卡（点歌/账单）整张壳底被推成粉灰。平台身份只留在 accent 强调线
+#: 与 ≤35% 的漂移色斑里。期望值取自登记表，不在测试里抄色值。
+WASH_ANCHOR = BRAND_WASH_TOKENS
+
+
+def test_wash_anchor_is_brand_for_every_card() -> None:
+    """锚点必须真是本命蓝派生（不是"未知平台中性灰"那条兜底路径）。"""
+    assert WASH_ANCHOR == derive_wash_tokens(BRAND_ACCENT)
+
+
+def test_no_card_paints_background_from_its_accent() -> None:
+    """任何一张卡的壳底渐变都不许拿 ``--accent`` 当色相来源。
+
+    2026-09-25 点名"背景要在守岸人蓝上做渐变"前，红/粉系平台卡整张底被推成
+    玫瑰色：壳层 15% 那一档吃 ``--wash-blob-1``，而它按 accent 混 35%。
+    现在锚点恒为本命蓝、混入降到 18%，本枚锁住这两处不回潮。
+    """
+    for name in CARD_TEMPLATES:
+        css = _css_of(name)
+        declared = re.findall(r"--wash-1:\s*([^;}]+)", css)
+        assert declared, f"{name} 缺 --wash-1"
+        assert declared[-1].strip() == BRAND_WASH_TOKENS["wash_1"], (
+            f"{name} 的 --wash-1 脱离本命蓝锚点: {declared[-1]!r}"
+        )
+        blob = re.findall(r"--wash-blob-1:\s*color-mix\(in srgb, var\(--accent\) (\d+)%", css)
+        for mix in blob:
+            assert int(mix) <= 18, f"{name} 色斑按 accent 混了 {mix}%（缺省上限 18%）"
 
 
 def _css_of(name: str) -> str:
@@ -335,10 +415,10 @@ def test_brand_wash_tokens_injected(name: str) -> None:
                 f"{name} {css_token} 兜底值与本命 token 不一致"
             )
         else:
-            # 步 5 形态：值由 bridge 按该卡主色派生（一定有值，缺 payload 不会崩）。
-            # 期望值现算——各卡主色不同（error 卡固定 ERROR_THEME.accent），
-            # 从渲染产物的 --accent 反读，避免在测试里硬编码第二份主色表。
-            expected = derive_wash_tokens(_card_accent(name))
+            # 步 5 形态：值由 bridge 直出（公共段由 render_root_tokens 产出）。
+            # 期望值取自登记表——锚点全卡一致为本命蓝（见 WASH_ANCHOR），
+            # 不再按各卡 --accent 反推，避免测试与实现同时漂移时双向失明。
+            expected = WASH_ANCHOR
             assert value == expected[token], (
                 f"{name} {css_token} 与按主色派生的本命档位不一致: "
                 f"{value!r} != {expected[token]!r}"
@@ -352,9 +432,17 @@ def test_pc_never_paints_brand_base() -> None:
         assert re.search(r"linear-gradient\(145deg,\s*var\(--wash-mist\)", css), (
             f"{name} 外壳渐变底未以 --wash-mist 打底"
         )
-        blob = re.search(r"--wash-blob-1:\s*color-mix\(in srgb, var\(--accent\) (\d+)%", css)
-        assert blob, f"{name} 缺 --wash-blob-1 定义"
-        assert int(blob.group(1)) <= 35, f"{name} 平台色斑混入超过 35% 上限"
+        # 取**最后一条**声明＝浏览器实际生效的那条。诊断卡按卡种覆盖
+        # ``--wash-blob-1``（壳层换蓝调后色斑不能还跟语义红混），只看第一条
+        # 会让这条门对覆盖后的实际色整个失明。
+        declared = re.findall(r"--wash-blob-1:\s*([^;}]+)", css)
+        assert declared, f"{name} 缺 --wash-blob-1 定义"
+        effective = declared[-1].strip()
+        if effective in CARD_WASH_BLOB_VALUES:
+            continue  # 登记族内的卡种色斑，值本身已在 theme_tokens 单源登记
+        mix = re.match(r"color-mix\(in srgb, var\(--accent\) (\d+)%", effective)
+        assert mix, f"{name} 生效的 --wash-blob-1 既非 accent 混色也不是登记族: {effective!r}"
+        assert int(mix.group(1)) <= 35, f"{name} 平台色斑混入超过 35% 上限"
 
 
 # ==================== 7. 动画必须在 .card 内 ====================
@@ -545,6 +633,7 @@ def test_wash_derivation_brand_base_is_stable() -> None:
         "render_song_candidates_html",
         "render_finance_card_html",
         "render_error_card_html",
+        "render_news_digest_card_html",
     ],
 )
 @pytest.mark.parametrize("payload", [None, {}])
@@ -1034,3 +1123,20 @@ def test_card_templates_have_zero_hardcoded_cjk_static_text_nodes() -> None:
         "卡片模板出现静态中文文本节点（唯一落点应为 bridge._CARD_TEXT "
         "+ 模板参数引用 card_text.<键>）：\n" + "\n".join(offenders)
     )
+
+
+def test_song_card_zebra_bands_are_two_rows_wide() -> None:
+    """点歌候选表的斑马纹必须**按视觉行两两取相**，不是逐行交替。
+
+    根因（2026-09-26 现算）：Jinja 里 ``is`` 比 ``//`` 结合更紧，
+    ``loop.index0 // 2 is even`` 实为 ``loop.index0 // (2 is even)`` = ``// 1``
+    ⇒ 退化成逐行交替（012345），两行一组的意图静默失效。这类缺陷不报错、
+    只是长错了，所以锁必须看**渲出来的相序**，不能只看模板里有没有这个字。
+    """
+    import re
+
+    html = bridge.render_song_candidates_html(
+        {"candidates": [{"name": f"歌{i}"} for i in range(6)]}
+    )
+    phases = re.findall(r"--surface-([ab])\) padding-box", html)
+    assert phases == ["a", "a", "b", "b", "a", "a"], f"斑马纹相序不对：{phases}"

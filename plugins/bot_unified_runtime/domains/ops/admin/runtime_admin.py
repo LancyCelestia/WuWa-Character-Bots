@@ -28,6 +28,9 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
     InstanceSettingsManager,
     RuntimeSettingsStore,
 )
+from plugins.bot_unified_runtime.domains.core.channel_capability_tags import (
+    preserve_capability_tags,
+)
 from plugins.bot_unified_runtime.domains.core.contracts import (
     CapabilityResult,
     PrivacyLevel,
@@ -114,6 +117,7 @@ def _handle_runtime_command(
     actor_id: str = "runtime-admin",
     actor_roles: list[str] | None = None,
     request_id: str = "",
+    session_key: str = "",
 ) -> str:
     parts = command_text.split()
     if not parts:
@@ -130,35 +134,40 @@ def _handle_runtime_command(
     store = manager.get(instance or default_instance)
     instance_label = f"[实例 {store.instance}] "
     if store.config_backend is not None and action in {"set", "get", "list", "reset"}:
-        from plugins.bot_unified_runtime.control_plane.auth import Principal
         from plugins.bot_unified_runtime.control_plane.config_service import (
             ConfigControlService,
         )
 
         service = ConfigControlService(config, store.config_backend, runtime_settings=store)
-        principal = Principal(actor_id, tuple(actor_roles or ()))
         if action == "list":
             return instance_label + "\n".join(f"{item['key']} = {item['value']}" for item in service.list())
         if action == "get" and remaining:
             row = service.get(remaining[0])
             return f"{instance_label}{row['key']} = {row['value']}（版本 {row['version']}）"
+        # 第 18 项收编（S-THROAT，2026-09-26）：本分支只留**读面**（上面 list/get 与
+        # 下面的回显取数）。写面一律落到咽喉 `store.set_override/reset_override`——
+        # 它在门内转发同一个 `backend.set_override`（CAS/审计/变更监听逐字节同形），
+        # 而 `ConfigControlService._write` 直连裸 SQL、一行不沾 `_throat_guard`；
+        # 旧形态在这里直写 ⇒ `/bot runtime set` 改 R1/R2 键无声落库（§⑨-B 旁路）。
         if action == "set" and len(remaining) >= 2:
-            row = service.get(remaining[0])
-            changed = service.set(remaining[0], " ".join(remaining[1:]), principal=principal, expected_version=row["version"], request_id=request_id)
+            store.set_override(
+                remaining[0], " ".join(remaining[1:]),
+                actor=actor_id, request_id=request_id, session_key=session_key,
+            )
+            changed = service.get(remaining[0])
             return f"{instance_label}已保存 {changed['key']} = {changed['value']}（版本 {changed['version']}）；动态消费者下次读取生效。"
         if action == "reset":
-            version = store.config_backend.snapshot().version
-            if remaining:
-                row = service.reset(remaining[0], principal=principal, expected_version=version, request_id=request_id)
-            else:
-                row = service.reset_all(principal=principal, expected_version=version, request_id=request_id)
-            return f"{instance_label}已恢复默认覆盖（版本 {row['version']}）。"
+            store.reset_override(
+                remaining[0] if remaining else None,
+                actor=actor_id, request_id=request_id, session_key=session_key,
+            )
+            return f"{instance_label}已恢复默认覆盖（版本 {store.config_backend.snapshot().version}）。"
         return "用法：/bot runtime set <KEY> <VALUE> | get <KEY> | list | reset [KEY]"
     if action == "set":
         if len(remaining) < 2:
             return "用法：/bot runtime set <KEY> <VALUE> [--instance <名称>]"
         key, value = remaining[0], " ".join(remaining[1:])
-        converted = store.set_override(key, value)
+        converted = store.set_override(key, value, actor=actor_id, session_key=session_key)
         return f"{instance_label}已设置 {key.upper()} = {converted}（已持久化，目标实例会自动刷新）。"
     if action == "get":
         if len(remaining) < 1:
@@ -178,14 +187,14 @@ def _handle_runtime_command(
         )
     if action == "reset":
         reset_key = remaining[0] if remaining else None
-        count = store.reset_override(reset_key)
+        count = store.reset_override(reset_key, actor=actor_id, session_key=session_key)
         return f"{instance_label}已清除 {count} 项运行时覆盖。"
     if action == "nickname":
         return f"{instance_label}{_handle_nickname_command(store, remaining)}"
     if action == "persona":
         return f"{instance_label}{_handle_persona_command(store, config, remaining)}"
     if action == "model":
-        return f"{instance_label}{_handle_model_command(store, config, remaining, diagnostics_store=diagnostics_store, usage_store=usage_store)}"
+        return f"{instance_label}{_handle_model_command(store, config, remaining, diagnostics_store=diagnostics_store, usage_store=usage_store, actor_id=actor_id, session_key=session_key)}"
     return (
         "用法：/bot runtime set <KEY> <VALUE> | get <KEY> | list | "
         "reset [KEY] | nickname add/remove/list <昵称> | persona list|switch|probability "
@@ -435,6 +444,8 @@ def _handle_model_command(
     *,
     diagnostics_store: Any | None = None,
     usage_store: Any | None = None,
+    actor_id: str = "runtime-admin",
+    session_key: str = "",
 ) -> str:
     from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
         build_model_registry,
@@ -663,24 +674,24 @@ def _handle_model_command(
             return "用法：/bot model set <id|auto>"
         name = parts[1].strip()
         if name.lower() == "auto":
-            store.reset_override("BOT_CHAT_MODEL")
+            store.reset_override("BOT_CHAT_MODEL", actor=actor_id, session_key=session_key)
             return "已切换为自动选型（按时段分组/priority 顺序，失败自动转移；思考强度按档位体系）。"
         known_ids = set(registry) | set(runtime_registry)
         if known_ids and name in known_ids:
-            store.set_override("BOT_CHAT_MODEL", name)
+            store.set_override("BOT_CHAT_MODEL", name, actor=actor_id, session_key=session_key)
             label = runtime_registry.get(name, {}).get("model", "") or (
                 registry[name].model if name in registry else ""
             )
             return f"已手动指定模型：{name}（{label}）。失败时自动转移其他模型。"
         if name in presets:
             model = presets[name]
-            store.set_override("BOT_CHAT_MODEL", name)
+            store.set_override("BOT_CHAT_MODEL", name, actor=actor_id, session_key=session_key)
             return f"已手动指定模型：{name}（{model}）。"
         # 允许直接给完整模型名（兼容旧用法；无注册表时走主 provider）。
-        store.set_override("BOT_CHAT_MODEL", name)
+        store.set_override("BOT_CHAT_MODEL", name, actor=actor_id, session_key=session_key)
         return f"已手动指定模型：{name}。"
     if action == "reset":
-        store.reset_override("BOT_CHAT_MODEL")
+        store.reset_override("BOT_CHAT_MODEL", actor=actor_id, session_key=session_key)
         return f"已恢复自动选型（默认兜底 {default_model}）。"
     if action in {"think", "思考", "reasoning"}:
         if len(parts) < 2:
@@ -689,7 +700,7 @@ def _handle_model_command(
             effort = SETTABLE_KEYS["BOT_CHAT_REASONING_EFFORT"](parts[1])
         except (KeyError, ValueError) as exc:
             return str(exc)
-        store.set_override("BOT_CHAT_REASONING_EFFORT", effort)
+        store.set_override("BOT_CHAT_REASONING_EFFORT", effort, actor=actor_id, session_key=session_key)
         if effort == "off":
             return "reasoning_effort 已设为 off：不发送思考强度字段。"
         if not effort:
@@ -759,7 +770,7 @@ def _handle_model_command(
         if not kv:
             # 不带价格参数 = 清除该模型价格，回到未计价。
             prices.pop(model_name, None)
-            store.set_override("BOT_MODEL_PRICES", json.dumps(prices, ensure_ascii=False))
+            store.set_override("BOT_MODEL_PRICES", json.dumps(prices, ensure_ascii=False), actor=actor_id, session_key=session_key)
             return f"已清除 {model_name} 的价格（该模型回到未计价）。"
         entry_prices = dict(prices.get(model_name, {}))
         # 2026-09-18：缓存读/缓存创建/按次计费三键可写——此前只收 input/output，
@@ -781,10 +792,10 @@ def _handle_model_command(
                 entry_prices[key] = number
         if not entry_prices:
             prices.pop(model_name, None)
-            store.set_override("BOT_MODEL_PRICES", json.dumps(prices, ensure_ascii=False))
+            store.set_override("BOT_MODEL_PRICES", json.dumps(prices, ensure_ascii=False), actor=actor_id, session_key=session_key)
             return f"已清除 {model_name} 的价格（该模型回到未计价）。"
         prices[model_name] = entry_prices
-        store.set_override("BOT_MODEL_PRICES", json.dumps(prices, ensure_ascii=False))
+        store.set_override("BOT_MODEL_PRICES", json.dumps(prices, ensure_ascii=False), actor=actor_id, session_key=session_key)
         segments = [
             f"{label} {entry_prices[key]:g} {unit}"
             for key, label, unit in (
@@ -806,7 +817,7 @@ def _handle_model_command(
             enabled = SETTABLE_KEYS["BOT_WEB_SEARCH_ENABLED"](parts[1])
         except (KeyError, ValueError) as exc:
             return str(exc)
-        store.set_override("BOT_WEB_SEARCH_ENABLED", parts[1])
+        store.set_override("BOT_WEB_SEARCH_ENABLED", parts[1], actor=actor_id, session_key=session_key)
         return f"web_search（联网搜索）已{'开启' if enabled else '关闭'}。"
     if action in {"usage", "用量", "token", "账单"}:
         if diagnostics_store is None and usage_store is None:
@@ -1018,7 +1029,9 @@ def _handle_model_command(
             parts[1:],
         )
     if action == "vision":
-        return _handle_vision_command(store, config, parts[1:])
+        return _handle_vision_command(
+            store, config, parts[1:], actor_id=actor_id, session_key=session_key
+        )
     return (
         "用法：/bot model set <id|auto> | list | add | update | "
         "priority | remove | effort | think | price | search | usage | "
@@ -1276,6 +1289,14 @@ def _handle_model_registry_command(
         except ValueError as exc:
             return str(exc)
         entry = dict(base_entry)
+        # 能力标签守卫（T4 路②）：`tags=` 是**整表替换**，管理员改档位时最容易
+        # 顺手把 `native-audio`/`native-video`/`native-animation` 一起带走，而带走
+        # 之后不报错、不写日志——音视频/动图只是静默退回 ASR/抽帧/拼静态条。
+        # 分治口径：档位与模态标签（low/high/max/vision/text-only/manual…）照旧
+        # 整表替换；`native-*` 从旧值自动保留，管理员自己写的能力标签原样生效
+        # （所以"加一枚"这条路完全通）。要**摘**一枚声明，走唯一在册真身
+        # `domains/core/channel_capability_tags.py`，不在这条命令里顺手做。
+        preserved_capability_tags: list[str] = []
         key_map = {
             "model": "model",
             "actual_model_id": "model",
@@ -1289,9 +1310,12 @@ def _handle_model_registry_command(
         }
         for key, value in kv.items():
             if key == "tags":
-                entry["tags"] = [
-                    tag.strip() for tag in value.split(",") if tag.strip()
-                ]
+                authored = [tag.strip() for tag in value.split(",") if tag.strip()]
+                merged, carried = preserve_capability_tags(
+                    authored, base_entry.get("tags") or []
+                )
+                entry["tags"] = merged
+                preserved_capability_tags.extend(carried)
             elif key == "effort":
                 from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
                     normalize_effort,
@@ -1341,9 +1365,17 @@ def _handle_model_registry_command(
                 else None
             ),
         )
+        note = ""
+        if preserved_capability_tags:
+            note = (
+                " 能力标签 "
+                + "、".join(preserved_capability_tags)
+                + " 已自动保留（tags= 只整表替换档位标签；摘能力声明要改唯一在册真身"
+                " domains/core/channel_capability_tags.py）。"
+            )
         return (
             f"已更新模型 {model_id}（改动存为运行时覆盖，优先于 .env 同名条目）。"
-            "密钥不会回显。"
+            "密钥不会回显。" + note
         )
     if action == "priority":
         if len(parts) < 2:
@@ -1380,6 +1412,9 @@ def _handle_vision_command(
     store: RuntimeSettingsStore,
     config: object,
     parts: list[str],
+    *,
+    actor_id: str = "runtime-admin",
+    session_key: str = "",
 ) -> str:
     """视觉识别模型管理：/bot model vision <list|add|update|priority|remove>。"""
     from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
@@ -1446,7 +1481,7 @@ def _handle_vision_command(
             mode = SETTABLE_KEYS["BOT_VISION_MODE"](rest[0])
         except (KeyError, ValueError) as exc:
             return str(exc)
-        store.set_override("BOT_VISION_MODE", mode)
+        store.set_override("BOT_VISION_MODE", mode, actor=actor_id, session_key=session_key)
         return f"视觉模式已设为 {mode}。"
 
     if sub == "add":
@@ -1904,6 +1939,7 @@ def build_runtime_admin_result(
     actor_id: str = "runtime-admin",
     diagnostics_store: Any | None = None,
     usage_store: Any | None = None,
+    session_key: str = "",
 ) -> CapabilityResult:
     from plugins.bot_unified_runtime.control_plane.services import ControlServiceError
 
@@ -1925,6 +1961,7 @@ def build_runtime_admin_result(
             diagnostics_store=diagnostics_store,
             usage_store=usage_store,
             actor_id=actor_id, actor_roles=actor_roles, request_id=request_id,
+            session_key=session_key,
         )
     except ControlServiceError as exc:
         return _error_result(request_id, exc.message)

@@ -87,6 +87,10 @@ class LLMReply(StrictBaseModel):
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     # 本次生成的路由尝试轨迹（ModelRouter.generate 成功返回前填充）。
     attempts: list[str] = Field(default_factory=list)
+    # 响应体 ``id``：走 AxonHub 时它就是 ``requests.external_id``，是网关侧
+    # 归因（实际渠道/逐跳错误/分项价）唯一的关联键（2026-09-25 B1）。
+    # 非网关供应商也会填这里——查不到只会记 miss，不猜。
+    remote_request_id: str = ""
 
 
 _SAFE_LLM_FINISH_REASONS = {
@@ -526,6 +530,7 @@ class OpenAICompatibleLLMProvider:
         usage = _extract_usage(data.get("usage"), choice.get("finish_reason"))
         if content_source == "reasoning_fallback":
             usage["content_source"] = "reasoning_fallback"
+        remote_id = data.get("id")
         return LLMReply(
             text=text,
             provider=self.provider_name,
@@ -533,6 +538,7 @@ class OpenAICompatibleLLMProvider:
             confidence=1.0,
             raw_usage=usage,
             tool_calls=tool_calls,
+            remote_request_id=remote_id if isinstance(remote_id, str) else "",
         )
 
     def _post_via_urllib(

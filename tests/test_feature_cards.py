@@ -22,14 +22,6 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.divination import (
-    build_divination_capability,
-    build_divination_card_content,
-)
-from plugins.bot_unified_runtime.capabilities.today_history import (
-    build_history_card_content,
-    build_today_history_capability,
-)
 from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SessionType,
@@ -37,7 +29,15 @@ from plugins.bot_unified_runtime.contracts import (
 from plugins.bot_unified_runtime.domains.divination.capabilities import (
     divination as divination_cap,
 )
+from plugins.bot_unified_runtime.domains.divination.capabilities.divination import (
+    build_divination_capability,
+    build_divination_card_content,
+)
 from plugins.bot_unified_runtime.domains.divination.data import deck_math
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.today_history import (
+    build_history_card_content,
+    build_today_history_capability,
+)
 from plugins.bot_unified_runtime.domains.subscribe.feeds.today_history import (
     HistoryEvent,
 )

@@ -10,13 +10,15 @@ import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.content_parser import (
+from plugins.bot_unified_runtime.contracts import SessionType, build_parsed_content
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
+from plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser import (
     _clean_summary,
     _format_publish_time,
 )
-from plugins.bot_unified_runtime.capabilities.music import build_music_capability
-from plugins.bot_unified_runtime.contracts import SessionType, build_parsed_content
-from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
+from plugins.bot_unified_runtime.domains.music.capabilities.music import (
+    build_music_capability,
+)
 from plugins.bot_unified_runtime.output.card_render.bridge import (
     render_universal_card_html,
 )
@@ -188,7 +190,9 @@ def test_music_hit_falls_back_to_cover_when_render_unavailable(tmp_path: Path) -
 # ---------- help 索引：二级展开引导 ----------
 
 def test_help_index_contains_second_level_hint() -> None:
-    from plugins.bot_unified_runtime.capabilities.echo import _help_index_body
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+        _help_index_body,
+    )
 
     body = _help_index_body(page=1, is_admin=True)
     assert "【子功能】" in body

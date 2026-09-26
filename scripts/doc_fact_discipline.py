@@ -13,8 +13,16 @@
 - 判据函数 `fact_findings()` 收「行 + 词表」纯参数：**全树与注毒共用同一支**
   （内存喂样本即可证门有牙，不往源码树写一个字）。
 - 与 `tests/test_documentation_consistency.py`（叙述文档面）的关系：同一把尺子的两面，
-  该门仍用其旧窄词表面向叙述件；本模块是 G-T3 的宽尺面。两把尺子同名不同面，
-  未合并的那半（叙述面改走本模块）记在席报告「没做什么」里。
+  该门改用 R4 的三条**结构**判据（机器册/真身路径指针 · 「当时值」且数在真身已不存在 ·
+  代码块/行内码）面向叙述件；本模块是 G-T3 的宽尺面。
+  **R4（2026-09-23 裁定件 ADDENDUM-USER-RULINGS-20260923 §R4）退役说明**：叙述规则 10
+  「裸计数门」的**词法放行本体**是 `test_documentation_consistency.py` 里旧的
+  `_AUTHORITY_MARKER_RE`（靠 历史/实测/当时/现值 等词整行放行），已由上述三条结构判据取代、
+  不再被引用。本模块的 `AUTHORITY_PHRASE_RE` 是 **G-T3 宽尺**的分段指针摘除器，被
+  `spec_gates_census`／板块门／税务门（`test_board_taxonomy_gate.py`、
+  `test_taxonomy_spec_gates.py`）依赖其「纯指针句放行」契约，**不在本次退役范围内**（动它会把
+  红搬进别席的账、并撕毁它们对合法指针句放行的既有断言）；宽尺改走同一套结构判据属该尺 owner
+  的后续工作，本席已在报告「没做什么」如实登记。
 """
 
 from __future__ import annotations

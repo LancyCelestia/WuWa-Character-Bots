@@ -24,9 +24,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from plugins.bot_unified_runtime.capabilities.music import parse_music_mode_spec
-from plugins.bot_unified_runtime.capabilities.weather import is_statement_lead
 from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.domains.music.capabilities.music import (
+    parse_music_mode_spec,
+)
+from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
+    is_statement_lead,
+)
 
 
 @dataclass(frozen=True)
@@ -433,7 +437,7 @@ def detect_natural_command(text: str, config: Config | None = None) -> NaturalRe
         if mode_match:
             spec = parse_music_mode_spec(str(mode_match.groupdict().get("spec") or ""))
             if spec is not None:
-                from plugins.bot_unified_runtime.capabilities.music import (
+                from plugins.bot_unified_runtime.domains.music.capabilities.music import (
                     normalize_music_mode,
                 )
 

@@ -24,9 +24,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.content_parser import (
-    build_content_capability,
-)
 from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SendPolicy,
@@ -38,6 +35,9 @@ from plugins.bot_unified_runtime.domains.core.contracts.media import (
 )
 from plugins.bot_unified_runtime.domains.files.sources import (
     downloader as downloader_module,
+)
+from plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser import (
+    build_content_capability,
 )
 
 # v21r2 W1a: platforms_generic 真身已迁 domains/link_parse/parsers/，monkeypatch 需打在真身上

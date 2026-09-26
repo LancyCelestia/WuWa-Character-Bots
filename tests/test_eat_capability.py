@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.eat import (
+from plugins.bot_unified_runtime.contracts import SessionType
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
+from plugins.bot_unified_runtime.domains.food.capabilities.eat import (
     build_eat_capability,
     clear_recent_dishes,
 )
-from plugins.bot_unified_runtime.contracts import SessionType
-from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
 
 
 def _message(text: str, session_id: str = "private:u1") -> IncomingMessage:

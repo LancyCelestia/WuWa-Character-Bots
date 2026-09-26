@@ -158,7 +158,9 @@ def test_epic_steam_cookie_candidates_prefer_runtime_root(
 
 def test_music_default_dir_routes_to_runtime_root(tmp_path: Path, monkeypatch) -> None:
     """点歌试听下载目录：相对默认值落数据根；绝对配置原样保留。"""
-    from plugins.bot_unified_runtime.capabilities.music import _resolve_music_data_dir
+    from plugins.bot_unified_runtime.domains.music.capabilities.music import (
+        _resolve_music_data_dir,
+    )
 
     monkeypatch.setenv("BOT_RUNTIME_DATA_DIR", str(tmp_path))
     assert _resolve_music_data_dir("data/music") == (tmp_path / "music").resolve()

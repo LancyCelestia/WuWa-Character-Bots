@@ -1,8 +1,9 @@
 """v21r3 渲染统一「机器门」补课（TDD RED 锚点，2026-09-18）。
 
-对全部 **11 个渲染面** 逐面编码裁决基线（v21r3 渲染统一裁决）九门：
+对全部渲染面（面清单见下方两张登记表，枚数以表现算为准）逐面编码裁决基线
+（v21r3 渲染统一裁决）九门：
 
-  面 = 7 张 Jinja 模板（domains/render/card_render/templates/*.html，读源文件
+  面 = Jinja 模板全家（domains/render/card_render/templates/*.html，读源文件
        全分支文本）+ 4 张直拼卡（import 构建函数取最终 HTML，离线零渲染）：
        echo_help（domains/chat_reply/capabilities/echo.py::_help_mica_html）、
        debug_llm（domains/ops/admin/debug.py::_llm_setup_mica_html）、
@@ -27,7 +28,7 @@
   TDD 锚点：本文件**预期 RED**——生产文件由 wave-2 席修复，本席禁改生产代码；
   个别门因并行席位已落地而直接 GREEN 属正常，如实记录于 progress-GATES.md。
   （裁决基线第 3 条「玻璃两档」原归 token/视觉席契约；GLASS2 席已以门 9 补设，
-  见 test_gate09_glass_tiers——白玻璃填充两档 + 描边三档，11 面生效。）
+  见 test_gate09_glass_tiers——白玻璃填充两档 + 描边三档，全部面生效。）
 """
 
 from __future__ import annotations
@@ -39,8 +40,10 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.debug import _llm_setup_mica_html
-from plugins.bot_unified_runtime.capabilities.echo import _help_mica_html
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+    _help_mica_html,
+)
+from plugins.bot_unified_runtime.domains.ops.admin.debug import _llm_setup_mica_html
 from plugins.bot_unified_runtime.domains.render.card_render import (
     bridge,
     mica_shell,
@@ -61,9 +64,12 @@ MONO_FONT_STACK: str | None = getattr(theme_tokens, "MONO_FONT_STACK", None)
 
 _TEMPLATES_DIR = Path(bridge.__file__).resolve().parent / "templates"
 
-# ==================== 11 面（7 模板 + 4 直拼卡） ====================
+# ============= 面清单（Jinja 模板全家 + 4 直拼卡；枚数以两张表现算为准） =============
 _TEMPLATE_SURFACES: dict[str, str] = {
-    # 面 id → 模板文件名（与 test_rendering_contract / test_e03 显式枚举同口径）
+    # 面 id → 模板文件名。**文件名的账本住派生源**
+    # `bridge.card_template_names()`（S-T-VISUAL-1 归一）；面 id 不可派生、
+    # 属显式登记，登记完备由下方 gate00 双向对账执法（S-D 同型，旧版此处
+    # 无对账锁＝登记表可与目录悄悄分家）。
     "universal": "universal_card.html",
     "market": "market_card.html",
     "affinity": "affinity_card.html",
@@ -71,6 +77,7 @@ _TEMPLATE_SURFACES: dict[str, str] = {
     "song": "song_candidates.html",
     "finance": "finance_card.html",
     "error": "error_card.html",
+    "news_digest": "news_digest_card.html",
 }
 _BUILTIN_SURFACES: tuple[str, ...] = (
     "echo_help",
@@ -144,6 +151,17 @@ def _error_payload(i: int) -> dict[str, Any]:
         "exc_message": f"模拟异常{i}",
         "trigger_echo": f"/bot status {i}",
         "help_text": "稍后再试",
+    }
+
+
+def _news_digest_payload(i: int) -> dict[str, Any]:
+    return {
+        "title": f"今日快讯{i}",
+        "sub": f"来源聚合{i}",
+        "foot": f"数据口径 {i}",
+        "items": [
+            {"source": "V2EX", "time": "09:00", "name": f"条目{i}", "snip": f"摘要{i}"},
+        ],
     }
 
 
@@ -221,7 +239,7 @@ def _build_builtin(sid: str) -> str:
 
 
 def _build_template(sid: str) -> str:
-    """七张 Jinja 模板：走 bridge 渲染入口取最终 HTML（宽度门消费注入值）。"""
+    """登记的 Jinja 模板：走 bridge 渲染入口取最终 HTML（宽度门消费注入值）。"""
     if sid == "universal":
         return bridge.render_universal_card_html(_universal_payload(1))
     if sid == "market":
@@ -236,6 +254,8 @@ def _build_template(sid: str) -> str:
         return bridge.render_mermaid_html("graph TD; A1-->B1")
     if sid == "error":
         return bridge.render_error_card_html(_error_payload(1))
+    if sid == "news_digest":
+        return bridge.render_news_digest_card_html(_news_digest_payload(1))
     raise AssertionError(f"未知模板面: {sid}")
 
 
@@ -416,7 +436,32 @@ def _theme_registered_hexes() -> frozenset[str]:
 _REGISTRY_HEXES = _theme_registered_hexes()
 
 
-# ==================== 八门 × 11 面 ====================
+# ==================== 门 gate00：登记完备（与供给链 S-D 同型，双向对账） ====================
+def test_gate00_surface_table_covers_derived_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_TEMPLATE_SURFACES 的文件名集合恒等于派生清单（S-T-VISUAL-1 补的盘对账）。
+
+    九门按 ALL_SURFACES 参数化：登记表与目录一旦分家，要么门扫不到盘上的面
+    （news_digest 当年的病），要么指向幽灵文件空跑。注毒腿在同一个函数里：
+    把取数口换成 tmp 目录多出一面，判据必须点名未登记——证明真值腿不是装饰。
+    """
+    def _diff(inventory: tuple[str, ...]) -> tuple[list[str], list[str]]:
+        inv = set(inventory)
+        registered = set(_TEMPLATE_SURFACES.values())
+        return sorted(inv - registered), sorted(registered - inv)
+
+    unregistered, dangling = _diff(bridge.card_template_names())
+    assert not unregistered, f"目录在盘而登记表没数到（门管辖塌了）: {unregistered}"
+    assert not dangling, f"登记表指向不存在的模板（空跑）: {dangling}"
+
+    (tmp_path / "ghost_card.html").write_text("<html></html>", encoding="utf-8")
+    monkeypatch.setattr(bridge, "_TEMPLATES_DIR", tmp_path)
+    unregistered, dangling = _diff(bridge.card_template_names())
+    assert unregistered == ["ghost_card.html"], f"注毒未咬住: {unregistered}"
+
+
+# ==================== 八门 × 全部面 ====================
 @pytest.mark.parametrize("sid", ALL_SURFACES)
 def test_gate01_border_radius_registry(sid: str) -> None:
     """裁决基线第 1 条：圆角字面量登记制 + 外壳 var(--r-shell) + 禁私设 token。"""

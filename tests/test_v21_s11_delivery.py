@@ -13,7 +13,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.domains.core.contracts import (
     PrivacyLevel,
     RenderedOutput,
     SendPolicy,

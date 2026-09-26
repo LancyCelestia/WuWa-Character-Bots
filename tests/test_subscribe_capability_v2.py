@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.subscribe_v2 import (
+from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.subscribe_v2 import (
     build_subscribe_capability_v2,
 )
-from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_runtime_v2 import (
     build_subscription_runtime_v2,
 )

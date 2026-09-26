@@ -35,7 +35,7 @@
     --surface-b: {{ surface_b }};
     --surface-neutral: {{ surface_neutral }};
     /* vis5 次级灰单源（theme_tokens.TEXT_SECONDARY，对三档表面 ≥4.5:1）。 */
-    --text-secondary: #576272;
+    --text-secondary: #4e5866;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: var(--font-family); background: transparent; display: flex; justify-content: center;
@@ -59,7 +59,7 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
 {{ decor_css | safe }}
 .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
     padding-bottom: 14px; border-bottom: var(--divider-line); }
-.title { font-size: 21px; font-weight: 700; color: var(--text-main); }
+.title { font-size: 20px; font-weight: 700; color: var(--text-main); }
 .subtitle { font-size: 12px; color: var(--text-sub); margin-top: 4px; }
 .group { margin-top: 16px; }
 .group-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; color: var(--accent-dark); letter-spacing: 0.06em; }
@@ -76,14 +76,14 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
     box-shadow: var(--mica-shadow-panel);
 }
 .index .info { flex: 1; min-width: 0; }
-.index .name { font-size: 14px; font-weight: 650; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.index .name { font-size: 14px; font-weight: 600; color: var(--text-main); line-height: 1.4; overflow-wrap: anywhere; }
 .index .price-row { display: flex; align-items: baseline; gap: 8px; margin-top: 3px; flex-wrap: wrap; }
 .index .price { font-size: 17px; font-weight: 700; color: var(--text-main); font-variant-numeric: tabular-nums; }
-.index .chg { font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.index .chg { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .index .chg.up { color: var(--up); }
 .index .chg.down { color: var(--down); }
 .index .chg.flat { color: var(--text-sub); }
-.index .pct { font-size: 12px; font-weight: 650; padding: 1px 8px; border-radius: var(--r-pill); font-variant-numeric: tabular-nums; }
+.index .pct { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: var(--r-pill); font-variant-numeric: tabular-nums; }
 .index .pct.up { color: #fff; background: var(--up); }
 .index .pct.down { color: #fff; background: var(--down); }
 .index .pct.flat { color: var(--text-sub); background: color-mix(in srgb, var(--accent) 10%, #fff); }

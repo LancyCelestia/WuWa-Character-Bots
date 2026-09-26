@@ -26,7 +26,7 @@ from itertools import pairwise
 
 import pytest
 
-from plugins.bot_unified_runtime.character.affinity import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     _BUDGET_MAX_GAIN_24H_POINTS,
     _BUDGET_MAX_LOSS_6H_POINTS,
     _BUDGET_MAX_LOSS_24H_POINTS,
@@ -333,7 +333,9 @@ def test_passive_regression_semantics_untouched_by_v6(tmp_path, monkeypatch) -> 
 # ---------------------------------------------------------------------------
 
 def test_algorithm_copy_describes_smoothing_qualitatively() -> None:
-    from plugins.bot_unified_runtime.capabilities.affinity import ALGORITHM_TEXT
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.affinity import (
+        ALGORITHM_TEXT,
+    )
 
     assert "平滑" in ALGORITHM_TEXT, "必须反映 v6 平滑层"
     assert "递减" in ALGORITHM_TEXT, "必须反映边际递减"

@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
 
-from plugins.bot_unified_runtime.capabilities.daily_assist import (
+from plugins.bot_unified_runtime.domains.assistant.daily.capabilities.daily_assist import (
     is_daily_assist_command,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities.affinity import (
@@ -100,6 +100,12 @@ from plugins.bot_unified_runtime.domains.music.capabilities.music import (
     is_music_command,
     is_music_mode_command,
 )
+from plugins.bot_unified_runtime.domains.ops.capabilities.consent_admin import (
+    is_consent_command,
+)
+from plugins.bot_unified_runtime.domains.ops.capabilities.host_state import (
+    is_host_state_command,
+)
 from plugins.bot_unified_runtime.domains.schedule.auto_send import (
     is_auto_send_command_text,
 )
@@ -158,6 +164,8 @@ class RouteKind(str, Enum):
     MEDIA_ARCHIVE = "media_archive"
     DAILY_ASSIST = "daily_assist"
     GROUP_INFO = "group_info"
+    HOST_STATE = "host_state"
+    CONSENT = "consent"
     EAT = "eat"
     AFFINITY = "affinity"
     DIVINATION = "divination"
@@ -594,6 +602,33 @@ def build_route_rules() -> list[RouteRule]:
             ("base_route:media_archive",),
         )
 
+    def host_state_match(text, config, _alias):
+        # 超管专属读数面：路由对全员开放，权限门在能力侧判（非超管拿到的是一句
+        # 温和的「这台机器我不对外报」）——判据只留一处，路由侧不复制第二套角色表。
+        if not is_host_state_command(text):
+            return None
+        return RouteDecision(
+            RouteKind.HOST_STATE,
+            "bot.host_state",
+            41,
+            "宿主机状态（机器配置/占用/运行版本，超管视图卡片）",
+            ("base_route:host_state",),
+        )
+
+    def consent_match(text, config, _alias):
+        # 书面同意命令面（裁定第 18 项放行腿）：谓词是锚定的整句判据，认不下任何
+        # 「大概像」的句子——这是一条会改生产参数的入口。总闸关着也照样路由：
+        # 能力侧会如实回「门没装载」，比把这句话丢回人格聊天让它瞎猜一句安全。
+        if not is_consent_command(text):
+            return None
+        return RouteDecision(
+            RouteKind.CONSENT,
+            "bot.consent",
+            41,
+            "书面同意命令面（同意卡 待批/看/批/驳；仅管理员）",
+            ("base_route:consent",),
+        )
+
     def daily_assist_match(text, config, _alias):
         # 收件箱速记：随手把待办/杂事丢进收件箱文件，早报定时任务读取汇总。
         if not getattr(config, "bot_daily_assist_enabled", True):
@@ -678,6 +713,8 @@ def build_route_rules() -> list[RouteRule]:
         RouteRule(RouteKind.MEDIA_ARCHIVE, "bot.media_archive", 43, "媒体归档", "媒体归档（收藏/归档/存图+媒体；存聊天记录）", ("base_route:media_archive",), media_archive_match),
         RouteRule(RouteKind.DAILY_ASSIST, "bot.daily_assist", 42, "收件箱速记", "收件箱（收件箱 买牛奶/收件箱）", ("base_route:daily_assist",), daily_assist_match),
         RouteRule(RouteKind.EMERGENCY_INFO, "bot.emergency_info", 44, "紧急信息", "紧急信息（外部预警与政务应急聚合：紧急信息｜紧急信息 待审）", ("base_route:emergency_info",), emergency_info_match),
+        RouteRule(RouteKind.HOST_STATE, "bot.host_state", 41, "宿主机状态", "宿主机状态（机器状态/机器配置/宿主状态；超管视图卡片）", ("base_route:host_state",), host_state_match),
+        RouteRule(RouteKind.CONSENT, "bot.consent", 41, "书面同意", "书面同意（同意卡 待批/看/批/驳；危险参数改动的批准入口，仅管理员）", ("base_route:consent",), consent_match),
         RouteRule(RouteKind.GROUP_INFO, "bot.group_info", 41, "群信息", "群信息（群信息/群主是谁/群人数/群公告/群精华/本群多大了）", ("base_route:group_info",), group_info_match),
         RouteRule(RouteKind.MOEGIRL_QUESTION, "bot.moegirl", 46, "二次元问句", "二次元问句（萌娘百科自动查询，未命中降级聊天）", ("base_route:moegirl_question",), moegirl_question_match),
         RouteRule(RouteKind.NATURAL_COMMAND, "bot.natural_command", 45, "自然语言命令", "自然语言命令归一化", ("base_route:natural_command",), natural_match),
@@ -713,6 +750,8 @@ def build_interface_manifest() -> list[InterfaceEntry]:
         InterfaceEntry("capability.game_live", "游戏直播状态", "reserved", "game_live", None, "预留：游戏内直播/活动事件接入", internal_note="预留：游戏直播事件接入，尚未实现"),
         InterfaceEntry("capability.meme_absorb", "吸收表情包", "active", "meme_absorb", None, "监听群图片异步下载、MD5 去重、权重筛选、VLM 打标与 NSFW 过滤", help_topic="表情收库"),
         InterfaceEntry("capability.group_info", "群信息", "active", "group_info", 41, "OneBot V11 群 API（get_group_info/成员列表/公告/精华）：群资料/人数全员，公告与精华仅管理员；诚实降级清单见 capabilities/group_info.py", help_topic="群信息"),
+        InterfaceEntry("capability.host_state", "宿主机状态", "active", "host_state", 41, "本机运行时事实（版本族/硬件/占用率）经 host_metrics 单一取数口现读，Mica 卡片出图；仅超管视图，读数逐行脱敏", help_topic="宿主机状态"),
+        InterfaceEntry("capability.consent", "书面同意命令面", "active", "consent", 41, "危险参数改动（R1/R2）签出的同意卡在这里批/驳/看：判定唯一住 safety_exec/settings_gate，同意账唯一住 safety_exec/consent，本接口只把一句入站消息交给它", help_topic="书面同意"),
         InterfaceEntry("capability.daily_assist", "收件箱速记/早晚简报", "active", "daily_assist", 42, "收件箱随手记 + 定时吃什么推荐与早晚简报（BOT_DAILY_ASSIST_*，纯文本文件驱动）", help_topic="收件箱"),
         InterfaceEntry("capability.tts", "语音合成", "active", "tts", 41, "本机 GPT-SoVITS v2ProPlus HTTP API（api_v2.py 的 /tts）：文本合成守岸人音色语音；参考音频与开关见 BOT_TTS_*", help_topic="语音"),
         InterfaceEntry("capability.emotion", "情绪状态注入", "active", "context", None, "作为上下文能力注入，不单独占用文本路由", internal_note="内部：心情引擎，经上下文注入，不占文本路由"),

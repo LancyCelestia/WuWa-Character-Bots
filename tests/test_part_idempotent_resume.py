@@ -42,12 +42,14 @@ from plugins.bot_unified_runtime.contracts import (
 )
 from plugins.bot_unified_runtime.domains.transport.sender import onebot as onebot_sender
 from plugins.bot_unified_runtime.domains.transport.sender import worker as worker_module
-from plugins.bot_unified_runtime.sender.onebot import send_onebot_v11
-from plugins.bot_unified_runtime.sender.queue import (
+from plugins.bot_unified_runtime.domains.transport.sender.onebot import send_onebot_v11
+from plugins.bot_unified_runtime.domains.transport.sender.queue import (
     PARTIAL_ROW_STATE,
     SQLiteSendRequestQueue,
 )
-from plugins.bot_unified_runtime.sender.worker import drain_send_queue_once
+from plugins.bot_unified_runtime.domains.transport.sender.worker import (
+    drain_send_queue_once,
+)
 
 CHUNKS = ["分片一", "分片二", "分片三"]
 
@@ -535,7 +537,9 @@ async def test_onebot_part_sink_failure_never_breaks_sending(
 @pytest.mark.asyncio
 async def test_queue_without_part_store_keeps_legacy_whole_request(tmp_path) -> None:
     """无 part 存储 API 的队列（鸭子类型探测失败）→ 完全走既有路径。"""
-    from plugins.bot_unified_runtime.sender.queue import InMemorySendQueue
+    from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+        InMemorySendQueue,
+    )
 
     audit = InMemoryAuditLogger()
     queue = InMemorySendQueue(audit)

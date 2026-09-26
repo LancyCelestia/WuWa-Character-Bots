@@ -20,11 +20,11 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.character.affinity import (
+from plugins.bot_unified_runtime.domains.chat_reply import affinity_replay as ar
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     _BEHAVIOR_DELTA,
     DynamicAffinityStore,
 )
-from plugins.bot_unified_runtime.domains.chat_reply import affinity_replay as ar
 
 
 class _Clock:

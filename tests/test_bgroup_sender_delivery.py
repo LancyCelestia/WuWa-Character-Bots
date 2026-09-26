@@ -36,7 +36,9 @@ from plugins.bot_unified_runtime.domains.transport.sender import (
 )
 from plugins.bot_unified_runtime.domains.transport.sender import onebot as onebot_sender
 from plugins.bot_unified_runtime.domains.transport.sender import queue as queue_module
-from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
+from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+    SQLiteSendRequestQueue,
+)
 
 
 def _utc_now() -> datetime:
@@ -217,7 +219,9 @@ def test_bot_unavailable_max_age_knob_reaches_queue(tmp_path) -> None:
     名存实亡（§14.4.2：env 键须有同名小写字段）。
     """
     from plugins.bot_unified_runtime.config import Config
-    from plugins.bot_unified_runtime.sender.queue import build_send_queue
+    from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+        build_send_queue,
+    )
 
     config = Config.model_validate(
         {

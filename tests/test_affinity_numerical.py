@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 import plugins.bot_unified_runtime.domains.chat_reply.character.affinity as affinity_module
-from plugins.bot_unified_runtime.character.affinity import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     _IDLE_REGRESSION_PER_DAY,
     _IDLE_REGRESSION_START_DAYS,
     _SENTIMENT_HALF_LIFE_DAYS,

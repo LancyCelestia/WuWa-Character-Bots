@@ -278,6 +278,22 @@ def _non_negative_int_converter(value: str) -> int:
     return number
 
 
+def _acg_timeout_converter(value: str) -> float:
+    """ACG 竖源单请求超时（秒）：拒 NaN/Inf/非正值，合法域 (0, 60]。"""
+    number = float(value)
+    if not math.isfinite(number) or not 0 < number <= 60:
+        raise ValueError("BOT_SEARCH_ACG_TIMEOUT_SECONDS 必须在 (0, 60] 秒内")
+    return number
+
+
+def _acg_per_source_converter(value: str) -> int:
+    """ACG 单竖源结果条数上限：与 config 字段语义同域（≥1，上限防刷屏）。"""
+    number = int(value)
+    if not 1 <= number <= 20:
+        raise ValueError("BOT_SEARCH_ACG_MAX_PER_SOURCE 必须在 1..20 内")
+    return number
+
+
 def _clock_converter(value: str) -> str:
     """HH:MM 时刻（安静时间窗口端点）。"""
     raw = str(value).strip()
@@ -331,6 +347,37 @@ def _role_list_converter(value: str) -> list[str]:
 # 传播——据此把 28 个「写成功但行为不变」的残项从 SETTABLE_KEYS 移入本清单。
 # 消费点接入合并层实时求值后，对应键即可回白名单（拒绝文案里已点名消费点）。
 RESTART_REQUIRED_KEYS: dict[str, str] = {
+    # ---- 文件写盘口收编波（需求 16(2)，2026-09-26 S-FILES-LAND）----
+    # 六枚的唯一读点在 domains/files/capabilities/file_exchange.py 的装配函数，
+    # 调用方（根 matcher）交的是装配期快照 config，且六枚未进运行时覆盖合并表
+    # （_RUNTIME_HOT_OVERRIDE_FIELDS 归根文件，本波禁写）⇒ 热 set 一次也不改变
+    # 已建好的策略，全进本清单，不做「看着能热改」（C-09 定罪形态）。
+    "BOT_FILES_WRITE_ENABLED": (
+        "写盘口总闸在会话入口函数体内现读调用方交来的快照 config；"
+        "根 matcher 未接合并层前热改不落到这一腿"
+    ),
+    "BOT_FILES_WRITE_ALLOWED_DIRS": "同 BOT_FILES_WRITE_ENABLED（装配口现读快照，白名单根逐次重建）",
+    "BOT_FILES_WRITE_MAX_BYTES": "同 BOT_FILES_WRITE_ENABLED（限额烘进每次构造的 WritePolicy）",
+    "BOT_FILES_WRITE_DAILY_CREATE": "同 BOT_FILES_WRITE_ENABLED（配额档同上）",
+    "BOT_FILES_WRITE_DAILY_REPLACE": "同 BOT_FILES_WRITE_ENABLED（配额档同上）",
+    "BOT_FILES_READ_CONFINED_MAX_BYTES": "同 BOT_FILES_WRITE_ENABLED（受限回读口限额单独一档，见席位简报）",
+    # ---- SAFE-EXEC 裁定第 18 项（2026-09-26 S-T-CONSENT1）：书面同意门总闸 ----
+    # 门自己必须是「人才能拨的开关」：装配期由 settings_gate 读一次快照
+    # （ConsentPolicy.from_config），运行期改它既不生效也不该生效。
+    "BOT_SAFETYEXEC_ENABLED": (
+        "书面同意执法门的总闸在 store 装配期快照一次（safety_exec/settings_gate.py）；"
+        "它就是护栏本体，运行期不许 bot 或任何人用一条命令把它热关掉——"
+        "关掉护栏这个动作本身必须重启才做得到"
+    ),
+    # ---- 中央调度收编波 P5：creation 对接点 provider 选择器族 ----
+    # 消费点在描述符表/健康探针（装配期建表）与 reserved_provider 探测表，
+    # 运行期 set 一次也不会改变已建好的描述符 ⇒ 登记为需重启，不做"看着能热改"。
+    "BOT_CREATION_IMAGE_PROVIDER": (
+        "绘画 provider 选择器在装配期烘进描述符/探针（capability_protocols 建表期读）"
+    ),
+    "BOT_CREATION_TTS_PROVIDER": (
+        "语音 provider 选择器在装配期烘进描述符/探针（capability_protocols 建表期读）"
+    ),
     # ---- C-09 首批 ----
     "BOT_GROUP_CHAT_AUTO_REPLY_ENABLED": (
         "消费点在装配期把开关冻进策略设置（pipeline→policy gate 抽签快照）"
@@ -385,6 +432,9 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
     ),
     "BOT_WEB_SEARCH_FALLBACK_PROVIDERS": (
         "检索供应商链由装配期 config 构建（sources/web_search.py），工厂闭包不回读覆盖"
+    ),
+    "BOT_WEB_SEARCH_KEYFREE_FALLBACK_ENABLED": (
+        "免 key 兜底在 build_web_search_provider 装配期读一次，链构造即固化（domains/core/search/web_search.py）"
     ),
     # ---- 视频理解族：经 media_config=装配期裸 config 读取 ----
     "BOT_VIDEO_MAX_FRAMES": (
@@ -493,6 +543,73 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
         "PokeDispatcher 读合并层 config，但合并表未登记 bot_poke_* "
         "（capabilities/poke.py），覆盖不可达；接线后可回白名单"
     ),
+    # ---- P14 波（2026-09-25「完善戳一戳 / 完善随机发图」）新增 14 键 ----
+    # 与上面 poke 族同判据、同口径：消费点每次都过 `_config_with_runtime_overrides`
+    # 拿合并 config（看着像能热改），但合并表 `_RUNTIME_HOT_OVERRIDE_FIELDS`
+    # （真身住根 __init__.py）没登记这些字段 ⇒ set 写了不生效。按 C-09
+    # 「死开关不许骗人」先入重启清单；登记进合并表后可逐键回白名单。
+    "BOT_POKE_EXTRA_ARMS_ENABLED": (
+        "poke 臂矩阵扩臂档：PokeDispatcher._knobs 现读合并 config，但合并表"
+        " _RUNTIME_HOT_OVERRIDE_FIELDS 未登记 bot_poke_*，覆盖不可达"
+    ),
+    "BOT_POKE_FOLLOW_ENABLED": ("同 poke 族判据（跟戳开关，合并表未登记本族键）"),
+    "BOT_POKE_FOLLOW_PROBABILITY": ("同 poke 族判据（跟戳概率）"),
+    "BOT_POKE_FOLLOW_COOLDOWN_SECONDS": ("同 poke 族判据（跟戳会话冷却）"),
+    "BOT_POKE_FOLLOW_MAX_PER_HOUR": ("同 poke 族判据（跟戳每小时上限）"),
+    "BOT_POKE_AFTER_REPLY_ENABLED": ("同 poke 族判据（回复后/主动发言后戳人开关）"),
+    "BOT_POKE_AFTER_REPLY_PROBABILITY": ("同 poke 族判据（回复后戳人概率）"),
+    "BOT_POKE_AFTER_REPLY_COOLDOWN_SECONDS": ("同 poke 族判据（回复后戳人会话冷却）"),
+    "BOT_POKE_AFTER_REPLY_MAX_PER_HOUR": ("同 poke 族判据（回复后戳人每小时上限）"),
+    "BOT_RANDPIC_DISPATCH_ENABLED": (
+        "随机发图派发开关：根 handler 现读合并 config，但合并表未登记"
+        " bot_randpic_* ⇒ 覆盖不可达；接线后可回白名单"
+    ),
+    "BOT_RANDPIC_DISPATCH_PROBABILITY": ("同 randpic 族判据（派发概率）"),
+    "BOT_RANDPIC_DISPATCH_COOLDOWN_SECONDS": ("同 randpic 族判据（派发会话冷却）"),
+    "BOT_RANDPIC_DISPATCH_MAX_PER_HOUR": ("同 randpic 族判据（派发每小时上限）"),
+    "BOT_RANDPIC_NO_REPEAT_WINDOW_SECONDS": (
+        "同 randpic 族判据（窗内不重发秒数，0=关=旧行为）"
+    ),
+    # ---- goal-12 波（2026-09-25 表情包子系统/贴纸）新增 5 键 ----
+    # 判据比 poke/randpic 族更硬：那两族至少每次过合并层（只是合并表没登记本族
+    # 键 ⇒ 覆盖不可达）；这五枚的调用点（根 __init__.py 的 absorb_event_images /
+    # build_meme_library_capability / select_sticker_for_turn）**直接把装配期的
+    # plugin Config 原件交进去，压根不经过 `_config_with_runtime_overrides`
+    # ⇒ 运行时 set 与 .env 改动都要重启才见效。合并层若将来接上，可逐键回白名单。
+    "BOT_MEME_LIBRARY_VLM_FALLBACK_FIRST_PRESET": (
+        "打标预制回落开关：listener._resolve_vision_config 每次打标现读，但根调用点"
+        " absorb_event_images 交的是装配期 plugin Config 原件（未过合并层）"
+    ),
+    "BOT_MEME_SHOREKEEPER_ABSORB_ENABLED": (
+        "本命自动吸收开关：listener._tag_with_vlm → shorekeeper_absorb"
+        ".apply_tagged_outcome 现读同一份未合并 plugin Config ⇒ set 不可达"
+    ),
+    "BOT_MEME_SHOREKEEPER_PROTECT_FROM_PRUNE": (
+        "本命豁免按龄裁剪：absorb_event_images._cleanup 现读未合并 plugin Config"
+        "（清理在收库尾部同步跑，取的就是那一份 config）"
+    ),
+    "BOT_MEME_RELEVANCE_MIN": (
+        "选图相关性地板：meme_library.select_sticker_for_turn 现读，能力层与根装配"
+        " 传入的都是装配期 plugin Config（未过合并层）"
+    ),
+    "BOT_MEME_STICKER_SCOPE_MODE": (
+        "反重复作用域口径：build_meme_library_capability 装配期取一次 + "
+        "select_sticker_for_turn 现读，两处都吃未合并 plugin Config"
+    ),
+    # ---- 亲密档 L1 自动腿两键（2026-09-24 用户裁定 R1 A，D 席登记）----
+    # 消费点 `runtime/content_route.py::_knobs` 确实是**每次判定现读** config，看着像
+    # 能热改；但两条入口拿到的 config 都不含覆盖：注入缝（chat.py）持装配期裸 config，
+    # 路由侧（__init__.py 的 build_router_cb）虽过 `_config_with_runtime_overrides`，
+    # 该合并表 `_RUNTIME_HOT_OVERRIDE_FIELDS` 未登记本族键 ⇒ set 写了不生效。
+    # 按 C-09「死开关不许骗人」先入重启清单；合并表登记后可回白名单（poke 同型）。
+    "BOT_CONTENT_ROUTE_L1_AUTO_ENABLED": (
+        "content_route._knobs 现读 config，但注入缝持装配期裸 config、合并表"
+        " _RUNTIME_HOT_OVERRIDE_FIELDS 未登记该键，覆盖不可达；接线后可回白名单"
+    ),
+    "BOT_CONTENT_ROUTE_L1_AUTO_MIN_TIER": (
+        "同族同判据（门槛档号取 character/affinity.py 的 _ATTITUDE_TIERS）："
+        "合并表未登记该键，覆盖不可达；接线后可回白名单"
+    ),
     # ---- 中央出站防风暴闸 + 送达核验族（B4-spec §1.5/§3.2；七键登记收口）----
     # 闸设置由 `build_outbound_gate` 在装配期以 callable 投影
     # （`domains/transport/sender/outbound_gate.py::build_outbound_gate_settings` 读裸
@@ -520,6 +637,16 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
         "闸的滑窗 store 在装配期建立并持有连接，运行期改路径=计数账分裂；"
         "永久重启键（不得进热改白名单）"
     ),
+    # TTL 键（用户 2026-09-25 裁定「开，A+B」＝开闸带自动到期）。档位现算同族判据：
+    # 消费点确实是每次判定实时求值（闸的 settings callable 在 decide 前现读），但
+    # 装配侧走 _config_with_runtime_overrides，其合并表
+    # __init__._RUNTIME_HOT_OVERRIDE_FIELDS 逐枚列出的字段里**没有任何**
+    # bot_outbound_gate_* ⇒ runtime set 写了不改变投影给闸的值＝假热改。
+    # 依 C-09「死开关不许骗人」入本清单；接线波登记合并表后可回白名单。
+    "BOT_OUTBOUND_GATE_ENABLED_UNTIL": (
+        "同族：build_outbound_gate_settings 读裸 config，合并层未登记，覆盖不可达；"
+        "且到期时刻的语义是「到点自动关」，能随手改回来＝把临时开关洗成永久开关"
+    ),
     "BOT_OUTBOUND_VERIFY_ENABLED": (
         "消费点读裸 config 非合并层（根 __init__.py 队列 worker 作业与"
         " domains/transport/sender/onebot.py），覆盖不可达；真机取证前也不宜热开"
@@ -530,11 +657,139 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
         "（sources/telegram_media.py）——半接线，热改仅部分通道生效；"
         "补齐后可回白名单"
     ),
+    # ---- LLM 账本与网关归因（B1，2026-09-25）：装配期读一次 ----
+    # 判据：LedgerService 是进程级单例（llm_engine/ledger.py::get_ledger_service），
+    # 反查口只在**首次构造**时按 Config 建一次；热改这些键当轮不生效，
+    # 且"已存在的单例不重读"是刻意口径——不做成"看起来能热改"。
+    "BOT_LLM_BILLING_ENABLED": (
+        "账本单例与 sink 解析在装配期定；关→开 或 开→关 都需重启才换档"
+        "（domains/chat_reply/llm_engine/ledger.py::get_ledger_service 惰性单例）"
+    ),
+    "BOT_AXONHUB_ATTRIBUTION_ENABLED": (
+        "反查口随 LedgerService 单例一次性构造（_build_attribution_lookup），"
+        "热改不当轮生效；缺 DSN 时 from_config 返回 None ⇒ 整面不启用"
+    ),
+    # DSN 五枚与超时同口径：都在上面那次构造里读走，之后不再回看 Config。
+    "BOT_AXONHUB_DB_HOST": "同 BOT_AXONHUB_ATTRIBUTION_ENABLED（构造期读走）",
+    "BOT_AXONHUB_DB_PORT": "同 BOT_AXONHUB_ATTRIBUTION_ENABLED（构造期读走）",
+    "BOT_AXONHUB_DB_DATABASE": "同 BOT_AXONHUB_ATTRIBUTION_ENABLED（构造期读走）",
+    "BOT_AXONHUB_DB_USER": "同 BOT_AXONHUB_ATTRIBUTION_ENABLED（构造期读走）",
+    "BOT_AXONHUB_DB_PASSWORD": "同 BOT_AXONHUB_ATTRIBUTION_ENABLED（构造期读走）",
+    # 卡片组装时按当轮 config_getter 现读，但值要进 Config 仍须重启（.env→Config 是装配期）。
+    "BOT_PROTOCOL_CLIENT_DIR": (
+        "同 BOT_AXONHUB_ATTRIBUTION_ENABLED（诊断卡协议端版本的取数目录）"
+    ),
+    "BOT_AXONHUB_ATTRIBUTION_TIMEOUT_SECONDS": (
+        "同 BOT_AXONHUB_ATTRIBUTION_ENABLED（构造期读走）"
+    ),
+    # ---- 慢回复先行回执族（2026-09-23）：装配期快照，与 BOT_VIDEO_PROGRESS_ACK_ENABLED 同型 ----
+    "BOT_CHAT_PROGRESS_ACK_ENABLED": (
+        "回执门禁读装配期 config 快照"
+        "（domains/chat_reply/runtime/progress_ack.py::ProgressAckSettings.from_config，"
+        "经根 __init__.py 注入 RuntimePipeline），覆盖不可达；与视频进度提示同型"
+    ),
+    "BOT_CHAT_PROGRESS_ACK_DELAY_SECONDS": (
+        "同族：装配期烘进 ProgressAckSettings，覆盖不可达"
+    ),
+    "BOT_CHAT_PROGRESS_ACK_COOLDOWN_SECONDS": (
+        "同族：冷却窗在装配期烘进 ProgressAckThrottle，覆盖不可达"
+    ),
+    "BOT_CHAT_PROGRESS_ACK_GROUP_WHITELIST": (
+        "同族：名单装配期烘进 ProgressAckSettings，覆盖不可达；"
+        "且热翻会让未申报的群立刻开始收到主动消息，保守裁定需重启"
+    ),
+    "BOT_CHAT_PROGRESS_ACK_GROUP_BLACKLIST": (
+        "同族：名单装配期烘进 ProgressAckSettings，覆盖不可达"
+    ),
+    "BOT_CHAT_PROGRESS_ACK_PRIVATE_WHITELIST": (
+        "同族：名单装配期烘进 ProgressAckSettings，覆盖不可达"
+    ),
+    "BOT_CHAT_PROGRESS_ACK_PRIVATE_BLACKLIST": (
+        "同族：名单装配期烘进 ProgressAckSettings，覆盖不可达"
+    ),
+    # ---- 回执自适应阈值四键（2026-09-25）：同族装配期快照 ----
+    "BOT_CHAT_PROGRESS_ACK_ADAPTIVE_ENABLED": (
+        "同族：烘进 ProgressAckSettings.from_config，覆盖不可达"
+    ),
+    "BOT_CHAT_PROGRESS_ACK_DELAY_FLOOR_SECONDS": (
+        "同族：烘进 ProgressAckSettings.from_config，覆盖不可达"
+    ),
+    "BOT_CHAT_PROGRESS_ACK_DELAY_CAP_SECONDS": (
+        "同族：烘进 ProgressAckSettings.from_config，覆盖不可达"
+    ),
+    "BOT_CHAT_PROGRESS_ACK_LATENCY_MULTIPLIER": (
+        "同族：烘进 ProgressAckSettings.from_config，覆盖不可达"
+    ),
+    # ---- 折句窗口五键（2026-09-25 用户裁定第 1 项）----
+    # 每次 offer 现读，但读的是开机建好的 Config（不是合并层视图）⇒
+    # 运行时 store 覆盖到不了这里，改 .env 必须重启才生效。如实登记，
+    # 不做成"看起来能热改"（同 #3 群调度器族的口径）。
+    "BOT_CHAT_MESSAGE_COALESCING_ENABLED": (
+        "折句器每轮读 config 快照（根 __init__.py _handle_chat →"
+        " message_coalescing.build_coalescing_settings），未过"
+        " _config_with_runtime_overrides ⇒ store 覆盖不可达，改 .env 需重启"
+    ),
+    "BOT_CHAT_MESSAGE_COALESCING_QUIET_SECONDS": (
+        "同族：读 config 快照，覆盖不可达"
+    ),
+    "BOT_CHAT_MESSAGE_COALESCING_MAX_HOLD_SECONDS": (
+        "同族：读 config 快照，覆盖不可达"
+    ),
+    "BOT_CHAT_MESSAGE_COALESCING_MAX_MESSAGES": (
+        "同族：读 config 快照，覆盖不可达"
+    ),
+    "BOT_CHAT_MESSAGE_COALESCING_MAX_CHARS": (
+        "同族：读 config 快照，覆盖不可达"
+    ),
+    # ---- 限流补回三键（2026-09-25 用户裁定第 2 项）----
+    "BOT_CHAT_RATE_LIMIT_REDRIVE_ENABLED": (
+        "补回参数经 build_redrive_settings 烘进 RuntimePipeline 构造"
+        "（根 __init__.py 装配段），覆盖不可达"
+    ),
+    "BOT_CHAT_RATE_LIMIT_REDRIVE_MAX_WAIT_SECONDS": (
+        "同族：装配期烘进 pipeline，覆盖不可达"
+    ),
+    "BOT_CHAT_RATE_LIMIT_REDRIVE_MAX_ATTEMPTS": (
+        "同族：装配期烘进 pipeline，覆盖不可达"
+    ),
+    # ---- 群节奏层五键（2026-09-24 T7）：热改合并层未登记 ⇒ 覆盖不可达 ----
+    "BOT_RATE_LIMIT_GROUP_PACING_TOKENS_PER_HOUR": (
+        "限流器经装配期 settings_provider→build_rate_limit_settings 每轮现读 Config；"
+        "合并层未登记该键（根 __init__ 冻结禁插行），store 覆盖不可达，改 .env 需重启"
+    ),
+    "BOT_RATE_LIMIT_GROUP_PACING_BURST_CAPACITY": (
+        "同族：合并层未登记该键，覆盖不可达，改 .env 需重启"
+    ),
+    "BOT_RATE_LIMIT_GROUP_PACING_MAX_PER_MINUTE": (
+        "同族：合并层未登记该键，覆盖不可达，改 .env 需重启"
+    ),
+    "BOT_RATE_LIMIT_GROUP_PACING_MIN_INTERVAL_SECONDS": (
+        "同族：合并层未登记该键，覆盖不可达，改 .env 需重启"
+    ),
+    "BOT_RATE_LIMIT_GROUP_VISION_MIN_INTERVAL_SECONDS": (
+        "同族：合并层未登记该键，覆盖不可达，改 .env 需重启"
+    ),
 }
+
+
+def _web_ratio_converter(raw: str) -> float:
+    """联网判定阈值的转换器（0.0–1.0 概率域）。
+
+    这两枚键能进 SETTABLE 而不进 RESTART，依据是它们有**合并层实时读点**：
+    `capabilities/chat.py` 每消息经 `runtime_settings.get_or(...)` 现读，
+    store 覆盖**优先于**装配期透传的 Config 值——正是本模块头注所说
+    「消费点接入合并层实时求值后才可回白名单」那个条件。
+    """
+    value = float(str(raw).strip())
+    if not 0.0 <= value <= 1.0:
+        raise ValueError("联网判定阈值必须在 0.0-1.0 之间")
+    return value
 
 
 # 白名单键 -> 转换函数；转换失败抛 ValueError，不会写入。
 SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
+    "BOT_WEB_SEARCH_KNOWLEDGE_THRESHOLD": _web_ratio_converter,
+    "BOT_WEB_SEARCH_CONFIDENCE_FLOOR": _web_ratio_converter,
     "BOT_CHAT_TEMPERATURE": _temperature_converter,
     "BOT_CHAT_MAX_TOKENS": _max_tokens_converter,
     "BOT_CHAT_FAST_MODE": _bool_converter,
@@ -602,6 +857,18 @@ SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     "BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR": _non_negative_int_converter,
     "BOT_RATE_LIMIT_GROUP_MAX_PER_MINUTE": _non_negative_int_converter,
     "BOT_RATE_LIMIT_EMOTION_EXEMPT": _bool_converter,
+    # ---- ACG 竖源检索六键族（2026-09-26 S-ACG-SWITCH 根修）----
+    # chat.py 的判据每消息经 get_or 现读这六枚（缺省已改读 Config 字段/.env，见
+    # capabilities/chat.py::_acg_leg_config_default）。覆盖面此前无入口——set 直接
+    # 拒绝 ⇒「覆盖在册者赢」对本族只是空话。按 BOT_WEB_SEARCH_*/BOT_VISION_ENABLED
+    # 同族先例（同为 chat 每消息 get_or 现读、覆盖即时生效）入白名单。
+    # .env 侧数值仍是装配期快照（改 .env 要重启），与全部 SETTABLE 键同语义。
+    "BOT_SEARCH_ACG_ENABLED": _bool_converter,
+    "BOT_SEARCH_ACG_BANGUMI_ENABLED": _bool_converter,
+    "BOT_SEARCH_ACG_MOEGIRL_ENABLED": _bool_converter,
+    "BOT_SEARCH_ACG_BILIBILI_ENABLED": _bool_converter,
+    "BOT_SEARCH_ACG_TIMEOUT_SECONDS": _acg_timeout_converter,
+    "BOT_SEARCH_ACG_MAX_PER_SOURCE": _acg_per_source_converter,
 }
 
 
@@ -627,6 +894,14 @@ class RuntimeSettingsStore:
         self._model_registry: dict[str, dict[str, Any]] = {}
         self._vision_registry: dict[str, dict[str, Any]] = {}
         self._mtime: float = 0.0
+        # SAFE-EXEC 裁定第 18 项（2026-09-26）：书面同意执法门。
+        # ``_safety_gate_config`` 非 None ⇒ 本 store 走统一装配面（生产/manager 路）；
+        # 直接构造的 store（控制面读视图、单测夹具）没配过 ⇒ 咽喉保持既有行为，
+        # 执法与否的缺省真值只认 `config.py::bot_safetyexec_enabled`（装配期快照）。
+        self._safety_gate_config: object | None = None
+        self._safety_gate_clock: Any | None = None
+        self._safety_gate: Any | None = None
+        self._safety_gate_failed = False
         # 互动计数写盘节流：每条聊天回复都会 +1，若每次都全量重写整个
         # settings JSON，纯属性能摩擦。内存即时生效，落盘按最小间隔节流；
         # 其他 mutator 的 _save 是全量转储，顺带把未落盘的计数一并写掉。
@@ -828,6 +1103,131 @@ class RuntimeSettingsStore:
 
     # ---- 参数覆盖 ----
 
+    def configure_safety_gate(self, config: object, *, clock: Any | None = None) -> None:
+        """装配口：绑定 Config（缺省读 `bot_safetyexec_enabled`）并惰性建门。
+
+        口径：门只在**第一次覆盖写**时装载（构造零落盘）；本方法不判定任何档位，
+        四档行为全部住 `domains/core/safety_exec/settings_gate.py`（唯一执法点）。
+        失败：装载失败记 `_safety_gate_failed`，R1/R2/R3 一律拒（fail-closed），
+        R0 直写并经 `_logger.error` 点名——不静默。
+        配置：`bot_safetyexec_enabled`（装配期快照，本方法调用时即定档）。
+        """
+        self._safety_gate_config = config
+        self._safety_gate_clock = clock
+        self._safety_gate = None
+        self._safety_gate_failed = False
+
+    def attach_safety_gate(self, gate: Any) -> None:
+        """显式挂门（测试注入冻结时钟 / 装配侧预造账本用）；传入即视为已装配。"""
+        self._safety_gate = gate
+        self._safety_gate_failed = False
+
+    @property
+    def safety_gate(self) -> Any | None:
+        """当前生效的执法门（未装载时返回 None；命令面据此判断能否批/看单）。"""
+        return self._safety_gate
+
+    def _ensure_safety_gate(self) -> Any | None:
+        if self._safety_gate is not None or self._safety_gate_failed:
+            return self._safety_gate
+        if self._safety_gate_config is None:
+            return None
+        try:
+            from plugins.bot_unified_runtime.domains.core.safety_exec import (
+                settings_gate as _gate_mod,
+            )
+
+            self._safety_gate = _gate_mod.build_gate_for_store(
+                self, self._safety_gate_config, clock=self._safety_gate_clock
+            )
+        except Exception as exc:  # noqa: BLE001 - 装载失败必须点名，不许无声旁路
+            _logger.error(
+                "safety-exec gate failed to load for instance %s: %s (%s) — "
+                "R1/R2/R3 overrides will be refused, R0 passes un-audited",
+                self.instance,
+                type(exc).__name__,
+                exc,
+            )
+            self._safety_gate_failed = True
+            self._safety_gate = None
+        return self._safety_gate
+
+    def _gate_active(self) -> bool:
+        gate = self._ensure_safety_gate()
+        return bool(gate is not None and gate.enabled)
+
+    def _refuse_without_gate(self, normalized_key: str) -> None:
+        """门装载失败（`safety_exec` 包体本身坏了）时的兜底：判不出档 ⇒ 一律拒。
+
+        只有当场能证明该键属 R0（`UNATTENDED_CHANGE_TIERS`）才放行——连分级表都读不
+        进来的树，「看起来没事」恰是最坏形态（本仓把存在性当活性的账一次都不该再记）。
+        """
+        try:
+            from plugins.bot_unified_runtime.domains.core.safety_exec import (
+                config_risk as _risk,
+            )
+
+            tier = _risk.risk_tier_for_target(normalized_key)
+            allowed = tier in _risk.UNATTENDED_CHANGE_TIERS
+        except Exception:  # noqa: BLE001 - 分级表也坏了：没有「判不出但先改」这种档位
+            allowed = False
+        if not allowed:
+            raise ValueError(
+                "安全执行引擎装载失败（safety_exec 本体坏了），"
+                "需要同意档的参数我一个都不改——请主人修复代码，"
+                "或以 BOT_SAFETYEXEC_ENABLED=false 重启走旧面。"
+            )
+
+    def _throat_guard(
+        self,
+        *,
+        target: str | None,
+        value: Any,
+        restore_default: bool,
+        actor: str,
+        request_id: str,
+        apply: Callable[[], Any],
+        session_key: str = "",
+    ) -> Any:
+        """SAFE-EXEC 裁定第 18 项：咽喉写入的**唯一**拦截点。
+
+        口径：`set_override` / `reset_override` 两个写面都只经这里过门；四档行为
+        全部住 `domains/core/safety_exec/settings_gate.py`（本方法零判定、零话术）。
+        `target=None` = 「一次撤掉全部覆盖」，没有单键可分级，走门侧聚合目标名。
+        失败：门装载失败 ⇒ `_refuse_without_gate`（判不出档一律拒，fail-closed）；
+        总闸关 ⇒ 整体旁路。三态中「未装配」（config 从未传入）与「关」都保持
+        接线前逐字节行为——既有 19 处生产写点在门关闭形态下与此前完全同形。
+        配置：`bot_safetyexec_enabled`（装配期快照，见 configure_safety_gate）。
+        """
+        if self._safety_gate_config is None:
+            return apply()
+        if target is None:
+            from plugins.bot_unified_runtime.domains.core.safety_exec import (
+                settings_gate as _gate_mod,
+            )
+
+            target = _gate_mod.ALL_OVERRIDES_TARGET
+        gate = self._ensure_safety_gate()
+        if gate is None:
+            self._refuse_without_gate(target)
+            return apply()
+        if not gate.enabled:
+            return apply()
+        # session_key 必须由调用方把**真实会话键**交进来：R1 的「在原会话里确认」
+        # 那一判据吃的就是它（consent.redeem_from_message 的同会话门）。缺省空串
+        # 只保留给「调用方确实拿不到会话」的写点（内部调度器、控制面读视图）——
+        # 那条判据对空串天然不成立（`consent.py` 里写的是 `and row.source_session_key`），
+        # 所以传空串＝这张卡不声明来源会话，判据不启用；这比留一个看着在执法的空壳诚实。
+        return gate.guarded_write(
+            key=target,
+            value=value,
+            restore_default=restore_default,
+            actor=actor,
+            request_id=request_id,
+            session_key=_as_text_key(session_key),
+            apply=apply,
+        )
+
     def list_overrides(self) -> dict[str, Any]:
         with self._lock:
             if self._config_backend is not None:
@@ -836,7 +1236,8 @@ class RuntimeSettingsStore:
             return dict(self._overrides)
 
     def set_override(self, key: str, value: str, *, actor: str = "runtime_internal",
-                     request_id: str = "", expected_version: int | None = None) -> Any:
+                     request_id: str = "", expected_version: int | None = None,
+                     session_key: str = "") -> Any:
         normalized_key = key.strip().upper()
         # 审查 C-09（死开关不许骗人）：装配期冻结键在进白名单校验之前单独
         # 拒绝并提示重启，绝不写入覆盖——宁可拒绝，不可假成功。
@@ -852,47 +1253,66 @@ class RuntimeSettingsStore:
                 f"可用键：{','.join(sorted(SETTABLE_KEYS))}"
             )
         converted = SETTABLE_KEYS[normalized_key](value.strip())
-        with self._lock:
-            backend = self._config_backend
-            if backend is None:
-                self._reload_if_changed()
-                self._overrides[normalized_key] = converted
-                self._save()
-                return converted
-        # SQL 自身负责 CAS；不能持 JSON 锁执行通知，否则共享 backend 的
-        # 两个 runtime store 并发提交时可能在对方 listener 锁上互等。
-        version = backend.snapshot().version if expected_version is None else expected_version
-        backend.set_override(
-            normalized_key, converted, expected_version=version,
-            actor=actor, request_id=request_id,
+
+        def _raw_write() -> Any:
+            with self._lock:
+                backend = self._config_backend
+                if backend is None:
+                    self._reload_if_changed()
+                    self._overrides[normalized_key] = converted
+                    self._save()
+                    return converted
+            # SQL 自身负责 CAS；不能持 JSON 锁执行通知，否则共享 backend 的
+            # 两个 runtime store 并发提交时可能在对方 listener 锁上互等。
+            version = backend.snapshot().version if expected_version is None else expected_version
+            backend.set_override(
+                normalized_key, converted, expected_version=version,
+                actor=actor, request_id=request_id,
+            )
+            return converted
+
+        return self._throat_guard(
+            target=normalized_key, value=converted, restore_default=False,
+            actor=actor, request_id=request_id, apply=_raw_write,
+            session_key=session_key,
         )
-        return converted
 
     def reset_override(self, key: str | None = None, *, actor: str = "runtime_internal",
-                       request_id: str = "", expected_version: int | None = None) -> int:
-        with self._lock:
-            backend = self._config_backend
-            if backend is None:
-                self._reload_if_changed()
-                if key is None:
-                    count = len(self._overrides)
-                    self._overrides = {}
-                    self._save()
-                    return count
-                normalized_key = key.strip().upper()
-                if normalized_key in self._overrides:
-                    del self._overrides[normalized_key]
-                    self._save()
-                    return 1
-                return 0
-        before = backend.snapshot()
-        sql_key = key.strip().upper() if key is not None else None
-        count = len(before.overrides) if sql_key is None else int(sql_key in before.overrides)
-        backend.reset_override(
-            sql_key, expected_version=before.version if expected_version is None else expected_version,
-            actor=actor, request_id=request_id,
+                       request_id: str = "", expected_version: int | None = None,
+                       session_key: str = "") -> int:
+        def _raw_reset() -> int:
+            with self._lock:
+                backend = self._config_backend
+                if backend is None:
+                    self._reload_if_changed()
+                    if key is None:
+                        count = len(self._overrides)
+                        self._overrides = {}
+                        self._save()
+                        return count
+                    normalized_key = key.strip().upper()
+                    if normalized_key in self._overrides:
+                        del self._overrides[normalized_key]
+                        self._save()
+                        return 1
+                    return 0
+            before = backend.snapshot()
+            sql_key = key.strip().upper() if key is not None else None
+            count = len(before.overrides) if sql_key is None else int(sql_key in before.overrides)
+            backend.reset_override(
+                sql_key, expected_version=before.version if expected_version is None else expected_version,
+                actor=actor, request_id=request_id,
+            )
+            return count
+
+        # 撤覆盖同样是「改参数」：单键按该键分级，全撤没有单键可分级，
+        # 由 `_throat_guard(target=None)` 走门侧聚合目标 ALL_RUNTIME_OVERRIDES（缺省 R2）。
+        return self._throat_guard(
+            target=None if key is None else key.strip().upper(),
+            value=None, restore_default=True,
+            actor=actor, request_id=request_id, apply=_raw_reset,
+            session_key=session_key,
         )
-        return count
 
     def get(self, key: str, config: object) -> Any:
         normalized_key = key.strip().upper()
@@ -1049,11 +1469,21 @@ class InstanceSettingsManager:
     backend_db 非空时，所有实例绑定同库的独立实例 revision/覆盖/审计。
     """
 
-    def __init__(self, settings_dir: str | Path, *, backend_db: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        settings_dir: str | Path,
+        *,
+        backend_db: str | Path | None = None,
+        safety_config: object = None,
+    ) -> None:
         self.settings_dir = Path(settings_dir).expanduser()
         self.backend_db = Path(backend_db).expanduser().resolve() if backend_db else None
         self._stores: dict[str, RuntimeSettingsStore] = {}
         self._lock = threading.Lock()
+        # SAFE-EXEC 第 18 项：manager 由装配口拿到 Config，惰性建出的每个实例
+        # store 都在此处过一次 `configure_safety_gate`（唯一装载点；缺省 None＝
+        # 不装配，控制面读视图与单测直接构造的 store 保持既有无门形态）。
+        self._safety_config = safety_config
 
     def _path_for(self, instance: str) -> Path:
         return self.settings_dir / f"runtime_settings_{self._safe_name(instance)}.json"
@@ -1081,6 +1511,8 @@ class InstanceSettingsManager:
                     instance=instance,
                     backend=backend,
                 )
+                if self._safety_config is not None:
+                    self._stores[safe_instance].configure_safety_gate(self._safety_config)
             return self._stores[safe_instance]
 
     def list_instances(self) -> list[str]:
@@ -1090,6 +1522,11 @@ class InstanceSettingsManager:
             path.stem.removeprefix("runtime_settings_")
             for path in self.settings_dir.glob("runtime_settings_*.json")
         )
+
+
+def _as_text_key(value: object) -> str:
+    """会话键只做形态清洗（strip + 限长），不猜、不拼、不改写语义。"""
+    return str(value or "").strip()[:240]
 
 
 def effective_instance(config: object) -> str:
@@ -1124,6 +1561,8 @@ def build_instance_settings_manager(config: object) -> InstanceSettingsManager:
     with _MANAGER_CACHE_LOCK:
         manager = _MANAGER_CACHE.get(cache_key)
         if manager is None:
-            manager = InstanceSettingsManager(settings_dir, backend_db=backend_key or None)
+            manager = InstanceSettingsManager(
+                settings_dir, backend_db=backend_key or None, safety_config=config
+            )
             _MANAGER_CACHE[cache_key] = manager
         return manager

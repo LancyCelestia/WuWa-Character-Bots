@@ -15,13 +15,15 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-from plugins.bot_unified_runtime.capabilities.echo import build_decision_query_result
 from plugins.bot_unified_runtime.decision.trace import (
     DEFAULT_TRACE_DB_FILENAME,
     DecisionStageRow,
     DecisionTrace,
     InMemoryDecisionTraceSink,
     SqliteDecisionTraceSink,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+    build_decision_query_result,
 )
 
 _BASE = datetime(2026, 9, 15, 12, 0, 0, tzinfo=timezone.utc)

@@ -59,13 +59,22 @@ from plugins.bot_unified_runtime.domains.core.contracts import (
     SendRequest,
 )
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import StrictBaseModel
+from plugins.bot_unified_runtime.domains.core.moment_parsing import parse_moment
 from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
     EMERGENCY_DEDUPE_PREFIX,
     active_push_key_shape_ok,
     is_emergency_dedupe_key,
+    wash_active_push_key,
 )
 
 __all__ = [
+    "KIND_GATE_TTL_EXPIRED",
+    "KIND_GATE_TTL_INVALID",
+    "TTL_STATE_ABSENT",
+    "TTL_STATE_ACTIVE",
+    "TTL_STATE_EXPIRED",
+    "TTL_STATE_INVALID",
+    "TTL_STATE_OFF",
     "ActivePushOutcome",
     "OutboundGate",
     "OutboundGateSettings",
@@ -74,6 +83,8 @@ __all__ = [
     "build_outbound_gate",
     "build_outbound_gate_settings",
     "dedupe_key_shape_ok",
+    "effective_gate_enabled",
+    "parse_gate_ttl",
     "submit_active_push",
 ]
 
@@ -94,6 +105,10 @@ KIND_DEGRADED = "outbound_gate_degraded"
 KIND_STORM = "outbound_gate_storm"
 # 设置读不到/类型不对 ⇒ 行为恒等于「关闭」，而配置面看起来仍是开着的。必须能报出来。
 KIND_SETTINGS_UNREADABLE = "outbound_gate_settings_unreadable"
+# TTL（`enabled_until`）到期 / 读不懂 ⇒ 两者都必须**响亮**，不许静默当「没配」。
+# 到期＝用户裁定的「临时开关自己下班」；读不懂＝闸门看起来开着而实际关着（同 I-3 病）。
+KIND_GATE_TTL_EXPIRED = "outbound_gate_ttl_expired"
+KIND_GATE_TTL_INVALID = "outbound_gate_ttl_invalid"
 GATE_STAGE = "outbound_gate"
 AUDIT_STAGE = "sender"  # 与 queue._append_sender_audit 同族口
 AUDIT_TRANSPORT = "outbound_gate"
@@ -120,10 +135,17 @@ DEFAULT_URGENT_SEVERITIES = ("P0", "P1")
 
 
 class OutboundGateSettings(StrictBaseModel):
-    """闸的六项设置（B4-spec §1.5）。
+    """闸的设置面（B4-spec §1.5 + 2026-09-25 开闸 A 案的 TTL 腿）。
 
-    本件不落 `config.py`（该面禁改）：`build_outbound_gate_settings` 以 `getattr`
-    口径读取，六键未落地时即取此处缺省=关闭，故本席可独立交付与验收。
+    七枚全部落 `config.py:307-320`（旧版写「不落 config.py」已过时，照实更正；第七枚
+    TTL 于 2026-09-25 由席 S260 补上，同批接上投影与判据 ⇒ 本字段不再是「在册未执法」）。
+    前六枚 `build_outbound_gate_settings` 按 `getattr` 口径读取（键未落地即取此处缺省，
+    本件不因配置面缺键而崩）；**第七枚相反**——读不到必抛（见 `_project_enabled_until`），
+    因为它的缺省语义是「无到期」，把「读不到」折成缺省＝造一个不会自己下班的开关。
+
+    `enabled_until` 是**第七枚**（TTL，ISO-8601 时刻字面量）：到期即等同
+    `enabled=False` 并响亮留一行记录，不需要谁记得回来手工关掉。缺省空串＝**无
+    TTL**，有效开启逐字节等于 `enabled` 本身（防「新键一上就改变现网」）。
     """
 
     enabled: bool = False
@@ -132,6 +154,68 @@ class OutboundGateSettings(StrictBaseModel):
     max_per_target_per_minute: int = 2
     max_per_target_per_hour: int = 6
     db_path: str = "data/outbound_gate.sqlite3"
+    enabled_until: str = ""
+
+
+# --------------------------------------------------------- TTL：有效开启的唯一判据
+# 状态词（进日志/告警 `safe_summary`，不进 verdict.reason——见 `effective_gate_enabled`）。
+TTL_STATE_OFF = "gate_off"          # enabled=False，TTL  irrelevant
+TTL_STATE_ABSENT = "ttl_absent"     # enabled=True 且未配 TTL ⇒ 长期开（今天的形状）
+TTL_STATE_ACTIVE = "ttl_active"     # enabled=True 且尚未到期
+TTL_STATE_EXPIRED = "ttl_expired"   # 过点 ⇒ 等同关闸（本席要的那条自失效）
+TTL_STATE_INVALID = "ttl_invalid"   # 读不懂 ⇒ fail-closed 等同关闸（宁关不猜）
+
+_TTL_BAD_STATES = frozenset({TTL_STATE_EXPIRED, TTL_STATE_INVALID})
+
+
+def parse_gate_ttl(value: object) -> datetime | None:
+    """把 `enabled_until` 字面量解析成 aware UTC 时刻；空值 ⇒ None（无 TTL）。
+
+    **解析本身不在此处**：ISO-8601 时刻的唯一真身是
+    `domains/core/moment_parsing.parse_moment`（G5 单一事实源锁
+    `test_gate_reuses_quiet_hours_single_source` 执法——闸侧禁自造时刻解析，
+    也禁「禁了自造却无处可走」）。本函数只保留**闸自己的**那半句语义：
+    「没配 TTL」是闸的判断，不是解析器的判断——`None` 与空白串在这里折成
+    「无 TTL」，其余输入（含写错的垃圾值）整个交给真身。
+
+    真身解不出即抛 `MomentParseError`（`ValueError` 子类），由
+    `effective_gate_enabled` 折成 `TTL_STATE_INVALID`（fail-closed）。本席**不猜**：
+    「2026-13-45」既不按「没配」放行（那会让一枚写错的 TTL 变成永久开关，正是用户
+    明确否决的债），也不按「已过期」处理（那会让人以为到期才关的）。
+    """
+    if value is None:
+        return None
+    if not isinstance(value, datetime) and not str(value).strip():
+        return None
+    return parse_moment(value, field="outbound_gate.enabled_until")
+
+
+def effective_gate_enabled(
+    settings: OutboundGateSettings,
+    now: datetime,
+) -> tuple[bool, str]:
+    """闸此刻**是否**执法，以及为什么（`(bool, 状态词)`，纯函数、零副作用）。
+
+    **为什么必须只在这里判**：`enabled` 的读点在闸内只有 `OutboundGate.effective_enabled`
+    一处（`OutboundGate.enabled` 与 `decide` 都经它），TTL 绝不在调用方各判一遍——
+    每多一个读点就多一条「配置面看着开着、实际关着」的裂缝（本件立项时抓到的正是
+    `emergency_info/service/push.py` 原先自己读了一次 `settings.enabled` 那一形）。
+    副作用（告警）不在这里做：本函数保持纯，边沿告警在 `OutboundGate._note_ttl_state`。
+    """
+    if not settings.enabled:
+        return False, TTL_STATE_OFF
+    raw = settings.enabled_until
+    if not str(raw or "").strip():
+        return True, TTL_STATE_ABSENT
+    try:
+        until = parse_gate_ttl(raw)
+    except (TypeError, ValueError):
+        return False, TTL_STATE_INVALID
+    if until is None:  # 理论不可达（空串已在上面拦掉），保底按无 TTL 走。
+        return True, TTL_STATE_ABSENT
+    if _utc(now) >= until:
+        return False, TTL_STATE_EXPIRED
+    return True, TTL_STATE_ACTIVE
 
 
 class OutboundGateVerdict(StrictBaseModel):
@@ -354,6 +438,9 @@ class OutboundGate:
         self._consecutive_defers: dict[str, int] = {}
         # 设置读不到的告警闩（进程内一次性，读成功即清；见 `_note_settings_unreadable`）。
         self._settings_issue_reported = False
+        # TTL 坏沿的告警闩（进程内边沿态：None=当前不在坏沿；值=已报过的那个坏沿状态词）。
+        # 与上面那枚同哲学：边沿报一次、回到好沿清账，绝不自造时间节流。
+        self._ttl_issue_state_reported: str | None = None
 
     # ------------------------------------------------------------------ 设置
     @property
@@ -423,7 +510,67 @@ class OutboundGate:
 
     @property
     def enabled(self) -> bool:
-        return self.settings.enabled
+        """闸此刻是否执法（**含 TTL**；判据唯一出口见 `effective_gate_enabled`）。"""
+        return self.effective_enabled()[0]
+
+    def effective_enabled(
+        self,
+        settings: OutboundGateSettings | None = None,
+        now: datetime | None = None,
+    ) -> tuple[bool, str]:
+        """`(是否执法, TTL 状态词)`——本闸**唯一**的 enabled 判据出口（TTL 边沿在此报）。
+
+        `decide` 与 `enabled` 都走这里，绝不在调用方各判一遍 TTL：每多一个读点就多
+        一条「配置面看着开着、实际关着」的裂缝（#49「在册未执法」那族的本症）。
+        """
+        current = _utc(now or self.clock())
+        resolved = self.settings if settings is None else settings
+        enabled, state = effective_gate_enabled(resolved, current)
+        self._note_ttl_state(state, resolved)
+        return enabled, state
+
+    def _note_ttl_state(self, state: str, settings: OutboundGateSettings) -> None:
+        """到期沿 / 不可解析沿各出**一枚**运营告警（边沿闩，不造第二套节流）。
+
+        - 闩的口径抄本件既有的 `_note_settings_unreadable`：同一坏沿只报一次、
+          回到非坏沿即清账（坏→好→坏 再报一次）。**没有**时间窗——投递折叠与抑制
+          归中央 `AdminAlertSuppression`（300s，`ops/monitor/alerts.py`），本件再叠
+          一层时间闸＝第二套节流（简报明禁）。
+        - 两枚 kind 都走 `note_issue`（既有唯一告警出口）。现网装配尚未给本闸注入
+          `issue_sink` ⇒ 同时在**边沿**留一行 WARNING，让"闸看起来开着而实际关着"
+          在只看日志时也可归因（旧形：sink=None 时 `note_issue` 连日志都不留）。
+        - 日志零正文：TTL 原值只以长度 + `sha256[:12]` 出现；解得出来的时刻才可原样打印
+          （它已由 `parse_moment` 归一，且来自管理员配置而非用户内容）。
+        """
+        if state not in _TTL_BAD_STATES:
+            with self._lock:
+                if self._ttl_issue_state_reported is not None:
+                    self._ttl_issue_state_reported = None
+            return
+        with self._lock:
+            if self._ttl_issue_state_reported == state:
+                return
+            self._ttl_issue_state_reported = state
+        raw = str(settings.enabled_until or "")
+        if state == TTL_STATE_EXPIRED:
+            kind = KIND_GATE_TTL_EXPIRED
+            detail = f"until={_format_moment(parse_gate_ttl(raw))}"
+        else:
+            kind = KIND_GATE_TTL_INVALID
+            detail = f"until_len={len(raw)} until_hash={_subject_hash(raw)}"
+        _logger.warning(
+            "outbound_gate ttl_state=%s %s action=gate_closed verdict=disabled_passthrough",
+            state,
+            detail,
+        )
+        self.note_issue(
+            OperationalIssue(
+                stage=GATE_STAGE,
+                kind=kind,
+                retryable=False,
+                safe_summary=f"reason={state} {detail}",
+            )
+        )
 
     def clock(self) -> datetime:
         """注入时钟的当前时刻（缺省 UTC now）。"""
@@ -557,13 +704,18 @@ class OutboundGate:
     ) -> OutboundGateVerdict:
         """过三道门给出结论（不触队列；`submit_active_push` 与装配侧共用）。
 
-        `reason=disabled` 表示关闭态直通；其余为三门之一给出的 allow/defer/skip。
+        `reason=disabled` 表示关闭态直通（**含 TTL 到期/读不懂而关**——见
+        `effective_gate_enabled`：那两种形态与 `enabled=False` 同形，都是 passthrough）。
+        其余为三门之一给出的 allow/defer/skip。
         `dedupe_namespace` 缺省 `emg`＝紧急域口径逐字节不变，其余主动投递族须申报
         自己那一族（见 `dedupe_key_shape_ok`）。
         """
         current = _utc(now or self.clock())
         settings = self.settings
-        if not settings.enabled:
+        # 唯一判据出口：裸 `settings.enabled` 不再是这里的条件（TTL 在册未执法的本症，
+        # #49「在册未执法」族）。关态一律走既有 REASON_DISABLED 词，语义=直通裸 submit。
+        gate_on, _ttl_state = self.effective_enabled(settings, current)
+        if not gate_on:
             return OutboundGateVerdict(action="allow", reason=REASON_DISABLED)
 
         subject_key = _subject_of(send_request)
@@ -731,6 +883,22 @@ def submit_active_push(
     `submit(request, deliver_after=...)`；拒绝不触队列，只出自造 SKIPPED 回执。
     """
     current = _utc(now or gate.clock())
+    # 键形在这唯一出口规范一次：闸只在**开闸态**执法键形，脏键整条判 skip＝静默丢；
+    # 关闭态是 passthrough 照发 ⇒ 「本地测通、上线丢」（本波同型三次：紧急域 `nmc:A1`、
+    # 等待回执、群摘要/日常助理两族，见 `dedupe.py:active_push_key_segment` 头注）。
+    # 已合法的键逐字节不变 ⇒ 现役各族行为零变化；真被改写必留一行 warning，不静默。
+    canonical_key = wash_active_push_key(send_request.dedupe_key)
+    if canonical_key != send_request.dedupe_key:
+        _logger.warning(
+            "outbound_gate dedupe_key_normalized capability_id=%s dedupe_family=%s"
+            " before_len=%d after_len=%d after_hash=%s",
+            send_request.capability_id,
+            dedupe_family,
+            len(send_request.dedupe_key),
+            len(canonical_key),
+            _subject_hash(canonical_key),
+        )
+        send_request = send_request.model_copy(update={"dedupe_key": canonical_key})
     verdict = gate.decide(
         send_request,
         now=current,
@@ -804,8 +972,46 @@ def submit_active_push(
 
 
 # --------------------------------------------------------------- 装配期构造
+_TTL_UNSET = object()
+
+# 「同族其余六枚」的名字只用来做一件事：**区分**「这根本不是一份闸配置」与
+# 「闸配置落后一步」。零键对象（`SimpleNamespace()`，本件与测试里的常态缺省形状）
+# 走静默缺省=关闭，与逐字节现状同形（`test_empty_config_projects_defaults_and_passes_through`
+# 钉着）；而同族键在场、唯独 TTL 键不在＝投影面/Config 与代码脱节，**必须响亮**：
+# 静默把它当「无到期」，正是用户明确否决的那笔人工回滚债（一枚临时开关变永久开关）。
+# 抛出后由 `OutboundGate.settings` 的既有兜底接住＝回退缺省关闭 + 冒
+# `KIND_SETTINGS_UNREADABLE`（同 I-3 病同一个出口，不另造第二种告警）。
+_GATE_SIBLING_KEYS_WITHOUT_TTL: tuple[str, ...] = (
+    "bot_outbound_gate_enabled",
+    "bot_outbound_gate_quiet_defer_enabled",
+    "bot_outbound_gate_urgent_severities",
+    "bot_outbound_gate_max_per_target_per_minute",
+    "bot_outbound_gate_max_per_target_per_hour",
+    "bot_outbound_gate_db_path",
+)
+
+
+def _project_enabled_until(config: object) -> str:
+    """投影 TTL 字面量（闸侧唯一读点）。**读不到不许折成「无到期」**，见上表注释。"""
+    raw = getattr(config, "bot_outbound_gate_enabled_until", _TTL_UNSET)
+    if raw is _TTL_UNSET or raw is None:
+        if any(hasattr(config, key) for key in _GATE_SIBLING_KEYS_WITHOUT_TTL):
+            raise LookupError(
+                "config 面缺 bot_outbound_gate_enabled_until（同族六键在而 TTL 键不在）"
+                "：投影面落后一步，静默按「无到期」会把临时开关洗成永久开关"
+            )
+        return ""
+    return str(raw).strip()
+
+
 def build_outbound_gate_settings(config: object) -> OutboundGateSettings:
-    """从 Config 投影闸设置（`getattr` 口径=六键未落地即取缺省，不阻塞本席交付）。"""
+    """从 Config 投影闸设置（七枚 `bot_outbound_gate_*` 键；真身 `config.py:307-320`）。
+
+    六枚既有键沿用 `getattr(缺省)` 口径（键未落地即取本件缺省，不阻塞装配）。
+    第七枚 TTL 例外：它**必须**经 `_project_enabled_until` 走「同族在而它不在⇒抛」的
+    判据——它的缺省语义是「无到期＝长期开」，把「读不到」当成缺省就是造一个不会自己
+    下班的开关（用户 2026-09-25 裁定「开，A+B」的 B 半句）。
+    """
     return OutboundGateSettings(
         enabled=bool(getattr(config, "bot_outbound_gate_enabled", False)),
         quiet_defer_enabled=bool(
@@ -827,6 +1033,7 @@ def build_outbound_gate_settings(config: object) -> OutboundGateSettings:
         db_path=str(
             getattr(config, "bot_outbound_gate_db_path", "data/outbound_gate.sqlite3")
         ),
+        enabled_until=_project_enabled_until(config),
     )
 
 

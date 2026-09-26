@@ -59,6 +59,16 @@ class SQLiteMemoryRepository:
     def bus(self) -> Any | None:
         return self._bus
 
+    @property
+    def recall_mode(self) -> str:
+        """本仓储的取数口径（装配层与观测面据此归因，不是第二套开关判定）。
+
+        ``legacy_newest_n`` = 总线没开：SQL 只按 ``updated_at DESC`` 取最近 N 条，
+        **``query_text`` 收下不用**——本轮注入可能与话题毫不相干。这是有意的
+        关态旧行为（逐字节不变），但必须是个可读到的事实而不是沉默。
+        """
+        return "memory_bus" if self._bus is not None else "legacy_newest_n"
+
     def upsert_fact(
         self,
         *,
@@ -311,17 +321,24 @@ class SQLiteMemoryRepository:
         return connection
 
 
-def build_memory_repository(config: object) -> MemoryProvider:
-    """召回侧唯一装配口（providers.py 经 ``build_memory_provider`` 走这里）。
+def build_memory_read_path(
+    config: object,
+) -> tuple[MemoryProvider, MemoryProvider | None]:
+    """召回侧唯一装配口：给出 ``(主腿, 兜底腿)``，两腿**永不同时打分**。
 
-    开关关=逐字节旧行为：返回只认 ``memory_facts`` 的旧仓储，**不建总线库、
-    不开新连接**。开关开=同一个仓储挂上总线（写/删/读统一走 v2 打分召回，
-    旧库行作为 explicit 影子候选并进同一套打分，不再各说各话）。
+    - 开关关=逐字节旧行为：主腿=只认 ``memory_facts`` 的旧仓储（``recall_mode=
+      `` ``legacy_newest_n``，按时间取最近 N 条、不看本轮查询），兜底腿=None；
+      **不建总线库、不开新连接**。
+    - 开关开=主腿=``MemoryBusProvider``（v2 统一打分召回，旧库行作为 explicit
+      影子候选并进同一套打分），兜底腿=同一个旧仓储实例——只在总线**抛异常**时
+      经合并层调用一次，且那次降级必须落审计（``providers`` 侧执法）。
+      兜底腿平时不参与，故不存在「两套排序串接」；它的 ``memory_facts`` 读面
+      与总线影子读同源同库，不会多出第二身份。
     """
     enabled = bool(getattr(config, "bot_memory_enabled", False))
     db_path = str(getattr(config, "bot_memory_db_path", "")).strip()
     if not enabled or not db_path:
-        return NullMemoryProvider()
+        return NullMemoryProvider(), None
     repository = SQLiteMemoryRepository(db_path)
     from plugins.bot_unified_runtime.domains.chat_reply.character.memory_bus_v2 import (
         MemoryBusProvider,
@@ -332,8 +349,14 @@ def build_memory_repository(config: object) -> MemoryProvider:
         config, legacy_explicit_reader=repository.list_rows_for_subject
     )
     if bus is None:
-        return repository
-    return MemoryBusProvider(bus)
+        return repository, None
+    return MemoryBusProvider(bus), repository
+
+
+def build_memory_repository(config: object) -> MemoryProvider:
+    """旧签名兼容口：只要主腿（消费腿请用 ``build_memory_read_path``）。"""
+    primary, _fallback = build_memory_read_path(config)
+    return primary
 
 
 def build_memory_provider(config: object) -> MemoryProvider:

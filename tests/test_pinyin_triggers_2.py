@@ -124,7 +124,7 @@ def test_pinyin_word_hits_owner_capability(cap: str, word: str, probe: str) -> N
 
 @pytest.mark.parametrize("word,probe", MODE_HITS, ids=lambda x: str(x))
 def test_music_mode_pinyin_hits_mode_command(word: str, probe: str) -> None:
-    from plugins.bot_unified_runtime.capabilities import music
+    from plugins.bot_unified_runtime.domains.music.capabilities import music
 
     assert music.is_music_mode_command(probe), f"mode 拼音词未命中：{word!r}（探针 {probe!r}）"
     # 让渡语义：mode 拼音短语不得被点歌主命令当歌名抢走。
@@ -205,7 +205,7 @@ def test_weather_pinyin_guard_parity(probe: str) -> None:
 
 def test_traditional_mode_word_still_hits() -> None:
     """簡繁零回归：點歌模式 走 mode 检测器（inventory 只收主命令检测器）。"""
-    from plugins.bot_unified_runtime.capabilities import music
+    from plugins.bot_unified_runtime.domains.music.capabilities import music
 
     assert music.is_music_mode_command("點歌模式")
 

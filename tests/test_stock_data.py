@@ -13,7 +13,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.domains.core.contracts.finance import (
     PricePoint,
     StockQuote,

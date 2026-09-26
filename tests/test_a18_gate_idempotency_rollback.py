@@ -39,13 +39,15 @@ from plugins.bot_unified_runtime.domains.chat_reply.policy.rate_limit import (
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.event_idempotency import (
     EventIdempotencyTable,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+    RuntimePipeline,
+)
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
     BotDecision,
     IncomingMessage,
     SessionType,
 )
-from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
-from plugins.bot_unified_runtime.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
 
 
 @pytest.fixture(autouse=True)

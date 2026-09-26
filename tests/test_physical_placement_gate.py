@@ -18,16 +18,21 @@
 ⑥ 语义 A（目录前缀）/ 语义 B（字面文件）双实现成参数，门的判据用 A，并锁死两者之差有限。
 
 **本门的限缩（读绿之前先记住）**：G-P2 是**存在性**判据（有没有被认领），不是活性判据
-（认领得对不对）。159/160 枚未认领里 **87 枚是旧顶层残留**（含 49 枚 `_CANONICAL` 退役垫片），
-它们要**退役或改道**、不该豁免——本席因此只豁免 ORPHAN-MAP §5-A/B 的 29 枚结构性件，
-§5-C 的 13 枚"无机械归主"照原样计入违规并标 `待用户裁`。
+（认领得对不对）。立门时 160 枚未认领（当时值）里 87 枚（当时值）是旧顶层残留
+（含 49 枚 `_CANONICAL` 退役垫片），它们要**退役或改道**、不该豁免——本门因此只豁免
+ORPHAN-MAP §5-A/B 的 29 枚结构性件，§5-C 的 13 枚"无机械归主"照原样计入违规并标 `待用户裁`。
+（计数口径：以上均为 2026-09-22 立门**当时值**；现值一律以
+`../ChatBot_Runtime/venv/Scripts/python.exe scripts/physical_placement_census.py --report`
+现算为准——AGENTS.md 规则 10，叙述文档不手写会过期的数。地板的 R5 重录账见下方常量区注记。）
 """
 
 from __future__ import annotations
 
 import ast
+import functools
 import sys
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT / "scripts") not in sys.path:
@@ -36,35 +41,76 @@ if str(REPO_ROOT / "scripts") not in sys.path:
 import physical_placement_census as pc  # 唯一取数口（判据 / 总数 / --report 三处同源）
 
 # --------------------------------------------------------------------------
-# 手写字面量上限（只准降）。迁一批 / 改一批声明后调小，并在对应 AUDIT_HISTORY 追加一行。
+# 手写字面量上限（只准降）＋ 扫描面地板（R5 授权重录）。
+# 每枚常量的三行账「起点值 / 现值 / 是否可满足」逐枚列在 `SEAT-TX134.md`；**现值一律以
+# `scripts/physical_placement_census.py --report` 现算为准**，本文件不抄活数（抄进来的每个
+# 数几天内就过期——AGENTS.md 规则 10）。
+#
+# 方向账（用户裁定 R5，席 TX134 · 2026-09-23）：
+# - 五枚**上限**（下面 `G_P1_*` / `G_P2_*`）本席**一枚未动**，仍"只准降、终态 0"；
+# - 只有 `MIN_SCANNED_PY_FILES` 一枚**地板**按 R5 重录——地板高于实测＝**结构性不可满足**，
+#   它与"债有没有还清"无关，红着只证明"尺子的起点刻度作废了"（P-65 定案）。
+# - **计数下降是合法的**：删壳退役与物理搬迁会让被数的对象变少，那是**进展不是缺陷**。
+#   地板的本职是检测"取数口塌陷"（扫不到东西／SKIP 被放宽／目录改名），**不是**阻止正当下降；
+#   真塌陷由 `test_g_p2_unclaimed_debt_never_grows` 的"命中非空"两腿与本地板**合起来**兜。
+# - 但"合法"不等于"免账"：动地板必须在 `AUDIT_HISTORY_MIN_SCANNED_PY` **追加一行**，
+#   由 `test_scan_surface_floor_history_is_satisfiable_and_recorded` 锁死（只降、当时可满足、
+#   末行必须跟到在册常量值）。引用不出 R5 这类授权就降地板＝放宽判据，按违规处理。
 # --------------------------------------------------------------------------
-#: G-P1 ①越界声明点数。2026-09-22 本席现算：
-#: `PYTHONIOENCODING=utf-8 ../ChatBot_Runtime/venv/Scripts/python.exe scripts/physical_placement_census.py --report`
-#: ⇒ ①越界 36（与 ORPHAN-MAP §4.1 的 36 逐条同集合）。
-G_P1_OUTSIDE_CEILING = 36
+#: G-P1 ①越界声明点数。起点值 36（2026-09-22 本门立门时现算，与 ORPHAN-MAP §4.1 同集合）；
+#: 36→32 跟随 2026-09-25 S284 落地的**声明侧四枚冗余影子认领**删除（`BRIEFS`／`PROPOSAL-placement-decl.md`
+#: 的三分之①；改前改后 `--report` 现算 36→32、claims 97→93、G-P2 Δ=0，非缩扫描面）。
+#: 现值与可满足性见 `--report`（现算：上限==现值 ⇒ 可满足但**零余量**，新增一枚越界即红）。
+G_P1_OUTSIDE_CEILING = 32
 #: G-P1 附账：目录认领套住别的 fid 认领的"包含对"（影子认领＝归属含糊，只准降）。
-G_P1_CONTAIN_CEILING = 19
+#: 起点值 19；19→15 同上批（四枚影子认领消失，包含对同步减 4）。现值见 `--report`（上限==现值 ⇒ 零余量）。
+G_P1_CONTAIN_CEILING = 15
 #: G-P2 语义 A 未认领数（**真债**，不受豁免影响，终态 0）。
-#: 本席现算 160 = ORPHAN-MAP 的 159 + 1，多的那一枚是本席新建的
-#: `plugins/bot_unified_runtime/domains/core/board_placement.py`（声明数据件，同样未认领，
-#: 本席**不给自己开后门**：不豁免、不自认领，如实进账，由后续迁移批归主）。
+#: 起点值 160 = ORPHAN-MAP 的 159 + 1（多的一枚是本门立门席新建的
+#: `plugins/bot_unified_runtime/domains/core/board_placement.py`，当时不豁免、不自认领，如实进账）。
+#: **现值以 `--report` 为准**；起点→现值的下降属**合法下降**（R5：退役与归主让被数对象变少），
+#: 上限按"只准降"的棘轮规矩由 owner 在树稳定时收紧，本席**不代调**（R5 只授权动地板）。
 G_P2_UNCLAIMED_CEILING = 160
-#: G-P2 违规数 = 未认领 ∧ 未豁免（终态 0）。本席现算 131 = 160 − 29 枚 §5-A/B 豁免。
+#: G-P2 违规数 = 未认领 ∧ 未豁免（终态 0）。起点值 131 = 160 − 29 枚 §5-A/B 豁免。
+#: ⚠ 三枚"131"同值不同尺，别混（`SEAT-TX134.md` §肆 ③ 已逐枚点名）：本枚＝G-P2 **违规起点账**；
+#: `domains/core/board_shim_ledger.py` 的 `OUTSIDE_BASELINE=131`＝**域外三态之和**起点账；
+#: S247 草稿的 `19+7+105=131`＝**豁免清单守恒式**。同数≠同账，拿它俩互相"核矛盾"是先换了尺子。
 G_P2_VIOLATION_CEILING = 131
-#: G-P2 豁免条数：豁免即债账，**只准降**（摘一条就改小此数并追加历史）。
+#: G-P2 豁免条数：豁免即债账，**只准降**（摘一条就改小此数并追加历史）。起点值 29；现值见 `--report`。
 G_P2_EXEMPT_CEILING = 29
 
-#: 扫描面地板：现算 655（plugins 654 + 根 1）。低于此＝扫描面塌陷，不是"大家都归位了"。
-MIN_SCANNED_PY_FILES = 600
-#: 板块树规模地板（现算 57 个二级功能 / 94 个声明点）——防有人删声明源把账做没。
+#: 扫描面地板：低于此＝扫描面塌陷（取数口坏了），**不是**"大家都归位了"。
+#: **本席按用户裁定 R5 重录（600 → 480）**，非自行放宽；逐枚算术如下（取数时刻 2026-09-23T06:4xZ，
+#: 尺＝`py_universe()`＝`plugins/**` + 仓库根，与 `--report` 同一支）：
+#:   - 起点值 655（2026-09-22 立门席读盘自记；同一提交树 `a08d34c` 的 git 口径为 646，
+#:     差 9 枚＝当时工作树在飞件；两值都 ≥ 当期地板 600，即**当时可满足**）。
+#:   - 现值 554 ⇒ 旧地板 600 **结构性不可满足**（P-65 定案：红因是地板陈旧，非扫描面塌陷）。
+#:   - 降幅逐枚可归因：HEAD(583) → 盘上(554) 的 33 枚**全部**是旧顶层垫片/残留
+#:     （`capabilities/*` 27 + `sender/*` 5 + `runtime/base_router.py` 1），无一例外；
+#:     646 → 583 的 69 枚由 P-65 逐枚点名闭合（70/70 有 `domains/**` 同名后继）。
+#:   - 未来还会正当下降：`board_shim_ledger.SHIM_ROWS` 现算**在册待退役且仍在扫描面内 47 枚**
+#:     ⇒ 全退役下界 507。取 480＝覆盖该 47 枚再留 27 枚余量（未入册域外件与并发波次）。
+#:   - 塌陷检测未被削弱：真塌陷（`plugins` 改名／`SKIP_DIR_NAMES` 被放宽吞掉一层目录／glob 断掉）
+#:     是**量级**下跌（会掉到 100 以下），480 与 600 在这类事故上判红能力相同；"一条都没数到"
+#:     另有本门"命中非空"两腿兜底。**每次降地板必须往 `AUDIT_HISTORY_MIN_SCANNED_PY` 追加一行。**
+MIN_SCANNED_PY_FILES = 480
+#: 板块树规模地板（起点值 57 个二级功能 / 94 个声明点，均为立门时现算）——防有人删声明源把账做没。
+#: 本席现算：两枚地板均**可满足**（实测高于地板）⇒ 按 R5"无正当下降证据就不动地板"，**一枚未改**。
 MIN_FEATURES = 50
 MIN_CLAIMS = 90
 
-AUDIT_HISTORY_G_P1_OUTSIDE: tuple[tuple[str, int], ...] = (("2026-09-22", 36),)
-AUDIT_HISTORY_G_P1_CONTAIN: tuple[tuple[str, int], ...] = (("2026-09-22", 19),)
+AUDIT_HISTORY_G_P1_OUTSIDE: tuple[tuple[str, int], ...] = (("2026-09-22", 36), ("2026-09-25", 32))
+AUDIT_HISTORY_G_P1_CONTAIN: tuple[tuple[str, int], ...] = (("2026-09-22", 19), ("2026-09-25", 15))
 AUDIT_HISTORY_G_P2_UNCLAIMED: tuple[tuple[str, int], ...] = (("2026-09-22", 160),)
 AUDIT_HISTORY_G_P2_VIOLATION: tuple[tuple[str, int], ...] = (("2026-09-22", 131),)
 AUDIT_HISTORY_G_P2_EXEMPT: tuple[tuple[str, int], ...] = (("2026-09-22", 29),)
+#: 地板账（每行 = (日期, 当期实测, 当期地板)）：**降地板必须在这里加一行**，由
+#: `test_scan_surface_floor_history_is_satisfiable_and_recorded` 执法（只降、当时可满足、末行跟到在册常量）。
+#: 第二行是 R5 授权的重录（席 TX134），不是放宽：600 在实测 554 上已不可满足。
+AUDIT_HISTORY_MIN_SCANNED_PY: tuple[tuple[str, int, int], ...] = (
+    ("2026-09-22", 655, 600),
+    ("2026-09-23", 554, 480),
+)
 
 #: AST 自锁要盯的字面量名（上限不许写成 len(...)/sum(...) 派生）。
 _CEILING_NAMES = (
@@ -83,16 +129,21 @@ _HISTORY_NAMES = (
     "AUDIT_HISTORY_G_P2_UNCLAIMED",
     "AUDIT_HISTORY_G_P2_VIOLATION",
     "AUDIT_HISTORY_G_P2_EXEMPT",
+    "AUDIT_HISTORY_MIN_SCANNED_PY",
 )
 
-_REAL = pc.compute()  # 全模块只现算一次（判据与 report 同一支）
+@functools.lru_cache(maxsize=1)
+def _real() -> dict[str, Any]:
+    """**首用绑定**取数（S555 推广自 S542 格②）：pc.compute() 内含 PlacementDeclarationError/取不到判据真身的抛点，旧版在模块顶层调它 ⇒ 脏树并发窗一发撕裂读会打成 collection ERROR（不可归因）。函数内取数 + lru_cache(maxsize=1) ⇒ collection 不采样、全进程仍只现算一次（判据与 report 同一支不变），红落具体用例上、可归因。
+    """
+    return pc.compute()
 
 
 # --------------------------------------------------------------------------
 # G-P1
 # --------------------------------------------------------------------------
 def test_g_p1_impl_paths_never_escape_own_domain_whitelist() -> None:
-    findings = _REAL["g_p1"]["outside_domain"]
+    findings = _real()["g_p1"]["outside_domain"]
     assert len(findings) <= G_P1_OUTSIDE_CEILING, (
         f"越界声明点 {len(findings)} > 上限 {G_P1_OUTSIDE_CEILING}＝又长了落在 domains 之外的新认领。"
         f"修法：把实现放进 `domains/<域>/<层>/` 再声明；确属工程面（docs/scripts/tests）的新条目"
@@ -104,7 +155,7 @@ def test_g_p1_impl_paths_never_escape_own_domain_whitelist() -> None:
 
 
 def test_g_p1_hard_zero_classes_stay_zero() -> None:
-    findings = _REAL["g_p1"]
+    findings = _real()["g_p1"]
     assert not findings["double_claim"], f"同一字面路径被两个 fid 认领（无条件红）：{findings['double_claim']}"
     assert not findings["duplicate_within"], f"同一功能内重复声明：{findings['duplicate_within']}"
     assert not findings["unknown_domain"], (
@@ -119,7 +170,7 @@ def test_g_p1_hard_zero_classes_stay_zero() -> None:
 
 
 def test_g_p1_containment_ledger_never_grows() -> None:
-    pairs = _REAL["g_p1"]["contain_pairs"]
+    pairs = _real()["g_p1"]["contain_pairs"]
     assert len(pairs) <= G_P1_CONTAIN_CEILING, (
         f"包含对（目录认领套住别的 fid 的认领）{len(pairs)} > 上限 {G_P1_CONTAIN_CEILING}。"
         f"影子认领＝归属含糊，新增必须先把粒度统一到同一层：{pairs[:6]}"
@@ -131,26 +182,26 @@ def test_g_p1_containment_ledger_never_grows() -> None:
 # G-P2
 # --------------------------------------------------------------------------
 def test_g_p2_unclaimed_debt_never_grows() -> None:
-    counts = _REAL["counts"]
+    counts = _real()["counts"]
     assert counts["scanned_py"] >= MIN_SCANNED_PY_FILES, (
         f"只扫到 {counts['scanned_py']} 个 py（地板 {MIN_SCANNED_PY_FILES}）＝扫描面塌陷"
     )
     assert counts["features"] >= MIN_FEATURES, f"二级功能只剩 {counts['features']} 枚＝声明源被掏空"
     assert counts["claims"] >= MIN_CLAIMS, f"声明点只剩 {counts['claims']} 条＝声明源被掏空"
-    unclaimed = _REAL["g_p2_semantic_a"]["unclaimed"]
-    violations = _REAL["g_p2_semantic_a"]["violations"]
+    unclaimed = _real()["g_p2_semantic_a"]["unclaimed"]
+    violations = _real()["g_p2_semantic_a"]["violations"]
     assert unclaimed <= G_P2_UNCLAIMED_CEILING, (
         f"未认领 py {unclaimed} > 上限 {G_P2_UNCLAIMED_CEILING}＝新文件没人认领。"
         f"修法：在 `board_taxonomy.py` 对应二级功能补 `impl_paths`（终态 0，不许拿豁免抵数）。"
-        f"新增大户：{_REAL['a_unclaimed_list'][-6:]}"
+        f"新增大户：{_real()['a_unclaimed_list'][-6:]}"
     )
     assert violations <= G_P2_VIOLATION_CEILING, (
         f"未认领且未豁免 {violations} > 上限 {G_P2_VIOLATION_CEILING}（终态 0）。"
-        f"未豁免的债：{_REAL['a_violation_list'][-6:]}"
+        f"未豁免的债：{_real()['a_violation_list'][-6:]}"
     )
     assert violations and unclaimed, "一条都没数到＝取数口坏了，不是'大家都归位了'"
     # 未认领 ⊇ 违规，且差值恰等于"豁免真正吞掉的未认领枚数"（三处同源，不许各算一套）
-    assert unclaimed - violations == len(set(_REAL["a_unclaimed_list"]) - set(_REAL["a_violation_list"]))
+    assert unclaimed - violations == len(set(_real()["a_unclaimed_list"]) - set(_real()["a_violation_list"]))
 
 
 def test_g_p2_exemptions_are_literal_existing_and_still_needed() -> None:
@@ -165,10 +216,10 @@ def test_g_p2_exemptions_are_literal_existing_and_still_needed() -> None:
     shape = pc.exemption_shape_errors(entries)
     assert not shape, f"豁免清单形状违规（必须字面 .py/.md 路径，禁 * ? [] \\ 目录兜底）：{shape}"
     # ② 每条仍真实存在（stale 即红——media 门"欠款仍真锁"同型）
-    stale = _REAL["stale_exempts"]
+    stale = _real()["stale_exempts"]
     assert not stale, f"这些豁免指向不存在的路径（假豁免）：{stale}"
     # ③ 每条仍然必要：被豁免的东西必须当前确实未认领，否则是"死豁免"白占额度
-    dead = _REAL["dead_exempts"]
+    dead = _real()["dead_exempts"]
     assert not dead, f"这些豁免对象其实已被认领＝死豁免，请删除并降 G_P2_EXEMPT_CEILING：{dead}"
     # ④ 每条带一句"为什么"
     no_reason = [p for p, reason in entries if not str(reason).strip()]
@@ -187,14 +238,14 @@ def test_g_p2_root_py_is_on_the_books() -> None:
 
 def test_report_and_gate_read_the_same_numbers() -> None:
     """单一取数口自证：`--report` 打印的每个数必须等于本门判据用的同一个现算值。"""
-    lines = "\n".join(pc.report_lines(_REAL))
-    size = _REAL["g_p1_size"]
-    a, b = _REAL["g_p2_semantic_a"], _REAL["g_p2_semantic_b"]
+    lines = "\n".join(pc.report_lines(_real()))
+    size = _real()["g_p1_size"]
+    a, b = _real()["g_p2_semantic_a"], _real()["g_p2_semantic_b"]
     assert f"①越界 {size['outside_domain']}" in lines
     assert f"附账:包含对 {size['contain_pairs']}" in lines
     assert f"未认领 {a['unclaimed']} / 违规 {a['violations']}" in lines
     assert f"未认领 {b['unclaimed']} / 违规 {b['violations']}" in lines
-    assert f"扫描 py（plugins/** + 根）: {_REAL['counts']['scanned_py']}" in lines
+    assert f"扫描 py（plugins/** + 根）: {_real()['counts']['scanned_py']}" in lines
 
 
 def test_two_claiming_semantics_are_both_computed_and_gap_is_bounded() -> None:
@@ -205,11 +256,11 @@ def test_two_claiming_semantics_are_both_computed_and_gap_is_bounded() -> None:
     exempt = {path for path, _r in pc.load_placement()["G_P2_EXEMPT"]}
     a = pc.gp2_findings(claims, universe, exempt, semantic="prefix")
     b = pc.gp2_findings(claims, universe, exempt, semantic="literal")
-    assert len(a["unclaimed"]) == _REAL["g_p2_semantic_a"]["unclaimed"], "A 语义现算与 report 不同源"
-    assert len(b["unclaimed"]) == _REAL["g_p2_semantic_b"]["unclaimed"], "B 语义现算与 report 不同源"
+    assert len(a["unclaimed"]) == _real()["g_p2_semantic_a"]["unclaimed"], "A 语义现算与 report 不同源"
+    assert len(b["unclaimed"]) == _real()["g_p2_semantic_b"]["unclaimed"], "B 语义现算与 report 不同源"
     gap = len(b["unclaimed"]) - len(a["unclaimed"])
     assert 0 <= gap <= len(universe), f"两语义未认领之差 {gap} 越界（扫描面 {len(universe)}）＝口径失控"
-    assert gap == _REAL["unclaimed_gap_a_b"]
+    assert gap == _real()["unclaimed_gap_a_b"]
     print(f"语义 A 未认领 {len(a['unclaimed'])} / 语义 B 未认领 {len(b['unclaimed'])} / 差 {gap}")
 
 
@@ -244,17 +295,61 @@ def test_ceilings_are_hand_written_literals() -> None:
 
 def test_audit_histories_never_rise() -> None:
     pairs = (
-        (AUDIT_HISTORY_G_P1_OUTSIDE, G_P1_OUTSIDE_CEILING, _REAL["g_p1_size"]["outside_domain"]),
-        (AUDIT_HISTORY_G_P1_CONTAIN, G_P1_CONTAIN_CEILING, _REAL["g_p1_size"]["contain_pairs"]),
-        (AUDIT_HISTORY_G_P2_UNCLAIMED, G_P2_UNCLAIMED_CEILING, _REAL["g_p2_semantic_a"]["unclaimed"]),
-        (AUDIT_HISTORY_G_P2_VIOLATION, G_P2_VIOLATION_CEILING, _REAL["g_p2_semantic_a"]["violations"]),
-        (AUDIT_HISTORY_G_P2_EXEMPT, G_P2_EXEMPT_CEILING, _REAL["counts"]["g_p2_exempt_entries"]),
+        (AUDIT_HISTORY_G_P1_OUTSIDE, G_P1_OUTSIDE_CEILING, _real()["g_p1_size"]["outside_domain"]),
+        (AUDIT_HISTORY_G_P1_CONTAIN, G_P1_CONTAIN_CEILING, _real()["g_p1_size"]["contain_pairs"]),
+        (AUDIT_HISTORY_G_P2_UNCLAIMED, G_P2_UNCLAIMED_CEILING, _real()["g_p2_semantic_a"]["unclaimed"]),
+        (AUDIT_HISTORY_G_P2_VIOLATION, G_P2_VIOLATION_CEILING, _real()["g_p2_semantic_a"]["violations"]),
+        (AUDIT_HISTORY_G_P2_EXEMPT, G_P2_EXEMPT_CEILING, _real()["counts"]["g_p2_exempt_entries"]),
     )
     for history, ceiling, current in pairs:
         counts = [count for _date, count in history]
         assert counts == sorted(counts, reverse=True), f"核账记录出现回升（方向锁）：{history}"
         assert ceiling <= counts[0], f"上限 {ceiling} 超过首届核账值 {counts[0]}＝调大换绿"
         assert current <= ceiling, f"现算值 {current} 已超上限 {ceiling}（本门主判据的兜底复述）"
+
+
+# --------------------------------------------------------------------------
+# 地板族专属账（R5）：**降是合法的，但每一次降都要留得下的账，且留下的账必须当时可满足。**
+# 上限的方向锁（上方）管不到地板——地板写高了会"结构性不可满足"（P-65 那枚红的真实形态），
+# 写低了则是放宽判据。两条都由本锁拦，全部在内存合成历史上跑，不碰源码树一个字。
+# --------------------------------------------------------------------------
+def _floor_history_errors(
+    history: tuple[tuple[str, int, int], ...],
+    *,
+    current_floor: int,
+    current_measured: int,
+) -> list[str]:
+    """地板账的四条不变量，返回人话错误（空表＝账自洽）。纯函数，判据与真账同源。"""
+    errors: list[str] = []
+    if not history:
+        return ["地板账为空＝降无可降也得留账"]
+    floors = [floor for _d, _m, floor in history]
+    if floors != sorted(floors, reverse=True):
+        errors.append(f"地板出现回升（{floors}）：地板只准降；调高地板＝换一把更严的尺要用户裁")
+    for date, measured, floor in history:
+        if measured < floor:
+            errors.append(f"{date} 那行「实测 {measured} < 地板 {floor}」当时就不可满足＝立了张永远红的账")
+    if floors[-1] != current_floor:
+        errors.append(f"末行地板 {floors[-1]} ≠ 在册常量 {current_floor}＝改了地板没在 AUDIT_HISTORY_MIN_SCANNED_PY 追加一行")
+    if current_measured < current_floor:
+        errors.append(f"现算扫描面 {current_measured} < 地板 {current_floor}＝要么真塌陷，要么地板又陈旧了（后者须按 R5 重录并留行）")
+    return errors
+
+
+def test_scan_surface_floor_history_is_satisfiable_and_recorded() -> None:
+    """地板账自洽锁（R5 授权的配套牙齿）：在册历史四条全过，且**反向自证三发**各咬一条。"""
+    measured = _real()["counts"]["scanned_py"]
+    errors = _floor_history_errors(AUDIT_HISTORY_MIN_SCANNED_PY, current_floor=MIN_SCANNED_PY_FILES, current_measured=measured)
+    assert not errors, f"地板账不自洽：{errors}"
+    # 反向自证①：地板回升（拿"更严的尺"糊别处的红，或单纯抄回旧值）必被抓
+    assert _floor_history_errors((("d1", 655, 600), ("d2", 554, 620)), current_floor=620, current_measured=554)
+    # 反向自证②：当期实测低于当期地板（＝P-65 那枚红的形态）必被抓，且不得靠"再降一格"静默改口
+    assert _floor_history_errors((("d1", 554, 600),), current_floor=600, current_measured=554)
+    # 反向自证③：改了在册地板却不追加账行（最常见的"顺手放宽"）必被抓
+    assert _floor_history_errors(AUDIT_HISTORY_MIN_SCANNED_PY, current_floor=MIN_SCANNED_PY_FILES - 1, current_measured=measured)
+    # 正样控制：账具本身不瞎——把现算值原样喂进去必不红（否则本锁是空跑）
+    assert not _floor_history_errors(AUDIT_HISTORY_MIN_SCANNED_PY, current_floor=MIN_SCANNED_PY_FILES, current_measured=measured)
+    print(f"扫描面 {measured} / 地板 {MIN_SCANNED_PY_FILES} / 余量 {measured - MIN_SCANNED_PY_FILES} 枚")
 
 
 # --------------------------------------------------------------------------
@@ -564,4 +659,88 @@ def test_g_p1_channel_single_construction_port_and_next_step_is_executable() -> 
     entry = ast.literal_eval(lit)
     assert entry == ("B02.x", f"{_PKG}/docs/a.py", "工程面"), lit
     assert (entry[0], entry[1]) in pc.g_p1_exempt_keys((entry,)), "报错给的『下一步』与构造口产物不同源 ⇒ 照做也无效"
-    assert _REAL["g_p1_dead_exempts"] == [], f"G-P1 死豁免（豁免对象已不在违规集，该摘并降账）：{_REAL['g_p1_dead_exempts']}"
+    assert _real()["g_p1_dead_exempts"] == [], f"G-P1 死豁免（豁免对象已不在违规集，该摘并降账）：{_real()['g_p1_dead_exempts']}"
+
+
+# ===========================================================================
+# 锁⑤（S555 推广自 S542 格②）：顶层取数防回潮——覆盖同批 4 件门件
+#   授权：RULINGS-20260924.md §R-250925-11（+ §R-250925-8 第 4 条 P-4②）。
+#   判据＝形状（按各文件自身 import 别名派生"外部真身"），不写死函数名清单。
+#   #4（central_dispatch_matrix）纳入 roster 只会 0 命中：:65 是函数别名（非调用），
+#   :46 外层根名是内建 tuple，且作者刻意要 import 期响亮 collection error（参数化 ID 依据）⇒ 不误伤。
+#   四态实跑与取证见 .superpowers/sdd/2026-09-24-central-dispatch/A1-TOPFETCH-FIXED-S555.md
+# ===========================================================================
+_ROSTER_TOPFETCH = (
+    "test_physical_placement_gate.py",
+    "test_taxonomy_spec_gates.py",
+    "test_body_completeness_synonym_shell.py",
+    "test_central_dispatch_matrix.py",
+)
+
+
+def _top_level_external_fetches(source: str) -> list[str]:
+    """模块顶层把"外部真身"的调用结果赋给模块变量 ⇒ 命中。外部真身＝本文件 `import x [as y]` 别名。"""
+    tree = ast.parse(source)
+    externals = {
+        (alias.asname or alias.name.split(".")[0])
+        for node in tree.body
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+
+    def _root(call: ast.Call) -> str:
+        func = call.func
+        while isinstance(func, ast.Attribute):
+            func = func.value
+        return func.id if isinstance(func, ast.Name) else ""
+
+    hits: list[str] = []
+    for node in tree.body:
+        if (
+            isinstance(node, (ast.Assign, ast.AnnAssign))
+            and isinstance(node.value, ast.Call)
+            and _root(node.value) in externals
+        ):
+            targets: list[ast.expr] = node.targets if isinstance(node, ast.Assign) else [node.target]
+            names = [ast.unparse(t) for t in targets]
+            hits.append(f"L{node.lineno}:{ast.unparse(node.value)}->{names}")
+    return hits
+
+
+def _real_is_lru_bound(source: str) -> bool | None:
+    """本文件若定义 `_real()`，它必须带 `functools.lru_cache(maxsize=1)`；未定义（如 #4）→ None＝不判。"""
+    tree = ast.parse(source)
+    defs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    if "_real" not in defs:
+        return None
+    decos = {ast.unparse(d) for d in defs["_real"].decorator_list}
+    return "functools.lru_cache(maxsize=1)" in decos
+
+
+def test_roster_modules_do_not_fetch_at_import() -> None:
+    here = Path(__file__).resolve().parent
+    problems: list[str] = []
+    for name in _ROSTER_TOPFETCH:
+        path = here / name
+        if not path.exists():
+            problems.append(f"{name} 不在盘（改名/删除＝推广覆盖失效）")
+            continue
+        source = path.read_text(encoding="utf-8")
+        for hit in _top_level_external_fetches(source):
+            problems.append(f"{name}: {hit}（顶层调外部真身＝collection 期可撕裂→整门 ERROR）")
+        if _real_is_lru_bound(source) is False:
+            problems.append(f"{name}: 定义了 _real() 但 lru_cache 装饰被摘＝『全模块只现算一次』前提没了")
+    assert not problems, "顶层取数防回潮锁⑤（S555 推广自 S542 格②）红：\n" + "\n".join(problems)
+
+
+def test_poison_roster_lock_is_shape_based_not_name_list() -> None:
+    """注毒自证：形状尺抓『全新命名』的顶层取数（证明不按 _REAL/compute 字面或写死名单执法）。"""
+    synth = (
+        "import spec_gates_census as zz\n"
+        "import physical_placement_census as pp\n"
+        "_FRESH = pp.compute()\n"
+        "_OTHER: dict = zz.compute()\n"
+    )
+    assert len(_top_level_external_fetches(synth)) == 2, "形状尺退化＝抓不到新命名"
+    benign = "from pathlib import Path\nREPO_ROOT = Path(__file__).resolve().parents[1]\n"
+    assert _top_level_external_fetches(benign) == [], "from-import 路径件被误伤＝豁免形状破了"

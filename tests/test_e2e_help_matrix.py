@@ -388,7 +388,7 @@ def test_execute_item_still_works_alongside_new_engine() -> None:
 
     from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
     from plugins.bot_unified_runtime.contracts import ReceiptState
-    from plugins.bot_unified_runtime.sender import InMemorySendQueue
+    from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
 
     config = Config(bot_quiet_hours_enabled=False, bot_affinity_enabled=False)
     runtime = e2e.E2eRuntime(

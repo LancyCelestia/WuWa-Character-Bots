@@ -8,12 +8,14 @@
   「当时在飞数 < CEILING 且仍有待办切片」⇒ 红。
 - 腿 2 `test_snapshot_*`：机器可验第二腿——读外部 `find` 现算后写入的
   `DISPATCH-SNAPSHOT.json`（门**绝不自起进程去猜**，只读快照），校验其形状/来源与活跃席数。
-- 腿 3 `test_synthetic_*`：反向自测——内存注「在飞数=6 且仍有待办」⇒必红，注「=10」⇒放行。
+- 腿 3 `test_synthetic_*`：反向自测——内存注「在飞数=6 且仍有待办」⇒必红，注「=CEILING」⇒放行。
 - 腿 4 `test_scan_surface_floor`：日志表行数地板（防「空表蒙绿」）。
 - 腿 5 `test_baseline_literals_are_handwritten`：基线必须是手写字面量，且本自锁对
   `Assign` 与 `AnnAssign` 双形态都认（防「改个写法就躲开自锁」/防派生式基线）。
 
-设计取舍（如实记，见 SEAT-S11.md）：腿 1 用**均匀阈值 CEILING=10**（BRIEFS 字面）。
+设计取舍（如实记，见 SEAT-S11.md）：腿 1 用**均匀阈值 CEILING**（原判据字面 10；用户 2026-09-22T16:32Z
+「断电续跑 + 并发条款改版」第一条把它**一次性改判为 15**，方向为变严，属 §7 禁写面的一次性例外，
+原阈值行逐字抄录与「为何是收紧不是放宽」见 SEAT-MAIN.md §贰零）。
 它会把「旧 5 席纪律期」里其实已满（在飞 5 = 当时上限 5）的历史行也判红——那是本门已知
 的过度执法，按「不为了让门绿去改表」的纪律照实报红，并在报告里逐行分类。
 """
@@ -34,9 +36,10 @@ from pathlib import Path
 #: 本席开工时现算 §12.5 = 11 行；主代理只追加不删，故此为**地板**（只降触发红、不随手抬）。
 DISPATCH_LOG_MIN_ROWS: int = 11
 
-#: 调度饱和上限 = 用户 2026-09-22 改判的并发席位数（05:51Z 起十席同条消息派齐）。
+#: 调度饱和上限 = 用户 2026-09-22 改判的并发席位数：05:51Z 起十席同条消息派齐，
+#: 16:32Z「断电续跑 + 并发条款改版」第一条把它**一次性提到 15**（方向＝变严，见本文件头注）。
 #: 「有空位」＝在飞数 < 此值。腿 3 的反向自测即钉死这个阈值的语义。
-CEILING: int = 10
+CEILING: int = 15
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _TAXONOMY_DIR = _REPO_ROOT / ".superpowers" / "sdd" / "2026-09-22-taxonomy"
@@ -162,8 +165,13 @@ def test_synthetic_underdispatch_is_red() -> None:
 
 
 def test_synthetic_saturated_passes() -> None:
-    """对照：在飞数=10（=上限）且仍有待办 ⇒ 放行（判据不过度执法到「满员」）。"""
-    ok = [{"timestamp": "SYNTH", "closed": "x", "dispatched": "y", "in_flight": 10, "pending": True}]
+    """对照：在飞数=CEILING 且仍有待办 ⇒ 放行（判据不过度执法到「满员」）。
+
+    这里**故意写 `CEILING` 而不是字面量**：本用例钉的是「判据用 `<` 而非 `<=`」这条语义，
+    与阈值具体是 10 还是 15 无关；写死数字会在用户改判阈值时假红，且那种红不携带任何信息。
+    阈值本身的手写字面量要求由腿 5 `test_baseline_literals_are_handwritten` 守。
+    """
+    ok = [{"timestamp": "SYNTH", "closed": "x", "dispatched": "y", "in_flight": CEILING, "pending": True}]
     assert _underdispatch_violations(ok, ceiling=CEILING) == []
 
 

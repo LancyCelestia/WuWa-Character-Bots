@@ -11,10 +11,6 @@
 from __future__ import annotations
 
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
-from plugins.bot_unified_runtime.character.affinity import (
-    linear_transition_for_affinity,
-    tier_for_affinity,
-)
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -25,11 +21,17 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     SessionType,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
+    linear_transition_for_affinity,
+    tier_for_affinity,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.policy.rate_limit import (
     RateLimitDecision,
 )
-from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
-from plugins.bot_unified_runtime.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+    RuntimePipeline,
+)
+from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
 
 
 def _message(session_type: SessionType = SessionType.PRIVATE) -> IncomingMessage:

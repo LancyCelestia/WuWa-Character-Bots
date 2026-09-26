@@ -20,21 +20,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.divination import (
-    build_divination_capability,
-)
-from plugins.bot_unified_runtime.capabilities.fx import (
-    build_fx_capability,
-    is_fx_command,
-)
-from plugins.bot_unified_runtime.capabilities.market import is_market_command
-from plugins.bot_unified_runtime.capabilities.stocks import (
-    build_stocks_capability,
-    is_stocks_command,
-)
-from plugins.bot_unified_runtime.capabilities.today_history import (
-    build_today_history_capability,
-)
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     COMMAND_ROUTE_KINDS,
     INTERNAL_CAPABILITY_NOTES,
@@ -43,6 +28,23 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     build_route_rules,
     classify_message_route,
     clear_route_decision_cache,
+)
+from plugins.bot_unified_runtime.domains.divination.capabilities.divination import (
+    build_divination_capability,
+)
+from plugins.bot_unified_runtime.domains.finance.capabilities.fx import (
+    build_fx_capability,
+    is_fx_command,
+)
+from plugins.bot_unified_runtime.domains.finance.capabilities.market import (
+    is_market_command,
+)
+from plugins.bot_unified_runtime.domains.finance.capabilities.stocks import (
+    build_stocks_capability,
+    is_stocks_command,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.today_history import (
+    build_today_history_capability,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

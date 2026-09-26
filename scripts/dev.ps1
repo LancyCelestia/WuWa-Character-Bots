@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [ValidateSet(
         "help",
@@ -47,9 +47,18 @@ param(
     [string]$Task = "help",
     [string]$Message = "",
     [switch]$Apply,
-    [switch]$KbFull,
-    [switch]$KbNoEmbed
+    # Generic knowledge-base switch list. The caller may pass either the natural
+    # single-dash form (-Kb -Full -NoEmbed) or the double-dash form
+    # (-Kb --kb-full --kb-no-embed). Windows PowerShell 5.1 refuses to *parse*
+    # a bare '--kb-full' as an argument, so this collects the tokens and the
+    # kb-sync task forwards them verbatim.
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$Kb = @()
 )
+
+# This script is a generic task runner. Every concrete task lives in
+# scripts/chatbot-tasks.json; nothing here hard-codes a per-task branch, so the
+# task list is data rather than code. All comments in this file are English.
 
 $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -57,8 +66,10 @@ $RuntimeRoot = Join-Path (Split-Path -Parent $Root) "ChatBot_Runtime"
 $RuntimeVenv = Join-Path $RuntimeRoot "venv"
 # Keep Python bytecode caches out of the AI workspace.
 $env:PYTHONDONTWRITEBYTECODE = "1"
-# 上条拦不住 `python -m py_compile` / `compileall`（实测照写源码树），再设镜像前缀兜底：
-# 任何仍被写出的字节码都落到 Runtime 下，不进 AI 工作区（runtime-layout 铁律 6）。
+# PYTHONDONTWRITEBYTECODE does not stop `python -m py_compile` / `compileall`
+# (they still write into the source tree in practice), so also set the mirror
+# prefix as a backstop: any bytecode that does get written lands under Runtime
+# instead of the AI workspace (runtime-layout rule 6).
 $env:PYTHONPYCACHEPREFIX = Join-Path $RuntimeRoot "pycache"
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
@@ -135,120 +146,295 @@ function Assert-FileContains {
     }
 }
 
-function Invoke-DocsCheck {
-    Write-Step "checking minimal command and runtime documents"
+# --- Generic executor helpers (no per-task hard-coded branching) ----------
 
-    $required = @(
-        "README.md",
-        "COMMANDS.md",
-        "pyproject.toml",
-        ".env.example",
-        ".env.prod",
-        "plugins",
-        "docs\route-matrix.md",
-        "docs\workspace-archive-policy.md",
-        "docs\external-runtime-access.md"
-    )
+# The project interpreter, resolved once and cached so a task that declares
+# pythonTool surfaces "Python was not found" at the same point as before.
+$script:DevPythonCache = $null
 
-    foreach ($item in $required) { Assert-PathExists $item }
-
-    Assert-FileContains "README.md" "COMMANDS.md"
-    Assert-FileContains "README.md" "ChatBot_Archive"
-    Assert-FileContains "COMMANDS.md" "scripts/dev.ps1 verify"
-    Assert-FileContains "pyproject.toml" 'plugin_dirs = ["plugins"]'
-    Assert-FileContains "pyproject.toml" 'builtin_plugins = ["echo"]'
-    Assert-FileContains "docs\workspace-archive-policy.md" "ChatBot_Archive"
-    Assert-FileContains "docs\external-runtime-access.md" "LOCALSTORE_USE_CWD"
-    Assert-FileContains "docs\route-matrix.md" "route"
-
-    Write-Step "docs-check passed"
+function Get-ProjectPythonCached {
+    if ($script:DevPythonCache) { return $script:DevPythonCache }
+    $py = Get-ProjectPython
+    $script:DevPythonCache = $py
+    return $py
 }
-function Invoke-PluginCheck {
-    Write-Step "checking local plugin discovery contract"
 
-    Assert-PathExists "plugins"
-    Assert-FileContains "pyproject.toml" 'plugin_dirs = ["plugins"]'
-    Assert-PathExists "plugins\bot_unified_runtime\__init__.py"
-    Assert-PathExists "plugins\bot_unified_runtime\domains\core\contracts\runtime.py"
+function Get-CacheDirPath {
+    param([string]$Name)
+    switch ($Name) {
+        "ruffCache" { return (Join-Path $RuntimeRoot "cache\ruff") }
+        "mypyCache" { return (Join-Path $RuntimeRoot "cache\mypy") }
+        default { throw "Unknown cache directory name: $Name" }
+    }
+}
 
+# True when the parsed JSON object exposes the named property.
+function HasProp {
+    param($Object, [string]$Name)
+    if ($null -eq $Object) { return $false }
+    return ($Object.PSObject.Properties.Name -contains $Name)
+}
+
+# Forward the caller's knowledge-base switches. Accepts either spelling family:
+# the real double-dash arguments (--kb-full / --kb-no-embed), the natural
+# single-dash tokens (-Full / -NoEmbed), or the bare words (full / noembed).
+# Each captured token is normalized by dropping leading dashes and hyphens and
+# lower-casing, so every family maps onto the same real argument.
+function Get-DevKbTokens {
+    $tokens = @()
+    foreach ($raw in $Kb) {
+        $norm = (([string]$raw).TrimStart('-') -replace '-', '').ToLowerInvariant()
+        switch ($norm) {
+            "kbfull" { if ("--kb-full" -notin $tokens) { $tokens += "--kb-full" } }
+            "full" { if ("--kb-full" -notin $tokens) { $tokens += "--kb-full" } }
+            "kbnoembed" { if ("--kb-no-embed" -notin $tokens) { $tokens += "--kb-no-embed" } }
+            "noembed" { if ("--kb-no-embed" -notin $tokens) { $tokens += "--kb-no-embed" } }
+        }
+    }
+    return $tokens
+}
+
+# Expand a single argv element from the task definition. A plain string is used
+# verbatim; an object describes a value that only resolves at run time.
+function Expand-DevArg {
+    param($Element)
+
+    if ($Element -is [string]) { return $Element }
+    if ($Element -isnot [System.Management.Automation.PSCustomObject]) { return [string]$Element }
+
+    if (HasProp $Element "cacheDir") {
+        return (Get-CacheDirPath $Element.cacheDir)
+    }
+    if (HasProp $Element "optionalMessage") {
+        $spec = $Element.optionalMessage
+        if ($spec.mode -eq "truthy") {
+            if ($Message) { return @($spec.flag, $Message) }
+            return @()
+        }
+        if (-not [string]::IsNullOrWhiteSpace($Message)) { return @($spec.flag, $Message) }
+        return @()
+    }
+    if (HasProp $Element "messageOrDefault") {
+        $spec = $Element.messageOrDefault
+        if ($spec.mode -eq "truthy") {
+            if ($Message) { return @($spec.flag, $Message) }
+            return @($spec.flag, $spec.default)
+        }
+        if ([string]::IsNullOrWhiteSpace($Message)) { return @($spec.flag, $spec.default) }
+        return @($spec.flag, $Message)
+    }
+    if (HasProp $Element "message") {
+        return $Message
+    }
+    if (HasProp $Element "replaceOr") {
+        $spec = $Element.replaceOr
+        $on = $false
+        switch ($spec.param) {
+            "Apply" { $on = [bool]$Apply }
+        }
+        if ($on) { return $spec.onFlag }
+        return $spec.offFlag
+    }
+    if (HasProp $Element "optionalSwitches") {
+        if ($Element.optionalSwitches -eq "Kb") { return (Get-DevKbTokens) }
+        return @()
+    }
+    throw "Unknown command argument descriptor in task JSON."
+}
+
+# Resolve the executable for a command. Commands that carry a python module or
+# a python script always run through the interpreter resolved at run time (so
+# the interpreter path is never a stored FilePath). Any other command resolves
+# its tool by name via Get-ProjectCommand.
+function Resolve-DevCommandTool {
+    param($Command)
+    if ((HasProp $Command "module") -or (HasProp $Command "pythonScript")) {
+        return Get-ProjectPythonCached
+    }
+    return (Get-ProjectCommand $Command.tool)
+}
+
+function Invoke-DevCommand {
+    param($Command)
+
+    $FilePath = Resolve-DevCommandTool $Command
+
+    $Arguments = @()
+    if (HasProp $Command "args") {
+        foreach ($element in @($Command.args)) {
+            $expanded = Expand-DevArg $element
+            if ($null -ne $expanded) {
+                foreach ($item in @($expanded)) { $Arguments += $item }
+            }
+        }
+    }
+    if (HasProp $Command "module") {
+        $Arguments = @("-m", $Command.module) + $Arguments
+    }
+    elseif (HasProp $Command "pythonScript") {
+        $Arguments = @($Command.pythonScript) + $Arguments
+    }
+
+    if ($null -eq $FilePath) {
+        throw "Command tool '$($Command.tool)' was not found."
+    }
+
+    if ((HasProp $Command "failMessage") -and $Command.failMessage) {
+        & $FilePath @Arguments
+        if ($LASTEXITCODE -ne 0) { throw $Command.failMessage }
+        return
+    }
+
+    switch ($Command.runner) {
+        "soft" {
+            & $FilePath @Arguments
+            $script:DevSoftExit = $LASTEXITCODE
+        }
+        "loop-plain" {
+            & $FilePath @Arguments
+        }
+        default {
+            Invoke-External $FilePath $Arguments
+        }
+    }
+}
+
+function Test-DevCondition {
+    param(
+        [string]$Condition,
+        [string]$Tool
+    )
+    switch ($Condition) {
+        "toolAvailable" { return [bool](Get-ProjectCommand $Tool) }
+        "botAlreadyRunning" {
+            $inUse = Get-NetTCPConnection -State Listen -LocalPort 8080 -ErrorAction SilentlyContinue
+            return [bool]$inUse
+        }
+        "testsDirExists" { return (Test-Path -LiteralPath (Join-Path $Root "tests")) }
+        default { throw "Unknown condition: $Condition" }
+    }
+}
+
+function Invoke-DevPluginsCount {
     $pluginFiles = Get-ChildItem -LiteralPath (Join-Path $Root "plugins") -Recurse -File -Include "*.py" -ErrorAction SilentlyContinue
-    if (-not $pluginFiles -or $pluginFiles.Count -eq 0) {
+    if (-not $pluginFiles -or @($pluginFiles).Count -eq 0) {
         throw "No local plugin Python files exist."
     }
-
-    Write-Step "found bot_unified_runtime and $($pluginFiles.Count) local plugin Python file(s)"
+    Write-Step "found bot_unified_runtime and $(@($pluginFiles).Count) local plugin Python file(s)"
 }
 
-function Invoke-Install {
-    $uv = Get-ProjectCommand "uv"
-    Push-Location $Root
-    try {
-        if ($uv) {
-            Write-Step "installing dependencies with uv sync"
-            Invoke-External $uv @("sync")
-            return
-        }
+# The generic step interpreter. Control-flow steps (conditional / loop /
+# subtask) recurse back into this same function; there is no per-task switch.
+function Invoke-DevSteps {
+    param($Steps)
 
-        $python = Get-ProjectPython
-        Write-Step "installing dependencies with pip editable install"
-        Invoke-External $python @("-m", "pip", "install", "-e", ".")
-    }
-    finally { Pop-Location }
-}
+    if ($null -eq $Steps) { return }
+    foreach ($step in @($Steps)) {
+        if ($script:DevAborted) { return }
 
-function Invoke-Run {
-    param([string]$Mode)
-
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        $portInUse = Get-NetTCPConnection -State Listen -LocalPort 8080 -ErrorAction SilentlyContinue
-        if ($portInUse) {
-            Write-Host "[dev] NoneBot 已经在运行（8080 端口被占用）。不要重复启动；如需重启请先关闭原进程。"
-            return
-        }
-        Write-Step "starting NoneBot ($Mode)"
-        Invoke-External $python @("bot.py")
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-RunWatch {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        while ($true) {
-            $portInUse = Get-NetTCPConnection -State Listen -LocalPort 8080 -ErrorAction SilentlyContinue
-            if ($portInUse) {
-                Write-Host "[dev] NoneBot 已经在运行（8080 端口被占用）。不要重复启动；如需重启请先关闭原进程。"
-                return
+        switch ($step.type) {
+            "step" {
+                if ($step.raw) {
+                    Write-Host $step.message.Replace('$LASTEXITCODE', [string]$LASTEXITCODE)
+                }
+                else {
+                    Write-Step $step.message
+                }
             }
-            Write-Step "starting NoneBot (run-watch, auto-restart on exit)"
-            & $python "bot.py"
-            Write-Host "[dev] NoneBot 退出（exit code = $LASTEXITCODE），5 秒后自动重启。按 Ctrl+C 退出本循环。"
-            Start-Sleep -Seconds 5
+            "warn" {
+                Write-Warning $step.message
+            }
+            "assertPath" {
+                Assert-PathExists $step.path
+            }
+            "assertContains" {
+                Assert-FileContains $step.path $step.needle
+            }
+            "command" {
+                Invoke-DevCommand $step
+            }
+            "subtask" {
+                Invoke-DevTask $step.task
+            }
+            "conditional" {
+                $ok = Test-DevCondition -Condition $step.condition -Tool $step.tool
+                if ($ok) {
+                    Invoke-DevSteps $step.then
+                }
+                elseif ((HasProp $step "else") -and $step.else) {
+                    Invoke-DevSteps $step.else
+                }
+            }
+            "loop" {
+                while (-not $script:DevAborted) {
+                    Invoke-DevSteps $step.steps
+                }
+            }
+            "sleep" {
+                Start-Sleep -Seconds ([int]$step.seconds)
+            }
+            "abortWithMessage" {
+                Write-Host $step.message
+                $script:DevAborted = $true
+            }
+            "ensureTool" {
+                if (-not (Get-ProjectCommand $step.tool)) { throw $step.missingMessage }
+            }
+            "ensureCacheDir" {
+                $p = Get-CacheDirPath $step.cacheDir
+                New-Item -ItemType Directory -Force -Path $p | Out-Null
+            }
+            "ensurePythonModule" {
+                $py = Get-ProjectPythonCached
+                & $py -c "import $($step.module)" *> $null
+                if ($LASTEXITCODE -ne 0) { throw $step.missingMessage }
+            }
+            "requireMessage" {
+                if ([string]::IsNullOrWhiteSpace($Message)) { throw $step.message }
+            }
+            "resolvePython" {
+                Get-ProjectPythonCached | Out-Null
+            }
+            "pythonImportVersion" {
+                $py = Get-ProjectPythonCached
+                $pkg = $step.package
+                Invoke-External $py @("-c", "from importlib.metadata import version; print('$pkg', version('$pkg'))")
+            }
+            "pluginsCount" {
+                Invoke-DevPluginsCount
+            }
+            "help" {
+                Write-Output $script:DevHelpLines
+            }
+            default {
+                throw "Unknown step type: $($step.type)"
+            }
         }
     }
-    finally { Pop-Location }
 }
 
-function Invoke-Test {
+# The pytest task keeps its original imperative body verbatim: the autosync
+# defaulting and the per-run temp-directory handling are control flow that the
+# generic step interpreter cannot express as a command list.
+function Invoke-TaskTest {
     if (-not (Test-Path -LiteralPath (Join-Path $Root "tests"))) {
         throw "The pytest suite is archived outside the workspace. Restore tests/ from development-materials-2026-08-28.tar.gz before using the test task."
     }
 
-    # autosync（2026-09-13 用户裁定）：test 任务启用 conftest 常驻自动同步——
-    # session 开始自动 --write 修正漂移，测试跑完文档/哈希已是同步态，人无感。
-    # V2.1 §13 门禁冲突修正（2026-09-17）：原实现无条件覆盖外层值，调用方设
-    # BOT_AUTOSYNC=0 会被这里改回 1，conftest 失败时自动 --write 重录预期
-    # （含 tests/render_hashes.json），把真实回归「洗绿」。现语义：
-    # 仅当调用方未显式设置 BOT_AUTOSYNC 时才默认 1（保留人无感体验）；
-    # 显式 0 = 禁自动重录（V2.1 验收模式，生成物基线必须逐字节不变）。
+    # autosync (2026-09-13 user ruling): the test task enables the conftest
+    # resident auto-sync so that, once the run finishes, docs/hashes are already
+    # in sync without any manual step. V2.1 gate-conflict fix (2026-09-17): the
+    # original implementation unconditionally overwrote an outer value, so a
+    # caller setting BOT_AUTOSYNC=0 was silently turned back to 1; when conftest
+    # failed it then auto-rerolled the expectations (including
+    # tests/render_hashes.json), washing a real regression green. Current
+    # semantics: default to 1 only when the caller did not explicitly set
+    # BOT_AUTOSYNC (keep the seamless experience); an explicit 0 disables the
+    # automatic re-roll (V2.1 acceptance mode, where the generated baseline must
+    # stay byte-for-byte unchanged).
     if (-not (Test-Path env:BOT_AUTOSYNC)) { $env:BOT_AUTOSYNC = "1" }
 
-    $python = Get-ProjectPython
+    $python = Get-ProjectPythonCached
     $pytest = Get-ProjectCommand "pytest"
 
     Push-Location $Root
@@ -308,617 +494,59 @@ function Invoke-Test {
     }
 }
 
-function Invoke-Sync {
-    # autosync（2026-09-13 用户裁定）：链式执行全部 --write 联动——
-    # 命令目录 -> 机器事实册 -> 哈希清单。改完代码跑一次本任务，
-    # 全项目对应部分自动更正，替代三个手动 write。
-    $python = Get-ProjectPython
-    Push-Location $Root
-    try {
-        Write-Step "sync: regenerating command catalog"
-        Invoke-External $python @("scripts/command_catalog.py", "--write")
-        Write-Step "sync: regenerating auto-facts"
-        Invoke-External $python @("scripts/doc_sync.py", "--write")
-        Write-Step "sync: regenerating render hashes"
-        Invoke-External $python @("tests/verify_hashes.py", "--write")
-        Write-Step "sync: regenerating ten-board doc tree"
-        Invoke-External $python @("scripts/board_doc_sync.py", "--write")
-        Write-Step "sync: verifying all gates green"
-        Invoke-External $python @("scripts/doc_sync.py", "--check")
-        Invoke-External $python @("tests/verify_hashes.py", "--check")
-        Invoke-External $python @("scripts/board_doc_sync.py", "--check")
-        Write-Step "sync complete - all generated docs & hashes up to date"
-    }
-    finally { Pop-Location }
-}
+function Invoke-DevTask {
+    param([string]$Name)
 
-
-function Invoke-Lint {
-    $ruff = Get-ProjectCommand "ruff"
-    if (-not $ruff) {
-        throw "ruff was not found. Add/install lint dependencies before using the lint task."
-    }
-    $ruffCache = Join-Path $RuntimeRoot "cache\ruff"
-    New-Item -ItemType Directory -Force -Path $ruffCache | Out-Null
-
-    Push-Location $Root
-    try {
-        Write-Step "running ruff check (cache outside workspace)"
-        Invoke-External $ruff @("check", "--cache-dir", $ruffCache, ".")
-    }
-    finally { Pop-Location }
-}
-
-
-function Invoke-Typecheck {
-    # Invoke mypy through the selected Python interpreter. The Windows mypy.exe
-    # launcher can retain the original venv path after the venv is moved outside
-    # the source workspace; python -m mypy avoids that stale launcher metadata.
-    $python = Get-ProjectPython
-    & $python -c "import mypy" *> $null
-    if ($LASTEXITCODE -ne 0) {
-        throw "mypy was not found in the selected Python environment. Add/install typecheck dependencies before using the typecheck task."
-    }
-    $mypyCache = Join-Path $RuntimeRoot "cache\mypy"
-    New-Item -ItemType Directory -Force -Path $mypyCache | Out-Null
-
-    Push-Location $Root
-    try {
-        Write-Step "running mypy for project-owned code (cache outside workspace)"
-        Invoke-External $python @(
-            "-m",
-            "mypy",
-            "--cache-dir",
-            $mypyCache,
-            "--explicit-package-bases",
-            "--ignore-missing-imports",
-            "plugins"
-        )
-    }
-    finally { Pop-Location }
-}
-
-
-function Invoke-Smoke {
-    Invoke-DocsCheck
-    Invoke-PluginCheck
-
-    $python = Get-ProjectPython
-    Write-Step "checking NoneBot import"
-    Invoke-External $python @("-c", "from importlib.metadata import version; print('nonebot2', version('nonebot2'))")
-
-    $nb = Get-ProjectCommand "nb"
-    if (-not $nb) {
-        throw "NoneBot CLI 'nb' was not found. Run scripts/dev.ps1 install first."
+    $task = $script:DevTasks.$Name
+    if ($null -eq $task) {
+        throw "No task definition found for '$Name' in $TasksPath."
     }
 
-    Write-Step "checking NoneBot CLI"
-    Invoke-External $nb @("--version")
-}
+    $script:DevAborted = $false
+    $script:DevSoftExit = $null
 
-function Invoke-Doctor {
-    $python = Get-ProjectPython
-    $exitCode = 0
-
-    Push-Location $Root
-    try {
-        Write-Step "running local environment doctor"
-        & $python -m plugins.bot_unified_runtime.domains.ops.smoke.smoke doctor
-        $exitCode = $LASTEXITCODE
+    if ((HasProp $task "setUtf8") -and $task.setUtf8) {
+        $env:PYTHONIOENCODING = "utf-8"
+        $env:PYTHONUTF8 = "1"
     }
-    finally { Pop-Location }
-
-    if ($exitCode -ne 0) {
-        Write-Step "Environment doctor did not pass. See diagnostic output above."
-        exit $exitCode
+    if ((HasProp $task "pythonTool") -and $task.pythonTool) {
+        Get-ProjectPythonCached | Out-Null
     }
-}
-
-function Invoke-BackendBaseSmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running offline backend base smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "nonebot")
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "startup")
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "transport")
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.chat_reply.pipeline.backend_unit", "--message", $(if ($Message) { $Message } else { "测试后端底座" }))
+    if ((HasProp $task "pytestTask") -and $task.pytestTask) {
+        Invoke-TaskTest
+        return
     }
-    finally { Pop-Location }
-}
-function Invoke-PromptPreview {
-    $python = Get-ProjectPython
 
-    Push-Location $Root
-    try {
-        if ([string]::IsNullOrWhiteSpace($Message)) {
-            throw "prompt-preview requires -Message."
+    if ((HasProp $task "push") -and $task.push) {
+        Push-Location $Root
+        try {
+            Invoke-DevSteps $task.steps
         }
-        Write-Step "building redacted prompt preview without calling LLM"
-        Invoke-External $python @(
-            "-m",
-            "plugins.bot_unified_runtime.domains.chat_reply.runtime.prompt_preview",
-            "--message",
-            $Message,
-            "--write"
-        )
-    }
-    finally { Pop-Location }
-}
-function Invoke-BackendSmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running one-shot offline backend core execution unit"
-        $arguments = @("-m", "plugins.bot_unified_runtime.domains.chat_reply.pipeline.backend_unit", "--message", $(if ($Message) { $Message } else { "测试后端主链路" }))
-        Invoke-External $python $arguments
-    }
-    finally { Pop-Location }
-}
-function Invoke-ChatSmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running local LLM chat smoke"
-        $arguments = @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "chat")
-        if (-not [string]::IsNullOrWhiteSpace($Message)) {
-            $arguments += @("--message", $Message)
+        finally {
+            Pop-Location
         }
-        Invoke-External $python $arguments
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-ReadinessSmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running unified local LLM dialogue readiness smoke"
-        $arguments = @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "readiness")
-        if (-not [string]::IsNullOrWhiteSpace($Message)) {
-            $arguments += @("--message", $Message)
-        }
-        Invoke-External $python $arguments
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-DialogueSmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running local LLM dialogue acceptance smoke"
-        $arguments = @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "dialogue")
-        if (-not [string]::IsNullOrWhiteSpace($Message)) {
-            $arguments += @("--message", $Message)
-        }
-        Invoke-External $python $arguments
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-RuntimeLayout {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "checking external runtime data boundary"
-        Invoke-External $python @("scripts\runtime_layout_smoke.py")
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-ConfigSmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running local configuration readiness smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "config")
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-PersonaSmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running local persona readiness smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "persona")
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-ContextSmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running local LLM context smoke"
-        $arguments = @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "context")
-        if (-not [string]::IsNullOrWhiteSpace($Message)) {
-            $arguments += @("--message", $Message)
-        }
-        Invoke-External $python $arguments
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-WhySmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running local LLM decision why smoke"
-        $arguments = @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "why")
-        if (-not [string]::IsNullOrWhiteSpace($Message)) {
-            $arguments += @("--message", $Message)
-        }
-        Invoke-External $python $arguments
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-LlmSmoke {
-    $python = Get-ProjectPython
-    $exitCode = 0
-
-    Push-Location $Root
-    try {
-        Write-Step "running OpenAI-compatible LLM connection smoke"
-        & $python -m plugins.bot_unified_runtime.domains.ops.smoke.smoke llm
-        $exitCode = $LASTEXITCODE
-    }
-    finally { Pop-Location }
-
-    if ($exitCode -ne 0) {
-        Write-Step "LLM smoke did not pass. See diagnostic output above."
-        exit $LASTEXITCODE
-    }
-}
-
-function Invoke-LlmSetup {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "printing safe LLM setup checklist"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "llm-setup")
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-NoneBotSmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running NoneBot plugin load smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "nonebot")
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-StartupSmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running NoneBot startup dry-run smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "startup")
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-QueueSmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running local send queue worker smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "queue")
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-TransportSmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running local OneBot/SnowLuma transport smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "transport")
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-OnlineTransportSmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running read-only online transport smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "online-transport")
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-Console {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "starting console chat REPL"
-        $arguments = @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.console_chat")
-        if (-not [string]::IsNullOrWhiteSpace($Message)) {
-            $arguments += @("--message", $Message)
-        }
-        Invoke-External $python $arguments
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-CredentialSmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running credential health smoke"
-        Invoke-External $python @(
-            "-m",
-            "plugins.bot_unified_runtime.domains.core.credentials.credential_health"
-        )
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-EmbeddingSmoke {
-    $python = Get-ProjectPython
-    $exitCode = 0
-
-    Push-Location $Root
-    try {
-        Write-Step "running OpenAI-compatible embeddings connection smoke"
-        & $python -m plugins.bot_unified_runtime.domains.ops.smoke.smoke embedding
-        $exitCode = $LASTEXITCODE
-    }
-    finally { Pop-Location }
-
-    if ($exitCode -ne 0) {
-        Write-Step "Embedding smoke did not pass. See diagnostic output above."
-        exit $LASTEXITCODE
-    }
-}
-
-function Invoke-KnowledgeSync {
-    $python = Get-ProjectPython
-    $exitCode = 0
-
-    Push-Location $Root
-    try {
-        Write-Step "pre-warming vector knowledge base from BOT_KNOWLEDGE_FILES"
-        & $python -m plugins.bot_unified_runtime.domains.ops.smoke.smoke knowledge-sync
-        $exitCode = $LASTEXITCODE
-    }
-    finally { Pop-Location }
-
-    if ($exitCode -ne 0) {
-        Write-Step "Knowledge sync did not finish. See diagnostic output above."
-        exit $LASTEXITCODE
-    }
-}
-
-function Invoke-KbWikiSync {
-    $python = Get-ProjectPython
-    $exitCode = 0
-    $kbArgs = @()
-    if ($KbFull) { $kbArgs += "--kb-full" }
-    if ($KbNoEmbed) { $kbArgs += "--kb-no-embed" }
-
-    Push-Location $Root
-    try {
-        Write-Step "syncing Crawl Wiki knowledge base into dedicated vector store"
-        & $python -m plugins.bot_unified_runtime.domains.ops.smoke.smoke kb-sync @kbArgs
-        $exitCode = $LASTEXITCODE
-    }
-    finally { Pop-Location }
-
-    if ($exitCode -ne 0) {
-        Write-Step "kb-sync did not finish. See diagnostic output above."
-        exit $LASTEXITCODE
-    }
-}
-
-function Invoke-GscoreSmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running GsCore bridge readiness smoke"
-        Invoke-External $python @(
-            "-m",
-            "plugins.bot_unified_runtime.domains.ops.integrations.gscore_bridge"
-        )
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-Verify {
-    Invoke-DocsCheck
-    Invoke-PluginCheck
-
-    if (Test-Path -LiteralPath (Join-Path $Root "tests")) {
-        Invoke-Test
     }
     else {
-        Write-Warning "Skipping tests because tests/ is intentionally archived outside the AI workspace."
+        Invoke-DevSteps $task.steps
     }
 
-    if (Get-ProjectCommand "ruff") {
-        Invoke-Lint
+    if ((HasProp $task "softFailMessage") -and $task.softFailMessage) {
+        if ($null -ne $script:DevSoftExit -and $script:DevSoftExit -ne 0) {
+            Write-Step $task.softFailMessage
+            exit $script:DevSoftExit
+        }
     }
-    else {
-        Write-Warning "Skipping lint because ruff is not installed."
-    }
-
-    if (Get-ProjectCommand "mypy") {
-        Invoke-Typecheck
-    }
-    else {
-        Write-Warning "Skipping typecheck because mypy is not installed."
-    }
-
-    Write-Step "verify completed for the current documentation/spec stage"
 }
 
-function Show-Help {
-    Write-Output @(
-        'Usage:'
-        '  powershell -NoProfile -ExecutionPolicy Bypass -Command "& .\scripts\dev.ps1 -Task <task>"'
-        ''
-        'Tasks:'
-        '  help          Show this help.'
-        '  doctor        Diagnose Python, NoneBot imports, OneBot adapter, APScheduler, nb CLI, and plugin import.'
-        '  install       Install project dependencies with uv sync when available, otherwise pip install -e .'
-        '  dev           Start NoneBot for local development.'
-        '  run           Start NoneBot using the same runtime command as dev.'
-        '  run-watch     Start NoneBot with auto-restart (restarts 5s after exit).'
-        '  test          Run the retained regression tests; fails if tests or pytest are unavailable.'
-        '  lint          Run ruff check. Fails until ruff is installed.'
-        '  typecheck     Run mypy. Fails until mypy is installed.'
-        '  readiness-smoke Summarize local dialogue, config, context, and next LLM action without real LLM calls.'
-        '  dialogue-smoke Validate one local dialogue turn across context, LLM, review, and sender diagnostics. Use -Message to test custom text.'
-        '  chat-smoke    Run a local static LLM chat smoke with Shorekeeper persona files. Use -Message to test custom text.'
-        '  backend-smoke Run one offline backend core execution through RuntimePipeline.'
-        '  prompt-preview Run and save a redacted LLM prompt preview without calling LLM.'
-        '  backend-base-smoke Run NoneBot/startup/transport/backend offline base checks.'
-        '  config-smoke  Validate local persona, knowledge, and LLM readiness config without network calls.'
-        '  runtime-layout Verify Runtime/external-data boundary and ensure source has no generated state.'
-        '  persona-smoke Validate loaded persona, tone, and safe source refs without calling LLM.'
-        '  context-smoke Build local persona/memory/knowledge prompt diagnostics without calling LLM. Use -Message to test custom text.'
-        '  why-smoke     Explain policy, reply budget, LLM status, send request, receipt, and audit for one local chat input.'
-        '  llm-setup     Print a safe .env checklist and next commands for real LLM onboarding; never writes secrets or calls the provider.'
-        '  llm-smoke     Validate configured OpenAI-compatible LLM connection without sending chat messages.'
-        '  nonebot-smoke Validate local NoneBot/OneBot plugin import and config without connecting SnowLuma.'
-        '  startup-smoke Initialize NoneBot in a child process, load handlers, then exit without connecting SnowLuma.'
-        '  queue-smoke   Drain a temporary SQLite send queue with fake transport; never connects SnowLuma or sends QQ messages.'
-        '  transport-smoke Validate OneBot/SnowLuma message segments and fake transport; never connects SnowLuma or sends QQ messages.'
-        '  online-transport-smoke Read current online bot state without calling send APIs; never sends QQ messages.'
-        '  console       Interactive console chat through the real runtime pipeline (offline static LLM by default). Use -Message for one-shot non-interactive mode.'
-        '  credential-smoke Check cookie/credential expiry and (with --probe) availability; warns when re-login is needed. Never prints secret values.'
-        '  embedding-smoke Validate configured OpenAI-compatible embeddings service without touching the knowledge DB.'
-        '  knowledge-sync Pre-warm vector knowledge base and write to external Runtime data.'
-        '  kb-sync        Sync Crawl Wiki knowledge base (hash-idempotent) into its own vector store; pass -KbFull for first ingest.'
-        '  gscore-smoke   Read-only GsCore bridge readiness check; never connects or sends.'
-        '  route-demo     Print the full phrasing routing matrix. Offline, no network, no QQ.'
-        '  route-smoke    Run deterministic capabilities against real APIs/services; may use network, never sends QQ.'
-        '  search-smoke   One read-only query per configured search provider (Tavily/You/TinyFish/LangSearch); never sends QQ.'
-        '  memory-sanitize Scan long-term memory for NSFW/violence/insult content; -Apply quarantines and deletes.'
-        '  docs-check    Verify minimal runtime docs, archive policy, and project config pointers exist.'
-        '  plugin-check  Verify plugins/ is configured and report whether local plugins exist yet.'
-        '  smoke         Verify docs, plugin discovery, NoneBot import, and nb CLI availability.'
-        '  verify        Verify docs, plugin discovery, retained pytest tests, lint, and typecheck.'
-    )
+# Load the task definitions. Read the bytes as UTF-8 explicitly so the non-ASCII
+# strings inside stay intact regardless of the active ANSI code page.
+$TasksPath = Join-Path $PSScriptRoot "chatbot-tasks.json"
+if (-not (Test-Path -LiteralPath $TasksPath)) {
+    throw "Task definitions file not found: $TasksPath"
 }
-function Invoke-RouteDemo {
-    $python = Get-ProjectPython
-    $env:PYTHONIOENCODING = "utf-8"
-    $env:PYTHONUTF8 = "1"
-    Push-Location $Root
-    Write-Step "printing full phrasing routing matrix (offline)"
-    try {
-        & $python -m plugins.bot_unified_runtime.domains.ops.smoke.route_demo
-        if ($LASTEXITCODE -ne 0) { throw "route-demo failed" }
-    }
-    finally { Pop-Location }
-}
+$DevTasksJsonText = [System.IO.File]::ReadAllText($TasksPath, [System.Text.Encoding]::UTF8)
+$DevTasksRoot = ConvertFrom-Json $DevTasksJsonText
+$script:DevTasks = $DevTasksRoot.tasks
+$script:DevHelpLines = @($DevTasksRoot.help.lines)
 
-function Invoke-RouteSmoke {
-    $python = Get-ProjectPython
-    $env:PYTHONIOENCODING = "utf-8"
-    $env:PYTHONUTF8 = "1"
-    Push-Location $Root
-    Write-Step "running real API smoke for deterministic capabilities"
-    try {
-        & $python -m plugins.bot_unified_runtime.domains.ops.smoke.route_demo --real
-        if ($LASTEXITCODE -ne 0) { throw "route-smoke failed" }
-    }
-    finally { Pop-Location }
-}
-
-
-function Invoke-SearchSmoke {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "running read-only search API providers smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.core.search.search_smoke")
-    }
-    finally { Pop-Location }
-}
-
-function Invoke-MemorySanitize {
-    $python = Get-ProjectPython
-
-    Push-Location $Root
-    try {
-        Write-Step "memory sanitize (dry-run preview; add -Apply to delete)"
-        $arguments = @("-m", "plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize", "--dry-run")
-        if ($Apply) { $arguments = @("-m", "plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize", "--apply") }
-        Invoke-External $python $arguments
-    }
-    finally { Pop-Location }
-}
-
-
-switch ($Task) {
-    "help" { Show-Help }
-    "doctor" { Invoke-Doctor }
-    "install" { Invoke-Install }
-    "dev" { Invoke-Run "dev" }
-    "run" { Invoke-Run "run" }
-    "run-watch" { Invoke-RunWatch }
-    "test" { Invoke-Test }
-    "lint" { Invoke-Lint }
-    "typecheck" { Invoke-Typecheck }
-    "readiness-smoke" { Invoke-ReadinessSmoke }
-    "dialogue-smoke" { Invoke-DialogueSmoke }
-    "chat-smoke" { Invoke-ChatSmoke }
-    "backend-smoke" { Invoke-BackendSmoke }
-    "prompt-preview" { Invoke-PromptPreview }
-    "backend-base-smoke" { Invoke-BackendBaseSmoke }
-    "config-smoke" { Invoke-ConfigSmoke }
-    "runtime-layout" { Invoke-RuntimeLayout }
-    "persona-smoke" { Invoke-PersonaSmoke }
-    "context-smoke" { Invoke-ContextSmoke }
-    "why-smoke" { Invoke-WhySmoke }
-    "llm-smoke" { Invoke-LlmSmoke }
-    "llm-setup" { Invoke-LlmSetup }
-    "nonebot-smoke" { Invoke-NoneBotSmoke }
-    "startup-smoke" { Invoke-StartupSmoke }
-    "queue-smoke" { Invoke-QueueSmoke }
-    "transport-smoke" { Invoke-TransportSmoke }
-    "online-transport-smoke" { Invoke-OnlineTransportSmoke }
-    "console" { Invoke-Console }
-    "credential-smoke" { Invoke-CredentialSmoke }
-    "embedding-smoke" { Invoke-EmbeddingSmoke }
-    "knowledge-sync" { Invoke-KnowledgeSync }
-    "kb-sync" { Invoke-KbWikiSync }
-    "gscore-smoke" { Invoke-GscoreSmoke }
-    "route-demo" { Invoke-RouteDemo }
-    "route-smoke" { Invoke-RouteSmoke }
-    "search-smoke" { Invoke-SearchSmoke }
-    "memory-sanitize" { Invoke-MemorySanitize }
-    "docs-check" { Invoke-DocsCheck }
-    "plugin-check" { Invoke-PluginCheck }
-    "sync" { Invoke-Sync }
-    "smoke" { Invoke-Smoke }
-    "verify" { Invoke-Verify }
-}
+Invoke-DevTask $Task

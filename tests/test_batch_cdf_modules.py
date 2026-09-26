@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from plugins.bot_unified_runtime.capabilities.group_files import (
+from plugins.bot_unified_runtime.domains.files.capabilities.group_files import (
     DirtyGuard,
     GroupFileStore,
     category_for_filename,

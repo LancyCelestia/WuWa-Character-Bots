@@ -21,14 +21,14 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from plugins.bot_unified_runtime.capabilities.campus import (
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.domains.assistant.campus.campus import (
     _CAMPUS_FORWARD_INTRO,
     _CAMPUS_FORWARD_MAX_CHARS,
     CampusForwardService,
     build_campus_source,
     matches_campus_source,
 )
-from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.domains.assistant.campus.campus_store import (
     CampusStore,
 )
@@ -657,6 +657,9 @@ def _central_pipeline(tmp_path: Path, *, idempotency_table=None):
     from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
     from plugins.bot_unified_runtime.control_plane.features import FeatureStateStore
     from plugins.bot_unified_runtime.control_plane.services import FeatureControlService
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+        RuntimePipeline,
+    )
     from plugins.bot_unified_runtime.domains.ops.features.feature_catalog import (
         build_product_descriptors,
     )
@@ -666,7 +669,6 @@ def _central_pipeline(tmp_path: Path, *, idempotency_table=None):
     from plugins.bot_unified_runtime.domains.transport.sender.queue import (
         InMemorySendQueue,
     )
-    from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
 
     audit = InMemoryAuditLogger()
     queue = InMemorySendQueue(audit_logger=audit)
@@ -864,15 +866,15 @@ def test_campus_forward_registered_for_feature_gate(tmp_path: Path) -> None:
     from plugins.bot_unified_runtime.domains.assistant.campus.campus import (
         build_campus_forward_message,
     )
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.capability_registry import (
+        CONTROLLED_INTERNAL_CAPABILITIES,
+    )
     from plugins.bot_unified_runtime.domains.ops.features.feature_catalog import (
         build_product_descriptors,
         capability_feature_bindings,
     )
     from plugins.bot_unified_runtime.domains.ops.features.feature_gate import (
         ProductFeatureGate,
-    )
-    from plugins.bot_unified_runtime.runtime.capability_registry import (
-        CONTROLLED_INTERNAL_CAPABILITIES,
     )
 
     assert "bot.campus_forward" in CONTROLLED_INTERNAL_CAPABILITIES

@@ -38,7 +38,9 @@ def test_risk7_reminder_wallclock_follows_config_timezone() -> None:
     """转正回归（V21-risk-7b 修复，2026-09-17）：墙钟推算统一配置时区。"""
     from zoneinfo import ZoneInfo
 
-    from plugins.bot_unified_runtime.character.reminders import parse_reminder_intent
+    from plugins.bot_unified_runtime.domains.schedule.store.reminders import (
+        parse_reminder_intent,
+    )
 
     bot_tz = ZoneInfo("Asia/Hong_Kong")  # config.py:254 默认值
     # 香港 2026-09-18 02:30（UTC 09-17 18:30）说"明天9点" → 应为香港 09-19 09:00。

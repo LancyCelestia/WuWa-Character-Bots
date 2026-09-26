@@ -9,6 +9,11 @@ from types import SimpleNamespace
 
 import plugins.bot_unified_runtime.domains.notes.capabilities.notes as notes_mod
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
+    RouteKind,
+    classify_message_route,
+    clear_route_decision_cache,
+)
 from plugins.bot_unified_runtime.domains.notes.capabilities.notes import (
     build_notes_capability,
     is_notes_command,
@@ -22,11 +27,6 @@ from plugins.bot_unified_runtime.domains.notes.store.notes_store import (
     NotesStore,
     detect_note_kind,
     reset_stores_for_tests,
-)
-from plugins.bot_unified_runtime.runtime.base_router import (
-    RouteKind,
-    classify_message_route,
-    clear_route_decision_cache,
 )
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n" + b"rest-of-fake-image"

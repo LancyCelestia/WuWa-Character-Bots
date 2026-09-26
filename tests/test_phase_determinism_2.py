@@ -22,8 +22,14 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.debug import _llm_setup_mica_html
-from plugins.bot_unified_runtime.capabilities.echo import _help_mica_html
+# S345 #83 J-1：三门与外层 skipif 共用的唯一判据/唯一 launch 出口住在 test_phase_determinism
+# （单一真身，禁三份副本），本文件复用之、不再各写一份。
+from test_phase_determinism import _playwright_available, launch_chromium_or_skip
+
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+    _help_mica_html,
+)
+from plugins.bot_unified_runtime.domains.ops.admin.debug import _llm_setup_mica_html
 from plugins.bot_unified_runtime.output.card_render.bridge import (
     render_finance_card_html,
     render_market_card_html,
@@ -168,17 +174,8 @@ def test_llm_setup_config_object_does_not_change_phase() -> None:
 
 
 # ==================== playwright 双渲对比（后端缺失时跳过） ====================
-def _playwright_available() -> bool:
-    try:
-        import playwright  # noqa: F401
-    except ImportError:
-        return False
-    from plugins.bot_unified_runtime.output.render_backends import (
-        build_render_backend,
-    )
-
-    backend = build_render_backend("playwright")
-    return bool(getattr(backend, "available", False))
+# 注：`_playwright_available` / `launch_chromium_or_skip` / `chromium_not_installed` 现由
+# test_phase_determinism 单一提供（见顶部 import），本文件不再复制第二份（禁三份副本）。
 
 
 def _double_render_shots(html: str) -> tuple[list[str], list[str], list[bytes]]:
@@ -190,10 +187,7 @@ def _double_render_shots(html: str) -> tuple[list[str], list[str], list[bytes]]:
     animation_names: list[str] = []
     shots: list[bytes] = []
     with sync_playwright() as p:
-        try:
-            browser = p.chromium.launch(headless=True)
-        except Exception as exc:  # noqa: BLE001 - 浏览器二进制缺失 → 跳过不失败。
-            pytest.skip(f"Chromium 启动失败（{exc.__class__.__name__}）")
+        browser = launch_chromium_or_skip(p)
         try:
             for _ in range(2):
                 page = browser.new_page(
@@ -322,10 +316,7 @@ def test_playwright_mermaid_reduced_motion_guard_effective_on_pseudo_elements() 
     )
     observed: dict[str, tuple[str, str]] = {}
     with sync_playwright() as p:
-        try:
-            browser = p.chromium.launch(headless=True)
-        except Exception as exc:  # noqa: BLE001 - 浏览器二进制缺失 → 跳过不失败。
-            pytest.skip(f"Chromium 启动失败（{exc.__class__.__name__}）")
+        browser = launch_chromium_or_skip(p)
         try:
             for mode in ("no-preference", "reduce"):
                 page = browser.new_page(

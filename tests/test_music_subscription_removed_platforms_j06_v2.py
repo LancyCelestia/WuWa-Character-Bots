@@ -12,15 +12,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.subscribe_v2 import (
-    build_subscribe_capability_v2,
-)
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 from plugins.bot_unified_runtime.domains.subscribe.adapters.music_v2 import (
     ADAPTERS as MUSIC_ADAPTERS,
 )
 from plugins.bot_unified_runtime.domains.subscribe.adapters.music_v2 import (
     MusicSubscriptionAdapterV2,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.subscribe_v2 import (
+    build_subscribe_capability_v2,
 )
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_runtime_v2 import (
     build_subscription_runtime_v2,

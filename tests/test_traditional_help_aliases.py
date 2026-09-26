@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.echo import (
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
     _HELP_ENTRY_META,
     HELP_ENTRIES,
     normalize_help_topic,

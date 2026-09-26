@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from plugins.bot_unified_runtime.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -160,7 +160,7 @@ def test_u6_run_env_failure_advice_snapshot() -> None:
 
 def test_debug_denied_body_renders_expected_copy() -> None:
     """行为级抽查：debug 拒绝句随 Q-02 变体池轮换，输出必属池渲染集合。"""
-    from plugins.bot_unified_runtime.capabilities import debug as debug_cap
+    from plugins.bot_unified_runtime.domains.ops.admin import debug as debug_cap
 
     assert debug_cap._denied_body() in {
         variant.format(action="看运行时排障记录")

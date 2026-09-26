@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 import asyncio
 import atexit
 import hashlib
+import inspect
 import os
 import random
 import re
@@ -15,6 +16,8 @@ import time
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from plugins.bot_unified_runtime.audit import AuditRepository, redact_private_debug
 from plugins.bot_unified_runtime.contracts import (
@@ -45,28 +48,39 @@ from plugins.bot_unified_runtime.domains.chat_reply.policy import (
     PolicySettings,
     QuietHoursChecker,
     RateLimiter,
+    RedriveSettings,
     ReplyBudgetSettings,
     RoleSettings,
     decide_reply_budget,
     evaluate_policy,
+    redrive_wait_seconds,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.event_idempotency import (
     EventIdempotencyTable,
     SqliteEventIdempotencyTable,
     build_event_dedupe_key,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.progress_ack import (
+    ProgressAckSettings,
+    ProgressAckThrottle,
+    build_progress_ack_request,
+    effective_ack_delay_seconds,
+    normalize_session_type,
+    pick_progress_ack_text,
+    progress_ack_allowed,
+)
 from plugins.bot_unified_runtime.domains.ops.features.feature_gate import FeatureAccess
+from plugins.bot_unified_runtime.domains.transport.sender import (
+    InMemoryReceiptRepository,
+    ReceiptRepository,
+    SendQueue,
+)
 from plugins.bot_unified_runtime.output import (
     build_forward_output,
     render_reviewed_output,
     review_capability_result,
     should_forward_by_node_count,
     should_forward_long_text,
-)
-from plugins.bot_unified_runtime.sender import (
-    InMemoryReceiptRepository,
-    ReceiptRepository,
-    SendQueue,
 )
 
 CapabilityCallable = Callable[[IncomingMessage, BotDecision], CapabilityResult]
@@ -109,35 +123,109 @@ class _BoundedSubmissionGate:
     只用 threading.Lock 计数，不引入事件循环绑定原语（跨 loop 与测试安全），
     提交路径 O(1) 非阻塞。许可数 = worker 数 + 等待队列深度，即 ThreadPool
     内部队列之外的第二道、也是唯一一道有界闸。
+
+    ## S134·B（裁定 3 项 B / CM-P-40 R2）：跨族**不共计数器**
+    改动前只有一枚 `_in_flight`，全部能力共用 ⇒ 任一族（含视觉）占满 2N 格，
+    另一族（含语音）就在 `pipeline_busy` 上被**静默否决**——前值实测：
+    permits=16 时视觉连取 16 格、语音随后连取 4 格成功数 = 0。
+
+    现在分两层，两层各自独立计数：
+     - **通用层** `permits`（＝2N，语义与旧版逐字相同）：所有能力共用的额度；
+     - **保留层** `reserved_permits` × 每一枚在册族：**每族自己的一格计数器**，
+       别的族既看不见也拿不走 ⇒ 通用层被别族打满时，本族仍可再取保留层，
+       "一票否决"缩成"保留位之外才否决"。
+
+    族身份**不在此处复制**：唯一真身是
+    ``domains/core/capability_resource_ownership.FAMILY_MEMBERS``（S85 的族册），
+    本件按 capability_id 现算族名，族册改了这里自动跟随（第二真身＝门红）。
+    总在途上界＝`permits + reserved_permits × 族数`，仍然有界（不会无界增长）。
     """
 
-    __slots__ = ("_in_flight", "_lock", "_permits")
+    __slots__ = (
+        "_general_in_flight",
+        "_in_flight_total",
+        "_lock",
+        "_permits",
+        "_reserved_in_flight",
+        "_reserved_permits",
+        "_reserved_scopes",
+    )
 
-    def __init__(self, permits: int) -> None:
+    def __init__(
+        self,
+        permits: int,
+        *,
+        reserved_permits: int = 0,
+        reserved_scopes: tuple[str, ...] = (),
+    ) -> None:
         self._lock = threading.Lock()
         self._permits = max(1, int(permits))
-        self._in_flight = 0
+        self._reserved_permits = max(0, int(reserved_permits))
+        self._reserved_scopes = frozenset(
+            str(scope) for scope in reserved_scopes if str(scope).strip()
+        )
+        self._general_in_flight = 0
+        self._reserved_in_flight: dict[str, int] = {
+            scope: 0 for scope in self._reserved_scopes
+        }
+        self._in_flight_total = 0
 
-    def try_acquire(self) -> bool:
+    def try_acquire(self, scope: str = "") -> bool:
+        """取一格额度。`scope`＝资源族（族册 `family_of` 的结果，族外传空串）。
+    
+        取序**先通用后保留**（保留层是"别人打满时的活路"，不是日常通道）。
+        """
         with self._lock:
-            if self._in_flight >= self._permits:
-                return False
-            self._in_flight += 1
-            return True
+            if self._general_in_flight < self._permits:
+                self._general_in_flight += 1
+                self._in_flight_total += 1
+                return True
+            key = str(scope or "")
+            if key in self._reserved_in_flight and self._reserved_in_flight[key] < self._reserved_permits:
+                self._reserved_in_flight[key] += 1
+                self._in_flight_total += 1
+                return True
+            return False
 
-    def release(self) -> None:
+    def release(self, scope: str = "") -> None:
+        """还一格。tier 归属按"该族保留层还占着就先还保留层"结算：
+        总数恒精确，只有极端并发下 tier 记账可能偏保守（少还保留层＝少给
+        该族一次活路），不会漏还、也不会超发。"""
+        key = str(scope or "")
         with self._lock:
-            self._in_flight = max(0, self._in_flight - 1)
+            self._in_flight_total = max(0, self._in_flight_total - 1)
+            if key in self._reserved_in_flight and self._reserved_in_flight[key] > 0:
+                self._reserved_in_flight[key] -= 1
+                return
+            if self._general_in_flight > 0:
+                self._general_in_flight -= 1
 
     @property
     def permits(self) -> int:
         return self._permits
 
     @property
+    def reserved_permits(self) -> int:
+        return self._reserved_permits
+
+    @property
+    def reserved_scopes(self) -> frozenset[str]:
+        return self._reserved_scopes
+
+    @property
     def in_flight(self) -> int:
-        """当前在途（运行+排队）任务数；测试与诊断用。"""
+        """当前在途总数（通用层 + 各族保留层）；测试与诊断用。"""
         with self._lock:
-            return self._in_flight
+            return self._in_flight_total
+
+    def scope_in_flight(self, scope: str) -> int:
+        """某族**保留层**的占用数（跨族互不可见的那一格）；诊断用。"""
+        with self._lock:
+            return int(self._reserved_in_flight.get(str(scope or ""), 0))
+
+    def general_in_flight(self) -> int:
+        with self._lock:
+            return self._general_in_flight
 
 
 _chat_pool_lock = threading.Lock()
@@ -182,8 +270,35 @@ def _shutdown_chat_pool() -> None:
         pool.shutdown(wait=False, cancel_futures=True)
 
 
+#: 每族保留位 = worker 数的一半（至少 1 格，且不超过 worker 数本身）。
+#: 依据：保留层的用途是"通用层被别族打满时本族仍有活路"，不是日常主通道；
+#: 取 N/2 使最坏总在途 = 2N + (N/2)×族数，仍可界（N=8、两族 ⇒ 24）。
+def _reserved_permits_for(workers: int) -> int:
+    return max(1, min(int(workers), int(workers) // 2 or 1))
+
+
+def inflight_scope_of(capability_id: Any) -> str:
+    """某枚能力在途闸上算哪一族（族外一律空串＝只走通用层）。
+
+    族籍唯一真身＝``domains/core/capability_resource_ownership.FAMILY_MEMBERS``；
+    本件**不**复制第二份名单。读不到册（极端导入环/测试桩）时退化为空串＝
+    fail-closed 到通用层，绝不因为"取不到族"而给谁开后门。
+    """
+    try:
+        from plugins.bot_unified_runtime.domains.core import (
+            capability_resource_ownership as _ownership,
+        )
+
+        return _ownership.family_of(str(capability_id or ""))
+    except Exception:  # noqa: BLE001 - 取族失败＝族外，走通用层，绝不抛
+        return ""
+
+
 def _get_chat_pool() -> tuple[ThreadPoolExecutor, _BoundedSubmissionGate]:
-    """懒创建管线专用池：worker N（config/env/默认 8），在途上限 2N（N 跑 + N 等）。"""
+    """懒创建管线专用池：worker N（config/env/默认 8），在途上限 2N（N 跑 + N 等）。
+
+    S134·B：闸构造时带上"每族各自的保留位"，保留层计数器跨族不共。
+    """
     global _chat_pool, _chat_pool_gate
     pool, gate = _chat_pool, _chat_pool_gate
     if pool is not None and gate is not None:
@@ -196,8 +311,25 @@ def _get_chat_pool() -> tuple[ThreadPoolExecutor, _BoundedSubmissionGate]:
                 thread_name_prefix="chat-pipeline",
             )
             atexit.register(_shutdown_chat_pool)
-            _chat_pool_gate = _BoundedSubmissionGate(workers * 2)
+            _chat_pool_gate = _BoundedSubmissionGate(
+                workers * 2,
+                reserved_permits=_reserved_permits_for(workers),
+                reserved_scopes=_reserved_scopes(),
+            )
         return _chat_pool, _chat_pool_gate
+
+
+def _reserved_scopes() -> tuple[str, ...]:
+    """在册族名（保留层的键集合），现算自族册；族册涨一族这里自动多一格。"""
+    try:
+        from plugins.bot_unified_runtime.domains.core import (
+            capability_resource_ownership as _ownership,
+        )
+
+        return tuple(sorted(_ownership.FAMILY_MEMBERS))
+    except Exception:  # noqa: BLE001 - 取不到册＝本轮不设保留层（旧形态）
+        return ()
+
 
 
 def _pipeline_busy_result(
@@ -230,13 +362,15 @@ def offload_capability(capability: CapabilityCallable) -> AsyncCapabilityCallabl
         decision: BotDecision,
     ) -> CapabilityResult:
         pool, gate = _get_chat_pool()
-        if not gate.try_acquire():
+        # S134·B：取/还必须同 scope（族），故一次算好复用；族外为空串＝只用通用层。
+        scope = inflight_scope_of(getattr(decision, "capability_id", ""))
+        if not gate.try_acquire(scope):
             return _pipeline_busy_result(message, decision)
         try:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(pool, capability, message, decision)
         finally:
-            gate.release()
+            gate.release(scope)
 
     return wrapped
 
@@ -442,9 +576,32 @@ class RuntimePipeline:
             [IncomingMessage, BotDecision, CapabilityResult], CapabilityResult
         ]
         | None = None,
+        # 慢回复先回执（ack-first）：阈值到点仍未出结果时，先落一句短的。
+        # 缺省 None=零调用（键关部署现状不变）；由根装配注入配置与投递口，
+        # 投递必须走主动投递唯一中央出口，不在这里直调 send_queue.submit。
+        progress_ack_settings: ProgressAckSettings | None = None,
+        progress_ack_submit: Callable[[Any], Any] | None = None,
+        # 网关当下有多慢（单跳 EWMA 毫秒，取链上最慢一跳）。缺省 None=不自适应，
+        # 逐字节回到固定 delay_seconds。读数由根装配注入（健康库在别处记账，
+        # 这里只消费），本模块绝不自己去开 SQLite——那会长出第二本延迟账。
+        progress_ack_latency_probe: Callable[[], float | None] | None = None,
+        # 被限流拦下的明确请求「期后补回」的参数；None=不补（旧行为逐字节保持）。
+        redrive_settings: RedriveSettings | None = None,
     ) -> None:
         self.feature_gate = feature_gate
         self.outbound_voice_enricher = outbound_voice_enricher
+        self.progress_ack_settings = progress_ack_settings
+        self.progress_ack_submit = progress_ack_submit
+        self.progress_ack_latency_probe = progress_ack_latency_probe
+        self.redrive_settings = redrive_settings
+        # 在飞的补回任务必须持有强引用，否则 create_task 的返回值被丢弃后
+        # 任务可能在跑完前被 GC 回收（asyncio 只存弱引用）。
+        self._redrive_tasks: set[Any] = set()
+        self._progress_ack_throttle = ProgressAckThrottle(
+            cooldown_seconds=float(
+                getattr(progress_ack_settings, "cooldown_seconds", 60.0) or 60.0
+            )
+        )
         self.send_queue = send_queue
         self.audit_logger = audit_logger
         self.receipt_repository = receipt_repository or InMemoryReceiptRepository()
@@ -530,6 +687,7 @@ class RuntimePipeline:
         self,
         message: IncomingMessage,
         capability_id: str,
+        redrive_capability: AsyncCapabilityCallable | None = None,
     ) -> _PreparedRuntime | DeliveryReceipt:
         if self.feature_gate is not None:
             try:
@@ -676,6 +834,18 @@ class RuntimePipeline:
                 public_message="",
                 debug_id=rate_limit.debug_id,
             )
+            # 不再静默吞掉：明确找 bot 说话却被「太密」类限流拦下的，等解禁那一刻
+            # 补跑一次（2026-09-25 用户裁定第 2 项）。补不上才维持原样静默。
+            redrive_wait = self._schedule_rate_limit_redrive(
+                message, capability_id, rate_limit, redrive_capability
+            )
+            if redrive_wait is not None:
+                receipt.retry_count = int(
+                    getattr(message, "redrive_count", 0) or 0
+                ) + 1
+                receipt.next_retry_at = datetime.now(timezone.utc) + timedelta(
+                    seconds=redrive_wait
+                )
             self._append_audit_safely(
                 AuditRecord(
                     request_id=message.request_id,
@@ -688,6 +858,11 @@ class RuntimePipeline:
                     private_debug=(
                         f"reason={rate_limit.reason}; "
                         f"retry_after_seconds={rate_limit.retry_after_seconds}"
+                        + (
+                            f"; redrive_scheduled_in={redrive_wait:.1f}s"
+                            if redrive_wait is not None
+                            else "; redrive=none"
+                        )
                     ),
                 )
             )
@@ -1123,6 +1298,70 @@ class RuntimePipeline:
         except Exception:  # noqa: BLE001 - 幂等表异常时放行，不阻断主链路。
             return True
 
+    def _schedule_rate_limit_redrive(
+        self,
+        message: IncomingMessage,
+        capability_id: str,
+        decision: Any,
+        capability: AsyncCapabilityCallable | None,
+    ) -> float | None:
+        """该不该补回、并就地排程；补不了返回 None（维持原样静默）。
+
+        只有拿到 async 能力的调用方（``handle_async``）才补得动——同步 ``handle``
+        没有可重放的协程，传 None 即不补，行为对它逐字节不变。
+        """
+        settings = self.redrive_settings
+        if settings is None or capability is None:
+            return None
+        wait_seconds = redrive_wait_seconds(settings, message, capability_id, decision)
+        if wait_seconds is None:
+            return None
+        try:
+            redrafted = message.model_copy(
+                update={"redrive_count": int(message.redrive_count or 0) + 1}
+            )
+        except Exception:  # noqa: BLE001 - 造不出副本就维持旧行为，不能因补回炸掉本轮。
+            return None
+        task = asyncio.ensure_future(
+            self._redrive_after(wait_seconds, redrafted, capability, capability_id)
+        )
+        self._redrive_tasks.add(task)
+        task.add_done_callback(self._redrive_tasks.discard)
+        return wait_seconds
+
+    async def _redrive_after(
+        self,
+        wait_seconds: float,
+        message: IncomingMessage,
+        capability: AsyncCapabilityCallable,
+        capability_id: str,
+    ) -> None:
+        """等过冷却再走一遍既有链路。
+
+        刻意复用 ``handle_async`` 而不是抄一段"精简版"：门禁、限流、审核、出站
+        闸门必须原样再过一次，否则补回的那一句就成了绕开中央件的第二条通路。
+        """
+        # 不套 try/except CancelledError：sleep 被取消时本就要向外传播，
+        # 加一个"捕获后原样抛"的处理器是空转（ruff TRY203 会点出来）。
+        await asyncio.sleep(wait_seconds)
+        try:
+            receipt = await self.handle_async(message, capability, capability_id)
+            logger.info(
+                "rate-limit redrive done request=%s capability=%s reason_scope=redrive "
+                "state=%s attempt=%d",
+                message.request_id,
+                capability_id,
+                getattr(getattr(receipt, "state", None), "value", receipt.state),
+                int(message.redrive_count or 0),
+            )
+        except Exception as exc:  # noqa: BLE001 - 补回失败只留痕，不得炸掉事件循环。
+            logger.warning(
+                "rate-limit redrive failed request=%s capability=%s type=%s",
+                message.request_id,
+                capability_id,
+                type(exc).__name__,
+            )
+
     def _rollback_rate_limit_record(
         self,
         message: IncomingMessage,
@@ -1185,6 +1424,115 @@ class RuntimePipeline:
         except Exception as exc:  # pragma: no cover - integration fallback.  # noqa: BLE001 - 能力调用异常统一转为内部错误回执。
             return self._internal_error(message, capability_id, exc)
 
+    def _progress_ack_candidate(self, message: IncomingMessage, capability_id: str) -> bool:
+        """这轮是否属于"可以发回执"的候选（名单与开关，不含冷却判定）。
+
+        只服务 `bot.chat`：命令类回复本来就快，多一句回执是纯噪音。投递口缺失
+        （未注入中央出口）时一律不发——回执不许绕闸直调 send_queue.submit。
+        """
+        settings = self.progress_ack_settings
+        if settings is None or not settings.enabled or self.progress_ack_submit is None:
+            return False
+        if capability_id != "bot.chat":
+            return False
+        # 会话类型取事件自带字段，不从 group_id 反推（缺群号不等于私聊）；
+        # 两档归一的判据唯一住 progress_ack.normalize_session_type（频道/邮件/控制台
+        # fail-closed 到群侧），此处不得再写一份。
+        session_type = normalize_session_type(getattr(message, "session_type", ""))
+        group_id = str(getattr(message, "group_id", "") or "").strip()
+        return progress_ack_allowed(
+            settings,
+            session_type=session_type,
+            group_id=group_id,
+            sender_id=str(getattr(message, "sender_id", "") or "").strip(),
+        )
+
+    async def _await_with_progress_ack(
+        self,
+        message: IncomingMessage,
+        prepared: _PreparedRuntime,
+        capability: AsyncCapabilityCallable,
+        capability_id: str,
+    ) -> CapabilityResult:
+        """等能力结果；到阈值仍未回来就先落一句回执，再继续等同一个任务。
+
+        压的是"白等"而不是总预算：阈值只决定何时说话，不取消任何已花掉成本的
+        真实回复（QQ 收不回，取消只会变成"不回话"）。阈值内出结果则零额外消息。
+        """
+        if not self._progress_ack_candidate(message, capability_id):
+            return await capability(prepared.message, prepared.decision)
+        settings = self.progress_ack_settings
+        submit = self.progress_ack_submit
+        if settings is None or submit is None:  # 收窄：候选判定已保证两者在场。
+            return await capability(prepared.message, prepared.decision)
+        session_id = str(getattr(message, "session_id", "") or "")
+        delay_seconds = self._effective_ack_delay(settings)
+        task = asyncio.ensure_future(capability(prepared.message, prepared.decision))
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=delay_seconds)
+        except TimeoutError:
+            pass  # shield 保证超时不牵连真实任务，下面继续等它。
+        await self._emit_progress_ack(
+            message, session_id, submit, delay_seconds=delay_seconds
+        )
+        return await task
+
+    def _gateway_ema_ms(self) -> float | None:
+        """网关当下多慢（单跳 EWMA 毫秒）。探针缺失/读失败一律 None=不自适应。"""
+        probe = self.progress_ack_latency_probe
+        if probe is None:
+            return None
+        try:
+            value = probe()
+        except Exception:  # noqa: BLE001 - 观测面坏了不得把回执一起带走。
+            return None
+        if value is None:
+            return None
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    def _effective_ack_delay(self, settings: ProgressAckSettings) -> float:
+        return effective_ack_delay_seconds(settings, self._gateway_ema_ms())
+
+    async def _emit_progress_ack(
+        self,
+        message: IncomingMessage,
+        session_id: str,
+        submit: Callable[[Any], Any],
+        *,
+        delay_seconds: float | None = None,
+    ) -> None:
+        """发一句回执。**查冷却与占坑在同一个动作里**，发送失败退还。
+
+        冷却判定放在这里而不是等能力之前：占坑必须紧贴"真的要不要发"这一决定，
+        否则同会话两条并发慢问会双双通过前置检查、各发一句（评审席实跑过）。
+        """
+        claimed_at = self._progress_ack_throttle.try_claim(session_id)
+        if claimed_at is None:
+            return
+        if delay_seconds is not None:
+            # 事后必须能回答"这次到底按几秒判的慢"——自适应与关死在日志上
+            # 长得一样，没有这一行就只能靠重启前后的对照去猜（旧回执零留痕）。
+            logger.info(
+                "chat progress ack emitted session=%s delay=%.1fs gateway_ema_ms=%s",
+                session_id,
+                delay_seconds,
+                self._gateway_ema_ms(),
+            )
+        try:
+            request = build_progress_ack_request(
+                message, pick_progress_ack_text(session_id)
+            )
+            value = submit(request)
+            if inspect.isawaitable(value):
+                await value
+        except Exception:  # noqa: BLE001 - 回执是附加体验，失败不影响真实回复。
+            logger.debug("chat progress ack submit failed")
+            self._progress_ack_throttle.release(session_id, claimed_at)
+
     async def handle_async(
         self,
         message: IncomingMessage,
@@ -1193,11 +1541,15 @@ class RuntimePipeline:
     ) -> DeliveryReceipt:
         _observe_decision_shadow(message, capability_id)
         try:
-            prepared = self._prepare(message, capability_id)
+            prepared = self._prepare(
+                message, capability_id, redrive_capability=capability
+            )
             if isinstance(prepared, DeliveryReceipt):
                 return prepared
             try:
-                result = await capability(prepared.message, prepared.decision)
+                result = await self._await_with_progress_ack(
+                    message, prepared, capability, capability_id
+                )
             except Exception as exc:  # noqa: BLE001 - 能力异常统一转内部错误回执并回滚额度。
                 # 审查 A-18：能力异常回滚限流记账（与 handle 同语义）。
                 self._rollback_rate_limit(prepared)

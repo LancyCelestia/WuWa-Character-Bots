@@ -342,7 +342,7 @@ def brand_capsule_css() -> str:
         "  border:1px solid #fff; box-shadow:var(--mica-shadow-soft); }\n"
         ".mica-capsule .mc-dot { width:22px; height:22px; flex-shrink:0;\n"
         "  border-radius:var(--r-circle); display:inline-flex; align-items:center;\n"
-        "  justify-content:center; font-size:12px; font-weight:650;\n"
+        "  justify-content:center; font-size:12px; font-weight:600;\n"
         "  color:var(--text-main); background:color-mix(in srgb, var(--accent) 14%, #fff); }\n"
         ".mica-capsule .mc-name { font-size:13px; font-weight:700;\n"
         "  color:var(--text-main); white-space:nowrap; }\n"
@@ -402,7 +402,7 @@ def render_root_tokens(
     phase: float | str = 0.2,
     wash: Mapping[str, str] | None = None,
     extras: Mapping[str, str] | None = None,
-    wash_blob_mix: int = 35,
+    wash_blob_mix: int = 18,
     include_phase: bool = True,
     include_wash: bool = True,
 ) -> str:
@@ -418,8 +418,10 @@ def render_root_tokens(
     ``--accent-rgb``），按传入顺序追加在末尾，保持各卡自有的扩展面。
 
     ``wash_blob_mix`` 是 ``--wash-blob-1`` 里 ``--accent`` 的混入百分比，
-    默认 35（四张直拼卡与 7 张模板中的六张一致）；``error_card`` 历史值为
-    24，经此参数保留原值（**视觉不变**是本次重构的硬约束）。
+    默认 **18**（2026-09-25 澜汐：背景要在守岸人本命蓝上做渐变）。历史缺省 35
+    在红/粉系平台卡（点歌、账单）上会把整块漂移斑连同壳层 15% 那一档一起顶成
+    玫瑰色，读起来平台色=底色；契约上限仍是 35（``test_pc_never_paints_brand_base``），
+    本值只下调不放宽。个别卡要更浓的平台斑仍走参数覆盖。
 
     ``include_phase`` / ``include_wash`` 供 ``universal_card`` 的**基础块**使用：
     该模板有两个 ``:root``（基础块 + 视频卡区块块），而

@@ -295,6 +295,7 @@ def test_lock_excludes_a_real_second_process(tmp_path):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     )
     try:

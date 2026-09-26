@@ -120,11 +120,23 @@ class AddressingPreferenceStore:
                     sender_id TEXT NOT NULL,
                     addressing_preference TEXT NOT NULL DEFAULT '',
                     gender_identity TEXT NOT NULL DEFAULT 'unknown',
+                    relationship TEXT NOT NULL DEFAULT '',
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (session_type, session_id, sender_id)
                 )
                 """
             )
+            # 关系档（2026-09-24 用户裁定 R2 A）：旧库自动补列，不要求人工迁移
+            # （家规先例=affinity 的 first_signals/first_impression/created_at 三列）。
+            existing = {
+                row[1]
+                for row in self._conn.execute("PRAGMA table_info(addressing_preferences)")
+            }
+            if "relationship" not in existing:
+                self._conn.execute(
+                    "ALTER TABLE addressing_preferences"
+                    " ADD COLUMN relationship TEXT NOT NULL DEFAULT ''"
+                )
 
     @staticmethod
     def _normalize_gender(raw: str | None) -> str:
@@ -152,6 +164,68 @@ class AddressingPreferenceStore:
         if row is None:
             return "", "unknown"
         return str(row[0] or ""), self._normalize_gender(str(row[1]))
+
+    def get_relationship(
+        self,
+        *,
+        session_type: str,
+        session_id: str = "",
+        sender_id: str,
+    ) -> str:
+        """关系档 canon id（词表见 `character/relationships.py`）；无记录返回空串。"""
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT relationship FROM addressing_preferences"
+                    " WHERE session_type=? AND session_id=? AND sender_id=?",
+                    (str(session_type), str(session_id), str(sender_id)),
+                ).fetchone()
+        except sqlite3.Error:
+            return ""
+        if row is None:
+            return ""
+        return str(row[0] or "")
+
+    def set_relationship(
+        self,
+        *,
+        session_type: str,
+        session_id: str = "",
+        sender_id: str,
+        relationship: str,
+    ) -> str:
+        """设定关系档，返回**实际落档**的 canon id。
+
+        词表外（打错字、没裁过的关系）→ 回空串且**不动原值**：一个错别字不许把
+        用户已设的关系洗掉。显式清空传空串（空串在词表里合法=回到默认相处分寸）。
+        本方法不做权限判定——谁能设由调用面（/bot identity 的"仅本人"门）负责。
+        """
+        from plugins.bot_unified_runtime.domains.chat_reply.character.relationships import (
+            normalize_relationship,
+        )
+
+        canon = normalize_relationship(relationship)
+        if canon == "" and str(relationship or "").strip() != "":
+            return ""  # 垃圾输入：不落档、不清档。
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO addressing_preferences (
+                    session_type, session_id, sender_id, relationship, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(session_type, session_id, sender_id) DO UPDATE SET
+                    relationship=excluded.relationship,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    str(session_type),
+                    str(session_id),
+                    str(sender_id),
+                    canon,
+                    _utc_now_iso(),
+                ),
+            )
+        return canon
 
     def set(
         self,

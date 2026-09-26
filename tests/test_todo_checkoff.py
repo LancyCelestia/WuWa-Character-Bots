@@ -10,21 +10,21 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import plugins.bot_unified_runtime.domains.schedule.store.reminders as reminders_mod
-from plugins.bot_unified_runtime.capabilities.reminder import (
-    build_reminder_capability,
-    extract_checkoff_query,
-    is_reminder_command,
-)
-from plugins.bot_unified_runtime.character.reminders import (
-    ReminderStore,
-    resolve_todo_match,
-)
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 from plugins.bot_unified_runtime.domains.notes.store import (
     notes_store as notes_store_mod,
 )
 from plugins.bot_unified_runtime.domains.notes.store.notes_store import (
     reset_stores_for_tests,
+)
+from plugins.bot_unified_runtime.domains.schedule.capabilities.reminder import (
+    build_reminder_capability,
+    extract_checkoff_query,
+    is_reminder_command,
+)
+from plugins.bot_unified_runtime.domains.schedule.store.reminders import (
+    ReminderStore,
+    resolve_todo_match,
 )
 
 

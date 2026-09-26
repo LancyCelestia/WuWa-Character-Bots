@@ -23,15 +23,15 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.subscribe import (
-    build_subscribe_capability,
-)
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     NormalizedSubscriptionItem,
     SourceFetchResult,
     SubscriptionDestination,
     SubscriptionSpec,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.subscribe import (
+    build_subscribe_capability,
 )
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store import (
     SubscriptionStore,

@@ -5,11 +5,11 @@ from __future__ import annotations
 import pytest
 
 from plugins.bot_unified_runtime.config import Config
-from plugins.bot_unified_runtime.runtime.settings import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
     SETTABLE_KEYS,
     RuntimeSettingsStore,
 )
-from plugins.bot_unified_runtime.sender.timeout import (
+from plugins.bot_unified_runtime.domains.transport.sender.timeout import (
     DEFAULT_TIMEOUT_SECONDS,
     MAX_TIMEOUT_SECONDS,
     resolve_transport_timeout,
@@ -88,7 +88,9 @@ def test_onebot_sender_applies_configured_timeout() -> None:
         SendRequest,
         SessionType,
     )
-    from plugins.bot_unified_runtime.sender.onebot import send_onebot_v11
+    from plugins.bot_unified_runtime.domains.transport.sender.onebot import (
+        send_onebot_v11,
+    )
 
     set_transport_timeout_provider(lambda: 0.05)
 

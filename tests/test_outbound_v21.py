@@ -783,6 +783,7 @@ class TestImportProbe:
             cwd=WORKSPACE_ROOT,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=180,
             env=env,
             check=False,

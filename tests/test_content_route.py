@@ -12,13 +12,14 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.llm.model_router import ModelRouter, ModelSpec
-from plugins.bot_unified_runtime.runtime.content_route import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
+    INTIMATE_SOURCE_MASTER_LOVE,
     ContentRouteEngine,
     build_router_cb,
     match_manual_command,
     match_master_love_admin,
 )
+from plugins.bot_unified_runtime.llm.model_router import ModelRouter, ModelSpec
 
 
 def _config(**overrides: object) -> SimpleNamespace:
@@ -179,10 +180,17 @@ def test_match_manual_command_variants() -> None:
 # ---------------------------------------------------------------- TTL / 空闲 / 开关
 
 def test_max_ttl_resets_pin() -> None:
+    """max_ttl 仍是兜底安全阀——但对"人亲手上着的钉"豁免了。
+
+    2026-09-24 用户裁定 R4 A：显式「亲密模式 开/深开」与管理员钉不受 120 分钟封顶
+    （配多长 TTL 就是多长，豁免面与执法面见 `tests/test_intimate_tiers_v4.py`）。
+    本锁因此改用**不在豁免面**的 ML 自动钉，继续执法"上限清得掉别的态"；
+    回滚点=把下面的 source 去掉即恢复"显式钉也被 max_ttl 清"的旧语义（旧实现红）。
+    """
     now = [100.0]
     engine = _engine(now)
     cfg = _config(bot_content_route_max_ttl_minutes=1.0)
-    engine.apply_manual("s1", "intimate", cfg)
+    engine.apply_manual("s1", "intimate", cfg, source=INTIMATE_SOURCE_MASTER_LOVE)
     assert engine.route_verdict("s1", cfg)["mode"] == "intimate"
     now[0] += 120.0
     assert engine.route_verdict("s1", cfg)["mode"] == "normal"

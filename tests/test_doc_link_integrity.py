@@ -228,7 +228,7 @@ def _tracked_docs() -> frozenset[str]:
     try:
         out = subprocess.run(
             ["git", "ls-files", "--", "AGENTS.md", "COMMANDS.md", "docs"],
-            cwd=ROOT, capture_output=True, text=True, timeout=30, check=False,
+            cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=30, check=False,
         )
     except (OSError, subprocess.SubprocessError):  # 无 git 时按「全部已跟踪」处理（更严）
         return frozenset()

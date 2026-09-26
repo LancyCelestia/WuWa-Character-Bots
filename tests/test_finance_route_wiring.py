@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.echo import HELP_ENTRIES
-from plugins.bot_unified_runtime.runtime.base_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+    HELP_ENTRIES,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     RouteKind,
     classify_message_route,
     clear_route_decision_cache,

@@ -18,12 +18,53 @@
 本批**不改任何投递语义**：现存旁路全部逐条挂名豁免（每条必须是「门关旧直连分支」，
 即上方 60 行内存在缺省 False 的 `getattr(config, "<*_via_queue>", False)` 卫哨），
 新写的直发没有豁免表条目 ⇒ 当场红。
+
+裁定 R-4 后的口径变更（2026-09-24T06:33Z 落码，席位 S153 同批改本件）
+-----------------------------------------------------------------
+上面那句「现存旁路逐条挂名豁免」**已作废**：R-4 把根文件四条投递路径的 `call_api`
+直发分支一次删净，四枚 `*_via_queue` 开关同时从 `config.py` 退役 ⇒ 豁免表的两行
+（cookie 两枚 / welcome+qr 两枚，合 4 处）**同批摘牌**，B 类扫描面进入**零容忍**形态：
+
+* 豁免表为空是**结果**不是**手段**——空表必须与「实测零命中」同时成立，
+  只清表不清债当场红（`test_exemption_table_covers_actual_bypasses_exactly` 双向现算）；
+* 旧的「上方 60 行内有缺省 False 的 `*_via_queue` 卫哨」不再是豁免理由——卫哨键本体
+  已在 `config.py` 零命中，长不回来了（`test_zero_tolerance_via_queue_sentinel_is_no_exemption`）；
+* 判据名集自 R-4 起扩到文件上传两枚（`upload_group_file` / `upload_private_file`）：
+  被删的四条分支里文件导出那两条走的就是它们，旧名集只认 `send_*` ⇒ 那两条一直在尺外，
+  不扩则下一位手写一条 `bot.upload_group_file(...)` 门照样绿。**扩面方向＝收严，非放宽**。
+
+折叠三口分账（2026-09-24T09:2xZ 落码，席位 S195；**旁路桶一字未动**）
+-----------------------------------------------------------------
+R-4 把旁路桶清空后，本件剩下的洞不在"记了什么"，而在"什么都没记"：旧扫描
+（`:160-178`）把**前缀过滤写在折叠条件内部**，于是 `call_api` 通道调用点的三种结局
+——折出空白（`""` / `"   "`）、折出非直发 api 名、根本折不出来（首参是 Name / 计算值）
+——**合并成同一个静默 `continue`**，而本件**没有任何「不可判」名册** ⇒ 条目三本账都不进
+＝第四态就地蒸发（同族已连修三处：五入口件 `_visit`／S189、齿锁两桶／S191）。
+
+现在三种结局各有名字（`scan_send_bypasses_with_fold` 一次遍历产三本账）：
+
+* 折出非空且命中直发前缀 → 旁路桶，判据与改造前**逐枚相等**
+  （`test_bypass_bucket_unchanged_by_fold_accounting` 拿 `_fold_legacy` 旧口在真树 + 十形态
+  电池上反证，且带反空跑腿）；
+* 折出非空但不命中前缀 → `DecidedNonBypassSite`：一次**判定完成的结论**，放过但留名可数；
+* 折出空白 / 根本折不出 → `FoldFailureSite`（可疑），**由唯一真身名册**
+  `test_five_entry_seam_lock.py::_DYNAMIC_BOUNDED_SITES` 按 (路径, 函数) 认领，**册外即红**
+  （`test_fold_failure_sites_are_claimed_by_unique_roster` 八腿）。
+
+本件**不立第三本动态名账**（两本各说各话正是 S189 点名的新洞），于是名册也不是逃生门：
+往那本册塞一枚权威尺扫不到的名字，五入口件「在册未扫到＝假豁免」普查先红；塞一枚
+"权威尺判已折叠"的名字来藏本尺站点，本锁第⑦腿与那条普查**双向**咬住（⑥b 在内存里预演
+过杀伤力）。无位置实参的 `call_api(**kw)` 是**判定边界**（没有 api 名位不构成投递），
+与五入口件 `_scan_call_api_sites` 的牙 7 同一口径，由 `test_authority_ruler_fold_failures
+_are_never_blinder` 末腿核对同判——真树今天该维零实例，故这条是前瞻耦合，**不是已成立的执法**。
 """
 
 from __future__ import annotations
 
 import ast
 import pathlib
+import re
+import sys
 from dataclasses import dataclass
 
 import pytest
@@ -31,16 +72,31 @@ import pytest
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 PKG_ROOT = REPO_ROOT / "plugins" / "bot_unified_runtime"
 
-#: 判据锁定的三类出站直发（规格 §4.2 原文口径）。
-SEND_API_NAMES = frozenset({"send_group_msg", "send_private_msg"})
+#: 判据锁定的出站直发 API（规格 §4.2 原文两枚 + 裁定 R-4 扩面两枚，见文件头口径变更）。
+SEND_API_NAMES = frozenset(
+    {
+        "send_group_msg",
+        "send_private_msg",
+        "upload_group_file",
+        "upload_private_file",
+    }
+)
+
+#: `call_api("<action>", …)` 首参的直发动词前缀（与 `SEND_API_NAMES` 同批改，防只扩一半）。
+CALL_API_ACTION_PREFIXES = ("send_", "upload_")
 
 #: sender 漏斗最底层＝唯一合法的协议通道本体，按规格排除在扫描面之外。
 SENDER_FUNNEL_DIRS = ("domains/transport/sender/",)
 
 
+
 @dataclass(frozen=True)
 class BypassExemption:
-    """一条在册旁路的豁免理由（必须可核：路径 + API + 条数 + 门关卫哨键）。"""
+    """一条在册旁路的豁免理由（结构保留给注毒用例；**现役表为空**，见 `BYPASS_EXEMPTIONS`）。
+
+    R-4 之前这条数据类的存在意义是「每条豁免必须可核」；R-4 之后 B 类零容忍，
+    任何人往表里塞回一行，本件的退役锁与双向互认锁会一起点名它。
+    """
 
     path: str
     api: str
@@ -50,82 +106,293 @@ class BypassExemption:
     registry_ref: str
 
 
-def _exempt(path: str, api: str) -> bool:
-    return any(
-        path.startswith(prefix) and f"{prefix}" in path for prefix in SENDER_FUNNEL_DIRS
-    )
+#: 已退役的四枚「门关」卫哨键（R-4 从 `config.py` 删除）。列在这里是为了让门去**现算**
+#: 它们确实回不来（`test_zero_tolerance_via_queue_sentinel_is_no_exemption`），
+#: 不是为了给新直发留一条"我以前有过开关"的说法。
+RETIRED_VIA_QUEUE_KEYS: tuple[str, ...] = (
+    "bot_group_welcome_via_queue",
+    "bot_cookie_qr_via_queue",
+    "bot_cookie_expiry_reminder_via_queue",
+    "bot_file_export_via_queue",
+)
 
 
-def scan_send_bypasses(package_root: pathlib.Path) -> dict[tuple[str, str], list[int]]:
-    """AST 扫描根 `__init__.py` + `domains/**`，返回 {(相对路径, API): [行号…]}。
+@dataclass(frozen=True)
+class ExemptionTableRetirement:
+    """豁免表摘牌记录：时刻 + 裁定 + 现算证据 + 被摘条目（缺一即不可审计）。"""
 
-    命中形态（只认这三类，避免把注册表里的字符串常量算成旁路）：
-    ① `x.call_api("send_…", …)` 首参为字符串字面量且以 `send_` 起头；
-    ② 属性直发 `x.send_group_msg` / `x.send_private_msg`（含 `await bot.send_group_msg(...)`）。
+    retired_at_utc: str
+    ruling: str
+    retired_rows: int
+    retired_sites: int
+    retired_apis: tuple[str, ...]
+    reason: str
+    evidence_cmds: tuple[str, ...]
+
+
+EXEMPTION_TABLE_RETIREMENT = ExemptionTableRetirement(
+    retired_at_utc="2026-09-24T06:33Z",
+    ruling="裁定 R-4（统一接入波第四批根改动：四条投递路径 call_api 直发分支全删）",
+    retired_rows=2,
+    retired_sites=4,
+    retired_apis=("send_private_msg", "send_group_msg"),
+    reason=(
+        "两条豁免各自挂在「缺省 False 的 *_via_queue 门关旧直连分支」上；R-4 把分支与"
+        "四枚开关一次删净 ⇒ 门关分支不再存在，豁免失去宿主，同批摘牌而非留成幽灵白名单"
+    ),
+    evidence_cmds=(
+        (
+            "grep -c 'send_group_msg\\|send_private_msg\\|upload_group_file\\|upload_private_file'"
+            " plugins/bot_unified_runtime/__init__.py ⇒ 字符串命中 5 处，逐条皆为注释/文档串"
+            "（:4820/:5280/:6100 等），AST 判据命中 0"
+        ),
+        "grep -n 'via_queue' plugins/bot_unified_runtime/config.py ⇒ 零命中（键本体已退役）",
+        (
+            "pytest tests/test_outbound_bypass_prohibition_gate.py -q @2026-09-24T06:59:10Z"
+            " ⇒ 3 failed（两行幽灵豁免 + 清点账 4≠0），本件即该三红的跟随"
+        ),
+    ),
+)
+
+
+def _collect_scan_sources(package_root: pathlib.Path) -> dict[str, str]:
+    """扫描面的「文件 → 源码」表：根 `__init__.py` + `domains/**`，sender 漏斗除外。
+
+    与判据分开成两个函数，是为了让注毒用例能**在内存里**改根文件文本再喂同一把尺
+    （绝不为造一例红去写生产树）。
     """
     files = [package_root / "__init__.py"]
     files.extend(sorted((package_root / "domains").rglob("*.py")))
-    found: dict[tuple[str, str], list[int]] = {}
+    sources: dict[str, str] = {}
     for file in files:
         if not file.exists():
             continue
         rel = file.relative_to(package_root).as_posix()
         if any(rel.startswith(prefix) for prefix in SENDER_FUNNEL_DIRS):
             continue
+        sources[rel] = file.read_text(encoding="utf-8")
+    return sources
+
+
+# --------------------------------------------------------------------------- 折叠三口分账（S195）
+#
+# 旧尺（2026-09-24T09:0xZ 之前的 `:160-178`）把「**前缀过滤写在折叠条件内部**」，于是
+# `call_api` 通道调用点的三种结局——① 折出空白（`""` / `"   "`）② 折出非直发 api 名
+# ③ 根本折不出来（首参是 Name / 计算值 / 拼接）——**合并成同一个静默 `continue`**，
+# 且本件当时**没有任何「不可判」名册** ⇒ 条目三本账都不进＝第四态（就地蒸发）。
+# 这与本窗已连修三处同族：五入口件 `_visit`（S189，判据 `api is not None and api.strip()`）、
+# 齿锁两桶（S191，折不出落第二桶并要求由唯一名册认领）。
+#
+# 现口径（S195）：**旁路桶一字不动**（`test_bypass_bucket_unchanged_by_fold_accounting`
+# 用改造前的旧取数口逐枚等值反证），只把折叠的三种结局**各给一个名字**：
+#   * 折出非空且命中直发前缀 → 旁路桶（`found`，判据与旧尺逐字节同形）；
+#   * 折出非空但不命中前缀   → `DecidedNonBypassSite`（一次**判定完成的结论**，放过但留名）；
+#   * 折出空白 / 根本折不出   → `FoldFailureSite`（可疑），由**唯一真身名册**
+#     `test_five_entry_seam_lock.py::_DYNAMIC_BOUNDED_SITES` 按 (路径, 函数) 认领，**册外即红**。
+# 本件**不立第三本动态名账**（两把尺各说各话正是 S189 点名的新洞）；名册因此不是本件的
+# 逃生门——往那本册塞一枚权威尺扫不到的名字，会被五入口件自己的「在册未扫到＝假豁免」
+# 普查当场打红（本锁第七腿在内存里复算这条咬合，不改任何禁写文件）。
+# 无位置实参的 `call_api(**kw)` 是**判定边界**（没有 api 名位就不构成投递），与五入口件
+# `_scan_call_api_sites` 的牙 7 同一口径，不再算静默丢弃：它由那条锁执法，本件另有一腿
+# 断言「本尺在这一维与权威尺同判」。
+# 保守方向锁死：本次改动**只让可疑集合变大**，绝不让旁路桶、`decided` 放过面或任何
+# 豁免表变小（`test_authority_ruler_fold_failures_are_never_blinder` 双向核对）。
+
+#: 五入口件名册的路径是仓根相对（`plugins/bot_unified_runtime/…`），本件的键是包根相对。
+_PKG_PREFIX = "plugins/bot_unified_runtime/"
+#: 模块级站点的宿主函数名占位（与五入口件 `_scan_call_api_sites` 的 `<module>` 同字面）。
+_MODULE_SCOPE = "<module>"
+
+
+@dataclass(frozen=True)
+class FoldFailureSite:
+    """`call_api` 通道上**折叠给不出合法 api 名**的一枚站点（旧尺的第四态在此显式化）。
+
+    * ``kind="blank-fold"``：首参是字符串字面量、但 strip 后为空 ⇒ 折叠"看起来成功"却交出
+      垃圾值。空串不是任何 OneBot 动作名，它既不是旁路、也不是"已判定的非旁路"。
+    * ``kind="unfoldable"``：首参存在但不是字符串字面量（Name / 计算值 / 拼接 / 下标…）
+      ⇒ 本尺折不出 api 名＝真不可判。
+    * ``shape``：人读证据（`首参源码形 -> 折出值`），**不参与认领键**——认领只看 (path, func)，
+      与齿锁 S191 第 (E) 腿同一形状，免得指纹措辞一变就成"册外"假红。
+    """
+
+    path: str
+    func: str
+    kind: str
+    shape: str
+
+
+@dataclass(frozen=True)
+class DecidedNonBypassSite:
+    """折叠**成功**且折出的名字不命中直发前缀 ⇒ 一次判定完成的结论（放过，但要留名可数）。"""
+
+    path: str
+    func: str
+    api: str
+
+
+def _shape_of(expr: ast.expr) -> str:
+    """折叠失败站点的首参源码形（人读指纹，截 120）。
+
+    不做 try/except 兜底：`ast.unparse` 对刚 `ast.parse` 成功的树不会失败，加裸 `except`
+    会被 `BLE001` 打回，且真失败时让尺自身崩比静默交一个假指纹好（静默兜底＝新第四态）。
+    """
+    return ast.unparse(expr)[:120]
+
+
+def _enclosing_functions(tree: ast.Module) -> dict[int, str]:
+    """节点 id → 最近宿主函数名（BFS 外层先入、内层后入 ⇒ 后写覆盖＝取最深，方法名同理）。
+
+    旧尺只记行号，于是「这一枚在哪个函数里」这条信息在扫描当场就被丢掉——而唯一名册的
+    认领键是 (路径, 函数)，**不指认到函数就无法认领**。归属口径与五入口件 `_visit` 的
+    `func_name` 一致（只在 `FunctionDef/AsyncFunctionDef` 上换栈，类体不换）。
+    """
+    owners: dict[int, str] = {}
+    queue: list[tuple[ast.AST, str]] = [(tree, _MODULE_SCOPE)]
+    head = 0
+    while head < len(queue):
+        node, func = queue[head]
+        head += 1
+        owners[id(node)] = func
+        for child in ast.iter_child_nodes(node):
+            inner = child.name if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef) else func
+            queue.append((child, inner))
+    return owners
+
+
+def _fold_legacy(source: str, rel: str) -> dict[tuple[str, str], list[int]]:
+    """**改造前的旧取数口**（前缀过滤写在折叠条件内部），专用于「旁路桶一字不动」对照。
+
+    逐字保留旧逻辑（含那个把三种结局压成一次 `continue` 的判据），不是文档而是尺——
+    新尺若哪天悄悄改了旁路桶，本函数与它的差集当场点名。
+    """
+    found: dict[tuple[str, str], list[int]] = {}
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        api: str | None = None
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "call_api"
+            and node.args
+        ):
+            first = node.args[0]
+            if (
+                isinstance(first, ast.Constant)
+                and isinstance(first.value, str)
+                and first.value.startswith(CALL_API_ACTION_PREFIXES)
+            ):
+                api = first.value
+        elif isinstance(node, ast.Attribute) and node.attr in SEND_API_NAMES:
+            api = node.attr
+        if api is None:
+            continue
+        found.setdefault((rel, api), []).append(int(getattr(node, "lineno", 0)))
+    return {key: sorted(lines) for key, lines in found.items()}
+
+
+def scan_send_bypasses_with_fold(
+    sources: dict[str, str],
+) -> tuple[dict[tuple[str, str], list[int]], list[FoldFailureSite], list[DecidedNonBypassSite]]:
+    """一次遍历产**三本账**：旁路桶 / 折叠失败（可疑）/ 已判定的非旁路（结论）。
+
+    三本账由**同一次遍历、同一个折叠口**产出（齿锁 S191 同型理由）：分成两个函数各扫一遍
+    ＝"投影口径与真身漂移"的第二把尺，那种洞正是本波在连修的东西。
+
+    折叠口的三种结局各有去处（见本节上方注释块的口径），**没有任何一条 `continue` 是静默的**：
+    每一条不记旁路的路径要么落 `fold_failures`，要么落 `decided`，要么是点名过的判定边界。
+    """
+    found: dict[tuple[str, str], list[int]] = {}
+    fold_failures: list[FoldFailureSite] = []
+    decided: list[DecidedNonBypassSite] = []
+    for rel, source in sources.items():
         try:
-            tree = ast.parse(file.read_text(encoding="utf-8"))
+            tree = ast.parse(source)
         except SyntaxError as exc:  # 语法错误由静态门处理，这里如实报错不静默跳过
             raise AssertionError(f"禁止式门无法解析 {rel}: {exc}") from exc
+        owners = _enclosing_functions(tree)
         for node in ast.walk(tree):
+            func = owners.get(id(node), _MODULE_SCOPE)
             api: str | None = None
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
                 and node.func.attr == "call_api"
-                and node.args
             ):
+                if not node.args:
+                    continue  # 判定边界（无 api 名位）：五入口件牙 7 同口径，本件第七腿核对同判
                 first = node.args[0]
-                if (
-                    isinstance(first, ast.Constant)
-                    and isinstance(first.value, str)
-                    and first.value.startswith("send_")
-                ):
-                    api = first.value
+                folded = (
+                    first.value
+                    if isinstance(first, ast.Constant) and isinstance(first.value, str)
+                    else None
+                )
+                if folded is None:
+                    fold_failures.append(
+                        FoldFailureSite(rel, func, "unfoldable", _shape_of(first))
+                    )
+                    continue
+                if not folded.strip():
+                    fold_failures.append(
+                        FoldFailureSite(rel, func, "blank-fold", f"{_shape_of(first)}->{folded!r}")
+                    )
+                    continue
+                if not folded.startswith(CALL_API_ACTION_PREFIXES):
+                    decided.append(DecidedNonBypassSite(rel, func, folded))
+                    continue
+                api = folded
             elif isinstance(node, ast.Attribute) and node.attr in SEND_API_NAMES:
                 api = node.attr
             if api is None:
                 continue
             found.setdefault((rel, api), []).append(int(getattr(node, "lineno", 0)))
-    return found
+    return (
+        {key: sorted(lines) for key, lines in found.items()},
+        sorted(fold_failures, key=lambda s: (s.path, s.func, s.kind, s.shape)),
+        sorted(decided, key=lambda s: (s.path, s.func, s.api)),
+    )
 
 
-#: 现存 B 类旁路逐条挂名（2026-09-21 实测：根文件 4 处、`domains/**` 零处）。
-#: 四条全是「S0 收编的门关旧直连分支」——门开即走 SendQueue/统一管线，门缺省 False
-#: 才落到这里。收编施工图见 SEAT-U4.md §4。
-BYPASS_EXEMPTIONS: tuple[BypassExemption, ...] = (
-    BypassExemption(
-        path="__init__.py",
-        api="send_private_msg",
-        count=2,
-        gate_key="bot_cookie_expiry_reminder_via_queue | bot_cookie_qr_via_queue",
-        reason=(
-            "cookie 到期提醒 job 门关分支 + cookie 登录二维码图片 else 分支"
-            "（S0 收编①③，规格 §4.2 所称「cookie 兜底」即此）"
-        ),
-        registry_ref="outbound_registry.DirectSendEntry「__init__.py:4440-4444」/「5730-5740」",
-    ),
-    BypassExemption(
-        path="__init__.py",
-        api="send_group_msg",
-        count=2,
-        gate_key="bot_group_welcome_via_queue | bot_cookie_qr_via_queue",
-        reason=(
-            "入群欢迎 notice handler 门关分支（S0 收编②）+ cookie 登录二维码图片群聊分支"
-            "（S0 收编③；规格 §4.2 误标为「随机图主动发」，实测全树零随机图直发，见 O5 账）"
-        ),
-        registry_ref="outbound_registry.DirectSendEntry「__init__.py:5378-5382」/「5730-5740」",
-    ),
-)
+def scan_send_bypasses_in_sources(sources: dict[str, str]) -> dict[tuple[str, str], list[int]]:
+    """对「文件 → 源码」表跑判据，返回 {(相对路径, API): [行号…]}（B 类直发唯一尺本体）。
+
+    这是 `scan_send_bypasses_with_fold` 的**第一投影**——旁路桶语义与改造前逐枚相等
+    （`test_bypass_bucket_unchanged_by_fold_accounting` 执法）；折叠失败与已判定非旁路两本账
+    由同一次遍历的另两个投影承担（`scan_fold_failure_sites` / `scan_decided_non_bypass_sites`）。
+    """
+    return scan_send_bypasses_with_fold(sources)[0]
+
+
+def scan_fold_failure_sites(sources: dict[str, str]) -> list[FoldFailureSite]:
+    """折叠失败（折出空白 ∪ 根本折不出）站点（第二投影）——本件唯一"不可判"出口。"""
+    return scan_send_bypasses_with_fold(sources)[1]
+
+
+def scan_decided_non_bypass_sites(sources: dict[str, str]) -> list[DecidedNonBypassSite]:
+    """已判定为非直发的 `call_api` 站点（第三投影，如 `get_msg` / `delete_msg`）。"""
+    return scan_send_bypasses_with_fold(sources)[2]
+
+
+
+def scan_send_bypasses(package_root: pathlib.Path) -> dict[tuple[str, str], list[int]]:
+    """AST 扫描根 `__init__.py` + `domains/**`，返回 {(相对路径, API): [行号…]}。
+
+    命中形态（只认这两类，避免把注册表里的字符串常量算成旁路）：
+    ① `x.call_api("send_…" / "upload_…", …)` 首参为字符串字面量且以直发动词起头；
+    ② 属性直发 `x.send_group_msg` / `x.send_private_msg` / `x.upload_group_file` /
+    `x.upload_private_file`（含 `await bot.send_group_msg(...)`）。
+    """
+    return scan_send_bypasses_in_sources(_collect_scan_sources(package_root))
+
+
+#: 现存 B 类旁路：**空表＝零容忍**（2026-09-24T06:33Z 裁定 R-4 同批摘牌，摘牌记录见
+#: `EXEMPTION_TABLE_RETIREMENT`）。原两行 `(__init__.py, send_private_msg, 2)` /
+#: `(__init__.py, send_group_msg, 2)` 的宿主分支（cookie 到期提醒 job、入群欢迎 notice、
+#: cookie 登录二维码图片群/私聊二分支、文件导出上传分支）已随 R-4 从生产根删除，
+#: 四枚 `*_via_queue` 卫哨键同批从 `config.py` 退役 ⇒ 保留任何一行都是幽灵豁免。
+#: 今天起根与 `domains/**`（sender 漏斗除外）出现任何一处直发即红，**没有豁免通道**。
+BYPASS_EXEMPTIONS: tuple[BypassExemption, ...] = ()
+
 
 
 def _table() -> dict[tuple[str, str], BypassExemption]:
@@ -170,45 +437,151 @@ def test_no_unexempted_send_bypass() -> None:
 
 
 def test_exemption_table_covers_actual_bypasses_exactly() -> None:
-    """豁免表不许留幽灵行：在册条数必须与实到条数逐 API 相等。
+    """双向现算互认：表 ⊇ 实测 **且** 实测 ⊇ 表，两侧都要数（S153 按 R-4 现状重写）。
 
-    旁路被收编走却没删条目 ⇒ 本例红，逼着收编席同批改表（防「豁免表只涨不消」）。
+    旧版只数一侧（在册行的条数须等于实到条数），实测多出来的那部分靠另一条判据兜；
+    今天表已空 ⇒ 单侧腿会退化成"没有行可核＝空跑"，所以两侧各自都必须是**算出来的**：
+
+    * 实测 ⊄ 表 ⇒ 有人新写直发（零容忍，当场红）；
+    * 表 ⊄ 实测 ⇒ 幽灵豁免（债已清、白名单还留着，当场红）。
     """
     found = scan_send_bypasses(PKG_ROOT)
     table = _table()
+    live_keys, table_keys = set(found), set(table)
+    unlisted = sorted(live_keys - table_keys)
+    ghosts = sorted(table_keys - live_keys)
+    assert not unlisted, f"表外直发（零容忍）：{[(k[0], k[1], found[k]) for k in unlisted]}"
+    assert not ghosts, f"幽灵豁免（旁路已收编却没删行）：{ghosts}"
     for (rel, api), row in sorted(table.items()):
-        actual = len(found.get((rel, api), []))
-        assert actual == row.count, (
-            f"豁免表漂移：{rel} `{api}` 在册 {row.count} 处、实到 {actual} 处。"
-            f"旁路收编后要删行，别留幽灵豁免。"
+        assert len(found[(rel, api)]) == row.count, (
+            f"豁免表漂移：{rel} `{api}` 在册 {row.count} 处、实到 {len(found[(rel, api)])} 处"
+        )
+    # 现役基线：B 类实测为零（此值由上面两条 + 本条共同执法，不是"达标"二字）
+    assert live_keys == set(), f"B 类直发现算应为零，实到 {found}"
+
+
+def test_zero_tolerance_via_queue_sentinel_is_no_exemption(tmp_path: pathlib.Path) -> None:
+    """零容忍形态（继承并改写 `test_every_exempted_bypass_is_gate_closed_legacy_branch`）。
+
+    旧判据的用途是"在册旁路必须个个是门关分支"，它**遍历豁免表**——表一空就整例空跑，
+    绿得毫无内容（计数腿真空，统一波记过的同型陷阱）。本例换成三腿实算：
+
+    ① 表空必须与实测空同时成立（只清尺不清债当场红）；
+    ② 旧豁免理由的本体（四枚缺省关 `*_via_queue` 卫哨）在 `config.py` 零命中、
+       且全扫描面零读点（AST 级）⇒ 没人能再援引"它有开关门"当豁免理由；
+    ③ 杀伤力：合成一条**上方带 `getattr(config, "bot_group_welcome_via_queue", False)`
+       卫哨**的直发，同一把尺必须点名它；去掉卫哨的同一形态同样点名（防判据只对某一种
+       形态敏感）。
+    """
+    # ① 表空 ⇔ 实测空
+    assert BYPASS_EXEMPTIONS == (), (
+        "B 类豁免表自 2026-09-24T06:33Z 起退役封账；要塞回一行请先拿到新裁定"
+    )
+    live = scan_send_bypasses(PKG_ROOT)
+    assert live == {}, f"豁免表为空而实测仍有直发 ⇒ 只清表不清债：{live}"
+
+    # ② 卫哨键本体已退役（读 config.py 文本 + 全扫描面一次 AST 现算，不猜）
+    config_text = (PKG_ROOT / "config.py").read_text(encoding="utf-8")
+    read_points = _retired_key_read_points(PKG_ROOT)
+    assert set(read_points) == set(RETIRED_VIA_QUEUE_KEYS), "四枚退役键须逐枚有账，不许合并计数"
+    for key in RETIRED_VIA_QUEUE_KEYS:
+        assert key not in config_text, f"{key} 在 config.py 复活 ⇒ 旧豁免理由被偷偷养回来"
+        assert read_points[key] == [], f"{key} 在生产面仍有读点 {read_points[key]}"
+
+
+    # ③ 卫哨形态不再构成豁免：带哨/不带哨各一发，同一把尺都要点名
+    guarded = tmp_path / "plugins_pkg"
+    (guarded / "domains").mkdir(parents=True)
+    (guarded / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+    (guarded / "domains" / "guarded.py").write_text(
+        "async def handle(bot, config):\n"
+        '    if not getattr(config, "bot_group_welcome_via_queue", False):\n'
+        "        await bot.send_group_msg(group_id=1, message=[])\n",
+        encoding="utf-8",
+    )
+    plain = tmp_path / "plugins_pkg_plain"
+    (plain / "domains").mkdir(parents=True)
+    (plain / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+    (plain / "domains" / "plain.py").write_text(
+        "async def handle(bot):\n    await bot.send_group_msg(group_id=1, message=[])\n",
+        encoding="utf-8",
+    )
+    # 带哨版调用在第 3 行（卫哨 if 占第 2 行），无哨版在第 2 行——两个行号各按夹具算，不猜
+    for root, rel, call_line in (
+        (guarded, "domains/guarded.py", 3),
+        (plain, "domains/plain.py", 2),
+    ):
+        hits = scan_send_bypasses(root)
+        assert hits == {(rel, "send_group_msg"): [call_line]}, (
+            f"{rel} 判据未命中或行号漂移，尺瞎了：{hits}"
+        )
+        problems = _unexempted(hits, _table())
+        assert len(problems) == 1 and rel in problems[0], (
+            f"{rel} 带卫哨形态被放行 ⇒ 零容忍失守：{problems}"
         )
 
 
-def test_every_exempted_bypass_is_gate_closed_legacy_branch() -> None:
-    """在册旁路必须个个「门关分支」：调用点上方 60 行内存在缺省 False 的 `*_via_queue` 卫哨。
+def _is_key_reference(node: ast.AST, keys: frozenset[str]) -> str | None:
+    """这个节点是不是「把某个在册键当名字用」：属性访问 `x.key` 或 `getattr(obj, "key", …)`。
 
-    这条把「豁免」和「无门直发」区分开——本波只清点、不改投递语义的前提就是
-    现存四条全部受开关控制、门开即走中央管线。
+    命中返回该键名，否则 None。一次遍历核完全部键，不逐键重扫全树（四枚键各扫一遍
+    是纯开销，一把门的成本要花在判据上）。
     """
-    source_lines = (PKG_ROOT / "__init__.py").read_text(encoding="utf-8").splitlines()
-    found = scan_send_bypasses(PKG_ROOT)
-    for (rel, api), row in _table().items():
-        assert rel == "__init__.py", "本例只核根文件的门关性"
-        gate_keys = [key.strip() for key in row.gate_key.split("|")]
-        for line_no in found[(rel, api)]:
-            window = "\n".join(source_lines[max(0, line_no - 61) : line_no - 1])
-            assert any(key in window for key in gate_keys), (
-                f"{rel}:{line_no} 的 `{api}` 上方 60 行内找不到 {gate_keys} 卫哨——"
-                f"它不是门关分支（新无门直发，或卫哨离得太远需单独收编）"
-            )
+    if isinstance(node, ast.Attribute):
+        return node.attr if node.attr in keys else None
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) >= 2
+        and isinstance(node.args[1], ast.Constant)
+    ):
+        value = node.args[1].value
+        if isinstance(value, str) and value in keys:
+            return value
+    return None
 
 
-def test_exempted_rows_carry_auditable_reason() -> None:
-    """每条豁免必须带理由 + 关键 + 登记册指针，且理由里点名收编出处（防一格一词糊门）。"""
-    for row in BYPASS_EXEMPTIONS:
+def _retired_key_read_points(package_root: pathlib.Path) -> dict[str, list[str]]:
+    """全扫描面里把四枚退役键当**名字**用的地方，返回 {键: [路径:行号…]}（缺键＝零读点）。
+
+    只认 AST 节点，不认注释与叙事串——`outbound_registry.py` 的散文里写着这些键名
+    （历史注记），那不该把本例判红；真正的读点（`config.bot_xxx_via_queue` /
+    `getattr(config, "bot_xxx_via_queue", False)`）才是"卫哨复活"。
+    """
+    keys = frozenset(RETIRED_VIA_QUEUE_KEYS)
+    hits: dict[str, list[str]] = {key: [] for key in RETIRED_VIA_QUEUE_KEYS}
+    for rel, source in _collect_scan_sources(package_root).items():
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute | ast.Call):
+                continue
+            key = _is_key_reference(node, keys)
+            if key is not None:
+                hits[key].append(f"{rel}:{node.lineno}")
+    return hits
+
+
+
+def test_retirement_record_is_auditable() -> None:
+    """摘牌必须留可复核的账（时刻/裁定/被摘枚数/证据命令），不许悄悄删两行了事。
+
+    同时保留旧版逐行审计（理由长度 + 门关键 + 登记册指针）：表一旦被人塞回任何一行，
+    这例立刻按旧标准核它——退役不等于把审计尺一起拆掉。
+    """
+    rec = EXEMPTION_TABLE_RETIREMENT
+    assert re.fullmatch(r"2026-09-2\dT\d{2}:\d{2}Z", rec.retired_at_utc), rec.retired_at_utc
+    assert "R-4" in rec.ruling, "摘牌须点名裁定"
+    assert rec.retired_rows == 2 and rec.retired_sites == 4, "被摘枚数须与两行在册条数一致"
+    assert rec.retired_apis == ("send_private_msg", "send_group_msg"), rec.retired_apis
+    assert len(rec.reason) >= 24, "退役理由过短，不可审计"
+    assert len(rec.evidence_cmds) >= 3, "须留可复跑证据命令"
+    assert len(RETIRED_VIA_QUEUE_KEYS) == 4, RETIRED_VIA_QUEUE_KEYS
+    for row in BYPASS_EXEMPTIONS:  # 现役空表 ⇒ 零次迭代，本例的实内容由上面各腿保证
         assert len(row.reason) >= 24, f"{row.path}/{row.api} 理由过短，不可审计"
         assert row.gate_key, f"{row.path}/{row.api} 缺门关卫哨键"
         assert "outbound_registry" in row.registry_ref, "豁免须指回叙事登记册条目"
+
 
 
 # ---------- ② 注毒自证：这扇门真的会红 ----------
@@ -246,18 +619,55 @@ def test_poison_sender_funnel_stays_out_of_scope(tmp_path: pathlib.Path) -> None
     assert scan_send_bypasses(fake) == {}
 
 
-def test_empty_exemption_table_would_flag_all_live_bypasses() -> None:
-    """注毒：把豁免表掏空 ⇒ 现存旁路全数现形（证明豁免是白、不是门本身松）。"""
-    found = scan_send_bypasses(PKG_ROOT)
-    live_total = sum(len(lines) for lines in found.values())
-    assert live_total == 4, f"现存根文件直发条数与清点账不符，现={live_total}"
-    assert len(_unexempted(found, {})) == len(found) == 2
+#: 注毒片段：**只在内存里**拼到真实根文件文本后面，绝不落盘（旧用例靠"掏空表 + 数现存
+#: 4 处"自证，R-4 后现存为 0 ⇒ 那条腿空跑；换成"同一把尺对生产文本必须点名"）。
+#: 三种形态各覆盖判据一半：属性直发两枚（群/私聊）+ `call_api` 字面量一枚。
+_POISON_SNIPPETS: dict[str, str] = {
+    "send_group_msg": (
+        "async def _s153_poison_attr(bot) -> None:\n"
+        "    await bot.send_group_msg(group_id=1, message=[])\n"
+    ),
+    "upload_group_file": (
+        "async def _s153_poison_call_api(bot) -> None:\n"
+        '    await bot.call_api("upload_group_file", group_id=1, file="x", name="x")\n'
+    ),
+    "upload_private_file": (
+        "async def _s153_poison_attr_private(bot) -> None:\n"
+        "    await bot.upload_private_file(user_id=2, file='x', name='x')\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("api", sorted(_POISON_SNIPPETS))
+def test_poison_injected_into_root_source_in_memory_is_named_by_same_ruler(api: str) -> None:
+    """杀伤力自证（取代 `test_empty_exemption_table_would_flag_all_live_bypasses`）。
+
+    旧例的判据是「掏空豁免表 ⇒ 现存 4 处全数现形」，它同时钉了两个数：现存=4、
+    表外组=2。R-4 把四条分支删净后这两个数都变 0 ⇒ 该例退化成 `0 == 0` 的空跑，
+    什么也不证明。新例反过来问：**同一把尺**（`scan_send_bypasses_in_sources`）
+    吃生产根文件的**真文本**，在内存里追加一条合成直发，必须点名它与其行号；
+    不追加时该文件必须干净——两半各数一次，缺一即假绿。真树全程只读。
+    """
+    snippet = _POISON_SNIPPETS[api]
+    rel = "__init__.py"
+    root_text = (PKG_ROOT / rel).read_text(encoding="utf-8")
+    baseline = scan_send_bypasses_in_sources({rel: root_text})
+    assert baseline == {}, f"根文件今天就有直发，注毒用例失去对照物：{baseline}"
+
+    head = root_text if root_text.endswith("\n") else f"{root_text}\n"
+    poisoned_text = head + snippet
+    found = scan_send_bypasses_in_sources({rel: poisoned_text})
+    # 片段共两行（def + 调用），调用是末行 ⇒ 行号 = 原文件行数 + 片段行数（现算，不硬编）
+    expected_line = len(head.splitlines()) + len(snippet.splitlines())
+    assert found == {(rel, api): [expected_line]}, f"注毒未被同一把尺点名：{found}"
+    problems = _unexempted(found, _table())
+    assert len(problems) == 1 and api in problems[0], f"零容忍失守：{problems}"
 
 
 def test_random_picture_domain_has_no_direct_send_bypass() -> None:
     """O5 实证锁：`domains/meme/**`（随机图/表情）零直发 ⇒ 规格 §4.2「随机图主动发
-    :5959/:5965」不是随机图，那两行实为 cookie 登录二维码分支；本波不擅自收编、
-    也不为不存在的旁路立豁免。"""
+    :5959/:5965」不是随机图，那两行实为 cookie 登录二维码分支（该分支已于 R-4 删除，
+    本例升为「该域任何时候都不许长出直发」的常驻反向锁）。"""
     found = scan_send_bypasses(PKG_ROOT)
     meme_hits = {key: lines for key, lines in found.items() if key[0].startswith("domains/meme/")}
     assert meme_hits == {}, f"meme 域出现新的直发旁路，需按 §4.2 收编：{meme_hits}"
@@ -265,9 +675,305 @@ def test_random_picture_domain_has_no_direct_send_bypass() -> None:
 
 @pytest.mark.parametrize("api", sorted(SEND_API_NAMES))
 def test_gate_scope_excludes_only_sender_funnel(api: str) -> None:
-    """口径自检：豁免前缀只有 sender 一条，防后来人偷偷加目录把门开大。"""
+    """口径自检：豁免前缀只有 sender 一条，且判据两半（属性名集 / call_api 前缀）不脱节。"""
     assert SENDER_FUNNEL_DIRS == ("domains/transport/sender/",)
-    assert api in {"send_group_msg", "send_private_msg"}
+    assert api in SEND_API_NAMES
+    # 属性直发认名集、call_api 认前缀：名集里冒出一个前缀盖不住的动作，两半就脱节了
+    assert api.startswith(CALL_API_ACTION_PREFIXES), (
+        f"{api} 在属性名集内却不被 call_api 前缀判据覆盖 ⇒ 同一形态换个写法就逃逸"
+    )
+
+
+
+# ------------------------------------------------------------------ 折叠失败认领（唯一名册，S195）
+
+
+def _unique_dynamic_roster() -> frozenset[tuple[str, str, str, str]]:
+    """不可判/折叠失败站点的**唯一真身名册**（住 `test_five_entry_seam_lock.py`）。
+
+    本件**只读**它、绝不另立第二本动态名账（齿锁 S191 同口径：两本各说各话正是 S189
+    点名的新洞）。按名 import 而非复制内容：复制＝第二真身，改名即静默失联。
+    """
+    if str(REPO_ROOT) not in sys.path:  # 与五入口件自身同一 sys.path 口径（本仓 pytest 走 -m）
+        sys.path.insert(0, str(REPO_ROOT))
+    from tests.test_five_entry_seam_lock import _DYNAMIC_BOUNDED_SITES
+
+    assert isinstance(_DYNAMIC_BOUNDED_SITES, frozenset), (
+        "五入口件那本动态名册不在了或换了形态＝本件的认领指针失效，两账须同批复判"
+    )
+    return _DYNAMIC_BOUNDED_SITES
+
+
+def roster_claim_pairs(
+    roster: frozenset[tuple[str, str, str, str]] | set[tuple[str, str, str, str]],
+) -> set[tuple[str, str]]:
+    """名册 → 本件键形态的认领集 `{(包相对路径, 函数)}`（剥 `plugins/bot_unified_runtime/` 前缀）。"""
+    return {(path.removeprefix(_PKG_PREFIX), func) for (path, func, _form, _arg) in roster}
+
+
+def unclaimed_fold_failures(
+    sites: list[FoldFailureSite], claims: set[tuple[str, str]]
+) -> list[FoldFailureSite]:
+    """册外折叠失败站点＝本件唯一允许的"违反"形态（认领之外的静默丢弃已被本改动消灭）。"""
+    return [site for site in sites if (site.path, site.func) not in claims]
+
+
+def _authority_scan_exclude_parts() -> tuple[str, ...]:
+    """权威尺（齿锁）的扫描排除面——**按名现读，不复制字面量**。
+
+    本件的折叠失败要与那本唯一名册对账，就得知道"同一张文件地"是哪张：本件扫描面
+    （根 + `domains/**`，只剔 sender 漏斗）比权威尺**宽**，多出 `domains/ops/smoke/` 与
+    `domains/core/decision/outbound_registry.py` 两块——那两块在权威尺的排除面上，
+    名册**永远不可能合法认领**它们（塞进去会被五入口件「在册未扫到＝假豁免」普查当场打红）。
+    复制那份字面量＝第二真身（改名即静默失联），故按名 import 同一本账。
+    """
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from tests.test_active_push_entry_teeth import _SCAN_EXCLUDE_PARTS
+
+    assert isinstance(_SCAN_EXCLUDE_PARTS, tuple) and all(
+        isinstance(part, str) for part in _SCAN_EXCLUDE_PARTS
+    ), "齿锁排除面换了形态＝两把尺的文件地不再可比，本锁须重判"
+    return _SCAN_EXCLUDE_PARTS
+
+
+def on_authority_ground(rel: str) -> bool:
+    """包相对路径 `rel` 是否落在两把尺共用的那张扫描地上（按齿锁同款子串判据）。"""
+    keyed = f"{_PKG_PREFIX}{rel}"  # 齿锁的键是仓根相对，这里逐字复现它的匹配输入
+    return not any(part in keyed for part in _authority_scan_exclude_parts())
+
+
+# ---------- ③ 折叠三口分账执法面（S195 收口第四态） ----------
+
+
+def test_fold_outcomes_land_in_three_named_buckets() -> None:
+    """最小样本喂**本件自己的尺**：六种折叠结局必须各自落到**唯一一本账**，不再共用 `continue`。
+
+    复现的是 S191 交回主代理的那处同型洞——旧尺对下面前四种形态的输出**逐字相同**（`{}`），
+    于是"折出空白"与"判定完成的非旁路"在账面上不可区分，且没有任何一册认领前者。
+    """
+    rel = "synth.py"
+    cases: dict[str, tuple[str, str]] = {  # 形态 → (源码, 期望归属)
+        "字面空串": ('async def f(bot):\n    await bot.call_api("", group_id=1)\n', "blank-fold"),
+        "字面纯空白": ('async def f(bot):\n    await bot.call_api("   ", group_id=1)\n', "blank-fold"),
+        "折不出-Name": ("async def f(bot, action):\n    await bot.call_api(action)\n", "unfoldable"),
+        "折不出-计算值": (
+            'async def f(bot):\n    await bot.call_api("send_" + "group_msg")\n',
+            "unfoldable",
+        ),
+        "折不出-下标": (
+            'ACTION = {"a": "get_msg"}\n\n\nasync def f(bot):\n    await bot.call_api(ACTION["a"])\n',
+            "unfoldable",
+        ),
+        "已判定非旁路": ('async def f(bot):\n    await bot.call_api("get_msg", message_id=1)\n', "decided"),
+        "无位置实参": ("async def f(bot):\n    await bot.call_api(**kw)\n", "boundary"),
+        "命中前缀": (
+            'async def f(bot):\n    await bot.call_api("send_group_msg", group_id=1)\n',
+            "bypass",
+        ),
+    }
+    seen_kinds: set[str] = set()
+    for name, (source, expect) in cases.items():
+        bypass, failures, decided = scan_send_bypasses_with_fold({rel: source})
+        hit_bypass = bool(bypass)
+        hit_fail = {f.kind for f in failures}
+        hit_decided = {d.api for d in decided}
+        if expect == "bypass":
+            assert bypass == {(rel, "send_group_msg"): [2]}, f"{name}：旁路桶形态漂移 {bypass}"
+            assert not failures and not decided, f"{name}：真旁路被记成别的账＝桶在互相吞 {failures}{decided}"
+        elif expect == "decided":
+            assert hit_decided == {"get_msg"}, f"{name}：已判定非旁路没留名（旧尺正是在这里与失败态合流）"
+            assert not hit_bypass and not hit_fail, f"{name}：判定结论被错记 {bypass}{failures}"
+        elif expect == "boundary":
+            assert not hit_bypass and not hit_fail and not hit_decided, (
+                f"{name}：无 api 名位的调用不构成投递（判定边界，口径同五入口件牙 7），"
+                "本例把这条锁成断言而非静默——它一旦变成入账或变成旁路都须来此复判"
+            )
+        else:
+            assert len(failures) == 1 and failures[0].kind == expect, (
+                f"{name}：折叠失败没落进可疑桶（failures={failures}）＝第四态仍在静默丢弃"
+            )
+            assert not hit_bypass, f"{name}：不可判被硬折成旁路＝凭空造阳 {bypass}"
+            assert not hit_decided, f"{name}：折不出却记成「已判定」＝把「我不知道」写成「它没有」"
+            seen_kinds.add(expect)
+        if expect in {"blank-fold", "unfoldable"}:
+            site = failures[0]
+            assert (site.path, site.func) == (rel, "f"), f"{name}：站点没指认到函数＝无法被名册认领"
+            assert site.shape, f"{name}：没留可读指纹＝只记有洞不记洞在哪"
+    assert seen_kinds == {"blank-fold", "unfoldable"}, f"两种失败形态少了一格（{seen_kinds}）＝合并未拆净"
+
+
+def test_bypass_bucket_unchanged_by_fold_accounting() -> None:
+    """「旁路桶一字不动」硬证：真树 + 八形态电池上，新尺第一投影与**改造前旧取数口逐枚相等**。
+
+    本席只做分账、不做改判：可疑桶变大是唯一的合法方向，旁路桶若因这次改动多一枚或少一枚
+    都是失守（少了＝漏报，多了＝把"判不出"当旁路＝假阳，两种都会让人去放宽判据）。
+    """
+    battery = [
+        'async def f(bot):\n    await bot.call_api("send_group_msg", group_id=1)\n',
+        'async def f(bot):\n    await bot.call_api("upload_group_file", group_id=1)\n',
+        'async def f(bot):\n    await bot.call_api("   ")\n',
+        "async def f(bot, action):\n    await bot.call_api(action)\n",
+        "async def f(bot):\n    await bot.call_api(**kw)\n",
+        'async def f(bot):\n    await bot.call_api("get_msg", message_id=1)\n',
+        "async def f(bot):\n    await bot.send_private_msg(user_id=1)\n",
+        "async def f(bot):\n    await bot.upload_private_file(user_id=1)\n",
+        "class C:\n    async def m(self, bot):\n        await bot.call_api(self._a)\n",
+        'x = "send_group_msg"\n',
+    ]
+    battery_hits = 0
+    for idx, source in enumerate(battery):
+        rel = f"battery{idx}.py"
+        new = scan_send_bypasses_in_sources({rel: source})
+        old = _fold_legacy(source, rel)
+        assert new == old, f"电池第 {idx} 枚旁路桶漂移：新={new} 旧={old}"
+        battery_hits += sum(len(v) for v in new.values())
+    # 反空跑：电池里必须真有旁路命中，否则"两侧相等"就是 `{} == {}` 的空证（计数腿真空）
+    assert battery_hits >= 4, f"电池旁路命中仅 {battery_hits} 枚＝等值证的空跑，须补形态"
+    sources = _collect_scan_sources(PKG_ROOT)
+    real_new = scan_send_bypasses_in_sources(sources)
+    real_old: dict[tuple[str, str], list[int]] = {}
+    for rel, source in sources.items():
+        real_old.update(_fold_legacy(source, rel))
+    # 真树这一腿今天是 `{} == {}`（B 类零容忍已降为空），它的价值是**耦合**：
+    # 任何人往旁路桶动手脚（放宽前缀、改属性名集判定）都会在这里与旧口分叉。
+    assert real_new == real_old, f"真树旁路桶两侧不等：新={real_new} 旧={real_old}"
+
+
+def test_fold_failure_sites_are_claimed_by_unique_roster() -> None:
+    """真树零容忍：本面每一枚折叠失败站点都**必须由那本唯一名册按 (路径,函数) 认领**，册外即红。
+
+    八腿各管一件事，缺一腿本锁退化成空跑：
+    ① 面非空（尺没瞎）；② 册外＝红；③ 可疑桶与旁路桶不互相吞；④ `decided` 每一枚都是
+    "非空且不命中前缀"的真结论（防它变成新垃圾桶）；⑤ 名册在本面内的认领必须**真有其站**
+    （假认领＝名册搬家，红）；⑥ 合成册外站点不被真名册吞（豁免面不是藏人抽屉）+ ⑥b 塞名
+    预演；⑦ 被认领的站点权威尺同判折不出（往名册塞名字来藏本站点 ⇒ 此腿与五入口件的
+    「在册未扫到＝假豁免」普查**双向**当场红）；⑧ 本件比权威尺宽出的那两块地
+    （`domains/ops/smoke/`、`domains/core/decision/outbound_registry.py`）今天不得有折叠失败
+    ——那一维上名册结构上无从认领，红因写清"改源站点或同批复判两尺排除面"，**不开第三本账**。
+    """
+    sources = _collect_scan_sources(PKG_ROOT)
+    assert len(sources) > 400, f"扫描面塌陷（{len(sources)} 件）＝本锁空跑"
+    bypass, failures, decided = scan_send_bypasses_with_fold(sources)
+    roster = _unique_dynamic_roster()
+    claims = roster_claim_pairs(roster)
+
+    # ② 册外即红
+    offenders = unclaimed_fold_failures(failures, claims)
+    assert not offenders, (
+        f"折叠失败站点无人认领（{[(o.path, o.func, o.kind, o.shape) for o in offenders]}）："
+        "折出空白/折不出既不是旁路也不是已判定，就是第四态静默丢——"
+        "要么把该 api 名改成可判定形态，要么附现算证据收进五入口件那本唯一动态名册，"
+        "绝不在本件新立一本豁免（两本各说各话＝新洞）"
+    )
+    # ① 非空跑：真树至少一枚折叠失败，否则 ②⑤⑥⑦ 全是测夹具
+    assert failures, (
+        "真树连一枚折叠失败都扫不到＝可疑桶没接到真树，上面那条「册外即红」是散文"
+        f"（failures={failures}，请连同五入口件普查一起复判）"
+    )
+    # ③ 两桶不互吞
+    assert not {(s.path, s.func) for s in failures} & set(bypass), (
+        "同一枚站点既进旁路桶又进可疑桶＝折叠口在自我矛盾，账数会随遍历顺序漂"
+    )
+    # ④ decided 只收"真结论"
+    for site in decided:
+        assert site.api.strip(), f"{site.path}:{site.func} 空串混进已判定桶＝垃圾桶化"
+        assert not site.api.startswith(CALL_API_ACTION_PREFIXES), (
+            f"{site.path}:{site.func} 的 `{site.api}` 命中直发前缀却记成非旁路＝旁路桶漏计"
+        )
+    # ⑤ 名册在本面内的认领须真有其站
+    surface_claims = {(path, func) for (path, func) in claims if path in sources}
+    failure_pairs = {(site.path, site.func) for site in failures}
+    stale = surface_claims - failure_pairs
+    assert not stale, (
+        f"名册认领了本面上今天并不存在的折叠失败站点（{sorted(stale)}）＝名册搬家或路径形态变了；"
+        "本件的认领指针随之失效，两账须同批复判"
+    )
+    # ⑥ 合成册外站点不得被真名册吞（键形态不同 ⇒ 结构上藏不住）
+    ghost = FoldFailureSite("domains/__s195_ghost__.py", "sneaky", "unfoldable", "action")
+    assert unclaimed_fold_failures([ghost], claims) == [ghost], "合成站点被真名册认领＝名册成了藏人抽屉"
+    # ⑦ 被认领者权威尺同判折不出（塞名字藏站点在这里红，不靠"记得改回来"）
+    from tests.test_five_entry_seam_lock import _scan_call_api_sites
+
+    authority_dynamic_pairs: set[tuple[str, str]] = set()
+    for rel, source in sources.items():
+        if not on_authority_ground(rel):
+            continue  # 权威尺不扫这块地，故它在这一维不是"可对照的裁判"，由第⑧腿单独执法
+        _resolved, dynamic = _scan_call_api_sites(source, rel)
+        authority_dynamic_pairs |= {(path, func) for (path, func, _form, _arg) in dynamic}
+    blind = [
+        site
+        for site in failures
+        if on_authority_ground(site.path) and (site.path, site.func) not in authority_dynamic_pairs
+    ]
+    assert not blind, (
+        f"本尺判折不出、权威尺却判已折叠（{[(b.path, b.func, b.kind) for b in blind]}）："
+        "两把尺对「不可判」的定义开始各说各话，名册会被塞进权威尺不认的名字来藏旁路"
+    )
+    # ⑧ 本件扫描面比权威尺宽出的那两块地（smoke / outbound_registry）今天不得有折叠失败：
+    #    那一维上名册结构上认领不了（塞进去必被五入口件的活性普查打红），所以要么源站点改成
+    #    可判定形态，要么由两把尺的 owner 同批复判排除面——**不许**在本件新开一本豁免。
+    off_ground = [site for site in failures if not on_authority_ground(site.path)]
+    assert not off_ground, (
+        f"共用排除面之外的地长出折叠失败（{[(o.path, o.func, o.kind) for o in off_ground]}）："
+        "本尺扫得到、权威尺不扫，那本唯一名册在这块地上无从认领——请改源站点或同批复判两尺排除面"
+    )
+    # ⑥b 「塞名字藏站点」这条路的杀伤力预演（全程在内存里造，一个禁写文件都不碰）：
+    #     真往那本册塞一枚"权威尺判已折叠"的名字，本尺这一腿会先放过（册外判据不报），
+    #     但权威尺的反查必判它不是动态名 ⇒ 五入口件「在册未扫到＝假豁免」普查随后红。
+    #     两把尺因此咬成一只：本件不立第二本账，也借不到第一本账藏人。
+    dirty = ("__init__.py", "_handle_dirty_guard")  # 权威尺在本面**判得出来**的一枚（delete_msg）
+    assert dirty not in authority_dynamic_pairs, (
+        "对照物变了：权威尺如今把 `_handle_dirty_guard` 判成折不出＝本腿的预演失去靶子，须换样本"
+    )
+    stuffed = claims | {dirty}
+    fake_site = FoldFailureSite(*dirty, "unfoldable", "self._a")
+    assert unclaimed_fold_failures([fake_site], stuffed) == [], (
+        "塞名后仍报册外＝认领判据没走名册，那 ② 那腿执法的是别的东西"
+    )
+
+
+def test_authority_ruler_fold_failures_are_never_blinder() -> None:
+    """单向对齐（保守方向锁）：权威尺在本件扫描面上判折不出的每一枚，本尺也必须看见。
+
+    本尺的折叠**弱于**五入口件（不做同帧字符串赋值折叠），所以「本尺可疑 ⊇ 权威尺动态」
+    恒成立才是安全方向；反向（权威尺抓到、本尺没抓到）说明本尺在这一维彻底失明——
+    最典型就是别名 `c = bot.call_api` / `getattr(bot,"call_api")` 形态（本尺只认属性直调）。
+    今天真树该维**零实例**（探针 C 段 09:11:00Z 实测），所以这条现在是"若有人写就红"的
+    前瞻耦合，不是已成立的执法；**不得**叙述成"别名旁路本件也挡得住"。
+    """
+    sources = _collect_scan_sources(PKG_ROOT)
+    _bypass, failures, _decided = scan_send_bypasses_with_fold(sources)
+    from tests.test_five_entry_seam_lock import _scan_call_api_sites
+
+    authority: set[tuple[str, str]] = set()
+    boundary_sites: list[str] = []
+    for rel, source in sources.items():
+        tree = ast.parse(source)
+        if on_authority_ground(rel):
+            _resolved, dynamic = _scan_call_api_sites(source, rel)
+            authority |= {(path, func) for (path, func, _form, _arg) in dynamic}
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "call_api"
+                and not node.args
+            ):
+                boundary_sites.append(f"{rel}:{node.lineno}")
+    mine_on_ground = {
+        (site.path, site.func) for site in failures if on_authority_ground(site.path)
+    }
+    missed = authority - mine_on_ground
+    assert not missed, (
+        f"权威尺判折不出而本尺一个字没记（{sorted(missed)}）＝本尺比权威尺瞎，"
+        "第四态只是搬了家；须扩本尺的被调体识别（别名/getattr 通道）或同批复判两把尺"
+    )
+    # 判定边界同判：无位置实参的 call_api 在两把尺上都不构成投递（一侧改口径必来此复判）
+    assert not boundary_sites, (
+        f"真树长出无位置实参的 call_api（{boundary_sites}）＝判定边界需重判："
+        "两把尺今天都不计，若某一侧改判入账请同批改本锁与五入口件牙 7"
+    )
 
 
 # =========================================================================

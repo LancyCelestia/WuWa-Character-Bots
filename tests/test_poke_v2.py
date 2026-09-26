@@ -7,14 +7,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.poke import (
-    PokeDispatcher,
-    PokeEvent,
-    PokeLimiter,
-    PokeReaction,
-    resolve_poke_reply,
-    resolve_poke_reply_mode,
-)
 from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     PrivacyLevel,
@@ -22,8 +14,18 @@ from plugins.bot_unified_runtime.contracts import (
     ReviewResult,
     RiskLevel,
 )
-from plugins.bot_unified_runtime.output.renderer import render_reviewed_output
-from plugins.bot_unified_runtime.sender.onebot import _segment_from_mixed_part
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.poke import (
+    PokeDispatcher,
+    PokeEvent,
+    PokeLimiter,
+    PokeReaction,
+    resolve_poke_reply,
+    resolve_poke_reply_mode,
+)
+from plugins.bot_unified_runtime.domains.render.renderer import render_reviewed_output
+from plugins.bot_unified_runtime.domains.transport.sender.onebot import (
+    _segment_from_mixed_part,
+)
 
 
 def _config(**overrides: object) -> SimpleNamespace:

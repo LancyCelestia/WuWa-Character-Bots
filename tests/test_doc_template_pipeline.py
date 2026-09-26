@@ -30,6 +30,14 @@ dts = importlib.util.module_from_spec(SPEC)
 sys.modules["doc_template_sync"] = dts  # dataclasses 解注解需要模块在 sys.modules 内
 SPEC.loader.exec_module(dts)  # type: ignore[attr-defined]
 
+# 席 S230（R0=A）：模板体检面的「什么算过程稿」判据**不在本门自立**——唯一真身住
+# `scripts/spec_gates_census.py`（分母表 `R0_DEBT_BUCKET_BY_CATEGORY` + `r0_process_rels`）。
+# 本门只**消费**它：全扫描面一寸不缩（照旧走 `dts._collect()`），只把过程稿从「被判欠账」
+# 挪到「另栏登记」，总账与两栏都在断言里点名（隐身＝再也查不到，本窗同罪）。
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
+import spec_gates_census as sc  # （复用已注册的 doc_template_sync，不重导入）
+
 VALID_PARAMS = (
     "  seat_id: T-FIX\n"
     "  wave: 2026-09-22-taxonomy\n"
@@ -69,8 +77,19 @@ def _clean_page() -> str:
 # ---------------------------------------------------------------------------
 def test_real_template_schema_fields() -> None:
     s = _schema()
-    assert [x.name for x in s.sections] == ["任务书", "账目", "交付", "发现", "自报"]
-    assert [x.name for x in s.sections if not x.optional] == ["交付", "自报"]
+    # 改因（2026-09-24 席 S208，账跟随真值；HEAD 即红，非本席引入）：
+    #   模板真身 docs/templates/seat-report.md 的 @schema 自席 S21（2026-09-22）起声明 **12 枚**
+    #   有序槽（`裁决? 任务书? 计划? 账目? 进度? 交付 证据? 发现? 缺口? 自报? 卫生? 纪律?`，
+    #   尾缀 `?`＝可选），且「自报」由必填降为可选（同波 §本版按语料真形改的两处 第 2 条）。
+    #   旧断言仍钉 5 节 + 必填 [交付,自报]，与模板两侧对不上（git show HEAD 双侧坐实：模板 12 节 vs 断言 5 节），
+    #   自 09-22 起红。此处按**模板现值**对齐，非放宽判据、非抬上限、非删断言：仍逐节名+逐必填集合等值比对。
+    #   前后值：[任务书,账目,交付,发现,自报] → 上述 12 节全序；required [交付,自报] → [交付]。
+    #   复跑：见本文件 docstring 顶部命令（单独一条：pytest tests/test_doc_template_pipeline.py::test_real_template_schema_fields）。
+    assert [x.name for x in s.sections] == [
+        "裁决", "任务书", "计划", "账目", "进度", "交付",
+        "证据", "发现", "缺口", "自报", "卫生", "纪律",
+    ]
+    assert [x.name for x in s.sections if not x.optional] == ["交付"]
     keys = [p.key for p in s.params]
     assert keys == ["seat_id", "wave", "status", "role", "report_class", "ledger_events"]
     by_key = {p.key: p for p in s.params}
@@ -237,7 +256,26 @@ def test_live_tree_check_is_clean_and_surface_has_floor() -> None:
     driven = [p for p in pages if p.fm is not None and p.fm.template in schemas]
     assert len(driven) >= 3, "试点页未接入（端到端样例丢失）"
     bad = [f"{p.rel}: {v}" for p in pages for v in p.violations]
-    assert not bad, "模板体检红：\n" + "\n".join(bad)
+    # 席 S230（R0=A）：判债只量「对外正式面」的体检违规；`.superpowers/**` 过程稿另栏登记、
+    # 不进欠账——**扫描面一寸不缩**（bad 仍是全量），两栏之和恒等于 bad（把过程稿*剔除*而非
+    # *另记* 会让 bad 掉下来、恒等式当场红）。上限今日仍是「对外欠账 = 0」，与旧判据同值。
+    process_rels = sc.r0_process_rels(pages)
+    debt_bad = [e for e in bad if not sc.r0_entry_is_process(e, process_rels)]
+    registered_bad = [e for e in bad if sc.r0_entry_is_process(e, process_rels)]
+    assert len(debt_bad) + len(registered_bad) == len(bad), (
+        f"R0 恒等式破裂：对外欠账 {len(debt_bad)} + 过程稿登记 {len(registered_bad)} ≠ 总账 {len(bad)}"
+        "＝扫描面被缩而不是分账"
+    )
+    assert not debt_bad, (
+        "模板体检红（对外正式面）：\n" + "\n".join(debt_bad)
+        + f"\n（同刻三值：旧尺总违规 {len(bad)} = 对外欠账 {len(debt_bad)} + "
+        + f"过程稿登记 {len(registered_bad)}；过程稿的体检债另册可见、不隐身。）"
+    )
+    # 反向自证（总账栏不许消失）：一旦对外欠账为 0，旧尺总违规**仍须全量出现在过程稿栏**——
+    # 若有人把过程稿整桶从扫描面剔除（而不是另记），bad 会塌陷，本行立刻红。
+    assert not bad or registered_bad, (
+        f"bad 非空但过程稿栏为空（{len(bad)} 条违规既不进欠账也不进登记＝就地蒸发/隐身）"
+    )
     for p in driven:
         blob = p.path.read_bytes()
         assert hashlib.sha256(blob).hexdigest() == hashlib.sha256(blob).hexdigest()
@@ -571,7 +609,12 @@ def test_write_poison_active_spec_bare_fact_still_refused(
     monkeypatch.setattr(dts, "_load_fact_vocab", lambda: {"聊天"})
     rc = dts.main(["--write"])
     err = capsys.readouterr().err
-    assert _sgc().face_of_history_page(pg, driven_non_generated=True) == "line"
+    # 席 S201（裁定 3.A）：记账判据 `face_of_history_page` 已不看头，写盘口前置改问
+    # 「驱动后该按哪面清零」＝`face_if_migrated`（现役对外类别恒 line：挂驱动前先清到零）。
+    assert _sgc().face_if_migrated(pg) == "line"
+    assert _sgc().face_of_history_page(pg, driven_non_generated=True) == "page", (
+        "现役规格页的**记账面**又回到「戴头⇒逐行」＝3.A 通道复活"
+    )
     assert rc != 0, "现役规格页带裸事实仍返回 0＝前置被绕过"
     assert "PREWRITE_NAKED_FACT" in err and pg.rel in err
     assert dts.TPL_AUTO_BEGIN not in f.read_text(encoding="utf-8"), "被拒页却写进了机器段"

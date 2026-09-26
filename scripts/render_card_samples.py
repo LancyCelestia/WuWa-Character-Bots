@@ -78,7 +78,7 @@ from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import 
 from plugins.bot_unified_runtime.domains.render.card_render.usage_cards import (
     usage_report_mica_html,
 )
-from plugins.bot_unified_runtime.output.render_backends import (
+from plugins.bot_unified_runtime.domains.render.render_backends import (
     build_render_backend,
 )
 
@@ -617,7 +617,7 @@ def build_affinity_private() -> dict[str, Any]:
         {
             "pc": BRAND_THEME.accent,
             "title": "好感度",
-            "subtitle": "与 澜汐 的相处记录",
+            "subtitle": "与 漂泊者 的相处记录",
             "mode": "private",
             "bot_to_user": {"score": 62.4, "tier": "亲近", "bar": 81.2},
             "user_to_bot": {"score": 58.0, "tier": "亲近", "bar": 76.5},
@@ -647,8 +647,8 @@ def build_affinity_group() -> dict[str, Any]:
             "mode": "group",
             "me_id": "u_shorekeeper",
             "rows": [
-                {"sender_id": "u_lancy", "display_name": "澜汐", "score": 78.6, "tier": "亲近"},
-                {"sender_id": "u_xiayue", "display_name": "霞月", "score": 71.2, "tier": "亲近"},
+                {"sender_id": "u_a", "display_name": "群友·阿波", "score": 78.6, "tier": "亲近"},
+                {"sender_id": "u_b", "display_name": "群友·小柚", "score": 71.2, "tier": "亲近"},
                 {"sender_id": "u_003", "display_name": "群友·阿波", "score": 34.5, "tier": "熟络"},
                 {"sender_id": "u_004", "display_name": "群友·小柚", "score": 12.0, "tier": "友善"},
             ],
@@ -829,7 +829,9 @@ def build_usage_report() -> dict[str, Any]:
 
 def build_media_archive() -> dict[str, Any]:
     """媒体归档结果卡（通用媒体卡壳；生产归档回执为纯文本，此为卡面形态参考）。"""
-    from plugins.bot_unified_runtime.output.templates import render_media_card_html
+    from plugins.bot_unified_runtime.domains.render.templates import (
+        render_media_card_html,
+    )
 
     html_text = render_media_card_html(
         {
@@ -994,6 +996,11 @@ def build_error_card() -> dict[str, Any]:
             ],
             # 审查 Q-05：不点名创造者真名（澜汐/霞月），角色身份泛称即可——
             # 样张是人工验收素材，但文案口径与生产「不绑定真名」红线一致。
+            "self_review_pairs": [
+                {"label": "我的推测", "value": "像是上游没在预算内回话（推测，不作为结论）。"},
+                {"label": "依据", "value": "四跳全部同一异常，且失败集中在读超时一侧。"},
+            ],
+            "contact_pairs": [{"label": "超管 1 位", "value": "私聊任一管理员并把本卡发过去"}],
             "help_text": "把这张卡截图发给创造者即可，信息已齐备且脱敏。",
             **_COMMON_FOOTER,
         }
@@ -1001,6 +1008,66 @@ def build_error_card() -> dict[str, Any]:
     return {
         "html": html_text,
         # 视口同生产 render_error_card_png（error_report.py）。
+        "viewport": {"width": 1160, "height": 1800},
+        "device_scale_factor": 2,
+        "wait_ms": 0,
+    }
+
+
+#: 告警样张专用头像：46×46 纯色 PNG 内联成 data URI（字节固定，样张可复现；
+#: 生产走 `_card_avatar_uri` 读 `avatar/bot_<qq>.png`，随机器状态变，不进样张）。
+_SAMPLE_AVATAR_URI = (
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAC4AAAAuCAIAAADY27xg"
+    "AAAAOElEQVR42u3OMQ0AAAgDsAlDHRJRhAgejiYV0FTPE1FRUVFRUVFRUVFRUVFR"
+    "UVFRUVFRUVFRUblZFfTq9XNgjJcAAAAASUVORK5CYII="
+)
+
+
+def build_alert_card() -> dict[str, Any]:
+    """运维告警卡（``card_variant=alert`` → 蓝→红洗色）。
+
+    与诊断卡同模板、不同洗色与标题：2026-09-25 澜汐点名「背景釉瑚渐变现在是
+    灰色的，告警要用蓝色到红色的渐变」，本样张就是那一档的验收素材；头像走
+    ``<img>`` 分支（不是「守」字圆点），核的是"平台头像真的能显示出来"。
+    """
+    html_text = bridge.render_error_card_html(
+        {
+            "card_variant": "alert",
+            "card_title": "运行时告警",
+            "exc_type": "llm/timeout",
+            "exc_message": "chain=4跳全败 last=axon-grok-46:timeout",
+            "human_text": "[守岸人告警] 我在想怎么回你这句话（模型那一跳）：等回话等超时了。",
+            "trigger_echo": "",
+            "stack_lines": [],
+            "method_pairs": [
+                {"label": "能力", "value": "bot.chat"},
+                {"label": "归类", "value": "上游超时"},
+                {"label": "归属", "value": "聊天回复域（chat_reply）"},
+            ],
+            "self_review_pairs": [
+                {"label": "我的推测", "value": "像是网关侧四跳全挂在上游（推测，不作为结论）。"},
+            ],
+            "contact_pairs": [{"label": "超管 1 位", "value": "私聊任一管理员并把本卡发过去"}],
+            "config_pairs": [{"label": "bot_chat_failover_max_seconds", "value": "300"}],
+            "version_pairs": [
+                {"label": "NoneBot", "value": "2.x.y"},
+                {"label": "协议端", "value": "SnowLuma 1.14.19"},
+            ],
+            "env_pairs": [
+                {"label": "平台", "value": "qq"},
+                {"label": "会话", "value": "私聊"},
+            ],
+            "id_pairs": [
+                {"label": "何时", "value": "2026-09-25 13:47:02 UTC+08:00"},
+                {"label": "排查编号", "value": "dbg_7c115984050c"},
+            ],
+            "help_text": "把这张卡发给创造者即可，信息已齐备且脱敏。",
+            "bot_name": "守岸人",
+            "bot_avatar_url": _SAMPLE_AVATAR_URI,
+        }
+    )
+    return {
+        "html": html_text,
         "viewport": {"width": 1160, "height": 1800},
         "device_scale_factor": 2,
         "wait_ms": 0,
@@ -1039,6 +1106,7 @@ CARDS: tuple[SampleCard, ...] = (
     SampleCard("usage_report", "usage · 模型账单(渠道子行)", build_usage_report),
     SampleCard("media_archive", "media_archive · 归档结果", build_media_archive),
     SampleCard("error_card", "error_card · 运行异常诊断", build_error_card),
+    SampleCard("alert_card", "alert_card · 运行时告警（蓝→红）", build_alert_card),
 )
 
 _REGISTRY: dict[str, SampleCard] = {card.key: card for card in CARDS}

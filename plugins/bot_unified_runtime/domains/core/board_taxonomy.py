@@ -293,6 +293,9 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 label="内容安全与亲密模式",
                 slug="content-safety",
                 summary="六硬线确定性闸、亲密档位判定、名单门与记忆净化。",
+                # 2026-09-24 亲密模式分级波（D 席登记）：帮助主题「亲密模式」在案，
+                # 板块树必须认领它，否则 `board_doc_sync --check` 判"主题未被认领"。
+                help_topics=("亲密模式",),
                 impl_paths=(
                     "plugins/bot_unified_runtime/domains/chat_reply/runtime/content_route.py",
                     "plugins/bot_unified_runtime/domains/chat_reply/security",
@@ -445,6 +448,9 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 help_topics=("快报", "历史上的今天"),
                 impl_paths=("plugins/bot_unified_runtime/domains/subscribe/feeds",),
                 config_prefixes=("bot_news_", "bot_today_history_"),
+                extra_l3=(
+                    ("news-digest-card", "新闻摘要卡"),
+                ),
             ),
             FeatureNode(
                 fid="B05.subscription",
@@ -809,8 +815,10 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 fid="B09.config-and-settings",
                 label="配置与运行时设置",
                 slug="config-and-settings",
-                summary="Config 单一入口、SETTABLE_KEYS/RESTART_REQUIRED_KEYS 与读取端点。",
-                help_topics=("配置", "设置", "就绪"),
+                summary="Config 单一入口、SETTABLE_KEYS/RESTART_REQUIRED_KEYS 与读取端点，"
+                        "以及危险参数改动的书面同意命令面（咽喉的四档裁决住 safety_exec）。",
+                route_kinds=("CONSENT",),
+                help_topics=("配置", "设置", "就绪", "书面同意"),
                 impl_paths=(
                     "plugins/bot_unified_runtime/config.py",
                     "plugins/bot_unified_runtime/domains/core/config",
@@ -829,7 +837,7 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 slug="feature-switches",
                 summary="组/插件/子功能/指令四级开关与依赖阻断显示。",
                 help_topics=("运行开关",),
-                impl_paths=("plugins/bot_unified_runtime/domains/ops/features", "plugins/bot_unified_runtime/control_plane/features.py"),
+                impl_paths=("plugins/bot_unified_runtime/domains/ops/features",),
                 extra_l3=(("feature-gate", "父子继承与 blocked_by"),),
             ),
             FeatureNode(
@@ -842,7 +850,6 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                     "plugins/bot_unified_runtime/domains/ops/audit",
                     "plugins/bot_unified_runtime/domains/ops/collectors",
                     "plugins/bot_unified_runtime/domains/ops/monitor",
-                    "plugins/bot_unified_runtime/control_plane/metrics.py",
                 ),
                 config_prefixes=("bot_alerts_", "bot_metrics_"),
                 extra_l3=(
@@ -907,7 +914,6 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 impl_paths=(
                     "scripts/doc_sync.py",
                     "scripts/command_catalog.py",
-                    "tests/verify_hashes.py",
                     "docs/auto-facts.md",
                 ),
                 extra_l3=(
@@ -971,7 +977,6 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 slug="documentation",
                 summary="十板块文档树、统一骨架、单一事实源与自动化同步契约。",
                 impl_paths=(
-                    "docs/boards",
                     "docs/README.md",
                     "docs/HANDBOOK.md",
                     "docs/CODE-MAP.md",

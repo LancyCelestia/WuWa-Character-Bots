@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.__init__ import (
+from plugins.bot_unified_runtime import (
     _GROUP_RECENT_IMAGE_TTL_SECONDS,
     _GROUP_RECENT_IMAGES,
     _latest_fresh_group_image,

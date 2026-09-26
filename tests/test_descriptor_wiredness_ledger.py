@@ -91,6 +91,22 @@ def _load_descriptor_ids() -> frozenset[str]:
 #:   现提进本常驻门，三把锁（seam 声明 + canary 多入口 + 入口耐久）并立，缺一不许降账。
 REGISTRY_POINTS_AT = "domains/chat_reply/runtime/capability_registry.py"
 WIRED: dict[str, frozenset[str]] = {
+    # 语音接真（中央调度收编波 P4-C4，席 S08，2026-09-23T20:3xZ）：`creation.tts.synthesize`
+    # 自此有**生产字面调用点**——控制面 `POST /api/v1/tts/jobs` 的 `default_invoker().invoke(...)`。
+    # 尺：`scripts/central_seam_census.py --json` → 该 id state none→wired（invoke_sites 非空）；
+    # 命令：`python -m pytest tests/test_control_plane_tts_api.py tests/test_descriptor_wiredness_ledger.py`。
+    # ⚠ 同行读数：控制面缺省关（`bot_control_plane_enabled=False`）⇒ **账面通电、现网零流量**，
+    #   不得叙述为"语音已可被 API 调用"（造绿九禁第⑧条）。
+    "creation.tts.synthesize": frozenset({"domains/creation/tts/routes.py"}),
+    # 绘画接真（中央调度收编波二批，席 S262 ＋ 主代理升账）：`creation.image.generate` 自本窗有
+    # **生产字面调用点**——控制面 `POST /api/v1/image-generation/jobs` 门面件的
+    # `default_invoker().invoke(...)`（capability_id 写成字面量，提成变量即被 AST 注毒判红）。
+    # 尺：`python scripts/central_seam_census.py --json` → 该 id state none→wired（invoke_sites 非空）；
+    # 命令：`python -m pytest tests/test_control_plane_image_api.py tests/test_descriptor_wiredness_ledger.py`。
+    # ⚠ 同 creation.tts.synthesize 一行读数：控制面缺省关（`bot_control_plane_enabled=False`）
+    #   ⇒ **账面通电、现网零流量**，且 provider 仍未接（缺省回 503 `image_not_wired`）——
+    #   不得叙述为"AI 绘画已可被调用"（造绿九禁第⑧条）。本枚升的是"有入口"，不是"能出图"。
+    "creation.image.generate": frozenset({"domains/creation/image/routes.py"}),
     "media.vision.anime_ip": frozenset({"domains/media/capabilities/image_search.py"}),
     "search.web": frozenset({"__init__.py"}),
     # 命令形接缝通电（R8）：点位=capability_registry 里那一行 execution 声明本身。
@@ -132,6 +148,17 @@ WIRED: dict[str, frozenset[str]] = {
     # 该批另点名的 bot.ignore 当时被第三把判据（空 label ⇒ title 缺失）挡住，
     # 该判据已由主会话一行修解除 ⇒ bot.ignore 随 P8 批（S-PREP-B3）移入下方 WIRED。
     "bot.affinity": frozenset({REGISTRY_POINTS_AT}),
+    # prepared 形 P9 批试点（S63 图 §3.1，主代理 2026-09-24T00:15Z 落码）：点歌模式。
+    # 命令入口已汇进根汇合函数（:7013 `_run_capability_through_pipeline`，字面 capability_id
+    # 已在 ⇒ 入口耐久锁 §5 不因本行而红），执行体是吃运行期 runtime_settings + event 解析
+    # mode 的内联闭包 ⇒ adapter=prepared；**根零改动、净 0 行 ⇒ 不顶漂**。
+    # 逐枚活性证（跑的就是交来那一个、缺成品=UNAVAILABLE 不自建）由
+    # tests/test_prepared_adapter_batch9.py（S66，15 例＋3 发注毒逐发有牙）负责，不由本表自证。
+    # 该席并独立复核本行四项前提全票成立：roles 用表缺省 ("user",)（根 matcher :6985 与规则 :6543
+    # 无角色门，拒人在域内 `music.py:449`；登 ("admin",) 反而＝中央换文本的行为漂移）、
+    # timeout 30.0 ≈ 悲观上界 60 倍（零网络/LLM/渲染，与同表 bot.emergency_info 同口径）、
+    # prepared 是唯一可选形（活签名首参 `store` ≠ config）、普查态 wired 26/generic 10/not_wired 84。
+    "bot.music_mode": frozenset({REGISTRY_POINTS_AT}),
     # prepared 形 P8 批（S-PREP-B3）：兜底引导席。生产入口唯一（根 :8568-8578
     # `_handle_ignore_guide` → `_run_simple_capability(..., "bot.ignore", ...)` :8570），
     # 早已汇进层 2 主缝；执行体是根内联闭包、全树无 `build_ignore_capability(config)`
@@ -141,9 +168,14 @@ WIRED: dict[str, frozenset[str]] = {
     "bot.ignore": frozenset({REGISTRY_POINTS_AT}),
     # 自动配音第二出站腿（VOICE-V12，2026-09-22）：media 族内容契约能力，无 RouteKind
     # 宿主行（≠命令形/prepared 形，与 media.vision.anime_ip 同此：WIRED 记账走字面
-    # invoke 点、不靠注册册 execution 声明）。通电点位=层 1 hook 的唯一 invoke 站点
-    # （domains/media/voice_enricher.py 直呼 synthesize 段改走 default_invoker().invoke）。
-    "media.tts.autodub": frozenset({"domains/media/voice_enricher.py"}),
+    # invoke 点、不靠注册册 execution 声明）。通电点位随 S270 归位：全树唯一一处 autodub
+    # 字面 invoke 现住单一组合口 domains/media/tts/result_transform.py::dub_via_central
+    # （voice_enricher 的 dub 闭包与 creation/tts/engine_provider 都改调它，直呼面清零）。
+    "media.tts.autodub": frozenset({"domains/media/tts/result_transform.py"}),
+    # S91 自动配音第二条腿：内联变换退役为中央第三形，由层 1 hook 派发。该 id 的 invoke 点
+    # 仍在 voice_enricher（_enrich_via_central 派 autodub_transform 那一发）——S270 归位只
+    # 挪走产出步 autodub 那一发，第三形 transform 的发不动。
+    "media.tts.autodub_transform": frozenset({"domains/media/voice_enricher.py"}),
 }
 
 #: 走泛型执行器（_run_simple_capability / pipeline.handle_async）的能力 id。
@@ -185,7 +217,10 @@ NOT_WIRED: frozenset[str] = frozenset(
         "bot.route", "bot.routes", "bot.runtime", "bot.search", "bot.send_queue_worker", "bot.setup.llm",
         "bot.why",
         # ---- orchestration_unwired（有 handler_ref，生产零 invoke）----
-        "creation.image.generate", "creation.tts.synthesize", "files.artifact.generate", "files.read.code",
+        # creation.tts.synthesize 一枚已于 2026-09-23 P4-C4 移入 WIRED（控制面 POST /api/v1/tts/jobs
+        # 落出生产字面调用点）；creation.image.generate 一枚已于 2026-09-25 S262 同型移入 WIRED
+        # （控制面 POST /api/v1/image-generation/jobs）⇒ 本列自此**无 creation.* 成员**。
+        "files.artifact.generate", "files.read.code",
         "files.read.excel", "files.read.latex", "files.read.markdown", "files.read.pdf", "files.read.ppt",
         "files.read.word", "media.asr.audio_file", "media.asr.speech", "media.video.frame_extract",
         "media.video.recognize", "media.video.subtitle", "media.vision.image", "media.vision.ocr",
@@ -204,7 +239,7 @@ NOT_WIRED: frozenset[str] = frozenset(
         #   bot.group_info 走根泛型执行器（`pipeline.handle_async` :8733 / :8507），
         #   不经 orchestrated_command ⇒ 登记只会账面翻绿而生产零变化＝本门最该拦的假绿。）
         "bot.alias", "bot.auto_send",
-        "bot.music_mode", "bot.natural_command", "bot.status",
+        "bot.natural_command", "bot.status",
     }
 )
 
@@ -223,8 +258,14 @@ NOT_WIRED: frozenset[str] = frozenset(
 #:   （bot.ignore 差 title 判据 / bot.meme_library、bot.group_info 生产不走缝）；
 #:   S-PREP-B3：P8 批 1 枚 bot.ignore 兑现欠债移入 WIRED 97→96（B2 那把 title 判据已由
 #:   主会话 `title=decl.label or decl.value` 一行修解除），另六枚实测拒登继续留欠账
-#:   （meme_library/group_info/content/music/today_history/media_archive 生产不经中央缝））。
-GAP_CEILING: int = 96
+#:   （meme_library/group_info/content/music/today_history/media_archive 生产不经中央缝）；
+#:   S08（P4-C4）：1 枚 creation.tts.synthesize 因控制面落出生产字面 invoke 点移入 WIRED
+#:   96→95。现算尺＝`scripts/central_seam_census.py --json` 该 id state=none→wired，
+#:   复跑命令＝`python -m pytest tests/test_descriptor_wiredness_ledger.py`（2026-09-23T20:3xZ）。
+#:   S63 图 §3.1（P9 批试点，主代理落码）：1 枚 bot.music_mode 仅登记 prepared（根零改动、
+#:   命令入口 :7013 已是汇缝字面量）⇒ 95→94。同刻现算复核＝
+#:   `python scripts/orchestration_wired_census.py --json` wired 25→26 / not_wired 85→84。
+GAP_CEILING: int = 93
 
 
 # ===========================================================================
@@ -572,13 +613,22 @@ def test_census_cross_check_lock_has_teeth(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(_v1, "seam_registered_cids", _seam_arm_deleted)
     with pytest.raises(AssertionError, match="bot.tts"):
         test_census_report_matches_ledger_partition()
-    # 归因唯一：被抽掉的正是那 8 枚命令形，**字面 invoke  wired 三枚不受影响**（防"整桶塌掉"式误红；
-    # VOICE-V12 media.tts.autodub 通电点位=层 1 hook 的字面 invoke，与注册册 seam 声明无关，故同在此列）。
+    # 归因唯一：被抽掉的正是那 8 枚命令形，**字面 invoke  wired 五枚不受影响**（防"整桶塌掉"式误红；
+    # VOICE-V12 media.tts.autodub 通电点位=层 1 hook 的字面 invoke，与注册册 seam 声明无关，故同在此列；
+    # 第四枚 creation.tts.synthesize＝本波 P4-C4 控制面 POST /api/v1/tts/jobs 的字面 invoke，同族同理，
+    # 2026-09-23T20:3xZ 现算随 `GAP_CEILING 96→95` 一同跟随。
+    # 第五枚 creation.image.generate＝二批 S262 A 案控制面 POST /api/v1/image-generation/jobs 的字面
+    # invoke，同族同理，2026-09-25T04:3xZ 现算随 `GAP_CEILING 94→93`（缺口下降＝收紧方向）一同跟随）。
     report = _report_buckets()
     assert report["wired"] == {
+        "creation.tts.synthesize",
+        "creation.image.generate",
         "media.vision.anime_ip",
         "search.web",
         "media.tts.autodub",
+        # S91 第二腿退役成的中央第三形：通电点位＝层 1 hook 派发 autodub_transform 的字面
+        # invoke，与 `media.tts.autodub` 同族同理（现算 2026-09-24T02:06:02Z 随本波跟随）。
+        "media.tts.autodub_transform",
     }, sorted(report["wired"])
 
 

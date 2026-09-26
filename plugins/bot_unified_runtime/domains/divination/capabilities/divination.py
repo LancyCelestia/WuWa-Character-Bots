@@ -726,7 +726,7 @@ def build_divination_capability(
         if render_backend is None or not getattr(render_backend, "available", False):
             return ""
         try:
-            from plugins.bot_unified_runtime.capabilities.content_parser import (
+            from plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser import (
                 render_card_png,
             )
 

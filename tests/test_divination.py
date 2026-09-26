@@ -11,12 +11,12 @@ from datetime import date, datetime, timezone
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.divination import (
+from plugins.bot_unified_runtime.contracts import SessionType
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
+from plugins.bot_unified_runtime.domains.divination.capabilities.divination import (
     build_divination_capability,
     parse_divination_intent,
 )
-from plugins.bot_unified_runtime.contracts import SessionType
-from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
 from plugins.bot_unified_runtime.domains.divination.data.ganzhi import (
     CST,
     NAYIN_TABLE,

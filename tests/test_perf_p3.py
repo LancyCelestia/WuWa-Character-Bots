@@ -17,7 +17,9 @@ import pytest
 def test_affinity_store_reuses_single_connection(tmp_path, monkeypatch):
     """observe/set_nickname/snapshot 各操作不得再每操作新开 SQLite 连接。"""
     import plugins.bot_unified_runtime.domains.chat_reply.character.affinity as affinity_module
-    from plugins.bot_unified_runtime.character.affinity import DynamicAffinityStore
+    from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
+        DynamicAffinityStore,
+    )
 
     connect_calls: list[str] = []
     real_connect = affinity_module.sqlite3.connect
@@ -39,7 +41,9 @@ def test_affinity_store_reuses_single_connection(tmp_path, monkeypatch):
 
 def test_affinity_store_thread_agnostic(tmp_path):
     """check_same_thread=False：不同线程使用同一 store 实例不报错。"""
-    from plugins.bot_unified_runtime.character.affinity import DynamicAffinityStore
+    from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
+        DynamicAffinityStore,
+    )
 
     store = DynamicAffinityStore(tmp_path / "affinity.sqlite3")
     errors: list[Exception] = []
@@ -66,7 +70,9 @@ def test_interaction_increment_throttles_disk_writes(tmp_path, monkeypatch):
     from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
         settings as settings_module,
     )
-    from plugins.bot_unified_runtime.runtime.settings import RuntimeSettingsStore
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+        RuntimeSettingsStore,
+    )
 
     store = RuntimeSettingsStore(tmp_path / "s.json", instance="t-throttle")
     fake_clock = [1000.0]
@@ -98,7 +104,9 @@ def test_interaction_full_dump_includes_pending_counts(tmp_path):
     """其他 mutator 的全量 _save 会顺带把未落盘计数一并写掉。"""
     import json
 
-    from plugins.bot_unified_runtime.runtime.settings import RuntimeSettingsStore
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+        RuntimeSettingsStore,
+    )
 
     path = tmp_path / "s.json"
     store = RuntimeSettingsStore(path, instance="t-dump")

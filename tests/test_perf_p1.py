@@ -21,7 +21,7 @@ from plugins.bot_unified_runtime.domains.core.search.web_search import (
 
 @pytest.fixture()
 def _reset_default_registry():
-    from plugins.bot_unified_runtime.sources import parsers
+    from plugins.bot_unified_runtime.domains.link_parse import parsers
 
     parsers._DEFAULT_REGISTRY_BUNDLE = None
     yield
@@ -29,7 +29,7 @@ def _reset_default_registry():
 
 
 def test_default_parser_registry_memoized(_reset_default_registry):
-    from plugins.bot_unified_runtime.sources.parsers import (
+    from plugins.bot_unified_runtime.domains.link_parse.parsers import (
         build_content_parser_registry,
     )
 
@@ -70,7 +70,7 @@ def _fake_embed_response(dim: int = 4, count: int = 1):
 
 
 def _provider():
-    from plugins.bot_unified_runtime.character.vector_knowledge import (
+    from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge import (
         OpenAICompatibleEmbeddingProvider,
     )
 
@@ -256,11 +256,11 @@ class _FakeEmbedder:
 
 def test_build_ann_index_batched(tmp_path, monkeypatch):
     """分批构建与全量构建结果等价：批量调小也应建满全部向量。"""
-    from plugins.bot_unified_runtime.character.vector_knowledge import (
-        SqliteVectorKnowledgeStore,
-    )
     from plugins.bot_unified_runtime.domains.chat_reply.character import (
         vector_knowledge,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge import (
+        SqliteVectorKnowledgeStore,
     )
 
     store = SqliteVectorKnowledgeStore(

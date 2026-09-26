@@ -20,12 +20,12 @@ from typing import Any, Protocol
 from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     attitude_tiers,
 )
-from plugins.bot_unified_runtime.domains.core.contracts.character import (
-    RelationshipContext,
-)
-from plugins.bot_unified_runtime.runtime.settings import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
     CLOSE_INTERACTION_THRESHOLD,
     FAMILIAR_INTERACTION_THRESHOLD,
+)
+from plugins.bot_unified_runtime.domains.core.contracts.character import (
+    RelationshipContext,
 )
 
 FAMILIARITY_TIERS = frozenset({"stranger", "familiar", "close"})

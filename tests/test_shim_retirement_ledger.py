@@ -44,8 +44,16 @@ import shim_retirement_census as s34
 LEDGER = s34.LEDGER_PY
 
 #: 扫描面塌陷地板（手写字面量）：低于此说明有人把判据/记号面改窄了，"0 问题"是假绿。
-MIN_OUTSIDE_FLOOR = 150
-MIN_SHIM_FLOOR = 100
+#: 2026-09-24 S188 现算跟随（物理归位第5项账跟随）：原 150/100 是域外~190、垫片~138 时代的地板；
+#: 之后归位波把件搬进 `domains/`、退役波摘垫片，域外真实降到 100、待退役真实降到 47——**扫描没塌**
+#: （本席实测 `--report` 域外 100、三态铺满），是地板 stale 过高误报进展为塌陷。现按现算写入。
+#: 复跑取值：`python scripts/shim_retirement_census.py --report`（「域外 py」行 + 「三态: … 待退役」段）。
+#: 铁律：此地板只准随归位继续下降，**永不因某波把件挪回域外而抬**（那是要红、不是搬账）。
+MIN_OUTSIDE_FLOOR = 99  # 2026-09-24T10:4xZ 现算 99（原 100）：裁定 1.A 把 `control_plane/api/tts.py`
+#   归位进 `domains/creation/tts/routes.py`（域外真少一枚，非扫描面塌陷）。复跑：
+#   `python scripts/physical_placement_census.py --four-accounts` 读 accounts.a1_outside_py_dual_ruler.current
+#   地板方向＝只准降不升（降须带这种"归位/迁走"证据行）；旧件已按规程备份 %TEMP%/tts-relocate-backup-20260924-184240。
+MIN_SHIM_FLOOR = 47
 
 #: 与三态之和同门记账的豁免上限 = `BASELINE.md` 起点值（只准降）。本席**只读**该账，不改它一个字。
 EXEMPT_START_CEILING = 29
@@ -379,11 +387,21 @@ def test_s101_package_shim_live_counts_are_not_false_zero() -> None:
     动手就当场打坏生产导入图。本锁里 `policy` 一枚**只有**实测根 `__init__.py:3740
     `from .policy import (`` 这一种相对形态引用 —— 相对导入解析成绝对点号这条腿不生效它就还是 0。
     只钉 **>0** 地板不钉绝对值 —— 正当迁走调用方让数变小是进展（账语义），不得误伤。
+
+    2026-09-24 S188 换腿（S146 §3 P3 / S146 option ②，非缩面）：原四腿里
+    `sender/__init__.py`、`sources/subscriptions/__init__.py` 今日 `computed_refs()==0`
+    （本席实测两枚 `_referencing_files` 皆 `owners=[]` —— 消费方已迁走，是账语义的正向进展，
+    强钉 >0 会拿「迁完了」当「取数口坏」误伤）。现留两枚仍有真引用的包垫片，且两种形态各居其一：
+    - `policy/__init__.py`：仅靠根 `__init__.py` 的**相对形态** `from .policy import` 命中（level=1）；
+    - `sources/parsers/__init__.py`：仅靠 `tests/test_auditfix_subscriptions_capabilities.py` 的
+      **点号串**（monkeypatch/importlib 字面量目标）命中。
+    ⇒ 反假零牙齿不降：相对腿坏 ⇒ policy 归零当场红；点号串腿坏 ⇒ parsers 归零当场红。
+    复跑取值：`python -c "import scripts.shim_retirement_census as s; idx=s.reference_index(); \
+    print([(k, s.computed_refs('plugins/bot_unified_runtime/'+k, index=idx)) for k in \
+    ('policy/__init__.py','sources/parsers/__init__.py')])"`（两值必 >0）。
     """
     for rel in (
-        "plugins/bot_unified_runtime/sender/__init__.py",
         "plugins/bot_unified_runtime/sources/parsers/__init__.py",
-        "plugins/bot_unified_runtime/sources/subscriptions/__init__.py",
         "plugins/bot_unified_runtime/policy/__init__.py",
     ):
         assert s34.computed_refs(rel) > 0, f"{rel} 仍恒零＝父包点号引用没被数到（S87 Critical-1 未修好）"
@@ -391,11 +409,15 @@ def test_s101_package_shim_live_counts_are_not_false_zero() -> None:
 
 def test_s101_poison_a_dropping_reference_records_moves_the_count() -> None:
     """注毒 a：在内存索引里删光一枚包垫片的引用记录 ⇒ 计数必须同步归零 ——
-    证明数的是真引用，不是常数 0。"""
-    row = "plugins/bot_unified_runtime/sender/__init__.py"
+    证明数的是真引用，不是常数 0。
+
+    2026-09-24 S188 换受害枚：旧样本 `sender/__init__.py` 今日真引用归零（消费方迁走，见
+    `test_s101_package_shim_live_counts_are_not_false_zero` docstring），改钉 `policy/__init__.py`
+    （根 `__init__.py` `from .policy import` 相对形态真实引用，现算 base==1）。"""
+    row = "plugins/bot_unified_runtime/policy/__init__.py"
     index = s34.reference_index()
     base = s34.computed_refs(row, index=index)
-    assert base > 0, "sender 包垫片真引用已是 0＝本席注毒样本过期（引用面变了，换受害枚再钉）"
+    assert base > 0, "policy 包垫片真引用已是 0＝本席注毒样本过期（引用面变了，换受害枚再钉）"
     target = s34.shim_target_dotted(row)
     pruned = {
         k: v

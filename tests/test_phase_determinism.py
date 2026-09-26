@@ -19,8 +19,10 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.debug import _llm_setup_mica_html
-from plugins.bot_unified_runtime.capabilities.echo import _help_mica_html
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+    _help_mica_html,
+)
+from plugins.bot_unified_runtime.domains.ops.admin.debug import _llm_setup_mica_html
 from plugins.bot_unified_runtime.domains.render.card_render.usage_cards import (
     usage_report_mica_html,
 )
@@ -287,6 +289,95 @@ def _playwright_available() -> bool:
     return bool(getattr(backend, "available", False))
 
 
+# ---- S345 #83 J-1：三门与外层 skipif 共用的**唯一**「能否真启动」判据 + 唯一 launch 出口 ----
+# 单一事实源。此前 :302/:197/:329 三处各写一份 `except Exception: pytest.skip(类名)`，
+# 于是「包能导入而二进制坏了 / 参数写错 / 磁盘满」被塌成一句 `Chromium 启动失败（ValueError）`
+# 后静默 skip——视觉确定性整面能在零红下永久停摆（见 SILENT-EXCEPT-AUDIT-20260925.md #8–#10）。
+# 判据只认「环境确实没装」这一种可诚实 skip 的形态；其余异常**一律上抛=明红**。
+# 生产根零接触、不新建任何告警出口（S345 简报红线：需新出口就停下报候选，不自己造第二条路）。
+_CHROMIUM_MISSING_MARKERS: tuple[str, ...] = (
+    "Executable doesn't exist",
+    "Please run `playwright install",
+    "playwright install chromium",
+)
+
+
+def chromium_not_installed(exc: BaseException) -> bool:
+    """唯一判据：区分「环境没装 Chromium」(→可 skip) 与「坏了/参数错/磁盘满」(→必须明红)。
+
+    三门与外层 skipif 共用它；禁三份副本。判据本身由永不 skip 的
+    `test_chromium_launch_criterion_is_discriminating` 哨兵守着（有人把它改成恒 True
+    ⇒ 三门集体静默 ⇒ 该哨兵当场红）。
+    """
+    text = str(exc)
+    return any(marker in text for marker in _CHROMIUM_MISSING_MARKERS)
+
+
+def launch_chromium_or_skip(pw: Any) -> Any:
+    """唯一 launch 出口：真启动一次。
+
+    - 「没装」→ `pytest.skip`，**reason 必带异常原文** `str(exc)`（J-3：不许只留类名）；
+    - 其余异常 → 照上抛 → 调用该测试**明红**，绝不静默消失。
+    """
+    try:
+        return pw.chromium.launch(headless=True)
+    except Exception as exc:
+        # 只有「确实没装」才 skip（且 reason 带 str(exc)），其余异常一律上抛=明红，见 chromium_not_installed。
+        if chromium_not_installed(exc):
+            pytest.skip(
+                f"Chromium 未安装，无法启动（{type(exc).__name__}: {exc}）"
+            )
+        raise
+
+
+def test_chromium_launch_criterion_is_discriminating() -> None:
+    """永不 skip 的判据哨兵：喂合成异常，钉死「没装」与「坏了」必须分家。
+
+    把 `chromium_not_installed` 注毒成恒 True ⇒ 三门会集体静默 ⇒ 本条必红（J-1 牙）。
+    """
+    assert chromium_not_installed(
+        RuntimeError("BrowserType.launch: Executable doesn't exist at /x/chrome.exe")
+    ) is True
+    assert chromium_not_installed(
+        RuntimeError("Please run `playwright install chromium`")
+    ) is True
+    # 「坏了/参数错/磁盘满」绝不能被判成「没装」——否则又回到静默消失。
+    assert chromium_not_installed(ValueError("invalid launch argument")) is False
+    assert chromium_not_installed(OSError("disk full or permission denied")) is False
+
+
+def test_playwright_chromium_launch_canary_is_never_silent() -> None:
+    """永不 skip 的 launch 哨兵：真起一次 Chromium。缺位即红（宁红不静默），
+
+    证明「截图字节等值 / --phase 钉帧 / reduced-motion 伪元素守卫」这一整面没在
+    零红下停摆。本函数**既无 skipif、体内也无 pytest.skip**（结构锁
+    `test_render_launch_guards_share_single_criterion_and_canary_is_loud` 执法）。
+    真缺浏览器环境下它会红——这是刻意设计的一次性显形（S335 §6-4「可接受方向」）。
+    """
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        try:
+            page = browser.new_page(
+                viewport={"width": 900, "height": 1200},
+                device_scale_factor=2,
+                reduced_motion="reduce",
+            )
+            page.set_content(
+                "<html><body><div class='card'>canary</div></body></html>",
+                wait_until="load",
+            )
+            page.wait_for_timeout(60)
+            shot = page.locator(".card").first.screenshot(type="png")
+            page.close()
+        finally:
+            browser.close()
+    assert isinstance(shot, (bytes, bytearray)) and len(shot) > 100, (
+        f"哨兵截图异常短（{len(shot)} 字节）＝渲染面没真跑起来"
+    )
+
+
 @pytest.mark.skipif(not _playwright_available(), reason="playwright/Chromium 不可用")
 def test_playwright_double_render_phase_and_pixels_stable() -> None:
     from playwright.sync_api import sync_playwright
@@ -296,10 +387,7 @@ def test_playwright_double_render_phase_and_pixels_stable() -> None:
     computed: list[str] = []
     shots: list[bytes] = []
     with sync_playwright() as p:
-        try:
-            browser = p.chromium.launch(headless=True)
-        except Exception as exc:  # noqa: BLE001 - 浏览器二进制缺失 → 跳过不失败。
-            pytest.skip(f"Chromium 启动失败（{exc.__class__.__name__}）")
+        browser = launch_chromium_or_skip(p)
         try:
             for _ in range(2):
                 page = browser.new_page(

@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.echo import (
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
     HELP_ENTRIES,
     _derive_help_command_section,
     _strip_help_command_section,

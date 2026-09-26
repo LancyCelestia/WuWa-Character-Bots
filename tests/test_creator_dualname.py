@@ -15,10 +15,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.chat import (
-    build_admin_roster_text,
-    build_chat_prompt,
-)
 from plugins.bot_unified_runtime.contracts import (
     ContextBundle,
     ConversationHistoryResult,
@@ -26,6 +22,10 @@ from plugins.bot_unified_runtime.contracts import (
     PersonaProfile,
     RetrievalResult,
     ToneProfile,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    build_admin_roster_text,
+    build_chat_prompt,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.character import addressing
 

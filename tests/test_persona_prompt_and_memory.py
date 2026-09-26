@@ -5,14 +5,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
-from plugins.bot_unified_runtime.character.affinity import (
-    AFFINITY_BASE,
-    DynamicAffinityStore,
-)
-from plugins.bot_unified_runtime.character.providers import (
-    FileCharacterContextProvider,
-)
 from plugins.bot_unified_runtime.contracts import (
     ContextBundle,
     ConversationHistoryResult,
@@ -35,12 +27,22 @@ from plugins.bot_unified_runtime.contracts import (
     WebSearchContext,
     WebSearchHit,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    build_chat_prompt,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
+    AFFINITY_BASE,
+    DynamicAffinityStore,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.character.memory import (
     SQLiteMemoryRepository,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.character.memory_extract import (
     extract_memory_texts,
     store_extracted_memories,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
+    FileCharacterContextProvider,
 )
 
 PERSONA_TEXT = "# 角色沉浸要求\n\n你就是守岸人本人，以第一人称思考与回应。"
@@ -116,6 +118,10 @@ _COMPACT_LABELS = (
     "【梗/热词检索】",
     "【联网检索】",
 )
+
+# 零命中也必须在场的分区：它们承载"这轮有没有资料/时间"这类事实，缺席会被模型
+# 读成"没有这件事"，与"空分区不渲染"的降噪语义正相反。
+_ALWAYS_ON_LABELS = ("【知识库】",)
 
 
 def _full_sections_context() -> ContextBundle:
@@ -285,12 +291,20 @@ def test_history_messages_normalize_order_and_skip_foreign_roles() -> None:
 
 def test_empty_runtime_sections_render_no_labels() -> None:
     # 心情/quirks 只含空白也视为空：标签行必须整块不出现。
+    # 例外一枚：【知识库】零命中时**必须**出现。它承载的不是"可选点缀"，而是"这轮有没有资料"
+    # 这一事实——分区缺席时模型不知道自己没查到，会把"没资料"讲成"这个人不存在"
+    # （2026-09-25 实弹：被问"你认识蓝毒吗"而库里实测有 103 行蓝毒）。
+    # 替代锁住在 tests/test_kb_availability_declaration.py（零命中仍声明＋声明自带
+    # "不代表不存在"那一半＋有块时不塞声明），删掉那条例外判据会当场红。
     context = _context(raw_text=PERSONA_TEXT).model_copy(
         update={"mood_description": "   ", "quirks_section": "  "}
     )
     system_prompt = build_chat_prompt(context)[0]["content"]
 
     for label in _COMPACT_LABELS:
+        if label in _ALWAYS_ON_LABELS:
+            assert label in system_prompt, f"{label} 属「零命中也要在场」那一族，不该整块消失"
+            continue
         assert label not in system_prompt
     assert "安全边界" in system_prompt
 

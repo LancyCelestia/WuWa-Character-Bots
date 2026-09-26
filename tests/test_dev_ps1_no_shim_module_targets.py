@@ -20,11 +20,16 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
 _DEV_PS1 = _ROOT / "scripts" / "dev.ps1"
+# 2026-09-23「四门禁入口改成读一枚 JSON」后，具体任务的 ``-m`` 目标从 dev.ps1 内联文本
+# 迁入本 JSON（真身任务表）。本门要把「dev.ps1 实际会执行的全部 -m 插件模块」都纳入，
+# 取数口就必须同时覆盖 dev.ps1 与这份 JSON（否则命中数塌成 0，提取器判据失效＝账实不符）。
+_TASKS_JSON = _ROOT / "scripts" / "chatbot-tasks.json"
 
 _CANONICAL_MEMORY_SANITIZE = (
     "plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize"
@@ -94,13 +99,65 @@ def _module_source_file(module: str) -> Path | None:
     return None
 
 
-def _dev_ps1_targets() -> list[tuple[int, str]]:
+def _dev_ps1_inline_targets() -> list[tuple[int, str]]:
+    """dev.ps1 文本里内联写法的 ``-m plugins.*`` 目标（正则三形态全覆盖）。"""
     text = _DEV_PS1.read_text(encoding="utf-8")
     hits: list[tuple[int, str]] = []
     for match in _MODULE_TARGET_RE.finditer(text):
         module = (match.group(1) or match.group(2)).rstrip(".")
         hits.append((text[: match.start()].count("\n") + 1, module))
     return hits
+
+
+def _task_json_targets() -> list[tuple[int, str]]:
+    """``chatbot-tasks.json`` 里每个 ``type:"command"`` 且带 ``module`` 的目标。
+
+    dev.ps1 对任何携带 ``module`` 的命令都拼成 ``python -m <module>`` 执行
+    （见 dev.ps1:271-272 ``Invoke-DevCommand``；与 runner=external/soft/loop-plain 无关），
+    所以这些就是本门要守的 ``-m`` 目标真身。``ensurePythonModule``（走 ``-c import``，
+    见 dev.ps1:389）不是 ``-m`` 运行，按 ``type=="command"`` 天然排除。只取
+    ``plugins.bot_unified_runtime`` 前缀（与 ``_MODULE_TARGET_RE`` 同域），``pip``/``mypy``
+    属外部工具、非本包模块，不纳入。行号取该 ``module`` 字面量在 JSON 源里首次出现的行，
+    仅供错误消息定位。
+    """
+    text = _TASKS_JSON.read_text(encoding="utf-8")
+    data = json.loads(text)
+    modules: list[str] = []
+
+    def _walk(node: object) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "command" and isinstance(node.get("module"), str):
+                modules.append(node["module"])
+            for value in node.values():
+                _walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(data.get("tasks", data))
+    line_of: dict[str, int] = {}
+    for lineno, line in enumerate(text.splitlines(), 1):
+        for module in modules:
+            if module not in line_of and f'"module": "{module}"' in line:
+                line_of[module] = lineno
+    return [
+        (line_of.get(module, 1), module)
+        for module in modules
+        if module.startswith("plugins.bot_unified_runtime")
+    ]
+
+
+def _dev_ps1_targets() -> list[tuple[int, str]]:
+    """四门禁实际会执行的全部 ``-m`` 插件模块目标 = dev.ps1 内联 + 迁入 JSON 的任务真身。
+
+    改因（2026-09-24 席 S208，账跟随真值，非缩面而是随真身搬迁**扩大**取数口）：
+    dev.ps1 迁入 chatbot-tasks.json 后其内联 ``-m plugins.*`` 归零，旧实现只扫 dev.ps1
+    ⇒ 命中 0 处、触发提取器自检下限（是账过时，不是正则真失效）。
+    前后值：合并前 dev.ps1 命中 0；合并后 dev.ps1 0 + JSON 31 = **31 处**（去重 **9 枚**）。
+    下限 ``>=30``／``unique>=8`` **一字未抬**，由现算自然满足；复跑：
+    ``pytest tests/test_dev_ps1_no_shim_module_targets.py::test_dev_ps1_target_extraction_is_not_trivial``。
+    """
+    return [*_dev_ps1_inline_targets(), *_task_json_targets()]
 
 
 def _shim_tags_of(module: str) -> list[str]:
@@ -147,29 +204,42 @@ def test_dev_ps1_module_targets_are_not_shims():
     )
 
 
-def _ps1_function_body(text: str, name: str) -> str:
-    """截取某个 PowerShell function 的函数体（末个函数以 switch/文件尾收口）。"""
-    start = text.index(f"function {name}")
-    ends = [
-        pos
-        for pos in (text.find("\nfunction ", start + 1), text.find("\nswitch ", start))
-        if pos != -1
-    ]
-    return text[start : min(ends)] if ends else text[start:]
+def _memory_sanitize_command() -> dict:
+    """取 chatbot-tasks.json 里 ``memory-sanitize`` 任务的 ``python -m`` 命令节点（真身已迁 JSON）。"""
+    data = json.loads(_TASKS_JSON.read_text(encoding="utf-8"))
+    steps = data["tasks"]["memory-sanitize"]["steps"]
+    commands = [s for s in steps if isinstance(s, dict) and s.get("type") == "command"]
+    assert commands, "memory-sanitize 任务里找不到 command 步骤（搬走了？守卫前提失效）"
+    return commands[-1]
 
 
 def test_memory_sanitize_task_points_to_canonical_module():
-    """本次缺陷的定点锁：``Invoke-MemorySanitize`` 必须指 canonical 真身，旧垫片路径不得复现。"""
-    text = _DEV_PS1.read_text(encoding="utf-8")
-    body = _ps1_function_body(text, "Invoke-MemorySanitize")
-    assert body.startswith("function Invoke-MemorySanitize"), "函数体截取失效（守卫前提）"
-    assert _LEGACY_MEMORY_SANITIZE not in body, (
-        f"Invoke-MemorySanitize 又指回旧垫片路径 {_LEGACY_MEMORY_SANITIZE}"
+    """本次缺陷的定点锁：``memory_sanitize`` 的 ``-m`` 真身必须指 canonical，旧垫片路径不得复现。
+
+    改因（2026-09-24 席 S208，账跟随真值）：该任务的 ``-m`` 目标自 2026-09-23 从 dev.ps1 的
+    ``function Invoke-MemorySanitize`` 搬进 chatbot-tasks.json（memory-sanitize 任务的 command 步），
+    dev.ps1 已无此函数 ⇒ 旧实现 ``text.index("function Invoke-MemorySanitize")`` 抛
+    ``ValueError: substring not found``（是账过时，非缺陷）。判据的**牙全保留**：module 必等值
+    canonical 真身、``--dry-run``/``--apply`` 两支齐全、旧垫片路径在 dev.ps1 与 JSON 两处都不得残留。
+    复跑：``pytest tests/test_dev_ps1_no_shim_module_targets.py::test_memory_sanitize_task_points_to_canonical_module``。
+    """
+    command = _memory_sanitize_command()
+    rendered = json.dumps(command, ensure_ascii=False)
+    assert command.get("module") == _CANONICAL_MEMORY_SANITIZE, (
+        f"memory-sanitize 的 -m 目标不是 canonical 真身，实得 {command.get('module')!r}"
+    )
+    assert _LEGACY_MEMORY_SANITIZE not in rendered, (
+        f"memory-sanitize 命令又指回旧垫片路径 {_LEGACY_MEMORY_SANITIZE}"
         "（18 行 PEP562 垫片，-m 后静默 no-op）"
     )
-    assert _CANONICAL_MEMORY_SANITIZE in body, "Invoke-MemorySanitize 未指向 canonical 真身模块"
-    assert "--dry-run" in body and "--apply" in body, "memory-sanitize 的 dry-run/apply 两支参数缺口"
-    assert _LEGACY_MEMORY_SANITIZE not in text, "dev.ps1 全文仍残留旧垫片模块路径"
+    assert "--dry-run" in rendered and "--apply" in rendered, (
+        "memory-sanitize 的 dry-run/apply 两支参数缺口"
+    )
+    for src_name, src_text in (
+        ("dev.ps1", _DEV_PS1.read_text(encoding="utf-8")),
+        ("chatbot-tasks.json", _TASKS_JSON.read_text(encoding="utf-8")),
+    ):
+        assert _LEGACY_MEMORY_SANITIZE not in src_text, f"{src_name} 全文仍残留旧垫片模块路径"
 
 
 def test_canonical_module_docstring_does_not_teach_shim_command():

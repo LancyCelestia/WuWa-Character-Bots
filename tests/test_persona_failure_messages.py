@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 
-from plugins.bot_unified_runtime.capabilities.chat import (
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
     _PERSONA_FAILURE_MESSAGES,
     persona_failure_message,
 )

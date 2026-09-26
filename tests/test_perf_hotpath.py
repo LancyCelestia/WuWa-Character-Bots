@@ -225,7 +225,9 @@ def _send_request(request_id: str, dedupe_key: str):
 
 def test_in_memory_send_queue_bounded():
     from plugins.bot_unified_runtime.domains.ops.audit.logger import InMemoryAuditLogger
-    from plugins.bot_unified_runtime.sender.queue import InMemorySendQueue
+    from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+        InMemorySendQueue,
+    )
 
     queue = InMemorySendQueue(audit_logger=InMemoryAuditLogger(), max_requests=3)
     for index in range(5):

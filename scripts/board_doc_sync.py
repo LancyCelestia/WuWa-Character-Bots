@@ -11,6 +11,15 @@
   重写，标记之外（含首次生成的骨架正文）原样保留。
 - **--check 即门禁**：覆盖缺口、重复认领、实现路径不存在、生成物漂移，任一命中
   退出码非 0。常驻门是 `tests/test_board_taxonomy_gate.py`。
+- **写盘口（TX241 L1）＝`_commit_rendered` 一支**：现读＋完整性凭据 → 从**刚读到的那份盘上态**
+  派生目标全文 → 写前再读比对凭据（不等 ⇒ 弃写、用它重跑，至多 `dts._CAS_ATTEMPTS` 次）→
+  临时名 + `os.replace` 原子落盘 → 读回核对 → 必要时**条件回滚**（先重读，盘上已是他人提交
+  ⇒ 只放弃、不把别人抬回去）。三件套真身住 `doc_template_sync`（凭据再往下唯一住
+  `shim_retirement_census._integrity_token`），本件零自造尺。旧形两条腿都没守卫：
+  `_write_page` 零重读直写整页、`_merge` 有重读但无等值门/读回/回滚且非原子。
+  残余窗口（不写＝按未修记账）：CAS 仍是 check-then-act，「最后一次 `read_bytes` →
+  `os.replace`」两发系统调用之间的竞写拦不住；且 AUTO 段本体来自更早的全树计算（投影器固有
+  形状）。两者都要 L2「所有页面写者同一把持仓锁」才归零，本波不自装（见 `SEAT-TX241.md` §5）。
 
 用法：
     python scripts/board_doc_sync.py --write   # 生成/就地更新 docs/boards/**
@@ -24,11 +33,18 @@ import argparse
 import ast
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "scripts") not in sys.path:  # 与 physical_placement_census 同形：同目录兄弟脚本直取
+    sys.path.insert(0, str(ROOT / "scripts"))
+
+import doc_sync as ds  # 塌陷锁唯一真身（`require_surface`）——本件不自造第二把「读空即抛」的尺
+import doc_template_sync as dts  # 页面写口三件套唯一真身（CAS 凭据／原子写／条件回滚），禁第二把尺
+
 BOARDS_DIR = ROOT / "docs" / "boards"
 TAXONOMY_PY = ROOT / "plugins/bot_unified_runtime/domains/core/board_taxonomy.py"
 KEYSTONE_PY = ROOT / "plugins/bot_unified_runtime/domains/chat_reply/runtime/capability_registry.py"
@@ -38,6 +54,16 @@ CONFIG_PY = ROOT / "plugins/bot_unified_runtime/config.py"
 AUTO_BEGIN = "<!-- BOARD-AUTO:BEGIN -->"
 AUTO_END = "<!-- BOARD-AUTO:END -->"
 AUTO_NOTE = "<!-- 本节由 scripts/board_doc_sync.py 生成，请勿手改；正文写在标记外 -->"
+
+
+class BoardPageConflict(RuntimeError):
+    """一页投影在**落盘前**被现读判据否决（TX241 L1）：CAS 重跑耗尽、或盘上态读不到。
+
+    立这枚异常是为了堵「静默跳过」：旧版 `_write_page` 零重读直写、`_merge` 无等值门，
+    并发下要么吃掉他席正文、要么把漂移留在盘上而 `--write` 仍报成功。现在冲突必须点名，
+    `write_tree` 逐页收集、`main` 计入退出码——**不把红搬进「这页怎么没更新」那本账**
+    （变绿六禁第⑥条，TX226 §4.2 L2 同口径）。
+    """
 
 
 # --------------------------------------------------------------------------
@@ -80,7 +106,13 @@ def _board_node(el: ast.Call) -> dict[str, Any]:
 
 
 def load_taxonomy() -> list[dict[str, Any]]:
-    """板块树：[{board…}, …]，每个 board 带 features 列表。"""
+    """板块树：[{board…}, …]，每个 board 带 features 列表。
+
+    S246R 塌陷锁：读空一律抛（复用 `doc_sync.require_surface`，禁第二把尺）。
+    旧形返回 `[]` 时，`build_tree`/`live_page_paths` 得到空 live 集，`prune_stale` 会按
+    「板块树不再认领」去**删页**——声明源降成再导出壳这种"眼睛瞎了"的形态，
+    在旧写法下表现为「生成页被静默清空」，而不是「读不到」。
+    """
     tree = ast.parse(TAXONOMY_PY.read_text(encoding="utf-8"))
     boards: list[dict[str, Any]] = []
     for node in ast.walk(tree):
@@ -94,7 +126,7 @@ def load_taxonomy() -> list[dict[str, Any]]:
             if isinstance(el, ast.Call) and isinstance(el.func, ast.Name) and el.func.id == "BoardNode":
                 boards.append(_board_node(el))
     boards.sort(key=lambda b: str(b.get("bid", "")))
-    return boards
+    return ds.require_surface("板块树取数口 load_taxonomy", boards, TAXONOMY_PY, ("BOARD_TAXONOMY",))
 
 
 def load_route_index() -> dict[str, dict[str, object]]:
@@ -111,30 +143,47 @@ def load_route_index() -> dict[str, dict[str, object]]:
                 "value": call.get("value", ""),
                 "command": bool(call.get("command")),
             }
-    return index
+    return ds.require_surface(
+        "路由索引取数口 load_route_index", index, KEYSTONE_PY, ("ROUTE_CAPABILITY_DECLARATIONS",))
 
 
 def load_route_kind_members() -> list[str]:
     text = ROUTER_PY.read_text(encoding="utf-8")
     body = text.split("class RouteKind(", 1)
     if len(body) < 2:
-        return []
+        return ds.require_surface(
+            "RouteKind 成员取数口 load_route_kind_members", [], ROUTER_PY, ("RouteKind",))
     seg = body[1].split("\n\n\n", 1)[0]
-    return re.findall(r"^\s{4}([A-Z][A-Z0-9_]*)\s*=", seg, re.MULTILINE)
+    return ds.require_surface(
+        "RouteKind 成员取数口 load_route_kind_members",
+        re.findall(r"^\s{4}([A-Z][A-Z0-9_]*)\s*=", seg, re.MULTILINE),
+        ROUTER_PY,
+        ("RouteKind",),
+    )
 
 
 def load_help_topics() -> list[str]:
     tree = ast.parse(KEYSTONE_PY.read_text(encoding="utf-8"))
-    return [
-        str(c.get("topic", ""))
-        for c in _collect_calls(tree, {"HelpTopicDecl"})
-        if c.get("topic")
-    ]
+    return ds.require_surface(
+        "帮助主题取数口 load_help_topics",
+        [
+            str(c.get("topic", ""))
+            for c in _collect_calls(tree, {"HelpTopicDecl"})
+            if c.get("topic")
+        ],
+        KEYSTONE_PY,
+        ("HELP_TOPIC_DECLARATIONS",),
+    )
 
 
 def load_config_fields() -> list[str]:
     text = CONFIG_PY.read_text(encoding="utf-8")
-    return sorted(set(re.findall(r"^\s{4}(bot_[a-z0-9_]+)\s*[:=]", text, re.MULTILINE)))
+    return ds.require_surface(
+        "配置字段取数口 load_config_fields",
+        sorted(set(re.findall(r"^\s{4}(bot_[a-z0-9_]+)\s*[:=]", text, re.MULTILINE))),
+        CONFIG_PY,
+        ("class Config",),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -491,42 +540,148 @@ def _paths_md(paths) -> str:
 # --------------------------------------------------------------------------
 # 落盘
 # --------------------------------------------------------------------------
+def _commit_rendered(path: Path, render: Callable[[str | None], str]) -> str:
+    """本页唯一写盘序列（TX241 L1·第三写口）。
+
+    旧形两枚都缺守卫：`_write_page` **零重读直写整页**（形 ① 的最大窗口——投影输入全来自
+    更早的全树计算，盘上被人改过也照样整页顶掉），`_merge` 虽有重读却**无等值门、无读回、
+    无回滚、非原子**（`write_text` 是 truncate+write）。现在统一成一支：
+
+    1. `read_bytes`（不存在 ⇒ None）＋完整性凭据；
+    2. `render(current_text)` 派生目标全文——**只从刚读到的那份盘上态派生**（人正文段取自
+       这一发现读，绝不用更早的内存副本）；
+    3. 目标文本 == 盘上文本 ⇒ 幂等命中，零写入返回 `unchanged`；
+    4. 写前 CAS：再读一次、凭据与第 1 步比对，不等 ⇒ 弃写（临时名都不落）并用新读到的那份
+       重跑 2–4，至多 `dts._CAS_ATTEMPTS` 次；仍未决 ⇒ `cas-conflict`（盘上留他席那份）；
+    5. 相等才 `_atomic_write_bytes`（临时名 + `os.replace`）→ 读回核对 → 不等则
+       `_rollback_or_abandon`（先重读，盘上已是他人提交 ⇒ 只放弃不回滚）。
+
+    三件套真身全在 `doc_template_sync`（其凭据又唯一住 `shim_retirement_census._integrity_token`），
+    本件**不自造尺**。残余窗口（不写＝按未修记账）：第 4 步 `read_bytes → os.replace` 之间仍是
+    check-then-act ⇒ ①型丢更新概率极低但不为零；且第 2 步的 AUTO 段来自更早的全树计算（本投影器
+    的固有形状，非本席引入），要归零只有 L2「所有页面写者同一把持仓锁」——本波不自装。
+
+    返回 `written` / `unchanged` / `cas-conflict` / `unreadable`（调用方点名，绝不静默）。
+    """
+    for _attempt in range(1, dts._CAS_ATTEMPTS + 1):
+        try:
+            raw = path.read_bytes()
+        except FileNotFoundError:
+            raw = None  # 新建页：本轮起点凭据取空字节（与「盘上什么都没有」同义）
+        except OSError as exc:
+            return f"unreadable（写前重读失败 {type(exc).__name__}: {exc}）"
+        current = None if raw is None else dts._decode_universal_newlines(raw)
+        token = dts._integrity_token_of(b"" if raw is None else raw)
+        rendered = render(current)
+        if current is not None and rendered == current:
+            return "unchanged"  # 幂等命中：盘上已是目标文本，本轮零写入
+        try:
+            check = path.read_bytes()
+        except FileNotFoundError:
+            check = b""
+        except OSError as exc:
+            return f"unreadable（写前 CAS 重读失败 {type(exc).__name__}: {exc}）"
+        if dts._integrity_token_of(check) != token:
+            continue  # 弃写：他席在渲染期间提交过 ⇒ 用它那份重跑
+        payload = rendered.encode("utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        dts._atomic_write_bytes(path, payload)
+        if path.read_bytes() != payload:
+            # 读回不等 ⇒ 窗口内被竞写。有写前态才谈得上回滚（且仍先重读、只在盘上仍是本席
+            # 写值时才抬回）；新建页无写前态可回，**不删**——别人可能刚在这条路径上落了东西。
+            if raw is None:
+                return "cas-conflict（写后读回≠本席落盘字节；新建页无写前态可回滚，保留盘上现值）"
+            preserved = dts._rollback_or_abandon(path, raw, payload)
+            return f"cas-conflict（写后读回≠本席落盘字节；{preserved}）"
+        return "written"
+    return f"cas-conflict（重跑 {dts._CAS_ATTEMPTS} 次仍有他席抢先落盘，本席陈旧投影不落地）"
+
+
+def _rel_for_msg(path: Path) -> str:
+    """点名用路径：仓内给相对形、仓外（`%TEMP%` 合成根、离线夹具）给原形。
+
+    不是装饰：`write_tree` 与常驻门都在仓内跑，而 TX241 的并发用例在 `tmp_path` 合成根上跑——
+    直接 `path.relative_to(ROOT)` 在仓外会抛 `ValueError`，把"拒写点名"变成"崩在点名那一行"。
+    """
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
 def _write_page(path: Path, title: str, auto: str, body: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_page(title, auto, body), encoding="utf-8", newline="\n")
+    """整页新建/重写（板块索引页那一发）。TX241：零重读直写已升为上面的 CAS 提交。"""
+
+    def _render(_current: str | None) -> str:
+        return _page(title, auto, body)
+
+    outcome = _commit_rendered(path, _render)
+    if outcome not in ("written", "unchanged"):
+        raise BoardPageConflict(f"{_rel_for_msg(path)}：{outcome}")
 
 
 def _merge(path: Path, title: str, auto: str, skeleton_body: str) -> None:
-    """就地更新 AUTO 段；文件不存在则用骨架正文新建（正文块由人后续填）。"""
-    if path.exists():
-        text = path.read_text(encoding="utf-8")
-        if AUTO_BEGIN in text and AUTO_END in text:
-            head, rest = text.split(AUTO_BEGIN, 1)
+    """就地更新 AUTO 段；文件不存在则用骨架正文新建（正文块由人后续填）。
+
+    TX241：目标文本的 head/tail 一律取自**本轮现读**的那份盘上态（旧版这一点已对，缺的是
+    等值门/读回/原子写/条件回滚），并由 `_commit_rendered` 在写前重读比对凭据——人在标记外
+    写的正文因此不会再被并发的一发投影吃掉。
+    """
+
+    def _render(current: str | None) -> str:
+        if current is None:
+            return _page(title, auto, skeleton_body)
+        if AUTO_BEGIN in current and AUTO_END in current:
+            head, rest = current.split(AUTO_BEGIN, 1)
             _, tail = rest.split(AUTO_END, 1)
-            new = f"{head}{AUTO_BEGIN}\n{AUTO_NOTE}\n\n{auto.rstrip()}\n{AUTO_END}{tail}"
-            if new != text:
-                path.write_text(new, encoding="utf-8", newline="\n")
-            return
+            return f"{head}{AUTO_BEGIN}\n{AUTO_NOTE}\n\n{auto.rstrip()}\n{AUTO_END}{tail}"
         # 无标记的老文件：前插 AUTO 段，不丢内容
-        path.write_text(f"# {title}\n\n{AUTO_BEGIN}\n{AUTO_NOTE}\n\n{auto.rstrip()}\n{AUTO_END}\n\n{text.lstrip()}", encoding="utf-8", newline="\n")
-        return
-    _write_page(path, title, auto, skeleton_body)
+        return (
+            f"# {title}\n\n{AUTO_BEGIN}\n{AUTO_NOTE}\n\n{auto.rstrip()}\n{AUTO_END}\n\n"
+            f"{current.lstrip()}"
+        )
+
+    outcome = _commit_rendered(path, _render)
+    if outcome not in ("written", "unchanged"):
+        raise BoardPageConflict(f"{_rel_for_msg(path)}：{outcome}")
 
 
 _SKELETONS = {L1_BODY.strip(), L2_BODY.strip(), L3_BODY.strip()}
 
 
 def prune_stale(live: set[Path]) -> list[Path]:
-    """删除板块树不再认领、且正文仍是未动骨架的生成页（有人写过的保留并报告）。"""
+    """删除板块树不再认领、且正文仍是未动骨架的生成页（有人写过的保留并报告）。
+
+    TX261 ①④（9 枚名册里的 D1）：旧形是「读 → 判 → 删」三步裸走、删前不复查——判据成立与
+    `unlink` 之间他席刚写入正文的页会被**静默删掉**（删件即半截契约，TX242 §3 点名洞）。
+    现在：判据从**同一份现读字节**派生（decode 失败＝看不懂 ⇒ 保守保留），`unlink` 前再读一次、
+    字节与判据所凭那份**逐字等值**才许删；不等（窗口内被人动过）⇒ 并入保留名册并 stderr 点名。
+    残余窗口如实：重读到 unlink 之间仍有无锁微秒缝（L2 不自装，同 `doc_template_sync.write_page`
+    诚实边界口径）；本腿买到的是「绝不删我看不懂或判据已过时的页」，不是「零竞态删除」。
+    """
     kept: list[Path] = []
     for path in sorted(BOARDS_DIR.rglob("*.md")):
         if path in live or "_meta" in path.parts or path.name == "_conventions.md":
             continue
-        text = path.read_text(encoding="utf-8")
+        try:
+            raw = path.read_bytes()
+            text = dts._decode_universal_newlines(raw)
+        except (OSError, UnicodeDecodeError):
+            kept.append(path)  # 读不懂/读不动的件一律不删（fail-closed）
+            continue
         if AUTO_END not in text or text.split(AUTO_END, 1)[1].strip() not in _SKELETONS:
             kept.append(path)
             continue
-        path.unlink()
+        try:
+            if path.read_bytes() != raw:  # 删前复查：判据与字节不同源的一刻绝不落刀
+                kept.append(path)
+                print(f"KEEP 判据后字节已变（窗口内他席写过）、不删：{path.relative_to(ROOT)}",
+                      file=sys.stderr)
+                continue
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            kept.append(path)
+            print(f"KEEP 删除腿异常（{type(exc).__name__}: {exc}）、保留待人工：{path}", file=sys.stderr)
     return kept
 
 
@@ -542,39 +697,63 @@ def live_page_paths(boards: list[Board]) -> set[Path]:
     return live
 
 
-def write_tree(boards: list[Board], topics: list[str], route_index: dict, facts: dict[str, int]) -> None:
+def write_tree(
+    boards: list[Board], topics: list[str], route_index: dict, facts: dict[str, int]
+) -> list[str]:
+    """投影整棵板块树，返回**逐页冲突点名**（空表＝本轮每一页都落成了）。
+
+    TX241：旧版返回 `None`、写口零守卫 ⇒ 「跑成功」与「盘上是不是我这一份」两件事被混成一件。
+    现在冲突逐页收进返回值、由 `main` 计入退出码——投影器仍**不**自动重试整棵树（那只会把
+    同一份陈旧全树计算再压一遍），单页级的重跑已在 `_commit_rendered` 里做过。
+    """
+    conflicts: list[str] = []
+
+    def _emit(path: Path, title: str, auto: str, body: str, *, merge: bool) -> None:
+        try:
+            if merge:
+                _merge(path, title, auto, body)
+            else:
+                _write_page(path, title, auto, body)
+        except BoardPageConflict as exc:
+            conflicts.append(str(exc))
+
     pruned_kept = prune_stale(live_page_paths(boards))
     for path in pruned_kept:
         print(f"KEEP 正文已有人写、板块树不再认领，请手工归档：{path.relative_to(ROOT)}", file=sys.stderr)
-    _write_page(
+    _emit(
         BOARDS_DIR / "README.md",
         "守岸人 Bot · 十板块功能树",
         render_root_auto(boards, facts),
         INDEX_BODY,
+        merge=False,
     )
     for board in boards:
         bdir = BOARDS_DIR / board.dir_name
-        _merge(
+        _emit(
             bdir / "README.md",
             f"{board.bid} {board.node['label']}",
             render_board_auto(board, topics),
             L1_BODY,
+            merge=True,
         )
         for feature in board.features:
             fdir = bdir / feature.slug
-            _merge(
+            _emit(
                 fdir / "README.md",
                 f"{feature.fid} {feature.node['label']}",
                 render_feature_auto(feature, topics),
                 L2_BODY,
+                merge=True,
             )
             for l3 in feature.l3:
-                _merge(
+                _emit(
                     fdir / f"{l3.slug}.md",
                     f"{feature.node['label']} · {l3.label}",
                     render_l3_auto(feature, l3, topics, route_index),
                     L3_BODY,
+                    merge=True,
                 )
+    return conflicts
 
 
 def check_tree(boards: list[Board], topics: list[str], route_index: dict) -> list[str]:
@@ -647,16 +826,38 @@ def main(argv: list[str] | None = None) -> int:
             print(f"PROBLEM {p}")
         return 1 if problems else 0
 
+    if args.write:
+        # TX-S779：`--write` 的写盘不得被体检早退吃掉。
+        # 旧形 `if problems: return 1` 排在 `if args.write:` **之前** ⇒ 体检只要有一项在案
+        # （今日实拦：他波两枚未登记项 `RouteKind HOST_STATE`／帮助主题「宿主机状态」），
+        # `--write` 就与 `--check` 一样在门口返回——`write_tree` 实到调用 0 次、生成物一个
+        # 字节都不跟随，而板面看起来"跑过了"（S770 只读桩证死，`REGEN-RUNBOOK-POST-D5-S770.md`
+        # §〇/E1）。这里先投影落盘，再照旧把体检问题如实报出来、退出码仍反映问题与冲突；
+        # `--check` 侧的早退语义原样保留在下方——门只准变严，不许为凑绿放宽判据。
+        conflicts = write_tree(boards, topics, route_index, facts)
+        for line in conflicts:
+            print(f"BOARD_PAGE_CONFLICT 本页投影被落盘前判据否决、盘上态归他席：{line}",
+                  file=sys.stderr)
+        print(
+            f"已生成 docs/boards/**（{facts['boards']} 板块 / {facts['features']} 功能 / "
+            f"{facts['l3']} 入口；冲突 {len(conflicts)} 页）"
+        )
+        if problems:
+            for p in problems:
+                print(f"PROBLEM {p}", file=sys.stderr)
+            print(
+                f"板块树体检未过：{len(problems)} 项"
+                "（--write 已按当前声明源投影落盘，体检问题仍须由 owner 同批处理）",
+                file=sys.stderr,
+            )
+        return 1 if (problems or conflicts) else 0
+
+    # 缺省与 --check：体检未过仍旧早退（互斥组保证与 --write 不同屏）；语义一字未动。
     if problems:
         for p in problems:
             print(f"PROBLEM {p}", file=sys.stderr)
         print(f"板块树体检未过：{len(problems)} 项", file=sys.stderr)
         return 1
-
-    if args.write:
-        write_tree(boards, topics, route_index, facts)
-        print(f"已生成 docs/boards/**（{facts['boards']} 板块 / {facts['features']} 功能 / {facts['l3']} 入口）")
-        return 0
 
     drift = check_tree(boards, topics, route_index)
     if drift:

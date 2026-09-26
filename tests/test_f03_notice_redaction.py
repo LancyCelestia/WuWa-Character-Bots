@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.download import build_download_capability
 from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     OperationalIssue,
@@ -26,6 +25,9 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     SendRequest,
     SessionType,
+)
+from plugins.bot_unified_runtime.domains.files.capabilities.download import (
+    build_download_capability,
 )
 from plugins.bot_unified_runtime.domains.files.sources.downloader import DownloadOutcome
 from plugins.bot_unified_runtime.domains.ops.monitor.alerts import (
@@ -39,7 +41,9 @@ from plugins.bot_unified_runtime.domains.transport.sender import (
 from plugins.bot_unified_runtime.domains.transport.sender.file_gateway import (
     FinalTransferError,
 )
-from plugins.bot_unified_runtime.sender.nonebot import send_nonebot_message
+from plugins.bot_unified_runtime.domains.transport.sender.nonebot import (
+    send_nonebot_message,
+)
 
 # 长度钉在 48 字节内：nonebot 侧 kind/safe_summary 取 str(exc)[:48]，
 # 两种敏感形态（URL userinfo + 裸键值对）都必须完整落在截断窗口内。

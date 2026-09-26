@@ -41,7 +41,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -49,6 +49,14 @@ from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
     ROLE_BLOCKED,
     ROLE_ORDER,
 )
+from plugins.bot_unified_runtime.domains.core.capability_manifest import (
+    config_keys_for,
+)
+
+if TYPE_CHECKING:  # 只借类型，不建运行期边：feature_gate → feature_catalog → 本模块。
+    from plugins.bot_unified_runtime.domains.ops.features.feature_gate import (
+        FeatureAccess,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +105,12 @@ class CapabilityFamily(str, Enum):
     FILES = "files"
     SEARCH = "search"
     CREATION = "creation"
+    # PIPELINE：「管线管理形」（第三种执行形态）能力族（2026-09-22）。单列一族是刻意的：
+    # `test_v21_s10_protocols` 把 COMMAND 族计数钉成 `len(_route_execution_rows())`，
+    # 管线管理形不属命令/prepared 执行形、不进 `_route_execution_rows()`，若塞进 COMMAND
+    # 会当场顶爆那条计数锁；且它跑的是 `pipeline.handle_async`（返回 DeliveryReceipt），
+    # 语义上也与"纯能力闭包"的 COMMAND 族正交。
+    PIPELINE = "pipeline"
 
 
 # ===========================================================================
@@ -167,6 +181,15 @@ PRESENTATION_DATA_KEY = "presentation_result"
 #: 只出现在 failed 终态的 ``data`` 里，**进程内传递、绝不序列化**（呈现载荷另有其键，
 #: 且失败态带载荷由 `_check_envelope_invariants` 拦死，本键不受该约束＝非结果体）。
 INVOKER_ERROR_DATA_KEY = "invoker_exception"
+
+
+class CapabilityTimeout(RuntimeError):
+    """中央执行预算耗尽（工作线程仍在跑，结果弃用）。
+
+    存在的理由只有一个：让「能力挂死」与「能力抛异常」共用同一条诊断卡路径——
+    本键被层 1 无条件 `raise`（见 `_step` 里 `isinstance(primary_error, BaseException)`），
+    而旧形态的超时只产一个安静的 TIMEOUT 终态 ⇒ 用户白等、卡也不出（AGENTS #49 在册未执法条）。
+    """
 
 #: 成功终态族——只有这一族允许携带呈现载荷。
 _SUCCESS_STATUSES: frozenset[InvocationStatus] = frozenset(
@@ -513,6 +536,59 @@ def _handler_callable(handler: HandlerFn, request: CapabilityRequest) -> Callabl
     return lambda: handler(request)
 
 
+#: 「当前线程正在 cap-proto 池里跑某枚能力的执行体」的按线程记账（S135 · 裁定 #7）。
+#: 用 `depth` 而非 bool：降级链与内层再嵌套要能正确退出，不能一置 True 就永久粘住
+#: （线程池的 worker 是**复用**的，粘住＝整个进程后续所有 invoke 都变成内联＝池形同虚设）。
+_WORKER_DEPTH = threading.local()
+
+
+def _in_capability_worker() -> bool:
+    """当前线程是否已在 cap-proto worker 内执行某枚能力（嵌套派发判据的唯一真身）。"""
+    return bool(getattr(_WORKER_DEPTH, "depth", 0))
+
+
+def _mark_capability_worker(
+    task: Callable[[], InvocationResult],
+) -> Callable[[], InvocationResult]:
+    """给提交进池的调用套上「本线程自此算 worker」的标记（异常路径也必回退计数）。"""
+
+    def _run() -> InvocationResult:
+        depth = int(getattr(_WORKER_DEPTH, "depth", 0))
+        _WORKER_DEPTH.depth = depth + 1
+        try:
+            return task()
+        finally:
+            _WORKER_DEPTH.depth = depth
+
+    return _run
+
+
+def _execute_handler(
+    task: Callable[[], InvocationResult], budget: float
+) -> InvocationResult:
+    """在预算内跑一次执行体；超时抛 :class:`concurrent.futures.TimeoutError`。
+
+    占位形态两档（S135 裁定「一次配音在 cap-proto 池只占一枚」的落点）：
+
+    - **顶层**（当前线程不在池内）：提交共享池、占 1 枚 worker，本枚预算由 future 施加；
+    - **嵌套**（当前线程已在池内跑另一枚能力，如自动配音的产出步 `media.tts.autodub` 被
+      `media.tts.autodub_transform` 的执行体调起）：**同线程内联执行、不再要第二枚**。
+      Python 线程不可中断 ⇒ 内联这档的 ``budget`` 只能不施加；总时限仍由**外层那枚**的
+      future 预算承担（这正是 autodub_transform 的 180s 必须高于内层 90s 的在册理由）。
+
+    两档都**照常**过层 2 的门（登记/feature/角色/载荷限额）、照常出审计行、照常走降级链
+    ——内联只省「再占一枚 worker」这一件事，不省任何执法，故不是绕中央件的第二通路。
+    """
+    if _in_capability_worker():
+        return task()
+    future = _get_capability_executor().submit(_mark_capability_worker(task))
+    try:
+        return future.result(timeout=budget)
+    except concurrent.futures.TimeoutError:
+        future.cancel()
+        raise
+
+
 def roles_satisfy(held: tuple[str, ...], required: tuple[str, ...]) -> bool:
     """权限语义＝**层级最低门槛**（2026-09-21 根修；判据方向由 R-ROLE 独立复核确认）。
 
@@ -543,7 +619,8 @@ def roles_satisfy(held: tuple[str, ...], required: tuple[str, ...]) -> bool:
 class CapabilityInvoker:
     """descriptor 驱动的受控调用入口。
 
-    顺序：描述符解析 → 权限门 → 载荷限额 → handler（未接线=unavailable）
+    顺序：描述符解析 → feature 门（仅在册受门者，未注入＝跳过）→ 权限门 → 载荷限额
+    → handler（未接线=unavailable）
     → 超时 → 异常走 fallback_chain（终态 honest_degrade=degraded）→ 审计。
     权限语义：主体 roles 与 descriptor.required_roles 有交集即放行；
     ``blocked`` 角色无条件拒绝。
@@ -560,12 +637,18 @@ class CapabilityInvoker:
         fallbacks: FallbackRegistry | None = None,
         probes: HealthProbeRegistry | None = None,
         audit_hooks: AuditHookRegistry | None = None,
+        feature_gate: Callable[[str], FeatureAccess] | None = None,
     ) -> None:
         self.registry = registry
         self.handlers = handlers
         self.fallbacks = fallbacks or FallbackRegistry()
         self.probes = probes or HealthProbeRegistry()
         self.audit_hooks = audit_hooks or AuditHookRegistry()
+        # 层 2 kill-switch 谓词：capability_id → FeatureAccess。缺省 ``None``＝不执法，
+        # 逐字节保持本波之前的现网现状（构造期不猜服务，由装配经
+        # :func:`attach_default_feature_gate` 注入，理由同 audit_sink：保住「默认
+        # invoker 只有一个生产取用点」那条结构判据）。
+        self.feature_gate = feature_gate
 
     # ---- 查询面 ---------------------------------------------------------
 
@@ -614,6 +697,32 @@ class CapabilityInvoker:
                 detail=f"未登记能力: {request.capability_id}",
             )
 
+        # 层 2 feature 门（收编 AGENTS #49「`invoke()` 不读 gate_feature_id」在册未执法）。
+        # 只执法**在册且受门**的能力；未受门＝pass-through，绝不照抄层 1
+        # ``ProductFeatureGate.__call__`` 的「未登记→拒绝」——那会把今天真在跑的
+        # 四条直呼型能力（``search.web`` / ``media.vision.anime_ip`` /
+        # ``creation.tts.synthesize`` / ``media.tts.autodub``，S43 实算 §1.3）当场挡死。
+        # 位置对齐层 1：``pipeline._prepare`` 的 feature gate 是**第一道**，先于角色门。
+        if self.feature_gate is not None:
+            bound_feature = gate_feature_bindings().get(request.capability_id)
+            if bound_feature is not None:
+                deny_reason: str | None = None
+                try:
+                    access = self.feature_gate(request.capability_id)
+                except Exception:  # noqa: BLE001 - 读不到状态＝拒绝，不外泄底层异常（同层 1）。
+                    deny_reason = "feature_state_unavailable"
+                else:
+                    if not access.allowed:
+                        deny_reason = access.reason
+                if deny_reason is not None:
+                    return _finish(
+                        InvocationStatus.DENIED,
+                        detail=(
+                            f"功能门关闭：{deny_reason}（feature_id={bound_feature}）"
+                        ),
+                        via="feature_gate",
+                    )
+
         if ROLE_BLOCKED in request.roles:
             return _finish(InvocationStatus.DENIED, detail="blocked 主体拒绝")
         if request.roles and not roles_satisfy(
@@ -645,15 +754,25 @@ class CapabilityInvoker:
         attempts = 1
         task = _handler_callable(handler, request)
         try:
-            future = _get_capability_executor().submit(task)
             try:
-                result = future.result(timeout=budget)
+                # 顶层=提交共享池（占 1 枚）；嵌套=同线程内联（不再要第二枚）。S135。
+                result = _execute_handler(task, budget)
             except concurrent.futures.TimeoutError:
-                future.cancel()
+                # 中央调度收编波 P3：超时不再只是"一个安静的终态"。
+                # 旧形态下 pipeline 的 `_internal_error` 旁路只看异常 ⇒ 能力挂死满预算时
+                # 用户既等不到结果也看不到诊断卡（AGENTS #49「中央超时不抛⇒挂死不出诊断卡」）。
+                # 现把超时包成异常经 INVOKER_ERROR_DATA_KEY 交回层 1，与"能力抛异常"共用同一张卡；
+                # 状态仍是 TIMEOUT（不新增第二套终态），降级链照旧不因此吞掉。
+                # 注：`future.cancel()` 已收进 `_execute_handler`（两档占位只此一处 submit）。
                 return _finish(
                     InvocationStatus.TIMEOUT,
                     detail=f"超时 {budget:g}s（线程跑到自然结束，结果弃用）",
                     via="invoker",
+                    data={
+                        INVOKER_ERROR_DATA_KEY: CapabilityTimeout(
+                            f"{request.capability_id} 超过中央预算 {budget:g}s"
+                        )
+                    },
                 )
         except Exception as exc:  # noqa: BLE001 - 主链异常走降级链。
             return self._run_fallbacks(
@@ -738,12 +857,11 @@ class CapabilityInvoker:
             # 预算与主 attempt 跑了多久**无关**，否则慢失败=注定没有降级。
             remaining = _attempt_budget(descriptor)
             try:
-                future = _get_capability_executor().submit(
-                    _handler_callable(fallback, request)
+                # 降级腿与主链同一占位规则（嵌套不再要第二枚，S135）。
+                result = _execute_handler(
+                    _handler_callable(fallback, request), remaining
                 )
-                result = future.result(timeout=remaining)
             except concurrent.futures.TimeoutError:
-                future.cancel()
                 last_detail = f"降级 {name} 超时"
                 fallback_failures += 1
                 continue
@@ -1168,6 +1286,31 @@ def _handle_media_frame_extract(request: CapabilityRequest) -> InvocationResult:
     )
 
 
+def _handle_creation_tts_synthesize(request: CapabilityRequest) -> InvocationResult:
+    """creation.tts.synthesize 的执行体 = 只委派 `creation/tts/engine_provider.handle`。
+
+    本函数刻意薄到只有一行委派：语音合成的唯一路径仍在 `media/capabilities/tts.py`，
+    生效顶（硬顶字数/字节顶/参考音/退避）由 provider 现读 `tts_presets`，本文件不留任何数值；
+    provider 未配 → provider 侧给诚实 UNAVAILABLE（协议≠可用，禁冒充合成成功）。
+    """
+    from plugins.bot_unified_runtime.domains.creation.tts import engine_provider
+
+    return engine_provider.handle(request)
+
+
+def _handle_creation_image_generate(request: CapabilityRequest) -> InvocationResult:
+    """creation.image.generate 的执行体 = 只委派 `creation/image/engine_provider.handle`。
+
+    与语音同构：**协议齐、实现缺位**。未配 provider ⇒ provider 侧给诚实 ``UNAVAILABLE``
+    并把 ``CreationImageNotWired`` 塞进 :data:`INVOKER_ERROR_DATA_KEY`，由层 1 ``_step``
+    无条件 ``raise`` → ``pipeline._internal_error`` 出诊断卡（"缺位必须可见"的腿）。
+    本函数刻意薄到一行委派：中央不建第二条绘图路、不持任何 provider 参数数值。
+    """
+    from plugins.bot_unified_runtime.domains.creation.image import engine_provider
+
+    return engine_provider.handle(request)
+
+
 def _handle_media_tts_autodub(request: CapabilityRequest) -> InvocationResult:
     """自动配音产出步 → tts.py ``synthesize_autodub`` 单一真身（VOICE-V12 第二出站腿）。
 
@@ -1194,17 +1337,28 @@ def _handle_media_tts_autodub(request: CapabilityRequest) -> InvocationResult:
     synth = request.context.get("synthesize")
     code, payload = tts.synthesize_autodub(config, text, synth=synth)
     if code == "no_ref":
+        # 两档 config-aware 文案（BOT_TTS_REF_AUDIOS 未配置 vs 配了但路径读不到，带 GPTSOVITS_DIR
+        # 基准提示）透传进 detail——不退化成常量（S267 现算语义代价①：旧版把两档并成一档，
+        # 丢"点名待配键"的可归因性；修法在此单点，voice 路与 creation 路同时受益）。
         return _result(
             request,
             InvocationStatus.NOT_CONFIGURED,
-            detail="无可用参考音频（BOT_TTS_REF_AUDIOS 未配置或全部读不到）",
+            detail=tts._no_ref_audio_hint(config),
             via="tts_autodub",
         )
     if code == "failed":
+        # 失败 detail 必须先过 redact_local_secrets 再进信封：invoker 每次终态都把
+        # ``detail[:300]`` 写进审计库 ``private_debug``（CapabilityAuditRecord→根 sink→SQLite），
+        # 而引擎失败原文可能带密钥/本机路径（S267 现算语义代价②；与 creation 路铁律4
+        # HONEST_DEGRADE 同口径）。截顶仍 [:500]，只是先打码。
+        from plugins.bot_unified_runtime.domains.render.plain_text import (
+            redact_local_secrets,
+        )
+
         return _result(
             request,
             InvocationStatus.FAILED,
-            detail=str(payload)[:500],
+            detail=redact_local_secrets(str(payload))[:500],
             via="tts_autodub",
         )
     return _result(
@@ -1213,6 +1367,20 @@ def _handle_media_tts_autodub(request: CapabilityRequest) -> InvocationResult:
         data=dict(payload) if isinstance(payload, dict) else {},
         via="tts_autodub",
     )
+
+
+def _handle_media_tts_autodub_transform(request: CapabilityRequest) -> InvocationResult:
+    """结果变换形（自动配音第二腿的呈现变换）→ 域内执行体一处委派，中央不建第二路。
+
+    执行体真身＝``domains/media/tts/result_transform.py::handle``（S36 落件、S91 通电）：
+    它读 ``payload["result"]``（前序呈现 dump）＋ ``context["dub"]``（产出步注入缝），
+    交回 ``data[PRESENTATION_DATA_KEY]``＝带音频的呈现 dump。合成这一步（``dub``）仍由调用点
+    （``voice_enricher``）以字面 ``capability_id="media.tts.autodub"`` 经中央产出步执行，
+    本 handler 不重造引擎路、不建第二真身（同 ``_handle_creation_tts_synthesize`` 薄委派范本）。
+    """
+    from plugins.bot_unified_runtime.domains.media.tts import result_transform
+
+    return result_transform.handle(request)
 
 
 #: 抽帧 handler 需要读 descriptor limits；装配期由 default_invoker 回填。
@@ -1244,14 +1412,22 @@ def _make_file_read_handler(
                 via="file_reader",
             )
         metadata = dict(parsed.metadata or {})
-        if metadata.get("status") == "parser_unavailable":
+        degrade_status = metadata.get("status")
+        if degrade_status in {"parser_unavailable", "parse_failed"}:
+            # 两种「没读到」必须分开说：旧格式/未装解析器＝环境没有这个能力；
+            # 损坏/伪后缀＝这份文件本身有问题。把后者写成「旧格式无适配器」
+            # 是给用户一条查不到人的归因（2026-09-25 S-PDF-1）。措辞自 2026-09-26
+            # S-PDF-2 起取自 file_reader.PARSE_STATUS_SENTENCES 单一真身，与根入站
+            # 归一共用——本 handler 曾是两态措辞的**唯一**宿主而生产零调用点，
+            # 真实入站路径把两态都吞成静默；措辞并成一态必红（test_file_ingress_failure_feedback）。
+            sentence = file_reader.parse_status_sentence(str(degrade_status))
             return _result(
                 request,
                 InvocationStatus.DEGRADED,
                 data={"kind": parsed.kind, "text": "", "metadata": metadata},
                 detail=(
-                    f"旧格式无真实适配器，诚实降级 parser_unavailable"
-                    f"（{metadata.get('format', '')}）；不冒充解析成功"
+                    f"{sentence}（{metadata.get('format', '')}）；"
+                    f"诚实降级 {degrade_status}"
                 ),
                 via="file_reader",
             )
@@ -1611,7 +1787,29 @@ def _probe_acg(config: Any) -> CapabilityHealth:
     return CapabilityHealth.AVAILABLE
 
 
-def _probe_creation_reserved(config: Any) -> CapabilityHealth:
+def _probe_creation_tts(config: Any) -> CapabilityHealth:
+    """creation.tts 的健康态**与 `bot.tts` 同一判定源**（CM-P-3：禁在中央另立第二口径）。
+
+    ``config is None`` ⇒ 无配置可读，诚实 ``NOT_CONFIGURED``（不猜有 provider）。
+    """
+    if config is None:
+        return CapabilityHealth.NOT_CONFIGURED
+    return _probe_tts(config)
+
+
+def _probe_creation_image(config: Any) -> CapabilityHealth:
+    """绘图对接点三态：未配键=``NOT_CONFIGURED``；配了键但工厂未落地=``DEGRADED``。
+
+    ``DEGRADED`` 这一格是**故意不给 AVAILABLE**：协议补全 ≠ 有真实绘图后端（准绳禁"预留实现"
+    写成"已支持"）。键 ``bot_creation_image_provider`` 一旦登记且填值，本行即从"根本没这个键"
+    升为"待配实现"，两种形态在 `/bot status` 与巡检告警上都可判别。
+    """
+    if config is None:
+        return CapabilityHealth.NOT_CONFIGURED
+    from plugins.bot_unified_runtime.domains.creation import reserved_provider
+
+    if reserved_provider.provider_configured(config, "creation.image"):
+        return CapabilityHealth.DEGRADED
     return CapabilityHealth.NOT_CONFIGURED
 
 
@@ -1624,7 +1822,8 @@ _PROBE_ASR = "asr_registry"
 _PROBE_VIDEO = "video_config"
 _PROBE_WEB = "web_search_chain"
 _PROBE_ACG = "acg_config"
-_PROBE_CREATION = "creation_reserved"
+_PROBE_CREATION_TTS = "creation_tts_dock"
+_PROBE_CREATION_IMAGE = "creation_image_dock"
 _PROBE_TTS = "tts_config"
 
 #: 已实现的执行面 adapter 形态（新增必须同时在此登记，未知名装配即炸）。
@@ -1658,7 +1857,7 @@ def _media_descriptors() -> list[CapabilityDescriptor]:
             limit_fields=(("image_urls", "max_images"), ("query_text", "max_chars")),
             fallback_chain=(HONEST_DEGRADE_PREFIX + "识别失败返回空说明，不冒充成功",),
             implementation_ref=f"{_MEDIA_REF}/ingest/vision_describe.py#describe_images",
-            config_keys=("bot_vision_enabled", "bot_vision_model_registry", "bot_vision_timeout_seconds"),
+            config_keys=config_keys_for("media.vision.image"),  # S180 降为读册
             health_probe=_PROBE_VISION,
             notes="VLM 链（GIF 取首帧/胶片条、本机字节优先）；失败=空+诚实说明",
         ),
@@ -1673,7 +1872,7 @@ def _media_descriptors() -> list[CapabilityDescriptor]:
             limit_fields=(("image_urls", "max_images"),),
             fallback_chain=(HONEST_DEGRADE_PREFIX + "无独立 OCR 引擎；VLM 代位或诚实无结果",),
             implementation_ref=f"{_MEDIA_REF}/ingest/vision_describe.py#describe_images",
-            config_keys=("bot_vision_enabled", "bot_vision_model_registry"),
+            config_keys=config_keys_for("media.vision.ocr"),  # S180 降为读册
             health_probe=_PROBE_VISION_DEGRADED,
             health_default=CapabilityHealth.NOT_CONFIGURED,
             notes="矩阵 L47 实证 OCR 无；VLM 文字转写代位=degraded（结果带 engine=vlm_transcribe）",
@@ -1692,7 +1891,7 @@ def _media_descriptors() -> list[CapabilityDescriptor]:
                 HONEST_DEGRADE_PREFIX + "反搜无候选时不凭空猜 IP（候选/证据口径）",
             ),
             implementation_ref=f"{_MEDIA_REF}/search/sauce_search.py#search_saucenao_ex",
-            config_keys=("bot_saucenao_api_key",),
+            config_keys=config_keys_for("media.vision.anime_ip"),  # S180 降为读册
             health_probe=_PROBE_SAUCENAO,
             notes="no_key/http_error/真无结果三态区分（2026-09-13 实战口径）",
         ),
@@ -1707,7 +1906,7 @@ def _media_descriptors() -> list[CapabilityDescriptor]:
             limit_fields=(("audio_source", "max_url_length"),),
             fallback_chain=(HONEST_DEGRADE_PREFIX + "转写失败返回空说明，不阻断不冒充",),
             implementation_ref=f"{_MEDIA_REF}/ingest/transcribe.py#transcribe_audio",
-            config_keys=("bot_asr_enabled", "bot_asr_model_registry", "bot_asr_timeout_seconds"),
+            config_keys=config_keys_for("media.asr.speech"),  # S180 降为读册
             health_probe=_PROBE_ASR,
             notes="record 段 → ffmpeg 转 mp3 → OpenAI 兼容 /audio/transcriptions",
         ),
@@ -1722,7 +1921,7 @@ def _media_descriptors() -> list[CapabilityDescriptor]:
             limit_fields=(("audio_source", "max_url_length"),),
             fallback_chain=(HONEST_DEGRADE_PREFIX + "转写失败返回空说明",),
             implementation_ref=f"{_MEDIA_REF}/ingest/transcribe.py#transcribe_audio",
-            config_keys=("bot_asr_enabled", "bot_asr_model_registry"),
+            config_keys=config_keys_for("media.asr.audio_file"),  # S180 降为读册
             health_probe=_PROBE_ASR,
             notes="同 transcribe 链；http 拉取限 20MB（_download_audio 逐块限读）",
         ),
@@ -1737,7 +1936,7 @@ def _media_descriptors() -> list[CapabilityDescriptor]:
             limit_fields=(("video_source", "max_url_length"),),
             fallback_chain=(HONEST_DEGRADE_PREFIX + "全部信号缺失时返回空简报+说明",),
             implementation_ref=f"{_MEDIA_REF}/ingest/video_understanding.py#build_video_brief",
-            config_keys=("bot_video_understanding_enabled", "bot_video_max_frames", "bot_video_asr_max_seconds"),
+            config_keys=config_keys_for("media.video.recognize"),  # S180 降为读册
             health_probe=_PROBE_VIDEO,
             notes="字幕+均匀抽帧+音轨 ASR+元数据四路融合；深挖档 deep=true",
         ),
@@ -1752,7 +1951,7 @@ def _media_descriptors() -> list[CapabilityDescriptor]:
             limit_fields=(("subtitle_text", "max_chars"),),
             fallback_chain=(HONEST_DEGRADE_PREFIX + "字幕轨缺失=空+诚实说明",),
             implementation_ref=f"{_MEDIA_REF}/ingest/video_understanding.py#build_video_brief",
-            config_keys=("bot_video_skip_asr_with_subtitle",),
+            config_keys=config_keys_for("media.video.subtitle"),  # S180 降为读册
             notes="CC 字幕由摄取层提供，协议面不重新下载解析（诚实边界）",
         ),
         CapabilityDescriptor(
@@ -1766,7 +1965,7 @@ def _media_descriptors() -> list[CapabilityDescriptor]:
             limit_fields=(("video_source", "max_url_length"), ("frames", "max_frames")),
             fallback_chain=(HONEST_DEGRADE_PREFIX + "ffmpeg 缺失/失败=空列表说明",),
             implementation_ref=f"{_MEDIA_REF}/ingest/vision_describe.py#_extract_video_frames",
-            config_keys=("bot_vision_video_frames", "bot_video_max_frames"),
+            config_keys=config_keys_for("media.video.frame_extract"),  # S180 降为读册
             notes="§11 目标 8 帧/深挖 24 帧；产出=进程内临时文件（对外 asset 化留后续）",
         ),
         # 自动配音第二出站腿（VOICE-V12 收编中央调度层，mandate「TTS 也不例外」）。
@@ -1787,14 +1986,7 @@ def _media_descriptors() -> list[CapabilityDescriptor]:
                 HONEST_DEGRADE_PREFIX + "配音失败=不发音频只发文字，绝不冒充合成成功",
             ),
             implementation_ref=f"{_MEDIA_REF}/capabilities/tts.py#synthesize_autodub",
-            config_keys=(
-                "bot_tts_enabled",
-                "bot_tts_api_url",
-                "bot_tts_ref_audios",
-                "bot_tts_hard_max_chars",
-                "bot_tts_max_audio_bytes",
-                "bot_tts_timeout_seconds",
-            ),
+            config_keys=config_keys_for("media.tts.autodub"),  # S180 降为读册
             health_probe=_PROBE_TTS,
             health_default=CapabilityHealth.NOT_CONFIGURED,
             notes=(
@@ -1802,6 +1994,39 @@ def _media_descriptors() -> list[CapabilityDescriptor]:
                 "门链（该不该配）与取文/政策/硬顶留在 hook（层 1）；本能力只做「一句话→一段音频」。"
                 "生效顶唯一家=tts_presets.resolve_* 与 synthesize（本表不留数值）。"
                 "现网缺省休眠（hook 键 ∧ 自动配音键皆关）⇒ 零调用点、行为逐字节不变。"
+            ),
+        ),
+        # 自动配音「结果变换形」第二腿（S91 通电 S36 落件；mandate「所有内容走中央调度层」）。
+        # 与 media.tts.autodub 分工：那枚=「一句话→一段音频」的产出步；本枚=其上游的
+        # 「呈现结果→带音频呈现结果」一次变换。执行体真身=result_transform.handle（薄壳一处委派）。
+        # 生效顶唯一家仍在 tts_presets.resolve_* 与产出步 synthesize（本表不留数值，limits 空）。
+        # 超时 180s **必须高于内层 autodub 90s**：本 handler 在 cap-proto 池占一枚 worker，
+        # 其 dub 闭包再 invoke autodub 时**同线程内联、不再要第二枚**（S135 裁定 #7），
+        # 内层那枚的预算因此不单独施加，"对调用方可见的那一顶"全押在外层这一枚的 future 上
+        # ——外层若先掐＝内层结果被弃的假失败，故 180s 必须严格高于内层 90s。
+        # （改前该顶同样存在，差别只在挂死时占 2 枚还是 1 枚 worker。）
+        CapabilityDescriptor(
+            capability_id="media.tts.autodub_transform",
+            family=CapabilityFamily.MEDIA,
+            title="自动配音（呈现结果→带音频呈现结果）",
+            input_protocol="media.v1 TransformRequest{payload{message,result},context{config,dub}}",
+            output_protocol=f"data[{PRESENTATION_DATA_KEY}]: CapabilityResult.model_dump()",
+            required_roles=("user",),
+            timeout_seconds=180.0,
+            limits={},
+            limit_fields=(),
+            fallback_chain=(
+                HONEST_DEGRADE_PREFIX + "变换失败=正文照发，绝不冒充配过音",
+            ),
+            implementation_ref=f"{_MEDIA_REF}/tts/result_transform.py#handle",
+            config_keys=config_keys_for("media.tts.autodub_transform"),  # S180 降为读册
+            notes=(
+                "结果变换形（第三执行形态，与 media.tts.autodub 产出步并列）：review 批准后、render "
+                "前的一次『呈现结果→带音频呈现结果』。门链（该不该配）留层 1 hook（voice_enricher）"
+                "先于本 invoke 短路 ⇒ should_voice_reply=False 的多数消息零中央调用；过门链后才派本能力。"
+                "产出步由调用点以字面 media.tts.autodub 经 dub 闭包交来，本执行体不重造引擎路。"
+                "超时须高于内层 90s（内层经嵌套内联跑在本枚同一枚 worker 上，池现值 4；"
+                "S135 裁定 #7『一次配音只占一枚』）。"
             ),
         ),
     ]
@@ -1818,7 +2043,11 @@ def _files_descriptors() -> list[CapabilityDescriptor]:
             timeout_seconds=30.0,
             limits={"max_chars": 120000},
             limit_fields=(("path", "max_chars"),),
-            fallback_chain=(HONEST_DEGRADE_PREFIX + "旧格式/无文本诚实降级 parser_unavailable",),
+            fallback_chain=(
+                HONEST_DEGRADE_PREFIX
+                + "旧格式/无解析器诚实降级 parser_unavailable；"
+                "损坏或伪后缀降级 parse_failed（两种归因分开说）",
+            ),
             implementation_ref=f"{_FILES_REF}/sources/file_reader.py#read_supported_file",
             config_keys=("bot_file_read_max_chars",),
             notes="不执行、只读；旧 Office 不得伪装现代格式解析成功（指南 §1 L33）" + note_extra,
@@ -1863,7 +2092,7 @@ def _search_descriptors() -> list[CapabilityDescriptor]:
             limit_fields=(("query", "max_chars"),),
             fallback_chain=(HONEST_DEGRADE_PREFIX + "引擎链空=诚实说明，不编造结果",),
             implementation_ref=f"{_SEARCH_REF}/web_search.py#build_web_search_provider",
-            config_keys=("bot_web_search_enabled", "bot_web_search_provider", "bot_web_search_tavily_api_key"),
+            config_keys=config_keys_for("search.web"),  # S180 降为读册
             health_probe=_PROBE_WEB,
             notes="tavily 主链+you/langsearch 回退；DDG/Bing 无 key 可用；disabled=Null",
         ),
@@ -1933,10 +2162,15 @@ def _creation_descriptors() -> list[CapabilityDescriptor]:
             required_roles=("user",),
             timeout_seconds=120.0,
             limits={},
-            fallback_chain=(HONEST_DEGRADE_PREFIX + "对接点未接线：unavailable，不盲重合成",),
-            implementation_ref=f"{_CREATION_REF}/tts/__init__.py#reserved",
-            config_keys=("bot_tts_enabled", "bot_tts_hard_max_chars", "bot_tts_max_audio_bytes"),
-            health_probe=_PROBE_CREATION,
+            fallback_chain=(HONEST_DEGRADE_PREFIX + "provider 未配/引擎不可达：unavailable 或 failed，不盲重合成",),
+            # P4-C3 翻面：执行体真身＝creation/tts/engine_provider.handle（只委派 media 侧唯一合成口）。
+            # 旧值 `.../tts/__init__.py#reserved` 指向一个只有 docstring 的占位包＝在册却无可解析执行体，
+            # 由本波门 G-CM 腿②/②b 抓出并显式记入 PLACEHOLDER_UNIMPLEMENTED（现摘牌一枚）。
+            implementation_ref=f"{_CREATION_REF}/tts/engine_provider.py#handle",
+            # 键集与顺序唯一真身＝capability_manifest（S180 降为读册）；CM-P-3 甲案的
+            # provider 探测表排序（bot_creation_tts_provider 列末）随之走，本表不再持有副本。
+            config_keys=config_keys_for("creation.tts.synthesize"),
+            health_probe=_PROBE_CREATION_TTS,
             health_default=CapabilityHealth.NOT_CONFIGURED,
             notes=(
                 "reserved：RWPA1 creation 契约（domains/creation/_common/contracts.py "
@@ -1963,13 +2197,18 @@ def _creation_descriptors() -> list[CapabilityDescriptor]:
                 "max_steps": 50,
             },
             fallback_chain=(HONEST_DEGRADE_PREFIX + "对接点未接线：unavailable，未知任务不重发",),
-            implementation_ref=f"{_CREATION_REF}/image/__init__.py#reserved",
-            health_probe=_PROBE_CREATION,
+            implementation_ref=f"{_CREATION_REF}/image/engine_provider.py#handle",
+            config_keys=config_keys_for("creation.image.generate"),  # S180 降为读册
+            health_probe=_PROBE_CREATION_IMAGE,
             health_default=CapabilityHealth.NOT_CONFIGURED,
             notes=(
-                "reserved：零现载体（矩阵 L52）；§11 L258 prompt≤4000/negative≤2000/"
-                "count≤2/输入≤20MP/steps≤50∩provider；未支持参数 422 不静默丢弃；"
-                "契约=_common/contracts.py（AssetRef 拒路径/URL、20MP 上限）"
+                "协议完整、实现缺位（中央调度收编波 P5/S09）：八段契约真身 = "
+                "domains/creation/image/{contracts,engine_provider}.py（请求/风格参考含权重/"
+                "负面提示/尺寸步数CFG/seed/进度=poll-only/结果件/失败语义/溯源水印 CreationProvenance）；"
+                "provider 工厂未落地 ⇒ 真调必诚实 UNAVAILABLE 并把 CreationImageNotWired "
+                "经 INVOKER_ERROR_DATA_KEY 交回层 1 出诊断卡（禁静默、禁冒充已支持）；"
+                "§11 L258 prompt≤4000/negative≤2000/count≤2/输入≤20MP/steps≤50∩provider；"
+                "未支持参数 422 不静默丢弃；契约=_common/contracts.py（AssetRef 拒路径/URL）"
             ),
         ),
     ]
@@ -2141,6 +2380,147 @@ def _make_prepared_handler(implementation_ref: str) -> HandlerFn:
         )
 
     return _handle
+
+
+# ===========================================================================
+# 管线管理形（pipeline_managed）执行面 —— 第三种形态（2026-09-22）
+# authoring 在注册册 `PIPELINE_MANAGED_CAPABILITY_DECLARATIONS`，壳只派生 + 挂信封。
+# 关键纪律：**不进** `_route_execution_rows()` / `_route_execution_adapters()` /
+# `_KNOWN_ADAPTERS`，故 `seam_registered_cids()`（缺口账认命令/预备通电）与
+# `execution_shape_cids()`（⑤入口耐久锁要求根汇缝站点）都看不见它 ⇒ bot.chat/订阅/
+# campus/告警在生产根未改道前，缺口账对它们的现算归位（generic/not_wired）一寸不动
+# ——诚实：能跑 ≠ 已接。规格见 docs/design/capability-orchestration-execution-morphology.md。
+# ===========================================================================
+
+
+def _delivery_receipt_projection(receipt: object) -> dict[str, str]:
+    """把 `DeliveryReceipt` 投影成 JSON 安全的小 dict（只取归因字段，不搬活模型）。"""
+    state = getattr(receipt, "state", None)
+    state_value = getattr(state, "value", None)
+    if state_value is None and state is not None:
+        state_value = str(state)
+    return {
+        "state": str(state_value or ""),
+        "request_id": str(getattr(receipt, "request_id", "") or ""),
+        "transport": str(getattr(receipt, "transport", "") or ""),
+        "provider_message_id": str(getattr(receipt, "provider_message_id", "") or ""),
+    }
+
+
+def _make_pipeline_managed_handler(implementation_ref: str) -> HandlerFn:
+    """管线管理形能力的统一信封：包裹层 1 的 `pipeline.handle_async`。
+
+    与命令/预备形根本不同：这里的"执行体"不是一个纯能力闭包，而是**装配现场的
+    `RuntimePipeline` 句柄 + 交给它的能力体**——`handle_async` 自带门禁/审核/渲染/投递、
+    返回 `DeliveryReceipt`。信封只把它包成 `InvocationResult`，**不重复**其内部治理。
+
+    诚实边界（比 prepared 更严）：pipeline 句柄与能力体只能由调用方（生产根改道后）经
+    `context` 交来；本形**绝不 import/构造 `RuntimePipeline`**——自建会凭空跑出一条与装配
+    现场不同配置（不同 provider/gate/render_backend）的第二通路，比"没走中央"更坏。拿不到
+    句柄 ⇒ `UNAVAILABLE` + 诚实 detail，不猜、不重建、不回退直呼。这正是当前现网实况：
+    根尚未改道 ⇒ 这几枚 invoke 一律诚实 UNAVAILABLE（在册≠已接），而非假成功。
+    """
+
+    def _handle(request: CapabilityRequest) -> InvocationResult:
+        message = request.payload.get("message")
+        if message is None:
+            return _result(request, InvocationStatus.FAILED, detail="payload.message 缺失")
+        pipeline = request.context.get("pipeline")
+        capability = request.context.get("capability")
+        if pipeline is None or capability is None:
+            return _result(
+                request,
+                InvocationStatus.UNAVAILABLE,
+                detail=(
+                    f"管线管理形未交执行体（在册真身 {implementation_ref}）：装配现场尚未把 "
+                    "pipeline 句柄与能力体改道经中央 invoker；本形绝不自建 RuntimePipeline，"
+                    "以免跑出与装配现场不同的第二通路"
+                ),
+                via="pipeline_managed_no_handle",
+            )
+        handle_async = getattr(pipeline, "handle_async", None)
+        if not callable(handle_async):
+            return _result(
+                request,
+                InvocationStatus.FAILED,
+                detail="pipeline 句柄无 handle_async（装配现场交错了对象）",
+                via="pipeline_managed",
+            )
+        # handle_async 是协程；invoker 已把本 handler 丢进工作线程（该线程无 running loop），
+        # 用 asyncio.run 桥接（与 `_handler_callable` 对 async handler 的同款做法）。异常不外抛：
+        # 交回 invoker 主链 except → 降级链（honest_degrade），绝不冒充投递成功。
+        receipt = asyncio.run(handle_async(message, capability, capability_id=request.capability_id))
+        return _result(
+            request,
+            InvocationStatus.OK,
+            data={"delivery_receipt": _delivery_receipt_projection(receipt)},
+            via=f"pipeline_managed:{_callable_identity(handle_async)}",
+        )
+
+    return _handle
+
+
+def _pipeline_managed_descriptors() -> list[CapabilityDescriptor]:
+    """管线管理形执行面 → 描述符（注册册 authoring，壳派生即校验；同 command/prepared 家规）。
+
+    无一行字面 `capability_id=` ⇒ 不构成第二处 authoring（`test_no_capability_id_is_authored_in_two_places`）。
+    坏 roles / 未知族 / ref 越界 ⇒ 装配当场炸（与 `_route_execution_rows` 同纪律）。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+        capability_registry as _registry,
+    )  # 局部 import：本壳与注册册互为环（沿用 _route_execution_rows 同款写法）
+
+    descriptors: list[CapabilityDescriptor] = []
+    for decl in _registry.PIPELINE_MANAGED_CAPABILITY_DECLARATIONS:
+        if decl.adapter != "pipeline_managed":
+            raise ValueError(f"{decl.capability_id}: 非管线管理形 adapter {decl.adapter!r}")
+        if decl.family not in {member.value for member in CapabilityFamily}:
+            raise ValueError(f"{decl.capability_id}: 未知能力族 {decl.family!r}")
+        for role in decl.roles:
+            if role not in ROLE_ORDER or role == ROLE_BLOCKED:
+                raise ValueError(f"{decl.capability_id}: roles 含非法角色 {role!r}")
+        module_part, hash_mark, symbol_part = decl.implementation_ref.partition("#")
+        if (
+            not hash_mark
+            or not symbol_part
+            or not module_part.startswith("plugins/bot_unified_runtime/")
+            or ".." in module_part
+        ):
+            raise ValueError(
+                f"{decl.capability_id}: implementation_ref 形态越界 {decl.implementation_ref!r}"
+            )
+        descriptors.append(
+            CapabilityDescriptor(
+                capability_id=decl.capability_id,
+                family=CapabilityFamily(decl.family),
+                title=decl.title,
+                input_protocol=decl.input_protocol,
+                output_protocol=decl.output_protocol,
+                required_roles=decl.roles,
+                timeout_seconds=decl.timeout_seconds,
+                limits={},  # 数值零硬编码：限额真顶由被包裹的层 1 管线现读
+                fallback_chain=(HONEST_DEGRADE_PREFIX + decl.degrade_note,),
+                implementation_ref=decl.implementation_ref,
+                config_keys=decl.config_keys,
+                health_probe="",  # 无探针：生产未改道，静态不冒充探测结论（health line 跳过）
+                notes=(
+                    f"执行面 authoring=注册册管线管理形表（adapter={decl.adapter}）；"
+                    "invoke 认得并能真跑（包裹 pipeline.handle_async），但生产根尚未改道 ⇒ "
+                    "缺口账按 generic/not_wired 现算、不记通电。规格="
+                    "docs/design/capability-orchestration-execution-morphology.md。"
+                ),
+            )
+        )
+    return descriptors
+
+
+def pipeline_managed_execution_cids() -> tuple[str, ...]:
+    """管线管理形在册 id（供 `/bot status` 与新门现算，零手抄名单）。"""
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+        capability_registry as _registry,
+    )
+
+    return tuple(decl.capability_id for decl in _registry.PIPELINE_MANAGED_CAPABILITY_DECLARATIONS)
 
 
 def _route_execution_rows() -> tuple[tuple[CapabilityDescriptor, str], ...]:
@@ -2351,6 +2731,16 @@ def _build_default_registrations() -> CapabilityInvoker:
     handlers.register("media.video.subtitle", _handle_media_video_subtitle)
     handlers.register("media.video.frame_extract", _handle_media_frame_extract)
     handlers.register("media.tts.autodub", _handle_media_tts_autodub)
+    # 结果变换形第二腿（S91 通电 S36 落件）：薄委派域内 result_transform.handle，
+    # 与产出步 media.tts.autodub 同族（直接注册执行体，非路由命令形，故不动 _KNOWN_ADAPTERS）。
+    handlers.register("media.tts.autodub_transform", _handle_media_tts_autodub_transform)
+    # 语音接真（中央调度收编波 P4-C2）：creation.tts.synthesize 自此有执行体，
+    # 但仍只委派 media 侧唯一合成口——本行不新增第二条引擎路。
+    handlers.register("creation.tts.synthesize", _handle_creation_tts_synthesize)
+    # 绘画协议预留收口（P5/S09 §7-P-reg）：兑现 reserved_provider.py 散文里的"U4 装配缝"。
+    # 挂 handler **不改"今天能不能真出图"**——provider 工厂未落地 ⇒ 真调必诚实 UNAVAILABLE；
+    # 区别只在：以前中央说"这能力没执行体"，现在由域内说"实现缺位、原因如下"（缺位可见）。
+    handlers.register("creation.image.generate", _handle_creation_image_generate)
 
     for cid, kinds, label in [
         ("files.read.word", ("document",), "Word"),
@@ -2388,6 +2778,15 @@ def _build_default_registrations() -> CapabilityInvoker:
         else:  # 未知形态在派生期已炸，这里只兜第二道
             raise ValueError(f"{descriptor.capability_id}: 未实现的执行面 adapter {adapter!r}")
 
+    # 管线管理形执行面（第三种形态，注册册 authoring，壳派生）：信封包裹 pipeline.handle_async。
+    # 刻意**不并入**上面的 `_route_execution_rows()` 循环——那两形是"纯能力闭包"、会被缺口账
+    # 认成 seam 通电；本形是层 1 直呼面、生产根未改道 ⇒ 只挂信封在册，不进 command/prepared 派发。
+    for descriptor in _pipeline_managed_descriptors():
+        handlers.register(
+            descriptor.capability_id,
+            _make_pipeline_managed_handler(descriptor.implementation_ref),
+        )
+
     probes.register(_PROBE_VISION, _probe_vision)
     probes.register(_PROBE_VISION_DEGRADED, _probe_vision_degraded)
     probes.register(_PROBE_SAUCENAO, _probe_saucenao)
@@ -2395,7 +2794,8 @@ def _build_default_registrations() -> CapabilityInvoker:
     probes.register(_PROBE_VIDEO, _probe_video)
     probes.register(_PROBE_WEB, _probe_web_search)
     probes.register(_PROBE_ACG, _probe_acg)
-    probes.register(_PROBE_CREATION, _probe_creation_reserved)
+    probes.register(_PROBE_CREATION_TTS, _probe_creation_tts)
+    probes.register(_PROBE_CREATION_IMAGE, _probe_creation_image)
     probes.register(_PROBE_TTS, _probe_tts)
 
     return CapabilityInvoker(
@@ -2425,6 +2825,43 @@ def attach_default_audit_sink(hook: Callable[[CapabilityAuditRecord], None]) -> 
     """
 
     default_invoker().audit_hooks.register(hook)
+
+
+def attach_default_feature_gate(predicate: Callable[[str], FeatureAccess]) -> None:
+    """装配期注册「层 2 feature 门谓词」的**唯一**口子（收编在册未执法）。
+
+    与 :func:`attach_default_audit_sink` 同一哲学：根装配不自己取 ``default_invoker()``
+    （那是第二 invoker 点位，结构门执法），只经本壳侧口子注入。注入的谓词必须是
+    ``ProductFeatureGate.check_capability`` ——「哪个 id 受哪个 feature 管」的唯一答案
+    仍是 :func:`gate_feature_bindings`，恢复类旁路与未登记判定**不在此重抄一份**。
+    """
+
+    default_invoker().feature_gate = predicate
+
+
+#: 通道稳定 id → 中央调用面 id 的别名表（只此一份）。
+#: 事实：本域注册表用 stable_id（``creation.image``），中央描述符用调用面 id
+#: （``creation.image.generate``）；两串都会落到"执行体在不在场"这个问句上，
+#: 不在此归一 ⇒ 探针按通道问必恒答"没有"（假告警换个方向复犯）。
+_CHANNEL_EXECUTION_IDS: dict[str, tuple[str, ...]] = {
+    "creation.tts": ("creation.tts", "creation.tts.synthesize"),
+    "creation.image": ("creation.image", "creation.image.generate"),
+}
+
+
+def has_registered_handler(capability_id: str) -> bool:
+    """中央执行面是否已注册该能力（或该通道任一调用面）的 handler。
+
+    存在的理由：根装配自己调 ``default_invoker()`` 会造出第二 invoker 取用点
+    （`tests/test_orchestration_callsite_single.py` 执法），而"执行体在不在场"
+    只有中央知道 ⇒ 由本模块给一个不暴露 invoker 实例的谓词。
+    """
+
+    invoker = default_invoker()
+    for name in _CHANNEL_EXECUTION_IDS.get(capability_id, (capability_id,)):
+        if invoker.handlers.get(name) is not None:
+            return True
+    return False
 
 
 # ===========================================================================
@@ -2460,6 +2897,7 @@ DESCRIPTOR_BUILDERS: tuple[Callable[[], list[CapabilityDescriptor]], ...] = (
     _search_descriptors,
     _creation_descriptors,
     _route_execution_descriptors,
+    _pipeline_managed_descriptors,
 )
 
 #: 编排侧条目真身（书写序=builders 序，供唯一表与 invoker 双向对照）。
@@ -2720,6 +3158,7 @@ __all__ = [
     "default_invoker",
     "gate_feature_bindings",
     "orchestration_descriptor_rows",
+    "pipeline_managed_execution_cids",
     "registered_capability_ids",
     "search_source_status",
     "validate_registry",

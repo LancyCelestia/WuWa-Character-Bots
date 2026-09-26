@@ -18,18 +18,6 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.eat import is_eat_command
-from plugins.bot_unified_runtime.capabilities.music import (
-    ALL_PARTS,
-    parse_music_mode_spec,
-)
-from plugins.bot_unified_runtime.capabilities.subscribe_v2 import (
-    build_subscribe_capability_v2,
-)
-from plugins.bot_unified_runtime.capabilities.weather import (
-    build_weather_capability,
-    is_weather_command,
-)
 from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SendPolicy,
@@ -42,10 +30,18 @@ from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionFetchResult,
     SubscriptionTarget,
 )
+from plugins.bot_unified_runtime.domains.food.capabilities.eat import is_eat_command
+from plugins.bot_unified_runtime.domains.music.capabilities.music import (
+    ALL_PARTS,
+    parse_music_mode_spec,
+)
 from plugins.bot_unified_runtime.domains.subscribe.adapters.social_v2 import (
     TwitterGraphQLClient,
     WeiboSubscriptionAdapterV2,
     _reached_cursor,
+)
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.subscribe_v2 import (
+    build_subscribe_capability_v2,
 )
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_scheduler import (
     PlatformThrottle,
@@ -53,6 +49,10 @@ from plugins.bot_unified_runtime.domains.subscribe.store.subscription_scheduler 
 )
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store_v2 import (
     SubscriptionStoreV2,
+)
+from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
+    build_weather_capability,
+    is_weather_command,
 )
 
 _NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)

@@ -21,6 +21,12 @@ from plugins.bot_unified_runtime.decision.trace import (
     get_decision_trace_sink,
     set_decision_trace_sink,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
+    clear_route_decision_cache,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+    RuntimePipeline,
+)
 from plugins.bot_unified_runtime.domains.core.decision import Dispatcher
 from plugins.bot_unified_runtime.domains.core.decision.engine import (
     BYPASS_ABILITIES,
@@ -41,9 +47,7 @@ from plugins.bot_unified_runtime.domains.core.decision.shadow import (
     reset_shared_state_for_tests,
     resolve_decision_mode,
 )
-from plugins.bot_unified_runtime.runtime.base_router import clear_route_decision_cache
-from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
-from plugins.bot_unified_runtime.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
 
 
 @pytest.fixture(autouse=True)
@@ -94,7 +98,10 @@ def test_mutual_group_first_hit_wins_within_group() -> None:
 
 
 def _route_stub(capability_id: str, kind: str, priority: int):
-    from plugins.bot_unified_runtime.runtime.base_router import RouteDecision, RouteKind
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
+        RouteDecision,
+        RouteKind,
+    )
 
     return RouteDecision(RouteKind(kind), capability_id, priority, f"{kind} rule")
 
@@ -303,7 +310,7 @@ def test_compare_unmodeled_legacy_capability_is_incomparable() -> None:
 
 
 def test_natural_command_compares_via_target_capability() -> None:
-    from plugins.bot_unified_runtime.runtime.base_router import (
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
         RouteDecision,
         RouteKind,
     )

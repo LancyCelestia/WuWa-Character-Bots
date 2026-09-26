@@ -8,7 +8,9 @@ from plugins.bot_unified_runtime.contracts import DeliveryReceipt, ReceiptState
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.ingress import (
     IngressGateway,
 )
-from plugins.bot_unified_runtime.sender.gateway import UnifiedDeliveryGateway
+from plugins.bot_unified_runtime.domains.transport.sender.gateway import (
+    UnifiedDeliveryGateway,
+)
 
 
 def _request():

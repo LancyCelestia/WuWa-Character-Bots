@@ -20,17 +20,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.weather import (
-    _WEATHER_RE,
-    _query_variants,
-    is_weather_command,
-)
-from plugins.bot_unified_runtime.runtime.base_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     RouteKind,
     classify_message_route,
     clear_route_decision_cache,
 )
-from plugins.bot_unified_runtime.runtime.natural_language import detect_natural_command
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.natural_language import (
+    detect_natural_command,
+)
+from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
+    _WEATHER_RE,
+    _query_variants,
+    is_weather_command,
+)
 
 # 陈述句样例（probe 样例「天气预报说明天下雨」+ 同族变体，含繁體同款句式）。
 STATEMENT_SAMPLES: list[str] = [

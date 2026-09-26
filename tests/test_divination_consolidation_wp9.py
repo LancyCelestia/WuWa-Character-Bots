@@ -38,9 +38,6 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.divination import (
-    build_divination_capability,
-)
 from plugins.bot_unified_runtime.contracts import SessionType
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
 from plugins.bot_unified_runtime.domains.divination.api.dto import DivinationDrawPayload
@@ -49,6 +46,9 @@ from plugins.bot_unified_runtime.domains.divination.api.errors import (
 )
 from plugins.bot_unified_runtime.domains.divination.api.facet import (
     DivinationHttpFacade,
+)
+from plugins.bot_unified_runtime.domains.divination.capabilities.divination import (
+    build_divination_capability,
 )
 from plugins.bot_unified_runtime.domains.divination.data import deck_math, ganzhi
 from plugins.bot_unified_runtime.domains.divination.data import draw_store as data_store

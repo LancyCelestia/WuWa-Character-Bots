@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from plugins.bot_unified_runtime.capabilities.today_history import (
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.today_history import (
     _load_push_table_checked,
     _save_push_table,
 )
@@ -40,10 +40,10 @@ def test_save_roundtrip(tmp_path) -> None:
 
 
 def test_capability_refuses_overwrite_on_corrupt_table(tmp_path) -> None:
-    from plugins.bot_unified_runtime.capabilities.today_history import (
+    from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+    from plugins.bot_unified_runtime.domains.subscribe.capabilities.today_history import (
         build_today_history_capability,
     )
-    from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 
     push_file = tmp_path / "push.json"
     push_file.write_text("[{broken", encoding="utf-8")

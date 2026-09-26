@@ -17,14 +17,14 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.market import (
-    build_market_capability,
-    is_market_command,
-)
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     IncomingMessage,
     SessionType,
+)
+from plugins.bot_unified_runtime.domains.finance.capabilities.market import (
+    build_market_capability,
+    is_market_command,
 )
 from plugins.bot_unified_runtime.domains.finance.data.market_data import IndexQuote
 from plugins.bot_unified_runtime.output.card_render.bridge import (

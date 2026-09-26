@@ -96,6 +96,16 @@ from plugins.bot_unified_runtime.domains.ops.smoke.diagnostics import (
     infer_text_tag,
     llm_diagnostic_messages,
 )
+from plugins.bot_unified_runtime.domains.transport.sender import (
+    InMemoryReceiptRepository,
+    InMemorySendQueue,
+    SQLiteSendRequestQueue,
+    drain_send_queue_once,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.onebot import (
+    build_onebot_message_segments,
+    send_onebot_v11,
+)
 from plugins.bot_unified_runtime.llm import (
     LLMProvider,
     LLMProviderError,
@@ -106,16 +116,6 @@ from plugins.bot_unified_runtime.llm import (
     safe_llm_finish_reason,
 )
 from plugins.bot_unified_runtime.runtime import RuntimePipeline
-from plugins.bot_unified_runtime.sender import (
-    InMemoryReceiptRepository,
-    InMemorySendQueue,
-    SQLiteSendRequestQueue,
-    drain_send_queue_once,
-)
-from plugins.bot_unified_runtime.sender.onebot import (
-    build_onebot_message_segments,
-    send_onebot_v11,
-)
 from scripts.load_runtime_config import json_decode_env_values, load_runtime_env_values
 
 _STARTUP_SMOKE_PREFIX = "__BOT_STARTUP_SMOKE__"
@@ -1252,7 +1252,7 @@ def run_transport_smoke(config: Config) -> dict[str, Any]:
     adapter_import = "missing"
     private_debug = ""
     try:
-        importlib.import_module("plugins.bot_unified_runtime.sender.onebot")
+        importlib.import_module("plugins.bot_unified_runtime.domains.transport.sender.onebot")
         adapter_import = "ok"
     except Exception as exc:  # noqa: BLE001 - smoke must report dependency failures.
         private_debug = _redact_smoke_debug(str(exc), config.bot_chat_api_key)
@@ -2806,7 +2806,68 @@ def run_embedding_smoke(config: Config) -> dict[str, Any]:
     return result
 
 
-def run_knowledge_sync(config: Config) -> dict[str, Any]:
+def _knowledge_sync_db_path(config: Config) -> str:
+    """knowledge-sync 的库路径**唯一派生口**：落旗方与消费方共用它。
+
+    S156 条 3：`--kb-cancel` 补 knowledge-sync 目标后，"operator 落的旗路径"
+    与"重建段登记的消费路径"必须逐字节同一——两处各写一遍 `getattr(...)`
+    迟早漂（漂了旗就 inert，落旗方还自觉成功，S112「存在性糊过活性判据」
+    同型）。缺省串与 run_knowledge_sync 旧写法逐字相同，行为零变更。
+    """
+    return str(
+        getattr(config, "bot_knowledge_db_path", "data/knowledge_embeddings.sqlite3")
+        or "data/knowledge_embeddings.sqlite3"
+    )
+
+
+def run_kb_cancel(config: Config, *, target: str = "wiki") -> dict[str, Any]:
+    """只落一面对手旗就走：请求**另一进程里在跑**的那轮同步停下来。
+
+    `target`（S156 条 3 新增，缺省 `"wiki"`=旧行为逐字节不变）：
+    - `"wiki"` / `"kb-sync"` → 旗落 kb 维基库目录（bot 进程夜间 kb-sync 消费）；
+    - `"knowledge-sync"` / `"knowledge"` → 旗落 knowledge 嵌入库目录
+      （operator CLI 那轮 knowledge-sync 的 ANN 重建段消费；db 路径与消费端
+      同走 `_knowledge_sync_db_path`，旗路径同走 kb_wiki 真身
+      `kb_sync_cancel_flag_path`——零新增 config 键）；
+    - 其余值 → ValueError，绝不"猜个目录把旗落了"。
+
+    为什么旗不是函数调用：`kb_wiki._SYNC_CANCEL_EVENT` 是进程局部的
+    `threading.Event`，而 CLI 是另一个进程——直接调 `cancel_kb_sync_task()`
+    只会置到本进程那枚没人听的 Event 上，看起来成功、实际什么都没停
+    （S112 现算，与"存在性糊过活性判据"同型）。旗标由在跑那一轮的批边界消费。
+    """
+    from plugins.bot_unified_runtime.domains.location.knowledge.kb_wiki import (
+        kb_sync_cancel_flag_path,
+        request_kb_sync_cancel,
+    )
+
+    normalized = str(target or "").strip().lower()
+    if normalized in {"wiki", "kb-sync"}:
+        db_path = str(getattr(config, "bot_kb_wiki_db_path", "") or "")
+        label = "kb-sync（维基库）"
+    elif normalized in {"knowledge", "knowledge-sync"}:
+        db_path = _knowledge_sync_db_path(config)
+        label = "knowledge-sync（嵌入库，ANN 重建段批边界）"
+    else:
+        raise ValueError(f"未知取消目标：{target!r}（可为 wiki / knowledge-sync）")
+    flag = kb_sync_cancel_flag_path(db_path) if db_path else None
+    requested = request_kb_sync_cancel(reason="operator-cli", db_path=db_path)
+    return {
+        "ok": True,
+        "requested_now": bool(requested),
+        "flag_path": str(flag or ""),
+        "public_message": (
+            f"已落下取消旗，在跑的 {label} 会在下一个批边界停止"
+            "（断点/已嵌入进度保留、重跑自动续传）。"
+            if requested
+            else "取消请求此前已在位（幂等：旗与事件都已置位），本轮照旧会停。"
+        ),
+    }
+
+
+def run_knowledge_sync(
+    config: Config, *, force_low_memory: bool = False
+) -> dict[str, Any]:
     """把 BOT_KNOWLEDGE_FILES 切片并批量向量化写入本地 SQLite（预建库）。"""
     model = str(getattr(config, "bot_embedding_model", "") or "").strip()
     base_url = str(getattr(config, "bot_embedding_base_url", "") or "").strip()
@@ -2818,10 +2879,7 @@ def run_knowledge_sync(config: Config) -> dict[str, Any]:
     local_base_url = str(
         getattr(config, "bot_embedding_local_base_url", "") or ""
     ).strip()
-    db_path = str(
-        getattr(config, "bot_knowledge_db_path", "data/knowledge_embeddings.sqlite3")
-        or "data/knowledge_embeddings.sqlite3"
-    )
+    db_path = _knowledge_sync_db_path(config)
     files = [
         Path(path).expanduser()
         for path in (getattr(config, "bot_knowledge_files", []) or [])
@@ -2896,14 +2954,56 @@ def run_knowledge_sync(config: Config) -> dict[str, Any]:
         result["total_after"] = int(after["total"])
         result["embedded_after"] = int(after["embedded"])
         ann: dict[str, Any] = {"built": False, "reason": "not_attempted"}
+        ann_cancelled = False
         if after["embedded"] > 0:
+            from plugins.bot_unified_runtime.domains.location.knowledge import (
+                kb_wiki as _kb_ops,
+            )
+
             try:
-                ann = store.build_ann_index()
-            except Exception as exc:  # noqa: BLE001
-                ann = {"built": False, "reason": f"{type(exc).__name__}"}
+                # force_low_memory：内存门（S112）的 operator 显式越门。缺省 False
+                # ⇒ CLI 与夜间 cron 同一把门，不因为"是人手跑的"就绕过。
+                # S139 缺陷 5：越门轮也必须协作式可取消——取消检查点搭在
+                # on_progress 这个载体上（与 kb-sync 主体 _run_kb_sync_task_locked
+                # 重建段同型，`KbSyncCancelled` 继承 BaseException 可穿透内层
+                # `except Exception: pass`）；旗路径在重建期间登记到本库目录，
+                # 进程外落的旗才真被 `_consume_cancel_flag` 看见——不登记则旗
+                # 永远 inert（"存在但不被消费"，S112 现算的同型教训）。
+                _kb_ops._SYNC_CANCEL_EVENT.clear()
+                _kb_ops._set_kb_sync_cancel_flag_path(
+                    _kb_ops.kb_sync_cancel_flag_path(db_path)
+                )
+                try:
+                    ann = store.build_ann_index(
+                        on_progress=_kb_ops._cancel_aware_progress(
+                            lambda built: print(
+                                f"progress ann_built={built}", flush=True
+                            )
+                        ),
+                        force_low_memory=force_low_memory,
+                    )
+                except _kb_ops.KbSyncCancelled:
+                    ann_cancelled = True
+                    ann = {"built": False, "reason": "cancelled"}
+                except Exception as exc:  # noqa: BLE001
+                    ann = {"built": False, "reason": f"{type(exc).__name__}"}
+            finally:
+                # 出口清残留（kb-sync 同口径）：本轮的取消请求不毒化下一轮，
+                # 不在跑的轮次不许继续监听目录。
+                _kb_ops._set_kb_sync_cancel_flag_path(None)
+                _kb_ops._SYNC_CANCEL_EVENT.clear()
         result["ann_index_built"] = bool(ann.get("built"))
         result["ann_vectors"] = int(ann.get("vectors", 0) or 0)
         result["ann_reason"] = str(ann.get("reason", ""))
+        if ann_cancelled:
+            # 诚实早退：取消轮**不做** certify 补戳（半程不 publish 的索引不该
+            # 顺手给任何"完备"背书），落断点事实即返回。
+            result["error_kind"] = "cancelled"
+            result["public_message"] = (
+                "knowledge-sync 已取消（取消落在 ANN 重建段）：重建未 publish、"
+                "线上两索引文件一字未动；向量化断点保留，重跑自动续接。"
+            )
+            return result
         # 完备性戳自愈（certify-prewarm 波 P1，载入端拒用告警
         # "run knowledge-sync to certify" 的落点）：重建成功时提交点已落戳，
         # certify 无活戳才补、此处即空转；重建失败/被锁挡下而库里无戳时，
@@ -2983,6 +3083,28 @@ def main(
         "--kb-no-embed",
         action="store_true",
         help="kb-sync: apply metadata/chunk changes only, skip embedding and ANN build.",
+    )
+    parser.add_argument(
+        "--kb-cancel",
+        action="store_true",
+        help=(
+            "kb-sync/knowledge-sync: do NOT sync — drop a cancel sentinel next to "
+            "the db of the *selected task* (kb-sync → wiki KB db; knowledge-sync → "
+            "embeddings db, S156) so the round that is *already running* stops at "
+            "its next batch boundary (checkpoints and embedded progress preserved). "
+            "Flag path/consumer share kb_wiki.kb_sync_cancel_flag_path — no new "
+            "config key."
+        ),
+    )
+    parser.add_argument(
+        "--ann-force-low-memory",
+        action="store_true",
+        help=(
+            "kb-sync/knowledge-sync: explicitly override the ANN rebuild memory gate "
+            "(S112). Default off — the CLI obeys the same gate as the nightly cron. "
+            "The override itself is recorded in knowledge_meta; OOM risk is on the "
+            "operator who passes it."
+        ),
     )
     parser.add_argument(
         "--message",
@@ -3265,7 +3387,20 @@ def main(
         return 0 if result["ok"] else 1
 
     if args.task == "knowledge-sync":
-        result = run_knowledge_sync(config)
+        if bool(args.kb_cancel):
+            # S156 条 3：operator 点名的一条落旗入口——同样"只落钮、不自己跑"
+            # （本进程若再开一轮 knowledge-sync，会和它要停的那轮抢同一把
+            # 维护/建锁闸，旗白落一次）。旗路径与消费端同源：都经
+            # _knowledge_sync_db_path × kb_wiki.kb_sync_cancel_flag_path。
+            cancel = run_kb_cancel(config, target="knowledge-sync")
+            print(f"ok={str(cancel['ok']).lower()}")
+            print(f"requested_now={str(cancel['requested_now']).lower()}")
+            print(f"flag_path={cancel['flag_path']}")
+            print(f"public_message={cancel['public_message']}")
+            return 0 if cancel["ok"] else 1
+        result = run_knowledge_sync(
+            config, force_low_memory=bool(args.ann_force_low_memory)
+        )
         print(f"ok={str(result['ok']).lower()}")
         print(f"model={result['model']}")
         print(f"base_url={result['base_url']}")
@@ -3294,6 +3429,15 @@ def main(
         return 0 if result["ok"] else 1
 
     if args.task == "kb-sync":
+        if bool(args.kb_cancel):
+            # 只要钮、不跑同步：本进程绝不自己开跑一轮（那会和它要停的那轮抢
+            # 同一把任务互斥闸，结果报 busy、旗却白落一次）。
+            cancel = run_kb_cancel(config)
+            print(f"ok={str(cancel['ok']).lower()}")
+            print(f"requested_now={str(cancel['requested_now']).lower()}")
+            print(f"flag_path={cancel['flag_path']}")
+            print(f"public_message={cancel['public_message']}")
+            return 0 if cancel["ok"] else 1
         from plugins.bot_unified_runtime.domains.location.knowledge.kb_wiki import (
             run_kb_sync_task,
         )
@@ -3302,6 +3446,7 @@ def main(
             config,
             full=bool(args.kb_full),
             embed=not bool(args.kb_no_embed),
+            force_low_memory_ann=bool(args.ann_force_low_memory),
             on_progress=lambda stats: print(
                 "progress synced "
                 f"added={stats.get('added', 0)} changed={stats.get('changed', 0)} "

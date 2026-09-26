@@ -453,7 +453,7 @@ store = SQLiteConfigStateStore(sys.argv[1])
 store.set_override('BOT_CHAT_TEMPERATURE', 0.85, expected_version=0, actor='child', request_id='cross-process')
 """
     proc = subprocess.run([sys.executable, "-B", "-c", code, str(backend.path)],
-                          capture_output=True, text=True, timeout=15, check=False)
+                          capture_output=True, text=True, encoding="utf-8", timeout=15, check=False)
     assert proc.returncode == 0, proc.stderr
     assert runtime.get_or(KEY, 0.5) == 0.85
     assert backend.changes()[0]["request_id"] == "cross-process"

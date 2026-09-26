@@ -18,6 +18,7 @@ ffmpeg 转成 16kHz 单声道 mp3（体积小、兼容面最广）；ffmpeg 失�
 
 from __future__ import annotations
 
+import base64
 import logging
 import shutil
 import subprocess
@@ -81,6 +82,48 @@ def extract_audio_source(raw_segments: list[dict[str, Any]] | None) -> str | Non
         if http_url:
             return http_url
     return None
+
+
+# 原生直传给主模型的音频容器（与网关实测可被理解的形态一致）。
+_NATIVE_AUDIO_FORMATS = {
+    ".wav": "wav",
+    ".mp3": "mp3",
+    ".ogg": "ogg",
+    ".flac": "flac",
+    ".m4a": "m4a",
+    ".aac": "aac",
+}
+
+
+def build_native_audio_part(source: str, *, max_mb: float) -> dict[str, Any] | None:
+    """本机语音文件 → base64 ``input_audio`` 内容部件；不合条件返回 None。
+
+    仅当来源是本机存在的文件、体积 ≤ max_mb 且容器在册时才构造；http URL、缺失、
+    超限或未知容器一律 None，由调用方回退 ASR 转写路径。返回 None 是本能力的
+    正常出口——未被声明支持原生音频的模型根本不会走到这里。
+    """
+    path = _local_path_from_value(source)
+    if path is None:
+        return None
+    audio_format = _NATIVE_AUDIO_FORMATS.get(path.suffix.lower())
+    if audio_format is None:
+        return None
+    try:
+        if path.stat().st_size > int(max_mb * 1024 * 1024):
+            logger.info("audio native input skipped: file too large")
+            return None
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if not data:
+        return None
+    return {
+        "type": "input_audio",
+        "input_audio": {
+            "data": base64.b64encode(data).decode("ascii"),
+            "format": audio_format,
+        },
+    }
 
 
 def _flatten_asr_entries(

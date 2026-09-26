@@ -19,10 +19,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.stocks import is_stocks_command
-from plugins.bot_unified_runtime.runtime.base_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     RouteKind,
     classify_message_route,
+)
+from plugins.bot_unified_runtime.domains.finance.capabilities.stocks import (
+    is_stocks_command,
 )
 
 # 探针 ② 节 4 条劫持样例（text, 预期让路落点集）。

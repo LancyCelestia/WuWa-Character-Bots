@@ -446,10 +446,16 @@ _ANN_MEMORY_SKIP_CONSECUTIVE_KEY = "consecutive_skips"
 _ANN_MEMORY_SKIP_TOTAL_KEY = "total_skips"
 # ^ 累计计数（S139 缺陷 4）：与跳过留痕同一枚 meta、同一批写点，**不另起一行账**
 #   （第二枚键=第二本账，读者要跨两行对齐才知道"连续没连续"）。
-#   语义：只数**未越门**的被挡轮（pre/midway 各算一轮）；显式越门既不加也不清
-#   （那是人工放行动作，不是"门又挡了一夜"）；publish 成功即清零连续数
-#   （total 只增不减，保留历史总量）。清零写点唯一在 `_publish_ann_pair` 尾部
-#   （= 计数戳唯一权威赋值点同侧），跳过分支结构锁不许它碰落戳/发布动作。
+#   语义：只数**未越门**的被挡轮（pre/midway 各算一轮）；publish 成功即清零
+#   连续数（total 只增不减，保留历史总量）。清零写点唯一在 `_publish_ann_pair`
+#   尾部（= 计数戳唯一权威赋值点同侧），跳过分支结构锁不许它碰落戳/发布动作。
+#   越门轮裁定（S156 条 2 钉死）：**越门那一轮不算「被挡一次」**——人工放行
+#   不是门又挡一夜，两枚计数对它**不加也不清**；越门本身照样记痕
+#   （forced=True 行留作证据），且越门轮没走到 publish（被取消/建锁挡下）
+#   时计数同样原样停在上一轮的值上。行为锁
+#   tests/test_kb_ops_parked_three_s156.py::
+#   test_forced_round_without_publish_neither_adds_nor_clears
+#   （反证腿：越门分支若被注成"清零连续"，该场景判别值必翻转）。
 _ANN_MEMORY_SKIP_ESCALATION_ROUNDS = 3
 # ^ 「连续被挡 ⇒ 升格告警」阈值。依据不是手感，是三条在册实况：
 #   ① 节拍——kb-sync 每日一轮（cron 23:40 + 启动补跑），"轮"≈"夜"；

@@ -7,21 +7,21 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.reminder import (
+from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.schedule.capabilities import (
+    reminder as reminder_cap_mod,
+)
+from plugins.bot_unified_runtime.domains.schedule.capabilities.reminder import (
     build_reminder_capability,
     clear_checkoff_pending_for_tests,
     is_reminder_command,
 )
-from plugins.bot_unified_runtime.character.reminders import (
+from plugins.bot_unified_runtime.domains.schedule.store.reminders import (
     ReminderStore,
     build_reminder_store,
     build_reminder_text,
     parse_reminder_intent,
     resolve_todo_match,
-)
-from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
-from plugins.bot_unified_runtime.domains.schedule.capabilities import (
-    reminder as reminder_cap_mod,
 )
 
 _TZ = timezone(timedelta(hours=8))
@@ -676,7 +676,9 @@ def test_checkoff_ambiguous_ordinal_covers_note_todo(tmp_path, monkeypatch) -> N
 
 def test_undo_phrases_route_into_reminder_surface() -> None:
     """A-14 接线收编：「取消勾选 X」/「X 还没做」要能进提醒/笔记路由面。"""
-    from plugins.bot_unified_runtime.capabilities.reminder import is_reminder_command
+    from plugins.bot_unified_runtime.domains.schedule.capabilities.reminder import (
+        is_reminder_command,
+    )
 
     assert is_reminder_command("取消勾选 买牛奶")
     assert is_reminder_command("买牛奶还没做")

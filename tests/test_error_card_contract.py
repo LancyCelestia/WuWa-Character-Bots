@@ -50,6 +50,11 @@ def _full_payload() -> dict[str, Any]:
             {"label": "触发时间", "value": "2026-09-14T12:00:00+08:00"},
             {"label": "message_id", "value": "m-9"},
         ],
+        "self_review_pairs": [
+            {"label": "推测原因", "value": "推测是对端回话太慢，不像是我算错了"},
+            {"label": "建议", "value": "看看网关那几跳是不是都超时了"},
+        ],
+        "contact_pairs": [{"label": "管理员", "value": "QQ 10001"}],
         "help_text": "把这张卡截图发给创造者即可，信息已齐备且脱敏。",
         "bot_name": "守岸人",
         "bot_avatar_url": "",
@@ -60,18 +65,27 @@ def _body_of(html: str) -> str:
     return html.split("<body>", 1)[-1]
 
 
+# 分区标题的单一事实来源是 `_CARD_TEXT` 登记表（模板只引键名）。测试从登记表取值，
+# 不再手抄中文串——历史上「触发方法」改名「定位与原因」就让手抄的期望值当场假红。
+_SECTION_LOCATE = bridge._CARD_TEXT["static_err_22"]
+_SECTION_SELF_REVIEW = bridge._CARD_TEXT["static_err_28"]
+_SECTION_CONTACT = bridge._CARD_TEXT["static_err_29"]
+
+
 def test_full_payload_renders_all_sections() -> None:
     html = bridge.render_error_card_html(_full_payload())
     for marker in (
         "运行异常",
-        "RUNTIME DIAGNOSTIC",
+        "运行诊断",  # goal-7 说人话波（2026-09-25）：旧英文机读标签 RUNTIME DIAGNOSTIC 中文化
         "触发回显",
         "栈摘录",
-        "触发方法",
+        _SECTION_LOCATE,
+        _SECTION_SELF_REVIEW,
+        _SECTION_CONTACT,
         "配置快照",
         "版本与构建",
         "平台与协议",
-        "IDs 与时间",
+        "标识与时间",  # goal-7 说人话波：旧 'IDs 与时间' 机读节题中文化（纯文本兜底侧旧串在 error_report，另席跟）
         "TimeoutError",
         "weather.py:120",
         "bot_weather_api_key",
@@ -110,7 +124,8 @@ def test_empty_and_dirty_payload_never_raises() -> None:
 
 def test_sections_hidden_when_data_missing() -> None:
     html = bridge.render_error_card_html({})
-    for section in ("触发回显", "栈摘录", "触发方法", "配置快照"):
+    for section in ("触发回显", "栈摘录", _SECTION_LOCATE, "配置快照",
+                    _SECTION_SELF_REVIEW, _SECTION_CONTACT):
         assert section not in _body_of(html)
     # 页脚求助缺省文案仍在。
     assert "把这张卡截图发给创造者" in html

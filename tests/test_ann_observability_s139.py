@@ -11,7 +11,8 @@
 2. **件2 sink 零注入点**：`kb_wiki.set_kb_sync_alert_sink` 此前全树仅测试调用
    ⇒ 内存门拒建那张卡今天根本投不出去。本锁按哨兵抽出根 `__init__.py` 装配块
    **真身文本 exec 一遍**（注入可达活性判据，先例=WP10 哨兵/test_sync_drift_activation），
-   并跑"总闸关/pipeline 缺位/超管名单空 ⇒ 不注入"三条负例。
+   并跑"总闸关/pipeline 缺位/运行态告警名单空 ⇒ 不注入"三条负例（名单口径
+   S156 起=`bot_admin_user_ids`，与运行态告警同源，锁见 test_kb_ops_parked_three_s156）。
 3. **件3 只写不读**：`ann_build_last_memory_skip` 的真读者=重启预检第 13 项
    `ann_pair`（S141 落地，S139 补齐缺的"规模"与计数呈现）。本锁用真库形
    （tmp sqlite + knowledge_meta）驱动真身 `inspect_ann_generation_pair`。
@@ -270,12 +271,18 @@ def _extract_root_sink_block() -> str:
 
 
 def _exec_sink_block(*, enabled: bool, pipeline: object, admins: list[str]) -> None:
-    """在替身命名空间里 exec 装配块真身文本（活性判据：注入可达，不是 grep 存在）。"""
+    """在替身命名空间里 exec 装配块真身文本（活性判据：注入可达，不是 grep 存在）。
+
+    S156 口径跟随：名单真源=运行态告警同一枚 `bot_admin_user_ids`；
+    `bot_super_admin_user_ids` 故意填哨兵值——装配块若回潮读超管字段，
+    "名单空⇒不注入"的负例当场红（两枚字段在替身里必须不同值才有牙）。
+    """
     code = _extract_root_sink_block()
     config = SimpleNamespace(
         bot_kb_wiki_enabled=enabled,
         bot_kb_wiki_root="D:/whatever/crawl_wiki" if enabled else "",
-        bot_super_admin_user_ids=admins,
+        bot_admin_user_ids=admins,
+        bot_super_admin_user_ids=["__sentinel_super_must_not_be_the_roster__"],
     )
     namespace = {
         "config": config,
@@ -319,10 +326,11 @@ def test_sink_injection_is_reachable() -> None:
 
 
 def test_sink_not_injected_without_gate_pipeline_or_admins() -> None:
-    """负例三条：总闸关 / pipeline 缺位 / 超管名单空 ⇒ 都不注入。
+    """负例三条：总闸关 / pipeline 缺位 / 运行态告警名单空 ⇒ 都不注入。
 
     门与 kb_wiki 调度器注册同源（bot_kb_wiki_enabled ∧ root 非空）；缺件回到
-    "只打日志"的旧形态，绝不拿 None pipeline 造半个 sink。
+    "只打日志"的旧形态，绝不拿 None pipeline 造半个 sink。名单口径 S156 起
+    =`bot_admin_user_ids`（替身里超管字段故意非空，读错字段本用例当场红）。
     """
     _exec_sink_block(enabled=False, pipeline=object(), admins=["1"])
     assert kb_wiki.current_kb_sync_alert_sink() is None

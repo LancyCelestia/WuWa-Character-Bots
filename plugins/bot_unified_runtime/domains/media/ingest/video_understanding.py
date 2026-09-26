@@ -154,7 +154,7 @@ def _extract_audio_clip(
     return None
 
 
-def _native_video_content_part(source: str, max_mb: float) -> dict[str, Any] | None:
+def build_native_video_part(source: str, max_mb: float) -> dict[str, Any] | None:
     """本机视频文件 → base64 video_url content part；不合条件返回 None。
 
     仅当来源是本机存在的文件且体积 ≤ max_mb 时才构造；http URL、缺失或
@@ -172,7 +172,13 @@ def _native_video_content_part(source: str, max_mb: float) -> dict[str, Any] | N
         return None
     if not data:
         return None
-    mime = _VIDEO_SUFFIX_MIME.get(path.suffix.lower(), "application/octet-stream")
+    mime = _VIDEO_SUFFIX_MIME.get(path.suffix.lower())
+    if mime is None:
+        # 认不出的容器不许发 `application/octet-stream` 的 video_url：那等于把一段
+        # 没标类型的字节交给模型，而网关侧这类部件最常见的结局是"200 但没看见内容"
+        # （本夜实测 grok 收 video_url 就是这个形态）。宁可不原生、交回抽帧路。
+        logger.info("video native input skipped: unknown container")
+        return None
     return {
         "type": "video_url",
         "video_url": {"url": _encode_image_bytes(data, mime)},
@@ -415,7 +421,7 @@ def build_video_brief(
         work_dir = tempfile.mkdtemp(prefix="bot_video_brief_")
         native_part: dict[str, Any] | None = None
         if native_input and vision_provider is not None:
-            native_part = _native_video_content_part(source, native_max_mb)
+            native_part = build_native_video_part(source, native_max_mb)
         frames_future = None
         if vision_provider is not None and source and native_part is None:
             frames_future = pool.submit(run_frames)

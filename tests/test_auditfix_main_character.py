@@ -16,15 +16,15 @@ import unicodedata
 
 import pytest
 
-from plugins.bot_unified_runtime.character.shared_group import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.shared_group import (
     OpenAICompatibleGroupSummarizer,
-)
-from plugins.bot_unified_runtime.character.vector_knowledge import (
-    SqliteVectorKnowledgeStore,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.character.temporal import (
     OpenMeteoWeatherProvider,
     _WeatherSnapshot,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge import (
+    SqliteVectorKnowledgeStore,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
     assess_public_content,

@@ -215,7 +215,9 @@ def test_documented_identity_tag_limit_matches_store() -> None:
 
 
 def test_documented_market_filters_match_registry() -> None:
-    from plugins.bot_unified_runtime.capabilities.market import market_filter_secids
+    from plugins.bot_unified_runtime.domains.finance.capabilities.market import (
+        market_filter_secids,
+    )
 
     b_shares = market_filter_secids("B股行情")
     moscow = market_filter_secids("莫斯科行情")
@@ -225,7 +227,9 @@ def test_documented_market_filters_match_registry() -> None:
 
 
 def test_documented_divination_hidden_stems_callable() -> None:
-    from plugins.bot_unified_runtime.capabilities.divination import hidden_stems_section
+    from plugins.bot_unified_runtime.domains.divination.capabilities.divination import (
+        hidden_stems_section,
+    )
 
     assert callable(hidden_stems_section)
     assert "藏干" in _blob("占卜")

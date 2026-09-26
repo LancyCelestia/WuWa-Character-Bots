@@ -15,16 +15,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities import user_copy
-from plugins.bot_unified_runtime.capabilities.news import (
-    build_news_capability,
-    extract_news_category,
-    is_news_command,
-)
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     IncomingMessage,
     SessionType,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.subscribe.capabilities.news import (
+    build_news_capability,
+    extract_news_category,
+    is_news_command,
 )
 from plugins.bot_unified_runtime.domains.subscribe.feeds import news_feeds
 from plugins.bot_unified_runtime.domains.subscribe.feeds.news_feeds import (

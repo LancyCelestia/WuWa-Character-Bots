@@ -5,6 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+    InstanceSettingsManager,
+)
 from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
     build_vision_provider,
     describe_images,
@@ -15,7 +18,6 @@ from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
 )
 from plugins.bot_unified_runtime.llm import LLMProviderError
 from plugins.bot_unified_runtime.llm.model_router import ModelRouter
-from plugins.bot_unified_runtime.runtime.settings import InstanceSettingsManager
 
 
 def test_extract_image_urls_from_segments() -> None:
@@ -63,7 +65,9 @@ def test_vision_enabled_hot_toggle_via_store() -> None:
     import tempfile
     from pathlib import Path
 
-    from plugins.bot_unified_runtime.runtime.settings import RuntimeSettingsStore
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+        RuntimeSettingsStore,
+    )
 
     store = RuntimeSettingsStore(
         Path(tempfile.mkdtemp(prefix="dsh-vision-")) / "settings.json"
@@ -244,7 +248,7 @@ def test_model_top_level_command_via_runtime_handler() -> None:
 
 
 def test_direct_vision_message_builder_attaches_images_only_once() -> None:
-    from plugins.bot_unified_runtime.capabilities.chat import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
         build_direct_vision_messages,
     )
 
@@ -265,10 +269,12 @@ def test_vision_command_roundtrip() -> None:
     import tempfile
     from pathlib import Path
 
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+        RuntimeSettingsStore,
+    )
     from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
         _handle_model_command,
     )
-    from plugins.bot_unified_runtime.runtime.settings import RuntimeSettingsStore
 
     store = RuntimeSettingsStore(
         Path(tempfile.mkdtemp(prefix="dsh-vision-")) / "s.json"

@@ -14,24 +14,25 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
-from plugins.bot_unified_runtime.domains.core.contracts.character import TemporalContext
-from plugins.bot_unified_runtime.llm.providers import (
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
     _MAX_RESPONSE_BYTES,
     _shared_http_client,
 )
+from plugins.bot_unified_runtime.domains.core.contracts.character import TemporalContext
 
 WEEKDAY_NAMES = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 
@@ -381,4 +382,345 @@ def build_temporal_provider(config: object) -> RuleBasedTemporalProvider:
         weather_provider=weather_provider,
         holiday_table=holiday_table,
     )
+
+
+# ---------------------------------------------------------------------------
+# 第 10 项（2026-09-25）：【当前时间】分区扩面 + 系统自述。
+#
+# 全部是**呈现层现算**的只读函数，不进 TemporalContext 契约（那是
+# domains/core/contracts 的件，加字段=改契约）；调用方只有 chat.py 的分区装配。
+# 历法换算唯一真身在 ``domains/divination/data/multi_calendar.py``——本件只调
+# 用、零第二套（饶迥/儒略历差/伊斯兰历都不在这重算一遍）。
+# ---------------------------------------------------------------------------
+
+_UTC_OFFSET_MINUTES_FLOOR = -12 * 60
+_UTC_OFFSET_MINUTES_CEIL = 14 * 60
+
+
+def utc_offset_label(timezone_name: str) -> str:
+    """时区名 → 「UTC±hh:mm」；时区认不出来回空串（不硬凑 +00:00）。"""
+    try:
+        offset = datetime.now(ZoneInfo(timezone_name)).utcoffset()
+    except Exception:  # noqa: BLE001 - 坏时区名（tz 库缺失等）只丢这一小段读出
+        return ""
+    if offset is None:
+        return ""
+    minutes = int(offset.total_seconds() // 60)
+    if not _UTC_OFFSET_MINUTES_FLOOR <= minutes <= _UTC_OFFSET_MINUTES_CEIL:
+        return ""
+    sign = "+" if minutes >= 0 else "-"
+    absolute = abs(minutes)
+    return f"UTC{sign}{absolute // 60:02d}:{absolute % 60:02d}"
+
+
+def clock_sync_readout() -> str:
+    """校时状态一行（复用 timesync 共享实例的公开属性，绝不触发联网）。
+
+    读的是装配期 ``configure_from`` 绑定好的那把进程内共享校时器：
+    ``enabled``/``offset_seconds`` 都是带锁的属性读，不碰 ``now()``（那会按
+    节奏发起 SNTP）。拿不到共享实例（未绑定/模块搬家）回诚实短语，
+    绝不谎称「已校时」。
+    """
+    try:
+        from plugins.bot_unified_runtime.domains.schedule.timesync import (
+            timesync as _timesync,
+        )
+
+        shared = getattr(_timesync, "_SHARED", None)
+    except Exception:  # noqa: BLE001 - 校时模块不可用只是少一行读出
+        return ""
+    if shared is None:
+        return "校时器未绑定，读的是系统钟"
+    if not shared.enabled:
+        return "SNTP 校时未启用，读的是系统钟"
+    offset = shared.offset_seconds
+    if offset is None:
+        return "SNTP 校时已启用、本进程还没成功校准（暂读系统钟）"
+    return f"SNTP 校时在线（当前偏移 {offset * 1000:+.0f} 毫秒）"
+
+
+@functools.lru_cache(maxsize=512)
+def _compact_calendar_lines_cached(year: int, month: int, day: int) -> tuple[str, ...]:
+    """五历紧凑读出（每天一份，缓存）。
+
+    **只装配、零第二套换算**：年月日全部调 ``multi_calendar`` 的原函数
+    （农历/伊斯兰历/饶迥/藏历年名/儒略历同日换算），这里不重算任何天文量。
+    为什么用紧凑版而不是 ``rich_calendar_lines``：那套明细（含节气位置/闰月说明/
+    精度边界长句 ≈2500 字）每天每条消息都灌进 system prompt 会把既有分区
+    挤出预算（共享锁 ``test_runtime_sections_use_compact_labels_in_order``
+    当场红就是证据），且"历史上的今天"卡才是它的主场。被追问细节时模型
+    有分区里的锚点+可让超管跑命令面全量。
+    """
+    from plugins.bot_unified_runtime.domains.divination.data.multi_calendar import (
+        format_lunar_date,
+        hijri_from_gregorian,
+        julian_from_gregorian,
+        julian_gregorian_offset,
+        rabjung_year,
+        tibetan_year_name,
+    )
+
+    year_h, month_h, day_h = hijri_from_gregorian(year, month, day)
+    cycle, year_in_cycle = rabjung_year(year)
+    julian_day = julian_from_gregorian(year, month, day)
+    offset = julian_gregorian_offset(year, month, day)
+    return (
+        f"农历：{format_lunar_date(year, month, day)[len('农历'):]}；干支纪年以农历正月初一换年",
+        f"伊斯兰历约{year_h}年{month_h}月{day_h}日（历表推算，与月相观测可差 ±1 天）",
+        (
+            f"藏历：饶迥第{cycle}轮第{year_in_cycle}年（{tibetan_year_name(year)}）；"
+            # 「历法面每面只准一种措辞」锁（test_self_info_reaches_prompt）按字面
+            # 计数，本行行内复读面名会被判成第二套口径；边界句留在同一行内，
+            # 「月/日」承前省略主语即指本行历法，语义零损失。
+            "月/日与洛萨无历表源，不推算"
+        ),
+        (
+            f"东正教历（儒略历计）：同一天=儒略历{julian_day.year}-{julian_day.month:02d}-"
+            f"{julian_day.day:02d}（今两历差{offset}天）"
+        ),
+    )
+
+
+#: 系统钟与「所报时刻」相差多少秒以内算同一次取数（分区每轮现算，正常相差 1 分钟内；
+#: 留 10 分钟余量给排队与线程池积压，超出即视为历史上下文，不许再拿今天的钟比日子）。
+_MOMENTS_SAME_READING_SECONDS = 600.0
+
+
+def _day_divergence_note(temporal: object, day: date, timezone_name: str) -> str:
+    """四把钟跨日时点名的一行提示；同日或拿不到时刻 ⇒ 空串。
+
+    为什么要这一行：历法面（农历/伊斯兰历/藏历/儒略历）按**东八区日界**取日，
+    分区首行报的是配置时区的墙钟，而台账 #6 记着 cron/调度走系统本地钟——
+    三把钟跨日时模型会把「今天」说错一天，且错得很有信心。
+
+    口径：时刻从 ``TemporalContext`` 自己的字符串还原（``now_local`` 只到分），
+    **不在这里再读一次配置时区钟**（同一瞬间的两个读数会自己跟自己打架）。
+    系统钟只在「与所报时刻大致同一次取数」的窗口内参与比较：超窗说明这是
+    补投/回放的历史上下文，拿今天的系统钟去断言"那天系统本地是另一天"当场就是假话
+    （self_calendar 席位在 smoke 里实抓到过这一型）。
+    """
+    now_text = str(getattr(temporal, "now_local", "") or "").strip()
+    if not timezone_name or not now_text:
+        return ""
+    try:
+        hour, minute = (int(part) for part in now_text.split(":")[:2])
+        moment = datetime(day.year, day.month, day.day, hour, minute, tzinfo=ZoneInfo(timezone_name))
+    except Exception:  # noqa: BLE001 - 时刻文本或时区名不可用：少这一行，历法面照出
+        return ""
+    try:
+        from plugins.bot_unified_runtime.domains.ops.self_calendar.moments import (
+            resolve_moments,
+            system_clock_now,
+        )
+
+        system_now = system_clock_now()
+        same_reading = (
+            abs((system_now - moment).total_seconds()) <= _MOMENTS_SAME_READING_SECONDS
+        )
+        snapshot = resolve_moments(
+            moment,
+            timezone_name=timezone_name,
+            system_now=system_now if same_reading else None,
+        )
+    except Exception:  # noqa: BLE001 - 跨日提示炸了不许把「现在几点」带走
+        return ""
+    return snapshot.day_divergence_note
+
+
+def time_partition_extras(temporal: object) -> list[str]:
+    """【当前时间】分区的补充行：时区+UTC 偏移+校时状态+五历紧凑读出+跨日提示。
+
+    fail-open：任何一块算不出来就少那一块，首行时刻文本由调用方保留——
+    历法面炸了不许把「现在几点」一起带走。
+    """
+    lines: list[str] = []
+    timezone_name = str(getattr(temporal, "timezone", "") or "").strip()
+    bits: list[str] = []
+    if timezone_name:
+        bits.append(f"时区 {timezone_name}")
+        offset_label = utc_offset_label(timezone_name)
+        if offset_label:
+            bits.append(offset_label)
+    clock = clock_sync_readout()
+    if clock:
+        bits.append(f"授时：{clock}")
+    if bits:
+        lines.append("；".join(bits) + "。")
+    try:
+        day = date.fromisoformat(str(getattr(temporal, "date_local", "") or ""))
+        lines += list(_compact_calendar_lines_cached(day.year, day.month, day.day))
+    except Exception:  # noqa: BLE001 - 历法面降级：少这几行，命令与对话都照常
+        return lines
+    note = _day_divergence_note(temporal, day, timezone_name)
+    if note:
+        lines.append(note)
+    return lines
+
+
+# 更新历史缓存：git log 是 subprocess（数十毫秒级），聊天每条消息都扫一遍
+# 纯属浪费；10 分钟保质期在分区里以「截至」字样如实标注，不装作现读。
+_GIT_TTL_SECONDS = 600.0
+_GIT_LOCK = threading.Lock()
+_GIT_CACHE: dict[str, Any] = {"lines": (), "monotonic": 0.0, "filled": False}
+
+
+def _repo_root() -> Path | None:
+    """向上找带 ``.git`` 的目录当仓库根（首版按固定 parents[4] 数层，数错一层
+    就恒回 None ⇒ 更新历史整块静默缺席且测试照样绿——walk 找锚点比数层稳）。
+    打包部署/子目录拷贝没有 .git 时诚实回 None，调用方省略该块。"""
+    here = Path(__file__).resolve()
+    for parent in here.parents[:8]:
+        if (parent / ".git").exists():
+            return parent
+    return None
+
+
+def recent_update_lines(limit: int = 6) -> list[str]:
+    """更新历史 = 最近 limit 条 commit 标题（`git log` 现读，fail-open 整块省略）。
+
+    WHY 只读标题：commit subject 是给人看的一句话，正文可能带密钥形态；
+    每条再过一遍 ``redact_local_secrets`` 双保险。``encoding`` 必须显式钉
+    utf-8——台账 #47 的教训：不钉 encoding 时按本仓铁律
+    ``PYTHONIOENCODING=utf-8`` 直跑会 GBK 解码崩。git 不可用/超时/非零
+    退出 ⇒ 回空列表，调用方**省略整块**而不是编一段"暂无更新"。
+    """
+    now = time.monotonic()
+    with _GIT_LOCK:
+        if _GIT_CACHE["filled"] and now - float(_GIT_CACHE["monotonic"]) <= _GIT_TTL_SECONDS:
+            return list(_GIT_CACHE["lines"])
+    lines: list[str] = []
+    root = _repo_root()
+    if root is not None:
+        try:
+            import subprocess
+
+            proc = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(root),
+                    "log",
+                    "--no-color",
+                    "--decorate=off",
+                    f"-n{max(1, int(limit))}",
+                    "--pretty=format:%h %s",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=3.0,
+                check=False,
+            )
+            if proc.returncode == 0:
+                from plugins.bot_unified_runtime.domains.render.plain_text import (
+                    redact_local_secrets,
+                )
+
+                lines = [
+                    redact_local_secrets(" ".join(raw.split()))
+                    for raw in proc.stdout.splitlines()
+                    if raw.strip()
+                ]
+        except Exception:  # noqa: BLE001 - git 不可用/超时：更新历史整块诚实缺席
+            lines = []
+    with _GIT_LOCK:
+        _GIT_CACHE["lines"] = tuple(lines)
+        _GIT_CACHE["monotonic"] = time.monotonic()
+        _GIT_CACHE["filled"] = True
+    return list(lines)
+
+
+def clear_update_history_cache_for_tests() -> None:
+    """测试专用：清空更新历史缓存。"""
+    with _GIT_LOCK:
+        _GIT_CACHE["lines"] = ()
+        _GIT_CACHE["monotonic"] = 0.0
+        _GIT_CACHE["filled"] = False
+
+
+def system_readout_lines() -> list[str]:
+    """系统自述（软件框架/适配器/插件版本 + 更新历史），逐行脱敏。
+
+    版本事实源唯一：调 ``host_status._runtime_versions()``——它本身又是
+    ``error_report._version_pairs`` 的收编口（诊断卡同源）。本件不 import
+    error_report 拼第二套，跨包私有函数复用在这里是**有意的**：那枚函数
+    就是为"喂给别的呈现面"存在的（host_status 已这么用，锁在
+    tests/test_host_status.py）。git 构建行（含短哈希）就在 ``_version_pairs``
+    的「构建」行里，随块带出，不再单列。
+    """
+    lines: list[str] = []
+    try:
+        from plugins.bot_unified_runtime.domains.ops.monitor import host_status
+
+        pairs = host_status._runtime_versions()
+    except Exception:  # noqa: BLE001 - 版本面拿不到就少这一段，不猜版本号
+        pairs = []
+    if pairs:
+        from plugins.bot_unified_runtime.domains.render.plain_text import (
+            redact_local_secrets,
+        )
+
+        lines += [f"{label}：{redact_local_secrets(value)}" for label, value in pairs]
+    commits = recent_update_lines()
+    if commits:
+        lines.append(f"更新历史（最近提交，截至取样 {time.strftime('%H:%M')}）：")
+        lines += [f"- {subject}" for subject in commits]
+    return lines
+
+
+#: 功能自述一行的字数地板：超出即按**主题边界**收口并显式报未列出的条数。
+#: 地板而非天花板——声明源长到一定程度时宁可少列并说清少了多少，也不静默截断。
+_CAPABILITY_INDEX_MAX_CHARS = 900
+
+
+def capability_index_lines(*, is_admin: bool = True) -> list[str]:
+    """功能自述（需求 10「你能做什么」）：主题名从帮助注册表的权威声明源现算。
+
+    口径：
+    - 唯一来源 = ``capability_registry.HELP_TOPIC_DECLARATIONS``（与 ``/bot help``
+      的 topic 数以同一条声明源为准）。这里**只列主题名**，逐参数说明仍归
+      ``/bot help <主题>`` 与 ``docs/command-catalog.md``——复制一份正文就是这个
+      项目反复踩的「第二真身」账。
+    - 可见性吃声明源的 ``admin_only``：非管理员既看不到管理类主题，也拿不到
+      包含它们的计数（否则等于把管理面泄露成一句「我有 40 项功能」）。
+    - 计数是**本次列出的条数**，不是全量常量；被地板收口时补一行「另有 N 项未列出」。
+    - 失败：声明源 import 不到、或取到的形状不可用 ⇒ 整块不出。宁可不报，
+      也不报一份手抄的旧清单（副本正是这个项目反复踩的第二真身账）。
+    """
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.runtime.capability_registry import (
+            HELP_TOPIC_DECLARATIONS,
+        )
+
+        topics = [
+            str(decl.topic).strip()
+            for decl in HELP_TOPIC_DECLARATIONS
+            if is_admin or not decl.admin_only
+        ]
+    except Exception:  # noqa: BLE001 - 取数口炸了就整块缺席，不猜功能清单
+        return []
+
+    topics = [topic for topic in topics if topic]
+    if not topics:
+        return []
+
+    listed: list[str] = []
+    used = 0
+    for topic in topics:
+        projected = used + len(topic) + (1 if listed else 0)
+        if projected > _CAPABILITY_INDEX_MAX_CHARS:
+            break
+        listed.append(topic)
+        used = projected
+    omitted = len(topics) - len(listed)
+    header = f"我能做的事（本会话可见 {len(listed)} 项，按帮助注册表现算）："
+    lines = [header + "、".join(listed)]
+    if omitted:
+        lines.append(f"另有 {omitted} 项未在此列出（全表说「/bot commands」）。")
+    lines.append(
+        "上面只有主题名：看全表说「/bot commands」，看某项的具体用法说「/bot help <主题>」，"
+        "别凭主题名编命令。"
+    )
+    return lines
 

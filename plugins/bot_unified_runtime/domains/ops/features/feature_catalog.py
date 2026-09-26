@@ -27,30 +27,48 @@ def capability_feature_bindings() -> dict[str, str]:
 
 
 # 显式登记真正接线的子功能；未登记内部步骤不假称可独立控制。
-_SUBFEATURE_ROWS = (
-    ("bot.plugin.poke.reply", "bot.plugin.poke", "戳一戳文字回复", "_handle_poke_notice"),
-    ("bot.plugin.poke.poke_back", "bot.plugin.poke", "戳一戳反戳", "_handle_poke_notice"),
-    ("bot.ingress.file_read", "bot.ingress", "入站文件内容读取", "_incoming_from_nonebot_event"),
-    ("bot.ingress.audio_transcode", "bot.ingress", "语音段预转码", "_transcode_record_segments"),
-    ("bot.ingress.telegram_media", "bot.ingress", "Telegram 媒体文件富化", "_handle_chat"),
-    ("bot.ingress.reply_lookup", "bot.ingress", "引用链远程反查", "_handle_chat"),
-    ("bot.plugin.chat.recent_image", "bot.plugin.chat", "群聊最近图片注入", "_handle_chat"),
-    ("bot.plugin.chat.forward_lookup", "bot.plugin.chat", "合并转发内容反查", "_handle_chat"),
-    ("bot.plugin.chat.video_preprocess", "bot.plugin.chat", "视频理解预处理", "_handle_chat"),
-    ("bot.plugin.chat.parrot", "bot.plugin.chat", "群聊复读自动回应", "_handle_chat"),
-    ("bot.plugin.affinity.passive", "bot.plugin.affinity", "被动好感画像与心情感知", "_handle_chat"),
-    ("bot.plugin.chat.reactions.receive", "bot.plugin.chat.reactions", "接收表情回应上下文", "_handle_msg_emoji_like_notice"),
-    ("bot.plugin.chat.reactions.emotion", "bot.plugin.chat.reactions", "情绪触发表情回应", "_handle_chat"),
-    ("bot.plugin.chat.reactions.after_reply", "bot.plugin.chat.reactions", "回复后表情回应", "_handle_chat"),
-    ("bot.plugin.meme_library.auto_absorb", "bot.plugin.meme_library", "群图自动收库", "_handle_meme_absorb"),
+#
+# 行形如 ``(节点 id, 父节点, 标签, 实现符号, default_enabled)``；第 5 位**逐枚写死**
+# （不留「省略即缺省开」的隐式档 —— 那张表要说的是「这一枚今天到底开不开」）。
+# **为什么需要第 5 位**：``FeatureSwitchSnapshot
+# .enabled()`` 对「未登记 id」恒返回 False（feature_gate.py:35-36 的
+# ``states.get(feature_id, False)``），而 ``states`` 只遍历注册表描述符
+# （control_plane/features.py:329-331）。根 ``__init__.py:8614`` 一直在问
+# ``switches.enabled("bot.plugin.chat.reactions.meme")`` —— 这一枚此前**不在册**，
+# 于是「情绪时刻发一张表情包」这条腿在生产结构性死路（与 config 的
+# ``bot_reactions_meme_enabled`` 缺省 True 无关：那是第二道门，第一道门先关死）。
+# 补登记即通；按「新增自动外发行为不得未经用户点头就上现网」的口径显式置 False，
+# 由超管在控制面 / WebUI 打开（父链 ``bot.plugin.chat.reactions`` 缺省开）。
+_SUBFEATURE_ROWS: tuple[tuple[str, str, str, str, bool], ...] = (
+    ("bot.plugin.poke.reply", "bot.plugin.poke", "戳一戳文字回复", "_handle_poke_notice", True),
+    ("bot.plugin.poke.poke_back", "bot.plugin.poke", "戳一戳反戳", "_handle_poke_notice", True),
+    ("bot.ingress.file_read", "bot.ingress", "入站文件内容读取", "_incoming_from_nonebot_event", True),
+    ("bot.ingress.audio_transcode", "bot.ingress", "语音段预转码", "_transcode_record_segments", True),
+    ("bot.ingress.telegram_media", "bot.ingress", "Telegram 媒体文件富化", "_handle_chat", True),
+    ("bot.ingress.reply_lookup", "bot.ingress", "引用链远程反查", "_handle_chat", True),
+    ("bot.plugin.chat.recent_image", "bot.plugin.chat", "群聊最近图片注入", "_handle_chat", True),
+    ("bot.plugin.chat.forward_lookup", "bot.plugin.chat", "合并转发内容反查", "_handle_chat", True),
+    ("bot.plugin.chat.video_preprocess", "bot.plugin.chat", "视频理解预处理", "_handle_chat", True),
+    ("bot.plugin.chat.parrot", "bot.plugin.chat", "群聊复读自动回应", "_handle_chat", True),
+    ("bot.plugin.affinity.passive", "bot.plugin.affinity", "被动好感画像与心情感知", "_handle_chat", True),
+    ("bot.plugin.chat.reactions.receive", "bot.plugin.chat.reactions", "接收表情回应上下文", "_handle_msg_emoji_like_notice", True),
+    ("bot.plugin.chat.reactions.emotion", "bot.plugin.chat.reactions", "情绪触发表情回应", "_handle_chat", True),
+    ("bot.plugin.chat.reactions.after_reply", "bot.plugin.chat.reactions", "回复后表情回应", "_handle_chat", True),
+    ("bot.plugin.chat.reactions.meme", "bot.plugin.chat.reactions", "情绪时刻发送表情包", "_handle_chat", False),
+    ("bot.plugin.meme_library.auto_absorb", "bot.plugin.meme_library", "群图自动收库", "_handle_meme_absorb", True),
 )
 SUBFEATURE_DESCRIPTORS = tuple(
     FeatureDescriptor(
         node, parent, "sub_feature", label,
+        # 第 5 位=缺省开关，逐枚写死不留隐式缺省：登记一张子功能表最重要的就是
+        # 「这一枚今天到底开不开」，靠 `len(row) > 4` 猜等于把它藏进语法里。
+        # 只有「新增的自动外发腿」这类需要她本人点头才上线的才写 False。
+        default_enabled=default_enabled,
         implementation_ref=f"plugins/bot_unified_runtime/__init__.py#{symbol}",
         documentation_refs=("docs/design/control-plane-registry.md",),
     )
-    for node, parent, label, symbol in _SUBFEATURE_ROWS
+    for row in _SUBFEATURE_ROWS
+    for node, parent, label, symbol, default_enabled in (row,)
 )
 
 

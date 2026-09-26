@@ -33,8 +33,10 @@
 from __future__ import annotations
 
 import ast
+import functools
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -45,7 +47,12 @@ if str(REPO_ROOT / "scripts") not in sys.path:
 import doc_template_sync as dts  # PageInfo 真身
 import spec_gates_census as sc  # 判据真身，只 import 不改
 
-_REAL = sc.compute()  # 全模块只现算一次，判据与 --report 同源
+
+@functools.lru_cache(maxsize=1)
+def _real() -> dict[str, Any]:
+    """**首用绑定**取数（S555 推广自 S542 格②）：sc.compute() 内含改名/塌陷抛点，旧版在模块顶层调它 ⇒ 脏树并发窗一发撕裂读会打成 collection ERROR。函数内取数 + lru_cache(maxsize=1) ⇒ collection 不采样、全进程仍只现算一次（判据与 report 同源不变）。
+    """
+    return sc.compute()
 
 # ---------------------------------------------------------------------------
 # 封闭同义族（成员由任务书背景段点名，非本席发明；见文件头「为什么不是手编表」段）
@@ -155,14 +162,14 @@ def _shell_hits(pages: list[dts.PageInfo]) -> list[tuple[str, str, str]]:
 def test_scan_surface_has_a_floor_not_vacuously_green() -> None:
     """必选节扫描面非空（塌陷即红）：命中 0 必须来自"扫了很多、确实无空壳"，
     而不是"什么都没扫到所以恒真"。"""
-    pairs = _required_pairs(_REAL["pages"])
+    pairs = _required_pairs(_real()["pages"])
     assert len(pairs) >= _MIN_EXAMINED_REQUIRED_SECTIONS, (
         f"只扫到 {len(pairs)} 枚必选节（地板 {_MIN_EXAMINED_REQUIRED_SECTIONS}）＝扫描面塌陷，"
         "命中=0 不可信（假绿：集合为空恒真）"
     )
     # 正样控制：真树确有必选节正文非空（否则整把尺都在空跑）
     nonempty = 0
-    for p in _board_pages(_REAL["pages"]):
+    for p in _board_pages(_real()["pages"]):
         canon = sc.BOARD_CANON.get(p.category)
         if canon is None:
             continue
@@ -179,7 +186,7 @@ def test_scan_surface_has_a_floor_not_vacuously_green() -> None:
 # ② 上限 + 现算命中对账
 # ---------------------------------------------------------------------------
 def test_real_tree_hits_within_hand_literal_ceiling() -> None:
-    hits = _shell_hits(_REAL["pages"])
+    hits = _shell_hits(_real()["pages"])
     assert len(hits) <= SYNONYM_SHELL_CEILING, (
         f"真树必选节同义空壳 {len(hits)} > 上限 {SYNONYM_SHELL_CEILING}："
         f"有人交了一批只写『见上/如题/略』的必选节 → {hits[:6]}"
@@ -195,7 +202,7 @@ def test_ceiling_direction_lock_only_down() -> None:
     for day, val in SYNONYM_SHELL_AUDIT:  # 单调不增
         assert val <= prev, f"同义空壳账本回升 {prev}->{val} @ {day}（只准降）"
         prev = val
-    current = len(_shell_hits(_REAL["pages"]))
+    current = len(_shell_hits(_real()["pages"]))
     assert current <= SYNONYM_SHELL_AUDIT[0][1], (
         f"今日现算 {current} > 首届核账 {SYNONYM_SHELL_AUDIT[0][1]}＝新增空壳未核账"
     )

@@ -186,8 +186,14 @@ def test_auto_reply_path_never_synthesizes_refused_body(monkeypatch, tmp_path: P
 
 
 def test_command_result_carries_review_text_for_central_review(monkeypatch, tmp_path: Path) -> None:
-    """M-02 中央半的接线锁：语音正文必须以 `review_text` 随 audio 部件出门，
-    否则 `reviewer` 依旧看不见（媒体能力 title/body 留空是出站契约，不能改）。"""
+    """M-02 中央半的接线锁：语音正文必须以 `review_text` 随 audio 部件出门。
+
+    2026-09-25 第 8 项裁定后，命令路的 `body` 不再是空串（出站＝原文本+语音），
+    但 `review_text` 这一腿**必须保留**：它是「部件自带文本」的在册读法，
+    与 body 走的是 reviewer 的两条采集路径（`_collect_scan_text` 会去重），
+    删掉它会让只认部件键的读法（以及 `test_reviewer_media_visibility` 那批
+    媒体免检锁）失去覆盖面。
+    """
     wav = tmp_path / "voice.wav"
     wav.write_bytes(b"RIFF....WAVEfmt ")
     monkeypatch.setattr(
@@ -200,7 +206,7 @@ def test_command_result_carries_review_text_for_central_review(monkeypatch, tmp_
     result = tts_mod.build_tts_capability(cfg)(_msg("说 " + _HARMLESS), None)
     assert result.audio, "成功路径应带语音部件"
     assert result.audio[0]["review_text"] == _HARMLESS
-    assert result.body == "", "出站正文仍须留空（防兜底链把朗读文本再发一条）"
+    assert result.body == _HARMLESS, "出站须带原文本（第 8 项：原文本+语音音频一起发）"
 
 
 def test_auto_reply_carries_review_text(monkeypatch, tmp_path: Path) -> None:

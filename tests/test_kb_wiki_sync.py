@@ -8,10 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.character.vector_knowledge import (
+from plugins.bot_unified_runtime.contracts import KnowledgeChunk
+from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge import (
     SqliteVectorKnowledgeStore,
 )
-from plugins.bot_unified_runtime.contracts import KnowledgeChunk
 from plugins.bot_unified_runtime.domains.location.knowledge.kb_wiki import (
     MergedKnowledgeRetriever,
     split_doc_chunks,
@@ -208,7 +208,7 @@ def test_entry_title_bonus_ranks_entry_page_first(tmp_path):
 
 def test_entry_title_match_len_segment_and_prefix():
     """词条名按 _/-/空白切分后：段包含命中，纯中文段 2~4 字前缀命中。"""
-    from plugins.bot_unified_runtime.character.vector_knowledge import (
+    from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge import (
         _entry_title_match_len,
     )
 

@@ -12,11 +12,15 @@ from plugins.bot_unified_runtime.domains.core.search.search_api import (
     build_api_search_provider,
 )
 from plugins.bot_unified_runtime.domains.core.search.web_search import (
+    ChainedWebSearchProvider,
     LangSearchWebSearchProvider,
     TavilyWebSearchProvider,
     TinyFishFetchProvider,
+    WebSearchHit,
     YouSearchProvider,
     build_web_search_provider,
+    filter_search_hits,
+    gate_chain_hits,
 )
 
 
@@ -372,11 +376,6 @@ def test_fetch_page_text_strips_boilerplate_structural_blocks(monkeypatch):
 
 
 def test_filter_search_hits_drops_low_quality_and_defers_short_snippets():
-    from plugins.bot_unified_runtime.domains.core.search.web_search import (
-        WebSearchHit,
-        filter_search_hits,
-    )
-
     hits = [
         WebSearchHit(title="好结果", snippet="这是一段足够长的摘要内容，包含具体信息。", url="https://good.example/a"),
         WebSearchHit(title="垃圾", snippet="短", url="https://www.pinterest.com/pin/1"),
@@ -430,3 +429,143 @@ def test_tavily_image_urls_degrades_to_empty_on_error_or_missing_key():
         api_key="", endpoint="https://tavily.test/search", client=_client(handler)
     )
     assert no_key.image_urls("x") == []
+
+
+# ==================== 相关性闸门：链级唯一执法口（2026-09-24 金标十题实测后补） ==================== #
+# 实测病因：`_filter_relevant` 此前只接在 DuckDuckGo/Bing（免 key 两家）内部，
+# 生产链走的 Tavily/You/LangSearch **一条都没过**；链的异步出口连低质剔除都没走。
+# 于是"四个不同问题返回同一坨无关页"会作为「本轮有检索块」进 prompt 把模型带偏。
+# 判据取向：一条都不含问题实体时**当没查到**（返回空），而不是整坨照放。
+
+
+class _StubProvider:
+    """返回预置结果的假提供器（不碰网络）。`name` 供链记录末站。"""
+
+    def __init__(self, name: str, hits: list[WebSearchHit] | None = None, *, boom: bool = False) -> None:
+        self.name = name
+        self._hits = hits or []
+        self._boom = boom
+        self.calls = 0
+
+    def search(self, query: str, *, max_results: int = 3) -> list[WebSearchHit]:
+        self.calls += 1
+        if self._boom:
+            raise RuntimeError("provider down")
+        return list(self._hits)
+
+    async def search_async(self, query: str, *, max_results: int = 3, client=None):
+        return self.search(query, max_results=max_results)
+
+
+def _hit(title: str, snippet: str, url: str, domain: str) -> WebSearchHit:
+    return WebSearchHit(title=title, snippet=snippet, url=url, source_domain=domain)
+
+
+_IRRELEVANT = _hit(
+    "惊人内幕：9月13日财经新闻揭示，一万亿美元AI巨头即将诞生？",
+    "本文汇总了当日多家媒体的财经报道与实习生日记，内容与本站所在地新闻有关。",
+    "https://www.thetechedvocate.org/finance/913",
+    "thetechedvocate.org",
+)
+_RELEVANT = _hit(
+    "个人所得税减除费用标准维持每月5000元",
+    "国家税务总局公告：居民综合所得基本减除费用（起征点）为每月 5000 元。",
+    "https://www.chinatax.gov.cn/tax/2026/notice",
+    "chinatax.gov.cn",
+)
+
+
+def test_gate_drops_every_hit_when_none_matches_query_entities() -> None:
+    """无一条含问题实体 ⇒ 空表（旧行为是整坨照放，等于把噪声当证据）。"""
+    assert gate_chain_hits([_IRRELEVANT], "中国 个人所得税 起征点 每月多少") == []
+    assert gate_chain_hits([_IRRELEVANT, _RELEVANT], "中国 个人所得税 起征点 每月多少") == [
+        _RELEVANT
+    ]
+
+
+def test_gate_is_idempotent_so_double_filtering_cannot_change_results() -> None:
+    """链与各家自备过滤叠加时必须幂等，否则"两处都执法"会互相吃掉结果。"""
+    once = gate_chain_hits([_RELEVANT, _IRRELEVANT], "个人所得税 起征点")
+    twice = gate_chain_hits(once, "个人所得税 起征点")
+    assert once == [_RELEVANT]
+    assert twice == once
+
+
+def test_chain_gates_a_provider_that_filters_nothing_itself() -> None:
+    """Tavily 型（自身不过滤）的无关结果，必须在链上被拦掉——这条修前是绿的假象。"""
+    spam = _StubProvider("tavily", [_IRRELEVANT])
+    good = _StubProvider("you", [_RELEVANT])
+    chain = ChainedWebSearchProvider([spam, good])
+    hits = chain.search("中国 个人所得税 起征点 每月多少", max_results=3)
+    assert hits == [_RELEVANT]
+    assert spam.calls == 1
+    assert chain.last_provider_name == "you"
+
+
+def test_chain_returns_empty_and_tries_every_provider_when_all_irrelevant() -> None:
+    """全无关 ⇒ 逐家试完返回空，而不是第一家有货就地收兵。"""
+    first = _StubProvider("tavily", [_IRRELEVANT])
+    second = _StubProvider("you", [_IRRELEVANT])
+    chain = ChainedWebSearchProvider([first, second])
+    assert chain.search("美联储 最新 利率决议", max_results=3) == []
+    assert (first.calls, second.calls) == (1, 1)
+    assert chain.last_provider_name == ""
+
+
+def test_async_chain_shares_the_same_gate_as_sync() -> None:
+    """异步出口曾直接返回原始 hits——这条把"两条路径同一不变量"钉住。"""
+    import asyncio
+
+    chain = ChainedWebSearchProvider([_StubProvider("tavily", [_IRRELEVANT])])
+    assert asyncio.run(chain.search_async("全球市值最高 公司 排行")) == []
+
+
+def test_chain_keeps_relevant_hits_in_authority_ordered() -> None:
+    """链出口对"都相关"的结果不丢件、顺序按来源权威档确定。
+
+    第一版以为短摘要该被剔除 ⇒ 红；第二版以为 `filter_search_hits` 的"后置"会保留
+    ⇒ 也红：非百科域同 rank 时**按域名字符串**重排，后置序被覆盖。当时这条把
+    `[thin, fed]`（随机博客排在美联储前面）钉成了"真实语义"。
+
+    2026-09-25 第 3 项接线改判：权威档（`domains/core/search/source_authority.py`）
+    取代字母序兜底，一手源必须排在未登记博客前面 ⇒ 期望值翻成 `[fed, thin]`。
+    这是**有意的行为变更**，不是修旧锁的手误；"都相关 ⇒ 全留、确定可复现"两半未动。
+    """
+    fed = _hit(
+        "美联储维持利率不变",
+        "美联储在本议息周期内维持基准利率不变，并提示后续视通胀数据调整。",
+        "https://www.federalreserve.gov/newsevents/2026",
+        "federalreserve.gov",
+    )
+    thin = _hit("美联储议息决定维持利率", "短", "https://blog.example.com/x", "blog.example.com")
+    chain = ChainedWebSearchProvider([_StubProvider("tavily", [fed, thin])])
+    assert chain.search("美联储 利率 决议", max_results=3) == [fed, thin]
+    # 反序输入给同一输出 ⇒ 顺序由权威档决定，与抓取顺序无关（确定性可复跑）。
+    reversed_chain = ChainedWebSearchProvider([_StubProvider("tavily", [thin, fed])])
+    assert reversed_chain.search("美联储 利率 决议", max_results=3) == [fed, thin]
+
+
+def test_generic_single_token_no_longer_passes_the_gate() -> None:
+    """只含一个泛词（"中国"）的结果不算相关——这条治的是金标实测的漏网形态。"""
+    ford = _hit(
+        "警报：超过22万辆福特F-150面临致命风险",
+        "该召回涉及中国市场，车主需关注。",
+        "https://www.thetechedvocate.org/ford",
+        "thetechedvocate.org",
+    )
+    query = "中国 个人所得税 起征点 每月多少"  # 4 个词 ⇒ 至少两个对得上
+    assert gate_chain_hits([ford], query) == []
+    two_tokens = _hit(
+        "个人所得税起征点维持每月5000元",
+        "国家税务总局明确减除费用标准。",
+        "https://www.chinatax.gov.cn/n",
+        "chinatax.gov.cn",
+    )
+    assert gate_chain_hits([ford, two_tokens], query) == [two_tokens]
+
+
+def test_short_query_only_needs_one_matching_token() -> None:
+    """问题本身词少时不抬门槛，否则会把唯一正确的结果也滤掉（召回保护）。"""
+    hit = _hit("Claude Opus 5.5 发布", "Anthropic 推出新模型。", "https://anthropic.com/x", "anthropic.com")
+    assert gate_chain_hits([hit], "Claude") == [hit]
+    assert gate_chain_hits([hit], "Figma") == []

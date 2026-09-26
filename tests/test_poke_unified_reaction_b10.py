@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.poke import (
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.poke import (
     PokeDispatcher,
     PokeEvent,
     PokeLimiter,
@@ -109,9 +109,17 @@ def test_dispatcher_gates_target_enabled_and_cooldown() -> None:
 
 
 def test_dispatcher_poke_back_and_custom_text() -> None:
+    """回戳意图可配（恰一臂口径，2026-09-25 ITEM 14(a)）。
+
+    本例原名想验「回戳 + 自定义话术同时成立」——那条语义已被裁定收掉：一次被戳
+    只出一种表达，回戳只在形态选中 ``poke`` 那一臂时成立。故这里显式指名
+    ``bot_poke_reply_mode="poke"``，保留「poke_back 意图由配置决定」这层原意，
+    并把「文本腿仍可按配置取话术」一并锁住。
+    """
     dispatcher = PokeDispatcher(clock=lambda: 0.0)
     config = _config(
         bot_poke_poke_back=True,
+        bot_poke_reply_mode="poke",
         bot_poke_group_text="别戳啦",
         bot_poke_private_text="戳我干嘛",
     )
@@ -119,20 +127,30 @@ def test_dispatcher_poke_back_and_custom_text() -> None:
         _onebot_notice(), bot_id="10001", config=config
     )
     assert group is not None
-    assert group.reply == "别戳啦"
-    assert group.poke_back is True
+    assert group.mode == "poke" and group.poke_back is True
     assert "poke_back" in group.audit_tags
+    # 恰一臂反向锁：形态不是 poke 时，poke_back 开关再开也不许叠第二臂。
+    both_off = PokeDispatcher(clock=lambda: 0.0).build_poke_reaction(
+        _onebot_notice(user_id=20999),
+        bot_id="10001",
+        config=_config(bot_poke_poke_back=True, bot_poke_reply_mode="fixed"),
+    )
+    assert both_off is not None
+    assert both_off.mode == "fixed" and both_off.poke_back is False
     private = dispatcher.build_poke_reaction(
-        _onebot_notice(group_id=None), bot_id="10001", config=config
+        _onebot_notice(group_id=None, user_id=20998), bot_id="10001", config=config
     )
     assert private is not None
-    assert private.reply == "戳我干嘛"
     assert private.group is False
     # 话术关闭：只回戳不发文本（新 dispatcher，避免上一步冷却占用）。
     quiet = PokeDispatcher(clock=lambda: 0.0).build_poke_reaction(
         _onebot_notice(),
         bot_id="10001",
-        config=_config(bot_poke_reply_enabled=False, bot_poke_poke_back=True),
+        config=_config(
+            bot_poke_reply_enabled=False,
+            bot_poke_poke_back=True,
+            bot_poke_reply_mode="poke",
+        ),
     )
     assert quiet is not None
     assert quiet.reply == ""

@@ -16,8 +16,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.runtime.aliases import CommandAliasResolver
-from plugins.bot_unified_runtime.runtime.base_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.aliases import (
+    CommandAliasResolver,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     RouteKind,
     classify_message_route,
     clear_route_decision_cache,
