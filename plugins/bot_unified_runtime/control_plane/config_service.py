@@ -2,12 +2,18 @@
 
 公开读项保留 legacy value/source 等字段。只有 SETTABLE_KEYS 可变更；
 RESTART_REQUIRED_KEYS 仅可读。本层拒绝越权/过期写，底层审计失败则整笔回滚。
+写面（set/reset/reset_all）自 S-G2-THROAT（2026-09-26，用户裁定「K-1：修」）
+起全部裹进 `domains/core/safety_exec/settings_gate.py::guarded_write` 这一
+唯一裁决点：R1/R2 无书面同意不落库、R3 直接拒；门未装配或总闸关时与接线前
+逐字节同形。
 """
 from __future__ import annotations
 
 import builtins
 import json
 import sqlite3
+import threading
+from collections.abc import Callable
 from typing import Any
 
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
@@ -39,6 +45,11 @@ class ConfigControlService:
             assert attached is not None
             backend = attached  # 同文件的另一个对象也统一到运行时监听绑定的对象。
         self.backend = backend
+        # 同意门的句柄只能经 runtime_settings 拿（见 _consent_gate：裸
+        # SQLiteConfigStateStore 对 RuntimeConfigBackend 的鸭子类型结构性不
+        # 兼容）。生产两个装配口（_app.py / runtime_admin.py）都传 store。
+        self._runtime_settings = runtime_settings
+        self._gate_lock = threading.Lock()
 
     def _key(self, key: str, *, writable: bool = False) -> str:
         try:
@@ -123,18 +134,113 @@ class ConfigControlService:
             overrides[key] = self._convert(key, value)
         return {**self._row(key, ConfigSnapshot(snapshot.version, overrides, snapshot.tombstones)), "preview": True}
 
+    def _consent_gate(self) -> Any | None:
+        """拿与咽喉**同一枚**书面同意门；返回 None＝无可装配的咽喉宿主（放行）。
+
+        三条现算事实（本方法只消费，不新造第二种判定）：
+        - 裁决体唯一住 `settings_gate.guarded_write`，构造点唯一走
+          `build_gate_for_store(store, config)`；store 必须是挂着这本配置库的
+          `RuntimeSettingsStore`——它的 `config_backend` 属性决定同意账落点与
+          咽喉侧的 `SqliteSafetyLedger` 是**同一个库文件**，而一次性凭证 `_grants`
+          是门对象上的进程内字典，两枚各造各的门则「会话里批过 → 控制面重试」
+          永远接不上，所以经 `safety_gate` 属性读／`attach_safety_gate()` 复用同一枚。
+        - 裸 `SQLiteConfigStateStore` 不满足 `RuntimeConfigBackend` 的鸭子类型
+          （缺 `list_overrides()`，且它的 `reset_override` 把 `expected_version`
+          做成必填）——硬接成门＝「看起来接了但一调就炸」，故无 store 形态返回
+          None、保持接线前逐字节行为（该形态只出现在单测直接构造；生产装配口
+          恒传 store）。
+        - `bot.consent` 命令面的 gate_provider 现读 `store.safety_gate`，attach
+          之后它与本服务看到的是同一枚门：卡可见、可批、重试可消费。
+        """
+        store = self._runtime_settings
+        if store is None:
+            return None
+        gate = store.safety_gate  # property（不是方法）：与 bot.consent 的现读口径同一取法
+        if gate is not None:
+            return gate
+        with self._gate_lock:
+            gate = store.safety_gate  # 双检：别的线程（含咽喉自己）刚建好就领用
+            if gate is not None:
+                return gate
+            from plugins.bot_unified_runtime.domains.core.safety_exec import (
+                settings_gate as _gate_mod,
+            )
+
+            gate = _gate_mod.build_gate_for_store(store, self.config)
+            store.attach_safety_gate(gate)  # 契约见 settings.py：传入即视为已装配
+            return gate
+
+    def _guarded_apply(self, *, target: str, value: Any, restore_default: bool,
+                       principal: Principal, request_id: str,
+                       apply: Callable[[], Any]) -> Any:
+        """把一次实际落库动作交给门；门缺席或总闸关 ⇒ 直接 `apply()`，与接线前
+        逐字节同形（`settings.py::_throat_guard` 的三态口径，本层不自创第四态）。
+
+        出票/拒绝的异常翻成本层既有 `ControlServiceError` 形态：不吞成 500、
+        工单号/短码/批准指引原文原样带出去（HTTP 面由 `_app.py` 的
+        exception_handler 装进 envelope 的 error.message）。
+
+        session_key 交空串：咽喉对「确实拿不到会话的写点」的既有口径
+        （settings.py `_throat_guard` 注释）——控制面侧不存在入站会话，拼一个
+        真会话里不存在的键会让 R1 的「在原会话里确认」判据（consent.py：
+        `and row.source_session_key`）永无被人满足＝死信卡；空串＝该判据对本
+        渠道不启用，R2 的超管私聊书面亲批不受影响（全链在锁①②实证）。
+        """
+        from plugins.bot_unified_runtime.domains.core.safety_exec.consent import (
+            DenyKind,
+        )
+        from plugins.bot_unified_runtime.domains.core.safety_exec.settings_gate import (
+            RuntimeChangeNeedsConsent,
+            RuntimeChangeRefused,
+        )
+
+        gate = self._consent_gate()
+        if gate is None or not gate.enabled:
+            return apply()
+        try:
+            return gate.guarded_write(
+                key=target, value=value, restore_default=restore_default,
+                actor=principal.subject, request_id=request_id,
+                session_key="", apply=apply,
+            )
+        except RuntimeChangeNeedsConsent as exc:
+            # 409 有 actions.py `confirmation_required` 的同状态码先例；原文直传。
+            raise ControlServiceError("consent_required", exc.plain_text, 409) from None
+        except RuntimeChangeRefused as exc:
+            if exc.kind is DenyKind.NEVER_AUTO:
+                status = 403  # R3：连批都不给，改 .env 重启是人的事
+            elif exc.kind is DenyKind.AUDIT_UNAVAILABLE:
+                status = 503  # 账落不下去 ⇒ 这笔没做，且存储面确实不可用
+            else:
+                status = 409
+            raise ControlServiceError("change_refused", exc.plain_text, status) from None
+
     def _write(self, key: str, value: Any, *, reset: bool, principal: Principal,
                expected_version: int, request_id: str) -> dict[str, Any]:
         self._authorize(principal, expected_version, request_id)
         key = self._key(key, writable=True)
         converted = None if reset else self._convert(key, value)
         try:
-            if reset:
-                snapshot = self.backend.reset_override(key, expected_version=expected_version,
-                                                       actor=principal.subject, request_id=request_id)
-            else:
-                snapshot = self.backend.set_override(key, converted, expected_version=expected_version,
-                                                     actor=principal.subject, request_id=request_id)
+            # S-G2-THROAT（K-1：修）：裸写落进 `_guarded_apply` 的 `apply=` 闭包。
+            # 用 lambda 而非嵌套 def 是两把锁之间的在册契约：
+            # `test_safety_exec_session_throat.py` 的直写名册按「最内层 def」归属，
+            # 嵌套 def 会把坐标从 ("config_service.py","_write") 顶成 "_apply"、
+            # 撞崩它的冻结核账；本席的 AST 活性锁
+            # （tests/test_control_plane_consent_throat.py）则要求这个调用点
+            # 必须住在 apply= 实参的子树里。两判据同绿＝既在册又活性。
+            snapshot = self._guarded_apply(
+                target=key, value=converted, restore_default=reset,
+                principal=principal, request_id=request_id,
+                apply=lambda: (
+                    self.backend.reset_override(
+                        key, expected_version=expected_version,
+                        actor=principal.subject, request_id=request_id,
+                    ) if reset else self.backend.set_override(
+                        key, converted, expected_version=expected_version,
+                        actor=principal.subject, request_id=request_id,
+                    )
+                ),
+            )
         except ConfigVersionConflict:
             raise ControlServiceError("version_conflict", "配置版本已变更，请重新读取。", 409) from None
         except (sqlite3.Error, OSError):
@@ -153,17 +259,34 @@ class ConfigControlService:
 
     def reset_all(self, *, principal: Principal, expected_version: int,
                   request_id: str = "") -> dict[str, int]:
-        """一次 CAS 清空覆盖；count 来自同一版本快照，不逐键提交。"""
+        """一次 CAS 清空覆盖；count 来自同一版本快照，不逐键提交。
+
+        过门口径（S-G2-THROAT，与咽喉同形）：全撤没有单键可分级，走门侧聚合
+        目标 `ALL_OVERRIDES_TARGET`（未登记目标按缺省档 ⇒ R2 书面同意）整批判
+        一次，而**不是**逐键判 tier 再逐键落——本方法的原子性就来自「一次 CAS、
+        一份快照计数」（docstring 原话），逐键出票等于把一键清空变成 N 张卡 +
+        N 次批准 + 部分生效，语义直接走样；`RuntimeSettingsStore.reset_override
+        (None)` 走 `_throat_guard(target=None)` 用的就是同一个聚合名，两本判据
+        合一，不留第二套规则。
+        """
         self._authorize(principal, expected_version, request_id)
         before = self._snapshot()
         if before.version != expected_version:
             raise ControlServiceError("version_conflict", "配置版本已变更，请重新读取。", 409)
         for key in before.overrides:
             self._key(key, writable=True)  # 仅预校验；历史冻结键也不假称热改。
+        from plugins.bot_unified_runtime.domains.core.safety_exec import (
+            settings_gate as _gate_mod,
+        )
+
         try:
-            after = self.backend.reset_override(
-                None, expected_version=expected_version,
-                actor=principal.subject, request_id=request_id,
+            after = self._guarded_apply(
+                target=_gate_mod.ALL_OVERRIDES_TARGET, value=None, restore_default=True,
+                principal=principal, request_id=request_id,
+                apply=lambda: self.backend.reset_override(
+                    None, expected_version=expected_version,
+                    actor=principal.subject, request_id=request_id,
+                ),
             )
         except ConfigVersionConflict:
             raise ControlServiceError("version_conflict", "配置版本已变更，请重新读取。", 409) from None

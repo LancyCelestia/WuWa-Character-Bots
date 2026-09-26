@@ -12,14 +12,15 @@
 
 1. **fail-closed**：拿不到白名单根＝一律不写。缺省策略 ``allowed_roots=()``
    即「什么都不许写」，装配层必须显式给根。绝不「先让它跑起来再说」。
-2. **验收全过才碰目标**：白名单 → 段名消毒 → 扩展名 → 限额 → 字节指纹 →
-   越界复核 → 外部名册注入缝 → **禁触名册直判** → 动词语义 → 配额，逐条判完才
-   第一次触碰目的目录。
+2. **验收全过才碰目标**：白名单 → 段名消毒（含拒 Win32 保留设备名） → 扩展名 →
+   限额 → 字节指纹 → 越界复核 → 外部名册注入缝 → **禁触名册直判** → 动词语义 →
+   配额，逐条判完才第一次触碰目的目录。
    超限/指纹不符的样本，目的目录里**连临时件都不会出现**（不是「写完再删」）。
 3. **不建第二张名册**（AGENTS「禁第二真身」+ ``domains/core/safety_exec/paths.py``
-   的自述约束）：本件只做写盘方向必需的三件事——剥分隔符、拒 ``..``、
-   ``resolve()`` 后 containment。「哪些目录/文件类别绝对禁触」那张名册的唯一真身
-   是 ``paths.py``；本件留 ``external_verdict`` 注入缝接它，**不在这里抄第二份**。
+   的自述约束）：本件只做写盘方向必需的四件事——剥分隔符、拒 ``..``、
+   拒保留设备名、``resolve()`` 后 containment。「哪些目录/文件类别绝对禁触」那张
+   名册的唯一真身是 ``paths.py``；本件留 ``external_verdict`` 注入缝接它，
+   **不在这里抄第二份**。
    ⚠ 名册的接入分两层，别混：**禁触那一族是缺省就执法的**（``_publish_staged``
    第 ⑤b 步与 ``resolve_existing`` 各问 ``paths`` 一次，只认 ``domain==forbidden``，
    故白名单根被配歪到人格库/设置目录时仍拦得住，回读口同理）；**正向注册名册**
@@ -105,6 +106,7 @@ class DenyCode:
     TRANSFORM_FAILED: Final[str] = "transform_failed"
     ALREADY_EXISTS: Final[str] = "already_exists"
     TARGET_MISSING: Final[str] = "target_missing"
+    RESERVED_NAME: Final[str] = "reserved_name"
     DAILY_QUOTA: Final[str] = "daily_quota"
     STAGING_UNAVAILABLE: Final[str] = "staging_unavailable"
     IO_ERROR: Final[str] = "io_error"
@@ -126,6 +128,7 @@ DENY_CODES: Final[frozenset[str]] = frozenset(
         DenyCode.TRANSFORM_FAILED,
         DenyCode.ALREADY_EXISTS,
         DenyCode.TARGET_MISSING,
+        DenyCode.RESERVED_NAME,
         DenyCode.DAILY_QUOTA,
         DenyCode.STAGING_UNAVAILABLE,
         DenyCode.IO_ERROR,
@@ -149,6 +152,10 @@ DENY_PLAIN_TEXT: Final[dict[str, str]] = {
     DenyCode.TRANSFORM_FAILED: "改写函数没有产出可用内容（抛错或返回了非字节/非文本）",
     DenyCode.ALREADY_EXISTS: "同名文件已在，创建动词不覆盖",
     DenyCode.TARGET_MISSING: "目标不存在，修改动词不新建",
+    DenyCode.RESERVED_NAME: (
+        "文件名撞上 Windows 保留设备名（nul/con/aux/com1 一族）。"
+        "这类名字写出去后，常规工具打不开也删不掉，落盘口与受限回读都不收。"
+    ),
     DenyCode.DAILY_QUOTA: "今日件数配额已用满",
     DenyCode.STAGING_UNAVAILABLE: "暂存目录不可用，未写",
     DenyCode.IO_ERROR: "落盘失败（文件系统或权限）",
@@ -259,6 +266,25 @@ DEFAULT_DAILY_CREATE_LIMIT: Final[int] = 60
 DEFAULT_DAILY_REPLACE_LIMIT: Final[int] = 120
 
 _SEGMENT_MAX_LEN: Final[int] = 120
+#: Win32 保留设备名（basename 点号前那一段，不区分大小写；带任何扩展名同样命中）。
+#: 这不是「第二张禁触名册」——禁触名册判的是**落点域**（哪些目录/文件类别禁触，
+#: 唯一真身 ``safety_exec/paths.py``），本表判的是**段名形态**，与
+#: ``_LEGAL_SEGMENT_RE`` 同族：同一个名字在别的 API 里是设备不是文件，落盘口收它
+#: 只会产出一枚常规工具打不开也删不掉的挂件（实测 ``os.replace`` 能把
+#: ``nul.txt`` 造进目录并回报成功，而 cmd 的 ``del nul.txt`` 把删除动作送进了空设备）。
+_RESERVED_WIN32_BASENAMES: Final[frozenset[str]] = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{i}" for i in range(1, 10)}
+    | {f"lpt{i}" for i in range(1, 10)}
+)
+
+
+def _is_reserved_device_name(segment: str) -> bool:
+    """段名是否命中 Win32 保留设备名（点号前的首段、casefold 比对）。"""
+    head = str(segment or "").split(".", 1)[0].casefold()
+    return head in _RESERVED_WIN32_BASENAMES
+
+
 #: 段名允许形态（消毒之后再判一次）：字母/数字/下划线/点/连字符/空格 + CJK/假名/谚文。
 #: 刻意不含 ``:``（盘符与 NTFS ADS）与 ``\ /``（分隔符）——那两层在剥离段已拦。
 _LEGAL_SEGMENT_RE: Final[re.Pattern[str]] = re.compile(
@@ -439,6 +465,10 @@ def sanitize_write_segments(ref: str | os.PathLike[str]) -> tuple[str, ...]:
             raise _Rejected(DenyCode.TRAVERSAL_DENIED)
         if not _LEGAL_SEGMENT_RE.match(cleaned):
             raise _Rejected(DenyCode.BAD_NAME)
+        if _is_reserved_device_name(cleaned):
+            # 排在段形态复查之后：形态先归位，再判设备名——「nul」与「nul.md」
+            # 走同一格拒绝，不给「换个扩展名」留绕行面。
+            raise _Rejected(DenyCode.RESERVED_NAME)
         segments.append(cleaned)
     if not segments:
         raise _Rejected(DenyCode.BAD_NAME)
@@ -582,6 +612,17 @@ def stage_write(
     base = Path(str(staging_dir)) if staging_dir else (
         Path(tempfile.gettempdir()) / "bot_restricted_staging"
     )
+    target = base / f"{uuid.uuid4().hex[:12]}_{name}"
+    # A-8 裁定（2026-09-27）「暂存腿同理补守卫」：签发暂存位之前，先问唯一真身
+    # ``paths.check_staged_target``——target 规范化后必须仍在本次暂存根内（两侧先
+    # resolve()，8.3 短名不除外；判定排在 mkdir 之前，守卫不落盘）。名字这一层
+    # ``sanitize_write_segments`` 已经拦下 ``..``/盘符/设备名，本判定是纵深防御：
+    # 正常流恒 allowed ⇒ 行为零变化，异常拼装从「照发号」变成 STAGING_UNAVAILABLE。
+    staged = paths.check_staged_target(target, base)
+    if staged.denied:
+        return _deny(
+            DenyCode.STAGING_UNAVAILABLE, name=name, detail=staged.reason_code
+        )
     try:
         base.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -590,7 +631,7 @@ def stage_write(
         ref="/".join(segments),
         name=name,
         extension=ext,
-        path=base / f"{uuid.uuid4().hex[:12]}_{name}",
+        path=target,
         staging_dir=base,
     )
 
