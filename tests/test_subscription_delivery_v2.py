@@ -13,9 +13,14 @@ from plugins.bot_unified_runtime.domains.subscribe.store.subscription_scheduler 
 )
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store_v2 import (
     SubscriptionStoreV2,
+    _event_id_for,
 )
 
 _NOW = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+# SUB-3 跟随义务：outbox 主键自 `f3e2972` 起是「三元组规范摘要」而非裸冒号拼接，
+# 本件旧期望把冒号串当字面量写死 ⇒ 语义已被改判。期望值一律**经真身派生**
+# （照抄新哈希＝下次形制再变就又红），旧行仍可寻这件事由 sub3 锁自己执法。
+_EVENT_ID = _event_id_for("test:channel:1", "video", "v1")
 
 
 def _store_with_event(tmp_path) -> SubscriptionStoreV2:
@@ -45,7 +50,7 @@ def test_outbox_without_delivery_callback_is_not_marked_sent(tmp_path) -> None:
     scheduler = SubscriptionScheduler(store, [])
 
     assert asyncio.run(scheduler.deliver_outbox_once()) == 0
-    row = store.outbox_state("test:channel:1:video:v1")
+    row = store.outbox_state(_EVENT_ID)
     assert row == "retry"
 
 
@@ -59,5 +64,5 @@ def test_outbox_is_marked_sent_only_after_callback_success(tmp_path) -> None:
 
     scheduler = SubscriptionScheduler(store, [], delivery_fn=deliver)
     assert asyncio.run(scheduler.deliver_outbox_once()) == 1
-    assert delivered == ["test:channel:1:video:v1"]
-    assert store.outbox_state("test:channel:1:video:v1") == "sent"
+    assert delivered == [_EVENT_ID]
+    assert store.outbox_state(_EVENT_ID) == "sent"

@@ -11,6 +11,13 @@ from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_runtime_v2 import (
     build_subscription_runtime_v2,
 )
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store_v2 import (
+    _event_id_for,
+)
+
+# SUB-3 跟随义务（同 `f3e2972`）：主键改规范摘要后，旧契约里写死的裸冒号 id
+# 一律改经真身派生——不硬编码新哈希，防再漂。
+_EVENT_ID = _event_id_for("test:channel:1", "post", "1")
 
 
 def test_runtime_factory_injects_outbox_delivery_callback(tmp_path) -> None:
@@ -54,6 +61,6 @@ def test_runtime_factory_injects_outbox_delivery_callback(tmp_path) -> None:
     )
 
     assert asyncio.run(runtime["scheduler"].deliver_outbox_once()) == 1
-    assert received == ["test:channel:1:post:1"]
-    assert runtime["store"].outbox_state("test:channel:1:post:1") == "sent"
+    assert received == [_EVENT_ID]
+    assert runtime["store"].outbox_state(_EVENT_ID) == "sent"
     runtime["store"].close()
