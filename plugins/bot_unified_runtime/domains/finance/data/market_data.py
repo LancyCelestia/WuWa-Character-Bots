@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import time
 import urllib.parse
 from collections.abc import Sequence
