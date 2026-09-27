@@ -9,11 +9,14 @@
 - A3 去重原子化：重复 dedupe_key 返回 SKIPPED 回执，不抛 IntegrityError。
 - A4 prune 只淘汰终态：QUEUED 行永不因容量被时间序挤掉。
 - A5 租约过期重认领递增 retry_count，达 max_attempts 置 FAILED_FINAL。
+- A5b 死租约（processing 且 lease_expires_at NULL）有界回收：不再永久霸占
+  同会话互斥窗口（S-FIX-TRANS-LEASE 饥饿修复）。
 - A14 forward 溢出合并后仍不突破 node_chars 硬边界。
 - A15 聊天文本："$5 和 $10" 货币写法不被当公式改写；真实 TeX 仍转换。
 """
 from __future__ import annotations
 
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -148,6 +151,65 @@ def test_a5_lease_reclaim_increments_retry_and_finalizes(tmp_path) -> None:
     summary = queue.safe_summary()
     assert summary[ReceiptState.FAILED_FINAL.value] == 1
     assert summary["processing"] == 0
+
+
+def _force_dead_lease(
+    queue: SQLiteSendRequestQueue, request_id: str, *, updated_at: datetime
+) -> None:
+    """把已认领行改回「processing 且租约信息丢失」形态（A-20 租约协议上线前
+    存量/异常遗留形状：claim 臂要求 lease 非空、NOT EXISTS 臂把 NULL 租约当
+    永远在途）。用独立短连接直写，模拟迁移遗留数据。"""
+    with closing(queue._connect()) as connection, connection:
+        connection.execute(
+            """
+            UPDATE send_requests
+            SET lease_expires_at = NULL, updated_at = ?
+            WHERE request_id = ?
+            """,
+            (updated_at.isoformat(), request_id),
+        )
+
+
+def test_a5b_dead_lease_row_is_reclaimed_within_bounded_window(tmp_path) -> None:
+    """A5b：死租约行本身在心跳缺席超过回收窗后可被重认领（计入重试预算、
+    重写租约），不再永远停在 processing。回收窗现值 300s（见
+    queue._DEAD_LEASE_RECLAIM_SECONDS），用例取远大于窗口的时刻做断言。"""
+    queue = _build_queue(tmp_path)
+    base = _utc_now()
+    dead = _send_request("req-a5b-dead", "dedupe-a5b-dead")
+    queue.submit(dead, now=base)
+    claimed = queue.claim_due(now=base + timedelta(seconds=120))
+    assert len(claimed) == 1
+    _force_dead_lease(queue, "req-a5b-dead", updated_at=base + timedelta(seconds=120))
+    # 窗口内（距最后心跳 < 300s）：仍视为在途，不得被抢认领（防放宽互斥）。
+    assert queue.claim_due(now=base + timedelta(seconds=150)) == []
+    # 窗口过后：死租约被回收——重认领递增 retry_count 并重写租约。
+    late = queue.claim_due(now=base + timedelta(seconds=3600))
+    ids = [entry.send_request.request_id for entry in late]
+    assert "req-a5b-dead" in ids
+    dead_entry = next(e for e in late if e.send_request.request_id == "req-a5b-dead")
+    assert dead_entry.retry_count == 1
+    assert dead_entry.lease_expires_at is not None
+
+
+def test_a5b_dead_lease_does_not_starve_same_session(tmp_path) -> None:
+    """A5b（饥饿主案）：死租约行不得永久霸占同会话互斥窗口——同会话后续行
+    必须在有限时间内可认领。修复前：claim_due 对该行任何 now 恒返回 []
+    （外层臂要 lease 非空且过期；NOT EXISTS 把 NULL 租约判永远在途）。"""
+    queue = _build_queue(tmp_path)
+    base = _utc_now()
+    dead = _send_request("req-a5b2-dead", "dedupe-a5b2-dead")
+    queue.submit(dead, now=base)
+    assert queue.claim_due(now=base + timedelta(seconds=120))
+    _force_dead_lease(queue, "req-a5b2-dead", updated_at=base + timedelta(seconds=120))
+    # 同会话后续行（session_id 与 dead 相同；已过内联宽限，本应可认领）。
+    queue.submit(_send_request("req-a5b2-next", "dedupe-a5b2-next"), now=base)
+    # 窗口内：NULL 租约仍算在途，互斥照常生效（对照组，防"直接删互斥"式假修）。
+    assert queue.claim_due(now=base + timedelta(seconds=150)) == []
+    # 窗口过后：后续行解除饥饿，在有限时间可认领。
+    late = queue.claim_due(now=base + timedelta(seconds=3600))
+    ids = [entry.send_request.request_id for entry in late]
+    assert "req-a5b2-next" in ids
 
 
 def test_a14_merged_overflow_respects_node_chars_limit() -> None:

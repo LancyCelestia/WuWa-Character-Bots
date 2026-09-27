@@ -43,6 +43,21 @@ PART_STATE_FAILED_FINAL = "failed_final"
 # PARTIAL 行补偿扫描的重试间隔：与 bot_unavailable 挂起的 90s 对齐（慢速重探，
 # 不随 retry_base_seconds 变化；确认类扫描本身不重发任何 part）。
 _PARTIAL_RESUME_BACKOFF_SECONDS = 90.0
+# 死租约有界回收（S-FIX-TRANS-LEASE）：state='processing' 但 lease_expires_at
+# 为 NULL 的行（A-20 租约协议上线前的存量认领行——_backfill_session_id 回填
+# session_id 后开始参与同会话互斥；或异常/人工直写遗留）此前是双重的洞：
+# ①外层认领臂要求「租约非空且已过期」→ 该行永不被重认领，永远停在
+#   processing；②NOT EXISTS 互斥臂把 NULL 租约当「永远在途」→ 同会话所有
+#   后续行被永久阻塞（饥饿）。修法：NULL 租约以 updated_at 为心跳，缺席超过
+#   本窗口即不再算在途，且该行本身进入认领候选（走既有 PROCESSING 臂：
+#   retry_count+1、重写租约，预算烧尽经 _finalize_expired_lease/PARTIAL 收口
+#   ——不新建第二套状态机）。窗口取 300s：现役 claim 必写非空租约，NULL 租约
+#   的 processing 行按定义是「无人正当持有」的遗留行（旧版认领后崩溃/迁移
+#   半态）；即便存在持 NULL 租约仍在慢速投递的行，其每个 part 尝试都经
+#   mark_part_attempt→_refresh_request_part_summary_in 推进 updated_at，
+#   窗内误杀要求「无租约且心跳静默 ≥5 分钟」，属进程级病态，与 _inline_claims
+#   台账对永久悬挂的处理口径一致（防重复投递优先于防漏发）。
+_DEAD_LEASE_RECLAIM_SECONDS = 300.0
 # 新入队行的认领宽限期：submit 写入 next_retry_at=now+宽限期，宽限期内
 # worker 的 claim_due 不得认领该行——入队后的首次投递由 handler 内联
 # 负责（不走租约协议），避免 worker 与内联投递竞态重复发送同一消息。
@@ -517,6 +532,12 @@ class SQLiteSendRequestQueue:
         safe_limit = max(1, int(limit))
         safe_lease_seconds = max(1, int(lease_seconds))
         lease_expires_at = current_time + timedelta(seconds=safe_lease_seconds)
+        # 死租约有界回收（见 _DEAD_LEASE_RECLAIM_SECONDS 头注）：NULL 租约的
+        # processing 行按「距最后一次写入是否超过回收窗」判在途/死，不再
+        # 永远算在途。updated_at 即心跳列（claim/mark_*/part 汇总写都推进）。
+        dead_lease_cutoff = (
+            current_time - timedelta(seconds=_DEAD_LEASE_RECLAIM_SECONDS)
+        ).isoformat()
         self._ensure_schema_once()
         # 审查 A-22：认领者身份（无事件循环的线程认领 → None，视作跨任务
         # 认领者，内联在途否决照常生效）。
@@ -549,6 +570,11 @@ class SQLiteSendRequestQueue:
                         AND next_retry_at IS NOT NULL
                         AND next_retry_at <= ?
                     )
+                    OR (
+                        state = ?
+                        AND lease_expires_at IS NULL
+                        AND updated_at <= ?
+                    )
                 )
                 AND NOT EXISTS (
                     SELECT 1
@@ -558,8 +584,14 @@ class SQLiteSendRequestQueue:
                       AND in_flight.state = ?
                       AND in_flight.rowid <> send_requests.rowid
                       AND (
-                          in_flight.lease_expires_at IS NULL
-                          OR in_flight.lease_expires_at > ?
+                          (
+                              in_flight.lease_expires_at IS NOT NULL
+                              AND in_flight.lease_expires_at > ?
+                          )
+                          OR (
+                              in_flight.lease_expires_at IS NULL
+                              AND in_flight.updated_at > ?
+                          )
                       )
                 )
                 ORDER BY created_at ASC, rowid ASC
@@ -574,7 +606,10 @@ class SQLiteSendRequestQueue:
                     PARTIAL_ROW_STATE,
                     current_time.isoformat(),
                     PROCESSING_STATE,
+                    dead_lease_cutoff,
+                    PROCESSING_STATE,
                     current_time.isoformat(),
+                    dead_lease_cutoff,
                     safe_limit,
                 ),
             ).fetchall()
