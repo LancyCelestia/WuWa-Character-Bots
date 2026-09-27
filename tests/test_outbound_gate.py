@@ -300,7 +300,9 @@ def _events(audit: InMemoryAuditLogger, request_id: str | None = None) -> list[s
 # 交给 `domains/emergency_info/service/dedupe.py:wash_active_push_key` 规范一次，真被
 # 改写就留一行 WARNING。于是本文件的判据从「脏键 ⇒ 闸 skip」改成三条真不变量：
 #   ① 抵达队列那一行的键必过形（⇒ 结构上不存在「因键形而生的静默 skip」）；
-#   ② 同一身份的多种脏形在出口收敛成**逐字相同**的一条键（重发防护比 skip 更强）；
+#   ② 每一枚**逐字相同**的输入恒得同一枚键（幂等真成立）；不同形态各是一枚身份，
+#      绝不折叠（Q-G8 2026-09-27 翻转：旧版「同一身份多种脏形收敛成同一条键」
+#      正是「过洗撞桶＝静默吞并」病灶本身，见 dedupe.py:active_push_key_segment 头注）；
 #   ③ 不同身份绝不撞段（退化输入走摘要兜底，不塌成同一段）。
 # 判据是宪法、洗的是出口：读侧谓词（`dedupe_key_shape_ok` / `is_legal_segment`）对**原始
 # 串**的负样本断言一条不动，改的只是「过完出口之后会发生什么」。
@@ -326,16 +328,19 @@ _KEY_SEGMENT_MAX = 120
 
 
 def _rescued_segment(text: str) -> str:
-    """洗完仍含字母数字时的段：`washed + "_h" + digest`（S192 跟随洗段近似单射）。
+    """洗完仍含字母数字时的段：`洗后前缀 + "_h" + digest(整枚原串)`（S192 近似单射 + Q-G8）。
 
     按 `dedupe.py:active_push_key_segment` 头注写明的规则用标准库**独立复算**，不 import
-    被测实现：后缀 `_h` + blake2b(digest_size=8) 的 16 hex（共 18 字符），非法字符换成 `_`，
-    截断预算 `120 - len(suffix)`。任一规则（摘要/前缀/预算）改动都会让这里与真身分叉 → 红。
+    被测实现：后缀 `_h` + blake2b(digest_size=8) 的 16 hex（共 18 字符），前缀取
+    **strip 后**的原文把非法字符换成 `_`、截断预算 `120 - len(suffix)`；摘要算在
+    **未 strip 的原串整串**上（前后空白属于身份本身——Q-G8 根修点，此前 digest 算在
+    strip 后的串上，`" a"`/`"a "` 会折进裸段同一桶）。任一规则（摘要对象/前缀/预算）
+    改动都会让这里与真身分叉 → 红。
     """
     digest = hashlib.blake2b(text.encode("utf-8"), digest_size=8).hexdigest()
     suffix = "_h" + digest
     washed = "".join(
-        char if char in _LEGAL_SEGMENT_CHARS else "_" for char in text
+        char if char in _LEGAL_SEGMENT_CHARS else "_" for char in text.strip()
     )[: _KEY_SEGMENT_MAX - len(suffix)]
     return washed + suffix
 
@@ -1310,10 +1315,10 @@ _SEGMENT_SHAPE_CASES: tuple[tuple[str, str, str | None, str], ...] = (
     # 期望值由本文件 `_rescued_segment` 独立复算，与 `_digest_segment` 同法，不 import 出口。
     ("emg:qq:has space:g-1", "rescued", f"emg:qq:{_rescued_segment('has space')}:g-1",
      "段内空白：配置串按逗号切开不 strip 的直达形态（洗完带 `_h<摘要>` 后缀防与裸 `has_space` 撞段）"),
-    ("emg:  qq:item-1:g-1", "rescued", "emg:qq:item-1:g-1",
-     "段前空白：`strip()` 判空拦不住（段非空）"),
-    ("emg:qq:item-1:g-1 ", "rescued", "emg:qq:item-1:g-1",
-     "尾段尾随空白：与干净键收敛成同一条（旧判据「两条队列行＝重发」由出口消除）"),
+    ("emg:  qq:item-1:g-1", "rescued", f"emg:{_rescued_segment('  qq')}:item-1:g-1",
+     "段前空白：Q-G8 起不再折进裸段——前导空白属于身份本身，洗完带自己的 `_h<摘要>`"),
+    ("emg:qq:item-1:g-1 ", "rescued", f"emg:qq:item-1:{_rescued_segment('g-1 ')}",
+     "尾段尾随空白：Q-G8 起与干净键**不再**收敛成同一条（旧收敛＝过洗撞桶＝静默吞并）"),
     ("emg:qq:预警:g-1", "rescued", f"emg:qq:{_digest_segment('预警')}:g-1",
      "段字符集只认 [A-Za-z0-9_.-]：非 ASCII 条目号退化成摘要段"),
     ("emg:qq:item-1:private:3865067623", "skip", None,
@@ -2625,18 +2630,22 @@ def test_shape_battery_covers_every_active_push_namespace() -> None:
     )
 
 
-def test_same_identity_dirty_forms_converge_to_one_key_at_the_exit() -> None:
-    """②：同一身份的多种脏形在出口产出**逐字相同**的键（旧判据「skip 挡重发」作废）。
+def test_whitespace_variant_forms_never_collapse_into_the_bare_key_at_the_exit() -> None:
+    """②（Q-G8 翻转）：裸键与它的前后空白变体**不再是同一桶**——每枚形态自洽、互不吞并。
 
-    旧用例说的是「带空格与不带空格是两条队列行＝重发」，靠闸把它 skip 掉来防重发；
-    新现实直接让两者收敛成同一枚键——收敛比 skip 强（消息照发，幂等照成立）。
+    旧版本断言「同一身份的多种脏形收敛成逐字相同的一条键」，并把收敛吹成比 skip 强的
+    重发防护；SEAT-ATK-QUEUE Q-G8 判死这笔账：`"a"` 与 `" a"` 结构上无法区分
+    「配置事故多带了个空格」与「身份本身就叫 ' a'」，折叠＝不同身份共用幂等桶＝静默吞并。
+    新承诺三条：① 裸键逐字节不动直达（现役合法键零变化）；② 每枚空白变体各带自己
+    的 `_h<摘要>` 落**不同**的键（互异、也异于裸键）；③ 同一形态重复投洗完恒同键
+    （幂等不丢——防重发靠整串恒等，不靠折叠）。
     """
     clean = "emg:qq:item-1:g-1"
     dirty_forms = (
         "emg:qq:item-1:g-1 ",  # 尾随空白
         "emg:  qq:item-1:g-1",  # 段前空白
         "emg:qq: item-1:g-1",  # 段内前导空白
-        "emg:qq:item-1:g-1\t",  # 制表符同样是段级脏
+        "emg:qq:item-1:g-1\t",  # 制表符同样是独立身份
     )
     landed: list[str] = []
     for form in (clean,) + dirty_forms:
@@ -2647,15 +2656,28 @@ def test_same_identity_dirty_forms_converge_to_one_key_at_the_exit() -> None:
         assert outcome.verdict.action == "allow", f"{form!r} 被拒收"
         landed.append(_exit_key_of(queue))
 
-    assert set(landed) == {clean}, f"同身份未收敛成一枚键：{landed}"
+    assert landed[0] == clean, f"现役合法裸键被改写（零改写承诺破裂）：{landed[0]!r}"
+    assert len(set(landed)) == len(landed), (
+        f"空白变体仍互相/与裸键撞桶（过洗吞并复发）：{landed}"
+    )
+    for form, key in zip(dirty_forms, landed[1:]):
+        assert _segments_all_legal(key), (form, key)
+        again = RecordingQueue()
+        assert _push(
+            again, _request(dedupe_key=form), _open_gate(), now=_utc(12, 0)
+        ).verdict.action == "allow"
+        assert _exit_key_of(again) == key, f"同一形态两次洗完键漂移：{form!r}"
 
 
-def test_converged_forms_land_in_one_idempotency_bucket_in_real_queue(
+def test_identical_key_still_dedupes_while_whitespace_variant_never_absorbed(
     tmp_path: Path,
 ) -> None:
-    """②的另一半（真队列）：干净键已占坑时，脏形同身份被 `ON CONFLICT` 判重复。
+    """②的另一半（真队列，Q-G8 翻转）：**整串相同**才被 `ON CONFLICT` 判重复；空白变体不再被吞进裸键桶。
 
-    这条才叫「重发防护」——不是闸 skip（skip 是漏报），而是幂等真成立。
+    旧版本断言「尾随空白脏形与裸形同桶（SKIPPED）」并称其为重发防护——那枚 SKIPPED
+    恰恰是 Q-G8 定性的静默吞并（两枚身份被并成一件）。翻转后两条都必须是真话：
+    ① 同一枚键投两遍：第二遍 SKIPPED（幂等防重发仍然真成立，靠整串恒等、不靠折叠）；
+    ② 尾随空白形与裸形、以及两个不同的空白形：各占各的坑（QUEUED），互不吞并。
     """
     from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
         OutboundGateSettings,
@@ -2676,6 +2698,12 @@ def test_converged_forms_land_in_one_idempotency_bucket_in_real_queue(
         now=_utc(12, 0),
     )
     first = _push(real_queue, _request(dedupe_key="emg:qq:item-1:g-1"), gate, now=_utc(12, 0))
+    repeat = _push(
+        real_queue,
+        _request(request_id="req-repeat", dedupe_key="emg:qq:item-1:g-1"),
+        gate,
+        now=_utc(12, 0),
+    )
     dirty_same = _push(
         real_queue,
         _request(request_id="req-dirty-same", dedupe_key="emg:qq:item-1:g-1 "),
@@ -2689,9 +2717,13 @@ def test_converged_forms_land_in_one_idempotency_bucket_in_real_queue(
         now=_utc(12, 0),
     )
     assert first.receipt is not None and first.receipt.state is ReceiptState.QUEUED
+    assert repeat.receipt is not None
+    assert repeat.receipt.state is ReceiptState.SKIPPED, (
+        "同一枚整串键第二遍没被幂等判重 ⇒ `ON CONFLICT` 防重发失效"
+    )
     assert dirty_same.receipt is not None
-    assert dirty_same.receipt.state is ReceiptState.SKIPPED, (
-        "脏形没落进同一个幂等桶 ⇒ 同一推送发两遍（收敛失效）"
+    assert dirty_same.receipt.state is ReceiptState.QUEUED, (
+        "尾随空白形被吞进裸键桶 ⇒ Q-G8 病灶（过洗撞桶＝静默吞并）复发"
     )
     assert dirty_other.receipt is not None
     assert dirty_other.receipt.state is ReceiptState.QUEUED, (
@@ -2703,7 +2735,8 @@ def test_closed_gate_path_is_normalised_too() -> None:
     """关态同样过一遍出口洗段：闸没开≠没人治理（「本地测通、上线丢」的反打）。
 
     这正是本波同型炸三次的病根——旧现实里关态 passthrough 照发脏键，开闸才判死；
-    新现实下两种状态落库的都是同一枚规范键。
+    新现实下两种状态抵达队列的键都过了一遍出口洗涤（Q-G8 起每枚形态各有其规范形，
+    不再折叠成同一枚）。
     """
     from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
         OutboundGateSettings,
@@ -2716,10 +2749,9 @@ def test_closed_gate_path_is_normalised_too() -> None:
         now=_utc(12, 0),
     )
     queue = RecordingQueue()
-    # 选「同一身份的段尾空白 vs 干净形」而不是「`631 785` vs `631_785`」：后者在洗段
-    # 近似单射（S184 §3-① 修复）后**本就是两个不同身份**（空格段带 `_h<摘要>` 后缀、下划线段
-    # 原样保留），再断它们收敛成同一枚就是断一条被刻意拆开的假命题。段尾空白 `strip()` 掉后
-    # 与干净段同值 ⇒ 仍是「同身份多形收敛」，且脏形（带空格）非经出口洗段不可归一，判据照有牙。
+    # 钉的是「脏形不原样入库、裸形逐字节直达」两件事。旧版在此借「段尾空白与干净段
+    # 收敛同值」构造样本——Q-G8 判该收敛正是过洗撞桶病灶，已翻转为「两枚身份各占各的桶」
+    # （见 `test_whitespace_variant_forms_never_collapse_into_the_bare_key_at_the_exit`）。
     for form, request_id in (
         ("digest_push:631_785:2026-09-14", "req-a"),
         ("digest_push:631_785 :2026-09-14", "req-b"),
@@ -2733,8 +2765,11 @@ def test_closed_gate_path_is_normalised_too() -> None:
             dedupe_namespace="digest_push",
         )
         assert outcome.verdict.reason == "disabled"
-    assert queue.keys == ["digest_push:631_785:2026-09-14"] * 2, (
-        f"关态没洗段（或把两身份错并成一桶）：{queue.keys}"
+    assert queue.keys == [
+        "digest_push:631_785:2026-09-14",
+        f"digest_push:{_rescued_segment('631_785 ')}:2026-09-14",
+    ], (
+        f"关态没在出口洗段成各自规范形（或把两身份错折回一桶）：{queue.keys}"
     )
 
 
@@ -3173,12 +3208,14 @@ def test_wash_is_injective_on_the_two_s184_collapse_classes() -> None:
 
 
 def test_active_push_key_segment_is_injective_legal_idempotent_and_bounded() -> None:
-    """构造侧四把尺（S192 §2 ③④⑤⑥）：退化输入两两不撞、幂等、合法逐字节不变、过谓词且 ≤120。
+    """构造侧四把尺（S192 §2 ③④⑤⑥ + Q-G8 翻转）：退化输入两两不撞、幂等、合法逐字节不变、过谓词且 ≤120。
 
     全部直接调用被测件，不走出口，把「洗段近似单射」的四条承诺钉在最内层：
-    - ③ `中文群` / `：：：` / `空段` 三类退化输入两两不撞；`""` 与 `"   "` **刻意同为空桶**
-      （`active_push_key_segment` 先 `strip()` 再算，空白变体本就是「同一枚空身份」——这正是
-      主代理修法的原话「先 strip() 再算，故 " x" 与 "x" 仍同为 x」，若断它们不等反而是造假红）；
+    - ③ 承载不同信息的退化输入两两不撞。**Q-G8（2026-09-27）翻转了本条旧断言**：
+      旧版「`""` 与 `"   "` 刻意同为空桶、`" x" == "x"`（先 strip 再算）」正是本席判死的
+      过洗撞桶病灶（不同身份共用幂等桶＝静默吞并），一并翻正——空白变体各带自己原串的
+      摘要、`''`/`None`/`'   '` 三枚摘要互异；`""` 一桶的摘要对象不含空白、逐字节如旧
+      （生产存量 `he4a...` 行仍由空串寻址）；
     - ④ 同输入两次调用逐字相同（幂等不被摘要破坏）；
     - ⑤ 合法输入输出逐字节等于输入（现役键零变化的那条承诺要有机检）；
     - ⑥ 洗完的段仍过中央谓词 `is_legal_segment` 且长度 ≤ `_KEY_SEGMENT_MAX`。
@@ -3188,21 +3225,24 @@ def test_active_push_key_segment_is_injective_legal_idempotent_and_bounded() -> 
         is_legal_segment,
     )
 
-    # ③ 三类真正承载不同信息的退化输入：两两不撞。
-    distinct_inputs = ["", "中文群", "：：："]
+    # ③ 承载不同信息的退化输入（Q-G8 起含空值三形态）：两两不撞。
+    distinct_inputs: list[object] = ["", None, "   ", "中文群", "：：："]
     distinct_segments = [active_push_key_segment(x) for x in distinct_inputs]
     assert len(set(distinct_segments)) == len(distinct_segments), distinct_segments
-    # 空段与纯空白同属「空身份」一桶（strip 语义），这是**设计**、不是塌陷：显式钉死，
-    # 免得有人误把它当第二个 S184 缺陷去「修」（真去修就会与 " x"=="x" 那条承诺打架）。
-    assert active_push_key_segment("") == active_push_key_segment("   ") == "h" + (
+    # 空串的桶位逐字节如旧（digest 对象无空白 ⇒ 存量合法键零变化的推广面）。
+    assert active_push_key_segment("") == "h" + (
         hashlib.blake2b(b"", digest_size=8).hexdigest()
-    ), "空/空白应同为空桶"
-    # ⑤+空白不变（`_h` 摘要前的 strip）：带前后空白的合法段与裸段同值。
-    assert active_push_key_segment(" x") == active_push_key_segment("x") == "x"
-    assert active_push_key_segment("  qq  ") == "qq"
+    ), "空串摘要对象漂移 ⇒ 生产存量空段行不再可寻址"
+    # Q-G8 主案：前后空白**不再**折进裸段——变体各带自己原串的摘要，与裸段逐字不同。
+    assert active_push_key_segment("x") == "x"
+    assert active_push_key_segment(" x") == "x_h" + hashlib.blake2b(
+        b" x", digest_size=8
+    ).hexdigest()
+    assert active_push_key_segment(" x") != active_push_key_segment("x")
+    assert active_push_key_segment("  qq  ") != "qq"
 
     # ④ 幂等：对退化/合法/脏样本各调两次都逐字相同；且洗过的段再喂回去仍不动（双洗同键）。
-    idempotent_inputs = distinct_inputs + [
+    idempotent_inputs: list[object] = distinct_inputs + [
         " x", "中文群", "has space", "631 785", "group:1", "9" * 121, "3865067623",
     ]
     for sample in idempotent_inputs:
@@ -3215,10 +3255,55 @@ def test_active_push_key_segment_is_injective_legal_idempotent_and_bounded() -> 
         assert active_push_key_segment(legal) == legal, legal
 
     # ⑥ 洗完一律是合法段且不超长（含边界：长 id 洗后恰 ≤120 且过谓词，否则开闸即判死）。
-    for sample in idempotent_inputs + ["digest_push", "预警", "！!xx！"]:
+    for sample in idempotent_inputs + ["digest_push", "预警", "！!xx！", "  qq  ", "\t"]:
         washed = active_push_key_segment(sample)
         assert is_legal_segment(washed), (sample, washed)
         assert 1 <= len(washed) <= _KEY_SEGMENT_MAX, (sample, len(washed))
+
+
+def test_qg8_fix_preserves_byte_identical_output_for_legacy_no_padding_forms() -> None:
+    """迁移锁（契约标识符一字不动）：**无前后空白**的一切输入，修前修后输出逐字节相同。
+
+    Q-G8 只把「带前后空白的变体不再折进裸段/同一摘要」这一刀切下去；其余形态
+    （合法段、段内含空格、中文、全角冒号、121/122 位长 id、纯下划线退化段……）的
+    digest 对象与洗后前缀都不变 ⇒ 已入生产库的键全部照旧可寻址。修法＝拿改前算法
+    （HEAD 原形，独立复算不 import）对同一批样本现算比对；有人把「不 strip 直判」
+    改出边界（比如把 digest 对象也换成 strip 后）时此锁当场红。
+    """
+    from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
+        active_push_key_segment,
+    )
+
+    def _pre_qg8_segment(value: object) -> str:
+        # 改前原形（git HEAD dedupe.py:134-142）：先 strip 再判、digest 算 strip 后。
+        text = str(value or "").strip()
+        if (
+            1 <= len(text) <= _KEY_SEGMENT_MAX
+            and all(char in _LEGAL_SEGMENT_CHARS for char in text)
+        ):
+            return text
+        digest = hashlib.blake2b(text.encode("utf-8"), digest_size=8).hexdigest()
+        suffix = "_h" + digest
+        washed = "".join(
+            char if char in _LEGAL_SEGMENT_CHARS else "_" for char in text
+        )[: _KEY_SEGMENT_MAX - len(suffix)]
+        if washed and all(char in _LEGAL_SEGMENT_CHARS for char in washed) and any(
+            char.isalnum() for char in washed
+        ):
+            return washed + suffix
+        return "h" + digest
+
+    stable_inputs = [
+        "", "11 08838060", "631 785", "has space", "group:1", "chan nel",
+        "中文群", "：：：", "预警", "item-1", "3865067623", "gov_9.2", "chat.123",
+        "a" * 120, "9" * 121, "9" * 122, "___", "___中文", "digest_push",
+    ]
+    for sample in stable_inputs:
+        assert active_push_key_segment(sample) == _pre_qg8_segment(sample), sample
+    # 有意改道的只有「前后空白变体」——本锁同时钉住改动被限制在这一刀上：
+    assert active_push_key_segment(" x") != _pre_qg8_segment(" x")
+    assert active_push_key_segment("   ") != _pre_qg8_segment("   ")
+    assert active_push_key_segment("631 785 ") != _pre_qg8_segment("631 785 ")
 
 
 def test_poison_nodigest_restores_the_s184_collisions(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3274,38 +3359,44 @@ def test_poison_truncate_at_budget_breaks_long_id_legality(
     )
 
 
-def test_poison_nostrip_breaks_whitespace_invariance(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """注毒③（不落盘）：去掉 `text.strip()` ⇒ `" x"` 与 `"x"` 不再同键（空白粘进段里）。
+def test_poison_prestrip_restores_the_qg8_collapse(monkeypatch: pytest.MonkeyPatch) -> None:
+    """注毒③（不落盘，Q-G8 翻正）：把「先 strip 再判/算」的**改前原形**灌回去 ⇒ 病灶回流。
 
-    这咬的是「空/空白同为空桶、`" x"=="x"`」这条 strip 语义承诺（与 ①②③ 的近似单射配套）：
-    真身先 strip 再判/算，`" x"`→`"x"`；去掉 strip 后 `" x"` 被当脏段，`is_legal_segment` 因内部
-    又 strip 仍判 True ⇒ 直接原样返回带空格的 `" x"`，于是 `" x" != "x"`。若注毒后二者仍相等，
-    说明这一腿没被真正判到（判据落空）。
+    旧版本这条毒咬的是「`" x"=="x"`、空/空白同桶」的 strip 语义承诺；Q-G8 判该承诺
+    正是「过洗撞桶＝静默吞并」病灶本身 ⇒ 毒向翻正：毒体＝HEAD 改前算法（strip-早退 +
+    digest 算 strip 后的串），在它下面 `" x"` 与 `"x"` 重新同段、`''`/`'   '` 重新同摘要；
+    真身下这三处塌陷全被拆开（正锁：`test_active_push_key_segment_is_injective_...`
+    与 `test_whitespace_variant_forms_never_collapse_...`）。若毒体下仍不撞，本毒不成立、须换样本。
     """
     import plugins.bot_unified_runtime.domains.emergency_info.service.dedupe as dedupe_mod
-    from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
-        is_legal_segment,
-    )
 
-    def _no_strip(value: object) -> str:
-        text = str(value or "")  # ← 毒：漏了 .strip()
-        if is_legal_segment(text):
+    def _pre_strip_collapse(value: object) -> str:  # ← 毒：改前原形（strip-早退，digest 算 strip 后）
+        text = str(value or "").strip()
+        if (
+            1 <= len(text) <= _KEY_SEGMENT_MAX
+            and all(char in _LEGAL_SEGMENT_CHARS for char in text)
+        ):
             return text
         digest = hashlib.blake2b(text.encode("utf-8"), digest_size=8).hexdigest()
         suffix = "_h" + digest
         washed = "".join(
-            c if c in _LEGAL_SEGMENT_CHARS else "_" for c in text
+            char if char in _LEGAL_SEGMENT_CHARS else "_" for char in text
         )[: _KEY_SEGMENT_MAX - len(suffix)]
-        if is_legal_segment(washed) and any(c.isalnum() for c in washed):
+        if washed and all(char in _LEGAL_SEGMENT_CHARS for char in washed) and any(
+            char.isalnum() for char in washed
+        ):
             return washed + suffix
         return "h" + digest
 
-    monkeypatch.setattr(dedupe_mod, "active_push_key_segment", _no_strip)
-    assert dedupe_mod.wash_active_push_key("ack:x: x") != dedupe_mod.wash_active_push_key(
+    monkeypatch.setattr(dedupe_mod, "active_push_key_segment", _pre_strip_collapse)
+    assert dedupe_mod.wash_active_push_key("ack:x: x") == dedupe_mod.wash_active_push_key(
         "ack:x:x"
-    ), "注毒未打破空白不变 ⇒ 该腿判据落空（真身与注毒同形）"
+    ), "注毒未复现空白折叠 ⇒ 该腿判据落空（毒体与真身同形，须换样本）"
+    assert dedupe_mod.wash_active_push_key(
+        "digest_push::2026-09-14"
+    ) == dedupe_mod.wash_active_push_key(
+        "digest_push:   :2026-09-14"
+    ), "注毒下空段与纯空白已不共桶 ⇒ 毒体不是改前原形，本条作废重做"
 
 
 # ------------------------------------------- T10 申报与建键同源锁（R-CENTRAL-b I-2）

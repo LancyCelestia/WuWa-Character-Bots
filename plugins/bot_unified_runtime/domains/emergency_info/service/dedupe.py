@@ -130,13 +130,25 @@ def active_push_key_segment(value: object) -> str:
     同一段** ⇒ 两条真消息共用一个幂等桶＝换一种形态继续静默丢（QQ 纯数字打不到，
     TG/guild 形态打得到）。故凡「真被洗过」的段一律带原串摘要后缀：同输入恒同输出
     （幂等不受影响），不同输入靠摘要分开。空段与洗完只剩分隔符的退化输入同样走摘要。
+
+    **Q-G8（2026-09-27 攻击审计 SEAT-ATK-QUEUE）：「不 strip 直判，非法才加摘要」**。
+    S184 那一版的「早退」是**先 `strip()` 再判** ⇒ `" a"` 与 `"a"` 折成同一段、
+    `""`/`None`/`"   "` 三种输入折成同一摘要——这就是上面同一段话禁止的「过洗撞桶」，
+    只是它藏在 strip 这一步里：不同身份共用一个幂等桶＝静默吞并。现改为：
+    - **原串本身就是合法段**才早退（零改写、零后缀）⇒ 已入生产库的合法键形逐字节不变；
+    - 其余形态（含一切带前导/尾随空白的变体）**各是一枚身份**：摘要算在 strip 前的
+      原串整段上（非字符串输入再带上类型标记，`''`/`None`/`'   '` 三枚摘要互异），
+      可读前缀取 strip+字符替换后的洗串——折叠消失，双洗仍逐字节不动（幂等保住在）；
+    - 无前后空白的输入（现役全部可达形态：构造点已各自 strip、OneBot/TG 标识原形）
+      改前改后输出**逐字节相同**，由 `tests/test_outbound_gate.py` 的迁移锁钉死。
     """
-    text = str(value or "").strip()
-    if is_legal_segment(text):
-        return text
-    digest = hashlib.blake2b(text.encode("utf-8"), digest_size=8).hexdigest()
+    raw = str(value or "")
+    if _SEGMENT_RE.match(raw):
+        return raw
+    identity = raw if isinstance(value, str) else f"\u0000{type(value).__name__}:{raw}"
+    digest = hashlib.blake2b(identity.encode("utf-8"), digest_size=8).hexdigest()
     suffix = "_h" + digest
-    washed = _ILLEGAL_KEY_SEGMENT_CHAR_RE.sub("_", text)[: _KEY_SEGMENT_MAX - len(suffix)]
+    washed = _ILLEGAL_KEY_SEGMENT_CHAR_RE.sub("_", raw.strip())[: _KEY_SEGMENT_MAX - len(suffix)]
     if is_legal_segment(washed) and any(char.isalnum() for char in washed):
         return washed + suffix
     return "h" + digest
