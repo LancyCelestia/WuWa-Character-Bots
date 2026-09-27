@@ -5,10 +5,10 @@
 > 修改帮助页数据后运行 `python scripts/command_catalog.py --write`。
 > `/bot help`、`/bot help <模块>` 与本目录共享同一数据源。
 
-- 模块数：78
-- 别名数：514
-- 普通用户可用模块：37；仅管理员模块：41
-- 路由规则数：34；其中登记为内部能力：5
+- 模块数：82
+- 别名数：572
+- 普通用户可用模块：39；仅管理员模块：43
+- 路由规则数：36；其中登记为内部能力：5
 
 ## 使用入口
 
@@ -21,8 +21,8 @@
 
 ### 这个机器人能做什么
 
-- 全部 78 个模块都列在本文件「模块详情」里；普通用户可直接使用其中 37 个公开模块，其余 41 个为管理员诊断与配置模块。
-- 能力横跨人格闲聊、链接解析、点歌、天气、行情、占卜、提醒、订阅推送、表情包、下载与一整套管理员运维命令；全部 78 个模块逐个列在下方「模块详情」，公开模块名单以 /bot help 为准。
+- 全部 82 个模块都列在本文件「模块详情」里；普通用户可直接使用其中 39 个公开模块，其余 43 个为管理员诊断与配置模块。
+- 能力横跨人格闲聊、链接解析、点歌、天气、行情、占卜、提醒、订阅推送、表情包、下载与一整套管理员运维命令；全部 82 个模块逐个列在下方「模块详情」，公开模块名单以 /bot help 为准。
 
 ### 怎么开始聊天
 
@@ -46,7 +46,7 @@
 
 ### 哪些命令只有管理员能用
 
-- 仅管理员模块共 41 个，全部走 `/bot` 前缀（例如 `/bot status`、`/bot runtime`、`/bot model`），普通成员发送会收到拒绝提示；权限由六级角色体系（user/trusted/enterprise/admin/super_admin/blocked）判定。
+- 仅管理员模块共 43 个，全部走 `/bot` 前缀（例如 `/bot status`、`/bot runtime`、`/bot model`），普通成员发送会收到拒绝提示；权限由六级角色体系（user/trusted/enterprise/admin/super_admin/blocked）判定。
 - 排障第一入口是 `/bot status`，追问原因用 `/bot why`。
 
 ### 群聊和私聊有什么差别
@@ -64,7 +64,7 @@
 ### 哪些功能依赖网络？
 
 - 需要联网的模块：上下文、对话、模型、搜索、凭据、文件、群摘要、视频理解、邮件、Telegram、订阅、点歌、搜图、天气、行情、个股行情、商品行情、国债收益率、北向资金、汇率、快报、维基、萌娘百科、历史上的今天、下载、链接、媒体归档、群信息、Epic、聊天、表情收库、紧急信息。
-- 纯本地模块：功能管理、记忆、接入、配置、就绪、角色、人格、路由、历史、暂停、回复、用量、解析、群文件、日志、身份、怪癖、合并转发、运行开关、供应商、表情、占卜、随机图、笔记、收件箱、语音、帮助、戳一戳、决策。
+- 纯本地模块：功能管理、记忆、接入、配置、就绪、角色、人格、路由、历史、暂停、回复、用量、解析、群文件、日志、身份、怪癖、合并转发、运行开关、供应商、表情、占卜、宿主机状态、书面同意、随机图、笔记、日程、收件箱、语音、帮助、戳一戳、决策、亲密模式。
 - 联网模块自带重试与兜底（各模块的「失败兜底」行写明具体行为）；外部源不可用时给可读失败原因。
 
 ### 高频入口速查
@@ -121,7 +121,7 @@
   人格/知识/记忆等文件的在位情况、各持久化存储落在 sqlite 还是内存、
   LLM 供应商与密钥是否就绪。所有信息脱敏输出，不显示密钥与会话原文。
 【指令与参数】
-/bot status：作用=查看运行状态摘要；参数=无；内容=软暂停状态/原因、角色计数、人格与知识文件缺失数、记忆/历史/诊断/审计/回执/队列的开关与存储（sqlite/memory）、限速与安静时间、LLM provider/model/key 状态与就绪下一步；意义=排障第一入口，出问题先看状态再 /bot why。
+/bot status：作用=查看运行状态摘要；参数=无；内容=软暂停状态/原因、角色计数、人格与知识文件缺失数、记忆/历史/诊断/审计/回执/队列的开关与存储（sqlite/memory）、限速与安静时间、LLM provider/model/key 状态与就绪下一步；超管另附宿主机快照行（处理器/显卡/内存/磁盘/占用/版本）与状态卡图片；意义=排障第一入口，出问题先看状态再 /bot why。
 【权限与效果】
   权限=仅管理员（普通成员发送会收到拒绝提示）。
   内容逐段对应：运行时硬开关/软暂停与原因→权限角色计数（admin/enterprise/trusted/blocked）→
@@ -153,7 +153,7 @@
   长期记忆是你主动交给机器人的事实卡片（区别于自动抽取的印象）。
   每条记忆归属“写入它的那个人＋所在会话”，互相隔离。
 【指令与参数】
-/bot memory add <内容>：作用=记住一句话；参数=内容（必填，建议 ≤1200 字）＋--sensitivity=（可选，personal|group|public|credentialed，默认 personal）；内容=回显已记住的正文与 fact_id、sensitivity；意义=让机器人长期记住你的偏好与事实。
+/bot memory add <内容>：作用=记住一句话；参数=内容（必填，建议 ≤1200 字），或加 --sensitivity=（可选，personal|group|public|credentialed，默认 personal）；内容=回显已记住的正文与 fact_id、sensitivity；意义=让机器人长期记住你的偏好与事实。
 /bot memory list：作用=列出我的记忆；参数=无；内容=fact_id＋sensitivity＋正文的清单（私聊=全部个人记忆，群聊=仅 public/group 两级）；意义=核对机器人到底记住了什么。
 /bot memory delete <fact_id>：作用=删除一条记忆；参数=fact_id（必填，来自 add/list 输出）；内容=成功回显已删除，找不到会明说；意义=撤回不想被记住的内容。
 权限=全员（只增删查“你本人”的记忆，别人的看不到也删不掉）。
@@ -726,7 +726,7 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
   优先于 .env）；不在白名单的键（如五个持久化开关）只能改 .env 重启。
   所有子命令都可加 --instance <名称> 操作指定实例。
 【指令与参数】
-/bot runtime set <KEY> <VALUE>：作用=热改一个参数；参数=KEY（必填，可写键见 get 列表）＋VALUE（必填，按键校验）＋--instance <名称>（可选，定位实例）；内容=已设置 KEY = 值（已持久化）；意义=不改 .env 立即生效，重启保留。
+/bot runtime set <KEY> <VALUE>：作用=热改一个参数；参数=KEY（必填，可写键见 get 列表）＋VALUE（必填，按键校验），或加 --instance <名称>（可选，定位实例）；内容=已设置 KEY = 值（已持久化）；意义=不改 .env 立即生效，重启保留。
 /bot runtime get <KEY>：作用=读参数实际生效值；参数=KEY（必填）；内容=值＋（覆盖值）/（.env 默认值）来源标注；意义=确认运行时覆盖与 .env 谁在生效。
 /bot runtime list：作用=列出全部覆盖项；参数=无；内容=KEY=VALUE 清单；意义=盘点改过哪些。
 /bot runtime reset [KEY]：作用=恢复默认；参数=KEY（可选，省略=清空全部覆盖）；内容=清除项数；意义=撤销热改。
@@ -975,7 +975,7 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
 - 输出形式：文本
 - 配置变量：BOT_SESSION_IDENTITY_DB_PATH
 - 可复制示例：/bot identity set 岸宝｜/bot identity tag 早起,秃头,干饭人
-- 总览：【身份】会话身份记忆：/bot identity show|set|tag|clear｜自助称谓偏好：set-name|set-gender|unset-name|unset-gender
+- 总览：【身份】会话身份记忆：/bot identity show|set|tag|clear｜自助称谓偏好：set-name|set-gender|unset-name|unset-gender｜自助关系档：set-relation|unset-relation|show-relation
 - 标题：【身份】会话级身份记忆（管理员）＋用户自助称谓偏好
 
 ### 教程
@@ -997,7 +997,7 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
 /bot identity set-gender <male|female|nonbinary|custom|unknown>：作用=登记你的性别自述；参数=五个值之一（大小写不敏感）；内容=已记下确认；意义=让语气分寸更合适；非法值不记录并列出可接受值。
 /bot identity unset-name：作用=清除称谓偏好；参数=无；内容=已清除/本就没有；意义=恢复自动称呼。
 /bot identity unset-gender：作用=清除性别自述；参数=无；内容=已清除/本就没有；意义=恢复 unknown。
-自助子命令权限=所有用户（只能操作自己的偏好，无他人参数）；unset 为整条记录清除（称谓与性别自述一并移除）；称谓偏好与上方管理员会话身份是两套数据，自助偏好优先级更高。
+自助子命令权限=所有用户（只能操作自己的偏好，无他人参数）；unset-name/unset-gender 为整条记录清除（称谓与性别自述一并移除），unset-relation 只清关系档那一列；称谓偏好与上方管理员会话身份是两套数据，自助偏好优先级更高；关系档的开关语义与词表口径见「亲密模式」模块（/bot help 亲密模式）。
 【权限与效果】
   权限=仅管理员。只调整该会话内的称呼与语气，不改变守岸人核心人格；
   防止会话身份被用来推翻人格设定（防 OOC 护栏内建于渲染层）。
@@ -1838,7 +1838,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 - 失败兜底：区分「独立页缺失/列表缺失/网络失败」的文本提示
 - 配置变量：BOT_WIKI_LANG；BOT_WIKI_ENTRY_PAGES
 - 可复制示例：维基 量子力学｜维基 鸣潮守岸人
-- 总览：【维基】查询百科词条：维基 <词条>
+- 总览：【维基】查通用百科（MediaWiki）：维基 <词条>
 - 标题：【维基】查询百科词条
 
 ### 教程
@@ -1868,7 +1868,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 - 配置变量：BOT_MOEGIRL_QUESTION_ENABLED
 - 可复制示例：萌娘百科 初音未来｜初音未来是谁？
 - 关联回归测试：tests/test_moegirl_search.py；tests/test_moegirl_question_fix.py
-- 总览：【萌娘百科】查询萌娘百科：萌娘百科 <词条>｜直接问 XX是谁
+- 总览：【萌娘百科】查 ACG 向百科：萌娘百科 <词条>｜直接问 XX是谁
 - 标题：【萌娘百科】查询萌娘百科词条
 
 ### 教程
@@ -2114,34 +2114,119 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 ## 群信息
 
 - 权限：普通用户可用
-- 触发别名：群信息；本群信息；群资料；群主是谁；谁是群主；群人数；群公告；群精华；精华消息；本群多大了
+- 触发别名：群信息；本群信息；群资料；群主是谁；谁是群主；群人数；群公告；群精华；精华消息；本群多大了；群相册；本群相册；群相册列表；群待办；本群待办；群待办列表；群里都有谁；本群都有谁；群里谁说过话；本群谁说过话；群参与者；本群参与者；都有谁说过话；我都跟谁聊过；跟谁聊过
 - 能力入口：bot.group_info
-- 群聊/私聊差异：仅群聊生效（私聊回守岸人提示）；群资料/人数全员，公告与精华仅管理员；成员名单不整列（隐私+防刷屏）
+- 群聊/私聊差异：仅群聊生效（私聊回守岸人提示）；群资料/人数/相册/待办/参与者全员，公告与精华仅管理员；成员名单不整列（隐私+防刷屏），参与者族读记忆里的说话人而非协议名单
 - 网络依赖：需要联网
 - 输出形式：文本
 - 可复制示例：群信息｜群主是谁｜群人数｜群公告｜群精华｜本群多大了
 - 关联回归测试：tests/test_group_info.py
-- 总览：【群信息】查本群资料：群信息｜群主是谁｜群人数｜群公告｜群精华
-- 标题：【群信息】本群资料、群主、人数、公告与精华
+- 总览：【群信息】查本群资料：群信息｜群主是谁｜群人数｜群公告｜群相册｜群里都有谁
+- 标题：【群信息】本群资料、群主、人数、公告、精华、相册、待办与参与者
 
 ### 教程
 
 【板块介绍】
-  在群里直接问「群信息 / 群主是谁 / 群人数 / 群公告 / 群精华」，
-  守岸人走 OneBot V11 群接口（群资料/成员列表/公告/精华）现查现答；
-  资料带进程内缓存（资料 600s/成员 900s/公告 600s），不刷屏不慢等。
+  在群里直接问「群信息 / 群主是谁 / 群人数 / 群公告 / 群精华 / 群相册 / 群待办 / 群里都有谁」，
+  守岸人走协议端群接口现查现答：QQ 侧 OneBot V11（群资料/成员列表/公告/精华/相册/待办），
+  Telegram 侧按 Bot API 对等回答（群名/介绍/人数/群主与管理员/置顶当公告位/我的身份与头衔；
+  全量成员名单与精华/相册/待办没有对应接口，缺的逐条直说不猜），
+  邮件里没有「群」这个对象，只答本会话元信息与参与者；
+  资料带进程内缓存（资料 600s/成员 900s/公告 600s/相册 600s/待办 120s），
+  待办缓存刻意给得短——刚设好的待办不该被旧表盖住。
 【指令与参数】
 群信息：作用=查本群小档案；参数=无；内容=群名/群主/人数/上限/管理员数，管理员另附公告首段与精华条数；意义=一问就知道群概况。
 群主是谁｜群人数｜本群多大了：作用=单点直问；参数=无；内容=只答问的那一项（建群时长依赖协议字段，没有就直说）；意义=口语直问直答。
 群公告｜群精华：作用=看公告首段/精华条数；参数=无；内容=仅管理员，其余成员收到权限提示；意义=群务信息分级可见。
-边界（诚实降级）：群链接/群分享、群等级/群标签、群相册——协议无标准 API，不做不假装；接口失败如实说拿不到不编数；成员名单不整列（隐私+防刷屏）；仅群聊生效。
+群相册｜群待办：作用=看本群相册概览与挂着的待办；参数=无；内容=相册只到「哪个相册多少张」这一层、不列单张照片，待办最多列 5 条并显式说另有几条；意义=群务一眼看全。
+群里都有谁｜群参与者｜谁说过话：作用=说清这个群里都有谁在说话；参数=无；内容=按记忆里的说话人给名字（不是协议成员名单），人多的群给前若干名并显式说还有多少，读过记录却一条都没取到时直说「没读到记录」而不是「没人说过话」；意义=知道自己在跟谁聊。
+边界（诚实降级）：群链接/群分享、群等级/群标签仍无对应动作，不做不假装；相册与待办的字段名认不出时只报条数、不编名字；接口失败如实说拿不到（≠本群没有）；成员名单不整列（隐私+防刷屏）；参与者来自记忆而非协议名单，两者不是一回事；仅群聊生效。
+【参与者这一项】
+  「群里都有谁 / 群参与者 / 谁说过话」这一族不查协议名单，答的是记忆里真的说过话的人；
+  同一份判据在群聊与私聊各自成腿，看的范围就是当前这个会话；没读到记录时如实说没读到。
 【权限与效果】
-  权限=群资料/人数全员；公告与精华仅管理员。仅群聊生效，私聊回提示。
-【示例】群信息｜群主是谁｜群人数｜本群多大了｜群公告｜群精华
+  权限=群资料/人数/相册/待办/参与者全员；公告与精华仅管理员。仅群聊生效，私聊回提示。
+【示例】群信息｜群主是谁｜群人数｜本群多大了｜群公告｜群精华｜群里都有谁
 
 ### 帮助页一致性要求
 
 - 本模块的实时帮助以 `/bot help 群信息` 为准。
+
+## 宿主机状态
+
+- 权限：仅管理员
+- 触发别名：宿主机状态；机器状态；机器配置；宿主状态；宿主機狀態；機器狀態；hoststate；jiqizhuangtai；jizhuangtai；jiqipeizhi
+- 能力入口：bot.host_state
+- 群聊/私聊差异：仅超级管理员（其余角色得到一句温和拒绝）；群聊与私聊同面可问；读数本机现算、逐行打码，只读不改任何设置
+- 网络依赖：纯本地
+- 输出形式：文本；图片
+- 可复制示例：机器状态｜机器配置｜宿主状态｜hoststate
+- 关联回归测试：tests/test_host_state_card.py；tests/test_host_metrics.py；tests/test_host_status.py
+- 总览：【宿主机状态】超管看本机：机器状态｜机器配置｜版本与占用
+- 标题：【宿主机状态】这台机器的配置、占用与运行版本（仅管理员）
+
+### 教程
+
+【板块介绍】
+  说「机器状态 / 机器配置 / 宿主机状态」，守岸人现读本机事实：
+  版本族（NoneBot、OneBot 适配器、协议端、插件、Python）走包元数据，
+  硬件与占用走系统计数器，两路都汇到 domains/ops/host_metrics.py 这一个取数口。
+【指令与参数】
+机器状态：作用=报本机实况；参数=无；内容=CPU/内存/磁盘占用、显卡与显存、系统版本，附守岸人自己的运行版本族；意义=一句话知道机器现在累不累。
+机器配置：作用=报硬件；参数=无；内容=型号/核心数/总内存/磁盘分区容量；意义=区分「配置」与「此刻占用」两件事。
+读数来源：全部本机现算（版本走包元数据，占用走系统计数器），不是背下来的一段话；拿不到的项直说拿不到，绝不补一个看起来合理的数。
+出图：能出图时发一张超管视图卡片（属性名与属性值各自左对齐）；渲染后端不可用时退成纯文本，并把「卡未出图」那句话说明白。
+边界：这是超管专属视图，非超管问到只会得到一句温和的「这台机器我不对外报」，不会泄露盘符路径或任何密钥形态；本能力只读，不碰任何设置与文件。
+【权限与效果】
+  权限=仅超级管理员（其余角色得到一句温和的拒绝，不报错、不泄露）。
+  效果=一张 Mica 卡片图 + 一份纯文本台账；渲染后端缺席时只剩文本，且卡上那行「未出图」会直说。
+  读数 90 秒内复用缓存，连续追问不重复扫机器；每行出卡前过打码口。
+【示例】机器状态｜机器配置｜宿主状态｜hoststate
+
+### 帮助页一致性要求
+
+- 本模块的实时帮助以 `/bot help 宿主机状态` 为准。
+
+## 书面同意
+
+- 权限：仅管理员
+- 触发别名：同意卡；书面同意；同意單；書面同意；consentcard；yijika；shumiantongyi
+- 能力入口：bot.consent
+- 群聊/私聊差异：仅管理员及其以上；看单不分群聊私聊，批一张具体的卡按同意账的阶梯判（R2=超管私聊亲批）；发起人不批自己发起的卡；只回显账上事实，本命令面自己绝不改参数
+- 网络依赖：纯本地
+- 输出形式：文本
+- 可复制示例：同意卡 待批｜同意卡 看 3f2a1b｜同意卡 批 3f2a1b 8c1d4e7a｜书面同意 驳 3f2a1b 8c1d4e7a
+- 关联回归测试：tests/test_consent_command_surface.py；tests/test_safety_exec_throat_wire.py
+- 总览：【书面同意】危险参数的批准入口：同意卡 待批｜看｜批｜驳（仅管理员）
+- 标题：【书面同意】哪些参数改动在等谁点头，以及怎么点这个头（仅管理员）
+
+### 教程
+
+【板块介绍】
+  需要书面同意的参数被改动时，设置咽喉不落笔，先签一张同意卡；这一族命令就是把那张卡批掉或驳回的那句话。
+  分级表唯一住 domains/core/safety_exec/config_risk.py，同意账唯一住 domains/core/safety_exec/consent.py，
+  执法点唯一住 domains/core/safety_exec/settings_gate.py——本命令面零判定、零第二本账，只把一句入站消息交给它。
+【指令与参数】
+同意卡 待批：作用=列出还没人批的工单；参数=无；内容=每张卡的工单号、短码、要改哪枚参数、旧值→新值、风险档、申请人、签出与过期时刻；意义=点头之前先把要改的东西看完整，不靠别人转述。
+同意卡 看 <工单号>：作用=单看一张卡的全文；参数=工单号（卡面上那一串，必填）；内容=与待批页同一套字段，多一个「状态」；意义=群里传话传了一半时，以账上的原文为准。
+同意卡 批 <工单号> <短码>：作用=照卡面批准这一件；参数=工单号 + 卡上短码（两个都必填，短码必须逐字对上）；内容=批语已记下，并说清接下来该谁做什么；意义=危险的参数改动要的是有权限的人亲手的一句话，不是模型顺手的一个字。
+同意卡 驳 <工单号> <短码>：作用=驳回并作废这张卡；参数=工单号 + 短码；内容=已驳回，这张卡不再有效；意义=不想改就明说不改，别让它挂到过期还占着待办。
+认不下的句子一律不当命令：触发词后面跟了我看不懂的东西，我就当没听见，绝不「大概像」就把它读成一次批准。
+【档位是什么】
+  R0 不问就改（每次照记一行流水）；R1 由管理员在原会话里确认；R2 要超级管理员在私聊里亲口批；
+  R3 连批都不给，只允许出待审补丁，部署由主人亲手做。
+【权限与效果】
+  权限=管理员可看单；一张具体的卡够不够格批，由账上的阶梯判：可信级、私聊门、原会话门、
+  发起人不得批自己发起的那张、一次性、到点作废（不可续）。判据只有一处，这里不复制。
+  效果=改动的真身在批之前一个字节都不动；短码对不上不算批也不算驳，那张卡照旧待批，但这次尝试会落一条流水。
+【批了之后】
+  批准只记下「谁批的、批的是哪件事」；真正落笔要原来发起这件事的人用同一参数再说一次，凭证一次有效。
+  账本装不上、值与当初批的对不上、没有热改路径的，一律不改，并且明说为什么没改——不做「看起来改了」那种回显。
+【示例】同意卡 待批｜同意卡 看 3f2a1b｜同意卡 批 3f2a1b 8c1d4e7a｜书面同意 驳 3f2a1b 8c1d4e7a
+
+### 帮助页一致性要求
+
+- 本模块的实时帮助以 `/bot help 书面同意` 为准。
 
 ## 好感度
 
@@ -2180,7 +2265,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 ## Epic
 
 - 权限：普通用户可用
-- 触发别名：epic；epic free；epic 免费；免费游戏；免費遊戲；遊戲免費；steam免費；游戏免费；steam免费；steam 免费
+- 触发别名：epic；epic free；epic 免费；免费游戏；免費遊戲；遊戲免費；steam免費；steam 免費；游戏免费；steam免费；steam 免费
 - 能力入口：bot.epic
 - 自然语言触发：epic；免费游戏；免費遊戲
 - 群聊/私聊差异：群聊/私聊行为一致（无会话分支）
@@ -2217,10 +2302,10 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 - 群聊/私聊差异：群聊/私聊行为一致（无会话分支）
 - 网络依赖：纯本地
 - 输出形式：图片
-- 配置变量：BOT_RANDPIC_DIRS；BOT_RANDPIC_TRIGGER_WORDS
+- 配置变量：BOT_RANDPIC_DIRS；BOT_RANDPIC_TRIGGER_WORDS；BOT_RANDPIC_ENABLED；BOT_RANDPIC_MAX_FILE_MB；BOT_RANDPIC_NO_REPEAT_WINDOW_SECONDS；BOT_RANDPIC_DISPATCH_ENABLED；BOT_RANDPIC_DISPATCH_PROBABILITY；BOT_RANDPIC_DISPATCH_COOLDOWN_SECONDS；BOT_RANDPIC_DISPATCH_MAX_PER_HOUR
 - 可复制示例：随机图｜来张图
-- 关联回归测试：tests/test_randpic_identity.py
-- 总览：【随机图】从图库随机发一张：随机图 / 来张图
+- 关联回归测试：tests/test_randpic_identity.py；tests/test_randpic_dispatch.py
+- 总览：【随机图】从图库随机发一张：随机图 / 来张图（也可回复后主动发）
 - 标题：【随机图】图库随机发图
 
 ### 教程
@@ -2228,16 +2313,21 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 【板块介绍】
   借鉴 nonebot-plugin-randpic 的“指令→随机图”玩法但只吸收思路：
   不建目录、不建数据库、不做上传，一把随机梭哈。目录清单 30 秒 TTL
-  缓存，改文件夹半分钟内生效。
+  缓存，改文件夹半分钟内生效。P14 波把「谁开口要图才发」扩成
+  三触发：指令 / 回复完用户消息后 / 用户戳 bot 后（后两条缺省关）。
 【指令与参数】
 随机图 / 来张图：作用=从你配置的图库文件夹随机发一张图；参数=无；内容=一张图片（jpg/jpeg/png/gif/webp/bmp，单张 ≤20MB）；意义=自建图库的抽卡玩法。
+回复后主动发图（P14）：bot 答完一句就有概率补一张图；BOT_RANDPIC_DISPATCH_ENABLED、BOT_RANDPIC_DISPATCH_PROBABILITY、BOT_RANDPIC_DISPATCH_COOLDOWN_SECONDS、BOT_RANDPIC_DISPATCH_MAX_PER_HOUR（缺省关）。戳 bot 那条走戳一戳的 randpic 臂（见「戳一戳」页），三触发共用同一条读目录路径与同一本窗账。
+窗内不重发：BOT_RANDPIC_NO_REPEAT_WINDOW_SECONDS（按会话记账，0=关=旧行为可重样）；开态下指令路整库都在窗内时退「最久没发」那张（不拒不发），主动路宁可不发也不刷屏。
 配置：图库目录写在 BOT_RANDPIC_DIRS（可多个、递归扫描、只读绝不自建目录）；触发词可用 BOT_RANDPIC_TRIGGER_WORDS 换成自己的（默认 随机图/来张图）。
 随机图|来张图：作用=发图；参数=无（触发词后跟标点/语气词也可命中；「随机图片库」这类包含关系词不误触发）；内容=图片或图库为空的配置提示；意义=娱乐。
 【取值范围】
   BOT_RANDPIC_DIRS：文件夹路径列表；扩展名 jpg/jpeg/png/gif/webp/bmp；
-  单文件 ≤20MB；目录不存在/为空时给友好提示不报错。
+  单文件 ≤20MB；目录不存在/为空/图被移走时给友好提示不报错、不发死引用。
+  BOT_RANDPIC_NO_REPEAT_WINDOW_SECONDS：≥0 秒，0=不记账按纯随机。
 【权限与效果】
-  权限=全员（bot_randpic_enabled 可关）。
+  权限=全员（bot_randpic_enabled 可关）。主动发图那条腿同样吃安静时间
+  窗与 blocked 名单两道硬门，拨开概率也越不过。
 【示例】随机图｜来张图
 
 ### 帮助页一致性要求
@@ -2314,6 +2404,47 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 
 - 本模块的实时帮助以 `/bot help 笔记` 为准。
 
+## 日程
+
+- 权限：普通用户可用
+- 触发别名：日程；日程板；日程列表；我的日程；看看日程；日程清单；日程表；日程导入；课表导入；课表；課表；她在干嘛；她在忙什么；主人在干嘛；主人去哪了；她出去了吗；richeng；richengliebiao；rclb；schedule；kebiao
+- 能力入口：bot.reminder
+- 自然语言触发：日程 <时间> <活动>；日程表；日程列表；我的日程；日程 删 <N>；日程 删课 <N>；日程 公开 <N>；日程 隐私 <N>；日程 导入 <多行文本>；课表 导入 <多行文本>；课表；她在干嘛；她在忙什么；主人在干嘛；主人去哪了；她出去了吗；明天8点有课
+- 群聊/私聊差异：日程板按用户归属（board-<owner>，与提醒/笔记共库不共表义）；代答按可见性分级投影
+- 网络依赖：纯本地
+- 输出形式：文本
+- 配置变量：BOT_SCHEDULE_ENABLED；BOT_SCHEDULE_DB_PATH；BOT_SCHEDULE_STATUS_REPLY_ENABLED；BOT_SCHEDULE_NATURAL_CAPTURE_ENABLED
+- 可复制示例：日程 明天8点到9点半 高数｜日程 每周三14:00 组会 公开｜日程表｜日程 公开 2｜日程 删 3｜她在干嘛
+- 关联回归测试：tests/test_schedule_board.py
+- 总览：【日程】她的日程表与智能代答：日程 <时间> <活动>｜日程表｜日程 删 N｜日程 公开 N｜课表 导入
+- 标题：【日程】日程记录、课表导入与按分级表代答
+
+### 教程
+
+【板块介绍】
+  日程板复用 V2.1 日程引擎（与提醒共用车间不共表义）：一条日程=
+  活动＋起止时刻＋可见性（公开/隐私，缺省隐私）。信息来源只有你
+  亲口说过的话与发来的课表——不查设备、不读定位、不做任何本机监控。
+【指令与参数】
+日程 <时间> <活动>：作用=往你的日程板记一条；参数=时间（必填，支持「明天8点/8点到9点半/每周三」，单双周要带「学期 2026-09-07」）＋活动正文（可带「公开」二字）；内容=编号式确认；意义=把安排交给我排好。缺省隐私。
+日程表 / 日程列表 / 我的日程：作用=看未来 30 天安排；参数=无；内容=编号＋时刻＋[公]/[密]；意义=盘点。
+日程 删 N：作用=放下第 N 条最近那次；参数=编号（日程表里的号）；内容=确认；「日程 删课 N」整条安排不再出现。
+日程 公开 N / 日程 隐私 N：作用=切换第 N 条对别人的可答面；参数=编号；内容=确认；公开也只说「在做什么＋几点到几点」。
+日程 导入 / 课表 导入：<多行文本>：作用=课表/计划整批记（一行一条「周X 8:00-9:40 名称 地点 单/双」）；也可以直接发课表图片（图只在你发来的这一刻读，不存不扫）。
+她在干嘛 / 主人在忙什么：作用=别人替你问一声；内容=按分级表回：公开条目普通用户只听得到类别与时刻，熟人（trusted/管理员）听得到活动名；隐私与敏感细节永不出口。
+【权限与效果】
+  记录腿全员可用（BOT_SCHEDULE_ENABLED 总闸，缺省关，改后重启）。
+  代答腿另有总闸 BOT_SCHEDULE_STATUS_REPLY_ENABLED（缺省关）；
+  自然语言顺手记（「明天8点有课」不带「日程」二字）另受
+  BOT_SCHEDULE_NATURAL_CAPTURE_ENABLED 控制（缺省关）。
+  隐私判定发生在出站前：代答由确定性投影成句，不经大模型，
+  地点/健康/饮食/作息细节对非本人永不外给（分级表见设计文档）。
+【示例】日程 明天8点到9点半 高数｜日程 每周三14:00 组会 公开｜日程表｜日程 公开 2｜日程 删 3｜日程 导入 周一8:00-9:40 高数 一教101｜她在干嘛
+
+### 帮助页一致性要求
+
+- 本模块的实时帮助以 `/bot help 日程` 为准。
+
 ## 收件箱
 
 - 权限：普通用户可用
@@ -2356,7 +2487,7 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 - 群聊/私聊差异：全员可用；对话自动配音范围由 BOT_TTS_AUTO_REPLY_SCOPE 决定（private/group/all）
 - 网络依赖：纯本地
 - 输出形式：语音
-- 配置变量：BOT_TTS_ENABLED；BOT_TTS_API_URL；BOT_TTS_GPTSOVITS_DIR；BOT_TTS_REF_AUDIOS；BOT_TTS_TRIGGER_WORDS；BOT_TTS_OUTPUT_DIR；BOT_TTS_PRESET；BOT_TTS_MAX_CHARS；BOT_TTS_HARD_MAX_CHARS；BOT_TTS_MAX_AUDIO_BYTES；BOT_TTS_TIMEOUT_SECONDS；BOT_TTS_SPEED_FACTOR；BOT_TTS_TEMPERATURE；BOT_TTS_TOP_K；BOT_TTS_TOP_P；BOT_TTS_TEXT_LANG；BOT_TTS_TEXT_SPLIT_METHOD；BOT_TTS_CACHE_ENABLED；BOT_TTS_CACHE_MAX_BYTES；BOT_TTS_CACHE_MAX_AGE_DAYS；BOT_TTS_AUTO_REPLY_ENABLED；BOT_TTS_AUTO_REPLY_SCOPE；BOT_TTS_AUTO_REPLY_MAX_CHARS；BOT_TTS_AUTO_REPLY_PROBABILITY；BOT_TTS_AUTO_REPLY_ALWAYS；BOT_TTS_VOICE_HOOK_ENABLED
+- 配置变量：BOT_TTS_ENABLED；BOT_TTS_API_URL；BOT_TTS_GPTSOVITS_DIR；BOT_TTS_REF_AUDIOS；BOT_TTS_TRIGGER_WORDS；BOT_TTS_OUTPUT_DIR；BOT_TTS_PRESET；BOT_TTS_MAX_CHARS；BOT_TTS_HARD_MAX_CHARS；BOT_TTS_MAX_AUDIO_BYTES；BOT_TTS_TIMEOUT_SECONDS；BOT_TTS_SPEED_FACTOR；BOT_TTS_TEMPERATURE；BOT_TTS_TOP_K；BOT_TTS_TOP_P；BOT_TTS_TEXT_LANG；BOT_TTS_TEXT_SPLIT_METHOD；BOT_TTS_CACHE_ENABLED；BOT_TTS_CACHE_MAX_BYTES；BOT_TTS_CACHE_MAX_AGE_DAYS；BOT_TTS_AUTO_REPLY_ENABLED；BOT_TTS_AUTO_REPLY_SCOPE；BOT_TTS_AUTO_REPLY_MAX_CHARS；BOT_TTS_AUTO_REPLY_SPLIT_MAX_CHARS；BOT_TTS_AUTO_REPLY_PROBABILITY；BOT_TTS_AUTO_REPLY_ALWAYS；BOT_TTS_VOICE_HOOK_ENABLED
 - 可复制示例：说 今天的潮汐很安静｜语音 我在这里｜tts hello
 - 关联回归测试：tests/test_tts.py；tests/test_tts_outbound_chain.py；tests/test_tts_hijack_guard.py；tests/test_tts_speech_gate.py；tests/test_tts_failure_visibility.py；tests/test_tts_audio_gate.py
 - 总览：【语音】让我用声音念一段话：说 <文本>
@@ -2368,10 +2499,12 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   语音能力对接本机 GPT-SoVITS v2ProPlus 的 HTTP 接口（api_v2.py，默认 9880），
   用你训练好的守岸人权重合成；文本不出本机，合成结果落运行时目录。
 【指令与参数】
-说 <文本>：作用=把文本合成为守岸人音色的语音消息；参数=文本（必填，默认上限 200 字，BOT_TTS_MAX_CHARS=0 为不限）；内容=一条语音；意义=让回复带上声音。
+说 <文本>：作用=把文本合成为守岸人音色的语音消息；参数=文本（必填，默认上限 200 字，BOT_TTS_MAX_CHARS=0 为不限）；内容=一段声音连同它所读的那串字（声音在前、文字在后，同一条消息里一起发出）；意义=让回复带上声音。
 语音 <文本>｜念 <文本>｜朗读 <文本>｜tts <文本>：触发词等价，繁體 說/語音/唸/朗讀/語音合成 同（正文保留繁體用字）；BOT_TTS_TRIGGER_WORDS 可自定义。
-对话自动配音：BOT_TTS_AUTO_REPLY_ENABLED 开启后，人格回复会连同语音一起发出，范围由 BOT_TTS_AUTO_REPLY_SCOPE 决定（private/group/all）。
-配音概率：默认只有 5% 的回复会带语音（BOT_TTS_AUTO_REPLY_PROBABILITY）；BOT_TTS_AUTO_REPLY_ALWAYS=true 可临时改成条条都配，方便验收听音。
+对话自动配音：两闸串联才会发声——总闸 BOT_TTS_ENABLED 与自动配音闸 BOT_TTS_AUTO_REPLY_ENABLED 都得开着，人格回复才连同语音一起发出；范围由 BOT_TTS_AUTO_REPLY_SCOPE 决定（private/group/all）。
+配音走哪条腿：BOT_TTS_VOICE_HOOK_ENABLED 只选路、不是开关。开=新链，正文先过审再拿去合成，合成失败会留一条运营故障（进中央告警与诊断卡）；关=旧包装路径，失败就不带语音、正文照发，只在结果上留机读留痕。该键装配期读死，改后要重启。
+配音概率：默认有 10% 的回复会带语音（BOT_TTS_AUTO_REPLY_PROBABILITY）；BOT_TTS_AUTO_REPLY_ALWAYS=true 可临时改成条条都配，方便验收听音。
+长句拆条：BOT_TTS_AUTO_REPLY_SPLIT_MAX_CHARS>0 时，超字数自动按句末标点切成多条语音随同一条消息发出（0=不拆；语速 0.85 时 60 秒≈150~180 字）。
 预设与硬顶：合成参数以中央预设表为唯一缺省源（BOT_TTS_PRESET，其余数值键=管理员覆盖）；单次文本硬顶 2000 字、产物 8 MiB（BOT_TTS_HARD_MAX_CHARS / BOT_TTS_MAX_AUDIO_BYTES，超限拒绝并留痕）；群聊自动配音另受内容群白名单安全门约束（黑名单永远赢，白名单空=群面不配音绝不猜群）。
 【权限与效果】
   权限=全员，前提是 BOT_TTS_ENABLED=true 且 9880 服务在跑。参考音频未配置、
@@ -2457,24 +2590,37 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 - 触发别名：戳一戳；poke
 - 能力入口：on_notice:戳一戳
 - 网络依赖：纯本地
-- 输出形式：文本回应
-- 配置变量：BOT_POKE_ENABLED；BOT_POKE_PROBABILITY
-- 总览：【戳一戳】戳机器人有概率收到回应（有冷却）
+- 输出形式：文本回应；语音+文本；表情包图片；随机图片；回戳
+- 配置变量：BOT_POKE_ENABLED；BOT_POKE_PROBABILITY；BOT_POKE_REPLY_ENABLED；BOT_POKE_REPLY_MODE；BOT_POKE_POKE_BACK；BOT_POKE_EXTRA_ARMS_ENABLED；BOT_POKE_PRIVATE_COOLDOWN_SECONDS；BOT_POKE_GROUP_COOLDOWN_SECONDS；BOT_POKE_GROUP_TEXT；BOT_POKE_PRIVATE_TEXT；BOT_POKE_FOLLOW_ENABLED；BOT_POKE_FOLLOW_PROBABILITY；BOT_POKE_FOLLOW_COOLDOWN_SECONDS；BOT_POKE_FOLLOW_MAX_PER_HOUR；BOT_POKE_AFTER_REPLY_ENABLED；BOT_POKE_AFTER_REPLY_PROBABILITY；BOT_POKE_AFTER_REPLY_COOLDOWN_SECONDS；BOT_POKE_AFTER_REPLY_MAX_PER_HOUR；BOT_POKE_AFFINITY_ENABLED；BOT_POKE_AFFINITY_DELTA；BOT_POKE_AFFINITY_DAILY_MAX
+- 关联回归测试：tests/test_poke_v2.py；tests/test_poke_arms_v3.py
+- 总览：【戳一戳】被戳回一个（六臂轮换）+ 跟戳 + 说完顺手戳（都有冷却）
 - 标题：【戳一戳】戳一戳互动回应
 
 ### 教程
 
 【板块介绍】
-  戳一戳是轻量互动：群友戳机器人头像，机器人按概率回一句话。
-  冷却与概率防止连戳刷屏。
+  戳一戳是轻量互动：群友戳机器人头像，机器人按概率回应一个表达。
+  冷却与概率防止连戳刷屏。P14 波把「回应」扩成六臂矩阵，并补了
+  跟戳（A 戳 B 时跟着戳）与「说完话顺手戳一下」两条主动腿。
 【指令与参数】
 触发=QQ「戳一戳」头像互动；行为=按概率回应，默认有冷却防骚扰。
+被戳回一个（六臂确定性轮换，只出一个）：反戳 / 自然语言回复 / 语音+文本 / 表情包 / 随机图 / 固定话术；BOT_POKE_REPLY_MODE 显式指名任一臂，mix=轮换（扩臂要 BOT_POKE_EXTRA_ARMS_ENABLED=true，缺省停在旧三臂=旧行为）。
+跟戳：群里 A 戳 B 时按概率跟着戳 B；BOT_POKE_FOLLOW_ENABLED、BOT_POKE_FOLLOW_PROBABILITY、BOT_POKE_FOLLOW_COOLDOWN_SECONDS、BOT_POKE_FOLLOW_MAX_PER_HOUR（缺省关；独立于回戳的冷却与每小时账）。
+说完顺手戳：bot 回复完、群内主动接话、入群欢迎之后按概率戳一下对方；BOT_POKE_AFTER_REPLY_ENABLED、_PROBABILITY、_COOLDOWN_SECONDS、_MAX_PER_HOUR（缺省关）。
+硬门：安静时间窗内、blocked 名单里的人一律不戳也不主动发图——拨开概率开关也越不过这两道。
+语音臂复用 bot.tts 那条「文本+语音」能力（BOT_TTS_ENABLED 且引擎在线才有声，合成不成只留文本腿）；随机图臂吃 BOT_RANDPIC_DIRS（图库空则温和回退固定话术，绝不静默空回）。
 可调：BOT_POKE_ENABLED（开关）、BOT_POKE_*_COOLDOWN_SECONDS（冷却）、BOT_POKE_PROBABILITY（概率）。
 权限=全员；无文字命令，属互动事件。
-无指令：作用=头像互动回应；参数=无；内容=概率性一句回应；意义=轻互动。配置经 .env 或 /bot runtime set（可写键以 runtime 白名单为准）。
+无指令：作用=头像互动回应与轻量主动接触；参数=无；内容=六臂之一（一句回应 / 语音+文本 / 一张图 / 回戳）；意义=轻互动。配置经 .env 或 /bot runtime set（可写键以 runtime 白名单为准，本族多为改 .env+重启）。
+【取值范围】
+  BOT_POKE_REPLY_MODE：fixed/llm/meme/voice/randpic/poke 六值显式指名，
+  或 mix=按 (会话,戳者,时间桶) 的 SHA-256 摘要确定性轮换（同戳同果，
+  不用随机数）；轮换池缺省三臂，BOT_POKE_EXTRA_ARMS_ENABLED=true 才扩到六臂。
+  概率类键取值 0..1；冷却与每小时上限各自独立记账。
 【权限与效果】
-  权限=全员。开关关闭时戳一戳无任何回应。
-【示例】戳一戳守岸人的头像 → 有概率收到回应
+  权限=全员。开关关闭时戳一戳无任何回应；安静时间窗与 blocked 名单
+  是硬门，主动腿（跟戳/说完顺手戳/主动发图）全部缺省关。
+【示例】戳一戳守岸人的头像 → 有概率收到回应（话术 / 语音 / 一张图 / 被戳回来）
 
 ### 帮助页一致性要求
 
@@ -2639,6 +2785,56 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 
 - 本模块的实时帮助以 `/bot help 紧急信息` 为准。
 
+## 亲密模式
+
+- 权限：普通用户可用
+- 触发别名：亲密模式；亲密档位；intimate；qinmimoshi
+- 能力入口：bot.chat（整句「亲密模式 开/深开/关」；关系档子命令见 /bot identity）
+- 自然语言触发：亲密模式 开；亲密模式 深开；亲密模式 关
+- 群聊/私聊差异：私聊按本人；群聊成员说的只对自己（个人档），管理员拨上去的才是整群钉
+- 网络依赖：纯本地
+- 输出形式：文本确认（语气与首跳资格的变化，不改内容放行面）
+- 配置变量：BOT_CONTENT_ROUTE_ENABLED；BOT_CONTENT_ROUTE_INTIMATE_TTL_MINUTES；BOT_CONTENT_ROUTE_L1_AUTO_ENABLED；BOT_CONTENT_ROUTE_L1_AUTO_MIN_TIER；BOT_CONTENT_ROUTE_GROUP_PER_USER_ENABLED；BOT_CONTENT_ROUTE_GROUP_WHITELIST；BOT_CONTENT_ROUTE_GROUP_BLACKLIST；BOT_CONTENT_ROUTE_PRIVATE_WHITELIST；BOT_CONTENT_ROUTE_PRIVATE_BLACKLIST
+- 可复制示例：亲密模式 开；亲密模式 深开；亲密模式 关；/bot identity set-relation 恋人；/bot identity show-relation
+- 关联回归测试：tests/test_intimate_tiers_v4.py
+- 总览：【亲密模式】整句开关：亲密模式 开|深开|关｜关系档自助设定：/bot identity set-relation|unset-relation|show-relation
+- 标题：【亲密模式】这一阵用什么语气相处，你们自己说（整句开关＋关系档）
+
+### 教程
+
+【板块介绍】
+  亲密档=「这一阵用什么语气相处」的会话状态，分深浅两档：浅档只改称呼、
+  语气与投入度；深档才允许把首跳换到在册的成人内容通道。档**为什么**成立只
+  记一处（runtime/content_route.py 的 pin_source）：本人显式开关、管理员钉、
+  内容信号三类有权换模型，Master Love 与好感度自动腿属于「给档不换模型」。
+  关系档（恋人/情侣/夫妻/长辈/晚辈/家人/挚友/master…）给这一档具体的形状。
+【指令与参数】
+亲密模式 开（同义：亲密模式开／开启亲密模式／打开亲密模式／亲密模式 on）：作用=把当前会话上到亲密档的**浅档**（只给关系语气，不改默认模型）；参数=无（整句才算命令，句子中间带这几个字不算）；内容=一句守岸人语气的确认；意义=想被更柔软地对待就说一句，不必念名单。
+亲密模式 深开（同义：亲密模式 开 深／亲密模式 开 二档／亲密模式 开 grok／二档／深档）：作用=浅档之上再允许把首跳换到在册的成人内容通道（grok 优先）；参数=无（整句才算命令，三条深档判据先于浅档匹配）；内容=深档确认一句；意义=「档成立」与「该换模型」自此分家——要哪种自己说。
+亲密模式 关（同义：亲密模式关闭／解除亲密模式／亲密模式 off）：作用=深浅两档一起解除；参数=无；内容=回到平时语气的确认；意义=说完就撤，不粘着。
+自动退出：作用=亲密档从**激活那一刻**起 60 分钟后自然退出；参数=BOT_CONTENT_ROUTE_INTIMATE_TTL_MINUTES（.env+重启）；内容=会话活跃不续期、再说一次「开」即重置；意义=不会有哪句话把你永久钉在亲密档上。
+好感度自动进浅档：作用=相处到某一档的人不必开口也拿到浅档语气；参数=BOT_CONTENT_ROUTE_L1_AUTO_ENABLED（总闸）/ BOT_CONTENT_ROUTE_L1_AUTO_MIN_TIER（门槛档号，真身 character/affinity.py 的 _ATTITUDE_TIERS）；内容=只给档、不换模型，与 Master Love 同类；意义=亲密语气不该只发给名单里那两位。两枚改 .env 后要重启（合并层未登记，/bot runtime set 明确拒绝）。
+/bot identity set-relation <关系>：作用=告诉守岸人你们是什么关系，让这一档有具体的形状；参数=受控词表内的关系或其口语别名（词表与每档语气指令的真身=character/relationships.py，本册零抄录）；内容=已记下的档号；意义=同一句「亲密模式 开」，关系不同语气就该不同；词表外的值不落档也不清档，并把整张词表回给你。
+/bot identity unset-relation：作用=只清关系档那一列；参数=无；内容=已清除（带原先记的档号）；意义=称谓偏好与性别自述不受牵连——这与 unset-name 的整行删除是两件事。
+/bot identity show-relation：作用=看自己当前的关系档；参数=无；内容=档号，或明说「没设定过，按相处深浅自然来」；意义=先核对再改，不靠猜。
+权限=全员：任何人对自己说一句就生效，无需管理员。群聊里成员说的只对自己（个人档），要把整群钉上得管理员；群聊整面还受黑白名单约束（白名单为空=整群关闭，绝不猜群；黑名单永远赢）。
+硬线：内容放行面不因关系档而改变，仍由会话门 explicit_allowed_for_session 判；六条硬线任何关系、任何开关、任何设定都压不过（security/content_safety.py）。
+【取值范围】
+  档位=浅(l1)/深(l2)；退出=一句「亲密模式 关」或 60 分钟 TTL 自然退出（按
+  激活时刻起算、活跃不续期、重开即重置）；显式钉与管理员钉不再被第二道
+  max_ttl 悄悄截掉（2026-09-24 裁定 R4 A）。关系档取值由受控词表决定，
+  词表外一律不落档；同时命中两档按歧义不记录，不替谁编一个方向。
+【权限与效果】
+  权限=全员（任何人对自己拨）。会话准入门链：总闸 BOT_CONTENT_ROUTE_ENABLED
+  → 私聊/群聊黑白名单（私聊白名单空=放开、群聊白名单空=整群关闭，刻意不对称；
+  黑名单永远赢）→ 群内成员个人档总闸 BOT_CONTENT_ROUTE_GROUP_PER_USER_ENABLED。
+  只改变称呼与投入度，不推翻任何既有的身份与称谓事实；六条硬线压不过。
+【示例】亲密模式 开｜亲密模式 深开｜亲密模式 关｜/bot identity set-relation 恋人
+
+### 帮助页一致性要求
+
+- 本模块的实时帮助以 `/bot help 亲密模式` 为准。
+
 ## 路由覆盖与内部接口
 
 ### 路由规则 → 帮助模块
@@ -2676,6 +2872,8 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   - content | bot.content | 链接
   - chat | bot.chat | 聊天
   - media_archive | bot.media_archive | 媒体归档
+  - host_state | bot.host_state | 宿主机状态
+  - consent | bot.consent | 书面同意
   - daily_assist | bot.daily_assist | 收件箱
   - emergency_info | bot.emergency_info | 紧急信息
   - group_info | bot.group_info | 群信息
@@ -2700,6 +2898,8 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   - capability.game_live | reserved | 预留：游戏直播事件接入，尚未实现
   - capability.meme_absorb | active | 表情收库
   - capability.group_info | active | 群信息
+  - capability.host_state | active | 宿主机状态
+  - capability.consent | active | 书面同意
   - capability.daily_assist | active | 收件箱
   - capability.tts | active | 语音
   - capability.emotion | active | 内部：心情引擎，经上下文注入，不占文本路由

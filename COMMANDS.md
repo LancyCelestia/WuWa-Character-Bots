@@ -15,6 +15,7 @@
 - 普通成员只见公开模块；管理员另见管理员专属模块（含本手册全部内容）。
 
 <!-- BEGIN AUTO:COMMANDS-MODULE-INDEX generated-from=_HELP_ENTRIES by tests/test_commands_md_generated_index.py; 请勿手改本块 -->
+
 ## 模块索引（自动生成 · 逐 topic 覆盖）
 
 > 本节由 `tests/test_commands_md_generated_index.py` 从 `echo.py` 的 `_HELP_ENTRIES` 自动投影，
@@ -84,11 +85,14 @@
 - 吃什么（普通用户可用）：bot.eat
 - 媒体归档（仅管理员）：bot.media_archive
 - 群信息（普通用户可用）：bot.group_info
+- 宿主机状态（仅管理员）：bot.host_state
+- 书面同意（仅管理员）：bot.consent
 - 好感度（普通用户可用）：bot.affinity
 - Epic（普通用户可用）：bot.epic
 - 随机图（普通用户可用）：bot.randpic
 - 提醒（普通用户可用）：bot.reminder
 - 笔记（普通用户可用）：bot.reminder
+- 日程（普通用户可用）：bot.reminder
 - 收件箱（普通用户可用）：bot.daily_assist
 - 语音（普通用户可用）：bot.tts
 - 帮助（普通用户可用）：bot.help
@@ -99,6 +103,8 @@
 - 忽略（仅管理员）：matcher:IGNORE（空消息静默；未知命令形态回引导）
 - 决策（仅管理员）：/bot decision
 - 紧急信息（仅管理员）：bot.emergency_info
+- 亲密模式（普通用户可用）：bot.chat（整句「亲密模式 开/深开/关」；关系档子命令见 /bot identity）
+
 <!-- END AUTO:COMMANDS-MODULE-INDEX -->
 
 ## 管理员专属（/bot 前缀命令族）
@@ -129,7 +135,7 @@
 | 群策略 | `/bot group list\|add\|del\|set\|clear …` | 群黑白名单四档 | 档位 black1\|black2\|white1\|white2；群号数字可多个 |
 | 群文件 | `/bot 群文件` | 群上传统计（仅群聊） | 无 |
 | 文件 | `文件 <格式> <主题>` | 生成文档并上传群文件 | 格式 md\|markdown\|docx\|pptx\|xlsx\|pdf |
-| 身份 | `/bot identity show\|set\|tag\|clear`；自助 `/bot identity set-name\|set-gender\|unset-name\|unset-gender` | 会话级身份记忆＋用户自助称谓偏好 | set `<昵称>`；tag 逗号分隔最多 8 个；自助四子命令所有用户可用、只能改自己（set-gender 取值 male\|female\|nonbinary\|custom\|unknown，set-name ≤32 字）；对本会话生效，人格不变 |
+| 身份 | `/bot identity show\|set\|tag\|clear`；自助 `/bot identity set-name\|set-gender\|unset-name\|unset-gender` | 会话级身份记忆＋用户自助称谓偏好 | set `<昵称>`；tag 逗号分隔上限以配置真身现算为准；自助四子命令所有用户可用、只能改自己（set-gender 取值 male\|female\|nonbinary\|custom\|unknown，set-name 长度上限以配置真身现算为准）；对本会话生效，人格不变 |
 | 怪癖 | `/bot quirk list\|approve\|retire\|add` | 人格怪癖审核制 | list [pending\|active\|retired] 上限 20；approve/retire `<id前缀>` 唯一命中；add 直添即生效 |
 | 邮件 | `/mail status\|accounts\|use\|send\|pause\|resume` | Gmail/QQ 收发控制 | 仅 Telegram 管理端；send 三/四段用 `\|` 分隔 |
 
@@ -145,7 +151,7 @@
 
 ### 运行开关类（.env 键，改后重启）
 
-- 限流：`BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR/_PER_MINUTE`（≥0，0=该帽不生效）、`BOT_RATE_LIMIT_EMOTION_EXEMPT`（默认 true）、`BOT_GROUP_CHAT_AUTO_REPLY_ENABLED`（默认 false）+`…_PROBABILITY`（0..1 默认 0.004，2026-09-12 实弹调低防自我触发限流）、安静时间 6 键 `BOT_QUIET_HOURS_*`——以上均可 `/bot runtime set` 热改。
+- 限流：`BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR/_PER_MINUTE`（≥0，0=该帽不生效）、`BOT_RATE_LIMIT_EMOTION_EXEMPT`（默认 true）、`BOT_GROUP_CHAT_AUTO_REPLY_ENABLED`（默认 false）+`…_PROBABILITY`（0..1 默认 0.004，2026-09-12 实弹调低防自我触发限流）、安静时间键族 `BOT_QUIET_HOURS_*`——以上均可 `/bot runtime set` 热改。
 - 点名回复节流：`BOT_RATE_LIMIT_CHAT_SENDER_MIN_INTERVAL_SECONDS`（默认 45，同一人点名回复最小间隔秒数，0=关闭）——可 `/bot runtime set` 热改。
 - 合并转发：`BOT_RENDER_FORWARD_MIN_NODES`（默认 4）/`_MIN_CHARS`（1500）/`_MAX_NODES`（0=不限）/`_NODE_CHARS`（≥200，默认 900），热改；消费在装配期，需重启。
 - 群摘要：`BOT_SHARED_GROUP_CONTEXT_ENABLED`（默认 false）、`BOT_GROUP_DIGEST_LIST_MODE`（whitelist|blacklist|off|all）、`BOT_GROUP_DIGEST_WHITELIST/BLACKLIST`——热改；每日通讯总结推送 `BOT_GROUP_DIGEST_PUSH_ENABLED`（默认 true）+`BOT_GROUP_DIGEST_PUSH_TIME`（HH:MM，默认 21:30，仅白名单群、非 whitelist 零推送）——.env 键，重启生效。
@@ -157,7 +163,7 @@
 | 模块 | 触发 | 作用 | 关键参数 |
 |---|---|---|---|
 | 订阅 | `/订阅 add\|list\|pause\|resume\|remove` | 平台新内容推送 | add `<公开目标>`（群内需管理员）；pause/resume/remove `<id>` 目的地粒度 |
-| 点歌 | `点歌 <歌名>`、`点歌 <编号>`、`点歌模式 <模式>` | 搜歌发送（候选选择窗默认开启） | 同名/多候选 ≥2 首一律先出候选卡询问，回复序号数字（如 `2`）或 `点歌 2` 即选播，不再直接播首选；候选 300 秒内有效，不回复不播放；模式 卡片\|语音\|音频\|链接\|全部可组合（管理员持久化） |
+| 点歌 | `点歌 <歌名>`、`点歌 <编号>`、`点歌模式 <模式>` | 搜歌发送（候选选择窗默认开启） | 同名/多候选 ≥2 首一律先出候选卡询问，回复序号数字（如 `2`）或 `点歌 2` 即选播，不再直接播首选；候选时限以配置真身现算为准，不回复不播放；模式 卡片\|语音\|音频\|链接\|全部可组合（管理员持久化） |
 | 表情 | `表情 <模板> [文字]`、`表情 列表` | meme-generator-rs 生成表情 | 文字多段用 ｜ |
 | 偷表情 | `偷表情 [关键词]`、`表情库统计` | 表情库加权随机 | 关键词/情绪标签可选 |
 | 搜图 | `搜图`＋图片 | SauceNAO 反搜来源 | 图片需同条消息 |
@@ -166,11 +172,11 @@
 | 个股行情 | `英伟达股价`、`AMD 股价`、`英特尔股价`、`股价`、`股價`、`個股`、英文 `stocks`＋公司别名；`市值` 须与公司别名共现（如 `英伟达市值`，裸词不触发） | 个股行情（OHLCV/市值，出金融卡；数据带来源与延迟标注） | 与「行情」互不抢路由（裸「行情」归行情）；OpenAI 未上市，只给有来源的公开估值说明 |
 | 汇率 | `汇率`、`美元兑人民币`、`100日元换多少人民币`、`匯率`/`兌換` 等 | 汇率查询/主要货币面板（出金融卡） | 11 币种、基准货币明确；中间价口径带延迟标注；TWD/MOP/AED 暂无行情会明说；与 stocks 重叠时汇率优先 |
 | 占卜 | `占卜`、`塔罗 [三张\|每日一抽]`、`八字 <生日时间>` | 金钱卦/塔罗/八字（含地支藏干） | 日期 `1998年3月2日\|1998-03-02\|1998/3/2`；只给日期按午时；1900-2100 年 |
-| 快报 | `快报`/`早报`/`晚报`/`今日热点`/`科技新闻`/`AI新闻`/`财经快报`/`财经新闻`/`国际新闻`；昵称形式 `守岸人 快报`/`守岸人 AI新闻` 等等价触发 | RSS 聚合快报（10 分钟缓存）：默认 20 条；标题下带 RSS 摘要行（治标题党）；自动过滤营销条目（求职/招聘/推广/优惠等） | 类目：财经/国际/科技·AI/综合轮转；裸「新闻」不触发 |
+| 快报 | `快报`/`早报`/`晚报`/`今日热点`/`科技新闻`/`AI新闻`/`财经快报`/`财经新闻`/`国际新闻`；昵称形式 `守岸人 快报`/`守岸人 AI新闻` 等等价触发 | RSS 聚合快报（缓存窗以配置真身现算为准）：默认条数以配置真身现算为准；标题下带 RSS 摘要行（治标题党）；自动过滤营销条目（求职/招聘/推广/优惠等） | 类目：财经/国际/科技·AI/综合轮转；裸「新闻」不触发 |
 | 维基 | `维基 <词条>` | MediaWiki 百科 | 默认中文维基 |
 | 萌娘百科 | `萌娘百科 <词条>`；直接问「XX是谁？」 | 萌百查询＋实体问句自动查询 | 问句剥出实体 2-30 字；未命中转聊天 |
 | 历史上的今天 | `历史上的今天 [设置 HH:MM\|状态\|取消]` | 当日历史＋每日推送 | 群内设置/取消需管理员 |
-| 下载 | `/bot download <链接>`（裸发「下载 …」当前不走路由，请用 /bot 前缀） | yt-dlp 下载回传；多连接并行（分片 8 并发+16MB Range 分块，装有 aria2c 时自动委托 -x16）；平台有 CC 字幕时自动下载保存（srt 优先、zh 简体优先），回复显示「字幕已保存：路径」 | 单文件 ≤1GB；拒绝内网地址 |
+| 下载 | `/bot download <链接>`（裸发「下载 …」当前不走路由，请用 /bot 前缀） | yt-dlp 下载回传；多连接并行（分片 8 并发Range 分块大小以配置真身现算为准，装有 aria2c 时自动委托 -x16）；平台有 CC 字幕时自动下载保存（srt 优先、zh 简体优先），回复显示「字幕已保存：路径」 | 单文件上限以配置真身现算为准；拒绝内网地址 |
 | 昵称 | `守岸人/岸宝 <命令>`；`/bot 昵称 set <QQ号> <小名>` | 昵称触发命令（后者管理员）；繁体触发词已支持：`點歌`/`快報`/`財經新聞`/`國際新聞`/`親密度`/`天氣`/`天氣預報`/`隨機圖`/`來張圖` 等 | 昵称表经 `/bot runtime nickname` 维护 |
 | 链接 | 直接发 http(s) 链接 | 平台信息卡解析 | B站/抖音/小红书/油管/推特/GitHub 等 |
 | 草稿 | `报存 给 <收件人> 发消息\|邮件[，主题：…，内容：…]` | 自动发送草稿预览 | 收件人可用 、,， 分隔多个；当前仅预览不实发 |
@@ -178,8 +184,8 @@
 | 好感度 | `好感度`/`好感查看`/`查询好感`/`好感`/`好感值`/`亲密度`/`affinity`；`好感度 算法` | 双向好感（-100~+100 八档，v5 多因素线性步长） | `好感` 仅独立成词时触发（防「好感消失了」误触）；群聊出榜，`我` 只看自己，`算法` 输出 v5 定性说明（多因素：说话温度×相处时长×第一印象×当日心情，不展示固定加减数值） |
 | Epic | `epic`/`免费游戏`/`steam免费` | Epic+Steam 每周限免 | 无参数 |
 | 随机图 | `随机图`/`来张图` | 自建图库随机发图（仅发原图本体，不附带「随机图片」等文字标注） | 目录 `BOT_RANDPIC_DIRS`；触发词 `BOT_RANDPIC_TRIGGER_WORDS` |
-| 语音 | `说 <文本>`、`语音 <文本>`、`念 <文本>`、`朗读 <文本>`、`语音合成 <文本>`；繁體 `說`/`語音`/`唸`/`朗讀`/`語音合成`；英文 `tts`/`say`（大小写不敏感）；拼音 `shuo`/`yuyin`/`nian`/`langdu` | 文本合成守岸人音色语音（本机 GPT-SoVITS v2ProPlus，深度帮助 `/bot help 语音`） | 触发词后必须跟正文，只发「说」等裸触发词不占路由、交回人格对话；正文默认上限 200 字（`BOT_TTS_MAX_CHARS`，硬顶 `BOT_TTS_HARD_MAX_CHARS`）；追加词 `BOT_TTS_TRIGGER_WORDS` 与内置 16 词合并非替换；繁體正文保留繁體用字不转简；失败降级：私聊守岸人口吻文案（如「嗓子还没接上——语音服务好像没在跑」），群内走中央 A-19 降级池；总开关 `BOT_TTS_ENABLED`、参考音频 `BOT_TTS_REF_AUDIOS`、自动配音 `BOT_TTS_AUTO_REPLY_*`（默认关） |
-| 提醒 | `<时间>提醒我 <事项>`、`提醒列表`、`取消提醒 <id前缀>` | 到点主动督促 | id 前缀 4-12 位唯一命中；事项 ≤120 字 |
+| 语音 | `说 <文本>`、`语音 <文本>`、`念 <文本>`、`朗读 <文本>`、`语音合成 <文本>`；繁體 `說`/`語音`/`唸`/`朗讀`/`語音合成`；英文 `tts`/`say`（大小写不敏感）；拼音 `shuo`/`yuyin`/`nian`/`langdu` | 文本合成守岸人音色语音（本机 GPT-SoVITS v2ProPlus，深度帮助 `/bot help 语音`） | 触发词后必须跟正文，只发「说」等裸触发词不占路由、交回人格对话；正文默认上限以配置真身现算为准（`BOT_TTS_MAX_CHARS`，硬顶 `BOT_TTS_HARD_MAX_CHARS`）；追加词 `BOT_TTS_TRIGGER_WORDS` 与内置 16 词合并非替换；繁體正文保留繁體用字不转简；失败降级：私聊守岸人口吻文案（如「嗓子还没接上——语音服务好像没在跑」），群内走中央 A-19 降级池；总开关 `BOT_TTS_ENABLED`、参考音频 `BOT_TTS_REF_AUDIOS`、自动配音 `BOT_TTS_AUTO_REPLY_*`（默认关） |
+| 提醒 | `<时间>提醒我 <事项>`、`提醒列表`、`取消提醒 <id前缀>` | 到点主动督促 | id 前缀 4-12 位唯一命中；事项长度上限以配置真身现算为准 |
 | 记忆 | `/bot memory add\|list\|delete` | 个人长期记忆（全员，仅本人） | add 支持 `--sensitivity=personal\|group\|public\|credentialed`（默认 personal）；群聊 list 只见 public/group |
 | 路由 | `/bot route <文本>`、`/bot routes` | 路由判定/路由表（全员只读） | 文本必填 |
 
@@ -203,7 +209,7 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 console     # 控制台
 powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 backend-smoke -Message "测试后端主链路"
 ```
 
-完整任务表（smoke/queue/transport/credential/knowledge-sync 等约 40 项）执行 `dev.ps1 help` 查看；测试策略、路径与安全规则见 `AGENTS.md`、`WORKSPACE_GUIDE.md` 与 `docs/ai-setup-knowledge-pack.md`。运行数据统一在 `ChatBot_Runtime\data\`；`.env`、Cookie、Token、数据库内容不进入聊天、日志或文档。
+完整任务表（smoke/queue/transport/credential/knowledge-sync 等项，数以脚本自身现算为准）执行 `dev.ps1 help` 查看；测试策略、路径与安全规则见 `AGENTS.md`、`WORKSPACE_GUIDE.md` 与 `docs/ai-setup-knowledge-pack.md`。运行数据统一在 `ChatBot_Runtime\data\`；`.env`、Cookie、Token、数据库内容不进入聊天、日志或文档。
 
 
 ## 功能控制（控制面服务同源）
