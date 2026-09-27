@@ -189,9 +189,30 @@ async def _download_voice_source(url: str, target: Path, *, proxy: str = "") -> 
         import httpx
     except ImportError:  # pragma: no cover - httpx 随 nonebot 必装
         return None
+    # SEAT-ATK-VISION F-V-2（网络卫生波 S-FIX-NETHYG）：本腿曾是出站取字节里唯一
+    # 不过中央 SSRF 咽喉的一条（入站 vision/transcribe/downloader 全闸）。与
+    # transcribe._download_audio 同款接法：入口先过 check_download_url（拒→None，
+    # 降级直链 audio 但绝不出站），逐跳落点复查经 httpx request 事件钩在**每一跳
+    # 建连前**再过同一咽喉——公网入口 302→内网/元数据落点时那一跳绝不发出。
+    # 局部导入防装配环（与 transcribe 先例同口径）；钩内 RejectedUrlError 由下方
+    # 既有 except Exception 兜底吞成 None（丢源不泄露，与下载失败同降级面）。
+    from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+        RejectedUrlError,
+        check_download_url,
+    )
+
+    try:
+        check_download_url(url)
+    except RejectedUrlError:
+        return None
+
+    def _guard_hop(request: Any) -> None:
+        check_download_url(str(request.url))
+
     client_kwargs: dict[str, Any] = {
         "timeout": httpx.Timeout(20.0),
         "follow_redirects": True,
+        "event_hooks": {"request": [_guard_hop]},
     }
     if proxy:
         client_kwargs["proxy"] = proxy
@@ -288,6 +309,20 @@ def _provider_message_id(result: Any) -> str | None:
     return str(value) if value is not None else None
 
 
+def _send_failure_summary(kind: str, exc: BaseException) -> str:
+    """atkfix M-2（收窄裁定口径）：失败回执 safe_summary 携带异常**类型**。
+
+    kind 是 worker 判据与幂等去重逐字消费的承重串（``worker.py`` 按
+    ``issue.kind`` 判定确认/终局），一个字节都不许变。既有裁决锁
+    （tests/test_operational_failures.py:368-373）钉死**异常消息文本**绝不
+    进回执 JSON——回执要落库，消息原文只准进本地日志（_FinalSendError 分支
+    同口径先例）。故 safe_summary 富化只取类型名（非敏感分类词，ValueError
+    与 OSError 的分野已是诊断价值），消息原文一个字符不带；原因全文见本
+    函数调用方所在分支的 warning 日志（detail=%s）。
+    """
+    return f"{kind} {type(exc).__name__}"[:96]
+
+
 def _mail_html_body(text: str) -> str:
     """把回复正文包装成邮件 HTML 正文（守岸人配色，内联样式）。
 
@@ -307,7 +342,26 @@ def _mail_html_body(text: str) -> str:
     )
 
 
-def _build_mail_reply_message(bot: Any, event: Any, text: str) -> EmailMessage:
+def _mail_message_id(salt: str, sender_id: str, recipient: str, subject: str, text: str) -> str:
+    """由「邮件身份 + 队列请求号」确定性派生 Message-ID（atkfix R3）。
+
+    旧写法每装配一次就 ``make_msgid()`` 盖一个随机新号：SMTP 在 DATA 之后断连
+    会归 ``FAILED_RETRYABLE``（:702-747）⇒ 队列重投 ⇒ 每重投一次换一个号 ⇒
+    收件人收到多封「同文不同号」的重复邮件。这里改成**同一封信重投必得同一个号**：
+    输入取队列稳定身份 ``salt``（= request_id，重投期间逐字不变）叠加发件/收件/
+    主题/正文——这些在重投间同样稳定。不同邮件（不同 request_id 或不同正文）
+    ⇒ 不同号，故**不破**按部件幂等的既有契约；同号让收件端/我方出口都能按
+    RFC 5322 的 Message-ID 去重。domain 仍取发件地址域，无 @ 落 localhost 兜底。
+    """
+    domain = sender_id.partition("@")[2] if "@" in sender_id else "localhost"
+    raw = f"{salt}\x00{sender_id}\x00{recipient}\x00{subject}\x00{text}"
+    local = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return f"<{local}@{domain}>"
+
+
+def _build_mail_reply_message(
+    bot: Any, event: Any, text: str, *, message_salt: str
+) -> EmailMessage:
     bot_info = getattr(bot, "bot_info", None)
     sender_id = str(getattr(bot_info, "id", "") or getattr(bot, "self_id", "")).strip()
     sender_name = str(getattr(bot_info, "name", "") or "").strip()
@@ -320,6 +374,15 @@ def _build_mail_reply_message(bot: Any, event: Any, text: str) -> EmailMessage:
     message["From"] = formataddr((sender_name, sender_id)) if sender_name else sender_id
     message["To"] = recipient
     message["Subject"] = f"Re: {subject}" if subject else "Re:"
+    # atkfix M-4：stdlib smtplib.send_message 不自动盖 Message-ID，nonebot 邮件
+    # 适配器也不盖 ⇒ 旧写法出站邮件**没有消息号**，对方客户端引用回复时
+    # In-Reply-To 无物可指，会话线程自源头断裂。装配层自盖（域取发件地址域，
+    # 无 @ 则落 localhost 兜底）。atkfix R3：号由「邮件身份 + 队列请求号」
+    # 确定性派生（见 ``_mail_message_id``），不再每装配一次盖一个随机新号——
+    # 重投同一封 ⇒ 同一个号，收件端可据 Message-ID 去重，杜绝重复投递。
+    message["Message-ID"] = _mail_message_id(
+        message_salt, sender_id, recipient, subject, text
+    )
     if message_id:
         message["In-Reply-To"] = message_id
         message["References"] = message_id
@@ -329,7 +392,7 @@ def _build_mail_reply_message(bot: Any, event: Any, text: str) -> EmailMessage:
 
 
 def _build_mail_attachment_envelope(
-    bot: Any, event: Any, body_text: str
+    bot: Any, event: Any, body_text: str, *, daily_count: int | None
 ) -> MailEnvelope:
     """邮件附件腿的信封（需求 16(3) 三端对齐 · S-T-TGSEND）。
 
@@ -346,8 +409,11 @@ def _build_mail_attachment_envelope(
     与本名册比对，两者不一致（管线把请求路由到了别处）就整件拒发，
     **绝不静默改投**。
 
-    ``daily_count`` 留 ``None``：日限执法要跨进程计数状态，真身归装配层。
-    网关在 ``None`` 时放行但记一行日志，绝不把「没接计数器」读成「额度还剩」。
+    ``daily_count``＝**当日已投件数的 live 读值**（atkfix R2）：调用方从投递喉道
+    ``FileTransferGateway.mail_attachment_count_today()`` 取，逐件刷新后交进来。
+    计数真身住在网关这条唯一喉道上（唯一事实源，装配层不另建第二本账）；这里
+    只做注入。仍保留 ``None`` 通道：直接构造信封的历史/测试调用若显式传 None，
+    网关照旧「放行但记日志」，绝不把「没接计数器」读成「今天还剩 50 件」。
     """
     bot_info = getattr(bot, "bot_info", None)
     sender_address = str(
@@ -362,7 +428,7 @@ def _build_mail_attachment_envelope(
         body_text=body_text,
         sender_address=sender_address,
         sender_name=sender_name,
-        daily_count=None,
+        daily_count=daily_count,
     )
 
 
@@ -433,10 +499,16 @@ async def send_nonebot_message(
     # 部件级进度：已成功发出的媒体部件数。>0 时异常按结果未知终态处理，
     # 上游不再整体重试（否则会把已送达图片/文件重发一遍）。
     delivered_parts = 0
+    # atkfix M-3：已送达部件中最后一枚**被出口确认**的消息号（只从成功返回的
+    # 发送腿取）。结果未知回执携带它：管理员与队列至少有一枚可指认的把手。
+    delivered_message_id: str | None = None
+    # atkfix M-4：邮件文本腿出站报文的自盖 Message-ID。仅供 SENT 回执兜底；
+    # 失败/结果未知回执绝不携带（未经出口证明的号不算送达证据）。
+    outbound_message_id: str | None = None
     download_proxy = _resolve_download_proxy(bot)
 
     async def _send() -> Any:
-        nonlocal delivered_parts
+        nonlocal delivered_parts, delivered_message_id, outbound_message_id
         parts = media_parts
         # remaining 取代闭包 text：caption 随图发出后置空，避免同一段正文重复发送。
         remaining = text
@@ -453,17 +525,29 @@ async def send_nonebot_message(
             transport_name: Literal["telegram", "mail"] = (
                 "telegram" if adapter_name == "telegram" else "mail"
             )
-            envelope = (
-                _build_mail_attachment_envelope(bot, event, remaining)
-                if transport_name == "mail"
-                else None
-            )
             result: Any = None
             # B3 阶段 1：附件统一经 FileTransferGateway 投递；缺失/超 2MB 的
             # 不可重试判定、caption 截 1000 字、读全量字节、回执缺失按失败
             # 的语义逐行等价搬运（见 file_gateway._deliver_telegram_document）。
             gateway = get_default_file_gateway()
             for part_index, part in enumerate(files):
+                # atkfix R2：邮件附件信封逐件构造，daily_count 现读喉道当日已投件数
+                # （gateway 是唯一投递喉道＝计数真身，装配层不另建账），使多部件
+                # 请求内的第 2..N 件也吃到前件成功后的实时递增，杜绝一次性快照低估。
+                envelope = (
+                    _build_mail_attachment_envelope(
+                        bot,
+                        event,
+                        remaining,
+                        daily_count=(
+                            gateway.mail_attachment_count_today()
+                            if transport_name == "mail"
+                            else None
+                        ),
+                    )
+                    if transport_name == "mail"
+                    else None
+                )
                 try:
                     ticket = gateway.stage(
                         FileSource(
@@ -500,6 +584,13 @@ async def send_nonebot_message(
                     raise _FinalSendError(str(exc.kind)) from exc
                 result = file_receipt.provider_result
                 delivered_parts += 1
+                # atkfix M-3：附件腿同样登记已证明号（TG 文档取出口回号；邮件
+                # 附件出口不回号，provider_file_id 诚实为 None ⇒ 不登记）。
+                delivered_message_id = (
+                    _provider_message_id(result)
+                    or file_receipt.provider_file_id
+                    or delivered_message_id
+                )
                 if transport_name == "telegram" and not file_receipt.provider_file_id:
                     raise RuntimeError("telegram attachment receipt missing")
                 # 邮件腿**不得**照抄上一条：SMTP 出口本就不回消息号
@@ -523,10 +614,14 @@ async def send_nonebot_message(
                         remaining = ""
                     else:
                         # 超长正文塞 caption 会被 Telegram 截断：图先发，文字单独成条。
-                        await send_photo(
+                        # atkfix M-3：返回的 Message 不再丢弃——图已送达，号是把手。
+                        result = await send_photo(
                             chat_id=send_request.target_id, photo=photo_ref
                         )
                     delivered_parts += 1
+                    delivered_message_id = (
+                        _provider_message_id(result) or delivered_message_id
+                    )
                 except Exception:  # noqa: BLE001 - 图片失败降级为纯文本，避免重试重发已成功内容
                     logger.warning(
                         "telegram photo send failed request_id=%s",
@@ -547,6 +642,9 @@ async def send_nonebot_message(
                             chat_id=send_request.target_id, voice=voice_ref
                         )
                         delivered_parts += 1
+                        delivered_message_id = (
+                            _provider_message_id(result) or delivered_message_id
+                        )
                         _cleanup_voice_source(raw_voice_ref)
                 elif voice_mode == "audio":
                     send_audio = getattr(bot, "send_audio", None)
@@ -555,6 +653,9 @@ async def send_nonebot_message(
                             chat_id=send_request.target_id, audio=voice_ref
                         )
                         delivered_parts += 1
+                        delivered_message_id = (
+                            _provider_message_id(result) or delivered_message_id
+                        )
                         _cleanup_voice_source(raw_voice_ref)
             if result is not None and not remaining:
                 return result
@@ -569,7 +670,13 @@ async def send_nonebot_message(
             send_mail = getattr(bot, "send_mail", None)
             if not callable(send_mail):
                 raise RuntimeError("mail adapter does not expose send_mail")
-            return await send_mail(_build_mail_reply_message(bot, event, remaining))
+            reply_message = _build_mail_reply_message(
+                bot, event, remaining, message_salt=send_request.request_id
+            )
+            # atkfix M-4：记下本腿自盖 Message-ID（仅 SENT 回执兜底消费；
+            # send_mail 抛错/超时路径绝不引用未经出口证明的号）。
+            outbound_message_id = str(reply_message["Message-ID"])
+            return await send_mail(reply_message)
         return await bot.send(event, remaining, **kwargs)
 
     timeout = resolve_transport_timeout(timeout_seconds)
@@ -604,6 +711,8 @@ async def send_nonebot_message(
             request_id=send_request.request_id,
             state=ReceiptState.FAILED_FINAL,
             transport=transport,
+            # atkfix M-3：超时前已确认送达的部件号是真实把手，随回执出站。
+            provider_message_id=delivered_message_id,
             public_message="",
             debug_id=debug_id,
             operational_issue=OperationalIssue(
@@ -622,7 +731,10 @@ async def send_nonebot_message(
         # FileTransferError 串等）会进 OperationalIssue 的 kind/safe_summary，
         # 随后内插进管理员告警等系统通知文本，出站前统一打码（可能夹带内网
         # URL/键值形态）；聊天回复链不经此分支，零改动。本地日志保留原文供诊断。
-        final_detail = redact_local_secrets(str(exc)[:48]) or "send_failed_final"
+        # atkfix M-1（S-ATKFIX-OUTB 同口径补正）：**先洗后截**——旧写法
+        # redact(str(exc)[:48]) 属先截后洗，截断窗口恰好切开密钥形态时
+        # （如 "sk-" 连段被截成残段）打码腿因残缺不命中，残段原样出站。
+        final_detail = redact_local_secrets(str(exc))[:48] or "send_failed_final"
         logger.warning(
             "nonebot send not retryable kind=%s request_id=%s transport=%s",
             str(exc),
@@ -646,9 +758,12 @@ async def send_nonebot_message(
             ),
         )
     except Exception as exc:  # noqa: BLE001 - adapter errors become typed receipts.
+        # atkfix M-2：本地日志补 detail=%s——回执带不走的异常原文（裁决锁
+        # :368-373）在这里留全量，诊断卡/告警消费 safe_summary 里的类型词。
         logger.warning(
-            "nonebot transport send failed type=%s request_id=%s transport=%s",
+            "nonebot transport send failed type=%s detail=%s request_id=%s transport=%s",
             type(exc).__name__,
+            str(exc),
             send_request.request_id,
             transport,
         )
@@ -660,13 +775,16 @@ async def send_nonebot_message(
                 request_id=send_request.request_id,
                 state=ReceiptState.FAILED_FINAL,
                 transport=transport,
+                # atkfix M-3：已证明送达的部件号随结果未知回执出站。
+                provider_message_id=delivered_message_id,
                 public_message="",
                 debug_id=debug_id,
                 operational_issue=OperationalIssue(
                     stage=stage if stage in {"telegram", "mail"} else "runtime",
+                    # kind 是 worker 判据承重串，逐字不动；safe_summary 补异常类型（atkfix M-2）。
                     kind="result_unknown",
                     retryable=False,
-                    safe_summary="result_unknown",
+                    safe_summary=_send_failure_summary("result_unknown", exc),
                     debug_id=debug_id,
                 ),
             )
@@ -678,9 +796,10 @@ async def send_nonebot_message(
             debug_id=debug_id,
             operational_issue=OperationalIssue(
                 stage=stage if stage in {"telegram", "mail"} else "runtime",
+                # 同上：kind 逐字承重，safe_summary 只补类型词、不带消息原文（atkfix M-2）。
                 kind="send_exception",
                 retryable=True,
-                safe_summary="send_exception",
+                safe_summary=_send_failure_summary("send_exception", exc),
                 debug_id=debug_id,
             ),
         )
@@ -689,6 +808,9 @@ async def send_nonebot_message(
         request_id=send_request.request_id,
         state=ReceiptState.SENT,
         transport=transport,
-        provider_message_id=_provider_message_id(result),
+        # atkfix M-3/M-4：出口回号 > 已证明部件号 > 邮件文本腿自盖号。
+        provider_message_id=(
+            _provider_message_id(result) or delivered_message_id or outbound_message_id
+        ),
         public_message="sent",
     )

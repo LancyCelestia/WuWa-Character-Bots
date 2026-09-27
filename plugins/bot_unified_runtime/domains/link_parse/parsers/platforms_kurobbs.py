@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import gzip
 import json
 import re
 from typing import Any
@@ -24,8 +23,11 @@ from plugins.bot_unified_runtime.domains.core.contracts.media import (
     build_parsed_content,
 )
 from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    DEFAULT_MAX_BYTES,
     DEFAULT_USER_AGENT,
     ParseHttpError,
+    _CredentialScrubbingRedirectHandler,
+    _read_capped,
 )
 from plugins.bot_unified_runtime.domains.link_parse.parsers.platforms_generic import (
     _format_epoch,
@@ -51,6 +53,18 @@ def _kuro_post_detail(post_id: str, *, cookie_header: str) -> dict:
 
     接口要求登录态 ``token`` 请求头（匿名返回 220「访问令牌不能为空」）；
     token 过期时返回 220「登录已过期」，由上层降级浅卡。
+
+    SEAT-ATK-LINKPARSE F-1（网络卫生波 S-FIX-NETHYG）裸 opener 三件套收口，
+    全部复用 http_util 中央件、不建第二判据：
+    (a)(b) 读改走 ``_read_capped``（上限＝同族唯一先例 ``DEFAULT_MAX_BYTES``，
+        传输字节与 gzip 解压输出双限幅；超限抛 ParseHttpError，走既有诚实
+        失败面由上层降级浅卡，绝不整只吞进内存）；
+    (c) token 经 ``add_unredirected_header`` 挂载——urllib 原生 ``redirect_request``
+        只复制 ``req.headers``，unredirected 头任何一跳 30x 都不带走（token 不在
+        中央 ``_CREDENTIAL_HEADER_NAMES`` 三桶名单内，单靠剥除 handler 剥不住它，
+        改名单会误伤把它当普通业务头的同域续跳，故取 urllib 原生语义而非扩名单）；
+        opener 同时挂中央 ``_CredentialScrubbingRedirectHandler`` 单源（跨 host
+        剥 cookie/authorization 三桶 + 跳数上限 5），未来此腿加标准凭证头即自动受护。
     """
     token = _kuro_token(cookie_header)
     if not token:
@@ -60,7 +74,6 @@ def _kuro_post_detail(post_id: str, *, cookie_header: str) -> dict:
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
         "Accept-Encoding": "gzip",
         "Referer": "https://www.kurobbs.com/",
-        "token": token,
     }
     request = urlrequest.Request(
         _KURO_DETAIL_API,
@@ -68,14 +81,15 @@ def _kuro_post_detail(post_id: str, *, cookie_header: str) -> dict:
         headers=headers,
         method="POST",
     )
+    request.add_unredirected_header("token", token)
     try:
         # 默认开启证书校验：api.kurobbs.com 证书链正常（2026-09 curl 实测
         # ssl_verify_result=0），此前全局跳过校验没有依据，还让带
         # user_token 的登录态请求暴露于中间人风险。
-        with urlrequest.build_opener().open(request, timeout=12) as response:
-            payload = response.read()
-            if response.headers.get("Content-Encoding", "").lower() == "gzip":
-                payload = gzip.decompress(payload)
+        with urlrequest.build_opener(_CredentialScrubbingRedirectHandler()).open(
+            request, timeout=12
+        ) as response:
+            payload = _read_capped(response, _KURO_DETAIL_API, DEFAULT_MAX_BYTES)
         body = json.loads(payload.decode("utf-8", errors="replace"))
     except Exception as exc:
         raise ParseHttpError(f"kurobbs detail failed: {type(exc).__name__}") from exc
