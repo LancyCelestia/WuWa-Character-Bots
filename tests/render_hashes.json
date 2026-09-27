@@ -8,7 +8,7 @@
   "plugins/bot_unified_runtime/domains/ops/admin/debug.py": "ddd8ab9c52413af45f899df9516baee205d0f8cd0ee0dab606a59918f0c9d40d",
   "plugins/bot_unified_runtime/domains/render/card_render/bridge.py": "0b5716a8bb6f7f9e0e39f8c610b15dfbc1f110b2dbb76343be781dab23ea667e",
   "plugins/bot_unified_runtime/domains/render/card_render/templates/affinity_card.html": "2b6d105ef1b15ed6c0eae60fd811c317b618863ad90f9bcf00c8c1d59e752793",
-  "plugins/bot_unified_runtime/domains/render/card_render/templates/error_card.html": "22be733651e4c72d73e459c95d9c9e5172bf5e10d78eea795742ff304698d654",
+  "plugins/bot_unified_runtime/domains/render/card_render/templates/error_card.html": "9bdcd8dcf218ac7ca3e07bceb72d8e68224944e0bc0e3a09d140299655712c45",
   "plugins/bot_unified_runtime/domains/render/card_render/templates/finance_card.html": "c61736fdda799878c5d85aaa705f059b52d3b92846efc4b7c0bc209d7cb62f1a",
   "plugins/bot_unified_runtime/domains/render/card_render/templates/market_card.html": "115875aecbe99a2b7b1ae66f5a87fa3bb53f796d32e656d02d2ab22145da4304",
   "plugins/bot_unified_runtime/domains/render/card_render/templates/mermaid_card.html": "fdfe22e569cc07beb5626ce8d5fc6a13970f44923dd04d1a65357d1ae53f2c13",

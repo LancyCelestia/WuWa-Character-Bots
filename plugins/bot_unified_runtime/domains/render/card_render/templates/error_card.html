@@ -138,8 +138,12 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
 .row .label { flex: 0 0 176px; font-size: 14px; font-weight: 600; word-break: break-all;
     color: var(--text-secondary); letter-spacing: 0.06em; }
 /* 值与标签同字体（2026-09-25 评审「统一字体格式」）；数字仍走 tabular-nums
-   对齐。等宽只保留给 .stack（真代码块），那是另一回事。 */
-.row .value { flex: 1; min-width: 0; font-size: 17px; color: var(--text-main);
+   对齐。等宽只保留给 .stack（真代码块），那是另一回事。
+   字号档（2026-09-28 用户点名「属性值比属性名还大」）：键值节是**次级正文**，
+   取 TYPE_SCALE 的 field=14（与 .label 同档），层级由「名=600+次级灰+字距 /
+   值=常规+主墨色」给，不靠字号压过去。lead=17 只属于 .human 与 .echo 那两句
+   整段话，不是键值行的尺。 */
+.row .value { flex: 1; min-width: 0; font-size: 14px; color: var(--text-main);
     font-family: var(--font-family); line-height: 1.6; letter-spacing: 0;
     font-variant-numeric: tabular-nums; word-break: break-all; }
 /* 双列（2026-09-25 三段恢复并锁定）：两栏短值对共享同一条 176px 左轨，
