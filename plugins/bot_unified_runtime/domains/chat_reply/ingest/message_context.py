@@ -38,7 +38,7 @@ def _flatten(items: Any, *, depth: int = 0) -> tuple[list[dict[str, Any]], list[
             value = str(data.get("text") or data.get("content") or "").strip()
             if value:
                 quotes.append(value)
-                texts.append(f"\n[引用内容]\n{value}\n[/引用内容]")
+                texts.append(f"\n[引用内容]\n{_neutralize_markers(value)}\n[/引用内容]")
             normalized.append({"type": "quote", "data": {**data, "text": value}})
         elif kind in {"forward", "chat_history", "messages"}:
             children = data.get("messages") or data.get("content") or data.get("nodes")
@@ -46,7 +46,7 @@ def _flatten(items: Any, *, depth: int = 0) -> tuple[list[dict[str, Any]], list[
             joined = "\n".join(child_texts).strip()
             if joined:
                 forwards.append(joined)
-                texts.append(f"\n[转发/聊天记录]\n{joined}\n[/转发/聊天记录]")
+                texts.append(f"\n[转发/聊天记录]\n{_neutralize_markers(joined)}\n[/转发/聊天记录]")
             normalized.append({"type": "forward", "data": {"messages": child_segments, **data}})
             normalized.extend(child_segments)
             quotes.extend(child_quotes); forwards.extend(child_forwards)
