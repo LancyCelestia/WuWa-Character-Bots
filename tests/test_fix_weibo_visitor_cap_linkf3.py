@@ -27,6 +27,8 @@ import pytest
 
 from plugins.bot_unified_runtime.domains.link_parse.parsers import (
     http_util,
+)
+from plugins.bot_unified_runtime.domains.link_parse.parsers import (
     platforms_weibo as W,
 )
 
@@ -140,6 +142,7 @@ def test_visitor_incarnate_read_is_capped(monkeypatch: pytest.MonkeyPatch) -> No
     incarnate = _FakeRawResp(b"<html>cross_domain(0);</html>" + _PAD)
     captured = _install(monkeypatch, [_FakeRawResp(_GEN_OK), incarnate])
     W._weibo_visitor_cookie()
+    assert captured["opener"].calls == 2, "没走到 incarnate 第二跳＝锁空跑"
     assert incarnate.read_sizes, "incarnate 腿没读到任何字节＝锁空跑"
     assert all(
         s is not None and int(s) >= 0 and int(s) <= http_util.DEFAULT_MAX_BYTES + 1
