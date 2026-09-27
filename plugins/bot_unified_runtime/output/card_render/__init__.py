@@ -5,7 +5,7 @@ from plugins.bot_unified_runtime.domains.render.card_render.models import (
     RenderPayload,
 )
 
-from .bridge import (
+from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
     PLATFORM_COLORS,
     PLATFORM_OFFICIAL_NAMES,
     parse_to_render_payload,

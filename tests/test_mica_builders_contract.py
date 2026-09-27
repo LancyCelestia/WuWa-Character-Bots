@@ -40,7 +40,7 @@ from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import 
 from plugins.bot_unified_runtime.domains.render.card_render.usage_cards import (
     usage_report_mica_html,
 )
-from plugins.bot_unified_runtime.output.templates import render_media_card_html
+from plugins.bot_unified_runtime.domains.render.templates import render_media_card_html
 
 _SHADOW_TOKEN_NAMES = {"--mica-shadow", "--mica-shadow-soft"}
 _ALLOWED_SHADOW_VALUES = {
