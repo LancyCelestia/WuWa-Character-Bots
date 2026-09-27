@@ -9720,13 +9720,6 @@ def _register_nonebot_handlers() -> None:
         except Exception:  # noqa: BLE001 - 本地库失败走萌百链路。
             kb_body = None
         if kb_body:
-            from plugins.bot_unified_runtime.contracts import (
-                CapabilityResult,
-                PrivacyLevel,
-                RiskLevel,
-                SendPolicy,
-            )
-
             kb_result = CapabilityResult(
                 request_id=message.request_id,
                 capability_id="bot.moegirl",
