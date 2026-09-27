@@ -18,7 +18,7 @@
 
 ## 怎么调用
 
-- 席位 `SUBSCRIBE`、能力 id `bot.subscribe`、优先级 12（比多数资讯类入口靠前，因为它是命令而非查询）。
+- 席位 `SUBSCRIBE`、能力 id `bot.subscribe`、优先级见 `domains/chat_reply/runtime/base_router.py` 的 `RouteRule` 行（比多数资讯类入口靠前，因为它是命令而非查询）。
 - 文本归一：`domains/subscribe/capabilities/subscribe.py:normalize_subscribe_text`（把 `/订阅 添加 …`、`订阅 add …`、`subscribe add …` 统一成规范形态）、`is_subscribe_command`、`is_standalone_subscribe_command`。
 - 命令后端真身：`domains/subscribe/capabilities/subscribe_v2.py:build_subscribe_capability_v2(*, store, adapters, config)`，动作分支 `add / list / pause / resume / remove`（+ `check`、`status` 由旧壳承接）。
 - 目标解析全部委托给 adapter 层（`domains/subscribe/adapters/__init__.py:SubscriptionRegistry` 与 `build_subscription_registry_v2`），本文件不写任何平台知识。
@@ -28,7 +28,7 @@
 
 - `bot_subscribe_enabled`（缺省 True，总开关）；`bot_subscribe_db_path`（库路径的缺省值以 `config.py` 该字段为准，经 runtime_paths 重映射）。
 - 每平台一布尔：`bot_subscribe_platform_bilibili/_xiaohongshu/_youtube/_telegram/_pixiv/_weibo/_netease`（缺省 True）。关掉某平台后 `add` 该平台目标会被显式拒绝，**既有订阅行不删**（轮询侧跳过）。
-- 节律键：`bot_subscribe_poll_interval_seconds`（缺省 300）、`max_items_per_tick`（20）、`jitter_ratio`（0.20）、`global_concurrency`（3）、`platform_concurrency`（1）、`min_interval_seconds`（1.0）、`lease_seconds`（120）、`retry_base_seconds`（60）、`retry_cap_seconds`（1800）、`outbox_interval_seconds`（15）。
+- 节律键：`bot_subscribe_poll_interval_seconds` 与 `max_items_per_tick`/`jitter_ratio`/`global_concurrency`/`platform_concurrency`/`min_interval_seconds`/`lease_seconds`/`retry_base_seconds`/`retry_cap_seconds`/`outbox_interval_seconds` 一组节律键；各键缺省值一律以 `plugins/bot_unified_runtime/config.py` 与消费件签名为真身，本板块不抄数。
 - `bot_subscribe_card_enabled`（缺省 True）：推送是否出卡。
 - 装配期读取，改这些值需重启；逐键语义以 `docs/config-catalog-full.md` 为准。
 

@@ -55,7 +55,7 @@ flowchart LR
 ## 边界与降级
 
 - **总开关**：`bot_memory_enabled`（缺省 False）与 `bot_memory_db_path`（缺省空）任一不满足 ⇒ 召回侧给 `NullMemoryProvider`，`/bot memory` 明确回一段"记忆功能还没打开，让管理员设两个键并重启"的人话，不静默。
-- **总线九键全缺省保守**：`bot_memory_bus_enabled=False`、`bot_memory_reflected_write_target="legacy"`（另一取值 `bus` 才写新表）等，见 `config.py` 记忆块。本轮**刻意不登记进 SETTABLE_KEYS**——登记而不接热改合并层是本仓已定罪的"假热改"形态，读路径逐调用现读的证明没做完之前不开放热改。
+- **总线一批键全缺省保守**：`bot_memory_bus_enabled=False`、`bot_memory_reflected_write_target="legacy"`（另一取值 `bus` 才写新表）等，逐键以 `config.py` 记忆块为准。本轮**刻意不登记进 SETTABLE_KEYS**——登记而不接热改合并层是本仓已定罪的"假热改"形态，读路径逐调用现读的证明没做完之前不开放热改。
 - **抽取只跑后台**：`memory_extract` 在回复完成后的后台线程执行，任何失败都不影响主回复；错误有冷却窗（`bot_memory_extract_error_cooldown_seconds`，缺省值以 `config.py` 该字段为准），超时与 max_tokens 都有上限。
 - **敏感级不出口**：`credentialed` 永不进召回面，进 prompt 前还要过 `LLM_SAFE_MEMORY_SENSITIVITIES`（public/group/personal）；`requester != subject` 直接零结果。
 - **沉淀面复用单一词表**：六硬线 + minors 的清洗判据来自 `domains/chat_reply/security/memory_sanitize.py` 这一份，总线**不另建第二套词表**；该来源不可用时退回"不清洗"并点名一次，绝不静默换判据。

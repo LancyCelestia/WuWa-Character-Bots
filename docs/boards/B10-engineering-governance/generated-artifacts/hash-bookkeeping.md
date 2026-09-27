@@ -6,7 +6,7 @@
 ## B10.generated-artifacts · 交付物哈希与重录时机
 
 - 层级：一级 B10 → 二级 generated-artifacts → 三级 `hash-bookkeeping`
-- 实现落点：`scripts/doc_sync.py`、`scripts/command_catalog.py`、`tests/verify_hashes.py`、`docs/auto-facts.md`
+- 实现落点：`scripts/doc_sync.py`、`scripts/command_catalog.py`、`docs/auto-facts.md`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

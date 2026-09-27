@@ -6,7 +6,7 @@
 ## B08.send-queue · SQLite 队列与恢复
 
 - 层级：一级 B08 → 二级 send-queue → 三级 `queue-persistence`
-- 实现落点：`plugins/bot_unified_runtime/domains/transport/sender`
+- 实现落点：`plugins/bot_unified_runtime/domains/transport/sender/__init__.py`、`plugins/bot_unified_runtime/domains/transport/sender/file_gateway.py`、`plugins/bot_unified_runtime/domains/transport/sender/gateway.py`、`plugins/bot_unified_runtime/domains/transport/sender/outbound_gate.py`、`plugins/bot_unified_runtime/domains/transport/sender/queue.py`、`plugins/bot_unified_runtime/domains/transport/sender/receipts.py`、`plugins/bot_unified_runtime/domains/transport/sender/timeout.py`、`plugins/bot_unified_runtime/domains/transport/sender/worker.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么
@@ -19,7 +19,7 @@
 
 ## 开关与参数
 
-`bot_send_queue_enabled`（缺省 False）与 `bot_send_queue_db_path`（缺省空）共同决定是否落 SQLite，任一不满足即走 `InMemorySendQueue`（持久能力随之关闭，这是缺省形态不是降级）。开启后：`bot_send_queue_max_items`（缺省 1000）、`bot_send_queue_max_attempts`（缺省 3）、`bot_send_queue_retry_base_seconds`（缺省 30）/`bot_send_queue_retry_max_seconds`（缺省 300）控制容量与退避重试，`bot_send_bot_unavailable_max_age_seconds`（缺省 1800）给「协议端不在线」挂起回执的年龄上限、超龄自动清理。键名以 `build_send_queue` 函数体与 `config.py` 为准，逐键详情见目录册；改配置属管理员动作，热改需重启。
+`bot_send_queue_enabled` 与 `bot_send_queue_db_path`（两键缺省态以 `config.py` 双字段为真身）共同决定是否落 SQLite，任一不满足即走 `InMemorySendQueue`（持久能力随之关闭，这是缺省形态不是降级）。开启后：`bot_send_queue_max_items`、`bot_send_queue_max_attempts`、`bot_send_queue_retry_base_seconds`/`bot_send_queue_retry_max_seconds`（五键缺省值以 `config.py` 五字段为真身）控制容量与退避重试，`bot_send_bot_unavailable_max_age_seconds`（缺省 1800）给「协议端不在线」挂起回执的年龄上限、超龄自动清理。键名以 `build_send_queue` 函数体与 `config.py` 为准，逐键详情见目录册；改配置属管理员动作，热改需重启。
 
 ## 失败时看到什么
 

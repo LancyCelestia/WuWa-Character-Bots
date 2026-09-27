@@ -18,7 +18,7 @@
 - 任务入口 `domains/chat_reply/character/reflection.py::run_nightly_reflection(config, summarizer=None)`；按日取轮次 `gather_turns_by_date(history_db, scope_date)`（scope_date 取 UTC 日期，与 `created_at` 的 UTC isoformat 口径一致）。
 - 归纳器两档：`HeuristicSummarizer`（零 LLM、确定性正则，缺省）与 `LLMSummarizer`（注入 OpenAI 兼容客户端，失败或未注入回退启发式）；`bot_reflection_llm_enabled` 决定装配哪档。
 - 落库 `ReflectionStore`（库路径经 `providers.build_runtime_data_path` 解析到 Runtime 数据根——DATAFIX 根治过 CWD 相对路径写进源码树的事故）；文本归一单一来源：反思侧 `_normalize_fact_text` 从 `memory_bus_v2.canonical_fact_text` 派生，禁第二副本。
-- 调度装配在根 `__init__.py::_register_reflection_scheduler`：每日 `bot_reflection_hour:minute`（缺省 04:30）定时任务 `bot_reflection_daily`，漏班有补跑判据 `_should_catch_up_reflection`。
+- 调度装配在根 `__init__.py::_register_reflection_scheduler`：每日 `bot_reflection_hour:minute`（时刻两键以 `config.py` 为准）定时任务 `bot_reflection_daily`，漏班有补跑判据 `_should_catch_up_reflection`。
 - 旁路产出：`quirk_proposal_drafts` / `build_reflection_quirk_proposer` 把归纳事实投给怪癖审核面（propose→管理员 approve，见 B03）。
 - 总线接通后归纳器降级为**写侧归纳器**：不再拥有存储，只在 `settings.enabled ∧ reflected_write_target=bus` 时把候选事实投进 `MemoryBus.absorb`（关态不建新库不开新连接）。
 

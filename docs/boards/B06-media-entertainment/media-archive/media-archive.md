@@ -34,7 +34,7 @@
 `domains/media/archive/media_archive.py:MediaArchiveStore`（`exists` / `archive` /
 `stats`），字节摘要统一调 `domains/media/digest.py:media_digest`，本域不再自算
 sha256；取字节复用中央下载咽喉的 SSRF 判定，并额外挂一个**逐跳复查重定向**的
-护栏（`urlopen` 默认自动跟随 30x，重定向目标指向内网或元数据地址时必须就地拒绝）。
+护栏（每一跳经 `domains/media/capabilities/media_archive.py` 的 `_GuardedRedirectHandler` 复查，跟随跳数上限以 `urllib.request.HTTPRedirectHandler` 真身的 `max_redirections` 为准——页内旧写 30x 属与 requests/urllib3 口径混用的史值，现收回指真身；重定向目标指向内网或元数据地址时必须就地拒绝）。
 
 指令参数（写在指令文本里，用空格分隔）：
 
@@ -50,12 +50,12 @@ sha256；取字节复用中央下载咽喉的 SSRF 判定，并额外挂一个**
 - `bot_media_archive_dir` 与 `bot_media_archive_db_path`（两者的缺省路径以 `config.py`
   的对应字段为准）：两者都在 `config.py` 的 `path_fields` 里，
   经 `scripts/runtime_paths.py` 重映射到 Runtime 数据根。
-- `bot_media_archive_min_role`（`super_admin`）：权限门，取值沿用
+- `bot_media_archive_min_role`（缺省值以 `config.py` 该字段为真身）：权限门，取值沿用
   `domains/chat_reply/policy/roles.py` 的六级角色。
-- `bot_media_archive_max_file_mb`（100）、`bot_media_archive_daily_limit`（50）、
-  `bot_media_archive_per_message_limit`（4）：三道限额。
-- `bot_media_archive_summary_enabled`（True）：是否生成聊天记录归档的摘要行。
-- `bot_media_archive_video_frames`（5）：视频抽帧数量。
+- `bot_media_archive_max_file_mb`、`bot_media_archive_daily_limit`、
+  `bot_media_archive_per_message_limit`：三道限额，缺省值以 `config.py` 三字段为真身。
+- `bot_media_archive_summary_enabled`（缺省态以 `config.py` 该字段为真身）：是否生成聊天记录归档的摘要行。
+- `bot_media_archive_video_frames`（缺省枚数以 `config.py` 该字段为真身）：视频抽帧数量。
 - 依赖识图能力：模型注册表 `bot_vision_model_registry` 与 `bot_vision_enabled`
   （见 `../vision/README.md`），本能力不另立一份模型配置。
 

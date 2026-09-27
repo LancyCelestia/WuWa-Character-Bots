@@ -25,8 +25,8 @@
 
 ## 开关与参数
 
-- `bot_error_card_enabled`（缺省 True）：关掉即错误卡旁路零动作，回退到「只有告警日志、会话侧无回显」的旧行为。
-- `bot_error_card_cooldown_seconds`（缺省 60）：同会话冷却期内降级为一句守岸人口吻纯文本。
+- `bot_error_card_enabled`（缺省态以 `config.py` 该字段为真身）：关掉即错误卡旁路零动作，回退到「只有告警日志、会话侧无回显」的旧行为。
+- `bot_error_card_cooldown_seconds`（缺省秒数以 `config.py` 该字段为真身）：同会话冷却期内降级为一句守岸人口吻纯文本。
 - `bot_render_max_concurrency` / `bot_render_wait_budget_ms`：见 [render-backend](../card-render/render-backend.md)；预算耗尽的表现是按当前画面截断，**不**触发兜底，只有真失败才回文字。
 - 传输能力：`transport` 不支持 `forward` 时按 `text_fallback` 降级；`mixed` 里不支持的段类型会被跳过并留痕（丢段有告警，不静默蒸发）。
 

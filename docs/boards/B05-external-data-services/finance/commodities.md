@@ -24,7 +24,7 @@
 
 - 开关读点：`domains/chat_reply/runtime/base_router.py` 以 `getattr(config, "bot_commodities_enabled", True)` 判定，**但 `config.py` 里没有这个字段、目录册也没有登记** ⇒ 现实中关不掉（缺省恒 True）。这是"读点先于声明"的欠账，记在本功能 README 现行缺陷，别把它当成可热改的旋钮。
 - 超时/缓存沿用 `bot_market_timeout_seconds`、`bot_market_cache_seconds`、`bot_market_retry_on_empty`。
-- 优先级 37（2026-09-21 拆位结果，越专用越靠前）——**代码已在、线上未生效**，需提交并由用户提权重启。
+- 优先级见 `domains/chat_reply/runtime/base_router.py` 的 `RouteRule` 行（2026-09-21 拆位结果，越专用越靠前）——**代码已在、线上未生效**，需提交并由用户提权重启。
 - 市场号规律（101=COMEX、102=NYMEX）写在数据层头注，改 secid 只改这一处。
 
 ## 失败时看到什么

@@ -32,10 +32,10 @@
 
 ## 开关与参数
 
-- `bot_meme_command_enabled`（True）：命令面总闸，用于快速屏蔽整族表情指令。
-- `bot_meme_api_enabled`（False）：是否真的对接生成器；关了就是「会说没配上」。
+- `bot_meme_command_enabled`（缺省态以 `config.py` 该字段为真身）：命令面总闸，用于快速屏蔽整族表情指令。
+- `bot_meme_api_enabled`（缺省态以 `config.py` 该字段为真身）：是否真的对接生成器；关了就是「会说没配上」。
 - `bot_meme_api_base_url`（`http://127.0.0.1:2233`）：本机服务地址。
-- `bot_meme_api_timeout_seconds`（15）：单次请求上限。
+- `bot_meme_api_timeout_seconds`（缺省秒数以 `config.py` 该字段为真身）：单次请求上限。
 - `bot_meme_api_output_dir`（产物目录，缺省路径以 `config.py` 该字段为准）：在 `config.py` 的
   `path_fields` 内重映射到 Runtime 数据根。
 - `bot_meme_cache_max_bytes`：本域产物的缓存配额口径（与其它图类能力共用中央

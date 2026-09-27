@@ -27,7 +27,7 @@
 
 - `bot_fx_enabled`（缺省 True，已在 `config.py` 声明）。
 - 超时/缓存沿用 `bot_market_timeout_seconds` / `bot_market_cache_seconds`，空响应重试共用 `bot_market_retry_on_empty`。
-- 优先级 36（拆位后最靠前的金融席位之一，因为"兑"这类词最容易和股指撞）——**代码已在、线上未生效**（该文件属 2026-09-21 修复波的未提交改动面）。
+- 优先级见 `domains/chat_reply/runtime/base_router.py` 的 `RouteRule` 行（拆位后最靠前的金融席位之一，因为"兑"这类词最容易和股指撞）——**代码已在、线上未生效**（该文件属 2026-09-21 修复波的未提交改动面）。
 
 ## 失败时看到什么
 

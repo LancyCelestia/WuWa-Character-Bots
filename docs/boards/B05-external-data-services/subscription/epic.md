@@ -19,7 +19,7 @@
 
 ## 怎么调用
 
-- 席位 `EPIC`、能力 id `bot.epic`、优先级 41；闭包 `domains/subscribe/capabilities/epic.py:build_epic_capability(config, *, render_backend)`，谓词 `is_epic_command`。
+- 席位 `EPIC`、能力 id `bot.epic`、优先级见 `domains/chat_reply/runtime/base_router.py` 的 `RouteRule` 行；闭包 `domains/subscribe/capabilities/epic.py:build_epic_capability(config, *, render_backend)`，谓词 `is_epic_command`。
 - 数据真身：`domains/subscribe/feeds/epicfree.py:fetch_epic_free_games(*, proxy, timeout)`（Epic 公开免费促销接口，免 key，`locale=zh-CN&country=CN`）；`domains/subscribe/feeds/steamfree.py:fetch_steam_free_games(*, proxy, timeout, limit)`（Steam featured categories 的 `specials.items` 中 `discount_percent == 100`）。
 - 图片取横版商店大图（`_wide_image`：OfferImageWide 优先、退 Thumbnail）。
 - 出卡：复用解析卡的 `render_card_png` 管线（B05.link-parse → B08），文本作 caption/兜底；条目格式化在 `_format_games`。

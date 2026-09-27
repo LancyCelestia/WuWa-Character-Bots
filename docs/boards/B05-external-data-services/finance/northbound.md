@@ -24,7 +24,7 @@
 
 - 开关读点 `getattr(config, "bot_northbound_enabled", True)` 在 `domains/chat_reply/runtime/base_router.py`，但 **`config.py` 未声明该字段** ⇒ 线上关不掉（详见本功能 README 现行缺陷）。
 - 超时/缓存沿用 `bot_market_timeout_seconds` / `bot_market_cache_seconds`；北向快照有独立 TTL 常量与独立缓存（`reset_northbound_cache`），与指数快照互不影响。
-- 优先级 39（拆位后）——代码已在、线上未生效。
+- 优先级见 `domains/chat_reply/runtime/base_router.py` 的 `RouteRule` 行（拆位后）——代码已在、线上未生效。
 
 ## 失败时看到什么
 

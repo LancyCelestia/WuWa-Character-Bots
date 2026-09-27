@@ -25,7 +25,7 @@
 
 ## 开关与参数
 
-- `bot_news_enabled`（缺省 True）、`bot_news_timeout_seconds`（缺省 6.0）、`bot_news_cache_seconds`（缺省 600，按类目分桶）、`bot_news_max_items`（缺省 20；这是用户裁定过的默认条数）。
+- `bot_news_enabled`（缺省 True）、`bot_news_timeout_seconds`、`bot_news_cache_seconds`（按类目分桶）、`bot_news_max_items`（条数语义由用户裁定过，三键缺省值以 `config.py` 为准）。
 - 逐键含义以 `docs/config-catalog-full.md` 为准；均为装配期读取的静态配置，热改当轮不生效。
 
 ## 失败时看到什么

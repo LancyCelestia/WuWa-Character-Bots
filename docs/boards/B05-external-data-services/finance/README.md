@@ -71,4 +71,4 @@ flowchart LR
 3. **技术指标窗口不足时给 None 而非数**：KDJ/MACD/RSI/WR/CCI 各自判窗口，样本不够就是"暂缺"；箱形图有 min-5 样本门，**单日 OHLC 四价位不得当分布输入**（口径红线写在 `domains/finance/data/finance_chart.py` 头注，纯计算层识别不了这个语义，只能靠调用方自律 + 用例钉）。
 4. **个股 logo 卡面槽位属休眠契约**：缓存与三级兜底已实装，是否显示由模板槽位裁决；卡上没有 logo 不算异常。
 5. **A 股/港股注册切片与美股九家同表不同面**：批量面板不含 A/港股注册切片（`list_cn_hk_companies`），点名才取——扩展面板属待裁决项，不是 bug。
-6. **三枚"看起来能关"的开关其实关不掉**（P2，本席实跑 `grep` 证）：路由层以 `getattr(config, "bot_commodities_enabled"|"bot_bond_enabled"|"bot_northbound_enabled", True)` 判定，而 `config.py` 未声明这三个字段、目录册亦无登记 ⇒ 缺省恒开、`.env` 写了也不生效。属"读点先于声明"的呆账（与本板块 #47 波发现的 `bot_emergency_info_quiet_breach_levels` 同族）。正解是要么补进 `config.py` 并登记目录册，要么删掉读点——**不要在文档里把它写成可关旋钮**，三张卡片已按实况改口。
+6. **三枚"看起来能关"的开关其实关不掉**（P2，经实跑 `grep` 取证）：路由层以 `getattr(config, "bot_commodities_enabled"|"bot_bond_enabled"|"bot_northbound_enabled", True)` 判定，而 `config.py` 未声明这三个字段、目录册亦无登记 ⇒ 缺省恒开、`.env` 写了也不生效。属"读点先于声明"的呆账（与本板块 #47 波发现的 `bot_emergency_info_quiet_breach_levels` 同族）。正解是要么补进 `config.py` 并登记目录册，要么删掉读点——**不要在文档里把它写成可关旋钮**，三张卡片已按实况改口。

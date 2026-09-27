@@ -8,14 +8,17 @@
 > 统一事件总线、来源枚举、指标结构化与轨迹阶段表。
 
 - 归属板块：[B09](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/ops/audit`、`plugins/bot_unified_runtime/domains/ops/collectors`、`plugins/bot_unified_runtime/domains/ops/monitor`、`plugins/bot_unified_runtime/control_plane/metrics.py`
-- 帮助主题：日志, 状态, 审计, 用量
+- 实现落点：`plugins/bot_unified_runtime/domains/ops/audit`、`plugins/bot_unified_runtime/domains/ops/collectors`、`plugins/bot_unified_runtime/domains/ops/monitor/__init__.py`、`plugins/bot_unified_runtime/domains/ops/monitor/alerts.py`、`plugins/bot_unified_runtime/domains/ops/monitor/disconnect_notice.py`、`plugins/bot_unified_runtime/domains/ops/monitor/event_service.py`、`plugins/bot_unified_runtime/domains/ops/monitor/event_store.py`、`plugins/bot_unified_runtime/domains/ops/monitor/host_card.py`、`plugins/bot_unified_runtime/domains/ops/monitor/host_status.py`、`plugins/bot_unified_runtime/domains/ops/monitor/intent_telemetry.py`、`plugins/bot_unified_runtime/domains/ops/monitor/loop_watchdog.py`、`plugins/bot_unified_runtime/domains/ops/monitor/result_unknown.py`、`plugins/bot_unified_runtime/domains/ops/monitor/runtime_event_log.py`、`plugins/bot_unified_runtime/domains/ops/monitor/usage_monitor.py`
+- 路由席位：`HOST_STATE`
+- 能力 id：`bot.host_state`
+- 帮助主题：日志, 状态, 审计, 用量, 宿主机状态
 - 配置键前缀：`bot_alerts_`, `bot_metrics_`（逐键以目录册为准）
 
 ### 三级入口
 
 | 三级入口 | 路由席位 | 能力 id | 别名/帮助页 | 优先级 |
 |---|---|---|---|---|
+| [宿主机状态](host-state.md) | HOST_STATE | bot.host_state | 宿主机状态 | 41 |
 | [统一事件与 SSE](event-bus.md) | — | — | — | — |
 | [指标结构化来源](metrics-sources.md) | — | — | — | — |
 | [轨迹阶段与脱敏](trace-stages.md) | — | — | — | — |
@@ -24,11 +27,11 @@
 
 ## 这个功能解决什么
 
-二级功能 B09.observability「日志·指标·Trace·审计」——统一事件总线、来源枚举、指标结构化与轨迹阶段表。
-
-真身模块自述：只读账本统计适配器；不初始化 ledger、不解析 attempts、不触碰运行配置。
-
-本页上方的生成区从权威声明源投影，实现落点与归属以它为准，正文不复制。 一切可数事实（字段/主题/别名/入口/模板数）以机器册 `docs/auto-facts.md` 为准。
+二级功能 B09.observability「日志·指标·Trace·审计」——统一事件与 SSE（`control_plane/events.py`
+及 V2.1 事件层）、指标结构化来源（账本/资源/宿主机/用量四类只读源）、轨迹阶段与脱敏
+（`domains/chat_reply/runtime/deadline.py` 相位账 + 审计脱敏真身）、运维告警与抑制
+（`domains/ops/monitor/alerts.py`）。四条腿共用的纪律：先持久化后投递、未知不是 0、
+脱敏零例外、存在性锁不算修好。
 
 ## 处理流程
 

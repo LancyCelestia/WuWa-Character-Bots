@@ -8,7 +8,7 @@
 > 组/插件/子功能/指令四级开关与依赖阻断显示。
 
 - 归属板块：[B09](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/ops/features`、`plugins/bot_unified_runtime/control_plane/features.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/ops/features`
 - 帮助主题：运行开关
 
 ### 三级入口
@@ -42,7 +42,8 @@ flowchart LR
   svc --> api["/api/v1/features/*"]
   svc --> cmd["/bot feature …"]
   svc --> gate[ProductFeatureGate]
-  gate --> pipe[B02.RuntimePipeline 每事件判定]
+  gate --> pipe[B02.RuntimePipeline 每事件判定（层 1）]
+  gate --> invoker[中央 CapabilityInvoker.invoke 直呼面判定（层 2）]
 ```
 
 一条主链路一张图：树构建与判定只在本板块，业务侧只有"被门挡住"这一个接触点。
@@ -58,6 +59,11 @@ flowchart LR
 - 门查询故障 **fail-closed**：状态读取异常时快照 `available=False`，所有判定
   一律拒绝执行（除恢复类能力），回执「这项功能暂时不可用。」并落审计
   （stage=policy，event=失败原因），**绝不退化成"读不到就放行"**。
+- 层 2 直呼面（绕过 pipeline 直接 `CapabilityInvoker.invoke`）自 2026-09-23/24 起同样过这道门：
+  经唯一注入口 `attach_default_feature_gate` 复用同一判定真身 `check_capability`，三条边界=只对
+  `gate_feature_bindings()` 在册受门者执法、未受门 pass-through、读不到状态 fail-closed；当前直呼
+  入口的能力全部未受门 ⇒ 层 2 新增执法面为空（机制成立 ≠ 已对所有能力执法）。完整口径见
+  [feature-gate.md](feature-gate.md) 与 `docs/design/control-plane-registry.md`。
 - 并发用双 CAS：节点级 `version` + 图级 `graph_revision`，`None`/省略不视为
   "跳过校验"而是直接 422（不给绕过 CAS 的后门）。
 - 不强杀在跑的任务：`/bot feature` 的回执文案就写明"已运行的任务不会被强杀"，
@@ -66,7 +72,8 @@ flowchart LR
 ## 测试与验收
 
 `tests/test_runtime_feature_gate.py`（放行/拒绝/未登记/故障 fail-closed/恢复能力豁免
-五态与告警去重）、`test_phase0_3_features.py`（树语义：父关带子、blocked_by、
+五态与告警去重）、`tests/test_feature_gate_layer2.py`（层 2 直呼面：三边界与纯转发/不抄名单/根装配
+结构锁）、`test_phase0_3_features.py`（树语义：父关带子、blocked_by、
 inherited_from、受保护拒绝）、`tests/test_feature_store_integrity.py`
 （revision CAS、坏状态拒绝恢复默认、legacy 导入封口）、`test_feature_store_integrity.py`、
 `test_feature_cards.py`、`test_runtime_subfeatures.py`（显式子功能与实现坐标一致性）、

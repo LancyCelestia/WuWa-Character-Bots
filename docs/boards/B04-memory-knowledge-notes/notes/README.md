@@ -48,7 +48,7 @@ flowchart LR
 
 - **总闸**：`bot_notes_enabled` 缺省 True；`bot_notes_db_path` 经 `scripts/runtime_paths.py` 重映射到 Runtime，不落源码树（启动期不建库）。
 - **路由席位**：笔记**不占** `RouteKind`——全部词形收在提醒判定 `is_reminder_command` 里（`RouteKind.REMINDER`），因此它没有自己的路由席位与优先级，帮助层与审计层的能力 id 记账是 `bot.reminder`（见本页列出的现行缺陷）。
-- **限额**：单会话笔记数达 `bot_notes_max_per_chat`（缺省 200）时 `add` 返回 None，由能力层给人话提示而不是静默丢弃；单条笔记图片上限 `_MAX_NOTE_IMAGES`、单图字节上限 `_MAX_IMAGE_BYTES`（判据在能力层，store 只认文本）。
+- **限额**：单会话笔记数达 `bot_notes_max_per_chat`（缺省值以 `config.py` 该字段为准）时 `add` 返回 None，由能力层给人话提示而不是静默丢弃；单条笔记图片上限 `_MAX_NOTE_IMAGES`、单图字节上限 `_MAX_IMAGE_BYTES`（判据在能力层，store 只认文本）。
 - **图片来源与落点双查**：随笔记发来的图片走 SSRF 入口护栏，`file://`/本地路径读取有字节上限，落盘目录名消毒防穿越；删笔记时图片文件随笔记一起清（引用已不在，留着只会积灰）。
 - **会话隔离**：一切读写都带 `chat_id`（= `message.session_id`），A 群看不到 B 群的笔记；群成员之间是否再按人隔离取决于 session_id 本身含 uid，该粒度目前无测试覆盖（见本页列出的现行缺陷）。
 - **授时降级链**：NTP 全败 → HTTPS `Date` 头估偏移 → 回退系统钟，每级一行日志；`|offset|` 超 `bot_time_sync_max_drift_ms`（缺省值以 `config.py` 该字段为准）或 RTT 超上限的应答视为不可信，拒收该台换下一台。防火墙拦 UDP 123 时回退系统钟**属预期行为**，不是故障。

@@ -16,7 +16,7 @@
 现役三族：
 
 - **渲染契约族**：`tests/test_rendering_contract.py`（Jinja 模板逐条断言）、`tests/test_mica_builders_contract.py`（f-string 直拼的卡）、`tests/test_template_visual_audit.py`（数值与色值等值审计）、`tests/test_mica_shell.py`、`tests/test_error_card_contract.py`、`tests/test_brand_capsule_contract.py`。契约正文 = `docs/rendering-contract.md` + 单一事实来源 `theme_tokens.py`。
-- **出站与投递契约族**：`tests/test_outbound_gate.py`（中央防风暴闸的规格反证 T1–T13；其 T6 直调族清单自 2026-09-22 WAVE42 起随「群摘要 / 日常助理改道中央出口」更新，现役族数以 `test_existing_families_still_submit_directly` 与 `tests/test_outbound_bypass_prohibition_gate.py` 的豁免表为准，本处不手写）、`tests/test_outbound_v21.py`、`tests/test_v21_wiredirect_unified_path.py`（存量族「只登记不迁移」结构锁的先例，该口径自 2026-09-22 WAVE42 起对群摘要 / 日常助理两族放开，见 `.superpowers/sdd/2026-09-21-unify-wave/decisions/WAVE42-active-push-central-exit.md`）。
+- **出站与投递契约族**：`tests/test_outbound_gate.py`（中央防风暴闸的规格反证 T1–T13；其 T6 直调族清单两次跟随口径变更——2026-09-22 WAVE42 群摘要 / 日常助理改道中央出口、2026-09-24 裁定 R-4 四枚主动投递族无条件走中央出口（根文件 `call_api` 直发分支整段删除，见台账 #49/#52），直调下限随之收紧为**零容忍方向的硬尺**；现役族数与清单以 `test_existing_families_still_submit_directly` 与 `tests/test_outbound_bypass_prohibition_gate.py` 的豁免表为准，本处不手写）、`tests/test_outbound_v21.py`、`tests/test_v21_wiredirect_unified_path.py`（存量族「只登记不迁移」结构锁的先例，该口径自 WAVE42 起对改道族放开、自 R-4 起对四枚主动投递族全面收口，见 `.superpowers/sdd/2026-09-21-unify-wave/decisions/WAVE42-active-push-central-exit.md`〔gitignore，仅本机〕与 `docs/HANDBOOK.md` §42）。
 - **安全与边界契约族**：`tests/test_ssrf_throat_coverage.py`、`tests/test_credential_domain_binding_gate.py`、`tests/test_content_safety_v*.py`、`tests/test_copy_redline_gate.py`（文案红线）、`tests/test_voice_boundary_central_gate.py`（文本边界中央件）。
 
 ## 怎么调用

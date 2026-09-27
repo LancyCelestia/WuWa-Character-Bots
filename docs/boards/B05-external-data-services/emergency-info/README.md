@@ -59,8 +59,8 @@ flowchart LR
 
 ## 现行缺陷
 
-1. **整域代码已在、线上未生效**（阻塞项）：本域文件多为未提交状态（`domains/emergency_info/service/alert_taxonomy.py` 等仍 untracked），必须提交并由用户提权重启才算上线；此前的"闸建好但一条都过不去"（条目 id 用 `:` 连接撞上幂等键段字符集禁 `:`）已由 WIRE-SUB 波根修并补端到端用例——静态可达性全绿照样漏，这是本域最贵的一课。
-2. **`WP3-TAXONOMY` 半成品挂账**：预警谱注册表可用，但**注册表驱动定级/按震级与境内外定级尚未做完**，相关用例以 `xfail(strict=False)` 诚实挂着（标记名 `WP3-TAXONOMY`，摘牌指引写在测试件头注）。另有少量参数化实例意外 xpass，属关键词表恰好兜住，不是实现（实例数以该测试件实跑为准）。
+1. **整域代码已入库、线上未生效**（阻塞项）：本域文件已全部提交（复跑 `git status --short plugins/bot_unified_runtime/domains/emergency_info/` 现算为干净），剩下的阻塞点只有一条——生产进程未重启 ⇒ 定级与订阅口径一行都不生效（铁律：改代码必须重启，重启权在用户）。此前的"闸建好但一条都过不去"（条目 id 用 `:` 连接撞上幂等键段字符集禁 `:`）已由 WIRE-SUB 波根修并补端到端用例——静态可达性全绿照样漏，这是本域最贵的一课。
+2. **~~`WP3-TAXONOMY` 半成品挂账~~（已于 2026-09-22 落地摘牌，勿再当"未做"派工）**：注册表驱动定级已在——族内合法色档由注册表派生、地震只吃震级/深度/境内外三枚源侧事实分档、`grading_candidates` 提供审计面，且**种类词整体退出缺省关键词表**（判据由 `tests/test_emergency_info_taxonomy.py::test_default_keyword_table_contains_no_category_words` 锁死）。复跑：全树 `grep -rn "WP3-TAXONOMY" tests/` 只剩摘牌注释、无 `xfail` 标记；`pytest tests/test_emergency_info_taxonomy.py tests/test_emergency_info_collector.py tests/test_emergency_grading_family_legality.py -q` 全绿（实例数以该次实跑为准）。⚠ **反向警示**：把「台风/地震/暴雨」这类种类词加回缺省关键词表＝重演"标题含种类词即抬到 P0、矩阵格全判红档"那笔 Critical，任何"回填 observed 类进关键词表"的开工令都不构成授权——类别可达性走注册表别名索引（`resolve_category`），与定级关键词是两条不相干的腿。残项：`grading_candidates()` 生产无消费方，已按 2026-09-22 评审席 T8 裁定 (b) 诚实改口为"未接线的调试/复算出口"（落库只存最终档），升格为审计通路须另行授权且禁造第三条通路。
 3. **`bot_emergency_info_quiet_breach_levels` 是枚不存在的键**：能力层用 `getattr` 读它，`config.py` 未声明 ⇒ 只能吃代码缺省（P0,P1），`.env` 写了不生效（`domains/emergency_info/service/grading.py` 头注自证）。要么补声明+登记目录册，要么删读点。
 4. **地名→坐标 resolver 未接**：装配层跨域取数没做，所以 `area=湘潭` 目前只走文字命中，半径只能靠用户自己给 `coord=`。
 5. 条目 id 含非法段时改为"点名跳过该条"，但 `deps.sources` 为空仍沿用既存的"整轮 return"口径（两处行为不一致，登记未修）。

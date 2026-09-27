@@ -24,15 +24,15 @@
 
 一个能力要"被系统看见"，需要同时回答七件事：占哪个路由席位、叫什么能力 id、优先级多少、算不算确定性命令、要不要绑 matcher、有没有内部说明、帮助主题归谁。这些属性早期散在 `base_router.py` 的多张手写清单里，新增一个能力要改四五处，漏登一处就出现"代码在跑但没人知道它存在"的隐身能力。
 
-本功能把它们收成**每能力一行的 keystone 声明源**：`domains/chat_reply/runtime/capability_registry.py::ROUTE_CAPABILITY_DECLARATIONS`，同文件另有接口清单、内部受控能力、帮助主题三张表。它只声明数据、不 import 包内任何模块，因此不会造成循环依赖；`base_router` 在 import 时从它构造 `COMMAND_ROUTE_KINDS`。
+本功能把它们收成**每能力一行的 keystone 声明源**：`domains/chat_reply/runtime/capability_registry.py::ROUTE_CAPABILITY_DECLARATIONS`，同文件另有接口清单、内部受控能力、帮助主题等声明表（逐表以 `capability_registry.py` 为准）。它只声明数据、不 import 包内任何模块，因此不会造成循环依赖；`base_router` 在 import 时从它构造 `COMMAND_ROUTE_KINDS`。
 
-第二层问题是"同一个 id 在几处各登记一次、彼此漂移"。现在的口径是：这四张表是**声明式输入源**，而"某个 capability_id 是否在册、它的 handler/健康探针/降级说明/门 id/帮助主题/路由席位是什么"的**唯一答案**是 `plugins/bot_unified_runtime/runtime/capability_protocols.py::CAPABILITY_DESCRIPTOR`（由多路输入取并集派生，编排侧那一路是同模块的 `DESCRIPTOR_BUILDERS`）。消费面（`domains/ops/features/feature_catalog.py` 与 `scripts/command_catalog.py`）都改读这张唯一表。
+第二层问题是"同一个 id 在几处各登记一次、彼此漂移"。现在的口径是：上述声明表是**声明式输入源**，而"某个 capability_id 是否在册、它的 handler/健康探针/降级说明/门 id/帮助主题/路由席位是什么"的**唯一答案**是 `plugins/bot_unified_runtime/runtime/capability_protocols.py::CAPABILITY_DESCRIPTOR`（由多路输入取并集派生，编排侧那一路是同模块的 `DESCRIPTOR_BUILDERS`）。消费面（`domains/ops/features/feature_catalog.py` 与 `scripts/command_catalog.py`）都改读这张唯一表。
 
 ## 处理流程
 
 ```mermaid
 flowchart LR
-  decl[capability_registry 四张声明表] --> proj[base_router 字面投影表]
+  decl[capability_registry 声明表族] --> proj[base_router 字面投影表]
   decl --> desc[capability_protocols.CAPABILITY_DESCRIPTOR]
   build[DESCRIPTOR_BUILDERS 编排侧] --> desc
   desc --> invoker[CapabilityInvoker]
@@ -45,7 +45,7 @@ flowchart LR
 ## 边界与降级
 
 - 声明行的 `execution` 列不填＝该能力**只在册、未接入中央 invoker**，属诚实在册而非已接入；缺口逐条记在缺口账测试里（见下节指针），本文不写条数。
-- 四张表的**字面形态不可改成运行时构造**：机器册、命令目录、文档门禁、触发词提取四处静态解析器按源码文本提取，不 import 插件包。
+- 上述声明表的**字面形态不可改成运行时构造**：机器册、命令目录、文档门禁、触发词提取四处静态解析器按源码文本提取，不 import 插件包。
 - 描述符完整性校验在构造期：`health_probe` 填了就必须是壳内已注册的探针，否则当场红。
 - 信封不变量：成功态才允许携带呈现载荷且必须是已 dump 的 dict；失败/降级态不得携带载荷且必须给非空 `detail`（诚实降级说明，不静默、不假成功）。
 

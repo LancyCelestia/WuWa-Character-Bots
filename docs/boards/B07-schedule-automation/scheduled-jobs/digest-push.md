@@ -19,7 +19,7 @@
 
 ## 开关与参数
 
-- 装配门：`bot_group_digest_push_enabled`（缺省 True）∧ `bot_shared_group_context_enabled`。
+- 装配门：`bot_group_digest_push_enabled`（缺省态以 `config.py` 该字段为真身）∧ `bot_shared_group_context_enabled`。
 - **目标只认白名单**：`bot_group_digest_list_mode` 必须是 `whitelist` 且 `bot_group_digest_whitelist` 非空，否则一律不推（绝不猜群）；`bot_group_digest_blacklist` 供排除。摘要口径键 `bot_group_digest_max_turns`/`_max_chars`/`_llm_enabled` 等。推送时刻 `bot_group_digest_push_time`（缺省 `21:30`）为**装配期快照**，改后需重启。
 - 去重：`dedupe_key` 带当天日期（同群同天不重发）。
 

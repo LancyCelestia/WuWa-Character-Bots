@@ -20,7 +20,7 @@
 ## 开关与参数
 
 - 装配门：`bot_credential_check_enabled`（缺省 False，关则不注册）。
-- `bot_credential_check_interval_hours`（缺省 6，下限钳到 1）。收件人取 `bot_admin_user_ids`，为空则发不出（不猜人）。凭据本身的读取与域名归因见 B05/B10 的凭据与凭证咽喉。
+- `bot_credential_check_interval_hours`（缺省值与钳制下限以 `config.py` 该字段声明为真身）。收件人取 `bot_admin_user_ids`，为空则发不出（不猜人）。凭据本身的读取与域名归因见 B05/B10 的凭据与凭证咽喉。
 
 ## 失败时看到什么
 

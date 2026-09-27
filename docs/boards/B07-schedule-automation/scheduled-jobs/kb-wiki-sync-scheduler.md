@@ -19,8 +19,8 @@ Crawl Wiki 知识库的每日增量同步：把源 wiki 目录的变更同步进
 
 ## 开关与参数
 
-- 装配门：`bot_kb_wiki_enabled`（缺省 False）且 `bot_kb_wiki_root` 非空才注册。
-- `bot_kb_wiki_sync_hour`（缺省 23）、`bot_kb_wiki_sync_minute`（缺省 40）、`bot_kb_wiki_sync_on_startup`（缺省 True）；库路径 `bot_kb_wiki_db_path`。全量重建（`kb_drift`）不在本任务里自动做，是用户裁定的独立动作。
+- 装配门：`bot_kb_wiki_enabled`（缺省态以 `config.py` 该字段为真身）且 `bot_kb_wiki_root` 非空才注册。
+- `bot_kb_wiki_sync_hour`、`bot_kb_wiki_sync_minute`、`bot_kb_wiki_sync_on_startup`（三键缺省值以 `config.py` 三字段为真身）；库路径 `bot_kb_wiki_db_path`。全量重建（`kb_drift`）不在本任务里自动做，是用户裁定的独立动作。
 
 ## 失败时看到什么
 

@@ -29,10 +29,10 @@
 
 | 项 | 真身 | 值语义 |
 |---|---|---|
-| 引用链深度 | `message_context.py:REPLY_CHAIN_MAX_DEPTH` | 最多 5 层 |
-| 每级/总字数钳制 | `REPLY_CHAIN_PER_LEVEL_CHARS` / `REPLY_CHAIN_TOTAL_CHARS` | 超长截断加省略号 |
-| 段归一嵌套止境 | `message_context.py:_flatten(depth=)` | `depth > 5` 直接返回空 |
-| 转发深度/节点/超时 | 根 `__init__.py:_FORWARD_NESTED_MAX_DEPTH` / `_FORWARD_NESTED_MAX_TOTAL` / `_FORWARD_MESSAGE_API_TIMEOUT_SECONDS` | 主+子共享一个总预算 |
+| 引用链深度 | `message_context.py:REPLY_CHAIN_MAX_DEPTH` | 递归回溯的最大层数，取值以该常量现算为准 |
+| 每级/总字数钳制 | `REPLY_CHAIN_PER_LEVEL_CHARS` / `REPLY_CHAIN_TOTAL_CHARS` | 超长截断加省略号，取值以该常量现算为准 |
+| 段归一嵌套止境 | `message_context.py:_flatten(depth=)` | 超过该件内置止境直接返回空，止境值以其为准 |
+| 转发深度/节点/超时 | 根 `__init__.py:_FORWARD_NESTED_MAX_DEPTH` / `_FORWARD_NESTED_MAX_TOTAL` / `_FORWARD_MESSAGE_API_TIMEOUT_SECONDS` | 主+子共享一个总预算，取值以这些常量现算为准 |
 
 ## 失败时看到什么
 

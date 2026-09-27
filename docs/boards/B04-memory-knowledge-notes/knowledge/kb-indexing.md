@@ -21,7 +21,7 @@
 
 ## 开关与参数
 
-`bot_knowledge_files`（清单，`list[str]`）、`bot_knowledge_chunk_chars`（缺省 900）、`bot_knowledge_max_chunks`（人格上下文注入侧每文件块数上限，`plugins/bot_unified_runtime/domains/chat_reply/character/providers.py` 读）、`bot_knowledge_top_k`（检索槽位预算，缺省 4）、`bot_knowledge_db_path`（进路径重映射）。嵌入侧的模型、端点、维度、本地通道由 `bot_embedding_*` 决定；换模型或端点会让指纹变化并触发"清空旧向量重嵌"。这些都是装配期读取，改 `.env` 要重启才生效（索引代际本身除外：另一进程原子换入新索引后，本进程下一次检索即感知，不需重启）。
+`bot_knowledge_files`（清单，`list[str]`）、`bot_knowledge_chunk_chars`、`bot_knowledge_max_chunks`（人格上下文注入侧每文件块数上限，`plugins/bot_unified_runtime/domains/chat_reply/character/providers.py` 读）、`bot_knowledge_top_k`（检索槽位预算）、`bot_knowledge_db_path`（进路径重映射）；上述各键的缺省值以 `plugins/bot_unified_runtime/config.py` 为准。嵌入侧的模型、端点、维度、本地通道由 `bot_embedding_*` 决定；换模型或端点会让指纹变化并触发"清空旧向量重嵌"。这些都是装配期读取，改 `.env` 要重启才生效（索引代际本身除外：另一进程原子换入新索引后，本进程下一次检索即感知，不需重启）。
 
 ## 失败时看到什么
 

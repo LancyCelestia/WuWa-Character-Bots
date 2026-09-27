@@ -268,7 +268,7 @@ Status: STARTED
 | food | 菜谱/图库 | AGENTS #30①(clean_food_gallery) | 缺域文档：图库预热 61 道、VLM 防污染黑名单、`food.md` 自定义格式全部无文 | B06 |
 | location | 地理编码/城市别名 | v21r2-reorg-w16-log、AGENTS 天气行 F18 | 缺别名表与逐级拆解规则文档（60+ 别名是代码常量） | B05 |
 | transport | 发送队列/出站适配器 | v21r2-reorg-w14-log、outbound-* 三件、U3-OUTBOUND 审计 | 缺 **send_queue 幂等协议**文档：part 级幂等/UNKNOWN 确认/PARTIAL 断点续发只在 AGENTS 一句 | B08 |
-| creation | 生成域骨架 | v21r2-reorg-wpa1-log（骨架波，§9 字段级契约草案） | 缺功能本体：该域现为骨架，无用户可见能力，应显式标「占位域」避免新 AI 误当已实现 | B06 |
+| creation | 生成域骨架 | v21r2-reorg-wpa1-log（骨架波，§9 字段级契约草案） | 缺功能本体：该域现为骨架，无用户可见能力，应显式标「占位域」避免新 AI 误当已实现（**2026-09-21 当时值，此判词已失效**：该域此后落成协议在册面——描述符与执行体都注册了，缺的是真实 provider 而不是协议，实况见 `docs/boards/B06-media-entertainment/creation/README.md`。"无用户可见入口"那半仍成立：板块生成区里本域没有路由席位也没有能力 id，所以它依然不是一个能被消息触发的功能） | B06 |
 
 ### 5.3 归档建议
 
@@ -305,3 +305,106 @@ Status: STARTED
 ---
 
 Status: DONE — 本席（SEAT-META）续写完成：§3 覆盖 `docs/design` 顶层各件（逐条 + 合并区间，全名已列）+ `docs/design/unify-audit-20260919/` 全组（区间条目）+ `docs/superpowers/` 逐条；§4 覆盖 `.superpowers/sdd/` 各波次目录（目录级判定）；§5 三节（重复与冲突 / 门钉勘误 / 覆盖缺口逐域 / 归档建议 A-B-C）。全表合计新增条目数以脚本现算为准。采集与判定全部由一次性只读脚本完成，未在源码树留下 `__pycache__`/`.pytest_cache`，未跑 pytest，未做任何 git 写操作。
+
+
+## 6. 2026-09-23 现算跟随（TX216 席，纯加法；§1–§5 原判条目一字未动）
+
+**尺子与时刻**：退役依据册全表行现算，现役标记（现行/现役）行的文件 token 逐枚存在性核查
+（首格分词 × 多候选根：repo 根 / `docs/` / `docs/design/` / `docs/design/unify-audit-20260919/`），
+缺件者走 `git ls-files` + `git log --diff-filter=D` 取证；读数与逐枚名册以本席报告
+`.superpowers/sdd/2026-09-22-taxonomy/SEAT-TX216.md` 与下方复算命令为准（AGENTS 规则 10，此处不手写会漂移的总数）。
+
+**① 结论**：仍标「现役」而真身已删/已迁的条目 = `0` 枚（两遍现算一致，逐枚名册为空）。
+
+**② 表形缺陷（登记不改写）**：§3.2 数行以裸文件名省略 `docs/design/` 前缀、§3.3–3.4 有合并名行
+（「a / b / c」共写一格）。凡按「首格=字面全路径」做机器存在性核查者必误判为缺失——本席第一遍即被
+此形顶出假缺失，第二遍多候选解析后归零。修法（补全路径 or 行级 token 化尺）交主会话/门 owner 裁，本席不代改历史条目。
+
+**③ code-quality 台账对账**：域内代码锚按 `plugins/bot_unified_runtime/` 现算全命中；
+不在盘的 `tests/` 名与 `domains/core/dispatch/` 均系该册自标「拟建·尚不存在」的计划锚而非死锚。
+
+**④ B06–B10 面B**：普查（`spec_gates_census.compute()`，时刻见 SEAT-TX216）面B/面A 对 boards 均零命中，
+板块门绿；本席以盲区尺（门词表外量词 + 限额/缺省/下限/钳制上下文）复扫人工区，将真裸默认值行逐行改写为
+「以真身为准」指针句（守恒一行换一行、机器段 `BOARD-AUTO` 只字不碰、crlf 前后计数并报），
+并顺带修出 B06 媒体归档页的一处默认值口径误称（详见 SEAT-TX216 §4）。
+
+复算命令（只读）：见 SEAT-TX216 §7。
+
+
+## 7. 2026-09-23 现算跟随（TX268 席，纯加法；§1–§6 原判条目一字未动）
+
+**尺子与时刻**：现算取数时刻 2026-09-23（本会话内 `find` / `wc -c` 逐枚实测）。
+尺子 = 用户四条「板块归属」新裁定（外部/半外部资产不占 bot 板块）× 本仓 `docs/`、`personas/`、`tests/`
+三面的文件存在性核查。字节数为现算值，随树漂移，只作时点证据（AGENTS 规则 10）。
+本册 §1–§6 采集面 = 根 `.md` / `docs/*.md` / `docs/design/**` / `.superpowers/sdd/**`；
+`personas/**` 与 `tests/**` 非原采集面，本席按裁定补记并逐枚点名。参照 §6 的做法——**只追加、不改写历史条目**。
+
+**四条裁定要点（依据源 = 用户消息）**：
+- **裁定一（外部引擎）**：Crawl Wiki 引擎**设计文档**与其**部署 docs** → 主板块 NONE；若确是 bot 侧知识库**操作界面**则归 B09。
+- **裁定二（半外部件）**：借鉴设计参考、第三方通告、官方文档快照、提示词合集、竞品调研 → 主板块 NONE、次板块 NONE。
+- **裁定三（知识库素材）**：核心知识、身份、世界观、表达规范、偏好配置等人格设定材料 → 主板块 B03，次板块可留 B04。
+- **裁定四（机器册与生成物）**：机器册、command-catalog、render_hashes、render_samples 等脚本派生的账/册 → 主板块 B10。
+
+### 7.1 本仓**在册且需改对**的条目（历史行一字不动；下表为「现算改对值」，其效力取代对应历史行）
+
+| 路径 | 字节(现算) | 现役性 | 裁定 | 主板块（历史行 → 改对） | 次板块（历史行 → 改对） | 判定依据 |
+|---|---|---|---|---|---|---|
+| `docs/THIRD_PARTY_NOTICES.md` | 3996 | 现行权威 | 二 | §2 表 `B08` → **NONE** | §2 表 `B10` → **NONE** | 第三方出处/许可合规件＝半外部资产，不占 bot 板块（外部/半外部不占板块的总则）；此件被 `tests/verify_hashes.py` 钉住＝「禁移树但主板块判 NONE」，与 §6 已确立口径一致 |
+| `docs/command-catalog.md` | 171176 | 生成物(现行) | 四 | §2 表 `B02` → **B10** | §2 表 `B05/B06` → 不变 | 由 `scripts/command_catalog.py --write` 派生的生成物＝机器册族，与 `docs/auto-facts.md`（§2 已 B10）同族同归；本裁定只点名改主板块，次板块（内容确为命令口径）保持 |
+
+### 7.2 本仓**在册但无需改**的条目（现算核对，列出以免下一席重判）
+
+| 路径 | 裁定 | 现值 | 结论 | 依据 |
+|---|---|---|---|---|
+| `docs/auto-facts.md` | 四 | §2 已 `B10`（次 `B09`） | 无需改（任务亦明示别为它动门） | 生成物机器册，已正确归 B10 |
+| `docs/ai-kb-operations-manual.md` | 一 | §2 已 `B09`（次 B03） | 无需改 | bot 侧知识库**操作界面**说明书，按裁定一末句正应归 B09，本就正确 |
+| `docs/ai-setup-knowledge-pack.md` | 一 | §2 已 `B09`（次 B10） | 无需改 | 同上：知识库操作全集，归 B09 正确 |
+| `docs/search-api-adapters-2026-09-06.md` | 一/二 | §2 已 `B05`（次 B09） | 无需改（**非**官方文档快照） | 它是 bot 实际调用 Tavily/You/LangSearch 的**适配与回退顺序**规格（B05 外接数据服务真身件），不是「LangSearch 官方文档快照」这类半外部拷贝，不适用裁定二 |
+
+### 7.3 本仓**原账未覆盖、按裁定补记**的条目（rule 5：新增并逐枚点名；仅登记归属，不移文件、不改文件本体）
+
+`personas/**`（人格设定材料本体）与 `tests/render_hashes.json`（哈希台账）不在 §1–§6 采集面内；
+裁定三/四点名它们，本席补记现算归属。**`personas/**` 为 AGENTS 铁律 6/8 禁写面——本席只读其存在性，
+绝不移动或改写任何 persona 文件**；此表只是给它一个板块归属记录。
+
+| 路径 | 字节(现算) | 现役性 | 裁定 | 主板块 | 次板块 | 一级/二级功能 | 处置 | 判定依据 |
+|---|---|---|---|---|---|---|---|---|
+| `personas/shorekeeper/identity.md` | 16349 | 人格资产(禁写面) | 三 | B03 | B04 | 身份与称谓设定（人格素材） | 原地保留，仅登记归属 | 核心人格设定件 → 裁定三归 B03 |
+| `personas/shorekeeper/knowledge/守岸人_核心知识.md` | 81749 | 人格资产(禁写面) | 三 | B03 | B04 | 核心知识（人格素材） | 同上 | 裁定三核心知识面本体 |
+| `personas/shorekeeper/knowledge/守岸人_人格与表达规范.md` | 157651 | 人格资产(禁写面) | 三 | B03 | B04 | 人格与表达规范（人格素材） | 同上 | 裁定三表达规范/偏好配置本体 |
+| `personas/shorekeeper/knowledge/worldview_glossary.md` | 4709 | 人格资产(禁写面) | 三 | B03 | B04 | 世界观术语表（人格素材） | 同上 | 裁定三世界观面本体 |
+| `tests/render_hashes.json` | 2580 | 生成物台账 | 四 | B10 | NONE | 交付物哈希台账（生成物） | 原地保留 | `tests/verify_hashes.py` 派生哈希账＝机器册族，归 B10 |
+
+### 7.4 裁定点名但**不在本仓**的对象（边界如实账，勿误当已处理）
+
+- **裁定一「Crawl Wiki 引擎设计文档（6 份）与两份讲 Crawl Wiki 部署的 docs」**：`Crawl Wiki` 是外部仓
+  （本仓只读集成，指针见 `docs/config-catalog-full.md` 的 `BOT_KB_WIKI_*` 节，及 `docs/HANDBOOK.md` 停摆根修段所指外部路径），
+  **其引擎设计与部署文档不在 ChatBot 工作树内**，本册无从对其建行/改行。本仓与之相关的只有 bot 侧集成面
+  （config-catalog B09、`domains/location/knowledge/kb_wiki.py`、板块页 `docs/boards/B07-schedule-automation/scheduled-jobs/kb-wiki-sync-scheduler.md`），
+  均已正确落位，属「操作界面/集成」而非「引擎设计文档」，按裁定一末句正应留 B09/B04，无 NONE 可改。
+- **裁定二「借鉴设计参考（`design-reference.md`）、提示词合集、竞品调研」**：本仓 `find` 对这三类**零命中**
+  （属外部设计聚合仓资产）；本仓唯一实存的半外部件是 `docs/THIRD_PARTY_NOTICES.md`，已在 7.1 改对。
+- **裁定四「`render_samples/*.md`（9）」**：本仓**无** `render_samples/` 目录（`find -type d -iname '*render_sample*'` 零命中），
+  该样张册属外部设计仓；本仓 render 侧对应的哈希台账是 `tests/render_hashes.json`，已在 7.3 补记 B10。
+- **裁定三点名的「`docs/design` 面人格素材文档、`personas/shorekeeper/*.md`、Runtime 人格副本」**：
+  本仓 `docs/design/**` 经关键词核对，命中的都是**算法规格件**或**席位过程件**，均非「人格设定素材本体」，
+  按各自主题留板块，不适用裁定三（个别件已在 §3.5 判为 B03/B08 语境，指针见彼处）。人格素材**实体**在本仓为
+  `personas/shorekeeper/*.md`（枚数以本报告 §7.3 表为准），已在 7.3 补记。**Runtime 人格副本在运行数据根
+  （工作区外，AGENTS 规则 1 不索引、不扫描、不处理）**。
+
+### 7.5 门与规范核对（改法合规性）
+
+- `tests/test_board_taxonomy_gate.py` 的**板块结构门**（结构自洽 / 活性覆盖 / `impl_paths` 可解析 / 生成物同步 /
+  旧窄计数循环）**不解析本分类账**、也无「主板块取值合法集」校验——`_meta` 在 `_board_body_pages()` 旧窄循环、
+  G-T2 骨架、投影器 `scripts/board_doc_sync.py`（两处按 `_meta` 目录名跳过）三面被显式排除 ⇒ 本席改此册 主板块 值不触那三面。
+  ⚠ **但 G-T3 宽尺（`spec_gates_census` 面 A）并不排除 `_meta`**——本册正文照被它扫。本席 §7 初稿曾被它记若干行
+  （裸计数/裸枚举/裸运行路径），已逐行改写为指针句，现该文件对此尺**净贡献归零**（复算 `sc.compute()` 过滤
+  `doc-classification` 的读数见本席报告）。G-T3 现值仍高于其上限，逐条归属他件（`docs/design` 审计件等，
+  属 TX265 面 A 指针化在办债），非本席、非本册 ⇒ 按纪律不降基线、不代他席改。
+- `tests/test_doc_link_integrity.py`（扫描面含 `docs/**/*.md`，本册在内）：本席全用行内代码写路径、
+  不加导航用的 markdown 链接、不带「文件加行号」式死坐标 ⇒ 不改「md 死链 HARD 零档」与「死坐标 CEILING」棘轮。
+- 未动 `board_taxonomy.py` / `board_doc_sync.py` / 三件生成物 `--write` / `AGENTS.md #48` /
+  `HANDOFF-BOARDS-20260921.md` / `docs/boards/_conventions.md`（禁写面与难逆面，越权归主会话）。
+
+复算命令（只读）：`find personas -name '*.md'` · `find . -type d -iname '*render_sample*'` ·
+`wc -c` 逐枚 · `ls tests/render_hashes.json` · 关键词 `grep` 见本席报告 `SEAT-TX268.md`。

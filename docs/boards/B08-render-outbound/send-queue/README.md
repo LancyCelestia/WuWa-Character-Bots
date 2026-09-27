@@ -8,7 +8,7 @@
 > part 级幂等、UNKNOWN 确认、PARTIAL 断点续发与投递回执。
 
 - 归属板块：[B08](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/transport/sender`
+- 实现落点：`plugins/bot_unified_runtime/domains/transport/sender/__init__.py`、`plugins/bot_unified_runtime/domains/transport/sender/file_gateway.py`、`plugins/bot_unified_runtime/domains/transport/sender/gateway.py`、`plugins/bot_unified_runtime/domains/transport/sender/outbound_gate.py`、`plugins/bot_unified_runtime/domains/transport/sender/queue.py`、`plugins/bot_unified_runtime/domains/transport/sender/receipts.py`、`plugins/bot_unified_runtime/domains/transport/sender/timeout.py`、`plugins/bot_unified_runtime/domains/transport/sender/worker.py`
 - 帮助主题：回执
 - 配置键前缀：`bot_send_queue_`（逐键以目录册为准）
 
@@ -37,7 +37,7 @@ flowchart LR
   sent --> repo[ReceiptRepository 落账]
 ```
 
-队列契约 `SendQueue`（Protocol，`submit`/`find_request`/`safe_summary`）由 `domains/transport/sender/queue.py::build_send_queue(config, audit_logger)` 选择实现：`bot_send_queue_enabled` 且 `bot_send_queue_db_path` 非空时给 `SQLiteSendRequestQueue`，否则退回 `InMemorySendQueue`。取件与重试在 `SendQueueWorker`（`worker.py`），回执账本在 `receipts.py::build_receipt_repository`。主动投递一律经 `submit_active_push` 走 outbound_gate，不直调队列 `submit`（那是另一道闸，见本板块出站统一口径）。
+队列契约 `SendQueue`（Protocol，`submit`/`find_request`/`safe_summary`）由 `domains/transport/sender/queue.py::build_send_queue(config, audit_logger)` 选择实现：`bot_send_queue_enabled` 且 `bot_send_queue_db_path` 非空时给 `SQLiteSendRequestQueue`，否则退回 `InMemorySendQueue`。取件与重试在 `SendQueueWorker`（`worker.py`），回执账本在 `receipts.py::build_receipt_repository`。主动投递一律经 `submit_active_push` 走 outbound_gate、不直调队列 `submit`（现役口径与「闸关态=与裸 submit 同形 passthrough」的在册未执法说明见 [板块总页](../README.md) ⚠ 段）；该出口在判定前先做两件事——正文过一次 `redact_local_secrets`、幂等键形经 `wash_active_push_key` 规范一次（脏键改写必留 warning，真身 `domains/emergency_info/service/dedupe.py`），结果与跳过/顺延回执一并封装为 `ActivePushOutcome` 交回调用方。
 
 ## 边界与降级
 

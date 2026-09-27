@@ -20,6 +20,7 @@
 |---|---|---|---|---|
 | [今日快报](news.md) | NEWS | bot.news | — | 41 |
 | [历史上的今天](today-history.md) | TODAY_HISTORY | bot.today_history | 历史上的今天 | 41 |
+| [新闻摘要卡](news-digest-card.md) | — | — | — | — |
 <!-- BOARD-AUTO:END -->
 
 ## 这个功能解决什么

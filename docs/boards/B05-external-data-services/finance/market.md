@@ -28,8 +28,8 @@
 ## 开关与参数
 
 - `bot_market_enabled`（缺省 True）：本入口总开关。
-- `bot_market_timeout_seconds`（缺省 6.0）、`bot_market_cache_seconds`（缺省 60.0，进程内 TTL）、`bot_market_retry_on_empty`（缺省 True，东财"200 空体"至多再试一次）。
-- 优先级 41；同族席位（个股 42、汇率 36、商品 37、债 38、北向 39）在 2026-09-21 修复波做过**拆位**（越专用越靠前）并收紧 market 词表把「兑/原油/国债/债券/北向/沪深股通」让路——该改动**代码已在、线上未生效**（未提交、未重启）。
+- `bot_market_timeout_seconds`、`bot_market_cache_seconds`（进程内 TTL；两键缺省值以 `config.py` 为准）、`bot_market_retry_on_empty`（缺省 True，东财"200 空体"至多再试一次）。
+- 本入口与同族席位（个股/汇率/商品/债/北向）的优先级数值以 `domains/chat_reply/runtime/base_router.py` 的 `RouteRule` 行为准；2026-09-21 修复波做过**拆位**（越专用越靠前）并收紧 market 词表把「兑/原油/国债/债券/北向/沪深股通」让路——该改动**代码已在、线上未生效**（未提交、未重启）。
 
 ## 失败时看到什么
 

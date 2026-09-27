@@ -8,7 +8,7 @@
 > 十板块文档树、统一骨架、单一事实源与自动化同步契约。
 
 - 归属板块：[B10](../README.md)
-- 实现落点：`docs/boards`、`docs/README.md`、`docs/HANDBOOK.md`、`docs/CODE-MAP.md`
+- 实现落点：`docs/README.md`、`docs/HANDBOOK.md`、`docs/CODE-MAP.md`
 
 ### 三级入口
 
@@ -55,10 +55,14 @@ flowchart LR
 
 `tests/test_board_taxonomy_gate.py`（结构自洽 + 活性覆盖 + 实现路径可解析 + 生成物同步 + 骨架完整 + 正文禁手写计数，含三发注毒自证）；`tests/test_documentation_consistency.py`（帮助注册表与路由、配置键、测试路径的一致性门族）；`tests/test_doc_link_integrity.py`（文档坐标与 markdown 链接的死活与棘轮）。
 
-写一页板块正文的自检：不新建结构、不改 AUTO 段、不留「（待写」、小节标题齐全、不写会漂移的计数、引用只写 `路径` 或 `路径:函数名`（不写行号）、图只用 mermaid `flowchart` 或 `sequenceDiagram` 且只画自己那一段。
+写一页板块正文的自检：不新建结构、不改 AUTO 段、不留生成器骨架的占位句（占位句真身＝`scripts/board_doc_sync.py` 的 `L1_BODY`/`L2_BODY`/`L3_BODY`，机器按逐字比对判、不靠词面猜）、小节标题齐全、不写会漂移的计数、引用只写 `路径` 或 `路径:函数名`（不写行号）、图只用 mermaid `flowchart` 或 `sequenceDiagram` 且只画自己那一段。
 
 ## 现行缺陷
 
 - 板块树自身没有「内容正确性」门：机制只保证结构、认领与同步，页内描述失真只能靠评审发现。
 - 旧文档物理退役未执行（分类账给的是处置建议），当前是「新树 + 旧权威件」并存状态；读者需要知道谁是最新口径，这本身是过渡期成本。
-- 三级入口正文由各席位手写，风格与详略不齐；统一靠 `_conventions.md` 的骨架约定与评审，尚无自动的「正文完整度」判据（现有门只查正文非空与无「待写」的近似形态）。
+- 三级入口正文由各席位手写，风格与详略不齐；统一靠 `_conventions.md` 的骨架约定与评审。**「尚无自动完整度判据」这句已经作废**：
+  `scripts/spec_gates_census.py:board_body_completeness` 逐页记人写区字符数、骨架占位是否逐字未填、缺哪枚必选槽、是否只剩指针句，
+  再按 `BODY_TIER_ORDER` 分档（档位名册以该真身为准，本页不抄份数）；自指导词型空壳另有 `tests/test_body_completeness_synonym_shell.py`
+  一把封闭同义族的锁。这条腿**今日只登记、不设上限**，转正首届核账值由该门 owner 在收口窗取。判据仍抓不到的那半：
+  占位句之外的空洞散文与**内容正确性**，归评审。

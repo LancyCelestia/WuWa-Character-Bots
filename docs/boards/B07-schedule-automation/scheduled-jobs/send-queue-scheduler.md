@@ -19,7 +19,7 @@
 
 ## 开关与参数
 
-- `bot_send_queue_worker_enabled`（缺省 False）：关则整 worker 不注册。`bot_send_queue_worker_interval_seconds`（缺省 30）、`bot_send_queue_worker_batch_size`（缺省 20），都下限钳到 1。
+- `bot_send_queue_worker_enabled`（缺省态以 `config.py` 该字段为真身）：关则整 worker 不注册。`bot_send_queue_worker_interval_seconds` 与 `bot_send_queue_worker_batch_size` 的轮询间隔、批量与公共钳制下限同以该真身为准。
 - 队列本体（是否持久化、幂等、断点续发）归 B08.send-queue：`bot_send_queue_enabled` 关时是内存队列，重启丢在途消息（装配期会如实告警一次）。
 
 ## 失败时看到什么

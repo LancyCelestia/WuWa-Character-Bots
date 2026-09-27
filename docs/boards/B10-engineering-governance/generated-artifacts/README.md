@@ -8,7 +8,7 @@
 > doc_sync / command_catalog / verify_hashes 三件与 auto-facts 投影。
 
 - 归属板块：[B10](../README.md)
-- 实现落点：`scripts/doc_sync.py`、`scripts/command_catalog.py`、`tests/verify_hashes.py`、`docs/auto-facts.md`
+- 实现落点：`scripts/doc_sync.py`、`scripts/command_catalog.py`、`docs/auto-facts.md`
 
 ### 三级入口
 

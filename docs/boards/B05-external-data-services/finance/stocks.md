@@ -28,7 +28,7 @@
 
 ## 开关与参数
 
-- `bot_stocks_enabled`（缺省 True）。优先级 42，比 `market` 更靠后一位但**谓词更专用**，两者互不抢路由；「行情」裸词永远归 `market`。
+- `bot_stocks_enabled`（缺省 True）。优先级比 `market` 更靠后一位（数值以 `domains/chat_reply/runtime/base_router.py` 的 `RouteRule` 行 为准）但**谓词更专用**，两者互不抢路由；「行情」裸词永远归 `market`。
 - 超时/缓存沿用 `bot_market_*`；东财空响应受 `bot_market_retry_on_empty` 管。
 - 卡面无 logo 属模板槽位休眠，不是异常。
 

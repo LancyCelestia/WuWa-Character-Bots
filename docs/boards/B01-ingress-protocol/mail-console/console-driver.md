@@ -6,7 +6,7 @@
 ## B01.mail-console · 控制台一次性驱动
 
 - 层级：一级 B01 → 二级 mail-console → 三级 `console-driver`
-- 实现落点：`plugins/bot_unified_runtime/mail_adapter.py`、`plugins/bot_unified_runtime/mail_bridge.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/transport/mail/mail_adapter.py`、`plugins/bot_unified_runtime/domains/transport/mail/mail_bridge.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

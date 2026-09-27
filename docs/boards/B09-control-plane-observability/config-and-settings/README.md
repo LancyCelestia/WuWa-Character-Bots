@@ -5,16 +5,18 @@
 
 ## B09.config-and-settings 配置与运行时设置
 
-> Config 单一入口、SETTABLE_KEYS/RESTART_REQUIRED_KEYS 与读取端点。
+> Config 单一入口、SETTABLE_KEYS/RESTART_REQUIRED_KEYS 与读取端点，以及危险参数改动的书面同意命令面（咽喉的四档裁决住 safety_exec）。
 
 - 归属板块：[B09](../README.md)
 - 实现落点：`plugins/bot_unified_runtime/config.py`、`plugins/bot_unified_runtime/domains/core/config`、`plugins/bot_unified_runtime/runtime/settings.py`、`docs/config-catalog-full.md`
-- 帮助主题：配置, 设置, 就绪
+- 路由席位：`CONSENT`
+- 帮助主题：配置, 设置, 就绪, 书面同意
 
 ### 三级入口
 
 | 三级入口 | 路由席位 | 能力 id | 别名/帮助页 | 优先级 |
 |---|---|---|---|---|
+| [书面同意](consent.md) | CONSENT | bot.consent | 书面同意 | 41 |
 | [字段声明与校验器](config-declaration.md) | — | — | — | — |
 | [热更、drain 与回滚](hot-reload-model.md) | — | — | — | — |
 | [示例与目录三处同源](env-example-catalog.md) | — | — | — | — |

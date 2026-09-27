@@ -62,7 +62,7 @@ HTTP 调用是阻塞的，能力在 offload 线程池里同步执行，绝不跑
   （`shorekeeper`）。
 - 自动配音面：`bot_tts_auto_reply_enabled`（False）、`bot_tts_auto_reply_scope`
   （`private|group|all`）、`bot_tts_auto_reply_max_chars`（120）、
-  `bot_tts_auto_reply_probability`（0.05）、`bot_tts_auto_reply_always`（False）、
+  `bot_tts_auto_reply_probability`（0.10）、`bot_tts_auto_reply_always`（False）、
   `bot_tts_voice_hook_enabled`（False）。
 - 缓存：`bot_tts_cache_enabled`（True）、`bot_tts_cache_max_bytes`/
   `bot_tts_cache_max_age_days`（均 0=不限制）。

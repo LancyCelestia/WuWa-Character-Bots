@@ -53,7 +53,7 @@ v7 代码与行为锁都已在但未启用，开启属用户裁决 + 重启。**
 ## 开关与参数
 
 总闸 `bot_affinity_enabled`；库位 `bot_affinity_db_path`。
-v7 十二枚键（`bot_affinity_v7_enabled` + `bot_affinity_base_step`、`_novelty_ratio`、
+v7 一批键（`bot_affinity_v7_enabled` + `bot_affinity_base_step`、`_novelty_ratio`、
 `_novelty_halo_days`、`_rhythm_reference_turns`、`_negative_event_cap_z`、
 `_daily_move_cap_z`、`_fuse_daily_events`、`_repair_gain`、`_z_hard_bound`、
 `_quality_weights`、`_decay_tau_days`）：缺省值以 `config.py` 与

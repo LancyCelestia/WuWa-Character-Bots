@@ -43,7 +43,7 @@
 ## 开关与参数
 
 `bot_poke_enabled`（总闸）、`bot_poke_private_cooldown_seconds`、
-`bot_poke_group_cooldown_seconds`、`bot_poke_probability`（缺省 1.0=每次必应）、
+`bot_poke_group_cooldown_seconds`、`bot_poke_probability`（缺省＝每次必应，数值以 `config.py` 该字段为准）、
 `bot_poke_admin_bypass`（管理员是否绕过冷却/概率）、`bot_poke_reply_enabled`（是否回话术）、
 `bot_poke_poke_back`（是否回戳，缺省开）、`bot_poke_group_text` / `bot_poke_private_text`
 （自定义话术，空=内置默认）、`bot_poke_reply_mode`（缺省 `mix`）、

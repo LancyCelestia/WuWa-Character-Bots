@@ -54,7 +54,7 @@ flowchart LR
 
 ## 退役与并入记录
 
-本板块不吞旧文档，只挂指针。现役规格仍在原处：`docs/design/memory-reflection-v2-design.md`（记忆总线 v2：九键、打分公式、迁移规约）、`docs/design/v21r2-v2-memory-log.md`（V2.1 记忆存储层四表与墓碑设计要点）、`docs/design/v21r4-kb-drift-explainer.md`（索引与原文数量对不上的科普说明与两条处置路线）。
+本板块不吞旧文档，只挂指针。现役规格仍在原处：`docs/design/memory-reflection-v2-design.md`（记忆总线 v2：配置键位、打分公式、迁移规约）、`docs/design/v21r2-v2-memory-log.md`（V2.1 记忆存储层的表结构与墓碑设计要点）、`docs/design/v21r4-kb-drift-explainer.md`（索引与原文数量对不上的科普说明与两条处置路线）。
 
 路径迁移史（v21r2 域重组留下的再导出垫片，垫片不算实现）：`domains/notes/store/notes_store.py` → `domains/notes/store/notes_store.py`；`character/memory.py`、`domains/chat_reply/character/memory_bus_v2.py`、`character/vector_knowledge.py`、`domains/chat_reply/character/knowledge_service.py` → `domains/chat_reply/character/`；`domains/location/knowledge/kb_wiki.py` → `domains/location/knowledge/kb_wiki.py`；`runtime/time_window.py` → `domains/chat_reply/runtime/time_window.py`。
 

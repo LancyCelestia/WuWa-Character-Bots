@@ -39,7 +39,7 @@ flowchart LR
 
 真身 `plugins/bot_unified_runtime/domains/chat_reply/character/history.py`，表 `conversation_turns`（owner 与保留策略登记在 `docs/db-owners.md`）。写入口 `SQLiteConversationHistoryRepository.append_turn`，读出口 `ConversationHistoryStore.retrieve`（实现同时具备 recorder/cleaner 协议）；装配口 `build_conversation_history_provider`。
 
-窗口有两道独立的闸：写侧按 `bot_history_max_items`（缺省 1000）做库内滚动保留，读侧按 `bot_history_max_turns`（缺省 6）与 `bot_history_max_chars`（缺省 1600）截断——这两个读参数在 `domains/chat_reply/character/providers.py` 消费，不在本模块。
+窗口有两道独立的闸：写侧按 `bot_history_max_items` 做库内滚动保留，读侧按 `bot_history_max_turns` 与 `bot_history_max_chars` 截断（三道缺省值以 `plugins/bot_unified_runtime/config.py` 对应字段为准）——这两个读参数在 `domains/chat_reply/character/providers.py` 消费，不在本模块。
 
 ## 边界与降级
 

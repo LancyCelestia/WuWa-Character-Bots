@@ -47,13 +47,13 @@
 - `bot_meme_library_max_file_bytes`（字节上限以 `config.py` 该字段为准）、`bot_meme_library_max_files`、
   `bot_meme_library_max_age_days`：入库体积上限与 FIFO/TTL 剪枝（表情库是可再生
   缓存，与媒体归档的永久保存相反）。
-- `bot_meme_library_cooldown_seconds`（20）：同人同会话发送冷却，防刷屏。
+- `bot_meme_library_cooldown_seconds`（缺省秒数以 `config.py` 该字段为真身）：同人同会话发送冷却，防刷屏。
 - `bot_meme_library_group_allowlist` / `_denylist`：哪些群允许收图（黑白名单口径
   与全仓一致，名单为空即等于不收）。
-- `bot_meme_library_nsfw_max`（0.2，抽图上限）、`bot_meme_library_nsfw_delete`
-  （0.8，达分即连文件带记录删）。
+- `bot_meme_library_nsfw_max`（抽图上限）、`bot_meme_library_nsfw_delete`
+  （达分即连文件带记录删；两键缺省阈值以 `config.py` 双字段为真身）。
 - `bot_meme_library_prefer`：偏好标签序列（改它=改选图倾向，属人格向调整）。
-- VLM 打标：`bot_meme_library_vlm_enabled`（False）及 `_vlm_model`/`_vlm_base_url`/
+- VLM 打标：`bot_meme_library_vlm_enabled`（缺省态以 `config.py` 该字段为真身）及 `_vlm_model`/`_vlm_base_url`/
   `_vlm_api_key`/`_vlm_timeout_seconds`/`_vlm_preset`；密钥只写 `env:变量名`。
 
 ## 失败时看到什么

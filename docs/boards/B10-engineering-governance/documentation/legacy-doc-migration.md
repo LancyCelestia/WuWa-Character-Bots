@@ -6,7 +6,7 @@
 ## B10.documentation · 旧汇总文档的归属与退役
 
 - 层级：一级 B10 → 二级 documentation → 三级 `legacy-doc-migration`
-- 实现落点：`docs/boards`、`docs/README.md`、`docs/HANDBOOK.md`、`docs/CODE-MAP.md`
+- 实现落点：`docs/README.md`、`docs/HANDBOOK.md`、`docs/CODE-MAP.md`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

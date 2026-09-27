@@ -18,6 +18,10 @@
 层级约定：``BNN`` = 一级板块（目录名 ``BNN-<slug>``），``BNN.<slug>`` = 二级功能
 （目录名 ``<slug>/``），三级功能 = ``<slug>/<l3-slug>.md``（由派生得到，不手写 id）。
 
+第二根轴（2026-09-26 用户裁定「按一级分类每类建自己的 git 库」的余量）：``LIBRARY_TAXONOMY``
+登记**板块账派不出来的发行库**（契约地基库与通道适配器库）。一级板块库的成员**只由本文件的
+``BOARD_TAXONOMY`` 派生**（库工厂那一支尺），**绝不抄进 ``LIBRARY_TAXONOMY``**——抄进来就是第二真身。
+
 用法：
     python scripts/board_doc_sync.py --write   # 生成/就地更新 docs/boards/**
     python scripts/board_doc_sync.py --check   # 漂移或覆盖缺口即退出码非 0
@@ -49,6 +53,42 @@ class FeatureNode:
     @property
     def bid(self) -> str:
         return self.fid.split(".", 1)[0]
+
+
+@dataclass(frozen=True)
+class ReleaseLibNode:
+    """发行库：一支自己的 git 仓的**成员账**（与板块账正交的第二把尺，2026-09-26 用户裁定）。
+
+    一级板块库（``kind="board"``）的名字与成员**一律由 ``BOARD_TAXONOMY`` 现派生**（库工厂那一支），
+    **绝不写进本表**——写进来就是第二真身。本表只登记「板块账派不出来」的两族：契约地基库与适配器库。
+
+    字段纪律（沿用 ``board_placement.py`` 的豁免纪律：字面路径、禁通配、禁正则、禁目录兜底）：
+
+    - ``slug`` 必须过板块门那把 kebab 尺，它同时是仓外库目录名与 tag 命名空间，与板块 slug 全不相交。
+    - 发行名是**派生**属性（``release_name``＝``lib:<slug>``），不许另抄一份字符串。
+    - ``member_paths`` 只准逐枚字面文件路径；两族库之间必须互斥（同一字节进两支仓＝库级双认领）。
+    - ``pending_seed``＝ ``(候选落点或字面 none, 为什么今天还不在场)``，合法态恰三种：
+      ①候选落点不在盘上（搬家/新建未落）；②落点＝``none``（该库按字面没有成员，带理由）；
+      ③落点在盘上、但该枚今天已被某支板块库装着（板块账未让位）。
+      第四种形态——在盘上、无主、也没进任何成员表——是懒登记，常驻门当场判红。
+    """
+
+    lid: str
+    label: str
+    slug: str
+    kind: str
+    summary: str
+    member_paths: tuple[str, ...] = ()
+    pending_seed: tuple[tuple[str, str], ...] = ()
+    channel: str = ""
+
+    @property
+    def release_name(self) -> str:
+        return f"lib:{self.slug}"
+
+    def has_seeds(self) -> bool:
+        """纯派生态：有成员路径才算有货；盘上存在性由常驻门去查（数据件不碰文件系统）。"""
+        return bool(self.member_paths)
 
 
 @dataclass(frozen=True)
@@ -114,7 +154,7 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 slug="mail-console",
                 summary="邮件收发桥接与本地控制台交互，共用同一条主链路。",
                 help_topics=("邮件",),
-                impl_paths=("plugins/bot_unified_runtime/mail_adapter.py", "plugins/bot_unified_runtime/mail_bridge.py"),
+                impl_paths=("plugins/bot_unified_runtime/domains/transport/mail/mail_adapter.py", "plugins/bot_unified_runtime/domains/transport/mail/mail_bridge.py"),
                 config_prefixes=("bot_mail_",),
                 extra_l3=(
                     ("mail-inbound", "来信解析入链"),
@@ -188,7 +228,7 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 label="决策引擎",
                 slug="decision-engine",
                 summary="影子对照记录分歧，接管进度由配置模式控制。",
-                impl_paths=("plugins/bot_unified_runtime/decision", "plugins/bot_unified_runtime/domains/core/decision"),
+                impl_paths=("plugins/bot_unified_runtime/domains/core/decision",),
                 config_prefixes=("bot_decision_",),
                 help_topics=("决策",),
                 extra_l3=(("shadow-mode", "影子对照与分歧记账"),),
@@ -250,7 +290,30 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 summary="分区上下文、称谓边界、会话身份、人格源与副本同步。",
                 help_topics=("人格", "身份", "上下文"),
                 impl_paths=(
-                    "plugins/bot_unified_runtime/domains/chat_reply/character",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/__init__.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/addressing.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/documents.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/emotion.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/glossary.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/knowledge_service.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/memory.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/memory_extract.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/memory_service.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/persona_injection.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/persona_service.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/persona_set.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/providers.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/reflection.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/relationship.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/relationships.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/session_identity.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/shared_export.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/shared_group.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/source_summary.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/temporal.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/trend.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/vector_knowledge.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/worldbook_service.py",
                     "personas/shorekeeper",
                 ),
                 extra_l3=(
@@ -652,6 +715,23 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 ),
             ),
             FeatureNode(
+                fid="B07.schedule-board",
+                label="日程板与智能代答",
+                slug="schedule-board",
+                summary="自然语言/命令/课表导入建日程板（复用 V2.1 引擎），"
+                        "别人问「她在干嘛」按可见性分级代答（隐私判定在出站前）。",
+                help_topics=("日程",),
+                impl_paths=(
+                    "plugins/bot_unified_runtime/domains/schedule/capabilities/schedule_board.py",
+                    "plugins/bot_unified_runtime/domains/schedule/service/board_store.py",
+                ),
+                config_prefixes=("bot_schedule_",),
+                extra_l3=(
+                    ("visibility-projection", "可见性分级投影（代答腿）"),
+                    ("timetable-import", "课表文本/图片导入"),
+                ),
+            ),
+            FeatureNode(
                 fid="B07.scheduled-jobs",
                 label="调度器族与定时推送",
                 slug="scheduled-jobs",
@@ -759,7 +839,16 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 slug="send-queue",
                 summary="part 级幂等、UNKNOWN 确认、PARTIAL 断点续发与投递回执。",
                 help_topics=("回执",),
-                impl_paths=("plugins/bot_unified_runtime/domains/transport/sender",),
+                impl_paths=(
+                    "plugins/bot_unified_runtime/domains/transport/sender/__init__.py",
+                    "plugins/bot_unified_runtime/domains/transport/sender/file_gateway.py",
+                    "plugins/bot_unified_runtime/domains/transport/sender/gateway.py",
+                    "plugins/bot_unified_runtime/domains/transport/sender/outbound_gate.py",
+                    "plugins/bot_unified_runtime/domains/transport/sender/queue.py",
+                    "plugins/bot_unified_runtime/domains/transport/sender/receipts.py",
+                    "plugins/bot_unified_runtime/domains/transport/sender/timeout.py",
+                    "plugins/bot_unified_runtime/domains/transport/sender/worker.py",
+                ),
                 config_prefixes=("bot_send_queue_",),
                 extra_l3=(
                     ("queue-persistence", "SQLite 队列与恢复"),
@@ -845,11 +934,24 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 label="日志·指标·Trace·审计",
                 slug="observability",
                 summary="统一事件总线、来源枚举、指标结构化与轨迹阶段表。",
-                help_topics=("日志", "状态", "审计", "用量"),
+                route_kinds=("HOST_STATE",),
+                capability_ids=("bot.host_state",),
+                help_topics=("日志", "状态", "审计", "用量", "宿主机状态"),
                 impl_paths=(
                     "plugins/bot_unified_runtime/domains/ops/audit",
                     "plugins/bot_unified_runtime/domains/ops/collectors",
-                    "plugins/bot_unified_runtime/domains/ops/monitor",
+                    "plugins/bot_unified_runtime/domains/ops/monitor/__init__.py",
+                    "plugins/bot_unified_runtime/domains/ops/monitor/alerts.py",
+                    "plugins/bot_unified_runtime/domains/ops/monitor/disconnect_notice.py",
+                    "plugins/bot_unified_runtime/domains/ops/monitor/event_service.py",
+                    "plugins/bot_unified_runtime/domains/ops/monitor/event_store.py",
+                    "plugins/bot_unified_runtime/domains/ops/monitor/host_card.py",
+                    "plugins/bot_unified_runtime/domains/ops/monitor/host_status.py",
+                    "plugins/bot_unified_runtime/domains/ops/monitor/intent_telemetry.py",
+                    "plugins/bot_unified_runtime/domains/ops/monitor/loop_watchdog.py",
+                    "plugins/bot_unified_runtime/domains/ops/monitor/result_unknown.py",
+                    "plugins/bot_unified_runtime/domains/ops/monitor/runtime_event_log.py",
+                    "plugins/bot_unified_runtime/domains/ops/monitor/usage_monitor.py",
                 ),
                 config_prefixes=("bot_alerts_", "bot_metrics_"),
                 extra_l3=(
@@ -992,6 +1094,100 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
 )
 
 
+#: 板块账派不出来的两族发行库：地基库 ``contracts`` 与四座通道适配器库 A1-A4。
+#: 成员一律逐枚字面路径（派生尺见 S741 报告 §三）；``scripts/telegram_resilience.py`` 刻意不入册——
+#: 库工厂的成员宇宙只扫 ``plugins/**``，把树外件写进名册＝让一支发版本的库依赖一支根本不存在的仓。
+LIBRARY_TAXONOMY: tuple[ReleaseLibNode, ...] = (
+    ReleaseLibNode(
+        lid='L0',
+        label='接口协议地基库',
+        slug='contracts',
+        kind='foundation',
+        summary='全仓唯一「谁都可以依赖、它谁都不依赖」的契约叶子层：不被任何业务板块认领，只被依赖。',
+        member_paths=(
+            'plugins/bot_unified_runtime/contracts/__init__.py',
+            'plugins/bot_unified_runtime/domains/core/contracts/__init__.py',
+            'plugins/bot_unified_runtime/domains/core/contracts/auto_send.py',
+            'plugins/bot_unified_runtime/domains/core/contracts/character.py',
+            'plugins/bot_unified_runtime/domains/core/contracts/envelope.py',
+            'plugins/bot_unified_runtime/domains/core/contracts/errors.py',
+            'plugins/bot_unified_runtime/domains/core/contracts/finance.py',
+            'plugins/bot_unified_runtime/domains/core/contracts/media.py',
+            'plugins/bot_unified_runtime/domains/core/contracts/music.py',
+            'plugins/bot_unified_runtime/domains/core/contracts/request.py',
+            'plugins/bot_unified_runtime/domains/core/contracts/runtime.py',
+            'plugins/bot_unified_runtime/domains/core/contracts/subscription.py',
+        ),
+    ),
+    ReleaseLibNode(
+        lid='A1',
+        label='QQ 通道适配器库',
+        slug='adapter-qq',
+        kind='adapter',
+        summary='OneBot V11 腿（`onebot.py`，手卷 HTTP/WS、不经适配器包）＋ NoneBot 通用腿'
+                '（`nonebot.py`：Telegram／Mail／Console 三条通道的 deliver 实现同住这一枚）。'
+                '⚠ 座名叫 adapter-qq 而成员跨四通道的口径偏差已登记，见本包 §待裁 F-1。',
+        channel='onebot',
+        member_paths=(
+            'plugins/bot_unified_runtime/domains/transport/sender/nonebot.py',
+            'plugins/bot_unified_runtime/domains/transport/sender/onebot.py',
+        ),
+    ),
+    ReleaseLibNode(
+        lid='A2',
+        label='Telegram 通道适配器库',
+        slug='adapter-telegram',
+        kind='adapter',
+        summary='getUpdates 轮询韧性与 file_id 取字节；现役真身还住在仓根 scripts/，等搬家。',
+        channel='telegram',
+        pending_seed=(
+            (
+                'plugins/bot_unified_runtime/domains/transport/telegram/resilience.py',
+                '搬家未落（播种三态之①）：现役真身＝scripts/telegram_resilience.py，落在库工厂成员宇宙之外；且搬进 plugins/** 会提前执行插件根（bot.py 装载序），须她明示授权',
+            ),
+        ),
+    ),
+    ReleaseLibNode(
+        lid='A3',
+        label='Mail 通道适配器库',
+        slug='adapter-mail',
+        kind='adapter',
+        summary='ResilientMailAdapter 与来信桥：全仓唯一以 import 上游适配器包为通道证据的一路。',
+        channel='mail',
+        member_paths=(
+            'plugins/bot_unified_runtime/domains/transport/mail/mail_adapter.py',
+            'plugins/bot_unified_runtime/domains/transport/mail/mail_bridge.py',
+        ),
+    ),
+    ReleaseLibNode(
+        lid='A4',
+        label='Console 通道适配器库',
+        slug='adapter-console',
+        kind='adapter',
+        summary='按字面的第四通道：今天零成员，只有两处互相矛盾的触点，建库即建一支空仓。',
+        channel='console',
+        pending_seed=(
+            (
+                'none',
+                '按字面无成员（播种三态之②）：全仓零 register_adapter 注册到 Console、生产代码零 nonebot.adapters.console import（extra 声明不算）；三案未裁，裁完再定入不入册',
+            ),
+        ),
+    ),
+)
+
+
+def iter_release_libs() -> Iterator[ReleaseLibNode]:
+    """按声明序遍历非板块发行库（板块库由板块账派生，绝不在本表）。"""
+    yield from LIBRARY_TAXONOMY
+
+
+def lib_by_slug(slug: str) -> ReleaseLibNode | None:
+    for lib in LIBRARY_TAXONOMY:
+        if lib.slug == slug:
+            return lib
+    return None
+
+
 def board_by_id(bid: str) -> BoardNode | None:
     for board in BOARD_TAXONOMY:
         if board.bid == bid:
@@ -1014,10 +1210,14 @@ def feature_by_id(fid: str) -> FeatureNode | None:
 
 __all__ = [
     "BOARD_TAXONOMY",
+    "LIBRARY_TAXONOMY",
     "TAXONOMY_VERSION",
     "BoardNode",
     "FeatureNode",
+    "ReleaseLibNode",
     "board_by_id",
     "feature_by_id",
     "iter_features",
+    "iter_release_libs",
+    "lib_by_slug",
 ]

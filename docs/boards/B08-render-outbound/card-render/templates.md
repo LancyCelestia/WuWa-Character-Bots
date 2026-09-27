@@ -38,7 +38,7 @@
 
 - `card_width`（universal 卡宽度由 payload 驱动，配合 zoom 第三机制）
 - `phase` / `--phase`（由 `payload_phase` 从内容摘要派生，钉动画初相）
-- `wash_blob_mix`（平台色混入比，缺省 35，error 卡按登记豁免传 24）
+- `wash_blob_mix`（平台色混入比，缺省与 error 卡登记豁免值以 `bridge.py` 构造参数真身为准）
 - `prefix_parts`（能力声明的前置部件，如群聊 @ 段，由 renderer 前置拼接，不由模板决定）
 
 生效条件：**必须重启**。模板与 Python 拼卡都是代码，无热加载。

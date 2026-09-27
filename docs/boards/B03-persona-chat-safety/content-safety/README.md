@@ -9,6 +9,7 @@
 
 - 归属板块：[B03](../README.md)
 - 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/content_route.py`、`plugins/bot_unified_runtime/domains/chat_reply/security`
+- 帮助主题：亲密模式
 - 配置键前缀：`bot_content_route_`, `bot_master_love_`（逐键以目录册为准）
 
 ### 三级入口

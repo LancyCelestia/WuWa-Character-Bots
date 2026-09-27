@@ -78,7 +78,7 @@ flowchart TD
   引擎；引擎的 `/control` 端点无鉴权且能改运行时状态（含终止），因此本板块
   **不记录任何调用方法**，只登记该风险与服务由用户自启这一事实。
 - 字数与体积：`bot_tts_max_chars=0` 表示不按字数截断，但仍必过中央硬顶
-  `bot_tts_hard_max_chars`（缺省 2000）与产物字节顶 `bot_tts_max_audio_bytes`
+  `bot_tts_hard_max_chars`（缺省值以 `config.py` 该字段为真身）与产物字节顶 `bot_tts_max_audio_bytes`
   （音频字节上限以 `bot_tts_max_audio_bytes` 为准，wav/PCM 下即时长顶）；超限=拒绝并留痕，绝不静默出货、不自动拆条。
 
 ## 测试与验收
@@ -95,7 +95,8 @@ flowchart TD
 `powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task test"`
 实跑输出为准，本文不手写。
 
-一键自检：`python scripts/tts_offline_selfcheck.py`（重启前体检十项 → 配置面真验证
+一键自检：`python scripts/tts_offline_selfcheck.py`（重启前体检（项数以
+pre_restart_check 在册清单派生）→ 配置面真验证
 → 语料对齐门）；真机语音发出后用 `python scripts/tts_retcode_collect.py --json`
 采集退码闭合面。真机验收清单＝`docs/acceptance-manual.md` §6.6.11（离线/引擎/真机
 三组）；重启前置体检＝`scripts/pre_restart_check.py` 的音色一致性项。

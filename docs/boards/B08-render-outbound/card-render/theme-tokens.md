@@ -13,7 +13,7 @@
 
 `domains/render/card_render/theme_tokens.py` 是全项目视觉数值的**唯一登记处**。输入是一个品牌色/平台标识/数值档位，输出是一张 CSS 自定义属性表；卡片模板与 f-string 直拼卡都只消费这张表，自己不许写数值。
 
-它登记的东西大致分五族：本命色与派生洗色（`BRAND_ACCENT`、`derive_wash_tokens`、`SHELL_WASH_GRADIENT`）、平台主题（`PLATFORM_THEMES` + `THEME_ALIASES` + `get_platform_theme`）、层次与表面（`SHADOW_LEVELS` / `SHADOW_CSS_VARS` 三级族 shell·panel·tile、`GLOW_ACCENT`、`GLASS_MAIN`/`GLASS_FOOT`/`GLASS_EDGE`、`SURFACE_TINTS`、`OVERLAY_SCRIMS`、`SEMANTIC_COLORS`）、几何与排印刻度（`RADIUS_INNER_PX`、`CARD_SHELL_WIDTHS`、`GAP_SCALE_PX`、`TYPE_SCALE_PX`、`FONT_FAMILY_STACK`、`MONO_FONT_STACK`、`FONT_WEIGHT_MAX`、`META_VIEWPORT_POLICY`）、装饰层参数（`BLOB_COUNT`、`BLOB_DURATIONS`；平台色混入比 `wash_blob_mix` 不在此表，它是注入参数——缺省 35、error 卡按登记豁免传 24）。
+它登记的东西大致分五族：本命色与派生洗色（`BRAND_ACCENT`、`derive_wash_tokens`、`SHELL_WASH_GRADIENT`；2026-09-25 起壳底洗色以 **`BRAND_WASH_TOKENS` 为全卡唯一锚点**——本命蓝色相恰等于洗色基准色相时「按本命蓝派生」曾是空操作，故显式登记一支；告警卡按卡种覆盖壳层走 `CARD_WASH_ALERT`、漂移斑按卡种走 `CARD_WASH_BLOBS`，旧 `CARD_WASHES`/`CARD_WASH_CALM` 已退役不留兼容名）、平台主题（`PLATFORM_THEMES` + `THEME_ALIASES` + `get_platform_theme`）、层次与表面（`SHADOW_LEVELS` / `SHADOW_CSS_VARS` 三级族 shell·panel·tile、`GLOW_ACCENT`、`GLASS_MAIN`/`GLASS_FOOT`/`GLASS_EDGE`、`SURFACE_TINTS`、`OVERLAY_SCRIMS`、`SEMANTIC_COLORS`）、几何与排印刻度（`RADIUS_INNER_PX`、`CARD_SHELL_WIDTHS`、`GAP_SCALE_PX`、`TYPE_SCALE_PX`、`FONT_FAMILY_STACK`、`MONO_FONT_STACK`、`FONT_WEIGHT_MAX`、`META_VIEWPORT_POLICY`）、装饰层参数（`BLOB_COUNT`、`BLOB_DURATIONS`；平台色混入比 `wash_blob_mix` 不在此表，它是注入参数——缺省与 error 卡登记豁免值以 `bridge.py` 构造参数真身为准，混入缺省曾由 35 下调到 18，下调后的现值以 `mica_shell.py`/`bridge.py` 为准）。
 
 守岸人本命色（淡蓝/白/深蓝/少量星空紫）是**基底**：平台色只允许在两个位置出场（accent 徽章高亮、`--wash-blob-1` 有限混入色斑），永远不做底色；灰阶与未知平台的色相推力归零，落回纯本命洗。
 

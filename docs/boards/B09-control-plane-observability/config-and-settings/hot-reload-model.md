@@ -22,7 +22,7 @@
 （`runtime/settings.py` 是 PEP 562 再导出垫片，不是第二处定义）：
 
 - `SETTABLE_KEYS: dict[env名, converter]` —— 可写白名单，每个键配一个类型转换/域校验器
-  （`_temperature_converter` 0.0–2.0、`_max_tokens_converter` 0..65538（0=不设上限）、
+  （`_temperature_converter`、`_max_tokens_converter`（0=不设上限）等校验器、域值区间以该文件转换器真身为准、
   `_clock_converter`、`_timezone_converter`、`_session_types_converter`、
   `_role_list_converter`、`_group_list_converter`、`_model_priority_groups_converter` 等）。
 - `RESTART_REQUIRED_KEYS: dict[env名, 原因说明]` —— 只读冻结表，值是"为什么改不了"的人话。

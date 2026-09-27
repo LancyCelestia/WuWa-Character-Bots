@@ -32,4 +32,4 @@
 
 ## 测试与验收
 
-`tests/test_memory_bus_v2.py`（本件红线自锁所在）与 `tests/test_memory_bus_v2_migration.py`（存量迁移面，施工工具 `scripts/migrate_memory_bus_v2.py` 存在性已核；其幂等/守恒细节未在本席逐行复核，以该测试件断言为准）。真机：总线开启后说一件稳定事实、隔天再提，`/bot why` 看分数与来源。
+`tests/test_memory_bus_v2.py`（本件红线自锁所在）与 `tests/test_memory_bus_v2_migration.py`（存量迁移面，施工工具 `scripts/migrate_memory_bus_v2.py` 存在性已核；其幂等/守恒细节未经逐行复核，以该测试件断言为准）。真机：总线开启后说一件稳定事实、隔天再提，`/bot why` 看分数与来源。

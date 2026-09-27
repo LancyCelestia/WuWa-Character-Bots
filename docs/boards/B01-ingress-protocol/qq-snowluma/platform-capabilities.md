@@ -24,7 +24,7 @@
 ## 开关与参数
 
 - 群信息无独立开关，随能力注册生效；缓存 TTL 在 `domains/chat_reply/runtime/group_cache.py`（资料/公告/精华十分钟档、成员列表一刻钟档，取值以该文件为准）。
-- 贴纸回应四键：`bot_reactions_enabled`（缺省 True）、`bot_reactions_probability`（0.2）、`bot_reactions_cooldown_seconds`（30）、`bot_reactions_max_per_hour`（20）；第二层图表情 `bot_reactions_meme_*`；聚合库 `bot_reactions_db_path`。逐键语义与热更性以 `docs/config-catalog-full.md` 为准。
+- 贴纸回应键族：`bot_reactions_enabled`、`bot_reactions_probability`、`bot_reactions_cooldown_seconds`、`bot_reactions_max_per_hour`（下方括号内缺省值为当时值）；第二层图表情 `bot_reactions_meme_*`；聚合库 `bot_reactions_db_path`。逐键语义、缺省值与热更性以 `docs/config-catalog-full.md` 为准。
 - 权限：公告与精华走 bot 侧角色门（管理员及以上），协议侧再失败就如实降级；成员名单不整列，只给统计数与群主/管理员数——这是隐私红线，不是待办优化。
 - 平台角色：入站 `sender.role` 由根文件摄取层填进 `IncomingMessage.sender_platform_role`，群主判定（如紧急信息订阅）只认这个字段，且仅 `scope=group` 生效。
 

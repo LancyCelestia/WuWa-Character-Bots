@@ -19,7 +19,7 @@
 
 ## 这个功能解决什么
 
-当某个能力在执行中抛异常时，用户不该只看到「什么都没发生」或一句冷冰冰的失败。这个入口把内部异常转成一张守岸人语气的诊断卡：既给用户一句人话回执，又给管理员留下脱敏后的堆栈、版本、平台协议、配置快照等排查线索。它替代了过去「能力崩了就静默」的黑箱状态。
+当某个能力在执行中抛异常、或某条运维告警要开口时，用户不该只看到「什么都没发生」或一句冷冰冰的失败。这个入口把内部异常转成一张守岸人语气的诊断卡：既给用户一句人话回执，又给管理员留下脱敏后的堆栈、版本、平台协议、配置快照等排查线索。它替代了过去「能力崩了就静默」的黑箱状态。2026-09-25 起运行时告警也汇入同一组装口（`domains/ops/monitor/alerts.py` 对 `error_report` 的委托：卡 payload 唯一组装口 `build_issue_report`、补发调度 `schedule_issue_card`、时刻格式 `format_clock_label` 全卡共用），告警与诊断卡不再各写各的载荷。
 
 ## 处理流程
 
@@ -38,7 +38,9 @@ flowchart LR
 
 ## 边界与降级
 
-三键在 `config.py`：`bot_error_card_enabled`（缺省 True）、`bot_error_card_cooldown_seconds`（缺省 60）、`bot_error_card_stack_frames`（缺省 8，内部按 `_STACK_FRAMES_MIN/MAX` 夹取）。解析链为 nonebot driver config → 环境变量 → 缺省，仅异常路径调用、无热路径成本。冷却秒数变化会重建进程级共享闸，但热改 config 仍需重启方全量生效。全链 fail-open：`maybe_submit_error_card` 自身不抛异常，`pipeline` 还有第二层兜底。渲染或提交失败只落 `logger.warning`，用户至少拿到第一段文本回执。回执文案来自报告里的 `human_text`（轮换的守岸人话术），卡片正文对触发回显、栈帧、配置快照逐项脱敏，出站再经统一打码。
+三键在 `config.py`：`bot_error_card_enabled`、`bot_error_card_cooldown_seconds`、`bot_error_card_stack_frames`（三键缺省值以 `config.py` 声明为真身，帧数另有内部 `_STACK_FRAMES_MIN/MAX` 夹取）。解析链为 nonebot driver config → 环境变量 → 缺省，仅异常路径调用、无热路径成本。冷却秒数变化会重建进程级共享闸，但热改 config 仍需重启方全量生效。全链 fail-open：`maybe_submit_error_card` 自身不抛异常，`pipeline` 还有第二层兜底。渲染或提交失败只落 `logger.warning`，用户至少拿到第一段文本回执。回执文案来自报告里的 `human_text`（轮换的守岸人话术），卡片正文对触发回显、栈帧、配置快照逐项脱敏，出站再经统一打码。
+
+卡面要素自 2026-09-25 起补齐（对旧「14 项要素缺 ⑤⑪⑫⑬」的账）：协议端客户端版本取 SnowLuma 自己 `package.json`（`_protocol_client_version_label`，目录由邻键 `bot_protocol_client_dir` 给出、缺省空=诚实标注，不走同步 RPC、不拿适配器版本顶替）；自我审查与修复倾向 `_self_review`（按异常名/栈字样给推测、认不出落「我不猜」默认档，句子必带「推测」）；超管联系方式 `_admin_contact_pairs`（取 `bot_super_admin_user_ids` 与 `bot_admin_profiles` 同源，取不到写「未配置」不留空行）；配置快照长值钳到上限且**显式标「另有 N 字未显示」**（静默截断＝谎报，上限以该件 `_CONFIG_VALUE_MAX_CHARS` 为真身，本文不手写数值）。卡体版式（单列左轨、键值节两栏、页脚胶囊独占一行）与壳底本命蓝的收口都记在渲染契约与 `theme_tokens` 侧，见 [theme-tokens](../card-render/theme-tokens.md)。
 
 ## 测试与验收
 

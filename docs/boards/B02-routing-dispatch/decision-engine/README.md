@@ -8,7 +8,7 @@
 > 影子对照记录分歧，接管进度由配置模式控制。
 
 - 归属板块：[B02](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/decision`、`plugins/bot_unified_runtime/domains/core/decision`
+- 实现落点：`plugins/bot_unified_runtime/domains/core/decision`
 - 帮助主题：决策
 - 配置键前缀：`bot_decision_`（逐键以目录册为准）
 

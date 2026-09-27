@@ -8,7 +8,7 @@
 > 邮件收发桥接与本地控制台交互，共用同一条主链路。
 
 - 归属板块：[B01](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/mail_adapter.py`、`plugins/bot_unified_runtime/mail_bridge.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/transport/mail/mail_adapter.py`、`plugins/bot_unified_runtime/domains/transport/mail/mail_bridge.py`
 - 帮助主题：邮件
 - 配置键前缀：`bot_mail_`（逐键以目录册为准）
 

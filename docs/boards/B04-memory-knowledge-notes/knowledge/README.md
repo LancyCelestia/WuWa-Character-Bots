@@ -34,6 +34,9 @@
 
 检索底座 `domains/core/search/`（统一多平台搜索协议与网络 provider）也在本功能名下登记，但它的真实网络出口与 `/search/*` 路由属 B05 外部数据面，这里只写它作为"知识来源约束"的那一半。
 
+> 呈现端旁注：知识检索结果只以文本注入人格上下文（`ContextBundle.knowledge_results`），本身不出卡。若要把一条检索/聚合结论直接摆成可读卡片，看 B05「外部资讯与数据服务」下的[新闻摘要卡](../../B05-external-data-services/news/news-digest-card.md)——紧凑条目 + 来源徽章 + 时间戳的摘要质感，是把外部资讯收敛成一屏的呈现端样板，与知识域互补。
+
+
 ## 处理流程
 
 ```mermaid
@@ -73,4 +76,4 @@ flowchart LR
 1. **索引与原文数量对不上（待用户裁决，不得宣称已重建）**：`scripts/pre_restart_check.py` 的 `kb_drift` 项实测到"目录卡远多于原文块"（两值以体检实跑输出为准，当时值已过期），成因是目录只加不减 + 换过嵌入模型 + 删除不同步。后果是检索质量与耗时打折，日常聊天不受致命影响。**两条路线（重建 vs 不建）都在 `docs/design/v21r4-kb-drift-explainer.md` 里，选择权在用户**；本波只如实登记，不执行任何生产库重建。数字属会漂移量，以体检实跑输出为准。
 2. **V2.1 的知识/教导/世界书服务在生产路径上是零接线**：`bot_v21_service_wiring_enabled` 缺省 False，`bot_knowledge_service_enabled`、`bot_worldbook_enabled` 同缺省 False，`bot_teaching_enabled` 虽为 True 也被主门挡住 ⇒ 「审核过的教导条目会进 prompt」目前只是**代码与离线测试事实**，线上不成立。`docs/db-owners.md` 对这两个库的标注也是"待生成/零生产接线"，别读成已生效。
 3. **人格库的"全集删除"语义是双刃**（P1 风险，非现行故障）：`sync_chunks` 以 `bot_knowledge_files` 为全集清理缺席文件；清单配错（路径写错、`.env` 少一项）就会静默删掉对应语料块。已有"空清单不洗库"的守卫，但**非空而缺项**的情形只靠人审配置。
-4. **统一搜索服务的活体验收仍 blocked**：`domains/core/search/search_service.py` 自述"真实网络验收与 REST 路由（/search/*）不在本席范围（live=blocked 登记）"，provider 一律注入、自身零网络 ⇒ 预算/并发/缓存参数目前只有离线证据。
+4. **统一搜索服务的活体验收仍 blocked**：`domains/core/search/search_service.py` 自述真实网络验收与 REST 路由（/search/*）不在其范围内（live=blocked 登记），provider 一律注入、自身零网络 ⇒ 预算/并发/缓存参数目前只有离线证据。

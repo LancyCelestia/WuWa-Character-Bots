@@ -46,10 +46,10 @@ bridge 负责「脏数据归一 + 只吐已登记 token」，后端负责「浏�
 ## 边界与降级
 
 - **出图失败一律回纯文本，契约零破坏**：`render_card` 失败返回 `None`；各能力收到 `None` 或空字节必须走既有文字分支（点歌回候选列表、mermaid 回代码块原文）。这条是渲染契约铁律 7，桥层的 `None`/`{}` 断言与各能力回退断言共同执法。
-- **缺省串行**：并发上限 `bot_render_max_concurrency` 缺省 1（等价旧全程大锁），等待预算 `bot_render_wait_budget_ms` 缺省 0（=不启用，维持固定地板等待）。两键不配置时行为逐字节等于现状。
+- **缺省串行**：并发上限 `bot_render_max_concurrency`（等价旧全程大锁）与等待预算 `bot_render_wait_budget_ms`（=不启用，维持固定地板等待）的缺省值以 `config.py` 两键声明为真身。两键不配置时行为逐字节等于现状。
 - **浏览器是线程绑定的常驻资源**：sync playwright 不能跑在事件循环线程上，所以调用方必须 offload；`mermaid` 走专用单线程池正是这个原因。空闲回收、崩溃标记、连续页面失败强制重建见 [render-backend](render-backend.md)。
 - **离线素材不入库**：mermaid 真身 JS 落在 Runtime 资产目录，带 sha256 旁车与体积门；缺失或损坏时不注册拦截、放行网络，绝不拿半截文件出图。
-- **UI 硬约束**：无 `<meta viewport>`、`body` 透明、字重 ≤700、动画必须在 `.card` 子树内、字号下限 12px、阴影只准 `SHADOW_CSS_VARS` 登记族（族外含 `inset` 一票否决）。这些不是审美倡议，是契约测试断言。
+- **UI 硬约束**：无 `<meta viewport>`、`body` 透明、字重上限与字号下限以 `theme_tokens.py` 与渲染契约登记为真身、动画必须在 `.card` 子树内、阴影只准 `SHADOW_CSS_VARS` 登记族（族外含 `inset` 一票否决）。这些不是审美倡议，是契约测试断言。
 
 ## 测试与验收
 

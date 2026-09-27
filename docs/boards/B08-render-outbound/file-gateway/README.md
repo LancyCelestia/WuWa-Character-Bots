@@ -38,7 +38,7 @@ flowchart LR
 
 ## 边界与降级
 
-下载侧配置以 `config.py` 的 `bot_download_*` 键为准（下载目录、单文件与缓存字节上限、超时、并发、是否委托 aria2 等，逐键以目录册为准；路径类键进 `path_fields` 重映射到运行数据根）。超过大小上限时回退到小于上限的最高画质组合，无合适组合即诚实失败。URL 命中被拦协议或内网地址时由 `check_download_url` 抛拒因（`_url_rejection_reason`），下载不越闸。生成的票据名经 `sanitize_file_name` 消毒，落盘名带 sha256 与 dedupe key 去重。板块声明的配置前缀还含 `bot_file_gateway_`，但本会话未在 `config.py` 检索到该前缀的实际字段——若确无消费方则为声明性前缀，未确认。
+下载侧配置以 `config.py` 的 `bot_download_*` 键为准（下载目录、单文件与缓存字节上限、超时、并发、是否委托 aria2 等，逐键以目录册为准；路径类键进 `path_fields` 重映射到运行数据根）。超过大小上限时回退到小于上限的最高画质组合，无合适组合即诚实失败。URL 命中被拦协议或内网地址时由 `check_download_url` 抛拒因（`_url_rejection_reason`），下载不越闸。生成的票据名经 `sanitize_file_name` 消毒，落盘名带 sha256 与 dedupe key 去重。板块声明的前缀 `bot_file_gateway_` 已于 2026-09-27 现算定案：`config.py` 零枚该前缀字段、全仓无消费方，是纯声明性前缀（登记在板块声明源里，退役与否归声明源 owner，本页不再当悬案）。**受控读写面（2026-09-25/26 补）**：「改这份文档/把文件读回来」这类请求走 `domains/files/sender/restricted_runner.py` 的公共口——`resolve_existing`（定位）/ `read_confined_bytes`（限域读取）/ `revise_in_place`（原地改写），落笔前过 `sanitize_write_segments`（消毒穿越段并拒 Win32 保留设备名，代号 `reserved_name`）；判定形态是**进程内路径沙箱**：resolve 后按段成员判定＋禁触名册缺省执法，七类穿透形态实测仅保留设备名一类可穿、已收进拒收判据。开关与限额六键 `bot_files_write_*` / `bot_files_read_confined_max_bytes` 以 `config.py` 声明为真身（逐键详情见目录册）。
 
 ## 测试与验收
 

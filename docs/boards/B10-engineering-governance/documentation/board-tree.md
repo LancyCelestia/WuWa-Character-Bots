@@ -6,14 +6,14 @@
 ## B10.documentation · 一/二/三级板块树本体
 
 - 层级：一级 B10 → 二级 documentation → 三级 `board-tree`
-- 实现落点：`docs/boards`、`docs/README.md`、`docs/HANDBOOK.md`、`docs/CODE-MAP.md`
+- 实现落点：`docs/README.md`、`docs/HANDBOOK.md`、`docs/CODE-MAP.md`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么
 
 说明这棵树本身的形状：三个层级是什么、怎么判定、落在磁盘哪里。定义真身在 `docs/boards/_conventions.md` 第〇节，本页是给接手者看的展开版与读法。
 
-- **一级 板块 `BNN`**：回答「实现这个 bot 需要哪十大块」。十块是上限，不得随意增删，编号连续不许断号（由 `tests/test_board_taxonomy_gate.py` 的结构门执法）。磁盘形态 `docs/boards/BNN-<slug>/`，目录内只准放一个 `README.md`。现役清单（以 `docs/boards/` 目录与生成物为准，本页不维护副本）：B01 接入与协议、B02 路由与中央调度、B03 人格·对话·内容安全、B04 记忆·知识·笔记、B05 外部资讯与数据服务、B06 多媒体与娱乐、B07 日程·自动化·助理、B08 渲染与出站统一、B09 控制面·配置·可观测、B10 工程基座与治理。
+- **一级 板块 `BNN`**：回答「实现这个 bot 需要哪十大块」。十块是上限，不得随意增删，编号连续不许断号（由 `tests/test_board_taxonomy_gate.py` 的结构门执法）。磁盘形态 `docs/boards/BNN-<slug>/`，目录内只准放一个 `README.md`。名单的真身＝声明源 `plugins/bot_unified_runtime/domains/core/board_taxonomy.py` 各板块条目的 `label`（生成物 `docs/boards/README.md` 是它的投影），改名以声明源为准；下面这串是**开窗当时值**：B01 接入与协议、B02 路由与中央调度、B03 人格·对话·内容安全、B04 记忆·知识·笔记、B05 外部资讯与数据服务、B06 多媒体与娱乐、B07 日程·自动化·助理、B08 渲染与出站统一、B09 控制面·配置·可观测、B10 工程基座与治理。
 - **二级 功能 `BNN.<slug>`**：一组同源实现、同一门禁口径的功能簇，一个功能一个目录，文档只出现在自己目录内。本板块的七个二级功能就是本页所在树的上七级目录（`task-entry` / `generated-artifacts` / `test-gates` / `naming-conventions` / `security-guardrails` / `workspace-hygiene` / `documentation`），逐条以声明源 `fid="B10.*"` 为准。
 - **三级 入口 `BNN.<slug>.<l3-slug>`**：一个可独立调用、可独立开关的功能入口，形态是一张卡（`<二级目录>/<l3-slug>.md`）。
 
@@ -27,7 +27,7 @@
 4. 帮助主题**不**生成三级入口，它挂到对应入口卡片的「别名与帮助页」列。
 5. 更细的粒度（一个函数、一个参数、一个模板）都不是入口，写进所属卡片正文。
 
-读法约定：一级页看职责与边界；二级页按「这个功能解决什么 → 处理流程 → 边界与降级 → 测试与验收 → 现行缺陷」五节读；三级页按「这个入口做什么 → 怎么调用 → 开关与参数 → 失败时看到什么 → 测试与验收」五节读。小节标题是骨架约定，由 `test_generated_pages_have_full_skeleton` 保证存在且非空（判据是标记外正文长度，不是逐节名比对）。
+读法约定：一级页看职责与边界；二级页按「这个功能解决什么 → 处理流程 → 边界与降级 → 测试与验收 → 现行缺陷」五节读；三级页按「这个入口做什么 → 怎么调用 → 开关与参数 → 失败时看到什么 → 测试与验收」五节读。小节标题是骨架约定，`tests/test_board_taxonomy_gate.py:test_generated_pages_have_full_skeleton` 两条腿并立：一条管骨架没被动过（AUTO 双标记 + 标记外正文非空），一条管人写区小节**集合与顺序**同类一致（G-T2 同类骨架由 `scripts/board_doc_sync.py` 的骨架常量派生，与页同一支取形，不是长度近似）。
 
 ## 开关与参数
 
@@ -43,4 +43,4 @@
 
 ## 测试与验收
 
-结构门全族 + 三发注毒自证见 `doc-taxonomy-sync.md`；本层的验收动作是复跑 `python scripts/board_doc_sync.py --check`（只读）与 `tests/test_board_taxonomy_gate.py`。人工侧另查两件事：正文是否还留「（待写」占位、是否手写了会漂移的计数（机器管前者近似形态与后者，措辞是否说人话归评审）。
+结构门全族 + 三发注毒自证见 `doc-taxonomy-sync.md`；本层的验收动作是复跑 `python scripts/board_doc_sync.py --check`（只读）与 `tests/test_board_taxonomy_gate.py`。人工侧另查两件事：正文有没有留生成器骨架的占位句、有没有手写会漂移的计数——**两件事今天都有自动账**：前者＝`scripts/spec_gates_census.py:board_body_completeness`（逐页分档，占位判定与 `scripts/board_doc_sync.py` 的骨架常量逐字比对）＋ `tests/test_body_completeness_synonym_shell.py`（同义措辞空壳），后者＝G-T3 `scripts/doc_fact_discipline.py`。机器管到形态，措辞是否说人话、内容对不对仍归评审。

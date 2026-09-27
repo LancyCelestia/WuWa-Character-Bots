@@ -27,7 +27,7 @@
 
 - 开关读点：`domains/chat_reply/runtime/base_router.py` 以 `getattr(config, "bot_bond_enabled", True)` 判定，但 **`config.py` 未声明该字段** ⇒ 线上关不掉（缺省恒 True），属欠账非旋钮（详见本功能 README 现行缺陷）。
 - 超时/缓存沿用 `bot_market_timeout_seconds`、`bot_market_cache_seconds`、`bot_market_retry_on_empty`。
-- 优先级 38（拆位后）——代码已在、线上未生效，待提交与重启。
+- 优先级见 `domains/chat_reply/runtime/base_router.py` 的 `RouteRule` 行（拆位后）——代码已在、线上未生效，待提交与重启。
 - 报表端点、列名→期限映射的出处与交叉验证方法都写在 `bond_data.py` 头注，属该文件事实。
 
 ## 失败时看到什么

@@ -357,20 +357,20 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
    ⚠ 该开关的**开态**至今未在生产生效 ⇒ 见待裁-1。
 2. **执行体身份不进审计**（R-CENTRAL I-1）——`via` 已细化为 `caller_capability:{qualname}`
    （`plugins/bot_unified_runtime/runtime/capability_protocols.py::_make_command_handler` / `_make_prepared_handler`）。
-   判据：`tests/test_orchestration_callsite_single.py:1012` 一带 + canary/batch1/batch2 三件同判据。
+   判据：`tests/test_orchestration_callsite_single.py::test_command_handler_records_which_callable_actually_ran` + canary/batch1/batch2 同判据。
    **残余未收**：全树仍无「matcher 侧 factory ≡ 描述符 `implementation_ref`」的比对锁 ⇒ 漂移只留痕、不点名，登记入 P2-7 红线条。
 3. **审计钩子非幂等**（R-CENTRAL M-1）——`plugins/bot_unified_runtime/runtime/capability_protocols.py::AuditHookRegistry.register`
    已按对象身份去重（装配块重放不再「一次 invoke 落 N 行」）。
 4. **闸设置读不到即永久静默关闸**（R-CENTRAL I-3）——求值异常路径现冒
    `OperationalIssue`，kind 常量 `domains/transport/sender/outbound_gate.py::KIND_SETTINGS_UNREADABLE`。
-   判据：`tests/test_outbound_gate.py:2028/2064` 一带（断言 kind 序列恰为该一枚，注毒「只 log 不发 issue」即红）。
+   判据：`tests/test_outbound_gate.py` 里以 `_flaky` 桩注入读失败的那把锁 + `test_wrong_typed_gate_settings_announces_like_a_failure`（断言 kind 序列恰为该一枚，注毒「只 log 不发 issue」即红）。
 5. **同 `capability_id` 双行 × 双 execution**（R-CENTRAL M-2）——判据：
-   `tests/test_capability_single_registration.py:357`「双行同 id 的家族只准填其中一行」。
-6. **空标签让派生整表红**（R-PREP 侧）——`tests/test_prepared_adapter_canary.py:357/387`
+   `tests/test_capability_single_registration.py::test_no_capability_id_declares_execution_on_two_rows`「双行同 id 的家族只准填其中一行」。
+6. **空标签让派生整表红**（R-PREP 侧）——`tests/test_prepared_adapter_canary.py::test_multi_entry_liveness_lock_has_teeth` 与 `::test_row_without_human_label_still_derives_a_title`
    钉住「空标签行必须给出可用 value，否则内部席位永远接不进中央」。
 7. **多入口绕过层 2 而账按声明降**（R-PREP C-1 + R-CHOKE C-1，两条 Critical 同根）——
-   根 `__init__.py:6628` 现取 `resolution.capability_id or "bot.alias"`（此前别名入口把固定 id 交给缝 ⇒
-   查不到在册 ⇒ 纯直呼，权限/健康/限额/超时/审计一行不跑），且汇合点已包缝（`:2555`）。
+   根 `__init__.py` 的别名入口装配段现取 `resolution.capability_id or "bot.alias"`（此前别名入口把固定 id 交给缝 ⇒
+   查不到在册 ⇒ 纯直呼，权限/健康/限额/超时/审计一行不跑），且汇合点 `_run_capability_through_pipeline` 已包缝。
    判据：`tests/test_prepared_adapter_canary.py::_SEAM_FUNNELS` + `::test_multi_entry_liveness_lock_has_teeth`。
    **残余**：见 P1-19/P1-20（收紧谓词与扫描面）。
 8. **清点账对别名裸调失明**（S-BYPASS RED1）——`tests/test_outbound_bypass_prohibition_gate.py::_submit_alias_names`
@@ -470,7 +470,7 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
   同批补一条聚合计数锁（拦了多少），避免「贴 issue 触发 A-19 群聊吞体」旧坑复现（该约束保留：正文不回用户）。
 - **涉集中面**：是（中央壳 + 告警面）→ 串行。
 
-### P1-18 自动配音腿缺「结果变换形」适配器，直连合成旁路层 2，靠两把休眠键掩盖（B06/B07）
+### P1-18 自动配音腿缺「结果变换形」适配器，直连合成旁路层 2，靠两把休眠键掩盖（B06/B07）〔本行标题＝2026-09-21 当时的判词，其中「缺适配器」这半已失效；该腿现状是**已通电，而两把开关键缺省关 ⇒ 关态不可达**，逐条对照见本条「现状」段，不改写也不删除原标题〕
 
 - **级别**：P1（口径分叉 + 门禁只钉现状）
 - **位置**：`domains/media/voice_enricher.py`（`enrich(message, decision, result) -> result`，直连
@@ -478,15 +478,49 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
   （本席亲验：执行体调用式仍是 `callable_from_caller(message, decision)`，**无「前序 result」通道**）
 - **现象**：`_KNOWN_ADAPTERS` 现含 `{"command","prepared"}`，但 prepared 形的「成品」指**已装配的执行体**，
   不是 review 之后的呈现结果；要把 post-review 变换经中央跑，需要第三种「结果变换形」适配器
-  + 对应 descriptor + handler。既有 `creation.tts.synthesize` 有描述符无 handler ⇒ `invoke` 恒 `UNAVAILABLE`，不可复用。
+  + 对应 descriptor + handler。既有 `creation.tts.synthesize` 有描述符无 handler ⇒ `invoke` 恒 `UNAVAILABLE`，不可复用。〔⚠ 2026-09-25 S261 现算：本句后半已失效——中央调度收编波给该能力注册了 handler（`capability_protocols.py::_handle_creation_tts_synthesize`，同样只薄委派域内真身），当时值按本册「保留不删」规矩留在原文里。〕
 - **根因**：执行面 adapter 谱系按「命令形 / 已装配命令形」两形落地，缺变换形这一类真实需求。
 - **影响**：mandate「所有内容走中央出口」在这条腿上不成立；生产现被
   `bot_tts_voice_hook_enabled=False` ∧ `bot_tts_auto_reply_enabled=false` 两把独立门**休眠掩盖**——
   两键一翻即旁路复活，而现有门（`tests/test_voice_central_entry_gate.py` A1–A5、
   `test_orchestration_callsite_wave_media.py` 把 `bot.tts.synth` 钉成 `KNOWN_DIRECT_ALLOWLIST_MEDIA`）
-  只钉现状、不主张中央可达 ⇒ 绿灯不等于受管。
-- **现状**：未修（该席按禁造第四路规则停在规格 + RED 测试，未落生产码）。缺口已由
-  `tests/test_voice_enricher_central_dispatch.py` 以「现状钉 PASS + 目标 `xfail(strict=False)`」显式挂账。
+  只钉现状、不主张中央可达 ⇒ 绿灯不等于受管。〔2026-09-25 席 S272：**本段整条是 2026-09-21 的
+  当时值**——其中「两键一翻即旁路复活」与「`bot.tts.synth` 被钉成直呼 allowlist」两形随后分别被
+  收编与摘牌，判今天请读下一条「现状」，本册按规矩不删原文〕
+- **现状**：**已落地·收编为中央第三形（S91，2026-09-24；S253B 现算复核、S261 跟随措辞）**——
+  第三形 `media.tts.autodub_transform` 有 descriptor + handler（`capability_protocols.py`
+  的 `_handle_media_tts_autodub_transform` 只薄委派域内真身
+  `plugins/bot_unified_runtime/domains/media/tts/result_transform.py::handle`），
+  生产侧唯一消费点＝`domains/media/voice_enricher.py` 那一处字面 `invoke`（"恰一处"是 AST 判据）。
+  〔⚠ 2026-09-25 席 S288D 现算：本句是 **S91 当时的拓扑（当时值）**——S270 把产出步归位成单一组合口之后**所指已变**，
+  按本册「原文不删、就地改口」规矩在句后跟随。今天全树生产面（`plugins/` + `scripts/`，AST 现算）有**两发**字面
+  `invoke`、各在一处：层 1 hook 派发第三形 `media.tts.autodub_transform` 那一发仍在
+  `domains/media/voice_enricher.py::_enrich_via_central`；而本句原指的**产出步** `media.tts.autodub` 那一发已搬进
+  `domains/media/tts/result_transform.py::dub_via_central`（hook 侧对该 id 的 invoke 数＝0；"组合口恰一处 + 退役旧点位"
+  两半同时成立才算归位而非另加一份，由 `tests/test_voice_enricher_central_dispatch.py::test_auto_voice_leg_no_longer_calls_synthesize_directly`
+  钉住）。故"唯一消费点"不再成立于单文件：该组合口有两条生产入路（`voice_enricher` 的 `dub` 闭包与
+  `domains/creation/tts/engine_provider.py::synthesize_via_engine`），"恰一处"这枚 AST 判据今天量的是
+  **invoke 点**、不是**消费点**。点位与逐枚归属一律以缺口账 `tests/test_descriptor_wiredness_ledger.py`
+  与直呼面普查门现算为准，本册不抄第二份清单〕
+  本条验收判据逐条对照：①「xfail 转正向锁」＝已达成（`tests/test_voice_enricher_central_dispatch.py`
+  现为常态化正向锁、无 xfail，活性用例 `test_central_transform_dispatch_reaches_registered_handle`
+  真跑到注册体一次并把带音频呈现结果读回）；②「`bot.tts.synth` 摘出直呼登记集」＝已达成
+  （`tests/test_orchestration_callsite_wave_media.py` 里 `KNOWN_DIRECT_ALLOWLIST_MEDIA["bot.tts.synth"]`
+  现为空集，产出步改走 `media.tts.autodub` 的 invoker 面）。
+  **仍要同行读的两条限制**：ⓐ「已通电」≠「已生效」——现网 `bot_tts_voice_hook_enabled` 缺省 False
+  且生产 `.env` 未设该行、`bot_tts_auto_reply_enabled=false`，两把休眠键仍在 ⇒ **今天这条腿关态不可达**、
+  生产行为逐字节不变；翻键还须重启（装配期读死）。〔2026-09-25 席 S272 复核：同一结论**从合法口也成立**
+  ——`config.py` 里 `bot_tts_voice_hook_enabled` 与 `bot_tts_auto_reply_enabled` 两枚字段缺省都是 `False`；
+  生产实值不在本册判定范围内（判开关是否关着的合法口只有 config 缺省值、
+  `plugins/bot_unified_runtime/domains/core/config/config_readiness.py` 投影、以及让用户看
+  `/bot status`），上一句那句 `.env` 读法按当时口径保留、不作为本册的取数方式〕ⓑ形式命题「`_KNOWN_ADAPTERS` 里多一个变换形成员」
+  **刻意未做**：`TRANSFORM_SHAPE` 不进 `_KNOWN_ADAPTERS`、不进路由行（现算该集合仍为
+  `{"command","prepared"}`），走的是"直接注册执行体"这条与 `media.tts.autodub` 同族的路——
+  故本条不得叙述为"适配器谱系已补全"。旧包装（根 `_attach_voice_reply` → `maybe_attach_voice`）
+  的退役第二步仍挂 xfail（`tests/test_voice_hook_assembly.py::test_r9_root_init_retires_legacy_wrapper_symbols`），
+  双态互斥、与本腿不并存。〔以下为本条 2026-09-21 发现当时的原文，按本册规矩保留不删：未修（该席按禁造
+  第四路规则停在规格 + RED 测试，未落生产码）。缺口已由 `tests/test_voice_enricher_central_dispatch.py`
+  以「现状钉 PASS + 目标 `xfail(strict=False)`」显式挂账。〕
 - **验收判据**：xfail 转 XPASS 即落地信号（目标用例：合成须经 `CapabilityInvoker.invoke`）；
   落地同批必须把 `bot.tts.synth` 从 `KNOWN_DIRECT_ALLOWLIST_MEDIA` 摘进
   `KNOWN_INVOKER_SITES_MEDIA` 并删现状钉——只翻键不摘牌 = 假绿。
@@ -700,7 +734,7 @@ P1-13 的两枚治理缺口已转待裁-1/待裁-2 明账，审计文本本身�
   ⇒ 今天恰好命中 2 处：中央件自身 1（授权）+ 下述 1（欠款）。**正样验证过**：判据必须看得见 `digest.py` 自己那两处，
   否则"零命中"只是尺子瞎。
 - **P2｜欠款实体：表情图库下载去重用内联 md5 当图像身份**
-  `plugins/bot_unified_runtime/domains/meme/sources/meme_library_listener.py:329`
+  `plugins/bot_unified_runtime/domains/meme/sources/meme_library_listener.py::absorb_event_images` 内的下载去重段——
   `md5 = hashlib.md5(image_bytes).hexdigest()` 直接进 `pending` 作去重键。后果：①第二份内容身份实现（与中央件并存即漂移）；
   ②用的是 md5，比中央件的 sha256 弱；③与 `media_archive` 的 sha256 去重**不互通**（同两张图在两个库里判重口径不同）。
   最小修法：改 `media_digest(image_bytes)`；若判重键格式不许变（库里已有 md5 行），则保留旧列、新增 sha256 列并行写，
@@ -713,7 +747,7 @@ P1-13 的两枚治理缺口已转待裁-1/待裁-2 明账，审计文本本身�
 
 > 来源＝本波席位报告（`.superpowers/sdd/2026-09-22-taxonomy/`：SEAT-S70 / S79 / S80 / S81 / S88 的既有结论，本席不自创新论断）。
 > SEAT-S94 交卷时不在盘 ⇒ 该席点名的 `scripts/physical_placement_census.py` 读侧「读不到当缺键」缺陷**不在本块记账**，由持有其结论的席交卷后另录。
-> 本席只记账不修码。所引行号坐标经本席现算复核存在；两处例外如实记：S70 旧坐标 `scripts/spec_gates_census.py:334-335`
+> 本席只记账不修码。所引坐标一律按**符号名**锚定（用例名/函数名），不写行号——行号随他人编辑漂移：本块原写的 `__init__.py:6628` 于 2026-09-24 现算已错位到该文件另一函数，S20 席据此把本块全部坐标重锚为符号形。两处例外如实记：S70 旧坐标 `scripts/spec_gates_census.py:334-335`
 > 已被 S78 施工覆盖（原缺陷现状见甲-1「已修」），`docs/templates/sdd-ledger.md` 的别名两行仍命中。
 > 开口项数以本块编号标题现算为准（AGENTS 铁律 10）；文中一切「N 枚 / 余量 N」均为发现当时值并就地标「当时值」。
 
@@ -759,7 +793,7 @@ P1-13 的两枚治理缺口已转待裁-1/待裁-2 明账，审计文本本身�
 
 - **级别**：P1（S80 判 Important；形态正是 `tests/test_prepared_adapter_canary.py` 自己写下并批评过的
   「`pytest.skip` 静默变哑（不是红）」）
-- **位置**：`tests/test_creation_job_protocol.py:48`、`tests/test_creation_protocol_parity.py:43`（本席现算确认）
+- **位置**：`tests/test_creation_job_protocol.py::_cp`、`tests/test_creation_protocol_parity.py::_cp`（中央壳的惰性导入口，两处同名）
 - **现象**：跳过理由「中央 capability_protocols 当前不可导入（他席在飞）」——而该文件此刻正被归位批搬迁
   （S14/S87 面）⇒ 搬迁期间这两把「creation 协议 ↔ 中央壳」奇偶锁不报红，协议对齐绿灯与被迁真身无关。
 - **根因**：为他席在飞期间保全量绿，选择整把锁 skip，而非「不执法显式挂账＋恢复条件」的明账。
@@ -782,7 +816,7 @@ P1-13 的两枚治理缺口已转待裁-1/待裁-2 明账，审计文本本身�
   **涉集中面**：否。
 
 ### P2-15 「两语义未认领之差」断言恒真（装饰性锁）（B10）
-- **级别**：P2（S70 原话：否则删掉这句、别留装饰） **位置**：`tests/test_physical_placement_gate.py:211`
+- **级别**：P2（S70 原话：否则删掉这句、别留装饰） **位置**：`tests/test_physical_placement_gate.py::test_g_p2_exemptions_are_literal_existing_and_still_needed`
   （本席现算确认：`assert 0 <= gap <= len(universe)`）
 - **现象**：`gap` 按构造恒 ≥0 且 ≤ 扫描面大小 ⇒ 该断言永不红，给读表人「口径已被检查」的错觉。
 - **现状**：未修（门本体属禁写面 ⇒ 交该门 owner；本席不动）。**判据**：换真锁（例 `gap <= 0.8 × universe`
