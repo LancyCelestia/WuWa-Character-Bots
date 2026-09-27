@@ -208,3 +208,45 @@ def group_session_prefix(group_id: Any) -> str:
     if not normalized:
         return ""
     return f"{GROUP_SESSION_PREFIX}{normalized}_"
+
+
+def group_scope_key(value: Any) -> str:
+    """整群共享作用域键（群级状态/群级钉落键的**唯一构造处**，2026-09-27 T-1）。
+
+    病根（台账同族第四次）：群消息的权威会话键 = ``event.get_session_id()`` 是
+    **逐成员**下划线形 ``group_<gid>_<uid>``（每人一把）。"全群生效"的状态若落在
+    任意一把逐成员键上，其余成员的键段永远拼不出那把键——写侧以为拨了群开关，
+    读侧无人收到（fail-safe 方向的静默失效）。本函数把任意群形态键收拢到同一把
+    全群共享键，写侧（管理员上钉）与读侧（成员裁决查钉）只准经此构造：
+
+    - 下划线形 ``group_123_456`` → ``group:123``（逐成员键 → 整群作用域键）
+    - 冒号形   ``group:123``     → ``group:123``（该形按构造即整群，幂等）
+    - 非群键 / 空键 / 半截脏键    → ``""``（调用方自行回落，绝不造出无主群键）
+
+    落键取冒号形是本件钉死的历史语义（「``group:<gid>`` 按构造即整群」，见
+    模块 docstring 判据口径第 2 条）：QQ 数字 uid/gid 使逐成员下划线键在字节层
+    不可能等于 ``group:<gid>``，成员个人桶与群作用域桶天然不碰撞；合成/开发态
+    直接以 ``group:<gid>`` 作会话键时其读写同桶——那正是"整群"的设计语义。
+    """
+    parsed = parse_session_key(value)
+    if parsed.kind != KIND_GROUP:
+        return ""
+    return f"{LEGACY_GROUP_SCHEME}{parsed.group_id}"
+
+
+def sanitize_key_segment(value: Any, *, forbidden: str) -> str:
+    """组合键段消毒（构造侧共用，2026-09-27 T-2）：清洗 + 剔除段内分隔符。
+
+    先走 ``_clean_identifier`` 的既有清洗口径（字符串化、去两端空白、falsy→
+    ``""``），再把 ``forbidden`` 子串的所有出现整体删掉、循环至不动点（删后
+    拼接可能再生成新的分隔符）。返回值保证不再含 ``forbidden`` ⇒ 由它拼出的
+    组合键拆回几段就是几段：用户可控输入（如 sender_id）无法借分隔符伪造
+    嵌套/歧义键。``forbidden`` 为空串时等价 ``_clean_identifier``。
+    拆键侧（``rpartition`` 之类）不另立清洗判据——消毒只在构造点这一处发生。
+    """
+    text = _clean_identifier(value)
+    if not forbidden:
+        return text
+    while forbidden in text:
+        text = text.replace(forbidden, "")
+    return text
