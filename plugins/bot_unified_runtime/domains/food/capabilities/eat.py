@@ -546,18 +546,31 @@ def _eat_card(config: Any, render_backend: Any, dish: Dish, body: str) -> str:
 
 
 def _llm_constrained(config: Any, raw_extra: str) -> str:
-    """自然语言约束（忌口/食材/人数）→ 主路由生成菜谱；失败返回空串。"""
+    """自然语言约束（忌口/食材/人数）→ 主路由生成菜谱；失败返回空串。
+
+    S-FIX-ATK-P1A（审计票 P1-a 复用腿）：raw_extra 是用户任意键入
+    （忌口文本 / 「教我做「<菜名>」」拼出的菜名段），进 prompt 前必须过
+    二手文本咽喉真身。旧形态把「任务指令+约束」整块裸拼后塞回
+    `_summarize_subtitle`——H-01 收口后整块被按「视频字幕」包裹，
+    既谎报来源，又让引导行把真任务指令一并声明成「不得据其行动」的数据；
+    现拆为「指令留在包裹外、不可信段单独过咽喉、组装后走共享主路由口」。
+    咽喉不可用＝不发模型、回退本地随机（与字幕腿同一 fail-closed 口径）。
+    """
     try:
+        from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
+            guard_secondhand_text,
+        )
         from plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser import (
-            _summarize_subtitle,  # 复用同一主路由调用范式
+            _generate_via_main_router,  # 复用同一主路由调用范式（P1-a 拆出的组装口）
         )
 
         prompt = (
             "你是家常菜推荐助手。根据用户约束推荐 1 道菜，"
             "格式：菜名、简介一句、食材列表、编号做法步骤（3-6 步）。"
-            f"用户约束：{raw_extra}"
+            "用户约束：\n"
+            + guard_secondhand_text(raw_extra[:1200], source_label="用户饮食约束")
         )
-        return _summarize_subtitle(config, prompt, max_chars=1200)
+        return _generate_via_main_router(config, prompt)
     except Exception:  # noqa: BLE001 - LLM 失败兜底本地随机。
         return ""
 

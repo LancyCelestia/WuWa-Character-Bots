@@ -616,34 +616,53 @@ def build_subscription_push_capability(
     return capability
 
 
+# 字幕总结腿的任务指令（在不可信包裹**外**，S-FIX-ATK-P1A 拆常量以便复用腿
+# 各带各的指令，不再整块借道字幕口）。
+_SUBTITLE_TASK_INSTRUCTION = (
+    "以下是视频字幕全文。用中文总结成 3-5 句要点，"
+    "保留关键信息（人物/产品/结论/数据），不要客套和开场白：\n\n"
+)
+
+
+def _generate_via_main_router(config: Any, prompt: str) -> str:
+    """把**已组装好**的 prompt 送主聊天模型取文本；异常一律上抛，由调用方降级。
+
+    同步调用：只在已进 OFFLOADED_CAPABILITY_IDS 的能力腿（worker 线程）里跑，
+    不会阻塞事件循环。走主路由的故障转移链，不新增 key 配置。
+    **约束（S-FIX-ATK-P1A）**：本口只负责「发」，不负责「消毒」——prompt 里
+    凡含远端/用户可控原文，组装方必须已让其过
+    `chat_reply/security/injection.guard_secondhand_text`（咽喉真身唯一，
+    本函数不自带第二套包裹）。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+        build_model_router,
+    )
+
+    router = build_model_router(config)
+    reply = router.generate(
+        [{"role": "user", "content": prompt}],
+        message_text=prompt,
+    )
+    return str(getattr(reply, "text", "") or "").strip()
+
+
 def _summarize_subtitle(config: Any, subtitle: str, *, max_chars: int = 3000) -> str:
     """主聊天模型路由给字幕出 3-5 句要点；失败返回空串。
 
-    同步调用：bot.content 已在 OFFLOADED_CAPABILITY_IDS 中，跑在 worker
-    线程不会阻塞事件循环。走主路由的故障转移链，不新增 key 配置。
+    S-FIX-SECTEXT-GUARD（审查 H-01）：字幕由平台 API 返回、内容远端可控，
+    进模型前必须过二手文本咽喉（全角化+成对边界+定性引导），与识图/视频
+    识别/ASR 各腿同一真身；导入放 try 内＝咽喉不可用时不直发字幕。
     """
     try:
-        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
-            build_model_router,
-        )
         from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
             guard_secondhand_text,
         )
 
-        router = build_model_router(config)
-        # S-FIX-SECTEXT-GUARD（审查 H-01）：字幕由平台 API 返回、内容远端可控，
-        # 进模型前必须过二手文本咽喉（全角化+成对边界+定性引导），与识图/视频
-        # 识别/ASR 各腿同一真身；导入放 try 内＝咽喉不可用时不直发字幕。
         prompt = (
-            "以下是视频字幕全文。用中文总结成 3-5 句要点，"
-            "保留关键信息（人物/产品/结论/数据），不要客套和开场白：\n\n"
+            _SUBTITLE_TASK_INSTRUCTION
             + guard_secondhand_text(subtitle[:max_chars], source_label="视频字幕")
         )
-        reply = router.generate(
-            [{"role": "user", "content": prompt}],
-            message_text=prompt,
-        )
-        return str(getattr(reply, "text", "") or "").strip()
+        return _generate_via_main_router(config, prompt)
     except Exception:  # noqa: BLE001 - 总结失败回退字幕摘录本身。
         return ""
 
