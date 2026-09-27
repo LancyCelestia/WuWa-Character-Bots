@@ -41,6 +41,23 @@ UNKNOWN_PLATFORM_COLOR = "#607080"
 # templates 三条消费链共同 import，天然满足「单一事实来源」。
 BRAND_NAME_EN = "Shorekeeper"
 
+
+def brand_name_en_for(persona_id: str) -> str:
+    """按**当前生效人格**派生卡面英文署名（2026-09-28 用户裁定：卡面身份跟人格外壳走）。
+
+    英文署名此前无人格源（全仓只有上面那枚常量）。人格册的 ``persona_id`` 本身就是
+    拉丁 slug（``shorekeeper`` / ``danya``），首字母大写即得正确署名——零新配置键、
+    零改册形态。拿不出可用 slug（空、``default``、含非 ASCII）时回落品牌常量，
+    **绝不渲染空署名段**（胶囊侧的省略逻辑只管功能名，英文名不许空）。
+    """
+    slug = str(persona_id or "").strip()
+    if not slug or slug.lower() == "default":
+        return BRAND_NAME_EN
+    skeleton = slug.replace("_", "").replace("-", "").replace(" ", "")
+    if not skeleton.isascii() or not skeleton.isalnum():
+        return BRAND_NAME_EN
+    return slug.replace("_", " ").replace("-", " ").title()
+
 _WASH_HUE_SHIFT = 30 / 360      # 平台色相对本命相的最大推幅
 _WASH_HUE_PULL = 0.5            # 平台色相 → 推幅的比例（本命相权重 3:1）
 # 2026-09-25 澜汐点名「背景现在是灰色的，要在守岸人蓝标志色上做釉瑚飘逸渐变」。
@@ -647,6 +664,7 @@ __all__ = [
     "UNKNOWN_PLATFORM_COLOR",
     "UNKNOWN_THEME_KEYS",
     "ThemeTokens",
+    "brand_name_en_for",
     "derive_wash_tokens",
     "get_platform_theme",
     "platform_accent",

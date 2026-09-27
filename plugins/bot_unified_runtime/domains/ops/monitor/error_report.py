@@ -433,6 +433,30 @@ def _default_config_getter(name: str) -> object:
         return None
 
 
+def _persona_signature(getter: Callable[[str], object]) -> tuple[str, str]:
+    """卡面署名 ``(中文名, 英文名)`` 跟**生效人格**走（2026-09-28 用户裁定）。
+
+    中文名走 ``persona_profile.current_bot_nickname``——那是 /bot status、卡片页脚、
+    人格自称共用的唯一读法（先查人格册，再回落兼容显示名），**绝不读
+    ``get_login_info``**（其自身身份缓存改后不刷新，台账 #60★）。英文名由人格册的
+    ``persona_id``（拉丁 slug）经 ``theme_tokens.brand_name_en_for`` 派生。
+    取不到就交空串给渲染侧统一回落品牌形态（``BRAND_THEME.display_name`` /
+    ``BRAND_NAME_EN``），卡面既不许出现空署名、也不许在这里再抄一份回落规则。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+        current_bot_nickname,
+    )
+    from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
+        brand_name_en_for,
+    )
+
+    persona_id = str(getter("bot_persona_profile_id") or "").strip()
+    name = current_bot_nickname(persona_id) or str(
+        getter("bot_persona_display_name") or ""
+    ).strip()
+    return name, brand_name_en_for(persona_id)
+
+
 def _card_avatar_uri(getter: Callable[[str], object], bot_id: str = "") -> str:
     """卡面头像：先按**实际发送方**取 `data/avatar/bot_<qq>.png`，取不到再退到
     `render.bot_avatar.bot_avatar_uri` 的单实例口径，最后内联成 data URI。
@@ -1233,6 +1257,7 @@ def build_error_report(
             _kv("告警关联", message.debug_id),
         ]
     )
+    signature = _persona_signature(getter)
     return {
         "card_variant": "error",
         "card_title": "运行异常",
@@ -1284,7 +1309,8 @@ def build_error_report(
         "id_pairs": id_pairs,
         "help_text": _HELP_TEXT,
         "fallback_help_text": _FALLBACK_HELP_TEXT,
-        "bot_name": "守岸人",
+        "bot_name": signature[0],
+        "bot_name_en": signature[1],
         "bot_avatar_url": _card_avatar_uri(getter),
     }
 
@@ -1387,6 +1413,7 @@ def build_issue_report(
             ),
         ]
     )
+    signature = _persona_signature(getter)
     return {
         "card_variant": "alert",
         "card_title": "运行时告警",
@@ -1439,7 +1466,8 @@ def build_issue_report(
         "id_pairs": id_pairs,
         "help_text": _HELP_TEXT,
         "fallback_help_text": _FALLBACK_HELP_TEXT,
-        "bot_name": "守岸人",
+        "bot_name": signature[0],
+        "bot_name_en": signature[1],
         "bot_avatar_url": _card_avatar_uri(getter, source_bot)
     }
 

@@ -381,6 +381,7 @@ def _capsule_context(
     bot_name: str,
     bot_avatar_url: str,
     feature_label: str,
+    bot_name_en: str = "",
 ) -> dict[str, str]:
     """品牌胶囊上下文（CAP1 2026-09-20，用户裁定「所有图片加胶囊」）。
 
@@ -391,12 +392,14 @@ def _capsule_context(
     （铁律 7：渲染面永不因署名件炸整卡）。
 
     ``bot_name`` 空回落 ``BRAND_THEME.display_name``（中文名单一来源）；
-    英文名 ``BRAND_NAME_EN`` 由生成器内部取值，此处不传字面量。
+    ``bot_name_en``（2026-09-28 补形参）空回落 ``BRAND_NAME_EN``——**卡面身份要跟着
+    生效人格走**，署名由调用侧按人格派生后传入，缺省形态与历史逐字节一致。
     """
     return {
         "capsule_css": BRAND_CAPSULE_CSS,
         "capsule_html": brand_capsule_html(
             bot_name=(bot_name or BRAND_THEME.display_name),
+            bot_name_en=bot_name_en,
             avatar_url=bot_avatar_url,
             feature_label=feature_label,
         ),
@@ -2114,6 +2117,8 @@ def render_error_card_html(payload_dict: dict[str, Any] | None = None) -> str:
     card_variant = "alert" if str(data.get("card_variant") or "") == "alert" else "calm"
     rgb = _hex_to_rgb(ERROR_THEME.accent)
     bot_name = _as_str(data.get("bot_name")) or BRAND_THEME.display_name
+    # 英文署名同口径：调用侧按生效人格派生后传入，空则回落品牌常量（mica_shell 内）。
+    bot_name_en = _as_str(data.get("bot_name_en"))
     bot_avatar_url = _as_str(data.get("bot_avatar_url"))
     return _ERROR_CARD_TEMPLATE.render(
         platform_color=ERROR_THEME.accent,
@@ -2143,7 +2148,9 @@ def render_error_card_html(payload_dict: dict[str, Any] | None = None) -> str:
         # CAP1 新增、无调用方出处的卡面文案，回落退役；error_report 载荷未带
         # feature_label 时整段省略（卡面「运行异常」语义自有 card_title 承载）。
         # help_text 由模板摆在胶囊旁。
-        **_capsule_context(bot_name, bot_avatar_url, _as_str(data.get("feature_label"))),
+        **_capsule_context(
+            bot_name, bot_avatar_url, _as_str(data.get("feature_label")), bot_name_en
+        ),
         # 漂移相位按 payload digest 确定注入（E01 同源语义）。
         phase=payload_phase(data, face="error"),
         # 釉瑚云母洗：与 --accent 同点注入（红 accent 派生，mist 保持本命打底）。
