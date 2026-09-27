@@ -207,7 +207,7 @@ def test_compat_shim_still_reexports_the_whole_public_surface() -> None:
     """旧路径垫片转发面 ⊇ 真身 ``__all__``（补名后垫片不得出现断供）。"""
     shim_namespace: dict[str, object] = {}
     exec(  # noqa: S102 — 同上，比对垫片星转发面
-        "from plugins.bot_unified_runtime.output.card_render.theme_tokens import *",
+        "from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import *",
         shim_namespace,
     )
     forwarded = {
@@ -216,4 +216,4 @@ def test_compat_shim_still_reexports_the_whole_public_surface() -> None:
         if not name.startswith("_") and name != "__builtins__"
     }
     missing = sorted(set(theme_tokens.__all__) - forwarded - set(dir(builtins)))
-    assert not missing, f"output.card_render.theme_tokens 垫片缺转发：{missing}"
+    assert not missing, f"domains.render.card_render.theme_tokens 再导出缺项：{missing}"
