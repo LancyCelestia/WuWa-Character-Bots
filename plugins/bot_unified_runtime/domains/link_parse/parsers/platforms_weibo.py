@@ -25,7 +25,9 @@ from plugins.bot_unified_runtime.domains.core.contracts.media import (
     build_parsed_content,
 )
 from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    DEFAULT_MAX_BYTES,
     ParseHttpError,
+    _read_capped,
     http_get_json,
     http_get_text,
 )
@@ -86,6 +88,10 @@ def _weibo_visitor_cookie() -> str:
 
     m.weibo.cn 对无 cookie 会话间歇风控（ok=-100/6102）；带访客身份可明显
     提升深解析成功率。结果进程内缓存 6 小时。
+
+    两腿读取一律走中央 `_read_capped`（LINKPARSE F-3：此前裸 `response.read()`
+    整只进内存）。目标 host 是固定常量域，故未挂逐跳 handler；若日后此 opener
+    接受用户可控 URL，须同批挂中央凭证剥除 handler。
     """
     now = time.time()
     if _visitor_cache["cookie"] and now - _visitor_cache["at"] < _VISITOR_TTL:
@@ -100,7 +106,11 @@ def _weibo_visitor_cookie() -> str:
         body = urllib.parse.urlencode({"cb": "gen_callback", "fp": _VISITOR_FP}).encode()
         request = urllib.request.Request(_VISITOR_GEN_API, data=body, headers=headers)
         with opener.open(request, timeout=10) as response:
-            payload = json.loads(response.read().decode("utf-8", "replace"))
+            payload = json.loads(
+                _read_capped(response, _VISITOR_GEN_API, DEFAULT_MAX_BYTES).decode(
+                    "utf-8", "replace"
+                )
+            )
         tid = str(((payload or {}).get("data") or {}).get("tid") or "")
         if not tid:
             return ""
@@ -120,7 +130,7 @@ def _weibo_visitor_cookie() -> str:
             f"{_VISITOR_INCARNATE_API}?{query}", headers=headers
         )
         with opener.open(incarnate, timeout=10) as response:
-            response.read()
+            _read_capped(response, _VISITOR_INCARNATE_API, DEFAULT_MAX_BYTES)
         cookie = "; ".join(
             f"{item.name}={item.value}"
             for item in jar
