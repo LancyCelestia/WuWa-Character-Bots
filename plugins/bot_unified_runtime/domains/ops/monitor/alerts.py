@@ -422,6 +422,23 @@ _KIND_PLAIN: dict[str, str] = {
     "tts_service_rejected": "语音引擎拒了这个请求",
     "tts_synthesize_failed": "语音合成失败",
     "tts_no_ref_audio": "没有可用的参考音频",
+    # 以下三档是 queue 观测族与 creation 巡检的在册代号（真身=worker.py 的
+    # `_DORMANT_PARTIAL_KIND`/`_INFLIGHT_SATURATED_KIND` 与 reserved_health_alert.py
+    # 的 `_NOT_CONFIGURED_KIND`）。2026-09-28 取证：这三枚一直在册外裸奔，用户
+    # 永远只看到 fallback「我还没登记成人话的错」。覆盖由 `test_alert_plain_text.py`
+    # 从真身常量派生执法，新加观测 kind 忘了填人话当场红。
+    "send_queue_dormant_partial": (
+        "有几条旧任务发了一半就停住了，重试的通道按设计不碰它们，"
+        "七天内会自动归档出清；不要紧，眼下不用谁去管，属待归档的存量"
+    ),
+    "send_queue_inflight_saturated": (
+        "手上在投递的务占满了窗口，新消息在排队等空位，通常自己就解开；"
+        "不要紧，只有连着出现才需要看一眼发送腿是不是卡住了"
+    ),
+    "creation_not_configured": (
+        "图片创作的接口是预留位、后端还没接上，功能没开不是故障；"
+        "每个进程实例报一次，重启后会再报一次，暂时不用谁管"
+    ),
 }
 
 #: 键由 ``SessionType`` 枚举派生，不手抄字符串——旧表写的是 `"mail"`，而枚举值

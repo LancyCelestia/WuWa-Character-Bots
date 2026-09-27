@@ -973,6 +973,9 @@ _ISSUE_REASON_LABELS: dict[str, str] = {
     "empty_response": "对方回了空内容",
     "internal_error": "内部抛异常",
     "pipeline_busy": "队列排满，这条挤不进去",
+    "send_queue_dormant_partial": "旧任务发到一半停住，等自动归档出清",
+    "send_queue_inflight_saturated": "在途投递占满窗口，新消息在排队",
+    "creation_not_configured": "创作预留位未接后端，功能未启用",
 }
 
 
