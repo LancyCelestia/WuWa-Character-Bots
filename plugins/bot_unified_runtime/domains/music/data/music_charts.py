@@ -234,6 +234,12 @@ class KugouChartSource(_HTTPChartSource):
     platform = "kugou"
 
     def _fetch_payload(self, cookie: str) -> Any:
+        # S-FIX-WXDATA F-C（S-ATK-DATA F-C，2026-09-27 实测）：酷狗榜腿是明文
+        # http —— **非疏忽**：本机实弹 `https://mobilecdn.kugou.com/api/v3/rank/
+        # song` TLS 握手不通（CONNECT 建立后 curl 000，含 --ssl-no-revoke 复测），
+        # 同参 http 200。mobilecdn 侧不支持 443 ⇒ 强升 https 会整腿打死。
+        # 明文面缓解＝响应只取榜单结构化字段、正文过清洗尺；升级前提＝上游
+        # 支持 TLS（复测命令见 SEAT-MAIN §一百零四）。
         return http_get_json(
             f"http://mobilecdn.kugou.com/api/v3/rank/song"
             f"?rankid={self.chart_id}&page=1&pagesize={self.limit}&format=json",

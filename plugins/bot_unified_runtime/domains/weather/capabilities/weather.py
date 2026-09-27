@@ -18,6 +18,9 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
     SendPolicy,
 )
+from plugins.bot_unified_runtime.domains.finance.data.market_data import (
+    sanitize_remote_text,
+)
 from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
     ParseHttpError,
     http_get_json,
@@ -53,11 +56,19 @@ _WEATHER_RE = re.compile(
 _DISTRICT_RE = re.compile(r"^[/!！]?(?:支持区县|查询区县|可查区县)\s*(?P<province>.+)$")
 
 
+# S-FIX-WXSSL L2（WXFIN F18）：变体链线程放大收窄——每条变体最坏
+# ≈2 次 NMC 重试 + Open-Meteo geocode/forecast（各 10s 超时），变体数
+# 直接乘进单消息外呼链。上限 3：原串 + 去分隔符 + 最末段（区县级，
+# 降维最有用的一档）；更靠前的市/省段不再逐个外呼。
+_QUERY_VARIANTS_MAX = 3
+
+
 def _query_variants(query: str) -> list[str]:
-    """F18 查询变体链：『湘潭 雨湖』→ [原串, 去分隔串, 雨湖, 湘潭]。
+    """F18 查询变体链：『湘潭 雨湖』→ [原串, 去分隔串, 雨湖]。
 
     原串（含省-市合成）→ 去分隔符合成 → 各段倒序（末段=区县/乡镇名优先）。
-    NMC 与 Open-Meteo 兜底都会逐个尝试，命中即止；去重保序。
+    NMC 与 Open-Meteo 兜底都会逐个尝试，命中即止；去重保序；
+    总数封顶 _QUERY_VARIANTS_MAX（单消息外呼链有界）。
     """
     raw = (query or "").strip()
     if not raw:
@@ -71,7 +82,7 @@ def _query_variants(query: str) -> list[str]:
         for part in reversed(parts[1:]):
             if part not in variants:
                 variants.append(part)
-    return variants
+    return variants[:_QUERY_VARIANTS_MAX]
 
 # ---------------------------------------------------------------- 主通道重试
 # NMC rest/weather 主接口本身存活（2026-09-12 复测：curl 与项目链路 10/10
@@ -83,10 +94,15 @@ _NMC_RETRY_ATTEMPTS = 2
 _NMC_RETRY_BACKOFF_SECONDS = 0.5
 
 
-def _nmc_query_with_retry(query: str, *, proxy: str) -> str | None:
+def _nmc_query_with_retry(
+    query: str, *, proxy: str, timeout: float | None = None
+) -> str | None:
     """NMC 主通道：城市在码表内但拉取失败（超时/空 data）时重试一次。
 
     码表未命中直接返回 None（调用方走 Open-Meteo 全球兜底，不空耗延迟）。
+    S-FIX-WX-T6：可选 `timeout` 逐次透传给底层查询；不传（None）＝旧行为
+    （由 `fetch_nmc_weather` 自身缺省定超时），装配处实传配置值后超时才真正
+    受 `bot_weather_timeout_seconds` 支配（锁：tests/test_wx_t6_timeout_plumbing.py）。
     """
     parts = [part.strip() for part in str(query or "").split("-") if part.strip()]
     in_db = bool(
@@ -96,7 +112,7 @@ def _nmc_query_with_retry(query: str, *, proxy: str) -> str | None:
         return None
     report: str | None = None
     for attempt in range(_NMC_RETRY_ATTEMPTS):
-        report = nmc_weather_query(query, proxy=proxy)
+        report = nmc_weather_query(query, proxy=proxy, timeout=timeout)
         if report is not None:
             return report
         if attempt + 1 < _NMC_RETRY_ATTEMPTS:
@@ -211,9 +227,11 @@ def fetch_city_alerts(
     if not tokens:
         return []
     try:
-        payload = http_get_json(
-            _NMC_FIND_ALARM_URL, proxy=proxy, timeout=timeout, verify_ssl=False
-        )
+        # S-FIX-WXSSL M1（2026-09-27）：同 nmc_weather.fetch_nmc_weather，
+        # 历史「证书链不完整」说法实测证伪，缺省走证书验证；预警标题直接
+        # 进群聊文本，不可留裸 TLS 通道（验证在场由
+        # tests/test_weather_tls_verification.py 锁定）。
+        payload = http_get_json(_NMC_FIND_ALARM_URL, proxy=proxy, timeout=timeout)
     except (ParseHttpError, ValueError, OSError):
         return []
     entries = ((((payload or {}).get("data") or {}).get("page") or {}).get("list")) or []
@@ -221,7 +239,11 @@ def fetch_city_alerts(
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        title = str(entry.get("title") or "").strip()
+        # S-FIX-WXDATA F-A（S-ATK-DATA F-A）：预警标题/发布时间是上游自由文本，
+        # 进群聊正文与 prompt 前过中央清洗尺（换行折叠，注入文字不得凭空多行）；
+        # 标题按 120 字放宽钳制（缺省 40 会切掉长预警标题正文），kind/color
+        # 由已清洗的 title 派生，天然继承单行形态。
+        title = sanitize_remote_text(entry.get("title"), 120)
         if not title or not all(token in title for token in tokens):
             continue
         kind, color = parse_alert_title(title)
@@ -231,7 +253,7 @@ def fetch_city_alerts(
                 "title": title,
                 "kind": kind,
                 "color": color,
-                "issued": str(entry.get("issuetime") or "").strip(),
+                "issued": sanitize_remote_text(entry.get("issuetime")),
                 "url": f"https://www.nmc.cn{url}" if url.startswith("/") else url,
             }
         )
@@ -260,6 +282,12 @@ def build_weather_capability(
     config: Any | None = None, *, render_backend: Any | None = None
 ) -> Any:
     proxy = str(getattr(config, "bot_download_proxy", "") or "") if config else ""
+    # S-FIX-WX-T6（超时假账根修）：命令路径各外呼腿的超时唯一真身＝
+    # `bot_weather_timeout_seconds`（键已在 config.py:486 声明，缺省 8.0）。
+    # 此前该键只在 temporal（环境信息腿）被读，命令链路三腿全部吃硬编码
+    # 缺省——配置在册不算数。现装配闭包读一次、逐腿实传；config=None
+    # 时 getattr 走同款缺省 8.0，行为与键声明值一致。
+    timeout_seconds = float(getattr(config, "bot_weather_timeout_seconds", 8.0))
 
     def _render_weather_card(query: str, report: str, source: str) -> str:
         """天气报告合成 Mica 卡图；后端不可用或失败返回空串。"""
@@ -337,7 +365,7 @@ def build_weather_capability(
         report: str | None = None
         source = "nmc"
         for variant in variants:
-            report = _nmc_query_with_retry(variant, proxy=proxy)
+            report = _nmc_query_with_retry(variant, proxy=proxy, timeout=timeout_seconds)
             if report is not None:
                 query = variant
                 break
@@ -347,7 +375,9 @@ def build_weather_capability(
             global_result: dict[str, Any] | None = None
             for variant in variants:
                 try:
-                    global_result = open_meteo_query(variant, proxy=proxy)
+                    global_result = open_meteo_query(
+                        variant, proxy=proxy, timeout=timeout_seconds
+                    )
                 except Exception:  # noqa: BLE001 - 全球源失败按未找到降级。
                     global_result = None
                 if global_result is not None:
@@ -383,7 +413,7 @@ def build_weather_capability(
         alerts: list[dict[str, str]] = []
         if source == "nmc":
             try:
-                alerts = fetch_city_alerts(query, proxy=proxy)
+                alerts = fetch_city_alerts(query, proxy=proxy, timeout=timeout_seconds)
             except Exception:  # noqa: BLE001 - 预警支路失败不影响天气主报告。
                 alerts = []
             if alerts:

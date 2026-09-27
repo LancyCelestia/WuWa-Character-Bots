@@ -8,8 +8,12 @@ NMC 查不到（海外城市/乡镇街道级）时由能力层调用本模块兜
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
+from plugins.bot_unified_runtime.domains.finance.data.market_data import (
+    sanitize_remote_text,
+)
 from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
     http_get_json,
 )
@@ -53,10 +57,26 @@ _ZH_EN_CITY_ALIASES: dict[str, str] = {
 
 
 def _describe(code: object) -> str:
+    # S-FIX-WXDATA F-B（2026-09-27，S-ATK-DATA F-B）：旧写法 `code or -1` 把
+    # falsy 的 0（晴——最高频码）坍缩成 -1 判「未知」。改为只挡 None。
+    if code is None:
+        return "未知"
     try:
-        return _WEATHER_CODE_ZH.get(int(str(code or -1)), "未知")
+        return _WEATHER_CODE_ZH.get(int(str(code).strip()), "未知")
     except (TypeError, ValueError):
         return "未知"
+
+
+def _fmt_num(value: object) -> str:
+    """S-FIX-WXDATA F-A：上游数值字段类型闸——非有限数值一律「—」，
+    拒绝把 "25\\n注入" / NaN 之类的字符串直插报文（换行会凭空撑爆行骨架）。"""
+    try:
+        num = float(str(value).strip())
+    except (TypeError, ValueError):
+        return "—"
+    if not math.isfinite(num):
+        return "—"
+    return str(value).strip()
 
 
 def _geocode(city: str, *, timeout: float, proxy: str) -> list[dict[str, Any]] | None:
@@ -121,6 +141,7 @@ def open_meteo_query(city: str, *, timeout: float = 10.0, proxy: str = "") -> di
                 }
             ),
             timeout=timeout,
+            proxy=proxy,
         )
     except Exception:  # noqa: BLE001 - 全球源网络失败按未找到降级。
         return None
@@ -128,9 +149,12 @@ def open_meteo_query(city: str, *, timeout: float = 10.0, proxy: str = "") -> di
         return None
     current = forecast.get("current") or {}
     daily = forecast.get("daily") or {}
-    name = str(place.get("name") or city)
+    # S-FIX-WXDATA F-A（S-ATK-DATA）：地名/行政区/国家是上游自由文本，进正文与
+    # prompt 前过中央清洗尺（复用金融腿 sanitize_remote_text，禁第二套尺）；
+    # 数值字段一律过 _fmt_num 类型闸，防 "…\n…" 撑爆报文行骨架与 NaN 直通。
+    name = sanitize_remote_text(place.get("name")) or (city or "")
     region_parts = [
-        str(place.get(k) or "")
+        sanitize_remote_text(place.get(k))
         for k in ("admin1", "country")
         if place.get(k)
     ]
@@ -139,9 +163,9 @@ def open_meteo_query(city: str, *, timeout: float = 10.0, proxy: str = "") -> di
         f"📍 {location_label}",
         (
             f"当前：{_describe(current.get('weather_code'))}，"
-            f"{current.get('temperature_2m')}°C，"
-            f"湿度 {current.get('relative_humidity_2m')}%，"
-            f"风速 {current.get('wind_speed_10m')}km/h"
+            f"{_fmt_num(current.get('temperature_2m'))}°C，"
+            f"湿度 {_fmt_num(current.get('relative_humidity_2m'))}%，"
+            f"风速 {_fmt_num(current.get('wind_speed_10m'))}km/h"
         ),
     ]
     max_t = (daily.get("temperature_2m_max") or [None, None])
@@ -149,8 +173,8 @@ def open_meteo_query(city: str, *, timeout: float = 10.0, proxy: str = "") -> di
     codes = (daily.get("weather_code") or [None, None])
     if len(max_t) >= 2:
         lines.append(
-            f"今天 {min_t[0]}~{max_t[0]}°C {_describe(codes[0] if codes else None)}；"
-            f"明天 {min_t[1]}~{max_t[1]}°C {_describe(codes[1] if len(codes) > 1 else None)}"
+            f"今天 {_fmt_num(min_t[0])}~{_fmt_num(max_t[0])}°C {_describe(codes[0] if codes else None)}；"
+            f"明天 {_fmt_num(min_t[1])}~{_fmt_num(max_t[1])}°C {_describe(codes[1] if len(codes) > 1 else None)}"
         )
     return {
         "report": "\n".join(lines),
