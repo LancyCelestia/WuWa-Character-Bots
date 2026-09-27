@@ -21,6 +21,9 @@ from pathlib import Path
 from PIL import Image, ImageFile
 
 from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import http_get
+from plugins.bot_unified_runtime.domains.media.ingest.image_pixel_budget import (
+    ensure_pixel_budget,
+)
 
 _RUNTIME_DATA_ENV = "BOT_RUNTIME_DATA_DIR"
 
@@ -134,6 +137,12 @@ def try_stitch_strip(
                 referer=referer,
             )
             image = Image.open(io.BytesIO(payload))
+            # F-7（攻击者复查 SEAT-ATK-LINKPARSE × SEAT-FIX-VISBOMB 2026-09-27）：
+            # 单图**解压前**像素预算走单源真身——画布护栏在 load() 之后拦不住
+            # 单图炸弹（PIL 默认阈值 1x-2x 带只告警照常解码）。超限抛
+            # PixelBudgetError，被本腿既有 except 接住＝放弃拼接保持原图组，
+            # 与其它下载失败同口径诚实降级。
+            ensure_pixel_budget(image)
             image.load()
         except Exception:  # noqa: BLE001 - 任一图失败即放弃拼接，保持原图组。
             return list(urls), ""

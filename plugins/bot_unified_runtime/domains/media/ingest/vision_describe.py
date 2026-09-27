@@ -35,6 +35,9 @@ from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import 
     LLMProviderError,
     OpenAICompatibleLLMProvider,
 )
+from plugins.bot_unified_runtime.domains.media.ingest.image_pixel_budget import (
+    ensure_pixel_budget,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -219,18 +222,27 @@ def _pil_normalize(path: Path, *, first_frame_only: bool) -> str | None:
 
 
 def _pil_normalize_image(image: Any, *, first_frame_only: bool) -> str | None:
-    """PIL 重编的 Image 对象核心（供本机路径与远程字节两路复用）。"""
+    """PIL 重编的 Image 对象核心（供本机路径与远程字节两路复用）。
+
+    攻击者复查 F-V-1（2026-09-27 席位 S-FIX-VISBOMB）：≤25MB 的 PNG 可在文件头
+    声明上亿像素（解压炸弹），而旧顺序 ``convert()`` 先于 ``thumbnail()`` 意味着
+    全分辨率解码已经发生——闸必须在任何 load/convert 之前施加。超限图**拒绝**并
+    走既有诚实失败面（返回 None=按无图降级），不静默缩放巨图。降采样改在**未
+    load 的原图上**进行（JPEG 走 draft、块解码缩放），兑现模块头部 :122 的内存
+    安全注释原意。判据真身在 image_pixel_budget 单源，此处不写阈值。
+    """
     from io import BytesIO
 
     try:
+        ensure_pixel_budget(image)
         if first_frame_only:
             image.seek(0)
+        if max(image.size) > _PIL_MAX_SIDE:
+            image.thumbnail((_PIL_MAX_SIDE, _PIL_MAX_SIDE))
         frame = image.convert("RGB")
-        if max(frame.size) > _PIL_MAX_SIDE:
-            frame.thumbnail((_PIL_MAX_SIDE, _PIL_MAX_SIDE))
         buffer = BytesIO()
         frame.save(buffer, format="JPEG", quality=85)
-    except Exception:  # noqa: BLE001 - 媒体重编失败按无图处理。
+    except Exception:  # noqa: BLE001 - 媒体重编失败按无图处理（含 PixelBudgetError 拒收）。
         return None
     return _encode_image_bytes(buffer.getvalue(), "image/jpeg")
 
@@ -248,12 +260,18 @@ def _gif_filmstrip_data_url(path: Path) -> str | None:
 
 
 def _gif_strip_from_image(image: Any) -> str | None:
-    """动图拼条的 Image 对象核心（供本机路径与远程字节两路复用）。"""
+    """动图拼条的 Image 对象核心（供本机路径与远程字节两路复用）。
+
+    F-V-1 同族：逐帧 ``convert()`` 会全分辨率驻留（帧尺寸=逻辑屏），故对基帧一次
+    像素预算闸、超限即拒（GIF 各帧不超逻辑屏，单闸覆盖全族）；拼条峰值=3 帧×
+    预算内驻留，较旧面的无界窗口（PIL 默认 1x–2x 告警带照常解码）已收敛。
+    """
     from io import BytesIO
 
     try:
         from PIL import Image
 
+        ensure_pixel_budget(image)
         frame_count = int(getattr(image, "n_frames", 1) or 1)
         if frame_count <= 1:
             return _pil_normalize_image(image, first_frame_only=True)
@@ -354,30 +372,61 @@ _REMOTE_DATA_URL_CACHE_ORDER: list[str] = []
 _REMOTE_DATA_URL_CACHE_CAP = 32
 
 
+def _guarded_image_opener() -> urllib.request.OpenerDirector:
+    """取图护栏 opener（攻击者复查 F-1，2026-09-27 席位 S-ATKFIX-SSRF1）。
+
+    urlopen 默认 opener 自动跟随 30x、逐跳落点零复查：图片 URL 一跳指进
+    内网/云元数据时，内网字节会经 PIL → data URL → VLM 描述回显给群成员。
+    这里复用短链链上唯一的逐跳护栏形态 ``_GuardedShortLinkRedirectHandler``
+    （每一跳落点先过 ssrf_guard.check_fetch_landing，判据仍是中央
+    ``check_download_url``——不造第二套 URL 判据）：命中内网/整型 IP/畸形
+    落点即在建连之前抛 ParseHttpError，「落点拒绝即弃图」与
+    ``media_archive._fetch_url_media`` 同口径；跨 host 剥凭证的
+    ``_CredentialScrubbingRedirectHandler`` 语义随之继承。
+    """
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+        _GuardedShortLinkRedirectHandler,
+    )
+
+    return urllib.request.build_opener(_GuardedShortLinkRedirectHandler())
+
+
 def _download_image_bytes(
     url: str,
     *,
     max_bytes: int = _MAX_REMOTE_IMAGE_BYTES,
 ) -> bytes | None:
-    # WP1（背景点4）：远程取字节此前完全不过 SSRF 咽喉——用户可控 URL 直连
-    # urlopen 可打内网/云元数据。入口先过 check_download_url（内网/保留段/畸形
-    # 一律拒），拒绝即按「取不到图」降级（返回 None，调用方保留原 URL），
-    # 与 media_archive._fetch_url_media 同口径。
+    """远程取图字节。判据口径（WP1 背景点4 + 攻击者复查 F-1/F-2）：
+
+    - 入口先过中央咽喉 ``check_download_url``（内网/保留段/畸形一律拒）。
+      **明确拒绝不再吞成 None，而是原样上抛**——调用方据此区分「咽喉
+      拒绝」与「瞬时失败」（审查 F-2：拒绝=丢图不回透，瞬时失败=保留
+      原 URL 兜底）。
+    - 30x 重定向走 ``_guarded_image_opener`` 逐跳落点复查（审查 F-1），
+      落点拒绝抛 ParseHttpError，同样上抛。
+    - 返回 None 只发生在「公网判定成立但瞬时下载失败/超限/读失败」。
+    """
     from plugins.bot_unified_runtime.domains.files.sources.downloader import (
         RejectedUrlError,
         check_download_url,
     )
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+        ParseHttpError,
+    )
 
-    try:
-        check_download_url(url)
-    except RejectedUrlError:
-        return None
+    check_download_url(url)
     request = urllib.request.Request(url, headers={"User-Agent": _DESKTOP_UA})
     host = urlparse(url).hostname or ""
     try:
-        with urllib.request.urlopen(request, timeout=_REMOTE_DOWNLOAD_TIMEOUT) as response:
+        with _guarded_image_opener().open(
+            request, timeout=_REMOTE_DOWNLOAD_TIMEOUT
+        ) as response:
             payload = response.read(max_bytes + 1)
-    except Exception as exc:  # noqa: BLE001 - 下载失败降级保留原 URL 并留诊断。
+    except (RejectedUrlError, ParseHttpError):
+        # SSRF 护栏拒绝（入口咽喉 / 逐跳落点）是透明信号——绝不降级成
+        # 「瞬时失败」返回 None，否则调用方会把内网 URL 原样回透给 provider。
+        raise
+    except Exception as exc:  # noqa: BLE001 - 公网判定成立后瞬时下载失败降级保留原 URL 并留诊断。
         logger.warning(
             "vision: remote image download failed host=%s err=%s", host, exc
         )
@@ -415,8 +464,21 @@ def prepare_vision_image_urls(
 ) -> list[str]:
     """把远程 http 图片 URL 转成 data URL（bot 侧下载）；本地/data URL 原样。
 
-    失败时保留原 URL 兜底（个别服务商侧或许能取到），并已留 warning 日志。
+    审查 F-2（2026-09-27 席位 S-ATKFIX-SSRF1）——拒绝分支 fail-closed：
+    SSRF 咽喉**明确拒绝**的 URL（入口 ``RejectedUrlError`` / 重定向落点
+    ``ParseHttpError``，判据仍为中央 check_download_url）一律**丢该图不回透**——
+    本机构架的 VLM provider 若自取 image_url，透传原内网 URL 等于让它替我们
+    连内网。仅「公网判定成立但瞬时下载失败」（``_download_image_bytes`` 返回
+    None）保留原 URL 兜底（个别服务商侧或许能取到），并已在下载腿留 warning。
+    拒绝原因文案不含 URL 形态（咽喉固定文案），日志只记「丢图」不回显地址。
     """
+    from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+        RejectedUrlError,
+    )
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+        ParseHttpError,
+    )
+
     prepared: list[str] = []
     for url in (urls or [])[: max(1, limit)]:
         if not url.startswith("http"):
@@ -426,7 +488,11 @@ def prepare_vision_image_urls(
         if cached:
             prepared.append(cached)
             continue
-        data = _download_image_bytes(url)
+        try:
+            data = _download_image_bytes(url)
+        except (RejectedUrlError, ParseHttpError):
+            logger.warning("vision: image dropped by SSRF guard, not forwarded to provider")
+            continue
         converted = _image_bytes_to_data_url(data) if data else None
         if converted is None:
             prepared.append(url)
@@ -570,7 +636,27 @@ def _extract_video_frames(
     out_dir: str,
     timeout_seconds: float = 30.0,
 ) -> list[Path]:
-    """ffmpeg 均匀抽帧落盘为 JPEG；ffmpeg 缺失或失败返回空列表。"""
+    """ffmpeg 均匀抽帧落盘为 JPEG；ffmpeg 缺失或失败返回空列表。
+
+    攻击者复查残余收口（2026-09-27 席位 S-ATKFIX-SSRF2）：http 源由 ffmpeg
+    自带网络栈自取、绕开 Python 咽喉（与 yt-dlp F-5 同类）。在把源交给 ffmpeg
+    （含 ``_probe_video_duration``）之前，先过**中央唯一判据** ``check_download_url``
+    ——明确拒绝即按「无帧」降级返回 ``[]``（与 ffmpeg 缺失同口径），绝不把内网
+    地址下发给 ffmpeg；本机文件路径不受影响。ffmpeg 自身跟随的重定向落点属
+    连接级残余（同 F-5/F-8），登记不堵（见席位报告）。
+    """
+    source = str(video_source or "")
+    if source.startswith(("http://", "https://")):
+        from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+            RejectedUrlError,
+            check_download_url,
+        )
+
+        try:
+            check_download_url(source)
+        except RejectedUrlError:
+            logger.warning("vision: video frame source rejected by SSRF guard")
+            return []
     ffmpeg = _find_ffmpeg_locate()
     if not ffmpeg:
         logger.info("video frames skipped: ffmpeg not found")
@@ -804,6 +890,10 @@ def describe_images(
     limit = max(1, int(max_images))
     # QQ 多媒体签名 URL 服务商侧取不到：bot 侧先下载转 data URL（见 §14.6.4）。
     image_urls = prepare_vision_image_urls(list(image_urls), limit=limit)
+    if not image_urls:
+        # 审查 F-2 连锁：全部图被护栏丢弃（入口/落点拒绝）时没有图可描述，
+        # 直接返回空——不发「用户附带了图片」却无图可看的空跑请求误导模型。
+        return ""
     content: list[dict[str, Any]] = [
         {
             "type": "text",
@@ -926,10 +1016,20 @@ def describe_subscription_item(
                 urls.append(url)
     if not urls:
         return ""
+    # SUB-4 腿1（S-ATK-SUBSCRIBE，2026-09-27）：远端标题以 query_text 身份直进
+    # 视觉模型 prompt，且旧名单里没有订阅链路——改走二手消毒单一真身
+    # `guard_secondhand_text`（全角化+成对边界+定性引导），禁手拼包裹字面量。
+    from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
+        guard_secondhand_text,
+    )
+
+    guarded_title = guard_secondhand_text(
+        str(payload.get("title") or ""), source_label="订阅条目标题"
+    )
     return describe_images(
         provider,
         image_urls=urls,
-        query_text=str(payload.get("title") or ""),
+        query_text=guarded_title,
         max_images=max_images,
         max_chars=max_chars,
     )
