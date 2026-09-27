@@ -912,10 +912,10 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 - **常见错误**：填负数；误以为 0 是"零输出"（实际是"不设上限"）。
 
 ### 7. `BOT_CHAT_TIMEOUT_SECONDS`（默认 `40.0`）
-- **说明**：正常模式单模型请求超时；快速模式实际用 min(正常, `BOT_CHAT_FAST_TIMEOUT_SECONDS`)。
+- **说明**：正常模式单模型请求超时（**每一跳**，不是整条回复的预算）；快速模式实际用 min(正常, `BOT_CHAT_FAST_TIMEOUT_SECONDS`)。
 - **合法值**：有限数 **>0**（NaN/Infinity/≤0 → error `openai_timeout_seconds_invalid`）。
 - **地板 30s**：低于它时思考型模型连首字都等不到，而链上每一跳共用同一钳制值——换渠道不会更快，只会把同一发超时重放 N 遍，结局恒为 `error_kind=timeout` + 失败话术模板（2026-09-27 实弹：两跳全 timeout、`duration_ms=69436.9`）。地板由 `tests/test_chat_timeout_floor.py` 执法，两枚键要一起抬（只抬一枚＝没抬，快速模式取 min）。
-- **常见错误**：填 0；超过 `BOT_CHAT_FAILOVER_MAX_SECONDS` 时单次超时会被故障转移窗口压到剩余预算内。
+- **常见错误**：填 0；超过 `BOT_CHAT_FAILOVER_MAX_SECONDS` 时单次超时会被故障转移窗口压到剩余预算内。整条回复另有 `BOT_REQUEST_BUDGET_SECONDS`（缺省 300s）封顶。
 
 **七键之外的关键配套**：`BOT_API_KEY_*` 五个凭据槽（供注册表 `env:` 引用，NoneBot dotenv 会放进 driver.config，**必须保留在 Config 字段里**，否则真实运行态拿到空 key）；`BOT_MODEL_REGISTRY` 条目内 api_key 支持列表做同模型多密钥转移；`reasoning_effort`（空/off=不发送；qwen/dashscope 转 `enable_thinking`；遇 `unsupported_parameter` 自动去参重试一次）；推理模型空 content 回退 `reasoning_content` 尾部 600 字。
 
