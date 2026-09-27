@@ -117,10 +117,27 @@ def build_receipt_query_result(
             request_id=request_id,
             audit_tags=["debug_query", "receipt_query", "debug_not_found"],
         )
+    # R-G1（S-ATK-RECEIPTS，2026-09-27）：多回执共享 request_id 属生产设计内
+    # 形态（error_report 的 ack/card 两行同 id），而 find() 只回「最新一行」⇒
+    # 管理员会把「卡已发、ack 被吞」读成整体失败（反向亦然）。读侧枚举同 id
+    # 全部兄弟（最新在前、上限 5 条，超限诚实标注），单回执路径逐字节不变。
+    siblings = receipt_repository.list_receipts(receipt.request_id)
+    if len(siblings) <= 1:
+        body = _format_receipt(receipt)
+    else:
+        ordered = list(reversed(siblings))
+        shown = ordered[:5]
+        blocks = [
+            f"〔兄弟回执 {len(shown) - idx}/{len(siblings)}〕\n{_format_receipt(item)}"
+            for idx, item in enumerate(shown)
+        ]
+        head = f"共 {len(siblings)} 条兄弟回执（同一 request_id，最新在前）："
+        tail = f"（另有 {len(ordered) - len(shown)} 条未列出）" if len(ordered) > len(shown) else ""
+        body = "\n".join([head, *blocks] + ([tail] if tail else []))
     return _debug_result(
         capability_id="bot.receipt",
         title="发送回执",
-        body=_format_receipt(receipt),
+        body=body,
         request_id=request_id,
         audit_tags=["debug_query", "receipt_query"],
     )
