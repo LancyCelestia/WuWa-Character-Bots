@@ -469,6 +469,12 @@ def _alert_token(raw: str, *, limit: int = 48) -> str:
     return cleaned or "未记名"
 
 
+#: 认不出代号时主句里必带的那半句（2026-09-28 用户裁定「兜底句别只报我没词」）。
+#: 测试两面都吃这个常量——「已登记的不许出现它」「未登记的必须出现它」共用一把尺，
+#: 措辞再改也不会把反向腿测成空转（旧写法两边各抄一遍字面量，改一处即静默失效）。
+ALERT_UNREGISTERED_MARK = "还没登记中文说明"
+
+
 def _alert_plain_headline(issue: OperationalIssue) -> str:
     """把一条 issue 翻成一句中文主句（不含技术字段行）。"""
     stage = _alert_token(issue.stage)
@@ -480,8 +486,14 @@ def _alert_plain_headline(issue: OperationalIssue) -> str:
         token = f"{stage}/{kind}" if doing is None and reason is None else (
             kind if doing is not None else stage
         )
-        doing = doing or "我在做一件事"
-        reason = f"出了个我还没登记成人话的错（代号 {token}）"
+        doing = doing or "有一件事没做成"
+        # 兜底句自带出路：不编原因＋该谁动（照代号补 `_KIND_PLAIN`）＋现场依据在哪
+        # （本条 detail 与排查编号）。运维拿到这一句就知道下一步，不用再翻代码猜。
+        reason = (
+            f"碰到一件{ALERT_UNREGISTERED_MARK}的异常（代号 {token}）；"
+            "原因我不猜，请按代号往 alerts._KIND_PLAIN 补一句中文说明，"
+            "现场依据看本条 detail 与排查编号"
+        )
     # 主句只留"发生了什么"：时间/会话/账号/试了几次/要不要再试交给下面的逐行字段，
     # 同一件事不在一条消息里说两遍（2026-09-25 澜汐：一行一个值、别复读）。
     return f"[守岸人告警] {doing}：{reason}。"

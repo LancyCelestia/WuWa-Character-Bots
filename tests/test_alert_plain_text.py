@@ -146,10 +146,25 @@ def test_unknown_stage_and_kind_names_the_token_instead_of_inventing() -> None:
     issue = OperationalIssue(stage="zephyr_gate", kind="frobnicated", attempts=1)
     head = _head(_text(issue))
     assert head.startswith("[守岸人告警]")
-    assert "还没登记成人话" in head
+    assert plain.ALERT_UNREGISTERED_MARK in head
     # 代号必须原样点名，否则这行就成了看不懂的中文——两个方向都不许。
     assert "zephyr_gate/frobnicated" in head
     assert _has_cjk(head)
+
+
+def test_unregistered_fallback_tells_who_acts_and_where_to_look() -> None:
+    """兜底句不许只是"我没词"（2026-09-28 用户：太流水账）。
+
+    认不出代号时，这一行是唯一出口，必须自带四要素里的三件：**不编原因**、
+    **该谁动＋动哪**（往哪张表补登记）、**现场依据在哪**（detail／排查编号）。
+    判据吃常量与去处字面，不抄整句——改措辞不必改测试，删掉出路必被红。
+    """
+    head = _head(_text(OperationalIssue(stage="zephyr_gate", kind="frobnicated")))
+    assert "不猜" in head, f"兜底句丢了「不编原因」这一条：{head}"
+    assert "_KIND_PLAIN" in head, f"兜底句没点名补登记的去处：{head}"
+    assert "detail" in head and "排查编号" in head, f"兜底句没给现场依据去处：{head}"
+    # 反向腿：去处字面必须真存在于生产表名，否则指了个不存在的门。
+    assert hasattr(plain, "_KIND_PLAIN"), "去处表已改名，兜底句在指空门"
 
 
 def test_unknown_kind_with_known_stage_keeps_stage_prose() -> None:
