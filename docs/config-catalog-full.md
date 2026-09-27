@@ -338,11 +338,11 @@
 | `BOT_CHAT_TEMPERATURE` | float | `0.7` | **0.0 ≤ x ≤ 2.0**（有限数） | ✅热更 | 采样温度 | 详见 B 节 |
 | `BOT_CHAT_REASONING_EFFORT` | str | `""` | `""`/`off`/`low`/`medium`/`high`/`xhigh`/`max` | ✅热更 | 思考强度：空=各模型家族默认最高档（deepseek/glm/kimi/minimax=max，gpt/grok=xhigh，gemini=high）；off=不发送；qwen/dashscope 系转成 `enable_thinking` 布尔；不支持时自动去参重试一次 | 复杂任务会把全局/默认档临时升到家族最高档；条目级 `effort` 字段优先于全局 |
 | `BOT_CHAT_MAX_TOKENS` | int | `65538` | **0 ≤ x ≤ 65538（校验器强制）**；**0=不向 API 传 max_tokens（不设上限）**，负数/>65538 非法 | ✅热更 | 正常聊天输出上限；命令能力用各自独立限制 | |
-| `BOT_CHAT_TIMEOUT_SECONDS` | float | `20.0` | 有限数 **>0** | | 正常模式单模型超时 | 详见 B 节 |
+| `BOT_CHAT_TIMEOUT_SECONDS` | float | `40.0` | 有限数 **>0** | | 正常模式单模型超时 | 详见 B 节 |
 | `BOT_CHAT_FAST_MODE` | bool | `True` | | | QQ/群聊快速响应模式：限制上下文/输出/联网前置，优先首字 | 启用时路由超时取 min(正常,快速) |
 | `BOT_CHAT_FAST_MAX_TOKENS` | int | `65538` | 0 ≤ x ≤ 65538（校验器强制，同上） | ✅热更 | 快速模式输出上限 | |
 | `BOT_CHAT_FAST_MAX_CANDIDATES` | int | `0` | ≥0；0=不限候选数 | | 快速模式候选模型截断数 | ModelRouter fast_mode 生效 |
-| `BOT_CHAT_FAST_TIMEOUT_SECONDS` | float | `20.0` | >0 | | 快速模式超时 | router 取 min(正常,快速)；值为 0/缺省时回退 12.0 |
+| `BOT_CHAT_FAST_TIMEOUT_SECONDS` | float | `40.0` | >0 | | 快速模式超时 | router 取 min(正常,快速)；值为 0/缺省时回退 12.0 |
 | `BOT_CHAT_FAST_CONTEXT_BUDGET` | int | `9600` | ≥0（样例 32768 ⚠️） | | 快速模式上下文预算 | |
 | `BOT_CHAT_FAST_WEB_MAX_QUERIES` | int | `3` | ≥0（样例 5 ⚠️） | | 快速模式联网检索次数上限 | 依赖 `BOT_WEB_SEARCH_ENABLED` |
 | `BOT_CHAT_FAILOVER_MAX_SECONDS` | float | `120.0` | ≥0；0=不限 | | 故障转移总时限：候选连败时的整体预算，防响应拖到分钟级 | 与请求级 deadline 取更早者 |
@@ -911,9 +911,10 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 - **合法值**：整数 **0 ≤ x ≤ 65538**（校验器强制）；**0 = 不向 API 传 max_tokens（由模型自行决定）**；负数或 >65538 非法 → error `openai_max_tokens_invalid`。热更同规则（`_max_tokens_converter`）。
 - **常见错误**：填负数；误以为 0 是"零输出"（实际是"不设上限"）。
 
-### 7. `BOT_CHAT_TIMEOUT_SECONDS`（默认 `20.0`）
+### 7. `BOT_CHAT_TIMEOUT_SECONDS`（默认 `40.0`）
 - **说明**：正常模式单模型请求超时；快速模式实际用 min(正常, `BOT_CHAT_FAST_TIMEOUT_SECONDS`)。
 - **合法值**：有限数 **>0**（NaN/Infinity/≤0 → error `openai_timeout_seconds_invalid`）。
+- **地板 30s**：低于它时思考型模型连首字都等不到，而链上每一跳共用同一钳制值——换渠道不会更快，只会把同一发超时重放 N 遍，结局恒为 `error_kind=timeout` + 失败话术模板（2026-09-27 实弹：两跳全 timeout、`duration_ms=69436.9`）。地板由 `tests/test_chat_timeout_floor.py` 执法，两枚键要一起抬（只抬一枚＝没抬，快速模式取 min）。
 - **常见错误**：填 0；超过 `BOT_CHAT_FAILOVER_MAX_SECONDS` 时单次超时会被故障转移窗口压到剩余预算内。
 
 **七键之外的关键配套**：`BOT_API_KEY_*` 五个凭据槽（供注册表 `env:` 引用，NoneBot dotenv 会放进 driver.config，**必须保留在 Config 字段里**，否则真实运行态拿到空 key）；`BOT_MODEL_REGISTRY` 条目内 api_key 支持列表做同模型多密钥转移；`reasoning_effort`（空/off=不发送；qwen/dashscope 转 `enable_thinking`；遇 `unsupported_parameter` 自动去参重试一次）；推理模型空 content 回退 `reasoning_content` 尾部 600 字。

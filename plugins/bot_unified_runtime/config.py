@@ -1275,12 +1275,18 @@ class Config(BaseModel):
     bot_chat_temperature: float = 0.7
     bot_chat_reasoning_effort: str = ""
     bot_chat_max_tokens: int = 65538
-    bot_chat_timeout_seconds: float = 20.0
+    # 每跳超时（不是整条回复的预算）：链上每一跳共用这一个钳制值，换渠道不会更快。
+    # 20s 一档是**必然失败**而非「响应慢」——思考型模型光首字就要 20 秒以上，2026-09-27 实弹
+    # `route_attempts=axon-gemini-38-flash:timeout|axon-grok-46:timeout error_kind=timeout
+    # duration_ms=69436.9` 两跳同死，全链败后弹失败话术。地板由 tests/test_chat_timeout_floor.py 执法；
+    # 整条回复的天花板另有 bot_request_budget_seconds（缺省 300s）与 bot_chat_failover_max_seconds 管。
+    bot_chat_timeout_seconds: float = 40.0
     # QQ/群聊快速响应模式：限制上下文、输出和联网前置工作，优先首字响应速度。
     bot_chat_fast_mode: bool = True
     bot_chat_fast_max_tokens: int = 65538
     bot_chat_fast_max_candidates: int = 0
-    bot_chat_fast_timeout_seconds: float = 20.0
+    # 与上面同档：快速模式装配走 `min(normal, fast)`，只抬一枚等于没抬。
+    bot_chat_fast_timeout_seconds: float = 40.0
     bot_chat_fast_context_budget: int = 9600
     bot_chat_fast_web_max_queries: int = 3
     # 故障转移总时限（秒）：候选模型连续失败时的整体预算，防止响应被拖到分钟级；0=不限。
