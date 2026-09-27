@@ -64,6 +64,7 @@ def build_subscription_runtime_v2(
     *,
     delivery_fn: Any | None = None,
     context_factory: Any | None = None,
+    dead_letter_sink: Any | None = None,
 ) -> dict[str, Any]:
     """按配置构造独立 V2 Store、adapter 列表和调度器。"""
     if context_factory is None:
@@ -86,7 +87,12 @@ def build_subscription_runtime_v2(
         getattr(config, "bot_subscribe_db_path", "data/subscriptions.sqlite3")
         or "data/subscriptions.sqlite3"
     )
-    store = SubscriptionStoreV2(db_path)
+    # SUB-1（S-ATK-SUBSCRIBE，2026-09-27）：旧写法裸 SubscriptionStoreV2(db_path)
+    # ⇒ ①四枚 bot_subscription_* 键写了也不生效（store 的 config 覆盖腿永空）、
+    # ②死信只有一行 WARNING、管理员通道永空。生产 .env 现算零枚这四键 ⇒ 接上
+    # config 为行为中性（键值 0/缺省仍回退模块常量）；sink 由装配现场注入，
+    # 缺省 None 保持旧降级形态（根接线一行走 root 批）。
+    store = SubscriptionStoreV2(db_path, config=config, dead_letter_sink=dead_letter_sink)
     adapters = build_subscription_registry_v2()
     throttle = PlatformThrottle(
         per_platform_limit=int(
