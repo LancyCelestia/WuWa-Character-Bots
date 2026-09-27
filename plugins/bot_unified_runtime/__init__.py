@@ -7477,6 +7477,9 @@ def _register_nonebot_handlers() -> None:
 
         command_text = normalize_command_text(args.extract_plain_text().strip())
         help_bot_avatar_url = ""
+        # P-G1（S-ATK-PERSONA，2026-09-27）：外观随切腿的角色门采集袋——
+        # runtime 管理能力闭包执行时记下本次 actor_roles，随钩子传进 helper。
+        persona_gate_roles: list[str] = []
 
         if is_memory_command_text(command_text):
             capability_id = "bot.memory"
@@ -7717,6 +7720,10 @@ def _register_nonebot_handlers() -> None:
             runtime_command = command_text.removeprefix("runtime").strip()
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                # P-G1：记下本次管理命令面的角色（外观腿唯一门的供数点）。
+                persona_gate_roles[:] = [
+                    str(role).lower() for role in (getattr(_decision, "actor_roles", ()) or ())
+                ]
                 return build_runtime_admin_result(
                     settings_manager,
                     effective_instance(config),
@@ -8245,6 +8252,7 @@ def _register_nonebot_handlers() -> None:
                 config=config,
                 command_text=command_text,
                 settings_manager=settings_manager,
+                actor_roles=persona_gate_roles,
             )
         # 规格 3 双触发（用户 2026-09-27 睡前定稿·第 9 项）：同一句里
         # 「无参数命令头 + 自然语言尾巴」⇒ 命令执行与人格回复并行，
@@ -10148,6 +10156,7 @@ async def _dispatch_persona_appearance_if_switched(
     command_text: str,
     settings_manager: Any,
     registry: Any | None = None,
+    actor_roles: list[str] | None = None,
 ) -> None:
     """把「runtime persona switch <id|default>」翻译成一次 QQ 外观下发，逐腿回执（H-1）。
 
@@ -10164,6 +10173,14 @@ async def _dispatch_persona_appearance_if_switched(
     - 未入人格册 ⇒ 点名「仅切换了语气，外观未改」，绝不谎称外观已随；
     - 任何异常都不外抛：语气切换主链已回执，外观失败只补一条诚实回执。
     """
+    # P-G1（S-ATK-PERSONA，2026-09-27）：唯一触发点的角色门。`sent` 不等于
+    # 切换成功——非管理员被驳回的回执同样是 sent，而 override 读回校验用的
+    # 恰是「当前生效 id」：任何用户复读 `persona switch <生效id>` 都能把外观
+    # 下发腿再驱动一次（QQ 资料写属 bot 账号级动作）。中央角色面含 admin 或
+    # super_admin 才动作，其余静默（主链驳回回执已点名，这里绝不追加动作）。
+    _roles = {str(role).lower() for role in (actor_roles or [])}
+    if "admin" not in _roles and "super_admin" not in _roles:
+        return
     tokens = command_text.split()
     # 兼容 "runtime persona switch x" 与别名前缀：定位 persona→switch→target。
     if "persona" not in tokens:
