@@ -38,7 +38,7 @@ from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
     credentials_allowed_for_target,
     scrub_credentials_for_target,
 )
-from plugins.bot_unified_runtime.output.bot_avatar import bot_avatar_uri
+from plugins.bot_unified_runtime.domains.render.bot_avatar import bot_avatar_uri
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -651,7 +651,7 @@ def build_music_capability(
         if render_backend is None or not getattr(render_backend, "available", False):
             return None
         try:
-            from plugins.bot_unified_runtime.output.templates import (
+            from plugins.bot_unified_runtime.domains.render.templates import (
                 render_song_candidates_html,
             )
 

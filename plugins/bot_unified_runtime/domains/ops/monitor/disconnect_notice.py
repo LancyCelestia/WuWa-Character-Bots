@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from plugins.bot_unified_runtime.mail_bridge import (
+from plugins.bot_unified_runtime.domains.transport.mail.mail_bridge import (
     notify_telegram_admins,
     send_mail_from_account,
 )

@@ -91,7 +91,7 @@ def select_candidate_url(
     )
     return picked
 from plugins.bot_unified_runtime.domains.link_parse.parsers.types import ParsedContent
-from plugins.bot_unified_runtime.output.bot_avatar import bot_avatar_uri
+from plugins.bot_unified_runtime.domains.render.bot_avatar import bot_avatar_uri
 
 
 def parse_matched_url(
@@ -426,7 +426,7 @@ def render_card_png(
     """
     if render_backend is None or not getattr(render_backend, "available", False):
         return None
-    from plugins.bot_unified_runtime.output.templates import (
+    from plugins.bot_unified_runtime.domains.render.templates import (
         card_payload_from_parse,
         render_media_card_html,
         render_universal_card_html,
@@ -626,12 +626,18 @@ def _summarize_subtitle(config: Any, subtitle: str, *, max_chars: int = 3000) ->
         from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
             build_model_router,
         )
+        from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
+            guard_secondhand_text,
+        )
 
         router = build_model_router(config)
+        # S-FIX-SECTEXT-GUARD（审查 H-01）：字幕由平台 API 返回、内容远端可控，
+        # 进模型前必须过二手文本咽喉（全角化+成对边界+定性引导），与识图/视频
+        # 识别/ASR 各腿同一真身；导入放 try 内＝咽喉不可用时不直发字幕。
         prompt = (
             "以下是视频字幕全文。用中文总结成 3-5 句要点，"
             "保留关键信息（人物/产品/结论/数据），不要客套和开场白：\n\n"
-            + subtitle[:max_chars]
+            + guard_secondhand_text(subtitle[:max_chars], source_label="视频字幕")
         )
         reply = router.generate(
             [{"role": "user", "content": prompt}],
