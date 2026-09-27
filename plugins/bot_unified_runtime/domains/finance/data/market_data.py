@@ -163,6 +163,25 @@ def _empty_degraded_text() -> str:
 _RETRY_BACKOFF_SECONDS = 0.6  # 0.5~1s 区间取 0.6s；monkeypatch 本常量可覆盖。
 
 
+# ==================== FIN-I1（2026-09-27 评审票）：远端自由文本清洗 ============
+# 远端字符串（个股 f14 / 北向领涨股名）进展示字段前在数据边界做一次
+# 「控制字符清洗 + 长度钳制（截断加省略号）」——纯格式卫生，不动任何信任
+# 语义；None≠0 纪律不受影响（空值仍空）。卡片 DOM 结构与渲染契约零改动。
+_REMOTE_TEXT_MAX_CHARS = 40
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
+
+
+def sanitize_remote_text(value: Any, max_chars: int = _REMOTE_TEXT_MAX_CHARS) -> str:
+    """远端自由文本 → 可打印单行短文本（C0/C1/换行折叠为空格，超长钳制）。"""
+    text = str(value or "")
+    cleaned = "".join(ch if ch.isprintable() else " " for ch in text)
+    cleaned = _WHITESPACE_RUN_RE.sub(" ", cleaned).strip()
+    limit = max(1, int(max_chars))
+    if len(cleaned) > limit:
+        cleaned = cleaned[: limit - 1].rstrip() + "…"
+    return cleaned
+
+
 def retry_on_empty_enabled() -> bool:
     """东财空响应重试开关（config ``bot_market_retry_on_empty``，默认开）。
 
