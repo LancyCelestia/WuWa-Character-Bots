@@ -22,11 +22,15 @@ def register_subscription_runtime_v2(
     *,
     delivery_fn: Any | None = None,
     context_factory: Any | None = None,
+    dead_letter_sink: Any | None = None,
 ) -> dict[str, Any]:
     runtime = build_subscription_runtime_v2(
         config,
         delivery_fn=delivery_fn,
         context_factory=context_factory,
+        # SUB-2 装配链补齐：`29f2cf6` 已把 build/store 两侧备好，就差 register
+        # 这一行透传——生产走 register 时 sink 仍会在这里断掉。
+        dead_letter_sink=dead_letter_sink,
     )
 
     async def poll_job() -> None:

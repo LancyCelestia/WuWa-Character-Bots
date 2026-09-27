@@ -303,12 +303,44 @@ class SubscriptionScheduler:
                     settled.add(event.event_id)
                     continue
                 try:
-                    success = await self._delivery_fn(event)
+                    outcome = await self._delivery_fn(event)
                 except Exception:  # noqa: BLE001 - 单事件投递失败转重试，不弃队。
-                    success = False
+                    outcome = False
+                # SUB-2（S-ATK-SUBSCRIBE ATK-SUB-1）：投递面可以交回两种形状。
+                #   bool          ＝旧「整事件成一个/败一个」语义，逐字节保持既往行为；
+                #   [(键, 成功)]  ＝逐目的地结果，只给真送达的目的地当场落台账，
+                #                   整事件判据换成「无未覆盖目的地」（与 J-04 查重口闭环）。
+                # 旧形状下「10002 一失败 → 整事件 retry → 已收到的 10001 每轮再推一遍
+                # （最多 5 遍）」这条双发路径由此堵住。
+                ledger_written = False
+                if isinstance(outcome, (list, tuple)):
+                    per_dest = [(str(key), bool(ok)) for key, ok in outcome if str(key)]
+                    delivered_now = [key for key, ok in per_dest if ok]
+                    if delivered_now:
+                        try:
+                            await self.store.record_outbox_deliveries_async(
+                                event.event_id, delivered_now, sent_at=self._clock()
+                            )
+                            ledger_written = True
+                        except Exception:  # 台账失败不阻断标记，退化为旧 at-least-once 行为。
+                            _LOGGER.warning(
+                                "outbox delivery ledger write failed for %s",
+                                event.event_id,
+                                exc_info=True,
+                            )
+                    if destination_keys:
+                        success = not await self.store.outbox_undelivered_destinations_async(
+                            event.event_id, destination_keys
+                        )
+                    else:
+                        # 没有目的地行（离线夹具/直投通道）：按交回的结果集判，
+                        # 空集不判成功——绝不把「什么都没投」当成「全投了」。
+                        success = bool(per_dest) and all(ok for _, ok in per_dest)
+                else:
+                    success = bool(outcome)
                 if success:
                     sent_at = self._clock()
-                    if destination_keys:
+                    if destination_keys and not ledger_written:
                         # 审查 J-04：成功台账必须先于 sent 标记落库——两写
                         # 之间崩溃/超时时，sent 未落但台账已落，重启回收重投
                         # 前查重命中，不重复推送。台账写失败只记日志（退化
