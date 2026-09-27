@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -20,6 +21,9 @@ from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionFetchResult,
     SubscriptionOutboxEvent,
     SubscriptionTarget,
+)
+from plugins.bot_unified_runtime.domains.subscribe.adapters.target_policy_v2 import (
+    target_key_issue,
 )
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_migration import (
     prepare_subscription_database,
@@ -73,6 +77,21 @@ def _iso(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat()
+
+
+def _event_id_for(target_id: str, item_kind: str, item_id: str) -> str:
+    """ATK-SUB-3：outbox 主键必须对 (target, kind, item_id) 三元组**单射**。
+
+    旧写法裸冒号拼接（f"{target.id}:{kind}:{item_id}"）非单射——kind 含冒号的
+    条目（("video","a:b") 与 ("video:a","b")）拼出同一串；seen 表按三元组主键
+    判新，outbox 却按拼串主键 INSERT OR IGNORE ⇒ 第二条**永久静默丢**（不推送、
+    不重试、不告警）。远端段字符不受本地控制（V1 适配器本就产 live:{room}:{start}
+    形），故不清洗输入、只把键换成规范摘要。存量行旧 id 原样可寻（claim/记账
+    全走存库值），仅新增行换形。
+    """
+    canonical = json.dumps([target_id, item_kind, item_id], ensure_ascii=False)
+    digest = hashlib.blake2b(canonical.encode("utf-8"), digest_size=16).hexdigest()
+    return f"sub-{digest}"
 
 
 def _dt(value: str | None) -> datetime | None:
@@ -271,6 +290,15 @@ class SubscriptionStoreV2:
         return SubscriptionTarget.model_validate(values)
 
     def upsert_target(self, target: SubscriptionTarget) -> None:
+        # 审查 F-6 纵深腿（2026-09-28 S-FIX-SUB-SEC）：落库口复检 target_key
+        # 白名单（fail-closed 于已登记平台；未登记平台=直构/测试目标不误杀，
+        # 其字符集仍受全局安全式约束，见 target_policy_v2）。出面 resolve
+        # 早已拦下非法 key，本腿堵的是「绕过 resolve 直构」的写入口。
+        issue = target_key_issue(target.platform, target.target_kind, target.target_key)
+        if issue:
+            raise ValueError(
+                f"订阅目标落库被拒绝：{issue}（{target.platform}）"
+            )
         values = target.model_dump(mode="json")
         values["target_payload"] = json.dumps(values["target_payload"], ensure_ascii=False)
         values["enabled"] = int(values["enabled"])
@@ -529,7 +557,7 @@ class SubscriptionStoreV2:
                     ).rowcount
                     if not inserted or baseline:
                         continue
-                    event_id = f"{target.id}:{item.item_kind}:{item.item_id}"
+                    event_id = _event_id_for(target.id, item.item_kind, item.item_id)
                     event = SubscriptionOutboxEvent(
                         event_id=event_id,
                         target_id=target.id,
@@ -956,6 +984,13 @@ class SubscriptionStoreV2:
         return await asyncio.to_thread(self.set_target_enabled, target_id, enabled)
 
     def close(self) -> None:
+        """释放进程级单例连接（票3 收口注记，SEAT-FIX-SUBCOOK-L）。
+
+        v2 与 v1 同构：``_get_connection`` 至多建一枚缓存连接（RLock +
+        ``check_same_thread=False``，方法内 ``with self._lock, conn`` 只做事务
+        提交、绝不中途关闭共享连接），句柄数恒为 O(1)，非泄漏；连接随进程
+        存活，Windows 删库前须先 ``close()``（生命周期契约，见类锁测试）。
+        """
         with self._lock:
             if self._connection is not None:
                 self._connection.close()

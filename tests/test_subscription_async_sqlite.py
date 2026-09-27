@@ -31,6 +31,7 @@ from plugins.bot_unified_runtime.domains.subscribe.store.subscription_scheduler 
 )
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store_v2 import (
     SubscriptionStoreV2,
+    _event_id_for,
 )
 
 _NOW = datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc)
@@ -255,7 +256,7 @@ def test_async_facade_save_fetch_result_and_outbox_flow(tmp_path) -> None:
         events = await store.save_fetch_result_async(
             target, _result(target.id, "v2"), baseline=False
         )
-        assert [event.event_id for event in events] == ["test:channel:1:video:v2"]
+        assert [event.event_id for event in events] == [_event_id_for("test:channel:1", "video", "v2")]
         # 重复投喂同一条目：INSERT OR IGNORE 去重，不产生新事件。
         replay = await store.save_fetch_result_async(
             target, _result(target.id, "v2"), baseline=False
@@ -267,7 +268,7 @@ def test_async_facade_save_fetch_result_and_outbox_flow(tmp_path) -> None:
 
         base = datetime.now(timezone.utc)
         claimed = await store.claim_outbox_async(base + timedelta(seconds=1), limit=10)
-        assert [event.event_id for event in claimed] == ["test:channel:1:video:v2"]
+        assert [event.event_id for event in claimed] == [_event_id_for("test:channel:1", "video", "v2")]
         assert all(event.state == "sending" for event in claimed)
         await store.mark_outbox_sent_async(
             claimed[0].event_id, base + timedelta(seconds=2)
@@ -278,12 +279,12 @@ def test_async_facade_save_fetch_result_and_outbox_flow(tmp_path) -> None:
         more = await store.save_fetch_result_async(
             target, _result(target.id, "v3"), baseline=False
         )
-        assert [event.event_id for event in more] == ["test:channel:1:video:v3"]
+        assert [event.event_id for event in more] == [_event_id_for("test:channel:1", "video", "v3")]
         claimed_retry = await store.claim_outbox_async(
             base + timedelta(seconds=3), limit=10
         )
         assert [event.event_id for event in claimed_retry] == [
-            "test:channel:1:video:v3"
+            _event_id_for("test:channel:1", "video", "v3")
         ]
         await store.mark_outbox_retry_async(
             claimed_retry[0].event_id, base + timedelta(seconds=60)
@@ -303,8 +304,8 @@ def test_async_facade_save_fetch_result_and_outbox_flow(tmp_path) -> None:
             .fetchall()
         )
     assert {str(row["event_id"]): str(row["state"]) for row in rows} == {
-        "test:channel:1:video:v2": "sent",
-        "test:channel:1:video:v3": "sending",
+        _event_id_for("test:channel:1", "video", "v2"): "sent",
+        _event_id_for("test:channel:1", "video", "v3"): "sending",
     }
 
 
@@ -374,8 +375,8 @@ def test_scheduler_store_work_runs_off_event_loop(tmp_path) -> None:
         # 第二轮：ok 目标各产出一条新事件（共享 adapter 计数：v3 / v4）。
         events = await scheduler.poll_due_once(now=_NOW)
         assert [event.event_id for event in events] == [
-            "test:ok:1:video:v3",
-            "test:ok:2:video:v4",
+            _event_id_for("test:ok:1", "video", "v3"),
+            _event_id_for("test:ok:2", "video", "v4"),
         ]
         # 投递：一条成功（sent）、一条失败（转 retry）。
         assert await scheduler.deliver_outbox_once(limit=20) == 1
@@ -391,9 +392,9 @@ def test_scheduler_store_work_runs_off_event_loop(tmp_path) -> None:
             f"{name} executed on the event loop thread"
         )
     # 行为零变化：落库终态与旧同步实现完全一致。
-    assert delivered == ["test:ok:1:video:v3", "test:ok:2:video:v4"]
-    assert store.outbox_state("test:ok:1:video:v3") == "sent"
-    assert store.outbox_state("test:ok:2:video:v4") == "retry"
+    assert delivered == [_event_id_for("test:ok:1", "video", "v3"), _event_id_for("test:ok:2", "video", "v4")]
+    assert store.outbox_state(_event_id_for("test:ok:1", "video", "v3")) == "sent"
+    assert store.outbox_state(_event_id_for("test:ok:2", "video", "v4")) == "retry"
     ok = store.get_target("test:ok:1")
     assert ok is not None and ok.baseline_initialized is True
     bad = store.get_target("test:bad:1")

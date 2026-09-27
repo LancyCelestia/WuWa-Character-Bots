@@ -28,9 +28,10 @@ from plugins.bot_unified_runtime.domains.subscribe.store.subscription_scheduler 
 )
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store_v2 import (
     SubscriptionStoreV2,
+    _event_id_for,
 )
 
-_EVENT_ID = "test:channel:1:video:v1"
+_EVENT_ID = _event_id_for("test:channel:1", "video", "v1")
 
 
 def _seed_target_with_destination(store: SubscriptionStoreV2) -> str:
