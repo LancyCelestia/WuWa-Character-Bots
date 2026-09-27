@@ -227,7 +227,7 @@ async def test_restart_resume_never_resends_delivered_parts(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_unknown_without_confirmer_never_blind_resent(tmp_path) -> None:
-    """无法确认的 UNKNOWN part：不盲发，行保持 PARTIAL；零进展后休眠。
+    """无法确认的 UNKNOWN part：不盲发，行保持 PARTIAL；零进展后终态收敛。
 
     UNKNOWN 态经队列 part 存储 API 播种（审查 A-03 后零送达超时归可重试，
     不再产生新 UNKNOWN；确认协议仍须覆盖历史行/兜底路径产生的 UNKNOWN）。
@@ -253,25 +253,18 @@ async def test_unknown_without_confirmer_never_blind_resent(tmp_path) -> None:
     assert fields["state"] == PARTIAL_ROW_STATE
     assert fields["parts_delivered"] == 2
 
-    # 第二轮恢复：零进展 → 休眠（next_retry_at=NULL），后续扫描不再认领。
+    # 第二轮恢复：零进展 ⇒ Q-G7 终态口（修复后契约，SEAT-FIX-QPARK §四-1
+    # 主代理合入批 2026-09-27）——行写 FAILED_FINAL、永不重投；part 明细账
+    # 保留（unknown_indexes==[1] 形态可在 send_request_parts 表取证）。
     await drain_send_queue_once(
         queue2, _transport(bot2), now=base + timedelta(seconds=420)
     )
     assert bot2.sent == ["分片三"]  # 分片二始终未被盲发
     fields = _row_fields(tmp_path, name, "req-hold")
-    assert fields["state"] == PARTIAL_ROW_STATE
-    with sqlite3.connect(tmp_path / name) as connection:
-        next_retry_at = connection.execute(
-            "SELECT next_retry_at FROM send_requests WHERE request_id = ?",
-            ("req-hold",),
-        ).fetchone()[0]
-    assert next_retry_at is None
-    partials = queue2.list_partial_requests()
-    assert len(partials) == 1
-    assert partials[0].parts is not None
-    assert partials[0].parts.unknown_indexes() == [1]
-    # 休眠行不再被 claim_due 认领（无空转）。
+    assert fields["state"] == ReceiptState.FAILED_FINAL.value
+    # 终态行不再被 claim_due 认领（无空转、亦无永久 parked）。
     assert queue2.claim_due(now=base + timedelta(seconds=100000)) == []
+    assert queue2.list_partial_requests() == []
 
 
 @pytest.mark.asyncio

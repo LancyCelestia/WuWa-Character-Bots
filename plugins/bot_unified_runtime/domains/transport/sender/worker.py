@@ -27,6 +27,7 @@ from plugins.bot_unified_runtime.contracts import (
 )
 from plugins.bot_unified_runtime.domains.ops.monitor.alerts import AdminAlertSuppression
 from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+    PartLedgerConflictError,
     PartProgress,
     QueuedSendRequest,
 )
@@ -44,6 +45,15 @@ SendTransport = Callable[[SendRequest], Awaitable[DeliveryReceipt]]
 _INFLIGHT_SATURATED_KIND = "send_queue_inflight_saturated"
 _INFLIGHT_SATURATED_EVENT = "queue_worker_inflight_saturated"
 _BUSY_ALERT_SUPPRESSION = AdminAlertSuppression(window_seconds=300.0)
+# Q-G7 ③（SEAT-ATK-QUEUE）休眠 PARTIAL 点名：终态口合入后该形态应恒为 0
+# （只可能剩上线前存量），计数恒进 pass 观测、超阈值（>=1 即病态）经与
+# busy 饱和告警同一个 operational 出口点名（dedupe_key 至多 5 枚，300s
+# 抑制）；绝不向原会话补发任何提示（群聊刷屏红线，与 _INFLIGHT_SATURATED
+# 同一纪律）。
+_DORMANT_PARTIAL_KIND = "send_queue_dormant_partial"
+_DORMANT_PARTIAL_EVENT = "queue_worker_dormant_partial"
+_DORMANT_PARTIAL_ALERT_THRESHOLD = 1
+_DORMANT_ALERT_SUPPRESSION = AdminAlertSuppression(window_seconds=300.0)
 # §9.3 UNKNOWN 确认协议：确认器注入点（生产默认 None → 无法确认的 UNKNOWN
 # part 永不盲发，停在 PARTIAL 待人工/平台确认）。语义：
 #   True  = 平台确认已送达（如 get_msg 命中）→ part 标 SENT，跳过；
@@ -68,6 +78,15 @@ def _utc_now() -> datetime:
 
 
 class DrainableSendQueue(Protocol):
+    """SEAT-ATK-QUEUE（Q-G1）：终结口全部支持可选 ``dedupe_key`` 行身份寻址。
+
+    worker 把认领条目自带的行主键（``QueuedSendRequest.row_dedupe_key``，
+    缺失回退 payload dedupe_key）线程到每一个 mark_* 调用；队列据此把
+    UPDATE 谓词收口到行主键——同 request_id 兄弟行不再互相改写。老式队列
+    替身（签名不含 dedupe_key）经 `_call_queue_state_method` 的签名探测
+    自动退回旧寻址，鸭子类型面零破坏。
+    """
+
     def claim_due(
         self,
         *,
@@ -91,6 +110,7 @@ class DrainableSendQueue(Protocol):
         public_message: str = "sent",
         *,
         now: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> DeliveryReceipt:
         raise NotImplementedError
 
@@ -100,6 +120,7 @@ class DrainableSendQueue(Protocol):
         public_message: str,
         *,
         now: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> DeliveryReceipt:
         raise NotImplementedError
 
@@ -109,6 +130,7 @@ class DrainableSendQueue(Protocol):
         public_message: str,
         *,
         now: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> DeliveryReceipt:
         raise NotImplementedError
 
@@ -118,6 +140,10 @@ class PartStoreQueue(Protocol):
 
     worker 经鸭子类型探测该能力；内存队列不实现 → 整条 part 语义自动关闭，
     走既有请求级整发路径。
+
+    SEAT-ATK-QUEUE（Q-G5）：全部方法支持可选 ``dedupe_key`` 行身份——
+    worker 把认领条目的行主键线程进来，part 账按 (request_id, dedupe_key,
+    part_index) 寻址，兄弟行不再共账。
     """
 
     max_attempts: int
@@ -128,14 +154,22 @@ class PartStoreQueue(Protocol):
         payload_digests: list[str],
         *,
         now: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> PartProgress | None:
         raise NotImplementedError
 
-    def part_progress(self, request_id: str) -> PartProgress | None:
+    def part_progress(
+        self, request_id: str, *, dedupe_key: str | None = None
+    ) -> PartProgress | None:
         raise NotImplementedError
 
     def mark_part_attempt(
-        self, request_id: str, part_index: int, *, now: datetime | None = None
+        self,
+        request_id: str,
+        part_index: int,
+        *,
+        now: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> bool:
         raise NotImplementedError
 
@@ -146,6 +180,7 @@ class PartStoreQueue(Protocol):
         *,
         provider_message_id: str | None = None,
         now: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> bool:
         raise NotImplementedError
 
@@ -157,6 +192,7 @@ class PartStoreQueue(Protocol):
         error_kind: str | None = None,
         provider_message_id: str | None = None,
         now: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> bool:
         raise NotImplementedError
 
@@ -167,11 +203,17 @@ class PartStoreQueue(Protocol):
         *,
         error_kind: str | None = None,
         now: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> bool:
         raise NotImplementedError
 
     def mark_part_pending(
-        self, request_id: str, part_index: int, *, now: datetime | None = None
+        self,
+        request_id: str,
+        part_index: int,
+        *,
+        now: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> bool:
         raise NotImplementedError
 
@@ -182,6 +224,7 @@ class PartStoreQueue(Protocol):
         resumable: bool = True,
         now: datetime | None = None,
         operational_issue: OperationalIssue | None = None,
+        dedupe_key: str | None = None,
     ) -> DeliveryReceipt:
         raise NotImplementedError
 
@@ -204,6 +247,9 @@ class SendQueueWorkerResult(BaseModel):
     # 审查 A-20 busy 可见：本次 pass 内在途上限饱和告警的实发次数
     # （300s 抑制窗口内重复饱和不再计数，防告警刷屏）。
     inflight_saturated_alerts: int = 0
+    # Q-G7 可观测：本次 pass 末仍处休眠 PARTIAL（state=partial 且
+    # next_retry_at IS NULL）的行数；无该视图的队列（内存版/测试替身）记 0。
+    dormant_partial_count: int = 0
     operational_issues: tuple[OperationalIssue, ...] = ()
 
 
@@ -233,6 +279,7 @@ async def drain_send_queue_once(
         "partial_deferred": 0,
         "partials_resumed": 0,
         "inflight_saturated_alerts": 0,
+        "dormant_partial_count": 0,
     }
     operational_issues: list[OperationalIssue] = []
 
@@ -248,6 +295,10 @@ async def drain_send_queue_once(
         )
 
     for entry in entries:
+        # Q-G1（SEAT-ATK-QUEUE）：本条目的行身份——认领重读时由队列随条目
+        # 带出行主键（row_dedupe_key），旧构造方缺省回退 payload 自述。
+        # 所有终结写与 part 记账都以此寻址，同 request_id 的兄弟行互不沾污。
+        row_identity = entry.row_dedupe_key or entry.send_request.dedupe_key
         part_outcome = await _try_deliver_by_parts(
             send_queue,
             entry,
@@ -256,6 +307,7 @@ async def drain_send_queue_once(
             audit_logger=audit_logger,
             now=current_time,
             unknown_part_confirmer=unknown_part_confirmer,
+            dedupe_key=row_identity,
         )
         if part_outcome is None:
             receipt = await _call_transport_safely(entry.send_request, transport)
@@ -264,6 +316,7 @@ async def drain_send_queue_once(
                 entry.send_request,
                 receipt,
                 now=current_time,
+                dedupe_key=row_identity,
             )
             ended_partial = False
         else:
@@ -342,6 +395,17 @@ async def drain_send_queue_once(
             queue_receipt,
         )
 
+    # Q-G7 ③：休眠 PARTIAL 进 busy 观测——每 pass 收尾读一次只读视图，
+    # 零副作用；超阈值经 operational 口点名（300s 抑制，防刷屏）。
+    dormant_entries = _list_dormant_partials_safely(send_queue)
+    counters["dormant_partial_count"] = len(dormant_entries)
+    if len(dormant_entries) >= _DORMANT_PARTIAL_ALERT_THRESHOLD:
+        await _emit_dormant_partial_alert(
+            dormant_entries,
+            audit_logger=audit_logger,
+            operational_notifier=operational_notifier,
+        )
+
     return SendQueueWorkerResult(
         **counters,
         operational_issues=tuple(operational_issues),
@@ -404,6 +468,20 @@ async def _notify_operational_issue_safely(
         return
 
 
+def _supports_kwarg(method: object, name: str) -> bool:
+    """队列方法是否接受指定关键字参数（老式替身自动退回旧调用形）。"""
+    try:
+        parameters = inspect.signature(cast("Callable[..., object]", method)).parameters
+    except (TypeError, ValueError):
+        return False
+    if name in parameters:
+        return True
+    return any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
+
+
 def _call_queue_state_method(
     send_queue: DrainableSendQueue,
     method_name: str,
@@ -412,6 +490,7 @@ def _call_queue_state_method(
     *,
     now: datetime,
     operational_issue: OperationalIssue | None,
+    dedupe_key: str | None = None,
 ) -> DeliveryReceipt:
     method = getattr(send_queue, method_name)
     try:
@@ -420,11 +499,19 @@ def _call_queue_state_method(
             parameter.kind is inspect.Parameter.VAR_KEYWORD
             for parameter in parameters.values()
         )
+        supports_dedupe = "dedupe_key" in parameters or any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
     except (TypeError, ValueError):
         supports_issue = False
+        supports_dedupe = False
     kwargs: dict[str, object] = {"now": now}
     if supports_issue:
         kwargs["operational_issue"] = operational_issue
+    if supports_dedupe and dedupe_key is not None:
+        # Q-G1：行身份寻址——终结写只碰本行，兄弟行不再被共键扇出改写。
+        kwargs["dedupe_key"] = dedupe_key
     return method(request_id, public_message, **kwargs)
 
 
@@ -512,6 +599,83 @@ async def _emit_inflight_saturated_alert(
     await _notify_operational_issue_safely(
         operational_notifier, carrier_request, receipt
     )
+    return 1
+
+
+def _list_dormant_partials_safely(
+    send_queue: DrainableSendQueue,
+) -> list[QueuedSendRequest]:
+    """只读探测休眠 PARTIAL；无视图队列（内存版/测试替身）记空、永不抛。"""
+    lister = getattr(send_queue, "list_dormant_partials", None)
+    if not callable(lister):
+        return []
+    try:
+        result = lister()
+    except Exception:
+        logging.getLogger(__name__).debug("dormant partial probe failed", exc_info=True)
+        return []
+    return list(result) if isinstance(result, list) else []
+
+
+async def _emit_dormant_partial_alert(
+    dormant_entries: list[QueuedSendRequest],
+    *,
+    audit_logger: AuditRepository | None,
+    operational_notifier: Callable[..., object] | None,
+) -> int:
+    """休眠 PARTIAL 点名：审计 WARN + operational 告警（300s 抑制）。
+
+    safe_summary/private_debug 只含计数与行身份（dedupe_key，至多 5 枚），
+    无正文无路径；carrier 取最老休眠行的 SendRequest（只读视图，不改其态、
+    不触发任何投递）。与 _emit_inflight_saturated_alert 同一告警出口纪律。
+    """
+    if not dormant_entries:
+        return 0
+    allowed, suppressed_count = _DORMANT_ALERT_SUPPRESSION.allow(
+        ("queue", _DORMANT_PARTIAL_KIND)
+    )
+    if not allowed:
+        return 0
+    keys = [entry.send_request.dedupe_key for entry in dormant_entries[:5]]
+    issue = OperationalIssue(
+        stage="queue",
+        kind=_DORMANT_PARTIAL_KIND,
+        retryable=False,
+        safe_summary=(
+            f"{_DORMANT_PARTIAL_KIND} count={len(dormant_entries)} keys={'|'.join(keys)}"
+        ),
+    )
+    carrier = dormant_entries[0].send_request
+    if audit_logger is not None:
+        try:
+            audit_logger.append(
+                AuditRecord(
+                    request_id=carrier.request_id,
+                    session_id=carrier.session_id,
+                    capability_id=carrier.capability_id,
+                    stage="sender",
+                    event=_DORMANT_PARTIAL_EVENT,
+                    severity=RiskLevel.MEDIUM,
+                    public_message="",
+                    private_debug=(
+                        f"kind={_DORMANT_PARTIAL_KIND} "
+                        f"dormant_count={len(dormant_entries)} "
+                        f"suppressed_before={suppressed_count}"
+                    ),
+                )
+            )
+        except Exception:  # 审计失败不阻断观测出口（debug 留痕）。
+            logging.getLogger(__name__).debug(
+                "dormant-partial audit append failed", exc_info=True
+            )
+    receipt = DeliveryReceipt(
+        request_id=carrier.request_id,
+        state=ReceiptState.QUEUED,
+        transport=SEND_QUEUE_WORKER_TRANSPORT,
+        public_message="",
+        operational_issue=issue,
+    )
+    await _notify_operational_issue_safely(operational_notifier, carrier, receipt)
     return 1
 
 
@@ -716,15 +880,36 @@ def book_inline_unknown_parts(send_queue: Any, send_request: SendRequest, issue:
     ):
         return False
     request_id = send_request.request_id
-    planned = send_queue.ensure_parts_planned(
-        request_id, [_payload_digest(chunk) for chunk in chunks]
+    # Q-G1/Q-G5：inline 记账同样携带行身份（payload dedupe_key＝SQLite 队列
+    # 行主键——submit 以同一 SendRequest 落行，两值天然等值；老式替身队列经
+    # 签名探测退回旧调用形）。
+    identity = send_request.dedupe_key
+    dkw: dict[str, str] = (
+        {"dedupe_key": identity}
+        if identity is not None
+        and _supports_kwarg(send_queue.ensure_parts_planned, "dedupe_key")
+        else {}
     )
+    try:
+        planned = send_queue.ensure_parts_planned(
+            request_id, [_payload_digest(chunk) for chunk in chunks], **dkw
+        )
+    except PartLedgerConflictError:
+        # Q-G5：账本守卫拒绝复用。返回 True＝「已按保守口径收口」——调用方
+        # 不得再走请求级 mark_retryable_failure（那等于放行盲重投）；行留在
+        # 原态，由 worker 认领周期在同一守卫处 fail-closed（result_unknown
+        # 终态化 + 审计可见）。宁漏不双发。
+        logging.getLogger(__name__).warning(
+            "inline part ledger conflict, request fenced request_id=%s",
+            request_id,
+        )
+        return True
     if planned is None:
         return False
     kind = str(issue.kind)
     for part_index in planned.pending_indexes():
-        send_queue.mark_part_unknown(request_id, part_index, error_kind=kind)
-    send_queue.mark_partial(request_id, resumable=True, operational_issue=issue)
+        send_queue.mark_part_unknown(request_id, part_index, error_kind=kind, **dkw)
+    send_queue.mark_partial(request_id, resumable=True, operational_issue=issue, **dkw)
     return True
 
 
@@ -888,11 +1073,14 @@ async def _try_deliver_by_parts(
     audit_logger: AuditRepository | None,
     now: datetime,
     unknown_part_confirmer: UnknownPartConfirmer | None = None,
+    dedupe_key: str | None = None,
 ) -> _PartDeliveryOutcome | None:
     """part 级投递入口；返回 None 表示降级为既有整发路径。
 
     降级只发生在规划事务（原子）失败且未产生任何副作用时——此后任何存储
     异常一律按 result_unknown 终态化，绝不回落整发（已送达 part 会被重发）。
+    Q-G5 例外：PartLedgerConflictError（账本 digest 守卫拒绝）绝不回落整发，
+    直接按 result_unknown 收口停摆（宁漏不双发）。
     """
     store = _part_store(send_queue)
     chunks = _chunk_part_plan(entry.send_request)
@@ -900,6 +1088,14 @@ async def _try_deliver_by_parts(
         return None
     request = entry.send_request
     request_id = request.request_id
+    identity = dedupe_key or request.dedupe_key
+    # 队列 part API 是否接受行身份（老式替身→空 dict，退回旧调用形）。
+    dkw: dict[str, str] = (
+        {"dedupe_key": identity}
+        if identity is not None
+        and _supports_kwarg(store.ensure_parts_planned, "dedupe_key")
+        else {}
+    )
     logger = logging.getLogger(__name__)
     resumed = entry.parts is not None and (
         entry.parts.delivered > 0 or bool(entry.parts.unknown_indexes())
@@ -909,6 +1105,32 @@ async def _try_deliver_by_parts(
             request_id,
             [_payload_digest(chunk) for chunk in chunks],
             now=now,
+            **dkw,
+        )
+    except PartLedgerConflictError:
+        # Q-G5：本身份账已存有 digest 不符的行（或旧无主账不可收养）——
+        # 混账必致「拿别人的账当自己的」（B 一条没发账上全送达＝静默丢，
+        # 或断点续发拿兄弟 payload 重发＝双发）。fail-closed 收口，绝不重投。
+        logger.warning(
+            "part ledger conflict, request fenced as unknown request_id=%s",
+            request_id,
+        )
+        issue = _part_issue("part_ledger_conflict")
+        receipt = DeliveryReceipt(
+            request_id=request_id,
+            state=ReceiptState.FAILED_FINAL,
+            transport=SEND_QUEUE_WORKER_TRANSPORT,
+            public_message="",
+            debug_id=issue.debug_id,
+            operational_issue=issue,
+        )
+        queue_receipt = _finalize_part_outcome_safely(
+            send_queue, request_id, receipt, now=now, dedupe_key=identity
+        )
+        return _PartDeliveryOutcome(
+            receipt=receipt,
+            queue_receipt=queue_receipt,
+            resumed=resumed,
         )
     except Exception:  # noqa: BLE001 - 规划失败且零副作用 → 安全降级整发。
         logger.warning(
@@ -937,19 +1159,19 @@ async def _try_deliver_by_parts(
                     unknown_part_confirmer, request, part_index
                 )
             if verdict is True:
-                store.mark_part_sent(request_id, part_index, now=now)
+                store.mark_part_sent(request_id, part_index, now=now, **dkw)
                 parts_delivered += 1
                 progress_made = True
             elif verdict is False:
                 # 平台明确「未送达」：重发安全，回到 PENDING。
-                store.mark_part_pending(request_id, part_index, now=now)
+                store.mark_part_pending(request_id, part_index, now=now, **dkw)
                 progress_made = True
             else:
                 parts_unknown += 1
 
         # 2) 顺序续发 PENDING part（attempts 达上限的 part 跳过，靠请求级
         #    退避循环最终收敛到终态）。
-        progress = store.part_progress(request_id) or progress
+        progress = store.part_progress(request_id, **dkw) or progress
         # M-63 A 案：mixed 走原子整发分支（一次调用投整条，段级键只记账）。
         if _is_atomic_part_delivery(request):
             return await _deliver_atomic_mixed_parts(
@@ -966,13 +1188,14 @@ async def _try_deliver_by_parts(
                 receipt_repository=receipt_repository,
                 audit_logger=audit_logger,
                 now=now,
+                dedupe_key=identity,
             )
         attempts_cap = max(1, int(store.max_attempts))
         for part_index in progress.pending_indexes():
             record = progress.records.get(part_index)
             if record is not None and record.attempts >= attempts_cap:
                 continue
-            store.mark_part_attempt(request_id, part_index, now=now)
+            store.mark_part_attempt(request_id, part_index, now=now, **dkw)
             receipt = await _call_transport_safely(
                 _single_part_request(request, chunks[part_index]), transport
             )
@@ -986,13 +1209,14 @@ async def _try_deliver_by_parts(
                     part_index,
                     provider_message_id=receipt.provider_message_id,
                     now=now,
+                    **dkw,
                 )
                 parts_delivered += 1
                 progress_made = True
             elif receipt.state is ReceiptState.FAILED_RETRYABLE:
                 # 明确可重试的失败：回 PENDING，本轮继续发后续 part
                 # （规格验收场景 2：只补发失败 part，后续 part 照常推进）。
-                store.mark_part_pending(request_id, part_index, now=now)
+                store.mark_part_pending(request_id, part_index, now=now, **dkw)
             else:
                 issue_kind = (
                     receipt.operational_issue.kind
@@ -1001,12 +1225,16 @@ async def _try_deliver_by_parts(
                 )
                 if issue_kind == "result_unknown":
                     store.mark_part_unknown(
-                        request_id, part_index, error_kind=issue_kind, now=now
+                        request_id, part_index, error_kind=issue_kind, now=now, **dkw
                     )
                     parts_unknown += 1
                 else:
                     store.mark_part_failed_final(
-                        request_id, part_index, error_kind=issue_kind or None, now=now
+                        request_id,
+                        part_index,
+                        error_kind=issue_kind or None,
+                        now=now,
+                        **dkw,
                     )
                 # 结果未知/明确终败后停止后续 part：连接可能已不可靠，
                 # 与既有「有副作用即不整体重投」语义一致。
@@ -1025,7 +1253,7 @@ async def _try_deliver_by_parts(
             operational_issue=issue,
         )
         queue_receipt = _finalize_part_outcome_safely(
-            send_queue, request_id, receipt, now=now
+            send_queue, request_id, receipt, now=now, dedupe_key=identity
         )
         return _PartDeliveryOutcome(
             receipt=receipt,
@@ -1040,7 +1268,7 @@ async def _try_deliver_by_parts(
     #    读回退失败用本 pass 内存快照收敛；收敛本身异常则按 result_unknown
     #    兜底终态化（任何异常不抛主链路）。
     try:
-        progress = store.part_progress(request_id) or progress
+        progress = store.part_progress(request_id, **dkw) or progress
     except Exception:  # noqa: BLE001 - 快照兜底，见函数 docstring。
         logging.getLogger(__name__).debug(
             "part progress refresh failed, using in-pass snapshot request_id=%s",
@@ -1058,6 +1286,8 @@ async def _try_deliver_by_parts(
             parts_unknown=parts_unknown,
             resumed=resumed,
             now=now,
+            dedupe_key=identity,
+            dkw=dkw,
         )
     except Exception:  # noqa: BLE001 - 收敛失败绝不抛出，按结果未知兜底。
         logging.getLogger(__name__).warning(
@@ -1075,7 +1305,7 @@ async def _try_deliver_by_parts(
         return _PartDeliveryOutcome(
             receipt=receipt,
             queue_receipt=_finalize_part_outcome_safely(
-                send_queue, request_id, receipt, now=now
+                send_queue, request_id, receipt, now=now, dedupe_key=identity
             ),
             parts_delivered=parts_delivered,
             parts_unknown=parts_unknown,
@@ -1098,6 +1328,7 @@ async def _deliver_atomic_mixed_parts(
     receipt_repository: ReceiptRepository | None,
     audit_logger: AuditRepository | None,
     now: datetime,
+    dedupe_key: str | None = None,
 ) -> _PartDeliveryOutcome:
     """mixed 原子整发投递（M-63 A 案核心，U-29/G2-R1 已裁）。
 
@@ -1122,6 +1353,13 @@ async def _deliver_atomic_mixed_parts(
     存储异常按 result_unknown 终态化，绝不回落整发（已送达会被重发）。
     """
     request_id = request.request_id
+    # Q-G5：段级记账与收敛终结写一律携带行身份（队列支持时）。
+    dkw: dict[str, str] = (
+        {"dedupe_key": dedupe_key}
+        if dedupe_key is not None
+        and _supports_kwarg(store.ensure_parts_planned, "dedupe_key")
+        else {}
+    )
     pending = progress.pending_indexes()
     if pending:
         attempts_cap = max(1, int(store.max_attempts))
@@ -1132,7 +1370,7 @@ async def _deliver_atomic_mixed_parts(
         )
         if not at_cap:
             for part_index in pending:
-                store.mark_part_attempt(request_id, part_index, now=now)
+                store.mark_part_attempt(request_id, part_index, now=now, **dkw)
             receipt = await _call_transport_safely(request, transport)
             last_receipt = receipt
             _record_part_receipt_safely(
@@ -1147,6 +1385,7 @@ async def _deliver_atomic_mixed_parts(
                         part_index,
                         provider_message_id=receipt.provider_message_id,
                         now=now,
+                        **dkw,
                     )
                 parts_delivered += len(pending)
                 progress_made = True
@@ -1165,7 +1404,7 @@ async def _deliver_atomic_mixed_parts(
                 # 记 UNKNOWN 而非 FAILED_FINAL（未判定不能写死终态）。
                 for part_index in pending:
                     store.mark_part_unknown(
-                        request_id, part_index, error_kind=kind, now=now
+                        request_id, part_index, error_kind=kind, now=now, **dkw
                     )
                 parts_unknown += len(pending)
                 progress_made = True
@@ -1182,10 +1421,11 @@ async def _deliver_atomic_mixed_parts(
                         part_index,
                         error_kind=kind or "result_unknown",
                         now=now,
+                        **dkw,
                     )
                 parts_unknown += len(pending)
                 progress_made = True
-            progress = store.part_progress(request_id) or progress
+            progress = store.part_progress(request_id, **dkw) or progress
 
     # ---- 收敛（读回退已在调用方兜底；此处不再抛存储异常到主链路之外）----
     if progress.total > 0 and progress.delivered == progress.total:
@@ -1196,6 +1436,7 @@ async def _deliver_atomic_mixed_parts(
             "sent",
             now=now,
             operational_issue=None,
+            dedupe_key=dedupe_key,
         )
         receipt = last_receipt or DeliveryReceipt(
             request_id=request_id,
@@ -1226,6 +1467,7 @@ async def _deliver_atomic_mixed_parts(
             resumable=progress_made,
             now=now,
             operational_issue=issue,
+            **dkw,
         )
         return _PartDeliveryOutcome(
             receipt=DeliveryReceipt(
@@ -1258,6 +1500,7 @@ async def _deliver_atomic_mixed_parts(
             "failed_retryable",
             now=now,
             operational_issue=issue,
+            dedupe_key=dedupe_key,
         )
     else:
         queue_receipt = _call_queue_state_method(
@@ -1267,6 +1510,7 @@ async def _deliver_atomic_mixed_parts(
             "failed_final",
             now=now,
             operational_issue=issue,
+            dedupe_key=dedupe_key,
         )
     return _PartDeliveryOutcome(
         receipt=last_receipt
@@ -1295,11 +1539,24 @@ def _converge_part_end_state(
     parts_unknown: int,
     resumed: bool,
     now: datetime,
+    dedupe_key: str | None = None,
+    dkw: dict[str, str] | None = None,
 ) -> _PartDeliveryOutcome:
-    """part 投递后的终态收敛（由 _try_deliver_by_parts 的兜底 try 包裹调用）。"""
+    """part 投递后的终态收敛（由 _try_deliver_by_parts 的兜底 try 包裹调用）。
+
+    Q-G1/Q-G5：收敛终结写携带行身份（dedupe_key / dkw 由调用方线程传入），
+    兄弟行不再互相改写。
+    """
+    dkw = dkw or {}
     if progress.total > 0 and progress.delivered == progress.total:
         queue_receipt = _call_queue_state_method(
-            send_queue, "mark_sent", request_id, "sent", now=now, operational_issue=None
+            send_queue,
+            "mark_sent",
+            request_id,
+            "sent",
+            now=now,
+            operational_issue=None,
+            dedupe_key=dedupe_key,
         )
         receipt = last_receipt or DeliveryReceipt(
             request_id=request_id,
@@ -1321,6 +1578,7 @@ def _converge_part_end_state(
             resumable=progress_made,
             now=now,
             operational_issue=issue,
+            **dkw,
         )
         receipt = DeliveryReceipt(
             request_id=request_id,
@@ -1346,6 +1604,7 @@ def _converge_part_end_state(
             "failed_retryable",
             now=now,
             operational_issue=None,
+            dedupe_key=dedupe_key,
         )
         receipt = last_receipt or DeliveryReceipt(
             request_id=request_id,
@@ -1368,6 +1627,7 @@ def _converge_part_end_state(
         "failed_final",
         now=now,
         operational_issue=None,
+        dedupe_key=dedupe_key,
     )
     receipt = last_receipt or DeliveryReceipt(
         request_id=request_id,
@@ -1390,6 +1650,7 @@ def _finalize_part_outcome_safely(
     receipt: DeliveryReceipt,
     *,
     now: datetime,
+    dedupe_key: str | None = None,
 ) -> DeliveryReceipt:
     """part 存储异常后的兜底终态化；再失败则原样返回回执（不抛主链路）。"""
     try:
@@ -1400,6 +1661,7 @@ def _finalize_part_outcome_safely(
             "",
             now=now,
             operational_issue=receipt.operational_issue,
+            dedupe_key=dedupe_key,
         )
     except Exception:  # noqa: BLE001 - 队列也不可用时只能放弃状态推进。
         return receipt
@@ -1411,6 +1673,7 @@ def _update_queue_state(
     receipt: DeliveryReceipt,
     *,
     now: datetime,
+    dedupe_key: str | None = None,
 ) -> DeliveryReceipt:
     issue = receipt.operational_issue or send_request.operational_issue
     public_message = "" if issue is not None else receipt.public_message
@@ -1422,6 +1685,7 @@ def _update_queue_state(
             public_message or "sent",
             now=now,
             operational_issue=issue,
+            dedupe_key=dedupe_key,
         )
     if receipt.state is ReceiptState.FAILED_RETRYABLE:
         return _call_queue_state_method(
@@ -1431,6 +1695,7 @@ def _update_queue_state(
             public_message if issue is not None else public_message or "failed_retryable",
             now=now,
             operational_issue=issue,
+            dedupe_key=dedupe_key,
         )
     if receipt.state is ReceiptState.SKIPPED:
         return _call_queue_state_method(
@@ -1440,6 +1705,7 @@ def _update_queue_state(
             public_message or "skipped",
             now=now,
             operational_issue=issue,
+            dedupe_key=dedupe_key,
         ).model_copy(update={"state": ReceiptState.SKIPPED, "operational_issue": issue})
     return _call_queue_state_method(
         send_queue,
@@ -1448,6 +1714,7 @@ def _update_queue_state(
         public_message if issue is not None else public_message or receipt.state.value,
         now=now,
         operational_issue=issue,
+        dedupe_key=dedupe_key,
     )
 
 

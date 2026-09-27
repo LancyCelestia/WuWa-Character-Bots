@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import sqlite3
@@ -53,10 +54,19 @@ _PARTIAL_RESUME_BACKOFF_SECONDS = 90.0
 #   retry_count+1、重写租约，预算烧尽经 _finalize_expired_lease/PARTIAL 收口
 #   ——不新建第二套状态机）。窗口取 300s：现役 claim 必写非空租约，NULL 租约
 #   的 processing 行按定义是「无人正当持有」的遗留行（旧版认领后崩溃/迁移
-#   半态）；即便存在持 NULL 租约仍在慢速投递的行，其每个 part 尝试都经
-#   mark_part_attempt→_refresh_request_part_summary_in 推进 updated_at，
-#   窗内误杀要求「无租约且心跳静默 ≥5 分钟」，属进程级病态，与 _inline_claims
-#   台账对永久悬挂的处理口径一致（防重复投递优先于防漏发）。
+#   半态）。
+# 心跳覆盖面口径修正（SEAT-ATK-QUEUE Q-G2/Q-G3，2026-09-27）：
+#   * 仅 part 跟踪行（chunks/mixed）在投递**期间**有逐次心跳——每个 part 尝试
+#     都经 mark_part_attempt→_refresh_request_part_summary_in 推进 updated_at；
+#     整发行（无 part 行）投递期间 updated_at 不推进，其心跳只有 claim 写入与
+#     投递结束的 mark_* 两拍。窗内误杀整发行要求「无租约且从认领起心跳静默
+#     ≥5 分钟」，即一次投递耗时超窗——属进程级病态，与 _inline_claims 台账对
+#     永久悬挂的处理口径一致（防重复投递优先于防漏发）。
+#   * 「同一 pass 内击穿 300s 窗」的原语漏洞已修：worker 一个 pass 只在开头取
+#     一次 now，旧版所有状态写原样回写这枚 pass-start 时刻 → 刚写入的心跳可以
+#     是 5 分钟前的。现所有 updated_at 写统一经 _heartbeat_iso()：取
+#     max(注入时刻, 墙钟)，注入的未来值照旧生效（测试确定性不破），过去/陈旧
+#     值被墙钟顶起（心跳永不吃旧）。租约与 next_retry_at 仍按注入时刻计算。
 _DEAD_LEASE_RECLAIM_SECONDS = 300.0
 # 新入队行的认领宽限期：submit 写入 next_retry_at=now+宽限期，宽限期内
 # worker 的 claim_due 不得认领该行——入队后的首次投递由 handler 内联
@@ -92,6 +102,29 @@ def _inline_delivery_grace_seconds() -> float:
 _BOT_UNAVAILABLE_KIND = "bot_unavailable"
 _BOT_UNAVAILABLE_RETRY_DELAY_SECONDS = 90.0
 _BOT_UNAVAILABLE_MAX_AGE_SECONDS = 1800.0
+# Q-G7（SEAT-ATK-QUEUE）休眠 PARTIAL 永久停摆的收口三件（S-FIX-QPARK 补丁）：
+# ① mark_partial(resumable=False) 不再写 next_retry_at=NULL 的永久死档——
+#   「无可推进 PENDING part（且 attempts 未烧尽）」的行直接终态化 FAILED_FINAL
+#   （可被 _prune 剪、part 明细账保留供取证）；「还有可推进 part」的行强制回
+#   补偿退避（视同 resumable，绝不静默停放）。原则一句话：宁漏不双发不等于
+#   宁停不报。
+# ② 告警行（admin_alert_card/bot.alert/bot.error_report/admin_alert 标记）
+#   自身就是告警链载体，任何形态的休眠档都不许落在它们身上。
+# ③ 补丁上线前已存在的休眠行（生产 P2 名册 10 枚）由 _prune 顶部按 TTL 扫成
+#   终态——只终态化、绝不重投。
+_DORMANT_PARTIAL_SWEEP_SECONDS = 7 * 86400.0
+# 告警行身份三源（任一命中即算，见 _is_alert_send_request）：capability 登记、
+# 键形前缀、审计标签。键形前缀对齐 alerts.build_admin_alert_card_send_request
+# （admin_alert_card:*）与管线告警能力键形（bot.alert:*）。
+_ALERT_CAPABILITY_IDS = frozenset({"bot.alert", "bot.error_report"})
+_ALERT_DEDUPE_PREFIXES = ("admin_alert_card:", "bot.alert:")
+_ALERT_AUDIT_TAGS = frozenset({"admin_alert"})
+
+
+class PartLedgerConflictError(Exception):
+    """Q-G5：part 账本守卫拒绝复用——同一行身份下已存的 part 行 payload_digest
+    与本次规划不一致（或旧无主账本无法安全收养）。调用方（worker）绝不可
+    因此回落整发（已送达 part 会被重发），只能按 result_unknown 收口。"""
 
 
 class _CorruptQueueRow(Exception):
@@ -116,9 +149,54 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _part_key(request_id: str, part_index: int) -> str:
-    """规格 §9.3.1：part 稳定键 = message_request_id + part_index，重试不换键。"""
-    return f"{request_id}#part{int(part_index)}"
+def _heartbeat_iso(now: datetime) -> str:
+    """心跳列（updated_at）专用时间戳：max(调用方注入时刻, 墙钟)。
+
+    Q-G3（SEAT-ATK-QUEUE）：worker 一个 pass 只在开头取一次 now，旧版所有
+    状态写原样回写这枚 pass-start 时刻——长 pass（批量×分片×超时）里刚发生
+    的写入会盖上几分钟前的戳，300s 缺席判据可在同一 pass 被击穿。现心跳只准
+    前进不准吃旧值：注入的未来值照旧生效（保持测试确定性），过去/陈旧值被
+    墙钟顶起。注意只用于 updated_at——租约与 next_retry_at 仍按注入时刻计算，
+    不改调度语义。naive 注入值不比较墙钟（无法安全取 max），原样落盘。
+    """
+    if now.tzinfo is None or now.tzinfo.utcoffset(now) is None:
+        return now.isoformat()
+    wall = _utc_now()
+    return max(now, wall).isoformat()
+
+
+def _part_identity_token(dedupe_key: str) -> str:
+    """行身份 → part_key 后缀（sha256[:16]）。dedupe_key 可含任意字符
+    （冒号/井号皆有可能），故不裸拼原文，用摘要定长段，杜绝分隔符歧义。"""
+    return hashlib.sha256(str(dedupe_key).encode("utf-8")).hexdigest()[:16]
+
+
+def _part_key(request_id: str, part_index: int, dedupe_key: str | None = None) -> str:
+    """规格 §9.3.1：part 稳定键 = 请求身份 + part_index，重试不换键。
+
+    Q-G5（SEAT-ATK-QUEUE）：旧键只含 request_id，而同 request_id 可以有多行
+    （error_report ack/card 共键设计，审查 E-12）⇒ 兄弟行共用一本 part 账，
+    B 一条没发账上已全送达。现键带行身份（dedupe_key 摘要段）。
+    ``dedupe_key=None``＝无主旧账格式（仅用于寻址升级前遗留行），新写入一律
+    传身份。part_key 此后只当不透明主键用；检索一律走
+    (request_id, dedupe_key, part_index)。
+    """
+    if dedupe_key is None:
+        return f"{request_id}#part{int(part_index)}"
+    return f"{request_id}#part{int(part_index)}#{_part_identity_token(dedupe_key)}"
+
+
+def _is_alert_send_request(send_request: SendRequest) -> bool:
+    """该行是否告警链成员（Q-G7 ②，三源任一命中即算）。
+
+    生产 P2 名册 10 枚 parked 里 5 枚是 admin_alert_card、3 枚是 bot.alert —
+    告警自己失踪是最坏形状，故这类行绝不许进永久休眠档。"""
+    if send_request.capability_id in _ALERT_CAPABILITY_IDS:
+        return True
+    dedupe_key = str(send_request.dedupe_key or "")
+    if dedupe_key.startswith(_ALERT_DEDUPE_PREFIXES):
+        return True
+    return bool(_ALERT_AUDIT_TAGS.intersection(send_request.audit_tags))
 
 
 def _queued_receipt(send_request: SendRequest) -> DeliveryReceipt:
@@ -142,6 +220,11 @@ class QueuedSendRequest:
     lease_expires_at: datetime | None = None
     # §9.3：part 级进度（仅 SQLite 队列装载；None=无 part 跟踪，走既有整发语义）。
     parts: PartProgress | None = None
+    # Q-G1（SEAT-ATK-QUEUE）：行主键 dedupe_key（行身份）。payload 里的
+    # dedupe_key 在历史共键覆写行（生产 7 行实锤）上可能与行主键不等值，
+    # 写路径一律以此为准；旧构造方（内存路径/测试直构）缺省 None → 回退
+    # payload 值。
+    row_dedupe_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -285,7 +368,7 @@ class SQLiteSendRequestQueue:
         # 锁串行化，消除每操作建连开销与 mark_* 跨连接两事务的非原子读改写。
         self._connection: sqlite3.Connection | None = None
         self._connection_lock = threading.RLock()
-        # 审查 A-22：进程内联认领台账（request_id → 提交任务）。
+        # 审查 A-22：进程内联认领台账（dedupe_key → (request_id, 提交任务)）。
         # 生产内联首投是「同一协程内 submit → transport → mark_*」的同任务
         # 序列，worker 是跨任务认领者——台账把「内联在途」从时间推断
         # （宽限期）升级为任务存活推断：提交任务未终结且认领者非本人时，
@@ -298,7 +381,12 @@ class SQLiteSendRequestQueue:
         #   重启 = 台账随进程消亡，磁盘 next_retry_at 宽限兜底（现状语义）。
         # 台账只活在内联窗口内，条目数与在途消息数同阶；任务永久悬挂属进程
         # 级病态，对应行保持不认领（防重复投递优先于防漏发，与 §9.3 一致）。
-        self._inline_claims: dict[str, asyncio.Task[None]] = {}
+        # Q-G6（SEAT-ATK-QUEUE）：键从 request_id 改为行身份 dedupe_key——
+        # 旧形状「一槽一任务」下兄弟行互相顶槽（后登记的顶掉前任），且任一
+        # 终结口整槽清空 ⇒ 前任仍在途已失去 A-22 保护（防双发盾失效）。
+        # 现每行一槽互不顶替；释放只精准清自己的槽（显式身份）或本任务在
+        # 该 request_id 下自持的槽（内联 legacy 口）。
+        self._inline_claims: dict[str, tuple[str, asyncio.Task[None]]] = {}
 
     def _ensure_schema_once(self) -> None:
         if self._schema_ready:
@@ -385,16 +473,21 @@ class SQLiteSendRequestQueue:
         with self._connection_lock:
             yield self._shared_connection()
 
-    # ---- 审查 A-22：内联首投认领台账 ----------------------------------------
+    # ---- 审查 A-22：内联首投认领台账（行身份键） ----------------------------
     # 竞态窗口论证：内联首投（handler 协程）与 worker 投递（调度任务）是两个
     # 无共享同步原语的并发投递者，原先只靠 next_retry_at 时间错开——内联耗时
     # 超过宽限期（多分片×传输超时、事件循环停顿）即双发。台账以「提交任务
     # 是否终结」为在途信号：任务存活=内联仍持行；任务终结（正常路径必经
     # mark_* 四口之一，异常/取消路径由死认领清簿兜底）=行可被 worker 接管。
     # 所有读写都在 _connection_lock（RLock）临界区内，与既有锁序一致。
+    # Q-G6（SEAT-ATK-QUEUE）：槽键从 request_id 改为行身份 dedupe_key——旧
+    # 「一槽一任务」形状下，共 request_id 的兄弟行后登记的顶掉前任，且任一
+    # 终结口整槽清空 ⇒ 前任仍在 await 传输却已失去 A-22 保护。现每行一槽、
+    # 释放只精准清自己（显式身份或本任务自持槽），互不顶替。
 
-    def _register_inline_claim(self, request_id: str) -> None:
-        """登记内联首投认领；仅事件循环内调用生效（须在连接锁临界区内）。
+    def _register_inline_claim(self, send_request: SendRequest) -> None:
+        """登记内联首投认领（dedupe_key → (request_id, 提交任务)）；仅事件
+        循环内调用生效（须在连接锁临界区内）。
 
         线程提交（无运行中事件循环）不登记：退回纯时间宽限=既有语义。
         """
@@ -404,14 +497,56 @@ class SQLiteSendRequestQueue:
             return
         if task is None:
             return
-        self._inline_claims[request_id] = task
+        self._inline_claims[send_request.dedupe_key] = (send_request.request_id, task)
 
-    def _release_inline_claim(self, request_id: str) -> None:
-        """释放内联认领（mark_* 终结口调用；须在连接锁临界区内）。"""
-        self._inline_claims.pop(request_id, None)
+    def _release_inline_claim(
+        self, request_id: str, dedupe_key: str | None = None
+    ) -> None:
+        """释放内联认领（mark_* 终结口调用；须在连接锁临界区内）。
+
+        - 携带行身份（显式 dedupe_key 或终结口解析所得）：只清自己那一槽。
+        - 无身份（legacy 口，如根装配 `mark_sent(request_id)`）：按调用任务
+          精准释放——只清「本任务以该 request_id 登记」的槽；兄弟任务的槽
+          原样保留（那正是 A-22 要保的在途保护）。线程内调用无法归属调用者，
+          不猜——死认领槽由 claim_due 惰性清簿兜底（既有语义）。
+        """
+        if dedupe_key is not None:
+            entry = self._inline_claims.get(dedupe_key)
+            if entry is not None and entry[0] == request_id:
+                self._inline_claims.pop(dedupe_key, None)
+            return
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            task = None
+        if task is None:
+            return
+        for key, (stored_rid, stored_task) in list(self._inline_claims.items()):
+            if stored_rid == request_id and stored_task is task:
+                self._inline_claims.pop(key, None)
+
+    def _inline_claim_identity_for_caller(self, request_id: str) -> str | None:
+        """Q-G1 内联精准寻址：无显式 dedupe_key 的 mark_* 调用先问台账——
+        当前任务若正是该 request_id 某槽的提交任务，返回其行身份。
+
+        生产内联链（根装配 `_record_transport_receipt`，本席禁改）只传
+        request_id；共 request_id 的兄弟行在「取最新一行」启发式下可能拿错。
+        台账登记发生于 submit、与任务同体，是该调用「想终结哪一行」的权威
+        答案（同一协程 submit → transport → mark_* 序列）。
+        """
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            return None
+        if task is None:
+            return None
+        for key, (stored_rid, stored_task) in self._inline_claims.items():
+            if stored_rid == request_id and stored_task is task:
+                return key
+        return None
 
     def _inline_claim_blocks(
-        self, request_id: str, claimer: asyncio.Task[None] | None
+        self, dedupe_key: str, claimer: asyncio.Task[None] | None
     ) -> bool:
         """该行的内联认领是否否决本次认领（须在连接锁临界区内）。
 
@@ -422,13 +557,24 @@ class SQLiteSendRequestQueue:
           drain，如测试/顺序管线）：不否决——单协程内天然串行，不存在
           跨任务竞态；跨任务认领者（生产 worker）被否决，这正是 A-22 目标。
         """
-        entry = self._inline_claims.get(request_id)
+        entry = self._inline_claims.get(dedupe_key)
         if entry is None:
             return False
-        if entry.done():
-            self._inline_claims.pop(request_id, None)
+        _, task = entry
+        if task.done():
+            self._inline_claims.pop(dedupe_key, None)
             return False
-        return entry is not claimer
+        return task is not claimer
+
+    def _inline_claim_alive(self, dedupe_key: str) -> bool:
+        """僵尸清扫前的存活探测：有任务正内联持有该行 → 不许终态化。
+
+        与 _inline_claim_blocks 不同，本探测不清簿（清扫不是认领）。
+        """
+        entry = self._inline_claims.get(dedupe_key)
+        if entry is None:
+            return False
+        return not entry[1].done()
 
     def submit(
         self,
@@ -468,9 +614,10 @@ class SQLiteSendRequestQueue:
                     last_public_message,
                     created_at,
                     updated_at,
-                    session_id
+                    session_id,
+                    expires_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(dedupe_key) DO NOTHING
                 """,
                 (
@@ -484,6 +631,12 @@ class SQLiteSendRequestQueue:
                     current_time.isoformat(),
                     current_time.isoformat(),
                     send_request.session_id,
+                    # Q-G4：行级投递期限落列（claim 认领口与僵尸清扫的执法点）。
+                    (
+                        send_request.expires_at.isoformat()
+                        if send_request.expires_at is not None
+                        else None
+                    ),
                 ),
             )
             if cursor.rowcount == 0:
@@ -496,8 +649,9 @@ class SQLiteSendRequestQueue:
                 # 审查 A-22：缺省入队（无 deliver_after）= 声明本行有内联首投，
                 # 登记认领台账堵 worker 抢跑双发窗口；deliver_after 入队（如
                 # 错误卡补发）声明无内联首投，绝不登记（worker 到点照常认领）。
+                # Q-G6：登记键＝行身份 dedupe_key（兄弟行各占各槽）。
                 if deliver_after is None:
-                    self._register_inline_claim(send_request.request_id)
+                    self._register_inline_claim(send_request)
 
         self._append_sender_audit(send_request, receipt, event)
         return receipt
@@ -546,6 +700,8 @@ class SQLiteSendRequestQueue:
         except RuntimeError:
             claimer_task = None
         with self._transaction_immediate() as connection:
+            # Q-G4（SEAT-ATK-QUEUE）：僵尸 processing 行清扫先于一切认领。
+            self._finalize_zombie_processing_rows(connection, current_time)
             # 审查 A-20（worker 侧）per-session 串行化：同会话已有在途认领
             # （state='processing' 且租约未过期）时，该会话的其余到期行不得
             # 进入本批候选——投递顺序只能在认领口保证，投递侧锁无法约束
@@ -554,6 +710,8 @@ class SQLiteSendRequestQueue:
             # rowid<>self 排除自身，让本行的租约过期重认领照常进行。
             # session_id IS NULL 的存量行（迁移前/毒行）不参与互斥，行为与
             # 既有语义一致。
+            # Q-G4：两条 PROCESSING 臂都加 expires_at 门（NULL=未声明期限，
+            # 照旧可重认领）——过期行绝不作为新任务重投。
             rows = connection.execute(
                 """
                 SELECT *
@@ -564,6 +722,7 @@ class SQLiteSendRequestQueue:
                         state = ?
                         AND lease_expires_at IS NOT NULL
                         AND lease_expires_at <= ?
+                        AND (expires_at IS NULL OR expires_at > ?)
                     )
                     OR (
                         state = ?
@@ -574,6 +733,7 @@ class SQLiteSendRequestQueue:
                         state = ?
                         AND lease_expires_at IS NULL
                         AND updated_at <= ?
+                        AND (expires_at IS NULL OR expires_at > ?)
                     )
                 )
                 AND NOT EXISTS (
@@ -603,10 +763,12 @@ class SQLiteSendRequestQueue:
                     current_time.isoformat(),
                     PROCESSING_STATE,
                     current_time.isoformat(),
+                    current_time.isoformat(),
                     PARTIAL_ROW_STATE,
                     current_time.isoformat(),
                     PROCESSING_STATE,
                     dead_lease_cutoff,
+                    current_time.isoformat(),
                     PROCESSING_STATE,
                     current_time.isoformat(),
                     dead_lease_cutoff,
@@ -619,7 +781,8 @@ class SQLiteSendRequestQueue:
                 # 一律否决认领——不区分 QUEUED 到期 / 租约过期 / PARTIAL 续发
                 # 入口，内联耗时超过宽限期也不会被 worker 重复投递。被否决行
                 # 本 pass 跳过，下轮 claim 重查（任务终结后自动放行）。
-                if self._inline_claim_blocks(str(row["request_id"]), claimer_task):
+                # Q-G6：否决判据按行身份查自己的槽，兄弟行不再互相顶替。
+                if self._inline_claim_blocks(str(row["dedupe_key"]), claimer_task):
                     continue
                 if row["state"] == PARTIAL_ROW_STATE:
                     # §9.3 补偿扫描：PARTIAL 行续发。claimed_from_state 只能取
@@ -665,7 +828,8 @@ class SQLiteSendRequestQueue:
                         claimed_from_state,
                         lease_expires_at.isoformat(),
                         retry_count,
-                        current_time.isoformat(),
+                        # Q-G3：心跳只前进不吃旧（注入的未来值照旧生效）。
+                        _heartbeat_iso(current_time),
                         row["dedupe_key"],
                     ),
                 )
@@ -683,7 +847,76 @@ class SQLiteSendRequestQueue:
                 """,
                 claimed_keys,
             ).fetchall()
-        return self._entries_from_rows(refreshed, connection)
+            # F-4（SEAT-ATK-SENDQ，2026-09-27）：条目重建回同一事务内——
+            # `_entries_from_rows` 里的 part 进度 SELECT 若在事务外跑，会与
+            # 他线程 BEGIN 交错、读到未提交态（对方回滚＝幻影进度）。
+            return self._entries_from_rows(refreshed, connection, in_transaction=True)
+
+    def _finalize_zombie_processing_rows(
+        self, connection: sqlite3.Connection, current_time: datetime
+    ) -> None:
+        """Q-G4（SEAT-ATK-QUEUE）：过期/心跳久旱的 PROCESSING 僵尸行终态化，先于认领。
+
+        审计原判：认领 SQL 无年龄条件、payload 的 expires_at 在队列/worker
+        零执法点 ⇒ 一条陈旧 processing 行会在死租约窗（300s）后被当新任务
+        重发（「几天前的话突然又发一遍」）。修法两刀：
+        ①认领口：两条 PROCESSING 臂补 ``expires_at IS NULL OR expires_at > ?``
+          （见 claim_due SQL），过期行不再进候选；
+        ②清扫口（本方法）：把「声明期限已过」或「心跳（updated_at）距墙钟
+          久旱超过 ``_BOT_UNAVAILABLE_MAX_AGE_SECONDS``（同一年龄常量，不建
+          第二真身；实例可配）」的 processing 行走 _finalize_expired_lease
+          收口（有已送达 part → PARTIAL 断点，否则 FAILED_FINAL + 审计）——
+          终态化比重投更符合「宁漏不双发」。
+
+        口径说明：
+        - 年龄量在**心跳**上而非 created_at：健康 worker 认领时经
+          _heartbeat_iso 把 updated_at 顶到墙钟，「刚被认领、正在投递」的
+          行永不被清扫（A-20 并发认领互斥回归 test_a20① 是存量契约，清扫
+          若按入队年龄判就把在投行当场终态化——首版踩坑后改为此口径）；
+          真正僵尸的行自最后一次写入起已静默 ≥ 年龄窗。
+        - 年龄以墙钟计（注入时刻是测试虚构钟，不得把刚生成的行「吹老」）；
+          expires_at 比较用当轮认领时刻（与租约/到期同用一把注入钟）。
+        - 本进程仍内联持有（台账任务存活）的行跳过不清。
+        - 病态越界情形（一次投递真实耗时超年龄窗后结束）：清扫只动账面，
+          在途传输的收尾 mark_* 仍按行身份写回本行，不产生第二认领者。
+        - 批 LIMIT 20：每 pass 少量消化即可（僵尸按定义不再生成），不抢
+          认领主路径的锁预算；单行终态化异常只跳过本行，绝不拖垮认领事务。
+        """
+        wall_now = _utc_now()
+        stale_before = (
+            wall_now - timedelta(seconds=self._bot_unavailable_max_age_seconds)
+        ).isoformat()
+        try:
+            zombies = connection.execute(
+                """
+                SELECT *
+                FROM send_requests
+                WHERE state = ?
+                  AND (
+                        (expires_at IS NOT NULL AND expires_at <= ?)
+                     OR (updated_at IS NOT NULL AND updated_at <= ?)
+                  )
+                ORDER BY created_at ASC, rowid ASC
+                LIMIT 20
+                """,
+                (PROCESSING_STATE, current_time.isoformat(), stale_before),
+            ).fetchall()
+        except sqlite3.Error:
+            return
+        for row in zombies:
+            dedupe_key = str(row["dedupe_key"])
+            if self._inline_claim_alive(dedupe_key):
+                continue
+            try:
+                self._finalize_expired_lease(
+                    connection, row, int(row["retry_count"]), current_time
+                )
+            except sqlite3.Error as exc:
+                logging.getLogger(__name__).warning(
+                    "zombie finalize failed dedupe_key=%s error=%s",
+                    dedupe_key,
+                    exc,
+                )
 
     # ---- 毒行隔离（评审 H9）------------------------------------------------
     # 90f590e 只给 _finalize_expired_lease 加了隔离，_entry_from_row 的两个
@@ -726,14 +959,23 @@ class SQLiteSendRequestQueue:
         row: sqlite3.Row,
         exc: Exception | None,
         current_time: datetime | None = None,
+        *,
+        shared_connection: sqlite3.Connection | None = None,
     ) -> None:
         """把无法解析的队列行就地置终态，避免它每轮都毒死整个批次。
 
-        关键：**不要**在调用方那条共享连接上执行。该连接以 autocommit 模式
-        创建（``isolation_level=None``），``BEGIN``/``commit``/``rollback`` 都是
-        无效操作，DML 会留下一个隐式打开的事务——后果是终态化时隐时现、并把
+        关键（默认腿）：**不要**在调用方那条共享连接上执行。该连接以 autocommit
+        模式创建（``isolation_level=None``），``BEGIN``/``commit``/``rollback``
+        都是无效操作，DML 会留下一个隐式打开的事务——后果是终态化时隐时现、并把
         连接卡在怪异状态（实测：行停在 processing）。这里改用独立短连接，
         使隔离动作与调用方的连接状态彻底解耦。
+
+        F-4 例外腿（SENDQ × 主代理合并批 2026-09-27）：``claim_due`` 的条目
+        重建已挪进 IMMEDIATE 事务内（同事务读回防幻影进度），此时独立短连接
+        会被外层写锁挡到 busy 超时（毒行停在 processing，实测回归）。故给
+        ``shared_connection`` 时**直接在打开着本事务的连接上 UPDATE**——并入
+        外层事务、随其一起提交，原子性反而更强；独立短连接语义只保留给
+        事务外调用方。
 
         与非终态行永不被 _prune 淘汰的契约一致：置 FAILED_FINAL 后由既有
         A4 淘汰路径回收；不删除行，保留事后取证能力。
@@ -741,10 +983,7 @@ class SQLiteSendRequestQueue:
         stamp = (current_time or _utc_now()).isoformat()
         dedupe_key = str(row["dedupe_key"])
         kind = "invalid_payload" if exc is None else self._corrupt_row_kind(row, exc)
-        try:
-            with closing(self._connect()) as connection, connection:
-                connection.execute(
-                    """
+        finalize_sql = """
                     UPDATE send_requests
                     SET state = ?,
                         claimed_from_state = NULL,
@@ -752,9 +991,14 @@ class SQLiteSendRequestQueue:
                         next_retry_at = NULL,
                         updated_at = ?
                     WHERE dedupe_key = ?
-                    """,
-                    (ReceiptState.FAILED_FINAL.value, stamp, dedupe_key),
-                )
+                    """
+        finalize_params = (ReceiptState.FAILED_FINAL.value, stamp, dedupe_key)
+        try:
+            if shared_connection is not None:
+                shared_connection.execute(finalize_sql, finalize_params)
+            else:
+                with closing(self._connect()) as connection, connection:
+                    connection.execute(finalize_sql, finalize_params)
         except sqlite3.Error as db_exc:
             logging.getLogger(__name__).warning(
                 "corrupt-row finalize failed dedupe_key=%s error=%s",
@@ -769,15 +1013,31 @@ class SQLiteSendRequestQueue:
         )
 
     def _entries_from_rows(
-        self, rows: list[sqlite3.Row], connection: sqlite3.Connection
+        self,
+        rows: list[sqlite3.Row],
+        connection: sqlite3.Connection,
+        *,
+        in_transaction: bool = False,
     ) -> list[QueuedSendRequest]:
-        """逐行解析：坏行终态化后跳过，健康行照常返回（毒行隔离）。"""
+        """逐行解析：坏行终态化后跳过，健康行照常返回（毒行隔离）。
+
+        F-4（SENDQ × 主代理合并批 2026-09-27）：仅 ``claim_due`` 的读回发生在
+        IMMEDIATE 写事务内（``in_transaction=True``）——毒行终态化必须并入同一
+        事务（shared_connection 腿）；独立短连接会被外层写锁挡到超时（毒行停
+        processing，实测回归坐实）。其余读点连接上下文不同，盲并会撞
+        "cannot start a transaction within a transaction"（实测）——两腿以
+        in_transaction 显式区分、不猜。
+        """
         entries: list[QueuedSendRequest] = []
         for row in rows:
             try:
                 entries.append(self._entry_from_row(row, connection))
             except _CorruptQueueRow as exc:
-                self._finalize_corrupt_row(row, exc.cause)
+                self._finalize_corrupt_row(
+                    row,
+                    exc.cause,
+                    shared_connection=connection if in_transaction else None,
+                )
         return entries
 
     def _finalize_expired_lease(
@@ -790,8 +1050,12 @@ class SQLiteSendRequestQueue:
         """租约反复过期的行达到 max_attempts 后置终态，不再交投。"""
         # §9.3 断点守卫：已有 part 送达且未全部完成时改置 PARTIAL（带扫描
         # 退避），租约循环烧完请求预算也不得整封盲重发。
+        # Q-G1：断点守卫与终态化都按行主键寻址（终结口本就持有 row.dedupe_key）。
         if self._convert_terminal_to_partial_in(
-            connection, str(row["request_id"]), now=current_time
+            connection,
+            str(row["request_id"]),
+            now=current_time,
+            dedupe_key=str(row["dedupe_key"]),
         ):
             logging.getLogger(__name__).warning(
                 "expired-lease row deferred to partial breakpoint request_id=%s",
@@ -812,7 +1076,7 @@ class SQLiteSendRequestQueue:
             (
                 ReceiptState.FAILED_FINAL.value,
                 retry_count,
-                current_time.isoformat(),
+                _heartbeat_iso(current_time),
                 row["dedupe_key"],
             ),
         )
@@ -842,6 +1106,7 @@ class SQLiteSendRequestQueue:
         public_message: str,
         *,
         now: datetime,
+        dedupe_key: str,
     ) -> DeliveryReceipt:
         """B-4（管线检视 #6）：SnowLuma 断线的投递挂起，不消耗重试预算。
 
@@ -864,6 +1129,7 @@ class SQLiteSendRequestQueue:
                 public_message=public_message,
                 now=now,
                 operational_issue=issue,
+                dedupe_key=dedupe_key,
             )
             event = "send_failed_final"
         else:
@@ -881,6 +1147,7 @@ class SQLiteSendRequestQueue:
                 public_message=public_message,
                 now=now,
                 operational_issue=issue,
+                dedupe_key=dedupe_key,
             )
             event = "send_deferred_bot_unavailable"
         self._append_sender_audit(entry.send_request, receipt, event)
@@ -893,14 +1160,26 @@ class SQLiteSendRequestQueue:
         *,
         now: datetime | None = None,
         operational_issue: OperationalIssue | None = None,
+        dedupe_key: str | None = None,
     ) -> DeliveryReceipt:
         current_time = now or _utc_now()
         self._ensure_schema_once()
         with self._transaction() as connection:
-            # 审查 A-22：内联首投已走到终结口（无论成败）即释放认领台账，
-            # 行交还既有重试/接管语义；「not found」分支也先释放防台账泄漏。
-            self._release_inline_claim(request_id)
-            entry = self._find_entry_in(connection, request_id)
+            # Q-G1：终结口一律先定行身份（显式 > 内联台账 > 最新行启发式），
+            # 之后所有读写都按该身份寻址——不再以非唯一 request_id 为谓词。
+            identity = self._resolve_update_identity_in(connection, request_id, dedupe_key)
+            # 审查 A-22（Q-G6）：内联首投已走到终结口（无论成败）即释放本行
+            # 认领槽；只清自己的槽，兄弟行在途保护原样保留。
+            self._release_inline_claim(request_id, identity)
+            if identity is None:
+                return DeliveryReceipt(
+                    request_id=request_id,
+                    state=ReceiptState.FAILED_FINAL,
+                    transport=SQLITE_QUEUE_TRANSPORT,
+                    public_message="send request not found",
+                    operational_issue=operational_issue,
+                )
+            entry = self._find_entry_in(connection, request_id, dedupe_key=identity)
             if entry is None:
                 return DeliveryReceipt(
                     request_id=request_id,
@@ -914,14 +1193,19 @@ class SQLiteSendRequestQueue:
             public_message = "" if issue is not None else public_message
             if issue is not None and str(issue.kind) == _BOT_UNAVAILABLE_KIND:
                 return self._defer_for_bot_unavailable(
-                    connection, entry, issue, public_message, now=current_time
+                    connection,
+                    entry,
+                    issue,
+                    public_message,
+                    now=current_time,
+                    dedupe_key=identity,
                 )
             retry_count = entry.retry_count + 1
             if retry_count >= self.max_attempts:
                 # §9.3 断点守卫：请求重试预算烧尽但有 part 已送达时改置
                 # PARTIAL 断点（补偿扫描续发），不整封 FAILED_FINAL 盲重发。
                 if self._convert_terminal_to_partial_in(
-                    connection, request_id, now=current_time
+                    connection, request_id, now=current_time, dedupe_key=identity
                 ):
                     receipt = DeliveryReceipt(
                         request_id=request_id,
@@ -944,6 +1228,7 @@ class SQLiteSendRequestQueue:
                     public_message=public_message,
                     now=current_time,
                     operational_issue=issue,
+                    dedupe_key=identity,
                 )
                 event = "send_failed_final"
             else:
@@ -959,6 +1244,7 @@ class SQLiteSendRequestQueue:
                     public_message=public_message,
                     now=current_time,
                     operational_issue=issue,
+                    dedupe_key=identity,
                 )
                 event = "send_failed_retryable"
 
@@ -972,14 +1258,25 @@ class SQLiteSendRequestQueue:
         *,
         now: datetime | None = None,
         operational_issue: OperationalIssue | None = None,
+        dedupe_key: str | None = None,
     ) -> DeliveryReceipt:
         current_time = now or _utc_now()
         self._ensure_schema_once()
         with self._transaction() as connection:
-            # 审查 A-22：内联首投成功即释放认领台账（行置 SENT 后 worker
-            # 本就不可认领，释放只为台账生命周期与行状态一致）。
-            self._release_inline_claim(request_id)
-            entry = self._find_entry_in(connection, request_id)
+            # Q-G1：行身份寻址（显式 > 内联台账 > 最新行启发式）。
+            identity = self._resolve_update_identity_in(connection, request_id, dedupe_key)
+            # 审查 A-22（Q-G6）：内联首投成功即释放本行认领槽（行置 SENT 后
+            # worker 本就不可认领，释放只为台账生命周期与行状态一致）。
+            self._release_inline_claim(request_id, identity)
+            if identity is None:
+                return DeliveryReceipt(
+                    request_id=request_id,
+                    state=ReceiptState.FAILED_FINAL,
+                    transport=SQLITE_QUEUE_TRANSPORT,
+                    public_message="send request not found",
+                    operational_issue=operational_issue,
+                )
+            entry = self._find_entry_in(connection, request_id, dedupe_key=identity)
             if entry is None:
                 return DeliveryReceipt(
                     request_id=request_id,
@@ -999,6 +1296,7 @@ class SQLiteSendRequestQueue:
                 public_message=public_message,
                 now=current_time,
                 operational_issue=issue,
+                dedupe_key=identity,
             )
         self._append_sender_audit(entry.send_request, receipt, "send_marked_sent")
         return receipt
@@ -1010,14 +1308,25 @@ class SQLiteSendRequestQueue:
         *,
         now: datetime | None = None,
         operational_issue: OperationalIssue | None = None,
+        dedupe_key: str | None = None,
     ) -> DeliveryReceipt:
         current_time = now or _utc_now()
         self._ensure_schema_once()
         with self._transaction() as connection:
-            # 审查 A-22：内联首投终败即释放认领台账（有已送达 part 时由
-            # 下方断点守卫改置 PARTIAL，台账同样终结——内联已结束）。
-            self._release_inline_claim(request_id)
-            entry = self._find_entry_in(connection, request_id)
+            # Q-G1：行身份寻址（显式 > 内联台账 > 最新行启发式）。
+            identity = self._resolve_update_identity_in(connection, request_id, dedupe_key)
+            # 审查 A-22（Q-G6）：内联首投终败即释放本行认领槽（有已送达 part
+            # 时由下方断点守卫改置 PARTIAL，台账同样终结——内联已结束）。
+            self._release_inline_claim(request_id, identity)
+            if identity is None:
+                return DeliveryReceipt(
+                    request_id=request_id,
+                    state=ReceiptState.FAILED_FINAL,
+                    transport=SQLITE_QUEUE_TRANSPORT,
+                    public_message="send request not found",
+                    operational_issue=operational_issue,
+                )
+            entry = self._find_entry_in(connection, request_id, dedupe_key=identity)
             if entry is None:
                 return DeliveryReceipt(
                     request_id=request_id,
@@ -1031,7 +1340,7 @@ class SQLiteSendRequestQueue:
             # §9.3 断点守卫：显式终态失败前，若已有 part 送达且未全部完成，
             # 改置 PARTIAL 断点由补偿扫描续发，绝不整封盲重发已送达内容。
             if self._convert_terminal_to_partial_in(
-                connection, request_id, now=current_time
+                connection, request_id, now=current_time, dedupe_key=identity
             ):
                 receipt = DeliveryReceipt(
                     request_id=request_id,
@@ -1054,6 +1363,7 @@ class SQLiteSendRequestQueue:
                 public_message=public_message,
                 now=current_time,
                 operational_issue=issue,
+                dedupe_key=identity,
             )
         self._append_sender_audit(entry.send_request, receipt, "send_failed_final")
         return receipt
@@ -1065,17 +1375,91 @@ class SQLiteSendRequestQueue:
     # 所有写路径沿用共享连接单事务（WAL）惯例；part 明细表与请求行汇总列在同
     # 一事务内更新。
 
+    def _resolve_update_identity_in(
+        self,
+        connection: sqlite3.Connection,
+        request_id: str,
+        dedupe_key: str | None,
+    ) -> str | None:
+        """Q-G1 终结口行身份解析：显式 > 内联台账（本任务自持槽）> 最新行。
+
+        返回行主键 dedupe_key；库里没有该 request_id 的任何行时返回 None
+        （调用方走 not-found 回执，与既有语义一致）。绝不返回 request_id
+        当身份用——那正是共键写扇出的原罪。
+        """
+        if dedupe_key is not None:
+            return str(dedupe_key)
+        inline = self._inline_claim_identity_for_caller(request_id)
+        if inline is not None:
+            return inline
+        row = connection.execute(
+            """
+            SELECT dedupe_key
+            FROM send_requests
+            WHERE request_id = ?
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1
+            """,
+            (request_id,),
+        ).fetchone()
+        return None if row is None else str(row["dedupe_key"])
+
+    def _part_ledger_identity_in(
+        self,
+        connection: sqlite3.Connection,
+        request_id: str,
+        dedupe_key: str | None,
+    ) -> str | None:
+        """Q-G5 part 账本身份判定。
+
+        解析优先级同终结口（显式 > 最新行）。在此基础上做旧账迁移判定：
+        - 该身份已有 part 行 → 用它（正常续账）。
+        - 身份无行、但存在无主旧账（dedupe_key IS NULL 的升级前行）→
+          返回 None＝沿用旧格式账本继续记账（绝不另起一本新账把已送达
+          part 重发）；ensure_parts_planned 会把旧账收养进身份。
+        - 库上无任何相关行 → 用身份开新账（新写入不再产生无主行）。
+        """
+        if dedupe_key is None:
+            return None
+        identity_rows = connection.execute(
+            """
+            SELECT 1 FROM send_request_parts
+            WHERE request_id = ? AND dedupe_key = ?
+            LIMIT 1
+            """,
+            (request_id, dedupe_key),
+        ).fetchone()
+        if identity_rows is not None:
+            return dedupe_key
+        orphan_rows = connection.execute(
+            """
+            SELECT 1 FROM send_request_parts
+            WHERE request_id = ? AND dedupe_key IS NULL
+            LIMIT 1
+            """,
+            (request_id,),
+        ).fetchone()
+        if orphan_rows is not None:
+            return None
+        return dedupe_key
+
     def ensure_parts_planned(
         self,
         request_id: str,
         payload_digests: list[str],
         *,
         now: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> PartProgress | None:
         """首次 part 化发送前预写全部 PENDING part 行（幂等，ON CONFLICT 跳过）。
 
         只保存 payload 摘要，不保存用户正文副本（规格 §9.3.2）。请求行不存在
         或写入失败时返回 None，调用方降级为既有整发语义。
+
+        Q-G5 账本守卫：本身份账上已存行必须与本次规划的 digest 逐位一致，
+        不一致 ⇒ 抛 PartLedgerConflictError——调用方（worker）绝不回落整发
+        （已送达 part 会被重发），只能按 result_unknown 收口。无主旧账
+        （升级前遗留 NULL 身份行）digest 全等时收养入身份，否则同样拒绝。
         """
         current_time = now or _utc_now()
         digests = list(payload_digests)
@@ -1084,6 +1468,16 @@ class SQLiteSendRequestQueue:
         self._ensure_schema_once()
         try:
             with self._transaction() as connection:
+                resolved = self._resolve_update_identity_in(
+                    connection, request_id, dedupe_key
+                )
+                ledger = self._part_ledger_identity_in(connection, request_id, resolved)
+                self._guard_part_ledger_digests(
+                    connection, request_id, ledger, digests, adopt_into=resolved
+                )
+                if ledger is None and resolved is not None:
+                    # 收养成功路径：守卫已把无主旧账回填身份 → 本笔起按身份记账。
+                    ledger = resolved
                 total = len(digests)
                 for index, digest in enumerate(digests):
                     connection.execute(
@@ -1096,13 +1490,14 @@ class SQLiteSendRequestQueue:
                             state,
                             attempts,
                             payload_digest,
-                            updated_at
+                            updated_at,
+                            dedupe_key
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(part_key) DO NOTHING
                         """,
                         (
-                            _part_key(request_id, index),
+                            _part_key(request_id, index, ledger),
                             request_id,
                             index,
                             total,
@@ -1110,10 +1505,21 @@ class SQLiteSendRequestQueue:
                             0,
                             digest,
                             current_time.isoformat(),
+                            ledger,
                         ),
                     )
-                self._refresh_request_part_summary_in(connection, request_id, now=current_time)
-                return self._load_part_progress_in(connection, request_id)
+                self._refresh_request_part_summary_in(
+                    connection,
+                    request_id,
+                    now=current_time,
+                    dedupe_key=ledger,
+                    row_identity=resolved,
+                )
+                return self._load_part_progress_in(
+                    connection, request_id, dedupe_key=ledger
+                )
+        except PartLedgerConflictError:
+            raise
         except sqlite3.Error:
             logger = logging.getLogger(__name__)
             logger.warning(
@@ -1121,11 +1527,94 @@ class SQLiteSendRequestQueue:
             )
             return None
 
-    def part_progress(self, request_id: str) -> PartProgress | None:
-        """读取请求的 part 级进度快照（只读；无 part 跟踪时返回 None）。"""
+    def _guard_part_ledger_digests(
+        self,
+        connection: sqlite3.Connection,
+        request_id: str,
+        ledger: str | None,
+        digests: list[str],
+        *,
+        adopt_into: str | None = None,
+    ) -> None:
+        """Q-G5：账本 digest 一致性守卫 + 无主旧账收养。
+
+        - ledger 为身份：逐位比对（仅比对本次规划覆盖到的 index）。
+        - ledger 为 None 但 adopt_into 有身份：面对的是无主旧账——digest 全等
+          且 index 集合吻合则收养（回填 dedupe_key 列），否则拒绝。
+        任一 digest 不等 → PartLedgerConflictError（宁停发不混账）。
+        """
+        if ledger is not None:
+            rows = connection.execute(
+                """
+                SELECT part_index, payload_digest
+                FROM send_request_parts
+                WHERE request_id = ? AND dedupe_key = ?
+                """,
+                (request_id, ledger),
+            ).fetchall()
+            for row in rows:
+                index = int(row["part_index"])
+                stored = row["payload_digest"]
+                if stored is None or index >= len(digests):
+                    continue
+                if str(stored) != str(digests[index]):
+                    raise PartLedgerConflictError(
+                        f"part ledger digest mismatch request_id={request_id} "
+                        f"part_index={index}"
+                    )
+            return
+        # ledger None：可能是无主旧账（升级遗留）。有身份可收养时才检查。
+        orphan = connection.execute(
+            """
+            SELECT part_index, payload_digest
+            FROM send_request_parts
+            WHERE request_id = ? AND dedupe_key IS NULL
+            """,
+            (request_id,),
+        ).fetchall()
+        if not orphan:
+            return
+        orphan_map = {int(r["part_index"]): r["payload_digest"] for r in orphan}
+        adoptable = adopt_into is not None and len(orphan_map) == len(digests)
+        if adoptable:
+            for index, digest in enumerate(digests):
+                stored = orphan_map.get(index)
+                if stored is None or str(stored) != str(digest):
+                    adoptable = False
+                    break
+        if adoptable and adopt_into is not None:
+            connection.execute(
+                """
+                UPDATE send_request_parts
+                SET dedupe_key = ?
+                WHERE request_id = ? AND dedupe_key IS NULL
+                """,
+                (adopt_into, request_id),
+            )
+            return
+        if adopt_into is None:
+            # 无身份可收养（请求行都还没有）：旧账原样留着，本轮按旧格式续写。
+            return
+        raise PartLedgerConflictError(
+            f"legacy part ledger not adoptable request_id={request_id}"
+        )
+
+    def part_progress(
+        self, request_id: str, *, dedupe_key: str | None = None
+    ) -> PartProgress | None:
+        """读取请求的 part 级进度快照（只读；无 part 跟踪时返回 None）。
+
+        未显式给身份时按终结口同式解析行身份（最新行→该身份的账，账空回退
+        无主旧账），与 mark_part_*/ensure_parts_planned 的寻址保持一致。
+        """
         self._ensure_schema_once()
         with self._locked_connection() as connection:
-            return self._load_part_progress_in(connection, request_id)
+            identity = self._resolve_update_identity_in(
+                connection, request_id, dedupe_key
+            )
+            return self._load_part_progress_in(
+                connection, request_id, dedupe_key=identity
+            )
 
     def list_partial_requests(self, *, now: datetime | None = None) -> list[QueuedSendRequest]:
         """PARTIAL 断点行的运维/测试视图（含休眠行，供人工确认与排查）。"""
@@ -1149,6 +1638,7 @@ class SQLiteSendRequestQueue:
         part_index: int,
         *,
         now: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> bool:
         """发送前原子写入：state→PENDING 且 attempts+1（规格 §9.3.3）。
 
@@ -1161,6 +1651,7 @@ class SQLiteSendRequestQueue:
             state=PART_STATE_PENDING,
             increment_attempts=True,
             now=now,
+            dedupe_key=dedupe_key,
         )
 
     def mark_part_sent(
@@ -1170,6 +1661,7 @@ class SQLiteSendRequestQueue:
         *,
         provider_message_id: str | None = None,
         now: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> bool:
         return self._update_part_row(
             request_id,
@@ -1177,6 +1669,7 @@ class SQLiteSendRequestQueue:
             state=PART_STATE_SENT,
             provider_message_id=provider_message_id,
             now=now,
+            dedupe_key=dedupe_key,
         )
 
     def mark_part_unknown(
@@ -1187,6 +1680,7 @@ class SQLiteSendRequestQueue:
         error_kind: str | None = None,
         provider_message_id: str | None = None,
         now: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> bool:
         """结果未知（超时/断连/无法判定）：记 UNKNOWN，绝不静默当失败盲重发。"""
         return self._update_part_row(
@@ -1196,6 +1690,7 @@ class SQLiteSendRequestQueue:
             last_error_kind=error_kind,
             provider_message_id=provider_message_id,
             now=now,
+            dedupe_key=dedupe_key,
         )
 
     def mark_part_failed_final(
@@ -1205,6 +1700,7 @@ class SQLiteSendRequestQueue:
         *,
         error_kind: str | None = None,
         now: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> bool:
         """平台明确拒绝且不可重试（如 403）：该 part 终态，不回 PENDING。"""
         return self._update_part_row(
@@ -1213,6 +1709,7 @@ class SQLiteSendRequestQueue:
             state=PART_STATE_FAILED_FINAL,
             last_error_kind=error_kind,
             now=now,
+            dedupe_key=dedupe_key,
         )
 
     def mark_part_pending(
@@ -1221,6 +1718,7 @@ class SQLiteSendRequestQueue:
         part_index: int,
         *,
         now: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> bool:
         """明确可重试的失败（或确认「未送达」的 UNKNOWN）回到 PENDING。"""
         return self._update_part_row(
@@ -1228,6 +1726,7 @@ class SQLiteSendRequestQueue:
             part_index,
             state=PART_STATE_PENDING,
             now=now,
+            dedupe_key=dedupe_key,
         )
 
     def _update_part_row(
@@ -1240,23 +1739,31 @@ class SQLiteSendRequestQueue:
         last_error_kind: str | None = None,
         provider_message_id: str | None = None,
         now: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> bool:
         current_time = now or _utc_now()
         self._ensure_schema_once()
         try:
             with self._transaction() as connection:
+                resolved = self._resolve_update_identity_in(
+                    connection, request_id, dedupe_key
+                )
+                ledger = self._part_ledger_identity_in(connection, request_id, resolved)
+                # Q-G5：行定位改 (request_id, dedupe_key, part_index) 三元组，
+                # 兄弟行不再同键互踩；UPDATE 谓词含身份列（结构锁执法）。
                 row = connection.execute(
                     """
                     SELECT parts_total
                     FROM send_request_parts
-                    WHERE part_key = ?
+                    WHERE request_id = ? AND part_index = ?
+                      AND dedupe_key IS ?
                     """,
-                    (_part_key(request_id, part_index),),
+                    (request_id, part_index, ledger),
                 ).fetchone()
                 if row is None:
                     return False
                 assignments = ["state = ?", "updated_at = ?"]
-                params: list[object] = [state, current_time.isoformat()]
+                params: list[object] = [state, _heartbeat_iso(current_time)]
                 if increment_attempts:
                     assignments.append("attempts = attempts + 1")
                 if last_error_kind is not None:
@@ -1265,17 +1772,28 @@ class SQLiteSendRequestQueue:
                 if provider_message_id is not None:
                     assignments.append("provider_message_id = ?")
                     params.append(provider_message_id)
-                params.extend([request_id, part_index])
+                elif state in (PART_STATE_PENDING, PART_STATE_UNKNOWN):
+                    # F-3（SEAT-ATK-SENDQ，2026-09-27）：part 转回 pending/unknown
+                    # 必清残号——worker UNKNOWN 对账的本地列短路只准吃确认器写入的
+                    # 现号，历史残号不得把「没确认」洗成「已送达」（红线：UNKNOWN
+                    # 只由确认器/人工销案）。
+                    assignments.append("provider_message_id = NULL")
+                params.extend([request_id, part_index, ledger])
                 connection.execute(
                     f"""
                     UPDATE send_request_parts
                     SET {", ".join(assignments)}
                     WHERE request_id = ? AND part_index = ?
+                      AND dedupe_key IS ?
                     """,
                     params,
                 )
                 self._refresh_request_part_summary_in(
-                    connection, request_id, now=current_time
+                    connection,
+                    request_id,
+                    now=current_time,
+                    dedupe_key=ledger,
+                    row_identity=resolved,
                 )
             return True
         except sqlite3.Error:
@@ -1293,18 +1811,35 @@ class SQLiteSendRequestQueue:
         request_id: str,
         *,
         now: datetime,
+        dedupe_key: str | None = None,
+        row_identity: str | None = None,
     ) -> None:
-        """把 part 明细表汇总进请求行列（同事务；必须在调用方事务内执行）。"""
+        """把 part 明细表汇总进请求行列（同事务；必须在调用方事务内执行）。
+
+        Q-G3 头注配套事实（诚实口径）：本汇总是唯一的「投递期间心跳」写点，
+        且**只对有 part 跟踪的行存在**——无 part 行的整发行直接 return，
+        其 updated_at 只在 claim 与终结 mark_* 两拍推进。
+        Q-G1：汇总谓词收口到行主键 dedupe_key（本函数旧版 `WHERE request_id`
+        正是共键兄弟行互相改写 parts_* 的通路）。
+        ``dedupe_key``＝被汇总的 part 账身份（None＝无主旧账）；
+        ``row_identity``＝被改写的请求行主键（缺省跟随 dedupe_key；孤儿旧账
+        模式下请求行仍要被汇总，故两枚分开传）。
+        """
         rows = connection.execute(
             """
             SELECT part_index, parts_total, state
             FROM send_request_parts
-            WHERE request_id = ?
+            WHERE request_id = ? AND dedupe_key IS ?
             ORDER BY part_index ASC
             """,
-            (request_id,),
+            (request_id, dedupe_key),
         ).fetchall()
         if not rows:
+            return
+        target = row_identity if row_identity is not None else dedupe_key
+        if target is None:
+            # 请求行不存在（无主账且解析不出身份）：与旧版「UPDATE 不中任何行」
+            # 同形——但绝不以 request_id 为谓词去碰兄弟行。
             return
         total = max(int(row["parts_total"]) for row in rows)
         delivered = sum(1 for row in rows if str(row["state"]) == PART_STATE_SENT)
@@ -1320,14 +1855,14 @@ class SQLiteSendRequestQueue:
                 parts_delivered = ?,
                 parts_progress = ?,
                 updated_at = ?
-            WHERE request_id = ?
+            WHERE dedupe_key = ?
             """,
             (
                 total,
                 delivered,
                 progress_json,
-                now.isoformat(),
-                request_id,
+                _heartbeat_iso(now),
+                target,
             ),
         )
 
@@ -1335,18 +1870,36 @@ class SQLiteSendRequestQueue:
         self,
         connection: sqlite3.Connection,
         request_id: str,
+        *,
+        dedupe_key: str | None = None,
     ) -> PartProgress | None:
-        """在调用方连接上读取 part 进度（事务内/持锁读均可，RLock 可重入）。"""
+        """在调用方连接上读取 part 进度（事务内/持锁读均可，RLock 可重入）。
+
+        Q-G5：进度按 (request_id, dedupe_key) 读；身份账读空时回退读无主旧账
+        （升级遗留行），保证历史行不被误判「part 明细丢失」毒行；两本账互不
+        混读——身份账存在即以其为准，兄弟行不再共账。
+        """
         rows = connection.execute(
             """
             SELECT part_index, parts_total, state, attempts, last_error_kind,
                    provider_message_id, payload_digest
             FROM send_request_parts
-            WHERE request_id = ?
+            WHERE request_id = ? AND dedupe_key IS ?
             ORDER BY part_index ASC
             """,
-            (request_id,),
+            (request_id, dedupe_key),
         ).fetchall()
+        if not rows and dedupe_key is not None:
+            rows = connection.execute(
+                """
+                SELECT part_index, parts_total, state, attempts, last_error_kind,
+                       provider_message_id, payload_digest
+                FROM send_request_parts
+                WHERE request_id = ? AND dedupe_key IS NULL
+                ORDER BY part_index ASC
+                """,
+                (request_id,),
+            ).fetchall()
         if not rows:
             return None
         records: dict[int, PartRecord] = {}
@@ -1383,6 +1936,7 @@ class SQLiteSendRequestQueue:
         resumable: bool = True,
         now: datetime | None = None,
         operational_issue: OperationalIssue | None = None,
+        dedupe_key: str | None = None,
     ) -> DeliveryReceipt:
         """置 PARTIAL 终态+断点：有已送达 part 但无法立即全部完成。
 
@@ -1393,10 +1947,20 @@ class SQLiteSendRequestQueue:
         current_time = now or _utc_now()
         self._ensure_schema_once()
         with self._transaction() as connection:
+            # Q-G1：行身份寻址；终结口只清本行的认领槽（Q-G6）。
+            identity = self._resolve_update_identity_in(connection, request_id, dedupe_key)
             # 审查 A-22：PARTIAL 收敛属于 worker 投递侧终结口，顺手释放
             # 认领台账（内联路径不会产生 PARTIAL，防御性对齐生命周期）。
-            self._release_inline_claim(request_id)
-            entry = self._find_entry_in(connection, request_id)
+            self._release_inline_claim(request_id, identity)
+            if identity is None:
+                return DeliveryReceipt(
+                    request_id=request_id,
+                    state=ReceiptState.FAILED_FINAL,
+                    transport=SQLITE_QUEUE_TRANSPORT,
+                    public_message="send request not found",
+                    operational_issue=operational_issue,
+                )
+            entry = self._find_entry_in(connection, request_id, dedupe_key=identity)
             if entry is None:
                 return DeliveryReceipt(
                     request_id=request_id,
@@ -1406,6 +1970,17 @@ class SQLiteSendRequestQueue:
                     operational_issue=operational_issue,
                 )
             issue = operational_issue or entry.send_request.operational_issue
+            if not resumable:
+                # Q-G7 ①：休眠轮的收敛判定必须先于 PARTIAL 写入。
+                decision = self._dormancy_decision_in(connection, entry, request_id)
+                if decision == "final":
+                    return self._finalize_dormant_partial_in(
+                        connection, entry, request_id, issue=issue, now=current_time
+                    )
+                if decision == "backoff":
+                    # 还有可推进 part：绝不允许落成 NULL 死档，强制视为可续发
+                    # （现役 worker 路径造不出该形态，防御未来新调用点）。
+                    resumable = True
             next_retry_at = (
                 current_time + timedelta(seconds=_PARTIAL_RESUME_BACKOFF_SECONDS)
                 if resumable
@@ -1420,13 +1995,13 @@ class SQLiteSendRequestQueue:
                     next_retry_at = ?,
                     last_public_message = '',
                     updated_at = ?
-                WHERE request_id = ?
+                WHERE dedupe_key = ?
                 """,
                 (
                     PARTIAL_ROW_STATE,
                     next_retry_at.isoformat() if next_retry_at is not None else None,
-                    current_time.isoformat(),
-                    request_id,
+                    _heartbeat_iso(current_time),
+                    identity,
                 ),
             )
             receipt = DeliveryReceipt(
@@ -1441,19 +2016,154 @@ class SQLiteSendRequestQueue:
         self._append_sender_audit(entry.send_request, receipt, "send_deferred_partial")
         return receipt
 
+    def _dormancy_decision_in(
+        self,
+        connection: sqlite3.Connection,
+        entry: QueuedSendRequest,
+        request_id: str,
+    ) -> str:
+        """休眠轮（resumable=False）三态判定："final" / "backoff" / "dormant"。
+
+        - 仍有 PENDING 且 attempts 未烧尽的 part ⇒ "backoff"（可推进的行不许
+          停放；告警行同规则——停放/终态都救不回未送达的告警，续投才救得回，
+          而 backoff 既非 parked 也非静默）。
+        - 无可推进 part（只剩 SENT/UNKNOWN/FAILED_FINAL，或 attempts 全烧尽）
+          ⇒ "final"：休眠 ≡ 永久停摆（confirmer 缺席时每轮必为零进展），
+          直接终态化，宁可漏不盲重发。
+        - 无 part 账本 ⇒ 告警行 "final"（无账本无法证明可推进，停放代价对
+          告警不可接受），其余保持既有休眠语义（生产 P2 名册全部带账本，
+          该分支只兜非 worker 调用点）。
+        """
+        if _is_alert_send_request(entry.send_request):
+            progress = self._load_part_progress_in(
+            connection, request_id, dedupe_key=entry.row_dedupe_key
+        )
+            if progress is None or progress.total <= 0:
+                return "final"
+        else:
+            progress = self._load_part_progress_in(
+            connection, request_id, dedupe_key=entry.row_dedupe_key
+        )
+            if progress is None or progress.total <= 0:
+                return "dormant"
+        attempts_cap = max(1, self.max_attempts)
+        can_progress = any(
+            record.state == PART_STATE_PENDING and record.attempts < attempts_cap
+            for record in progress.records.values()
+        )
+        return "backoff" if can_progress else "final"
+
+    def _finalize_dormant_partial_in(
+        self,
+        connection: sqlite3.Connection,
+        entry: QueuedSendRequest,
+        request_id: str,
+        *,
+        issue: OperationalIssue | None,
+        now: datetime,
+    ) -> DeliveryReceipt:
+        """Q-G7 ① 的终态口：休眠轮直接写 FAILED_FINAL（调用方事务内执行）。
+
+        part 明细账原样保留（SENT 的仍是 SENT、UNKNOWN 的仍是 UNKNOWN）——
+        这是「诚实回执」的取证面：事后能从 send_request_parts 查出到底送达
+        了几段、哪几段结果未知。绝不重发任何 part（宁漏不双发）。
+        谓词用行身份 dedupe_key（不新增共键写）。updated_at 写用
+        _heartbeat_iso(now)（QKEY 心跳纪律件）；若基线无该原语则退直接
+        isoformat（合并次序说明见 SEAT-FIX-QPARK §五）。
+        """
+        progress = self._load_part_progress_in(
+            connection, request_id, dedupe_key=entry.row_dedupe_key
+        )
+        delivered = progress.delivered if progress is not None else 0
+        total = progress.total if progress is not None else 0
+        summary = f"dormant_final delivered={delivered}/{total}"
+        row_identity = (
+            getattr(entry, "row_dedupe_key", None) or entry.send_request.dedupe_key
+        )
+        heartbeat = globals().get("_heartbeat_iso")
+        updated_at = heartbeat(now) if callable(heartbeat) else now.isoformat()
+        connection.execute(
+            """
+            UPDATE send_requests
+            SET state = ?,
+                claimed_from_state = NULL,
+                lease_expires_at = NULL,
+                next_retry_at = NULL,
+                last_public_message = ?,
+                updated_at = ?
+            WHERE dedupe_key = ?
+            """,
+            (
+                ReceiptState.FAILED_FINAL.value,
+                summary,
+                updated_at,
+                row_identity,
+            ),
+        )
+        final_issue = issue or OperationalIssue(
+            stage="queue",
+            kind="dormant_partial_final",
+            retryable=False,
+            safe_summary="dormant_partial_final",
+        )
+        receipt = DeliveryReceipt(
+            request_id=request_id,
+            state=ReceiptState.FAILED_FINAL,
+            transport=SQLITE_QUEUE_TRANSPORT,
+            retry_count=entry.retry_count,
+            next_retry_at=None,
+            public_message="",
+            operational_issue=final_issue,
+        )
+        self._append_sender_audit(entry.send_request, receipt, "send_dormant_final")
+        return receipt
+
+    def list_dormant_partials(
+        self, *, now: datetime | None = None, limit: int = 20
+    ) -> list[QueuedSendRequest]:
+        """休眠 PARTIAL 视图（state=partial 且 next_retry_at IS NULL）。
+
+        Q-G7 修复落地后该形态只剩「上线前存量」与极窄的非 worker 分支；
+        供 worker busy 观测与运维点名（SEAT-ATK-QUEUE Q-G7 修法③）。
+        del now 保持签名与时间无关。"""
+        del now
+        self._ensure_schema_once()
+        safe_limit = max(1, int(limit))
+        with self._locked_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM send_requests
+                WHERE state = ? AND next_retry_at IS NULL
+                ORDER BY created_at ASC, rowid ASC
+                LIMIT ?
+                """,
+                (PARTIAL_ROW_STATE, safe_limit),
+            ).fetchall()
+            return self._entries_from_rows(rows, connection)
+
     def _convert_terminal_to_partial_in(
         self,
         connection: sqlite3.Connection,
         request_id: str,
         *,
         now: datetime,
+        dedupe_key: str | None = None,
     ) -> bool:
         """FAILED_FINAL 前的断点守卫：0<已送达<总数 时改写 PARTIAL。
 
         在调用方事务内执行；返回 True 表示调用方应跳过 FAILED_FINAL 写入
         （PARTIAL 断点已落库，由补偿扫描续发，绝不整封盲重发）。
+        Q-G1：进度判定与改写都按行身份（终结口/租约收口都持有 dedupe_key）。
         """
-        progress = self._load_part_progress_in(connection, request_id)
+        identity = dedupe_key or self._resolve_update_identity_in(
+            connection, request_id, None
+        )
+        if identity is None:
+            return False
+        progress = self._load_part_progress_in(
+            connection, request_id, dedupe_key=identity
+        )
         if progress is None or progress.total <= 0:
             return False
         if not 0 < progress.delivered < progress.total:
@@ -1467,13 +2177,13 @@ class SQLiteSendRequestQueue:
                 lease_expires_at = NULL,
                 next_retry_at = ?,
                 updated_at = ?
-            WHERE request_id = ?
+            WHERE dedupe_key = ?
             """,
             (
                 PARTIAL_ROW_STATE,
                 next_retry_at.isoformat(),
-                now.isoformat(),
-                request_id,
+                _heartbeat_iso(now),
+                identity,
             ),
         )
         return True
@@ -1579,6 +2289,18 @@ class SQLiteSendRequestQueue:
                 "parts_progress",
                 "TEXT",
             )
+            # SEAT-ATK-QUEUE Q-G4：行级投递期限列（SendRequest.expires_at 的
+            # SQL 可比较投影）。此前 expires_at 在队列/worker 零执法点——陈旧
+            # processing 行 300s 后会被当新任务重发。claim_due 的 PROCESSING
+            # 两臂据此拒绝认领过期行，僵尸清扫（_finalize_zombie_processing_
+            # rows）据此终态化。存量行自 request_json 回填（同 session_id 口）。
+            self._ensure_column(
+                connection,
+                "send_requests",
+                "expires_at",
+                "TEXT",
+            )
+            self._backfill_expires_at(connection)
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS send_request_parts (
@@ -1595,10 +2317,26 @@ class SQLiteSendRequestQueue:
                 )
                 """
             )
+            # SEAT-ATK-QUEUE Q-G5：part 账本行身份列（send_requests.dedupe_key
+            # 的引用）。旧 part_key 只含 request_id，共 request_id 的兄弟行
+            # 共用一本账（B 一条没发账上全送达）。新行一律带身份；旧行
+            # （列 NULL）＝无主旧账，只被显式收养或留作惰性读，绝不静默混用。
+            self._ensure_column(
+                connection,
+                "send_request_parts",
+                "dedupe_key",
+                "TEXT",
+            )
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_send_request_parts_request
                 ON send_request_parts (request_id)
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_send_request_parts_identity
+                ON send_request_parts (request_id, dedupe_key)
                 """
             )
             connection.execute(
@@ -1640,6 +2378,22 @@ class SQLiteSendRequestQueue:
         except sqlite3.Error:
             return
 
+    def _backfill_expires_at(self, connection: sqlite3.Connection) -> None:
+        """Q-G4：存量行回填 expires_at（与 _backfill_session_id 同法同规矩：
+        json_valid 过滤，SQLite 无 JSON1 时静默跳过，回填失败不致命）。"""
+        try:
+            connection.execute(
+                """
+                UPDATE send_requests
+                SET expires_at = json_extract(request_json, '$.expires_at')
+                WHERE expires_at IS NULL
+                  AND json_valid(request_json)
+                  AND json_extract(request_json, '$.expires_at') IS NOT NULL
+                """
+            )
+        except sqlite3.Error:
+            return
+
     def _connect(self) -> sqlite3.Connection:
         # timeout：写锁被占时最多等 5s 再报 busy，避免默认语义下偶发立即失败。
         connection = sqlite3.connect(self.db_path, timeout=5.0)
@@ -1666,6 +2420,45 @@ class SQLiteSendRequestQueue:
         # 只淘汰终态行（死信不堆积）：非终态（QUEUED/PROCESSING/
         # FAILED_RETRYABLE）是待投递或在途消息，被容量/时间序挤掉等于
         # 静默丢消息，故永不淘汰（A4 契约：宁可表超限也不丢在途）。
+        # Q-G7 ③ 唯一例外——休眠 PARTIAL（next_retry_at IS NULL，永不再被
+        # 认领、等价于已丢）超 TTL 后先扫成 FAILED_FINAL，再进上面的终态剪
+        # 除集；只改状态绝不重投（宁漏不双发）。新休眠已由 mark_partial
+        # 终态口在源头堵住，本腿只收历史存量（SEAT-ATK-QUEUE §二-P2 10 枚）。
+        cutoff = (
+            _utc_now() - timedelta(seconds=_DORMANT_PARTIAL_SWEEP_SECONDS)
+        ).isoformat()
+        # Q-G1 结构锁合规（主代理合并批 2026-09-27）：批量 UPDATE 必须带行
+        # 主键——同事务内先取休眠行键集，再逐行以 dedupe_key 落终态（休眠集
+        # 以十计，逐行成本可忽略；两语句同处 _prune 的写事务内，原子性不变）。
+        dormant_keys = [
+            str(row["dedupe_key"])
+            for row in connection.execute(
+                """
+                SELECT dedupe_key FROM send_requests
+                WHERE state = ?
+                  AND next_retry_at IS NULL
+                  AND updated_at <= ?
+                """,
+                (PARTIAL_ROW_STATE, cutoff),
+            ).fetchall()
+        ]
+        for dormant_key in dormant_keys:
+            connection.execute(
+                """
+                UPDATE send_requests
+                SET state = ?,
+                    claimed_from_state = NULL,
+                    lease_expires_at = NULL,
+                    last_public_message = 'dormant_partial_swept',
+                    updated_at = ?
+                WHERE dedupe_key = ?
+                """,
+                (
+                    ReceiptState.FAILED_FINAL.value,
+                    _utc_now().isoformat(),
+                    dormant_key,
+                ),
+            )
         connection.execute(
             """
             DELETE FROM send_requests
@@ -1713,18 +2506,38 @@ class SQLiteSendRequestQueue:
             return self._find_entry_in(connection, request_id)
 
     def _find_entry_in(
-        self, connection: sqlite3.Connection, request_id: str
+        self,
+        connection: sqlite3.Connection,
+        request_id: str,
+        *,
+        dedupe_key: str | None = None,
     ) -> QueuedSendRequest | None:
-        row = connection.execute(
-            """
-            SELECT *
-            FROM send_requests
-            WHERE request_id = ?
-            ORDER BY created_at DESC, rowid DESC
-            LIMIT 1
-            """,
-            (request_id,),
-        ).fetchone()
+        """按行身份取条目（Q-G1）。
+
+        给了 dedupe_key 就按行主键精确取一行；没给才回退「按 request_id 取
+        最新一行」的旧启发式（find_request 等只读口保持既有寻址语义）。
+        写路径一律先经 _resolve_update_identity_in 定身份再来取。
+        """
+        if dedupe_key is not None:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM send_requests
+                WHERE dedupe_key = ?
+                """,
+                (dedupe_key,),
+            ).fetchone()
+        else:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM send_requests
+                WHERE request_id = ?
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT 1
+                """,
+                (request_id,),
+            ).fetchone()
         if row is None:
             return None
         try:
@@ -1757,7 +2570,12 @@ class SQLiteSendRequestQueue:
             # 建表/迁移后 SELECT * 必含 parts_total 列；极端损坏场景由外层
             # _CorruptQueueRow 兜底隔离。
             parts_total = row["parts_total"]
-            parts = self._load_part_progress_in(connection, str(row["request_id"]))
+            # Q-G1/Q-G5：part 进度按行主键身份读（兄弟行各读各账）；行身份
+            # 随条目带出（worker 终结口据此寻址，不再依赖 payload 自述）。
+            row_dedupe_key = str(row["dedupe_key"])
+            parts = self._load_part_progress_in(
+                connection, str(row["request_id"]), dedupe_key=row_dedupe_key
+            )
             if parts_total is not None and int(parts_total) > 0 and parts is None:
                 # part 明细丢失但请求行声明了分片：进度不可信，按毒行隔离
                 # （终态化，绝不整封盲重发——防重复投递优先）。
@@ -1779,6 +2597,7 @@ class SQLiteSendRequestQueue:
                     else None
                 ),
                 parts=parts,
+                row_dedupe_key=row_dedupe_key,
             )
         except Exception as exc:
             raise _CorruptQueueRow(
@@ -1796,8 +2615,17 @@ class SQLiteSendRequestQueue:
         public_message: str,
         now: datetime,
         operational_issue: OperationalIssue | None = None,
+        dedupe_key: str,
     ) -> DeliveryReceipt:
-        """在调用方事务内更新行状态（mark_* 的单事务写路径）。"""
+        """在调用方事务内更新行状态（mark_* 的单事务写路径）。
+
+        Q-G1（SEAT-ATK-QUEUE，Critical）：谓词收口到行主键 dedupe_key。
+        旧版 `WHERE request_id = ?` 在同 request_id 多行（error_report
+        ack/card 共键设计，审查 E-12 刻意保留）时一次写覆全组：已 SENT 行
+        被复活带兄弟正文再认领＝双发、未发行被写成 SENT＝静默丢、两行
+        request_json 洗成同一份＝正文销毁（生产 7 行实锤＋离线复刻两全）。
+        行身份由终结口解析（显式 > 内联台账 > 最新行）并线程传入。
+        """
         issue = operational_issue or send_request.operational_issue
         public_message = "" if issue is not None else public_message
         persisted_request = (
@@ -1816,7 +2644,7 @@ class SQLiteSendRequestQueue:
                 lease_expires_at = NULL,
                 last_public_message = ?,
                 updated_at = ?
-            WHERE request_id = ?
+            WHERE dedupe_key = ?
             """,
             (
                 state.value,
@@ -1824,8 +2652,8 @@ class SQLiteSendRequestQueue:
                 retry_count,
                 next_retry_at.isoformat() if next_retry_at is not None else None,
                 public_message,
-                now.isoformat(),
-                send_request.request_id,
+                _heartbeat_iso(now),
+                dedupe_key,
             ),
         )
         return DeliveryReceipt(
