@@ -728,3 +728,44 @@ def test_kb_wiki_tail_feed_is_outside_ann_branch():
         assert site.lineno > ann_if.orelse[-1].lineno, (
             "收尾喂入点缩回了 ANN 分支体内 = 病根复位（判据变松）"
         )
+
+
+# =============================================================================
+# §4 FTS 失败留痕（P-4，2026-09-27 晨）：建没建成必须一行可判
+#
+# 本波实况：夜间收尾报 fts_built=false 而**零原因**——`_rebuild_fts` 的
+# `except sqlite3.Error: return None` 与 `ensure_fts_index` 的
+# `except Exception: return False` 各吞一层，判「为什么没建成」只能靠猜
+# （我据此猜了 schema、猜了毒行、猜了盘量，五发探针问的是不存在的问题）。
+# 两把锁各钉一条出口：异常必须落一条 WARNING 且点名异常类型。
+# =============================================================================
+
+
+def test_fts_rebuild_failure_logs_the_exception_type(tmp_path, caplog, monkeypatch):
+    """`_rebuild_fts` 撞上 sqlite 错误时，必须留一行点名类型的 WARNING，不许静默退 None。"""
+    store = _make_store(tmp_path, count=8)
+    assert store.build_ann_index()["built"] is True
+    monkeypatch.setattr(vk, "_FTS_CREATE_SQL", "CREATE VIRTUAL TABLE broken_fts USING fts5(")
+
+    with caplog.at_level(logging.WARNING, logger=vk.logger.name):
+        assert store._rebuild_fts() is None, "建表语句被截断，重建必须失败"
+
+    reasons = [r.getMessage() for r in caplog.records if "fts" in r.getMessage().lower()]
+    assert reasons, "FTS 重建失败必须留痕（本波就是靠这里没留痕猜了五轮）"
+    assert "OperationalError" in reasons[0], f"留痕必须点名异常类型：{reasons[0]}"
+
+
+def test_ensure_fts_index_logs_the_outer_exception(tmp_path, caplog, monkeypatch):
+    """`ensure_fts_index` 的外层兜底同理：降级为纯向量通道可以，不出声不行。"""
+    store = _make_store(tmp_path, count=8)
+
+    def _boom() -> None:
+        raise RuntimeError("fts5 module missing (simulated)")
+
+    monkeypatch.setattr(store, "_ensure_fts_table", _boom)
+    with caplog.at_level(logging.WARNING, logger=vk.logger.name):
+        assert store.ensure_fts_index(force=True) is False
+
+    reasons = [r.getMessage() for r in caplog.records if "RuntimeError" in r.getMessage()]
+    assert reasons, "外层 except 吞掉非 sqlite 异常时也必须点名（否则两把锁只钉住一半）"
+    assert "fts5 module missing (simulated)" in reasons[0], "原因原文要可归因，不许只剩类型名"

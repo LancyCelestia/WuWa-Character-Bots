@@ -31,6 +31,7 @@ from plugins.bot_unified_runtime.contracts import KnowledgeChunk
 from plugins.bot_unified_runtime.domains.chat_reply.character.documents import (
     load_character_document,
 )
+from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 
 _EMBED_BATCH_SIZE = 10  # 百炼 qwen3.7 上限 20 条、v4 上限 10 条，取 10 两者都兼容。
 _MIN_CHUNK_CHARS = 120
@@ -45,6 +46,15 @@ _FTS_CREATE_SQL = (
     ")"
 )
 _FTS_MIN_MATCH_CHARS = 3
+
+
+def _fts_failure_brief(detail: str, *, limit: int = 200) -> str:
+    """失败原因上账前的消毒：只留首行、定长，并把密钥/路径形态打成码。
+
+    报错串可能带被插入的正文片段或 `.env` 里的端点密钥，日志面不许原样落盘。
+    """
+    first_line = str(detail or "").splitlines()[0] if detail else ""
+    return redact_local_secrets(first_line[:limit])
 _RRF_K = 60.0  # RRF 平滑常数：k 越大排名越平滑，越不容易被单一通道霸榜。
 _VECTOR_CANDIDATE_FACTOR = 4
 _VECTOR_CANDIDATE_FLOOR = 20
@@ -4572,7 +4582,14 @@ class SqliteVectorKnowledgeStore:
                     return True
                 self._fts_valid = False
                 return False
-            except Exception:  # noqa: BLE001 - FTS5 缺失/损坏时禁用关键词通道。
+            except Exception as exc:  # noqa: BLE001 - FTS5 缺失/损坏时禁用关键词通道。
+                # 降级可以，不出声不行：本波就是靠这一处静默把「没建成」读成
+                # 「大概建错了」，五发探针才问出一个不存在的问题。
+                logger.warning(
+                    "FTS 通道探查/重建异常，关键词通道本轮降级为纯向量：%s: %s",
+                    type(exc).__name__,
+                    _fts_failure_brief(str(exc)),
+                )
                 self._fts_valid = False
                 return False
 
@@ -4683,7 +4700,14 @@ class SqliteVectorKnowledgeStore:
                     (_FTS_SIGNATURE_KEY, signature),
                 )
             return signature
-        except sqlite3.Error:
+        except sqlite3.Error as exc:
+            # 留痕不留正文：sqlite 的报错串里可能带被插入的文本片段，只取类型名
+            # 与定长首行（本函数返回 None 即关键词通道降级，无声降级=不可归因）。
+            logger.warning(
+                "FTS 重建失败，关键词通道本轮降级为纯向量：%s: %s",
+                type(exc).__name__,
+                _fts_failure_brief(str(exc)),
+            )
             return None
 
     def _match_candidates(self, terms: list[str], limit: int) -> list[str]:
