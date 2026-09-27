@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -355,15 +354,47 @@ def build_platform_router(
     def read_file(
         payload: dict[str, Any], principal: Principal = Depends(read_dependency)
     ):
+        # F-1（SEAT-ATK-CP，2026-09-28 根修）：读取根＝显式配置的白名单
+        # （bot_control_plane_files_roots，装配期快照键），**不再**以进程 cwd 为根；
+        # 无配置 ⇒ 503 诚实拒绝（与 config 服务/media 未装配同一形态），绝不回落 cwd。
+        # 全部守卫（resolve+按段判成员、敏感子树/后缀 denylist、绝对路径拒）由
+        # ..file_access.FileReadGateway 一次执法（F-3 收编：网关＝本端点唯一读取实现体，
+        # 守卫排在任何 stat/解析之前）；HTTP 层不另存第二套路径判据。
         from ...domains.files.sources.file_reader import read_supported_file
+        from ..file_access import FileGatewayError, FileReadGateway, parse_roots
 
+        roots = parse_roots(
+            getattr(config, "bot_control_plane_files_roots", None)
+            if config is not None
+            else None
+        )
+        if not roots:
+            raise ControlPlaneError(
+                503,
+                "files_config_unavailable",
+                "未配置文件读取根（BOT_CONTROL_PLANE_FILES_ROOTS 为空），端点拒绝读取。",
+            )
+        gateway = FileReadGateway(roots)
         relative = str(payload.get("path") or "")
-        if not relative or Path(relative).is_absolute():
-            raise ControlPlaneError(422, "file_read_rejected", "只允许工作区相对路径。")
-        candidate = (Path.cwd() / relative).resolve()
-        root = Path.cwd().resolve()
-        if root != candidate and root not in candidate.parents:
-            raise ControlPlaneError(403, "file_read_rejected", "路径不在工作区范围内。")
+        try:
+            candidate, matched_root = gateway.authorize(relative)
+        except FileGatewayError as exc:
+            reason = str(exc)
+            if reason == "absolute_path_forbidden":
+                raise ControlPlaneError(
+                    422, "file_read_rejected", "只允许登记根内的相对路径。"
+                ) from exc
+            if reason == "path_not_allowed":
+                raise ControlPlaneError(
+                    403, "file_read_rejected", "路径不在登记读取根范围内。"
+                ) from exc
+            if reason == "denied_location":
+                raise ControlPlaneError(
+                    403, "file_read_denied", "路径命中敏感读取禁区。"
+                ) from exc
+            raise ControlPlaneError(
+                404, "file_not_supported", "文件不存在或格式不支持。"
+            ) from exc
         result = read_supported_file(candidate)
         if result.kind in {"missing", "unknown"}:
             raise ControlPlaneError(
@@ -371,7 +402,7 @@ def build_platform_router(
             )
         return envelope(
             {
-                "path": str(candidate.relative_to(root)),
+                "path": str(candidate.relative_to(matched_root)),
                 "kind": result.kind,
                 "text": result.text,
                 "title": result.title,
@@ -388,6 +419,27 @@ def build_platform_router(
             raise ControlPlaneError(422, "media_kind_invalid", "媒体类型无效。")
         if config is None:
             raise ControlPlaneError(503, "media_config_unavailable", "媒体配置未装配。")
+        # F-01（SEAT-ATK-WEBUI，SEAT-FIX-WEBUIMA 2026-09-27 根修）：三源的本地形态
+        # 不再直连 ingest 真身——与 /files/read 走同一登记根/禁区守卫中央件
+        # （唯一真身 = ..file_access.FileReadGateway.admit_media_source，HTTP 层
+        # 不自存第二套路径判据）。远程/数据形态原样放行（远程取物咽喉在 ingest
+        # 下游，另票处理）；未知 scheme 与越界本地路径 fail-closed。全部本地拒因
+        # 折叠成单一回执码——"存在但越界"与"不存在"同形，杜绝存在性探测。
+        # 守卫排在任何 ingest 调用（其内含 stat/open/ffmpeg 触盘）之前。
+        from ..file_access import FileGatewayError, FileReadGateway, parse_roots
+
+        gateway = FileReadGateway(
+            parse_roots(getattr(config, "bot_control_plane_files_roots", None))
+        )
+
+        def _admit(raw: str) -> str:
+            try:
+                return str(gateway.admit_media_source(raw))
+            except FileGatewayError as exc:
+                raise ControlPlaneError(
+                    422, "media_source_rejected", "媒体来源未通过读取校验。"
+                ) from exc
+
         try:
             if kind in {"image", "gif"}:
                 from ...domains.media.ingest.vision_describe import (
@@ -395,10 +447,13 @@ def build_platform_router(
                     describe_images,
                 )
 
+                guarded_images = [
+                    _admit(str(item)) for item in payload.get("image_urls", [])
+                ]
                 provider = build_vision_provider(config)
                 text = describe_images(
                     provider,
-                    image_urls=[str(item) for item in payload.get("image_urls", [])],
+                    image_urls=guarded_images,
                     query_text=str(payload.get("query") or ""),
                 )
                 result = {
@@ -412,10 +467,9 @@ def build_platform_router(
                     transcribe_audio,
                 )
 
+                guarded_audio = _admit(str(payload.get("audio_source") or ""))
                 asr_provider = build_asr_provider(config)
-                text = transcribe_audio(
-                    asr_provider, audio_source=str(payload.get("audio_source") or "")
-                )
+                text = transcribe_audio(asr_provider, audio_source=guarded_audio)
                 result = {
                     "text": text,
                     "asr": bool(text),
@@ -427,11 +481,12 @@ def build_platform_router(
                     describe_video,
                 )
 
+                guarded_video = _admit(str(payload.get("video_source") or ""))
                 provider = build_vision_provider(config)
                 frames = max(1, min(16, int(payload.get("frames") or 4)))
                 text = describe_video(
                     provider,
-                    video_source=str(payload.get("video_source") or ""),
+                    video_source=guarded_video,
                     query_text=str(payload.get("query") or ""),
                     frames=frames,
                 )
