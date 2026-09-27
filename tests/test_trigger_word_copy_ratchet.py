@@ -237,8 +237,9 @@ class NotDebtHandoff(NamedTuple):
         return _words_from_text(self.words_text)
 
 
-#: **ruleB 不计账名册（28 枚，逐枚点名＋各写判据；新增/删除都必须带理由，禁止写成条款）**。
-#: 判据出处＝S106 五态表（只读席）＋本席 AST 值侧探针复算；`--ledger` 里这 28 枚仍逐条打印。
+#: **ruleB 不计账名册（枚数＝本册现长，逐枚点名＋各写判据；新增/删除都必须带理由，禁止写成条款。
+#:  2026-09-26 S-TRIG-ROSTER 随 K-3 乙通道入一枚在飞件探针（末条带⚠注：该件词集再编辑即虚设转红，由件 owner 重登记））**。
+#: 判据出处＝S106 五态表（只读席）＋本席 AST 值侧探针复算；`--ledger` 里这些枚仍逐条打印。
 COPY_NOT_DEBT: Final[tuple[NotDebtCopy, ...]] = (
     NotDebtCopy(
         file="plugins/bot_unified_runtime/control_plane/features.py",
@@ -436,9 +437,40 @@ COPY_NOT_DEBT: Final[tuple[NotDebtCopy, ...]] = (
         kind="在册镜像",
         reason="同表 历史上的今天 格 tuple 值：同上，独立声明单元第 5 格",
     ),  # 现算位 313｜真身 echo.py:1725｜值侧形态见 reason
+    NotDebtCopy(
+        file="tests/test_group_info_meta_parity.py",
+        label="coll",
+        words_text="群主是谁、群人数、群信息、群公告",
+        kind="探针字面量",
+        reason="邮件侧 QQ 式群问句的负锁入参（「不得编造群名/群主/人数行」逐条喂这四词，词面即验收标的，"
+        "派生自真身会让负样本退化成用真身验真身）——照 ``test_traditional_triggers_2`` 探针族同判。"
+        "⚠ 该文件为 2026-09-26 在飞未入库件（mtime 18:02，T-META 摄取波）：若其词集再编辑，本条即虚设转红，"
+        "由该件 owner 按四把牙重登记，S-TRIG-ROSTER 不替在飞件预设未来形态",
+    ),  # 现算位 322｜真身 echo.py:1962
+    NotDebtCopy(
+        file="plugins/bot_unified_runtime/domains/schedule/capabilities/schedule_board.py",
+        label="coll",
+        words_text="主人在干嘛、她在干嘛、主人去哪了、她在忙什么、她出去了吗",
+        kind="在册镜像",
+        reason="日程板代答问句表 _QUESTION_NATURAL_ALIASES：本能力「智能代答」判据真身"
+        "（文件头注释 2「别人问她在干嘛/主人在忙什么，按分级表回答」），帮助册「日程」条目"
+        "（echo.py dict:aliases 在账镜像位）镜像同词集属帮助闭合/双向覆盖门要求——双写系两波"
+        "同日有意分层，非抄第三方真身。R8 甲·S-R8-TRIGGER-c 归因凭据：三态现算证明本枚系 "
+        "HEAD(b0172ee)→现树新增（未跟踪新文件＋echo.py 工作树 diff 互证，2026-09-26/27 日程板波）。",
+    ),  # R8甲归因新增｜真身 echo.py:2178:dict:aliases（在账）
+    NotDebtCopy(
+        file="plugins/bot_unified_runtime/domains/schedule/capabilities/schedule_board.py",
+        label="regexstr",
+        words_text="提醒、叫我、記得叫、记得叫",
+        kind="探针字面量",
+        reason="反抢词排除守卫 _NATURAL_SIGNAL_EXCLUDE_RE（116 行注释「非疑问、无提醒信号」）："
+        "字面出现是给提醒域「让路」，不驱动日程板任何路由——判据子集口读作副本属假阳，"
+        "照 S131「结构数据以词为键」判例点名。R8 甲·S-R8-TRIGGER-c 归因凭据：同为 "
+        "HEAD→现树新增（未跟踪新文件，HEAD 树零命中）。",
+    ),  # R8甲归因新增｜真身 echo.py:2129:dict:aliases（在账）
 )
 
-#: **ruleA 不计账名册（10 簇在册镜像对；第 11 簇「订阅」跨能力撞词，刻意不入册＝继续记账）**。
+#: **ruleA 不计账名册（11 簇在册镜像对，2026-09-26 随同意门入第 11 簇；另「订阅」簇为跨能力撞词、刻意不入本册＝继续记账经移交）**。
 HOME_MIRROR_NOT_DEBT: Final[tuple[NotDebtMirror, ...]] = (
     NotDebtMirror(
         words_text="archive、guidang、shoucang、存图、存聊天记录、存记录、归档、收图、收藏",
@@ -505,6 +537,19 @@ HOME_MIRROR_NOT_DEBT: Final[tuple[NotDebtMirror, ...]] = (
         "command_catalog::_eval_literal 只认同模块常量所要求的字面量，能力侧那枚才是路由真身，"
         "双向门与触发词单一来源门都要求三者词集相等。",
     ),  # 现算位 echo 1992×3027 × host_state 56
+    NotDebtMirror(
+        words_text="同意卡、书面同意、同意單、書面同意、consentcard、yijika、shumiantongyi",
+        sites=(
+            ("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:aliases"),
+            ("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:triggers_nickname"),
+            ("plugins/bot_unified_runtime/domains/ops/capabilities/consent_admin.py", "DEFAULT_TRIGGER_WORDS"),
+        ),
+        reason="书面同意族 7 词（18 项收尾波同意门，2026-09-26 入库）：consent_admin.py:55 注释与 "
+        "echo.py『书面同意』条目 2018 行注释互为对侧自陈「词表必须逐词一致，由触发词双向门执法」；"
+        "帮助侧两枚字面量位是 command_catalog::_eval_literal 只认同模块常量所要求，"
+        "能力侧 DEFAULT_TRIGGER_WORDS 是路由真身——与上一枚宿主机状态簇同型三员镜像，超额 2 笔不计账"
+        "（S-TRIG-ROSTER 按 K-3 乙裁定逐枚登记，2026-09-26）。",
+    ),  # 现算位 echo 2019×3069 × consent_admin 57
 )
 
 #: **ruleA 跨能力撞词移交名册（1 簇，RULINGS-20260924 第 9 项裁定 A／S137 落码 2026-09-24）**：

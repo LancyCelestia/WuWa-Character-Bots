@@ -345,7 +345,7 @@ _PUBLIC_HELP_TOPICS = frozenset(
     {
         "订阅", "点歌", "表情", "天气", "行情", "个股行情", "商品行情", "国债收益率", "北向资金", "汇率", "占卜", "快报", "维基", "萌娘百科",
         "历史上的今天", "下载", "昵称", "链接", "Epic", "好感度", "吃什么", "偷表情",
-        "随机图", "提醒", "笔记", "收件箱", "语音", "搜图", "记忆", "路由", "草稿",
+        "随机图", "提醒", "笔记", "日程", "收件箱", "语音", "搜图", "记忆", "路由", "草稿",
         "帮助", "聊天", "戳一戳", "表情收库", "自然语言", "群信息", "亲密模式",
     }
 )
@@ -375,7 +375,7 @@ _HELP_CATEGORIES = (
         {
             "订阅", "点歌", "表情", "偷表情", "搜图", "Epic", "历史上的今天",
             "天气", "行情", "个股行情", "商品行情", "国债收益率", "北向资金", "汇率", "占卜", "快报", "维基", "萌娘百科", "下载",
-            "昵称", "链接", "吃什么", "好感度", "随机图", "提醒", "笔记", "收件箱", "语音", "记忆", "路由",
+            "昵称", "链接", "吃什么", "好感度", "随机图", "提醒", "笔记", "日程", "收件箱", "语音", "记忆", "路由",
             "草稿", "帮助", "聊天", "戳一戳", "表情收库", "自然语言", "群信息", "亲密模式",
         },
     ),
@@ -1973,7 +1973,10 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "detail": (
                 '【板块介绍】\n'
                 '  在群里直接问「群信息 / 群主是谁 / 群人数 / 群公告 / 群精华 / 群相册 / 群待办 / 群里都有谁」，\n'
-                '  守岸人走 OneBot V11 群接口（群资料/成员列表/公告/精华/相册/待办）现查现答；\n'
+                '  守岸人走协议端群接口现查现答：QQ 侧 OneBot V11（群资料/成员列表/公告/精华/相册/待办），\n'
+                '  Telegram 侧按 Bot API 对等回答（群名/介绍/人数/群主与管理员/置顶当公告位/我的身份与头衔；\n'
+                '  全量成员名单与精华/相册/待办没有对应接口，缺的逐条直说不猜），\n'
+                '  邮件里没有「群」这个对象，只答本会话元信息与参与者；\n'
                 '  资料带进程内缓存（资料 600s/成员 900s/公告 600s/相册 600s/待办 120s），\n'
                 '  待办缓存刻意给得短——刚设好的待办不该被旧表盖住。\n'
                 '【参与者这一项】\n'
@@ -1991,7 +1994,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             # 且与 host_state.DEFAULT_TRIGGER_WORDS 逐字同集，由触发词双向门执法。
             "aliases": ('宿主机状态', '机器状态', '机器配置', '宿主状态', '宿主機狀態', '機器狀態', 'hoststate', 'jiqizhuangtai', 'jizhuangtai', 'jiqipeizhi'),
             "index": '【宿主机状态】超管看本机：机器状态｜机器配置｜版本与占用',
-            "title_line": '【宿主机状态】这台机器的配置、占用与运行版本（仅超管）',
+            "title_line": '【宿主机状态】这台机器的配置、占用与运行版本（仅管理员）',
             "lines": [
                 '机器状态：作用=报本机实况；参数=无；内容=CPU/内存/磁盘占用、显卡与显存、系统版本，附守岸人自己的运行版本族；意义=一句话知道机器现在累不累。',
                 '机器配置：作用=报硬件；参数=无；内容=型号/核心数/总内存/磁盘分区容量；意义=区分「配置」与「此刻占用」两件事。',
@@ -2167,6 +2170,39 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '  权限=全员（bot_notes_enabled 可关）。单会话上限 bot_notes_max_per_chat\n'
                 '  （默认 200），满了会提示先清理；数据库与图片经 runtime 路径落盘。\n'
                 '【示例】笔记 记 周三要交总结（换行）- [ ] 写初稿｜笔记列表｜笔记 看 1｜做完 1｜删笔记 1｜作业做完了'
+            ),
+        },
+        {
+            "topic": '日程',
+            "admin_only": False,
+            "aliases": ('日程', '日程板', '日程列表', '我的日程', '看看日程', '日程清单', '日程表',
+                        '日程导入', '课表导入', '课表', '課表', '她在干嘛', '她在忙什么',
+                        '主人在干嘛', '主人去哪了', '她出去了吗',
+                        'richeng', 'richengliebiao', 'rclb', 'schedule', 'kebiao'),
+            "index": '【日程】她的日程表与智能代答：日程 <时间> <活动>｜日程表｜日程 删 N｜日程 公开 N｜课表 导入',
+            "title_line": '【日程】日程记录、课表导入与按分级表代答',
+            "lines": [
+                '日程 <时间> <活动>：作用=往你的日程板记一条；参数=时间（必填，支持「明天8点/8点到9点半/每周三」，单双周要带「学期 2026-09-07」）＋活动正文（可带「公开」二字）；内容=编号式确认；意义=把安排交给我排好。缺省隐私。',
+                '日程表 / 日程列表 / 我的日程：作用=看未来 30 天安排；参数=无；内容=编号＋时刻＋[公]/[密]；意义=盘点。',
+                '日程 删 N：作用=放下第 N 条最近那次；参数=编号（日程表里的号）；内容=确认；「日程 删课 N」整条安排不再出现。',
+                '日程 公开 N / 日程 隐私 N：作用=切换第 N 条对别人的可答面；参数=编号；内容=确认；公开也只说「在做什么＋几点到几点」。',
+                '日程 导入 / 课表 导入：<多行文本>：作用=课表/计划整批记（一行一条「周X 8:00-9:40 名称 地点 单/双」）；也可以直接发课表图片（图只在你发来的这一刻读，不存不扫）。',
+                '她在干嘛 / 主人在忙什么：作用=别人替你问一声；内容=按分级表回：公开条目普通用户只听得到类别与时刻，熟人（trusted/管理员）听得到活动名；隐私与敏感细节永不出口。',
+            ],
+            "detail": (
+                '【板块介绍】\n'
+                '  日程板复用 V2.1 日程引擎（与提醒共用车间不共表义）：一条日程=\n'
+                '  活动＋起止时刻＋可见性（公开/隐私，缺省隐私）。信息来源只有你\n'
+                '  亲口说过的话与发来的课表——不查设备、不读定位、不做任何本机监控。\n'
+                '【权限与效果】\n'
+                '  记录腿全员可用（BOT_SCHEDULE_ENABLED 总闸，缺省关，改后重启）。\n'
+                '  代答腿另有总闸 BOT_SCHEDULE_STATUS_REPLY_ENABLED（缺省关）；\n'
+                '  自然语言顺手记（「明天8点有课」不带「日程」二字）另受\n'
+                '  BOT_SCHEDULE_NATURAL_CAPTURE_ENABLED 控制（缺省关）。\n'
+                '  隐私判定发生在出站前：代答由确定性投影成句，不经大模型，\n'
+                '  地点/健康/饮食/作息细节对非本人永不外给（分级表见设计文档）。\n'
+                '【示例】日程 明天8点到9点半 高数｜日程 每周三14:00 组会 公开｜日程表｜'
+                '日程 公开 2｜日程 删 3｜日程 导入 周一8:00-9:40 高数 一教101｜她在干嘛'
             ),
         },
         {
@@ -3135,6 +3171,21 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "examples": ("笔记 记 周三要交总结｜笔记列表｜笔记 看 1｜做完 1｜完成 1｜删笔记 1",),
         "tests": ("tests/test_notes.py", "tests/test_todo_checkoff.py", "tests/test_reminder_tone.py"),
     },
+    "日程": {
+        "capability": "bot.reminder",
+        "network": False,
+        "chat_scope": "日程板按用户归属（board-<owner>，与提醒/笔记共库不共表义）；代答按可见性分级投影",
+        "outputs": ("文本",),
+        "triggers_nl": ("日程 <时间> <活动>", "日程表", "日程列表", "我的日程", "日程 删 <N>", "日程 删课 <N>",
+                       "日程 公开 <N>", "日程 隐私 <N>", "日程 导入 <多行文本>", "课表 导入 <多行文本>", "课表",
+                       "她在干嘛", "她在忙什么", "主人在干嘛", "主人去哪了", "她出去了吗",
+                       "明天8点有课"),
+        "triggers_nickname": ("日程", "日程板", "richeng", "rclb", "richengliebiao", "schedule", "kebiao"),
+        "config_vars": ("BOT_SCHEDULE_ENABLED", "BOT_SCHEDULE_DB_PATH",
+                        "BOT_SCHEDULE_STATUS_REPLY_ENABLED", "BOT_SCHEDULE_NATURAL_CAPTURE_ENABLED"),
+        "examples": ("日程 明天8点到9点半 高数｜日程 每周三14:00 组会 公开｜日程表｜日程 公开 2｜日程 删 3｜她在干嘛",),
+        "tests": ("tests/test_schedule_board.py",),
+    },
     "收件箱": {
         "capability": "bot.daily_assist",
         "network": False,
@@ -3433,7 +3484,7 @@ def _help_card_rows(row: str) -> list[tuple[str, str]]:
 
 def _resolve_help_accent(accent_color: str) -> tuple[str, str]:
     """把配置主色归一成 (accent, accent_dark)；非法/留空回退中性灰。"""
-    from plugins.bot_unified_runtime.output.card_render.bridge import (
+    from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
         _darken,
         _hex_to_rgb,
         _rgb_to_hex,
@@ -3478,6 +3529,9 @@ def _help_mica_html(
     工艺出处=用户裁定）+ 液态玻璃面板 + 三枚柔光色斑漂移（E01 二批：相位由
     payload digest 钉帧，bridge.payload_phase 单一事实源，页面零 JS）。
     """
+    from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
+        payload_phase,
+    )
     from plugins.bot_unified_runtime.domains.render.card_render.mica_shell import (
         drift_blobs_html,
         mica_decor_css,
@@ -3486,9 +3540,6 @@ def _help_mica_html(
     )
     from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
         BRAND_WASH_TOKENS,
-    )
-    from plugins.bot_unified_runtime.output.card_render.bridge import (
-        payload_phase,
     )
 
     accent, accent_dark = _resolve_help_accent(accent_color)
