@@ -103,8 +103,8 @@ from .domains.food.capabilities.eat import build_eat_capability
 from .domains.link_parse.capabilities.content_parser import build_content_capability
 from .domains.location.capabilities.moegirl import (
     build_moegirl_capability,
-    local_kb_answer,
-    question_lookup,
+    extract_moegirl_query,
+    question_lookup, resolve_grounding_for_entity,  # 2026-09-27 百科接地批（行数不变：7087/7088 在册 matcher 坐标零顶漂）
 )
 from .domains.location.capabilities.wiki import build_wiki_capability
 from .domains.media.capabilities.media_archive import build_media_archive_capability
@@ -389,13 +389,23 @@ def _build_memory_writer(
     import logging
     import threading
 
-    from .domains.chat_reply.character.memory import SQLiteMemoryRepository
+    from .domains.chat_reply.character.memory import (
+        SQLiteMemoryRepository,
+        build_memory_bus_for_writer,
+    )
     from .domains.chat_reply.character.memory_extract import (
         extract_memory_texts,
         store_extracted_memories,
     )
 
-    repository = SQLiteMemoryRepository(config.bot_memory_db_path)
+    # A（bus 开闸前置，S-FIX-ATK-MEMORY-FIX）：抽取腿必须带总线构造仓储——开关开时
+    # derived 事实直落总线（provenance=derived），不再写旧表被影子读洗成 explicit。
+    # 开关关（现网缺省）时 build_memory_bus_for_writer 返回 None 且**不碰库**
+    # （memory_bus_v2.build_memory_bus 先判 enabled 再连 store），构造参数 bus=None
+    # 与不传等价 ⇒ 缺省关态逐字节不变（SQLiteMemoryRepository docstring 承诺）。
+    repository = SQLiteMemoryRepository(
+        config.bot_memory_db_path, bus=build_memory_bus_for_writer(config)
+    )
     router = model_router if model_router is not None else build_model_router(config)
     worker_lock = threading.Lock()
     cooldown_until = 0.0
@@ -451,13 +461,17 @@ def _build_memory_writer(
                     extract_reminder_drafts,
                     store_extracted_reminders,
                 )
+                from .domains.schedule.store.reminders import (
+                    _local_now as _reminder_local_now,
+                )
                 from .domains.schedule.store.reminders import build_reminder_store
 
-                # session_id 形如 "group:<id>" / "private:<id>"（ingress 约定）。
-                scope, _, target = session_id.partition(":")
+                # 作用域归属=中央 session_keys 判据（A-ING-3：partition(":") 自拆误判下划线群键）。
+                target_scope, target_id = _reminder_target_from_session_key(session_id, sender_id)
                 drafts = extract_reminder_drafts(
                     provider, user_text=user_text, reply_text=reply_text,
                     generation_options=_generation_options(120),
+                    now=_reminder_local_now(),
                 )
                 if drafts:
                     store_extracted_reminders(
@@ -465,8 +479,8 @@ def _build_memory_writer(
                         drafts=drafts,
                         session_key=session_id,
                         sender_id=sender_id,
-                        target_scope=scope if scope in {"group", "private"} else "private",
-                        target_id=target.strip() or sender_id,
+                        target_scope=target_scope,
+                        target_id=target_id,
                     )
         except Exception as exc:  # noqa: BLE001 - optional memory failures must not escape.
             cooldown_until = time.monotonic() + float(setting(
@@ -978,7 +992,7 @@ def _forward_message_text_sync(result: Any) -> str:
             text = " ".join(parts).strip()
         if text:
             lines.append(f"{nickname}：{text}" if nickname else text)
-    return "\n".join(lines)
+    return _neutralize_forward_body("\n".join(lines))
 
 
 def _collect_nested_forward_ids(result: Any) -> list[str]:
@@ -6263,7 +6277,7 @@ def _register_nonebot_handlers() -> None:
                 pick_gallery_image,
                 merged_poke_config,
                 session_key=(
-                    f"group_{poker_group}_{poker_id}"
+                    f"group_{poker_group}"  # 与 get_session_id 同形（票②）
                     if reaction.group
                     else f"private_{poker_id}"
                 ),
@@ -8222,6 +8236,20 @@ def _register_nonebot_handlers() -> None:
         )
         if should_finish_nonebot_matcher(receipt):
             await status.finish(receipt.public_message)
+        # ---- PERSONA-HOT 装配腿（S-PERSONA-WIRE，提案=接线点 A；设计详见
+        # .superpowers/sdd/2026-09-27-fullload/logs/SEAT-PERSONA-HOT-wiring.md）：
+        # 语气人格切换成功后，紧随一次异步外观下发（H-1 逐项回执）。判据只认
+        # bot.runtime + sent + 显式「persona switch」命令形（H-2：情绪/概率自动腿
+        # 永不到这）；sent 只说明主链回执已投递，切换是否真落地由 helper 读回
+        # runtime override 确认——驳回/报错路径同样是 sent，不确认就会假随切。
+        if capability_id == "bot.runtime" and receipt.state.value == "sent":
+            await _dispatch_persona_appearance_if_switched(
+                bot=bot,
+                event=event,
+                config=config,
+                command_text=command_text,
+                settings_manager=settings_manager,
+            )
         # 规格 3 双触发（用户 2026-09-27 睡前定稿·第 9 项）：同一句里
         # 「无参数命令头 + 自然语言尾巴」⇒ 命令执行与人格回复并行，
         # 覆盖旧口径「命令旁路缓冲、命中命令就不走人格回复」。判据收在
@@ -9698,9 +9726,119 @@ def _register_nonebot_handlers() -> None:
 
     @moegirl.handle()
     async def _handle_moegirl(bot: Bot, event: Event) -> None:
+        # 百科接地批（2026-09-27 甲+丙）：萌百指令与问句都不再自答——百科正文
+        # 唯一进 prompt 的形态是「接地块」，经消息契约 kb_grounding_text/
+        # kb_grounding_label 进入人格聊天链的**既有一次生成**（chat.py 装配点
+        # 统一过中央件 guard_secondhand_text，拼接零手拼字面量；结构锁在
+        # tests/test_kb_grounding_chat.py）。有接地 ⇒ 交聊天链用守岸人的话说；
+        # 无接地面（用法提示/候选列表/无条目/网络失败——零百科正文、零链接）
+        # 留在命令面兜底。落点全部在已注册坐标（≤:9298）之下 ⇒ 零顶漂。
+        message = _incoming_from_nonebot_event(
+            event,
+            bot_id=str(getattr(bot, "self_id", "unknown")),
+            feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
+        )
+        try:
+            query = extract_moegirl_query(message.plain_text)
+        except ValueError:
+            query = ""
+        grounding = None
+        if query:
+            try:
+                grounding, _reason = await asyncio.to_thread(
+                    resolve_grounding_for_entity, query, config=config
+                )
+            except Exception:  # noqa: BLE001 - 接地故障回命令面原链路，不劣化。
+                grounding = None
+        if grounding is not None:
+            await _moegirl_answer_via_chat(
+                bot,
+                event,
+                message.model_copy(
+                    update={
+                        "kb_grounding_text": grounding.text,
+                        "kb_grounding_label": grounding.label,
+                    }
+                ),
+                moegirl,
+            )
+            return
         await _run_simple_capability(
             bot, event, build_moegirl_capability, "bot.moegirl", moegirl
         )
+
+    async def _moegirl_answer_via_chat(
+        bot: Bot,
+        event: Event,
+        message: IncomingMessage,
+        matcher: Any,
+    ) -> None:
+        """萌百两入口汇合的唯一转发出口：只经 bot.chat 一次生成，绝不自答。
+
+        管线、门控、历史归档、投递与诊断和旧「问句未命中降级」路径逐字同构
+        （即原 /bot.chat 主链路），本函数零新增通路；接地块随 message 进
+        chat 装配（见 domains/chat_reply/capabilities/chat.py 接地腿）。
+        """
+        receipt = await pipeline.handle_async(
+            message, chat_capability, capability_id="bot.chat"
+        )
+        await _notify_operational_receipt(message, receipt)
+        sent_request = _find_sent_request(send_queue, message.request_id)
+        if sent_request:
+            history_should_record = _should_record_chat_history(sent_request)
+            if history_should_record:
+                _record_chat_history_turn(
+                    history_recorder,
+                    message=message,
+                    role="user",
+                    text=message.plain_text,
+                    audit_logger=audit_logger,
+                )
+            transport_receipt = await _deliver_transport_send_request(
+                bot,
+                event,
+                sent_request,
+                audit_logger,
+                receipt_repository,
+                send_queue,
+            )
+            await _notify_operational_receipt(message, transport_receipt)
+            if (
+                history_should_record
+                and transport_receipt.state.value == "sent"
+            ):
+                _record_chat_history_turn(
+                    history_recorder,
+                    message=message,
+                    role="assistant",
+                    text=sent_request.content.text_fallback,
+                    audit_logger=audit_logger,
+                )
+            _record_runtime_diagnostic(
+                config=config,
+                diagnostics_store=diagnostics_store,
+                message=message,
+                capability_id="bot.chat",
+                receipt=transport_receipt,
+                send_queue=send_queue,
+                audit_logger=audit_logger,
+            )
+            if should_finish_nonebot_matcher(transport_receipt):
+                await matcher.finish(transport_receipt.public_message)
+            return
+        _record_runtime_diagnostic(
+            config=config,
+            diagnostics_store=diagnostics_store,
+            message=message,
+            capability_id="bot.chat",
+            receipt=receipt,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+        )
+        if _should_silently_skip_chat_receipt(message, receipt, audit_logger):
+            return
+        if should_finish_nonebot_matcher(receipt):
+            await matcher.finish(receipt.public_message)
 
     @moegirl_question.handle()
     async def _handle_moegirl_question(bot: Bot, event: Event) -> None:
@@ -9709,159 +9847,35 @@ def _register_nonebot_handlers() -> None:
             bot_id=str(getattr(bot, "self_id", "unknown")),
             feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
         )
-        started_at = time.perf_counter()
-        # 本地知识库优先：鸣潮/方舟/原神等本地语料命中时直接回答，
-        # 绝不外查萌百（外链质量差且可能与本地设定冲突）。
-        kb_body = None
         try:
-            kb_body = await asyncio.to_thread(
-                local_kb_answer, config, message.plain_text
-            )
-        except Exception:  # noqa: BLE001 - 本地库失败走萌百链路。
-            kb_body = None
-        if kb_body:
-            kb_result = CapabilityResult(
-                request_id=message.request_id,
-                capability_id="bot.moegirl",
-                kind="text",
-                title="",
-                body=kb_body,
-                risk_level=RiskLevel.LOW,
-                privacy_level=PrivacyLevel.PUBLIC,
-                send_policy=SendPolicy.IMMEDIATE,
-                audit_tags=["moegirl_question", "local_kb_first"],
-            )
-            receipt = await _run_capability_through_pipeline(
-                bot=bot,
-                event=event,
-                config=config,
-                pipeline=pipeline,
-                send_queue=send_queue,
-                audit_logger=audit_logger,
-                receipt_repository=receipt_repository,
-                diagnostics_store=diagnostics_store,
-                capability=lambda _m, _d: kb_result,
-                capability_id="bot.moegirl",
-                record_diagnostic=False,
-                offload_sync_capability=False,
-                history_recorder=history_recorder,
-                history_kind="command",
-                operational_notifier=_notify_operational_receipt,
-            )
-            if should_finish_nonebot_matcher(receipt):
-                await moegirl_question.finish(receipt.public_message)
-            return
-        try:
-            # 网络查询放线程池，紧超时由 sources 层预算约束（默认 ≤2×5s）。
+            # 本地检索 + 萌百外查都是阻塞面，放线程池；紧超时由 sources 层
+            # 预算约束（默认 ≤2×5s），300s TTL 缓存兜重复问法。
             outcome = await asyncio.to_thread(
                 question_lookup, message.plain_text, config=config
             )
-        except Exception:  # noqa: BLE001 - 查询层异常一律按降级处理。
+        except Exception:  # noqa: BLE001 - 查询层异常一律光脚转聊天链，绝不阻断。
             outcome = None
-        elapsed_ms = round((time.perf_counter() - started_at) * 1000)
-        if outcome is None or outcome.status != "hit" or not outcome.body:
-            # 未命中/网络失败 → 无感降级：同一条消息转交人格聊天链路，
-            # 管线、门控、历史归档与 /bot.chat 完全一致。
-            receipt = await pipeline.handle_async(
-                message, chat_capability, capability_id="bot.chat"
-            )
-            await _notify_operational_receipt(message, receipt)
-            sent_request = _find_sent_request(send_queue, message.request_id)
-            if sent_request:
-                history_should_record = _should_record_chat_history(sent_request)
-                if history_should_record:
-                    _record_chat_history_turn(
-                        history_recorder,
-                        message=message,
-                        role="user",
-                        text=message.plain_text,
-                        audit_logger=audit_logger,
-                    )
-                transport_receipt = await _deliver_transport_send_request(
-                    bot,
-                    event,
-                    sent_request,
-                    audit_logger,
-                    receipt_repository,
-                    send_queue,
-                )
-                await _notify_operational_receipt(message, transport_receipt)
-                if (
-                    history_should_record
-                    and transport_receipt.state.value == "sent"
-                ):
-                    _record_chat_history_turn(
-                        history_recorder,
-                        message=message,
-                        role="assistant",
-                        text=sent_request.content.text_fallback,
-                        audit_logger=audit_logger,
-                    )
-                _record_runtime_diagnostic(
-                    config=config,
-                    diagnostics_store=diagnostics_store,
-                    message=message,
-                    capability_id="bot.chat",
-                    receipt=transport_receipt,
-                    send_queue=send_queue,
-                    audit_logger=audit_logger,
-                )
-                if should_finish_nonebot_matcher(transport_receipt):
-                    await moegirl_question.finish(transport_receipt.public_message)
-                return
-            _record_runtime_diagnostic(
-                config=config,
-                diagnostics_store=diagnostics_store,
-                message=message,
-                capability_id="bot.chat",
-                receipt=receipt,
-                send_queue=send_queue,
-                audit_logger=audit_logger,
-            )
-            if _should_silently_skip_chat_receipt(message, receipt, audit_logger):
-                return
-            if should_finish_nonebot_matcher(receipt):
-                await moegirl_question.finish(receipt.public_message)
-            return
-        outcome_entity = outcome.entity
-        outcome_body = outcome.body
-
-        def capability(
-            incoming: IncomingMessage, _decision: Any
-        ) -> CapabilityResult:
-            return CapabilityResult(
-                request_id=incoming.request_id,
-                capability_id="bot.moegirl",
-                kind="text",
-                title="萌娘百科",
-                body=outcome_body,
-                risk_level=RiskLevel.LOW,
-                privacy_level=PrivacyLevel.PUBLIC,
-                audit_tags=[
-                    "moegirl",
-                    "moegirl_question",
-                    f"moegirl_entity:{outcome_entity[:20]}",
-                    f"moegirl_ms:{elapsed_ms}",
-                ],
-            )
-
-        receipt = await _run_capability_through_pipeline(
-            bot=bot,
-            event=event,
-            config=config,
-            pipeline=pipeline,
-            send_queue=send_queue,
-            audit_logger=audit_logger,
-            diagnostics_store=diagnostics_store,
-            capability=capability,
-            capability_id="bot.moegirl",
-            record_diagnostic=False,
-            history_recorder=history_recorder,
-            history_kind="command",
-            operational_notifier=_notify_operational_receipt,
+        grounding = (
+            outcome.grounding
+            if outcome is not None and outcome.status == "hit"
+            else None
         )
-        if should_finish_nonebot_matcher(receipt):
-            await moegirl_question.finish(receipt.public_message)
+        if outcome is not None and outcome.degrade_reason:
+            # 三类失败留痕（台账 #29⑪ 同口径：归因要能事后查，不能只剩 exc）。
+            logging.getLogger(__name__).info(
+                "moegirl question no grounding reason=%s entity=%s",
+                outcome.degrade_reason,
+                outcome.entity[:20],
+            )
+        chat_message = message
+        if grounding is not None:
+            chat_message = message.model_copy(
+                update={
+                    "kb_grounding_text": grounding.text,
+                    "kb_grounding_label": grounding.label,
+                }
+            )
+        await _moegirl_answer_via_chat(bot, event, chat_message, moegirl_question)
 
     # >>> S139-KBSYNC-ALERT-SINK BEGIN（哨兵配对：活性锁 tests/test_ann_observability_s139.py
     # 按这对哨兵把本块真身文本抽出来、注入假装配件 exec——"注入可达"判据，
@@ -10080,6 +10094,19 @@ def _register_emergency_info_scheduler(
                     continue
                 graded = item.model_copy(update={"level": level})
                 for target, rule in targets:
+                    if not is_legal_segment(target.target_id) or not is_legal_segment(
+                        target.channel
+                    ):
+                        # 目标腿与条目腿同罪（dedupe.py:94-102 doctrine、
+                        # 2026-09-20 nmc:A1 教训的 target 侧镜像）：键段拼不出的
+                        # 目标 id（.env 名单「群号:楼层」、订阅库脏行）单行
+                        # 点名跳过，绝不让建键 ValueError 带走整轮投递。
+                        logging.getLogger(__name__).warning(
+                            "紧急信息目标 %r 的 id/channel 不能作幂等键段，"
+                            "本轮跳过该目标（其余目标与条目照常投递）",
+                            target.target_id,
+                        )
+                        continue
                     if rule is not None:
                         # 订阅条件逐条筛（等级∧类型∧地点）；不过筛就不打扰这个目标。
                         if not matches_subscription(graded, rule):
@@ -10089,7 +10116,8 @@ def _register_emergency_info_scheduler(
                         # 之后被安静窗顺延是另一件事，混在一起会让排障看不出是谁的锅。
                         service.store.note_subscription_match(rule.target_key, at=now)
                     verdict = deliver_emergency(
-                        send_queue, gate, graded, target, now=now
+                        send_queue, gate, graded, target, now=now,
+                        breach_levels=sorted(source.quiet_breach_levels),
                     )
                     if verdict == "allow":
                         sent += 1
@@ -10122,6 +10150,130 @@ def _register_emergency_info_scheduler(
         coalesce=True,
     )
     return {"seconds": max(int(source.poll_interval_seconds), 30)}
+
+
+async def _dispatch_persona_appearance_if_switched(
+    *,
+    bot: Bot,
+    event: Event,
+    config: Config,
+    command_text: str,
+    settings_manager: Any,
+    registry: Any | None = None,
+) -> None:
+    """把「runtime persona switch <id|default>」翻译成一次 QQ 外观下发，逐腿回执（H-1）。
+
+    装配席 S-PERSONA-WIRE（提案=接线点 A，
+    .superpowers/sdd/2026-09-27-fullload/logs/SEAT-PERSONA-HOT-wiring.md）：
+
+    - 只认显式 switch 命令形（H-2：情绪/概率自动腿不走这条命令，到不了这里）；
+    - ``sent`` 回执不等于切换落地：非管理员驳回、不存在人格等错误路径同样是
+      sent——故以主链同判据读回 runtime override 确认，不一致 ⇒ 外观腿静默
+      （为什么没切，主链回执已点名，这里绝不追加假随切）；
+    - default ⇒ 目标＝主人格（config.bot_persona_profile_id），按册恢复其外观；
+    - 外观下发唯一收口件＝apply_persona_profile，出站只走 bot.call_api 唯一口径
+      （台账 #60；get_login_info 禁作自称事实源，本件也不读它）；
+    - 未入人格册 ⇒ 点名「仅切换了语气，外观未改」，绝不谎称外观已随；
+    - 任何异常都不外抛：语气切换主链已回执，外观失败只补一条诚实回执。
+    """
+    tokens = command_text.split()
+    # 兼容 "runtime persona switch x" 与别名前缀：定位 persona→switch→target。
+    if "persona" not in tokens:
+        return
+    idx = tokens.index("persona")
+    if idx + 1 >= len(tokens) or tokens[idx + 1].lower() != "switch":
+        return
+    if idx + 2 >= len(tokens):
+        return  # 缺 target，交给同步 usage 文案
+    target = tokens[idx + 2].strip()
+    if not target:
+        return
+
+    from .domains.chat_reply.character.persona_profile import (
+        apply_persona_profile,
+        get_shared_registry,
+    )
+
+    # 读回确认（不信 sent 语义）：switch default ⇒ override 应为空；switch <id> ⇒
+    # override 应为该 id。--instance 变体按默认实例读数，读不平同样静默，不假下发。
+    try:
+        override = str(
+            settings_manager.get(effective_instance(config)).get_persona_override()
+            or ""
+        )
+    except Exception:  # noqa: BLE001 - 确认态读不到就不下发，绝不让外观腿炸掉命令主链
+        return
+    if override != ("" if target == "default" else target):
+        return
+
+    active_registry = registry if registry is not None else get_shared_registry()
+    persona_id = (
+        str(getattr(config, "bot_persona_profile_id", "default"))
+        if target == "default"
+        else target
+    )
+    record = active_registry.get(persona_id)
+    if record is None:
+        # 未在册：外观无从下发（只切了语气），如实点名，不谎称外观已随。
+        await bot.send(
+            event,
+            f"人格「{persona_id}」未入人格册（personas/registry/），仅切换了语气，外观未改。",
+        )
+        return
+
+    try:
+        switch_receipt = await apply_persona_profile(
+            record,
+            call_api=lambda action, params: bot.call_api(action, **params),
+        )
+    except Exception as exc:  # noqa: BLE001 - 下发腿异常同样必须点名回执，不许沉默装成成功
+        await bot.send(
+            event,
+            f"⚠ 人格「{persona_id}」外观下发中断——一项未落地（{type(exc).__name__}: {exc}）；"
+            "语气切换不受影响，请排查后重试。",
+        )
+        return
+    await bot.send(event, switch_receipt.summary())
+
+
+# ---- S-FIX-INGEST（2026-09-27）：入站两枚 CONFIRMED 的最小修法落点 --------------
+# 两枚纯函数 shim 刻意放在**全册登记坐标最大值（media_archive :9298）之下**：
+# 根装配上方的在册行号一字不动（campus/liveness 坐标门零顶漂，插删净行数=0）。
+
+
+def _neutralize_forward_body(text: str) -> str:
+    """合并转发正文进任何拼接**之前**的标记消毒（审计 A-ING-1）。
+
+    ``get_forward_msg`` 展开的节点正文/昵称是攻击者可控二手正文；旧实现原样
+    拼进 plain_text，检测面对引用族刻意不认领（``security/injection.py``
+    ``_SPOOF_DETECTION_NAMES``），ALLOW 分支下伪造 ``[引用回复 层级N …]`` 块
+    与 ``format_reply_chain`` 真实产物逐字节同形 → 信任层级/身份冒认。
+    本 shim 零判据零正则：消毒真身唯一 = 中央
+    ``security/injection.neutralize_internal_markers``（引用链腿对称口径；
+    同覆盖 ``chat_record_text`` 归档腿，两处消费者共享同一产出端）。
+    """
+    from .domains.chat_reply.security.injection import neutralize_internal_markers
+
+    return neutralize_internal_markers(text)
+
+
+def _reminder_target_from_session_key(session_id: Any, sender_id: str) -> tuple[str, str]:
+    """提醒目标归属唯一判据 = 中央 ``domains/core/session_keys.parse_session_key``。
+
+    病根（审计 A-ING-3）：真实入站群键 = ``group_<gid>_<uid>`` 下划线形、不含冒号，
+    旧 ``session_id.partition(":")`` 自拆键形判作用域必误判——群提醒被错记到
+    发送者私聊作用域（整群语义丢失）。口径：群形（下划线/冒号两形，判据口径
+    1/2 条）→ ("group", 群号)；私聊形（裸 uid / ``private_`` 方案段）→
+    ("private", uid)；其余形态 fail-closed → ("private", 发送者)。消费点禁再自拆。
+    """
+    from .domains.core.session_keys import parse_session_key
+
+    parsed = parse_session_key(session_id)
+    if parsed.is_group:
+        return "group", parsed.group_id
+    if parsed.kind == "private" and parsed.user_id:
+        return "private", parsed.user_id
+    return "private", str(sender_id or "").strip()
 
 
 _register_nonebot_handlers()

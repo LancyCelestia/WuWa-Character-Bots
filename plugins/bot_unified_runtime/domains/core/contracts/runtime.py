@@ -172,6 +172,15 @@ class IncomingMessage(StrictBaseModel):
     reply_media_segments: list[dict[str, Any]] = Field(default_factory=list)
     # 媒体归档：回复的合并转发被 get_forward_msg 展开后的逐条正文；空 = 非转发。
     chat_record_text: str = ""
+    # 百科接地块（2026-09-27 甲+丙批）：萌百/本地知识库正文经能力层 URL 剥除后，
+    # 由**处理程序在异步上下文填充**、能力层只读（与 reply_video_path /
+    # chat_record_text 同一先例形态）。聊天链装配点把它过中央件
+    # guard_secondhand_text 并进本轮唯一一次生成——百科内容不自答、不甩链接、
+    # 不开第二条 LLM 通路。空 = 本轮没有接地块（全部既有构造点零改动零行为变化）。
+    kb_grounding_text: str = ""
+    # 接地来源标签（一行中文，如「本地知识库·予愿安洁莉娜·萌娘百科」）；
+    # 只作 guard 的 source_label 与降级出处行，不进任何判据。
+    kb_grounding_label: str = ""
     sender_roles: list[str] = Field(default_factory=lambda: ["user"])
     # 这条消息已被「期后补回」重投过几次（2026-09-25 用户裁定第 2 项）。
     # 被限流拦下的明确请求不再静默丢弃，而是等解禁后补跑一次；本字段就是

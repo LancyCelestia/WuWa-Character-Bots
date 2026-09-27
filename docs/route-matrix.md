@@ -30,16 +30,16 @@ QQ/SnowLuma 消息
 | 问法示例 | 路由 kind | 优先级 | 进入的匹配器/处理程序 | 归一化命令 / 实际能力 |
 | --- | --- | --- | --- | --- |
 | `/岸宝帮助`、`/岸宝天气 杭州`、`守岸人点歌 晴天`（斜杠可省略） | alias | 10 | `on_message` alias -> `_handle_alias` | bot.alias：昵称解析 -> help/weather/music/… |
-| `/bot status`、`/bot routes`、`/bot subscribe add …` | admin | 11 | `on_command("bot")` -> `_handle_status` 内部分派 | bot.status：status/routes/subscribe/… ；**逐条权限以代码为准**：`status`/`parse`/`reply`/`群文件`/`cookie`/`logs`/`search`/`group` 等为管理员专属（能力入口 `actor_roles` 判定，未传即拒绝）；`download` **对普通成员开放**（仅 `/bot download` 形式；裸「下载 …」当前不走路由，落人格聊天），安全边界由 `sources/downloader.check_download_url` 承担（只放行 http/https，拒绝内网/环回/保留地址与 `localhost`/云元数据主机，含 DNS 解析后的私网 IP 与十进制/十六进制 IP 形态） |
+| `/bot status`、`/bot routes`、`/bot subscribe add …` | admin | 11 | `on_command("bot")` -> `_handle_status` 内部分派 | bot.status：status/routes/subscribe/… ；**逐条权限以代码为准**：`status`/`parse`/`reply`/`群文件`/`cookie`/`logs`/`search`/`group` 等为管理员专属（能力入口 `actor_roles` 判定，未传即拒绝）；`status` 对 super_admin（同一 `actor_roles` 判据，零新配置键）另附宿主机快照行与状态卡图片，非超管输出逐字节不变（锁 tests/test_host_status.py）；`download` **对普通成员开放**（仅 `/bot download` 形式；裸「下载 …」当前不走路由，落人格聊天），安全边界由 `sources/downloader.check_download_url` 承担（只放行 http/https，拒绝内网/环回/保留地址与 `localhost`/云元数据主机，含 DNS 解析后的私网 IP 与十进制/十六进制 IP 形态） |
 | `/订阅 状态`、`/订阅 添加 <链接>`、英文 `subscribe` | subscribe | 12 | `_is_standalone_subscribe_event` -> `_handle_standalone_subscribe` | bot.subscribe |
 | `报存 给 A 发邮件，主题…` | auto_send | 13 | `_is_auto_send_plain_text` | bot.auto_send |
 | `/表情 列表`、`/meme petpet 可爱`、`meme generate`、`表情製作/表情產生 族`、`/表情帮助` +拼音触发（见 catalog） | meme | 20 | `_is_meme_event` -> `_handle_meme` | bot.meme -> 本地 meme-generator-rs |
 | `/偷表情 关键词`、`偷图/偷圖 关键词`、`随机表情/表情抽签`、`表情库统计`、英文 `steal`/`steal meme`/`meme random`/`meme stats` +拼音触发（见 catalog） | meme_library | 22 | `_is_meme_library_event` | bot.meme_library（群图收库 NSFW 降权；心情低时吵闹梗软重抽） |
 | `/点歌模式 卡片`、`點歌模式 卡片`、`music mode link`、`song mode` +拼音触发（见 catalog） | music_mode | 40 | `_is_music_mode_event` | bot.music_mode |
-| `/点歌 晴天`、`点唱/點唱 晴天`、英文 `music`/`song <歌名>` +拼音触发（见 catalog） | music | 41 | `_is_music_event` -> `_handle_music` | bot.music（网易云/酷我/酷狗/QQ/Apple/Spotify 依次） |
+| `/点歌 晴天`、`点唱/點唱 晴天`、英文 `music <歌名>`/`song <歌名>`（裸触发词不带歌名不占路由，交回人格对话） +拼音触发（见 catalog） | music | 41 | `_is_music_event` -> `_handle_music` | bot.music（网易云/酷我/酷狗/QQ/Apple/Spotify 依次） |
 | `/历史上的今天`、`歷史上的今天`、英文 `today in history`（可裸发）、`/today`/`/history`（必须带斜杠） +拼音触发（见 catalog） | today_history | 41 | `_is_today_history_event` | bot.today_history |
 | `/wiki 鸣潮`、`/WIKIPEDIA Python`、`维基/維基百科 鸣潮` +拼音触发（见 catalog） | wiki | 41 | `_is_wiki_event` | bot.wiki |
-| `/epic`、`/Epic Free`、`/Epic 免费`、`免费游戏`、英文 `steamfree`（`steam 免费/免費` 同） | epic | 41 | `_is_epic_event` | bot.epic |
+| `/epic`、`/Epic Free`、`/Epic 免费`、`免费游戏`、英文 `steamfree`（另有 `steam免费`/`steam 免费`/`steam免費`/`steam 免費`，简繁对称四形同权） | epic | 41 | `_is_epic_event` | bot.epic |
 | `/天气 杭州`、`/查天气 上海`、`天气预报/天氣預報 <城市>`、英文 `weather <city>` +拼音触发（见 catalog） | weather | 41 | `_is_weather_event` | bot.weather（中国气象局 NMC 主通道重试（次数以 weather 域取数真身为准）+预警支路+Open-Meteo 兜底） |
 | `行情`、`股指/大盘/股市`、`B股行情`、`莫斯科股指`、英文 `market`/`markets`/`stock market` +拼音触发（见 catalog） | market | 41 | `_is_market_event` -> `_handle_market` | bot.market（东财 push2 17 指数 + MOEX ISS 备选源；市场词过滤） |
 | `快报`、`今日快报 科技`、`早报/晚报/今日热点/科技新闻/AI新闻/AI快报/财经新闻/财经快报/国际新闻`、繁體同族词族（词表以 catalog 为准）（`快報/早報/晚報/今日熱點/科技新聞/AI新聞/AI快報/財經新聞/財經快報/國際新聞`）、英文 `news`/`tech news`/`ai news` +拼音触发（见 catalog） | news | 41 | `_is_news_event` | bot.news（V2EX 真 Atom + IT之家/少数派/华尔街见闻/BBC中文；自动过滤营销条目，默认条数以 A17 节键行为准） |
@@ -50,23 +50,25 @@ QQ/SnowLuma 消息
 | `收件箱 <内容>`、`收件箱`（看待处理）、英文 `inbox`、拼音 `shoujianxiang` | daily_assist | 42 | `_is_daily_assist_event` | bot.daily_assist（收件箱速记落纯文本文件；另有定时面：到点吃什么推荐 + 早晚简报私聊推送，名单 BOT_DAILY_ASSIST_PUSH_USER_IDS 为空只记不推） |
 | `收藏 [图片]`、`归档`、`收藏 分类=cosplay IP=鸣潮`、`存聊天记录`（回复合并转发）、英文 `archive` +拼音触发（见 catalog） | media_archive | 43 | `_is_media_archive_event` -> `_handle_media_archive` | bot.media_archive（VLM 判 类别×作品 双层目录归档：cosplay/二次元插图等；SSRF+magic bytes+sha256 去重+限额；默认仅超管） |
 | `紧急信息`、`緊急信息`、`预警`、`預警`、`地震`、`震情`、`待审`、英文 `emergency`、组合 `紧急信息 待审`、`紧急信息 订阅 <条件>`、`紧急信息 退订`、`紧急信息 订阅 看` | emergency_info | 44 | `_is_emergency_info_event` -> `_handle_emergency_info` | bot.emergency_info（外部预警聚合：采集→定级→去重→审核→经中央闸**按订阅**投递；装配门两腿=总闸∧有源（2026-09-20 裁定 3.B 撤第三腿），投递目标每轮现读 `emergency_subscriptions`；订阅/退订限超管·管理员·本群群主且仅 QQ 侧；触发词八形态与 `_EMERGENCY_RE` 同源，路由门与装配门同腿） |
+| `宿主机状态`、`机器状态`、`机器配置`、`宿主状态`、`宿主機狀態`、`機器狀態`、`hoststate`、`jiqizhuangtai`、`jizhuangtai`、`jiqipeizhi`（裸词即触发，词尾只容标点/空白） | host_state | 41 | `host_state_match` | bot.host_state（仅超管视图：版本族与硬件占用经 domains/ops/host_metrics.py 单一取数口现读，出图为 Mica 卡片、渲染后端缺席时退纯文本并说明；非超管得到温和拒绝，读数逐行打码、只读零变更；能力真身 domains/ops/capabilities/host_state.py，matcher 装配见 __init__.py） |
+| `同意卡`、`书面同意`、`同意單`、`書面同意`、`consentcard`、`yijika`、`shumiantongyi`（触发词后必须紧跟空白或句尾，且只容 `待批`/`看 <工单号>`/`批 <工单号> <短码>`/`驳 <工单号> <短码>` 四种整句形——锚定判据，"大概像"不当命令） | consent | 41 | `consent_match` | bot.consent（裁定第 18 项书面同意的批准腿：把一条入站消息交给 domains/core/safety_exec/settings_gate.py 的唯一裁决点，同意账在 domains/core/safety_exec/consent.py；本能力零判定、零第二本账、自己绝不改参数；仅管理员可看单，谁能批哪张卡由同意账的阶梯判（含「发起人不得批自己发起的卡」）；能力真身 domains/ops/capabilities/consent_admin.py，matcher 装配见根 __init__.py〔本波施工单，未落〕） |
 | `群信息`、`本群信息/群资料`、`群主是谁/谁是群主/群主`、`群人数/本群人数/本群多少人`、`本群多大了/群多大`、`群公告`、`群精华/精华消息`（词尾只容标点/语气助词，防包含词误触） | group_info | 41 | `group_info_match` | bot.group_info（OneBot V11 群 API：群资料/群主/人数全员，公告与精华仅管理员；成员名单不整列；群链接/群等级/群相册协议无标准 API 不做不假装；matcher 装配在 __init__.py 由主会话接线，词形判定见 domains/chat_reply/capabilities/group_info.py 的 is_group_info_command） |
 | `好感度`、`好感度 算法`、`好感/亲密度/親密度`、英文 `affinity` +拼音触发（见 catalog） | affinity | 41 | `_is_affinity_event` | bot.affinity（v5 多因素线性步长：-100~+100、基准 10=档0友善、8 档温和态度连续过渡，算法说明定性、不展示固定加减数值；双向卡/群榜/算法卡） |
 | `吃什么`、`今天吃什么`、`菜谱/怎么做 <菜名>`、英文 `eat`/`food`/`recipe <菜名>` +拼音触发（见 catalog） | eat | 41 | `_is_eat_event` | bot.eat（60 道本地库+LLM 约束推荐+Mica 卡） |
 | `汇率`、`美元兑人民币`、`100日元换多少人民币`、繁體 `匯率/兌換/換匯`、英文 `fx`/`forex`/`exchange rate` +拼音触发（见 catalog） | fx | 36 | `fx_match` | bot.fx（多语言触发：汇率/兑换/换汇/匯率等；与 stocks 重叠时 fx 优先 36<42；WP5 从 41 拆到 36，问汇率不再靠与 market 同 41 的书写序定胜负） |
-| `英伟达股价`、`公司别名`、`股价/股價/個股`、英文 `stock`/`stocks`（裸词=九巨头面板）；`市值` 需与公司别名共现触发（如 `英伟达市值`，裸词不触发） +拼音触发（见 catalog） | stocks | 42 | `stocks_match` | bot.stocks（个股行情兜底：短文本+无链接+命中公司别名或股价/市值词） |
+| `英伟达股价`、`英伟达市值`、`股价/股價/個股`、英文 `stock`/`stocks`（裸词=九巨头面板）；「公司别名」是**类别名不是字面词**——别名须与股价/市值词共现才触发（如 `英伟达市值`，裸 `市值` 不触发；别名词表以 stocks 域 CompanyRef 为准） +拼音触发（见 catalog） | stocks | 42 | `stocks_match` | bot.stocks（个股行情兜底：短文本+无链接+命中公司别名或股价/市值词） |
 | `黄金`、`金价`、`白银/银价`、`原油/油价`、`铜价`、`大宗商品`、繁體 `黃金/金價/白銀/銀價/油價/銅價`、英文 `gold`/`silver`/`oil`/`commodity`/`commodities`（短文本+无链接；「黄金股行情」股语境让位 market；「黄金基金/原油基金」基金语境不触发；「天气 黄金」/「点歌 原油」前导命令让路） | commodities | 37 | `commodities_match` | bot.commodities（东财外盘主力连续商品现价+30日走势；LME 无源用 COMEX 铜；WP5 优先级 41→37 拆位） |
 | `国债`、`国债收益率`、`债券收益率`、`期限利差`、`收益率曲线`、`中美国债`、繁體 `國債/債券收益率`（短文本+无链接；裸「债券」不触发，防误触） | bond | 38 | `bond_match` | bot.bond（东财 datacenter 国债收益率+10Y−2Y 利差上游直供；1Y 无源诚实不接；WP5 优先级 41→38 拆位） |
 | `北向资金`、`北上资金`、`北向`、`沪股通`、`深股通`、繁體 `北向資金/北上資金/滬股通/深股通`（短文本+无链接） | northbound | 39 | `northbound_match` | bot.northbound（成交总额等仍在披露字段；2024-08 起无净买入口径，不推算不伪造；WP5 优先级 41→39 拆位） |
-| `/萌娘百科 鸣潮`、`萌娘百科/萌百 <条目>`、英文 `moegirl` +拼音触发（见 catalog） | moegirl | 41 | `_is_moegirl_event` | bot.moegirl（萌娘百科查询；裸「萌娘」不触发） |
-| 直接问「XX是谁？」等二次元实体问句 | moegirl_question | 46 | `_is_moegirl_question_event` | bot.moegirl（剥出实体 2-30 字自动查询；未命中降级人格聊天；2026-09-13 起 44→46 让路 NL 层，天气/wiki 形问句由域词守卫拒绝） |
+| `/萌娘百科 鸣潮`、`萌娘百科/萌百 <条目>`、英文 `moegirl <条目>`（裸 `moegirl` 不带条目不占路由） +拼音触发（见 catalog） | moegirl | 41 | `_is_moegirl_event` | bot.moegirl（萌娘百科查询；裸「萌娘」不触发；2026-09-27 百科接地批：命中不再自答——条目正文只作接地块经消息契约 `kb_grounding_text` 进 bot.chat 一次生成，命令面只保留用法/候选/无条目/网络失败四类输出，全文无 URL） |
+| 直接问「XX是谁？」等二次元实体问句 | moegirl_question | 46 | `_is_moegirl_question_event` | bot.moegirl（剥出实体 2-30 字自动查询；2026-09-27 接地批：命中（本地知识库优先→萌百主词条）取为接地块交人格聊天链重述，无条目/网络失败/多候选歧义三类降级可判别、均转聊天链光脚回答；2026-09-13 起 44→46 让路 NL 层，天气/wiki 形问句由域词守卫拒绝） |
 | `杭州天气怎么样` | natural_command | 45 | `_is_natural_event` -> `_handle_natural` | bot.natural_command：归一化 `天气 杭州` -> bot.weather（「帮我查一下杭州天气」「帮我查天气 杭州」自 2026-09-13 moegirl_question 让路后同落本层归一化 weather） |
 | `来首晴天` / `放首歌 晴天` / `帮我放一首周杰伦的歌` | natural_command | 45 | 同上 | 归一化 `点歌 …` -> bot.music |
 | `帮我查维基 鸣潮` | natural_command | 45 | 同上 | 归一化 `wiki 鸣潮` -> bot.wiki（2026-09-13 moegirl_question 让路后真实落点与本行一致） |
 | `今天有什么免费游戏` | natural_command | 45 | 同上 | 归一化 `epic` -> bot.epic |
 | `今天历史上发生了什么` | natural_command | 45 | 同上 | 归一化 `历史上的今天` -> bot.today_history |
 | `看这个 https://www.bilibili.com/video/BV1xx411c7mD` | content | 46 | `_is_content_parse_event` -> `_handle_content` | bot.content（平台解析+卡片渲染） |
-| `今天有点累，陪我说说话。`、`漂泊者是谁` | chat | 50 | `_is_plain_chat_event` -> `_handle_chat` | bot.chat（人格档案+向量知识库+LLM） |
+| `今天有点累，陪我说说话。`、`你今天看起来心情不错` | chat | 50 | `_is_plain_chat_event` -> `_handle_chat` | bot.chat（人格档案+向量知识库+LLM）；**「漂泊者是谁」这类二次元实体问句不落本行**——先被上一行 `moegirl_question`（priority 46 < 50）接走，未命中才降级回本链路 |
 | `今天天气不错`、`播放量好高` | chat | 50 | 同上（**故意不劫持闲聊**） | bot.chat |
 | 空消息 | ignore | 999 | 无 | bot.ignore（无回复） |
 
@@ -146,3 +148,28 @@ card=平台音乐卡片（无卡信息用封面）、voice=语音、file=音频�
 - 权重：守岸人×8 → 鸣潮/战双/库洛×4 → ACG×1.5 → 普通×1；非表情×0.25；NSFW≥0.2 降权、≥0.8 永不发送；
 - 可选 VLM 打标（BOT_MEME_LIBRARY_VLM_*，TAG_PROMPT 返回 is_meme/description/emotion/scene/persona/nsfw）；
 - 工程：冷却以表情包入库冷却键为准、群黑白名单、LRU 保留窗与张数上限以真身键为准、异步下载绝不阻塞事件循环。
+
+## 11. 触发列真值口径与已知残差（2026-09-24 逐行实跑）
+
+§2 第一列的触发样本按「喂真身、不喂文档」的口径核过一遍，判据两条：
+
+1. **词面命中**＝该 kind 的 matcher 体内**真身调用的域层判定函数**（`is_*_command` 一族，
+   按 `ROUTE_RULES` 的运行时 `matcher.__name__` 关联，不按本文措辞关联）实跑；
+2. **落点**＝`base_router.classify_message_route` 在「路由相关 `*_enabled` 全开 +
+   紧急域装配门第二腿 `bot_emergency_info_sources` 有值」的配置下返回的 kind。
+
+三条口径写死在此，避免下次又当缺陷重查：
+
+- **裸触发词不占路由是设计语义**（tts/music/moegirl 等触发词类能力要求带正文，
+  只发 `说`/`music`/`moegirl` 一律交回人格对话）；结构路由行（alias/admin/natural/
+  content/chat）文档写的是整句示例，只按逐字原句判、不给它补正文再测。
+- **`+拼音触发（见 catalog）`** 是指针不是词表：拼音/繁體全量形态由
+  `scripts/command_catalog.py` 从 `_HELP_ENTRIES` 生成，本列不重抄（重抄必过期）。
+- **ASCII 单词的 `\b` 词边界**：胶合成 `zz<词>zz` 后不得仍命中本行 kind，
+  本列所列英文词经此负例复检通过；仓内既有体检见
+  `scripts/extract_trigger_words.py::run_ascii_boundary_violations`。
+
+**已知残差（代码缺词，不改文档凑绿，待主代理/域 owner 处置）**：
+
+- 无。历史一枚 `bot.epic` 缺带空格繁体形 `steam 免費`（简繁对称缺一支）已于 2026-09-24（S175）
+  补齐真身正则与帮助别名，四形同权；回归锁见 `tests/test_traditional_triggers_2.py`。

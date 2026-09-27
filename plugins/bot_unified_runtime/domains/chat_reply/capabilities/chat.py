@@ -105,6 +105,7 @@ from plugins.bot_unified_runtime.domains.core.search.web_search import (
     WebSearchProvider,
     fetch_page_text,
 )
+from plugins.bot_unified_runtime.domains.core.session_keys import group_scope_key
 from plugins.bot_unified_runtime.domains.files.sources.file_reader import (
     artifact_request,
     build_generated_file,
@@ -215,7 +216,6 @@ _MEDIA_DIRECTIVE = (
     "原图），按你的性格直说做不到，再给一个务实的替代建议。"
 )
 _FUZZY_VIDEO_WINDOW_SECONDS = 600
-_VIDEO_BRIEF_TAG = "[视频档案（不可信上下文，仅供参考）]"
 # 深挖重分析节流：同一档案在冷却窗内重复深挖直接用缓存简报（防刷屏双倍费用）。
 _DEEP_REANALYSIS_AT: dict[str, float] = {}
 _VIDEO_EVENT_LOG: Any = None
@@ -877,6 +877,17 @@ def persona_failure_message(session_id: str = "") -> str:
 
 _FAILURE_MESSAGE_CURSOR: dict[str, int] = {}
 _FAILURE_CURSOR_LOCK = threading.Lock()
+
+# 百科接地·生成失败兜底开头池（2026-09-27 甲批）：LLM 挂了而接地块在手时，
+# 不空手回「再试一次」——先把查到的百科原样讲给用户（无链接、一行中文出处）。
+# 风格与 _PERSONA_FAILURE_MESSAGES 五池同调（守岸人语气、温和、不机器腔）。
+_KB_GROUNDED_FALLBACK_LEADS: tuple[str, ...] = (
+    "刚才的话没能组织完整……这份资料我是真查到了的，先原样讲给你：",
+    "生成断在半路了。不过我读到的那一条还在——先由我念给你听：",
+    "这一条回复没能写完，但百科里的话我替你留着呢，先说给你：",
+    "我的措辞掉线了……资料没丢。来，我把刚读到的讲给你听：",
+    "这一次没能把话说圆。查到的内容先原样递给你，稍等我再说一遍也行：",
+)
 _SAFE_LLM_ERROR_KINDS = frozenset(
     {
         "config_missing",
@@ -2897,28 +2908,48 @@ def _manual_command_scope_key(
 ) -> str | None:
     """「亲密模式 开/关」作用域分流（v21r5 用户裁定：双开关）。
 
-    群聊：管理员→群键（开关二，全群生效，既有语义保留）；普通成员→本人
-    成员派生键（开关一，仅自己）；``per_user_enabled``=False 且非管理员→
-    返回 None（指令不受理）。私聊/控制台→本人会话键（既有语义，不设角色门）。
+    群聊：管理员→**群作用域键**（开关二，全群生效；T-1 修复 2026-09-27：不再
+    原样返回逐成员会话键——构造只准经中央件 ``group_scope_key``，与读侧
+    ``_group_pin_state`` 同一真身）；普通成员→本人成员派生键（开关一，仅自己）；
+    ``per_user_enabled``=False 且非管理员→返回 None（指令不受理）。
+    私聊/控制台→本人会话键（既有语义，不设角色门）。
     """
     st = str(session_type or "")
     if st != "group":
         return str(route_key or session_key or "")
     if "admin" in {str(role).strip().lower() for role in (sender_roles or [])}:
-        return str(session_key or "")
+        # 全群开关落全群共享的那把键；非群形态（中央件判 ""）回落本人键，
+        # 宁缺毋滥——绝不拿半截键造出一个无人能读到的"孤儿群钉"。
+        return group_scope_key(session_key) or str(session_key or "")
     if per_user_enabled:
         return str(route_key or session_key or "")
     return None
 
 
+def _is_group_scoped_manual_key(
+    session_type: str, session_key: str, scope_key: str
+) -> bool:
+    """群作用域支（=管理员腿）的唯一判据（T-1 修复 2026-09-27）。
+
+    判据不另立一套：群聊里作用域键**等于中央件由会话键派生的群作用域键**的
+    那一支只可能是管理员——普通成员一支返回的是成员派生键或本人会话键，
+    per_user 关闭且非管理员则不受理（None ⇒ 不上钉）。`_manual_pin_source`
+    与 `_scope_tag` 两个读数面共用本函数，一处改、两处随。
+    """
+    scoped = str(scope_key or "")
+    if not scoped or str(session_type or "") != "group":
+        return False
+    return scoped == group_scope_key(session_key)
+
+
 def _manual_pin_source(session_type: str, session_key: str, scope_key: str) -> str:
     """显式指令所上之钉的来源标签（2026-09-24 裁定：亲密档要带上"为什么亲密"）。
 
-    判据不另立一套：群聊里作用域键等于会话群键的那一支**只可能是管理员**——
-    普通成员那一支 `_manual_command_scope_key` 返回的是成员派生键（≠ 会话键），
-    per_user 关闭且非管理员则直接不受理（None ⇒ 不上钉）。私聊/控制台恒为本人。
+    判据只住 `_is_group_scoped_manual_key` 一处（与 `_scope_tag` 同一个谓词）：
+    群聊里落在群作用域键上的那支只可能是管理员，其余一律本人显式开关。
+    私聊/控制台恒为本人。
     """
-    if str(session_type or "") == "group" and str(scope_key or "") == str(session_key or ""):
+    if _is_group_scoped_manual_key(session_type, session_key, scope_key):
         return INTIMATE_SOURCE_ADMIN_PIN
     return INTIMATE_SOURCE_MANUAL
 
@@ -3195,7 +3226,9 @@ def build_chat_result(
             if _session_type_value == "group":
                 _scope_tag = (
                     "scope:group"
-                    if _manual_scope_key == content_route_session_key
+                    if _is_group_scoped_manual_key(
+                        _session_type_value, content_route_session_key, _manual_scope_key
+                    )
                     else "scope:user"
                 )
             else:
@@ -3735,6 +3768,24 @@ def _schedule_memory_extraction(
         )
 
 
+def _kb_grounded_fallback_text(message: IncomingMessage) -> str:
+    """生成失败但有百科接地：退回纯文本介绍（甲批口径——无 URL、无 🔗、一行中文出处）。
+
+    开头走既有失败话术池的守岸人语气（P2-4 五池同风格，不成硬短句）；正文是
+    moegirl 侧已剥链接的接地文本。三类失败由此可判别：无条目/网络失败=本轮
+    没有接地块（走各既有面），生成失败=本函数产出的 ``kb_grounded_fallback``。
+    """
+    import random
+
+    grounding = str(getattr(message, "kb_grounding_text", "") or "").strip()
+    if not grounding:
+        return ""
+    lead = random.choice(_KB_GROUNDED_FALLBACK_LEADS)
+    label = str(getattr(message, "kb_grounding_label", "") or "").strip() or "百科资料"
+    intro = re.sub(r"\s+", " ", grounding)[:500]
+    return f"{lead}\n【{label}】\n{intro}"
+
+
 def _llm_error_result(
     *,
     message: IncomingMessage,
@@ -3769,12 +3820,18 @@ def _llm_error_result(
         attempts=max(1, int(attempts)),
     )
     is_group_or_channel = message.session_type in {SessionType.GROUP, SessionType.CHANNEL}
+    # 甲批降级腿：生成失败但手上有百科接地 ⇒ 私聊回纯文本介绍（无链接）而非
+    # 空手道歉；群聊维持既有 SILENT_AUDIT 零变更。
+    grounded_intro = "" if is_group_or_channel else _kb_grounded_fallback_text(message)
     return CapabilityResult(
         request_id=message.request_id,
         capability_id=decision.capability_id,
         kind="text",
         title=f"{context.persona.display_name}的回复",
-        body="" if is_group_or_channel else persona_failure_message(message.session_id),
+        body=(
+            grounded_intro
+            or ("" if is_group_or_channel else persona_failure_message(message.session_id))
+        ),
         confidence=0.0,
         risk_level=RiskLevel.MEDIUM,
         privacy_level=context.privacy_level,
@@ -3788,6 +3845,7 @@ def _llm_error_result(
             f"persona:{context.persona.profile_id}",
             "llm_error",
             f"llm_error:{normalized_kind}",
+            *(["kb_grounded_fallback"] if grounded_intro else []),
         ],
     )
 
@@ -4412,9 +4470,10 @@ def build_chat_capability(
                 )
                 request_budget.record_phase("video_brief", vision_started)
             if video_brief_text:
+                # S-FIX-SECTEXT-GUARD（审查 M-02）：视频档案腿自本波起与识图/
+                # 视频识别/ASR 同走咽喉真身，禁调用点手拼「不可信上下文」标签。
                 composed_query = (
-                    f"{composed_query}\n{_VIDEO_BRIEF_TAG}\n"
-                    f"{_sanitize_untrusted_context_text(video_brief_text)}"
+                    f"{composed_query}\n{guard_secondhand_text(video_brief_text, source_label='视频档案')}"
                 ).strip()
                 media_directive = _MEDIA_DIRECTIVE
         elif not native_video_used:
@@ -4487,6 +4546,22 @@ def build_chat_capability(
                     composed_query = (
                         f"{composed_query}\n{guard_secondhand_text(transcript, source_label='语音转写结果')}"
                     ).strip()
+
+        # 百科接地（2026-09-27 甲+丙批）：moegirl/本地知识库正文由根装配处理程序
+        # 经消息契约 `kb_grounding_text/kb_grounding_label` 交进来，在这里与
+        # 识图/视频档案/语音转写四腿同构地过中央件 guard_secondhand_text 并进
+        # **本轮唯一一次生成**——百科内容不自答、不甩链接、不开第二条 LLM 通路
+        # （结构锁 tests/test_kb_grounding_chat.py）。文本在 moegirl 侧已剥 URL。
+        kb_grounding_text = str(getattr(message, "kb_grounding_text", "") or "")
+        kb_grounding_label = str(getattr(message, "kb_grounding_label", "") or "")
+        kb_grounding_used = False
+        if kb_grounding_text.strip():
+            kb_grounding_source = f"百科资料·{kb_grounding_label.strip() or '未知来源'}"
+            composed_query = (
+                f"{composed_query}\n"
+                f"{guard_secondhand_text(kb_grounding_text, source_label=kb_grounding_source)}"
+            ).strip()
+            kb_grounding_used = True
 
         # 上下文/检索段以前**不记账**：2026-09-26 实锤一轮 latency_ms=802560 而
         # 全部已记相位加起来 3.3 秒（LLM 3284ms），800 秒花在哪一段账面上看不见
@@ -5089,6 +5164,9 @@ def build_chat_capability(
             f"latency_llm_ms:{int((now - llm_started) * 1000)}",
             f"latency_web_ms:{int(web_latency_ms)}",
         ]
+        if kb_grounding_used:
+            # 接地在场必须外抛正面标记（「缺席反推」是在册假绿形态，S30 同训）。
+            latency_tags.append("kb_grounding_used")
         # 原生正面标记：此前"用了原生部件"只有函数内的 bool，从不外抛 ⇒ 外面只能靠
         # `phase_*_ms` **缺席**反推"没转译"（缺席当结论=本仓在册的假绿形态，S30 点名）。
         # 补三枚正面标签，重启验收一眼可判：有 `native_*_used` 就是原样进模型。

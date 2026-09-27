@@ -378,8 +378,13 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
             ),
             family="command",
             adapter="prepared",
-            # 内层预算才是权威：NMC 主通道 2 次重试（`bot_weather_timeout_seconds`=8s）
-            # + Open-Meteo 兜底，最坏约 24s。中央这颗只做"别吊死"的安全网，必须高于它。
+            # S-FIX-WX-T6 根修（2026-09-27）：`bot_weather_timeout_seconds`（键值缺省
+            # 8.0）现由 builder 装配实传给各外呼腿——NMC 重试、Open-Meteo
+            # geocode/forecast、预警支路同吃该值，内层预算自此才有权威；本颗
+            # timeout_seconds 只是外层「别吊死」安全网，真实最坏时长＝键值乘
+            # 重试/变体链，不在此钉死单一秒数。旧注释宣称命令路径吃这颗键、
+            # 还钉了具体秒数——皆假账（键当时根本不被命令链读取），证伪锁：
+            # tests/test_wx_t6_timeout_plumbing.py。
             timeout_seconds=45.0,
             degrade_note="无源/超时=诚实播报查不到，绝不编一个城市天气",
             config_keys=("bot_weather_enabled", "bot_weather_cache_seconds", "bot_weather_timeout_seconds"),

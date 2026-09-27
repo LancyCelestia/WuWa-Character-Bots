@@ -1,12 +1,19 @@
 """萌娘百科查询能力（bot.moegirl）：`萌娘百科 <词条>` + 二次元问句自动查询。
 
-显式指令走与 bot.wiki 相同的确定性命令链路；问句（「初音未来是谁？」）
-先归一化出实体再查萌百：可信主词条（标题精确匹配或唯一候选）→ 简介+
-链接；多候选 → 候选列表；无结果/网络失败 → 返回降级标记，由 handler
-把同一条消息转交 AI 人格聊天链路，用户无感。
+2026-09-27 甲+丙合并批（输出契约变更，判据=用户原话「要 bot 读百科、用她的世界
+观和语气说出来，不甩链接」）：
 
-性能约定（回复速度优先）：问句路径全程至多「1 次搜索 + 1 次摘要」两次
-外呼，紧超时 + 总预算硬约束；300s TTL 缓存让热门词条二次查询零外呼。
+* 本能力**零 LLM 通路**——百科/本地知识库正文一律只作**接地块**（经消息契约
+  `kb_grounding_text/kb_grounding_label`）进入聊天链的既有一次生成，由 chat.py
+  装配点统一过中央件 guard_secondhand_text；出站全文无 URL、无 🔗。
+* 显式指令走确定性命令链路：本地命中→ grounding；未命中才外查萌百（search+page
+  至多两次外呼、紧超时+总预算、300s TTL 缓存不变）；grounding 命中转交聊天链，
+  无条目/歧义/网络失败三类降级可判别（degrade_reason）。
+* 本地命中判据（放宽但保住防冒充）：库内标题普遍带出处后缀
+  （「予愿安洁莉娜（明日方舟）·萌娘百科」），旧「互含」判据认不下这类页；
+  新判据=剥尾随来源段后「规范化同名」或以实体开头且后续**只有**限定括号，
+  并现两个不同限定词判歧义不押注，消歧页/弱相关/近义不同实体一律不认。
+  逐条反例锁在 tests/test_kb_grounding_chat.py。
 """
 
 from __future__ import annotations
@@ -191,11 +198,16 @@ def _clip(text: str, limit: int) -> str:
 
 
 def format_main_result(hit: MoegirlHit, *, max_chars: int = 300) -> str:
+    """词条正文的统一人话格式：标题行 + 简介 + 一行中文出处（**永不拼 URL/🔗**）。
+
+    2026-09-27 甲批：旧版在末行拼「🔗 萌娘百科：<url>」，用户裁定甩链接不合格；
+    出处降为一行中文小字。URL 形态在进 prompt / 进正文前也会被 `_strip_urls`
+    再洗一遍——双保险，但这里根本不产它。
+    """
     lines = [f"【{hit.title}】"]
     if hit.snippet:
-        lines.append(_clip(hit.snippet, max_chars))
-    if hit.url:
-        lines.append(f"🔗 萌娘百科：{hit.url}")
+        lines.append(_strip_urls(_clip(hit.snippet, max_chars)))
+    lines.append(f"出自：萌娘百科·{hit.title}")
     return "\n".join(lines)
 
 
@@ -212,64 +224,266 @@ def format_candidates(hits: list[MoegirlHit], *, limit: int = 5) -> str:
 
 
 @dataclass(frozen=True)
+class MoegirlGrounding:
+    """百科接地块：只作为聊天链一次生成的资料进 prompt，永不直接当答案外发。
+
+    text 已剥 URL 并压平空白；label 是一行中文来源标签（进
+    guard_secondhand_text 的 source_label 与降级出处行），不进任何判据。
+    """
+
+    text: str
+    label: str
+    origin: str  # "local_kb" | "moegirl"
+    title: str = ""
+
+
+@dataclass(frozen=True)
 class MoegirlQuestionOutcome:
-    """问句路径结果：hit=已生成回复文本；degrade=转交 AI 聊天链路。"""
+    """问句路径结果：hit=拿到接地块（转聊天链生成）；degrade=直转聊天链。
+
+    degrade_reason 让「不是实体问句 / 无条目 / 网络失败 / 多候选歧义」四类
+    可判别（诚实降级，绝不编内容填空）。
+    """
 
     status: str  # "hit" | "degrade"
-    body: str = ""
     entity: str = ""
+    grounding: MoegirlGrounding | None = None
+    degrade_reason: str = ""  # "" | not_entity | no_entry | network_error | ambiguous
     elapsed_ms: int = 0
 
 
-_KB_PROVIDER_CACHE: dict[str, Any] = {}
-_KB_LOCK = __import__("threading").Lock()
+# ---------------------------------------------------------------- 接地取数
+
+# 出站/进 prompt 前统一剥链接（形态判据，宁多洗不漏放）：协议 URL 与裸 www。
+_URL_STRIP_RE = re.compile(r"(?:https?://|www\.)\S*", re.IGNORECASE)
+_DISAMBIG_MARKERS = ("消歧", "歧义", "disambig")
+# 尾随来源段（·萌娘百科 / ·B站wiki / ·prts_arknights）——只有「像来源」的尾段
+# 才剥：含 wiki/百科/萌百/moegirl/prts/bilibili/bangumi 或纯 ASCII 词形。
+# 名字本体含间隔号的（「安洁莉娜·卡多尔」）尾段是 CJK 人名节，不剥 ⇒ 不冒充。
+_SOURCE_SUFFIX_TOKEN_RE = re.compile(r"(?:[·&｜|])([^·&｜|]*)$")
+_SOURCE_HINT_RE = re.compile(
+    r"(wiki|百科|萌百|moegirl|prts|bilibili|bangumi|fandom)", re.IGNORECASE
+)
 
 
-def local_kb_answer(config: Any | None, entity: str, *, max_chars: int = 500) -> str | None:
-    """本地向量知识库优先：命中返回格式化知识条目，未命中返回 None。
+def _strip_urls(text: str) -> str:
+    return _URL_STRIP_RE.sub("", str(text or ""))
 
-    用户本地已建鸣潮/方舟/原神等全套游戏知识库——问这些内容时不应
-    再外查萌百（质量差且与本地设定冲突）。命中判定：top chunk 标题
-    与实体互含（规范化后），防止弱相关 chunk 冒充答案。
+
+def _norm_title(value: str) -> str:
+    return re.sub(r"[\s_]+", "", (value or "")).casefold()
+
+
+def _title_grounding_kind(title: str, entity: str) -> str | None:
+    """标题对实体的接地形态：''=同名正页；非空=带限定词页；None=不认。
+
+    防冒充三判据（每条都有反例锁，tests/test_kb_grounding_chat.py）：
+    ①消歧页直接不认；②只剥「像来源」的尾段（黑猫→黑猫诺儿 这类近义不同
+    实体因后续是名字本体而判不认）；③限定括号必须紧贴实体之后。
     """
-    if config is None or not entity:
+    t = _norm_title(title)
+    want = _norm_title(entity)
+    if not t or not want:
         return None
+    if any(marker in t for marker in _DISAMBIG_MARKERS):
+        return None
+    # 反复剥尾随来源段（多来源叠后缀也认）。
+    while True:
+        match = _SOURCE_SUFFIX_TOKEN_RE.search(t)
+        if match is None:
+            break
+        tail = match.group(1)
+        if not tail or (not _SOURCE_HINT_RE.search(tail) and not re.fullmatch(r"[a-z0-9]+", tail)):
+            break
+        t = t[: match.start()]
+    if not t:
+        return None
+    if t == want:
+        return ""
+    if t.startswith(want):
+        rest = t[len(want):]
+        qual = re.fullmatch(r"[（(]([^（）()]+)[）)]", rest)
+        if qual is not None:
+            return qual.group(1)
+    return None
+
+
+def _kb_grounding_from_chunk(chunk: Any, entity: str, max_chars: int) -> MoegirlGrounding | None:
+    title = str(getattr(chunk, "title", "") or "")
+    content = _strip_urls(re.sub(r"\s+", " ", str(getattr(chunk, "content", "") or "")).strip())
+    if not content:
+        return None
+    body = _clip(content, max_chars)
+    if not body:
+        return None
+    return MoegirlGrounding(
+        text=body,
+        label=f"本地知识库·{title.strip() or entity}",
+        origin="local_kb",
+        title=title.strip() or entity,
+    )
+
+
+def select_kb_chunks(chunks: Any, entity: str) -> Any | None:
+    """从检索结果里选「确属该实体」的块：同名正页先到先得；只有带限定词
+    命中且限定词唯一时取之（pick_main_hit『唯一候选允许』同哲学）；并现
+    两个不同限定词（不同游戏同名角色）判歧义，绝不押注。"""
+    want = _norm_title(entity)
+    if not want:
+        return None
+    qualified: dict[str, Any] = {}
+    for chunk in chunks or []:
+        kind = _title_grounding_kind(str(getattr(chunk, "title", "") or ""), want)
+        if kind is None:
+            continue
+        if kind == "":
+            return chunk
+        title_key = _norm_title(str(getattr(chunk, "title", "") or ""))
+        if title_key not in qualified:
+            qualified[title_key] = chunk
+        if len(qualified) > 1:
+            return None
+    return next(iter(qualified.values()), None)
+
+
+_KB_GROUNDING_CACHE: dict[str, Any] = {}
+_KB_LOCK = __import__("threading").Lock()
+_KB_UNAVAILABLE = object()
+
+
+def _merged_grounding_retrieve(config: Any) -> Any | None:
+    """人格向量库 + Crawl Wiki 向量库的合并检索口（全部复用中央件真身）。
+
+    旧 local_kb_answer 只查人格库——鸣潮/方舟/原神语料实际在 kb_wiki 库
+    （knowledge_embeddings.sqlite3 35k 块 vs kb_wiki_embeddings.sqlite3 740k 块），
+    这才是「本地优先」在生产恒 miss 的真根因（2026-09-27 现算）。
+    """
+    key = str(id(config))
+    with _KB_LOCK:
+        cached = _KB_GROUNDING_CACHE.get(key)
+        if cached is _KB_UNAVAILABLE:
+            return None
+        if callable(cached):
+            return cached
+    fn: Any = None
     try:
         from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge import (
             build_vector_knowledge_provider,
         )
+        from plugins.bot_unified_runtime.domains.location.knowledge.kb_wiki import (
+            MergedKnowledgeRetriever,
+            build_kb_wiki_retriever,
+        )
 
-        key = str(id(config))
-        with _KB_LOCK:
-            provider = _KB_PROVIDER_CACHE.get(key)
-            if provider is None:
-                provider = build_vector_knowledge_provider(config)
-                _KB_PROVIDER_CACHE[key] = provider
-        if provider is None:
-            return None
-        retrieve = getattr(provider, "retrieve", None)
-        if not callable(retrieve):
-            return None
+        legs: list[Any] = []
+        persona = build_vector_knowledge_provider(config)
+        if getattr(persona, "available", False):
+            legs.append(persona)
+        wiki = build_kb_wiki_retriever(config)
+        if getattr(wiki, "available", False):
+            legs.append(wiki)
+        merged = MergedKnowledgeRetriever(legs)
+        if legs and getattr(merged, "available", False):
+            fn = merged.retrieve
+    except Exception:  # noqa: BLE001 - 本地检索链不可用时回退外查萌百旧链路。
+        fn = None
+    with _KB_LOCK:
+        _KB_GROUNDING_CACHE[key] = fn if callable(fn) else _KB_UNAVAILABLE
+    return fn if callable(fn) else None
+
+
+def local_kb_grounding(
+    config: Any | None,
+    entity: str,
+    *,
+    max_chars: int = 500,
+    retrieve_fn: Any | None = None,
+) -> MoegirlGrounding | None:
+    """本地知识库优先接地：命中返回接地块，未命中/故障返回 None。
+
+    retrieve_fn 可注入假检索做离线测试；缺省走人格库+维基库合并检索。
+    """
+    if (config is None and retrieve_fn is None) or not entity:
+        return None
+    retrieve = retrieve_fn if callable(retrieve_fn) else _merged_grounding_retrieve(config)
+    if not callable(retrieve):
+        return None
+    try:
         chunks = list(retrieve(entity) or [])
-    except Exception:  # noqa: BLE001 - 本地库不可用时走原有萌百链路。
+    except Exception:  # noqa: BLE001 - 检索故障按未命中处理，走外查/降级。
         return None
-    if not chunks:
+    chunk = select_kb_chunks(chunks, entity)
+    if chunk is None:
         return None
+    return _kb_grounding_from_chunk(chunk, entity, max_chars)
 
-    def _norm(value: str) -> str:
-        return re.sub(r"[\s_]+", "", (value or "")).casefold()
 
-    want = _norm(entity)
-    top = chunks[0]
-    if want not in _norm(top.title) and _norm(top.title) not in want:
-        return None
-    content = re.sub(r"\s+", " ", str(top.content or "")).strip()
-    if not content:
-        return None
-    body = f"【{top.title}】\n{content[:max_chars]}"
-    if len(content) > max_chars:
-        body += "…"
-    return body
+def resolve_grounding_for_entity(
+    entity: str,
+    *,
+    config: Any | None = None,
+    search_fn: Callable[..., list[MoegirlHit]] | None = None,
+    page_fn: Callable[..., MoegirlHit | None] | None = None,
+    retrieve_fn: Any | None = None,
+) -> tuple[MoegirlGrounding | None, str]:
+    """实体 → 接地块：本地命中优先，未命中外查萌百主词条；失败可判别。
+
+    返回 (grounding, degrade_reason)；reason ∈ {"", "no_entry", "network_error",
+    "ambiguous"}。任何路径都不产 URL、不自调 LLM（唯一出口判据的结构面）。
+    """
+    local = local_kb_grounding(config, entity, retrieve_fn=retrieve_fn)
+    if local is not None:
+        return local, ""
+    api_bases = _configured_api_bases(config)
+    timeout = float(getattr(config, "bot_moegirl_timeout_seconds", 5.0) or 5.0) if config is not None else 5.0
+    proxy = str(getattr(config, "bot_download_proxy", "") or "") if config is not None else ""
+    max_chars = int(getattr(config, "bot_moegirl_summary_max_chars", 300) or 300) if config is not None else 300
+
+    search = search_fn or (
+        lambda query, **kw: moegirl_search(
+            query, api_bases=api_bases, timeout_seconds=timeout, proxy=proxy, **kw
+        )
+    )
+    try:
+        hits = search(entity)
+    except ParseHttpError:
+        return None, "network_error"
+    except Exception:  # noqa: BLE001 - 查询层任何异常都按网络失败降级。
+        return None, "network_error"
+    if not hits:
+        return None, "no_entry"
+    main = pick_main_hit(hits, entity)
+    if main is None:
+        # 多候选/无精确命中：多半是普通闲聊被问句路由误捕（"QQ用户是谁"），
+        # 词条选择列表对这类场景是骚扰——降级交聊天链路（既有语义保持）。
+        return None, "ambiguous"
+    page = main
+    fetch_page = page_fn
+    if fetch_page is None:
+        fetch_page = lambda title, **kw: moegirl_page_summary(
+            title, api_bases=api_bases, timeout_seconds=timeout, proxy=proxy, **kw
+        )
+    try:
+        fetched = fetch_page(main.title)
+        if fetched is not None:
+            page = fetched
+    except ParseHttpError:
+        pass
+    except Exception:  # noqa: BLE001, S110 - 摘要失败回退搜索自带摘要，不降级。
+        pass
+    snippet = _strip_urls(_clip(page.snippet or main.snippet or "", max_chars))
+    if not snippet:
+        return None, "no_entry"
+    title = (page.title or main.title or entity).strip()
+    return (
+        MoegirlGrounding(
+            text=snippet,
+            label=f"萌娘百科·{title}",
+            origin="moegirl",
+            title=title,
+        ),
+        "",
+    )
 
 
 def question_lookup(
@@ -278,12 +492,12 @@ def question_lookup(
     config: Any | None = None,
     search_fn: Callable[..., list[MoegirlHit]] | None = None,
     page_fn: Callable[..., MoegirlHit | None] | None = None,
+    local_retrieve: Any | None = None,
 ) -> MoegirlQuestionOutcome:
-    """问句自动查询主流程；任何失败都以 degrade 收尾，不抛异常。
+    """问句自动查询主流程：命中=接地块（由处理程序交聊天链一次生成）；失败=可判别降级。
 
-    ``search_fn``/``page_fn`` 可注入假实现做离线测试；默认实现按配置
-    带上镜像域名与超时。主词条页摘要拉取失败时回退搜索自带摘要，
-    不降级（已有可信命中就不浪费）。
+    ``search_fn``/``page_fn``/``local_retrieve`` 可注入假实现做离线测试；
+    零网络纪律不变（本件从不出网调用 LLM，萌百至多 1 搜索 + 1 摘要）。
     """
     started = time.perf_counter()
 
@@ -292,71 +506,20 @@ def question_lookup(
 
     entity = normalize_entity_question(text)
     if entity is None:
-        return MoegirlQuestionOutcome(status="degrade", elapsed_ms=elapsed())
-    api_bases = _configured_api_bases(config)
-    timeout = float(
-        getattr(config, "bot_moegirl_timeout_seconds", 5.0) or 5.0
-    ) if config is not None else 5.0
-    proxy = str(getattr(config, "bot_download_proxy", "") or "") if config is not None else ""
-    max_chars = int(
-        getattr(config, "bot_moegirl_summary_max_chars", 300) or 300
-    ) if config is not None else 300
-
-    search = search_fn or (
-        lambda query, **kw: moegirl_search(
-            query,
-            api_bases=api_bases,
-            timeout_seconds=timeout,
-            proxy=proxy,
-            **kw,
-        )
+        return MoegirlQuestionOutcome(status="degrade", degrade_reason="not_entity", elapsed_ms=elapsed())
+    grounding, reason = resolve_grounding_for_entity(
+        entity,
+        config=config,
+        search_fn=search_fn,
+        page_fn=page_fn,
+        retrieve_fn=local_retrieve,
     )
-    try:
-        hits = search(entity)
-    except ParseHttpError:
+    if grounding is not None:
         return MoegirlQuestionOutcome(
-            status="degrade", entity=entity, elapsed_ms=elapsed()
+            status="hit", entity=entity, grounding=grounding, elapsed_ms=elapsed()
         )
-    except Exception:  # noqa: BLE001 - 查询层任何异常都按降级处理。
-        return MoegirlQuestionOutcome(
-            status="degrade", entity=entity, elapsed_ms=elapsed()
-        )
-    if not hits:
-        return MoegirlQuestionOutcome(
-            status="degrade", entity=entity, elapsed_ms=elapsed()
-        )
-
-    main = pick_main_hit(hits, entity)
-    if main is None:
-        # 多候选/无精确命中：多半是普通闲聊问题（"QQ用户是谁"）被问句
-        # 路由误捕，词条选择列表对这类场景是骚扰。无感降级聊天链路；
-        # 明确想查百科的用户请用 /萌娘 指令（那里保留候选列表）。
-        return MoegirlQuestionOutcome(
-            status="degrade", entity=entity, elapsed_ms=elapsed()
-        )
-    page = main
-    fetch_page = page_fn
-    if fetch_page is None:
-        fetch_page = lambda title, **kw: moegirl_page_summary(
-            title,
-            api_bases=api_bases,
-            timeout_seconds=timeout,
-            proxy=proxy,
-            **kw,
-        )
-    try:
-        fetched = fetch_page(main.title)
-        if fetched is not None:
-            page = fetched
-    except ParseHttpError:
-        pass
-    except Exception:  # noqa: BLE001, S110 - 摘要失败回退搜索摘要，不阻断回复。
-        pass
     return MoegirlQuestionOutcome(
-        status="hit",
-        body=format_main_result(page, max_chars=max_chars),
-        entity=entity,
-        elapsed_ms=elapsed(),
+        status="degrade", entity=entity, degrade_reason=reason, elapsed_ms=elapsed()
     )
 
 
@@ -379,7 +542,15 @@ def _api_bases(config: Any | None) -> tuple[str, ...]:
 
 
 def build_moegirl_capability(config: Any | None = None) -> Any:
-    """`萌娘百科 <词条>`：精确页摘要 → 搜索可信主词条 → 候选列表。"""
+    """`萌娘百科 <词条>`：本地接地优先 → 精确页摘要 → 搜索可信主词条 → 候选列表。
+
+    2026-09-27 甲批：本执行体是命令面/中央调度 executor 的**兜底形态**——
+    生产消息流里 `萌娘百科 <词条>` 与问句都先由根装配处理程序取接地并转交
+    聊天链一次生成；走到这里的只剩无接地面（用法提示/候选列表/无条目/网络
+    失败），以及不经 handler 的 executor 路径。所有输出统一走
+    `format_main_result` / `format_grounding_result`：**无 URL、无 🔗，出处
+    只留一行中文小字**。
+    """
     api_bases = _api_bases(config)
     timeout = float(
         getattr(config, "bot_moegirl_timeout_seconds", 5.0) or 5.0
@@ -407,6 +578,18 @@ def build_moegirl_capability(config: Any | None = None) -> Any:
                 kind="text",
                 body="用法：萌娘百科 <词条>，例如『萌娘百科 洛天依』；也可以直接问『初音未来是谁』。",
                 audit_tags=["moegirl", "missing_query"],
+            )
+        # 本地知识库优先（方舟/原神等整套语料在库里，外网摘要只会更薄）。
+        local = local_kb_grounding(config, query)
+        if local is not None:
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.moegirl",
+                kind="text",
+                body=format_grounding_result(local),
+                risk_level=RiskLevel.LOW,
+                privacy_level=PrivacyLevel.PUBLIC,
+                audit_tags=["moegirl", "local_kb_grounding", f"moegirl_query:{query[:20]}"],
             )
         page: MoegirlHit | None = None
         try:
@@ -449,7 +632,7 @@ def build_moegirl_capability(config: Any | None = None) -> Any:
                 privacy_level=PrivacyLevel.PUBLIC,
                 audit_tags=["moegirl", "ambiguous", f"moegirl_query:{query[:20]}"],
             )
-        if main.snippet or main.url:
+        if main.snippet:
             return _text_result(message, main, query, max_chars)
         return CapabilityResult(
             request_id=message.request_id,
@@ -462,6 +645,16 @@ def build_moegirl_capability(config: Any | None = None) -> Any:
         )
 
     return capability
+
+
+def format_grounding_result(grounding: MoegirlGrounding, *, max_chars: int = 500) -> str:
+    """接地块 → 人话条目（命令面/executor 兜底输出；聊天链路径不经过这里）。"""
+    lines = [
+        f"【{grounding.title}】",
+        _strip_urls(_clip(grounding.text, max_chars)),
+        f"出自：{grounding.label}",
+    ]
+    return "\n".join(line for line in lines if line)
 
 
 def _text_result(
