@@ -7297,10 +7297,6 @@ def _register_nonebot_handlers() -> None:
                 )(synthetic, _decision)
 
         elif resolution.capability_id == "bot.meme_library":
-            from .domains.meme.capabilities.meme_library import (
-                build_meme_library_capability,
-            )
-
             arg = resolution.rest_text.strip()
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
@@ -8556,21 +8552,16 @@ def _register_nonebot_handlers() -> None:
             except Exception:  # noqa: BLE001 - 复读检测失败不影响主链路。
                 parrot_reply = None
             if parrot_reply:
-                from .contracts import CapabilityResult as _CR
-                from .contracts import PrivacyLevel as _PL
-                from .contracts import RiskLevel as _RL
-                from .contracts import SendPolicy as _SP
-
                 parrot_receipt = await pipeline.handle_async(
                     message,
-                    offload_capability(lambda m, d: _CR(
+                    offload_capability(lambda m, d: CapabilityResult(
                         request_id=m.request_id,
                         capability_id="bot.chat",
                         kind="text",
                         body=parrot_reply,
-                        send_policy=_SP.IMMEDIATE,
-                        privacy_level=_PL.GROUP,
-                        risk_level=_RL.LOW,
+                        send_policy=SendPolicy.IMMEDIATE,
+                        privacy_level=PrivacyLevel.GROUP,
+                        risk_level=RiskLevel.LOW,
                         audit_tags=["group_parrot", "social_response"],
                     )),
                     capability_id="bot.chat",
@@ -9555,9 +9546,6 @@ def _register_nonebot_handlers() -> None:
                 return _build_epic_with_backend(config)(message, _decision)
 
         elif capability_id == "bot.meme_library":
-            from .domains.meme.capabilities.meme_library import (
-                build_meme_library_capability,
-            )
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 synthetic = message.model_copy(update={"plain_text": normalized_text})

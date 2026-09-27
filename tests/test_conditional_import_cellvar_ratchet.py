@@ -88,45 +88,12 @@ class RosterEntry:
 
 
 _ROSTER: tuple[RosterEntry, ...] = (
-    RosterEntry(
-        file="plugins/bot_unified_runtime/__init__.py",
-        host="<module>._register_nonebot_handlers._handle_alias",
-        names=frozenset({"build_meme_library_capability"}),
-        line_hint=7300,
-        attribution=(
-            "2026-09-27 萌百 cellvar 根修波（commit f6b5f3c）同型普查在册站点；"
-            "本锁编写席当日现算复核坐实（AST+字节码双腿），归表情包库入口 owner 修，"
-            "修好后本条必须摘牌"
-        ),
-    ),
-    RosterEntry(
-        file="plugins/bot_unified_runtime/__init__.py",
-        host="<module>._register_nonebot_handlers._handle_chat",
-        names=frozenset({
-            "CapabilityResult as _CR",
-            "PrivacyLevel as _PL",
-            "RiskLevel as _RL",
-            "SendPolicy as _SP",
-        }),
-        line_hint=8559,
-        attribution=(
-            "2026-09-27 萌百 cellvar 根修波（commit f6b5f3c）排查点名的「_CR/_PL/_RL/_SP "
-            "lambda」组，本锁编写席现算复核同格；导入与消费同在 `if parrot_reply:` 块内、"
-            "今日不炸≠安全（把 lambda 提出块外或把导入删掉即炸），归 chat 主链 owner 修，"
-            "修好后摘牌"
-        ),
-    ),
-    RosterEntry(
-        file="plugins/bot_unified_runtime/__init__.py",
-        host="<module>._register_nonebot_handlers._handle_natural",
-        names=frozenset({"build_meme_library_capability"}),
-        line_hint=9558,
-        attribution=(
-            "2026-09-27 萌百 cellvar 根修波（commit f6b5f3c）同型普查在册站点；"
-            "本锁编写席当日现算复核坐实（AST+字节码双腿），归自然语言入口 owner 修，"
-            "修好后本条必须摘牌"
-        ),
-    ),
+    # 2026-09-27 摘牌：原三条目（_handle_alias / _handle_chat / _handle_natural，
+    # 即本 docstring 判据②点名的 `_CR/_PL/_RL/_SP` lambda 组与两枚
+    # `build_meme_library_capability` 分支导入）已按萌百手法根修——前两枚删分支内
+    # 重复导入、别名那组改闭包用模块级真身名；行为锁见
+    # tests/test_conditional_import_cellvar_sites_fix.py。日后扫出新同型站点，
+    # 按甲腿要求在此追加条目并带归属。
 )
 
 # AST 命中而字节码不坐实的分歧站：现算为空，零容忍（语义见模块 docstring）。
