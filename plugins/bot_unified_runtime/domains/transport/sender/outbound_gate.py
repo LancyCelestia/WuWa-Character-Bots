@@ -106,6 +106,10 @@ REASON_QUEUE_NO_DELIVER_AFTER = "queue_without_deliver_after"
 
 KIND_DEGRADED = "outbound_gate_degraded"
 KIND_STORM = "outbound_gate_storm"
+# 键形门 skip ⇒ 条目被闸吃掉、队列从未触达。修复前该分支只出 verdict 不报 issue
+# （Q-G9②「在册未执法」：就算接了 sink，脏键丢消息也不进告警链）。与 store 降级
+# 同口径逐发出声，折叠/抑制归中央 `AdminAlertSuppression`——闸内不建第二本账。
+KIND_SKIPPED = "outbound_gate_skipped"
 # 设置读不到/类型不对 ⇒ 行为恒等于「关闭」，而配置面看起来仍是开着的。必须能报出来。
 KIND_SETTINGS_UNREADABLE = "outbound_gate_settings_unreadable"
 # TTL（`enabled_until`）到期 / 读不懂 ⇒ 两者都必须**响亮**，不许静默当「没配」。
@@ -776,6 +780,14 @@ class OutboundGate:
             family=dedupe_family,
             namespace=dedupe_namespace,
         ):
+            # skip＝条目被闸吃掉（队列从未触达）。观测必须挂在 verdict 的出生点：
+            # 与 store 降级分支同一先例——逐发经 `note_issue` 单源出声，`retryable=False`
+            # （键形非瞬态故障，重投不解决问题），文本只留代号与主体哈希（`_issue`
+            # 构造，零正文零键形）；折叠/300s 抑制归中央 `AdminAlertSuppression`，
+            # 本件不自建闩/计数器（`_note_ttl_state` 头注同口径，禁第二本账）。
+            self.note_issue(
+                _issue(KIND_SKIPPED, reason=REASON_DEDUPE_SHAPE, subject_key=subject_key)
+            )
             return OutboundGateVerdict(
                 action="skip",
                 reason=REASON_DEDUPE_SHAPE,
@@ -1017,7 +1029,8 @@ def submit_active_push(
     `dedupe_namespace` 声明该族的键首段（缺省 `emg`=紧急域现役口径不变，其余族须
     自报，见 `dedupe_key_shape_ok`）。
     关闭态与三门全过都走裸 `submit(request)`（零关键字=与现状同形）；顺延走
-    `submit(request, deliver_after=...)`；拒绝不触队列，只出自造 SKIPPED 回执。
+    `submit(request, deliver_after=...)`；拒绝不触队列，出自造 SKIPPED 回执，
+    且 `decide` 内已逐发经 `note_issue` 冒 `outbound_gate_skipped`（Q-G9②）。
     正文在函数**最前**过一次 `redact_local_secrets`（AGENTS 铁律 3 的主动投递腿，
     作用域与理由见 `_redact_active_push_body` 头注；闸关否与打码无关——开关＝
     可以把安全关掉，禁做）。
