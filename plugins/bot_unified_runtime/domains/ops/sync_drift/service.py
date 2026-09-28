@@ -314,7 +314,7 @@ async def _deliver_telegram_and_mail(service: SyncDriftService, alert: DriftAler
         outcome["telegram"] = "disabled:no_recipients"
     else:
         try:
-            from plugins.bot_unified_runtime.mail_bridge import (
+            from plugins.bot_unified_runtime.domains.transport.mail.mail_bridge import (
                 notify_telegram_admins,
             )
 
@@ -333,7 +333,7 @@ async def _deliver_telegram_and_mail(service: SyncDriftService, alert: DriftAler
         return outcome
     delivered = 0
     try:
-        from plugins.bot_unified_runtime.mail_bridge import (
+        from plugins.bot_unified_runtime.domains.transport.mail.mail_bridge import (
             send_mail_from_account,
         )
 
