@@ -234,6 +234,14 @@ class WebSearchContext(StrictBaseModel):
     query: str = ""
     hits: list[WebSearchHit] = Field(default_factory=list)
     privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC
+    #: E-1（WEBCFG-AUDIT 表 C-3）检索状态账——供 prompt 面三态出口判据。
+    #: 缺省 False/""＝没记账＝保守走「未触发」现状句：旧调用点与旧夹具零改动。
+    #: attempted＝本轮真开跑过检索腿；error_kind＝遥测同源代号（provider:/page:/
+    #: acg:/empty_results 一类，出站前还要过 `_sanitize_web_error_kind` 形态闸）；
+    #: budget_skipped＝被 D1 预算闸整腿拦停（答完才是必须交付，检索是可选段）。
+    attempted: bool = False
+    error_kind: str = ""
+    budget_skipped: bool = False
 
 
 class ContextBundle(StrictBaseModel):

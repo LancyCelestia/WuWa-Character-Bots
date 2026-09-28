@@ -1644,10 +1644,41 @@ def _has_real_web_result_url(hit: WebSearchHit) -> bool:
     )
 
 
+#: E-1 三态措辞锚（`tests/test_webcfg_e1_web_search_states.py` 逐字节钉死，改措辞先改锁）。
+_WEB_SEARCH_NOT_SEARCHED_LINE = "- 本轮未按需联网检索现实时效信息"
+_WEB_SEARCH_FAILED_ANCHOR = "已联网检索但未获可用结果"
+_WEB_SEARCH_BUDGET_SKIP_ANCHOR = "联网检索与正文抓取被主动跳过"
+#: 归因代号形态闸：遥测 `web_error_kind` 的生成形态（字母数字 + `_ , : . + -`、
+#: 至多 80 字符）。混入控制字符/CJK/指令字样的非形态值一律替换为「未归类」，
+#: 原文绝不进 prompt——归因代号是数据不是指令（规则 11），且出站行必须单行。
+_WEB_SEARCH_ERROR_KIND_RE = re.compile(r"^[A-Za-z0-9_,.:+-]{1,80}$")
+
+
+def _sanitize_web_error_kind(kind: object) -> str:
+    text = str(kind or "").strip()
+    if not text or not _WEB_SEARCH_ERROR_KIND_RE.fullmatch(text):
+        return "未归类"
+    return text
+
+
 def _web_search_lines(context: ContextBundle, max_chars: int | None = None) -> str:
     web = context.web_search_context
+    # 三态出口：hits 为空才分「预算闸跳过 / 查了但失败 / 没去查」；状态字段用
+    # getattr 缺省读——状态字段问世前的鸭子夹具（hits=[] 的 SimpleNamespace）
+    # 不许 KeyError，兼容面由测试逐字节钉死。
+    if web is not None and not web.hits:
+        if getattr(web, "budget_skipped", False):
+            return (
+                f"- {_WEB_SEARCH_BUDGET_SKIP_ANCHOR}"
+                "（本轮预算优先保答题段，检索腿未启动）"
+            )
+        if getattr(web, "attempted", False):
+            return (
+                f"- 本轮{_WEB_SEARCH_FAILED_ANCHOR}"
+                f"（归因：{_sanitize_web_error_kind(getattr(web, 'error_kind', ''))}）"
+            )
     if web is None or not web.hits:
-        return "- 本轮未按需联网检索现实时效信息"
+        return _WEB_SEARCH_NOT_SEARCHED_LINE
     # v21r2 SEARCH 席：检索截至口径 + 一句守岸人时效诚实声明（过时就明说，不装新）。
     timeliness_header = (
         f"- {acg_search.timeliness_section_note(datetime.now().astimezone())}；"
@@ -4796,6 +4827,7 @@ def build_chat_capability(
         retrieval_affordable, _retrieval_remaining, retrieval_skip_reason = (
             _retrieval_affordance(request_budget)
         )
+        web_leg_budget_skipped = False
         retrieval_budget_skip_tag = ""
         if not retrieval_affordable:
             skipped_legs = [name for name, on in (("web", do_web), ("acg", run_acg)) if on]
@@ -4804,6 +4836,9 @@ def build_chat_capability(
             retrieval_budget_skip_tag = (
                 f"retrieval_skipped_budget:{'+'.join(skipped_legs) or 'none'}"
             )
+            # E-1：web 腿被预算闸拦停要单独留标志——prompt 面据此出「主动跳过」
+            # 独立线，不再和「没去查」同形（Hunk C 消费）。
+            web_leg_budget_skipped = "web" in skipped_legs
             logger.info(
                 "optional retrieval legs skipped to protect the answer phase: %s (%s)",
                 "+".join(skipped_legs) or "none",
@@ -5021,6 +5056,26 @@ def build_chat_capability(
         if do_web and not web_hits and not web_error_kinds:
             web_error_kinds.add("empty_results")
         web_error_kind = ",".join(sorted(web_error_kinds))[:80]
+        # E-1 归因回填（WEBCFG-AUDIT 表 C-3）：把「查过/失败代号/预算拦停」写回
+        # 上下文契约，供 `_web_search_lines` 分态。未触发态（联网总闸关、NEVER 判、
+        # 或 do_web=False 且非预算拦停）**不写**——保守走现状句就是该态判据。
+        # 构造失败只留痕不阻断回复链（观察面≠必须交付，fail-open）。
+        if do_web or web_leg_budget_skipped:
+            try:
+                _web_ctx = context.web_search_context
+                if _web_ctx is None:
+                    _web_ctx = WebSearchContext(request_id=message.request_id)
+                if do_web:
+                    _web_ctx = _web_ctx.model_copy(
+                        update={"attempted": True, "error_kind": web_error_kind}
+                    )
+                else:
+                    _web_ctx = _web_ctx.model_copy(update={"budget_skipped": True})
+                context = context.model_copy(
+                    update={"web_search_context": _web_ctx}
+                )
+            except Exception:  # noqa: BLE001 - 状态回填失败降级为现状同形，不升级成事故。
+                logger.debug("web search state backfill failed", exc_info=True)
         if intent_telemetry is not None:
             try:
                 intent_telemetry.record(
