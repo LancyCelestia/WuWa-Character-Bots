@@ -737,6 +737,35 @@ ATTACK_SURFACE_REGISTER: Final[tuple[SurfaceEntry, ...]] = (
             ),
         ),
     ),
+    SurfaceEntry(
+        surface_id="AS-SUBSCRIBE-FEED",
+        title="订阅条目（远端 feed 正文/标题/图像描述）二手回放腿",
+        state=DefenceState.DEFENDED,
+        channels=(AttackChannel.WEB_KB_TEXT,),
+        current_defender=(
+            "S-ATK-SUBSCRIBE 开票＋复核链现算（2026-09-28）：三腿同真身 "
+            "chat_reply/security/injection.guard_secondhand_text——"
+            "①视觉输入腿 domains/media/ingest/vision_describe.py::"
+            "describe_subscription_item（label「订阅条目标题」，`34c39de` 落）；"
+            "②出站正文腿 __init__.py::_deliver_v2_event（label「订阅条目内容」/"
+            "「订阅条目图像描述」，root 根腿 O2 已随 `e1e1d1c` 入库——在册已落）；"
+            "③行为锁 tests/test_subscription_vision_guard_sub4.py + "
+            "tests/test_sub_delivery_subfeed_register.py + 已入库 AST 锁 "
+            "tests/test_subscribe_root_wiring_sub2sub4.py"
+        ),
+        failure_mode=(
+            "远端 feed 标题/正文/图像描述若绕开咽喉直拼即成二手回放注入腿；"
+            "三腿均有哨兵（行为锁+AST 锁），回退即当场红（本票 2026-09-28 现算 HEAD）"
+        ),
+        minimal_landing="本票即补册动作：②腿已随 root 批入库，注册时直接记 DEFENDED；无新码",
+        probes=(
+            DefenceProbe(
+                _INJ,
+                "guard_secondhand_text",
+                note="活：订阅视觉输入腿 + 出站正文腿（HEAD 现算，两腿均入库）",
+            ),
+        ),
+    ),
 )
 
 
@@ -777,6 +806,7 @@ REQUIRED_SURFACE_IDS: Final[tuple[str, ...]] = (
     "AS-RESOURCE-UNBOUNDED",
     "AS-SSRF-OUTBOUND",
     "AS-INBOX-DIGEST-RETOLD",
+    "AS-SUBSCRIBE-FEED",
 )
 
 
