@@ -94,6 +94,8 @@ SCANNED_FILE_FLOOR = 566
 #: 腿②的函数扫描面。**地板，只准升**。
 SCANNED_FUNCTION_FLOOR = 6755
 #: 腿④的桶键调用点数。**地板，只准升**（牙齿在逐调用点判定，本数只作失明哨兵）。
+#: 09-28 S-REDTRIAGE-HEAD：判据改形＝调用点并数 sender_interval_ledger_key 折叠通路
+#: （账头诚实路径②「判据本身改形→随判据一起改并写明理由」），现算 42；地板 39 不动。
 BUCKET_KEY_CALL_FLOOR = 39
 #: 腿⑤的 `record_phase` 调用点总数。**地板，只准升**（相位多了不登记归属，本数会涨而覆盖率掉）。
 RECORD_PHASE_CALL_FLOOR = 5
@@ -194,9 +196,12 @@ def bucket_key_problems(tree: ast.AST) -> tuple[list[str], int]:
     """纯谓词：限流桶键是否**逐枚按 capability_id 分桶**（共用计数器＝可互压）。
 
     返回 (违规清单, 被检的调用点数)。两道判：
-      a) 每个 `self._bucket_key(第一参数, …)` 调用点必须把 `capability_id` 编进去；
-      b) `_bucket_key` 构造子本身必须把 `capability_id` 拼进返回的键里
-         （只判 a 会漏"形参收了却不用"这一手——那等于所有能力共用一格计数器）。
+      a) 每个桶键成型调用点（`self._bucket_key(…)` 与折叠通路
+         `sender_interval_ledger_key(…)`——ed802d3 起 sender_interval 两枚调用点
+         收进该唯一格式件，尺子须同数，否则「换形」会被误读成「拆账」）
+         必须把 `capability_id` 编进第一参数；
+      b) `_bucket_key` 与 `sender_interval_ledger_key` 构造子本身必须把
+         `capability_id` 拼进返回的键里（只判 a 会漏"形参收了却不用"这一手）。
     """
     violations: list[str] = []
     calls = 0
@@ -209,11 +214,23 @@ def bucket_key_problems(tree: ast.AST) -> tuple[list[str], int]:
             if "capability_id" not in first:
                 violations.append(
                     f"line{node.lineno}: 桶键第一参数 {first!r} 未含 capability_id（跨能力共用计数器）")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id == "sender_interval_ledger_key":
+            calls += 1
+            first = ast.unparse(node.args[0]) if node.args else "<无参>"
+            if "capability_id" not in first:
+                violations.append(
+                    f"line{node.lineno}: 冷却账本键第一参数 {first!r} 未含 capability_id（跨能力共用计数器）")
         if isinstance(node, ast.FunctionDef) and node.name == "_bucket_key":
             ctor_found = True
             body_text = "\n".join(ast.unparse(stmt) for stmt in node.body)
             if "capability_id" not in body_text:
                 violations.append(f"line{node.lineno}: _bucket_key 形参收下 capability_id 却不拼进键名")
+        if isinstance(node, ast.FunctionDef) and node.name == "sender_interval_ledger_key":
+            body_text = "\n".join(ast.unparse(stmt) for stmt in node.body)
+            if "capability_id" not in body_text:
+                violations.append(
+                    f"line{node.lineno}: sender_interval_ledger_key 形参收下 capability_id 却不拼进键名")
     if not ctor_found:
         violations.append("限流件里找不到 _bucket_key 构造子（量具被拆＝不可判）")
     return violations, calls
