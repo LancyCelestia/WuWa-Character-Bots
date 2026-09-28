@@ -17,6 +17,7 @@ from plugins.bot_unified_runtime.contracts import (
     SubscriptionTarget,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import is_admin_message
 from plugins.bot_unified_runtime.domains.subscribe.adapters.target_notice import (
     SubscriptionTargetNotice,
 )
@@ -60,13 +61,12 @@ def build_subscribe_capability_v2(
         ]
 
     def _is_admin(message: IncomingMessage) -> bool:
-        # 管理员判定沿用 v1 同源机制（audit P1#2）：admin 角色 + BOT_ADMIN_USER_IDS。
+        # 管理员判定沿用 v1 同源机制（audit P1#2）：admin 角色 + 管理名单。
+        # F-A 残留（2026-09-28）：第二腿改吃中央 (平台域, sender_id) 判定口
+        # （roles.is_admin_message），QQ 裸名单不再无平台腿直判。
         if "admin" in _roles(message):
             return True
-        admin_ids = {
-            str(value) for value in (getattr(config, "bot_admin_user_ids", []) or [])
-        }
-        return str(getattr(message, "sender_id", "")) in admin_ids
+        return is_admin_message(config, message)
 
     def _session_scope(message: IncomingMessage) -> str:
         return str(getattr(getattr(message, "session_type", None), "value", "private"))

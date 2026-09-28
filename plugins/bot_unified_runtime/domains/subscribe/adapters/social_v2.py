@@ -39,8 +39,25 @@ from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
 from plugins.bot_unified_runtime.domains.subscribe.adapters.target_notice import (
     SubscriptionTargetNotice,
 )
+from plugins.bot_unified_runtime.domains.subscribe.adapters.target_policy_v2 import (
+    require_legal_target_key,
+    subscription_outbound_cookie,
+    target_key_issue,
+)
 
 _NOW = lambda: datetime.now(timezone.utc)
+
+
+def _invalid_target_fetch_result(target: SubscriptionTarget) -> SubscriptionFetchResult:
+    """审查 F-6 纵深腿：直构/存量脏 key 在拉取构造点拒发请求。
+
+    key 未过白名单 ⇒ 不拼 URL、不带 Cookie，返回结构化失败（scheduler
+    按既有 error_code 通道 record_failure 退避；数据不删，用户可重新订
+    合规目标）。
+    """
+    return SubscriptionFetchResult(
+        health_state="degraded", error_code="invalid_target", retryable=False
+    )
 
 
 class TwitterGraphQLClient:
@@ -108,7 +125,7 @@ class TwitterGraphQLClient:
         _final_url, page = self._text_getter(
             "https://x.com/",
             timeout=timeout,
-            cookie=cookie,
+            cookie=subscription_outbound_cookie("twitter", "https://x.com/", cookie),
             proxy=proxy,
             referer="https://x.com/",
         )
@@ -118,10 +135,12 @@ class TwitterGraphQLClient:
         for script in scripts[-12:]:
             script_url = urllib.parse.urljoin("https://x.com/", script)
             try:
+                # 审查 F-6：script src 是页面可控值，urljoin 后可指向任意 host
+                # ——Cookie 出站按 twitter host 表逐 URL 判定，出表即剥。
                 _, source = self._text_getter(
                     script_url,
                     timeout=timeout,
-                    cookie=cookie,
+                    cookie=subscription_outbound_cookie("twitter", script_url, cookie),
                     proxy=proxy,
                     referer="https://x.com/",
                 )
@@ -197,7 +216,8 @@ class TwitterGraphQLClient:
         return self._json_getter(
             url,
             timeout=timeout,
-            cookie=cookie,
+            # 审查 F-6：Cookie 出站过平台 host 表∧中央咽喉组合口。
+            cookie=subscription_outbound_cookie("twitter", url, cookie),
             proxy=proxy,
             referer="https://x.com/",
             extra_headers=headers,
@@ -471,6 +491,11 @@ def _target(
     *,
     now: datetime | None = None,
 ) -> SubscriptionTarget:
+    # 审查 F-6（2026-09-28 S-FIX-SUB-SEC）：全 7 平台 resolve 的唯一构造咽喉，
+    # 冒号/URL 两种形态在此统一过 target_key 白名单（fail-closed，平台未登记
+    # 亦拒）。id/display_name 由 key 回显、key 又内插进拉取 URL——校验必须在
+    # 构造之前，非法 key 零落库。
+    require_legal_target_key(platform, kind, key)
     timestamp = now or _NOW()
     return SubscriptionTarget(
         id=f"{platform}:{kind}:{key}",
@@ -525,10 +550,17 @@ class _BaseAdapter:
         self.client = client
 
     def _fetch_text(self, target: SubscriptionTarget, context: dict[str, Any]) -> str:
+        # 审查 F-6：URL 由 target_key 内插构造 ⇒ 构造前复检白名单；
+        # Cookie 出站走平台 host 表∧中央咽喉组合口（不归属即剥，降级未登录）。
+        if target_key_issue(target.platform, target.target_kind, target.target_key):
+            raise ValueError("订阅目标标识未过白名单，拒绝构造拉取请求")
+        url = self._target_url(target)
         _final_url, body = http_get_text(
-            self._target_url(target),
+            url,
             timeout=float((context or {}).get("timeout_seconds", 10.0) or 10.0),
-            cookie=str((context or {}).get("cookie_header", "") or ""),
+            cookie=subscription_outbound_cookie(
+                target.platform, url, str((context or {}).get("cookie_header", "") or "")
+            ),
             proxy=str((context or {}).get("proxy", "") or ""),
         )
         return body
@@ -580,6 +612,9 @@ class BilibiliSubscriptionAdapterV2(_BaseAdapter):
         raise ValueError("无法识别的 Bilibili 订阅目标")
 
     async def fetch_incremental(self, target, cursors, context):
+        # 审查 F-6 纵深腿：构造拉取 URL 前复检 key（白名单见 target_policy_v2）。
+        if target_key_issue(target.platform, target.target_kind, target.target_key):
+            return _invalid_target_fetch_result(target)
         if self.client is not None:
             return await self._fetch_or_unsupported(target, cursors, context)
         try:
@@ -687,6 +722,9 @@ class XiaohongshuSubscriptionAdapterV2(_BaseAdapter):
         return _target(self.platform, "creator", match.group(1), raw)
 
     async def fetch_incremental(self, target, cursors, context):
+        # 审查 F-6 纵深腿：legacy 拉取用 target_key 拼主页 URL，先复检。
+        if target_key_issue(target.platform, target.target_kind, target.target_key):
+            return _invalid_target_fetch_result(target)
         if self.client is not None:
             return await self._fetch_or_unsupported(target, cursors, context)
         if target.target_kind == "live":
@@ -872,10 +910,15 @@ class YouTubeSubscriptionAdapterV2(_BaseAdapter):
         （401/403）沿用 auth_required 降级语义，其余网络失败走 degraded。
         """
         try:
+            probe_url = self._live_probe_url(target.target_key)
             final_url, body = http_get_text(
-                self._live_probe_url(target.target_key),
+                probe_url,
                 timeout=float((context or {}).get("timeout_seconds", 10.0) or 10.0),
-                cookie=str((context or {}).get("cookie_header", "") or ""),
+                cookie=subscription_outbound_cookie(
+                    "youtube",
+                    probe_url,
+                    str((context or {}).get("cookie_header", "") or ""),
+                ),
                 proxy=str((context or {}).get("proxy", "") or ""),
                 referer="https://www.youtube.com/",
             )
@@ -912,6 +955,9 @@ class YouTubeSubscriptionAdapterV2(_BaseAdapter):
         )
 
     async def fetch_incremental(self, target, cursors, context):
+        # 审查 F-6 纵深腿：feed/live 探测 URL 均由 target_key 内插，先复检。
+        if target_key_issue(target.platform, target.target_kind, target.target_key):
+            return _invalid_target_fetch_result(target)
         if self.client is not None:
             return await self._fetch_or_unsupported(target, cursors, context)
         if target.target_kind == "live":
@@ -1223,6 +1269,9 @@ class TwitterSubscriptionAdapterV2(_BaseAdapter):
         return items, next_cursor, previous_cursor, state["hit_last"]
 
     async def fetch_incremental(self, target, cursors, context):
+        # 审查 F-6 纵深腿：screen_name 进 GraphQL variables、句柄即 key，先复检。
+        if target_key_issue(target.platform, target.target_kind, target.target_key):
+            return _invalid_target_fetch_result(target)
         cookie = str((context or {}).get("cookie_header", "") or "")
         if "auth_token=" not in cookie or "ct0=" not in cookie:
             return SubscriptionFetchResult(
@@ -1321,6 +1370,9 @@ class TelegramSubscriptionAdapterV2(_BaseAdapter):
         return _target(self.platform, "public_channel", key, raw)
 
     async def fetch_incremental(self, target, cursors, context):
+        # 审查 F-6 纵深腿：t.me/s/{key} 路径位内插 target_key，先复检。
+        if target_key_issue(target.platform, target.target_kind, target.target_key):
+            return _invalid_target_fetch_result(target)
         if self.client is not None:
             return await self._fetch_or_unsupported(target, cursors, context)
         try:
@@ -1349,16 +1401,24 @@ class PixivSubscriptionAdapterV2(_BaseAdapter):
         raise ValueError("无法识别的 Pixiv 创作者")
 
     async def fetch_incremental(self, target, cursors, context):
+        # 审查 F-6 纵深腿：ajax/user/{key}/profile/all 路径位内插 target_key。
+        if target_key_issue(target.platform, target.target_kind, target.target_key):
+            return _invalid_target_fetch_result(target)
         if self.client is not None:
             return await self._fetch_or_unsupported(target, cursors, context)
         try:
             from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
                 http_get_json,
             )
+            endpoint = f"https://www.pixiv.net/ajax/user/{target.target_key}/profile/all"
             payload = http_get_json(
-                f"https://www.pixiv.net/ajax/user/{target.target_key}/profile/all",
+                endpoint,
                 timeout=float((context or {}).get("timeout_seconds", 10.0) or 10.0),
-                cookie=str((context or {}).get("cookie_header", "") or ""),
+                cookie=subscription_outbound_cookie(
+                    "pixiv",
+                    endpoint,
+                    str((context or {}).get("cookie_header", "") or ""),
+                ),
                 proxy=str((context or {}).get("proxy", "") or ""),
                 referer="https://www.pixiv.net/",
             )
@@ -1418,16 +1478,27 @@ class WeiboSubscriptionAdapterV2(_BaseAdapter):
         return _target(self.platform, "creator", key, raw)
 
     async def fetch_incremental(self, target, cursors, context):
+        # 审查 F-6 纵深腿：getIndex?value={key} 查询位内插 target_key。
+        if target_key_issue(target.platform, target.target_kind, target.target_key):
+            return _invalid_target_fetch_result(target)
         if self.client is not None:
             return await self._fetch_or_unsupported(target, cursors, context)
         try:
             from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
                 http_get_json,
             )
+            endpoint = (
+                "https://m.weibo.cn/api/container/getIndex"
+                f"?type=uid&value={target.target_key}"
+            )
             payload = http_get_json(
-                f"https://m.weibo.cn/api/container/getIndex?type=uid&value={target.target_key}",
+                endpoint,
                 timeout=float((context or {}).get("timeout_seconds", 10.0) or 10.0),
-                cookie=str((context or {}).get("cookie_header", "") or ""),
+                cookie=subscription_outbound_cookie(
+                    "weibo",
+                    endpoint,
+                    str((context or {}).get("cookie_header", "") or ""),
+                ),
                 proxy=str((context or {}).get("proxy", "") or ""),
                 referer="https://m.weibo.cn/",
                 extra_headers={

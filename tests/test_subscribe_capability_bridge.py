@@ -188,3 +188,48 @@ def test_check_clean_thread_coroutine_error_structured_no_leak(tmp_path: Any) ->
     assert adapter.calls == 1  # 协程已构造且被 run_until_complete 消费。
     assert "检查失败" in result.body and "bridge internal boom" in result.body
     assert "subscribe_check_failed" in result.audit_tags
+
+
+# ==================== F-A 残留：群管理门的平台域判定（_is_admin 旁路腿） ====================
+
+
+def _group_message(text: str, *, platform: str, sender_id: str) -> IncomingMessage:
+    return IncomingMessage(
+        platform=platform,
+        adapter="telegram" if platform == "telegram" else "onebot.v11",
+        bot_id="bot",
+        session_id=f"group:{sender_id}",
+        session_type=SessionType.GROUP,
+        sender_id=sender_id,
+        group_id="g1",
+        sender_roles=["user"],
+        plain_text=text,
+    )
+
+
+def _admin_gate_capability(tmp_path: Any) -> Any:
+    registry = SimpleNamespace(resolve_target=lambda raw: {}, find=lambda platform: None)
+    store = SubscriptionStore(str(tmp_path / "sub-gate.sqlite3"))
+    return build_subscribe_capability(
+        store=store,
+        registry=registry,
+        config=SimpleNamespace(bot_admin_user_ids=["100200"]),
+    )
+
+
+def test_v1_group_gate_denies_telegram_same_number_as_qq_admin(tmp_path: Any) -> None:
+    """病根锁：QQ 管理员号 100200 的用户在 telegram 平台发起群内 list，
+    不得再被无平台腿的裸名单直判放行（F-A 残留旁路点，subscribe.py _is_admin）。"""
+    capability = _admin_gate_capability(tmp_path)
+    result = capability(_group_message("订阅 list", platform="telegram", sender_id="100200"), None)
+    assert "subscribe_group_denied" in result.audit_tags, (
+        f"TG 同号仍吃到 QQ 裸名单 admin：{result.audit_tags} / {result.body}"
+    )
+
+
+def test_v1_group_gate_still_allows_qq_admin_bare_number(tmp_path: Any) -> None:
+    """零回归正向锁：QQ 平台（onebot 写法）的裸号管理员照旧过群管理门。"""
+    capability = _admin_gate_capability(tmp_path)
+    result = capability(_group_message("订阅 list", platform="onebot", sender_id="100200"), None)
+    assert "subscribe_group_denied" not in result.audit_tags
+    assert "subscribe_list" in result.audit_tags

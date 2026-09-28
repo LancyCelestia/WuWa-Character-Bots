@@ -16,6 +16,7 @@ from typing import Any, cast
 
 from plugins.bot_unified_runtime.contracts import CapabilityResult, IncomingMessage
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import is_admin_message
 from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionDestination,
     SubscriptionSpec,
@@ -171,8 +172,10 @@ def build_subscribe_capability(
     def _is_admin(message: IncomingMessage) -> bool:
         if "admin" in _roles(message):
             return True
-        admin_ids = {str(value) for value in (getattr(config, "bot_admin_user_ids", []) or [])}
-        return str(getattr(message, "sender_id", "")) in admin_ids
+        # F-A 残留（2026-09-28）：不再拿 QQ 裸名单做无平台腿的直判——
+        # 复用中央 (平台域, sender_id) 管理判定口（roles.is_admin_message），
+        # 缺平台事实/平台不认识 fail-closed，QQ 号在 TG 侧不再吃到 admin。
+        return is_admin_message(config, message)
 
     def _result(
         message: IncomingMessage,

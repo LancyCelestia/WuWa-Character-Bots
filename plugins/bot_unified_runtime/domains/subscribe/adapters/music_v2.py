@@ -42,6 +42,11 @@ from plugins.bot_unified_runtime.domains.subscribe.adapters.social_v2 import (
 from plugins.bot_unified_runtime.domains.subscribe.adapters.target_notice import (
     SubscriptionTargetNotice,
 )
+from plugins.bot_unified_runtime.domains.subscribe.adapters.target_policy_v2 import (
+    require_legal_target_key,
+    subscription_outbound_cookie,
+    target_key_issue,
+)
 
 # 审查 J-06：摘除平台保留名字映射，resolve 时给出指名道姓的「暂不支持」提示。
 _REMOVED_PLATFORM_LABELS = {
@@ -79,6 +84,10 @@ class MusicSubscriptionAdapterV2:
 
     @staticmethod
     def _make_target(provider: str, kind: str, key: str, raw: str) -> SubscriptionTarget:
+        # 审查 F-6（2026-09-28 S-FIX-SUB-SEC）：冒号形态 key 零校验即构造
+        # id/display_name 并内插拉取 URL（?id= 查询位与 /api/album/ 路径位）
+        # ——构造前过订阅域白名单（fail-closed），非法 key 走 add 面拒绝路径。
+        require_legal_target_key(provider, kind, key)
         now = datetime.now(timezone.utc)
         return SubscriptionTarget(
             id=f"{provider}:{kind}:{key}",
@@ -159,6 +168,12 @@ class MusicSubscriptionAdapterV2:
                 raise TypeError("music provider client must return SubscriptionFetchResult")
             return result
         if target.platform == "netease" and target.target_kind in {"playlist", "album", "artist", "public_user"}:
+            # 审查 F-6 纵深腿：endpoint 由 target_key 内插（查询位与路径位
+            # 均有），构造前复检白名单；Cookie 出站过平台 host 表∧中央咽喉。
+            if target_key_issue(target.platform, target.target_kind, target.target_key):
+                return SubscriptionFetchResult(
+                    health_state="degraded", error_code="invalid_target", retryable=False
+                )
             try:
                 if target.target_kind == "playlist":
                     endpoint = (
@@ -180,7 +195,11 @@ class MusicSubscriptionAdapterV2:
                 payload = http_get_json(
                     endpoint,
                     timeout=float((context or {}).get("timeout_seconds", 10.0) or 10.0),
-                    cookie=str((context or {}).get("cookie_header", "") or ""),
+                    cookie=subscription_outbound_cookie(
+                        "netease",
+                        endpoint,
+                        str((context or {}).get("cookie_header", "") or ""),
+                    ),
                     proxy=str((context or {}).get("proxy", "") or ""),
                     referer="https://music.163.com/",
                 )
