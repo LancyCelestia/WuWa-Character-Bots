@@ -145,6 +145,10 @@ def extract_page_text(payload: object) -> str:
 class _JsonSearchProvider:
     scheme = "bearer"
     method = "POST"
+    #: 声明本 provider 是否接受**请求级** body 追加层（``extra_body``）。缺省 False＝
+    #: 检索链对它绝不开该通道；只有声明了参数形态的 Tavily 类置 True
+    #: （WEBCFG-AUDIT E-3：time_range 是 Tavily 的请求级旋钮，其余引擎结构上无此参数）。
+    accepts_extra_body = False
 
     def __init__(
         self,
@@ -222,9 +226,18 @@ class _JsonSearchProvider:
     def _build_body(self, query: str, max_results: int) -> dict[str, Any]:
         return {"query": query, "max_results": max(1, int(max_results))}
 
-    def search(self, query: str, *, max_results: int = 3) -> list[WebSearchHit]:
+    def search(
+        self,
+        query: str,
+        *,
+        max_results: int = 3,
+        extra_body: Mapping[str, Any] | None = None,
+    ) -> list[WebSearchHit]:
+        # ``extra_body``＝请求级最后合并层（盖过装配期烘档值），仅对声明
+        # ``accepts_extra_body`` 的形态由链注入；None＝逐字节现状。
         return normalize_search_results(
-            self._request_json(query, max_results), max_results=max_results
+            self._request_json(query, max_results, body_override=extra_body),
+            max_results=max_results,
         )
 
     def close(self) -> None:
@@ -234,6 +247,9 @@ class _JsonSearchProvider:
 
 class TavilyWebSearchProvider(_JsonSearchProvider):
     name = "tavily"
+    #: Tavily 请求体认 ``time_range``（day/week/month/year）——链级时效窗
+    #: 唯一可注入的引擎形态（缺省 False 的基类声明见 ``_JsonSearchProvider``）。
+    accepts_extra_body = True
 
     def _build_body(self, query: str, max_results: int) -> dict[str, Any]:
         return {"query": query, "max_results": max(1, int(max_results))}

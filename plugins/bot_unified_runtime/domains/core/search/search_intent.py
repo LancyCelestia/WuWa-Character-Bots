@@ -445,10 +445,15 @@ class QueryRecency:
         years: 问句里出现的年份（升序去重）。这些年份**不构成实体证据**——
             它们由查询装饰追加，任何带日期的页面都含得上，实测正是拿它凑够
             相关性地板把「中国地图」放进了「个人所得税起征点」的结果块。
+        explicit_latest: 问句是否**明示**要最新（命中 ``_RECENCY_MARKER_RE``
+            词面）。与 ``wants_latest`` 的分工：裸年份（「2019年 票房 冠军」）
+            要求新鲜度参与排序，却绝不构成请求级时效窗的证据——历史年题被
+            time_range 挡掉旧档是错的（WEBCFG-AUDIT E-3 注毒负例）。
     """
 
     wants_latest: bool
     years: tuple[int, ...] = ()
+    explicit_latest: bool = False
 
     def names_year(self, token: str) -> bool:
         """某一枚查询 token 是不是「只有年份」的装饰（数字且落在问句点名的年份里）。"""
@@ -469,4 +474,6 @@ def detect_query_recency(text: str) -> QueryRecency:
         return QueryRecency(wants_latest=False)
     years = tuple(sorted({int(match) for match in _RECENCY_YEAR_RE.findall(stripped)}))
     marked = bool(_RECENCY_MARKER_RE.search(stripped))
-    return QueryRecency(wants_latest=marked or bool(years), years=years)
+    return QueryRecency(
+        wants_latest=marked or bool(years), years=years, explicit_latest=marked
+    )

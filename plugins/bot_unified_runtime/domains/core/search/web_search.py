@@ -18,7 +18,7 @@ import time
 import urllib.parse
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 
@@ -1046,14 +1046,54 @@ class ChainedWebSearchProvider:
         timeout_seconds: float = 5.0,
         proxy: str = "",
         page_fetcher: object | None = None,
+        latest_time_range: str = "",
     ) -> None:
         self.providers = providers
         self.timeout_seconds = timeout_seconds
         self.proxy = proxy
         self.page_fetcher = page_fetcher
         self.last_provider_name = ""
+        # 请求级时效窗（WEBCFG-AUDIT E-3）：仅当**非空**且查询被认出**明示**
+        # 时效词、且 provider 声明 ``accepts_extra_body`` 时，才在该次请求
+        # 追加 ``{"time_range": ...}``；缺省空＝整层不通电，链行为与改前逐字节一致。
+        self._latest_time_range = str(latest_time_range or "").strip()
         self._search_cache: dict[tuple[str, int], tuple[float, list[WebSearchHit]]] = {}
         self._search_cache_lock = threading.Lock()
+
+    def _extra_body_for(self, provider: object, query: str) -> dict[str, str] | None:
+        """本次请求要不要带时效窗、带多少——三重闸，任一不满足即 None（现状）。
+
+        判据刻意分三层（注毒自证锁 ``tests/test_webcfg_e3_latest_time_range.py``
+        逐闸钉死）：开关值非空；查询**明示**要最新（裸年份的历史题绝不在列——
+        ``wants_latest`` 不等价于 ``explicit_latest``，把 2019 票房题锁进周窗是错的）；
+        provider 自声明吃得下 ``extra_body``（免 key 引擎结构上无此参数）。
+        """
+        if not self._latest_time_range:
+            return None
+        if not getattr(provider, "accepts_extra_body", False):
+            return None
+        if not detect_query_recency(query).explicit_latest:
+            return None
+        return {"time_range": self._latest_time_range}
+
+    def _invoke_search(
+        self,
+        provider: WebSearchProvider,
+        query: str,
+        max_results: int,
+        extra_body: dict[str, str] | None,
+    ) -> list[WebSearchHit]:
+        """按家调用同步 search；extra_body 非 None 时开请求级追加层通道。
+
+        Protocol 面（``WebSearchProvider``）不声明 ``extra_body``——只有经
+        ``_extra_body_for`` 三闸验明 ``accepts_extra_body`` 的形态才走到这条路，
+        类型面上以局部 Any 收窄，绝不放宽 Protocol 本体签名（免 key 引擎们
+        结构上没有该参数，Protocol 加进去反而撒谎）。
+        """
+        if extra_body is not None:
+            targeted: Any = provider
+            return list(targeted.search(query, max_results=max_results, extra_body=extra_body))
+        return provider.search(query, max_results=max_results)
 
     def _cache_get(self, key: tuple[str, int]) -> list[WebSearchHit] | None:
         now = time.monotonic()
@@ -1089,8 +1129,9 @@ class ChainedWebSearchProvider:
         if cached is not None:
             return cached
         for provider in self.providers:
+            extra_body = self._extra_body_for(provider, query)
             try:
-                hits = provider.search(query, max_results=max_results)
+                hits = self._invoke_search(provider, query, max_results, extra_body)
             except Exception:  # noqa: BLE001 - 单提供器失败回退下一提供器。
                 hits = []
             filtered = gate_chain_hits(hits, query) if hits else []
@@ -1115,12 +1156,13 @@ class ChainedWebSearchProvider:
         是"同一个不变量在两条路径上一处执法一处不执法"的半程形。
         """
         for provider in self.providers:
+            extra_body = self._extra_body_for(provider, query)
             try:
                 method = getattr(provider, "search_async", None)
                 if callable(method):
                     hits = await method(query, max_results=max_results, client=client)
                 else:
-                    hits = provider.search(query, max_results=max_results)
+                    hits = self._invoke_search(provider, query, max_results, extra_body)
             except Exception:  # noqa: BLE001 - 单提供器失败回退下一提供器。
                 hits = []
             filtered = gate_chain_hits(hits, query) if hits else []
@@ -1158,6 +1200,20 @@ from plugins.bot_unified_runtime.domains.core.search.search_api import (
 )
 
 _KEYFREE_TAIL_CONFIG_FIELD = "bot_web_search_keyfree_fallback_enabled"
+_LATEST_TIME_RANGE_CONFIG_FIELD = "bot_web_search_tavily_time_range"
+
+
+def resolve_latest_time_range(config: object | None) -> str:
+    """请求级时效窗开关的**唯一**读点（缺省空＝不通电）。
+
+    与 ``keyfree_fallback_enabled`` 同款读法：``getattr(config, <字段名>, "")``
+    ⇒ 字段缺席恒为空串，链逐字节现状（反向锁 ``tests/test_webcfg_e3_latest_time_range.py``）。
+    值本身沿用装配期既有配置面 ``bot_web_search_tavily_time_range``（day/week/month/year），
+    不新建第二枚键；通电与否由调用方（链构造）决定，本函数只读不做判断。
+    """
+    if config is None:
+        return ""
+    return str(getattr(config, _LATEST_TIME_RANGE_CONFIG_FIELD, "") or "").strip()
 
 
 def keyfree_fallback_enabled(config: object | None) -> bool:
@@ -1262,6 +1318,7 @@ def _build_chained_provider(
         timeout_seconds=timeout_seconds,
         proxy=proxy,
         page_fetcher=fetcher,
+        latest_time_range=resolve_latest_time_range(config),
     )
 
 
