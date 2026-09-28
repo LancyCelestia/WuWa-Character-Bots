@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "persona_id": "shorekeeper",
+  "display_name": "守岸人",
+  "is_main": true,
+  "qq": {
+    "nickname": "守岸人",
+    "signature": "守岸人，这个称呼就很好。它表示，某种因你而有的意义和决心。",
+    "avatar_path": "",
+    "sex": ""
+  },
+  "files": {
+    "settings": [],
+    "knowledge": []
+  },
+  "_files_note": "两格均刻意留空（S-FIX-PERSONA-TEXT ④ 核验后点名「未落」，非漏填）。settings：在册 files.settings 非空即被主人格文本腿现读优先（providers.py _effective_persona_files：在册⇒压过 .env 基线）——现填 identity.md 会把生产正文从 .env BOT_PERSONA_FILES 蒸馏正身（sync_persona_source.py 审阅凭证把闸）换成册内原始全文，且实测劫持 tests/test_persona_injection_v21.py 七条离线锁（其 provider 走共享真册）。消费口径/资料换正是 §49.9 数据批决定，须另票点名，不静默改行为；接线本身已热（文本腿每轮现读册，见该文件）。knowledge 同口径：主人格静态兜底腿现读 .env 基线 4 件（含两份库街区百科），在册只覆盖册内 2 件——在册清单是遮蔽而非合并，填充会缩小兜底面，留待资料批点名（不静默改行为）。",
+  "voice": {
+    "tts_refs": [],
+    "_status": "只声明未接线（H-3：本批不实现 TTS 下发腿）"
+  },
+  "display_only": {
+    "_qq_writable": false,
+    "所在地": "黑海岸 - 泰缇斯枢纽",
+    "家乡": "星海彼岸",
+    "职业": "星海引航者",
+    "公司": "黑海岸",
+    "邮箱": "shorekeeper@blackshores.org",
+    "生日": "2月27日"
+  },
+  "_notes": "资料源 docs/HANDBOOK.md §49.9（2026-09-27 用户给全）。空 avatar_path＝不切头像项（§49.4-1）；六格 qq_writable:false＝仅展示，绝不当已同步 QQ 资料卡（§49.7）。"
+}

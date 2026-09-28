@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "persona_id": "danya",
+  "display_name": "达妮娅",
+  "is_main": false,
+  "qq": {
+    "nickname": "达妮娅",
+    "signature": "拥抱过虚无的人，才更贪恋一小簇微光。",
+    "avatar_path": "data/avatar/persona_avatar_danya_1080.jpg",
+    "sex": ""
+  },
+  "files": {
+    "settings": [],
+    "knowledge": []
+  },
+  "_files_note": "达妮娅设定/知识正文材料册外不存在（§49.9 只给了昵称/签名/头像与六展示格）。文本腿热读接线（S-FIX-PERSONA-TEXT ①）已就位：给达妮娅一份 personas/danya/ 内的设定正文并在册登记后，切换即带文本；在此之前切换回执人格文本腿如实报「未落」（H-1 点名，不默认成功）。",
+  "voice": {
+    "tts_refs": [],
+    "_status": "只声明未接线（H-3：本批不实现 TTS 下发腿）"
+  },
+  "display_only": {
+    "_qq_writable": false,
+    "所在地": "星炬学院",
+    "家乡": "虚数之海深处",
+    "职业": "黑洞观测员",
+    "公司": "星炬学院虚无观测组",
+    "邮箱": "dania@star-torch.edu",
+    "生日": "9月20日"
+  },
+  "_notes": "资料源 docs/HANDBOOK.md §49.9。性别用户未给⇒不写、不从名字推断。avatar_path 相对 Runtime 数据根解析；文件缺失时下发腿点名跳过不假成功。"
+}
