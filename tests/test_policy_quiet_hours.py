@@ -252,7 +252,9 @@ def test_private_only_window_blocks_private() -> None:
 
 
 def test_channel_session_always_excluded() -> None:
-    # 校验器只允许 private/group，channel/email/console 永远落在过滤白名单外。
+    # 校验器收 private/group/email（F1 修复，S-FIX-MAILINGRESS-R）；
+    # channel/console 仍永远落在过滤白名单外。email 的「可收且 opt-in」形制
+    # 由 tests/test_mail_ingress_locks.py F1 段执法。
     checker = _checker(clock=lambda: _utc(23, 30))
     decision = checker.check(_msg(SessionType.CHANNEL), "bot.chat")
     assert decision.allowed is True

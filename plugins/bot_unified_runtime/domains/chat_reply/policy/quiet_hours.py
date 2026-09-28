@@ -14,6 +14,14 @@ from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
 
 DEFAULT_BYPASS_ROLES = ["admin"]
 DEFAULT_SESSION_TYPES = ["group"]
+# F1（S-MAILINGRESS 审计 / S-FIX-MAILINGRESS-R 修复）：email 入枚举面。
+# 判据与运行时咽喉 `chat_reply/runtime/settings.py::_session_types_converter`
+# 对齐——那里早收 email、这里不收，就是「同一键两本枚举账」：/bot runtime set
+# 写 email 能落库，策略校验器却永不认（台账 #50/#56 同族坑）。修法只扩枚举面：
+# 覆盖判定仍走 `check()` 的 `session_type.value` 单一中央真身（本文件 :111 一腿、
+# outbound_gate 的 `_quiet_verdict` 读同一份 session_types），**mail 没有第二道闸**。
+# 与 QQ 私聊同形制＝**可收、opt-in**：缺省仍是 group，配置收编才生效。
+CONFIGURABLE_SESSION_TYPES = {"private", "group", "email"}
 
 
 class QuietHoursDecision(StrictBaseModel):
@@ -53,10 +61,14 @@ class QuietHoursSettings(StrictBaseModel):
     @classmethod
     def normalize_session_types(cls, values: list[str]) -> list[str]:
         normalized = [value.strip().lower() for value in values if value.strip()]
-        allowed = {"private", "group"}
-        invalid = [value for value in normalized if value not in allowed]
+        # F1 修复：枚举面收 email（与运行时咽喉 _session_types_converter 对齐，
+        # 见模块头 CONFIGURABLE_SESSION_TYPES 注释）。判定真身仍是 check() 的
+        # session_type.value 比对（:119 单腿），此处只扩「可配置」面、不造第二道闸。
+        invalid = [value for value in normalized if value not in CONFIGURABLE_SESSION_TYPES]
         if invalid:
-            raise ValueError("quiet hours session types must be private or group")
+            raise ValueError(
+                "quiet hours session types must be one of private/group/email"
+            )
         return list(dict.fromkeys(normalized))
 
     @field_validator("bypass_roles")
