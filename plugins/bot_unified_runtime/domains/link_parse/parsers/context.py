@@ -49,13 +49,8 @@ class ParseFailure(Exception):
         super().__init__(f"{self.code}: {self.platform}/{self.operation}")
 
 
-def build_request_headers(context: FetchContext) -> dict[str, str]:
-    headers = {
-        "User-Agent": context.user_agent,
-        "Accept-Encoding": "gzip",
-        "Accept-Language": "zh-CN,zh;q=0.9",
-    }
-    if context.cookie_header:
-        headers["Cookie"] = context.cookie_header
-    headers.update(context.extra_headers)
-    return headers
+# F-5（SEAT-ATK-LINKPARSE × 残票收口 S-FIX-ATK-OVERHEAD 2026-09-27）：此处曾有一份
+# 同名 `build_request_headers` 直写 Cookie、绕开 WP1 凭证咽喉（credentials_allowed_for_target
+# /_apply_cookie_guard/跨 host 剥除），且全树零生产调用方——属「双重真身陷阱」：误
+# `from .context import build_request_headers` 会静默复活 F-CRED 类外流。真身唯一出处＝
+# `http_util.build_request_headers`（本模块只留 FetchContext/ParseFailure 数据结构）。

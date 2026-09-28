@@ -24,6 +24,9 @@ from plugins.bot_unified_runtime.domains.core.contracts.media import (
     ParsedContent,
     build_parsed_content,
 )
+from plugins.bot_unified_runtime.domains.link_parse.parsers.cookies import (
+    PlatformCookie,
+)
 from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
     DEFAULT_MAX_BYTES,
     ParseHttpError,
@@ -145,16 +148,32 @@ def _weibo_visitor_cookie() -> str:
 
 
 def _weibo_merge_cookies(cookie_header: str) -> str:
-    """调用方登录 cookie 优先；缺失时并入访客 cookie 补充身份。"""
+    """调用方登录 cookie 优先；缺失时并入访客 cookie 补充身份。
+
+    F-6（SEAT-ATK-LINKPARSE × 残票收口 S-FIX-ATK-OVERHEAD 2026-09-27）：
+    输入若是带窄域归属的 ``PlatformCookie``，字符串重组（strip/join）会把它
+    拍平成普通 str，``cookie_domains`` 归因丢失 → 咽喉回退联合域，本平台票
+    可能被他平台 allowed host 串附。此处合并后按原归属重建 ``PlatformCookie``
+    （domains/platform 原样透传，不扩域）；普通 str 输入行为逐字节不变。
+    """
     base = (cookie_header or "").strip().rstrip(";")
     extra = _weibo_visitor_cookie()
-    if not extra:
-        return base
-    owned = {pair.split("=", 1)[0].strip() for pair in base.split(";") if "=" in pair}
-    additions = [
-        pair for pair in extra.split("; ") if pair.split("=", 1)[0] not in owned
-    ]
-    return "; ".join([base, *additions]) if base else "; ".join(additions)
+    if extra:
+        owned = {pair.split("=", 1)[0].strip() for pair in base.split(";") if "=" in pair}
+        additions = [
+            pair for pair in extra.split("; ") if pair.split("=", 1)[0] not in owned
+        ]
+        merged = "; ".join([base, *additions]) if base else "; ".join(additions)
+    else:
+        merged = base
+    domains = getattr(cookie_header, "cookie_domains", None)
+    if domains is not None:
+        return PlatformCookie(
+            merged,
+            cookie_platform=str(getattr(cookie_header, "cookie_platform", "") or ""),
+            cookie_domains=tuple(domains),
+        )
+    return merged
 
 
 def _strip_html(value: object) -> str:
