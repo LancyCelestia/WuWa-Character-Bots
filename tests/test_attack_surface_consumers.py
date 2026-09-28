@@ -286,11 +286,24 @@ def test_scan_failure_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_visual_spoof_predicate_still_has_no_production_consumer() -> None:
-    """find_visual_spoof_controls 未接线是**在册事实**，不许被「attack_surface
-    已执法」的新口径顺手洗成已接。生产侧（safety_exec 包外）对其判据的引用
-    枚数今天为 0；接上它的人必须连本锁与名册一起改。"""
+def test_visual_spoof_predicate_is_now_consumed_by_the_file_name_leg() -> None:
+    """2026-09-28 S-FILESAFE 接线：本锁由「零消费者回潮锁」翻成**正向消费锁**。
+
+    旧形态（S-ATTACK-CONSUMERS 席 2026-09-26）：``find_visual_spoof_controls`` 判据的
+    输入是名片串/文件名/贴纸元数据，``check_prompt_injection`` 只吃消息正文——输入错配，
+    所以那席把它「仍零消费者」钉成回潮锁，接上当天逼改锁。本席接的是**文件名腿**
+    （处置半边 ``strip_display_controls`` / ``fold_spoofed_role_keywords`` 由
+    ``file_gateway.sanitize_file_name`` 调用，判据仍住本件一处），锁随接线翻向。
+
+    判据两条，缺一条即红：
+    ① 生产侧（safety_exec 包外）确有文件对该判据族（含两半处置口）有真引用；
+    ② 其中至少一枚必须是 ``file_gateway``——那是「上传名 + 落盘名」两条腿共同的必经口，
+       它一变就意味着接线点漂移，得重新核「谁还在过这道闸」。
+    显示名腿（``injection.sanitize_display_name``）**今天仍无调用者**，那格残余写在
+    登记表 AS-VISUAL-SPOOF 的 ``failure_mode`` 里，不由本锁表态（本锁只核文件名腿在世）。
+    """
     production = REPO_ROOT / "plugins" / "bot_unified_runtime"
+    watched = {"find_visual_spoof_controls", "strip_display_controls", "fold_spoofed_role_keywords"}
     offenders: list[str] = []
     for path in production.rglob("*.py"):
         rel = path.relative_to(REPO_ROOT).as_posix()
@@ -305,13 +318,17 @@ def test_visual_spoof_predicate_still_has_no_production_consumer() -> None:
         for node in ast.walk(tree):
             fn = getattr(node, "func", None)
             used = isinstance(fn, (ast.Name, ast.Attribute)) and (
-                getattr(fn, "id", getattr(fn, "attr", "")) == "find_visual_spoof_controls"
+                getattr(fn, "id", getattr(fn, "attr", "")) in watched
             )
             if used:
                 offenders.append(rel)
-    assert not offenders, (
-        f"find_visual_spoof_controls 出现生产消费者 {offenders}：接线发生了，"
-        "请把本锁改为消费锁、更新 attack_surface 头注指针与 S-ANTATK 名册声明"
+    assert offenders, (
+        "find_visual_spoof_controls 的处置半边在生产零引用：文件名腿被摘掉了，"
+        "请把 AS-VISUAL-SPOOF 改回 GAP 并同步登记表与本锁"
+    )
+    assert any("file_gateway" in rel for rel in offenders), (
+        f"消毒口不再经由 file_gateway.sanitize_file_name（实算 {sorted(set(offenders))}）："
+        "上传名与落盘名这两条腿的接线点变了，须重新核『谁还在过这道闸』"
     )
 
 

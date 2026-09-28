@@ -46,6 +46,11 @@ from plugins.bot_unified_runtime.contracts import (
     new_debug_id,
 )
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import StrictBaseModel
+from plugins.bot_unified_runtime.domains.core.safety_exec.attack_surface import (
+    find_visual_spoof_controls,
+    fold_name_disguise,
+    strip_display_controls,
+)
 from plugins.bot_unified_runtime.domains.core.safety_exec.paths import (
     VERDICT_NEEDS_REVIEW,
     check_sendable,
@@ -161,14 +166,40 @@ def extract_provider_message_id(result: Any) -> str | None:
 
 
 def sanitize_file_name(name: str) -> str:
-    """文件名安全化：取 basename、剥路径分隔符与控制字符（规格 §2.6.2）。
+    """文件名安全化：取 basename、剥路径分隔符与控制字符（规格 §2.6.2），
+    再剥**显示伪装**的不可见字符并折掉**冒充 ASCII 英文名**的同形异码
+    （AS-VISUAL-SPOOF，2026-09-28 S-FILESAFE 接不可见腿；2026-09-28 S-SEC-NARROW 接同形腿）。
 
-    对不含分隔符/控制字符的普通文件名是恒等变换，既有通道的上传参数
-    因此逐字节不变。
+    两层判据各归其主：路径形态住本函数，不可见码点与同形折叠那一族的清单唯一真身在
+    ``domains/core/safety_exec/attack_surface``（``strip_display_controls`` /
+    ``fold_name_disguise``，本处只调用，不抄第二份表）。
+    同形腿为什么**现在**折、S-FILESAFE 那一席为什么不折：当时只有「折出来像角色词」
+    才报（``аdmin``），门窄到吃不到用户点名的形态——``report.ｅxe``、全角/西里尔近似形
+    冒充普通英文名整族漏网。本席把判据换成「折叠后成纯 ASCII 且原串非 ASCII」，
+    于是**只有冒充英文名的**才会被改写：纯西里尔真词（``администратор.txt``）、
+    汉字夹全角字母（``报告Ａ.docx``）、纯 ASCII 名一律逐字节不变，
+    「替别人改名 / 撞名」的旧顾虑只在伪装为真时才发生，而那一刻原名字本就是假的。
+    只折**字母数字**、绝不折 `．`/`／` 一类标点：消毒口不许凭空制造扩展名分界或路径分隔符。
+    对不含分隔符/控制字符/不可见码点/伪装的普通文件名仍是恒等变换，
+    既有通道的上传参数因此逐字节不变。
     """
     cleaned = str(name or "").replace("\\", "/").rsplit("/", 1)[-1]
     cleaned = "".join(ch for ch in cleaned if ord(ch) >= 32 and ch != "\x7f")
+    cleaned = strip_display_controls(cleaned)
+    cleaned = fold_name_disguise(cleaned)
     return cleaned.strip()
+
+
+def name_visual_spoof_tags(name: str) -> tuple[str, ...]:
+    """文件名/出站名的**显示伪装信号**（调用真身谓词，本处零判据）。
+
+    与 :func:`sanitize_file_name` 的分工：消毒负责「落盘/出站名长什么样」，
+    本口负责「这个名字有没有骗眼肉」——不可见伪装被消毒抹掉后信号即消失，
+    同形伪装会留下 ``ascii_disguise`` / ``homoglyph_*`` 代号供审计与回执点名。
+    出站侧（``FileSource`` 构造即消毒）与落盘侧（``restricted_runner`` 逐段消毒）
+    都必经上面那枚消毒口，所以本口是**旁路取证**，不是第二道闸。
+    """
+    return find_visual_spoof_controls(str(name or ""))
 
 
 def _utc_now() -> datetime:
