@@ -205,6 +205,21 @@ def build_digest_id(session_key: str, scope_date: str) -> str:
     return f"rd_{digest[:16]}"
 
 
+def _sanitize_fact_text(text: str) -> str | None:
+    """写前消毒闸（S-FIX-ATK-MEMORY-FIX C）：反思事实落库前必须过的单一判据。
+
+    硬红线判定复用 ``security/memory_sanitize.pre_write_sanitize``（与总线
+    ``absorb`` 闸、事后清洗同一个词表真身，本件不复制第二套正则），消毒=
+    内部边界标记全角化（幂等）。命中硬红线 ⇒ ``None``=拒存；干净文本逐字节
+    不变。懒导入断环：memory_sanitize 一族在顶层 import character 层组件。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize import (
+        pre_write_sanitize,
+    )
+
+    return pre_write_sanitize(text)
+
+
 def build_reflection_fact_id(sender_id: str, normalized_text: str) -> str:
     digest = hashlib.sha1(f"{sender_id}:{normalized_text}".encode()).hexdigest()
     return f"rf_{digest[:16]}"
@@ -374,6 +389,18 @@ class ReflectionStore:
                 text = _clip(draft.text, _MAX_FACT_CHARS)
                 if not text:
                     continue
+                # 写前消毒闸（C）：硬红线⇒整条拒存；内部边界标记⇒全角化后再入库。
+                safe_text = _sanitize_fact_text(text)
+                if safe_text is None:
+                    # 观测面纪律同总线闸：拒收留结构化日志、不带正文（不把被拒
+                    # 文本二次注入日志面），也不静默丢弃。
+                    logger.warning(
+                        "reflection fact refused by hard line sender=%s digest=%s",
+                        sender,
+                        digest_id,
+                    )
+                    continue
+                text = safe_text
                 normalized = _normalize_fact_text(text)
                 fact_id = build_reflection_fact_id(sender, normalized)
                 existing = connection.execute(
@@ -434,10 +461,22 @@ class ReflectionStore:
             text = _clip(draft.text, _MAX_FACT_CHARS)
             if not text:
                 continue
+            # 写前消毒闸（C，bus 档同口径）：全角消毒在这里补齐——硬红线判定
+            # absorb 闸（同一词表单一来源）仍然在场，挡在更外层；序号在消毒前
+            # 已按草稿位次定死，幂等探针位 ``refl:<digest>:<ordinal>`` 不因
+            # 跳过而漂移（同日重跑只算一次的承诺由此保住）。
+            safe_text = _sanitize_fact_text(text)
+            if safe_text is None:
+                logger.warning(
+                    "reflection fact refused by hard line sender=%s digest=%s",
+                    sender,
+                    digest_id,
+                )
+                continue
             outcome = bus.absorb(
                 owner_id=sender,
                 subject_user_id=sender,
-                text=text,
+                text=safe_text,
                 session_id=ingress_session_id,
                 category=draft.category.strip(),
                 confidence=max(0.0, min(1.0, float(draft.confidence))),
