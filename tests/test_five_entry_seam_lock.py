@@ -29,11 +29,15 @@
 `.call_api("<字面量>")`」升级为「三被调体（属性/getattr直调/别名）× 首参（字面量/同帧唯一
 字符串赋值折叠）」，且与齿锁不同——**折不出 api 的动态名不"保守放过"，而是点名入账**
 `(file, func, 形态, 首参源码形)`。普查扫全生产树（排除面 AST 现读齿锁，不许两把尺分开），
-零容忍：动态名普查 == `_DYNAMIC_BOUNDED_SITES`（恰两枚 by-design bounded 通道体：
+零容忍：动态名普查 == `_DYNAMIC_BOUNDED_SITES`（恰三枚 by-design bounded 通道体：
 `control_plane/dispatcher.py::execute` 的 `method`——唯一来源是 TransportRegistry 固定映射、
 「绝不拼接合成 API 名」（`dispatcher.py:136`），且过 admission/lease 双门；
 `domains/chat_reply/capabilities/group_info.py::call` 的 `action`——桥接器形参，能力入口只传
-四枚字面 `get_*`（`group_info.py:298-313`））。第三枚动态名在任何非排除文件长出＝当场红。
+四枚字面 `get_*`（`group_info.py:298-313`）；
+根 `__init__.py::_dispatch_persona_appearance_if_switched` 的 `action`（S-PERSONA-WIRE
+2026-09-27 收编）——人格热切换外观下发唯一适配器（H-1 唯一下发口），`action` 唯一来源＝
+`persona_profile.apply_persona_profile` 通道本体内两枚字面 `set_qq_profile`/`set_qq_avatar`，
+跨函数静态折不出但枚举封闭在册，不许拼名）。第四枚动态名在任何非排除文件长出＝当场红。
 **本批顺带钉死齿锁折叠的两处渗漏**（齿锁件禁动，渗漏在其件照旧存在，账记 SEAT-S182 §齿漏）：
 ① 其 `_resolve_api` 从不查各帧 `ambiguous` 集——函数内 `method=Call值` 被剔出 consts 后，
 名字查找穿透到外层同名**类体**常量 `method: str = ""` 折成 `""`，既不算旁路也不算盲区＝静默丢弃
@@ -159,6 +163,15 @@ _DYNAMIC_BOUNDED_SITES: frozenset[tuple[str, str, str, str]] = frozenset(
         (
             "plugins/bot_unified_runtime/domains/chat_reply/capabilities/group_info.py",
             "call",
+            "attribute",
+            "action",
+        ),
+        (
+            # 2026-09-27 S-PERSONA-WIRE 收编（人格热切换根装配腿）：适配器形参，
+            # 唯一来源＝persona_profile.apply_persona_profile 通道本体内两枚字面
+            # set_qq_profile/set_qq_avatar，枚举封闭在册、不许拼名（判据同上两枚）。
+            "plugins/bot_unified_runtime/__init__.py",
+            "_dispatch_persona_appearance_if_switched",
             "attribute",
             "action",
         ),

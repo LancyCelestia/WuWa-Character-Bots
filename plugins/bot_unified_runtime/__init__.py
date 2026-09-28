@@ -3910,6 +3910,12 @@ def _register_nonebot_handlers() -> None:
         quiet_settings_provider=lambda: build_quiet_hours_settings(
             _config_with_runtime_overrides(config, runtime_settings)
         ),
+        # QG9①（S-ATK-QUEUE Q-G9）：闸的 skip / 设置不可读 / 降级 / 风暴 / TTL 到期
+        # 五类 issue 此前只落审计与日志——`note_issue` 在 sink=None 时直接返回，
+        # 于是「闸把消息吃掉了」在管理员面完全静默。共用中央告警口，不另造直发腿。
+        issue_sink=lambda issue: _push_probe_issue(
+            issue, source_bot="outbound-gate", capability_id="bot.outbound_gate"
+        ),
     )
     # 中央执行面审计 sink（D-d/D-e 根修）：invoker 每次终态都 emit，但全树此前
     # **零注册** ⇒ 走中央的能力在生产"跑了不留痕"。经壳侧唯一口子挂载，
@@ -4280,8 +4286,17 @@ def _register_nonebot_handlers() -> None:
 
     _pending_probe_alert_tasks: set[Any] = set()
 
-    def _push_probe_issue(issue: Any) -> None:
-        """语音健康探针的诊断 → 中央管理员告警口（S-OBS：`last_operational_issue()` 的生产读者）。
+    def _push_probe_issue(
+        issue: Any,
+        *,
+        source_bot: str = "tts-probe",
+        capability_id: str = "bot.tts",
+    ) -> None:
+        """运营诊断 → 中央管理员告警口（S-OBS：`last_operational_issue()` 的生产读者）。
+
+        唯一共用告警出口：语音探针、绘画探针、出站闸（QG9①）、订阅死信（SUB-1）
+        全走这一个函数，各域只报自己的 `source_bot`/`capability_id`——**不许另造
+        第二条直发腿**（台账 #49★「未执法＝出站闸与 cookie 提醒缺省关」同族教训）。
 
         探针此前只把 issue 存在自己口袋里，全树零读者＝诊断存在但永远没人看见。
         这里刻意**共用** `operational_alert_suppression`（同一个 300s 抑制器），不另造
@@ -4303,9 +4318,9 @@ def _register_nonebot_handlers() -> None:
                 notify_operational_issue(
                     issue,
                     source_adapter="runtime",
-                    source_bot="tts-probe",
+                    source_bot=source_bot,
                     session_type=SessionType.PRIVATE,
-                    targets=targets, pipeline=pipeline, capability_id="bot.tts",
+                    targets=targets, pipeline=pipeline, capability_id=capability_id,
                     online_bots=_all_online_bots,
                     delivery=_deliver_admin_alert,
                     suppression=operational_alert_suppression,
@@ -4727,12 +4742,22 @@ def _register_nonebot_handlers() -> None:
             payload = event.item.source_payload or {}
             title = str(payload.get("title") or event.item.item_id)
             body = str(payload.get("text") or "").strip()
+            # SUB-4 腿2（S-ATK-SUBSCRIBE ATK-SUB-4）：远端可控的标题与正文是**二手
+            # 内容**，出群前必须过一次中央咽喉（全角化＋成对边界＋定性引导）——裸拼
+            # 出去时远端可在群消息里开伪造内部标记形态（如 `[引用回复 …]`），被后续
+            # 引用腿的读侧当结构解析。真身＝chat_reply/security/injection.py，禁手拼。
+            from .domains.chat_reply.security.injection import (
+                guard_secondhand_text,
+            )
+
+            safe_title = guard_secondhand_text(title, source_label="订阅条目内容")
+            safe_body = guard_secondhand_text(body, source_label="订阅条目内容")
             text = (
-                f"[订阅] {target.platform} {target.display_name} 更新《{title}》："
+                f"[订阅] {target.platform} {target.display_name} 更新《{safe_title}》："
                 f"{event.item.url}"
             )
             if body:
-                text += f"\n{body[:500]}"
+                text += f"\n{safe_body[:500]}"
             elif bool(getattr(config, "bot_vision_enabled", False)):
                 # 纯图/无文本订阅条目：用 vision 补一行描述，失败静默不阻断推送。
                 from .domains.media.ingest.vision_describe import (
@@ -4745,13 +4770,20 @@ def _register_nonebot_handlers() -> None:
                     describe_subscription_item, vision_provider, payload
                 )
                 if described:
-                    text += f"\n图：{described}"
+                    # 模型输出同样是二手内容（VLM 读的是远端图），一并过咽喉。
+                    text += "\n图：" + guard_secondhand_text(
+                        described, source_label="订阅条目图像描述"
+                    )
             from .domains.link_parse.capabilities.content_parser import (
                 build_subscription_push_capability,
             )
 
-            sent_any = False
-            all_success = True
+            # SUB-2 根腿（ATK-SUB-1）：逐目的地记账，不再把整事件压成一个 bool——
+            # 旧形态（`return sent_any and all_success`）下 10002 一失败，已成功收到
+            # 的 10001 没有台账，整事件 retry 后每轮再推一遍（最多 5 遍双发）。
+            # 键＝目的地行 id，与 scheduler 的 `_enabled_destination_keys`／查重口
+            # 同一把尺，不另立第二套。
+            outcomes: list[tuple[str, bool]] = []
             for destination in destinations:
                 # 目的地级暂停（pause 只作用于本目的地行）：跳过不投递，
                 # 也不计入失败（审计重发现 P2：此前 pause/resume 是 target 级）。
@@ -4780,7 +4812,7 @@ def _register_nonebot_handlers() -> None:
                     request = _find_sent_request(send_queue, message.request_id)
                     bot = _select_queue_bot(_all_online_bots, request) if request else None
                     if request is None or bot is None:
-                        all_success = False
+                        outcomes.append((str(destination.id), False))
                         continue
                     receipt = await _deliver_transport_send_request(
                         bot,
@@ -4791,12 +4823,15 @@ def _register_nonebot_handlers() -> None:
                         send_queue,
                     )
                     if receipt.state is ReceiptState.SENT:
-                        sent_any = True
+                        outcomes.append((str(destination.id), True))
                     else:
-                        all_success = False
+                        outcomes.append((str(destination.id), False))
                 except (OSError, RuntimeError, TypeError, ValueError):
-                    all_success = False
-            return sent_any and all_success
+                    outcomes.append((str(destination.id), False))
+            # 契约是 Awaitable[bool]（subscription_scheduler.py:76）：逐目的地台账已由
+            # outbox 侧落库，这里只回报「是否全部送达」。直接 return outcomes 会让
+            # bool() 恒真——只要有一个目的地，全败也被记成投递成功。
+            return bool(outcomes) and all(sent for _destination_id, sent in outcomes)
 
         # 模型渠道健康巡检：每小时全量探测一次（后台低并发最小调用），
         # 暂不可用渠道自动移出故障转移队列，恢复即自动回队。
@@ -4901,6 +4936,12 @@ def _register_nonebot_handlers() -> None:
                 scheduler,
                 config,
                 delivery_fn=_deliver_v2_event,
+                # SUB-1 尾线：死信（`retryable=False` 且此后永不 claim）此前只有一行
+                # WARNING 混在日志海里——`29f2cf6`/`de39afc` 把 build/store/register
+                # 三侧都备好了，这最后一行接的是中央同一个告警口。
+                dead_letter_sink=lambda issue: _push_probe_issue(
+                    issue, source_bot="subscribe", capability_id="bot.subscribe"
+                ),
             )
             subscription_ctx = subscription_registration.context
             if subscription_registration.status == "deferred":
@@ -5376,11 +5417,31 @@ def _register_nonebot_handlers() -> None:
     )
 
     async def _is_admin_origin(event: Event) -> bool:
+        # K1B-G1（S-ATK-K1b，Important）：这里此前只把 `event.get_user_id()` 跟
+        # QQ 管理员名单裸比——**平台域根本没进判定**，于是 Telegram 侧同号即可
+        # 驱动 cookie 导入/登录、昵称设置（可指任意目标）、文件导出、群文件统计、
+        # 文件通知五条腿。判定改走中央真身 `roles.is_admin_message`（内含
+        # `platform_domain_of` 归一＋空域 fail-closed），与主链 resolve_roles 同
+        # 一批平台串——不在此另立判据，也不扩第三口径。
+        from types import SimpleNamespace
+
+        from .domains.chat_reply.policy.roles import is_admin_message
+
         try:
-            user_id = str(event.get_user_id()).strip()
-        except Exception:  # noqa: BLE001 - 适配器实现差异。
+            probe = SimpleNamespace(
+                # NoneBot 基类 Event 上没有 get_platform（onebot/telegram 子类各有），
+                # 静态面按基类判 ⇒ 用 getattr 取可调用再兜空串，行为与原先一致。
+                platform=str(
+                    getattr(event, "get_platform", lambda: "")() or ""
+                ),
+                sender_id=str(event.get_user_id()),
+            )
+        except Exception:  # noqa: BLE001 - 适配器实现差异：读不出即按普通用户。
             return False
-        return user_id in {str(item).strip() for item in config.bot_admin_user_ids}
+        try:
+            return bool(is_admin_message(config, probe))
+        except Exception:  # noqa: BLE001 - 判定故障不外抛，fail-closed 按普通用户。
+            return False
 
     async def _is_admin_file_notice(event: Event) -> bool:
         return isinstance(
@@ -5871,9 +5932,12 @@ def _register_nonebot_handlers() -> None:
         try:
             if not bool(getattr(poke_config, "bot_poke_affinity_enabled", True)):
                 return ""
-            points = float(getattr(poke_config, "bot_poke_affinity_delta", 0.5) or 0.5)
+            # D-2：两枚兜底原写 0.5 / 5.0，与 config.py 真身缺省（0.1 / 0.5）不一致——
+            # 字段装载时永远走不到兜底，故生产行为今日不变；但字段一旦缺失就静默按
+            # 错值走。对齐真身是锁的直接判据（反向让根兜底牵着真身走＝禁）。
+            points = float(getattr(poke_config, "bot_poke_affinity_delta", 0.1) or 0.1)
             daily_max = float(
-                getattr(poke_config, "bot_poke_affinity_daily_max", 5.0) or 5.0
+                getattr(poke_config, "bot_poke_affinity_daily_max", 0.5) or 0.5
             )
             if points <= 0 or daily_max <= 0:
                 return ""
