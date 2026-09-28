@@ -338,7 +338,7 @@ def test_percentage_rows_carry_their_reference(
 
 
 def _rendered_host_html() -> str:
-    from plugins.bot_unified_runtime.output.card_render import bridge
+    from plugins.bot_unified_runtime.domains.render.card_render import bridge
 
     payload = hm.build_host_metrics_card_payload(_synthetic_report())
     return bridge.render_universal_card_html(payload)

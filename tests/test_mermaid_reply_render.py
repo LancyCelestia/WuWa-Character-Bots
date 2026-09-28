@@ -238,7 +238,9 @@ def test_template_cdn_url_matches_intercept_target() -> None:
     本地供给走传输层 page.route() 换血（素材本地化 F1）；两者失配即拦截
     落空、静默回源，用此契约锁死。
     """
-    from plugins.bot_unified_runtime.output.render_backends import _MERMAID_CDN_URL
+    from plugins.bot_unified_runtime.domains.render.render_backends import (
+        _MERMAID_CDN_URL,
+    )
 
     html_text = bridge.render_mermaid_html("graph TD\nA --> B")
     assert _MERMAID_CDN_URL in html_text
@@ -326,7 +328,7 @@ class _FakeBrowser:
 
 
 def _make_backend(monkeypatch: pytest.MonkeyPatch, page: _FakePage):
-    from plugins.bot_unified_runtime.output.render_backends import (
+    from plugins.bot_unified_runtime.domains.render.render_backends import (
         PlaywrightRenderBackend,
     )
 

@@ -177,7 +177,7 @@ def test_media_archive_card_content() -> None:
 
 
 def test_error_card_red_accent_and_full_sections() -> None:
-    from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
+    from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
         ERROR_ACCENT,
     )
 

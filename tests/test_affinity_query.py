@@ -377,7 +377,7 @@ def test_help_entry_exists_public_and_unique() -> None:
 
 
 def test_template_renders_scores_and_highlights() -> None:
-    from plugins.bot_unified_runtime.output.card_render.bridge import (
+    from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
         render_affinity_card_html,
     )
 

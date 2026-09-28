@@ -112,7 +112,7 @@ def _shared_route_inputs() -> tuple[object, object]:
     if _shared_alias_resolver is _UNAVAILABLE:
         alias: object
         try:
-            from plugins.bot_unified_runtime.runtime.aliases import (
+            from plugins.bot_unified_runtime.domains.chat_reply.runtime.aliases import (
                 build_command_alias_resolver,
             )
 

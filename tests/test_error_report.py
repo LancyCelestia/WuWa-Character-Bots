@@ -949,7 +949,7 @@ def test_error_card_real_render_smoke(tmp_path: Path) -> None:
     """
     if os.environ.get("BOT_ERRCARD_SMOKE", "") != "1":
         pytest.skip("真实渲染烟测默认跳过（BOT_ERRCARD_SMOKE=1 启用）")
-    from plugins.bot_unified_runtime.output.render_backends import (
+    from plugins.bot_unified_runtime.domains.render.render_backends import (
         PlaywrightRenderBackend,
     )
 
