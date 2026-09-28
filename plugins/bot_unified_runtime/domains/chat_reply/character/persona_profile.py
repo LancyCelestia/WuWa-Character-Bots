@@ -14,6 +14,10 @@
    卡片头像复用既有 ``bot_avatar.set_local_path``——**不新建第二条头像通路、不新建第二条
    出站通道**。昵称/签名一发、头像一发是两次独立调用，可能一半成功：逐项出回执，
    任一项未落地就点名「哪几项已落／哪几项没落」，禁止在半切态宣称"已切换"。
+   **动作册可写四样**（判活只走 SnowLuma 真身安装目录 ``config-*.js`` 的
+   ``ACTION_REGISTRY`` 口径，非插件树考古）：``set_qq_profile`` 收
+   nickname/personal_note/sex（sex 整型 0 未知·1 男·2 女）、``set_qq_avatar`` 收 file；
+   本件对四样逐一支持，**在册未表态的格绝不下发**（性别尤其禁从名字推断，§49.9）。
    回执除外观三格外含**人格文本腿**（``persona_text``）与**知识清单腿**
    （``knowledge_list``，S-IMPL-PERSONA-QQLEG 收口 H-1 五格项集）：备用人格在册
    设定清单为空 ⇒ 点名「文本未落」，绝不默认成功（S-FIX-PERSONA-TEXT ②，堵 H-1
@@ -131,6 +135,37 @@ def _anchored_register_file(entry: str, anchor_root: Path) -> str:
     return str(candidate) if decision.verdict == paths.VERDICT_ALLOWED else ""
 
 
+#: ``set_qq_profile.sex`` 枚举（0 未知 / 1 男 / 2 女）——判活口径＝SnowLuma 真身
+#: 安装目录 ``config-*.js`` 的 ACTION_REGISTRY 声明，不抄插件树里的历史宣称。
+#: 白名单之外一律装载时点名拒收；**绝不**从昵称/名字推断性别（§49.9 红线）。
+_QQ_SEX_MANUAL_VALUES = (0, 1, 2)
+
+
+def _parse_qq_sex(raw: object, source_name: str) -> int | None:
+    """装载 ``qq.sex``：缺省/空串⇒不表态（None，下发腿跳过该格）；
+    0/1/2（整型或等价数字串）⇒采信；其余形态⇒拒收点名，不猜、不折算。"""
+    if raw is None or isinstance(raw, bool):  # bool 是 int 子类，必须先行排除
+        return None
+    value: int | None = None
+    if isinstance(raw, int):
+        value = raw
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        try:
+            value = int(text)
+        except ValueError:
+            value = None
+    if value is None or value not in _QQ_SEX_MANUAL_VALUES:
+        logger.warning(
+            "persona register %s qq.sex rejected (不在动作册 sex 枚举 0/1/2，按不表态处理)",
+            source_name,
+        )
+        return None
+    return int(value)
+
+
 @dataclass(frozen=True)
 class PersonaProfileRecord:
     """一个 persona 的在册资料（值对象）。空字符串/空元组＝该项"不表态"，
@@ -140,6 +175,10 @@ class PersonaProfileRecord:
     display_name: str = ""
     qq_nickname: str = ""
     qq_signature: str = ""
+    # 性别＝动作册可写四样里唯一「在册才发」的一格：None＝不表态（绝不下发、
+    # 绝不从名字推断，§49.9）；0 未知 / 1 男 / 2 女（判活口径＝真身安装目录
+    # config-*.js 的 set_qq_profile.sex 枚举，白名单外的值装载时点名拒收）。
+    qq_sex: int | None = None
     qq_avatar_path: str = ""
     # 装载闸拒因（F-C）：非空＝在册头像被出站闸拦下（qq_avatar_path 已清空），
     # 下发腿必须据此出 failed 回执点名，绝不塌成「无头像」的 skipped 假成功。
@@ -271,6 +310,7 @@ def _parse_profile_file(path: Path) -> PersonaProfileRecord | None:
         display_name=str(payload.get("display_name") or persona_id).strip(),
         qq_nickname=str(qq.get("nickname") or "").strip(),
         qq_signature=str(qq.get("signature") or "").strip(),
+        qq_sex=_parse_qq_sex(qq.get("sex"), path.name),
         qq_avatar_path=avatar_kept,
         avatar_rejected_reason=avatar_rejected_reason,
         settings_files=settings_files,
@@ -465,7 +505,7 @@ class PersonaSwitchReceipt:
 
     def _summary_unlocked(self) -> str:
         if not self.attempted:
-            return f"人格「{self.persona_id}」没有需要下发的外观项（昵称/签名/头像均未在册）。"
+            return f"人格「{self.persona_id}」没有需要下发的外观项（昵称/签名/性别/头像均未在册）。"
         if self.fully_applied:
             return (
                 f"已切换人格「{self.persona_id}」："
@@ -618,6 +658,10 @@ async def apply_persona_profile(
         profile_params["nickname"] = record.qq_nickname.strip()
     if record.qq_signature.strip():
         profile_params["personal_note"] = record.qq_signature.strip()
+    # 动作册可写四样之「性别」：仅当在册明确表态（0/1/2）才拼入同发 set_qq_profile；
+    # None＝不表态⇒该格零下发（绝不默认 0，绝不从名字推断，§49.9）。
+    if record.qq_sex is not None:
+        profile_params["sex"] = int(record.qq_sex)
     if profile_params:
         status, detail = await _call_status(call_api, "set_qq_profile", profile_params)
         items.append(ItemReceipt("qq_profile", status, detail))
