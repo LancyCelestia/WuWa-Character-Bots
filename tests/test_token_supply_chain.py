@@ -65,7 +65,7 @@ from plugins.bot_unified_runtime.domains.render.card_render import (
 from plugins.bot_unified_runtime.domains.render.card_render.usage_cards import (
     usage_report_mica_html,
 )
-from plugins.bot_unified_runtime.output.templates import render_media_card_html
+from plugins.bot_unified_runtime.domains.render.templates import render_media_card_html
 
 _TEMPLATES_DIR = Path(bridge.__file__).resolve().parent / "templates"
 

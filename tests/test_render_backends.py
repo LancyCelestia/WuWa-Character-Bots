@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.output.render_backends import (
+from plugins.bot_unified_runtime.domains.render.render_backends import (
     NullRenderBackend,
     PlaywrightRenderBackend,
     build_render_backend,

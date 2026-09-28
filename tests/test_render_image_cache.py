@@ -16,7 +16,7 @@ from typing import Self
 import pytest
 
 from plugins.bot_unified_runtime.domains.render import render_backends as rb
-from plugins.bot_unified_runtime.output.render_backends import (
+from plugins.bot_unified_runtime.domains.render.render_backends import (
     PlaywrightRenderBackend,
 )
 

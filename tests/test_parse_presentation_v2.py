@@ -19,7 +19,7 @@ from plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser 
 from plugins.bot_unified_runtime.domains.music.capabilities.music import (
     build_music_capability,
 )
-from plugins.bot_unified_runtime.output.card_render.bridge import (
+from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
     render_universal_card_html,
 )
 

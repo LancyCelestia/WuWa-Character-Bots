@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.output.render_backends import (
+from plugins.bot_unified_runtime.domains.render.render_backends import (
     _RENDER_READY_SIGNALS,
     PlaywrightRenderBackend,
     _wait_render_budget,

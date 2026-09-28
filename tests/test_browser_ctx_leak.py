@@ -24,7 +24,9 @@ from typing import Any
 import pytest
 
 import plugins.bot_unified_runtime.domains.render.render_backends as render_backends_module
-from plugins.bot_unified_runtime.output.render_backends import PlaywrightRenderBackend
+from plugins.bot_unified_runtime.domains.render.render_backends import (
+    PlaywrightRenderBackend,
+)
 
 _POISON_MESSAGE = (
     "It looks like you are using Playwright Sync API inside the asyncio loop"

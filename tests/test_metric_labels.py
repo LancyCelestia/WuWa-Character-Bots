@@ -10,7 +10,7 @@ from __future__ import annotations
 from plugins.bot_unified_runtime.domains.core.contracts.media import (
     build_parsed_content,
 )
-from plugins.bot_unified_runtime.output.templates import card_payload_from_parse
+from plugins.bot_unified_runtime.domains.render.templates import card_payload_from_parse
 
 
 def _stats_labels(platform: str, item_kind: str, stats: dict[str, object]) -> dict[str, object]:

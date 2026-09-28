@@ -57,7 +57,7 @@ from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import 
 from plugins.bot_unified_runtime.domains.render.card_render.usage_cards import (
     usage_report_mica_html,
 )
-from plugins.bot_unified_runtime.output.templates import render_media_card_html
+from plugins.bot_unified_runtime.domains.render.templates import render_media_card_html
 
 # MONO_FONT_STACK 由 wave-2 席登记进 theme_tokens；缺席=尚无合法 mono 字面量。
 MONO_FONT_STACK: str | None = getattr(theme_tokens, "MONO_FONT_STACK", None)

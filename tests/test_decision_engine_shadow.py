@@ -16,11 +16,6 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SessionType,
 )
-from plugins.bot_unified_runtime.decision.trace import (
-    InMemoryDecisionTraceSink,
-    get_decision_trace_sink,
-    set_decision_trace_sink,
-)
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     clear_route_decision_cache,
 )
@@ -46,6 +41,11 @@ from plugins.bot_unified_runtime.domains.core.decision.shadow import (
     normalize_decision_mode,
     reset_shared_state_for_tests,
     resolve_decision_mode,
+)
+from plugins.bot_unified_runtime.domains.core.decision.trace import (
+    InMemoryDecisionTraceSink,
+    get_decision_trace_sink,
+    set_decision_trace_sink,
 )
 from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
 
@@ -381,7 +381,7 @@ def test_pipeline_survives_shadow_observer_crash(monkeypatch) -> None:
 
 def test_trace_sink_is_bounded() -> None:
     sink = InMemoryDecisionTraceSink(max_entries=3)
-    from plugins.bot_unified_runtime.decision.trace import DecisionTrace
+    from plugins.bot_unified_runtime.domains.core.decision.trace import DecisionTrace
 
     for index in range(5):
         sink.record(

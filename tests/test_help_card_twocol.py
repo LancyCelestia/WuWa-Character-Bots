@@ -19,7 +19,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
     _help_mica_html,
     build_help_result,
 )
-from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
+from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
     GAP_SCALE_PX,
 )
 
@@ -78,7 +78,7 @@ def test_index_page_is_two_columns_not_four() -> None:
     assert gap and int(gap.group(1)) in GAP_SCALE_PX, f"栏距不在刻度内：{outer.group(1)}"
     inner = re.search(r"\.help-grid\.masonry \.command-list\s*\{([^}]*)\}", css)
     assert inner, "缺 masonry 目录行容器规则"
-    assert not re.search(r"columns\s*:", inner.group(1)), (
+    assert not re.search(r" columns\s*:", inner.group(1)), (
         f"区内又切了一道栏＝四栏正文回来了：{inner.group(1)}"
     )
 

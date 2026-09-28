@@ -23,10 +23,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
     _help_mica_html,
 )
 from plugins.bot_unified_runtime.domains.ops.admin.debug import _llm_setup_mica_html
-from plugins.bot_unified_runtime.domains.render.card_render.usage_cards import (
-    usage_report_mica_html,
-)
-from plugins.bot_unified_runtime.output.card_render.bridge import (
+from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
     digest_phase,
     payload_phase,
     render_affinity_card_html,
@@ -38,7 +35,10 @@ from plugins.bot_unified_runtime.output.card_render.bridge import (
     render_universal_card_html,
     stable_payload_digest,
 )
-from plugins.bot_unified_runtime.output.templates import render_media_card_html
+from plugins.bot_unified_runtime.domains.render.card_render.usage_cards import (
+    usage_report_mica_html,
+)
+from plugins.bot_unified_runtime.domains.render.templates import render_media_card_html
 
 _PHASE_DECL_RE = re.compile(r"--phase:\s*([0-9]*\.?[0-9]+)\s*;")
 
@@ -281,7 +281,7 @@ def _playwright_available() -> bool:
         import playwright  # noqa: F401
     except ImportError:
         return False
-    from plugins.bot_unified_runtime.output.render_backends import (
+    from plugins.bot_unified_runtime.domains.render.render_backends import (
         build_render_backend,
     )
 

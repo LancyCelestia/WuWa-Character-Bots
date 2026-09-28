@@ -21,7 +21,7 @@ from plugins.bot_unified_runtime.domains.core.contracts.media import (
 )
 from plugins.bot_unified_runtime.domains.core.contracts.music import MusicTrack
 from plugins.bot_unified_runtime.domains.render.card_render import bridge
-from plugins.bot_unified_runtime.output.templates import (
+from plugins.bot_unified_runtime.domains.render.templates import (
     card_payload_from_parse,
     render_universal_card_html,
 )

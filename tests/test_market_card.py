@@ -27,7 +27,7 @@ from plugins.bot_unified_runtime.domains.finance.capabilities.market import (
     is_market_command,
 )
 from plugins.bot_unified_runtime.domains.finance.data.market_data import IndexQuote
-from plugins.bot_unified_runtime.output.card_render.bridge import (
+from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
     render_market_card_html,
 )
 
@@ -199,7 +199,7 @@ def test_market_capability_card_payload_carries_change_and_gap_note(
 ) -> None:
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
-        lambda timeout_seconds, cache_seconds: list(_QUOTES),
+        lambda timeout_seconds, cache_seconds, budget=None: list(_QUOTES),
     )
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_trend",
@@ -228,7 +228,7 @@ def test_market_capability_backend_failure_falls_back_to_text(
 ) -> None:
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
-        lambda timeout_seconds, cache_seconds: list(_QUOTES),
+        lambda timeout_seconds, cache_seconds, budget=None: list(_QUOTES),
     )
 
     class _BrokenBackend:
@@ -249,7 +249,7 @@ def test_market_capability_backend_failure_falls_back_to_text(
 def test_market_capability_without_backend_is_text(monkeypatch) -> None:
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
-        lambda timeout_seconds, cache_seconds: list(_QUOTES),
+        lambda timeout_seconds, cache_seconds, budget=None: list(_QUOTES),
     )
     capability = build_market_capability(config=None)
     result = capability(_make_message("行情"), _make_decision())
@@ -328,7 +328,7 @@ class TestMarketCrossCheck:
         quotes = self._quotes()
         monkeypatch.setattr(
             "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
-            lambda timeout_seconds, cache_seconds: list(quotes),
+            lambda timeout_seconds, cache_seconds, budget=None: list(quotes),
         )
         monkeypatch.setattr(
             "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_trend",
