@@ -24,6 +24,9 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Protocol
 
+from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
+    guard_secondhand_text,
+)
 from plugins.bot_unified_runtime.domains.core import session_keys
 from plugins.bot_unified_runtime.domains.core.contracts.character import (
     SharedGroupContext,
@@ -327,7 +330,11 @@ class OpenAICompatibleGroupSummarizer:
             "请把下面的群聊公共消息压缩成 3-5 条中性话题摘要，"
             "不保留任何个人敏感信息，不评价、不编造；"
             "成员一律按其原有称呼呈现，均为群友，"
-            "不得把任何成员塑造成唯一主角或称为漂泊者：\n" + key
+            "不得把任何成员塑造成唯一主角或称为漂泊者：\n"
+            # 群聊历史行是群成员产出的**二手内容**：入 prompt 前过统一咽喉
+            # （S-FIX-ATK-NOTES 2026-09-27；旧形态裸拼接——「双隔离」只隔离
+            # 人格词（漂泊者称呼），不隔离注入；开关默认关、开即实锤）。
+            + guard_secondhand_text(key, source_label="群聊公共摘要")
         )
         try:
             reply = self.llm_provider.generate(
