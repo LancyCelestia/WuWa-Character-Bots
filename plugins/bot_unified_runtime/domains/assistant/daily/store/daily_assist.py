@@ -3,13 +3,18 @@
 收件箱/菜单/任务清单都是纯文本文件（``bot_daily_assist_dir`` 目录下），
 设计成 ZCode、手机端与机器人都能直接编辑的共享格式：
 
-- ``inbox.md``：``## 待处理`` 段逐行累积；早报读取后整段归档到 ``daily/YYYY-MM-DD.md``
+- ``inbox.md``：``## 待处理`` 段逐行累积（**一条 = 一行**：写侧折叠所有换行
+  形态）；早报读取后整段归档到 ``daily/YYYY-MM-DD.md``；入 LLM 前过统一
+  二手咽喉 ``guard_secondhand_text``
 - ``food.md``：按 ``## 分节`` 组织；``## 备注`` 段不参与随机；``# ``, ``> ``, ``- `` 前缀剥除
 - ``tasks.md``：``## 进行中`` / ``## 已计划`` / ``## 想法池`` 三段；晚报读这三段
 - ``daily/meal_history.jsonl``：吃什么推荐历史（同一道菜 7 天内不重复）
 
 并发模型与项目惯例一致：进程内 ``threading.Lock`` 包住「检查 → mkdir → 追加」
 （APScheduler 线程池与能力面可能同时写）；不做跨进程保障（无此先例）。
+A1（S-FIX-GOAL18-REST2 2026-09-28）：归档腿「快照读 → 写归档 → 清空」同样
+全程持这把锁——此前快照读在锁外、清空在锁内，锁窗口内追加的行会被
+静默清掉（两边都查不到），现收进同一临界区。
 """
 
 from __future__ import annotations
@@ -22,6 +27,9 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
+    guard_secondhand_text,
+)
 from plugins.bot_unified_runtime.domains.core.safety_exec.paths import (
     VERDICT_NEEDS_REVIEW,
     check_sendable,
@@ -30,8 +38,16 @@ from plugins.bot_unified_runtime.domains.core.safety_exec.paths import (
 logger = logging.getLogger(__name__)
 
 _INBOX_PENDING_HEADER = "## 待处理"
+# 收件箱条目的「一条 = 一行」不变式（S-FIX-ATK-NOTES 2026-09-27，实锤 1）：
+# 读侧 `read_pending_inbox` 按 ``str.splitlines()`` 切行，因此写侧必须折叠
+# splitlines 认的**全部**行边界形态（不止 \r\n——\v\f\x1c-\x1e\x85\u2028\u2029
+# 同样能把一条劈成两条、或伪造 `## 段头` 改读取边界），统一换成全角分号。
+_INBOX_LINE_BREAKER_RE = re.compile(r"\s*[\r\n\v\f\x1c\x1d\x1e\x85\u2028\u2029]+\s*")
 _FOOD_EXCLUDED_SECTIONS = {"备注", "備註"}
 _INBOX_APPEND_LOCK = threading.Lock()
+# A3b（S-FIX-GOAL18-REST2 2026-09-28）：早报收件箱段总长帽（字符）。刻意不新增
+# config 键（先例：reminders.MAX_PENDING_PER_SENDER 同法）；要可调走提案。
+_MORNING_BRIEF_INBOX_MAX_CHARS = 1600
 
 _MEAL_HISTORY_FILE = "daily/meal_history.jsonl"
 _FOOD_FILE = "food.md"
@@ -192,9 +208,14 @@ def choose_meal(
 
 
 def append_inbox_line(path: Path, text: str, *, now: datetime | None = None) -> str:
-    """往收件箱 ``## 待处理`` 段追加一条；文件缺失时按模板创建。"""
+    """往收件箱 ``## 待处理`` 段追加一条；文件缺失时按模板创建。
+
+    写侧单行化（实锤 1 根修）：入参先折行再入库，任何调用方（含能力面多行
+    body）都写不出第二条物理行——「一条 = 一行」由这一处兜底，不留第二把尺。
+    """
     moment = now or datetime.now().astimezone()
-    line = f"- [{moment.strftime('%Y-%m-%d %H:%M')}] {text.strip()}"
+    single_line = _INBOX_LINE_BREAKER_RE.sub("；", (text or "").strip())
+    line = f"- [{moment.strftime('%Y-%m-%d %H:%M')}] {single_line}"
     with _INBOX_APPEND_LOCK:
         path.parent.mkdir(parents=True, exist_ok=True)
         content = _read_text(path)
@@ -228,44 +249,56 @@ def archive_inbox(path: Path, archive_dir: Path, *, now: datetime | None = None)
     """把待处理段整体搬进 ``archive_dir/YYYY-MM-DD.md`` 并清空待处理段。
 
     返回被归档的条目；待处理段本就为空时不写盘、返回空表。
+
+    A1（SEAT-ATK-SCHEDULE 会错票，S-FIX-GOAL18-REST2 2026-09-28）：**快照读→写
+    归档→清空全程持 ``_INBOX_APPEND_LOCK``**。旧写法在锁外读快照、锁内整段清空，
+    两者之间任何持锁追加都会「既没进归档、也被清空抹掉」——速记条目两头无痕
+    （探针实锤：竞态条目 B 静默丢失=True）。锁非可重入，故清空改为假定持锁的
+    ``_clear_pending_locked``，本函数是唯一上锁点；append 面锁语义不动。
+    持锁期含一次低频小文件 append（每日早报一次），与既有「单锁全 RMW」粒度同尺。
     """
     moment = now or datetime.now().astimezone()
-    pending = read_pending_inbox(path)
-    if not pending:
-        return []
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    daily_file = archive_dir / f"{moment.date().isoformat()}.md"
-    with daily_file.open("a", encoding="utf-8") as handle:
-        handle.write(f"\n## 收件箱归档 {moment.strftime('%H:%M')}\n")
-        for item in pending:
-            handle.write(f"{item}\n")
-    _rewrite_without_pending(path)
+    with _INBOX_APPEND_LOCK:
+        pending = read_pending_inbox(path)
+        if not pending:
+            return []
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        daily_file = archive_dir / f"{moment.date().isoformat()}.md"
+        with daily_file.open("a", encoding="utf-8") as handle:
+            handle.write(f"\n## 收件箱归档 {moment.strftime('%H:%M')}\n")
+            for item in pending:
+                handle.write(f"{item}\n")
+        _clear_pending_locked(path)
     return pending
 
 
-def _rewrite_without_pending(path: Path) -> None:
-    with _INBOX_APPEND_LOCK:
-        lines = _read_text(path).splitlines()
-        kept: list[str] = []
-        in_pending = False
-        wrote_placeholder = False
-        for raw in lines:
-            stripped = raw.strip()
-            if stripped.startswith("## "):
-                if in_pending and not wrote_placeholder:
-                    kept.append("（空）")
-                    wrote_placeholder = True
-                in_pending = stripped == _INBOX_PENDING_HEADER
-                kept.append(raw)
-                continue
-            if in_pending:
-                if not stripped or stripped == "（空）":
-                    continue
-                continue
+def _clear_pending_locked(path: Path) -> None:
+    """清空 ``## 待处理`` 段——**调用方必须已持 ``_INBOX_APPEND_LOCK``**（A1）。
+
+    原 ``_rewrite_without_pending``（自带锁）的唯一调用点就是 ``archive_inbox``，
+    锁整体上提进后者后本函数不再自锁（锁非可重入，双锁即死锁）。
+    """
+    lines = _read_text(path).splitlines()
+    kept: list[str] = []
+    in_pending = False
+    wrote_placeholder = False
+    for raw in lines:
+        stripped = raw.strip()
+        if stripped.startswith("## "):
+            if in_pending and not wrote_placeholder:
+                kept.append("（空）")
+                wrote_placeholder = True
+            in_pending = stripped == _INBOX_PENDING_HEADER
             kept.append(raw)
-        if in_pending and not wrote_placeholder:
-            kept.append("（空）")
-        path.write_text("\n".join(kept).rstrip("\n") + "\n", encoding="utf-8")
+            continue
+        if in_pending:
+            if not stripped or stripped == "（空）":
+                continue
+            continue
+        kept.append(raw)
+    if in_pending and not wrote_placeholder:
+        kept.append("（空）")
+    path.write_text("\n".join(kept).rstrip("\n") + "\n", encoding="utf-8")
 
 
 def read_task_sections(path: Path) -> dict[str, list[str]]:
@@ -374,7 +407,13 @@ def pick_variant(key: str, variants: tuple[str, ...], **fields: Any) -> str:
 
 
 def summarize_with_llm(config: Any, body: str, *, instruction: str) -> str:
-    """主聊天模型路由出一小段总结/建议；失败返回空串（调用方回退原文）。"""
+    """主聊天模型路由出一小段总结/建议；失败返回空串（调用方回退原文）。
+
+    收件箱是共享纯文本文件（群成员/手机端/ZCode 都可写），对 bot 来说是
+    **二手内容**——入 prompt 前过统一咽喉 ``guard_secondhand_text``
+    （S-FIX-ATK-NOTES 2026-09-27，实锤 2：09-26 四路之外的第五条裸链路）。
+    引导语 ``instruction`` 是本件常量，留在包裹外。
+    """
     stripped = (body or "").strip()
     if not stripped:
         return ""
@@ -382,8 +421,9 @@ def summarize_with_llm(config: Any, body: str, *, instruction: str) -> str:
         from plugins.bot_unified_runtime.llm.model_router import build_model_router
 
         router = build_model_router(config)
+        guarded = guard_secondhand_text(stripped[:4000], source_label="收件箱内容")
         reply = router.generate(
-            [{"role": "user", "content": f"{instruction}\n\n{stripped[:4000]}"}],
+            [{"role": "user", "content": f"{instruction}\n\n{guarded}"}],
             message_text=stripped[:200],
         )
         return str(getattr(reply, "text", "") or "").strip()
@@ -405,7 +445,19 @@ def build_morning_brief(
     lines: list[str] = [pick_variant("morning_open", _MORNING_OPENERS)]
     if pending:
         lines.append("【收件箱】")
-        lines.extend(f"{index}. {item}" for index, item in enumerate(pending, 1))
+        # A3b：收件箱段总长帽——刷屏条目不截断存储，只限早报单条消息体量，
+        # 未列出行数如实标注（仍在待处理段，不假装消失）。
+        used = 0
+        shown = 0
+        for index, item in enumerate(pending, 1):
+            entry = f"{index}. {item}"
+            if used + len(entry) > _MORNING_BRIEF_INBOX_MAX_CHARS:
+                break
+            lines.append(entry)
+            used += len(entry) + 1
+            shown += 1
+        if shown < len(pending):
+            lines.append(f"（另有 {len(pending) - shown} 行未列出，仍在收件箱待处理段）")
     if active:
         lines.append("【进行中】")
         lines.extend(f"- {item}" for item in active)
