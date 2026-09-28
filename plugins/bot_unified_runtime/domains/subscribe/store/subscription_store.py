@@ -357,6 +357,15 @@ class SubscriptionStore:
             return [dict(row) for row in rows]
 
     def close(self) -> None:
+        """释放进程级单例连接（票3 收口注记，SEAT-FIX-SUBCOOK-L）。
+
+        本 store 是**缓存单例连接**（``_get_connection`` 至多建一枚、
+        ``check_same_thread=False`` 随实例常驻），不是「每调新建 + ``with conn``
+        只提交不关」的句柄累积形——读侧句柄数恒为 O(1)，锁测试
+        ``test_store_connection_is_cached_singleton`` 钉死此不变量。代价是连接
+        随进程存活：Windows 上删除 sqlite 库文件（含 -wal/-shm）前必须先
+        ``close()``（装配层停机时调用）；这是生命周期契约，不是泄漏。
+        """
         with self._lock:
             if self._connection is not None:
                 self._connection.close()

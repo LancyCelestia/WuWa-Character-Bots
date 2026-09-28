@@ -26,7 +26,8 @@ DEFAULT_USER_AGENT = (
 # 响应体默认上限：所有 http_get*/http_post* 默认生效（max_bytes=None 时），
 # 防止异常响应/恶意大文件撑爆内存。覆盖本仓库全部平台的 HTML/JSON/API
 # 响应（最大为油管 watch 页与小红书 INITIAL_STATE，均在 3MB 量级）。
-# 传 0 或负数表示不限制；调用方可显式传更大的值覆盖。
+# max_bytes 三值语义的唯一真身见下方 ``_effective_max_bytes``（审查票4 收口，
+# 0/负数＝不限制＝显式退出大小护栏，绝非「拒绝一切」；本仓无「0=拒绝」语义）。
 DEFAULT_MAX_BYTES = 8 * 1024 * 1024
 
 
@@ -255,6 +256,43 @@ def _read_capped(response: Any, url: str, max_bytes: int) -> bytes:
     return raw
 
 
+def _effective_max_bytes(max_bytes: int | None) -> int:
+    """响应体大小上限语义的唯一真身（审查票4 收口，此前散在 3 个出站函数）。
+
+    三值口径：
+    - ``None`` → 默认上限 ``DEFAULT_MAX_BYTES``（大小护栏默认生效）；
+    - 正整数 → 该上限（大小护栏生效）；
+    - ``0`` / 负数 → **不限制**（归一返回 ``0``）：这是调用方对大小护栏的
+      **显式退出**，**不是**「拒绝一切」。本仓不存在「0=拒绝」语义，需要限制
+      就传正整数或 ``None``，需要显式退出才传 0。
+
+    审读取今日 ACTUAL 语义即「0/负＝不限制」（原注释与 ``if effective_max>0``
+    分支本已一致，票4 的只是「0 直觉易被误读为空/拒绝」的语义模糊，非代码矛盾）。
+    收口为单一真身以消除三处复制漂移；负数与 0 归一为同一真值 ``0``（行为不变，
+    二者此前都落入 ``else`` 不限制分支）。全仓零调用方今日显式传 0/负（见锁测试
+    ``test_no_caller_sets_http_throat_max_bytes_non_positive``），故此定版零行为变更。
+    """
+    if max_bytes is None:
+        return DEFAULT_MAX_BYTES
+    value = int(max_bytes)
+    return max(0, value)
+
+
+def _read_response_body(response: Any, url: str, effective_max: int) -> bytes:
+    """单一读取真身（GET / POST-json / POST-form 三处同形，防漂移）。
+
+    正上限 → ``_read_capped``（限幅读 + 限幅 gzip 解压，防 gzip 炸弹）；
+    ``0``（不限制）→ 全量 ``read()`` + 全量 ``gzip.decompress``——调用方显式
+    退出大小护栏后的后果由其自负，此路径无大小护栏。
+    """
+    if effective_max > 0:
+        return _read_capped(response, url, effective_max)
+    payload = response.read()
+    if response.headers.get("Content-Encoding", "").lower() == "gzip":
+        payload = gzip.decompress(payload)
+    return payload
+
+
 def http_get(
     url: str,
     *,
@@ -270,11 +308,12 @@ def http_get(
 ) -> tuple[str, bytes]:
     """GET 并返回 (最终 URL, 响应体)；短链重定向后 final_url 是落点。
 
-    max_bytes 默认取 ``DEFAULT_MAX_BYTES``（默认生效，无需调用方关心）；
-    传 0/负数表示不限制。429 按 Retry-After 有界重试（最多 2 次），
+    max_bytes 语义单一真身见 ``_effective_max_bytes``：默认取
+    ``DEFAULT_MAX_BYTES``（默认生效）；传 0/负＝不限制（显式退出大小护栏）。
+    429 按 Retry-After 有界重试（最多 2 次），
     其余 4xx 立即失败不重试（出处见 ``_retry_delay_seconds`` 注释）。
     """
-    effective_max = DEFAULT_MAX_BYTES if max_bytes is None else int(max_bytes)
+    effective_max = _effective_max_bytes(max_bytes)
     for attempt in range(HTTP_GET_MAX_ATTEMPTS):
         try:
             with _build_opener(proxy, verify_ssl=verify_ssl).open(
@@ -288,13 +327,7 @@ def http_get(
                 ),
                 timeout=timeout,
             ) as response:
-                if effective_max > 0:
-                    # 限幅读法（含 gzip 限幅解压），响应体已就绪。
-                    payload = _read_capped(response, url, effective_max)
-                else:
-                    payload = response.read()
-                    if response.headers.get("Content-Encoding", "").lower() == "gzip":
-                        payload = gzip.decompress(payload)
+                payload = _read_response_body(response, url, effective_max)
                 return response.geturl(), payload
         except ParseHttpError:
             raise
@@ -395,15 +428,10 @@ def http_post_json(
     _apply_cookie_guard(headers, url, cookie)
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urlrequest.Request(url, data=body, headers=headers, method="POST")
-    effective_max = DEFAULT_MAX_BYTES if max_bytes is None else int(max_bytes)
+    effective_max = _effective_max_bytes(max_bytes)
     try:
         with _build_opener(proxy).open(request, timeout=timeout) as response:
-            if effective_max > 0:
-                raw = _read_capped(response, url, effective_max)
-            else:
-                raw = response.read()
-                if response.headers.get("Content-Encoding", "").lower() == "gzip":
-                    raw = gzip.decompress(raw)
+            raw = _read_response_body(response, url, effective_max)
             return json.loads(raw.decode("utf-8"))
     except ParseHttpError:
         raise
@@ -523,15 +551,10 @@ def http_post_form(
         headers["Referer"] = referer
     _apply_cookie_guard(headers, url, cookie)
     request = urlrequest.Request(url, data=body.encode("utf-8"), headers=headers, method="POST")
-    effective_max = DEFAULT_MAX_BYTES if max_bytes is None else int(max_bytes)
+    effective_max = _effective_max_bytes(max_bytes)
     try:
         with _build_opener(proxy).open(request, timeout=timeout) as response:
-            if effective_max > 0:
-                raw = _read_capped(response, url, effective_max)
-            else:
-                raw = response.read()
-                if response.headers.get("Content-Encoding", "").lower() == "gzip":
-                    raw = gzip.decompress(raw)
+            raw = _read_response_body(response, url, effective_max)
             return json.loads(raw.decode("utf-8"))
     except ParseHttpError:
         raise

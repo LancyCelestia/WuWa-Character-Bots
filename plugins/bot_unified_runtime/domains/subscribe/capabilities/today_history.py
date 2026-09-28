@@ -105,10 +105,38 @@ def _save_push_table(push_file: str, table: dict[str, dict[str, int]]) -> bool:
         return False
 
 
+def _card_dir_token_is_reserved(token: str) -> bool:
+    """目录段是否命中中央写路径判据的保留设备名（审查票2：nul/con/com1 形态）。
+
+    判定真身 = ``domains/files/sender/restricted_runner.sanitize_write_segments``
+    （Win32 设备名「点号前首段」判定的唯一真身，与 meme 落盘同源）；本席只调用、
+    不修改、**绝不在此复刻点号切分判据**（避免第二真身漂移）。``_card_dir_token``
+    已把 token 清洗为纯 ``[0-9A-Za-z_-]``，无点号/分隔符/盘符，唯一可能的拒绝理由
+    就是保留设备名——但仍走整套判据，将来拼接形态变化也不会漏。任何拒绝都吞成
+    True（安全侧：宁可退化为随机目录名，也不把设备名写进盘）。
+    """
+    from plugins.bot_unified_runtime.domains.files.sender import restricted_runner
+
+    try:
+        restricted_runner.sanitize_write_segments(token)
+    except Exception:  # noqa: BLE001 - _Rejected（保留设备名等）一律视为不可用段名
+        return True
+    return False
+
+
 def _card_dir_token(raw: str) -> str:
-    """去重键 → 安全目录名：只留 ``[0-9A-Za-z_-]``，空则回退随机串。"""
+    """去重键 → 安全目录名：只留 ``[0-9A-Za-z_-]``，空或命中保留设备名回退随机串。
+
+    ``month_day`` 源自远端百科正文，清洗后仍可能得到 ``nul``/``com1`` 这类纯字母
+    设备名（``nul.txt`` 的点号会被字符集剥成 ``nultxt`` 天然安全，裸 ``nul`` 则需
+    中央判据拦截）——目录段落在校验名上时，Windows 下 render_card_png 的 mkdir 会
+    炸误导性 OSError，甚至造出常规工具删不掉的挂件；故拒并降级为随机目录名
+    （不影响出图，仅失去同日去重）。
+    """
     token = re.sub(r"[^0-9A-Za-z_-]", "", str(raw or ""))[:64]
-    return token or uuid.uuid4().hex[:12]
+    if not token or _card_dir_token_is_reserved(token):
+        return uuid.uuid4().hex[:12]
+    return token
 
 
 def _prune_card_dirs(root: Path, *, keep: int = 120) -> int:
