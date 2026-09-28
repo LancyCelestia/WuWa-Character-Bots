@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 import threading
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -38,6 +40,53 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+# —— 称谓名消毒（INJ-G2，2026-09-27 修复席 S-FIX-INJG2）——
+# `build_addressing_context` 把 name 逐字插进 system prompt 的
+# 【当前称谓与主角边界】指令句（消费点 chat.py 只拼不洗）。两条来源腿都在
+# 本件汇流之后收口：①群聊=当前发言人展示名（QQ 群名片可含换行/`】`/`system:`
+# 行，探针 P3 实测换行直通）；②私聊/群主=「设置名称」偏好（`/bot identity
+# set-name`，echo 侧门只挡控制字符/换行/32 字，同行 `“`/`【`/`】` 放行，
+# 探针 P4 实测伪指令逐字进 system 段）。
+# 分工：`security/injection.neutralize_internal_markers`（唯一真身，与
+# `ingest/message_context._neutralize_markers` 共用 INTERNAL_MARKER_PATTERN）
+# 只全角化 ASCII 成对边界标记 `[X]`/`[/X]`，**不碰** 【】、弯引号、换行与零宽
+# 格式字符——而本落点的攻击面恰是这些形态；不强行把 marker 消毒器扩成第二
+# 职责，本件自带最小「单行化 + 引号/方括号全角」私有函数。echo 侧 set-name
+# 校验门不动（capabilities/echo.py 为禁写面），收口在两腿汇流之后。
+_ADDRESS_NAME_ZERO_WIDTH = "\u200b\u200c\u200d\u2060\ufeff"
+_ADDRESS_NAME_WS_PATTERN = re.compile(r"\s+")
+
+
+def _sanitize_address_name(value: str) -> str:
+    """称谓名专用消毒：去零宽/Cf、方括号与引号全角化、折叠为单行。
+
+    幂等：全角产物（［］＂）不再命中任何替换规则，重复调用零副作用；
+    正常中文名（如「澜汐」）逐字节不变。
+    """
+    # ① 摘掉不可见格式字符：Cf 类（方向控制、BOM 类）+ 逐列出的零宽字符。
+    text = "".join(
+        ch for ch in value if unicodedata.category(ch) != "Cf" and ch not in _ADDRESS_NAME_ZERO_WIDTH
+    )
+    # ② 破格形态全角化：CJK 方括号/角括号/双弯引号与 ASCII 引号方括号——
+    #    指令模板的边界符号是 【】 与 “”，同名形态出现在名字里即可提前闭合。
+    text = (
+        text.replace("【", "［")
+        .replace("】", "］")
+        .replace("「", "〔")
+        .replace("」", "〕")
+        .replace("『", "〖")
+        .replace("』", "〗")
+        .replace("“", "＂")
+        .replace("”", "＂")
+        .replace('"', "＂")
+        .replace("'", "＇")
+        .replace("[", "［")
+        .replace("]", "］")
+    )
+    # ③ 单行化：换行/制表/连续空白（含 Zs 类空格）折叠为单个空格。
+    return _ADDRESS_NAME_WS_PATTERN.sub(" ", text).strip()
+
+
 def build_addressing_context(
     *,
     session_type: str,
@@ -61,6 +110,9 @@ def build_addressing_context(
         # 「优先称呼“漂泊者”+禁止称其为漂泊者」的自斥指令，击穿群聊主角
         # 边界——群聊非 master 一律忽略该偏好，回退展示名。
         name = str(sender_display_name or "你").strip() or "你"
+    # 两腿汇流后的唯一收口点（INJ-G2）：偏好与展示名都在此过一遍消毒，
+    # 之后才进 f-string 指令句与 AddressingContext。
+    name = _sanitize_address_name(name) or "你"
     if scope == "group" and not is_master:
         instruction = f"当前是多人群聊；对方是群友，优先称呼“{name}”，禁止称其为漂泊者，不要把群成员设为主角。"
     elif is_master:
