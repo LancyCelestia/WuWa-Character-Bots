@@ -172,3 +172,100 @@ def test_boundary_empty_and_none_safe() -> None:
 def test_explicit_no_web_still_wins_over_external_topic() -> None:
     # 「不要联网」显式约束永远优先：即便含域外专名也不判检索。
     assert not _triggers("英伟达最新财报，不用联网只用本地回答")
+
+
+# ===========================================================================
+# T4①（2026-09-28，S-POLICY）：本地域词表与检索意图词表**同源**
+#
+# 病根：库里躺着原神/星穹铁道/FGO 的整套语料，`DOMAIN_TERMS` 却只列了鸣潮/战双/
+# 库洛/明日方舟 ⇒ 这些题既不判 LOCAL_KNOWLEDGE、也不走"本地优先、低置信才补网"，
+# 被当域外实体直接推去联网。修法不是"再抄一份名单"（规则 10：抄一次过期一次），
+# 而是把外部游戏段**从既有词表现取**，并用下面这把同源门锁死"缺谁必红"。
+# ===========================================================================
+
+from plugins.bot_unified_runtime.domains.core.search.search_intent import (
+    ACG_DOMAIN_TERMS,
+    ACG_TIER_STRONG,
+)
+
+
+def _registry_game_terms() -> tuple[str, ...]:
+    return tuple(ACG_DOMAIN_TERMS["game"][ACG_TIER_STRONG])
+
+
+def test_local_domain_terms_are_derived_not_hand_copied() -> None:
+    """真身形态锁：DOMAIN_TERMS 必须是"自有设定 ∪ 词表现取"的产物，不是手抄元组。"""
+    import ast
+
+    tree = ast.parse(_MODULE_PATH.read_text(encoding="utf-8"))
+    assigned: dict[str, object] = {}
+    for node in tree.body:
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            assigned[node.target.id] = node.value
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    assigned[target.id] = node.value
+    value = assigned.get("DOMAIN_TERMS")
+    assert isinstance(value, ast.Call), (
+        "DOMAIN_TERMS 又变回手写字面量了 ⇒ 词表加一域这里不会跟随（规则 10）"
+    )
+    assert "_SHOREKEEPER_DOMAIN_TERMS" in assigned, (
+        "自有世界观锚点与外部游戏域必须分成两段登记，外部那段才准现取"
+    )
+
+
+def test_every_registry_game_domain_is_a_local_domain_term() -> None:
+    """同源门（缺谁必红）：词表强专名档的每一域都必须能在本地域里命中。"""
+    missing = [term for term in _registry_game_terms() if term not in _qi.DOMAIN_TERMS]
+    assert missing == [], f"检索词表认这些是二游题、本地域词表却不认：{missing}"
+    # 自有设定一段不许被现取覆盖掉（那是本 bot 的人格锚点，别处没有）
+    for own in ("守岸人", "黑海岸", "漂泊者", "鸣潮"):
+        assert own in _qi.DOMAIN_TERMS
+
+
+def test_registry_growth_propagates_into_the_local_domain_predicate() -> None:
+    """注毒/跟随自证：词表加一枚新游戏域 ⇒ 现取函数立刻带上它（这里绝不写死名单）。"""
+    extra = "新游戏域甲"
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        grown = dict(ACG_DOMAIN_TERMS)
+        grown["game"] = dict(grown["game"])
+        grown["game"][ACG_TIER_STRONG] = (*_registry_game_terms(), extra)
+        monkeypatch.setattr(_qi, "ACG_DOMAIN_TERMS", grown)
+        derived = _qi._external_game_domain_terms()
+        assert extra in derived, "外部游戏段不是从词表现取 ⇒ 它另有第二份真身"
+        # 反向注毒：把这段从 DOMAIN_TERMS 里摘掉，同源门必须能抓到（此处只验判据可用）
+        trimmed = tuple(t for t in _qi.DOMAIN_TERMS if t != extra)
+        assert extra not in trimmed
+    assert extra not in _qi._external_game_domain_terms(), "还原失败 ⇒ 后续用例不可信"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "原神里的纳西妲是谁",
+        "介绍一下星穹铁道的流萤",
+        "FGO 有哪些职阶",
+        "绝区零的角色关系是怎样的",
+    ],
+)
+def test_games_that_are_in_the_library_route_to_local_knowledge(text: str) -> None:
+    """行为面：在库游戏域的问题先查本地库，低置信才补网（不再是"域外实体"直推联网）。"""
+    decision = classify_question_intent(text)
+    assert decision.intent is QuestionIntent.KNOWLEDGE_FIRST, (
+        f"{text!r} 没判成本地知识优先（intent={decision.intent.value}, reason={decision.reason}）"
+    )
+    assert decision.category == "LOCAL_KNOWLEDGE"
+    assert decision.allow_web_fallback is True, "本地优先不等于禁网：低置信仍要能补搜一次"
+    assert _qi.classify_timely_domain(text) == _qi.TimelyDomain.ANIME_LORE.value
+
+
+def test_timely_questions_about_in_library_games_still_reach_the_web() -> None:
+    """扩面不许把时效题锁死在本地：卡池/版本这类问题仍判主搜索。"""
+    assert _triggers("原神5.0卡池什么时候复刻")
+    assert _triggers("鸣潮最新版本公告维护到几点")
+
+
+def test_endminland_is_still_not_a_local_domain_term() -> None:
+    """她明确裁定过的边界：「明日方舟·终末地」不因此扩面而被带进本地域。"""
+    assert not any("终末地" in term for term in _qi.DOMAIN_TERMS)

@@ -18,6 +18,16 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 
+# 本地域词表的外部游戏段由此派生（同源，不手抄名单）：``search_intent`` 只依赖
+# 标准库，没有回灌 chat_reply，因此模块级导入无环；``ACG_DOMAIN_TERMS`` 是
+# 「这句是不是二游题」的唯一词表真身，本件只是它的另一个消费方。
+from plugins.bot_unified_runtime.domains.core.search.search_intent import (
+    ACG_DOMAIN_TERMS,
+    ACG_TIER_STRONG,
+)
+
+_ACG_GAME_DOMAIN: str = "game"
+
 
 class QuestionIntent(str, Enum):
     KNOWLEDGE_FIRST = "knowledge_first"
@@ -164,7 +174,18 @@ class IntentDecision:
 
 
 # 世界观/本地知识词：它们只表示“可以先查本地知识库”，不是永久禁网。
-DOMAIN_TERMS = (
+#
+# 分成两段是刻意的（T4①，2026-09-28）：
+# * ``_SHOREKEEPER_DOMAIN_TERMS``＝本 bot 自有的人格/世界观锚点（鸣潮/库洛/角色名…），
+#   这份是真·本地设定，没有别处可取，只能登记在此；
+# * ``_EXTERNAL_GAME_DOMAIN_TERMS``＝**外部游戏域**（原神/星穹铁道/FGO…）——它们在库里
+#   有整套语料，却长期不在本地域词表里，于是「原神谁是最强的角色」既不判 LOCAL_KNOWLEDGE、
+#   也不走"本地优先、低置信才补网"，而是直接被当域外实体推去联网。
+#   这段**一律不手写**：真身是检索意图词表 ``search_intent.ACG_DOMAIN_TERMS["game"]``
+#   的强专名档（同一批语料"是不是二游题"的判据本来就住在那里，抄第二份必漂——规则 10）。
+#   同源锁见 ``tests/test_question_intent.py``：词表加一域、这里没跟上即红。
+# 「明日方舟·终末地」按需求明确不加：它不在强专名档，因此也不会被带进来。
+_SHOREKEEPER_DOMAIN_TERMS: tuple[str, ...] = (
     "鸣潮",
     "战双",
     "战双帕弥什",
@@ -201,10 +222,27 @@ DOMAIN_TERMS = (
     "调律大厅",
     "卡庇托",
     "鹫巢",
-    # 外部游戏域（用户点名）：先查本地知识库再回退联网；
-    # 「明日方舟·终末地」按需求明确不加——终末地问题不因此词命中本地域。
-    "鹰角",
-    "明日方舟",
+)
+
+
+def _external_game_domain_terms() -> tuple[str, ...]:
+    """外部游戏域锚点：由检索意图词表的强专名档现取（不在这里抄一遍名单）。"""
+    try:
+        tier = ACG_DOMAIN_TERMS[_ACG_GAME_DOMAIN][ACG_TIER_STRONG]
+    except KeyError:  # pragma: no cover - 词表改名/改结构时必须在这里现形
+        raise RuntimeError(
+            "本地域词表依赖的检索意图词表结构变了："
+            f"缺少 {ACG_DOMAIN_TERMS!r} 的 {_ACG_GAME_DOMAIN!r}/{ACG_TIER_STRONG!r} 一档，"
+            "请同步修 question_intent._external_game_domain_terms（不许改成手写名单）"
+        ) from None
+    return tuple(str(term) for term in tier)
+
+
+_External_GAME_DOMAIN_TERMS: tuple[str, ...] = _external_game_domain_terms()
+
+#: 本地域词表**唯一真身**：自有设定 ∪ 在库的外部游戏域（去重、保持登记序）。
+DOMAIN_TERMS: tuple[str, ...] = tuple(
+    dict.fromkeys(_SHOREKEEPER_DOMAIN_TERMS + _External_GAME_DOMAIN_TERMS)
 )
 
 _EXPLICIT_SEARCH_RE = re.compile(
@@ -245,6 +283,13 @@ _EXTERNAL_ENTITY_RE = re.compile(
 )
 _ENTITY_QUESTION_RE = re.compile(
     r"(是什么|是谁|是什么样|介绍一下|介绍|百科|背景|来历|在哪里|在哪儿|哪家公司)"
+)
+# 纯评价/意见问法：句子里虽含现实域锚点（手机/昨天…），但用户要的是「你怎么看」
+# 而非「去查一个事实」。把它当新概念真身登记在此，供 PRIMARY 判据一票否决，
+# 免得「这款手机好不好用」「昨天那场球怎么看」这类意见句被域词表顺手拖上网。
+_OPINION_EVAL_RE = re.compile(
+    r"(好不好|好用吗|怎么样|值得买|值不值|靠不靠谱|怎么评价|如何看待|怎么看|"
+    r"好不好看|好看吗|帅不帅|强不强)"
 )
 _STATIC_KNOWLEDGE_RE = re.compile(
     r"(为什么|什么是|原理|定义|区别|含义|意思|如何理解|能否解释|"
@@ -364,6 +409,23 @@ def classify_question_intent(text: str) -> IntentDecision:
     external_entity_anchor = bool(_EXTERNAL_ENTITY_RE.search(stripped))
     entity_question = bool(_ENTITY_QUESTION_RE.search(stripped))
     static_knowledge = bool(_STATIC_KNOWLEDGE_RE.search(stripped))
+    # 「要不要搜」直接复用「搜了之后信谁」那四张表（经 classify_timely_domain 单一真身），
+    # 不再新建第二份词表（规则 10）。命中时政/金融/科技/新闻任一现实域、且本地域未抢先、
+    # 又不是纯意见问法或稳定常识，就构成确定性主搜索——这正是审计席 22 句实测恒判 never
+    # 的根因：那四张表过去只参与检索后的来源排序，从没接进 PRIMARY。
+    _timely = classify_timely_domain(stripped, in_local_domain=has_domain)
+    opinion_eval = bool(_OPINION_EVAL_RE.search(stripped))
+    timely_reality = (
+        _timely
+        in (
+            TimelyDomain.FINANCE.value,
+            TimelyDomain.CURRENT_AFFAIRS.value,
+            TimelyDomain.TECH.value,
+            TimelyDomain.NEWS.value,
+        )
+        and not static_knowledge
+        and not opinion_eval
+    )
     technical_howto = bool(_TECHNICAL_HOWTO_RE.search(stripped))
     user_content = bool(_USER_CONTENT_RE.search(stripped))
     creative = bool(_CREATIVE_RE.search(stripped))
@@ -387,6 +449,8 @@ def classify_question_intent(text: str) -> IntentDecision:
         scores["external_entity_anchor"] = 0.8
     if entity_question and not domain_subject and not static_knowledge:
         scores["external_entity"] = 0.8
+    if timely_reality:
+        scores["timely_domain_signal"] = 0.85
     if has_domain:
         scores["local_domain"] = 0.7
     if static_knowledge:
@@ -452,8 +516,16 @@ def classify_question_intent(text: str) -> IntentDecision:
             scores=scores,
         )
 
-    # 显式搜索、URL、实时信息和外部实体是确定性主搜索。
-    if explicit_search or has_url or (current and (question_like or real_world or current_request)) or real_world:
+    # 显式搜索、URL、实时信息、外部实体，以及时效现实域是确定性主搜索。
+    # 「……了吗」这类纯时效问句（LPR又降了吗）也归此支：它命中现实域即上网，
+    # 不再恒判 never。
+    if (
+        explicit_search
+        or has_url
+        or (current and (question_like or real_world or current_request))
+        or real_world
+        or timely_reality
+    ):
         reason = (
             "explicit_search"
             if explicit_search
@@ -462,6 +534,8 @@ def classify_question_intent(text: str) -> IntentDecision:
             else "temporal_intent"
             if current
             else "real_world_signal"
+            if real_world
+            else "timely_domain_signal"
         )
         return _finish(
             intent=QuestionIntent.WEB_SEARCH,
@@ -596,6 +670,33 @@ def classify_question_intent_legacy(text: str) -> IntentDecision:
 def looks_like_question_text(text: str) -> bool:
     """判断文本是否像提问，供群聊自然语言回复策略使用。"""
     return _is_question_like(_strip(text))
+
+
+# ---------------------------------------------------------------------------
+# T6 回复形态判据（2026-09-27）：把「题型」从联网意图之外补两格，接入既有派生表。
+# 刻意复用 _ENTITY_QUESTION_RE（真身已在），不另起「介绍/历史」词表（规则 10）。
+# ---------------------------------------------------------------------------
+
+def wants_narrative_shape(text: str) -> bool:
+    """「介绍人物/事件/物品/来历/背景/百科」类叙述题：交付要展开，不砍成一句话。
+
+    只认既有的 _ENTITY_QUESTION_RE（介绍一下/介绍/背景/来历/是什么/是谁/百科…），
+    避免把「历史/经历/来龙去脉」再抄成第二张表；这类词通常也与介绍共现。
+    """
+    return bool(_ENTITY_QUESTION_RE.search(_strip(text)))
+
+
+# 纯是非/单点时效事实（「LPR又降了吗」）——搜到即可短答，别为凑长度写小作文。
+# 这是新概念谓词（如 _EXTERNAL_ENTITY_RE 先例），不是既有词表的副本。
+_BRIEF_FACTUAL_RE = re.compile(r"(了吗|了么|过吗|是不是|有没有|要不要|行不行|成不成|是否)")
+
+
+def looks_like_brief_factual(text: str) -> bool:
+    """短小的是非/单点事实问句：判「简明事实」而非「详尽叙述」。"""
+    stripped = _strip(text)
+    if not stripped or len(stripped) > 24:
+        return False
+    return bool(_BRIEF_FACTUAL_RE.search(stripped))
 
 
 # ---------------------------------------------------------------------------
