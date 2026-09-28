@@ -314,6 +314,78 @@ def guard_secondhand_text(text: str, *, source_label: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 显示名消毒（AS-VISUAL-SPOOF 的显示面腿，2026-09-28 S-FILESAFE 接线）
+# ---------------------------------------------------------------------------
+# 昵称 / 群名片 / 贴纸元数据里的 Bidi 覆写、零宽插入、同形异码伪装（``ａdmin``、
+# 西里尔 ``аdmin``）此前**进不了任何扫描**：它们不是用户消息正文，`check_prompt_injection`
+# 吃不到；`file_gateway.sanitize_file_name` 只管落盘形态。本节把登记谓词
+# `find_visual_spoof_controls` 的**处置半边**接上，判据零副本（两半都在 attack_surface）：
+# ① 剥不可见伪装（`strip_display_controls`）；② 仅当「混码同形伪装角色词」信号为真时
+# 折成 ASCII 近似形（`fold_spoofed_role_keywords`）。
+# 边界（不许误会成权限判定）：本函数**只改显示形态**——谁能做什么仍由
+# `safety_exec/trust.py` 从 `sender_id`→roles 派生，把名片折成 "admin" 不会让任何人
+# 升档，把名片洗白也不会让真超管降档。这条不变量由 trust 件的内容不变性金测兜底。
+
+
+def sanitize_display_name(name: str) -> str:
+    """显示名（昵称/群名片/贴纸名/署名）进模型与卡面前的消毒。
+
+    空进空出；普通名字（纯 ASCII、纯西里尔真词、含 emoji ZWJ 的表情）逐字节不变——
+    「不误伤」是这枚函数存在的条件，误伤一次就等于替用户改了名字。
+    """
+    raw = str(name or "")
+    if not raw.strip():
+        return ""
+    stripped = _attack_surface.strip_display_controls(raw)
+    folded = _attack_surface.fold_spoofed_role_keywords(stripped)
+    return folded.strip()
+
+
+def display_name_spoof_tags(name: str) -> tuple[str, ...]:
+    """显示名的伪装信号（审计/回执用），判据完全取自登记谓词，本件零副本。"""
+    try:
+        return _attack_surface.find_visual_spoof_controls(str(name or ""))
+    except Exception:  # noqa: BLE001 - 信号件坏了不该拖垮显示面
+        return ()
+
+
+#: 消毒后**仍**触发信号的可见伪装（同形近似形冒充英文名那一族：折了就等于替别人
+#: 改名、可能撞名），整格换成它。宁可少给一个名字，不可给一个骗眼肉的名字。
+SPOOF_SUPPRESSED_DISPLAY = "[显示名含伪装字符·已屏蔽]"
+
+
+def render_safe_display_name(name: str) -> str:
+    """显示面（引用链名片 / 归档标签 / 贴纸名）出图与进提示词前的最后一道处置。
+
+    与 :func:`sanitize_display_name` 的分工（两枚都要，缺一不可）：
+    消毒负责「能救的救回来」——剥肉眼看不见的伪装（Bidi/零宽），把混码同形的
+    **角色词**折成 ASCII 近似形（``ａdmin``→``admin``）；本函数负责
+    「救不回来的怎么办」——消毒后**仍然**触发 :func:`display_name_spoof_tags` 的
+    （``ｓｈｅｌｌ`` 这类冒充英文名的近似形，``fold_spoofed_role_keywords`` 按设计
+    只折角色词、不折它们），整格换成 :data:`SPOOF_SUPPRESSED_DISPLAY`。
+
+    三条口径（写死，勿改）：
+    - 空进空出：调用方据此判定「这一段没有名字」，绝不虚构占位；
+    - 合法名逐字节不变：谓词对纯 ASCII / 纯西里尔真词（``администратор``）/
+      汉字夹全角字母（``报告Ａ``）/ 含 ZWJ 的表情连字全部零命中——误伤一次
+      就等于替用户改名，防线本身成了新的故障源；
+    - **只改显示形态，不改可信级**：谁说了算仍由 ``safety_exec/trust.py`` 从
+      ``sender_id``→roles 派生；把名片折成 "admin" 或屏蔽成占位都不构成升档降档。
+
+    判据零副本：本函数只调用消毒口与信号口，不在此抄任何码点表。
+    """
+    raw = str(name or "")
+    if not raw.strip():
+        return ""
+    cleaned = sanitize_display_name(raw)
+    if not cleaned.strip():
+        return ""
+    if display_name_spoof_tags(cleaned):
+        return SPOOF_SUPPRESSED_DISPLAY
+    return cleaned
+
+
+# ---------------------------------------------------------------------------
 # 攻击面登记谓词的接线（用户需求 17 续作，S-ATTACK-CONSUMERS 席 2026-09-26）
 # ---------------------------------------------------------------------------
 # `domains/core/safety_exec/attack_surface.py` 登记 19 枚攻击面、落了 3 条谓词，

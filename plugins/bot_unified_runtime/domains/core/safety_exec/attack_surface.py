@@ -119,12 +119,17 @@ __all__ = [
     "defended_probe_violations",
     "detect_authority_rewrite",
     "detect_operational_takeover",
+    "find_ascii_disguise",
     "find_visual_spoof_controls",
+    "fold_ascii_lookalikes",
     "fold_confusables_to_ascii",
+    "fold_name_disguise",
+    "fold_spoofed_role_keywords",
     "has_script_mixing",
     "normalize_for_safety_matching",
     "register_by_id",
     "register_entries",
+    "strip_display_controls",
     "surface_ids",
 ]
 
@@ -220,6 +225,8 @@ _DEDUPE = "plugins.bot_unified_runtime.domains.emergency_info.service.dedupe"
 _MENTION = "plugins.bot_unified_runtime.domains.chat_reply.runtime.mentions"
 _ROLES = "plugins.bot_unified_runtime.domains.chat_reply.policy.roles"
 _CHAT = "plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat"
+_FGW = "plugins.bot_unified_runtime.domains.transport.sender.file_gateway"
+_READER = "plugins.bot_unified_runtime.domains.files.sources.file_reader"
 
 ATTACK_SURFACE_REGISTER: Final[tuple[SurfaceEntry, ...]] = (
     SurfaceEntry(
@@ -257,20 +264,21 @@ ATTACK_SURFACE_REGISTER: Final[tuple[SurfaceEntry, ...]] = (
         state=DefenceState.PARTIAL,
         channels=(AttackChannel.FILE_BODY,),
         current_defender=(
-            "injection.check_prompt_injection——S-G6-IMPL 现算：root __init__.py:1359-1375 "
-            "把附件正文拼进消息 plain_text，每条真人消息逐条过 chat.py 门；"
-            "trust「正文恒 T2」的逐份来源打标在册**未接线**（0 消费者）"
+            "S-SEC-NARROW 2026-09-28 现算：解析出口 `file_reader.labelled_text/"
+            "read_file_for_context` 已把逐份 T2 前导行做成咽喉（真身 `trust.label_file_body`，"
+            "邮件附件腿 mail_ingress_files 已改走这枚口）；根 __init__.py:1384 与中央 "
+            "files.read.* handler 仍直取 parsed.text（落点在他席禁写面，hub 补丁申请在册），"
+            "所以「每条真人消息过 chat.py 门」那半照旧由 injection 中央件承担"
         ),
         failure_mode=(
-            "残余=信号级包裹之外无来源归属（正文以整体消息过门，不以 file_body 身份打 T2 壳），"
-            "接线的落点在 root __init__.py 与 files/read 能力面（本席写面外）；"
-            "文件名/落盘名的视觉伪装另立 AS-VISUAL-SPOOF"
+            "残余＝**根摄取腿与中央 handler 两条**还没换到 labelled_text（它们今天确实没带"
+            "来源前导行，只有整条消息级包裹）；文件名/落盘名的视觉伪装另立 AS-VISUAL-SPOOF；"
+            "documents.py（人格/设定文档，受信本地件）不在本面"
         ),
         minimal_landing=(
-            "正文入 prompt 处逐份走 guard_secondhand_text/label_external_content"
-            "（落点 root/capability_protocols，交主代理 H1）；S-G6-IMPL 曾按施工图核 "
-            "documents.py 为落点——现算推翻：该件只载**人格/设定文档**（受信本地文件），"
-            "附件正文真通道在 root 摄取层"
+            "交装配点两行：root __init__.py 附件腿与 capability_protocols files.read.* "
+            "各改调 `read_file_for_context(path, display_name=…, request_id=…)`"
+            "（签名与替换形态见席位报告 hub 补丁申请）"
         ),
         probes=(
             DefenceProbe(
@@ -281,12 +289,13 @@ ATTACK_SURFACE_REGISTER: Final[tuple[SurfaceEntry, ...]] = (
             DefenceProbe(
                 _TRUST,
                 "label_external_content",
-                note="在册未接线（S-G6-IMPL 现算 0 消费者，勿当已生效）",
+                note="活（S-SEC-NARROW）：label_file_body→label_ingress_content→本符号，"
+                "邮件附件腿经 file_reader.labelled_text 真调用",
             ),
             DefenceProbe(
                 _TRUST,
                 "derive_trust_level",
-                note="在册未接线（同上）",
+                note="在册未接线（定档派生仍只被 safety_exec 包内消费，别当已生效）",
             ),
         ),
         handoff_ref="H1",
@@ -551,31 +560,52 @@ ATTACK_SURFACE_REGISTER: Final[tuple[SurfaceEntry, ...]] = (
     SurfaceEntry(
         surface_id="AS-VISUAL-SPOOF",
         title="Unicode/RTL/零宽/同形异码对文件名与标签的视觉伪装",
-        state=DefenceState.GAP,
+        state=DefenceState.PARTIAL,
         channels=(AttackChannel.FILE_NAME, AttackChannel.DISPLAY_NAME, AttackChannel.STICKER_META),
         current_defender=(
-            "无人挡显示伪装：paths 处理**路径穿越**形态（点段/短名/ADS/设备前缀），"
-            "不处理「看着像 report.txt.exe 实为 RLO 覆写」；content_safety 剥零宽只用于**匹配**，"
-            "不改显示串、且不覆盖 Bidi 覆写"
+            "文件名腿自 2026-09-28 S-FILESAFE 起在世（不可见那一族），"
+            "**同形冒充 ASCII 英文名那一族自 S-SEC-NARROW 2026-09-28 起也在世**："
+            "``file_gateway.sanitize_file_name``（上传/出站名与 ``restricted_runner."
+            "sanitize_write_segments`` 的共同消毒口）先剥路径形态与控制字符，再过 "
+            ":func:`strip_display_controls` 剥 Bidi 覆写与零宽一族（ZWJ 表情连字豁免），"
+            "最后过 :func:`fold_name_disguise`——判据「折叠改变了原串**且**折叠结果是纯 ASCII」，"
+            "于是 ``report.ｅxe``、``раypal.txt`` 这类冒充英文名的形被折回真 ASCII，"
+            "而纯西里尔真词、汉字夹全角字母（``报告Ａ.docx``）逐字节不变；"
+            "只折字母数字、**绝不折 `．`/`／`**（消毒口不许凭空造出扩展名分界或路径分隔符）。"
+            "信号面 :func:`find_visual_spoof_controls` 现同时报 ``ascii_disguise:*`` 一格"
         ),
         failure_mode=(
-            "文件名/名片里的 U+202E 反向覆写可把 `报告<exe>txt` 显示成 `报告tx<exe>t`，"
-            "全角/西里尔同形字伪装 admin/root 前缀骗过肉眼与朴素 startswith"
+            "①显示面残余不变：昵称/群名片/贴纸元数据进 prompt 与卡片前的消毒口"
+            "``injection.sanitize_display_name`` 已备好，但装配点住根 ``__init__.py`` 与 "
+            "``character/providers.py``（本席禁写面），今天仍无人调用——落盘侧拦住了、"
+            "模型看到的名片侧还没拦住。②同形伪装在**纯语种**形态下按教义不报"
+            "（``администратор.txt`` 折完还剩西里尔字母 ⇒ 不算冒充英文名），这是刻意取舍："
+            "报了就等于替俄语用户改名。③全角标点（``document．xml`` 那一形）不改写，"
+            "只在归档门的成员名**比对**处才该硬化——本席未做（见席位报告天花板条）"
         ),
         minimal_landing=(
-            "本席 find_visual_spoof_controls 作信号（表情 ZWJ 与纯西里尔真词不误伤）；"
-            "落盘名消毒另有 media_archive 先例，显示面接法交装配点（H2）"
+            "文件名腿两半已闭（S-FILESAFE 不可见 + 本席同形）；显示名腿交装配点：根 "
+            "``__init__.py`` 填 ``sender_display_name`` 处与 providers 的名片渲染处各调一次 "
+            "``injection.sanitize_display_name``（hub 申请 S-FILESAFE-T2 已开）"
+        ),
+        probes=(
+            DefenceProbe(_FGW, "sanitize_file_name"),
+            DefenceProbe(_INJ, "sanitize_display_name"),
         ),
         predicate_id="find_visual_spoof_controls",
         predicate_attack_samples=(
             f"报告{chr(0x202E)}txt.exe",             # RLO 覆写
             "ａdmin_配置",                # 全角伪 latin admin
             f"report{chr(0x200B)}.txt",          # 词中间零宽空格
+            "report.ｅxe",                   # 全角字母冒充 ASCII 扩展名（本席新增）
+            "раypal.txt",                    # 西里尔近似形冒充英文名（本席新增）
         ),
         predicate_safe_samples=(
             f"家庭合影👨{chr(0x200D)}🩹.jpg",          # emoji + ZWJ + 变体选择器，合法
             "администратор_说明.txt",      # 纯西里尔真词（俄语 admin），不是混码 spoof
+            "администратор.txt",           # 纯语种词：折完还剩西里尔，不改名（不误伤）
             "季度报告 2026 终稿.docx",
+            "报告Ａ.docx",                  # 汉字夹全角字母：折完非纯 ASCII ⇒ 不动
         ),
         handoff_ref="H2",
     ),
@@ -623,15 +653,31 @@ ATTACK_SURFACE_REGISTER: Final[tuple[SurfaceEntry, ...]] = (
     SurfaceEntry(
         surface_id="AS-RESOURCE-ARCHIVE-BOMB",
         title="资源滥用：归档/解压炸弹（docx/xlsx 内层超大成员）",
-        state=DefenceState.HANDOFF,
+        state=DefenceState.PARTIAL,
         channels=(AttackChannel.FILE_BODY,),
         current_defender=(
-            "media_archive 有 magic bytes 质检 + 单文件/每日/单条限额；"
-            "但 character documents._read_docx_text 直接 archive.read('word/document.xml') "
-            "无解压后尺寸上限，且 ElementTree.fromstring 未防实体展开（billion laughs）"
+            "S-SEC-NARROW 现算：附件真通道 ``file_reader`` 三条 OOXML 腿"
+            "（.docx/.xlsx/.pptx）解析前先过 ``archive_expansion_violation``——"
+            "**成员数 + 单成员申报字节 + 全容器申报合计**三重限额（限额住本文件常量真身，"
+            "不散抄）＋「真读每枚 XML 成员开头一小段」拦内部 DTD 实体展开（申报值会说谎，"
+            "这一格吃的是解出来的实际字节）；超限走新增的 ``archive_expansion_limited`` "
+            "诚实降级态，不抛、不断链。文本腿 ``_text`` 已改**流式截断读**"
+            "（只 read 预算字节，不再整档进内存），并按盘上尺寸如实说明「后面的没读」。"
+            "media_archive 侧 magic bytes + 单文件/每日/单条限额照旧"
         ),
-        failure_mode="一个几十 KB 的 docx 解压出 GB 级 XML / 递归实体 → 事件循环外线程 OOM/卡死",
-        minimal_landing="documents/file_reader 加解压成员尺寸上限 + 换 defusedxml（属他人文件，H6）",
+        failure_mode=(
+            "残余两格（故只 PARTIAL，不升 DEFENDED）："
+            "①``character/documents.py::_read_docx_text`` 那条**人格/设定文档**腿仍直读 "
+            "archive.read('word/document.xml') 且用 ElementTree.fromstring——该件是他席写面，"
+            "限额与 defusedxml 交 H6；②OOXML 解析器自身在体检放行后仍可能解出超大成员"
+            "（zip 中央目录申报值与实际字节可以不符，本门只真读了 XML 成员**开头**一小段，"
+            "不是全量重压）"
+        ),
+        minimal_landing=(
+            "documents.py 换走 file_reader 那枚体检（他人写面，H6）；如需全量硬上限，"
+            "要在解压器层面计数，而不是靠中央目录申报值"
+        ),
+        probes=(DefenceProbe(_READER, "read_supported_file"),),
         handoff_ref="H6",
     ),
     SurfaceEntry(
@@ -656,6 +702,40 @@ ATTACK_SURFACE_REGISTER: Final[tuple[SurfaceEntry, ...]] = (
         failure_mode="检索结果 URL 若绕过咽喉直取即洞（台账 #51 已闭一处）",
         minimal_landing="保持「跨 host/取字节」只过 check_download_url 一处（在册）",
         probes=(DefenceProbe(_DOWN, "check_download_url"),),
+    ),
+    SurfaceEntry(
+        surface_id="AS-INBOX-DIGEST-RETOLD",
+        title="收件箱/简报与群摘要 LLM 腿回放存量二手正文（第五/第六条二手链路）",
+        state=DefenceState.DEFENDED,
+        channels=(AttackChannel.FILE_BODY,),
+        current_defender=(
+            "S-FIX-ATK-NOTES 现算（2026-09-27）：两腿入 prompt 前统一过 "
+            "injection.guard_secondhand_text——日报腿 "
+            "domains/assistant/daily/store/daily_assist.py::summarize_with_llm"
+            "（label「收件箱内容」，早晚报共用同一真身），群摘要压缩腿 "
+            "domains/chat_reply/character/shared_group.py::"
+            "OpenAICompatibleGroupSummarizer.summarize（label「群聊公共摘要」，"
+            "受 bot_group_digest_llm_enabled 门控）；行为锁+AST 消费锁在 "
+            "tests/test_atknotes_inbox_guard.py"
+        ),
+        failure_mode=(
+            "两格残余在册：①群摘要进**对话 prompt** 的旧弱化腿（chat.py "
+            "_shared_group_lines 只 sanitize 不包裹——SEAT-ATK-NOTES 可疑-1，"
+            "chat.py 为他席写面，交装配点）；②inbox.md 修复前的存量多行记录"
+            "仍是物理多行（写侧已单行化、入模侧已被包裹罩住，残余只在"
+            "简报展示结构）"
+        ),
+        minimal_landing=(
+            "①chat.py 那腿换统一 guard 或 _wrap_untrusted_context_block（他人"
+            "写面，本席只报）；②存量多行如需清面，读侧折叠一次即可（未实施）"
+        ),
+        probes=(
+            DefenceProbe(
+                _INJ,
+                "guard_secondhand_text",
+                note="活：chat.py 四路二手腿 + 日报 summarize_with_llm + 群摘要压缩腿（S-FIX-ATK-NOTES 现算）",
+            ),
+        ),
     ),
 )
 
@@ -696,6 +776,7 @@ REQUIRED_SURFACE_IDS: Final[tuple[str, ...]] = (
     "AS-RESOURCE-ARCHIVE-BOMB",
     "AS-RESOURCE-UNBOUNDED",
     "AS-SSRF-OUTBOUND",
+    "AS-INBOX-DIGEST-RETOLD",
 )
 
 
@@ -841,7 +922,87 @@ def has_script_mixing(text: str) -> bool:
 
 def fold_confusables_to_ascii(text: str) -> str:
     """把同形异码字符折成 ASCII 近似形（大小写保留在调用方处理）。"""
-    return "".join(_CONFUSABLE_MAP.get(ch, ch) for ch in text)
+    return "".join(_LOOKALIKE_MAP.get(ch, ch) for ch in text)
+
+
+# ---------------------------------------------------------------------------
+# 「冒充英文名」的同形伪装（AS-VISUAL-SPOOF 文件名腿的第二格，S-SEC-NARROW 2026-09-28）
+#
+# 上面 `find_visual_spoof_controls` 的同形门只认「折出来是**角色词**」（аdmin→admin）；
+# 一座更常见的桥没人看：名字整体**看着像 ASCII 英文名**、码点却是全角/西里尔/希腊
+# 近似形（`report.ｅxe`、`D0Nald.txt` 那一族的同形变体）。这类伪装骗的是肉眼与
+# 「按后缀分诊」两段代码，本节的判据只加检测、不减检测。
+#
+# 判据（三条同时成立才算伪装，误伤面因此天然窄）：
+# ① 折形（`_LOOKALIKE_MAP`：同形异码 + 全角字母数字，**不含任何标点**）确实改变了原串；
+# ② 折叠结果是**纯 ASCII**；
+# ③ 原串里确有非 ASCII 字符。
+# 于是：纯西里尔真词（`администратор.txt`，折完还剩西里尔字母）不误伤；
+# 中文夹全角字母（`报告Ａ.docx`，折完还剩汉字）不误伤；纯 ASCII 恒等不报。
+# 为什么不折全角标点（`．` `／`）：那会把**肉眼看不见的结构**折出来——`．`→`.` 凭空
+# 造出一枚扩展名分界、`／`→`/` 造出一枚路径分隔符。消毒口绝不允许制造盘上结构，
+# 这一族的分类硬化的做法是「只在**比对**时折、不改写文件名」（见 file_reader 归档门）。
+# ---------------------------------------------------------------------------
+
+#: 西里尔/希腊同形字的大写补集（小写族见 `_CONFUSABLE_MAP`）。
+_CONFUSABLE_UPPER: Final[Mapping[str, str]] = {
+    "А": "A", "Е": "E", "О": "O", "Р": "P", "С": "C", "У": "Y",
+    "Х": "X", "І": "I", "Ј": "J", "Ѕ": "S",
+    "Α": "A", "Β": "B", "Ε": "E", "Ζ": "Z", "Η": "H", "Ο": "O",
+    "Π": "N", "Τ": "T", "Υ": "Y", "Χ": "X",
+}
+
+#: 全角拉丁与数字（U+FF10–FF19 / FF21–FF3A / FF41–FF5A）——ASCII 字母数字的排版变体，
+#: 不承载任何语种信息，折回半角不改变「这是个英文名」这一事实。
+FULLWIDTH_ALNUM_MAP: Final[Mapping[str, str]] = {
+    chr(code): chr(code - 0xFEE0)
+    for start, end in ((0xFF10, 0xFF19), (0xFF21, 0xFF3A), (0xFF41, 0xFF5A))
+    for code in range(start, end + 1)
+}
+
+#: 唯一的折叠表：同形异码（小写+大写）+ 全角字母数字。真身只此一处，
+#: 消费者（`sanitize_file_name` / `sanitize_display_name`）一律调函数、不抄表。
+_LOOKALIKE_MAP: Final[Mapping[str, str]] = {
+    **_CONFUSABLE_MAP,
+    **_CONFUSABLE_UPPER,
+    **FULLWIDTH_ALNUM_MAP,
+}
+
+
+def fold_ascii_lookalikes(text: str) -> str:
+    """把 ASCII 近似形（同形异码 + 全角字母数字）折成真正的 ASCII。"""
+    return fold_confusables_to_ascii(str(text or ""))
+
+
+def find_ascii_disguise(text: str) -> tuple[str, ...]:
+    """名字是否在**冒充一个 ASCII 英文名**：返回伪装代号（无伪装返回空表）。
+
+    代号：``ascii_disguise:lookalike_fold``——折叠改变了原串、且折叠结果是纯 ASCII。
+    本函数是**信号**、不是拦截；处置（折形改写显示名）由调用方按场合决定。
+    """
+    raw = str(text or "")
+    if not raw:
+        return ()
+    folded = fold_ascii_lookalikes(raw)
+    if folded == raw:
+        return ()
+    if all(ord(ch) < 128 for ch in folded):
+        return ("ascii_disguise:lookalike_fold",)
+    return ()
+
+
+def fold_name_disguise(text: str) -> str:
+    """名字伪装的**处置口**：只在 :func:`find_ascii_disguise` 判真时把整串折成 ASCII 近似形。
+
+    判据零副本（就复用上面那一枚），所以「折什么」与「报什么」永远同一把尺。
+    合法名字（纯 ASCII、纯西里尔真词、汉字夹全角字母、表情 ZWJ）逐字节不变——
+    误伤一次等于替用户改名，也就等于把这条防线变成新的故障源。
+    只动**字母数字**：不折 `．`/`／` 一类标点，消毒口不制造盘上结构（见上节注释）。
+    """
+    raw = str(text or "")
+    if not raw or not find_ascii_disguise(raw):
+        return raw
+    return fold_ascii_lookalikes(raw)
 
 
 @dataclass(frozen=True)
@@ -884,12 +1045,64 @@ def find_visual_spoof_controls(text: str) -> tuple[str, ...]:
     mixed = has_script_mixing(raw)
     if any_keyword and (changed_by_nfkc or changed_by_confusable or mixed):
         hits.append(_VisualHit("homoglyph_role_keyword", "mixed-script"))
+    # 「冒充 ASCII 英文名」那一格（全角/同形近似形），判据见 find_ascii_disguise。
+    for tag in find_ascii_disguise(raw):
+        hits.append(_VisualHit(tag.split(":", 1)[0], tag.split(":", 1)[1]))
     ordered: list[str] = []
     for h in hits:
         tag = f"{h.tag}:{h.codepoint}"
         if tag not in ordered:
             ordered.append(tag)
     return tuple(ordered)
+
+
+# ---------------------------------------------------------------------------
+# 显示伪装的**处置口**（AS-VISUAL-SPOOF 的接线半边，2026-09-28 S-FILESAFE）
+#
+# 上面那枚谓词只回答「有没有伪装」；接线还需要一句「拿到之后怎么办」。
+# 这一节就是那一句，判据**共用上面同一张表**（禁第二真身：不新抄一份码点清单）。
+# ---------------------------------------------------------------------------
+
+
+def strip_display_controls(text: str) -> str:
+    """剥掉**肉眼看不见**的伪装字符（Bidi 覆写/隔离 + 零宽一族），可见内容逐字节不动。
+
+    为什么只删不可见这一族：删掉不可见字符不改变任何人名/文件名的**可见**形态，
+    合法串因此是恒等变换（与 ``file_gateway.sanitize_file_name`` 的旧口径兼容）；
+    而同形异码（``ａdmin``、西里尔 ``а``）是**可见**字符，折叠等于替别人改写名字，
+    可能撞名、可能毁掉真词——那一族只由 :func:`find_visual_spoof_controls` 出信号，
+    要不要折由调用方按场合决定（见 :func:`fold_spoofed_role_keywords`）。
+    表情连字 ZWJ（U+200D）保留，与谓词里的 ``zwj_exempt`` 同一把尺。
+    """
+    raw = str(text or "")
+    if not raw:
+        return ""
+    kept: list[str] = []
+    for ch in raw:
+        if ch in _BIDI_CONTROLS:
+            continue
+        tag = _INVISIBLE_CONTROLS.get(ch)
+        if tag is not None and not tag.endswith("exempt"):
+            continue
+        kept.append(ch)
+    return "".join(kept)
+
+
+def fold_spoofed_role_keywords(text: str) -> str:
+    """仅在「混码同形伪装角色词」信号为真时，把整串折成 ASCII 近似形。
+
+    判据完全复用 :func:`find_visual_spoof_controls`（不另写一套）：信号不响就原样返回，
+    于是纯西里尔真词（``администратор``）、纯 ASCII（``admin_guide.txt``）都不受影响；
+    只有 ``ａdmin``／``аdmin`` 这种「折叠后才冒出 admin/root」的伪装才会被改写，
+    改写的目的是**让显示形态与事实形态一致**（模型看到的就不再是骗眼肉的形）。
+    本函数**不改可信级、不作放行判定**：谁说了算仍由 ``trust.py`` 从结构化事实派生。
+    """
+    raw = str(text or "")
+    if not raw:
+        return ""
+    if not any(tag.startswith("homoglyph_role_keyword") for tag in find_visual_spoof_controls(raw)):
+        return raw
+    return fold_confusables_to_ascii(unicodedata.normalize("NFKC", raw))
 
 
 # ---------------------------------------------------------------------------

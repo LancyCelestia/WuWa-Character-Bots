@@ -1483,6 +1483,18 @@ def _incoming_from_nonebot_event(
     sender_level = str(getattr(onebot_sender, "level", None) or "").strip() or None
     group_title = str(getattr(event, "group_title", None) or "").strip() or None
     sender_display_name = sender_card or sender_nickname or None
+    if sender_display_name:
+        # 显示名伪装腿（S-SAFE2 2026-09-28 hub 申请 3）：昵称/群名片是**用户自己填的**
+        # 字符串，RTL/零宽/同形异码可以把它伪装成"守岸人"或管理员名进模型与卡片。
+        # 消毒唯一真身＝security/injection.sanitize_display_name（不误伤＝普通名字逐字节
+        # 不变，误伤一次等于替用户改名），本处不写第二份正则。
+        from .domains.chat_reply.security.injection import (
+            sanitize_display_name as _sanitize_sender_display_name,
+        )
+
+        sender_display_name = (
+            _sanitize_sender_display_name(sender_display_name) or None
+        )
     if group_id is not None:
         _remember_group_images(
             str(group_id), normalized_message.segments or raw_segments
