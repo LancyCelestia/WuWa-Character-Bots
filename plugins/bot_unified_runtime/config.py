@@ -874,6 +874,22 @@ class Config(BaseModel):
     bot_meme_library_dir: str = "data/meme_library"
     bot_meme_library_db_path: str = "data/meme_library.sqlite3"
     bot_meme_library_max_file_bytes: int = 5242880
+    # B1 收库守卫（2026-09-28）：「把所有表情贴纸存下来」收窄为真贴纸——
+    # 字节/像素下限挡 1KB 图标与缩略图（0 = 关）；文件头魔数验真在
+    # _download_once 常开（真图才可能有对应签名），判据同 image_guard 唯一真身。
+    # ⚠ 2026-09-29 去重（任务 D1）：与 randpic 同坑——两键曾在下面波块被重复
+    # 声明（300 与 400 并存、后者覆盖前者）。唯一真值＝波块那份（min_side 400：
+    # 现行生效值，且 QQ mface/sticker 预览小图多在 128-256px，400 才挡得住"糊图"）。
+    # ---- B1 吸收器守卫波（2026-09-28）：与 randpic 池同两把尺，独立两把闸。
+    # 现网群图吸收 5 MiB **只上限、不下限** ⇒ QQ mface/sticker 段拿到的预览分辨率
+    # 小图（通常 min-side 128-256 px，几十 KB）与真表情包同权入库；P3 情绪时刻
+    # 发腿（feature `bot.plugin.chat.reactions.meme`）挑出的"糊图"就来自这里。
+    # 两键与 ``bot_randpic_min_file_kb`` / ``bot_randpic_min_side`` 语义一致，
+    # 消费真身 = ``meme_library_listener._admit_one``（拒收时 ``audit_kind=min_reject``）
+    # 与 ``scripts/import_meme_packs.py``。任一键 ≤0 ⇒ 对应那层关。
+    # 与 randpic 分别独立两把闸：表情包段与本地原图分布本不同，硬凑一把尺会双误。
+    bot_meme_library_min_file_kb: int = 100
+    bot_meme_library_min_side: int = 400
     bot_meme_library_max_files: int = 20000
     bot_meme_library_max_age_days: int = 30
     bot_meme_library_cooldown_seconds: int = 20
