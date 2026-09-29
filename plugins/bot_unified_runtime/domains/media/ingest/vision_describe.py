@@ -218,7 +218,7 @@ def _pil_normalize(path: Path, *, first_frame_only: bool) -> str | None:
 
         with Image.open(path) as image:
             return _pil_normalize_image(image, first_frame_only=first_frame_only)
-    except Exception:  # noqa: BLE001 - 媒体重编失败按无图处理。
+    except Exception:
         return None
 
 
@@ -243,7 +243,7 @@ def _pil_normalize_image(image: Any, *, first_frame_only: bool) -> str | None:
         frame = image.convert("RGB")
         buffer = BytesIO()
         frame.save(buffer, format="JPEG", quality=85)
-    except Exception:  # noqa: BLE001 - 媒体重编失败按无图处理（含 PixelBudgetError 拒收）。
+    except Exception:
         return None
     return _encode_image_bytes(buffer.getvalue(), "image/jpeg")
 
@@ -256,7 +256,7 @@ def _gif_filmstrip_data_url(path: Path) -> str | None:
 
         with Image.open(path) as image:
             return _gif_strip_from_image(image)
-    except Exception:  # noqa: BLE001 - 拼条失败按无图处理。
+    except Exception:
         return None
 
 
@@ -302,7 +302,7 @@ def _gif_strip_from_image(image: Any) -> str | None:
             offset += tile.width + 4
         buffer = BytesIO()
         strip.save(buffer, format="JPEG", quality=85)
-    except Exception:  # noqa: BLE001 - 拼条失败按无图处理。
+    except Exception:
         return None
     return _encode_image_bytes(buffer.getvalue(), "image/jpeg")
 
@@ -427,7 +427,7 @@ def _download_image_bytes(
         # SSRF 护栏拒绝（入口咽喉 / 逐跳落点）是透明信号——绝不降级成
         # 「瞬时失败」返回 None，否则调用方会把内网 URL 原样回透给 provider。
         raise
-    except Exception as exc:  # noqa: BLE001 - 公网判定成立后瞬时下载失败降级保留原 URL 并留诊断。
+    except Exception as exc:
         logger.warning(
             "vision: remote image download failed host=%s err=%s", host, exc
         )
@@ -454,7 +454,7 @@ def _image_bytes_to_data_url(data: bytes) -> str | None:
                     return strip
                 return _pil_normalize_image(image, first_frame_only=True)
             return _pil_normalize_image(image, first_frame_only=False)
-    except Exception:  # noqa: BLE001 - 解码失败按无图处理。
+    except Exception:
         return None
 
 
@@ -770,7 +770,7 @@ class DynamicVisionProvider:
         if self._dynamic_registry is not None:
             try:
                 dynamic = self._dynamic_registry() or {}
-            except Exception:  # noqa: BLE001 - 运行时注册表读取失败沿用 env。
+            except Exception:
                 dynamic = {}
             merged.update(
                 _flatten_vision_entries(dynamic, resolve_key=True, config=self._config)
@@ -810,7 +810,7 @@ class DynamicVisionProvider:
             )
 
             return vision_caption_cache.build_vision_caption_cache(self._config)
-        except Exception:  # noqa: BLE001 - 缓存缺席只是回到"每次都问模型"。
+        except Exception:
             logger.debug("vision caption cache unavailable", exc_info=True)
             return None
 
@@ -828,7 +828,7 @@ class DynamicVisionProvider:
                 )
 
                 cache_key = vision_caption_cache.caption_key_for_messages(messages)
-            except Exception:  # noqa: BLE001 - 建键失败按未命中处理。
+            except Exception:
                 cache_key = ""
         if cache_key:
             cached = cache.lookup(cache_key)
@@ -874,7 +874,7 @@ class DynamicVisionProvider:
                 last_error = exc
                 self.last_attempts.append(f"{entry_id}:{exc.error_kind}")
                 continue
-            except Exception as exc:  # noqa: BLE001 - 未分类异常统一为可转移错误。
+            except Exception as exc:
                 last_error = LLMProviderError(
                     f"vision model {entry_id} failed: {type(exc).__name__}",
                     error_kind="provider_error",
@@ -916,7 +916,7 @@ def build_vision_provider(
     if dynamic_registry is not None:
         try:
             has_dynamic = bool(_flatten_vision_entries(dynamic_registry() or {}))
-        except Exception:  # noqa: BLE001 - 注册表读取失败按空处理。
+        except Exception:
             has_dynamic = False
     if not has_env and not has_dynamic:
         return None
@@ -994,7 +994,7 @@ def describe_images_with_status(
             getattr(provider, "last_attempts", []),
         )
         return "", "failed"
-    except Exception:  # noqa: BLE001 - 识别失败不阻断聊天，但要留下"失败了"这个事实。
+    except Exception:
         logger.exception("vision describe failed")
         return "", "failed"
     text = str(getattr(reply, "text", "") or "").strip()

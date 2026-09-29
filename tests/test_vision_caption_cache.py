@@ -113,7 +113,6 @@ def test_batch_key_all_or_nothing_and_order_matters(tmp_path: Path) -> None:
 
 
 def test_key_from_messages_collects_image_parts_only() -> None:
-    import hashlib
 
     png = _png_bytes(b"msg")
     url = _data_url(png)

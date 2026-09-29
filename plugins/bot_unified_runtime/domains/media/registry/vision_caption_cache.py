@@ -91,7 +91,7 @@ def _local_path_from_value(value: str) -> Path | None:
     只问一件事"这个指针对不对得上一个真文件"——对不上就没有内容身份可用。
     """
     raw = str(value or "").strip()
-    if not raw or raw.startswith(_DATA_URL_PREFIX) or raw.startswith("http"):
+    if not raw or raw.startswith((_DATA_URL_PREFIX, "http")):
         return None
     if raw.startswith("file:"):
         raw = unquote(urlparse(raw).path)

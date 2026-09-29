@@ -58,7 +58,7 @@ STICKER_PACKS_FEATURE_ID = "bot.plugin.sticker_packs"
 #: 审计轨的会话上限（有界，防无界增长；超了先清最旧）。
 _MAX_TRACKED_SESSIONS = 512
 
-_LAST_POOL: "OrderedDict[str, str]" = OrderedDict()
+_LAST_POOL: OrderedDict[str, str] = OrderedDict()
 _LAST_POOL_LOCK = threading.Lock()
 
 
@@ -70,7 +70,7 @@ def sticker_packs_module() -> Any | None:
     """
     try:
         from . import sticker_packs
-    except Exception:  # noqa: BLE001 - 缺席就缺席，绝不在导入面上抛给主链路。
+    except Exception:
         logger.debug("sticker_packs module unavailable", exc_info=True)
         return None
     return sticker_packs
@@ -83,7 +83,7 @@ def configured_sticker_dir(config: Any) -> Path | None:
         return None
     try:
         return module.configured_sticker_dir(config)
-    except Exception:  # noqa: BLE001 - 读配置失败＝按「没登记」算，不猜目录。
+    except Exception:
         logger.debug("configured_sticker_dir failed", exc_info=True)
         return None
 
@@ -95,7 +95,7 @@ def list_pack_images(config: Any) -> list[Path]:
         return []
     try:
         return list(module.list_sticker_images(config) or [])
-    except Exception:  # noqa: BLE001 - 扫池失败按空池处理（不发＝正确的保守方向）。
+    except Exception:
         logger.debug("list_sticker_images failed", exc_info=True)
         return []
 
@@ -119,8 +119,8 @@ def pool_available(config: Any) -> bool:
         try:
             if not bool(checker(config)):
                 return False
-        except Exception:  # noqa: BLE001 - 问不动闸就退回「只看清单」，不误判成开。
-            pass
+        except Exception:
+            logger.debug("sticker_send_enabled probe failed", exc_info=True)
     return bool(list_pack_images(config))
 
 
@@ -138,7 +138,8 @@ def pool_verdict(config: Any) -> str:
     try:
         facts = facts_fn(config)
         return str(getattr(facts, "verdict", "") or "unknown")
-    except Exception:  # noqa: BLE001 - 读事实失败不影响发不发，只是少一句解释。
+    except Exception:  # 探针不许炸：问不到真身就报 unknown。
+        logger.debug("sticker_facts probe failed", exc_info=True)
         return "unknown"
 
 
@@ -148,6 +149,9 @@ def pick_from_packs(
     session_key: str = "",
     seed: str = "",
     allow_exhausted: bool = True,
+    persona_names: Any = (),
+    prefer_tags: Any = (),
+    locked_subdirs: Any = (),
 ) -> Path | None:
     """从贴纸池挑一张；挑不出＝``None``（**这里不做任何兜底**）。
 
@@ -159,6 +163,11 @@ def pick_from_packs(
     ``allow_exhausted``：整库都落在「窗内不重发」账里时怎么办——``True``（指令路，
     她开口要的东西不该拿「怕重复」当拒因）退最久没发那张；``False``（主动路）本轮
     不发。主动腿一律传 ``False``，判据真身在 ``sticker_packs.pick_sticker`` 那侧。
+
+    ``persona_names`` / ``prefer_tags`` / ``locked_subdirs``：人格册名候选（只准
+    从现役人格同名子目录取，缺册＝拿不到）、语境标签（命中子目录者排前）、锁定
+    子目录（S4 好感档未解锁的 ``私藏`` 一类，整条剔除）——三枚都是透传，判据
+    真身与缺省语义全在 ``sticker_packs.pick_sticker``，本件零自造。
     """
     module = sticker_packs_module()
     if module is None or config is None:
@@ -169,20 +178,24 @@ def pick_from_packs(
             session_key=str(session_key or ""),
             seed=str(seed or ""),
             allow_exhausted=bool(allow_exhausted),
+            persona_names=tuple(persona_names or ()),
+            prefer_tags=tuple(prefer_tags or ()),
+            locked_subdirs=tuple(locked_subdirs or ()),
         )
     except TypeError:
-        # 替身/旧签名不认 ``allow_exhausted`` ⇒ 按简报给的调用形逐字重试一次；
+        # 替身/旧签名不认新关键字 ⇒ 按简报给的调用形逐字重试一次；
         # 只对「签名不接受该关键字」回退，其余异常原样落到下面的 except。
         try:
             picked = module.pick_sticker(
                 config,
                 session_key=str(session_key or ""),
                 seed=str(seed or ""),
+                allow_exhausted=bool(allow_exhausted),
             )
-        except Exception:  # noqa: BLE001 - 挑图失败＝不发，绝不误发一张。
+        except Exception:
             logger.debug("pick_sticker failed", exc_info=True)
             return None
-    except Exception:  # noqa: BLE001 - 挑图失败＝不发，绝不误发一张。
+    except Exception:
         logger.debug("pick_sticker failed", exc_info=True)
         return None
     if picked is None:
@@ -237,7 +250,8 @@ def sticker_feature_enabled(feature_enabled: Callable[[str], bool] | None) -> bo
         return False
     try:
         return bool(feature_enabled(STICKER_PACKS_FEATURE_ID))
-    except Exception:  # noqa: BLE001 - 问不动就按没开算。
+    except Exception:  # 没快照=按不通过，宁可少发。
+        logger.debug("feature_enabled probe failed", exc_info=True)
         return False
 
 
