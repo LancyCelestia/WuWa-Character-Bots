@@ -219,6 +219,7 @@ def _pil_normalize(path: Path, *, first_frame_only: bool) -> str | None:
         with Image.open(path) as image:
             return _pil_normalize_image(image, first_frame_only=first_frame_only)
     except Exception:
+        logger.debug("vision_describe fail-open guard", exc_info=True)
         return None
 
 
@@ -244,6 +245,7 @@ def _pil_normalize_image(image: Any, *, first_frame_only: bool) -> str | None:
         buffer = BytesIO()
         frame.save(buffer, format="JPEG", quality=85)
     except Exception:
+        logger.debug("vision_describe fail-open guard", exc_info=True)
         return None
     return _encode_image_bytes(buffer.getvalue(), "image/jpeg")
 
@@ -257,6 +259,7 @@ def _gif_filmstrip_data_url(path: Path) -> str | None:
         with Image.open(path) as image:
             return _gif_strip_from_image(image)
     except Exception:
+        logger.debug("vision_describe fail-open guard", exc_info=True)
         return None
 
 
@@ -303,6 +306,7 @@ def _gif_strip_from_image(image: Any) -> str | None:
         buffer = BytesIO()
         strip.save(buffer, format="JPEG", quality=85)
     except Exception:
+        logger.debug("vision_describe fail-open guard", exc_info=True)
         return None
     return _encode_image_bytes(buffer.getvalue(), "image/jpeg")
 
@@ -427,7 +431,7 @@ def _download_image_bytes(
         # SSRF 护栏拒绝（入口咽喉 / 逐跳落点）是透明信号——绝不降级成
         # 「瞬时失败」返回 None，否则调用方会把内网 URL 原样回透给 provider。
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - 下载失败要给上游统一降级语义，warning 已带上下文。
         logger.warning(
             "vision: remote image download failed host=%s err=%s", host, exc
         )
@@ -455,6 +459,7 @@ def _image_bytes_to_data_url(data: bytes) -> str | None:
                 return _pil_normalize_image(image, first_frame_only=True)
             return _pil_normalize_image(image, first_frame_only=False)
     except Exception:
+        logger.debug("vision_describe fail-open guard", exc_info=True)
         return None
 
 
@@ -771,6 +776,7 @@ class DynamicVisionProvider:
             try:
                 dynamic = self._dynamic_registry() or {}
             except Exception:
+                logger.debug("vision_describe fail-open guard", exc_info=True)
                 dynamic = {}
             merged.update(
                 _flatten_vision_entries(dynamic, resolve_key=True, config=self._config)
@@ -829,6 +835,7 @@ class DynamicVisionProvider:
 
                 cache_key = vision_caption_cache.caption_key_for_messages(messages)
             except Exception:
+                logger.debug("vision_describe fail-open guard", exc_info=True)
                 cache_key = ""
         if cache_key and cache is not None:
             cached = cache.lookup(cache_key)
@@ -875,6 +882,7 @@ class DynamicVisionProvider:
                 self.last_attempts.append(f"{entry_id}:{exc.error_kind}")
                 continue
             except Exception as exc:
+                logger.debug("vision_describe fail-open guard", exc_info=True)
                 last_error = LLMProviderError(
                     f"vision model {entry_id} failed: {type(exc).__name__}",
                     error_kind="provider_error",
@@ -917,6 +925,7 @@ def build_vision_provider(
         try:
             has_dynamic = bool(_flatten_vision_entries(dynamic_registry() or {}))
         except Exception:
+            logger.debug("vision_describe fail-open guard", exc_info=True)
             has_dynamic = False
     if not has_env and not has_dynamic:
         return None
