@@ -85,7 +85,7 @@ def test_full_payload_renders_all_sections() -> None:
         "配置快照",
         "版本与构建",
         "平台与协议",
-        "标识与时间",  # goal-7 说人话波：旧 'IDs 与时间' 机读节题中文化（纯文本兜底侧旧串在 error_report，另席跟）
+        "标识与时间",  # goal-7 说人话波：旧 'IDs 与时间' 机读节题中文化（纯文本兜底侧旧串在 error_report，已跟齐）
         "TimeoutError",
         "weather.py:120",
         "bot_weather_api_key",

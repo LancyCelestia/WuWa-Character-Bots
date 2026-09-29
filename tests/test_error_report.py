@@ -422,7 +422,10 @@ def test_build_text_fallback_contains_stack_and_ids() -> None:
     assert fallback.startswith("[运行异常] ValueError:")
     assert "栈摘录" in fallback
     assert "_raise_value_error" in fallback
-    assert "IDs 与时间" in fallback
+    # goal-7 说人话波：机读节题中文化，`IDs 与时间` 旧串退役（单一真身＝
+    # error_report 兜底节题表 + bridge._CARD_TEXT["static_err_32"]，两面同词）。
+    assert "标识与时间" in fallback
+    assert "IDs 与时间" not in fallback
     assert "message_id=m-1" in fallback
     # 兜底文本同样脱敏。
     assert "supersecretvalue" not in fallback
