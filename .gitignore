@@ -118,4 +118,10 @@ webui/dist/
 # 会话产物隔离（R1 批① C1，2026-09-27 fullload 波；搬运归档另由该面 owner 执行）
 probes/
 SEAT-S*.md
+# 窄豁免：上面这条**无锚**规则在大小写不敏感的 Windows 上顺手吞掉了两枚在册交付件
+# （`seat-s84`／`seat-s85`＝嵌入吞吐与 ANN 重建成本的实测账，批⑮ 点名件）。
+# 不能把 `SEAT-S*.md` 锚定到 `/`：现算 833 枚 SDD 工作件正靠它挡着，锚定＝一次性
+# 放成未跟踪＝给批⑯-续与"被引用却未跟踪"双查门制造新债。故只放回这两枚。
+!.sdd-reports/seat-s84-embed-throughput.md
+!.sdd-reports/seat-s85-ann-rebuild-cost.md
 .qoder/scheduled_tasks.json
