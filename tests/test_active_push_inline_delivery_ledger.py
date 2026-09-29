@@ -771,7 +771,9 @@ def test_inline_claim_ledger_only_exists_inside_an_event_loop(
     worker_thread.start()
     worker_thread.join(timeout=30)
     assert not worker_thread.is_alive(), "线程提交挂死：本用例的前提（无事件循环）没造出来"
-    assert thread_request.request_id not in sqlite_queue._inline_claims, (
+    # SEAT-FIX-QKEY（Q-G6）跟随：认领台账槽键从 request_id 收口为行身份
+    # dedupe_key（兄弟行各占各槽），本腿的「登记了吗」判定同步换尺。
+    assert thread_request.dedupe_key not in sqlite_queue._inline_claims, (
         "线程提交竟然登记了认领台账 ⇒ 本件立论（台账只在循环内）已被现实推翻，"
         "必须回来改设计而不是改期望值"
     )
@@ -786,7 +788,8 @@ def test_inline_claim_ledger_only_exists_inside_an_event_loop(
 
     async def _submit_on_loop() -> bool:
         sqlite_queue.submit(loop_request, now=base)
-        registered = loop_request.request_id in sqlite_queue._inline_claims
+        # SEAT-FIX-QKEY（Q-G6）跟随：槽键＝行身份 dedupe_key。
+        registered = loop_request.dedupe_key in sqlite_queue._inline_claims
         # 认领者换成「另一个执行体」（线程/别的任务）＝生产 worker 的身份关系。
         claimed = await asyncio.to_thread(
             sqlite_queue.claim_due, now=due_later, limit=5
