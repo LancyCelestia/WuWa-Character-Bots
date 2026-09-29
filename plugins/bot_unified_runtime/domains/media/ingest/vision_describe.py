@@ -830,7 +830,7 @@ class DynamicVisionProvider:
                 cache_key = vision_caption_cache.caption_key_for_messages(messages)
             except Exception:
                 cache_key = ""
-        if cache_key:
+        if cache_key and cache is not None:
             cached = cache.lookup(cache_key)
             if cached:
                 self.last_attempts.append("vision_caption_cache:hit")
