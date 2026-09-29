@@ -42,6 +42,7 @@ from plugins.bot_unified_runtime.contracts import (
 # 引用无装配环，先例见该模块头纪律说明）。
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities.user_copy import (
     GROUP_FAILURE_ACK_TEMPLATES,
+    PIPELINE_BUSY_PRIVATE_ACK_TEMPLATES,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.policy import (
     InMemoryRateLimiter,
@@ -102,6 +103,31 @@ _CHAT_POOL_WORKERS_MIN = 1
 _CHAT_POOL_WORKERS_MAX = 64
 _CHAT_POOL_WORKERS_ENV = "BOT_PIPELINE_MAX_WORKERS"
 
+# ==================== 能力单次执行硬超时（超时改造 C1-a / 在册 M-4） ====================
+# 改动前 `offload_capability` 里**没有任何逐任务时限**（M-4 在册位置：
+# docs/design/audit-20260920-unify-U4-dispatch.md:168）：能力线程挂死 ⇒ 这一轮永远
+#  awaits，既没有回复也没有诊断卡（AGENTS 第四部分「统一错误报告卡」那行的
+# 「能力挂死不出卡」正是这一条）。中央 invoker 早就有逐次预算
+# （capability_protocols._execute_handler + CapabilityTimeout），但 bot.chat 的根
+# 不经过它（pipeline.handle_async 直呼）⇒ 本格把管线侧那一刀补上，超时后**复用同一枚
+# CapabilityTimeout**（禁第二族），异常逃逸进 `_internal_error` ⇒ 出卡。
+_CHAT_HARD_TIMEOUT_ENV = "BOT_PIPELINE_CAPABILITY_HARD_TIMEOUT_SECONDS"
+_REQUEST_BUDGET_ENV = "BOT_REQUEST_BUDGET_SECONDS"
+#: 硬超时相对请求预算的最小余量（秒）。判据＝硬超时**必须晚于**内部 deadline 到点：
+#: 早于或等于就会砍掉「本来能在预算内正常收尾」的回复（把"挂死出卡"修成"少回一句"
+#: 是不可接受的回归）。抬底而不是拒绝启动：一枚 .env 手滑不该把整个 bot 拦在门外。
+_HARD_TIMEOUT_OVER_BUDGET_HEADROOM_SECONDS = 60.0
+#: 硬超时上限钳位（秒）：与中央 invoker `_MAX_TIMEOUT_SECONDS`（600）同一量级的"别把
+#: 挂死等到天荒地老"约束，这里给到 3600 是因为它必须高于请求预算（预算上限 600）
+#: 再加一次故障转移窗；超出即钳回，绝不因为一个荒谬的数字把管线钉死。
+_CHAT_HARD_TIMEOUT_MAX_SECONDS = 3600.0
+#: 解析一次即进程内缓存（与池 worker 数同口径：装配期读定、改 .env 需重启，
+#: 刻意不做成"看起来能热改"——已登 settings.py:RESTART_REQUIRED_KEYS）。
+_hard_timeout_cache: dict[str, float] = {}
+_hard_timeout_cache_lock = threading.Lock()
+#: 测试/受控诊断注入的覆盖值（None=走上面的解析链）。生产代码路径永不写它。
+_hard_timeout_override: float | None = None
+
 
 # ==================== 群聊能力失败降级通知（审查 A-19） ====================
 # 语义分界（09-12 实弹裁定，不可回退）：限流拦截/安静时间拦截/超载快败
@@ -115,6 +141,12 @@ _CHAT_POOL_WORKERS_ENV = "BOT_PIPELINE_MAX_WORKERS"
 _GROUP_FAILURE_NOTICE_WINDOW_SECONDS = 300.0
 # 节流表容量上限：写满时先清过期项，仍满则整表重置——会话数有界防内存缓涨。
 _GROUP_FAILURE_NOTICE_TRACK_CAP = 512
+
+# 需求项 6（2026-09-29）：本轮「回执已出口」账本的存活窗与容量上限。
+# TTL 取单轮最坏耗时量级（真回复/失败都在此窗内落回 `_complete`）；超时即清，
+# 绝不让一条旧回执把很久之后的另一轮失败误判成「已开过口」。
+_ACK_EMITTED_MARK_TTL_SECONDS = 300.0
+_ACK_EMITTED_MARK_CAP = 512
 
 
 class _BoundedSubmissionGate:
@@ -261,6 +293,208 @@ def _resolve_chat_pool_workers() -> int:
     return _CHAT_POOL_WORKERS_DEFAULT
 
 
+def _config_field_default(field_name: str) -> float | None:
+    """Config 字段的**声明默认值**（唯一出处）。
+
+    本模块刻意不在这里抄第二份数字（规则 10：随代码漂移的值以真身定义处为准）——
+    硬超时与请求预算的缺省只有 `config.py` 一处真身，读不到就退「不参与抬底」语义。
+    config.py 零包内依赖 ⇒ 这里局部 import 不成环。
+    """
+    try:
+        from plugins.bot_unified_runtime.config import Config
+
+        info = Config.model_fields.get(field_name)
+        default = getattr(info, "default", None)
+        if default is None or isinstance(default, bool):
+            return None
+        return float(default)  # type: ignore[arg-type]
+    except Exception:  # noqa: BLE001 - 配置模型不可用时交调用方兜底。
+        return None
+
+
+def _first_positive_float(raw_values: list[object]) -> float | None:
+    """取第一个能解析成正浮点的原始值（None/非法形态逐级跳过，不抛）。"""
+    for raw in raw_values:
+        if raw is None:
+            continue
+        try:
+            value = float(str(raw).strip())
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def _driver_then_env(field_name: str, env_name: str) -> list[object]:
+    """解析链前两级：nonebot driver config → os.environ（同 `_resolve_chat_pool_workers`）。"""
+    raw_values: list[object] = []
+    try:
+        import nonebot
+
+        raw_values.append(
+            getattr(nonebot.get_driver().config, field_name, None)
+        )
+    except Exception:  # noqa: BLE001, S110 - 单元测试/独立脚本场景，静默落到下一级。
+        pass
+    raw_values.append(os.environ.get(env_name))
+    return raw_values
+
+
+def _driver_and_env_raw(
+    read_driver_attr: Callable[[Any], object], env_name: str
+) -> list[object]:
+    """解析链前两级：nonebot driver config → os.environ（同 `_resolve_chat_pool_workers`）。
+
+    字段名**必须由调用点以字面 getattr 形态给出**（而不是把名字当参数传进来再 getattr）：
+    配置键的活性证据由 `scripts/config_read_point_census` 按字面读点现算，形如
+    `getattr(config, field_name, …)` 的转名写法结构上看不见这一枚键 ⇒ 会被记成
+    「只字面在场、不保证活性」。这里刻意留字面读点，让"这枚键真被读到"可机器复核。
+    """
+    raw_values: list[object] = []
+    try:
+        import nonebot
+
+        raw_values.append(read_driver_attr(nonebot.get_driver().config))
+    except Exception:  # noqa: BLE001, S110 - 单元测试/独立脚本场景，静默落到下一级。
+        pass
+    raw_values.append(os.environ.get(env_name))
+    return raw_values
+
+
+def _resolve_request_budget_seconds() -> float | None:
+    """请求级总预算（只为「硬超时不得抢跑内部 deadline」这一抬底判据取值）。
+
+    读不到返回 None ⇒ 本轮不设地板：宁可不抬，也不在这里凭记忆造第二个缺省值。
+    """
+    raw_values = _driver_and_env_raw(
+        lambda driver_config: getattr(driver_config, "bot_request_budget_seconds", None),
+        _REQUEST_BUDGET_ENV,
+    )
+    raw_values.append(_config_field_default("bot_request_budget_seconds"))
+    return _first_positive_float(raw_values)
+
+
+def _resolve_capability_hard_timeout_seconds() -> float:
+    """硬超时解析链：driver config → env → Config 声明默认 → 上限钳位 → 按请求预算抬底。"""
+    raw_values = _driver_and_env_raw(
+        lambda driver_config: getattr(
+            driver_config, "bot_pipeline_capability_hard_timeout_seconds", None
+        ),
+        _CHAT_HARD_TIMEOUT_ENV,
+    )
+    raw_values.append(
+        _config_field_default("bot_pipeline_capability_hard_timeout_seconds")
+    )
+    configured = _first_positive_float(raw_values)
+    if configured is None:
+        # 全链都读不出正数（畸形 .env + 配置模型不可用）：能力执行回到"无硬超时"的
+        # 旧形态而不是"0 秒即判挂死"——后者会把每一条聊天都变成异常卡，属新增故障。
+        logger.warning(
+            "pipeline capability hard timeout unreadable from config/env/defaults; "
+            "falling back to %s seconds",
+            float(_CHAT_HARD_TIMEOUT_MAX_SECONDS),
+        )
+        configured = _CHAT_HARD_TIMEOUT_MAX_SECONDS
+    configured = min(configured, _CHAT_HARD_TIMEOUT_MAX_SECONDS)
+
+    budget = _resolve_request_budget_seconds()
+    if budget is None:
+        return configured
+    floor = budget + _HARD_TIMEOUT_OVER_BUDGET_HEADROOM_SECONDS
+    if configured < floor:
+        logger.warning(
+            "pipeline capability hard timeout %.1fs is not safely above request budget "
+            "%.1fs (headroom %.1fs) ⇒ raised to %.1fs: 外部闸不得抢在内部 deadline 之前砍掉回复",
+            configured,
+            budget,
+            _HARD_TIMEOUT_OVER_BUDGET_HEADROOM_SECONDS,
+            min(floor, _CHAT_HARD_TIMEOUT_MAX_SECONDS),
+        )
+        return min(floor, _CHAT_HARD_TIMEOUT_MAX_SECONDS)
+    return configured
+
+
+def set_capability_hard_timeout_seconds(value: float | None) -> None:
+    """设定/清除硬超时覆盖并作废缓存（None=恢复解析链）。
+
+    仅供测试与受控诊断注入：生产热路径仍按解析链 + 进程内缓存走，一次都不碰这里。
+    """
+    global _hard_timeout_override
+    with _hard_timeout_cache_lock:
+        _hard_timeout_override = None if value is None else max(0.001, float(value))
+        _hard_timeout_cache.clear()
+
+
+def capability_hard_timeout_seconds() -> float:
+    """当前生效的管线能力硬超时秒数（解析一次即缓存；override 在场时每次现算）。"""
+    with _hard_timeout_cache_lock:
+        override = _hard_timeout_override
+        if override is not None:
+            return override
+        cached = _hard_timeout_cache.get("seconds")
+    if cached is not None:
+        return cached
+    resolved = _resolve_capability_hard_timeout_seconds()
+    with _hard_timeout_cache_lock:
+        _hard_timeout_cache["seconds"] = resolved
+    return resolved
+
+
+def _capability_timeout_error(capability_id: str, timeout_seconds: float) -> Exception:
+    """超时的异常身份：复用中央 invoker 那枚 `CapabilityTimeout`（禁第二族）。
+
+    它的存在理由就写在自己的 docstring 里——让「能力挂死」与「能力抛异常」共用同
+    一条诊断卡路径。这里刻意**局部 import**：本模块与 runtime 层互有引用面，热路径
+    不新增导入边；导入失败退 `TimeoutError`——出卡判据只看「有异常逃逸到
+    `_internal_error`」，族名不是承重件（但绝不静默返回结果，那正是原缺陷）。
+    """
+    detail = (
+        f"{capability_id or 'unknown'} 超过管线硬超时 {timeout_seconds:g}s"
+        "（工作线程仍在跑，结果弃用）"
+    )
+    try:
+        from plugins.bot_unified_runtime.runtime.capability_protocols import (
+            CapabilityTimeout,
+        )
+
+        return CapabilityTimeout(detail)
+    except Exception:  # 取族失败仍要抛异常，绝不退回"静默无结果"。
+        logger.debug(
+            "CapabilityTimeout unavailable; raising TimeoutError instead", exc_info=True
+        )
+        return TimeoutError(detail)
+
+
+def _retire_offloaded_task(task: Any, release: Callable[[], None]) -> None:
+    """被弃用/已完成执行体的收尾：还闸位 + 取走异常。
+
+    task 未真退出（线程仍在跑，Python 线程不可中断）⇒ 闸位**延后**到线程真退出才还。
+    闸表示的是「这枚 worker 还占着」，提前还会把有界池写成无界队列：挂死风暴时
+    排队无上限，那是比"这一轮白等"更坏的故障形态。异常必须取走一次，否则 asyncio
+    会打「exception was never retrieved」的噪声日志（挂死任务迟早会抛出来）。
+    """
+
+    def _finish(_fut: Any = None) -> None:
+        release()
+        try:
+            if not task.cancelled():
+                task.exception()
+        except BaseException as exc:  # noqa: BLE001 - 收尾探测没有调用方可接，绝不外抛（留痕而不 pass）。
+            logger.debug(
+                "offloaded task exception probe failed type=%s", type(exc).__name__
+            )
+
+    try:
+        if task.done():
+            _finish()
+            return
+        task.add_done_callback(_finish)
+    except BaseException:  # 回调挂上失败也不能漏还闸位（漏还＝池被钉死成永久 busy）。
+        logger.debug("offloaded task retire hook failed", exc_info=True)
+        release()
+
+
 def _shutdown_chat_pool() -> None:
     """模块级关闭钩子：未启动的排队提交取消，已在跑的任务不等待。"""
     global _chat_pool, _chat_pool_gate
@@ -336,15 +570,35 @@ def _pipeline_busy_result(
     message: IncomingMessage,
     decision: BotDecision,
 ) -> CapabilityResult:
-    """超限快败结果：SILENT_AUDIT 只留审计痕，不外发话术（超载时不放大流量）。"""
+    """超限快败结果（在途占满，本轮不排队、立即返回）。
+
+    会话面分两档（超时改造 C1-d，2026-09-28 用户裁定「绝不让用户零反馈」）：
+    - **群/频道**：SILENT_AUDIT 只留审计痕、不外发话术——超载时不放大流量是
+      09-12 实弹成文裁定（`test_a19_group_failure_notice.py::test_group_pipeline_busy_stays_silent`
+      锁着），本档一字未动。
+    - **私聊**：**必须说话**。此前私聊与群聊同享静默，用户明确找 bot 说话却被
+      在途闸静默否决、一个字都收不到（现网判据：`SendPolicy.SILENT_AUDIT` ⇒
+      `_complete` 直落 SKIPPED 回执、零出站）。本档补一句池内短句
+      （user_copy.PIPELINE_BUSY_PRIVATE_ACK_TEMPLATES 轮换，守岸人语气）。
+    私聊不会因此刷屏：能走到这一格的前提是「在途已占满 2N」，同一私聊会话要连续
+    撞闸得先连续并发；而"这条被挤掉了、再发一次"正是用户需要知道的 facts。
+    错误细节（池容量/队列深度/能力名）一律不外传，只留审计与告警链。
+    """
+    speaks_privately = message.session_type is SessionType.PRIVATE
     return CapabilityResult(
         request_id=message.request_id,
         capability_id=decision.capability_id,
         kind="error",
         title="",
         summary="",
-        body="",
-        send_policy=SendPolicy.SILENT_AUDIT,
+        body=(
+            random.choice(PIPELINE_BUSY_PRIVATE_ACK_TEMPLATES)
+            if speaks_privately
+            else ""
+        ),
+        send_policy=(
+            SendPolicy.IMMEDIATE if speaks_privately else SendPolicy.SILENT_AUDIT
+        ),
         audit_tags=["pipeline_busy:v1"],
         operational_issue=OperationalIssue(
             stage="runtime",
@@ -366,11 +620,40 @@ def offload_capability(capability: CapabilityCallable) -> AsyncCapabilityCallabl
         scope = inflight_scope_of(getattr(decision, "capability_id", ""))
         if not gate.try_acquire(scope):
             return _pipeline_busy_result(message, decision)
+        released = threading.Event()
+
+        def _release() -> None:
+            if not released.is_set():
+                released.set()
+                gate.release(scope)
+
         try:
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(pool, capability, message, decision)
-        finally:
-            gate.release(scope)
+            task = loop.run_in_executor(pool, capability, message, decision)
+        except BaseException:
+            # 连提交都没成功（池已关闭等）：闸位当场归还，异常照旧向外走。
+            _release()
+            raise
+        timeout_seconds = capability_hard_timeout_seconds()
+        try:
+            result = await asyncio.wait_for(
+                asyncio.shield(task), timeout=timeout_seconds
+            )
+        except TimeoutError as exc:
+            # C1-a（M-4 关账）：到点不再"白等"。shield 让超时不牵连真实任务，
+            # 闸位按 worker 真实占用归还（见 _retire_offloaded_task），抛
+            # CapabilityTimeout ⇒ handle_async 的 except → _internal_error →
+            # _maybe_send_error_card：挂死第一次有了可见面。
+            _retire_offloaded_task(task, _release)
+            raise _capability_timeout_error(
+                str(getattr(decision, "capability_id", "") or ""), timeout_seconds
+            ) from exc
+        except BaseException:
+            # 取消/能力异常同口径：任务已真退出就立即还，没退出就等它退出再还。
+            _retire_offloaded_task(task, _release)
+            raise
+        _retire_offloaded_task(task, _release)
+        return result
 
     return wrapped
 
@@ -597,6 +880,12 @@ class RuntimePipeline:
         # 在飞的补回任务必须持有强引用，否则 create_task 的返回值被丢弃后
         # 任务可能在跑完前被 GC 回收（asyncio 只存弱引用）。
         self._redrive_tasks: set[Any] = set()
+        # 需求项 6（2026-09-29）：本轮回执**真发出去了**的 request_id 记账。
+        # 用途只有一个——「阈值后才失败 ⇒ 回执+兜底文案连发两条」的叠加治理：
+        # `_complete` 见失败结果时先查这枚账，同轮已开过口就不再补第二句。
+        # 有界：TTL + 条数上限双闸（形态照抄群失败节流表，fail-open）。
+        self._ack_emitted_at: dict[str, float] = {}
+        self._ack_emitted_lock = threading.Lock()
         self._progress_ack_throttle = ProgressAckThrottle(
             cooldown_seconds=float(
                 getattr(progress_ack_settings, "cooldown_seconds", 60.0) or 60.0
@@ -918,6 +1207,17 @@ class RuntimePipeline:
     ) -> DeliveryReceipt:
         message = prepared.message
         decision = prepared.decision
+        # 需求项 6（2026-09-29 用户裁定）：同一轮内「回执」与「失败兜底文案」
+        # 不得连发两条。回执晚于阈值先落一句、能力随后才失败——旧形态用户会收到
+        # 「我在想」+「再发一次」两气泡。判失败结果时先读这枚一次性账：
+        # 群腿跳过池内降级通知、私腿把纯失败话术压成静默审计（回执那句已经说过
+        # 了，QQ 收不回，第二句只会重复同一件事）。**带接地内容的兜底不压**
+        # （kb_grounded_fallback 兜底里有真资料，吞掉它就是吞回复，红线）。
+        post_ack_failure = (
+            result.operational_issue is not None
+            and "kb_grounded_fallback" not in result.audit_tags
+            and self._take_ack_emitted(message.request_id)
+        )
         if (
             result.operational_issue is not None
             and message.session_type in {SessionType.GROUP, SessionType.CHANNEL}
@@ -925,11 +1225,16 @@ class RuntimePipeline:
             # 审查 A-19：失败结果本身仍压成空正文 + SILENT_AUDIT（错误细节
             # 不回群，细节走管理员告警链），但群聊不再零反馈——节流窗内补
             # 一句池内降级文案。超载快败（pipeline_busy）在通知方法内部豁免。
-            self._maybe_submit_group_failure_notice(
-                message, result.operational_issue
-            )
+            if not post_ack_failure:
+                self._maybe_submit_group_failure_notice(
+                    message, result.operational_issue
+                )
             result = result.model_copy(
                 update={"body": "", "send_policy": SendPolicy.SILENT_AUDIT}
+            )
+        elif post_ack_failure:
+            result = result.model_copy(
+                update={"body": "", "summary": "", "send_policy": SendPolicy.SILENT_AUDIT}
             )
         if result.send_policy is SendPolicy.SILENT_AUDIT:
             receipt = DeliveryReceipt(
@@ -1445,6 +1750,9 @@ class RuntimePipeline:
             session_type=session_type,
             group_id=group_id,
             sender_id=str(getattr(message, "sender_id", "") or "").strip(),
+            # DEFECT-2 生效腿：群白名单记的是 QQ 群号，TG 频道消息也带 group_id＝chat.id
+            # ⇒ 同号会被一并放行、回执投到另一个平台。平台归一表共读 progress_ack。
+            platform=str(getattr(message, "platform", "") or "").strip(),
         )
 
     async def _await_with_progress_ack(
@@ -1471,10 +1779,19 @@ class RuntimePipeline:
         try:
             return await asyncio.wait_for(asyncio.shield(task), timeout=delay_seconds)
         except TimeoutError:
-            pass  # shield 保证超时不牵连真实任务，下面继续等它。
-        await self._emit_progress_ack(
+            # DEFECT-1（2026-09-28 修，S-ACK hub 申请 H-3）：shield 下"我们自己的到点"
+            # 必然 task 未完；task 已 done 却抛 TimeoutError ⇒ 是**能力自抛**（快速失败），
+            # 不是本轮慢。此时发一句"我还在跑"＝对着已结束的事谎报，且白占一次回执冷却。
+            if task.done():
+                raise
+            # shield 保证超时不牵连真实任务，下面继续等它。
+        emitted = await self._emit_progress_ack(
             message, session_id, submit, delay_seconds=delay_seconds
         )
+        if emitted:
+            # 需求项 6 连发治理：本轮已经开过口，`_complete` 见失败结果时
+            # 不再补第二句兜底（回执+「再发一次」连发＝用户报的叠加形态）。
+            self._mark_ack_emitted(message.request_id)
         return await task
 
     def _gateway_ema_ms(self) -> float | None:
@@ -1504,15 +1821,18 @@ class RuntimePipeline:
         submit: Callable[[Any], Any],
         *,
         delay_seconds: float | None = None,
-    ) -> None:
+    ) -> bool:
         """发一句回执。**查冷却与占坑在同一个动作里**，发送失败退还。
+
+        返回「这句是否真发出去了」：冷却挡下/投递异常都是 False——调用方据此
+        决定要不要给本轮留「已开口」的账（需求项 6 的连发治理）。
 
         冷却判定放在这里而不是等能力之前：占坑必须紧贴"真的要不要发"这一决定，
         否则同会话两条并发慢问会双双通过前置检查、各发一句（评审席实跑过）。
         """
         claimed_at = self._progress_ack_throttle.try_claim(session_id)
         if claimed_at is None:
-            return
+            return False
         if delay_seconds is not None:
             # 事后必须能回答"这次到底按几秒判的慢"——自适应与关死在日志上
             # 长得一样，没有这一行就只能靠重启前后的对照去猜（旧回执零留痕）。
@@ -1532,6 +1852,38 @@ class RuntimePipeline:
         except Exception:  # noqa: BLE001 - 回执是附加体验，失败不影响真实回复。
             logger.debug("chat progress ack submit failed")
             self._progress_ack_throttle.release(session_id, claimed_at)
+            return False
+        return True
+
+    def _mark_ack_emitted(self, request_id: str) -> None:
+        """本轮回执已出口 ⇒ 留账；同轮失败兜底据此不再连发（fail-open）。"""
+        try:
+            now = time.monotonic()
+            with self._ack_emitted_lock:
+                self._ack_emitted_at[request_id] = now
+                expired = [
+                    key
+                    for key, at in self._ack_emitted_at.items()
+                    if now - at >= _ACK_EMITTED_MARK_TTL_SECONDS
+                ]
+                for key in expired:
+                    self._ack_emitted_at.pop(key, None)
+                while len(self._ack_emitted_at) > _ACK_EMITTED_MARK_CAP:
+                    self._ack_emitted_at.pop(next(iter(self._ack_emitted_at)))
+        except Exception:  # fail-open：记不上下一步就当没发过，宁多发一句不吞回复。
+            logger.debug("progress ack mark failed", exc_info=True)
+
+    def _take_ack_emitted(self, request_id: str) -> bool:
+        """读一次并销账（一轮只判一次）；过期条目顺手清。"""
+        try:
+            now = time.monotonic()
+            with self._ack_emitted_lock:
+                at = self._ack_emitted_at.pop(request_id, None)
+                if at is not None:
+                    return now - at < _ACK_EMITTED_MARK_TTL_SECONDS
+                return False
+        except Exception:  # noqa: BLE001 - fail-open：读不到账＝当没发过，宁多发一句不吞回复。
+            return False
 
     async def handle_async(
         self,

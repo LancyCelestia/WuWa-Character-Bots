@@ -441,6 +441,17 @@ class Config(BaseModel):
     # 避免长任务挤占语音转码/kb 拉取等 to_thread；在途上限为 2 倍（含排队），
     # 超限快败记 pipeline_busy 审计。钳位 1..64；env 兜底 BOT_PIPELINE_MAX_WORKERS。
     bot_pipeline_max_workers: int = 8
+    # 管线能力单次执行的**硬超时**（秒，超时改造 C1-a / 台账 M-4）：
+    # `offload_capability` 下放线程池后原先没有任何逐任务时限（docs/design/
+    # audit-20260920-unify-U4-dispatch.md:168 在册 M-4），能力挂死 ⇒ 整轮白等、
+    # 既无回复也无诊断卡。现在到点抛 CapabilityTimeout，经 pipeline
+    # `_internal_error` 出统一诊断卡（与中央 invoker `_execute_handler` 同法）。
+    # 缺省 400：必须严格大于 `bot_request_budget_seconds`（300），否则会与内部
+    # deadline 抢跑、把"本可以在预算内完成"的回复砍掉；同时给 LLM 故障转移窗
+    # （model_router 120s）留一次"换渠道再来一跳"的余量。低于请求预算时由消费点
+    # （pipeline._resolve_capability_hard_timeout_seconds）按预算+余量抬底，不静默失效。
+    # 池创建期一次读定（与 BOT_PIPELINE_MAX_WORKERS 同口径）⇒ 改 .env 需重启。
+    bot_pipeline_capability_hard_timeout_seconds: float = 400.0
     # B2 中央决策引擎迁移模式（阶段 0）：legacy_only（默认，引擎不参与）/
     # shadow（引擎只算 plan 写 decision_trace，绝不发送）/ engine_only
     # （随迁移阶段 1+ 启用）。非法值在运行时一律回落 legacy_only（fail-closed）。
@@ -2030,6 +2041,29 @@ class Config(BaseModel):
             raise ValueError("BOT_REQUEST_BUDGET_SECONDS 必须是数字（秒）") from exc
         if math.isnan(number) or number <= 0 or number > 600:
             raise ValueError("BOT_REQUEST_BUDGET_SECONDS 必须在 0-600 秒之间")
+        return number
+
+    @field_validator("bot_pipeline_capability_hard_timeout_seconds", mode="before")
+    @classmethod
+    def _validate_pipeline_capability_hard_timeout_seconds(cls, value: Any) -> float:
+        """拒绝非数字/NaN/Infinity/0 与超大值；合法范围 (0, 3600] 秒。
+
+        与请求预算的大小关系**不在这里硬拒**：拒了等于让一次 .env 手滑把整个
+        bot 拦在启动门外（违反「最基础的功能必须可用」）。真判据住在消费点
+        `pipeline._resolve_capability_hard_timeout_seconds`，那里按
+        「请求预算 + 余量」抬底并留日志，既不报错也不静默失效。
+        """
+        try:
+            number = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "BOT_PIPELINE_CAPABILITY_HARD_TIMEOUT_SECONDS 必须是数字（秒）"
+            ) from exc
+        if math.isnan(number) or number <= 0 or number > 3600:
+            raise ValueError(
+                "BOT_PIPELINE_CAPABILITY_HARD_TIMEOUT_SECONDS 必须在 (0, 3600] 秒之间"
+                "（0 不合法：0 会让每一次能力执行立刻被判挂死）"
+            )
         return number
 
     @field_validator("bot_credential_probe_urls", mode="before")

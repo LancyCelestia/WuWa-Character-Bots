@@ -4,6 +4,11 @@
   仅排除 text-only，不再要求正向 vision/multimodal/vlm 标签。
 - #4 聊天专用有界线程池：offload_capability 走独立 chat-pipeline 池，
   在途（运行+排队）超限快败返回 pipeline_busy，不无限排队。
+
+超时改造 C1-d（2026-09-28 用户裁定「绝不让用户零反馈」）改写了 #4 的**会话面**：
+超载快败在**私聊**不再静默——补一句池内短句（user_copy.PIPELINE_BUSY_PRIVATE_ACK_TEMPLATES）；
+**群/频道仍按 09-12 实弹裁定保持静默**（超载不放大流量），本文件与
+test_a19_group_failure_notice.py::test_group_pipeline_busy_stays_silent 各锁一侧。
 """
 
 from __future__ import annotations
@@ -17,7 +22,10 @@ from contextlib import contextmanager
 import pytest
 
 from plugins.bot_unified_runtime.config import Config
-from plugins.bot_unified_runtime.contracts import ReceiptState
+from plugins.bot_unified_runtime.contracts import ReceiptState, SendPolicy
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.user_copy import (
+    PIPELINE_BUSY_PRIVATE_ACK_TEMPLATES,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
     LLMProviderError,
     LLMReply,
@@ -348,11 +356,14 @@ async def test_offload_fast_fails_with_pipeline_busy_when_gate_full() -> None:
 
         third = await wrapper(_message(), _decision())
 
-        # 超限快败：明确的 busy 结果，SILENT_AUDIT 不外发，不排队等待。
+        # 超限快败：明确的 busy 结果，不排队等待。会话面按 C1-d 分档——
+        # 本用例的消息是**私聊** ⇒ 必须说话（IMMEDIATE + 池内短句），
+        # 审计标签与 issue 一字未动（群侧静默契约由 test_a19 与本文件群用例锁）。
         assert third.operational_issue is not None
         assert third.operational_issue.kind == "pipeline_busy"
         assert third.operational_issue.retryable is True
-        assert third.send_policy.value == "silent_audit"
+        assert third.send_policy is SendPolicy.IMMEDIATE
+        assert third.body in PIPELINE_BUSY_PRIVATE_ACK_TEMPLATES
         assert "pipeline_busy:v1" in third.audit_tags
         assert gate.in_flight == 2  # 快败不占用闸门
 
@@ -396,10 +407,33 @@ def test_config_default_pool_workers() -> None:
     assert Config().bot_pipeline_max_workers == 8
 
 
+def _group_message() -> IncomingMessage:
+    return IncomingMessage(
+        platform="qq",
+        adapter="onebot",
+        bot_id="10000",
+        session_id="group:g-busy",
+        session_type=SessionType.GROUP,
+        sender_id="u-group",
+        group_id="g-busy",
+        plain_text="你好",
+        mentions_bot=True,
+    )
+
+
 @pytest.mark.asyncio
-async def test_busy_result_reaches_pipeline_as_silent_audit() -> None:
-    # busy 结果经 RuntimePipeline._complete 必须落在 SKIPPED/SILENT_AUDIT
-    # 分支，与失败静默的既有设计一致，不产生外发流量。
+async def test_pipeline_busy_emits_private_line() -> None:
+    """C1-d（超时改造第三格）：私聊超载快败**必须说话**。
+
+    改动前私聊与群聊同享 SILENT_AUDIT ⇒ 用户明确找 bot 却被在途闸静默否决，
+    一个字都收不到（本用例即那条零反馈路径的正面锁）。判据取**出站请求**，
+    不取散文：私聊恰好一条请求、正文必属池、审计标签仍是 pipeline_busy:v1。
+    """
+    queue = InMemorySendQueue(audit_logger=_NullAuditLogger())
+    pipeline = RuntimePipeline(
+        send_queue=queue,
+        audit_logger=_NullAuditLogger(),
+    )
     with _installed_pool(1):
         release = threading.Event()
 
@@ -412,22 +446,63 @@ async def test_busy_result_reaches_pipeline_as_silent_audit() -> None:
         second = asyncio.ensure_future(wrapper(_message(), _decision()))
         for _ in range(4):
             await asyncio.sleep(0)
-
         busy_result = await wrapper(_message(), _decision())
         release.set()
         await first
         await second
 
-    pipeline = RuntimePipeline(
-        send_queue=InMemorySendQueue(audit_logger=_NullAuditLogger()),
-        audit_logger=_NullAuditLogger(),
-    )
     receipt = await pipeline.handle_async(
         _message(),
         _static_capability(busy_result),
         "bot.chat",
     )
-    assert receipt.state == ReceiptState.SKIPPED
+
+    assert receipt.state is ReceiptState.SENT, receipt.state
+    assert len(queue.sent_requests) == 1, "私聊超载必须恰好一句，不多发"
+    request = queue.sent_requests[0]
+    assert request.content.text_fallback in PIPELINE_BUSY_PRIVATE_ACK_TEMPLATES
+    # 错误细节不外传：池句里不含 issue 代号/能力名，审计标签保持既有那一枚。
+    assert "pipeline_busy" not in request.content.text_fallback
+    assert "pipeline_busy:v1" in request.audit_tags
+    # 群侧静默（09-12 裁定）仍由 _pipeline_busy_result 的会话分档保证，见下一发。
+    group_busy = _pipeline_busy_result_for(_group_message(), SessionType.GROUP)
+    assert group_busy.send_policy is SendPolicy.SILENT_AUDIT
+    assert group_busy.body == ""
+
+
+def test_pipeline_busy_group_stays_silent_at_the_source() -> None:
+    """群/频道档零变化：超载快败仍 SILENT_AUDIT + 空正文（超载不放大流量）。"""
+    for session_type in (SessionType.GROUP, SessionType.CHANNEL):
+        busy = _pipeline_busy_result_for(
+            _group_message().model_copy(
+                update={"session_type": session_type, "session_id": f"{session_type.value}:s"}
+            ),
+            session_type,
+        )
+        assert busy.send_policy is SendPolicy.SILENT_AUDIT, session_type
+        assert busy.body == "", session_type
+        assert busy.operational_issue is not None
+        assert busy.operational_issue.kind == "pipeline_busy", session_type
+        assert busy.audit_tags == ["pipeline_busy:v1"], session_type
+
+
+def _pipeline_busy_result_for(message: IncomingMessage, session_type: SessionType) -> object:
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+        _pipeline_busy_result,
+    )
+
+    return _pipeline_busy_result(
+        message,
+        BotDecision(
+            request_id=message.request_id,
+            should_respond=True,
+            mode="command",
+            trigger="你好",
+            capability_id="bot.chat",
+            target_scope=session_type,
+            decision_reason="c1-d",
+        ),
+    )
 
 
 class _NullAuditLogger:
