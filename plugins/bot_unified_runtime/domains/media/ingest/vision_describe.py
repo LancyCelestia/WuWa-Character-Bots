@@ -33,6 +33,7 @@ from urllib.parse import unquote, urlparse
 
 from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
     LLMProviderError,
+    LLMReply,
     OpenAICompatibleLLMProvider,
 )
 from plugins.bot_unified_runtime.domains.media.ingest.image_pixel_budget import (
@@ -702,7 +703,11 @@ def _flatten_vision_entries(
 
     列表形态按 ``id#序号`` 展开；resolve_key 时把 env: 引用解析成真实密钥。
     """
-    from plugins.bot_unified_runtime.llm.model_router import _resolve_api_key
+    # 2026-09-29 席 S-FIX-SHIM-REFS：旧布局垫片 `llm/model_router` ⇒ 改指真身（`_resolve_api_key`
+    # 真身 :652 在册）；账见 `domains/core/board_shim_ledger.py` SHIM_ROWS。
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+        _resolve_api_key,
+    )
 
     flattened: dict[str, dict[str, Any]] = {}
     if not isinstance(registry, dict):
@@ -791,8 +796,52 @@ class DynamicVisionProvider:
             )
         return self._providers[fingerprint]
 
+    def _caption_cache(self) -> Any | None:
+        """取图片描述缓存实例（每次现读 config，支持「空串=关闭」的即时语义）。
+
+        真身＝``domains/media/registry/vision_caption_cache.py``。这里只调用、不
+        实现任何哈希或建表逻辑——内容身份的算法咽喉在 ``domains/media/digest.py``
+        （``tests/test_media_identity_single_source_ratchet.py`` 执法，禁第二份）。
+        任何异常按「没有缓存」处理：识图绝不能因为缓存坏了而读不到图。
+        """
+        try:
+            from plugins.bot_unified_runtime.domains.media.registry import (
+                vision_caption_cache,
+            )
+
+            return vision_caption_cache.build_vision_caption_cache(self._config)
+        except Exception:  # noqa: BLE001 - 缓存缺席只是回到"每次都问模型"。
+            logger.debug("vision caption cache unavailable", exc_info=True)
+            return None
+
     def generate(self, messages: list[dict[str, Any]], **kwargs: object) -> Any:
         self.last_attempts = []
+        # 描述缓存腿（MM-VIS-1，2026-09-29）：同一批图第二次进来直接复用上一次的
+        # 描述，省掉一次真实 VLM 账单。键由**图片内容**推导（不是 URL、不是问题），
+        # 取不到字节就没有键＝照常调用，行为与改动前逐字节一致。
+        cache = self._caption_cache()
+        cache_key = ""
+        if cache is not None:
+            try:
+                from plugins.bot_unified_runtime.domains.media.registry import (
+                    vision_caption_cache,
+                )
+
+                cache_key = vision_caption_cache.caption_key_for_messages(messages)
+            except Exception:  # noqa: BLE001 - 建键失败按未命中处理。
+                cache_key = ""
+        if cache_key:
+            cached = cache.lookup(cache_key)
+            if cached:
+                self.last_attempts.append("vision_caption_cache:hit")
+                logger.info(
+                    "vision describe vision_cache_hit=1 key=%s", cache_key[:16]
+                )
+                return LLMReply(
+                    text=cached,
+                    provider="vision_caption_cache",
+                    model="vision_caption_cache",
+                )
         candidates = sorted(
             self._merged_entries().items(),
             key=lambda kv: (
@@ -833,6 +882,14 @@ class DynamicVisionProvider:
                 self.last_attempts.append(f"{entry_id}:provider_error")
                 continue
             self.last_attempts.append(f"{entry_id}:success")
+            if cache_key and cache is not None:
+                # 只存真拿到了文字的这一次：空回复不建条目，否则下一次命中一份
+                # 空白描述，等于把"没看清"缓存成永久事实。
+                cache.put(
+                    cache_key,
+                    str(getattr(reply, "text", "") or "").strip(),
+                    str(getattr(reply, "model", "") or entry_id),
+                )
             return reply
         if last_error is not None:
             raise last_error
@@ -876,24 +933,43 @@ def _clip(value: str, max_chars: int) -> str:
     return f"{value[: max_chars - 1]}…"
 
 
-def describe_images(
+def describe_images_with_status(
     provider: Any,
     *,
     image_urls: list[str],
     query_text: str = "",
     max_images: int = _DEFAULT_MAX_IMAGES,
     max_chars: int = _DEFAULT_MAX_CHARS,
-) -> str:
-    """调用视觉模型输出紧凑识别结果；任何失败返回空串，绝不阻断主回复。"""
-    if provider is None or not image_urls:
-        return ""
+) -> tuple[str, str]:
+    """识别图片并**如实报告这一趟属于哪一类结果**：`(文本, kind)`。
+
+    治的账（审计缺陷 5）：旧口只回字符串，「没开识别」「本轮没图」「模型挂了」
+    三件事在调用方眼里长得一模一样（都是空串），于是失败全静默——用户发一张
+    糊图追问三遍，bot 一句"没看清"都没有，看起来像装看不见。
+
+    ``kind`` 四值（判据就这三条，别再细分出第二套口径）：
+    - ``"disabled"``：没有 provider（识别整件没开）——**不是失败**，不该道歉；
+    - ``"empty"``：本轮没有图，或模型回了个空文本——同上，不道歉；
+    - ``"failed"``：有图、且这一趟真的没读成（护栏把图全丢了 / provider 抛错）
+      ——只有这一类值得给用户一句人话。
+    - ``"ok"``：拿到描述文本。
+
+    诚实边界：本函数只报"这一腿的结果类别"，不重试、不改调用链、也不决定
+    要不要道歉（那是调用方的事），所以既有只关心文本的消费点可以照旧用
+    ``describe_images``（它就是本函数的文本投影）。
+    """
+    if provider is None:
+        return "", "disabled"
+    if not image_urls:
+        return "", "empty"
     limit = max(1, int(max_images))
     # QQ 多媒体签名 URL 服务商侧取不到：bot 侧先下载转 data URL（见 §14.6.4）。
     image_urls = prepare_vision_image_urls(list(image_urls), limit=limit)
     if not image_urls:
         # 审查 F-2 连锁：全部图被护栏丢弃（入口/落点拒绝）时没有图可描述，
         # 直接返回空——不发「用户附带了图片」却无图可看的空跑请求误导模型。
-        return ""
+        # 类别＝failed：用户那边是真发了图的，只是我们一张都没能读成。
+        return "", "failed"
     content: list[dict[str, Any]] = [
         {
             "type": "text",
@@ -917,14 +993,37 @@ def describe_images(
             exc.error_kind,
             getattr(provider, "last_attempts", []),
         )
-        return ""
-    except Exception:
+        return "", "failed"
+    except Exception:  # noqa: BLE001 - 识别失败不阻断聊天，但要留下"失败了"这个事实。
         logger.exception("vision describe failed")
-        return ""
+        return "", "failed"
     text = str(getattr(reply, "text", "") or "").strip()
     if not text:
-        return ""
-    return _clip(text, max(80, int(max_chars)))
+        return "", "empty"
+    return _clip(text, max(80, int(max_chars))), "ok"
+
+
+def describe_images(
+    provider: Any,
+    *,
+    image_urls: list[str],
+    query_text: str = "",
+    max_images: int = _DEFAULT_MAX_IMAGES,
+    max_chars: int = _DEFAULT_MAX_CHARS,
+) -> str:
+    """调用视觉模型输出紧凑识别结果；任何失败返回空串，绝不阻断主回复。
+
+    文本投影口（既有签名与调用点零改动）。需要区分"失败/没开/没图"的调用方
+    直接用 ``describe_images_with_status``，别在这里再猜一次。
+    """
+    text, _kind = describe_images_with_status(
+        provider,
+        image_urls=image_urls,
+        query_text=query_text,
+        max_images=max_images,
+        max_chars=max_chars,
+    )
+    return text
 
 
 def describe_video(

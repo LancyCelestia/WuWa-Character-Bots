@@ -132,6 +132,9 @@ PATH_REMAPPED_FIELDS: Final[tuple[str, ...]] = (
     "bot_usage_report_state_file",
     "bot_media_registry_path",
     "bot_music_dir",
+    # 图片描述缓存库（MM-VIS-1）：默认值就是 data/ 相对写法，不入册会被
+    # vision_caption_cache 按 CWD 落进源码树（铁律 6）。
+    "bot_vision_caption_cache_db",
     "bot_mood_db_path",
     "bot_quirks_db_path",
     "bot_session_identity_db_path",
@@ -970,6 +973,14 @@ class Config(BaseModel):
     bot_vision_max_chars: int = 500
     # 视频识别抽帧数：ffmpeg 均匀抽帧后单次 VLM 摘要；0 视同 1。
     bot_vision_video_frames: int = 4
+    # 图片描述缓存（席位 MM-VIS-1，2026-09-29）：同一张图第二次进来直接取上一次的
+    # VLM 描述，不再重复计费。键＝图片内容 sha256（走中央 digest，绝不用 URL 冒充
+    # 内容身份），真身＝domains/media/registry/vision_caption_cache.py。
+    # 空串＝整件关闭（不落库、不查库，行为与改动前逐字节一致）。
+    bot_vision_caption_cache_db: str = "data/vision_caption_cache.sqlite3"
+    # 描述保留时长（秒）：默认 24 小时。≤0 视同关闭。QQ 签名 URL 会过期，
+    # 但缓存按内容命中、与 URL 无关，所以过期治理只用来控体积与陈旧度。
+    bot_vision_caption_cache_ttl_seconds: int = 86400
     # 白名单1 群里图片/表情包/视频的回复概率：**2026-09-24 用户裁定并入文字
     # 接话同一个概率**——门禁抽签实际只读 `group_proactive_probability()`
     # （policy/gate.py 唯一读点），本键自 此 不 再 参 与 判定，仅为兼容 .env
