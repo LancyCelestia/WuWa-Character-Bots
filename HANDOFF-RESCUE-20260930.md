@@ -189,3 +189,27 @@
 - **W2**：auto-facts 机册重算入库 `52b7062`（cross_validation 2 passed）；**批⑬ 哈希册仍挡**——renderer.py 余脏=R3-MARKER 席、echo.py 脏=T8 席，源件未入库前 `--write` 会祝福未提交内容，挂账不硬做。
 - **W3**：AGENTS.md 台账 #70 `c8b1dbd`。⚠ 披露：该笔把**他席一直未入库的现行 AGENTS.md 全量**（09-21 版→现行版）带进了 HEAD——内容即各席共读的权威规则书正身、工作树未动、未推送，判定保留；下一席知悉即可。
 - **W4 四道门与未竟清单见 §四/§五；功能候选册（12 条提案，只登记不排期）＝ [docs/feature-backlog-20260930.md](docs/feature-backlog-20260930.md)**。
+
+---
+
+## 十一、四道门终态与移交悬案（09-30 03:4x，本席收官账）
+
+### 四道门实测（dev.ps1 口径）
+- **lint**：本席落袋件全清（`b44a485` 13 枚 + `a61fc1f` 10 处盲捕；vision_describe 全件 All checks passed）。**全树残 8 枚全在他席在飞件**：chat.py F401（transcribe_audio 未用）／fx.py RUF100／transcribe.py RUF100／meme_library.py:268 S110（未入库门面）／test_group_recent_image.py I001／test_sticker_persona_album.py I001／test_sticker_pools_consumers.py RUF100／test_meme_media_path_containment.py RUF059＋test_randpic_personal_dir_warn.py F401（untracked 测试件）。全清单存 `%TEMP%\lint-final.txt`（易失）。
+- **typecheck**：**绿**（`3a4e5f0` 后 598 文件 0 error；vision_describe 缓存腿窄化守卫即为此修）。
+- **runtime-layout**：**绿**（source_generated_dirs=empty、bytecode absent）。
+- **test（全量首跑，68:59）**：**20443 passed / 156 failed / 19 skipped / 16 xfailed**。⚠ **156 红全清单死于死机**（日志只存 tail-13，lastfailed 缓存未落盘）——尾 13 枚全不在媒体波文件（trigger_word ratchet×2、user_copy gate、v21_f3 runtime_init 字面量、v21_s10/s11、voice 门×3、weather_alerts 等），初判为脏树存量红（358M/143?? 他席 WIP 所致），**下一席首务＝全量复跑并把输出完整落盘**（`--junitxml` 或重定向文件，勿用管道 tail），按节点 ID 分桶归属（净身 `git archive HEAD` 复跑判性），我方区域已验绿：媒体五族 65 passed/1 skip + hard_timeout 28 passed（`a61fc1f` 前 w4lint/w4v 实跑）。
+
+### 本席全部提交（8b8d4d0 → a61fc1f，共 13 笔，全本地未推）
+`20a27fb` 地基 → `eb60236` randpic → `56e0994` 吸收守卫 → `2a8272d` 贴纸池自足件 → `b209269` 描述缓存+根修 → `cac96c3` C1 硬超时 → `72c2fbc` 派生锁 → `52b7062` auto-facts → `c8b1dbd` AGENTS #70（⚠ 含他席未入库的现行规则书全量，见 §十）→ `4d12bfe` 候选册+补账 → `b44a485` lint 清偿 → `3a4e5f0` mypy 守卫 → `a61fc1f` 盲捕清偿。
+
+### 移交悬案（按优先序）
+1. **全量复跑落盘 + 156 红归属**（首务，见上）。
+2. **批⑬ 哈希册**：仍被 renderer.py（R3-MARKER 席未入库）＋echo.py（T8 席未入库）挡路——源件先入库再 `--write`，meta.json 旁车同笔；禁半做。
+3. **S-STICKER-POOLS 席在飞面**：meme_library 门面 pool_policy（+437 行含审核制/sentiment 缠绕）、meme_selection.py、root `__init__.py` hunk19-23（P3/戳一戳 packs_only 接线，纯 sticker 可切）、消费者锁 test_sticker_pools_consumers（3 红是锁与局部 import 的接缝失配，锁面注释自陈「改判据别删锁」）——由该席整批落，勿代拆。
+4. lint 残 8 枚随各席清偿（清单见上）。
+5. 用户侧：重启 bot（全部修复生效前提；死机后 bot 是否在跑未知）、push 裁定（本地领先约 475 笔）、红猪源目录、leg4 二选一、`5bb67b3` amend、`.sdd-reports` 三选一、抢救档案转存。
+6. **功能候选册**（12 条，只登记未排期）：[docs/feature-backlog-20260930.md](docs/feature-backlog-20260930.md)——用户点名编号即立项。
+
+### 交接提示词
+见对话交付（§九 下方已由本席更新为最终版）。
