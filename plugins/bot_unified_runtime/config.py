@@ -107,6 +107,10 @@ PATH_REMAPPED_FIELDS: Final[tuple[str, ...]] = (
     "bot_meme_api_output_dir",
     "bot_meme_library_dir",
     "bot_meme_library_db_path",
+    # bot 自有表情私库（STICKER-POOL 波）：登记目录落在 data/ 相对路径下，必须经
+    # runtime_paths 折进 ChatBot_Runtime（铁律 6），否则按 CWD 解析会把运行数据
+    # 写进/读自源码树。真身读点唯一 = domains/meme/sources/sticker_packs.py。
+    "bot_sticker_dir",
     "bot_parse_history_db_path",
     "bot_music_analytics_db_path",
     "bot_download_dir",
@@ -928,6 +932,33 @@ class Config(BaseModel):
     # 反重复的作用域口径：global=本机发过即不再发（缺省，钉「同一张绝不发两次」）；
     # session=同时再按会话/群各记一本账（并集判定，比 global 更严，不会更松）。
     bot_meme_sticker_scope_mode: str = "global"
+    # ---- bot 自有表情私库（STICKER-POOL 波，2026-09-29）----
+    # 与「群聊吸收的表情库」（bot_meme_library_*）**分家**：那一库的来路是别人发到
+    # 群里的图（跨会话材料，读它要有收库门），本库是**管理员自己放进登记目录**的
+    # 守岸人贴纸，只读、不写、不入库、不去重进 SQLite。唯一读路径 =
+    # ``domains/meme/sources/sticker_packs.py``（消费方不得自己 os.walk 这条目录，
+    # 那是第二读点）。
+    #
+    # ⚠ 本库**刻意没有**像素/字节下限（与 randpic 的两把尺相反）：贴纸本来就小，
+    # GIF 预览分辨率天然低，加下限会把她精心挑的包裁成空池。这里的筛子只有四道：
+    # 扩展名白名单 → 文件头魔数验真 → 0 字节拒 → 越出登记根拒（判据真身
+    # ``domains/media/image_guard.py`` 与 ``domains/media/path_gate.py``）。
+    #
+    # 目录走 ``PATH_REMAPPED_FIELDS`` 重映射：缺省值写成 ``data/`` 相对路径，装载期
+    # 折到 ``ChatBot_Runtime/``（铁律 6：源码树零运行数据）。目录**不存在时诚实缺席**
+    # （返回空池 + 记 ``dirs_missing`` 账），绝不自建目录——先例 randpic「绝不自建」。
+    bot_sticker_dir: str = "data/bot_stickers/shorekeeper"
+    # 发送侧总闸：P3 情绪时刻 / 戳一戳 / 偷表情 三条腿共用一枚。关掉即整链不发
+    # （读路径照旧可查，只是三条腿都不取图），与 feature gate
+    # ``bot.plugin.sticker_packs`` 是**两道独立门**（任一关就不发）。
+    bot_sticker_enabled: bool = True
+    # ``os.walk`` 递归 vs 只扫单层。她的包常按角色/情绪分子目录，缺省开递归；
+    # 关掉是给「一个目录就是一包、子目录是别的用途」的摆法留的退路。
+    bot_sticker_recursive: bool = True
+    # 窗内不重发同一张（按会话记账，判据=内容 SHA-256，复用 randpic 的
+    # ``RecentImageWindow`` 同一本窗口形状）。缺省 1800 秒=半小时：主动发贴纸
+    # 是社交动作，同一张连发两次比不发更尴尬；0=关（纯随机，可重样）。
+    bot_sticker_no_repeat_window_seconds: float = 1800.0
     bot_vision_model_registry: dict[str, Any] = {}
     # 聊天图片/表情包识别开关：启用且注册表里有可用模型时才会调用 VLM。
     bot_vision_enabled: bool = False

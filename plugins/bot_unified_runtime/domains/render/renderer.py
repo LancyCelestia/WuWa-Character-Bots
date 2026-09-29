@@ -431,7 +431,23 @@ def _render_reviewed_output_inner(
         part for part in (result.prefix_parts or []) if isinstance(part, dict)
     ]
     for image in result.images or []:
-        if isinstance(image, dict) and (image.get("file") or image.get("url")):
+        if not isinstance(image, dict):
+            continue
+        # 贴纸路由（Task B 接线，2026-09-29）：能力层在 images 条目上打
+        # ``kind="sticker"`` ⇒ 部件类型标成 ``sticker``，onebot 出站腿据此走
+        # ``_sticker_segment``（原生 mface 优先、image 兜底）；没打 kind 的
+        # 仍是普通 ``image`` 部件——/随机图 等照片通路逐字节不变。
+        # 贴纸条目允许只带 ``emoji_id`` 不带文件（原生表情回投无需再传图），
+        # 三样都没有才是空载荷，照旧丢弃不出站。
+        if str(image.get("kind") or "").strip().lower() == "sticker":
+            if (
+                image.get("file")
+                or image.get("url")
+                or str(image.get("emoji_id") or "").strip()
+            ):
+                media_parts.append({"type": "sticker", **image})
+            continue
+        if image.get("file") or image.get("url"):
             media_parts.append({"type": "image", **image})
     # M-19①③：audio 出站唯一形态收口（voice→record 归一/散键剥离/拒绝留痕）。
     audio_parts, audio_anomalies = canonicalize_audio_parts(result.audio)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -357,6 +358,8 @@ def _segment_from_mixed_part(part: dict[str, Any]) -> OneBotMessageSegment | Non
         return _text_segment(text) if text else None
     if part_type == "image":
         return _image_segment(part)
+    if part_type in {"sticker", "mface"}:
+        return _sticker_segment(part)
     if part_type == "card":
         return _json_card_segment(part)
     if part_type == "record":
@@ -426,9 +429,9 @@ def _resolve_local_file_ref(file_ref: str) -> str | None:
     - 相对路径：保持既有透传（CWD 依赖的不完整引用交平台侧裁决；T85
       冻结棘轮 R6 毒件机制依赖此口，范围边界见 report-T100 §偏差）；
     - 空串：原样返回（调用方门前已拦）。
-    消费方：record/video/file 部件 None=构段期跳过；image 维持既有透传
-    （09-15 W1 事故回归件以不存在的绝对路径构造「媒体在、平台拒」前提，
-    闭合面不含 image，``_image_segment`` 内显式回退，见该处注释）。
+    消费方：record/video/file 部件 None=构段期跳过；image 面同闸（2026-09-28
+    B1 闭合，此前维持透传的前提「媒体在、平台拒」由 W1 回归件以真文件重构，
+    见 ``_image_segment`` 内注释与 report-T100 §偏差登记的闭合记录）。
     """
     if not file_ref:
         return file_ref
@@ -454,16 +457,77 @@ def _image_segment(content_ref: dict[str, Any]) -> OneBotMessageSegment | None:
         return None
     resolved = _resolve_local_file_ref(file_ref)
     if resolved is None:
-        # M-38 闭合面=record/video/file 媒体附件族；image 维持既有透传：
-        # 09-15 W1 事故回归件（test_media_rejection_retry_and_fallback）
-        # 以不存在的绝对路径构造「媒体在、平台拒」前提，image 死引用闭合
-        # 需连带重构该回归件前提，留待专席（report-T100 §偏差登记）。
-        resolved = file_ref
+        # M-38 闭合波遗留的 image 面留白，2026-09-28 B1 装闸闭合（旧留白由
+        # report-T100 §偏差登记记为待办）：死绝对路径不再构段——mixed 部件进
+        # dropped_types 观测、image 单件面落 text_fallback。09-15 W1 事故回归件
+        # （test_media_rejection_retry_and_fallback）的前提已连带重构为
+        # 「真文件在场、平台明确拒绝」，拒收语义零松动。
+        return None
     data: dict[str, Any] = {"file": resolved}
     for key in ("cache", "proxy", "timeout"):
         if key in content_ref and isinstance(content_ref[key], (bool, int, str)):
             data[key] = content_ref[key]
     return {"type": "image", "data": data}
+
+
+# ---- 出站 mface 判定尺（Task A 探测，2026-09-29，SnowLuma v1.14.19-node 本机册）----
+# 判据不是我们拍的，是协议端 bundle 里抄回来钉死的：`index.mjs`
+# `assertValidMessageElements(elements, "W")` 对 mface 元素只认一条——
+# ``/^[0-9a-fA-F]{32}$/``（MarketFace.faceId 的 hex GUID，收侧投影成 image 段时
+# 就挂在 ``data.emoji_id`` 上）。形态不符 ⇒ 协议端 INVALID_FIELD **整条拒发**，
+# 连坐同消息的文字部件——所以宁可本地不认、诚实回落，也不送一枚形状错的 id 出门。
+_MFACE_EMOJI_ID_RE = re.compile(r"[0-9a-fA-F]{32}\Z")
+
+
+def _mface_segment(part: dict[str, Any]) -> OneBotMessageSegment | None:
+    """协议端原生「表情包」段（mface）构造器；emoji_id 不合形 ⇒ ``None``。
+
+    QQ 客户端把 ``image`` 段显示成「图片」、``mface`` 显示成「表情包」——用户
+    点名的差异就出在这个段类型上。**本仓绝不自己拼 emoji_id**：id 只认载荷
+    自带的协议端原生值（收侧入库时随图记下，见 meme_library ``native_emoji_id``
+    列），且必须是 32 位 hex（见 ``_MFACE_EMOJI_ID_RE`` 注释的 bundle 实据）。
+    载荷键走 OneBot 蛇形（``emoji_id``/``emoji_package_id``/``summary``/``key``），
+    SnowLuma 收侧字段名逐一对得上（bundle `marketFaceElement()`）。
+    """
+    emoji_id = _string_value(part.get("emoji_id")).strip()
+    if not _MFACE_EMOJI_ID_RE.match(emoji_id):
+        return None
+    data: dict[str, Any] = {"emoji_id": emoji_id}
+    package_id = _string_value(part.get("emoji_package_id")).strip()
+    if package_id.isdigit():
+        data["emoji_package_id"] = package_id
+    summary = _string_value(part.get("summary")).strip()
+    if summary:
+        data["summary"] = summary[:60]
+    key = _string_value(part.get("key")).strip()
+    if key:
+        data["key"] = key[:128]
+    return {"type": "mface", "data": data}
+
+
+def _sticker_segment(part: dict[str, Any]) -> OneBotMessageSegment | None:
+    """贴纸段（S-MEME-MFACE + Task A 探测波，2026-09-29）：原生 mface 优先、真图兜底。
+
+    两级通路（SnowLuma v1.14.19 段方向册实测：mface 收/发两侧都是 "yes"，
+    出站**有**这条通道——此前「协议端可能只收不发」的疑虑已销）：
+    1. 载荷带可信原生 id（32 位 hex）⇒ ``mface`` 段，QQ 侧显示为「表情包」；
+    2. 没 id / id 不合形 ⇒ **诚实回落 image 段**（现役被证明能落地的贴纸通路，
+       与根装配 ``_maybe_send_reaction_meme`` 逐字节一致），并记一条
+       ``sticker_via_image_segment_fallback=true`` 观测行——用户报「发成了图片」
+       时先查这行，能分清「载荷没带 id」（能力侧数据问题）与「段构错了」（本层问题）。
+    两样都没有（无 id、无存活文件）⇒ ``None``＝丢段，交 mixed 丢段观测面，
+    绝不出空段、绝不把死路径送上线（M-38 那道闸同尺）。
+    """
+    segment = _mface_segment(part)
+    if segment is not None:
+        return segment
+    fallback = _image_segment(part)
+    if fallback is not None:
+        logger.warning(
+            "onebot sticker segment fell back to image sticker_via_image_segment_fallback=true debug_id=%s",
+            new_debug_id(),
+        )
+    return fallback
 
 
 def _json_card_segment(content_ref: dict[str, Any]) -> OneBotMessageSegment | None:
@@ -842,11 +906,11 @@ def _mixed_part_indexes(send_request: SendRequest) -> list[int]:
 def _mixed_dead_local_file_types(send_request: SendRequest) -> list[str]:
     """mixed 部件中「绝对路径死引用」的类型名列表（M-38 观测/终败判定面）。
 
-    与 ``_resolve_local_file_ref`` 同一判定（``_local_path_alive``），仅
-    覆盖闭合面 record/video/file（image 维持既有透传，见
-    ``_image_segment`` 注释）；非 mixed 恒空。用途：① 混排死件跳过后
-    SENT 回执的 missing_file 留痕；② 「死件唯一内容、无文字可保」终败
-    门。与构段判定同源，不会两说。
+    与 ``_resolve_local_file_ref`` 同一判定（``_local_path_alive``），覆盖闭合面
+    record/video/file/image 与贴纸面（sticker/mface 带本地文件时同闸；2026-09-29
+    S-MEME-MFACE；image 面 2026-09-28 B1 起同闸，与构段判定同源、
+    不会两说）；非 mixed 恒空。用途：① 混排死件跳过后 SENT 回执的 missing_file
+    留痕；② 「死件唯一内容、无文字可保」终败门。与构段判定同源，不会两说。
     """
     if send_request.content.content_type.strip().lower() != "mixed":
         return []
@@ -858,7 +922,7 @@ def _mixed_dead_local_file_types(send_request: SendRequest) -> list[str]:
         if not isinstance(part, dict):
             continue
         part_type = _string_value(part.get("type")).strip().lower()
-        if part_type not in {"record", "video", "file"}:
+        if part_type not in {"record", "video", "file", "image", "sticker", "mface"}:
             continue
         file_ref = _string_value(part.get("file")) or _string_value(part.get("url"))
         if not file_ref or file_ref.startswith(_NON_LOCAL_REF_PREFIXES):
