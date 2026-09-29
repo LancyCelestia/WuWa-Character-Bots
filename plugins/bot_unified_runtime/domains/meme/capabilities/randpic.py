@@ -29,8 +29,42 @@ P15 波（2026-09-25 S-T-RANDPIC-1）补的是**池子那一侧**，四条：
    现网图库实测 23,353 张 / 89,982 MB，旧写法每次取图要把全库摘要一遍（≈127s，而记忆化
    上限 1024 远小于库容量 ⇒ 每次都重来）。
 4. **交出去的路径必须此刻还活着**：TTL 清单里的死引用在挑中时就地摘掉。这不是洁癖——
-   ``domains/transport/sender/onebot.py`` 的 image 面刻意保留死引用透传（record/video/file
-   三面才有闸），所以死路径会一路走到协议端。
+   ``domains/transport/sender/onebot.py`` 的 image 面闸到本波为止仍是留白（record/video/file
+   三面才有闸），死路径会一路走到协议端；2026-09-28 B1 波把 image 面闸也装上了，
+   本层的验活仍是**第一道**（两闸各防一侧：这里防死引用被挑中，出站闸防上游任何
+   能力把死路径直接塞进部件）。
+
+B1 池子守卫波（2026-09-28）把「扫进来的是不是真图」也记进账：扫描跳过缩略图/缓存
+风格的子目录；0 字节空文件永不进候选；字节下限（``bot_randpic_min_file_kb``）与像素
+短边下限（``bot_randpic_min_side``，现值以 ``config.py`` 该字段为真身）在配置里开着时，
+逐张做文件头魔数验真与图头短边判定（内容质检唯一真身 ``domains/media/image_guard.py``），
+被挡原因按 ``images_empty`` / ``images_below_min_bytes`` / ``images_bad_magic`` /
+``images_below_min_side`` 分账——措辞仍由事实派生。两枚下限都不设（读不到配置键的
+调用口缺省 0）时扫描行为与 B1 之前逐字节同形。
+
+⚠ 2026-09-29 用户裁定把 Config 那两枚下限的**缺省归零**（图库是他自己管的 Picture
+目录，人工整理，不由 bot 硬筛），所以生产今天走的就是上面那句「逐字节同形」的关态；
+键与参数面全部保留作逃生口，任一键调回 > 0 即三层内容筛（字节闸 → 魔数闸 → 短边闸，
+顺序即代价序）重新生效。关态下**仍然生效**的只有本件另外几层：``_should_prune_dir``
+子目录剪枝、0 字节空件拒收、重解析点不进树（下面 PIC 段）、单张体积上限，
+以及出口的登记面收口与 ``transport/sender/onebot.py`` 的 image 面死引用闸。
+
+PIC 容器面（2026-09-29，需求 15 的隐私红线 + 容器逃逸根治）补的是**「扫进来的东西
+到底在不在登记面里」**这一格，三条：
+
+1. **重解析点不进树**：登记目录里放一枚 junction（或符号链接）指向别处时，
+   ``os.walk`` 原本照进不误——Windows 下 junction 的 ``os.path.islink`` 为**假**，
+   只有 ``FILE_ATTRIBUTE_REPARSE_POINT`` 认得它（本机取证见 ``tests/test_media_path_gate.py``
+   的「纯词法归一必判它能穿」那格牙齿）。修前实测：私人相册整摞进候选清单，
+   ``pick_random_image`` 交出 ``resolve()`` 后根本不在登记根里的那张。
+2. **出口再判一次**：``pick_gallery_image_outcome`` 交路径前问一句
+   :func:`read_is_registered`（判据唯一真身 ``domains/media/path_gate.py``）——
+   TTL 清单被旧口径残留或被别处塞进登记面之外的路径时也必须 hold，
+   代号 ``out_of_registered_root``，绝不把越界路径交给出站链。
+3. **入站附件面永不得当图库**：``BOT_RANDPIC_DIRS`` 里若有人把「别人发来的图」的
+   落点（下载目录 / 媒体归档 / 表情库）登记成图库，那是跨会话泄露的通路——
+   整条拒读，代号 ``denied_root``（这一格只在传了 ``config`` 的调用口生效，
+   纯 dirs 调用口行为与 PIC 波之前逐字节同形）。
 """
 
 from __future__ import annotations
@@ -38,6 +72,7 @@ from __future__ import annotations
 import hashlib
 import os
 import random
+import re
 import stat as _stat
 import threading
 import time
@@ -53,6 +88,7 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
 )
 from plugins.bot_unified_runtime.domains.core.text_boundary import is_trigger
+from plugins.bot_unified_runtime.domains.media import image_guard, path_gate
 
 # 拼音全拼/缩写（T-Spec T1.5/T1.6）：suijitu/laizhangtu 同覆盖繁体同音
 # （隨機圖/來張圖）；sjt/lzt 查重无冲突。前缀+标点边界逻辑天然防
@@ -62,8 +98,41 @@ DEFAULT_TRIGGER_WORDS: tuple[str, ...] = (
     "suijitu", "laizhangtu", "sjt", "lzt",
 )
 _IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"})
+# HEIC/HEIF/AVIF **刻意不进**扩展名集合：QQ 客户端侧不保证解码，发出去就是坏件。
+# 内容是否真是图由 image_guard 的魔数/像素守卫按文件头判定，扩展名只是第一道筛。
 _SCAN_CACHE_TTL_SECONDS = 30.0
 _MAX_FILE_BYTES = 20 * 1024 * 1024
+# ⚠ 与 config ``bot_randpic_max_file_mb``（现值以 config.py 该字段为真身）存在历史
+# 漂移：模块常量只在「拿不到配置键」时兜底。统一两把尺属配置面改动，B1 波不做，
+# 已按简报记入待裁（改哪把尺要用户点头，本件不自作主张）。
+
+#: 池子扫描跳过的目录名（B1 守卫波）。**只拦这三形**，其余目录一律照走——
+#: 用户真实图库里有 ``Random pics`` 这类带空格目录，绝不多裁：
+#: ① 名字以 ``.`` 或 ``_`` 开头（资源叉/.thumbnails/__pycache__ 之类）；
+#: ② 整名（不分大小写）命中 thumbs?/thumbnails?/cache(s)/preview(s)，可带 ``_数字`` 后缀；
+#: ③ 回收站目录字面量（#RecycleBin、$RECYCLE.BIN、群晖 @eaDir）。
+_PRUNE_DIR_RE = re.compile(r"^(?:thumbs?|thumbnails?|caches?|previews?)(?:_\d+)?$", re.IGNORECASE)
+_PRUNE_DIR_EXACT = frozenset({"#recyclebin", "$recycle.bin", "@eadir"})
+
+
+def _is_reparse_point(path: str | Path) -> bool:
+    """这条路径自己是不是重解析点（junction / 符号链接）——判据真身在 ``path_gate``。
+
+    本件留一枚**薄壳**而不是就地直呼 ``path_gate.reparse_point``：扫描侧要能在没有
+    真链接的机器上被测试桩掉（``tests/test_randpic_registered_root.py`` 的替身腿），
+    这一格就是可桩点。壳里不持第二把尺。
+    """
+    return path_gate.reparse_point(path)
+
+
+def _should_prune_dir(name: str) -> bool:
+    """目录名是否命中上面的登记集（命中则 os.walk 不进这个子树）。"""
+    text = str(name)
+    if text.startswith((".", "_")):
+        return True
+    if text.lower() in _PRUNE_DIR_EXACT:
+        return True
+    return bool(_PRUNE_DIR_RE.match(text))
 
 # 审查 L-10：_SCAN_CACHE 原本只有 30s TTL，过期键不删、键数无上限——
 # 长跑进程按目录键无界增长。对齐项目 LRU 惯例（先例：runtime/reactions.py
@@ -131,6 +200,15 @@ class GalleryFacts:
     images_seen: int = 0           # 命中图片扩展名的文件数（含超限的）
     images_over_limit: int = 0     # 其中因超过单张体积上限被排除的
     images_stat_failed: int = 0    # 其中 stat 拿不到、无法判定的（不猜大小）
+    # ---- B1 池子守卫波（2026-09-28）新增的四本内容账 ----
+    images_empty: int = 0          # 0 字节空文件（无条件拒，扩展名再对也发不出去）
+    images_below_min_bytes: int = 0  # 低于字节下限（bot_randpic_min_file_kb）被挡的
+    images_bad_magic: int = 0      # 文件头对不上登记签名 / 魔数对上却解不开的坏件
+    images_below_min_side: int = 0   # 短边低于像素下限（bot_randpic_min_side）被挡的
+    # ---- PIC 容器面（2026-09-29）新增的三本账 ----
+    dirs_refused_denied: int = 0   # 登记项落在「别人发来的图」落点上 ⇒ 整条拒读（跨会话红线）
+    dirs_pruned_links: int = 0     # 登记根里的重解析点子树（junction/符号链接）没进树
+    images_reparse_rejected: int = 0  # 文件本身是重解析点（真身在登记面之外）被拒的
     usable: int = 0                # 真正进了候选清单的张数
 
     @property
@@ -145,6 +223,10 @@ class GalleryFacts:
             return "unconfigured"
         if self.usable > 0:
             return "usable"
+        if self.dirs_refused_denied:
+            # 优先级排在 missing 之前：这一格说的是「有一条登记项我不肯读」，
+            # 而不是「那条路打不开」。混成后者会把用户自己的配置说成坏的。
+            return "denied_root"
         if self.dirs_missing:
             # 代号必须是 missing：措辞表与 ``gallery_audit_tags`` 的排除规则都按
             # 「missing ≠ 打开过」写好了，这里回 "empty" 会让一条写错的路径被说成
@@ -159,7 +241,21 @@ class GalleryFacts:
         if self.images_seen and self.images_seen == self.images_over_limit:
             return "over_limit"
         if self.images_seen and not self.usable:
-            # 有图片扩展名的文件、又没超限、却没进候选 ⇒ 只剩 stat 失败这一种可能。
+            # 打开过、有图片扩展名的文件、却没一张进候选：先报**有证据**的拒绝原因
+            # （B1 守卫波的四本账 + PIC 容器面的一本），摊不到任何一本才回 stat_failed
+            # （旧兜底口径不动）。优先级按「对内容的了解程度」排：链接外指 > 验出假图
+            # > 糊图 > 小图 > 空文件。
+            if self.images_reparse_rejected:
+                return "linked_outside_root"
+            if self.images_bad_magic:
+                return "bad_magic"
+            if self.images_below_min_side:
+                return "below_min_side"
+            if self.images_below_min_bytes:
+                return "below_min_bytes"
+            if self.images_empty:
+                return "empty_images"
+            # 以上都不命中 ⇒ 只剩 stat 失败这一种可能。
             return "stat_failed"
         if self.images_seen:
             return "over_limit"
@@ -210,11 +306,27 @@ class _ScanResult:
     facts: GalleryFacts = _EMPTY_FACTS
 
 
-def _scan_dir(root: Path, max_bytes: int) -> _ScanResult:
+def _scan_dir(
+    root: Path, max_bytes: int, *, min_bytes: int = 0, min_side: int = 0
+) -> _ScanResult:
     """递归扫描一个目录，**把「为什么没图」的事实带回来**（旧实现只带回顾清单）。
 
     只读：绝不创建目录/文件（``tests/test_randpic_identity.py`` 与
     ``tests/test_randpic_dispatch.py`` 各有一条「绝不自建」锁执法这一点）。
+
+    B1 守卫波（2026-09-28）加的三层筛子，逐层分账（登记判据见模块头部与
+    ``_should_prune_dir``）：
+
+    - **子目录剪枝**：缩略图/缓存风格目录（``.``/``_`` 前缀、thumbs/cache/preview
+      整名、回收站目录）不进树——那里挖出来的多半是糊图或系统件；
+    - **重解析点不进树、不当候选**（PIC 容器面）：目录 junction 记 ``dirs_pruned_links``、
+      文件链接记 ``images_reparse_rejected``——登记面之外的一张都不列；
+    - **0 字节无条件拒**（``images_empty``）：空文件扩展名再对也发不出去；
+    - **内容守卫**（``min_bytes``/``min_side`` 任一 > 0 才启用，0 = 关 = B1 之前
+      逐字节同形）：字节下限挡占位小图，文件头魔数验真挡假扩展名（HTML/文本改名
+      .png 这类），像素短边下限挡缩略图/图标（PIL 只解图头、惰性 import）。
+      魔数对上却解不开的按坏件记 ``images_bad_magic``；图头都读不到的记
+      ``images_stat_failed``——**不知道 ≠ 它没有**，不折成拒绝。
     """
     found: list[Path] = []
     missing = not root.exists()
@@ -222,6 +334,9 @@ def _scan_dir(root: Path, max_bytes: int) -> _ScanResult:
     unreadable = 0
     walked_files = 0
     seen = over_limit = stat_failed = 0
+    empty = below_min_bytes = bad_magic = below_min_side = 0
+    pruned_links = reparse_rejected = 0
+    guard_enabled = min_bytes > 0 or min_side > 0
     if not missing:
         if not root.is_dir():
             not_directory = True
@@ -231,7 +346,20 @@ def _scan_dir(root: Path, max_bytes: int) -> _ScanResult:
                 nonlocal unreadable
                 unreadable += 1
 
-            for current, _dirs, files in os.walk(root, onerror=_note_walk_error):
+            for current, dirs, files in os.walk(root, onerror=_note_walk_error):
+                # 就地改写 dirs 是 os.walk 的官方剪枝口：下一层不会再进这些子树。
+                kept: list[str] = []
+                for name in dirs:
+                    if _should_prune_dir(name):
+                        continue
+                    # PIC 容器面：登记根里的重解析点（junction/符号链接）**不进树**。
+                    # Windows 下 junction 的 os.path.islink 为假，照 islink 剪等于没剪，
+                    # 私人相册会整摞被吸进候选（判据真身 path_gate.reparse_point）。
+                    if _is_reparse_point(Path(current) / name):
+                        pruned_links += 1
+                        continue
+                    kept.append(name)
+                dirs[:] = kept
                 for name in files:
                     walked_files += 1
                     path = Path(current) / name
@@ -244,9 +372,37 @@ def _scan_dir(root: Path, max_bytes: int) -> _ScanResult:
                         # stat 拿不到＝不知道；既不记成「它没有」也不记成「它超限」。
                         stat_failed += 1
                         continue
+                    if _is_reparse_point(path):
+                        # 文件自己是链接：真身在登记面之外（或别处），一条都不发。
+                        reparse_rejected += 1
+                        continue
+                    if size <= 0:
+                        # 0 字节文件永远发不出去，扩展名再对也拦（无条件，与守卫开关无关）。
+                        empty += 1
+                        continue
                     if size > max_bytes:
                         over_limit += 1
                         continue
+                    if guard_enabled:
+                        if min_bytes > 0 and size < min_bytes:
+                            below_min_bytes += 1
+                            continue
+                        header = image_guard.read_header(path)
+                        if header is None:
+                            stat_failed += 1
+                            continue
+                        if not image_guard.header_is_image(header):
+                            bad_magic += 1
+                            continue
+                        if min_side > 0:
+                            side = image_guard.min_side_of_file(path)
+                            if side is None:
+                                # 魔数对上了却解不开＝截断/损坏的坏件（诚实拒，不猜能发）。
+                                bad_magic += 1
+                                continue
+                            if side < min_side:
+                                below_min_side += 1
+                                continue
                     found.append(path)
     return _ScanResult(
         tuple(found),
@@ -260,6 +416,12 @@ def _scan_dir(root: Path, max_bytes: int) -> _ScanResult:
             images_seen=seen,
             images_over_limit=over_limit,
             images_stat_failed=stat_failed,
+            images_empty=empty,
+            images_below_min_bytes=below_min_bytes,
+            images_bad_magic=bad_magic,
+            images_below_min_side=below_min_side,
+            dirs_pruned_links=pruned_links,
+            images_reparse_rejected=reparse_rejected,
             usable=len(found),
         ),
     )
@@ -284,18 +446,39 @@ def _merge_facts(left: GalleryFacts, right: GalleryFacts) -> GalleryFacts:
         images_seen=left.images_seen + right.images_seen,
         images_over_limit=left.images_over_limit + right.images_over_limit,
         images_stat_failed=left.images_stat_failed + right.images_stat_failed,
+        images_empty=left.images_empty + right.images_empty,
+        images_below_min_bytes=left.images_below_min_bytes + right.images_below_min_bytes,
+        images_bad_magic=left.images_bad_magic + right.images_bad_magic,
+        images_below_min_side=left.images_below_min_side + right.images_below_min_side,
+        dirs_refused_denied=left.dirs_refused_denied + right.dirs_refused_denied,
+        dirs_pruned_links=left.dirs_pruned_links + right.dirs_pruned_links,
+        images_reparse_rejected=left.images_reparse_rejected + right.images_reparse_rejected,
         usable=left.usable + right.usable,
     )
 
 
 def _collect_gallery(
-    dirs: list[str] | tuple[str, ...], *, max_bytes: int
+    dirs: list[str] | tuple[str, ...],
+    *,
+    max_bytes: int,
+    min_bytes: int = 0,
+    min_side: int = 0,
+    config: Any | None = None,
 ) -> tuple[list[Path], GalleryFacts]:
-    """**唯一的池子读数口**：清单与事实出自同一次扫描、同一份缓存（绝不各扫一遍）。"""
+    """**唯一的池子读数口**：清单与事实出自同一次扫描、同一份缓存（绝不各扫一遍）。
+
+    ⚠ 缓存键只有目录路径（既有口径）：同一目录在 TTL 内用**不同下限**再读，会命中
+    上一次阈值扫出的清单。生产读法里阈值恒来自同一份 Config（一个进程一把尺），
+    这个前提成立；测试里跨阈值复用缓存要自担（同 max_bytes 的历史注意事项一致）。
+
+    ``config`` 只在 PIC 容器面用一次：传了才判「这条登记项是不是别人发来的图的落点」
+    （:func:`gallery_root_denial`），没传＝纯 dirs 调用口，行为与本波之前逐字节同形。
+    """
     now = time.monotonic()
     images: list[Path] = []
     facts = GalleryFacts()
     configured = 0
+    refused = 0
     for raw in dirs:
         text = str(raw)
         if not text.strip():
@@ -308,6 +491,10 @@ def _collect_gallery(
         if not key:
             continue
         configured += 1
+        if config is not None and gallery_root_denial(root, config):
+            # 入站附件面（别人发来的图）登记成图库 ⇒ 整条不读、不进缓存、不列一张。
+            refused += 1
+            continue
         cached = _SCAN_CACHE.get(key)
         if cached is not None and now - cached[0] <= _SCAN_CACHE_TTL_SECONDS:
             # 审查 L-10：命中即触达，维持 LRU 新近序。
@@ -318,33 +505,51 @@ def _collect_gallery(
         # 审查 L-10：过期键读取时惰性清除（覆盖写入无法收缩字典占位，
         # 显式 pop 保证键数有界），随后走重扫路径自然回填。
         _SCAN_CACHE.pop(key, None)
-        result = _scan_dir(root, max_bytes)
+        result = _scan_dir(root, max_bytes, min_bytes=min_bytes, min_side=min_side)
         _SCAN_CACHE[key] = (now, list(result.paths), result.facts)
         # 审查 L-10：键数封顶，超界淘汰最久未用键（popitem(last=False)）。
         while len(_SCAN_CACHE) > _SCAN_CACHE_LRU_CAP:
             _SCAN_CACHE.popitem(last=False)
         images.extend(result.paths)
         facts = _merge_facts(facts, result.facts)
-    return images, replace(facts, dirs_configured=configured)
+    return images, replace(
+        facts, dirs_configured=configured, dirs_refused_denied=refused
+    )
 
 
 def list_gallery_images(
-    dirs: list[str] | tuple[str, ...], *, max_bytes: int = _MAX_FILE_BYTES
+    dirs: list[str] | tuple[str, ...],
+    *,
+    max_bytes: int = _MAX_FILE_BYTES,
+    min_bytes: int = 0,
+    min_side: int = 0,
+    config: Any | None = None,
 ) -> list[Path]:
     """汇总所有配置目录下的图片（带 30s TTL 缓存；目录不存在 → 忽略）。
 
     返回形状与旧实现一致（``list[Path]``，同一目录被写两遍时仍会出现重复路径）；
     想知道「为什么是空的」走 ``gallery_facts``（同一份缓存，不多扫一遍）。
+    ``min_bytes``/``min_side`` 是 B1 内容守卫下限，0 = 关（旧行为逐字节同形）。
+    ``config`` 是 PIC 容器面的入站附件面判定（见 :func:`gallery_root_denial`）。
     """
-    images, _facts = _collect_gallery(dirs, max_bytes=max_bytes)
+    images, _facts = _collect_gallery(
+        dirs, max_bytes=max_bytes, min_bytes=min_bytes, min_side=min_side, config=config
+    )
     return images
 
 
 def gallery_facts(
-    dirs: list[str] | tuple[str, ...], *, max_bytes: int = _MAX_FILE_BYTES
+    dirs: list[str] | tuple[str, ...],
+    *,
+    max_bytes: int = _MAX_FILE_BYTES,
+    min_bytes: int = 0,
+    min_side: int = 0,
+    config: Any | None = None,
 ) -> GalleryFacts:
     """池子读数（观察事实版）：与 ``list_gallery_images`` 共用同一次扫描与同一份缓存。"""
-    _images, facts = _collect_gallery(dirs, max_bytes=max_bytes)
+    _images, facts = _collect_gallery(
+        dirs, max_bytes=max_bytes, min_bytes=min_bytes, min_side=min_side, config=config
+    )
     return facts
 
 
@@ -374,11 +579,11 @@ def _pick_alive(
 ) -> tuple[Path | None, int]:
     """抽签 + **就地验活**：挑中的那张必须此刻还在，才交给出站链。
 
-    为什么必须在**这一层**拦：``domains/transport/sender/onebot.py`` 的
-    ``_image_segment`` 对 image 面刻意保留死引用透传（:456-461，M-38 收编时只给
-    record/video/file 三面加了 ``_resolve_local_file_ref`` 闸，image 面按 09-15 W1
-    事故回滚的前提「不存在的绝对路径会被媒介面/平台拒」留着＝report-T100 已登记的
-    偏差）⇒ 我们交出去一条死路径，协议端要么静默要么报错，两边都不是诚实降级。
+    为什么必须在**这一层**拦：TTL 清单有 30 秒滞后，期间被移走的文件仍在册；
+    ``domains/transport/sender/onebot.py`` 的 image 面闸到 2026-09-28 B1 波才装上
+    （此前 M-38 收编只给 record/video/file 三面加闸，image 面留白＝report-T100
+    已登记偏差，本波闭合），两闸各防一侧：这里防死引用被挑中，出站闸防上游任何
+    能力把死路径直接塞进部件。
 
     返回 ``(挑中的路径或 None, 尝试次数)``。上限 = 清单长度，但逐条摘除死引用，
     所以最坏情况是把这份 TTL 清单走空（之后自然按「图库空」同一口径降级）。
@@ -400,8 +605,13 @@ def pick_random_image(
     *,
     rng: random.Random | None = None,
     max_bytes: int = _MAX_FILE_BYTES,
+    min_bytes: int = 0,
+    min_side: int = 0,
+    config: Any | None = None,
 ) -> Path | None:
-    images = list_gallery_images(dirs, max_bytes=max_bytes)
+    images = list_gallery_images(
+        dirs, max_bytes=max_bytes, min_bytes=min_bytes, min_side=min_side, config=config
+    )
     if not images:
         return None
     picker = (rng or random).choice
@@ -466,6 +676,26 @@ def image_identity(path: str | Path) -> str:
 # 合并只换这里的 store 实现，本件调用面不变（详见本轮 NEEDS-MAIN）。
 
 
+# 群桶键归一（S-FIX-ATK-DIVRNG 票②）：被戳臂旧写法用 ``group_{G}_{U}`` 记「窗内
+# 不重发」账，指令/自动后腿用 ``group_{G}``（``event.get_session_id()`` 的群键不含
+# 发送者）。同群同图因此分裂成两本账，窗内不重发与并发防双发在群内互相看不见。
+# 本函数把「带发送者后缀」的群账键收敛回群键，使窗账形状单源。root 装配文件的 poke
+# 臂应同时在 caller 侧改传 ``group_{G}``（见报告 §待主代理落盘）；此处是账本入口的
+# 兜底收口——两侧无论哪边先落，群内记的都是同一本账。
+_GROUP_SENDER_SUFFIX = re.compile(r"^(group_\d+)_\d+$")
+
+
+def canonical_bucket_key(session_key: str) -> str:
+    """把 ``group_{G}_{U}`` 收敛为 ``group_{G}``；其余账键原样返回。
+
+    只改写「群键 + 发送者数字后缀」这一形状。``private_{U}``、裸 ``group_{G}``、
+    空串与其它任何键都原样透传——私聊会话键本身就带用户、语义上不可并桶。
+    """
+    raw = str(session_key or "")
+    match = _GROUP_SENDER_SUFFIX.match(raw)
+    return match.group(1) if match else raw
+
+
 class RecentImageWindow:
     """按会话记「最近发过的图片身份」的有界窗口（时间窗 + LRU 双上限）。
 
@@ -504,7 +734,7 @@ class RecentImageWindow:
         size: int | None = None,
         path: str | Path | None = None,
     ) -> None:
-        key = str(session_key or "")
+        key = canonical_bucket_key(session_key)
         value = str(identity or "").strip()
         if not key or not value:
             return
@@ -547,7 +777,7 @@ class RecentImageWindow:
         返回 True）；空会话键 / 空身份返回 False——判据拿不准时 fail-closed 到
         「不发」，宁可不发也不发一张记不进账的图（那等于给重复开门）。
         """
-        key = str(session_key or "")
+        key = canonical_bucket_key(session_key)
         value = str(identity or "").strip()
         if not key or not value:
             return False
@@ -586,7 +816,7 @@ class RecentImageWindow:
         """
         current = self.clock() if now is None else float(now)
         with self._lock:
-            bucket = self._recent.get(str(session_key or ""))
+            bucket = self._recent.get(canonical_bucket_key(session_key))
             if not bucket:
                 return frozenset()
             self._prune(bucket, window_seconds=window_seconds, now=current)
@@ -606,7 +836,7 @@ class RecentImageWindow:
         """
         current = self.clock() if now is None else float(now)
         with self._lock:
-            bucket = self._recent.get(str(session_key or ""))
+            bucket = self._recent.get(canonical_bucket_key(session_key))
             if not bucket:
                 return frozenset(), False
             self._prune(bucket, window_seconds=window_seconds, now=current)
@@ -631,7 +861,7 @@ class RecentImageWindow:
         """
         current = self.clock() if now is None else float(now)
         with self._lock:
-            bucket = self._recent.get(str(session_key or ""))
+            bucket = self._recent.get(canonical_bucket_key(session_key))
             if not bucket:
                 return ""
             self._prune(bucket, window_seconds=window_seconds, now=current)
@@ -646,7 +876,7 @@ class RecentImageWindow:
         """窗内**最近**发过的那张当时的路径（终极兜底时用它避开连续重复）。"""
         current = self.clock() if now is None else float(now)
         with self._lock:
-            bucket = self._recent.get(str(session_key or ""))
+            bucket = self._recent.get(canonical_bucket_key(session_key))
             if not bucket:
                 return ""
             self._prune(bucket, window_seconds=window_seconds, now=current)
@@ -665,7 +895,7 @@ class RecentImageWindow:
         """
         current = self.clock() if now is None else float(now)
         with self._lock:
-            bucket = self._recent.get(str(session_key or ""))
+            bucket = self._recent.get(canonical_bucket_key(session_key))
             if not bucket:
                 return ""
             self._prune(bucket, window_seconds=window_seconds, now=current)
@@ -779,6 +1009,8 @@ def pick_fresh_image(
     window_seconds: float,
     seed: str = "",
     max_bytes: int = _MAX_FILE_BYTES,
+    min_bytes: int = 0,
+    min_side: int = 0,
     allow_exhausted: bool = True,
     rng: random.Random | None = None,
 ) -> Path | None:
@@ -809,6 +1041,8 @@ def pick_fresh_image(
         window_seconds=window_seconds,
         seed=seed,
         max_bytes=max_bytes,
+        min_bytes=min_bytes,
+        min_side=min_side,
         allow_exhausted=allow_exhausted,
         rng=rng,
     ).path
@@ -822,12 +1056,17 @@ def pick_fresh_outcome(
     window_seconds: float,
     seed: str = "",
     max_bytes: int = _MAX_FILE_BYTES,
+    min_bytes: int = 0,
+    min_side: int = 0,
     allow_exhausted: bool = True,
     rng: random.Random | None = None,
+    config: Any | None = None,
 ) -> PickOutcome:
     """``pick_fresh_image`` 的带依据版；取图口只有这一条，上面那枚是它的投影。"""
     store = window if window is not None else _DEFAULT_RECENT_WINDOW
-    images, facts = _collect_gallery(dirs, max_bytes=max_bytes)
+    images, facts = _collect_gallery(
+        dirs, max_bytes=max_bytes, min_bytes=min_bytes, min_side=min_side, config=config
+    )
     # 同一个目录被写两遍 ⇒ 同一张图进候选两次：先按路径去重，别让它占两次概率。
     pool: list[Path] = list(dict.fromkeys(images))
     if not pool:
@@ -1026,6 +1265,67 @@ def configured_gallery_dirs(config: Any) -> list[str]:
     ]
 
 
+#: 入站附件落点（别人发来的图存哪儿）：这些目录**永不得**当随机图图库登记项。
+#: 用户明令「不得把别人发的图转给第三者」——把附件落点登记成图库，等于开一条
+#: 跨会话搬运的通路（A 群发的图被抽出来发到 B 群），所以这一格在**读之前**就拒，
+#: 不等清单、不等出站闸。键名以 ``config.py`` 那几个字段为真身，本件不抄路径值。
+_GALLERY_DENIED_CONFIG_KEYS: tuple[str, ...] = (
+    "bot_download_dir",
+    "bot_media_archive_dir",
+    "bot_meme_library_dir",
+)
+
+
+def gallery_root_denial(root: Path, config: Any) -> str:
+    """这条登记根是不是入站附件面（含它自己）？是 ⇒ 拒因代号，否 ⇒ 空串。"""
+    for key in _GALLERY_DENIED_CONFIG_KEYS:
+        raw = str(getattr(config, key, "") or "").strip()
+        if not raw:
+            continue
+        blocked = _gallery_root(raw)
+        try:
+            # ``allow_root=True``：登记项**就是**那处落点本身时同样要拦（等号不算越界）。
+            path_gate.contain_within(root, [blocked], allow_root=True)
+        except path_gate.PathEscapeError:
+            continue
+        return "inbound_attachment_store"
+    return ""
+
+
+def registered_gallery_roots(config: Any) -> list[Path]:
+    """登记且**允许读**的图库根（折算后的真身，junction 折平）。
+
+    判据只在此处派生一次：禁目录、空白写位都进不了这个列表，所以
+    :func:`read_is_registered` 与池子扫描看的永远是同一份来源。
+    """
+    roots: list[Path] = []
+    for raw in configured_gallery_dirs(config):
+        if gallery_root_denial(_gallery_root(raw), config):
+            continue
+        for item in path_gate.resolve_roots([_gallery_root(raw)]):
+            if item not in roots:
+                roots.append(item)
+    return roots
+
+
+def read_is_registered(path: str | Path | None, config: Any) -> bool:
+    """「这张图在登记面之内吗」——任何读图请求出口都过这一问（用户明令新增的那条锁）。
+
+    目录本身回否（那是容器、不是可发的图）；空值、登记面之外、被禁目录之下统统回否。
+    判据真身在 ``domains/media/path_gate.py``，本件不持第二把尺。
+    """
+    if path is None:
+        return False
+    text = str(path).strip()
+    if not text:
+        return False
+    try:
+        path_gate.contain_within(text, registered_gallery_roots(config))
+    except path_gate.PathEscapeError:
+        return False
+    return True
+
+
 def pick_gallery_image_outcome(
     config: Any,
     *,
@@ -1037,27 +1337,59 @@ def pick_gallery_image_outcome(
 
     窗关（缺省）时退化成旧的 ``pick_random_image`` 一步，不引入任何新排序；
     窗开时按会话排除窗内已发过的张。
+
+    PIC 容器面（2026-09-29）在这一处收口两格：① 读数带 ``config``，入站附件面的
+    登记项整条不读；② 交路径前问一次 :func:`read_is_registered`——TTL 清单里混进
+    登记面之外的路径（旧口径残留、缓存被别处塞）时**必须 hold**，代号
+    ``out_of_registered_root``，并把那条死引用从清单里摘掉，绝不交给出站链。
     """
     dirs = configured_gallery_dirs(config)
     max_bytes = _max_bytes_for(config)
+    min_bytes = _min_bytes_for(config)
+    min_side = _min_side_for(config)
     window_seconds = no_repeat_window_seconds(config)
     if window_seconds <= 0:
-        picked = pick_random_image(dirs, max_bytes=max_bytes)
+        picked = pick_random_image(
+            dirs, max_bytes=max_bytes, min_bytes=min_bytes, min_side=min_side, config=config
+        )
         if picked is not None:
-            return PickOutcome(picked, "picked")
-        facts = gallery_facts(dirs, max_bytes=max_bytes)
+            return _contain_outcome(
+                PickOutcome(picked, "picked"), config
+            )
+        facts = gallery_facts(
+            dirs, max_bytes=max_bytes, min_bytes=min_bytes, min_side=min_side, config=config
+        )
         reason = _gallery_reason(facts)
         if reason == "gallery_usable":
             # 清单有货却一张都没挑中＝挑到的都被移走了（旧纯随机路只查被抽中的那张）。
             reason = "pool_vanished"
         return PickOutcome(None, reason, facts=facts)
-    return pick_fresh_outcome(
+    outcome = pick_fresh_outcome(
         dirs,
         session_key=session_key,
         window_seconds=window_seconds,
         seed=seed,
         max_bytes=max_bytes,
+        min_bytes=min_bytes,
+        min_side=min_side,
         allow_exhausted=allow_exhausted,
+        config=config,
+    )
+    return _contain_outcome(outcome, config)
+
+
+def _contain_outcome(outcome: PickOutcome, config: Any) -> PickOutcome:
+    """取图口的出口门：交出去的那张必须此刻仍在登记面之内（判据唯一真身 path_gate）。"""
+    picked = outcome.path
+    if picked is None or read_is_registered(picked, config):
+        return outcome
+    _drop_from_cached_listing(picked)
+    return PickOutcome(
+        None,
+        "out_of_registered_root",
+        reads=outcome.reads,
+        probes=outcome.probes,
+        facts=outcome.facts,
     )
 
 
@@ -1084,6 +1416,28 @@ def _max_bytes_for(config: Any) -> int:
     except (TypeError, ValueError):
         return _MAX_FILE_BYTES
     return max_mb * 1024 * 1024 if max_mb > 0 else _MAX_FILE_BYTES
+
+
+def _min_bytes_for(config: Any) -> int:
+    """单张体积下限（B1 守卫键 ``bot_randpic_min_file_kb``）；≤0 或读不到 = 关。
+
+    Config 现值以 ``config.py`` 该字段为真身（2026-09-29 用户裁定归零 ⇒ 生产关态，
+    键保留作逃生口）；**读不到键**（装配期外的裸调用、旧测试的 SimpleNamespace）
+    同样回 0 = 关，与 B1 之前逐字节同形。
+    """
+    try:
+        min_kb = int(getattr(config, "bot_randpic_min_file_kb", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+    return min_kb * 1024 if min_kb > 0 else 0
+
+
+def _min_side_for(config: Any) -> int:
+    """像素短边下限（B1 守卫键 ``bot_randpic_min_side``，先例 eat.py ``_IMG_MIN_SIDE``）；≤0 或读不到 = 关。"""
+    try:
+        return max(0, int(getattr(config, "bot_randpic_min_side", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _pick_for_command(config: Any, message: IncomingMessage) -> Path | None:
@@ -1150,6 +1504,39 @@ _GALLERY_DEGRADATION_LINES: dict[str, str] = {
         "BOT_RANDPIC_DIRS 里 {sample} 我列出了文件，但大小一个个都读不出来，"
         "就没敢往外发。"
     ),
+    # ---- B1 池子守卫波（2026-09-28）新增的四种拒绝，各说各的事实 ----
+    "empty_images": (
+        "BOT_RANDPIC_DIRS 里 {sample} 有 {empty} 个图片扩展名的文件是 0 字节空件"
+        "——空的发出去就是坏件，我跳过了。"
+    ),
+    "below_min_bytes": (
+        "BOT_RANDPIC_DIRS 里 {sample} 有 {below_bytes} 张图低于体积下限 "
+        "{min_kb} KB（BOT_RANDPIC_MIN_FILE_KB）——占位小图我就不发给你了。"
+    ),
+    "bad_magic": (
+        "BOT_RANDPIC_DIRS 里 {sample} 有 {bad_magic} 个文件扩展名像图片，可文件头"
+        "对不上 jpg/png/gif/webp/bmp 任一签名（或解不开）——假图/坏件我不往外发。"
+    ),
+    "below_min_side": (
+        "BOT_RANDPIC_DIRS 里 {sample} 有 {below_side} 张图短边不到 {min_side} 像素"
+        "（BOT_RANDPIC_MIN_SIDE）——多半是缩略图/图标，糊图我不发。"
+    ),
+    # ---- PIC 容器面（2026-09-29）的三种拒绝，各说各的事实与下一步 ----
+    "denied_root": (
+        "BOT_RANDPIC_DIRS 里 {sample} 是别人发来的图存放的地方（下载/媒体归档/表情库"
+        "那一类），不是你自己的图库——我不从那儿抽图往外发，跨会话搬人家的图这条线"
+        "我不碰。把你自己的图片文件夹写进 BOT_RANDPIC_DIRS，再叫我一次呀。"
+    ),
+    "linked_outside_root": (
+        "BOT_RANDPIC_DIRS 里 {sample} 有 {links} 个文件是链接（junction/符号链接），"
+        "真身落在我没被登记的地方——那种图我不发。确实要发的话，把那个文件夹本身"
+        "写进 BOT_RANDPIC_DIRS（我只读登记过的这几根）。"
+    ),
+    "out_of_registered_root": (
+        "我刚要发的那张图，路径已经不在你登记的图库里了（多半是链接、或者被人移过）——"
+        "越出登记面的东西我一张都不发，顺手把这条死引用从清单里摘了。你再叫一次，"
+        "或者看看那个文件夹现在长什么样。"
+    ),
     "pool_vanished": (
         "我刚扫到的那批图现在一张都不在了（正被整理或移开吧）——"
         "这条腿我不发空件，你稍后再叫我一次。"
@@ -1158,10 +1545,23 @@ _GALLERY_DEGRADATION_LINES: dict[str, str] = {
 
 
 def gallery_degradation_line(
-    facts: GalleryFacts, dirs: Sequence[str], *, max_bytes: int = _MAX_FILE_BYTES
+    facts: GalleryFacts,
+    dirs: Sequence[str],
+    *,
+    max_bytes: int = _MAX_FILE_BYTES,
+    min_bytes: int = 0,
+    min_side: int = 0,
+    reason: str = "",
 ) -> str:
-    """把池子事实折成**一行**人话（认不出的事实回一句不带断言的兜底）。"""
+    """把池子事实折成**一行**人话（认不出的事实回一句不带断言的兜底）。
+
+    ``reason`` 是取图口的结论代号（PIC 容器面）：``out_of_registered_root`` 那一档
+    「事实账说有货、出口却拦下」只在结论里看得见（我们真打开过目录、也确实有货），
+    所以它取自己的措辞，不套 ``pool_vanished`` 那句。
+    """
     verdict = facts.verdict
+    if reason == "out_of_registered_root":
+        verdict = "out_of_registered_root"
     if verdict == "unconfigured":
         return _GALLERY_UNCONFIGURED_LINE
     if verdict == "usable":
@@ -1174,12 +1574,42 @@ def gallery_degradation_line(
             f"{verdict}）——路径与图库还在原处，我没自作主张改它。"
         )
     sample = str(dirs[0]).strip() if dirs and str(dirs[0]).strip() else "（空配置）"
+    if verdict in ("denied_root", "out_of_registered_root"):
+        # 这两档谈的是登记项与链接，不是内容：不带 files/images/mb 那些我们没证据的断言。
+        return template.format(
+            sample=sample, links=max(facts.images_reparse_rejected, 1)
+        )
     return template.format(
         sample=sample,
         files=max(facts.files_seen, 1),
         images=max(facts.images_seen, 1),
         mb=max(int(max_bytes) // (1024 * 1024), 1),
+        empty=max(facts.images_empty, 1),
+        below_bytes=max(facts.images_below_min_bytes, 1),
+        bad_magic=max(facts.images_bad_magic, 1),
+        below_side=max(facts.images_below_min_side, 1),
+        links=max(facts.images_reparse_rejected, 1),
+        min_kb=max(int(min_bytes) // 1024, 1) if min_bytes > 0 else 0,
+        min_side=max(int(min_side), 1) if min_side > 0 else 0,
     )
+
+
+#: 「打开过、确实没货」的 verdict 集（gallery_empty 这枚标签只许在这些档位出现）。
+#: B1 守卫波把四种内容拒绝（empty_images/below_min_bytes/bad_magic/below_min_side）
+#: 并进来：对用户而言都是「这一轮图库没有能发的图」，与旧口径兼容；路径不存在/
+#: 读不动那两档**永远不进此集**（没看见内容就不许断言没有）。
+_GALLERY_EMPTY_OK_VERDICTS = frozenset(
+    {
+        "empty",
+        "no_image_extension",
+        "over_limit",
+        "stat_failed",
+        "empty_images",
+        "below_min_bytes",
+        "bad_magic",
+        "below_min_side",
+    }
+)
 
 
 def gallery_audit_tags(reason: str, facts: GalleryFacts) -> list[str]:
@@ -1190,8 +1620,8 @@ def gallery_audit_tags(reason: str, facts: GalleryFacts) -> list[str]:
     """
     verdict = facts.verdict
     tags = ["randpic", "gallery_unavailable", f"gallery_{verdict}", f"reason_{reason}"]
-    if verdict in ("empty", "no_image_extension", "over_limit", "stat_failed"):
-        tags.append("gallery_empty")  # 打开过、确实没货：与旧标签口径兼容
+    if verdict in _GALLERY_EMPTY_OK_VERDICTS:  # 打开过、确实没货：与旧标签口径兼容
+        tags.append("gallery_empty")
     return tags
 
 
@@ -1224,7 +1654,12 @@ def build_randpic_capability(config: Any | None = None) -> Any:
                 kind="text",
                 title="随机图片",
                 body=gallery_degradation_line(
-                    outcome.facts, dirs, max_bytes=_max_bytes_for(config)
+                    outcome.facts,
+                    dirs,
+                    max_bytes=_max_bytes_for(config),
+                    min_bytes=_min_bytes_for(config),
+                    min_side=_min_side_for(config),
+                    reason=outcome.reason,
                 ),
                 # 刻意**不再**标 SILENT_AUDIT：这句是给用户看的（见上方口径③）。
                 audit_tags=gallery_audit_tags(outcome.reason, outcome.facts),

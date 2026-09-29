@@ -8,10 +8,12 @@
 ① 「图本身即表达」⇒ ``title``/``body``/``summary`` 必须留空。渲染层那句
    ``text = safe_text or body or summary or title``（``domains/render/renderer.py:319``）
    是兜底链：只要三格里有字，就会跟图一起变成一条文本段发出去（F5 实弹反馈的原事故）。
-② 发出去的路径**此刻必须还在**。``domains/transport/sender/onebot.py`` 的 image 面
-   刻意保留死引用透传（``_image_segment``:447-466 —— M-38 收编只给 record/video/file
-   三面加了 ``_resolve_local_file_ref`` 闸），所以拦死引用是我们这一层的责任，
-   协议端不会替我们拦。
+② 发出去的路径**此刻必须还在**。这道闸现在是**两把**：能力/取图层在挑中时就地验活
+   （``randpic._pick_alive``，防死引用被挑中），出站段构造侧 2026-09-28 B1 波也把
+   image 面闸装上了（``onebot._image_segment`` 走 ``_resolve_local_file_ref``，
+   与 M-38 早先给 record/video/file 三面加的是同一把尺——此前 image 面留白，
+   report-T100 §偏差登记在案，本波闭合）。两闸各防一侧：上面防 TTL 清单里的死引用
+   被挑中，下面防**上游任何能力**把死路径直接塞进部件。
 
 三触发的出站面各锁一次：指令路（``build_randpic_capability``）、被戳 randpic 臂
 （``poke.resolve_poke_reply`` → 纯图无文）、回复后主动派发（根装配
@@ -255,20 +257,34 @@ def test_group_at_prefix_and_image_coexist_without_caption(tmp_path: Path) -> No
 
 
 # ============================================================================
-# 死引用：协议端不替我们拦，必须在这一层拦
+# 死引用：两闸各防一侧（取图层 + 出站段构造层）
 # ============================================================================
 
 
-def test_image_segment_would_pass_a_dead_path_through(tmp_path: Path) -> None:
-    """**前提自证**（不是缺陷断言）：出站段构造对 image 面刻意不拦死引用。
+def test_image_segment_drops_dead_absolute_path(tmp_path: Path) -> None:
+    """出站段构造侧的 image 面闸（2026-09-28 B1 波装上，闭合 report-T100 §偏差留白）。
 
-    ``onebot._resolve_local_file_ref`` 的 record/video/file 三面有闸，image 面按
-    09-15 W1 事故回滚的前提留着透传（report-T100 已登记的偏差）。这条锁的意义是：
-    一旦哪天 image 面也装了闸，本用例当场红 ⇒ 逼着下面那条「我们这层拦」的锁重新对账。
+    旧写法 ``_image_segment`` 对**不存在的绝对路径**原样透传（M-38 收编只给
+    record/video/file 三面加闸，image 面留白 ⇒ 死路径一路走到协议端：NapCat 时期
+    静默摘段谎报 SENT、SnowLuma 整条拒发拖垮同消息文字部件）。闸已落地 ⇒
+    ``_resolve_local_file_ref`` 判死即返回 ``None``，本用例锁的就是**现在**的行为：
+    死绝对路径**不构段**（mixed 部件进 dropped_types 观测、image 单件面落
+    text_fallback），协议端不会再收到我们的死引用。
     """
     ghost = str(tmp_path / "gallery" / "already-moved.png")
-    segment = _image_segment({"type": "image", "file": ghost})
-    assert segment == {"type": "image", "data": {"file": ghost}}
+    assert _image_segment({"type": "image", "file": ghost}) is None
+    # 0 字节空件同样算死（``_local_path_alive`` 的存在∧常规文件∧非空双门）。
+    empty = tmp_path / "zero.png"
+    empty.write_bytes(b"")
+    assert _image_segment({"type": "image", "file": str(empty)}) is None
+    # 在场的真图仍然构段，且方案前缀引用（远端 URL）照旧透传——闸只拦死件，
+    # 不许把通路一起焊死（协议端自取的那一路不属本层判定）。
+    alive = tmp_path / "live.png"
+    alive.write_bytes(PNG_MAGIC + b"real-bytes")
+    segment = _image_segment({"type": "image", "file": str(alive)})
+    assert segment is not None and segment["type"] == "image"
+    remote = _image_segment({"type": "image", "file": "https://example.test/a.png"})
+    assert remote is not None and remote["data"]["file"] == "https://example.test/a.png"
 
 
 def test_capability_never_hands_the_chain_a_dead_path(tmp_path: Path) -> None:
@@ -280,7 +296,7 @@ def test_capability_never_hands_the_chain_a_dead_path(tmp_path: Path) -> None:
     for path in made:
         path.unlink()
     result = capability(_message(text="来张图", message_id="m-2"), None)
-    assert result.images == [], "死引用被交给出站链（image 面不拦，见上一条）"
+    assert result.images == [], "死引用被交给出站链（取图层的验活闸失效）"
     assert result.body.strip()
     assert result.send_policy is not SendPolicy.SILENT_AUDIT
     _review, rendered, segments = _chain(result)

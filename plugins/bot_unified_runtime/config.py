@@ -500,6 +500,22 @@ class Config(BaseModel):
     bot_randpic_dirs: list[str] = []
     bot_randpic_trigger_words: list[str] = []
     bot_randpic_max_file_mb: int = 25
+    # ---- 随机图池子的内容双下限（B1 波 2026-09-28 建 → 2026-09-29 用户裁定关掉）----
+    # 0=关；保留键只为未来想给用户加下限；当前不硬筛 Picture 目录，用户手动管图库。
+    # ⚠ 耦合口径（判据真身 = ``domains/meme/capabilities/randpic.py::_scan_dir``）：
+    # 文件头魔数验真与图头短边读数都挂在 ``guard_enabled``（任一键 > 0）这枚短路上，
+    # 两键同 0 ⇒ 魔数验真一并不参与，扫描行为与 B1 之前逐字节同形；旧缺省 100 KB +
+    # 400 px 出自 2026-09-28 现网 Picture 普查，本裁定把它归零。
+    # 两键归零后**仍无条件生效**的四层：子目录剪枝 ``_should_prune_dir``、
+    # 0 字节空件拒收（``images_empty``）、重解析点不进树（PIC 容器面）、
+    # 单张体积上限 ``bot_randpic_max_file_mb``；出口另有登记面收口
+    # （``domains/media/path_gate.py``）与出站死引用闸
+    # （``domains/transport/sender/onebot.py::_image_segment``）两把。
+    # ⚠ 2026-09-29 去重（任务 D1）：这两枚键曾在类体里被**重复声明**过（300 与 400
+    # 并存、后者覆盖前者），本块是那一处的唯一残留真身；
+    # 行为锁 tests/test_config_fields_no_duplicate.py 禁止第二份定义回流。
+    bot_randpic_min_file_kb: int = 0
+    bot_randpic_min_side: int = 0
     # ---- 随机发图派发（P14 波，2026-09-25「回复完用户消息 / 用户戳 bot /
     # 特定指令」三触发）。指令触发一直是既有那条；本批加的是「回复完主动发图」
     # 一条（戳 bot 那条走 BOT_POKE_REPLY_MODE=randpic 臂，同一取图口同一本窗账）。
