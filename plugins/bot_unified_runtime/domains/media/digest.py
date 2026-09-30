@@ -31,12 +31,32 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-__all__ = ["media_digest", "media_digest_file"]
+__all__ = ["media_digest", "media_digest_file", "media_md5"]
 
 
 def media_digest(data: bytes) -> str:
     """媒体字节内容摘要唯一算法：sha256 全长 64 hex 小写。"""
     return hashlib.sha256(data).hexdigest()
+
+
+def media_md5(data: bytes) -> str:
+    """表情库 ``md5`` 主键的唯一算法口（S-MEME-POOLSCAN，2026-09-29）。
+
+    为什么中央件要长这张脸：``domains/meme`` 的库行主键历史上就是 **md5**（群聊吸收腿、
+    离线导入脚本、库内 ``exists``/``remove`` 全按它对齐）。新增一条扫池腿时若在本地写
+    ``hashlib.md5(image_bytes)``，就会踩中 ``tests/test_media_identity_single_source_ratchet.py``
+    的「非中央件媒体身份实现」上限——那道门的原话是「禁第二份**实现**」，不是「禁 md5
+    这个键」。所以把 md5 也收进同一个咽喉：值与手抄逐字节相同（跨腿去重不受影响），
+    而全仓「媒体字节→哈希」的算法面仍然只住 ``domains/media/digest.py`` 这一处。
+
+    它**不**替换 ``media_digest``：sha256 仍是内容身份（发送史/隔离墓碑用它）；md5 只是
+    库行的历史主键形态。两把尺各答各的问题，别混。
+
+    已知欠款（不属本件）：``domains/meme/sources/meme_library_listener.py`` 仍内联手抄
+    一枚（该门 ``KNOWN_DEBT`` 在册，上限 1）。迁到本函数即可摘牌，但那要同时降棘轮数字，
+    归该门业主席处置，本席不代改。
+    """
+    return hashlib.md5(data).hexdigest()
 
 
 def media_digest_file(path: str | Path, *, chunk_size: int = 1 << 20) -> str | None:
