@@ -260,3 +260,9 @@ grep -rn "MigrationStatus\." plugins/bot_unified_runtime | wc -l
   暂时与代码不同步（测试文件数、config 字段数已因本波变化），要等那两席收笔后一次性 `--write` 重录。
 - **R7 半成品测试件"改名移出"而非删除**，并把原文留在 `half-done/`。代价＝该席要重做一遍
   接线与工单，但没人会在树里踩到一个语法错。
+
+**HEAD 可签净（终局实测，2026-10-02 03:4x）**：`git archive HEAD` 抽到仓库外副本、同一把尺复跑
+＝`ruff` **All checks passed**、`mypy` **Success: no issues found in 606 source files**。
+⇒ 工作树当前那 35 枚 lint 红 / 5 枚 typecheck 红**一枚都不在 HEAD 上**，全属未入库的在飞半成品
+（`quirks.py` 4、`db_backup.py` 1，其余在别席在飞件里）。
+**接手时的正确动作是继续做完那些面，不是回退**——已入库的 10 笔是可签的。
