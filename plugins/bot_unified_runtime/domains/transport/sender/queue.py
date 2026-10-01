@@ -2357,6 +2357,27 @@ class SQLiteSendRequestQueue:
                 ON send_requests (state, lease_expires_at)
                 """
             )
+            # SEAT-Q1-QUEUE-SCAN-20261002（P5.9）：留存窗口「最新 max_items 行」
+            # 的有序读侧。_prune 每次 submit 都跑（submit→_prune，非惰性），其
+            # keeper 子查询 `ORDER BY created_at DESC, rowid DESC LIMIT ?` 此前
+            # 无索引可用 ⇒ EXPLAIN QUERY PLAN = `SCAN send_requests` +
+            # `USE TEMP B-TREE FOR ORDER BY`（生产只读副本实测 1000 行、恰好
+            # pinned 在 max_items：均值 4.849 ms/次 submit，且那一轮一行都不必删）。
+            # 建索引后子查询变成 `SCAN ... USING COVERING INDEX
+            # idx_send_requests_created_at`、临时 B 树消失、读侧被 LIMIT 截断。
+            # 🔴 键序必须是**裸 ASC 单列** `created_at`，不许"顺手"改成 DESC：
+            # 索引叶子键恒为 (created_at, rowid ASC)，倒着走恰好等于
+            # `created_at DESC, rowid DESC`；写成 `(created_at DESC)` 时叶子变成
+            # (created_at DESC, rowid ASC)，正走倒走都对不上那枚 rowid DESC，
+            # 优化器退回 `USE TEMP B-TREE FOR LAST TERM OF ORDER BY`（两形均已在
+            # 生产副本上实测对比，读数记在工单）。想写 `(created_at, rowid)`
+            # 显式双列也不行——SQLite 拒绝把 rowid 当索引列（`no such column`）。
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_send_requests_created_at
+                ON send_requests (created_at)
+                """
+            )
 
     def _backfill_session_id(self, connection: sqlite3.Connection) -> None:
         """审查 A-20：存量行回填 session_id（迁移前行没有该列）。
@@ -2459,12 +2480,33 @@ class SQLiteSendRequestQueue:
                     dormant_key,
                 ),
             )
+        # SEAT-Q1-QUEUE-SCAN-20261002（P5.9）：反连接键从 `dedupe_key`（TEXT 主
+        # 键原文）换成 `rowid`。两件事，都不动语义：
+        # ① 让 keeper 子查询吃上新建的 idx_send_requests_created_at 且**免回表**
+        #    ——子查询只吐 rowid，索引叶子自带 rowid ⇒ COVERING；旧形态要逐行
+        #    回表取 dedupe_key 原文（同索引同数据实测 2.083 ms vs 0.212 ms，
+        #    读数记在工单 §3）。
+        # ② 顺带堵掉 `dedupe_key NOT IN (…)` 的 NULL 陷阱：SQLite 的
+        #    `TEXT PRIMARY KEY` 不隐含 NOT NULL（实测可插 NULL 主键行），
+        #    一旦 keeper 集里落进一枚 NULL dedupe_key，`NOT IN` 对整个集合判
+        #    NULL ⇒ 剪枝静默变成「一行都不删」且不报错（HEAD 代码上已复现：
+        #    最新行为 NULL 时删除数 0，而对照的无 NULL 场景删 4）。rowid 恒非空。
+        #    现网 `dedupe_key IS NULL` 行数＝0（只读实测），故此腿在现网无现值差异，
+        #    它买的是「以后也不许退回那个形状」。
+        # 等价性（不许靠"看起来一样"签字）：(created_at, rowid) 因 rowid 唯一而
+        # 全序，故「按该序取前 N 行」的行集与取键方式无关——dedupe_key 是主键，
+        # row ↔ dedupe_key 双射。生产副本上 cap=0/1/10/500/999/1000/1500/100000
+        # 八档逐档比过删除集，全等（读数记在工单 §3），另有锁
+        # tests/test_queue_prune_index_lock.py
+        # ::test_prune_keeps_exactly_the_newest_window_with_created_at_ties。
+        # 只剪终态（SENT/FAILED_FINAL/SKIPPED）：PARTIAL/QUEUED/PROCESSING/
+        # FAILED_RETRYABLE 不在 state IN 集内，A4「非终态永不淘汰」原样不动。
         connection.execute(
             """
             DELETE FROM send_requests
             WHERE state IN (?, ?, ?)
-              AND dedupe_key NOT IN (
-                SELECT dedupe_key
+              AND rowid NOT IN (
+                SELECT rowid
                 FROM send_requests
                 ORDER BY created_at DESC, rowid DESC
                 LIMIT ?
