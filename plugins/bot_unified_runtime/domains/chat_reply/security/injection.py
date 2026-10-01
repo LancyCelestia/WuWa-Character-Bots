@@ -212,6 +212,15 @@ def _max_risk(left: RiskLevel, right: RiskLevel) -> RiskLevel:
 def _rule_hit(rule: _InjectionRule, text: str) -> bool:
     """一条规则的命中判定。
 
+    ⚠ 入参 `text` **必须是** `_injection_match_view()` 的输出（W8，2026-10-01）：
+    本函数自己不归一——归一在 `check_prompt_injection` 里**一次**算好、七条规则共用。
+    理由：检测腿曾直接吃 `plain_text` 原文，而句级剥离吃归一视图，两视图不等价 ⇒
+    插一枚零宽（在「泄露」中间插 U+200B）或写成全角（`Ｒｕｎ ｔｈｅ ｓｃｒｉｐｔ`）
+    就从 BLOCK 面上静默滑走——肉眼与原文无差别，人审看不出。
+    在这里再归一一次＝第二套归一实现（本件由
+    `tests/test_prompt_injection_normalization_w8.py` 锁「全树 `unicodedata.normalize`
+    恰好一处、且住在 `_injection_match_view` 里」），且会让逐条规则的耗时翻倍。
+
     带 ``detection_names`` 的规则在**每次**匹配上校验标记名（finditer 不是
     search 首枚——一条文本里合法引用族块可能排在伪造受信标记之前，
     只看首枚会把真伪造放过去）。名集比对用 upper 归一，大小写形态随统一
@@ -335,11 +344,19 @@ _PROMPT_INJECTION_LINE_RE = re.compile(
 
 
 def _injection_match_view(value: object) -> str:
-    """指令形态判定的**唯一视图**：先剥 Unicode ``Cf``（格式控制字符），再 NFKC
+    """注入形态判定的**唯一视图**：先剥 Unicode ``Cf``（格式控制字符），再 NFKC
     折叠同形字。
+
+    **两个消费者共用这一枚**（本件唯一归一真身，禁第三处自造）：
+    ① 规则检测腿 `check_prompt_injection` → `_rule_hit`（W8，2026-10-01 起；
+      改前它吃原文，与②不等价 ⇒ 零宽/全角从 BLOCK 面上静默滑走）；
+    ② 句级/行级剥离 `has_injection_shape`。
 
     只在判定时用，归一结果绝不进 prompt——未命中的原文照旧输出，免得把
     正常语料的标点悄悄换形（全角冒号被折成半角就是可见的内容改动）。
+    反向同理：`_escape_internal_markers` 的消毒面仍吃**原文**，检测与消毒之间的
+    这处刻意不对称由「变形伪标记拿不到逐字节可执行的闭标记」兜住边界，
+    锁在 `tests/test_prompt_injection_normalization_w8.py` 锁⑥；语义级残余另案。
 
     为什么**不写码点表**：旧版在这里抄过一张「Cf 的实际分布段」区间表
     （住 chat.py 时叫 ``_FORMAT_CONTROL_RE``）。零宽空格/BOM 一类伪装形态改的
@@ -582,8 +599,19 @@ def check_prompt_injection(check_input: InjectionCheckInput) -> InjectionCheckRe
     action = InjectionAction.ALLOW
     risk_level = check_input.risk_level
 
+    # W8（2026-10-01）：检测腿与句级剥离同吃**同一枚**归一视图（ `_injection_match_view`
+    # 是本件唯一归一真身，禁第二套）。视图在循环外算一次、七条规则共用——逐条重算
+    # 是白烧的 NFKC，也给「两视图不同步」留缝。
+    # 病灶：改前这里吃 `check_input.plain_text` 原文，而句级剥离吃归一视图 ⇒ 两视图
+    # 不等价，插一枚零宽（在「泄露」中间插 U+200B）或写成全角（`Ｒｕｎ ｔｈｅ ｓｃｒｉｐｔ`）
+    # 就从 BLOCK 面上静默滑走——肉眼与原文无差别，人审看不出，只能靠锁。
+    # 处置分级**一字未动**：三条高危仍 BLOCK，边界/语气类与攻击面谓词仍只升包裹
+    # （能看见 ≠ 要拒答；误杀一条正常聊天比放走一条话术更坏）。消毒面仍吃原文——
+    # 这处刻意的不对称由「变形伪标记拿不到逐字节可执行的闭标记」兜住边界，
+    # 锁在 tests/test_prompt_injection_normalization_w8.py 锁⑥，语义级残余另案登记。
+    match_view = _injection_match_view(check_input.plain_text)
     for rule in _RULES:
-        if not _rule_hit(rule, check_input.plain_text):
+        if not _rule_hit(rule, match_view):
             continue
         detected_patterns.append(rule.tag)
         reasons.append(rule.reason)
