@@ -95,6 +95,10 @@ PERSONA_SOURCE_ROOT = "personas/shorekeeper"
 SOURCE_SNAPSHOT_FILES: tuple[str, ...] = (
     "personas/shorekeeper/aliases.txt",
     "personas/shorekeeper/identity.md",
+    # 意象族名册（2026-09-28 夜用户裁定「意象跟着人格走」）：由
+    # domains/chat_reply/character/imagery_roster.py 随包直读源文件，与 aliases.txt
+    # 同一家规——人格侧一份附属表，代码只消费不复制，所以它必须进覆盖面而不是豁免。
+    "personas/shorekeeper/imagery_families.txt",
     "personas/shorekeeper/knowledge/守岸人_核心知识.md",
     "personas/shorekeeper/knowledge/守岸人_人格与表达规范.md",
     "personas/shorekeeper/knowledge/worldview_glossary.md",

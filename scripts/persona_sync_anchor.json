@@ -1,13 +1,14 @@
 {
   "schema": 2,
   "copy_path": "C:\\Users\\LancyCelestia\\Documents\\MyWorkspace\\ChatBot\\ChatBot_Runtime\\data\\persona\\守岸人_核心人格.md",
-  "copy_sha256": "482c1b6a1787f1122e67565798d1a62a68766d11fec9212c22d3bd5ce76de8e0",
-  "copy_size": 12596,
-  "adopted_at": "2026-09-25T13:07:17+00:00",
-  "note": "第 9 项（回复时长时短）根修：生产副本「场景与长度」原写「单次回复通常不超过四句」，与源 identity.md【回复长度】「不要为了简短而截断自己」互相矛盾，且与用户 2026-09-25 明示的「日常不低于百来字、一次讲清」相反——模型实读的是副本，故那句短门一直是主因。两处同改为「长度跟着要讲的事走：介绍人物/事件/物品/来龙去脉/历史/动作场面就写足，日常搭话不堆砌但禁半截话，通常不少于百来字」，保留原有海浪比喻与禁收尾语口径，未引入新语气。备份 %TEMP%/persona-copy-backup-before-i9-20260925-210350.md",
+  "copy_sha256": "58ae1c9b85a831686093a54538e6af65630d223d42de887c5065cf6106c9be2e",
+  "copy_size": 12737,
+  "adopted_at": "2026-09-28T23:49:32+00:00",
+  "note": "批⑲主树还原（S-REC-PERSONA 落回 SOURCE_SNAPSHOT_FILES 后重录）：意象族名册 personas/shorekeeper/imagery_families.txt 属 T8 波人格侧真身，人工审阅＝只登记取材提示、无提示词注入面",
   "source_snapshot": {
     "personas/shorekeeper/aliases.txt": "340decd6c38a67513367d3b83e6af2d2df4c24062027bba7d8580d3943d55ae2",
-    "personas/shorekeeper/identity.md": "a00747f4ac38d08eaac024a70b8c8cfc6a561fffc89f26a247612c605454fbad",
+    "personas/shorekeeper/identity.md": "de1fa2176186252c1f47bea4158d275707ca602406af4f83706f8d410da9b6bf",
+    "personas/shorekeeper/imagery_families.txt": "367c1c3c6268663a75d0aaa4b3217bb1d2eac2c05b15b92c404fe0e6b366ff84",
     "personas/shorekeeper/knowledge/守岸人_核心知识.md": "21ec29dd05a41a6690ffeaa04d012ce303e4aba0e611b20b100559c904f19a84",
     "personas/shorekeeper/knowledge/守岸人_人格与表达规范.md": "c82cce791edd4428ffde53dc763bcaa013880919ab04f871609955b569474818",
     "personas/shorekeeper/knowledge/worldview_glossary.md": "c12fc3277d0f6c89ef72391d2376fa417e482d044aa06818cda1fc19de9bd0aa"
@@ -15,6 +16,7 @@
   "source_snapshot_files": [
     "personas/shorekeeper/aliases.txt",
     "personas/shorekeeper/identity.md",
+    "personas/shorekeeper/imagery_families.txt",
     "personas/shorekeeper/knowledge/守岸人_核心知识.md",
     "personas/shorekeeper/knowledge/守岸人_人格与表达规范.md",
     "personas/shorekeeper/knowledge/worldview_glossary.md"

@@ -217,6 +217,29 @@ def build_runtime(
     )
 
 
+def _bot_self_name(runtime: E2eRuntime) -> str:
+    """验收面的 bot 自称——与生产同一枚唯一读法（P-G3 第二波，2026-09-29）。
+
+    此前这里和 help 卡各自写 ``config.bot_persona_display_name or "守岸人"``，等于
+    验收入口自带第二条取名腿：切人格后生产卡片换了名、验收仍按配置名出卡，两边
+    读数不可比。现统一经 ``persona_profile.current_bot_nickname``（先查人格册按
+    当前生效人格 id 现读，再回落兼容显示名），切换态直接取 runtime 已装配的那枚
+    store（不新建第二份）。绝不读 ``get_login_info``（台账 #60★）。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+        active_persona_id,
+        current_bot_nickname,
+    )
+
+    return current_bot_nickname(
+        active_persona_id(
+            runtime.config,
+            override_provider=runtime.runtime_settings.get_persona_override,
+        ),
+        config=runtime.config,
+    )
+
+
 def build_pipeline(runtime: E2eRuntime, send_queue: Any) -> RuntimePipeline:
     """与 __init__.py 注册函数内同一套 RuntimePipeline 装配（子集）。"""
     config = runtime.config
@@ -235,9 +258,10 @@ def build_pipeline(runtime: E2eRuntime, send_queue: Any) -> RuntimePipeline:
         forward_min_nodes=int(
             getattr(config, "bot_render_forward_min_nodes", 4) or 4
         ),
-        forward_sender_name=(
-            getattr(config, "bot_persona_display_name", "") or "守岸人"
-        ),
+        # 合并转发节点的署名＝bot 自称，走唯一读法（P-G3 第二波）：验收读数必须与
+        # 生产同一枚腿，否则「验收通过」证明的是另一个名字。override 用 runtime 已
+        # 装配的那枚 store（不再新建第二份切换态）。禁 get_login_info（台账 #60★）。
+        forward_sender_name=_bot_self_name(runtime),
         group_auto_reply_enabled=False,
         group_auto_reply_probability=0.0,
     )
@@ -401,9 +425,7 @@ def _help_capability(
             card_dir=str(
                 getattr(config, "bot_card_render_dir", "data/cards") or "data/cards"
             ),
-            bot_name=str(
-                getattr(config, "bot_persona_display_name", "守岸人") or "守岸人"
-            ),
+            bot_name=_bot_self_name(runtime),
             bot_avatar_url="",
             accent_color=str(getattr(config, "bot_help_card_color", "") or ""),
         )
@@ -2581,6 +2603,117 @@ def _reconfigure_stdio() -> None:
             pass
 
 
+# ---- W1-④ 一键体检（2026-09-30 代理链事故波）----
+
+def _parse_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    try:
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip().strip('"')
+    except OSError:
+        return values
+    return values
+
+
+def _discover_env_values(explicit: str) -> dict[str, str]:
+    candidates = [Path(explicit)] if explicit else []
+    repo_root = Path(__file__).resolve().parents[1]
+    candidates.append(repo_root / ".env")
+    for candidate in candidates:
+        if candidate.is_file():
+            return _parse_env_file(candidate)
+    return {}
+
+
+def run_check_llm_chain(env_values: dict[str, str]) -> int:
+    """bot→网关→应急地板→上游域双路 全矩阵只读体检。
+
+    判定口径：每个上游域「至少一条路径可达」即算活（toolcode.cc 直连被
+    重置属设计内，经代理可达即绿）；返回 0=全绿，1=有关键腿断。
+    """
+    from plugins.bot_unified_runtime.domains.ops.network_patrol import (
+        PATROL_TARGETS_DEFAULT,
+        probe_https,
+        probe_tcp,
+    )
+    from scripts.llm_chain_selfcheck import (
+        find_emergency_floor,
+        scan_registry_payloads,
+    )
+
+    def _mark(ok: bool, detail: str) -> str:
+        return f"{'ok':>2} ({detail[:24]})" if ok else f"DOWN ({detail[:24]})"
+
+    failures = 0
+    print("==== LLM 链一键体检（只读探活；无任何发送路径）====")
+    gateway = (env_values.get("BOT_CHAT_BASE_URL") or "http://127.0.0.1:8090/v1").strip()
+    parts = urlsplit(gateway)
+    gateway_host = parts.hostname or "127.0.0.1"
+    gateway_port = parts.port or (443 if parts.scheme == "https" else 80)
+    gateway_ok = probe_tcp(gateway_host, gateway_port)
+    if not gateway_ok:
+        failures += 1
+    print(
+        f"[1] bot → 网关 {gateway_host}:{gateway_port}: "
+        f"{'ok' if gateway_ok else 'UNREACHABLE'}"
+    )
+
+    default_data_dir = (
+        Path(__file__).resolve().parents[1].parent / "ChatBot_Runtime" / "data"
+    )
+    data_dir = Path(env_values.get("BOT_RUNTIME_DATA_DIR") or default_data_dir)
+    payloads = scan_registry_payloads(data_dir / "settings")
+    floor = find_emergency_floor(payloads)
+    floor_ok = False
+    if floor:
+        floor_parts = urlsplit(floor)
+        floor_ok = probe_tcp(
+            floor_parts.hostname or "127.0.0.1", floor_parts.port or 11434
+        )
+    if not (floor and floor_ok):
+        failures += 1
+    if not floor:
+        print("[2] 应急地板: MISSING（注册表无 127.0.0.1:11434 直连档——不哑兜底是空头支票）")
+    else:
+        print(
+            f"[2] 应急地板 {floor}: {'ok' if floor_ok else 'UNREACHABLE（Ollama 没开？）'}"
+        )
+
+    proxy = (env_values.get("BOT_DOWNLOAD_PROXY") or "http://127.0.0.1:7890").strip()
+    extra = (env_values.get("BOT_NETWORK_PATROL_DOMAINS") or "").strip()
+    targets = (
+        [part.strip() for part in extra.replace(";", ",").split(",") if part.strip()]
+        or list(PATROL_TARGETS_DEFAULT)
+    )
+    clash_port = urlsplit(proxy).port or 7890
+    clash_alive = probe_tcp("127.0.0.1", clash_port)
+    if not clash_alive:
+        failures += 1
+    print(f"[3] Clash {proxy}: {'ok' if clash_alive else 'DOWN'}；上游域双腿：")
+    print(f"    {'domain':<28} {'direct':<34} proxy")
+    for domain in targets:
+        d_ok, d_detail = probe_https(f"https://{domain}/", proxy="", timeout=10.0)
+        if clash_alive:
+            p_ok, p_detail = probe_https(
+                f"https://{domain}/", proxy=proxy, timeout=15.0
+            )
+        else:
+            p_ok, p_detail = False, "clash down"
+        if not (d_ok or p_ok):
+            failures += 1
+        print(
+            f"    {domain:<28} {_mark(d_ok, d_detail):<34} {_mark(p_ok, p_detail)}"
+        )
+
+    verdict = "PASS" if failures == 0 else f"FAIL（{failures} 处不通，见上）"
+    print(f"==== 体检结论: {verdict} ====")
+    return 0 if failures == 0 else 1
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="重启后真机验收：合成消息走真实管线逐项发送（默认 DRY-RUN）"
@@ -2665,6 +2798,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="",
         help="OneBot WS 探测端点 host:port（默认 ONEBOT_WS_URLS 首条，再默认 127.0.0.1:3001）",
     )
+    parser.add_argument(
+        "--check-llm-chain",
+        action="store_true",
+        help="LLM 链一键体检：bot→网关→应急地板→上游域 直连/经代理 全矩阵"
+        "（只读探活，无需目标与 bot 在线；退出码 0=全绿）",
+    )
     return parser
 
 
@@ -2684,6 +2823,10 @@ def main(argv: list[str] | None = None) -> int:
         for line in lines:
             print(line)
         return code
+
+    # W1-④ LLM 链一键体检：只读探活，不装配运行时、不要求目标。
+    if args.check_llm_chain:
+        return run_check_llm_chain(_discover_env_values(str(args.env or "")))
 
     # 命令矩阵模式（--subset 隐含开启）；存量矩阵保持原语义。
     if args.help_matrix or str(args.subset or "").strip():

@@ -106,7 +106,11 @@ def _report_wiki_settled(con: sqlite3.Connection, total: int, since: str = "") -
         return
     for key in SUMMARY_FIELDS:
         if key in summary:
-            print(f"  {key}={summary[key]}")
+            value = summary[key]
+            # after 三件在失败轮落 null（本轮未测得，2026-09-27 汇总修复）：
+            # 打「未测得」而不是 None/0——0 是合法测得值，三态不许塌回 0。
+            label = "未测得" if value is None else value
+            print(f"  {key}={label}")
 
     started = str(summary.get("started_at") or "")
     if since and started < since:
@@ -117,15 +121,26 @@ def _report_wiki_settled(con: sqlite3.Connection, total: int, since: str = "") -
     def num(key: str) -> int:
         return int(summary.get(key) or 0)
 
+    def after_num(key: str, label: str) -> tuple[int, str]:
+        """after 三态取数：null（失败轮未测）→ 判据按不成立走、展示为「未测得」。
+
+        用 -1 哨兵而不是把 None 折成 0：0 会被读成"测得 0 行"，正是本脚本
+        要避免的伪装（与 kb_wiki._sync_summary 的三态口径同一）。
+        """
+        raw = summary.get(key)
+        if raw is None:
+            return -1, label
+        return int(raw or 0), str(int(raw or 0))
+
     pending = num("embed_pending")
     done = num("embedded")
-    embedded_after = num("embedded_after")
+    embedded_after, embedded_after_text = after_num("embedded_after", "未测得")
     ann_expected = int(meta.get(ANN_EXPECTED_KEY) or 0)
     checks = (
         ("本轮 ok 且无 error_kind", bool(summary.get("ok")) and summary.get("error_kind") in (None, "none")),
         (f"本轮队列清空 embedded({done})>=embed_pending({pending})", done >= pending),
-        (f"库内已嵌({embedded_after})>=块行数({total})", embedded_after >= total),
-        (f"ANN 应嵌数({ann_expected})==库内已嵌({embedded_after})", ann_expected == embedded_after),
+        (f"库内已嵌({embedded_after_text})>=块行数({total})", embedded_after >= total),
+        (f"ANN 应嵌数({ann_expected})==库内已嵌({embedded_after_text})", ann_expected == embedded_after),
     )
     for name, passed in checks:
         print(f"  {'[ok]' if passed else '[!!]'} {name}")

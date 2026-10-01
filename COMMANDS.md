@@ -15,7 +15,6 @@
 - 普通成员只见公开模块；管理员另见管理员专属模块（含本手册全部内容）。
 
 <!-- BEGIN AUTO:COMMANDS-MODULE-INDEX generated-from=_HELP_ENTRIES by tests/test_commands_md_generated_index.py; 请勿手改本块 -->
-
 ## 模块索引（自动生成 · 逐 topic 覆盖）
 
 > 本节由 `tests/test_commands_md_generated_index.py` 从 `echo.py` 的 `_HELP_ENTRIES` 自动投影，
@@ -99,12 +98,12 @@
 - 聊天（普通用户可用）：bot.chat
 - 戳一戳（普通用户可用）：on_notice:戳一戳
 - 表情收库（普通用户可用）：meme_absorb（群图自动收库，无命令）
+- 表情册（仅管理员）：bot.meme_library
 - 自然语言（普通用户可用）：bot.natural_command
 - 忽略（仅管理员）：matcher:IGNORE（空消息静默；未知命令形态回引导）
 - 决策（仅管理员）：/bot decision
 - 紧急信息（仅管理员）：bot.emergency_info
 - 亲密模式（普通用户可用）：bot.chat（整句「亲密模式 开/深开/关」；关系档子命令见 /bot identity）
-
 <!-- END AUTO:COMMANDS-MODULE-INDEX -->
 
 ## 管理员专属（/bot 前缀命令族）

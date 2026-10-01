@@ -168,6 +168,33 @@ function Get-CacheDirPath {
     }
 }
 
+# Pytest scratch root, deliberately OUTSIDE both $Root and $RuntimeRoot: a run must
+# not write caches into the source tree (workspace rule 6) or into runtime data.
+# NOTE: an earlier version of this comment claimed that pinning TMP/TEMP inside
+# ChatBot_Runtime\cache made 10 otherwise-green tests fail deterministically. The
+# A/B on 2026-09-29 measured the identical "5 failed / 155 passed" with TMP pinned
+# to a chatbot_runtime-shaped path and with it outside -- those reds were a stale
+# test leg (restricted_runner helpers retired as "删优于接"), not the path. Do not
+# re-add that claim. Candidates are tried in order and skipped when one lands
+# inside a protected root.
+function Get-PytestScratchBase {
+    $candidates = @()
+    if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA "Temp\qoder-chatbot-ci") }
+    $candidates += (Join-Path ([IO.Path]::GetTempPath()) "qoder-chatbot-ci")
+    foreach ($c in $candidates) {
+        $full = [IO.Path]::GetFullPath($c)
+        $blocked = $false
+        foreach ($guard in @($Root, $RuntimeRoot)) {
+            $gfull = [IO.Path]::GetFullPath($guard)
+            if ($full -eq $gfull -or $full.StartsWith($gfull + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+                $blocked = $true
+            }
+        }
+        if (-not $blocked) { return $full }
+    }
+    throw "No usable pytest scratch base outside the protected roots ($Root / $RuntimeRoot)"
+}
+
 # True when the parsed JSON object exposes the named property.
 function HasProp {
     param($Object, [string]$Name)
@@ -441,7 +468,7 @@ function Invoke-TaskTest {
     $oldTmp = $env:TMP
     $oldTemp = $env:TEMP
     $oldTmpRoot = $env:PYTEST_DEBUG_TEMPROOT
-    $ciTmp = Join-Path $RuntimeRoot ("cache\pytest_ci_" + $PID)
+    $ciTmp = Join-Path (Get-PytestScratchBase) ("pytest_ci_" + $PID)
     New-Item -ItemType Directory -Force -Path $ciTmp | Out-Null
     $env:TMP = $ciTmp
     $env:TEMP = $ciTmp

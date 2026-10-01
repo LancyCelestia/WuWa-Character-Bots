@@ -50,6 +50,11 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.memory_store_v21 i
 # 由 derive_scope 承担，这里只处理「旧库里已经写成通配」的三种字面量）。
 _GLOBAL_SCOPE_KEYS = frozenset({"", "*", "global"})
 
+# 本脚本自己的幂等探针前缀（真身只此一处：造键与对账都读它，禁第二份字面量）。
+# 前缀唯一属于本迁移 ⇒ 「这一行是不是本脚本落的」按探针判，不按 ``source`` 列判，
+# 见 ``_count_migrated_by_owner`` 的口径说明。
+_MIGRATION_EVENT_PREFIX = "reflmig:"
+
 
 class ConservationError(RuntimeError):
     """守恒断言失败——迁移被整体回滚。"""
@@ -218,7 +223,7 @@ def plan_migration(
                 "source": "reflection_migration",
                 "scope": scope,
                 "unresolved_scope": unresolved,
-                "source_event_id": f"reflmig:{fact.fact_id}",
+                "source_event_id": f"{_MIGRATION_EVENT_PREFIX}{fact.fact_id}",
             }
         )
     return plans
@@ -306,7 +311,8 @@ def migrate(
     total_after = len(read_legacy_facts(reflection_db))
     expected_by_owner = planned_by_owner - rejected_by_owner
     report.per_owner_after = dict(expected_by_owner)
-    # 断言面：总线里由本脚本落的行（source='reflection_migration'）逐人计数。
+    # 断言面：总线里由本脚本落的行按 ``reflmig:`` 探针逐人计数（口径见
+    # ``_count_migrated_by_owner``——按 source 列数会在「同槽脏前置」下假红）。
     store_counts = _count_migrated_by_owner(store)
     assert_conservation(
         expected_by_owner=dict(expected_by_owner),
@@ -345,10 +351,20 @@ def _absorb_one(bus: MemoryBus, plan: dict[str, Any]) -> str:
 
 
 def _count_migrated_by_owner(store: MemoryStoreV21) -> dict[str, int]:
+    """总线里由本脚本落的行，按**幂等探针**逐人计数。
+
+    尺子必须是探针而不是 ``source`` 列：``source`` 记的是「谁建的行」，而库里可能
+    早有一行同槽事实（抽取腿先落，``source=llm_extract``、无探针）。迁移撞上它就是
+    一次「带探针的确认」——只补空位、不抢写建行者那本账（锁见
+    ``test_absorb_confirmed_does_not_steal_existing_probe``），于是按 ``source`` 数会把
+    这次**真实完成**的迁移漏计成 0，守恒断言当场假红（ConservationError），而实际
+    一行未丢。探针前缀唯一属于本迁移，补位成功即计数成立，重跑只命中不新增。
+    """
     with store._lock:
         rows = store._connection.execute(
             "SELECT owner_id, COUNT(*) AS n FROM memory_entries_v21 "
-            "WHERE source = 'reflection_migration' GROUP BY owner_id"
+            "WHERE substr(source_event_id, 1, length(?)) = ? GROUP BY owner_id",
+            (_MIGRATION_EVENT_PREFIX, _MIGRATION_EVENT_PREFIX),
         ).fetchall()
     return {str(row["owner_id"]): int(row["n"]) for row in rows}
 

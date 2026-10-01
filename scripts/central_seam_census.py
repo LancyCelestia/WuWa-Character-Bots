@@ -53,6 +53,21 @@ v0.3.0（S200 2026-09-24「非能力署名标签显式桶」，用户裁定 2.A�
     ``covers_exactly`` 不变量随之仍成立（S81 锁读的是本件自报的 ``unknown_ids``/``unknown_id_sites``，
     两者一并收敛到 off_manifest，等式不破）。
 
+v0.3.1（S-CENSUS-LEG3 2026-09-29「量具自相矛盾」）——两处，**方向是加账、不减扫描面**：
+  · 缝外判定收进唯一判据口 ``is_offseam_bypass``（``seam-feed``＝交给中央、非缝外，见 ``_inside_feed``）：
+    改前 ``_state()`` 读**未过滤原桶**、``violations`` 却自带一份白名单 ⇒ 同一把尺两套规则，
+    按桶名读债的消费者必假报（现算触发点＝根 ``__init__.py:6299``，``build_tts_capability`` 的成品
+    交给 ``orchestrated_command("bot.tts", …)``，同线亦记 ``seam_sites``，却仍留在 ``offseam_sites``）。
+    新增导出 ``roster[*].offseam_bypass_sites`` 与 ``counts.offseam_bypass_sites``（＝原桶 − 喂缝点）。
+  · ⚠ ``offseam_sites`` **故意保持未过滤原桶**（不是遗漏）：它同时是两把既有尺的分母——
+    ① ``test_offseam_wired_contradiction_gate`` 的反藏点恒等式 ``sum(row.offseam_sites)
+    == counts.offseam_sites``；② ``test_capability_manifest_gate`` 腿⑧ 拿它过
+    ``project_direct_callsites`` 与真身册 ``direct_callsites`` 双向等值（册里
+    ``bot.tts`` 已镜像那条 ``offseam:…#_poke_voice_pair->build_tts_capability``）。
+    ⇒ 把过滤塞回原桶＝销账＋打断⑧；判债请读 ``offseam_bypass_sites``。
+    三态计数位移＝零（现算 ``states.offseam`` 本已 0：全树唯一一枚喂缝点由 wired 短路接走）。
+    锁：``tests/test_central_seam_census_offseam_tag_consistency.py``（含注毒五形）。
+
 判据点位（尺身份三元组的「件」，全部现读不抄）：
   申报源      plugins/bot_unified_runtime/runtime/capability_protocols.py
               plugins/bot_unified_runtime/domains/chat_reply/runtime/capability_registry.py
@@ -84,7 +99,7 @@ from typing import TypeAlias
 #: 函数定义节点的并集（typeshed 里 AsyncFunctionDef 与 FunctionDef 同级，不能只写后者）。
 _Fn: TypeAlias = ast.FunctionDef | ast.AsyncFunctionDef
 
-VERSION = "0.3.0-beta1"
+VERSION = "0.3.1-beta1"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PKG_ROOT = REPO_ROOT / "plugins" / "bot_unified_runtime"
@@ -122,6 +137,30 @@ PUSH_FUNCS = frozenset({"submit_active_push"})
 #: 依据：根汇合缝自己就调 ``pipeline.handle(message, capability, capability_id=...)``
 #: （``__init__.py``:2581），它与 ``handle_async`` 是同一泛型执行器的同/异步两形。
 SITE_EXEC_FUNCS = frozenset(SEAM_FUNCS) | GENERIC_FUNCS | frozenset({"handle", "invoke"})
+
+# ===========================================================================
+# 「这一点算不算缝外直呼（绕过中央的第二条通路）」——本件**唯一**判据口（S-CENSUS-LEG3 立）
+# ---------------------------------------------------------------------------
+# 语境标签由判据⑥赋值（见 ``_scan_file``），四形语义：
+#   ``seam-feed``        —— 直呼结果**直接作 缝/泛型/push/invoke 的实参**交出（``_inside_feed``
+#                          的原话：「交给中央，非缝外」）⇒ 已入中央件，不构成第二通路；
+#   ``assembly-wrap``    —— 直呼发生在 builder 闭包内（prepared 构造那一步）；
+#   ``self-composition`` —— 直呼发生在能力函数自身顶层（同模块自组合）；
+#   ``exec-bypass``      —— 真旁路：直呼执行体且没交进任何中央件。
+# ⚠ 三态 ``_state()``、第二通路 ``violations``、roster 的 ``offseam_bypass_sites`` 出口**同引本函数**；
+#   消费侧（尺/门/册）不得再抄一份 ``if tag != "seam-feed"``——抄第二份＝两把尺会各自漂移，
+#   正是本次归因（腿③读原桶、与尺自己的 tag 语义打架）的根形。锁：
+#   ``tests/test_central_seam_census_offseam_tag_consistency.py``。
+SEAM_FEED_TAG = "seam-feed"
+#: 「已通电却直呼真身」这一矛盾所认的标签（violations 专用；``seam-feed`` 由 ``is_offseam_bypass`` 挡在外）。
+SECOND_ROUTE_TAGS = frozenset({"exec-bypass", "assembly-wrap"})
+
+
+def is_offseam_bypass(site: dict) -> bool:
+    """唯一定义：非 ``seam-feed`` 才算缝外直呼。喂缝点仍是**证据**（随原桶导出、不许藏），
+    但它不构成第二通路 ⇒ 不得被读成债，也不得被 ``_state()`` 判成 ``offseam``。"""
+    return str(site.get("tag") or "") != SEAM_FEED_TAG
+
 
 _ALIAS_FN = "_handle_alias"
 _NATURAL_FN = "_handle_natural"
@@ -447,7 +486,7 @@ class Census:
                 if _is_injection(node, parents):
                     continue
                 if _inside_feed(node, parents):
-                    tag = "seam-feed"
+                    tag = SEAM_FEED_TAG
                 elif stack and _BUILDER_FN_RE.match(stack[-1]):
                     tag = "assembly-wrap"
                 elif stack and _CAPFUNC_RE.match(stack[-1]) and len(stack) == 1:
@@ -676,7 +715,14 @@ class Census:
             return "wired"
         if self.generic.get(cid):
             return "generic"
-        if self.offseam.get(cid):
+        # 缝外判定走唯一判据口 ``is_offseam_bypass``：**只**带 ``seam-feed`` 点的 id 不得被判成
+        # ``offseam``——那一点尺自己已记成正证据（同一 file:line 同时落在 seam/generic/push 桶里，
+        # 现算例＝根 ``__init__.py:6299`` 既记 ``orchestrated_command`` 缝站点、又记 builder 直呼点）。
+        # 判成债＝尺替它刚承认「已交进中央」的那一环挂欠条，三态账与 tag 语义自相打架。
+        # 计数位移＝零（现算 ``states.offseam`` 本已 0：wired/generic 前置短路，且全树仅 1 枚
+        #   seam-feed 点、其承载 id 为 wired）；这条"不许位移"由
+        #   ``tests/test_central_seam_census_offseam_tag_consistency.py`` 钉住。
+        if any(is_offseam_bypass(s) for s in self.offseam.get(cid, [])):
             return "offseam"
         return "none"
 
@@ -716,7 +762,9 @@ class Census:
             state = self._state(cid)
             state_counts[state] += 1
             off_sites = self.offseam.get(cid, [])
-            bypass = [s for s in off_sites if s["tag"] in ("exec-bypass", "assembly-wrap")]
+            # 尺自己的「缝外」判定（唯一判据口，见 is_offseam_bypass）：喂缝点不算债。
+            bypass_sites = [s for s in off_sites if is_offseam_bypass(s)]
+            bypass = [s for s in bypass_sites if s["tag"] in SECOND_ROUTE_TAGS]
             if state == "wired":
                 for s in bypass:
                     if s["tag"] == "exec-bypass":
@@ -728,7 +776,17 @@ class Census:
                 "seam_sites": self.seam.get(cid, []),
                 "invoke_sites": self.invoke.get(cid, []),
                 "generic_sites": self.generic.get(cid, []),
+                # ⚠ 原桶（含 ``seam-feed``）**照旧全量导出、一字不删**——两把既有尺靠它作分母：
+                #   ① ``test_offseam_wired_contradiction_gate`` 的反藏点恒等式
+                #      ``sum(roster.offseam_sites) == counts.offseam_sites``；
+                #   ② 腿⑧ ``project_direct_callsites`` 与真身册 ``direct_callsites`` 的双向等值
+                #      （册里 ``bot.tts`` 那条 ``offseam:…#_poke_voice_pair->build_tts_capability``
+                #      就是镜像这张桶，见 capability_manifest.py:379）。
+                #   ⇒ 「把 offseam_sites 改成过滤桶」在本仓**不是修法，是销账**：它会当场打断⑧，
+                #   且让尺不再能自证"哪些点是喂缝、哪些是旁路"。
+                # 要判债的消费侧请读下一行的 ``offseam_bypass_sites``（= 原桶 minus seam-feed）。
                 "offseam_sites": off_sites,
+                "offseam_bypass_sites": bypass_sites,
                 "entry_forms": sorted(self.entry_forms.get(cid, set())),
                 "test_sites": self.tests_evidence.get(cid, []),
                 "unknown_sites": self.unknown_id_sites.get(cid, []),
@@ -779,6 +837,12 @@ class Census:
                 "states": state_counts,
                 "seam_sites": sum(len(v) for v in self.seam.values()),
                 "offseam_sites": sum(len(v) for v in self.offseam.values()),
+                # 同一桶过唯一判据口后的账（原桶 − seam-feed）。与 roster 明细逐枚同源，
+                # 恒等式 ``sum(row.offseam_bypass_sites) == counts.offseam_bypass_sites`` 由
+                # tag 一致性锁执法；本数**只准与 offseam_sites 相等或更小**（更小＝扣掉喂缝点）。
+                "offseam_bypass_sites": sum(
+                    1 for v in self.offseam.values() for s in v if is_offseam_bypass(s)
+                ),
                 "violations_second_route": len(violations),
                 # 「在册表外」差集＝去掉署名桶后的 unknown_ids（桶内 id 见 unknown_ids_signature）。
                 "unknown_ids": len(off_manifest),

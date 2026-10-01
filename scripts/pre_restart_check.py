@@ -56,13 +56,14 @@ T4 渠道能力标签保险 / T5 PX-1 MCP 模块保险 / S141 ANN 代际可用�
                    输出只报服务键名与模块名，绝不回显 command/env 里的凭据。
   13. ann_pair     ANN 这一代到底可不可用（S141 加，全只读、不 mmap 加载索引）：
                    按主键点查 ChatBot_Runtime/data/kb_wiki_embeddings.sqlite3 的
-                   knowledge_meta 六行（完备性计数戳 ann_expected_vector_count /
-                   代际证明 ann_pair_attestation(ntotal·count·signature) /
+                   knowledge_meta 七行（完备性计数戳 ann_expected_vector_count /
+                   代际证明 ann_pair_attestation(ntotal·count·signature·embed_generation) /
+                   嵌入代次 ann_embed_generation /
                    ann_signature 与 embedding_signature / 内存门留痕
                    ann_build_last_memory_skip / 上一轮 kb_sync_last_summary），
-                   照 load_ann_index 的查序（成对文件实存与体积 → 签名 → 计数戳短装）
-                   比对得五态：PASS / REFUSED(missing=N) / UNSTAMPED /
-                   MEMORY_SKIP(有内存门拒建留痕) / NOT_APPLICABLE(库或键缺失)。
+                   照 load_ann_index 的查序（成对文件实存与体积 → 签名 → 计数戳短装
+                   → 代次覆盖）比对得五态：PASS / REFUSED(missing=N / coverage) /
+                   UNSTAMPED / MEMORY_SKIP(有内存门拒建留痕) / NOT_APPLICABLE(库或键缺失)。
                    键名与短装容差不在本文件另立一把尺（唯一真身=vector_knowledge.py，
                    由 tests/test_pre_restart_check_ann_pair.py 拿源码文本对账）。
                    零写库、零全表扫描、零 faiss；库/键不存在=SKIP，拒用=FAIL
@@ -1100,19 +1101,26 @@ def check_mcp_server_spec(env: dict[str, str], project_root: Path) -> CheckResul
 # ---------------------------------------------------------------------------
 # 为什么要这一项：2026-09-22 那次停摆的根因就是「ANN 索引短装 ⇒ 每条消息回落
 # numpy 暴力扫描」，而它**既不报错也不写日志**，只在重启后靠日志考古才发现。
-# 本项把同一道判据搬到重启之前：只读 `knowledge_meta` 的三行（计数戳 / 代际证明 /
-# 上一轮 kb-sync 摘要）+ 内存门留痕 + 两枚签名行，比对得五态之一。
+# 本项把同一道判据搬到重启之前：只读 `knowledge_meta` 的七行（计数戳 / 代际证明 /
+# 嵌入代次 / 上一轮 kb-sync 摘要）+ 内存门留痕 + 两枚签名行，比对得五态之一。
 #
 # 判据不许有第二把尺（AGENTS.md 规则：一处变更处处跟随）：
 #   · 键名与短装容差逐字对住真身
 #     `plugins/bot_unified_runtime/domains/chat_reply/character/vector_knowledge.py`
 #     （`_EMBEDDED_COUNT_KEY` / `_ANN_ATTESTATION_KEY` / `_ANN_MEMORY_SKIP_META_KEY` /
-#     `_ANN_COMPLETENESS_MAX_MISSING`）与 `domains/location/knowledge/kb_wiki.py`
+#     `_ANN_COMPLETENESS_MAX_MISSING` / `_EMBED_GENERATION_KEY` /
+#     `_ATTEST_EMBED_GENERATION_FIELD`）与 `domains/location/knowledge/kb_wiki.py`
 #     （`SYNC_SUMMARY_META_KEY`），由
 #     `tests/test_pre_restart_check_ann_pair.py::test_ann_pair_keys_and_threshold_match_single_source`
 #     拿源码文本对账——任何一侧改名即红；
 #   · 语义同真身：戳 = 「本代索引至少该装几条」的**上界**，`ntotal < 戳` 才是短装，
 #     `ntotal > 戳`（发布中途被杀）不算（load_ann_index 同判）；
+#   · 代次闸照 S159 真身判（load_ann_index 的代次终检）：当前嵌入代次
+#     （`ann_embed_generation`）> 代际证明盖章代次（其 `embed_generation` 字段）
+#     ⇒ 覆盖没跟上——删+嵌同轮会把标量戳拉回原值，戳判看不出这形 ⇒
+#     REFUSED(coverage)，两个数字同屏点名。缺行/畸形/负值按 0 读，与真身
+#     `_parse_embed_generation` 同口径；存量库两侧俱缺 ⇒ 0 对 0，既有放行语义
+#     逐字节不变（设计形态，锁钉住，不许在这里改口）；
 #   · 本项**不 mmap 读 `.index`**（那是重启后要付的 ≈1 秒），ntotal 取代际证明里的数，
 #     并另 stat 两枚 ANN 文件核体积——「证明自洽而磁盘没东西」是假绿，必须挑出来。
 # 零写库、零全表扫描：只按 PRIMARY KEY 点查 knowledge_meta，绝不碰 knowledge_chunks
@@ -1130,6 +1138,8 @@ ANN_SIGNATURE_META_KEY = "ann_signature"
 ANN_EMBEDDING_SIGNATURE_META_KEY = "embedding_signature"
 ANN_MEMORY_SKIP_META_KEY = "ann_build_last_memory_skip"
 ANN_SUMMARY_META_KEY = "kb_sync_last_summary"
+ANN_EMBED_GENERATION_META_KEY = "ann_embed_generation"  # 真身 _EMBED_GENERATION_KEY
+ANN_ATTEST_EMBED_GENERATION_FIELD = "embed_generation"  # 真身 _ATTEST_EMBED_GENERATION_FIELD
 
 ANN_COMPLETENESS_MAX_MISSING = 0  # 真身 _ANN_COMPLETENESS_MAX_MISSING：一条都不许少
 
@@ -1140,6 +1150,7 @@ _ANN_META_KEYS: tuple[str, ...] = (
     ANN_EMBEDDING_SIGNATURE_META_KEY,
     ANN_MEMORY_SKIP_META_KEY,
     ANN_SUMMARY_META_KEY,
+    ANN_EMBED_GENERATION_META_KEY,
 )
 
 ANN_STATE_PASS = "PASS"
@@ -1162,7 +1173,7 @@ class AnnPairVerdict:
 
 
 def _ann_meta_rows(db_path: Path) -> dict[str, str] | None:
-    """按主键点查 knowledge_meta 的六行（只读 URI，不建库、不写、不抢写锁）.
+    """按主键点查 knowledge_meta 的七行（只读 URI，不建库、不写、不抢写锁）.
 
     打不开 / 表不存在 ⇒ None（调用方按「无从判定」走 NOT_APPLICABLE，
     绝不猜默认值——猜 0 会把「无从证明完备」洗成「一行都不该有 ⇒ 完美」）。
@@ -1203,6 +1214,22 @@ def _ann_int(value: object) -> int | None:
     return number if number >= 0 else None
 
 
+def _ann_generation_value(value: object) -> int:
+    """代次取数口径同真身 `_parse_embed_generation`：缺行/畸形/负值 ⇒ 0.
+
+    与 `_ann_int`（计数戳口径）故意不同：戳缺行返回 None 是「无从判定」，
+    代次缺行返回 0 是「从未证过任何提交批次」——方向更严，任何一批嵌入都会
+    把它顶到 1 以上 ⇒ 守卫开火；存量库两侧同时缺行 ⇒ 0 对 0，与闸上线前
+    逐字节同形（真身 `_EMBED_GENERATION_KEY` 参数块在册，不在这里改口）。
+    取值先 `str()` 再解析，`True` 这类布尔垃圾只会折成 0，读不成「已证过一批」。
+    """
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
+    return max(0, parsed)
+
+
 def _ann_sig_head(value: str) -> str:
     """签名进输出时压短（它是端点+模型名拼接的长串，逐字上屏读不动）."""
     trimmed = value.strip()
@@ -1212,12 +1239,13 @@ def _ann_sig_head(value: str) -> str:
 
 
 def inspect_ann_generation_pair(env: dict[str, str], project_root: Path) -> AnnPairVerdict:
-    """读 knowledge_meta 六行 → 五态之一（PASS / REFUSED / UNSTAMPED / MEMORY_SKIP / NOT_APPLICABLE）.
+    """读 knowledge_meta 七行 → 五态之一（PASS / REFUSED / UNSTAMPED / MEMORY_SKIP / NOT_APPLICABLE）.
 
-    状态优先级（**根因赢，但被抢的状态一个字不藏**：短装数、戳、ntotal 全都进事实行）：
+    状态优先级（**根因赢，但被抢的状态一个字不藏**：短装数、戳、ntotal、代次全都进事实行）：
       1. NOT_APPLICABLE：库不存在 / 表不存在 / 戳与代际证明两行都没有 ⇒ 无从判定（SKIP）；
       2. 先算「这一代能不能用」的坏判据（按真身 load_ann_index 的查序）：
-         两文件缺席或体积与证明不符 → 签名不符 → 无戳 → 短装（ntotal < 戳 − 容差）；
+         两文件缺席或体积与证明不符 → 签名不符 → 无戳 → 短装（ntotal < 戳 − 容差）
+         → 代次超前（当前代次 > 盖章覆盖，S159 代次终检同判）；
       3. 有坏判据 **且** 内存门留痕在位且未越门 ⇒ MEMORY_SKIP（这就是「为什么没重建」）；
       4. 否则坏判据本身 ⇒ REFUSED / UNSTAMPED；全部通过 ⇒ PASS。
     """
@@ -1253,6 +1281,10 @@ def inspect_ann_generation_pair(env: dict[str, str], project_root: Path) -> AnnP
     summary = _ann_json_row(rows.get(ANN_SUMMARY_META_KEY, ""))
     ntotal = _ann_int((attestation or {}).get("ntotal")) if attestation else None
     attested_count = _ann_int((attestation or {}).get("count")) if attestation else None
+    embed_generation = _ann_generation_value(rows.get(ANN_EMBED_GENERATION_META_KEY, ""))
+    attested_generation = _ann_generation_value(
+        (attestation or {}).get(ANN_ATTEST_EMBED_GENERATION_FIELD)
+    )
 
     if stamp is None and attestation is None and not stamp_raw and not attested_sig:
         return AnnPairVerdict(
@@ -1293,6 +1325,10 @@ def inspect_ann_generation_pair(env: dict[str, str], project_root: Path) -> AnnP
     if attestation is None:
         bad_reason = "no_attestation"
         facts.append("代际证明：缺失（无证明 = 无从证实这一代成对换入过）")
+        facts.append(
+            f"嵌入代次：当前 {embed_generation}（代际证明缺席，无从比对盖章代次；"
+            "真身同格判据是「证明缺席且代次非零 ⇒ 照拒」，本项由 no_attestation 这发先红）"
+        )
     else:
         index_path = db_path.parent / KB_WIKI_ANN_INDEX_NAME
         order_path = db_path.parent / KB_WIKI_ANN_ORDER_NAME
@@ -1342,6 +1378,21 @@ def inspect_ann_generation_pair(env: dict[str, str], project_root: Path) -> AnnP
     if missing is not None and missing > ANN_COMPLETENESS_MAX_MISSING:
         bad_reason = bad_reason or "short_by_stamp"
 
+    # 代次终检（S159，照真身 load_ann_index 的查序排在计数戳判之后）：删+嵌同轮
+    # 会把标量戳拉回原值，戳追平了也可能根本没装下新那批——覆盖要按代次判：
+    # 当前代次 > 证明盖章代次 ⇒ 载入必然拒用（coverage refused），预检不许假 PASS。
+    # 证明缺席时本判 inert：`no_attestation` 在上面已判红（真身另有一发
+    # 「证明缺席+代次非零即拒」同样落进那格红里，判据只严不松）。
+    if attestation is not None:
+        coverage_behind = embed_generation > attested_generation
+        facts.append(
+            f"嵌入代次：当前 {embed_generation} ／ 证明盖章代次 {attested_generation}"
+            + ("（代次超前：盖章点之后又有嵌入批次提交，本代索引没装下）"
+               if coverage_behind else "")
+        )
+        if coverage_behind:
+            bad_reason = bad_reason or "coverage_behind_generation"
+
     # kb-sync 摘要行（收工判据：行数不是判据，看 ann_reason / embed_pending）
     if summary is None:
         facts.append("上一轮 kb-sync：无收工摘要（这一轮从未跑完过）")
@@ -1384,7 +1435,7 @@ def inspect_ann_generation_pair(env: dict[str, str], project_root: Path) -> AnnP
         )
 
     # --- 定态 ---------------------------------------------------------------
-    # 查序照 load_ann_index：签名/成对性在前，完备性戳在最后 ⇒ 已判坏就不改口。
+    # 查序照 load_ann_index：签名/成对性在前，完备性戳与代次覆盖在最后 ⇒ 已判坏就不改口。
     if attestation is not None and stamp is None:
         bad_reason = bad_reason or "unstamped"
     if bad_reason == "":
@@ -1430,6 +1481,19 @@ def inspect_ann_generation_pair(env: dict[str, str], project_root: Path) -> AnnP
             tuple(facts),
             "跑一次 knowledge-sync 全链（补嵌 → build_ann_index 重建 → 提交点落戳）；"
             "判据容差唯一真身=_ANN_COMPLETENESS_MAX_MISSING（0 条都不许少），本项不放宽。",
+            missing=missing,
+        )
+    if bad_reason == "coverage_behind_generation":
+        return AnnPairVerdict(
+            ANN_STATE_REFUSED,
+            "coverage_behind_generation",
+            f"这一代 ANN 不可用：当前嵌入代次 {embed_generation} > 证明盖章代次 {attested_generation}"
+            " ⇒ 盖章点之后提交的嵌入批次没进本代索引（同轮删+嵌把标量戳拉回原值，戳判看不出这形，"
+            "2026-09-26 生产假绿同型）⇒ 载入路径拒用 ANN，每条消息回落暴力扫描",
+            tuple(facts),
+            "跑一次 knowledge-sync 全链（补嵌 → build_ann_index 重建 → _publish_ann_pair 盖章新代次）；"
+            "判据唯一真身见 vector_knowledge.py 的 _EMBED_GENERATION_KEY / "
+            "_ATTEST_EMBED_GENERATION_FIELD 与 load_ann_index 代次终检（本项只搬判据、不放宽）。",
             missing=missing,
         )
     label = {

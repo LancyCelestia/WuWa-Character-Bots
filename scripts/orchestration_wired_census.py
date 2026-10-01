@@ -5,7 +5,7 @@
 
 判据同源（2026-09-22 S-CENSUS 收口，铁律 7「禁第二真身」）：本件是**唯一的**
 「在册 descriptor → wired / generic_executor / not_wired」判据真身——
-  ``scan_wiredness``   真树扫描（invoke 字面命中 ∪ R8 命令形接缝声明式通电 ∪ 泛型执行器命中）
+  ``scan_wiredness``   真树扫描（invoke 字面命中 ∪ R8 命令形接缝声明式通电 ∪ 泛型执行器命中 ∪ 根汇缝字面量第四臂）
   ``live_partition``   三桶归类（wired 优先）
   ``classify_all``     每条 id 的态（含 phantom 臂）——报表与本门账都从这里取数
 常驻门 ``tests/test_descriptor_wiredness_ledger.py`` 的 ``_scan_real_tree`` / ``_live_partition``
@@ -120,12 +120,21 @@ def scan_wiredness(
 ) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     """真树「通电 / 泛型」扫描的唯一判据：返回 (invoke 命中 cid→文件集, 泛型命中 cid→文件集)。
 
-    三支命中合成一份账（缺任一支即一笔假账，历史上都咬过）：
+    四支命中合成一份账（缺任一支即一笔假账，历史上都咬过）：
       1. ``v1gate._invoker_cids``  —— 字面量形 ``invoke(CapabilityRequest(capability_id="x"))``；
       2. ``v1gate.seam_registered_cids``（R8）—— 命令形接缝传**变量**、中央件内部才落成
          invoke ⇒ 只看字面量会让已通电的命令形能力在账上永远记 not_wired（三席独立点名的假账源）；
          点位=唯一表 ``capability_registry.py`` 里那行 ``execution=CapabilityExecution(...)`` 声明本身；
-      3. ``_generic_executor_cids`` —— 泛型执行器上的 ``capability_id=`` 字面量。
+      3. ``_generic_executor_cids`` —— 泛型执行器上的 ``capability_id=`` 字面量；
+      4. 根汇缝字面量（``root_funnel_literal_cids``，S-SEAM-FOLLOW-c 2026-09-27 补臂）——
+         P0-A 迁进 ``_run_capability_through_pipeline(..., capability_id=<字面>)`` 的站点上面
+         三支都看不见（1 不涉 invoke 字面、2 只认注册册声明、3 只认 handle_async/
+         _run_simple_capability 名）⇒ 曾由台账门挂过渡臂代扫，其注记白纸黑字写明
+         「旧尺补第四臂后撤过渡臂」；本臂即按该撤臂条件落地，判据真身仍唯一支
+         ``test_central_via_identity_and_entry_durability.root_funnel_literal_cids``
+         （§5 入口耐久锁同源，零复制、零第二支扫描器；函数内延迟 import， facets-only
+         复用本件 ``_iter_sources`` 时不顺带装载中央件）。点位＝根 ``__init__.py``，
+         与台账 WIRED 登记点位同字面。
 
     ``syntax_errors``：传入列表则坏文件记名后继续（普查是报告脚本，一份坏文件不能让整个台账不可用）；
     不传则由调用方决定如何处理——常驻门选择「当场炸」（RF2-5 口径，静默 continue=假绿温床）。
@@ -147,6 +156,13 @@ def scan_wiredness(
             generic_hits.setdefault(cid, set()).add(rel)
     for cid, files in v1gate.seam_registered_cids().items():
         invoke_hits.setdefault(cid, set()).update(files)
+    # 第四臂（根汇缝字面量，S-SEAM-FOLLOW-c 2026-09-27；判据理由见上方 docstring 第 4 支）。
+    # 走模块属性现取：台账门注毒锁（test_funnel_arm_lock_has_teeth）monkeypatch 同一真身即断电。
+    import test_central_via_identity_and_entry_durability as viaid
+
+    root_rel = v1gate._rel(_PKG_ROOT / "__init__.py")
+    for cid in viaid.root_funnel_literal_cids():
+        invoke_hits.setdefault(cid, set()).add(root_rel)
     return invoke_hits, generic_hits
 
 
