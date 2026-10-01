@@ -4,7 +4,7 @@
   "docs/design/render-pipeline-optimization-spec.md": "5797cdb0cceb59d2bf2061eea586212219246a8e235e24741a6aa70a7651f7df",
   "docs/design/visual-effects-catalog.md": "4e7cf9331d99ed1060b56ca28c7b7e973dd16dfb997ddf9b51d60cbb37f42784",
   "docs/rendering-contract.md": "8ccc14d17f6d20daa90d6a395f6e68f7f09286b6fbbc7c7e20ffc8a0f8622c0e",
-  "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py": "c9536323efa8e39271703abdcd90b5edb65857eec26093040a9779b2c77a93e3",
+  "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py": "23fa4d717f520d2422d1feb931d37c59cd0da81b54e8216a1c676088a0f18fa5",
   "plugins/bot_unified_runtime/domains/ops/admin/debug.py": "2759ef6c5ad6e4aeaa3668fdd788f20e6e0c8aeed73ec35b2f1504bb9cbb9681",
   "plugins/bot_unified_runtime/domains/render/card_render/bridge.py": "bf0976e4e3ad77ae64b74411bacb0cbab7a0cd4a1d6157bc4e2e59dfc25bcbef",
   "plugins/bot_unified_runtime/domains/render/card_render/templates/affinity_card.html": "2b6d105ef1b15ed6c0eae60fd811c317b618863ad90f9bcf00c8c1d59e752793",

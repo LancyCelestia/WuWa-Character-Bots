@@ -311,5 +311,165 @@ grep -rn "MigrationStatus\." plugins/bot_unified_runtime | wc -l
 ⇒ **重启不会崩在 import 上**。本窗另修掉一枚真会炸的：`quirks.py` 用了 `OUTCOME_REFUSED` 却没 import
 （生产路径 propose 一被拒就 NameError），同处补 `db_backup.py:576` 的 None 解引用形态。
 ⚠ 但工作树里仍有 6 个半成品面**未入库**，重启会把它们**一起加载**（文件在盘上就会被 import）。
-**结论**：想立刻拿"新代码 + TTS 关闭"，可以重启，风险我已实测到 import 级；
-想同时要门绿与 RAG 提速，就先做上面第 1、2 条 ANN 两步与 27 枚 lint 收尾，再重启（一次到位，省一轮）。
+**想立刻拿"新代码 + TTS 关闭"，可以重启**，风险我已实测到 import 级；
+想同时要门绿与 RAG 提速，就先做 §十六 的 ANN 两步与 27 枚 lint 收尾，再重启（一次到位，省一轮）。
+
+---
+
+## 十五、亲密模式「人在白名单里 ⇒ 他在任何群都能开」施工图（裁定已定，**未实施**）
+
+> 用户 2026-10-02 对本点的原话是"指的是「人在白名单里 ⇒ 他在任何群都能开」"。
+> **本节是施工图不是完成账**：动手权在下一位，动手前先把下面的"三处消费者"读完。
+> 本节的每一条行号都是 10-02 死机后**回读真身现算**的，不是凭记忆写的。
+
+**现状真身**（`domains/chat_reply/runtime/content_route.py:893-942`，`explicit_allowed_for_session`）：
+
+| 分支 | 判据（逐字） | 读 `sender_id` 吗 |
+|---|---|---|
+| `console` | 直接 `True`（运营者本地面） | — |
+| `private` | 私聊黑名单赢 → 白名单**非空**时仅名单内 QQ 放行 → 其余放行 | ✅ 读（这就是"人员名单"） |
+| `group` | `str(group_id).strip() in (wl - bl)`，wl/bl = `bot_content_route_group_{whitelist,blacklist}` | ❌ **死参，群分支完全不读人** |
+
+⇒ 缺口就在最后一行：**群聊放行只看群号，与"这个人是谁"无关**。
+
+**名单真身**＝`config.py:1230/1231/1236/1237` 四枚（群黑白 + 私聊黑白）。
+**没有第五枚"人员跨群"名单**，裁定＝**复用 `bot_content_route_private_whitelist` 当人员白名单，不新建键**
+（理由：不起第二本账；不新建键 ⇒ 免走"新键四面"全套同步，见 §五第 10 条）。
+
+**唯一改动点**：群分支加一条"人腿"，**顺序不许换**：
+
+1. 群黑名单命中 ⇒ `False`（**永远赢**，人的白名单压不过群的禁令）；
+2. 群白名单命中 ⇒ `True`（既有行为，一字不动）；
+3. **新增**：`sender_id` **逐字**命中 `bot_content_route_private_whitelist` ⇒ `True`；
+4. 其余 ⇒ `False`。
+
+**三条正确性硬点（写错任何一条就是把最贵的方向搞反）**：
+
+1. **空名单绝不等于放开**。私聊侧"空=默认放开"是**刻意**与群侧不对称的既有裁定
+   （`config.py:1232-1235` 明写"与群白名单「空=关闭」语义刻意不对称"）。新腿只准判
+   "**逐字命中**"，**绝不准判"名单空 ⇒ 放开"** —— 否则一枚为私聊写的空语义会一次把
+   群聊亲密面整体打开，那是本仓最贵的一类越放。
+2. `bot_content_route_private_blacklist` 命中的人**不获得**新腿；但**不撤销**他原本靠群白名单
+   拿到的放行（那是既有行为，改它超出本裁定范围 ⇒ 别"顺手"改）。
+3. 本裁定**只动 admission**：不动"谁有权拨"（群内仍仅管理员可拨，`chat.py` 的管理员门原样）、
+   不动 **tier 来源**（群级钉与个人级 `member_session_key` 的现行优先级不变）、不动 TTL / `max_ttl`。
+
+**消费者必须同批改，否则新腿只在部分通路生效**（"半条腿"形态正是 F-A 那一刀治的病）。
+群分支的调用点现算三处：
+
+| 调用点 | 现状 | 要不要动 |
+|---|---|---|
+| `content_route.py:981`（`resolve_intimate_context`） | 已传 `sender_id=` | 不动 |
+| `chat.py:3958`（人格对话主缝） | 已传 | 不动 |
+| `tts.py:1554` | `explicit_allowed_for_session("group", group_id, config)` —— **没传 sender_id** | **必改**，否则 TTS 群语音露骨面永远吃不到本裁定 |
+
+（`__init__.py:9449` 也在同族调用面上，改前读它的实参确认。）
+
+**验收（双向自测；只打勾不算证据）**：在 `tests/test_intimate_group_switch_delivery.py`
+（现 12/12 绿、**未入库**）补四腿——① 正例：群不在群白名单 + 人在私聊白名单 ⇒ `True`；
+② 反例：同群、`sender_id` 换成名单外的号 ⇒ `False`；③ 反例：把该群加进群黑名单 ⇒ 人再白也 `False`；
+④ 消费者腿：断言 `tts.py` 那条判定**实参里真带上了 sender**（AST 认调用形，或注入 fake config 数参数）。
+
+**生效口径**：只改代码 ⇒ 必须重启（项目铁律：改代码必须重启才生效）；不新增配置键
+⇒ 无 `RESTART_REQUIRED_KEYS` 追加、无 `.env.example` 申报行。名单现值**不抄进本文档**（规则 3）。
+
+---
+
+## 十六、ANN 修复 runbook（现算修正版，含我此前一笔错账的**更正**）
+
+> ⚠ **先更正**：本档早先写的"内存门要 4.5 GiB、还差 0.6 GiB"**不准**。
+> `_ANN_BUILD_MIN_AVAILABLE_BYTES = 4.5 GiB` 源码里明写「**不当门用、不是物理下限**」
+> （`vector_knowledge.py:453-459`，那是 S85 在 n≈766k 一个点上的历史合价，只被一枚复算锁钉着）。
+> 真正的门是**需求模型按当轮 n 现算**：`n=740,267 / dim=1024` ⇒ 线性 4.77 GiB、
+> **总要价 ≈6.00 GiB**、中途 ≈5.3 GiB（同节 619-624 行的实测对表）。
+> ⇒ "**差多少**"必须按当时的已嵌行数重算，别拿我上一版的 0.6 GiB 当结论。
+
+**两重病因，互相独立，只治一个仍然不可用**（均已现网取证）：
+
+**A. 签名不一致 ⇒ `signature_mismatch`**
+`embedding_signature` 与 `ann_signature` **存的都是 `self.signature`**（模型/端点指纹，
+`vector_knowledge.py:346` 的注释就是这条的原始说明），两枚写点分别是
+`1563-1572`（embedding 侧）与 `3348 → _set_stored_ann_signature`（ANN 侧，读点 `3827-3858`）。
+现网取证：前者指 `127.0.0.1:8090`（AxonHub 网关），后者指 `127.0.0.1:11434`（直连 Ollama）
+⇒ 值不等 ⇒ 判据在 `4054` 处 `return False, "signature_mismatch"`（reason 名在册：
+`_STAMP_RECONCILE_REASONS`，`420-433`）。**即使重建成功也会被这条继续拒。**
+⇒ 两条修法二选一，**别混着做**：① 把嵌入端点指回建索引那一代（改配置＝要重启，现值不入文档）；
+② 在同一代签名下**重建并同事务重盖两枚戳**（缺一即红另一处，这正是"两把尺"形态）。
+
+**B. 内存要价 > 空闲**（开火前门，S112）
+`3. 要价 = 4,694 B/向量 × n + 批内副本(2048×dim×4×4) + max(128 MiB, (线性+批副本)/4)`；
+空闲 < 要价 ⇒ **不开火**，reason = `insufficient_memory`，并留三处痕迹（WARNING 日志 /
+`knowledge_meta` 观测行 / 经 kb-sync 既有告警 sink 出五要素卡），**旧索引原样保留**。
+- 越门的**唯一在册通道**＝operator CLI 的显式旗标（`450-452`：阈值是模块常量、**不开新 config 键**、
+  不许改生产配置面去"让它绿"）。
+- 集合级自证另有独立地板 **1.5 GiB**（`_ANN_STAMP_RECONCILE_MIN_AVAILABLE_BYTES`，`407-416`：
+  定它的根据是**余量不是需求**——本机空闲跌到 1.6–2.5 GiB 区间连着死机两次），
+  外加项数上限 **2,000,000**（超即 `too_large_for_set_proof`，**宁可由人显式越门，不许把机器按死**）。
+- 探针取不到数 ⇒ 按"不可判定"fail-closed，同样不开火。
+  ⚠ 本机已知坑：`K32GetProcessMemoryInfo` 对当前进程伪句柄返回 0（读数 nan）⇒
+  **先怀疑探针再怀疑事实**（这条我踩过一次）。
+
+**修完 A+B 之后的第三道闸（别忘）**：完备性闸 `_ANN_COMPLETENESS_MAX_MISSING = 0`
+（`344-367`，一条都不许少）。**跳过重建不放行这闸** ⇒ 只要索引短装就回落暴力扫描
+（`_vector_candidates` → numpy 矩阵 → `_brute_candidates_python`）。
+**这就是"bot 内存不高却整片发烫"的真根因**：`744,371 × 1024` 每轮现点积。
+
+**实操步骤（取证只读，不改生产）**：
+1. 现算 `n`（已嵌行数，`knowledge_chunks` 向量列非空计数）——**离线口径**：那条 COUNT 实测 23.8 s，
+   禁进载入路径（`355-356`）。
+2. 现算可用物理内存（脚本形态见 §十四）。本机 32 GiB；死机前实测空闲 0.8 GB（TTS 关掉后已回升，**以现算为准**）。
+3. 按上面式子算要价 ⇒ **要开工先把空闲做到 ≥ 要价 + 余量**（n≈740k 时 ≈7 GiB 起步），
+   并先停同机大户（死机前读数：llama-server 2.48 GB、游戏 2.34 GB —— 当时 `nvidia-smi` 看不到、
+   python 主进程 RSS 只 0.48 GB，**都不是 bot**）。
+4. 复验门名：`tests/test_ann_memory_gate_s118.py`（内含"32 GiB 机 / 10 GiB 空闲必须放行"与
+   "2 GiB 空闲仍拒"两钉，**不许把门重定标成摆设**）、`tests/test_pre_restart_check_ann_pair.py`；
+   两枚都在 `scripts/pre_restart_check.py` 里现算（本窗 FAIL 读数＝`ann_pair` 与 `kb_drift`）。
+5. 台账 #61★ 那条判据一并读：**「证明缺席且代次 > 0」要与守卫同读**，别只看单边。
+
+---
+
+## 十七、在飞面清点（死机后现算）+ 本席两条自曝
+
+**现算命令**（下一位照着跑就能拿到同一形状，别信我抄的数）：
+`git status --porcelain | awk '{print substr($0,1,2)}' | sort | uniq -c`；
+逐面 mtime 与行列增量用 `git status --porcelain | grep '^ M' | cut -c4- | while read f; do …; done`。
+
+**本窗写这一节时的读数＝51 枚**（`34 枚 tracked 已改` + `17 枚未跟踪`），
+而同一轮开工时是 **47 枚** ⇒ 差额不是本席造的，见下面"热写面"。
+
+**🔴 热写面（有一席正在同一工作树里活着写，10-02 06:0x 现算）**：
+`docs/HANDBOOK.md`（mtime 06:03:48）、`docs/auto-facts.md`（06:01:15）、
+`tests/test_prompt_injection_order.py`（05:34:42）。
+判据＝mtime 落在本席动手之后且**不是本席写的**（本席全程只写交接档与哈希册两族面）。
+⇒ **下一位动手前必须重跑一次 mtime 现算**，别把这三枚当"无人认领的遗留"顺手收走。
+
+**分类账（17 枚未跟踪件，按"重启会不会被加载"切）**：
+
+| 族 | 枚数 | 面 | 关键点 |
+|---|---|---|---|
+| **会被 import 的源件** | 3 | `domains/core/write_trace.py`(10.7 KB) / `runtime/db_backup.py`(53.8 KB) / `domains/chat_reply/llm_engine/prompt_template.py`(9.0 KB) | **文件在盘上就会被加载**——重启前必须逐枚 `ast.parse` + 邻域复跑（本窗已核 39 枚 py 面**零 SyntaxError**）。`db_backup.py` 的 mypy 洞我已修在盘上，但**未入库** |
+| **人格数据** | 1 | `personas/shorekeeper/imagery_families.txt`(2.8 KB) | 规则 8：改话术要维持守岸人语气；台账 #66★ 那条"意象名词禁硬编码进代码"就是为它 |
+| **新锁（测试）** | 10 | `test_intimate_group_switch_delivery.py` / `test_claims_subset_implementation_gate.py` / `test_migration_status_assignment_gate.py` / `test_store_write_trace_d2.py` / `test_command_admin_gate_registration.py` / `test_prompt_template_layer_w1.py` / `test_download_artifact_container_gate.py` / `test_timeout_umbrella_remaining_legs.py` / `test_tts_cache_quota_shape_guard.py` / `test_seat_t1_persona_contract_20261002.py` | 前六枚**现算绿**；后四枚里 `claims_subset` / `migration_status` / `tts_cache_quota` 是**刻意的判据镜**（HEAD 轴自证看不见，台账 #72★），`timeout_umbrella` 尚差 3 处零字节差 |
+| **工单/提案** | 3 | `patches/B1-CONFIG-REQUEST.md` / `B1-TTS-CACHE-OUTTMPL-20261002.md` / `P3A-ROUTE-GATE-PROPOSAL-20261002.md` | 纯文本，动手前先读 |
+
+**已入库但注释指向本节的**：`patches/W-E05-GATE-GAPS-20260930.md §6.1/§6.2`（曾悬空，已补）。
+**半成品未删**：`.superpowers/sdd/2026-10-02-fixwave/half-done/test_db_backup.py.HALF-WRITTEN`
+（那枚曾把整树 collection 打崩的类名断行，只准**移出**不准删）。
+
+### 本席自曝（两条，都留在账上）
+
+1. **`BOT_AUTOSYNC` 误设**：本窗一条 `--collect-only` 复跑命令里我把 `BOT_AUTOSYNC=0` 写成 `1`，
+   于是 conftest **静默重录了哈希册**。后果与处置全部现算：
+   受影响面只有 `tests/render_hashes.json`（**恰好 1 处 hunk**）+ 它的 sidecar
+   `tests/render_hashes.meta.json`（2 行：`body_sha256` + `full_write_at`）。
+   漂移内容是 `capabilities/echo.py` 一枚哈希。
+   **核完再决定留不留**（而不是"手滑了就一键退回"）：`git diff --numstat HEAD -- …/echo.py` **空**
+   ⇒ echo.py 与 HEAD **逐字相同** ⇒ HEAD 里那枚哈希**本来就对不上 HEAD 自己的文件**
+   （＝台账 #72★ 说的"HEAD 基线自红"，也正是 §十四 `pre_restart_check` 报 `hash_ledger` FAIL 的那一枚）。
+   复验：`BOT_AUTOSYNC=0 python tests/verify_hashes.py`（只读）⇒ **exit 0、零字节输出＝零漂移**。
+   ⇒ **裁定：保留这一行重录并入库**（它是真基线修，不是给谁的作品品"祝福"），
+   与本节同批提交。**教训写死**：`BOT_AUTOSYNC` 只准显式给 `0`；"我只是想看看能不能收集"
+   在这种共享树里没有"只读跑一下"这回事——生成物在 conftest 里，不在你的意图里。
+2. **上一窗六席阵亡于 150 次调用硬顶**（不是模型问题，是我把三件交付捆在一席的规划错误），
+   代价＝半成品测试文件把整树 collection 打断 + 10 枚 write-trace 锁返工。
+   ⇒ 本窗三席简报里各写死"≤80 次调用、~65 次立刻收尾、按节即时 append、批量校验一次脚本跑完"。
