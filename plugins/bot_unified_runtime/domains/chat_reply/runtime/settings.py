@@ -966,6 +966,45 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
         "文件读取根白名单是装配期 Config 字段，/files/read 据快照构造网关；"
         "合并层未登记该键 ⇒ 热改不生效——改 .env + 重启"
     ),
+    # ==== W2 门禁配置三面补齐（2026-10-01，登记账本 patches/E05-CONFIG-REQUEST.md）====
+    # 七枚键都是「判据已在代码里生效、配置面此前不存在」的幽灵键补登记（台账 #68★
+    # 「幽灵字段补齐＝config 字段 + 本文件热改态登记 + .env.example 三面齐」）。
+    # 档位取向＝一律 RESTART，逐枚给出不可热改的**机制**理由，不做「看着能热改」的
+    # 假承诺（C-09 定罪形态）：合并层 `_RUNTIME_HOT_OVERRIDE_FIELDS` 归根 `__init__.py`
+    # 且本波禁写 ⇒ 这七枚的覆盖在合并层就走不到消费点，`/bot runtime set` 只会
+    # 写成一格无人回读的库存值。将来接线波把键登记进合并表后，逐枚回白名单。
+    "BOT_GATE_COMMAND_REQUIRES_LISTED_GROUP": (
+        "命令态群须在册门（policy/gate.py `command_group_unlisted`）：判定现读"
+        " driver config → os.environ 两级、不读 store，且合并层未登记该键 ⇒ 热 set"
+        " 走不到这一腿。止血面＝改 .env + 重启（缺省 True＝收紧，写 false 回退旧行为）"
+    ),
+    "BOT_RATE_LIMIT_COMMAND_ENABLED": (
+        "命令腿帽总闸：读点 policy/rate_limit.py::build_rate_limit_settings 经装配期"
+        " settings_provider 现读 Config，但合并层未登记该键 ⇒ store 覆盖不可达，"
+        "改 .env + 重启"
+    ),
+    "BOT_RATE_LIMIT_COMMAND_WINDOW_SECONDS": (
+        "同族：合并层未登记该键，覆盖不可达；窗长 <1 会被 RateLimitSettings 校验器拒"
+    ),
+    "BOT_RATE_LIMIT_COMMAND_SENDER_MAX_REQUESTS": (
+        "同族：合并层未登记该键，覆盖不可达（0＝该腿不生效，负数装载期拒）"
+    ),
+    "BOT_RATE_LIMIT_COMMAND_GROUP_MAX_REQUESTS": (
+        "同族：合并层未登记该键，覆盖不可达（0＝该腿不生效，负数装载期拒；私聊不记群账）"
+    ),
+    "BOT_RATE_LIMIT_COMMAND_BYPASS_ROLES": (
+        "命令腿自己的旁路脸：同族读点、合并层未登记 ⇒ 覆盖不可达。与聊天侧"
+        " BOT_RATE_LIMIT_BYPASS_ROLES 分册，改这一枚不动聊天语义"
+    ),
+    "BOT_QUIET_HOURS_DIRECT_BYPASS_MENTIONS": (
+        "安静时段直连豁免的 mentions 腿（quiet_hours.py::_direct_bypass_leg）：同族六枚"
+        "键在合并层有登记、本枚新出未登记 ⇒ 热 set 走不到判据，改 .env + 重启。"
+        "True＝@bot 点名夜间仍必应（缺省，v21r2 锁钉的形状）；False＝收紧这一腿"
+    ),
+    "BOT_QUIET_HOURS_DIRECT_BYPASS_COMMANDS": (
+        "安静时段直连豁免的 commands 腿：同上（合并层未登记本枚 ⇒ 覆盖不可达）。"
+        "True＝命令类能力夜间直通（缺省＝既有语义）；False＝把命令关进安静时间这道门"
+    ),
 }
 
 

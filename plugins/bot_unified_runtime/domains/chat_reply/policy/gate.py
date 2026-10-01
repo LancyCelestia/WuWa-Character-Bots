@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -76,11 +77,69 @@ class PolicySettings:
     # 返回的键会覆盖对应静态集合（管理员热改优先于 .env），未返回的键保持静态。
     group_lists_provider: Callable[[], dict[str, frozenset[str]]] | None = None
     # 命令态群须在册（E05 缺口一）：群不属于任何一张名单（含动态 provider 四档）时，
-    # `/bot` 与别名命令一律否决。缺省 True＝收紧；置 False 仅供事故止血回退旧行为。
+    # `/bot` 与别名命令一律否决。置 False 仅供事故止血回退旧行为。
     # **只动命令腿**：被动回复侧语义一字未改（未触发群消息照旧 fail-close 到
     # `passive_group_message`），黑白名单四档判据与硬否决顺序也一字未动。
     # 读点真身＝`_effective_group_lists` 的同一份四册，禁第二份名单名（规则 10）。
-    command_requires_listed_group: bool = True
+    #
+    # `None`（缺省）＝**按配置面判定**，不是「按 True」：装配方
+    # `runtime/pipeline.py:910` 用显式 kwargs 构造 PolicySettings、没透传这一枚，
+    # 所以「不改代码就想关掉这道门」的唯一通路是配置面
+    # （`BOT_GATE_COMMAND_REQUIRES_LISTED_GROUP`，缺省 True＝收紧，见
+    # `_command_listed_gate_from_config`）。显式传 True/False 时本字段优先
+    # （单测、smoke、诊断走这条，行为逐字节不变）。
+    command_requires_listed_group: bool | None = None
+
+
+def _flag_from_text(raw: object) -> bool | None:
+    """把配置面原始值折成三态：True / False / None（＝读不出，交下一级）。
+
+    NoneBot 的 driver config 对未在本项目 `Config` 声明过的键存的是 `.env` **原文字符串**，
+    所以 `"false"` 这类写法必须在这里折成 False——直接 `bool("false")` 恒真，正是
+    「写了没用」那类静默失效的成因（台账 #68★）。认不出的形态一律返回 None，
+    由调用方落到下一级或安全缺省：**宁按缺省收紧，也不猜用户的意思**。
+    """
+    if isinstance(raw, bool):
+        return raw
+    if raw is None:
+        return None
+    text = str(raw).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _command_listed_gate_from_config() -> bool:
+    """命令态在册门的配置面读数：driver config → os.environ → 缺省 True。
+
+    读法与 `runtime/pipeline.py::_resolve_chat_pool_workers` / `_driver_then_env` 同源
+    （那里已成文：pipeline 不接收注入 config ⇒ 惰性 `get_driver()` 现读，未初始化时
+    短路落下一级）。两点刻意保持一致：
+    ① 键名以 **getattr 字面量**形态写出——配置键的活性由 `scripts.config_read_point_census`
+       按字面读点现算，转名写法结构上看不见（本文件因此**不**用常量传键名）；
+    ② 任何读取异常都不放开闸门（fail-close 到安全缺省，绝不为「读配置失败」放行命令）。
+    """
+    raw_values: list[object] = []
+    try:
+        import nonebot
+
+        raw_values.append(
+            getattr(
+                nonebot.get_driver().config,
+                "bot_gate_command_requires_listed_group",
+                None,
+            )
+        )
+    except Exception:  # noqa: BLE001, S110 - 单测/独立脚本未初始化 driver，静默落到下一级。
+        pass
+    raw_values.append(os.environ.get("BOT_GATE_COMMAND_REQUIRES_LISTED_GROUP"))
+    for raw in raw_values:
+        flag = _flag_from_text(raw)
+        if flag is not None:
+            return flag
+    return True
 
 
 def _resolve_probability(value: float | Callable[[], float] | None) -> float:
@@ -361,9 +420,15 @@ def evaluate_policy(
         # 不会为它返回；下面的 R4 软点名腿与被动腿（:not command_triggered）都
         # 以"非命令态"为前提，与本门不同维 ⇒ 本门只可能收紧命令腿，动不到被动腿
         # 与硬否决的判据、顺序、reason 字符串。
+        # 开关取值三层（W2 止血面）：装配方显式传 True/False ＞ 配置面
+        # （driver config → os.environ → 缺省 True）；只有前一层**没表态**（None）
+        # 才去读配置面——单测与 smoke 传显式值，读数逐字节不受环境变量影响。
+        requires_listed_group = active_settings.command_requires_listed_group
+        if requires_listed_group is None:
+            requires_listed_group = _command_listed_gate_from_config()
         if (
             command_triggered
-            and active_settings.command_requires_listed_group
+            and requires_listed_group
             and not group_is_listed(group_lists, group_id)
         ):
             return _denied("command_group_unlisted", ("command_group_unlisted",))

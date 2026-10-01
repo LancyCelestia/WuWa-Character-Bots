@@ -12,22 +12,25 @@ from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
     new_debug_id,
 )
 
+from .rate_limit import CHAT_LIKE_CAPABILITY_IDS
+
 DEFAULT_BYPASS_ROLES = ["admin"]
-# E05 缺口三：私聊 formerly 整条不在覆盖面上（`["group"]`），"安静时间"对私聊
-# 形同虚设——夜间任意命令与任意私聊都直接免检。缺省含 private。
-# ⚠ 生产真身缺省住在 config.py 的 `bot_quiet_hours_session_types`（现值 ["group"]），
-# `build_quiet_hours_settings` 只在 Config **没有**该字段时才回落到这里；本枚改动
-# 要在生产生效必须同批改 config.py 缺省（＝三面同批，见 patches/E05-CONFIG-REQUEST.md），
-# 且 `.env` 若显式写了 BOT_QUIET_HOURS_SESSION_TYPES=group 仍会盖住新缺省。
-DEFAULT_SESSION_TYPES = ["group", "private"]
-# 「聊天类」能力＝安静时间本该拦的那些；不在这张表里的就是命令类能力。
-CHAT_LIKE_CAPABILITY_IDS = frozenset({"bot.chat", "bot.content"})
+# 覆盖册缺省＝**只罩 group**。私聊/email 要不要进覆盖面属**配置面**（键
+# `BOT_QUIET_HOURS_SESSION_TYPES`，枚举面见下方 `CONFIGURABLE_SESSION_TYPES`），
+# 由用户裁、由 config.py 落，**不由补丁焊死**：曾有版本把 private 擅自写进这里，
+# 于是「夜间私聊自己也被哑」这件事在代码里就发生了，三面登记（config 字段 /
+# settings 热改态 / `.env.example`）一行没动——台账 #68★「只补一面必红另一面」。
+# 现值真身＝`config.py` 的 `bot_quiet_hours_session_types`（缺省 ["group"]）；
+# `build_quiet_hours_settings` 只在 Config **没有**该字段时才回落到这里。
+DEFAULT_SESSION_TYPES = ["group"]
+# 「聊天类」名册的唯一落点在 `rate_limit.py`（限流侧与安静侧同一真身，禁第二处
+# 字面量；两层判据不同已在彼处注释写清）。本模块只吃宽层＝被动回复类。
 # F1（S-MAILINGRESS 审计 / S-FIX-MAILINGRESS-R 修复）：email 入枚举面。
 # 判据与运行时咽喉 `chat_reply/runtime/settings.py::_session_types_converter`
 # 对齐——那里早收 email、这里不收，就是「同一键两本枚举账」：/bot runtime set
 # 写 email 能落库，策略校验器却永不认（台账 #50/#56 同族坑）。修法只扩枚举面：
-# 覆盖判定仍走 `check()` 的 `session_type.value` 单一中央真身（本文件 :111 一腿、
-# outbound_gate 的 `_quiet_verdict` 读同一份 session_types），**mail 没有第二道闸**。
+# 覆盖判定仍走 `check()` 里 `session_type.value` 比对这一条中央腿（本文件不另开
+# 第二道闸，outbound_gate 的 `_quiet_verdict` 读同一份 session_types）。
 # 与 QQ 私聊同形制＝**可收、opt-in**：缺省仍是 group，配置收编才生效。
 CONFIGURABLE_SESSION_TYPES = {"private", "group", "email"}
 
@@ -46,10 +49,17 @@ class QuietHoursSettings(StrictBaseModel):
     timezone_name: str = "Asia/Hong_Kong"
     session_types: list[str] = Field(default_factory=lambda: list(DEFAULT_SESSION_TYPES))
     bypass_roles: list[str] = Field(default_factory=lambda: list(DEFAULT_BYPASS_ROLES))
-    # 直连豁免的形状（E05 缺口三）：True＝`@bot` **且**命令类能力才豁免（`∧`）；
-    # False＝旧行为「`@` 或非 bot.chat/bot.content **任一**即旁路」（`∨`，仅供止血回退）。
-    # 旧形状的后果＝安静时段内任意命令能力、任意 @ 全免 ⇒ 这道门夜间等于没上。
-    direct_bypass_requires_both: bool = True
+    # 直连豁免的**两条腿各自一枚开关**（2026-10-01 用户裁定「夜间 @bot 点名仍必应」）。
+    # 曾被并成单枚 `direct_bypass_requires_both`＝把两腿焊成 `∧`，后果是夜里
+    # ①只 @ 不说话的聊天被拦、②指令族也被拦——两枚都是 v21r2 凌晨实弹事故换来的
+    # 锁（`tests/test_v21r2_hotzone_quiet_silence.py` 的
+    # `test_quiet_hours_direct_mention_bypass_preserved` 与
+    # `test_quiet_hours_command_capability_bypass_preserved`，其 docstring 写死
+    # 「既有门语义不变：mentions_bot 直通、非聊天类能力直通」）。缺省两腿**都照旧
+    # 旁路**＝那两把锁的形状；要收紧哪一腿在配置面单独立键裁（读点见
+    # `build_quiet_hours_settings`），不在补丁里代裁。
+    direct_bypass_covers_mentions: bool = True
+    direct_bypass_covers_commands: bool = True
 
     @field_validator("start_time", "end_time")
     @classmethod
@@ -74,8 +84,9 @@ class QuietHoursSettings(StrictBaseModel):
     def normalize_session_types(cls, values: list[str]) -> list[str]:
         normalized = [value.strip().lower() for value in values if value.strip()]
         # F1 修复：枚举面收 email（与运行时咽喉 _session_types_converter 对齐，
-        # 见模块头 CONFIGURABLE_SESSION_TYPES 注释）。判定真身仍是 check() 的
-        # session_type.value 比对（:119 单腿），此处只扩「可配置」面、不造第二道闸。
+        # 见模块头 CONFIGURABLE_SESSION_TYPES 注释）。判定真身仍是 `check()` 里
+        # 「`session_type.value` 是否在 session_types 册上」那一条中央腿，
+        # 此处只扩「可配置」面、不造第二道闸。
         invalid = [value for value in normalized if value not in CONFIGURABLE_SESSION_TYPES]
         if invalid:
             raise ValueError(
@@ -144,11 +155,15 @@ class QuietHoursChecker:
                 reason="outside_quiet_hours",
                 audit_tags=["quiet_hours:ok"],
             )
-        if self._is_direct_request(message, capability_id):
+        leg = self._direct_bypass_leg(message, capability_id)
+        if leg:
             return QuietHoursDecision(
                 allowed=True,
                 reason="direct_request_bypass",
-                audit_tags=["quiet_hours:direct_request_bypass"],
+                audit_tags=[
+                    "quiet_hours:direct_request_bypass",
+                    f"quiet_hours:bypass:{leg}",
+                ],
             )
         return QuietHoursDecision(
             allowed=False,
@@ -160,20 +175,25 @@ class QuietHoursChecker:
             ],
         )
 
-    def _is_direct_request(self, message: IncomingMessage, capability_id: str) -> bool:
-        """直连豁免判据（E05 缺口三：`or` 收成分离为 `and`）。
+    def _direct_bypass_leg(self, message: IncomingMessage, capability_id: str) -> str:
+        """这条消息命中哪一腿直连豁免（`""`＝不豁免）。
 
-        缺省 strict＝`@bot` **且**命令类能力（不在 CHAT_LIKE_CAPABILITY_IDS）才豁免：
-        - 旧形状里"非 bot.chat 即旁路"这一腿＝**任意命令能力夜间全免**，正是缺口本身；
-        - "只 @ 不说事"那一腿夜间也不再唤醒 bot——安静时间就是给 bot 睡觉用的，
-          真要点名办事走 `@bot /bot …`（两条件同现）这条腿。
+        两腿各读各的开关、互不顶替（用户裁定 2026-10-01）：
+        - `mentions`：@bot 点名——夜里仍必应，与能力是不是聊天类无关；
+        - `commands`：命令类能力（不在宽层名册 `CHAT_LIKE_CAPABILITY_IDS` 里）——
+          指令族照旧直通；`bot.content`（链接解析）属被动回复，不在这一腿。
+        命中的腿名进 audit_tags（`quiet_hours:bypass:{mentions|commands}`），
+        复盘时才分得清「夜里被放行的那条到底是点名还是命令」。
         旁路顺序仍排在 `_has_bypass_role` 之后（admin 在最前，既有语义不动）。
         """
-        mentioned = bool(message.mentions_bot)
-        command_like = capability_id not in CHAT_LIKE_CAPABILITY_IDS
-        if self.settings.direct_bypass_requires_both:
-            return mentioned and command_like
-        return mentioned or command_like
+        settings = self.settings
+        if settings.direct_bypass_covers_mentions and message.mentions_bot:
+            return "mentions"
+        if settings.direct_bypass_covers_commands and (
+            capability_id not in CHAT_LIKE_CAPABILITY_IDS
+        ):
+            return "commands"
+        return ""
 
     def _has_bypass_role(self, message: IncomingMessage) -> bool:
         bypass_roles = set(self.settings.bypass_roles)
@@ -205,10 +225,14 @@ def build_quiet_hours_settings(config: object) -> QuietHoursSettings:
         bypass_roles=list(
             getattr(config, "bot_quiet_hours_bypass_roles", DEFAULT_BYPASS_ROLES)
         ),
-        # 缺口三的收紧开关读点：config 无该字段时取 True＝新行为生效（三面登记见
-        # patches/E05-CONFIG-REQUEST.md，补字段前后这段都不会炸构造）。
-        direct_bypass_requires_both=bool(
-            getattr(config, "bot_quiet_hours_direct_bypass_requires_both", True)
+        # 直连豁免两腿的读点：Config 无该字段时取**代码缺省 True＝两腿照旧旁路**
+        # （既有门语义，v21r2 两把锁钉的就是这一形）。要收紧哪一腿在配置面裁，
+        # 三面同批（config 字段 + settings 热改态登记 + `.env.example`）。
+        direct_bypass_covers_mentions=bool(
+            getattr(config, "bot_quiet_hours_direct_bypass_mentions", True)
+        ),
+        direct_bypass_covers_commands=bool(
+            getattr(config, "bot_quiet_hours_direct_bypass_commands", True)
         ),
     )
 

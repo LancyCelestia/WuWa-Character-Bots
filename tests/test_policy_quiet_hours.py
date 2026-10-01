@@ -10,9 +10,13 @@
   审查 A-15：全天静默语义待产品裁定，此处仅按实现现状如实锁死。
 - 豁免优先级：enabled 开关 > bypass_roles（大小写不敏感）> session_types 过滤
   > 窗口判定 > direct_request。
-- E05 缺口三改判据后的形状：direct_request 缺省＝`@bot` **且**命令类能力才豁免
-  （`∧`）；`session_types` 缺省含 private。旧 `∨` 形状经
-  `direct_bypass_requires_both=False` 止血回退（配对锁见本文件 direct_request 段）。
+- E05 缺口三的形状（2026-10-01 用户裁定「夜间 @bot 点名仍必应」后定稿）：直连豁免
+  **两腿各一枚开关**——`direct_bypass_covers_mentions` / `direct_bypass_covers_commands`，
+  缺省都是 True＝既有门语义（v21r2 两把锁钉的形状：只 @ 也直通、非聊天类能力也直通）；
+  收紧哪一腿由配置面单独立键裁，不由补丁焊。曾被并成单枚 `requires_both` 焊成 `∧`，
+  那两把锁当场红。
+- `session_types` 缺省＝**只罩 group**（私聊/email 进不进覆盖面属配置面，见
+  `build_quiet_hours_settings` 读点注释）；本文件只锁"缺省没被代码擅自扩"。
 - 非法时间串/时区在 pydantic 校验期即拒绝（ValidationError）；settings 为
   callable 时求值异常或类型不对 → 回退默认（enabled=False，不误拦消息）。
 """
@@ -25,6 +29,9 @@ import pytest
 from pydantic import ValidationError
 
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.chat_reply.policy import (
+    rate_limit as rate_limit_module,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.policy.quiet_hours import (
     QuietHoursChecker,
     QuietHoursSettings,
@@ -227,21 +234,35 @@ def test_role_bypass_precedes_session_type_filter() -> None:
 
 
 # ---------------------------------------------------------------------------
-# SESSION_TYPES 过滤（E05 缺口三：缺省含 group + private）
+# SESSION_TYPES 过滤（缺册＝只罩 group；私聊/email 进不进属配置面，不许代码擅自扩）
 # ---------------------------------------------------------------------------
 
 
-def test_private_session_is_covered_by_default() -> None:
-    """缺省会话册含 private ⇒ 私聊不再整条免检（旧行为：session_type_excluded）。"""
+def test_private_session_is_excluded_by_default() -> None:
+    """缺省册里没有 private ⇒ 私聊走 `session_type_excluded`（覆盖它要配置面裁）。
+
+    曾有版本把 private 擅自写进 `DEFAULT_SESSION_TYPES`，等于在补丁里替用户裁了
+    「夜间私聊也哑」——三面登记（config 字段 / settings 热改态 / `.env.example`）
+    一行没动，正是台账 #68★ 点名的「只补一面必红另一面」。
+    """
+    assert QuietHoursSettings().session_types == ["group"]
     checker = _checker(clock=lambda: _utc(23, 30))
+    decision = checker.check(_msg(SessionType.PRIVATE), "bot.chat")
+    assert decision.allowed is True
+    assert decision.reason == "session_type_excluded"
+
+
+def test_private_coverage_requires_explicit_config() -> None:
+    """合法形：配置把 private 收进册 ⇒ 私聊夜里真的被拦（旋钮可用，缺省不擅自）。"""
+    checker = _checker(_settings(session_types=["group", "private"]), clock=lambda: _utc(23, 30))
     decision = checker.check(_msg(SessionType.PRIVATE), "bot.chat")
     assert decision.allowed is False
     assert decision.reason == "quiet_hours"
 
 
 def test_email_still_opt_in() -> None:
-    """email 属配置面 opt-in（F1 口径不动）：新缺省册里没有它，未登记就是缺席。"""
-    assert QuietHoursSettings().session_types == ["group", "private"]
+    """email 属配置面 opt-in（F1 口径不动）：缺省册里没有它，未登记就是缺席。"""
+    assert QuietHoursSettings().session_types == ["group"]
     checker = _checker(_settings(session_types=["group"]), clock=lambda: _utc(23, 30))
     decision = checker.check(_msg(SessionType.PRIVATE), "bot.chat")
     assert decision.allowed is True
@@ -288,7 +309,7 @@ def test_session_types_rejects_unknown_value() -> None:
 
 
 # ---------------------------------------------------------------------------
-# direct_request 豁免（E05 缺口三：`@` 与非 chat 能力**同现**才旁路）
+# direct_request 豁免（两腿各一枚开关；缺省两腿都直通＝既有门语义）
 # 判据不吃文本形状——mentions_bot 与 capability_id 两维就够（命令文本长什么样
 # 属路由侧的事，安静时间不该再第二条判据）。
 # ---------------------------------------------------------------------------
@@ -301,39 +322,71 @@ def test_mentioned_command_bypasses_inside_window() -> None:
     assert decision.allowed is True
     assert decision.reason == "direct_request_bypass"
     assert "quiet_hours:direct_request_bypass" in decision.audit_tags
+    # 腿名进审计：复盘时分得清夜里被放行的是点名还是命令（两腿同现时记 mentions，
+    # 与旧 `∨` 形状的判序一致）。
+    assert "quiet_hours:bypass:mentions" in decision.audit_tags
 
 
-def test_command_without_mention_is_blocked() -> None:
-    """越界形：不打 @ 的任意命令能力夜里不再白拿旁路（这就是缺口本身）。"""
-    checker = _checker(clock=lambda: _utc(23, 30))
-    decision = checker.check(_msg(), "bot.music")
-    assert decision.allowed is False
-    assert decision.reason == "quiet_hours"
-    assert decision.audit_tags == [
-        "quiet_hours:blocked",
-        "quiet_hours:session:group",
-        "quiet_hours:capability:bot.music",
-    ]
-
-
-def test_mentioned_chat_is_blocked_by_default() -> None:
-    """只 @ 不说事（bot.chat）夜里不唤醒 bot——安静时间就是给 bot 睡觉用的。"""
+def test_mentioned_chat_bypasses_by_default() -> None:
+    """用户裁定（2026-10-01）：夜间 @bot 点名仍必应——mentions 腿单腿即直通。"""
     checker = _checker(clock=lambda: _utc(23, 30))
     decision = checker.check(_msg(mentions=True), "bot.chat")
-    assert decision.allowed is False
-    assert decision.reason == "quiet_hours"
+    assert decision.allowed is True
+    assert decision.reason == "direct_request_bypass"
+    assert "quiet_hours:bypass:mentions" in decision.audit_tags
+
+
+def test_command_capability_without_mention_bypasses_by_default() -> None:
+    """既有门语义（v21r2 锁）：指令族不被点名也直通；审计记 commands 腿。"""
+    checker = _checker(clock=lambda: _utc(23, 30))
+    decision = checker.check(_msg(), "bot.music")
+    assert decision.allowed is True
+    assert decision.reason == "direct_request_bypass"
+    assert "quiet_hours:bypass:commands" in decision.audit_tags
+
+
+def test_mentions_leg_can_be_tightened_independently() -> None:
+    """收紧只关 mentions 这枚开关时：@ 聊天与 @ 命令都落回拦截，命令腿不受累。"""
+    checker = _checker(
+        _settings(direct_bypass_covers_mentions=False), clock=lambda: _utc(23, 30)
+    )
+    assert checker.check(_msg(mentions=True), "bot.chat").reason == "quiet_hours"
+    assert checker.check(_msg(mentions=True), "bot.music").reason == "direct_request_bypass"
+
+
+def test_commands_leg_can_be_tightened_independently() -> None:
+    """收紧只关 commands 这枚开关时：夜里命令也要过时间门，@ 点名仍必应。"""
+    checker = _checker(
+        _settings(direct_bypass_covers_commands=False), clock=lambda: _utc(23, 30)
+    )
+    assert checker.check(_msg(), "bot.music").reason == "quiet_hours"
+    assert checker.check(_msg(mentions=True), "bot.chat").reason == "direct_request_bypass"
+
+
+def test_both_legs_off_reduces_gate_to_role_and_window_only() -> None:
+    """两腿都关＝静窗内除 admin/旁路角色外一律拦（极端收紧形态）。"""
+    checker = _checker(
+        _settings(
+            direct_bypass_covers_mentions=False,
+            direct_bypass_covers_commands=False,
+        ),
+        clock=lambda: _utc(23, 30),
+    )
+    assert checker.check(_msg(mentions=True), "bot.music").reason == "quiet_hours"
+    assert checker.check(_msg(roles=("admin",)), "bot.music").reason == "role_bypass"
 
 
 @pytest.mark.parametrize(
     ("mentions", "capability_id", "expect_allowed"),
     [
-        (True, "bot.chat", False),  # 旧形状里这一腿靠 mentions 免检
-        (False, "bot.music", False),  # 旧形状里这一腿靠非 chat 免检
-        (True, "bot.music", True),  # 两条件同现才免检
-        (False, "bot.chat", False),
+        (True, "bot.chat", True),  # 点名腿：@ 了就应
+        (False, "bot.music", True),  # 命令腿：指令族直通
+        (True, "bot.music", True),  # 两腿同现也直通
+        (False, "bot.chat", False),  # 没人点名的群聊＝静窗该拦的那条
+        (False, "bot.content", False),  # 链接解析属被动回复层，不在命令腿
     ],
 )
-def test_and_truth_table(
+def test_default_dual_switch_truth_table(
     mentions: bool, capability_id: str, expect_allowed: bool
 ) -> None:
     checker = _checker(clock=lambda: _utc(23, 30))
@@ -341,15 +394,21 @@ def test_and_truth_table(
     assert decision.allowed is expect_allowed
 
 
-def test_legacy_or_bypass_available_via_flag() -> None:
-    """止血开关：direct_bypass_requires_both=False 逐字节回退旧 `∨` 语义。"""
-    checker = _checker(
-        _settings(direct_bypass_requires_both=False), clock=lambda: _utc(23, 30)
-    )
-    assert checker.check(_msg(mentions=True), "bot.chat").reason == (
-        "direct_request_bypass"
-    )
+def test_legacy_or_shape_is_the_default_no_second_flag() -> None:
+    """`∧` 那枚单开关已摘除：形状只能由两腿开关组合表达，禁第三枚旋钮。"""
+    assert "direct_bypass_requires_both" not in QuietHoursSettings.model_fields
+    checker = _checker(clock=lambda: _utc(23, 30))
+    assert checker.check(_msg(mentions=True), "bot.chat").reason == "direct_request_bypass"
     assert checker.check(_msg(), "bot.music").reason == "direct_request_bypass"
+
+
+def test_chat_like_roster_has_a_single_truth_source() -> None:
+    """并册锁：安静侧的名册就是限流侧那一份对象（禁第二处字面量回流）。"""
+    from plugins.bot_unified_runtime.domains.chat_reply.policy import quiet_hours
+
+    assert quiet_hours.CHAT_LIKE_CAPABILITY_IDS is rate_limit_module.CHAT_LIKE_CAPABILITY_IDS
+    assert "bot.content" in quiet_hours.CHAT_LIKE_CAPABILITY_IDS
+    assert "bot.content" not in rate_limit_module.CHAT_CAPABILITY_IDS  # 命令帽仍罩它
 
 
 def test_role_bypass_still_precedes_the_direct_leg() -> None:
@@ -493,7 +552,8 @@ class _Config:
     bot_quiet_hours_timezone: ClassVar[str] = "UTC"
     bot_quiet_hours_session_types: ClassVar[list[str]] = ["group", "private"]
     bot_quiet_hours_bypass_roles: ClassVar[list[str]] = ["admin", "super_admin"]
-    bot_quiet_hours_direct_bypass_requires_both: ClassVar[bool] = False
+    bot_quiet_hours_direct_bypass_mentions: ClassVar[bool] = False
+    bot_quiet_hours_direct_bypass_commands: ClassVar[bool] = False
 
 
 def test_build_settings_from_config_maps_all_fields() -> None:
@@ -504,7 +564,8 @@ def test_build_settings_from_config_maps_all_fields() -> None:
     assert settings.timezone_name == "UTC"
     assert settings.session_types == ["group", "private"]
     assert settings.bypass_roles == ["admin", "super_admin"]
-    assert settings.direct_bypass_requires_both is False
+    assert settings.direct_bypass_covers_mentions is False
+    assert settings.direct_bypass_covers_commands is False
 
 
 def test_build_settings_defaults_on_plain_object() -> None:
@@ -512,10 +573,12 @@ def test_build_settings_defaults_on_plain_object() -> None:
     assert settings.enabled is False
     assert settings.start_time == "23:00"
     assert settings.end_time == "07:00"
-    assert settings.session_types == ["group", "private"]
+    # 缺省册＝只罩 group：私聊进册要 Config 显式带字段（三面同批），读点不代裁。
+    assert settings.session_types == ["group"]
     assert settings.bypass_roles == ["admin"]
-    # 缺口三的新缺省＝收紧形（Config 无字段时也照样生效，不靠三面登记才生效）。
-    assert settings.direct_bypass_requires_both is True
+    # Config 无键时取代码缺省 True＝两腿照旧直通（既有门语义，不靠三面登记才不哑）。
+    assert settings.direct_bypass_covers_mentions is True
+    assert settings.direct_bypass_covers_commands is True
 
 
 def test_build_checker_uses_provider_when_given() -> None:

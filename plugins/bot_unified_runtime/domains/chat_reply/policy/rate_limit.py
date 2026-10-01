@@ -23,7 +23,19 @@ from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
 
 from . import redrive_ledger
 
-CHAT_CAPABILITY_IDS = {"bot.chat"}
+# ---- 「聊天类」名册的唯一落点（W1 并册）------------------------------------
+# 曾三处各写一份字面量（限流侧 / 安静侧 / 预算侧），安静侧还把 `bot.content`
+# 算成聊天、限流侧把它算成命令 ⇒ 同一条能力两本账，改一处漏一处。
+# 名册只准从这里导入（quiet_hours.py 已改吃本模块，`reply_budget.py` 那枚同名
+# 集合在别席手里，登记进交接面）。两层**不同判据、同一真身**：
+# 窄层＝走聊天句数账/点名最小间隔、且**不进命令帽**的那一层；判据与管道
+# `interactive` 那句（`capability_id != "bot.chat"`）同口径，少罩一个能力就是零限流。
+CHAT_CAPABILITY_IDS = frozenset({"bot.chat"})
+# 宽层＝「由消息内容自己触发的被动回复」（聊天 + 链接解析）＝安静时间本该拦的那层。
+# `bot.content` 是回复不是命令（真身＝`runtime/base_router.py` 的 RouteKind.CONTENT
+# 册，链接命中即触发）：夜里没人 @ 它就不该开口；而限流侧它仍归命令帽罩 ⇒ 两层
+# 各有读点、字面量只在这里出现一次。
+CHAT_LIKE_CAPABILITY_IDS = CHAT_CAPABILITY_IDS | frozenset({"bot.content"})
 DEFAULT_BYPASS_ROLES = ["admin"]
 
 # 群节奏层的桶名（InMemory 与 SQLite 共用同一组 scope，判定序也共用）。
@@ -2398,6 +2410,14 @@ class RedriveSettings:
 # 仍然补回（那是白抽签），判据住在 `_is_directed_request(..., proactive_selected=True)`
 # 的显式标签腿，由 pipeline 当场把已算好的 `proactive_request` 递进来——
 # 补的是「已经欠下的那句」，不是「再抽一次签」。
+# 也刻意不含 command_rate_limited（E05 缺口二，W1 复核后维持）：补回是把整条消息
+# 重放**完整链路**（`pipeline._redrive_after` 复用 handle_async），而 `_is_directed_request`
+# 把所有非 chat 能力都算「欠一句回复」⇒ 一旦进白名单，每条被帽命令都会重放
+# `max_attempts` 次，每次都重新过命令帽：12/分钟的帽被 3 次重放吃成最多 36 句，
+# 洪水只是延后并没有被挡住；用户手动重敲过的还会几分钟后二次刷屏。
+# 「被帽命令静默无回执」是**回执面**的账（pipeline 那条 `public_message=""`，
+# 且 `pick_rate_limit_exhausted_notice` 现役零消费者＝说明面本身没接线），
+# 该补在说明上，不该用重放去补。
 _REDRIVE_REASONS = frozenset(
     {
         "sender_min_interval",

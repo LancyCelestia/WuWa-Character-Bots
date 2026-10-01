@@ -781,6 +781,17 @@ class Config(BaseModel):
     bot_group_black2: list[str] = []
     bot_group_white1: list[str] = []
     bot_group_white2: list[str] = []
+    # 命令态群须在册（门禁缺口一，判据真身 policy/gate.py::evaluate_policy 的
+    # `command_group_unlisted` 一腿）：群不属于任何一张策略册（black1/black2/
+    # white1/white2，含管理员热改的动态名单）时，群内 `/bot` 与别名命令一律否决。
+    # 缺省 True＝收紧（安全侧）；置 False 回退旧行为——旧行为是「bot 所在任意群的
+    # 任意成员可敲全部 /bot」，只作事故止血用，不作常态配置。
+    # 只收紧**命令腿**：被动回复侧（未触发群消息 → `passive_group_message`）与黑白
+    # 名单四档判据、硬否决顺序一字未动。
+    # ⚠ 止血面形态：本键由 gate.py 在**每次判定时**经 driver config → os.environ
+    # 现读（装配方 runtime/pipeline.py 未透传 PolicySettings 那一枚，故走配置面这条
+    # 唯一通路）；`.env` 改动仍要重启才装载（NoneBot dotenv 只在进程启动时装）。
+    bot_gate_command_requires_listed_group: bool = True
     bot_meme_search_enabled: bool = False
     bot_meme_search_timeout_seconds: float = 8.0
     bot_meme_search_cache_seconds: int = 600
@@ -1628,12 +1639,44 @@ class Config(BaseModel):
     bot_rate_limit_emotion_exempt: bool = True
     bot_rate_limit_bypass_roles: list[str] = ["admin"]
     bot_rate_limit_db_path: str = ""
+    # ---- 命令腿独立分钟帽（门禁缺口二；判据真身 policy/rate_limit.py 的
+    # `command_rate_limited` 一腿，`command_allowed` 为放行记账）----
+    # 缺陷底账：pipeline 把 `capability_id != "bot.chat"` 一律标 interactive=True，
+    # 而两把限流器都在 interactive / non_chat_capability 处早退放行 ⇒ 全部命令能力
+    # 此前**零限流**（任意成员可在群里把 /bot 敲到算力见底）。命令帽做在两条早退腿
+    # **之前**，与 chat 句数帽分册记账（scope 前缀 command_*）。
+    # 读点真身＝policy/rate_limit.py::build_rate_limit_settings（getattr 字面读点，
+    # 经装配期 settings_provider 每轮现读本 Config 的值）；这五枚**未登记进热改合并层**
+    # （合并表 _RUNTIME_HOT_OVERRIDE_FIELDS 归根 __init__.py，本波禁写）⇒ 改这里＝
+    # 改 .env + 重启（登记见 runtime/settings.py::RESTART_REQUIRED_KEYS）。
+    # 数值取向：沿用 rate_limit.py 里的既有缺省，本批**一个数字都没改**。
+    bot_rate_limit_command_enabled: bool = True
+    # 窗长（秒）；<1 会被 RateLimitSettings 校验器拒（消费侧同一条腿）。
+    bot_rate_limit_command_window_seconds: int = 60
+    # 0 = 该腿不生效（与群句数帽同口径，避免 min(n,0) 反向变成「不限」）。
+    bot_rate_limit_command_sender_max_requests: int = 12
+    bot_rate_limit_command_group_max_requests: int = 20
+    # 命令腿自己的旁路脸：与 chat 侧 `bot_rate_limit_bypass_roles` **解耦**——
+    # 要把管理员也关进帽子里改这一枚，别动 bypass_roles（那会改到聊天侧语义）。
+    # 超管经 roles.py 自动叠 admin ⇒ 管理员自救通道默认不被这道帽锁死。
+    bot_rate_limit_command_bypass_roles: list[str] = ["admin"]
     bot_quiet_hours_enabled: bool = True
     bot_quiet_hours_start: str = "00:00"
     bot_quiet_hours_end: str = "06:00"
     bot_quiet_hours_timezone: str = "Asia/Hong_Kong"
     bot_quiet_hours_session_types: list[str] = ["group"]
     bot_quiet_hours_bypass_roles: list[str] = ["admin"]
+    # ---- 安静时段「直连豁免」两腿各自的开关（门禁缺口三；判据真身
+    # policy/quiet_hours.py::QuietHoursChecker._direct_bypass_leg）----
+    # 2026-10-01 用户裁定：两腿**各一枚**开关、互不顶替（曾被并成单枚
+    # `direct_bypass_requires_both`＝把两腿焊成 `∧`，夜里「只 @ 不说话」与整族命令
+    # 一起被拦，撞掉 v21r2 凌晨实弹事故换来的两把锁）。
+    # 缺省两腿都照旧旁路＝既有门语义逐字节不变；要收紧哪一腿在配置面单独裁，
+    # 不由补丁代裁。读点＝build_quiet_hours_settings 的 getattr 字面读点。
+    # ⚠ 同族前六枚在热改合并层（根 __init__ 的 _RUNTIME_HOT_OVERRIDE_FIELDS）已登记、
+    # 这两枚新出未登记 ⇒ 改这里＝改 .env + 重启。
+    bot_quiet_hours_direct_bypass_mentions: bool = True
+    bot_quiet_hours_direct_bypass_commands: bool = True
     # 订阅系统基础框架（bot.subscribe）：定时拉取平台新内容并私聊/群聊推送。
     bot_subscribe_enabled: bool = True
     bot_subscribe_db_path: str = "data/subscriptions.sqlite3"
@@ -2162,6 +2205,7 @@ class Config(BaseModel):
 
     @field_validator(
         "bot_rate_limit_bypass_roles",
+        "bot_rate_limit_command_bypass_roles",
         "bot_quiet_hours_session_types",
         "bot_quiet_hours_bypass_roles",
         mode="before",

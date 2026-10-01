@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
+from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     RiskLevel,
@@ -13,6 +17,18 @@ from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
     configure_proactive_affinity_gate,
     evaluate_policy,
     group_is_listed,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.policy.quiet_hours import (
+    QuietHoursSettings,
+    build_quiet_hours_settings,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.policy.rate_limit import (
+    RateLimitSettings,
+    build_rate_limit_settings,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+    RESTART_REQUIRED_KEYS,
+    SETTABLE_KEYS,
 )
 
 
@@ -304,3 +320,163 @@ def test_group_is_listed_uses_the_four_slots_single_truth() -> None:
     # 槽名真身＝四档；多给无关键不算在册。
     assert not group_is_listed({"grey": frozenset({"g"})}, "g")
     assert set(GROUP_POLICY_SLOTS) == {"black1", "black2", "white1", "white2"}
+
+
+# ---------------------------------------------------------------------------
+# W2 · 门禁准入键的三面登记账（台账 #68★：幽灵字段补齐＝config 字段 + settings.py
+# 热改态登记 + `.env.example` **三面齐**，只补一面必红另一面）。
+# 本段是「三面齐」这件事的常驻锁：任一面被摘掉、或新补同类键却只补一面，当场点名。
+# 登记账本文＝patches/E05-CONFIG-REQUEST.md。
+# ---------------------------------------------------------------------------
+
+#: (Config 字段名, env 键名)——八枚逐枚点名，缺一枚就是漏登记。
+#: 安静时间两枚的真身读点＝`quiet_hours.py::build_quiet_hours_settings` 的
+#: `bot_quiet_hours_direct_bypass_{mentions,commands}`（2026-10-01 用户裁定把早前
+#: 单枚 `..._requires_both` 拆成两腿各一枚；本席按**落盘读点**定名，不自创键名）。
+ADMISSION_KEYS_ON_THREE_FACES: tuple[tuple[str, str], ...] = (
+    ("bot_gate_command_requires_listed_group", "BOT_GATE_COMMAND_REQUIRES_LISTED_GROUP"),
+    (
+        "bot_quiet_hours_direct_bypass_mentions",
+        "BOT_QUIET_HOURS_DIRECT_BYPASS_MENTIONS",
+    ),
+    (
+        "bot_quiet_hours_direct_bypass_commands",
+        "BOT_QUIET_HOURS_DIRECT_BYPASS_COMMANDS",
+    ),
+    ("bot_rate_limit_command_enabled", "BOT_RATE_LIMIT_COMMAND_ENABLED"),
+    ("bot_rate_limit_command_window_seconds", "BOT_RATE_LIMIT_COMMAND_WINDOW_SECONDS"),
+    ("bot_rate_limit_command_sender_max_requests", "BOT_RATE_LIMIT_COMMAND_SENDER_MAX_REQUESTS"),
+    ("bot_rate_limit_command_group_max_requests", "BOT_RATE_LIMIT_COMMAND_GROUP_MAX_REQUESTS"),
+    ("bot_rate_limit_command_bypass_roles", "BOT_RATE_LIMIT_COMMAND_BYPASS_ROLES"),
+)
+
+_ENV_EXAMPLE = Path(__file__).resolve().parents[1] / ".env.example"
+_ACTIVE_ENV_KEY_RE = re.compile(r"^([A-Z][A-Z0-9_]*)=", re.MULTILINE)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "env_key"),
+    ADMISSION_KEYS_ON_THREE_FACES,
+    ids=[env for _, env in ADMISSION_KEYS_ON_THREE_FACES],
+)
+def test_admission_key_is_registered_on_all_three_faces(field_name: str, env_key: str) -> None:
+    """①Config 有字段 ②热改面有唯一表态 ③`.env.example` 有**激活**键行（注释形态不算）。"""
+    assert field_name in Config.model_fields, f"{field_name} 缺 config.py 字段（写了不生效）"
+
+    listed = set(SETTABLE_KEYS) | set(RESTART_REQUIRED_KEYS)
+    assert env_key in listed, (
+        f"{env_key} 对热改面没表态：既不在 SETTABLE_KEYS 也不在 RESTART_REQUIRED_KEYS"
+        "（管理员看不出它能不能热改）"
+    )
+    assert not (env_key in SETTABLE_KEYS and env_key in RESTART_REQUIRED_KEYS), (
+        f"{env_key} 两表同现 ⇒ 热改档位无唯一真值"
+    )
+
+    active_keys = {
+        m.group(1) for m in _ACTIVE_ENV_KEY_RE.finditer(_ENV_EXAMPLE.read_text(encoding="utf-8"))
+    }
+    assert env_key in active_keys, (
+        f"{env_key} 不在 `.env.example` 的激活键行里 ⇒ 运维照旧不知道有这枚开关"
+        "（本断言刻意不认 `# KEY=` 注释形态，与 test_env_example_gate 同口径）"
+    )
+
+
+def test_command_gate_config_default_is_the_safe_side() -> None:
+    """缺省取向核对（补台账 #69★ 那条「补键的门只判在场不校验缺省值」的牙）：
+    配置面缺省必须＝收紧侧 True，且 PolicySettings 侧留 None＝「交配置面判」。"""
+    info = Config.model_fields["bot_gate_command_requires_listed_group"]
+    assert info.default is True, "命令态在册门的配置面缺省漂了（安全侧必须=True）"
+    assert PolicySettings().command_requires_listed_group is None, (
+        "PolicySettings 侧不许把缺省写回硬编码 True——None 才是「按配置面判定」那一档，"
+        "装配方显式传值时仍优先"
+    )
+
+
+@pytest.mark.parametrize("raw", ["false", "0", "no", "off"])
+def test_env_switch_actually_closes_the_command_gate(
+    raw: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """止血面必须**实测能关**（简报硬话：想关掉不能只能改码 + 重启）。
+
+    `"false"` 折成假值这一腿是承重结构：driver config / os.environ 存的是原文字符串，
+    `bool("false")` 恒真＝「写了没用」的静默失效形态。
+    """
+    monkeypatch.setenv("BOT_GATE_COMMAND_REQUIRES_LISTED_GROUP", raw)
+    decision = evaluate_policy(_group("/bot status"), "bot.status", PolicySettings())
+    assert decision.allowed is True, f"配置面写 {raw!r} 没关掉这道门＝止血面是假的"
+
+
+def test_env_garbage_keeps_the_gate_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """认不出的形态宁按缺省收紧，绝不猜用户的意思（fail-close）。"""
+    monkeypatch.setenv("BOT_GATE_COMMAND_REQUIRES_LISTED_GROUP", "maybe")
+    decision = evaluate_policy(_group("/bot status"), "bot.status", PolicySettings())
+    assert decision.reason == "command_group_unlisted"
+
+
+def test_explicit_flag_beats_the_config_surface(monkeypatch: pytest.MonkeyPatch) -> None:
+    """装配方/单测显式传值优先于配置面：环境写 false 也压不住显式 True 的判定。"""
+    monkeypatch.setenv("BOT_GATE_COMMAND_REQUIRES_LISTED_GROUP", "false")
+    decision = evaluate_policy(
+        _group("/bot status"),
+        "bot.status",
+        PolicySettings(command_requires_listed_group=True),
+    )
+    assert decision.reason == "command_group_unlisted"
+
+
+def test_new_config_fields_drive_the_consumer_settings() -> None:
+    """七枚消费侧键（rate_limit 五枚 + quiet_hours 两枚）缺省**逐枚等于**消费侧模型的
+    缺省，且改了 Config 就改了消费侧读数 ⇒ 证明键不是「登记在册却没人读」的镜像。"""
+    rate = build_rate_limit_settings(Config())
+    baseline = RateLimitSettings()
+    for field in (
+        "command_enabled",
+        "command_window_seconds",
+        "command_sender_max_requests",
+        "command_group_max_requests",
+        "command_bypass_roles",
+    ):
+        assert getattr(rate, field) == getattr(baseline, field), (
+            f"Config 缺省与 RateLimitSettings.{field} 缺省分叉＝两本账"
+        )
+    assert build_quiet_hours_settings(Config()).direct_bypass_covers_mentions is (
+        QuietHoursSettings().direct_bypass_covers_mentions
+    )
+    assert build_quiet_hours_settings(Config()).direct_bypass_covers_commands is (
+        QuietHoursSettings().direct_bypass_covers_commands
+    )
+
+    moved = build_rate_limit_settings(
+        Config.model_validate(
+            {
+                "bot_rate_limit_command_enabled": False,
+                "bot_rate_limit_command_window_seconds": 30,
+                "bot_rate_limit_command_sender_max_requests": 3,
+                "bot_rate_limit_command_group_max_requests": 5,
+                "bot_rate_limit_command_bypass_roles": ["admin", "trusted"],
+            }
+        )
+    )
+    assert moved.command_enabled is False
+    assert moved.command_window_seconds == 30
+    assert moved.command_sender_max_requests == 3
+    assert moved.command_group_max_requests == 5
+    assert moved.command_bypass_roles == ["admin", "trusted"]
+
+    tightened = build_quiet_hours_settings(
+        Config.model_validate(
+            {
+                "bot_quiet_hours_direct_bypass_mentions": False,
+                "bot_quiet_hours_direct_bypass_commands": False,
+            }
+        )
+    )
+    assert tightened.direct_bypass_covers_mentions is False
+    assert tightened.direct_bypass_covers_commands is False
+
+
+def test_command_bypass_roles_accepts_delimiter_string() -> None:
+    """`.env` 里写 `admin;trusted` 这类分隔串必须能装载（与同族 bypass_roles 共用
+    `_parse_role_list` 那条腿；漏挂 validator 会当场 ValidationError＝「写了就炸」）。"""
+    parsed = Config.model_validate({"bot_rate_limit_command_bypass_roles": "admin;trusted"})
+    assert parsed.bot_rate_limit_command_bypass_roles == ["admin", "trusted"]

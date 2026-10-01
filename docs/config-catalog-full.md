@@ -768,6 +768,14 @@
 | `BOT_QUIET_HOURS_TIMEZONE` | str | `Asia/Hong_Kong` | IANA 时区 | ✅热更 | 免打扰时区（独立于 `BOT_TIMEZONE`） | |
 | `BOT_QUIET_HOURS_SESSION_TYPES` | list[str] | `["group"]` | 会话类型列表 | ✅热更 | 适用的会话类型 | |
 | `BOT_QUIET_HOURS_BYPASS_ROLES` | list[str] | `["admin"]` | 角色名列表 | ✅热更 | 豁免角色 | |
+| `BOT_QUIET_HOURS_DIRECT_BYPASS_MENTIONS` | bool | `True` | 0/1 | 🟡需重启 | 安静时段直连豁免的 mentions 腿：True＝@bot 点名夜间仍必应，False＝收紧这一腿 | 判据真身 `policy/quiet_hours.py::_direct_bypass_leg`；同族六枚在合并层已登记、本枚新出未登记 |
+| `BOT_QUIET_HOURS_DIRECT_BYPASS_COMMANDS` | bool | `True` | 0/1 | 🟡需重启 | 安静时段直连豁免的 commands 腿：True＝命令类能力夜间直通（既有语义），False＝命令关进这道门 | 与 mentions 腿分立、互不顶替（2026-10-01 用户裁定） |
+| `BOT_GATE_COMMAND_REQUIRES_LISTED_GROUP` | bool | `True` | 0/1 | 🟡需重启 | 命令态群须在册：群不属四册（black1/black2/white1/white2，含动态名单）时群内 `/bot` 与别名命令一律否决；只收紧命令腿 | 判据真身 `policy/gate.py` 的 `command_group_unlisted`；读点＝gate 现读 driver config→os.environ，装配层未透传 |
+| `BOT_RATE_LIMIT_COMMAND_ENABLED` | bool | `True` | 0/1 | 🟡需重启 | 命令腿帽总开关 | 读点 `policy/rate_limit.py::build_rate_limit_settings`，合并层未登记该键 |
+| `BOT_RATE_LIMIT_COMMAND_WINDOW_SECONDS` | int | `60` | ≥1 | 🟡需重启 | 命令腿滑动窗长度（秒） | 同上族 |
+| `BOT_RATE_LIMIT_COMMAND_SENDER_MAX_REQUESTS` | int | `12` | ≥0；0=该腿不生效 | 🟡需重启 | 同人命令腿窗内上限 | 同上族；与 chat 句数帽分册记账（scope `command_*`） |
+| `BOT_RATE_LIMIT_COMMAND_GROUP_MAX_REQUESTS` | int | `20` | ≥0；0=该腿不生效 | 🟡需重启 | 同群命令腿窗内上限（私聊不记群账） | 同上族 |
+| `BOT_RATE_LIMIT_COMMAND_BYPASS_ROLES` | list[str] | `["admin"]` | 角色名列表 | 🟡需重启 | 命令腿自己的旁路脸 | 与 `BOT_RATE_LIMIT_BYPASS_ROLES`（聊天侧）分册，改这枚不动聊天语义 |
 
 ### A25 非 Config 键（`.env.example` 存在、但由其他组件消费，不属于本 Config）
 

@@ -39,6 +39,15 @@ from scripts.config_read_point_census import (  # 判据单一真身：门不另
 # **读得到但 .env 进不来**——生产 os.environ 不含 BOT_*（NoneBot dotenv 只把
 # 已声明字段落进 Config），所以账本开关此前**无论 .env 写什么都不生效**。
 # 形态清一色是 getattr 带宽容缺省；note 记的是"不设字段会怎样"，供裁定补字段还是改读点。
+# 〔2026-10-01 席 W2 门禁配置三面补齐再销六枚〕`policy/rate_limit.py` 命令腿五枚
+# （`bot_rate_limit_command_{enabled,window_seconds,sender_max_requests,group_max_requests,bypass_roles}`）
+# 与 `policy/quiet_hours.py` 直连豁免腿（该席在飞把它拆成 `bot_quiet_hours_direct_bypass_{mentions,commands}`
+# 两枚）——读点早已在代码里生效、Config 却没这些字段 ⇒ `.env` 写了被 `extra='ignore'` 静默吃掉。
+# 本批按台账 #68★ 三面同批补齐（config 字段 + settings.py 热改档 + `.env.example`，另加 catalog 第四面），
+# 登记账本＝`patches/E05-CONFIG-REQUEST.md`；缺省逐枚等于代码面缺省 ⇒ 现网零行为变更，
+# 登记项随之消失（本清单从未收它们，因为处置是"补字段"而非"挂账"）。
+# 另注：本门扫到的幽灵数会随他席在飞改名浮动（同一枚判据被拆成两枚 ⇒ 幽灵 +1），
+# 复跑前先 grep 真身读点，别按旧枚数下结论。
 # ---------------------------------------------------------------------------
 GHOST = "plugins/bot_unified_runtime/"
 REGISTERED_GHOSTS: dict[tuple[str, str], str] = {
