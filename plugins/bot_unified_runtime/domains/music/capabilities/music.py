@@ -280,15 +280,29 @@ def _media_parts_for_mode(
     out: list[dict] = []
     audio_url = music_audio_url(item)
     if audio_url and (("voice" in parts) or ("file" in parts)):
-        local_path = (
-            audio_downloader(audio_url)
-            if audio_downloader is not None
-            else None
+        from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+            RejectedUrlError,
         )
-        if "voice" in parts:
-            out.append({"type": "record", "file": str(local_path) if local_path else audio_url})
-        if "file" in parts:
-            out.append({"type": "file", "file": str(local_path) if local_path else audio_url})
+
+        rejected_by_guard = False
+        local_path: str | None = None
+        try:
+            local_path = (
+                audio_downloader(audio_url)
+                if audio_downloader is not None
+                else None
+            )
+        except RejectedUrlError:
+            # W7（对齐 vision 图片腿审查 F-2）：咽喉明确拒绝 ⇒ **整条媒体段撤下**。
+            # 旧形在这里回落成「把原 URL 交给协议端自取」，而投毒形态的入口是**公网**
+            # 直链（咽喉放行）、落点才是内网——协议端照旧盲跟 302，同一个读原语只是
+            # 换了执行者。瞬时失败（返回 None）仍按原形降级发原链接，行为不变。
+            rejected_by_guard = True
+        if not rejected_by_guard:
+            if "voice" in parts:
+                out.append({"type": "record", "file": str(local_path) if local_path else audio_url})
+            if "file" in parts:
+                out.append({"type": "file", "file": str(local_path) if local_path else audio_url})
     if "card" in parts:
         out.extend(_music_card_parts(item))
     return out
@@ -342,11 +356,89 @@ def _resolve_music_data_dir(raw: str) -> Path:
     return runtime_path(raw)
 
 
+# ---------------------------------------------------------------------------
+# 试听音频下载腿（W7，2026-10-31）：手动逐跳咽喉复查 + 音频族文件头 + 逐块限读
+#
+# 审计实证（修复前零锁、可直接利用）：本腿入口过了咽喉，却把跳转整段交给 httpx
+# （客户端 ``follow_redirects`` 打开），而当时的逐跳钩子 ``_scrub_hop`` **只剥凭证、不判
+# 内网**，全文对 ``response.url`` 零复查 ⇒ 一条公网直链回 302→``127.0.0.1:3001``
+# （OneBot 端点）或 ``169.254.169.254``（云元数据）即盲连，响应字节落盘成
+# ``song_<sha1>.<ext>`` 并发进群＝**内网读原语**；且该腿无 magic bytes 判定。
+# 修法两处复用已验证正确形，判据零副本（禁造第二套）：
+#   · 手动逐跳形态＝``domains/meme/sources/meme_library_listener.py:_download_once``；
+#   · 咽喉本体＝``domains/files/sources/downloader.py:check_download_url``（本模块
+#     唯一调用点，入口与每一跳落点共用，跳数上限对齐 urllib 侧收紧后的显式五跳）。
+# 拒绝语义对齐 ``domains/media/ingest/vision_describe.py`` 的审查 F-2：咽喉**明确
+# 拒绝**时上抛 ``RejectedUrlError`` 而非降级成 None——None 会让调用方把「已判危险
+# 的 URL」原样交给协议端自取（那只是同一个洞换个执行者）。
+# ---------------------------------------------------------------------------
+_AUDIO_MAX_REDIRECT_HOPS = 5
+_AUDIO_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+#: 音频族容器品牌（ISO BMFF ``ftyp`` 的 major/compatible brand）。视频壳（``qt  ``/
+#: ``M4V ``/``MSNV``）不在册——本腿只该收音频。
+_AUDIO_MP4_BRANDS = frozenset(
+    {b"M4A ", b"M4B ", b"M4P ", b"mp42", b"isom", b"iso2", b"iso4", b"iso5", b"iso6", b"dash"}
+)
+
+
+def _audio_suffix_from_header(payload: bytes) -> str:
+    """字节头 → 落盘后缀；**非音频族**返回空串（调用方据此弃字节、不落盘）。
+
+    真身口径：content-type 是响应方自述，不算证据（伪装 ``audio/mpeg`` 的 JSON
+    正是这条腿原先唯一能读回内网内容的形态）。全树此前没有音频族 magic-bytes
+    判据（``media/image_guard.py`` 只认图片五族、``media_archive.sniff_extension``
+    只有图/视频），本函数是第一份；别处要用同一判据请上收本件、不要复制字面量。
+    """
+    if len(payload) < 12:
+        return ""
+    if payload.startswith(b"ID3"):
+        return ".mp3"
+    if payload[0] == 0xFF and (payload[1] & 0xE0) == 0xE0:
+        return ".mp3"  # MPEG 帧同步（MP3 / ADTS AAC 同族）
+    if payload.startswith(b"fLaC"):
+        return ".flac"
+    if payload.startswith(b"OggS"):
+        return ".ogg"
+    if payload.startswith(b"RIFF") and payload[8:12] == b"WAVE":
+        return ".wav"
+    if payload.startswith(b"FORM") and payload[8:12] in (b"AIFF", b"AIFC"):
+        return ".aif"
+    if payload[4:8] == b"ftyp":
+        brands = (payload[8:12], payload[12:16], payload[16:20], payload[20:24])
+        if any(brand in _AUDIO_MP4_BRANDS for brand in brands):
+            return ".m4a"
+    return ""
+
+
+def _music_cache_quota_bytes(config: Any | None) -> int:
+    """缓存配额真值：读 config，读不出 ⇒ 回落 ``Config`` 字段缺省。
+
+    治的账（W7 核限额度）：旧形 ``getattr(config, "bot_music_cache_max_bytes", 0) or 0``
+    在 config 缺席（独立入口/夹具）时静默回落成 0，而 ``enforce_quota`` 的 0＝**不限总量**
+    ⇒ 配额在最没人看着的入口上失效。数字不在此重抄（规则 10），缺省本体只写在
+    ``config.py`` 一处；管理员**显式**设 0＝「不清我的缓存」照旧受尊重。
+    """
+    raw = getattr(config, "bot_music_cache_max_bytes", None)
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        from plugins.bot_unified_runtime.config import Config
+
+        fallback = Config.model_fields["bot_music_cache_max_bytes"].default
+        return int(fallback) if isinstance(fallback, int) and fallback > 0 else 0
+    return raw
+
+
 def _default_audio_downloader(config: Any | None = None) -> Callable[[str], str | None]:
-    """把试听直链下载到 data/music/（Runtime 数据根）；失败返回 None，不抛异常。"""
+    """把试听直链下载到 data/music/（Runtime 数据根）。
+
+    失败语义两分（W7）：**瞬时失败**（非 200/超限/非音频字节/网络异常）返回 None，
+    调用方按「只有文字或原链接」降级；**咽喉明确拒绝**（入口或任一落点属内网/保留段/
+    非法协议）上抛 ``RejectedUrlError``——绝不降级成 None（见文件头 F-2 段）。
+    """
     target_dir = _resolve_music_data_dir(
         str(getattr(config, "bot_music_dir", "") or "data/music")
     ).expanduser()
+    # 单响应体积帽：0＝不限只在管理员显式设 0 时成立；getattr 兜底 200MB 是旧形原值。
     max_bytes = int(getattr(config, "bot_download_max_bytes", 209715200) or 0)
     timeout_seconds = float(getattr(config, "bot_download_timeout_seconds", 60) or 60)
     proxy = str(getattr(config, "bot_download_proxy", "") or "")
@@ -368,10 +460,6 @@ def _default_audio_downloader(config: Any | None = None) -> Callable[[str], str 
         )
 
         try:
-            check_download_url(url)
-        except RejectedUrlError:
-            return None
-        try:
             import httpx
         except Exception:  # noqa: BLE001
             return None
@@ -379,53 +467,85 @@ def _default_audio_downloader(config: Any | None = None) -> Callable[[str], str 
 
         def _scrub_hop(request: Any) -> None:
             # ② httpx transport：逐跳复核，跨 host/CDN 时剥 Cookie/Authorization。
+            # ⚠ 本钩子**不判内网**（W7 事故根因：旧形把它当成唯一的逐跳防线）。
+            # 内网判定在下方循环里、发请求之前，用的是中央咽喉本体。
             if not credentials_allowed_for_target(cookie_header, str(request.url)):
                 for key in list(request.headers.keys()):
                     if str(key).lower() in ("cookie", "authorization", "proxy-authorization"):
                         del request.headers[key]
 
-        try:
-            headers = {"user-agent": "Mozilla/5.0"}
-            if allowed_cookie:
-                headers["cookie"] = allowed_cookie
-            kwargs: dict[str, Any] = {
-                "headers": headers,
-                "follow_redirects": True,
-                "timeout": timeout_seconds,
-                "event_hooks": {"request": [_scrub_hop]},
-            }
-            if proxy:
-                kwargs["proxy"] = proxy
-            with httpx.Client(**kwargs) as client:
-                response = client.get(url)
-            response.raise_for_status()
-            payload = response.content
-            if max_bytes > 0 and len(payload) > max_bytes:
-                return None
-            target_dir.mkdir(parents=True, exist_ok=True)
-            digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:12]
-            suffix = ".mp3"
-            content_type = response.headers.get("content-type", "")
-            if "m4a" in content_type:
-                suffix = ".m4a"
-            elif "flac" in content_type:
-                suffix = ".flac"
-            path = target_dir / f"song_{digest}{suffix}"
-            path.write_bytes(payload)
-            try:
-                from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
-                    enforce_quota,
-                )
+        headers = {"user-agent": "Mozilla/5.0"}
+        if allowed_cookie:
+            headers["cookie"] = allowed_cookie
+        kwargs: dict[str, Any] = {
+            "headers": headers,
+            # W7：跳转不再交给客户端自动完成——手动逐跳，每一跳**发出前**过咽喉。
+            "follow_redirects": False,
+            "timeout": timeout_seconds,
+            "event_hooks": {"request": [_scrub_hop]},
+        }
+        # 台账 #71★：空代理键**绝不**写成显式 ``proxy=None``——显式传 proxy 会让
+        # NO_PROXY/环境变量失效，而 ``proxy=None`` 也≠直连（trust_env 回落环境/
+        # 注册表系统代理）。留空时一个键都不传，回落语义原样保留。
+        if proxy:
+            kwargs["proxy"] = proxy
 
-                enforce_quota(
-                    target_dir,
-                    max_bytes=int(getattr(config, "bot_music_cache_max_bytes", 0) or 0),
-                )
-            except Exception:  # noqa: S110, BLE001 - 缓存配额清理失败不影响主链路。
-                pass
-            return str(path)
-        except Exception:  # noqa: BLE001
+        payload: bytes | None = None
+        target = url
+        try:
+            with httpx.Client(**kwargs) as client:
+                for hop in range(_AUDIO_MAX_REDIRECT_HOPS + 1):
+                    # 咽喉**唯一**调用点：入口与每一跳落点共用同一份判据。
+                    check_download_url(target)
+                    with client.stream("GET", target) as response:
+                        if response.status_code in _AUDIO_REDIRECT_STATUSES:
+                            location = str(response.headers.get("location") or "").strip()
+                            if not location or hop >= _AUDIO_MAX_REDIRECT_HOPS:
+                                return None
+                            # 相对 Location 按当前跳解析，再交下一轮复查落点。
+                            target = str(httpx.URL(target).join(location))
+                            continue
+                        if response.status_code != 200:
+                            return None
+                        chunks: list[bytes] = []
+                        size = 0
+                        for chunk in response.iter_bytes():
+                            size += len(chunk)
+                            if max_bytes > 0 and size > max_bytes:
+                                # 逐块限读：不在内存里整读完了才检查大小。
+                                return None
+                            chunks.append(chunk)
+                        if not chunks:
+                            return None
+                        payload = b"".join(chunks)
+                        break
+        except RejectedUrlError as exc:
+            # 拒绝在抛出点 WARNING 留痕（原因文案固定、不含地址），随后**上抛**：
+            # 调用方据此把这一路的媒体段整条撤下，绝不回落成「原 URL 交给协议端」。
+            _LOGGER.warning("music audio leg rejected by SSRF guard: %s", exc)
+            raise
+        except Exception:  # noqa: BLE001 - 瞬时失败按「没拿到音频」降级，不带原因外透。
             return None
+        if payload is None:
+            return None
+        suffix = _audio_suffix_from_header(payload)
+        if not suffix:
+            # 非音频族字节（HTML/JSON/文本伪装、视频壳）：不落盘、不进群。
+            _LOGGER.info("music audio leg dropped non-audio payload bytes=%s", len(payload))
+            return None
+        target_dir.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:12]
+        path = target_dir / f"song_{digest}{suffix}"
+        path.write_bytes(payload)
+        try:
+            from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
+                enforce_quota,
+            )
+
+            enforce_quota(target_dir, max_bytes=_music_cache_quota_bytes(config))
+        except Exception:  # noqa: S110, BLE001 - 缓存配额清理失败不影响主链路。
+            pass
+        return str(path)
 
     return download
 
