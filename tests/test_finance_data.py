@@ -154,6 +154,13 @@ FX_SNAPSHOT_FIXTURE: dict = {
         "SGD": 1.34,
         "MOP": 8.04,
         "AED": 3.67,
+        # 2026-10-02 席位 F1：SUPPORTED_CURRENCIES 补 RUB/CHF/CAD/AUD 后，
+        # 本夹具必须同步给出这四枚，否则「上游全量返回」这条腿会被误判成
+        # DEGRADED。**形状值，非真实报价**（本节头注：结构未实测，fixture 锁行为）。
+        "RUB": 92.4,
+        "CHF": 0.885,
+        "CAD": 1.365,
+        "AUD": 1.52,
     },
 }
 
@@ -535,6 +542,9 @@ class TestFxData:
         assert set(fx_data.SUPPORTED_CURRENCIES) >= {
             "USD", "EUR", "GBP", "JPY", "KRW", "TWD", "CNY", "HKD", "SGD", "MOP", "AED",
         }
+        # 席位 F1（2026-10-02）：用户点名的 11 币必须全部在册（含待验的四枚——
+        # 在册≠有源，三态由 fx_currency_availability() 逐枚表态，门② 执法）。
+        assert set(fx_data.SUPPORTED_CURRENCIES) >= set(fx_data.REQUIRED_CURRENCIES)
         assert fx_data.BASE_CURRENCY == "USD"
 
     def test_snapshot_parsed_from_fixture(self, monkeypatch) -> None:

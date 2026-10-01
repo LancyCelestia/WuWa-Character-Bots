@@ -14,6 +14,29 @@
 ``USD/AED`` 在东财 suggest 实测查无结果 → 登记进 ``FX_UNAVAILABLE_PAIRS``
 （覆盖表见 ``fx_pair_availability``），由能力层展示「暂无数据」，绝不臆造。
 
+**币种三态名册（2026-10-02 席位 F1，P7 汇率补齐）**：用户点名 11 币
+（``REQUIRED_CURRENCIES``）里 RUB/CHF/CAD/AUD 四枚**没有任何已核实的报价腿**
+——本仓与历史工单（``patches/S02-FINANCE-COVERAGE.md`` §2.1）都只把这四枚记为
+「待验」，而「待验」不等于「有源」也不等于「无源」。所以三态分开登记，缺一态
+即视为静默消失（锁 ``tests/test_fx_currency_coverage.py``）：
+
+- ``sourced``＝进 ``_FX_PAIR_UNIVERSE`` 的行，且每枚 secid 在
+  ``_FX_SOURCED_EVIDENCE`` 里有 (实测日期, 实测方式) 条目。**没凭据的行不许进
+  宇宙表**（这是「为了齐全而编源」的唯一代码级防线）；
+- ``unavailable``＝实测查无，登记在 ``FX_UNAVAILABLE_PAIRS`` ＋
+  ``_FX_ABSENT_EVIDENCE``；
+- ``pending``＝候选 secid 已列、真机未探，登记在 ``FX_PENDING_CANDIDATE_SECIDS``
+  （含兜底腿 ``FX_PENDING_FALLBACK_LEGS``）。**候选绝不进宇宙表、绝不进面板、
+  绝不被换算层引用**，用户问到该币时 ``fx_no_quote_reason`` 明写「未接入已核实
+  报价源＋候选腿是谁＋还差哪一步」，不用估算、不用相近币种顶替。
+  探测入口 ``probe_fx_candidates()`` 只给运维/验收用，生产链路不调用它。
+
+兑换换算层：``fx_usd_bridge`` ＋ ``fx_derived_quote`` 只用 ``rate_type="spot"``
+的行搭 USD 三角，产出 ``rate_type="derived"`` 并附口径说明（非中间价、非可成交
+价）——缺任一腿即 ``None``。这条链路是模块头注从一开始就承诺的交叉价通路
+（``cross_rate_from_usd``），2026-10-02 之前从未接进能力层，所以「英镑汇率／
+韩元汇率／新加坡元汇率」这类「币名＋汇率」问句此前一律回「暂无数据」。
+
 **备选源（provenance 快照链路）**：``open.er-api.com/v6/latest/{base}``
 （免 key、覆盖面广）。**诚实边界：该端点在主代理环境实测同样不可达**，
 ``fetch_fx_snapshot`` 保持对外签名不变（capabilities/fx 按它对接），内部仍
@@ -58,7 +81,25 @@ from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
 
 BASE_CURRENCY = "USD"
 
-# 计划要求的 11 个币种（含基准）；展示顺序即此顺序。
+# 用户 2026-10-02 点名的 11 枚币种（席位需求书 §6）：这是「点名 ⊆ 已登记」对账
+# 的尺，逐枚必须恰好落在三态名册之一（sourced / unavailable / pending），
+# 由 tests/test_fx_currency_coverage.py 门②执法。顺序＝展示顺序，勿随意重排。
+REQUIRED_CURRENCIES: tuple[str, ...] = (
+    "USD",
+    "EUR",
+    "JPY",
+    "KRW",
+    "CNY",
+    "HKD",
+    "SGD",
+    "RUB",
+    "CHF",
+    "CAD",
+    "AUD",
+)
+
+# 快照链路（er-api 备选源）请求并逐币对账的目标集合＝点名清单 ∪ 在册历史清单。
+# 币种数以本元组自身为准，叙述文档不手写计数（AGENTS 规则 10）。
 SUPPORTED_CURRENCIES: tuple[str, ...] = (
     "USD",
     "EUR",
@@ -71,6 +112,10 @@ SUPPORTED_CURRENCIES: tuple[str, ...] = (
     "SGD",
     "MOP",
     "AED",
+    "RUB",
+    "CHF",
+    "CAD",
+    "AUD",
 )
 
 _FX_URL = "https://open.er-api.com/v6/latest/{base}"
@@ -299,6 +344,69 @@ _FX_PARITY_ALTERNATES: dict[str, str] = {
 # 东财 suggest 实测查无行情的货币对（2026-09-12），登记为「数据源不可用」。
 FX_UNAVAILABLE_PAIRS: tuple[str, ...] = ("USD/TWD", "USD/MOP", "USD/AED")
 
+# 「实测查无」这句话的唯一真身：覆盖表与用户可见的拒答文案同读此处，
+# 不许出现第二份「暂无」措辞（S02 工单 §2.1 的两份「暂无」之诫）。
+_FX_PAIR_ABSENT_NOTE = "东财无该货币对行情"
+
+# ==================== 三态凭据名册（2026-10-02 席位 F1） ====================
+
+# 有源凭据册：secid → (实测日期, 实测方式)。「有源」只认两种凭据——
+# ① 本模块头注已自陈的「主代理 curl 实测」；② 后续波次真机重探并落日期＋响应形态。
+# 宇宙表里出现无凭据的 secid ＝ 把待验/无源编成有源，门① 当场红。
+# 注：120.USDCNYC 只是 ``_FX_PARITY_ALTERNATES`` 里的备用记录、不在取数链上，
+# 故不占凭据条目（有凭据册只覆盖「真会外呼的 secid」）。
+_FX_SOURCED_EVIDENCE: dict[str, tuple[str, str]] = {
+    "133.USDCNH": ("2026-09-12", "主代理 curl 实测 ulist.np/get（模块头注在册）"),
+    "120.EURCNYC": ("2026-09-12", "主代理 curl 实测 ulist.np/get（模块头注在册）"),
+    "120.JPYCNYC": ("2026-09-12", "主代理 curl 实测 ulist.np/get（100 日元口径）"),
+    "120.HKDCNYC": ("2026-09-12", "主代理 curl 实测 ulist.np/get（模块头注在册）"),
+    "119.USDJPY": ("2026-09-12", "主代理 curl 实测 ulist.np/get（模块头注在册）"),
+    "119.EURUSD": ("2026-09-12", "主代理 curl 实测 ulist.np/get（模块头注在册）"),
+    "119.GBPUSD": ("2026-09-12", "主代理 curl 实测 ulist.np/get（模块头注在册）"),
+    "119.USDKRW": ("2026-09-12", "主代理 curl 实测 ulist.np/get（模块头注在册）"),
+    "119.USDHKD": ("2026-09-12", "主代理 curl 实测 ulist.np/get（模块头注在册）"),
+    "119.USDSGD": ("2026-09-12", "主代理 curl 实测 ulist.np/get（模块头注在册）"),
+}
+
+# 无源凭据册：货币对 → (实测日期, 实测方式)。写进 ``FX_UNAVAILABLE_PAIRS``
+# 的每一枚都必须在这儿查得到，否则「查无」本身也是未经核实的断言。
+_FX_ABSENT_EVIDENCE: dict[str, tuple[str, str]] = {
+    "USD/TWD": ("2026-09-12", "东财 suggest 实测查无行情"),
+    "USD/MOP": ("2026-09-12", "东财 suggest 实测查无行情"),
+    "USD/AED": ("2026-09-12", "东财 suggest 实测查无行情"),
+}
+
+# 候选待验名册：币种 → 候选 secid（直盘两个报价方向都探，加人民币中间价一族）。
+# 命名规律来自已实测的同族行（119.<CCY1><CCY2> 直盘、120.<CCY>CNYC 人民币中间价），
+# CAD/AUD 惯用报价方向是 <CCY>/USD，故两个方向并列，避免只探一侧而误判「无源」。
+# ⚠ 这些 secid 一律**未经真机核实**：不进宇宙表、不进面板、不被换算层引用。
+# 核实前问到该币一律走 ``fx_no_quote_reason`` 明写未接入。
+FX_PENDING_CANDIDATE_SECIDS: dict[str, tuple[str, ...]] = {
+    "RUB": ("119.USDRUB", "119.RUBUSD", "120.RUBCNYC"),
+    "CHF": ("119.USDCHF", "119.CHFUSD", "120.CHFCNYC"),
+    "CAD": ("119.USDCAD", "119.CADUSD", "120.CADCNYC"),
+    "AUD": ("119.USDAUD", "119.AUDUSD", "120.AUDCNYC"),
+}
+
+# 每个待验币的第二条腿（兜底源）。只登记本仓有证据的腿；没有第二腿的
+# 就明写没有——「只有候选一条腿」本身是要在册的可达性事实。
+# er-api 快照链路＝已实现但本机实测不可达的兜底（``fetch_fx_snapshot``）。
+_FX_SNAPSHOT_FALLBACK_LEG = (
+    "er-api 快照链路 fetch_fx_snapshot（代码已实现，本机实测不可达）"
+)
+FX_PENDING_FALLBACK_LEGS: dict[str, str] = {
+    "RUB": (
+        f"{_FX_SNAPSHOT_FALLBACK_LEG}；另 iss.moex.com 外汇板可作第二候选"
+        "（该主机 2026-09-12 实证直连可达，见 market_data 模块头注；外汇端点未探）"
+    ),
+    "CHF": _FX_SNAPSHOT_FALLBACK_LEG,
+    "CAD": _FX_SNAPSHOT_FALLBACK_LEG,
+    "AUD": _FX_SNAPSHOT_FALLBACK_LEG,
+}
+
+# 待验币的展示名（用户可见文案里点名「哪枚还没接上」时用的中文币名）。
+_PENDING_CURRENCY_ORDER: tuple[str, ...] = ("RUB", "CHF", "CAD", "AUD")
+
 _FX_ULIST_URL = (
     "https://push2.eastmoney.com/api/qt/ulist.np/get"
     "?fltt=2&secids={secids}&fields=f2,f3,f4,f12,f13,f14,f18"
@@ -319,15 +427,364 @@ def reset_fx_cache() -> None:
 
 
 def fx_pair_availability() -> dict[str, str]:
-    """货币对覆盖表：有源 → ``eastmoney:<secid> <rate_type>``；
-    东财查无行情 → ``unavailable: 东财无该货币对行情``（供能力层展示）。"""
+    """货币对覆盖表（「能不能报这个数」的单一读点）：
+
+    - 有实测源 → ``eastmoney:<secid> <rate_type>``；
+    - 东财实测查无 → ``unavailable: <_FX_PAIR_ABSENT_NOTE>``；
+    - 可由 USD 三角换算（两条现货腿都在宇宙表里）→ ``cross: <腿1>+<腿2>``；
+    - 候选源待真机核实 → ``pending: <候选 secid 列表>``。
+
+    四态互斥：同一货币对若已有实测源行，**不**再产出 cross/pending 条目（实测源
+    永远优先，避免一个对子两张票）。"""
     table = {
         pair: f"eastmoney:{secid} {rate_type}"
         for pair, secid, rate_type, *_rest in _FX_PAIR_UNIVERSE
     }
+    for pair, legs in _derived_pair_legs().items():
+        table.setdefault(pair, f"cross: {legs[0]}+{legs[1]}")
     for pair in FX_UNAVAILABLE_PAIRS:
-        table[pair] = "unavailable: 东财无该货币对行情"
+        table[pair] = f"unavailable: {_FX_PAIR_ABSENT_NOTE}"
+    for code, candidates in FX_PENDING_CANDIDATE_SECIDS.items():
+        for pair in (f"USD/{code}", f"{code}/CNY"):
+            table.setdefault(pair, f"pending: {'/'.join(candidates)}")
     return table
+
+
+def fx_currency_availability() -> dict[str, str]:
+    """币种级三态名册：``SUPPORTED_CURRENCIES`` 每一枚恰好落一态。
+
+    - ``sourced: <参与的科学对清单>``——宇宙表里真会外呼的行；
+    - ``unavailable: <原因>``——``FX_UNAVAILABLE_PAIRS`` 里实测查无的行所涉币种；
+    - ``pending: <候选腿>``——候选 secid 已列、真机未核实。
+
+    判定顺序＝先实测源、再待验名册、再实测查无；三处都不在的币＝静默消失，
+    由 ``tests/test_fx_currency_coverage.py`` 门② 当场红。"""
+    sourced_pairs: dict[str, list[str]] = {}
+    for pair, *_rest in _FX_PAIR_UNIVERSE:
+        for code in pair.split("/"):
+            sourced_pairs.setdefault(code, []).append(pair)
+    absent_codes: dict[str, str] = {}
+    for pair in FX_UNAVAILABLE_PAIRS:
+        for code in pair.split("/"):
+            absent_codes.setdefault(code, _FX_PAIR_ABSENT_NOTE)
+    table: dict[str, str] = {}
+    for code in SUPPORTED_CURRENCIES:
+        if code in sourced_pairs:
+            table[code] = "sourced: " + "、".join(sourced_pairs[code])
+        elif code in FX_PENDING_CANDIDATE_SECIDS:
+            table[code] = (
+                f"pending: 候选 {'/'.join(FX_PENDING_CANDIDATE_SECIDS[code])}"
+                f"（兜底腿：{FX_PENDING_FALLBACK_LEGS.get(code, '无第二腿')}）"
+            )
+        elif code in absent_codes:
+            table[code] = f"unavailable: {absent_codes[code]}"
+        else:  # pragma: no cover - 由门② 兜住：新加币却三处都没登记。
+            table[code] = "unregistered: 未登记任何数据源状态"
+    return table
+
+
+def fx_unquoted_currencies(
+    rates: Sequence[FxRate] | None = None,
+) -> tuple[str, ...]:
+    """点名清单里「这一轮给不出报价」的币种，按 ``REQUIRED_CURRENCIES`` 顺序。
+
+    含两种情形，都必须在卡面显式列出（缺席不许静默消失）：
+    ① 结构性无源／候选待验（三态名册里不是 ``sourced`` 的）；
+    ② 有实测源行但本次上游没回这一行（限流空响应、字段缺数）。"""
+    availability = fx_currency_availability()
+    live: set[str] = set()
+    for rate in rates or ():
+        live.add(rate.base_currency)
+        live.add(rate.quote_currency)
+    missing: list[str] = []
+    for code in REQUIRED_CURRENCIES:
+        state = availability.get(code, "unregistered: 未登记任何数据源状态")
+        if not state.startswith("sourced") or (rates and code not in live):
+            missing.append(code)
+    return tuple(missing)
+
+
+def fx_missing_note(
+    rates: Sequence[FxRate] | None = None,
+) -> str:
+    """卡面/纯文本共用的缺席说明：实测查无、待验候选、本轮缺行**分列**，
+    措辞各不相同——「查无」是核实过的事实、「待验」只是还没探、 「缺行」是本轮限流，
+    三者不得混成一句「东财无行情」（S02 工单 §2.1「两份暂无文案」之诫）。"""
+    availability = fx_currency_availability()
+    absent: list[str] = []
+    pending: list[str] = []
+    for code in REQUIRED_CURRENCIES:
+        state = availability.get(code, "")
+        if state.startswith(("unavailable", "unregistered")):
+            absent.append(code)
+        elif state.startswith("pending"):
+            pending.append(code)
+    parts: list[str] = []
+    if FX_UNAVAILABLE_PAIRS:
+        parts.append("、".join(FX_UNAVAILABLE_PAIRS) + f"（{_FX_PAIR_ABSENT_NOTE}）")
+    if absent:
+        parts.append("、".join(absent) + "（实测查无或未登记，不给数字）")
+    if pending:
+        parts.append(
+            "、".join(pending) + "（候选源待真机核实，未接入不上数）"
+        )
+    no_row = [
+        code for code in fx_unquoted_currencies(rates)
+        if availability.get(code, "").startswith("sourced")
+    ]
+    if no_row:
+        parts.append("、".join(no_row) + "（本轮上游未返回该行，不猜数）")
+    return "；".join(parts)
+
+
+def fx_missing_sub(rates: Sequence[FxRate] | None = None) -> str:
+    """``fx_missing_note`` 那行的口径副标题（卡上 sub 槽）。"""
+    if fx_unquoted_currencies(rates):
+        return "无实测源或本轮缺行：不给数字"
+    return "全部点名币种均有报价"
+
+
+def fx_no_quote_reason(base: str, quote: str) -> str:
+    """直答「这一对为什么报不出来」——按三态给不同话，绝不把待验说成查无。"""
+    base_upper = (base or "").strip().upper()
+    quote_upper = (quote or "").strip().upper()
+    pair = f"{base_upper}/{quote_upper}"
+    reverse = f"{quote_upper}/{base_upper}"
+    if pair in FX_UNAVAILABLE_PAIRS or reverse in FX_UNAVAILABLE_PAIRS:
+        return _FX_PAIR_ABSENT_NOTE
+    pending_notes: list[str] = []
+    for code in (base_upper, quote_upper):
+        candidates = FX_PENDING_CANDIDATE_SECIDS.get(code)
+        if candidates:
+            pending_notes.append(
+                f"{code}（{_CURRENCY_DISPLAY.get(code, code)}）尚未接入已核实报价源，"
+                f"候选 {'/'.join(candidates)} 待真机核实"
+            )
+    if pending_notes:
+        return "；".join(pending_notes)
+    return "未登记可用数据源，没有可核的数就不报"
+
+
+# ==================== USD 三角换算桥（2026-10-02 接进能力层） ====================
+
+
+def _spot_usd_legs() -> dict[str, str]:
+    """宇宙表里「与 USD 直接成交」的现货行：币种 → 货币对键。
+
+    两趟扫描：先收 ``USD/<X>`` 形（直读「X 每美元」），再收 ``<X>/USD`` 形，
+    同币并列时保留直读那一行——扫描顺序固定，输出因此是确定的。"""
+    legs: dict[str, str] = {}
+    rows = [
+        (pair, rate_type)
+        for pair, _secid, rate_type, _unit_base, _display in _FX_PAIR_UNIVERSE
+        if rate_type == "spot"
+    ]
+    for want_usd_base in (True, False):
+        for pair, _rate_type in rows:
+            base, quote = pair.split("/", 1)
+            if base == "USD" and quote != "USD":
+                code = quote
+                if not want_usd_base:
+                    continue
+            elif quote == "USD" and base != "USD":
+                code = base
+                if want_usd_base:
+                    continue
+            else:
+                continue
+            legs.setdefault(code, pair)
+    return legs
+
+
+def _direct_cny_pairs() -> frozenset[str]:
+    return frozenset(
+        pair for pair, *_rest in _FX_PAIR_UNIVERSE if pair.endswith("/CNY")
+    )
+
+
+def _derived_pair_legs() -> dict[str, tuple[str, str]]:
+    """静态推断哪些 ``<币>/CNY`` 可由两条现货腿按 USD 三角换算（有源优先，
+    已经直接挂了 ``<币>/CNY`` 行的币不再重复发一张 cross 票）。"""
+    legs = _spot_usd_legs()
+    cny_leg = legs.get("CNY")
+    if cny_leg is None:
+        return {}
+    out: dict[str, tuple[str, str]] = {}
+    for code, own_leg in legs.items():
+        if code in ("USD", "CNY"):
+            continue
+        pair = f"{code}/CNY"
+        if pair in _direct_cny_pairs():
+            continue
+        out[pair] = (own_leg, cny_leg)
+    return out
+
+
+def fx_per_usd(rate: FxRate | None) -> float | None:
+    """把一条 USD 直盘**现货**行折成「每 1 美元兑多少该币」；其它一律 None。
+
+    ``USD/<X>`` → ``rate/unit_base``；``<X>/USD`` → ``unit_base/rate``。
+    中间价（parity）行不参与：换算桥里混进央行中间价＝一格数字两种口径，
+    是「基准/中间价显式」红线的反面。非有限、非正同样 None（FIN-N1 口径）。
+    """
+    if rate is None or rate.rate_type != "spot":
+        return None
+    unit = float(rate.unit_base or 0.0)
+    value = float(rate.rate)
+    if unit <= 0 or value <= 0 or not math.isfinite(unit) or not math.isfinite(value):
+        return None
+    if rate.base_currency == "USD":
+        per = value / unit
+    elif rate.quote_currency == "USD":
+        per = unit / value
+    else:
+        return None
+    return per if per > 0 and math.isfinite(per) else None
+
+
+def fx_usd_bridge(rates: Sequence[FxRate] | None) -> dict[str, FxRate]:
+    """币种 → 提供其「每美元」价的现货行（USD 三角的唯一取腿读点）。"""
+    bridge: dict[str, FxRate] = {}
+    rows = list(rates or ())
+    for want_usd_base in (True, False):
+        for rate in rows:
+            per_usd = fx_per_usd(rate)
+            if per_usd is None:
+                continue
+            if rate.base_currency == "USD":
+                if not want_usd_base:
+                    continue
+                code = rate.quote_currency
+            elif rate.quote_currency == "USD":
+                if want_usd_base:
+                    continue
+                code = rate.base_currency
+            else:  # pragma: no cover - fx_per_usd 已挡掉非 USD 直盘
+                continue
+            if code and code != "USD":
+                bridge.setdefault(code, rate)
+    return bridge
+
+
+def fx_derived_quote(
+    rates: Sequence[FxRate] | None,
+    base: str,
+    quote: str,
+) -> tuple[FxRate, str] | None:
+    """按 USD 三角换算任意两币；换不出给 None（不硬凑、更不用估算冒充报价）。
+
+    返回 ``(FxRate, 口径说明)``：``rate_type="derived"``（卡面副标题映射成
+    「交叉换算」），说明句点名「用了哪两条腿 ＋ 非中间价 ＋ 非可成交价」，
+    时点取参与换算的两行里**较早**的那个（不造新时间戳）。"""
+    base_upper = (base or "").strip().upper()
+    quote_upper = (quote or "").strip().upper()
+    if not base_upper or not quote_upper or base_upper == quote_upper:
+        return None
+    bridge = fx_usd_bridge(rates)
+    if not bridge:
+        return None
+    table: dict[str, float] = {"USD": 1.0}
+    for code, row in bridge.items():
+        per_usd = fx_per_usd(row)
+        if per_usd is not None:
+            table[code] = per_usd
+    rate = cross_rate_from_usd(table, base_upper, quote_upper)
+    if rate is None:
+        return None
+    legs: list[str] = []
+    stamps: list[str] = []
+    for code in (base_upper, quote_upper):
+        if code == "USD":
+            legs.append("USD（桥基准）")
+            continue
+        anchor = bridge.get(code)
+        if anchor is None:
+            return None  # 缺腿＝换不出，绝不半截报数。
+        legs.append(f"{anchor.base_currency}/{anchor.quote_currency}")
+        if anchor.timestamp:
+            stamps.append(anchor.timestamp)
+    note = (
+        f"由 {legs[0]} 与 {legs[1]} 两条现货报价按 USD 三角换算："
+        "非中间价、非可成交价、延迟行情"
+    )
+    return (
+        FxRate(
+            base_currency=base_upper,
+            quote_currency=quote_upper,
+            rate=rate,
+            unit_base=1.0,
+            timestamp=min(stamps) if stamps else "",
+            source=_FX_EASTMONEY_SOURCE,
+            rate_type="derived",
+            delayed=True,
+            history=(),
+        ),
+        note,
+    )
+
+
+def _diff_rows_by_code(payload: Any) -> dict[str, dict[str, Any]]:
+    """东财批量响应 → ``f12 代码 → 行``（``_parse_rates`` 与可达性探针共用）。"""
+    if not isinstance(payload, dict):
+        return {}
+    data = payload.get("data")
+    diff = data.get("diff") if isinstance(data, dict) else None
+    if not isinstance(diff, list):
+        return {}
+    rows: dict[str, dict[str, Any]] = {}
+    for row in diff:
+        if isinstance(row, dict):
+            code = str(row.get("f12") or "").strip().upper()
+            if code:
+                rows[code] = row
+    return rows
+
+
+def probe_fx_candidates(
+    timeout_seconds: float = 8.0,
+) -> dict[str, dict[str, Any]]:
+    """待验候选 secid 的真机可达性探针（**运维/验收入口，生产链路不调用**）。
+
+    把 ``FX_PENDING_CANDIDATE_SECIDS`` 的全部候选一次批量打给东财
+    ``ulist.np/get``，逐币报「哪条腿有行且 f2 是有限正数／无行／调用异常」。
+    纯只读：不写缓存、不动宇宙表、不产生任何用户可见文案。命中后的正确动作是
+    **人工**把该行同批写进 ``_FX_PAIR_UNIVERSE`` ＋ ``_FX_SOURCE_EVIDENCE``
+    ＋ ``resolve_fx_pair`` 的可用面，并把它从待验名册摘掉——只动一边必红另一边
+    （门①/门②）。
+    """
+    candidates: list[str] = []
+    for code in _PENDING_CURRENCY_ORDER:
+        for secid in FX_PENDING_CANDIDATE_SECIDS.get(code, ()):
+            if secid not in candidates:
+                candidates.append(secid)
+    report: dict[str, dict[str, Any]] = {
+        code: {"candidates": list(FX_PENDING_CANDIDATE_SECIDS.get(code, ())),
+               "hit": [], "no_row": [], "bad_value": []}
+        for code in _PENDING_CURRENCY_ORDER
+    }
+    if not candidates:  # pragma: no cover - 名册清空后的诚实空转
+        return report
+    try:
+        payload = _fetch_payload(",".join(candidates), max(1.0, float(timeout_seconds)))
+    except Exception as exc:  # noqa: BLE001 - 探针失败只报状态，绝不抛。
+        for entry in report.values():
+            entry["error"] = f"{type(exc).__name__}"
+        return report
+    rows = _diff_rows_by_code(payload)
+    for code, entry in report.items():
+        for secid in entry["candidates"]:
+            tail = secid.split(".", 1)[1] if "." in secid else secid
+            row = rows.get(tail)
+            if row is None:
+                entry["no_row"].append(secid)
+                continue
+            value = _as_float(row.get("f2"))
+            if value is None:
+                entry["bad_value"].append(secid)
+            else:
+                entry["hit"].append({"secid": secid, "f2": value, "f14": row.get("f14")})
+        entry["quoted"] = bool(entry["hit"])
+    return report
 
 
 def _as_float(value: Any) -> float | None:
@@ -364,19 +821,10 @@ def _fetch_payload(secids: str, timeout_seconds: float) -> Any:
 
 
 def _parse_rates(payload: Any, timestamp: str) -> list[FxRate]:
-    """按宇宙表顺序解析响应；缺行/f2 非数的货币对跳过（绝不造数）。"""
-    if not isinstance(payload, dict):
-        return []
-    data = payload.get("data")
-    diff = data.get("diff") if isinstance(data, dict) else None
-    if not isinstance(diff, list):
-        return []
-    by_code: dict[str, dict[str, Any]] = {}
-    for row in diff:
-        if isinstance(row, dict):
-            code = str(row.get("f12") or "").strip().upper()
-            if code:
-                by_code[code] = row
+    """按宇宙表顺序解析响应；缺行/f2 非数的货币对跳过（绝不造数）。
+
+    行索引走 ``_diff_rows_by_code``（与可达性探针同一把尺，不起第二份）。"""
+    by_code = _diff_rows_by_code(payload)
     rates: list[FxRate] = []
     for pair, secid, rate_type, unit_base, _display in _FX_PAIR_UNIVERSE:
         row = by_code.get(secid.split(".", 1)[1])
@@ -503,7 +951,22 @@ _CURRENCY_ALIASES: dict[str, str] = {
     "迪拉姆": "AED",
     "新加坡元": "SGD",
     "新币": "SGD",
+    # 2026-10-02 席位 F1 补齐的四枚（用户点名清单里的待验币）。
+    # 解析层照常认得它们（问到就要给一句明确的「没接上」而不是答非所问），
+    # 但「认得」≠「有源」：报价面由 fx_currency_availability() 说了算。
+    # 惯用简称里刻意不收「澳币」「加币」——前者在粤语/口语里也指澳门元，
+    # 后者与「加密货币」类语境易混，顶替币种＝报错数。
+    "卢布": "RUB",
+    "俄罗斯卢布": "RUB",
+    "瑞郎": "CHF",
+    "瑞士法郎": "CHF",
+    "加元": "CAD",
+    "加拿大元": "CAD",
+    "澳元": "AUD",
+    "澳大利亚元": "AUD",
+    "澳洲元": "AUD",
     # 繁体变体（2026-09-13 多语言触发覆盖）。
+    # 「瑞士法郎／加拿大元／澳洲元」简繁同形，不重复登记（重复键＝ruff F601）。
     "人民幣": "CNY",
     "新台幣": "TWD",
     "台幣": "TWD",
@@ -512,9 +975,23 @@ _CURRENCY_ALIASES: dict[str, str] = {
     "歐元": "EUR",
     "英鎊": "GBP",
     "澳門幣": "MOP",
+    "澳門元": "MOP",
+    "盧布": "RUB",
+    "俄羅斯盧布": "RUB",
+    "澳大利亞元": "AUD",
 }
 _CN_NAME_ALT = "|".join(sorted(_CURRENCY_ALIASES, key=len, reverse=True))
 _VALID_CODES = frozenset(_CURRENCY_ALIASES.values())
+
+# ISO 三字母码识别：**从别名表值集派生**（2026-10-02 起这是唯一的码名册，
+# 旧写法在这里硬抄了第二份 11 枚码，扩币必「面板有、触发词没有」分裂）。
+# 两侧只禁 ASCII 字母胶合（不禁 CJK 相邻），所以「usd换算」认得到、
+# 「audio换算」「decade」里的 aud/cad 认不到——CJK 在 Python re 里算 \w，
+# 用 \b 会把「usd换算」一起挡掉，故走显式 lookaround。
+_ISO_CODE_RE = re.compile(
+    rf"(?<![A-Za-z])(?:{'|'.join(sorted(_VALID_CODES))})(?![A-Za-z])",
+    re.IGNORECASE,
+)
 
 # 「100日元换多少人民币」：金额 + 币名 + 兑换动词（可带 能/可以/多少；
 # 繁体 動詞 兌/換 同樣接受）。
@@ -527,6 +1004,9 @@ _SLASH_PAIR_RE = re.compile(r"([A-Za-z]{3})\s*(?:/|兑|兌|对)\s*([A-Za-z]{3})"
 # 「美元汇率/美元匯率」：单查默认兑人民币。
 _NAME_RATE_RE = re.compile(rf"(?P<name>{_CN_NAME_ALT})\s*[汇匯]率")
 
+# 币种 → 展示名。键集必须与 ``_VALID_CODES``（别名表值集）严格相等——
+# 「别名认得但展示名没有」会退化成 ISO 码生肉，「展示名有但别名没有」永不命中，
+# 两样都由 tests/test_fx_currency_coverage.py 门④ 拦。
 _CURRENCY_DISPLAY: dict[str, str] = {
     "USD": "美元",
     "CNY": "人民币",
@@ -539,6 +1019,10 @@ _CURRENCY_DISPLAY: dict[str, str] = {
     "MOP": "澳门币",
     "AED": "迪拉姆",
     "SGD": "新加坡元",
+    "RUB": "卢布",
+    "CHF": "瑞郎",
+    "CAD": "加元",
+    "AUD": "澳元",
 }
 
 
@@ -581,20 +1065,19 @@ def wants_major_rates(text: str) -> bool:
 
 
 def has_currency_term(text: str) -> bool:
-    """文本是否含任何已知币名（中文别名/繁体/ISO 小写码）。
+    """文本是否含任何已知币名（中文别名/繁体/ISO 码，大小写均可）。
 
     「换算」类泛词的语境约束用（评审 P1-1）：「美元换算」=True、
-    「单位换算」=False。
+    「单位换算」=False。ISO 码腿走 ``_ISO_CODE_RE``（别名表值集派生的唯一
+    码名册，带 ASCII 胶合闸），不再在本函数里硬抄第二份码清单——旧写法
+    扩币时必出现「面板有、触发词没有」的分裂态（S02 工单 §9-4）。
     """
     lowered = (text or "").lower()
     if not lowered:
         return False
     if any(alias in lowered for alias in _CURRENCY_ALIASES):
         return True
-    return any(
-        code.lower() in lowered
-        for code in ("USD", "EUR", "GBP", "JPY", "KRW", "TWD", "CNY", "HKD", "SGD", "MOP", "AED")
-    )
+    return bool(_ISO_CODE_RE.search(lowered))
 
 
 def format_fx_rate_line(rate: FxRate, amount: float = 1.0) -> str:
@@ -609,12 +1092,18 @@ def format_fx_rate_line(rate: FxRate, amount: float = 1.0) -> str:
     return f"{amount:g}{base_name} ≈ {converted:.2f} {quote_name}"
 
 
-def format_fx_brief(rates: Sequence[FxRate]) -> str:
+def format_fx_brief(rates: Sequence[FxRate], missing: str = "") -> str:
     """主要货币汇率速览（快查批量链路）；按 unit_base 折算展示；
-    空结果给降级文案。provenance 快照链路见 ``format_fx_snapshot_brief``。"""
+    空结果给降级文案。provenance 快照链路见 ``format_fx_snapshot_brief``。
+
+    ``missing``（可选）：点名清单里「这一轮给不出报价」的说明句
+    （``fx_missing_note`` 产出）。缺省空串＝输出与 2026-09-13 评审域 B 的
+    逐字文案锁完全一致；能力层显式传入，缺席因此不再从纯文本面静默消失。"""
     if not rates:
         return _empty_fx_text()
     lines = ["主要货币汇率速览"]
     for rate in rates:
         lines.append(format_fx_rate_line(rate, amount=rate.unit_base))
+    if missing:
+        lines.append(f"暂无数据：{missing}")
     return "\n".join(lines)

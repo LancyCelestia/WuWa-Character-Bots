@@ -295,6 +295,11 @@ def test_fx_unavailable_pairs_constant() -> None:
 
 
 def test_fx_pair_availability_table() -> None:
+    """覆盖表：2026-10-02 席位 F1 由「有源/无源」二分扩成四态封闭。
+
+    四态＝eastmoney（实测源，永远优先）／cross（两条实测现货腿按 USD 三角）／
+    unavailable（实测查无）／pending（候选待真机核实）。同一对子只发一张票。
+    """
     table = fx_pair_availability()
     assert table["USD/CNY"] == "eastmoney:133.USDCNH spot"
     assert table["JPY/CNY"] == "eastmoney:120.JPYCNYC parity"
@@ -302,8 +307,28 @@ def test_fx_pair_availability_table() -> None:
     assert table["USD/TWD"] == "unavailable: 东财无该货币对行情"
     assert table["USD/MOP"] == "unavailable: 东财无该货币对行情"
     assert table["USD/AED"] == "unavailable: 东财无该货币对行情"
+    # 交叉换算票：只发给「有两条实测现货腿、却没有直挂 CNY 行」的对子。
+    assert table["GBP/CNY"] == "cross: GBP/USD+USD/CNY"
+    assert table["KRW/CNY"] == "cross: USD/KRW+USD/CNY"
+    assert table["SGD/CNY"] == "cross: USD/SGD+USD/CNY"
+    assert table["EUR/CNY"] == "eastmoney:120.EURCNYC parity"  # 有实测源 ⇒ 不发 cross
+    # 待验候选票：明写候选腿，绝不写成 unavailable（那等于替东财作了未做过的证）。
+    assert table["USD/RUB"] == "pending: 119.USDRUB/119.RUBUSD/120.RUBCNYC"
+    assert table["AUD/CNY"] == "pending: 119.USDAUD/119.AUDUSD/120.AUDCNYC"
+    pending_pairs = {
+        pair
+        for code in fx_data.FX_PENDING_CANDIDATE_SECIDS
+        for pair in (f"USD/{code}", f"{code}/CNY")
+    }
     assert set(table) == (
-        {pair for pair, *_rest in fx_data._FX_PAIR_UNIVERSE} | set(FX_UNAVAILABLE_PAIRS)
+        {pair for pair, *_rest in fx_data._FX_PAIR_UNIVERSE}
+        | set(FX_UNAVAILABLE_PAIRS)
+        | set(fx_data._derived_pair_legs())
+        | pending_pairs
+    )
+    assert all(
+        value.split(":", 1)[0] in {"eastmoney", "cross", "unavailable", "pending"}
+        for value in table.values()
     )
 
 

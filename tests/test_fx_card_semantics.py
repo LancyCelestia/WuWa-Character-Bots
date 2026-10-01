@@ -6,7 +6,8 @@
 2. 卡文件名 digest 纳入查询语义：不同货币对的定向卡不再同名互覆；
    面板卡=同文件幂等（行情刷新覆写同一面板文件）；
 3. 既有 fx 回归语义不变：panel/正向/反向/无源四条 body 文案逐字保持，
-   面板副标题、audit_tags 口径不变。
+   面板副标题、audit_tags 口径不变（2026-10-02 席位 F1 起，面板 body 末尾
+   多一行「暂无数据：…」点名缺席币种——这是有意的诚实增量，其余三条仍逐字不变）。
 
 离线手段：``fetch_fx_rates`` 打桩、渲染后端 fake（记录 payload、按次编号出 PNG）。
 """
@@ -27,7 +28,18 @@ from plugins.bot_unified_runtime.domains.core.contracts.finance import FxRate
 from plugins.bot_unified_runtime.domains.finance.capabilities import fx as fx_cap
 
 _PANEL_SUBTITLE = "中间价/参考价 · 延迟行情"
-_PANEL_BODY = "主要货币汇率速览\n1美元 ≈ 6.71 人民币\n100日元 ≈ 4.36 人民币"
+# 面板 body 逐字锁（评审域 B 发现 6 立的「文案不变」锁）。2026-10-02 席位 F1
+# 追加末行「暂无数据：…」——缺席从纯文本面也不再静默消失（S02 工单 §2.1 门 3）。
+# 后半句「本轮上游未返回该行」来自本文件 ``_rates()`` 只带 USD/CNY＋JPY/CNY 两行：
+# 桩越窄、这句话越全，正是「拿不到的必须点名」要的效果。改桩数据必须同步改这里。
+_PANEL_BODY = (
+    "主要货币汇率速览\n"
+    "1美元 ≈ 6.71 人民币\n"
+    "100日元 ≈ 4.36 人民币\n"
+    "暂无数据：USD/TWD、USD/MOP、USD/AED（东财无该货币对行情）；"
+    "RUB、CHF、CAD、AUD（候选源待真机核实，未接入不上数）；"
+    "EUR、KRW、HKD、SGD（本轮上游未返回该行，不猜数）"
+)
 _USDCNY_BODY = "1美元 ≈ 6.71 人民币\n1 USD = 6.7081 CNY（eastmoney · spot）"
 _CNYUSD_BODY = "1 CNY ≈ 0.15 USD\n1 CNY = 0.1491 USD（由 USD/CNY 反向换算）"
 

@@ -33,10 +33,12 @@
 
 - 面板整体失败：数据源失败人话。
 - 某对无源：卡上「暂无数据」并计入 `missing_note`，**绝不补 0、绝不用相近币种顶替**。结构性无源清单（`USD/TWD`、`USD/MOP`、`USD/AED` 在东财实测查无结果）登记在 `FX_UNAVAILABLE_PAIRS`，读点 `fx_pair_availability()`。
+- **三态名册（2026-10-02 席位 F1）**：币种按 `fx_currency_availability()` 逐枚表态——`sourced`（宇宙表里真会外呼、且 `_FX_SOURCED_EVIDENCE` 查得到实测凭据）／`pending`（候选 secid 已列、真机未核实）／`unavailable`（实测查无）。用户点名的 **RUB/CHF/CAD/AUD 四枚今天是 `pending`**：问到就明写「尚未接入已核实报价源＋候选腿是谁＋还差真机核实这一步」，既不冒充有源、也不替东财作「查无」的证。缺席清单在卡面与纯文本面板同读 `fx_missing_note()`，不从任一面静默消失。
+- 定向换算的回答顺序：实测直盘 → 反向命中（取倒数并标注）→ USD 三角换算（`fx_derived_quote`，只用本轮在盘的两条**现货**腿，标注「非中间价、非可成交价」，缺腿即拒答）→ 三态拒答。因此「英镑汇率／韩元汇率／新加坡元汇率」不再答非所问。面板卡仍只列实测源行，`derived` 不进面板，避免一格数字混两种口径。
 - 无历史走势：东财外汇日 K 在相关板块实测全空 ⇒ `FxRate.history` 恒为空，卡上诚实写「暂无历史走势数据」，不画假折线。
 - 备选快照端点在当前环境同样不可达：`status=unavailable`，缺币进 `missing_currencies` 显式列出。
 
 ## 测试与验收
 
-离线：`tests/test_fx_data.py`（解析方向、无源登记、交叉价 None、快照缺币）、`tests/test_fx_card_semantics.py`（面板/换算副标题与落盘名语义）、`tests/test_route_priority_disambiguation.py`（「美元兑人民币行情」「汇率 美元」类样句归属）。
-真机：`汇率`、`美元兑人民币`、`100日元换多少人民币`、`新台币汇率`（应明确"该币种暂无源"）。
+离线：`tests/test_fx_data.py`（解析方向、无源登记、交叉价 None、快照缺币）、`tests/test_fx_card_semantics.py`（面板/换算副标题与落盘名语义）、`tests/test_fx_currency_coverage.py`（三态封闭、有源必带凭据、缺席可见、名册单一真身、换算不编数，每把门配注毒腿）、`tests/test_route_priority_disambiguation.py`（「美元兑人民币行情」「汇率 美元」类样句归属）。
+真机：`汇率`、`美元兑人民币`、`100日元换多少人民币`、`新台币汇率`（应明确"该币种暂无源"）、`卢布汇率`（应点名候选腿待真机核实，且**不出现任何换算数字**）。

@@ -5,6 +5,14 @@
 绝不补 0；汇率无可用日 K（实测 119/120/133 板块 kline 全空）→ 卡上诚实标注
 「暂无历史走势数据」，不伪造走势。
 
+回答顺序（定向换算）：实测直盘 → 反向命中（取倒数并标注）→ USD 三角换算
+（``fx_derived_quote``，只用本轮在盘的两条现货腿，产出 ``derived`` 口径并在
+正文点名两条腿）→ 全部落空时按三态名册给不同的拒答话（``fx_no_quote_reason``：
+实测查无 / 候选源待真机核实 / 未登记源），**待验币绝不被说成「东财无行情」，
+也绝不被估算值顶替**。面板卡只列实测源行（``derived`` 不进面板），换算结果在
+消息文字里；缺席清单（含 RUB/CHF/CAD/AUD 四枚待验）在卡面与纯文本同读
+``fx_missing_note``，不从任何一个面静默消失。
+
 表达方向（``parse_fx_query``）：「美元兑人民币」「USD/CNY」「100日元换多少
 人民币」「日元汇率」（单查默认兑人民币）、「汇率/主要货币」面板。
 
@@ -46,7 +54,10 @@ _FX_HINT_RE = re.compile(
 )
 _FX_CONVERT_RE = re.compile(r"换算|換算")
 _FX_ENGLISH_RE = re.compile(r"\b(?:fx|forex|exchange rate)\b", re.IGNORECASE)
-_FX_NON_HINT_RE = re.compile(r"(话术|积分|話術|積分)")
+# 席位 F1（2026-10-02）补 ``(增|追)加元素``：新收币名「加元」是「增加元素」的
+# 子串，「把间距增加元素换算一下」会因此被劫持成汇率面板。沿用既有 话术/积分
+# 的整句让路形态（同一条腿，不起第二把尺）。
+_FX_NON_HINT_RE = re.compile(r"(话术|积分|話術|積分)|(?:增加|追加)元素")
 _STOCK_GUARD_RE = re.compile(r"(股价|股票|股價|股指|大盘|大盤|基金|房价)")
 
 
@@ -80,12 +91,20 @@ def is_fx_command(text: str) -> bool:
 
 
 def build_fx_card_payload(
-    rates: list[Any], missing_note: str, *, focus_label: str | None = None
+    rates: list[Any],
+    missing_note: str,
+    *,
+    focus_label: str | None = None,
+    missing_sub: str = "上游无该货币对行情",
 ) -> dict[str, Any]:
     """组装 finance_card（render_finance_card_html）payload（汇率面板块）。
 
-    缺数据行明确展示「暂无数据」（含无源货币对），绝不伪造 0 汇率；
+    缺数据行明确展示「暂无数据」（含无源货币对与待验候选币），绝不伪造 0 汇率；
     汇率无可用日 K → 每行 trend_note 诚实标注，不伪造走势。
+
+    ``missing_sub``（2026-10-02 席位 F1）：那行的口径副标题。缺席原因现在分三类
+    （实测查无 / 候选待验 / 本轮缺行），副标题不许再一口咬定「上游无该货币对行情」
+    ——把没探过的说成查无＝另一种编数。缺省值保持旧文案，既有调用方零改动。
 
     ``focus_label``（定向换算查询，如「USD兑CNY」）：卡仍为主要货币面板，
     但副标题显式标注面板语义（换算结果在消息文字里），消除「问 A 答 B」
@@ -114,7 +133,7 @@ def build_fx_card_payload(
                 "label": "暂无数据",
                 "value": missing_note,
                 "cls": "flat",
-                "sub": "上游无该货币对行情",
+                "sub": missing_sub,
             }
         )
     return {
@@ -198,10 +217,13 @@ def build_fx_capability(
 
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
         from plugins.bot_unified_runtime.domains.finance.data.fx_data import (
-            FX_UNAVAILABLE_PAIRS,
             fetch_fx_rates,
             format_fx_brief,
             format_fx_rate_line,
+            fx_derived_quote,
+            fx_missing_note,
+            fx_missing_sub,
+            fx_no_quote_reason,
             parse_fx_query,
             resolve_fx_pair,
         )
@@ -221,6 +243,8 @@ def build_fx_capability(
 
         text = message.plain_text
         query = parse_fx_query(text)
+        # 缺席说明算一次给文本面板与卡面共用（三态名册 + 本轮缺行）。
+        missing_note = fx_missing_note(rates)
         card_dir = str(
             getattr(config, "bot_card_render_dir", "data/cards") or "data/cards"
         )
@@ -234,10 +258,29 @@ def build_fx_capability(
             base, quote, amount = query
             resolved = resolve_fx_pair(base, quote)
             if resolved is None:
-                body = (
-                    f"{base}/{quote} 暂无数据（东财无该货币对行情），先不瞎猜数字。"
-                )
-                audit_extra = "fx:pair_unavailable"
+                # 直盘/反向都没有 → 先试 USD 三角换算（两条实测现货腿都在本轮里
+                # 才算数，缺任一腿即 None）。这条通路是 fx_data 头注从一开始就
+                # 承诺、2026-10-02 之前从未接进能力层的交叉价，接通后
+                # 「英镑汇率/韩元汇率/新加坡元汇率」不再答非所问。
+                derived = fx_derived_quote(rates, base, quote)
+                if derived is None:
+                    # 换不出来就明写换不出来，并点名「为什么」：实测查无 /
+                    # 候选源待真机核实 / 未登记源，三种话各不相同。
+                    body = (
+                        f"{base}/{quote} 暂无数据（{fx_no_quote_reason(base, quote)}），"
+                        "先不瞎猜数字。"
+                    )
+                    audit_extra = "fx:pair_unavailable"
+                else:
+                    derived_rate, derivation_note = derived
+                    body = (
+                        f"{format_fx_rate_line(derived_rate, amount)}\n"
+                        f"1 {base} = {derived_rate.rate:.6g} {quote}\n"
+                        f"{derivation_note}"
+                    )
+                    title = f"{base}兑{quote}"
+                    audit_extra = f"fx:cross:{base}/{quote}"
+                    focus_label = f"{base}兑{quote}"
             else:
                 pair_key, inverted = resolved
                 pair_base, pair_quote = pair_key.split("/", 1)
@@ -279,13 +322,16 @@ def build_fx_capability(
                     audit_extra = f"fx:pair:{pair_key}"
                     focus_label = f"{base}兑{quote}"
         else:
-            body = format_fx_brief(rates)
+            body = format_fx_brief(rates, missing_note)
 
         semantic_key = "panel"
         if focus_label:
             semantic_key = f"pair:{focus_label}"
         payload = build_fx_card_payload(
-            rates, "、".join(FX_UNAVAILABLE_PAIRS), focus_label=focus_label or None
+            rates,
+            missing_note,
+            focus_label=focus_label or None,
+            missing_sub=fx_missing_sub(rates),
         )
         card = _render_card(payload, card_dir, semantic_key=semantic_key)
         return CapabilityResult(
