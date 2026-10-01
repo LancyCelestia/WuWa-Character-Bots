@@ -266,3 +266,50 @@ grep -rn "MigrationStatus\." plugins/bot_unified_runtime | wc -l
 ⇒ 工作树当前那 35 枚 lint 红 / 5 枚 typecheck 红**一枚都不在 HEAD 上**，全属未入库的在飞半成品
 （`quirks.py` 4、`db_backup.py` 1，其余在别席在飞件里）。
 **接手时的正确动作是继续做完那些面，不是回退**——已入库的 10 笔是可签的。
+
+## 十四、资源与知识库实测（用户追问「TTS 吃内存 / 能否重启 / 数据库是否在自动更新」，2026-10-02 04:1x）
+
+### TTS 已关（待重启生效）
+`.env` 三枚总闸置 false（改前备份 `%TEMP%/qoder-env-before-tts-off-20261002T040012.env`，凭据全程未打印）：
+`BOT_TTS_ENABLED` / `BOT_TTS_AUTO_REPLY_ENABLED`（原先私聊 10% 概率自动发语音）/ `BOT_TTS_VOICE_HOOK_ENABLED`。
+⚠ 另两处在册事实要记着：`config.py:593-594` 的 `bot_tts_cache_max_bytes=0` 与 `cache_max_age_days=0`
+＝**缓存无上限、无过期**（计划里 P3-8 那一格，席 B1 未收口），TTS 一旦重开，合成产物目录会只涨不清。
+
+### 内存/内存门实测
+- 本机 31.7 GB，**空闲仅 0.8 GB**；占前几位＝`llama-server` 2.48 GB、`Client-Win64-Shipping` 2.34 GB、
+  Memory Compression 1.07 GB、**bot python 0.58 GB** ⇒ **bot 不是这台机器的内存大户**，
+  但它瞬时提交量到过 8.2 GB（PrivateMB），峰值确实会去挤那 0.8 GB 的余量。
+- 🔴 **头号 CPU/内存真凶是"ANN 不可用 ⇒ 每条消息暴力扫 744,371 × 1024 维"**（见下）。
+  关 TTS 只省合成那条腿，**修 ANN 才是这台机器上最大的性能收益**。
+
+### 知识库现状（只读普查，全部 mode=ro）
+| 问题 | 实测答案 |
+|---|---|
+| 每天自动爬取更新词条？ | **在跑**。`knowledge_meta.kb_sync_last_summary`＝`started_at 2026-10-01T16:44:07Z / finished_at 16:49:00Z / mode=incremental / ok=true`（＝本地 10-02 00:44 那一轮）。库内 `knowledge_docs` **211,961** 条、`knowledge_chunks` **744,371**。 |
+| 清洗、汇总正常？ | **正常**。`embed_pending=0`、`chunks_after=embedded_after=744,371` ⇒ 嵌入链**无欠账**；FTS 表与主表同为 744,371 ⇒ 清洗入索引一致。汇总侧 `reflection_digests` 326 行、最新 10-01T16:43Z，`conversation_turns` 6,375 行、最新 10-01T20:01Z（＝刚刚），`memory_recall_audit_v21` 200 行 ⇒ 记忆/反思/摘要三条都在写。 |
+| ANN / RAG 嵌入能完成？** | **嵌入完成，ANN 没完成——两件事必须分开说。** ANN 索引文件 mtime **09-27 03:24**、`order.json` 只装 **740,267** 条，而期望 **744,371** ⇒ **短装 4,104 条**；`ann_embed_generation=68` 而盖章代次 0；`ann_build_checkpoint` 停在 `last_rowid=71448 / stage=midway`。载入路径判 `signature_mismatch` ⇒ **拒用 ANN，回落暴力扫描**（这条 `ann_pair` 门自己写得很清楚）。 |
+
+**ANN 修不好有两重独立原因（下一窗按这个顺序做）**
+1. **内存门挡住重建**（刻意设计，低内存硬跑会把 bot 连人带库压死）：`available 7.84GiB < required 8.44GiB`，
+   `floor 4.50GiB`（S85 标定值），`headroom 0.12GiB`，**累计被挡 6 轮**。⇒ 要么先腾出 ≥0.6 GiB 再跑
+   `knowledge-sync` 重建，要么显式用 operator CLI 的 `--ann-force-low-memory` 越门（越门本身另留痕，**不建议**）。
+2. **两枚签名自相矛盾，光重建不够**：`embedding_signature` 记的是
+   `http://127.0.0.1:8090/v1|bge-m3;…` （AxonHub 网关），`ann_signature` 记的是
+   `http://127.0.0.1:11434/v1|bge-m3;…` （Ollama 端点）——**同一个人换过嵌入端点，两枚戳各记了一个时代**。
+   即便重建成功、行数对平，载入侧的签名比对仍会因这两枚不等而判不可用 ⇒ 必须**同批**把 `ann_signature`
+   随当前 `embedding_signature` 重盖章，否则修完第 1 条还是回落暴力扫描。
+3. 另有两枚 09-30 15:07（清空事故时刻）留下的**半成品重建残件** `.wip-kb_wiki_faiss.index`（81 MB，
+   order 65,536 条）与 `.wip-…order.json`：属"上一代没建完"的尸块，判归属后按规程处置（**本窗未动**）。
+
+### 重启判定（诚实版）
+`scripts/pre_restart_check.py` 现算 **PASS 4 / SKIP 4 / FAIL 5，rc=1**。逐条含义：
+- `ruff` FAIL＝27 枚全在**未入库的在飞半成品件**里（HEAD 副本实测 `All checks passed`）⇒ 不影响运行，只影响门。
+- `doc_sync` / `hash_ledger` FAIL＝派生册与哈希台账需 `--write` 重录（本波改了代码，计数当然动）。
+- `kb_drift` / `ann_pair` FAIL＝**真实功能降级**：RAG 现在走暴力扫描，召回与时延都吃亏。
+**可重启性另做了一次硬核验（不看回显看实跑）**：全部脏 .py 与新模块 `ast.parse` 通过、
+`import plugins.bot_unified_runtime` ＝ `PLUGIN_IMPORT_OK`、typecheck `Success: no issues found in 609 source files`
+⇒ **重启不会崩在 import 上**。本窗另修掉一枚真会炸的：`quirks.py` 用了 `OUTCOME_REFUSED` 却没 import
+（生产路径 propose 一被拒就 NameError），同处补 `db_backup.py:576` 的 None 解引用形态。
+⚠ 但工作树里仍有 6 个半成品面**未入库**，重启会把它们**一起加载**（文件在盘上就会被 import）。
+**结论**：想立刻拿"新代码 + TTS 关闭"，可以重启，风险我已实测到 import 级；
+想同时要门绿与 RAG 提速，就先做上面第 1、2 条 ANN 两步与 27 枚 lint 收尾，再重启（一次到位，省一轮）。
