@@ -13,6 +13,14 @@ RouteKind——笔记词形已并入 route-matrix §2 reminder 行，A34 终审�
 - 内容含 ``- [ ]`` 勾选框 → 自动判为待办（kind=todo）。
 
 存储经 domains/notes/store/notes_store（SQLite，runtime_paths 解析，会话隔离）。
+
+归属（W6 2026-09-30，与 store 同批改）：读/列/删/勾四类操作**每次**都把本轮
+发言人当归属人交给 store（SQL 谓词随之恒带 `AND user_id = ?`），能力层再比一次
+记录自身的归属人——两层照抄记忆硬闸（`character/memory.py` 的
+`SQLiteMemoryRepository.retrieve`：`requester_id != subject_user_id` 即拒）。
+此前隔离只是"现网 session_id 恰好带 uid"的上游形态，store 自身零判据。
+认不出发言人（空白身份）时连"记一条"也拒，绝不写出一条谁也认领不回的笔记。
+
 文案守岸人语气：温柔、简短、不机器腔。
 
 路由接线现状（审查 A-14）：撤销正则已并入 is_notes_command；生产路由
@@ -477,6 +485,29 @@ _USAGE_TEXT = (
 )
 
 
+def _requester(message: IncomingMessage) -> str:
+    """本轮归属人＝发言人（规范化去空白）；空串＝认不出是谁在说话。"""
+    return str(message.sender_id or "").strip()
+
+
+def _owned(note: Note | None, owner: str) -> Note | None:
+    """判定层归属闸（照记忆硬闸的判定腿：`requester_id != subject_user_id` 即拒）。
+
+    store 侧谓词已按归属人过滤，这里再比一次**记录自身**的 owner：这一层不看
+    SQL 形态，防日后有人把谓词摘掉/退回会话域时整链静默敞开。不命中一律当
+    「没有这一条」处理——不向请求人确认它是否存在，正文与配图都不外泄。
+    """
+    if note is None or not owner or str(note.user_id).strip() != owner:
+        return None
+    return note
+
+
+_NO_REQUESTER_TEXT = (
+    "抱歉，这一回我没认出是哪位在和我说话——笔记是要认人的，"
+    "所以先不替你记下，也不给你翻别人的。"
+)
+
+
 def build_notes_capability(config: Any | None = None) -> Any:
     """构建笔记能力：与 reminder 等能力一致，返回 (message, decision) -> 结果。"""
 
@@ -508,6 +539,7 @@ def build_notes_capability(config: Any | None = None) -> Any:
         *,
         store: Any,
         explicit: bool,
+        owner: str,
     ) -> CapabilityResult | None:
         """自然语言撤销勾选：在已勾条目里模糊匹配后回写 [ ]。
 
@@ -515,6 +547,10 @@ def build_notes_capability(config: Any | None = None) -> Any:
         唯一高分=hit、并列=ambiguous 问人、未命中给最接近候选）。返回
         None 表示不承接（自然形态且本会话没有任何已勾条目——让位给后面
         分支/普通聊天；显式「取消勾选」形态则永不落空，给个交代）。
+
+        候选池只扫**本轮归属人自己**的笔记（store 谓词带 owner＋下面的
+        ``_owned`` 判定层）：别人的已勾条目不进候选，也就永远不会被
+        陌生人的「X 还没做」改写到她的正文里。
         """
         from plugins.bot_unified_runtime.domains.schedule.store.reminders import (
             NEAR_MISS_FLOOR,
@@ -527,8 +563,8 @@ def build_notes_capability(config: Any | None = None) -> Any:
         # 都要扫——「最后一件被勾完」的撤销恰恰发生在 done 笔记里。
         owners: list[tuple[int, int]] = []  # (note_id, 稳定条目号) 与 names 对齐
         names: list[str] = []
-        for todo in store.list_notes(chat_id, limit=50):
-            if not todo.is_todo:
+        for todo in store.list_notes(chat_id, user_id=owner, limit=50):
+            if not _owned(todo, owner) or not todo.is_todo:
                 continue
             for item_index, item_text in todo.todo_checked_items():
                 owners.append((todo.note_id, item_index))
@@ -544,9 +580,11 @@ def build_notes_capability(config: Any | None = None) -> Any:
         outcome, indexes = resolve_todo_match(query, names)
         if outcome == "hit":
             note_id, item_index = owners[indexes[0]]
-            before = store.get(note_id, chat_id)
+            before = store.get(note_id, chat_id, user_id=owner)
             was_done = bool(before and before.todo_state == "done")
-            updated = store.mark_item_undone(note_id, chat_id, item_index)
+            updated = store.mark_item_undone(
+                note_id, chat_id, item_index, user_id=owner
+            )
             if updated is None:
                 # 并发窗口内笔记被删/改写：按未命中回话，不编造成功。
                 return _result(
@@ -593,10 +631,16 @@ def build_notes_capability(config: Any | None = None) -> Any:
         if _NOTES_BARE_RE.match(text):
             return _result(message, _USAGE_TEXT, tags=["usage"])
 
+        # 归属闸第一层（判定腿）：认不出发言人就不碰任何一条笔记——读、删之外
+        # 也拦住「记一条」，否则会落出一条谁也认领不回的无主行（fail-closed）。
+        owner = _requester(message)
+        if not owner:
+            return _result(message, _NO_REQUESTER_TEXT, tags=["no_requester"])
+
         delete_match = _NOTES_DELETE_RE.search(text)
         if delete_match:
             note_id = int(next(g for g in delete_match.groups() if g))
-            note = store.delete(note_id, chat_id)
+            note = store.delete(note_id, chat_id, user_id=owner)
             if note is None:
                 return _result(
                     message,
@@ -619,7 +663,7 @@ def build_notes_capability(config: Any | None = None) -> Any:
         if undo_query is not None:
             undo_explicit = _NOTES_UNDO_EXPLICIT_RE.search(text) is not None
             undo_result = _handle_undo(
-                message, undo_query, store=store, explicit=undo_explicit
+                message, undo_query, store=store, explicit=undo_explicit, owner=owner
             )
             if undo_result is not None:
                 return undo_result
@@ -627,7 +671,7 @@ def build_notes_capability(config: Any | None = None) -> Any:
         view_match = _NOTES_VIEW_RE.search(text)
         if view_match:
             note_id = int(next(g for g in view_match.groups() if g))
-            note = store.get(note_id, chat_id)
+            note = _owned(store.get(note_id, chat_id, user_id=owner), owner)
             if note is None:
                 return _result(
                     message,
@@ -649,7 +693,7 @@ def build_notes_capability(config: Any | None = None) -> Any:
         done_match = _NOTES_DONE_RE.search(text)
         if done_match:
             note_id = int(done_match.group(1))
-            note = store.get(note_id, chat_id)
+            note = _owned(store.get(note_id, chat_id, user_id=owner), owner)
             if note is None:
                 return _result(
                     message,
@@ -675,14 +719,16 @@ def build_notes_capability(config: Any | None = None) -> Any:
             if not open_items:
                 # kind=todo 却无未勾条目（历史整篇 done 的残余形态，正常
                 # 路径到不了这里）：按兼容路径收口状态，不再走条目改写。
-                store.mark_done(note_id, chat_id)
+                store.mark_done(note_id, chat_id, user_id=owner)
                 return _result(
                     message,
                     f"第 {note_id} 条已经完成过了。安心。",
                     tags=["done_repeat"],
                 )
             first_index, first_text = open_items[0]
-            updated = store.mark_item_done(note_id, chat_id, first_index)
+            updated = store.mark_item_done(
+                note_id, chat_id, first_index, user_id=owner
+            )
             if updated is None:
                 # 并发窗口内笔记被删/改写：按未命中回话，不编造成功。
                 return _result(
@@ -707,7 +753,7 @@ def build_notes_capability(config: Any | None = None) -> Any:
             )
 
         if _NOTES_LIST_RE.search(text):
-            notes = store.list_notes(chat_id)
+            notes = store.list_notes(chat_id, user_id=owner)
             if not notes:
                 return _result(
                     message,
@@ -728,7 +774,7 @@ def build_notes_capability(config: Any | None = None) -> Any:
             content_md = next(g for g in add_match.groups() if g).strip()
             if not content_md:
                 return _result(message, _USAGE_TEXT, tags=["usage"])
-            if store.count_chat(chat_id) >= max_per_chat:
+            if store.count_chat(chat_id, user_id=owner) >= max_per_chat:
                 return _result(
                     message,
                     f"这个会话的笔记已经收满 {max_per_chat} 条了。先整理一下——"
@@ -758,7 +804,8 @@ def build_notes_capability(config: Any | None = None) -> Any:
             )
 
             note = store.add(
-                user_id=message.sender_id,
+                # 归属人＝本轮发言人（规范化后的形态，与谓词比的是同一个串）。
+                user_id=owner,
                 chat_id=chat_id,
                 # T3 修复（S-FIX-ATK-NOTES2，2026-09-28）：入库即净——「笔记 看 N」
                 # 会把 content_md 全文以她的名义复读，内部边界标记原样入库=可执行

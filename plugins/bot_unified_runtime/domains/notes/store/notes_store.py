@@ -8,9 +8,21 @@
 - 图片不在库里存字节：content_md 落 ``![图片N](文件名)`` 引用行，文件本体
   存 data/notes_images/<chat 摘要>/<文件名>（domains/notes/capabilities/notes.py 负责
   落盘与回发；store 只认文本）。
-- 数量上限：单会话笔记数 ≥ max_notes_per_chat 时 add 拒绝（返回 None），
-  由能力层给人话提示。
-- 会话隔离：一切读写都带 chat_id（=message.session_id），A 群看不到 B 群。
+- 数量上限：单会话**按归属人**笔记数 ≥ max_notes_per_chat 时 add 拒绝（返回
+  None），由能力层给人话提示（配额与可见面同口径，否则别人记的条目会把她
+  看不见也删不掉的位置占死）。
+- 隔离（两层，2026-09-30 W6 加固，形制照抄记忆那条硬闸——
+  ``character/memory.py`` 的 ``SQLiteMemoryRepository.retrieve`` 里
+  ``requester_id != subject_user_id`` 即拒、SQL 恒带 ``subject_user_id = ?``）：
+  ① **会话域**：一切读写都带 chat_id（=message.session_id），A 群看不到 B 群；
+  ② **归属域**：读/列/删/勾四类调用方可传 `user_id`（请求人），SQL 谓词随即
+  恒带 `AND user_id = ?`——能力层每次必传 message.sender_id。
+  历史上第 ② 层只是**碰巧**成立：现网 session_id 形如 `group_<群号>_<uid>`
+  （OneBot V11 / Telegram / QQ 适配器都带发言人），键本身就分人。把归属写进
+  谓词后，隔离不再依赖上游键的形态；传了 `user_id` 但为空白＝请求人身份不成
+  立，一律零命中（fail-closed），绝不退成"没传＝查全部"。
+  不传 `user_id` 保持既有会话域口径（reminder 族 `_locate_and_mark` 等在册
+  调用方只握有 session_key，行为逐字不变）。
 """
 
 from __future__ import annotations
@@ -157,6 +169,31 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _owner_predicate(user_id: str | None) -> tuple[str, tuple[str, ...]]:
+    """归属谓词（照记忆硬闸的 SQL 腿：``SQLiteMemoryRepository.retrieve`` 的
+    候选查询恒带 ``subject_user_id = ?``，同款形态）。
+
+    - ``None``＝调用方没表明归属人 → 拼空串，沿用既有**会话域**口径（reminder 族
+      在册调用方只握有 session_key，不因其改动行为）。
+    - 给了且非空白 → ``AND user_id = ?``，读写删勾四类操作一律限定到归属人。
+    - 给了但是空白串 → 请求人身份不成立，拼永假条件（``AND 1 = 0``）零命中。
+      刻意**不**把它退化成"没传"：那等于把「认不出是谁在说话」洗成「查全部」，
+      正是本条硬闸要堵的那道缝。
+    """
+    if user_id is None:
+        return "", ()
+    owner = str(user_id).strip()
+    if not owner:
+        return " AND 1 = 0", ()  # 永假条件：身份不成立 ⇒ 零命中，绝不退成"查全部"。
+    return " AND user_id = ?", (owner,)
+
+
+_SELECT_NOTE_COLUMNS = (
+    "SELECT note_id, user_id, chat_id, content_md, kind, todo_state,"
+    " created_at, updated_at, done_at FROM notes"
+)
+
+
 class NotesStore:
     """SQLite 笔记 store（与 ReminderStore 同一套卫生习惯）。"""
 
@@ -201,7 +238,11 @@ class NotesStore:
         kind: str | None = None,
         todo_state: str | None = None,
     ) -> Note | None:
-        """新增笔记；单会话数量达上限时返回 None（不覆盖旧内容）。"""
+        """新增笔记；该会话里**该归属人**的笔记数达上限时返回 None（不覆盖旧内容）。
+
+        配额按 (chat_id, user_id) 计：与读/列/删的归属口径同量纲——只按会话计会让
+        同键他人把她看不见也删不掉的名额占死（现网 session_id 分人，两种口径等值）。
+        """
         content_md = str(content_md or "").strip()
         if not content_md:
             raise ValueError("content_md 不能为空")
@@ -210,7 +251,8 @@ class NotesStore:
         created = _utc_now_iso()
         with self._lock, self._conn:
             count = self._conn.execute(
-                "SELECT COUNT(*) FROM notes WHERE chat_id = ?", (chat_id,)
+                "SELECT COUNT(*) FROM notes WHERE chat_id = ? AND user_id = ?",
+                (str(chat_id), str(user_id)),
             ).fetchone()[0]
             if int(count or 0) >= self._max_per_chat:
                 return None
@@ -227,7 +269,9 @@ class NotesStore:
             created_at=created, updated_at=created, done_at="",
         )
 
-    def mark_done(self, note_id: int, chat_id: str) -> Note | None:
+    def mark_done(
+        self, note_id: int, chat_id: str, *, user_id: str | None = None
+    ) -> Note | None:
         """整篇勾选（兼容路径，审查 A-06 后**仅限非条目类待办使用**）。
 
         语义原样保留：一条 UPDATE 把整篇置 done（幂等：已完成的重复勾选
@@ -239,20 +283,25 @@ class NotesStore:
         锁纪律：UPDATE 与 ``self.get()`` 必须分两段——``threading.Lock``
         不可重入，持锁调 ``self.get()``（其内部再次取锁）会死锁
         （2026-09-13 实测：重复勾选路径整线程挂死，pytest 卡死定位）。
+
+        归属：传了 ``user_id`` 时 UPDATE 谓词与回读都恒带 owner 列——别人的
+        待办既勾不动也回读不到（返回 None，能力层按未命中回话）。
         """
         done_at = _utc_now_iso()
+        owner_clause, owner_params = _owner_predicate(user_id)
         with self._lock, self._conn:
             self._conn.execute(
                 "UPDATE notes SET todo_state = 'done', done_at = ?, updated_at = ?"
                 " WHERE note_id = ? AND chat_id = ? AND kind = 'todo'"
-                " AND todo_state <> 'done'",
-                (done_at, done_at, int(note_id), str(chat_id)),
+                " AND todo_state <> 'done'" + owner_clause,
+                (done_at, done_at, int(note_id), str(chat_id), *owner_params),
             )
         # 无论本轮是否实际勾上，都返回最新记录（幂等语义：不刷新 done_at）。
-        return self.get(int(note_id), chat_id)
+        return self.get(int(note_id), chat_id, user_id=user_id)
 
     def mark_item_done(
-        self, note_id: int, chat_id: str, item_index: int
+        self, note_id: int, chat_id: str, item_index: int, *,
+        user_id: str | None = None,
     ) -> Note | None:
         """按条目勾选待办（审查 A-06：勾一条只动一条，不再整篇置完成）。
 
@@ -275,12 +324,17 @@ class NotesStore:
         锁纪律（同 mark_done，2026-09-13 实测教训）：``threading.Lock``
         不可重入，UPDATE 与 ``self.get()`` 必须分两段取锁，持锁调
         ``self.get()`` 会死锁。
+
+        归属：传了 ``user_id`` 时读、写、回读三段都恒带 owner 列；别人的笔记
+        在第一步就 ``get`` 不到 → 返回 None、零写入（与"笔记不存在"同口径，
+        不向请求人确认这篇是否存在）。
         """
         note_id = int(note_id)
         item_index = int(item_index)
+        owner_clause, owner_params = _owner_predicate(user_id)
         # 有限重试：并发改写同一篇时 content_md 守护失败 → 重读重算。
         for _attempt in range(5):
-            note = self.get(note_id, chat_id)
+            note = self.get(note_id, chat_id, user_id=user_id)
             if note is None or not note.is_todo:
                 return None
             lines = str(note.content_md or "").splitlines(keepends=True)
@@ -306,7 +360,8 @@ class NotesStore:
                 cursor = self._conn.execute(
                     "UPDATE notes SET content_md = ?, updated_at = ?,"
                     " todo_state = ?, done_at = ?"
-                    " WHERE note_id = ? AND chat_id = ? AND content_md = ?",
+                    " WHERE note_id = ? AND chat_id = ? AND content_md = ?"
+                    + owner_clause,
                     (
                         new_content,
                         now,
@@ -315,17 +370,19 @@ class NotesStore:
                         note_id,
                         str(chat_id),
                         str(note.content_md),
+                        *owner_params,
                     ),
                 )
                 changed = int(cursor.rowcount or 0)
             if changed:
                 # 锁纪律：get() 在持锁段之外单独取锁。
-                return self.get(note_id, chat_id)
+                return self.get(note_id, chat_id, user_id=user_id)
             # 守护失败：并发改写了同一篇，重读重算；重试耗尽则返回最新态。
-        return self.get(note_id, chat_id)
+        return self.get(note_id, chat_id, user_id=user_id)
 
     def mark_item_undone(
-        self, note_id: int, chat_id: str, item_index: int
+        self, note_id: int, chat_id: str, item_index: int, *,
+        user_id: str | None = None,
     ) -> Note | None:
         """按条目撤销勾选（审查 A-14：mark_item_done 的对称逆操作）。
 
@@ -346,12 +403,16 @@ class NotesStore:
 
         锁纪律（同 mark_done）：``threading.Lock`` 不可重入，UPDATE 与
         ``self.get()`` 必须分两段取锁，持锁调 ``self.get()`` 会死锁。
+
+        归属：与 ``mark_item_done`` 同口径——传了 ``user_id`` 则读、写、回读
+        三段恒带 owner 列，别人的笔记第一步就取不到（None、零写入）。
         """
         note_id = int(note_id)
         item_index = int(item_index)
+        owner_clause, owner_params = _owner_predicate(user_id)
         # 有限重试：并发改写同一篇时 content_md 守护失败 → 重读重算。
         for _attempt in range(5):
-            note = self.get(note_id, chat_id)
+            note = self.get(note_id, chat_id, user_id=user_id)
             if note is None or not note.is_todo:
                 return None
             lines = str(note.content_md or "").splitlines(keepends=True)
@@ -377,71 +438,93 @@ class NotesStore:
                 cursor = self._conn.execute(
                     "UPDATE notes SET content_md = ?, updated_at = ?,"
                     " todo_state = 'open', done_at = ''"
-                    " WHERE note_id = ? AND chat_id = ? AND content_md = ?",
+                    " WHERE note_id = ? AND chat_id = ? AND content_md = ?"
+                    + owner_clause,
                     (
                         new_content,
                         now,
                         note_id,
                         str(chat_id),
                         str(note.content_md),
+                        *owner_params,
                     ),
                 )
                 changed = int(cursor.rowcount or 0)
             if changed:
                 # 锁纪律：get() 在持锁段之外单独取锁。
-                return self.get(note_id, chat_id)
+                return self.get(note_id, chat_id, user_id=user_id)
             # 守护失败：并发改写了同一篇，重读重算；重试耗尽则返回最新态。
-        return self.get(note_id, chat_id)
+        return self.get(note_id, chat_id, user_id=user_id)
 
-    def delete(self, note_id: int, chat_id: str) -> Note | None:
-        """删除笔记，返回被删记录（供能力层清理图片文件）；未命中返回 None。"""
-        note = self.get(int(note_id), chat_id)
+    def delete(
+        self, note_id: int, chat_id: str, *, user_id: str | None = None
+    ) -> Note | None:
+        """删除笔记，返回被删记录（供能力层清理图片文件）；未命中返回 None。
+
+        归属：传了 ``user_id`` 时先按归属人取（别人的取不到→None，零删除），
+        DELETE 谓词再带一次 owner 列——两段都判，不给"读到别人、删掉别人"留缝。
+        """
+        note = self.get(int(note_id), chat_id, user_id=user_id)
         if note is None:
             return None
+        owner_clause, owner_params = _owner_predicate(user_id)
         with self._lock, self._conn:
             self._conn.execute(
-                "DELETE FROM notes WHERE note_id = ? AND chat_id = ?",
-                (int(note_id), str(chat_id)),
+                "DELETE FROM notes WHERE note_id = ? AND chat_id = ?" + owner_clause,
+                (int(note_id), str(chat_id), *owner_params),
             )
         return note
 
     # -- 读面 -----------------------------------------------------------------
 
-    def count_chat(self, chat_id: str) -> int:
+    def count_chat(self, chat_id: str, *, user_id: str | None = None) -> int:
+        """会话内笔记数；传了 ``user_id`` 则只数该归属人（与配额、可见面同口径）。"""
+        owner_clause, owner_params = _owner_predicate(user_id)
         with self._lock:
             row = self._conn.execute(
-                "SELECT COUNT(*) FROM notes WHERE chat_id = ?", (str(chat_id),)
+                "SELECT COUNT(*) FROM notes WHERE chat_id = ?" + owner_clause,
+                (str(chat_id), *owner_params),
             ).fetchone()
         return int(row[0] or 0)
 
-    def get(self, note_id: int, chat_id: str) -> Note | None:
+    def get(
+        self, note_id: int, chat_id: str, *, user_id: str | None = None
+    ) -> Note | None:
+        owner_clause, owner_params = _owner_predicate(user_id)
         with self._lock:
             row = self._conn.execute(
-                "SELECT note_id, user_id, chat_id, content_md, kind, todo_state,"
-                " created_at, updated_at, done_at FROM notes"
-                " WHERE note_id = ? AND chat_id = ?",
-                (int(note_id), str(chat_id)),
+                _SELECT_NOTE_COLUMNS + " WHERE note_id = ? AND chat_id = ?" + owner_clause,
+                (int(note_id), str(chat_id), *owner_params),
             ).fetchone()
         return self._row_to_note(row)
 
-    def list_notes(self, chat_id: str, *, limit: int = 50) -> list[Note]:
+    def list_notes(
+        self, chat_id: str, *, user_id: str | None = None, limit: int = 50
+    ) -> list[Note]:
+        """会话清单；传了 ``user_id`` 只列该归属人的条目（别人的不进清单）。"""
+        owner_clause, owner_params = _owner_predicate(user_id)
         with self._lock:
             rows = self._conn.execute(
-                "SELECT note_id, user_id, chat_id, content_md, kind, todo_state,"
-                " created_at, updated_at, done_at FROM notes"
-                " WHERE chat_id = ? ORDER BY note_id ASC LIMIT ?",
-                (str(chat_id), int(limit)),
+                _SELECT_NOTE_COLUMNS
+                + " WHERE chat_id = ?"
+                + owner_clause
+                + " ORDER BY note_id ASC LIMIT ?",
+                (str(chat_id), *owner_params, int(limit)),
             ).fetchall()
         return [note for note in (self._row_to_note(row) for row in rows) if note]
 
-    def list_open_todos(self, chat_id: str, *, limit: int = 50) -> list[Note]:
+    def list_open_todos(
+        self, chat_id: str, *, user_id: str | None = None, limit: int = 50
+    ) -> list[Note]:
+        """未勾待办清单；归属口径同 ``list_notes``（reminder 族旧调用零变化）。"""
+        owner_clause, owner_params = _owner_predicate(user_id)
         with self._lock:
             rows = self._conn.execute(
-                "SELECT note_id, user_id, chat_id, content_md, kind, todo_state,"
-                " created_at, updated_at, done_at FROM notes"
-                " WHERE chat_id = ? AND kind = 'todo' AND todo_state = 'open'"
-                " ORDER BY note_id ASC LIMIT ?",
-                (str(chat_id), int(limit)),
+                _SELECT_NOTE_COLUMNS
+                + " WHERE chat_id = ? AND kind = 'todo' AND todo_state = 'open'"
+                + owner_clause
+                + " ORDER BY note_id ASC LIMIT ?",
+                (str(chat_id), *owner_params, int(limit)),
             ).fetchall()
         return [note for note in (self._row_to_note(row) for row in rows) if note]
 

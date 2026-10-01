@@ -46,10 +46,12 @@ def _config(tmp_path) -> SimpleNamespace:
     )
 
 
-def _message(text: str, *, segments: list | None = None) -> IncomingMessage:
+def _message(
+    text: str, *, segments: list | None = None, sender_id: str = "u1"
+) -> IncomingMessage:
     return IncomingMessage(
         platform="qq", adapter="nonebot", bot_id="bot-1",
-        session_id="group:1", session_type=SessionType.GROUP, sender_id="u1",
+        session_id="group:1", session_type=SessionType.GROUP, sender_id=sender_id,
         group_id="1", plain_text=text, message_id="m1",
         raw_segments=segments or [],
     )
@@ -288,3 +290,173 @@ def test_notes_store_and_view_carry_no_executable_markers(tmp_path, monkeypatch)
     viewed = capability(_message("笔记 看 1"), object())
     assert not INTERNAL_MARKER_PATTERN.search(viewed.body), viewed.body
     assert "买牛奶" in viewed.body
+
+
+# ---------- 归属硬闸（W6 2026-09-30，审计 V3-8「成员级隔离粒度无证据」） ----------
+#
+# 为什么这么测：生产里 `chat_id = message.session_id`，而 OneBot V11 / Telegram /
+# QQ 适配器的群会话键本身就带发言人 id（`group_<群号>_<uid>`），所以"同群两人共用
+# 一个 chat_id"在现网暂时不成立——隔离靠的是**上游键的形态**，store 自己零判据、
+# 零测试（本文件旧面每个用例都只跑单个 sender）。本段把归属显式写进谓词与判定，
+# 让隔离不再依赖别人的键格式：用「同 chat_id、不同 user_id」这一最坏形态正面注毒。
+#
+# 反向锁同批：本人读写自己的必通；原设计**没有**超管代查面，故也不新增。
+
+_SECRET = "乙的私房话\n- [ ] 只有乙知道的事项"
+
+
+def test_store_owner_predicate_blocks_foreign_list_get_delete(tmp_path) -> None:
+    """注毒腿（store）：同会话内 A 列表/翻看/删除 B 的笔记一律零命中。"""
+    store = NotesStore(tmp_path / "n.sqlite3")
+    mine = store.add(user_id="u1", chat_id="group:1", content_md=_SECRET)
+    assert mine is not None
+    # 别人（u2）在同一个 chat_id 下：列表空、翻看 None、删除删不动。
+    assert store.list_notes("group:1", user_id="u2") == []
+    assert store.list_open_todos("group:1", user_id="u2") == []
+    assert store.get(mine.note_id, "group:1", user_id="u2") is None
+    assert store.delete(mine.note_id, "group:1", user_id="u2") is None
+    assert store.count_chat("group:1", user_id="u2") == 0
+    # 没被删掉：本人（u1）仍看得到、删得掉。
+    assert store.get(mine.note_id, "group:1", user_id="u1") is not None
+    assert [n.note_id for n in store.list_notes("group:1", user_id="u1")] == [
+        mine.note_id
+    ]
+    assert [n.note_id for n in store.list_open_todos("group:1", user_id="u1")] == [
+        mine.note_id
+    ]
+    assert store.count_chat("group:1", user_id="u1") == 1
+    assert store.delete(mine.note_id, "group:1", user_id="u1") is not None
+    assert store.get(mine.note_id, "group:1") is None, "本人删除后真没了"
+
+
+def test_store_owner_predicate_blocks_foreign_writes(tmp_path) -> None:
+    """注毒腿（写面）：别人勾不动、撤销不动，正文与状态逐字节原样。"""
+    store = NotesStore(tmp_path / "n.sqlite3")
+    mine = store.add(user_id="u1", chat_id="group:1", content_md=_SECRET)
+    before = store.get(mine.note_id, "group:1")
+    assert store.mark_done(mine.note_id, "group:1", user_id="u2") is None
+    assert store.mark_item_done(mine.note_id, "group:1", 0, user_id="u2") is None
+    assert store.mark_item_undone(mine.note_id, "group:1", 0, user_id="u2") is None
+    after = store.get(mine.note_id, "group:1")
+    assert after.content_md == before.content_md, "别人的勾选零写入"
+    assert after.todo_state == "open" and after.done_at == ""
+    # 本人勾得动（反向锁）。
+    assert store.mark_item_done(mine.note_id, "group:1", 0, user_id="u1") is not None
+    checked = store.get(mine.note_id, "group:1")
+    assert "- [x] 只有乙知道的事项" in checked.content_md
+    assert store.mark_item_undone(mine.note_id, "group:1", 0, user_id="u1") is not None
+    assert store.mark_done(mine.note_id, "group:1", user_id="u1") is not None
+
+
+def test_store_blank_requester_is_refused_not_unscoped(tmp_path) -> None:
+    """空白归属人＝请求方身份不成立：拒，而不是"当成没传"敞开全量。"""
+    store = NotesStore(tmp_path / "n.sqlite3")
+    mine = store.add(user_id="u1", chat_id="group:1", content_md="甲的事")
+    for blank in ("", "   "):
+        assert store.list_notes("group:1", user_id=blank) == []
+        assert store.get(mine.note_id, "group:1", user_id=blank) is None
+        assert store.delete(mine.note_id, "group:1", user_id=blank) is None
+    assert store.get(mine.note_id, "group:1", user_id="u1") is not None
+
+
+def test_store_ownerless_rows_are_invisible_but_untouched(tmp_path) -> None:
+    """历史无主行（user_id 空串）：按归属域一律不可见（fail-closed），
+    但会话域读面仍能看见——数据不毁，等运维处置（见席位报告遗留风险）。"""
+    store = NotesStore(tmp_path / "n.sqlite3")
+    import sqlite3
+
+    stamp = "2026-09-13T00:00:00+00:00"
+    with sqlite3.connect(store._path) as conn:  # 直插，绕开 add 的归属入参
+        conn.execute(
+            "INSERT INTO notes (user_id, chat_id, content_md, kind, todo_state,"
+            " created_at, updated_at, done_at) VALUES ('', ?, '无主旧行', 'note',"
+            " '', ?, ?, '')",
+            ("group:1", stamp, stamp),
+        )
+        conn.commit()
+    orphan = store.list_notes("group:1")[-1]
+    for requester in ("", "u1", "u2", "unknown"):
+        assert store.get(orphan.note_id, "group:1", user_id=requester) is None
+        assert orphan.note_id not in [
+            n.note_id for n in store.list_notes("group:1", user_id=requester)
+        ]
+    assert store.get(orphan.note_id, "group:1") is not None, "会话域读面不受影响"
+
+
+def test_store_quota_and_session_scope_keep_legacy_callers(tmp_path) -> None:
+    """配额按归属人计（同人不能被别人挤满），不传 user_id 的旧调用方
+    （reminder 族 `_locate_and_mark`）口径逐字不变。"""
+    store = NotesStore(tmp_path / "n.sqlite3", max_notes_per_chat=1)
+    assert store.add(user_id="u1", chat_id="group:1", content_md="甲的一条") is not None
+    assert store.add(user_id="u1", chat_id="group:1", content_md="甲的第二条") is None
+    assert store.add(user_id="u2", chat_id="group:1", content_md="乙的一条") is not None
+    # 会话域旧形态：仍能看到两条。
+    assert [n.note_id for n in store.list_notes("group:1")] == [1, 2]
+    assert store.count_chat("group:1") == 2
+    assert store.count_chat("group:1", user_id="u2") == 1
+
+
+def test_capability_group_member_cannot_read_or_delete_others(tmp_path, monkeypatch) -> None:
+    """注毒腿（能力面实链）：同群陌生人 list/看/删/做完/撤销全部拿不到别人的笔记，
+    文案沿用"没有第 N 条"未命中口径（不确认存在，不外泄正文）。"""
+    _setup(tmp_path, monkeypatch)
+    config = _config(tmp_path)
+    store = notes_store_mod.build_notes_store(config)
+    victim = store.add(user_id="u1", chat_id="group:1", content_md=_SECRET)
+    assert victim is not None
+    capability = build_notes_capability(config)
+
+    listed = capability(_message("笔记列表", sender_id="u2"), object())
+    assert "乙的私房话" not in listed.body and "只有乙知道的事项" not in listed.body
+    assert "还没有为你记下过笔记" in listed.body
+
+    viewed = capability(_message("笔记 看 1", sender_id="u2"), object())
+    assert "没有第 1 条笔记" in viewed.body
+    assert "私房话" not in viewed.body and not viewed.images
+
+    deleted = capability(_message("删笔记 1", sender_id="u2"), object())
+    assert "没有找到第 1 条" in deleted.body
+    assert store.get(1, "group:1") is not None, "别人删不动"
+
+    done = capability(_message("做完1", sender_id="u2"), object())
+    assert "没有第 1 条笔记" in done.body
+    assert store.get(1, "group:1").todo_state == "open", "别人勾不动"
+
+    undo = capability(_message("取消勾选 只有乙知道的事项", sender_id="u2"), object())
+    assert "还没有勾上过" in undo.body
+    assert store.get(1, "group:1").todo_state == "open"
+
+    # 本人视角原语义不变（反向锁）。
+    own_view = capability(_message("笔记 看 1", sender_id="u1"), object())
+    assert "私房话" in own_view.body and "（待办，还没完成）" in own_view.body
+    own_delete = capability(_message("删笔记 1", sender_id="u1"), object())
+    assert "放下了" in own_delete.body
+
+
+def test_capability_no_admin_proxy_lookup_face(tmp_path, monkeypatch) -> None:
+    """原设计没有"超管代查别人笔记"的面 ⇒ 加固也不新增：管理员身份同样只看自己。"""
+    _setup(tmp_path, monkeypatch)
+    config = _config(tmp_path)
+    config.bot_super_admin_user_ids = ["99999"]
+    store = notes_store_mod.build_notes_store(config)
+    store.add(user_id="u1", chat_id="group:1", content_md=_SECRET)
+    capability = build_notes_capability(config)
+    result = capability(_message("笔记 看 1", sender_id="99999"), object())
+    assert "没有第 1 条笔记" in result.body and "私房话" not in result.body
+
+
+def test_capability_new_note_owned_by_sender_in_shared_session(
+    tmp_path, monkeypatch
+) -> None:
+    """记笔记的归属人＝发起人：同会话里乙记的不进甲的清单，容量也各算各的。"""
+    _setup(tmp_path, monkeypatch)
+    config = _config(tmp_path)
+    config.bot_notes_max_per_chat = 1
+    capability = build_notes_capability(config)
+    assert "第 1 条" in capability(_message("笔记 记 甲的事", sender_id="u1"), object()).body
+    assert "第 2 条" in capability(_message("笔记 记 乙的事", sender_id="u2"), object()).body
+    store = notes_store_mod.build_notes_store(config)
+    assert [n.user_id for n in store.list_notes("group:1")] == ["u1", "u2"]
+    u2_list = capability(_message("笔记列表", sender_id="u2"), object())
+    assert "乙的事" in u2_list.body and "甲的事" not in u2_list.body
+    assert "收满 1 条" in capability(_message("笔记 记 乙的又一条", sender_id="u2"), object()).body
