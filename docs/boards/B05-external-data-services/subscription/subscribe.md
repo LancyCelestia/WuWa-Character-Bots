@@ -9,7 +9,7 @@
 - 路由席位：`SUBSCRIBE`（matcher `subscribe`，command=True）
 - 判定优先级：12
 - 能力 id：`bot.subscribe`
-- 实现落点：`plugins/bot_unified_runtime/domains/subscribe`、`plugins/bot_unified_runtime/sources/subscriptions`
+- 实现落点：`plugins/bot_unified_runtime/domains/subscribe`、`plugins/bot_unified_runtime/domains/subscribe/adapters`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

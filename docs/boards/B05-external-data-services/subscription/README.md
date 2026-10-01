@@ -8,7 +8,7 @@
 > B 站/YT/小红书/推特/微博/Epic 订阅与 outbox 落库。
 
 - 归属板块：[B05](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/subscribe`、`plugins/bot_unified_runtime/sources/subscriptions`
+- 实现落点：`plugins/bot_unified_runtime/domains/subscribe`、`plugins/bot_unified_runtime/domains/subscribe/adapters`
 - 路由席位：`SUBSCRIBE`, `EPIC`
 - 能力 id：`bot.subscribe`, `bot.epic`
 - 帮助主题：订阅, Epic

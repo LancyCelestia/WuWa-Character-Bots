@@ -38,7 +38,7 @@
 
 | 维度 | echo 帮助卡 | debug LLM 检查卡 | usage 报告卡 | media 旧解析卡 |
 |---|---|---|---|---|
-| **根元素**（`.card` 契约） | `div.help-stage.card > section.help-shell`（echo.py:2783） | `div.setup-stage.card > section.setup-shell`（debug.py:802） | `div.stage.card > section.shell`（usage_cards.py:178） | `div.card > div.panel` **双层**，`.panel` 才是壳（templates.py:249） |
+| **根元素**（`.card` 契约） | `div.help-stage.card > section.help-shell`（echo.py:2783） | `div.setup-stage.card > section.setup-shell`（debug.py:802） | `div.stage.card > section.shell`（usage_cards.py:178） | `div.card > div.panel` **双层**，`.panel` 才是壳（templates.py 的 `render_media_card_html`） |
 | **壳选择器** | `.help-shell`（私有名） | `.setup-shell`（私有名） | `.shell`（通用名） | `.panel`（私有名） |
 | **壳宽** | 940px（echo.py:2729） | 880px（debug.py:751） | 900px（usage_cards.py:121） | 640px（templates.py:72） |
 | **宽度登记** | 无（`CARD_SHELL_WIDTHS` 无条目，theme_tokens.py:84-91） | 无 | 无 | 无 |

@@ -6,7 +6,7 @@
 ## B08.send-queue · 回执与对账
 
 - 层级：一级 B08 → 二级 send-queue → 三级 `delivery-receipt`
-- 实现落点：`plugins/bot_unified_runtime/domains/transport/sender/__init__.py`、`plugins/bot_unified_runtime/domains/transport/sender/file_gateway.py`、`plugins/bot_unified_runtime/domains/transport/sender/gateway.py`、`plugins/bot_unified_runtime/domains/transport/sender/outbound_gate.py`、`plugins/bot_unified_runtime/domains/transport/sender/queue.py`、`plugins/bot_unified_runtime/domains/transport/sender/receipts.py`、`plugins/bot_unified_runtime/domains/transport/sender/timeout.py`、`plugins/bot_unified_runtime/domains/transport/sender/worker.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/transport/sender/__init__.py`、`plugins/bot_unified_runtime/domains/transport/sender/failure_class.py`、`plugins/bot_unified_runtime/domains/transport/sender/file_gateway.py`、`plugins/bot_unified_runtime/domains/transport/sender/gateway.py`、`plugins/bot_unified_runtime/domains/transport/sender/outbound_gate.py`、`plugins/bot_unified_runtime/domains/transport/sender/queue.py`、`plugins/bot_unified_runtime/domains/transport/sender/receipts.py`、`plugins/bot_unified_runtime/domains/transport/sender/timeout.py`、`plugins/bot_unified_runtime/domains/transport/sender/worker.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

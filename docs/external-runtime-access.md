@@ -93,7 +93,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& .\scripts\dev.ps1 -Tas
 
 `knowledge_progress.py` 一次报两个向量库（`memory`=角色记忆库、`wiki`=百科接货库），只读打开，
 可以在 kb-sync 跑动中随时看。wiki 侧的**收工判据不是行数**：投料阶段块行就已全部落库，
-"库内 100% 带向量"既可能是投完也可能是还没开嵌。真正的四条判据（摘要 `ok`/`error_kind`、
+"库内是否全量带向量"既可能是投完也可能是还没开嵌。真正的四条判据（摘要 `ok`/`error_kind`、
 本轮 `embedded >= embed_pending`、`embedded_after >= 块行数`、`ann_expected_vector_count == embedded_after`）
 由脚本自己打勾，语义锁在 `tests\test_knowledge_progress_settled_gate.py`。
 注意摘要里的 `embed_pending` 是**本轮投料数（分母）**，不是"还剩多少"。
@@ -126,9 +126,9 @@ TTS 语料工具链的代码真身与产物真身都在引擎目录 `C:\Software
 
 | 产物（GPT-SoVITS-V2Pro\refs\） | sha256 前 16 | 大小 | 备注 |
 |---|---|---|---|
-| corpus_durations.csv | 05362a75a3e1c71f | 86716B | 490 行含 2 簇重复，291/118 虚增（真实 289/117） |
+| corpus_durations.csv | 05362a75a3e1c71f | 86716B | `490` 行含 2 簇重复，291/118 虚增（真实 289/117） |
 | listening_checklist.md | 20e94300aa5016bb | 3168B | 生成物内嵌手写矛盾数字 |
-| shorekeeper_refs_asr.tsv | 5970949be196be5d | 2345B | 粘贴块 9 条含 32kHz 杂散件 |
+| shorekeeper_refs_asr.tsv | 5970949be196be5d | 2345B | 粘贴块 `9` 条含 32kHz 杂散件 |
 | honami_lines_asr.tsv | d99be28d5290bd3c | 4237B | 无粘贴块=非同版本产出，不可归因 |
 | shorekeeper_ref_01.wav | 783c66eb1fb541ee | 463404B | 32kHz 杂散件，勿扩进选片池 |
 | shorekeeper_ref_01.flac | 1c8617dc464abd3d | 385420B | 手工第一条，源=剧情/main_honami_2_8_2_43_9.flac（哈希可溯） |
@@ -137,7 +137,7 @@ TTS 语料工具链的代码真身与产物真身都在引擎目录 `C:\Software
 ### 与自检工具的分工
 
 - `scripts\verify_chatbot_env.py`（已入仓，T87 重建）：手动快查工具——改完 `.env` 后秒级离线核对 bot 侧配置面（生产 pydantic Config 装载语义 + TTS 段深查），不是重启门。
-- `scripts\pre_restart_check.py`（重启前置预检 10 项）：第 10 项「音色守望」守引擎面（tts_infer.yaml/权重/sha256 身份对表，基线册 `scripts\tts_voice_baseline.json`）。
+- `scripts\pre_restart_check.py`（重启前置预检，项数以该件现算为准）：其中「音色守望」一项守引擎面（tts_infer.yaml/权重/sha256 身份对表，基线册 `scripts\tts_voice_baseline.json`）。
 - `tests\test_tts_corpus_tools.py`（冒烟门）：只守语料工具收编副本与引擎原件的逐字节一致，随全量测试（`dev.ps1 -Task test`）运行。
 
 三者零重叠：配置面归 verify_chatbot_env，引擎面归 pre_restart_check，语料工具版本面归冒烟门。

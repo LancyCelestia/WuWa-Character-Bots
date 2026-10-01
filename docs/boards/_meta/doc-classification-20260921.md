@@ -217,6 +217,25 @@ Status: STARTED
 | `…/emergency-info-registration-runbook-20260920/` | 41 / 283883 | 过程件(progress.md 总账 + reports/ 十席 log + 14 .txt 探针输出) | B05 | B10 | 是——AGENTS #45 明文「详总账=…/progress.md + reports/ 十席 log」 | 归档前必须先把 #45 指针改到新落点；**.txt 是探针实跑原始输出，属证据不可重造，随包** | AGENTS #45 与施工图 §4 口径更正段两处引用本目录 |
 | `…/v21-20260917-parallel/` | 6 / 27247 | 过程件(w1-affinity/w2-gates-baseline/w4-supervisor/w5-billing/w6-divination/w7-search 六席) | B10 | B03/B09/B06 | 是（V2.1 波，编号缺 w3，与 AGENTS #34 语境一致） | 归档 | 六件同名「w<号>-<域>.md」=并行席位分账 |
 | `…/v21r6-audit/` | 6 / 76766 | 过程件(audit-A-v21r5 / B-frontend / C-external2 / D-newfailures / audit-report / progress) | B10 | NONE | **待定**——本席未在 AGENTS 顶部横幅与 HANDBOOK 检索到对 `v21r6-audit` 的直接点名（HANDOFF-V21R6-TESTING.md 是同名不同路径件） | 暂不动，标「待定」；缺的证据=确认 V21R6 验收入口是否已吸收本目录结论 | 目录名与根文件 HANDOFF-V21R6-TESTING.md 不同路径，易混为重复件但实非同一物 |
+| `.superpowers/sdd/2026-09-23-audit-8f099879/` | 现算 | 过程件（八F09 审计席 log） | B10 | 全域 | 待定——P-56 处置令引用其结论（AGENTS 规则 11） | 暂不动；收官前不移出 | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-23-audit2-8f099879/` | 现算 | 过程件（BRIEFS/SEAT-A* 席报 + ledger 派发账） | B10 | 全域 | 是——G-K1 派发纪律门读其 BRIEFS/ledger（tests/test_dispatch_discipline_gate.py） | 不移出（在册门的取数面） | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-23-boards-full-doc-wave/` | 现算 | 过程件（十板块文档波单件） | B10 | B10 | 是——AGENTS #48 即该波 | 归档 | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-23-modality-integration/` | 现算 | 过程件（单件） | B10 | NONE | 待定 | 归档 | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-23-stopfix-wave/` | 现算 | 过程件（停摆根修波席 log） | B10 | 全域 | 是——AGENTS #50 §41 | 归档 | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-24-central-dispatch/` | 现算 | 过程件 + **BASELINE.md 现役尺**（多门按其重算） | B10 | B08/B09 | 是——AGENTS #49/#52 与 placement/dispatch 诸门点名 BASELINE.md | **BASELINE.md 绝不可移**；余者归档 | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-24-cutover/` | 现算 | 过程件（2 件） | B10 | NONE | 待定 | 归档 | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-24-r2/` | 现算 | 过程件 | B10 | 全域 | 待定 | 归档 | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-25-blindgate-census/` | 现算 | 过程件（单件普查） | B10 | NONE | 待定 | 归档 | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-25-gateway-telemetry/` | 现算 | 过程件 | B10 | NONE | 待定 | 归档 | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-25-goal18-wave/` | 现算 | 过程件（十八项首窗席 log） | B10 | 全域 | 是——AGENTS #56 与 HANDOFF-GOAL18 引用 | 归档前先改引用（规则 5 证据件） | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-25-safetyexec-review/` | 现算 | 过程件（单件评审） | B10 | NONE | 待定 | 归档 | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-26-goal18-second/` | 现算 | 过程件（第二窗席 log） | B10 | 全域 | 是——AGENTS #58 | 归档前先改引用 | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-26-kb-recovery/` | 现算 | 过程件（KB 恢复席 log） | B10 | NONE | 待定 | 归档 | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-26-unify2/` | 现算 | 过程件（单件） | B10 | NONE | 待定 | 归档 | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-27-bughunt/` | 现算 | 过程件（单件） | B10 | NONE | 待定 | 归档 | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-27-fullload/` | 现算 | 过程件（满载波席 log；SEAT-R8-TRIGGER-c.md 等） | B10 | 全域 | 是——触发词两把尺名册按该目录凭据登记（tests/test_trigger_word_*.py） | 登记凭据件不可移；余者归档 | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/2026-09-27-kb-grounding/` | 现算 | 过程件（单件） | B10 | NONE | 待定 | 归档 | S-BASE 目录级判定 2026-09-29 |
+| `.superpowers/sdd/news-card-samples/` | 现算 | 样例件（快报卡样例 1 md） | B05 | NONE | 待定——主板块按 news 卡归属预填，待页主确认 | 保留或归档由 B05 页主裁 | S-BASE 目录级判定 2026-09-29 |
 | **合计** | 文件数与字节合计见上方各行汇总 | — | — | — | — | 结论: **三处「绝不能动」= 2026-09-21-fix-wave（未提交账）+ 2026-09-18-unify-wave/commit-checklist.md（待提交清单）+ 2026-09-19-unify-audit/{plan-G-contract, report-T36}（现役规格与验收判据）** | 上表逐行判定汇总 |
 
 ## 5. 收尾三节

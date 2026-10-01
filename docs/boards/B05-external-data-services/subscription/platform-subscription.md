@@ -6,7 +6,7 @@
 ## B05.subscription · 各平台订阅通道
 
 - 层级：一级 B05 → 二级 subscription → 三级 `platform-subscription`
-- 实现落点：`plugins/bot_unified_runtime/domains/subscribe`、`plugins/bot_unified_runtime/sources/subscriptions`
+- 实现落点：`plugins/bot_unified_runtime/domains/subscribe`、`plugins/bot_unified_runtime/domains/subscribe/adapters`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

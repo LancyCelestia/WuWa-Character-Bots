@@ -9,7 +9,7 @@
 - 路由席位：`CONSENT`（matcher `consent`，command=True）
 - 判定优先级：41
 - 能力 id：`bot.consent`
-- 实现落点：`plugins/bot_unified_runtime/config.py`、`plugins/bot_unified_runtime/domains/core/config`、`plugins/bot_unified_runtime/runtime/settings.py`、`docs/config-catalog-full.md`
+- 实现落点：`plugins/bot_unified_runtime/config.py`、`plugins/bot_unified_runtime/domains/core/config`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/settings.py`、`docs/config-catalog-full.md`
 - 帮助主题：书面同意
 <!-- BOARD-AUTO:END -->
 

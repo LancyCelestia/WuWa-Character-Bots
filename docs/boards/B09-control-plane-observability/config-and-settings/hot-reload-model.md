@@ -6,7 +6,7 @@
 ## B09.config-and-settings · 热更、drain 与回滚
 
 - 层级：一级 B09 → 二级 config-and-settings → 三级 `hot-reload-model`
-- 实现落点：`plugins/bot_unified_runtime/config.py`、`plugins/bot_unified_runtime/domains/core/config`、`plugins/bot_unified_runtime/runtime/settings.py`、`docs/config-catalog-full.md`
+- 实现落点：`plugins/bot_unified_runtime/config.py`、`plugins/bot_unified_runtime/domains/core/config`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/settings.py`、`docs/config-catalog-full.md`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

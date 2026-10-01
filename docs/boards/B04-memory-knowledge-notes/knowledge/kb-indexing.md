@@ -21,7 +21,7 @@
 
 ## 开关与参数
 
-`bot_knowledge_files`（清单，`list[str]`）、`bot_knowledge_chunk_chars`、`bot_knowledge_max_chunks`（人格上下文注入侧每文件块数上限，`plugins/bot_unified_runtime/domains/chat_reply/character/providers.py` 读）、`bot_knowledge_top_k`（检索槽位预算）、`bot_knowledge_db_path`（进路径重映射）；上述各键的缺省值以 `plugins/bot_unified_runtime/config.py` 为准。嵌入侧的模型、端点、维度、本地通道由 `bot_embedding_*` 决定；换模型或端点会让指纹变化并触发"清空旧向量重嵌"。这些都是装配期读取，改 `.env` 要重启才生效（索引代际本身除外：另一进程原子换入新索引后，本进程下一次检索即感知，不需重启）。
+`bot_knowledge_files`（清单，`list[str]`）、`bot_knowledge_chunk_chars`（缺省 900）、`bot_knowledge_max_chunks`（人格上下文注入侧每文件块数上限，`plugins/bot_unified_runtime/domains/chat_reply/character/providers.py` 读）、`bot_knowledge_top_k`（检索槽位预算，缺省 4）、`bot_knowledge_db_path`（进路径重映射）。嵌入侧的模型、端点、维度、本地通道由 `bot_embedding_*` 决定；换模型或端点会让指纹变化并触发"清空旧向量重嵌"。这些都是装配期读取，改 `.env` 要重启才生效（索引代际本身除外：另一进程原子换入新索引后，本进程下一次检索即感知，不需重启）。
 
 ## 失败时看到什么
 
@@ -37,6 +37,6 @@
 
 `tests/test_knowledge_empty_manifest_wipe_guard.py`（空/小清单不得清库）、`tests/test_knowledge_mtime_cache.py`（文件签名缓存）、`tests/test_ann_completeness_gate.py`（短装拒用）、`tests/test_ann_atomic_publish.py`（原子换入与不同代拒载）、`tests/test_ann_certify_prewarm.py`（计数戳与预热）、`tests/test_embed_adaptive_batch.py`、`tests/test_embed_cold_start_guard.py`（嵌入批大小与冷启动护栏）、`tests/test_v21_knowledge_service.py`（服务装配面）。
 
-### 现行缺陷
+## 现行缺陷
 
 块数、已向量化数这类实况一律读 `stats()` 与机器册，本文不写。ANN 重建在请求线程外由维护任务承担，索引落后于语料属可预期状态（表现为回退暴力扫描或向量通道缺席，而不是报错）。

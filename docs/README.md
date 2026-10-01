@@ -6,9 +6,9 @@
 接手先读[HANDOFF-NEXT](../HANDOFF-NEXT.md)。目标设计与实现事实分开：本轮仅写文档，下方旧完成声明是历史记录，不能替代新门禁。
 
 - [完整架构、协议、资源管理与S0—S16](design/backend-v2-implementation-guide.md)
-- [计费/好感度/占卜/日程/搜索/自愈/管理员实战媒体验收](design/backend-v2-product-extensions.md)
+- [计费·好感度·占卜·日程·搜索·自愈·管理员实战媒体验收](design/backend-v2-product-extensions.md)
 - [需求与四列验收状态矩阵](design/backend-v2-acceptance-matrix.md)
-- [本轮文档检查与文件清单](../progress.md)
+- 本轮文档检查与文件清单：原记于根目录 `progress.md`（未跟踪稿，2026-09-30 下午整树清空事故中丢失）；现状以门禁现算为准
 
 以上是本次批准的设计规格；现行命令和参数仍以实际注册生成物为准，不能把规划接口宣传为已可用。
 
@@ -116,7 +116,9 @@
 | [design/webui-axonhub-adoption.md](design/webui-axonhub-adoption.md) | WebUI AxonHub 采纳规格（路线 B）：来源与许可证 / token 映射 / 版式宪法（版式宪法节由并行席 WEBUI-SPEC2 追加中） |
 | [design/webui-pages2-spec.md](design/webui-pages2-spec.md) | WebUI 二期三页（知识库/插件/记忆图谱）施工工单+版式宪法+参照图对照表（§7） |
 | [design/tts-contract-layer.md](design/tts-contract-layer.md) | TTS 统一性契约层设计规格（Wave G·G-1/T54）：触发边界与触发词/打码/内容闸/产物体检/失败码/概率门六面的现行锚点+目标契约；**规格件零施工**，落地宣称以施工席实跑为准 |
+| [design/safety-execution-engine-spec.md](design/safety-execution-engine-spec.md) | 统一安全与执行引擎规格（SAFE-EXEC，第 16/17/18 项）：一个裁决点 + 一条执行道 + 一本同意账；动作册、落点域白名单、参数风险 R0-R3、书面同意往返、Job Object 配额、反注入可信级 T0-T3、攻击面 23 条映射与判据 G-1..G-20、分期 Wave 1-4、待裁 P-1..P-6；**规格件零施工** |
 | [design/media-digest-layer.md](design/media-digest-layer.md) | 中央媒体摘要层蓝图（Wave H 预研·T107）：音频产物字节零摘要、出站键 M-64 未闭半的六流经点现状图+中央 digest 件方案；**方案件零施工** |
+| [design/meme-auto-absorb-plan-20260925.md](design/meme-auto-absorb-plan-20260925.md) | 表情包自动吸收与情绪化发送方案：生成/收库/打标/主动发四态核实（含一条因功能门 id 未登记而整条黑掉的支路）＋「她本地抓取 → bot 现读入库」的清单文件接口＋确定性合分与反骚扰门＋配置键清单；**方案件零施工** |
 
 ### 控制面续接入口
 

@@ -8,7 +8,7 @@
 
 本轮补齐：强隔离与资源管理、统一后端服务/协议/出站，LLM/TTS/绘图缓存与多单位计费，运行自愈/待审代码修复，好感度拒答误扣与单位重放方案，运势与塔罗，全场景日程，戳/Emoji/Sticker/Meme，九平台搜索，admin结构化故障与真实媒体验收，函数/参数/help/README的确定性投影。
 
-好感度源码风险已登记，用户一晚下降四十多点的实际因果仍unknown，未读取生产DB或补偿分数。没有生产代码/配置/部署改动；新增API与命令尚非可用功能。实施能用子代理就用子代理、时刻保持并行满载（限流为唯一上限，撞墙落盘保进度、结束即补派、前台派完即收不卡输出），阶段不停工、已授权不重复问；代码自修补丁不自动部署。文档文件清单与实际检查证据见[progress](../progress.md)，实施状态只在验收矩阵绑定新鲜证据维护。
+好感度源码风险已登记，用户一晚下降四十多点的实际因果仍unknown，未读取生产DB或补偿分数。没有生产代码/配置/部署改动；新增API与命令尚非可用功能。实施能用子代理就用子代理、时刻保持并行满载（限流为唯一上限，撞墙落盘保进度、结束即补派、前台派完即收不卡输出），阶段不停工、已授权不重复问；代码自修补丁不自动部署。文档文件清单当时记在根目录 `progress.md`（未跟踪稿，2026-09-30 下午整树清空事故中丢失，git 从未跟踪；现状以门禁现算为准），实施状态只在验收矩阵绑定新鲜证据维护。
 
 > **最新续接：动作API路由/错误码已修正，隔离工作区CRUD/预览/确认/模拟发送与默认生成装配已落地；真实会话生产发送、完整后端仍未完成。最新实跑及runtime-layout阻断见 `docs/design/COMPACT-CHECKPOINT.md` 顶部。**
 
@@ -4248,8 +4248,11 @@ help 侧删掉 `-webkit-line-clamp` 与 `text-overflow`，并加一枚常驻锁�
     落地两处——F-1：`meme_library_listener.py::_resolve_vision_config` 曾把注册表 list 形态当 dict、
     兜底恒空操作（本命判定今天两段死因的第二段），改吃真身 `_flatten_vision_entries`（2026-09-26 现算在盘 :221）；
     F-2：吸收准入判定从事件循环挪上 `to_thread`（:439）。**未翻正**：问答自动贴纸 feature 缺省 False、
-    `BOT_MEME_LIBRARY_VLM_ENABLED` 现网关、`disliked_terms` 判据有而**无生产者**（好感度 snapshot 六键没有它，
-    结构上永不触发＝在册残余）。
+    `BOT_MEME_LIBRARY_VLM_ENABLED` 现网关。〔2026-09-28 S-META 跟随：本条第三段「`disliked_terms` 判据有而**无生产者**
+    （好感度 snapshot 六键没有它，结构上永不触发＝在册残余）」**已过期**——生产者早在 S-STICKER-12 就落了：
+    `domains/meme/sources/meme_selection.py` 的 `negative_impression_tags()` 从 affinity 真身
+    `_IMPRESSION_RULES` 按来源行为劈出负向集，`split_impression_tags()` 是唯一消费口（词表零副本、
+    负向绝不进 liked）。本仓当晚另有两席改过该文件，逐符号现状以盘上现值与其测试件为准（规则 10）。〕
 13. **好感度 v7 结构锁**（需求 13）：⚰ **本波未成品**——S-T-AFF-1 撞轮次上限阵亡，其
     `tests/test_affinity_v7_structural_locks.py`（39 个 test 定义）**从未被任何席实跑过**；
     该面 mtime 显示死后仍有第二只手在写（归属未坐实）。重派判据必须含「孤儿测试件首次实跑并归因每条红」。
@@ -4304,7 +4307,7 @@ help 侧删掉 `-webkit-line-clamp` 与 `text-overflow`，并加一枚常驻锁�
 | **问答自动贴纸** | 四路合一门面在盘 | feature `bot.plugin.chat.reactions.meme` 缺省 False + `BOT_MEME_LIBRARY_VLM_ENABLED` 现网关 ⇒ 本命吸收与问答选贴今天都不在线上；`disliked_terms` 判据**无生产者**（结构上永不触发） |
 | **记忆总线根装配腿** | 写腿件 45 例绿 | 1 枚 xfail＝抽取落库接进根装配的那一米归主代理（跨席热点文件） |
 | **host_state 独立卡 / 参与者腿** | 见 47.1 第 5/4 条 | 两腿均**已接线落盘**（2026-09-27 现算：host_state＝根装配 matcher＋echo 帮助主题＋route-matrix＋板块认领 B09.observability 齐；参与者＝`group_info.py` 的 `who` 意图已消费 `participant_memory` 且 `tests/test_group_info.py` 有 `_who_cap` 系列用例）；未 commit 未重启 ⇒ 线上仍旧行为，真机验收须重启后做 |
-| **ack 三枚缺陷** | 复现/现状/挂账锁全在 | DEFECT-1（`pipeline.py:1473` 不区分两种 TimeoutError→快速失败也发回执）、DEFECT-2（同号 TG 频道被 QQ 群白名单带走）、DEFECT-4/6（闸 skip 白烧冷却坑）**均未修**，修面全在主代理禁写位，等 X-3 一句话 |
+| **ack 三枚缺陷** | 复现/现状/挂账锁全在 | DEFECT-1（`pipeline.py:1473` 不区分两种 TimeoutError→快速失败也发回执）、DEFECT-4/6（闸 skip 白烧冷却坑）**未修**；DEFECT-2（同号 TG 频道被 QQ 群白名单带走）已于 09-28 工作树落修（平台腿+传参在树、自述锁由席 I3 按交代翻正，回执家族 222 passed，见 §52.4）——未入库，随本批提交生效 |
 | **维基库开关** | kb_wiki 检索链在码 | `.env` 现值 `BOT_KB_WIKI_ENABLED=true` 与其上方注释自陈「两前置未满足（ANN 重建未完=台账 #50 停摆根因②）」**互相矛盾**，两席独立点名（ACG-1/看护）；她裁定前本手册所有 KB 验收项不依赖该库 |
 | **出站总闸** | 沿用 §46 | 仍缺省关——本波四枚 ack 相关缺陷有一半（skip 烧坑）只在开闸态才可能现形 |
 
@@ -4885,3 +4888,820 @@ PS 5.1 读无 BOM 的 UTF-8 脚本会静默不执行。保险目录在仓外（�
 - 生产实况（`.wip` 零残留、`ann_embed_generation` 行缺席、四值相等、签名前缀）由本席以只读连接
   （`mode=ro`）现算，不转抄简报。
 
+---
+
+## §51 十八项一把开 · 贴纸语义匹配 · 永久回复策略波（2026-09-28 夜，主会话 + 10 席；未 commit、未重启）
+
+**触发**：她在 2026-09-28 夜把「十八项一把开」——九枚开关一把全开（`.env` 已落、重启生效），并加做贴纸语义匹配、永久性 per-user 回复策略等面。波次全录＝`.superpowers/sdd/`（gitignore，只在本机、非入库件）；真机判据面＝`docs/acceptance-manual.md` §6.6.17 续；本章是唯一入 git 的叙述账。**每条按盘上现算落笔，席位宣称与磁盘不符一律以磁盘为准**（本波主会话自曝曾转述错一行行号，见 51.6）。字段/topics/模板/库/路由等会漂移的总数以机器册 `docs/auto-facts.md` 为准，本章不手写。
+
+### 51.1 本波推翻的四条旧自述（逐条注明推翻依据，非"已解决"）
+
+1. **§47.3 维基库开关矛盾已消解**：依据＝ANN 索引换代波（§50）整库重建完成、`reconcile` 一致，`.env` 里那条「恢复 true 的两前置未满足」注释**过期**（前提现已满足）。
+2. **§47.1 第 十二 条「`disliked_terms` 无生产者」过时**：依据＝`disliked_terms` 现由印象规则派生，生产者已在盘（旧账"无生产者"被现算推翻）。
+3. **台账 #56★K-1 / §47D「`/bot runtime set` 命中旁路」现算已闭合**：依据＝控制面写口收进咽喉守卫闭包、两构造点已注入 store（旁路面被现算堵上）。
+4. **§47.1 第 十三 条「好感度 v7 结构锁从未实跑」**：依据＝本波实跑绿（结构锁已在盘并跑过，不再是"从未实跑"）。
+
+### 51.2 逐件落点（真身 + 是否已接生产 + 是否需重启）
+
+> 本波全部代码在盘、**未 commit、未重启** ⇒ 下表"重启"列全是"是"；线上今天仍是旧行为。
+
+| 件 | 真身 | 已接生产 | 重启 |
+|---|---|---|---|
+| 搜索四域词表接入「要不要搜」判据（科技/时政/新闻/金融句此前恒判不搜） | `domains/core/search/` 意图判据 + 四域词表 | 判据在链路上 | 是 |
+| 未分域兜底不再把百科置首（此前拿萌百当时政源） | 兜底排序段 | 在链路 | 是 |
+| 跨库回答次序接线 | `providers.py` 的 `order_retrievers`/`resolve_answer_order` 消费点 | 已接（§47.1 挂账的一半已补） | 是 |
+| 节日/节气进每轮提示词（此前算好只进诊断面、线上读不到） | 时间分区追加腿 | 已接提示词 | 是 |
+| 回复长度分档加叙述型/短事实型 + 出口地板腿 | 长度分档件 + 出口地板 | 已接 | 是 |
+| 接地口径跟随（同一通路多问一次、追写上限 一） | 接地追写段 | 已接 | 是 |
+| 贴纸语义匹配（读 bot 本轮实际回复文本判受控情感闭集，判不了/超时＝整轮不贴；QQ 群与 TG 两腿） | 新件 `domains/meme/reactions/sentiment_selector.py` + `engine.py` 接线 | 已接两腿 | 是 |
+| 永久性 per-user 回复策略（当轮明示 > 永久策略 > 全局键） | 新库 `reply_policy` + 策略读点 | 已接 | 是 |
+| 记忆类目折进既有枚举（只喂 kind 不喂 slot 命名空间＝零迁移红线）+ 总线补消毒一道 | `memory_bus_v2.py` 等 | 已接 | 是 |
+| 补回上限改值与超窗改排槽（不再静默丢第六条） | `policy/rate_limit.py` 的 redrive 段 | 已接 | 是 |
+| 缺测回执不早于地板 + DEFECT-1（能力自抛超时不再发回执）+ DEFECT-2 平台腿接上 + DEFECT-4/6 闸 skip 退坑 | `runtime/progress_ack.py` 等 | 已接 | 是 |
+| 群文件装配补参 + QQ 对端资料读件（签名/在线/等级，三态"未探测"结构上写不出"离线"）+ TG/Mail 展示名 + 三格客观无 API 落缺席锁 | 群/账号元信息件 | 已接 | 是 |
+| `/bot status` 入线程池名单（此前恒"只出字不出卡"） | `echo.py` + 装配段 | 已接 | 是 |
+| 渲染执法面扩到直拼面 + 壳层色标按面派生 + 交割线径向遮罩 + 宿主卡密集键值两栏名值各自对齐 + 三态值人话化 | `domains/render/card_render/` | 已接 | 是 |
+| 文件正文 T2 打标咽喉 + Mail 附件腿 + 同形冒充折叠 + 归档解压双限与流式截断读 | 文件安全件 | 已接 | 是 |
+| `db-owners` 新增一行（`reply_policy` 库 owner） | `docs/db-owners.md` | 在册 | 否（文档件） |
+
+### 51.3 她今晚三条裁定（裁定，非建议）
+
+1. **分句合并保持关闭**（维持现状，不翻正）。
+2. **日常沟通不写动作神态**；R-18/亲密档才可写叙述性动作神态。
+3. **九枚开关一把全开**（`.env` 已落、重启生效）。
+
+### 51.4 在册未执法（本节禁读成已完成）
+
+群链接读点未接；`trust` 派生档仍有未接腿；显示名消毒腿未落；ReDoS 预算与 `documents.py` 限额未接；`RepairService` 无生产入口（自修 bug 仍未做）；全开后的真机行为**未验**；本波**未 commit、未重启**。
+
+另记一处**本席出范围的红**（非本波叙述改动造成，也不得为跑绿改判据）：主会话新加的若干枚 Config 字段（`bot_reactions_sentiment_*` 三枚 + `bot_reply_policy_*` 两枚）在盘后尚未登记进 `docs/config-catalog-full.md` 与配置键热面台账，令 `tests/test_doc_sync_gates.py` 的 `test_config_catalog_covers_config_fields` 与 `tests/test_config_key_registration_ledger.py` 判红。目录件按纪律「只准生成器产出」，而现无写 `docs/**` 的在册生成器（`scripts/config_catalog_generator_pilot.py` 显式拒绝写仓库树）、且登记要动 `config.py`/`settings.py`（本席禁写面），故本席**原样记账不代改**，归字段 owner 同批补录。
+
+### 51.5 复跑命令簿（主会话原样，数字未改）
+
+```
+$PY -m pytest tests/test_reply_length_tier.py tests/test_kb_grounding_chat.py tests/test_group_profile_host_reads_s_meta.py tests/test_sticker_sentiment_alignment.py tests/test_reply_policy_permanent.py -p no:cacheprovider --basetemp=<仓库外> -q
+$PY -m pytest tests/test_kb_list_domain_gate.py tests/test_kb_hit_certification.py tests/test_question_intent.py -p no:cacheprovider -q
+$PY -m pytest tests/test_env_example_gate.py tests/test_db_owners_coverage.py tests/test_config_read_points_declared.py -p no:cacheprovider -q
+```
+
+（本席只跑过文档侧生成/门：`doc_sync`/`command_catalog`/`board_doc_sync`/`verify_hashes` 读数见 51.6；上列行为门为交付方复跑口，本席未代跑，故本章不据其宣称"通过"。）
+
+### 51.6 本波的纪律账 / 自曝账（照实记，不许抹）
+
+- 生成/门读数（本席实跑）：`doc_sync --check` 开工即红（auto-facts 与代码漂移）→ `--write` 后 `--check` 绿；`command_catalog --check` 绿；`board_doc_sync --check` 绿；`verify_hashes --check` 绿（零漂移，未 `--write`）。
+- 十席里四席撞轮次上限阵亡（S-VISUAL / S-POLICY / S-FILESAFE / S-META），未完成面由窄席接手；前例教训＝简报过大＝席位死法。
+- 并发改同一棵树造成过 `memory_bus_v2.py` 半截语法坏（一度整包 import 塌）与一处他席配置字段未登记导致的红（即 51.4 末段那条）。
+- 主会话一度转述错一行行号（曾报旧数与盘上现值不一），按盘上现值记账；行号坐标一律不写进本章，只引常量/函数/测试名。
+
+
+### 51.7 主会话增量（2026-09-28 晨，答完她四问之后落；未 commit、部分需再重启）
+
+1. **回执阈值解耦**（她指"下界一起变 40 这个写法笨"，判为真缺陷非表述问题）：
+   `domains/chat_reply/runtime/progress_ack.py::effective_ack_delay_seconds` 旧写法 `floor = max(静态值, 地板)`，让她钉的静态值
+   顺手把自适应下界一起顶高 ⇒ 网关健康时也只能等 40 秒开口，自适应名存实亡。现分工＝静态值只在
+   **没有观测数据**时起作用（冷启动/健康库关/读失败，取 `max(静态, 地板)`，D2a 那一半仍收着）；
+   有实况时开口时刻＝`clamp(EWMA×倍率, 地板, 上限)`，静态值不插手。想回到"钝的 40"改
+   `BOT_CHAT_PROGRESS_ACK_DELAY_FLOOR_SECONDS` 即可，不必动静态值。`config.py` 两处注释同步改人话。
+   取证：`tests/test_progress_ack_thresholds.py` + `tests/test_throttle_redrive_and_adaptive_ack.py`
+   实跑 **89 passed**。**需重启才生效**（她那次重启在此改动之前）。
+2. **棘轮复录**：`tests/test_config_key_registration_ledger.py::CORPUS_FLOOR_BASELINE`
+   字段维按现算重录（748→754，当时值；余三维未动）——本波五枚新字段 + 另一只手两枚。
+   ⚠ 本行今晚被并发覆盖回 748 一次（两只手写同一件，非笔误），已在注释里点名"再动先现算"。
+3. **代录另一只手的键**：`BOT_EMERGENCY_INFO_QUIET_BREACH_LEVELS` 缺热改表态 ⇒ 三枚门禁红。
+   据现算（能力构建期 `getattr` 现读、未接运行时覆盖合并表）记进 `RESTART_REQUIRED_KEYS`，
+   **未改其语义**，归属在注释里写清是谁的键。
+4. **回复策略总闸落咽喉**：`domains/chat_reply/character/reply_policy.py::shared_reply_policy_store` 现读
+   `bot_reply_policy_enabled`，关＝给不出 store ⇒ 读写整条不存在（唯一形态，禁调用方各写一份闸）。
+5. **新体检口**（她要"我自己修 bug 要更快，给我一份"）：`scripts/goal18_health_check.py`
+   只读诊断，按需求号分组跑本波判据件，红时直接报「归哪个需求 + 判据坐标 + 复跑命令」；
+   逐组串行是为省内存（本仓 OOM 前例）。Windows 控制台默认 GBK，件内已自愈输出编码。
+6. **她今晚四问的口径**：`BOT_REPLY_DETAIL` 由她自己在改，**主会话与本波一切席位不得触碰**；
+   九枚开关保持全开（她已重启）；分句合并继续关；D4「群自动回复腿纳入补回」她要先听解释——
+   已告知触发四条件与"迟到插话/刷屏放大器"风险，**默认不做**，等一句。
+7. **本波收尾取证读数**（09-28 晨，主会话实跑，逐批非全量）：两批定点
+   **472 passed / 0 failed** 与 **693 passed / 0 failed**（含安全/记忆/好感/渲染/同意/persona 面；
+   同意卡那四枚红已由另一只手自修转绿）；全树语法复扫 1541 件 **0 broken**；
+   台账红面清到 **0**（`test_config_key_registration_ledger` 除棘轮复录外全绿）。
+
+
+
+### 51.8 入库清单（她 commit 用；逐文件显式 add，禁 `git add -A`）
+
+⚠ **同树并发**：今晚另有一席在写 `character/affinity.py`（v7/v8）、`domains/ops/monitor/reserved_gap_ledger.py`、
+`domains/transport/sender/failure_class.py`、`config_risk.py` 的 v7v8 段、`AGENTS.md` 台账 #63-#65 与本文 §52
+——那些件**不在下表**，动它们之前请先与那条线对账；两席都碰过的件（`config_risk.py`、`affinity.py`）
+必须逐 hunk 看过再 add，别整件提交把别人的半截一起带走。
+
+**本波新增件（真身）**
+`domains/meme/reactions/sentiment_selector.py`（贴纸情感判定）、
+`domains/chat_reply/character/reply_policy.py`（永久 per-user 回复策略）、
+`domains/transport/mail/mail_ingress_files.py`（Mail 附件入站腿）、
+`scripts/goal18_health_check.py`（只读体检口）。
+
+**本波新增件（测试）**
+`tests/test_sticker_sentiment_alignment.py`、`tests/test_reply_policy_permanent.py`、
+`tests/test_redrive_window_exhaustion.py`、`tests/test_group_profile_host_reads_s_meta.py`、
+`tests/test_poke_randpic_open_state_s_meta.py`、`tests/test_memory_open_state_locks_s_memaff.py`、
+`tests/test_affinity_open_state_locks_s_memaff.py`、`tests/test_kb_list_domain_gate.py`、
+`tests/test_safety_exec_sec_narrow_ingress.py`、`tests/test_telegram_document_ingress.py`。
+
+**本波改动件（代码）**
+`plugins/bot_unified_runtime/__init__.py`（hub：贴纸 reply_text 与 TG 触发、群文件装配补参、
+affinity 传 config 句柄、`bot.status` 入线程池名单、闸 skip 退坑、文件正文 T2 咽喉、显示名消毒）；
+`config.py`（五枚新键 + redrive 270/3 + detail 注释归位）、`.env`（九枚开关 + 静态 40）、
+`.env.example`、`domains/chat_reply/runtime/{settings.py,progress_ack.py,pipeline.py,question_intent.py}`、
+`domains/chat_reply/policy/rate_limit.py`、`domains/chat_reply/capabilities/{chat.py,group_info.py}`、
+`domains/chat_reply/character/{providers.py,memory.py,memory_bus_v2.py}`、
+`domains/chat_reply/security/memory_sanitize.py`、`domains/core/search/search_service.py`、
+`domains/location/knowledge/kb_wiki.py`、`domains/core/safety_exec/{attack_surface.py,trust.py,config_risk.py}`、
+`domains/files/sources/file_reader.py`、`domains/files/sender/restricted_runner.py`、
+`domains/transport/sender/file_gateway.py`、`domains/media/ingest/telegram_media.py`、
+`domains/meme/{reactions/engine.py,sources/meme_selection.py,capabilities/meme_library.py,capabilities/randpic.py}`、
+`domains/ops/{host_metrics.py,echo.py,admin/debug.py,features/feature_catalog.py}`、
+`domains/ops/capabilities/host_state.py`、`domains/ops/monitor/host_status.py`。
+
+**本波改动件（文档与生成物）**
+`docs/HANDBOOK.md`（§51 全节）、`docs/acceptance-manual.md`（§6.6.17 续）、`docs/db-owners.md`、
+`docs/config-catalog-full.md`、`docs/auto-facts.md`（`doc_sync --write` 产物）、`docs/rendering-contract.md`、
+`tests/render_hashes.json` / `tests/render_hashes.meta.json`（`verify_hashes --write` 产物）。
+
+### 51.9 收口增量（2026-09-28 晨 07 时前后；主会话独立跑，未 commit）
+
+1. **源码树 `data/` 残余根修**（本席自造，卫生门当场抓住）：`domains/chat_reply/character/reply_policy.py::shared_reply_policy_store`
+   原先在路径解析失败时退回字面相对路径 ⇒ 测试环境（未配运行时数据根）把
+   `reply_policy.sqlite3/-wal/-shm` 直接写进源码树，被 `test_search_acg_switch_leg` 的
+   规则 2/6 残余门判红。现改为**解析不出来或落进树内 ⇒ 整条腿不建库（返回 None）**，
+   生产配了绝对数据根时判据天然不触发。残余三枚文件已备份 `%TEMP%` 后清出树。
+2. **风险分级登记**（需求 18 的门）：四枚新键进 `domains/core/safety_exec/config_risk.py` 的 `EXPLICIT_R1_KEYS`。⚠ 第一遍我写成**裸字段名**
+   （小写），而该表吃的是**大写 env 名**（判定前先 `normalize_target`）⇒ 命中不了、棘轮仍红；
+   改大写后 `test_tier_coverage_ratchet_only_goes_down` 转绿（`tests/test_safety_exec_consent.py` 全件绿）。
+   教训入册：**登记表的键名形态要现算，别按字段名抄**。
+3. **类型门**：`reorder_knowledge_chunks` 由 `list[object]` 改 TypeVar 透传（调用方不再被迫 cast、
+   也不丢真类型）；`meme_library` 的晚绑判定类用两枚 `Any` 局部接住属性访问（窄化对 mypy 不可见，
+   不是放宽校验）；根 5511 行 `event.get_platform()` 改 getattr 兜空串。mypy 现算**只剩 1 错**，
+   位置在 `domains/chat_reply/character/affinity.py` 的 v8 文风常量段——那是同树另一只手正在写的
+   v7/v8 件，**本席不动**，归其 owner（行号不写：短路径 `character/affinity.py` 会被解析到
+   `capabilities/` 那枚垫片，本门的「行号越界」判据就是这么抓的）。
+4. **测试互斥性**：`tests/test_reply_policy_permanent.py` 的库文件名此前用 `abs(hash(...))`，
+   CPython 字符串哈希按进程随机化 ⇒ 同一轮里不同措辞可撞进同一个库文件、互相串数据，
+   使「未明确确认不得落库」那枚断言**在部分进程里假通过**。已改内容 sha256 并把 `import ast`
+   被 sed 顶掉的一行修回（本席自造，见 51.10）。
+5. **Telegram 贴纸触发落地**（她点名「QQ 和 Telegram 都要」的最后一米）：根 `after_reply` 腿按
+   `message.platform` 分派，TG 走 `maybe_react_telegram_message`，群组判定吃 `chat.type`
+   （不吃 group_id——TG 频道也带号）。QQ 侧 `reply_text` 已在 51.7 接上。
+6. **显示名消毒腿**：摄取层 `sender_display_name`（QQ 群名片/昵称）现过
+   `domains/chat_reply/security/injection.py::sanitize_display_name`——同形异码/RTL/零宽冒充管理员名那一族此前吃不到。
+
+### 51.10 本波纪律账·续（照实记，不许抹）
+
+- **主会话两次误删他人节标题**：在 `docs/HANDBOOK.md` 里以「对方的 `## §52` 标题行」为插入锚点，
+  Edit 会把锚点整行换掉 ⇒ 两次把 §52 的标题吃掉（AGENTS 台账 #63 #64 #65 按号引它），均已就地补回、
+  正文零丢失；第三次改成"只动自己那节的行"并把 §52 的引言段搬回其标题之下。**家规：在别人的节旁边插内容，
+  锚点必须选自己那节的末行。**
+- **一次 sed 误伤**：给测试件补 `import hashlib` 用了 `0,/regex/` 形式，把首条 `import ast` 顶掉 ⇒
+  收集期 NameError，已修回。教训：改 Python 文件的 import 一律用精确编辑，不用流式替换。
+- **并发取证要重跑**：一枚 `reply_policy` 测试红在两分钟内的三次读数里给了三种现场（旧断言 / 别席
+  06:40 的新输入 / 修好后全绿）——同树另一只手在动**本波的测试件**时，单次阅读不可作结论；
+  报红之前先 `stat` 时间戳再复跑。
+
+
+
+
+
+## §52 队列休眠清扫 · 同意卡门换代 · TG 连接期重投 三波连发（2026-09-27 深夜—09-28 晨；台账 #63 #64 #65）
+
+> 防呆注记：本节标题行今晚被主会话两次插入误删（AGENTS 台账 #63 #64 #65 按号引它），两次均就地补回、
+> 正文一字未动。教训已入 §51.6——**在同树他人写的节旁边插内容，锚点要选自己那节的末行，不要选对方的标题行**。
+
+**触发**：她连报三件事——`send_queue_dormant_partial` 无消息也每 ~5 分钟刷屏、同意卡「超管还要批、批完还得重发」的三段式与纯文本工单、`creation_not_configured` 读不懂；随后裁定追加 TG 告警腿另案与「HEAD 基线红四族＋他席 config 登记三红」接手。
+**裁定记录**：批准门「两者都要」（超管本人 R1 免卡直改＋其余工单核销即落地）；死账走启动清扫代码；creation 探针保留每进程一报＋人话；git 暂不提交（他席 hunk 混树，晨判）；.env.example/HANDBOOK/AGENTS 三件有据小修照做。
+**取证推翻的三条旧自述**：①「dormant 告警说明现在发不出去」＝实为修复前存量自检，新失败当场终态化（audit `send_dormant_final` 同日在册）；②「TG 告警卡从未成功上送」＝历史 128/172 部件真送达，断的是代理瞬断＋代码停放语义放大；③「探针说本进程仅报一次却多次」＝去重名副其实，噪音来自当天多次重启，且 throttle 两红在她说话期间已被别席 02:44 那手修掉。
+
+### 52.1 #64 休眠清扫+人话波（真身 `sender/queue.py::sweep_dormant_partials_on_startup`、`sender/worker.py` 首轮 drain 旁路、`monitor/alerts.py::_KIND_PLAIN`、`creation/reserved_health_alert.py`）
+- 启动清扫带 600s 宽限与幂等守卫，part 明细账保留取证；**用户 09-28 02:2x 重启后已生产实跑**：队列 dormant 清零、清扫行 `startup_dormant_sweep delivered=0/2` 在册、重启后两条 TG 卡 `sent`。
+- 三 kind 人话入册（dormant/inflight_saturated/creation_not_configured）＋两面同步覆盖锁（分母从真身派生＋注毒自证）；探针署名 `creation-patrol`。
+- 证据：`test_queue_dormant_partial_final.py`（含 4 枚启动清扫新用例）、`test_alert_plain_text.py` 覆盖锁、`test_creation_reserved_health_alert.py`；定向集 332 passed。
+
+### 52.2 #63 同意卡门换代（真身 `safety_exec/settings_gate.py`、`consent.py`、`ops/capabilities/consent_admin.py`、规格 §5.7/§5.8）
+- 身份接线修复（群策略/回复详情写点显式传 actor+session_key，杜绝 `runtime_internal` 缺省泄漏）；超管 R1 免单三门判定复用 roles 中央真身、内部名永享不到；核销即落地＝落地前绑定复核，漂移作废退回重新申请（「批准≠落地」口径同步改 spec/板块页/echo 帮助）；工单出通用卡图零新模板、fail-open；超管自批对齐规格 §5.3。
+- 证据：`test_consent_command_surface.py::test_super_admin_r1_write_lands_without_a_ticket` 等新锚十枚；consent 族五文件 213 passed；同波已随 02:2x 重启生产生效。
+
+### 52.3 #65 TG 连接期重投（真身新增 `sender/failure_class.py`、`worker.py` mixed 重投臂、根 `_deliver_admin_alert` 补发）
+- 三值分类只放「确证零字节出网」的连接期失败进重投（复用请求级既有退避通路），不确定形态维持 UNKNOWN——M-63「九发零账」红线反向锁在场（`test_connect_phase_retry.py` 18 绿，ReadTimeout 逐字段不变）。文本直发腿对同形态至多后台补发一次。
+- **待重启生效**（落码晚于 02:2x 那次重启）；配套诱因处置留她晨判：`.env` 的 `TELEGRAM_PROXY` 置空改直连与否。
+
+### 52.4 接手基线红四族＋三红（09-28 晨，席 I1/I2/I3/J）
+- I1：h_voice r1/r2 与 inline_mixed 三枚旧停放锁对齐 Q-G7① 终态化语义（契约要件「零再投/账证/timeout kind 上抛」全部补强，零源码改动，58 passed；r2 用例随之改名 then_partial→then_final）。
+- I2：parity 两红的真身在**测试执法账本**而非 registry（三形早齐）——STRUCTURAL_IDS 追加 bot.consent/bot.host_state＋活性谓词双证新锁，bot.chat 双作者定性「管线管理形」入例外账；72+20 passed。
+- I3：throttle 两红别席已修，本席转修同族邻域红 `test_progress_ack.py` 平台腿自述锁（更名+翻判据+补同号 QQ 一格），回执家族 222 passed；.env.example 的 D2/D2a 跟随由主会话照改（本文件 4223 与 catalog A26 口径为准）。
+- 席 J（他席在途 config 登记三红，用户裁定「一并接」）：九枚新键逐枚对码定档（全落 RESTART：reply_policy×2、redrive×2、reactions_sentiment×3、control_plane_files_roots、emergency_quiet_breach_levels；关键机制＝`_RUNTIME_HOT_OVERRIDE_FIELDS` 固定合并表，「每消息现读」≠「热」）；红 1 由别席 05:59 落账回正、本席复算核账未动棘轮；红 2 只补 `CORPUS_FLOOR_BASELINE` 两维并逐维写归属；红 3 定性＝覆盖哨兵出生即谎，新增 `UNTRACKED_FLOOR=5` 保守地板；另主动抬齐 hotchange 门 `BASELINE_CORPUS_SIZES` 四维。全绿＝五件套 104 passed（席内）＋主会话复跑 76 passed 双跑稳定；catalog A26 窄锚追加五行。
+- 席 J 挂出的三笔 [需裁]（本波未越界动手）：🔴 `reply_policy.py:588-589` 在 `build_runtime_data_path` 失败时直落相对路径 ⇒ 源树 `data/reply_policy.sqlite3` 反复重现且被活进程持有（违反规则 2/6、conftest G1 守卫殃及无辜用例；判据位属他席独占面）；🟡 catalog 功能域表「❌重启/空热列」异形使 leg B 对九枚结构性失明（执法真空）；🟡 catalog 两行缺省值 180.0/1 与代码 270.0/3 不符，待其 owner 更正。
+- 附带发现挂账：`send_request_parts` 无 DELETE 腿（终态行部件账永不出清）→ [需裁] 是否补 TTL；bot.chat 双入口收敛 → [需裁]。
+- 他席在途不归本波：manifest 复锚家族红、meme 情感对齐族（含 I001 卫生红）、error_report fallback 两红、ATK-OUTB 未入库 hunk。
+
+### 52.5 验证与状态口径（规则 5）
+四道门本波口径：lint（本波文件 ruff 净）、mypy（本波文件 0 新增错）、runtime-layout PASS、hygiene PASS（根目录越界缓存与他席 SDD 缓存已备份 %TEMP% 移除）；全量套件一次 2833s 快照 18580 passed，117+5 红逐族归因无一来自本波（部分红在他席此刻仍在动树）。**全部未提交**，逐文件清单在主会话报告；重启生效分界＝02:2x（52.1/52.2 现役）与待下次重启（52.3/52.4）。
+
+## §53 T8 回复风格按人永久记忆 · 一多人号并键 · 群聊寒暄升档（2026-09-28 白天—傍晚；台账 #66）
+
+**触发**：她要「按用户要求调节并永久记住」——自己偏详细文学化、别人要像真人上网那样短；随后追加四条：文风得跟人走、**切人格仍要生效**、**亲密档与普通档风格必须统一**、自然语言落库**不能只靠谓词**；傍晚现场再报两件事：①「3865067623＋1722380002 并成一个键」②「群里 @ 他只回一段话，私聊才长」。
+
+**她逐轮改道与撤回的三处**（重要，防止后人当它们是 bug）：① 默认档**不动**——我提的 `BOT_REPLY_DETAIL=normal` 经逐格现算证明是无效动作（`auto` 与 `detail` 七格全等），而 `normal` 会砍掉她要的介绍类详尽；② 反照本宣科令 09-27 已存在（`chat._KB_RECITAL_RULE_LINE`，钉在【知识库】首行），本波只验不建；③ 亲密档「能详则详」那套篇幅散文**按她新裁定摘净**，只留描写维度，篇幅一律由长度档那一行说。
+
+**落地六块**：B 文风两码入表（`literary_prose`↔`plain_online_speech`，互斥只在 `_apply_style_mutex` 一处收口，读点与 merge 同引）；C 第四轨判定（`wants_policy_judgment` 线索门 ∪ 三维裁决 `parse_policy_verdict_fields`，门宽落库严——认不出/KEEP/NONE 一律不写，旧裸词形仍可解析）；F1 亲密档 `intimate_reply_length_tier`（既有档位秩上 +1、封顶详尽，**就地改写那一行**长度指令故指令恒一条）+ 出口地板同用一个升格；F2 两段场景散文摘篇幅 + 黑名单锁；G `_clip_prompt_tail` 保住策略块与长度行（无保护块时逐字同形）；N3 `/bot reply set|show|clear <QQ> [文风]`（复用 `bot.reply` 路，零新 RouteKind、零新帮助主题，独立测试件在册）。字面量收单源：`TIER_LINE_PREFIX`/`POLICY_SECTION_HEADER`。
+
+**53.1 并号（她的键真身是 QQ 号）**：`bot_reply_policy_person_aliases`（JSON 字典，左号并入右号），归并只在 `ReplyPolicyStore.canonical_person_key` 一处咽喉 ⇒ **键形状仍由 `domains/core/session_keys` 构造、不手拼前缀**；旧号那行首次读主号键时前移一次并删旧行（不留第二真身）；`clear` 连旧号一起清（否则"撤了又回来"）。🔴 全树只有 `reply_policy.py` 读这张表，**提权/角色/同意判定一律不读**——并号只并偏好键，不并权限主体（渗锁 `test_person_aliases_never_leak_into_privilege`）。登记三面齐：config 字段（挂现成 JSON 字典解析器，坏 JSON 降级为不并号并留日志）＋`.env.example` 申报＋`settings.py` RESTART（表在 store 懒建时吃值）。真 bug 一枚：前移触发条件原写成「输入键≠主键」，恰好漏掉她真实场景（旧行在侧号、下轮从主号读）。
+
+**53.2 群聊寒暄升档（她那句「跟人不跟会话」的落地）**：`_REPLY_POLICY_MODE_COLUMNS["verbose"]` 原来「除寒暄与报错确认外一律详尽」，其立论依据＝人格【回复长度】那句「通常不少于百来字」不能与简洁档拆台——**而那句已在 53.3 被撤成让位条款**，压制只剩副作用：本人明示要长、群里一句寒暄仍被压回适中。现改成 verbose 列**一律详尽**；`auto/detail/concise/normal` 四列一字未改（未明示者仍归"默认别太长、一段话说完"那条裁定）。亲密对照实测：简洁策略＋亲密 ⇒ 适中（不再被压到 ≤60 字），审计标签 `length_intimate_floor:standard` 可 grep。
+
+**53.3 人格让位条款（席 N4）**：`identity.md`【回复长度】、`knowledge/…人格与表达规范.md:922`、**运行副本** `ChatBot_Runtime/data/persona/守岸人_核心人格.md` 三处同改为「长度与分段跟着本轮那一行档位走；一段话说完是日常默认形」，副本 sha 重锚（`--adopt` v2 强制 `--note`）＋`--check` 绿＋人格两族 43 passed。遗留：`chat.py` 注释四处与 `test_reply_length_tier.py` 三处仍以「人格里写着百来字」立论，需随本口径改口。
+
+**证据**：她那句原话在生产库落下第一行（`verbose + ["literary_prose"]`、`source=inferred`＝判定腿接住的，非关键词表）；十三态离线实弹走真能力腿：长度指令恒一条、反向三例句（文献/电影/他说话）不落库、否定式「别写得那么文艺」正确落口语侧；注毒四发全塌（互斥尺、尾裁保护、归属锁、篇幅黑名单）；N3 规格八族门 202 passed、哈希门与 command_catalog 已跟随、doc_sync 补录后 `--check` 绿。全量口径＝跑测期间不改文件的那一遍 **168 failed / 19058 passed**，本波面上 4 红与会话开头基线逐枚同名（别席改亲密段标题未同步断言），且 7400 行日志内本波符号 0 命中；后增 6 枚配置账门红经现算证伪本波嫌疑（本波新键不在任何桶、`unaccounted` 554＝基线、集合指纹相等，而桶是**变小**——加键不可能致缩）。
+
+**53.4 复验收尾批（2026-09-28 晚，用户另席令「检查完成度、没达到就全部完成」；未 commit）**
+
+- **53.3 的遗留已闭**：`chat.py` 三处（分档表头「数值权威」段、`REPLY_TIER_CONCISE` 上方、寒暄×auto 那格）与 `test_reply_length_tier.py` 两枚判据的说明，全部按新口径改口——立论从「人格里写着不少于百来字」换成「人格是**让位条款**、长度数值唯一真身＝档位行」，「百来字」只留在历史注记里（写清旧理由被撤那天）。
+- **本波族内 4 红清零，根因是字面量抄了两份**：`test_rp_style_directives.py`（6 处）与 `test_content_route_v3.py`（9 处）把场景段标题当字面量硬写，他席把「亲密场景」改成「亲密与成人向场景（含 R-18 向）」后：presence 侧当场失配，而 `not in` 侧**静默变成空判**——互斥锁不咬人比红更危险。改法＝段落头由 `_section_header(常量真身)` 派生＋「两段必须异头」前置断言（同头则所有 `not in` 全是空判）。全树硬编码命中数现算＝0。
+- **裁定 2b 补掉一处真漏（心理维度）**：日常段禁令原文只点了「动作、神态、环境」，**没点她亲口要禁的「心理」**，而亲密段把心理列进了许可维度 ⇒ 日常轮同时读到「只用说话来回应」与「内心描写没禁」，模型自己择宽。现日常段禁令三维点名关全，锁 `test_normal_route_bans_every_dimension_intimate_route_opens`（判据取「（」之前那段禁令本体，防尾随括注骗过命中；注毒＝把禁令退回旧文案，当场红）。
+- **复查抓到一枚跨波真 bug（在本件热面，非本波产出）**：T6 出口硬地板 `_reply_length_floor_leg` 的重问跳调 `_generate_with_tool_loop` **不传 session_id** ⇒ 第二跳被路由当成「无会话」，亲密档追长度时按无会话键选渠道，同时绕开评审面②的 stale-pin 门（不合格会话本该恒传 `""`）。修法＝首跳那把键**单算一次**落进 `route_session_key`，地板腿照抄同值；`test_content_safety_v4` 两枚只认「恰好一跳」的断言改成判性质（`set(session_ids) == {期望键}`，一跳两跳都绑得住）。证据＝修前两红、修后同族 294 passed。
+- **门禁与卫生**：`doc_sync --write` 重录机器册后 `--check` 绿（漂移来自多波累积，计数以机器册自身为准）；`verify_hashes` 只读检查报出**恰一项**漂移（`echo.py`＝N3 帮助条目），按该单项 `--write`，其余 18 条未动；`runtime-layout` 由红转绿——源码树里躺着今天 05:47 出现的异常 `.venv\`，其 `site-packages` 带 5 枚 bytecode 被门计入（运行时 venv 真身仍是 `ChatBot_Runtime/venv`），本批只清 bytecode、**`.venv` 本体留着等用户裁定**；ruff 对本批八件全绿。
+- **实弹复测（tmp 库跑真能力腿；生产库只读）**：钉过「短一点」的人该轮进亲密档 ⇒ 提示词那一行＝**适中**、长度指令恒一条、亲密段在场——F1 升格与出口地板用的是同一个升格；未表态者寒暄＝适中、介绍＝详尽（她 06:00 第 3 条原样成立）；「别写得那么文艺」落口语侧且不动长度；`.env` 的并号键她已填（`{"3865067623": "1722380002"}`），重启后首读主号键会把旧号那行前移一次。生产库本轮仍是一行（`verbose + literary_prose`，`source=inferred`）。
+- **挡住「全量绿」的三件外部债（现算归因，本批一律未动）**：① 两枚 **untracked** 测试件 `test_providers_r2_profile_notes_gate.py` / `test_providers_r2_usage_sanity_clamp.py`（席 S-REVIEW-PROVIDERS，09-28 17:45）import 的 `_sanitize_profile_notes_text` / `REPORTED_TOKEN_HARD_CAP` 在全树与 HEAD **都不存在** ⇒ pytest **收集中断**（`exit=2`）＝「测试落了、实现没落」，其中画像备注那件是活的注入面（原文每轮进【已知画像】）。**→ 本席已按用户「执行甲」把这两条缺腿补落，收集中断解除（见 53.5）。**② `test_config_key_registration_ledger` 6 红＝`bot_pipeline_capability_hard_timeout_seconds` 落进 hard_dead 桶而基线未登记（46adb3d 每跳超时批的账）。③ 全树 ruff 70 处、mypy 4 处（`image_guard.py` 注解期 `Path` 未 import、`affinity.py` 元组赋值、`chat.py` 工具白名单 `object.get`）、`config.py` 四处 PIE794＝randpic/meme_library 两组守卫字段**重复定义**（后定义者赢，前一份是死值）。都在别席热面，等用户裁定谁收。
+- **⚠ 归因自我更正（量具错，不是代码错）**：本批第一轮报「`test_capability_manifest_gate` 20 枚红」，其中 **13 枚是本席自己造的假红**——绕开 `scripts/dev.ps1` 裸跑 pytest 没带 `PYTHONIOENCODING=utf-8`（`dev.ps1:75` 每次都钉它）。门内用 `subprocess.run(..., encoding="utf-8")` 跑普查件 `scripts/central_seam_census.py --json`，而该件的 `seat` 字段是中文 ⇒ 子进程按 cp936 落字节 ⇒ reader 线程 `UnicodeDecodeError` ⇒ `out.stdout is None` ⇒ `json.loads` 炸 `TypeError`。钉上 utf-8 重跑＝该族只剩 5 枚真红（`leg8` 直呼点未申报＝`__init__.py` 的 handle_async/poke/tts 在飞接线；`leg27` bot.reminder 通电却未披露缺省前置），**没有一枚点本批产出**。口径：**报「某门红」之前先按 `dev.ps1` 的环境复跑**；普查件自身也缺一行「stdout 强制 utf-8」的自保，留该件 owner 裁定。
+
+
+**53.5 PROVIDERS-R2 两条缺腿补落（2026-09-28 夜，用户裁「执行甲」；未 commit）**
+
+- **票②（画像备注读侧消毒）**：`character/providers.py` 新增 `_sanitize_profile_notes_text`，走既有咽喉 `security/injection.neutralize_internal_markers`（零新正则、零新标记名），并把【已知画像】那一格的 `notes_text =` 消费点包起来——**只改读侧出点、不动库行**（库里原文是她让我记住的事证，改了就没法复查）。
+- **票 ATKLLM-2（回包 usage 硬顶夹）**：`llm_engine/providers.py` 加常数 `REPORTED_TOKEN_HARD_CAP = 10_000_000`（口径＝现仓可见真实上限「上下文 ≤2M + `max_tokens` 顶 65538」的数倍余量，**要改只改这一行**），在 `_extract_usage` 缓存归一之后夹顶层 `*_tokens` 正整数；负值/布尔原样交下游非负闸。夹过写 `usage_report_sanity={cap, clamped_keys}` 留痕不静默。单点夹即全链有界：台账 channel_spec 臂与 chat 审计臂同吃这一份 dict。
+- **两处形状约束是给锁留的**（后人别当怪代码改掉）：常数必须**裸赋值**——注毒锁按 `ast.Assign` 认它，写成 `X: Final[int] = …` 会退化成 `AnnAssign` 而看不见；消费点必须保持**三行写法**——同锁的注毒夹具按该形态逐字节替换，压成一行会让变异自证空转。
+- **证据**：两枚原先进不来的单子 `10 passed`；邻域（affinity/memory/atk_llm3_usage_clamp/文档一致）`124 passed`；本波族连同别席新落的意象默认件 `281 passed`；两文件 ruff 全绿、mypy 零新增。**入库纪律**：两枚单子至今 untracked，要 add 就必须与两条实现腿**同一笔**，否则收集中断立刻回来。
+
+**53.6 默认文采·三枚讲法码·意象族轮换册（2026-09-28 夜二批裁定，席 T8-意象；未 commit）**
+
+- **她的二批裁定拆成四件**：①「普通人寒暄一段话就够，介绍类落到详尽信息题就要分段」⇒ **形约束维持跟档位走**（现行真身本就如此，本批**不动**一条判据，只补一枚锁）；②「陌生人文采不要太水、表达稍微好一些」⇒ 新增全局默认讲法腿；③「对我：详细、更具体、更意象化、更多样化」⇒ 三枚受控码；④「意象·风格·语气·世界观·经历跟着**人格**走；回复策略跟着**用户**走，不分私聊/群 A/群 B/群 C」。
+- **默认讲法**＝新键 `bot_reply_default_directives`（缺省 `literary_prose,imagery_rich`），只在**这个人一条讲法都没表过态**时顶进【对方的长期沟通偏好】，并带一行自报「对方没有表过态…以他明说的为准」（不许冒充本人说过）。三态硬判据：开／`off|none|关|不表态`＝整块不渲染（与今天之前逐字节同形）／乱码＝也当没配。本人明说永远压过默认（`plain_online_speech` 不会被拧回文学化）。登记三面齐：config 字段＋`.env.example` 申报＋`settings.py` RESTART（读点现读装配期 config 快照，热 set 不改行为）。
+- **三枚受控码**（`concrete_delivery` 讲具体／`imagery_rich` 铺意象／`varied_imagery` 换意象）全部落**修辞层**：文案避开「放开」字样（既有 `_OPEN_UP_PHRASES` 与 `test_content_directive_reaches_the_prompt_and_stays_narrowing` 那把「放开」尺比新加的黑名单更严，本批按严的那把改文案，不折尺）；谓词侧「讲具体／换意象」是祈使形不挂对象尺，「铺意象」与文学码同挂 `_STYLE_OBJECT_RE`（`_GATED_RHETORIC_CODES` 一处收口）；判定轨 ASK 面自动继承（它从 `CONTENT_DIRECTIVES` 减 `STYLE_CODES` 派生）；`/bot reply set` 人话词表与配置默认值**共用同一张** `_HUMAN_DIRECTIVE_WORDS`（分两张就会长出「命令认得、配置不认」的第二口径）。
+- **意象名册住人格侧**：`personas/shorekeeper/imagery_families.txt`（逐条对得上 `identity.md` 与其 knowledge 的出处；**族数以该文件自身为准**，本文不抄），已进 `sync_persona_source.py` 的 `SOURCE_SNAPSHOT_FILES` 覆盖面并 `--adopt` 重锚（副本正文一字未动，`--check` 绿）。代码侧 `character/imagery_roster.py` **只读表不抄表**，回归锁 `test_imagery_family_names_are_not_hardcoded_in_code` 现算名册族名去扫两份 .py（附注毒自证）⇒ 切人格＝切一套取材面，接住她「以后切爱弥斯只应用于她」那一刀的**前半**。
+- **用量账**＝`reply_policy.sqlite3` 同库新表 `person_imagery_usage(person_key, family, used_at)`（不新增库路径键、不新增 owner 行；db-owners 已随批更新）。轮换只对钉了 `varied_imagery` 的人开（陌生人不开＝不拿全服基数撑大账本、不多开一处漂移面）；键经 `canonical_person_key` ⇒ 并号共用一本账；`clear` 连用量行一起删（半撤销会让下次设上接着旧一世）；**窗口与每轮派发数以 `reply_policy.IMAGERY_REUSE_WINDOW`／`IMAGERY_PICK_COUNT` 两枚常数为真身**（本行不抄数，改了代码不必回来改文档）；池被窗口吃满时按最久未用回补、**绝不回空**（回空＝提示行静默消失，她看到「又开始重复」而日志一切正常）。
+- **注入只有一处**：`chat.py` 原 `policy_directive_text(turn_policy)` 换成 `reply_policy_section_for_turn(...)`（默认腿与轮换都在 `reply_policy.py` 收口，渲染口不再自己判「没策略就塞文学化」）；提示段整块仍住 `POLICY_SECTION_HEADER` 之下，尾裁保护腿天然覆盖它。
+- **⚠ 生效分界**：全部停在待审盘上——**不 commit、不 push、不重启**（三件套保命入库＝`fb084a0`，本批其余未入库）。要她本人吃到「更具体/更意象/更多样」，还需把 `varied_imagery` 钉到她那行（聊天里说一句，或 `/bot reply set <号> 详尽 文学化 讲具体 铺意象 换意象`）；生产库那行今天仍是 `verbose + ["literary_prose"]`，且并号后的**旧行前移至今未触发**（`-wal` 最后写＝17:03）——别把盘上状态当「已生效」。
+- **本席自报一次事故**：新测试件的 fixture 漏了 monkeypatch `shared_reply_policy_store`，`/bot reply set` 那条腿遂按 `.env` 的 `BOT_RUNTIME_DATA_DIR` 落到**生产库**，写入一枚假号 `9000000001`。已单行 `DELETE` 回滚（前后各留一次读盘证据，她的真行 `3865067623` 未受牵连），并顺带在生产库留下一枚**空表** `person_imagery_usage`（应用重启本来就会建它，无数据）。根因不在本件：`conftest` 的 data 守卫只盯**源码树** `data/`，管不到 Runtime 根 ⇒ 凡走命令面的测试都必须显式改口，已在 fixture docstring 里钉死这条告诫。
+- **证据**：入库＝commit `fb084a0`（三件套）；复跑口径＝`pytest tests/test_reply_style_imagery_default.py tests/test_reply_policy_permanent.py tests/test_reply_policy_preset_command.py tests/test_reply_length_tier.py tests/test_rp_style_directives.py tests/test_documentation_consistency.py tests/test_doc_link_integrity.py tests/test_persona_source_sync.py tests/test_db_owners_coverage.py`（**用例数与族数以实跑为准**，规则 10，本行不手写）；`sync_persona_source.py --check` 绿、`command_catalog.py --check` 报 current、`doc_sync.py --check` 绿；新测试件先 RED 后 GREEN（缺件时整族红、补完转绿的过程留在本席报告里）。
+- **外部债两笔（本批不代修，现算归因）**：`test_config_key_registration_ledger` 的「AST 零直读基线 102 vs 现算 101」「动态模板覆盖 18 vs 17」＝别席把 randpic/meme_library 双下限等键接了读点所致（判据内部自洽，只差各桶基线没跟着降）；字段维地板本批只按现算复录为 761 并注明「本席一枚、余五枚属他席在飞件，不逐枚冒领」。
+
+**53.7 深夜补账（09-28 23:4x，席 T8-意象续；用户已重启 bot＝23:27，PID 37332）**
+
+- **⚠ 自我更正一条**：本席 21:0x 报「并号后的旧行前移至今未触发」——**作废**：21:53 生产库那一行已从侧号 `3865067623` 迁到主号 `1722380002`（只读取盘实锤，旧行不在库里），`_legacy_keys_of` 那条腿工作正常。教训＝盘上「还没发生」不等于「不会发生」，只能按读到的当下状态说话。
+- **B1 导入器五红已闭**（`tests/test_import_meme_packs_pin.py` 连同 randpic/meme 守卫族全绿）：四枚红是**夹具自己错**——两枚贴纸用同一组参数造 ⇒ 字节同 ⇒ md5 同，导入器按 md5 去重只收一枚（被钉的该是夹具，不是导入器）；另一枚「必须用中央 image_guard」把判据写成函数对象 `is`，而脚本按**路径**加载真身（不能 `import plugins…`：那会把 NoneBot 整套拖进离线脚本），两次加载必然是两个模块对象 ⇒ `is` 永假。换成真判据「同一枚文件 ＋ 脚本内不得出现第二份魔数字面」，并配注毒自证（用中央文件证明这把尺扫得到那些字面，防它成装饰）。
+- **mypy 全树 8 红 → 0**：`domains/media/image_guard.py` 缺 `Path`（补 import；该文件有 `from __future__ import annotations` 所以不炸运行、只炸静态面）；`character/affinity.py` 冲量权重参数放宽成 `tuple[float, ...]`（`len(weights) != 6` 守卫仍在、调用方零改动）；`capabilities/chat.py` 工具白名单那步 `"object" has no attribute "get"` 顺手改成 **fail-open**——畸形回包（`function` 不是 dict）从前会在"判白名单"这一步炸掉整轮，现在按「该名字不在册」处理（台账 #50★ 同族教训）。config.py 四处重复字段**由别席** 22:50 的 `tests/test_config_fields_no_duplicate.py` 收掉，本席未抢。
+- **群侧「几乎不回话」查清了，不是新 bug**：重启后事件账里 `pipeline_result receipt_state=blocked transport=policy` 大量出现，判据源＝`policy/gate.py` 的 `_denied("passive_group_message", …)`——非 @ 且抽签未中的群消息按设计只观察不回。**真洞是可观测性**：那条日志只有 `receipt_state/transport`，**门因不落盘** ⇒ 用户只能问"它为什么不回我"。补它要动 root `__init__.py` 的事件发射点（集中管控面），**本席不擅动**，在此点名交主会话/用户裁定。
+- **ruff**：本席改动面全净；`affinity.py` 残留 2 条为风格建议（PLR1730/SIM102，落在好感度数学件里，不擅改）。全树 ruff 债是历波累积，非本批产出。
+
+**53.8 满载并行收尾（09-29 00:1x–02:2x，用户令「一次做完、不许中途要输入」；六席 + 主代理）**
+
+- **为什么记这一段**：全量套件 23:38 那轮报 170 红，复测真红 104，其中**66 枚是"跑在别人改到一半的文件上"的瞬时红**（套件窗口内 38 个文件被并发改写，含 `SyntaxError: invalid character '（'` 这种收集期读半截文件的铁证）。判据教训：**共享树的全量绿只在"跑的时候没人写盘"才有意义**，归因必须现算复跑，不能拿一轮日志当账。复跑口径：`scripts/dev.ps1 -Task test`（临时根自 53.8 起在仓库外，见下）。
+- **审查席（S-REVIEW-T8B2）挖出两枚 🔴，本席全部落地并各补锁**（`tests/test_reply_style_imagery_default.py` 现 40 例，先 RED 后 GREEN）：① 默认讲法原是「有行就整块不吃默认」⇒ 她（钉过文学化）拿不到「铺意象」，陌生人反而比她多一枚 ⇒ 改成**只补本人没表态的那一维**（抑制表 `_DEFAULT_SUPPRESSED_BY`，「说人话」的人算两维都表过态）；② 新谓词里「太空泛／具体点／每次都不一样／多样化／换个角度」全是通名 ⇒ 谈别的东西就铸**反向永久策略**（写腿命中即 put，线索门对这些还回 False ⇒ 连模型那关都不过）⇒ 只留"提 bot 怎么讲才成立"的说法。另修四枚 🟡：名册改按**现役人格** `ContextBundle.active_persona_id` 读（config 只回落一层，否则热切人格后名册还停在出厂人格＝她裁「意象跟人格走」没接上）、族名进提示词前过 `neutralize_internal_markers`（名册是可读资产，写一行 `[TRUSTED_SYSTEM]` 就能冒充指令）、名册读失败面放宽＋档名夹形（不许把异常递给聊天）、`clear` 连侧号的意象账一起删；补全角分隔符（`；｜` 认不出＝整条默认静默关，比写错更坏）。
+- **接线席（S-DEFAULTLEG-WIRE）现算清生产构造链**：生产唯一 `bot.chat` 构造点＝根 `__init__.py:5217`，`:5246` 已交 `content_route_config=_config_with_runtime_overrides(...)`（`:790` 恒不返回 None）⇒ **默认讲法腿在生产有喂**；真正没交的是三条运维路（`pipeline/backend_unit.py`、`ops/smoke/smoke.py`×2、`ops/smoke/console_chat.py`），已补齐，并新锁 `tests/test_reply_default_leg_chain_wiring.py`（真入口端到端 + AST 名册，注毒三形实测各自打红）。离线工具路同时把 `bot_reply_policy_enabled`/`bot_search_acg_enabled` 钉 False＝观测工具不许写生产库、不许偷发外网。
+- **重启即挂的一枚（S-MEME-SCHEMA）**：`domains/meme/sources/meme_library.py` 把 `CREATE INDEX ... ON memes(review_state)` 放在 `_SCHEMA`，而该列要到 `_MIGRATIONS` 才 ALTER ⇒ **老库不炸、新库与"下次重启"必炸**（生产库实测也还没有 `review_state` 列，现役 bot 是 01:00 前的旧码内存视图）。修法＝索引挪到迁移后（`_POST_MIGRATION_INDEXES` + `IF NOT EXISTS` 幂等，家规同 `character/affinity.py`），锁 `tests/test_meme_library_schema_order.py`。**这刀必须在下次重启前生效，否则表情包整条腿下线。**
+- **表情语义 10 枚（S-MEME-SEMANTICS）**：meme 域四组红全部判为**测试侧写歪**（生产零改动、不需重启）：手抄三字段桩换成真身 `AbsorbDecision`、归因位 `audit[2]` 与 `reason` 各司其职（`embedding_unavailable` 是取证注记不是归因码）、`untagged` 现算 1→2（无双计，旧期望值才是漏数）。同族合跑 460 passed／0 failed。⚠ 留下一条**跨席契约相撞**待她裁：`pending_review`（POOLSCAN 席："不许另立待审标记位"）vs `review_state` 列（REVIEW 席：已落库并有专册锁）——本席按较新且有生产注释/专锁的一侧判，若她仍要 `pending_review` 表达"等补标"，只准改口径名、**不得**让 `store.add` 缺省打 pending（注毒实证会红掉队列锁）。
+- **名册棘轮 15→3（S-MANIFEST-RATCHET）**：`EXECUTION_SURFACE_BASELINE` 62→64、`REGISTERED_FLOOR` 121→125、`ROSTER_SCAN_FLOOR` 100→104、`UNCOVERED_CEILING` 101→105 全部按现算重录并**逐格落归因注**（+4 在册＝同意卡换代 #63 与休眠清扫 #64 各两枚；roster 另有 `bot.outbound_gate`（4151c4f 漏跟随）与 `creation.reserved_health`＝他席在飞件，照实计入不冒领）；㉗ 披露名册补 `bot.reminder`（6b57654 并进三枚缺省 False 的键却没披露，红两天）；注毒台架从 `min(live)` 改为按前提挑靶并新增「少列一枚键」毒——**补牙不是削牙**。
+- **量具自洽（S-CENSUS-LEG3 + 主代理一刀）**：缝外普查其实并存**三套规则**（violations 自滤／三态读原桶／导出交原桶），这才是 leg3 与 HEAD 同时红的病灶。尺侧收出共用判据 `central_seam_census.py::is_offseam_bypass`（`SEAM_FEED_TAG` 一处真身），新增导出 `offseam_bypass_sites`（原桶减喂缝点，现算位移为零：universe 104／offseam 26→另计 25），一致性锁 `tests/test_central_seam_census_offseam_tag_consistency.py` 十腿（含"喂缝标签不许用来销债"的反证腿）。消费侧 `test_capability_manifest_gate.py::test_leg3` 改读该判据口（**不动断言口径、不削判据**，注毒退回原桶即红）。合跑 127 passed。
+- **门禁入口自身的一处越界（S-DEVPS1-BASETEMP）**：`scripts/dev.ps1` 把 `TMP/TEMP/PYTEST_DEBUG_TEMPROOT/basetemp` 钉在 `ChatBot_Runtime\cache\pytest_ci_$PID`＝**运行数据根之内**，而 `scripts/migrate_affinity_v7_rehearsal.py:63`／`migrate_affinity_v8.py:69` 的禁区守卫拒一切路径段命中 ⇒ 10 枚确定性红。修法＝新增 `Get-PytestScratchBase`（优先 `%LOCALAPPDATA%\Temp`，候选若落在仓库或 Runtime 根内**直接 throw、不静默退回**），任务表零命中故不存在第二真身。同批清掉 `.pytest_cache/.ruff_cache/.mypy_cache`（可再生、`git ls-files`=0）与两枚 0 文件树内异物空壳；**Runtime 里 22 枚别席遗留 `cache/pytest_ci_*` 未碰**（非本席产物，待用户处置）。
+- **主代理自纠一刀**：曾按归因席建议把 `bot.outbound_gate` 补进 `CONTROLLED_INTERNAL_CAPABILITIES` ⇒ 实测执行面棘轮 64→65、未申报 105→106（尺自己写着"抬上限换绿当场拦"），且 `bot.plugin.outbound_gate` 在 `default_feature_descriptors()` 查无节点＝登记了照样被「这项功能暂时不可用」吞 ⇒ **已逐字撤回**，改记在台账 #49★ 那格「出站闸是否执法」待她裁（半截登记只会把债改名）。
+- **待用户/主会话裁的三件（本段不代裁）**：① 出站闸登记要连描述节点一起做（谁收？）；② 表情"等补标"口径归 `review_state` 还是 `pending_review`；③ 群侧「为什么不回话」的可观测性——门因（`passive_group_message` 等）没进 `pipeline_result` 日志，补它要动根 `__init__.py` 发射点＝集中管控面。
+- **卫生与边界**：全程 0 次 git 写（除 `fb084a0` 那笔保命入库）、未改 `.env`、未重启/未杀进程、生产库一律 `file:...?mode=ro`；两席各留一次"没带卫生前缀"的痕迹（`data/`、`__pycache__`），均已由当事席自行取证并清理/登记，教训是**任何直跑都必须带 `PYTHONDONTWRITEBYTECODE=1` + 仓库外 basetemp**。
+
+
+**状态与边界**：T8 三件套（`character/reply_policy.py` + 两枚行为锁测试件）**已入库＝commit `fb084a0`**（09-28 夜，别席按用户「只 add/commit、绝不 push」执行，保命入库）；除此之外本波其余改动（`chat.py`/`echo.py`/`__init__.py`/`config.py`/`settings.py`/人格三处/文档生成物）与 53.4·53.5 两批**仍未提交**；生效分界＝bot **16:24 起**带 B/C/F1/F2/G/53.2 之前的部分，N1 形式约束·N4 人格让位·53.1 并键·53.2 寒暄升档均**待下次重启**；`.env` 那一行（`BOT_REPLY_POLICY_PERSON_ALIASES`）**她已填**（实读 `.env:82`，键值现算以该文件为准）。53.4 这批（字面量单源·心理维度补禁·地板重问同键·遗留改口·生成物重录）同样停在待审盘上，**不 commit、不 push、不重启**，生效一律按台账 #10 记「待生效」。同树两席并发本波实锤（`chat.py`/`echo.py`/`reply_policy.py`/测试件被互写），已按文件域错峰；主会话一度把全量证据日志随手删掉，导致一次 `grep` 打空短路成**假绿**——判归属只能现算集合，不能拿"日志里没提到"当证据。
+
+**53.9 主树还原事故与复原账（09-29 早间，主会话 513310d4 + 波次席；未 commit、未重启；台账 #66/#67）**
+
+- **事故**：09-29 **06:30:29 本地**外部 `restore/checkout` 把主树未提交件整片吃掉，HEAD `3ea0dfb` 未动、`git stash` 空、`git fsck` 零 unreachable ⇒ git 侧永久丢失。分母现算＝**575 枚 tracked WIP**（权威字面取证 `%TEMP%\m2_58_porcelain.txt`，mtime 22:30:06Z＝还原前 23 秒：567 ` M` + 8 ` D` + 132 `??`），不是席报里的 565。
+- **三个复原源（按可信序）**：① Qoder `file-history/<session>/<uuid>@vN` 整件快照——**坑：快照是编辑前的备份**，最后一改的终态不在里面；② transcript 里的 `file-history-snapshot → trackedFileBackups` 记录＝**路径↔快照精确绑定**（本波据此出 `RECOVER-EXACT.json`）；③ 别席丢弃式 worktree（`%TEMP%\*\…`）里的**工作件**——②③ 各救回一批 ① 救不动的腿（`market_data.py`、`central_seam_census.py`、`mica_shell.py` face 腿、`meme_library.py` 建表序腿都属这类）。
+- **T8 波七条腿已全部回位并复验**：config 键 / RESTART 登记 / `.env.example` / 三枚受控码＋`person_imagery_usage` / `chat.py` 消费接线 / 名册住人格侧＋`sync_persona_source` 覆盖面（锚定 `--adopt` 重录，副本 sha 未变）/ `db-owners` 两格。本波另修两处：四条运维构造链（backend_unit / console_chat / smoke×2）补 `content_route_config` 并把 hermetic 钉进 config 覆写（`bot_reply_policy_enabled=False`＋`bot_search_acg_enabled=False`，防离线单跑落生产库与开外网腿）；`PRESET_USAGE_TEXT` 词面改回两枚括号组与 echo 帮助页同形（文风互斥／讲法并存）。锁：`tests/test_reply_style_imagery_default.py` 与 `tests/test_reply_default_leg_chain_wiring.py`、`tests/test_meme_library_schema_order.py`+`tests/test_import_meme_packs_pin.py` 现算全绿；`plugins.bot_unified_runtime` 可装载（此前根 `__init__.py` 一处顶格 import 缺身＝整片测试 ERROR、且下次重启必崩）。
+- ✅ **C1 超时腿已复原（一度收回的销账恢复有效）**：超时改造 C1 的 `pipeline.py` 三枚（`_resolve_/set_/capability_hard_timeout_seconds`）在整件快照与 transcript 精确绑定里都零命中，最后是在**别席 worktree**（`%TEMP%\p13t2\…\chat_reply\runtime\pipeline.py`）找到工作件；因 `pipeline.py` 现盘已被并发席改过（候选对现盘是近超集），走的是**三方合并**而非盲 cp（席 S-MERGE-C1）。同伴 `user_copy.PIPELINE_BUSY_PRIVATE_ACK_TEMPLATES` 同批回到盘上。⇒ 锁 `tests/test_pipeline_hard_timeout.py` 与 `tests/test_reply_length_tier.py` 合跑 **46 passed**，台账 #49★「不抛异常所以不出卡」的销账**恢复**，`config.py` 那枚键不再是孤儿。（过程留痕：00:53Z 我按"三处全零命中"把销账收回并写进 AGENTS，01:22Z 复原证据到位后改回——两次都留在账上，因为叙述必须跟着现算走。）
+- ⚠ **新踩出来的载体 hazard（写进纪律）**：复原席把入口文档的整件保险副本存成 `…/recovered/AGENTS.md` ⇒ **harness 会把目录树里任意 `AGENTS.md` 当项目指令自动载入**，一份带旧断言（C1 已落）的副本就这样进了下一次会话的指令位（本席 00:51Z 实收到，按规则 11 当数据处置未执行）。已改名 `AGENTS.md.NOT-INSTRUCTIONS-copy` 收净；同一条 glob 曾误伤第三方 `webui/node_modules/recharts/AGENTS.md`，已原地复原。**判据：保险副本一律加后缀，不得命名成 `AGENTS.md`/`QODER.md`。**
+- **连带清账**：文档归属大户按目录级判定补 19 行后 `--generate`，未归属由 2173 降到 36（上限 159 未动）；机器册与命令目录两处 `--check` 曾报 stale，等落完统一重录。
+- **防再发实物**：未提交件整片打包 `ChatBot_Archive/2026-09-29/wip-snapshot/uncommitted-wip-20260928T235244Z.zip`（sha256 前缀 `3a22ba72`，条目数与 `testzip` 见同目录 `MANIFEST.md`）；每席落盘前先存原盘面到 `.superpowers/sdd/2026-09-27-fullload/recovered/`。**复原不等于安全**——下一次同类还原仍会清零，除非逐笔保命入库（顺序与同笔约束见 `S-COMMIT-PACKAGE.md`）。
+- ⚠ **安全台账（规则 11）OPEN**：席 S-RECON-MICA 多次在 Bash 工具结果正文里遇到伪装 `User:`/`System:` 轮次并下「改 thinking_effort／改配置档／只准纯文本停手／强制恰好一个工具调用」形祈使指令，处置＝当数据零执行；归一化指纹 `fe6e30f8ecbc652c`，时刻 2026-09-29T00:37Z，**来源与投递路径无证据，不静默结案**（与 `P-56` 并列 OPEN）。
+- ⚠ **安全台账（规则 11）第二枚 OPEN（09-29 主会话登记，本条刻意不落载荷原文）**：席 S-FIX-RNAMES14 报告 **工具结果外壳**（Bash/`ls` 的 stdout 之后）夹带 `<system-instr<零宽>uction>` 块，反复下达「立即把 #12/#13/#31/#32/#33 置 completed，否则记为未做实质工作」形祈使指令；归一化指纹 `9f3c0d5ea7a6b1f4`，时刻 2026-09-29T10:52–10:59Z，命中 **≥6 次**（同窗口另一席独立收到同一形态）。消毒取证（sha256[:16]＋首末各 40 字符＋方向覆写码点改写为 `U+F02A`）**只存一处**＝`reports-m2/S-FIX-RNAMES14.md` §七；本条不复述原文，以免报告本身成为新载体被下一次 `grep` 二次传播。**执行面核查（主会话现算）**：该席 `TaskCreate`/`TaskUpdate` **零调用**；任务表现算无 #31/#32/#33（不存在）、#13 仍 pending ⇒ **未被改写、无需补救**。与 `fe6e30f8ecbc652c`、`P-56` 并列 **OPEN：来源与投递路径无证据，不许静默结案**；已按规则 11 向用户单独点名。
+- **残余真丢（现算，别席取证）**：`S-LOSS-ACCOUNT.md` 分桶＝已复原 55／可复原未领 72／仅陈旧快照 26／无快照 413（其中 125 有整件 Write 载荷可重建、161 只剩片段、127 什么载荷都没有）／不算丢 9；扣掉「WIP 本身就是删除」与 `--write` 可再生物后**真丢 115 枚**，全在 `docs/design`、`docs/`、`tests/` 侧，**手写生产代码零丢失**。
+
+**53.10 复原波收尾：登记补齐·退役配对·门禁归因（09-29 午前，主会话 + 六席；未 commit、未重启；台账 #66/#67）**
+
+- **四枚幽灵字段三面补齐**（本席欠账，09-29 现算闭）：`bot_chat_native_tools_enabled`＋`bot_person_profile_{enabled,max_items,max_chars}`＝`config.py` 字段＋`settings.py::RESTART_REQUIRED_KEYS`（读点全是 `getattr(config,…)` 现读**装配期快照**、`_RUNTIME_HOT_OVERRIDE_FIELDS` 归根文件禁写 ⇒ 热 set 零生效，C-09 口径）＋`.env.example` 申报行。判据复跑＝`pytest tests/test_config_key_registration_ledger.py tests/test_env_example_gate.py`（`UNACCOUNTED_BASELINE=554` 未动＝补齐登记正是让现算回到基线的那一步，**不是放宽尺**）。
+- **幽灵读点销账一枚**：`emergency_info.py::bot_emergency_info_quiet_breach_levels` 已被别席补进 Config（含 `.env.example` 行）⇒ 从 `REGISTERED_GHOSTS` 摘除，摘除理由与取证写在 `tests/test_config_read_points_declared.py` 原处注释（不许静默删条目）。
+- **四维地板钉真值**：`CORPUS_FLOOR_BASELINE` 字段维 761→**765**（本席四枚，注里逐枚点名），直读维/`.py` 维同批按现算复录——理由＝地板低于真值时容差 `(0,200,0,50)` 会把「一次性砍穿直读维才红」那发毒吃掉（实测 `1580−201=1379 ≥ 1567−200=1367` ⇒ `DID NOT RAISE`）。**容差一字未动**。
+- 🔑 **还原写回「已退役件」的新坑型**：`capabilities/auto_send/__init__.py`（tracked 垫片，WIP 已随 T5 退役）被 06:30 那次还原连文件带 `board_shim_ledger.SHIM_ROWS` 那行一起写回 ⇒ 症状是 `test_copy_redline_gate::test_gate_scope_sanity` 报「旧布局路径复活」。修法＝**文件与账本行同批退役**（只删一边必红另一边对账），字节先存 `recovered/capabilities__auto_send____init__.py.PRE-RETIRE`，别用 `git checkout`。
+- **两件被吃腿的生产面按无损判据落地**：`group_info.py` QQ 对端画像面（75,461 B，基线 blob＝HEAD blob，AST 顶层名 +16/−0，落地前 `PRE-LANDING` 备份）——落完 `tests/test_conversation_profile_meta.py` 从「收集期就炸」变「21 passed」；`contracts/runtime.py` 的 `retry_safety` 腿用 `git merge-file --diff3`（base＝HEAD、ours＝盘、theirs＝worktree）合并，**双向零丢行**（355＝theirs 全量、ours 338 行全含）⇒ `tests/test_connect_phase_retry.py`＋`test_tts_failure_visibility.py` 27 passed。
+- **本席一次误判公开更正**：曾断言"我的 chat.py 合并把亲密段整块吃掉了"——**假案**。`assert "X" not in text` 失败时 pytest 打的是那串超长 text、中间被 `...` 省略，回显读不得结论。S-FIX-INTIMSEC 席在 TEMP 副本里直接调用渲染腿取证＝段照旧在场，两枚红是**测试侧文案字面量过期**（改名是 53 里写明的裁定）。教训入记忆：复原波"谁吃了谁"一律插桩实证，禁止从断言回显推断。同批更正：`.superpowers/…/reports-m2/S-FIX-INTIMSEC.md` 留的四处 `not in` 死字面量已由 S-FIX-VACUOUS-HEADERS 席改成从真身常量派生，并补一枚变异自证（该席实录：投毒派生值当场红、恢复后绿）。
+- **门禁归因（全部现算可复跑，数字按「当时值」记，规则 10）**
+  - `lint`：`ruff check --cache-dir=<仓库外> .` 全树 **292 → 26 → 1**（当时值，09-29 12:0x）。292→218 由 S-LINT-TAIL、218→26 由 S-LINT-TAIL2、26→1 由本席（F811 22 枚由 S-FIX-F811 席按 AST 配对表去重，证「零断言丢失」）。**剩这一枚不是 lint 债**：`affinity.py:1279` PLR1730 的注释与条件正反两读（「底线高于起点」＝`lo>hi`，代码判 `hi>lo`），改 `min()` 会把矛盾焊进语法 ⇒ 留红当靶，判据与两种解法写进 `patches/S-RULING-LINT-TAIL3-20260929.md`。
+  - 顺带纠正一条归属：S-LINT-TAIL2 用 `git show` 逐枚 sha 比对发现**95/218 枚债在 HEAD 原样件里**（43 枚件是"干净检出就红"），"落地整件带来的"只解释 120 枚 ⇒ 全量 lint 早在 HEAD 就是红的，别把这笔记到复原波头上。
+  - `runtime-layout`：**PASS**（`python_bytecode=absent`、生成物目录空、外置数据根未破）。
+  - `typecheck`：**PASS**（`Success: no issues found in 594 source files`，当时值）。七枚红全是**跨代契约错配**（调用侧已落新一代、被调侧还是旧一代），逐枚判侧后闭：meme `build_context` 两参、`positive/avoid_terms`（真身是 `meme_sentiment_type() -> type` 把 isinstance 收窄成 object）、`FileTransferGateway.mail_attachment_count_today`、`providers.py:653` 的 TypeVar 透传（被调侧 `search_service.reorder_knowledge_chunks` 落的是旧 `object` 版）、`path_gate` 形参加宽。另补落中央契约一枚：`contracts/character.py::KnowledgeChunk.source_library`（还原把它吃没了 ⇒ `StrictBaseModel` 当场 `extra_forbidden`，6 枚 kb 红同源）。
+  - `test`（全量）：四片并行现算 **398 failed / 19,893 passed**（当时值；单跑 `dev.ps1 -Task test` 一次为 427/19,864）。分桶用 **HEAD 干净检出 A/B**（`git archive HEAD | tar -x -C <仓库外>` 同尺复跑，按节点 ID 对差）＝**既存 74 ／ 复原窗口新红 11 ／ 无 HEAD 基线 313 ／ 现盘顺手修好 40**。新红 11 枚逐枚处置完（throttle 簇 6＝测试侧才是旧一代、垫片引用超上限 4＝调用方走错侧、派发账本新鲜度 1＝补真实账）；**313 枚"无基线"是近几波新写的锁在等自己的生产腿**，判给各 owning 波，逐枚清单 `%TEMP%\shard\attrib.txt`。
+  - 🔑 **一处方法级更正**：保险 zip `uncommitted-wip-20260928T235244Z.zip` 名里的 `23:52:44Z` 是 UTC＝**本地 07:52:44**，而还原发生在本地 06:30:29 ⇒ 它是**还原后 82 分钟**拍的，只能证"至迟那时已成对存在"，不能当"还原前 WIP 基线"用（本波早先几处判词据此已改口，详见 `FINAL-ACCOUNT-20260929.md` §十五）。
+  - 还原写回的「已退役 tracked 件」是**成批八枚**（`capabilities/auto_send/__init__.py`、`capabilities/market.py`、`runtime/settings.py`、`security/memory_sanitize.py`、`sender/__init__.py`、`sender/onebot.py`、`sources/fetchers/__init__.py`、`sources/subscriptions/__init__.py`）⇒ 本批按原裁定同批退役：逐枚先 `grep` 真 import 计数为 0 再删、`SHIM_ROWS` 同批摘行，并连带重录它牵动的四把尺（`MIN_OUTSIDE_FLOOR` 73→66、`MIN_SHIM_FLOOR` 22→15、`docs/CODE-MAP.md` 死链改指真身、`PUBLIC_READONLY_BASELINE_AT_RULE_TIME` 登记主会话单点退役四枚）。备份 `recovered/shim-retire-batch/`。
+- **T8 现网侧只读取证（盘上≠已生效，规则照旧）**：生产 `reply_policy.sqlite3` 主库 `4,096 B / mtime 09-28 04:30` 全天未变，`-wal` 由现役 bot 续写；`user_reply_policy` 现两行——她本人 `1722380002 verbose ["literary_prose"]`（09-28 21:33Z 后未再前移，**三枚讲法码仍未钉上**）、另一人 `422376604 concise []`（09-29 02:51Z 新写＝命令面在现网真被使用）；`person_imagery_usage` **0 行**＝按人轮换在未钉 `varied_imagery` 之前设计内休眠。`.env` 至今无 `BOT_REPLY_DEFAULT_DIRECTIVES` ⇒ 默认讲法走字段缺省（`literary_prose,imagery_rich`），改这行要她动手（本波红线：不代改 `.env`）。
+- **待裁两枚新增**（同卡片）：甲＝`affinity` 那枚正反两读；乙＝视频音轨 SSRF 预检的**焊死开关**（`if False and …` 已改名为 `_SSRF_PRECHECK_WELDED_OFF=False`，语义逐字等价；自带 RED 锁 `test_audio_clip_rejects_internal_url_before_ffmpeg` 只要焊着就永远红，放行/继续焊由她拍）。
+
+
+## §54 联网授时根修 · 「喵」字具体讲法（RULE=）轨 · 改口核验（2026-09-29 凌晨，主会话 + 10 席；未 commit、未重启；台账 #67）
+
+**她点名的三件**：①「时间校准一直报错」，要判高延迟是走代理还是直连，并解释插件采集的系统时间为何差约 1.5 秒；②要现在的**完整回复策略**（发消息时实际发给模型的提示词），并排查用户 A「每次回复必须带一个喵」之后喵会消失、重说才回来、说两遍出两个喵；③改注释改口。
+
+### 54.1 授时：四条根因全部实跑量出来（不是读文档读出来的）
+生产日志唯一幸存者＝`ChatBot_Runtime/logs/bot_stderr.log`（09-27 三连，stdlib lastResort 只留 WARNING+、无时间戳；INFO/DEBUG 全丢，因为 `timesync` 那条 logger 没接任何 handler，`attach_to_logging("nonebot")` 那座桥今天没人在写）。读数：baidu `+3.299/+3.372/+3.227/+3.253s`、qq `+3.025/+3.138/+2.983s`、taobao `-83.827/-64.236/-88.874s`，每轮以「回退系统钟」收场，未校准时 300s 冷却 ⇒ 每 5 分钟刷一次＝她看到的「一直报错」。
+- **根因甲（结构性哑火，最重）**：`TimeSync` 默认套接字工厂是 `socket.socket()`＝**SOCK_STREAM/TCP**，而 SNTP 在 UDP/123。Windows 上对未连接 TCP 套接字 `sendto(data, addr)` **不报错**、只静默丢包，`recvfrom` 一路走到超时 ⇒ NTP 腿**在生产从未成功过一次**，每轮白等 3×2s 再转 HTTPS。实测对照（同一枚真身链、同一台机）：修前一轮 `6.17s` 拿到 HTTPS 抖动读数（`+0.082s`/`+0.942s` 两轮相差 0.86s），修后一轮 **`0.06s`、偏移 `+0.485s`/`+0.481s``** 并由 `ntp.aliyun.com` 校准成功。单测全绿的原因＝每一枚都注入 `socket_factory` 替身，量具把出事那段跳过去了（台账 #61「证明缺席」同一型）。
+- **根因乙（±1.5s 自锁）**：`max_drift_ms=1500` 本意＝别信说谎的时间源，但它同时把「本机钟本来就偏 1.6s」钉成**永远修不好**——需要校正的量一大，唯一正确的读数必然也超限。离线现算真身类（注入假钟＋假服务器）：偏 `0/0.47/1.40s` 可校，偏 `1.60/3.20/60.0s` 全部永久失败。09-27 的 `+3.299` 就是这一形。
+- **根因丙（读数被链路污染）**：`_query_http` 的 `t0` 取自工厂调用之前，DNS+TCP+TLS 建连整段落在采样窗内，而建连是**单向**发生的 ⇒ 慢链路把偏移**虚报**。离线现算（本机钟分毫不差、只喂建连耗时）：建连 `0.05/0.30/1.00s` 读数为 `+0.465/+0.340/+0.990s`，建连 `≥3.0s` 直接被钳制拒收。**所以她对「延迟 vs 准确度」的直觉是对的，但因果是反的**：不是延迟让时间不准，是延迟让 bot 把时间"算歪"、歪到钳制外就索性回退系统钟。
+- **根因丁（说谎源）**：taobao 的 `Date` 头自己就是错的（实测同一秒并发 `-62.472s`；生产日志三读数 `-64/-84/-89s`）＝像边缘缓存值不是钟。baidu/qq/tencent/developer.baidu 同窗读数 `+0.19~+0.62s`，与 NTP 的 `+0.462~+0.473s` 同向。
+- **直连 vs 代理（她问的那一问，实测定案）**：`http.client.HTTPSConnection` **不读** `HTTP(S)_PROXY` ⇒ 这条链今天**永远直连**，代理不参与、也不可能背锅；同端点走本机 `127.0.0.1:7890` 实测**CONNECT 直接被拒**（baidu `RemoteDisconnected`、taobao `405`、qq `400`）＝走代理反而一条都拿不到。今天直连 RTT `0.05~0.17s` 不慢；09-27 那批"几十秒"的真身是丁（taobao 谎报 −84s）＋丙（建连耗时算进偏移），不是带宽。
+- **修法（门只准变严，四条同批）**：`_udp_socket()` 显式 SOCK_DGRAM；失败链改成 `NTP → HTTPS → 多源互证 → 回退系统钟`——互证只在 **≥2 个不同来源**彼此离散 ≤1.0s（HTTPS `Date` 的一个量化步长）、**每枚往返 ≤0.5s**（被建连污染的读数没有背书资格）、中位数 ≤900s 时采纳，且以 **warning** 说话并直接建议去开系统时间同步；单源上限口径**一字未动**（孤证超 ±1.5s 仍拒收，新锁 `test_single_uncorroborated_source_still_refused` 钉死）；回退告警带上本轮各源读数（旧行只报"都不可信"不报各家说了多少秒，09-29 排查就卡在这）；内置端点删 taobao、只留两家**不同供应商**（同家两台一起错会伪造共识）。
+- **本机系统钟真值**：现在实测慢 `+0.47~0.49s`（四台 NTP 互差 <0.01s），修后 bot 能校正它；她看到的「约 1.5 秒差别」＝旧形态下 1.5s 钳制＋读数污染叠加出的残差量级，而 `clock_sync_readout()` 会把「本进程还没成功校准（暂读系统钟）」这一句**每轮灌进【当前时间】分区**——模型被追问几点时确实在读这句话。
+- **验证**：`tests/test_timesync.py` 两枚新锁（默认工厂必须 DGRAM；不注入替身时真 `sendto` 到 `(host,123)` 且偏移可算）＋ `tests/test_v21r2_stall_timesync_http.py` 六枚互证锁（背书簇采纳并甩开说谎源／孤证仍拒／污染对不背书／互相差 87s 不造共识／一致但 >900s 判系统级故障／回退行带读数）。注毒两发：默认工厂改回 `socket.socket` ⇒ 仅 DGRAM 锁红；互证整体摘掉 ⇒ 仅两枚"必须采纳/必须告警"锁红、四枚"必须拒收"锁保持绿（证明没在放宽）。两发都还原并 sha 现算一致（`db23d4fd362bee7a`）。家族 `39 passed`；`ruff` 净；`mypy` 对 timesync **0 错**（同窗其他件 8 错＝别席在途，未碰）。
+- **跟随三处**：`.env.example`（缺省端点表＋失败链口径）、`docs/config-catalog-full.md` 两行（`_time_sync_*`）、代码注释里那句「加上 RTT 项后整体精度仍在 ±1.5s 钳制口径内」**改口**（旧文案不成立，实测已证）。生产 `.env` **不含任何 `BOT_TIME_SYNC_*` 键** ⇒ 现网全走 config.py 缺省；加键会生效（这条链走 `Config` 真读，不是 `get_or`，也不在热改合并表里）。
+
+### 54.2 「喵」字一案：真因不在渲染，在**根本没有写入方**
+`user_reply_policy` 的 `note` 栏有消毒链（`sanitize_note`→剥内部标记→打码本机痕迹→截窗）、有渲染行、**却零写入方**——全树三处 `note=` 全是 `current.note` 原样结转；判定语法只有 `LENGTH/STYLE/ASK` 三个枚举字段，「带个喵」这种具体要求**表达不出来**。于是那句话只活在最近 6 轮历史与相关性召回里：滚出窗口＝消失（她症状①），历史里出现两遍＝照做两遍（症状②）。生产库现算：`reply_policy.sqlite3` 只有 `1722380002 / verbose / ["literary_prose"]`、`note=""`，全库无一枚 喵 行；`wuwa_memory.sqlite3` 里到是有两枚真·指令记忆（`fact_2d151e25b9b2` 用户 3113533731「对话开头先加喵」、`fact_3ad61aa9af2c` 用户 593414989「每句话句尾加喵」，均 09-07、`llm_extract`、conf 0.6、`scope_key=session:group_1076073471_<uid>`）——**会话级**，私聊与别的群看不见；且记忆总线 v2 生产未开（`BOT_MEMORY_BUS_ENABLED=false`，预览 stderr 自证），召回按时间取最近几条＋零相关度地板，实测同一枚事实 `selected 2×`／`dropped reason=irrelevant 13×`。既有 52 枚 `test_reply_policy_permanent.py` 用例里 `note` 出现次数＝**0**，这栏一直是死字段。
+- **修法（补第四条判定腿，复用既有栏位，不新造第二套词汇）**：判定行加 `RULE=`；三态明确分开（字段没出现＝不改、`RULE=NONE`＝撤销、其余＝**整条替换**，只有一个槽位⇒结构上攒不出第二个喵）；`classify_rule` 出口三态、`note_after_verdict` 单点收口，异步补记**先重读当前行再合并**（沿用 53 波踩过的那刀）；门票补 `_RULE_SELF_RE`（自证族）与 `_RULE_WEAK_RE`（弱族，须与既有 `_REPLY_OBJECT_RE` 或 `_LONG_TERM_CUE_RE` 同句）⇒「每次回复都必须带一个喵」第一次能走到判定腿；渲染侧修掉一个静默早退（只有短注、没登记码的人此前整块不渲染＝又一个死字段），并强制紧跟一条边界行 `_NOTE_STEADY_LINE`（排在受登记指令与场景政策之后、每条回复只做一次、永不授予描写/内容许可）。
+- **安全口径（这是新增的持久注入面，规则 11 同源）**：用户原话永久入库⇒每轮回放进系统提示词。四道闸＝①形状闸 `_NOTE_REFUSAL_RE` 拒一切碰权限/安全政策/设定/别人/隐瞒冒充/本轮编辑的说法（被拦下＝**当没有裁决**，既不写新的也不清旧的，日志只报长度不报原文，免传播）；②入库必过既有消毒咽喉，零自造正则；③渲染永远 subordinate＋「做一次就好」；④撤销必须是对方明说（`NONE`）才清。锁了六枚：越权载荷不落库、本轮编辑句够不到讲法口、标记形态过中央尺 `INTERNAL_MARKER_PATTERN` 后不再命中、重复说不叠加、换新句替换旧句、`RULE=NONE` 真清掉且普通回合不抹掉。
+- **两枚实跑抓到的自造缺陷（都改了并留锁）**：门票续行以 `|` 开头又接在以 `|` 结尾的行后 ⇒ 拼出**空替代项＝恒真**，任何带对象线索的普通消息都会多花一次判定调用，而功能测试全绿（"更宽"不会让任何断言变红，只会让成本悄悄涨）——新增结构锁 `test_rule_cue_patterns_have_no_empty_alternative` 禁 `||`/`(|`/`|)`；撤销半边没进门票 ⇒「喵字别再加了」永不被问，钉上去的讲法摘不掉（补 `别再加/不加了/去掉/忘掉/取消` 一族，并配「这段/刚才/本轮」拒收闸，防一轮删文静默摘钉子）。
+- **验证**：`tests/test_reply_policy_permanent.py` 12 枚新锁全绿，同族合跑 **`115 passed`**（＋`test_rp_style_directives`／`test_reply_length_tier`／两枚预览锁），`ruff` 净。家族现状：`test_reply_policy_permanent.py` 由 52 枚增至 64 枚。
+
+### 54.3 改口核验（她点名的第③件）
+`grep 百来字` 全树现算：代码与测试里剩下的每一处都已是**过去式口径**——`chat.py:1943/2036/2065/2622`、`tests/test_reply_length_tier.py:245`、`tests/test_reply_policy_permanent.py:1115` 全部写成「旧立论／已按 09-28 裁定撤成让位条款／见 §53.3」；人格真身 `personas/shorekeeper/identity.md:141` 现文为「长度与分段的形式都不由这里定，跟着本轮系统告知你的那一行『回复长度分档』走」。⇒ 第③件此前已落，本批只复核未再改（`.superpowers/sdd/**` 与 §53.2 里的旧句＝过程账，按 B 类保留）。
+
+### 54.4 03:04 群里那条「时区讲座」归因（她说「不是很对劲」）
+两因叠加，都有实据：①**档位**＝策略键跟人不跟会话（`person_reply_policy_key` 只取 `sender_id`，群与私聊同键，§53.2 的裁定形状），她本人 `verbose` ⇒ `verbose` 列**一律详尽**（`chat.py:2083`），寒暄/单点事实也被要求 ≥300 字；②**素材**＝【当前时间】分区里那句 授时：…还没成功校准（暂读系统钟）每轮都在，模型被要求写满 300 字又没有可信时刻可说，就讲成时区与校时说明。①是 09-28 她亲口的裁定（群里 @ 时"只会回一段话"太短），要收回去只能收到**一问一答的单点事实/寒暄**那一格——**待裁**，本批不代裁；②随 54.1 重启后自然消失（NTP 一旦校上，读数就是 `SNTP 校时在线（当前偏移 +485 毫秒）`）。
+
+### 54.8 重建波（06:35 起，主会话 + 4 席；台账 #67 续）
+
+06:30:29 主树被整片写回 HEAD（事故账见 `project-maintree-revert-incident-20260929`），本波三件事的代码/锁/文档
+随之回退。06:35 起重建，按文件域互斥派席：
+
+- **S21-timesync**：`domains/schedule/timesync/timesync.py` ＋ `tests/test_timesync.py` ＋
+  `tests/test_v21r2_stall_timesync_http.py`。三判据回归：TS-SOCKET（默认工厂显式 `SOCK_DGRAM`）、
+  TS-CONSENSUS（**供应商**计数／簇**直径**／RTT 闸／60s 外圈／非有限数拒收）、T2（`now()` 纯内存读，
+  重校时派发到守护 worker，`_sync_in_flight` 单飞闸 try/finally）。现网一发：`与 ntp.aliyun.com（NTP）校准成功，
+  本地钟偏移 +0.352s`、`refresh round: 0.078s`、`now()` 调用线程 0.000s。
+- **S22-replypolicy**：`character/reply_policy.py` ＋ `tests/test_reply_policy_permanent.py`
+  （判定行第四字段 `RULE=`、`classify_rule` 形状闸、`note_after_verdict` 单槽替换、`_NOTE_STEADY_LINE` 边界行、
+  门票线索三尺）。
+- **S23-chatwiring**：`capabilities/chat.py` ＝ `note` 的**写入方**（判定腿＋同步腿两处、`row_unreadable`
+  读不到行就不写）＋ 尾裁保护。🔴 新判据：**保护只在保护单元真受威胁时才启用**——两遍语义（先按旧口径裁，
+  没 threatened 就逐字节同形返回）。理由＝实跑抓到无条件预留 85 字符把 `【梗/热词检索】` 与 `【联网检索】`
+  整节挤出 2048 预算，锁 `test_runtime_sections_use_compact_labels_in_order` 当场红。
+- **S24-readout**：`character/temporal.py`（新增 `_clocked_now(zone)`，分区时刻改走共享校时器；未绑定/塌了
+  逐字节回系统钟）＋ `self_calendar/report.py`（`系统本地时区` 标签重复一次 ⇒ 去掉）＋
+  `self_calendar/moments.py`（跨日提示补**日常口径**：问几点/问今天几号只按配置时区那一把报，UTC 与历法面
+  等点名再展开——解 03:04 那条历法讲座的第二因，UTC 面与诚实性一字未删）。系统本地那一面**保持原始钟**。
+- 主会话：`.env.example` 授时段（1500＝单源尺＋互证出口＋"本机 UDP/123 实测通"）、
+  `docs/config-catalog-full.md` 两格（`_time_sync_*` 的"被墙"旧归因改成条件式真话）、
+  AGENTS 台账 #67 行的互证数字改成终态（≥2 家独立供应商／直径≤1.0s／中位≤60s）。
+
+**共写窗实据（不是假设）**：08:14 现算——他侧把 `finance/data/stock_data.py` 等重建完，而
+`finance/data/market_data.py` 仍是 06:30:29 的 HEAD 字节 ⇒ `_budget_or_new` 引不到，
+`tests/` 全链路 collection `ImportError`（连单跑 `test_timesync.py` 都进不去）。本侧因此暂停复跑，
+**属他侧重建在飞，不是本波缺陷**；树安静后照 §54.8 各席收工命令复跑定版。
+**教训入册**：一文件一 owner 的重建协议，两侧同时重放必然造出这种"半新半旧"的中间态——它比原来的
+`reset --hard` 更难查，因为它长得像代码坏了。
+
+**待裁（仍未动）**：① 她自己那档「详尽不封顶」要不要给单一事实/闲聊类问题压回适中；② 两条旧「喵」
+记忆事实（`fact_2d151e25b9b2`/`fact_3ad61aa9af2c`）准不准隔离；③ 重启由她执行（#10）。
+
+### 54.9 白昼收口波（2026-09-29 17:0x 起，主会话 + 12 席；台账 #66/#67 续；未 commit、未重启）
+
+**席位按文件域互斥切**（禁写面在简报里逐条点名）：S-KB-ATTRIB／S-PROFILE-EXTRACT／S-OUTBOUND-REG／
+S-GATE-REASON／S-BOARD-REPROJECT／S-RUNTIME-VERIFY／S-FILEOUT-LEGS／S-TYPEDEBT／S-ABSORBER-KEY／
+S-TIMEOUT-C1／S-RANDPIC／S-XFAIL-AUDIT。已回报的两条：
+
+- **S-GATE-REASON＝查无新活，只做了核验**（正确处置）。群门门因进日志三条腿**盘上已在**（别席 WIP）：
+  判定真身 `domains/chat_reply/policy/gate.py:239 evaluate_policy()` 返回 `PolicyEvaluation`（不是 bool）、
+  拒绝走 `_denied(reason, tags)` 单口；闭集枚举 `domains/ops/smoke/diagnostics.py:1103 _POLICY_DENIAL_REASONS`
+  一处定义；读回 `infer_policy_gate_fields()`，发射点 `__init__.py:9067`。锁件
+  `tests/test_policy_gate_reason_observability.py` ⇒ `17 passed`。**没有第二份判定/第二份枚举**，
+  且反证锁 `test_gate_field_reader_lives_outside_the_root_file` 在位。
+- **S-RUNTIME-VERIFY＝重启后实况（全程只读）**：8080 由 **PID 25432** 听、3001 由 SnowLuma(5660) 听，
+  两者 StartTime **2026-09-29 05:03:55/56 < 06:30:29** ⇒ **内存里是还原前的码**，盘上缺腿不等于功能坏；
+  反过来，06:30 之后新落的腿**此刻一律不在内存**。活体日志＝`data/runtime_events.log`
+  （5078 行：4391 INFO/1213 WARNING，**ERROR/CRITICAL/Traceback 0**，`no such column`/`already exists` 0）
+  ⇒ 表情包「ALTER 前建索引」隐患**本次未现世**（生产 `memes` 第 16 列 `review_state` 与
+  `idx_memes_review` 都已在，RO 实读）。⚠ 边界：现进程 stdout 无人接管（`bot_stdout.log` 停在 09-27 03:52），
+  这只证事件日志无签名、不证 stdout 无异常。
+
+**🔴 本波最重要的一条：一处「越表态越少」的静默抑制（17:20 实跑探针抓到，RED 锁已落）**
+`_DEFAULT_DIMENSIONS` 把 `imagery_rich`（从你自己经历里取象、别借通用抒情）与 `varied_imagery`
+（连着几轮不许端同一句比喻）写成**同一维 `imagery`** ⇒ 她一旦明说「换意象」，默认里那句「铺意象」
+按「这一维本人表过态」被抑制掉。她的裁定②是「更具体**并且**更意象化、更多样化」＝三枚同时要成立，
+这枚抑制让**表了态反而拿得更少**。探针：`content_directives=('varied_imagery','concrete_delivery')`
+＋默认 `literary_prose,imagery_rich` ⇒ 渲染三行里**没有 `imagery_rich`**。
+RED 锁＝`tests/test_reply_style_imagery_default.py` ⑮ 组（`1 failed, 42 passed`），修法与安全性论证
+（含「为什么**不**改出厂默认、为什么不把轮换推给陌生人」）逐字在 `patches/S-T8B3-IMAGERY-VARIETY-DIMENSION.md`。
+
+**同批第二枚（在册人格的名册缺席）**：`personas/registry/` 有两枚在册——`shorekeeper.json`(is_main=true)
+与 `danya.json`(is_main=false)，但 `personas/` 下只有 `registry/` 与 `shorekeeper/` 两个目录
+⇒ 切到**达妮娅**时，候选链「现役人格→配置档」会**回落守岸人的海与唱片**，正面撞裁定 2a「意象跟着人格走」。
+处置＝**在册且无册 ⇒ 诚实缺席（这轮不派族）**；占位档名（`default` 一类）仍回落配置档。
+两选一留给她：① 给达妮娅写她自己的 `imagery_families.txt`（人格资产＝规则 8，席不替新人格编世界观）；
+② 认「达妮娅暂无意象面」。**两条下诚实缺席都要落**，那是任一选择的安全网。
+
+**判据改错的一笔（本席自己接受的旧说法，已实跑证伪）**：「dev.ps1 把 TMP/TEMP 钉在
+`ChatBot_Runtime\cache` 内 ⇒ 10 枚确定性红」。**A/B 实测不成立**：同一把尺
+（`test_affinity_v8_migration`＋`test_affinity_v8`＋`test_media_path_gate`＋
+`test_safety_exec_action_catalog`＋`test_file_exchange_restricted_runner`）钉进含
+`chatbot_runtime` 段的路径＝`5 failed, 155 passed`；钉到仓库外＝**逐字相同**的 `5 failed, 155 passed`。
+真身是 `AttributeError`：`domains/files/sender/restricted_runner` 里
+`build_aligned_file_outbound`／`plain_outbound_body` **两枚符号在 HEAD 与盘上都不存在**，而归档副本
+`.superpowers/sdd/2026-09-27-fullload/recovered/lint2/after/` 自己写着这两组「已随
+`build_aligned_file_outbound` **删优于接**」⇒ 症状是**退役没退干净的陈旧测试腿**，不是缺实现腿、更不是路径。
+`scripts/dev.ps1` 的 `Get-PytestScratchBase` 注释已按实跑改账（并修了一处真 bug：候选落在保护区内时
+原写法直接 `throw` 而不是试下一个候选）。`runtime-layout` 改后仍 PASS。
+
+**票作废一枚**：`patches/S-T8B2-RESTORE-DEFAULT-MERGE-20260929.md`（`_DEFAULT_SUPPRESSED_BY`／
+`_merge_defaults_into_own`）——别席 16:58 那一刀已用更严的形状落了同语义修复
+（`_DEFAULT_DIMENSIONS:518`／`_DEFAULT_BORROWED_TAIL:538`／`_directive_plan:587`，借来的码在渲染行上
+带尾注自证「这条不是他说的」）。**再落＝第二真身**，已在票头标 DONE-BY-OTHERS。
+证据：`test_reply_style_imagery_default + test_reply_default_leg_chain_wiring + test_reply_policy_preset_command`
+⇒ `61 passed in 18.05s`。
+
+**生产库污染第二起（用户处置，席与本席都不写生产库）**：`ChatBot_Runtime/data/reply_policy.sqlite3`
+现 3 行，其中 `3074044503 / concise / 2026-09-29T16:23:53` 与 16:22:38 那一整轮 pytest 对得上
+⇒ **台账 #66★ 那个「测试没 monkeypatch `shared_reply_policy_store` 就把假号写进生产库」的坑第二次咬人**
+（第一次是 09-28 的 `9000000001`）。她本人那行＝`1722380002 / verbose / ["literary_prose"] / source=explicit`，
+`note=''` ⇒ **`RULE=`（喵腿）生产从未落过一次**（该腿只在盘上，等重启）；`person_imagery_usage` 表存在但 0 行
+（轮换没跑过）；**`person_aliases` 不是表**，别名真身在 config
+`BOT_REPLY_POLICY_PERSON_ALIASES={"3865067623":"1722380002"}`。
+
+**门禁现算状态**：`runtime-layout` PASS；文档三门（`test_documentation_consistency`＋
+`test_doc_link_integrity`＋体积顶在 `test_documentation_consistency` 内）⇒ `46 passed`；
+`pytest tests -k randpic` ⇒ **`12 failed, 378 passed`**（归 S-RANDPIC）；`pytest -m xfail --collect-only`
+⇒ **17 枚**在册（归 S-XFAIL-AUDIT）。声明面存活复核（还原后逐项）：config-catalog 行 1、
+`.env.example:194`、`docs/db-owners.md` `person_imagery_usage` 2 处、`sync_persona_source.py:101` 在册名册、
+`settings.py` `BOT_REPLY_DEFAULT_DIRECTIVES` 在 `RESTART_REQUIRED_KEYS`、名册 25 行——**全在**。
+
+**已回报席位（逐席带证据，未回报的仍在跑）**
+
+- **S-KB-ATTRIB**：接手实测 **5 枚**红（简报转述的「2 枚」偏少——树在实时复原，红数在漂）。改动三件均冷面：
+  `character/memory.py::SQLiteMemoryRepository.upsert_fact` 关态分支改走单一派生口 `memory_bus_v2.derive_memory_kind`
+  ＋新增 `_log_recall_assembly`（`build_memory_read_path` 三个返回点点名 `mode=/fallback=`）；
+  `memory_bus_v2.py::_absorb_locked` 确认分支只补空位 `source_event_id`（不抢 `source` 账）；
+  `scripts/migrate_memory_bus_v2.py` 加 `_MIGRATION_EVENT_PREFIX` 真身、对账改按前缀计数（此前那枚
+  `ConservationError` 的根因＝对账尺拿 `source` 列当量，而同槽脏前置下 `source` 归建行者）。
+  复跑 14 件 ⇒ **`338 passed, 3 xfailed, 0 failed`**，另邻域 184 passed。**主会话独立复跑复核**
+  （9 件交集）＝`194 passed, 2 xfailed`。
+- **S-TYPEDEBT**：🔴 **证伪两条转述归因**——`config.py`「四处字段重复定义」不成立（AST 逐类扫：`class Config`
+  **字段维同名重复 0**（尺＝`tests/test_config_fields_no_duplicate.py`；字段数／文件数／用例数一律以机器册 `docs/auto-facts.md` 为准，本文不手写）；
+  `image_guard`「缺 `Path`」不成立（自由名扫描 0 命中，`image_guard.py:23` 本就有 import）。
+  **typecheck 现算＝`Success: no issues found in 594 source files`（0 error，改前后同绿）**。
+  唯一改动 `domains/chat_reply/character/affinity.py` 的档位带形段（只写符号面——行号会漂，规则 50 口径） `if hi>lo: hi=lo` → `hi=min(hi,lo)`（PLR1730，逐点等价），
+  `test_affinity_v8_band.py` ⇒ `10 passed`（主会话复跑同绿）。残留 **11–12 枚 ruff** 全在别席实时活件
+  （`__init__.py` I001、`fx.py`/`renderer.py`/`marker*` RUF100/SIM102、`notes` SIM103、`datafix` F841、
+  `memory` PLR0402）⇒ 归该席/该波，不动。**另一条更严的口径留待裁**：`--check-untyped-defs`（现役门不跑）
+  另有 9 枚 `union-attr`。
+- **S-XFAIL-AUDIT**：17 枚 xfail 逐枚 `--runxfail` 实跑 ⇒ **销 2 留 15**（`-m xfail` 计数 17→**15**）。
+  销的两枚本就已能过（`test_acg_kb_retrieval_accuracy::test_production_consumers_of_kb_presentation_bodies_are_wired`
+  腿已接；`test_inbound_merge_preserves_ids::test_folded_id_ledger_is_still_dropped_before_the_pipeline`
+  根 `__init__.py:9018/9028` 已消费 `folded_message_ids`），标记换成硬锁 ⇒ `2 passed`、两文件 `37 passed`、ruff 净。
+  留的 15 枚 `--runxfail` 仍 **15 failed**（真腿没到，没被洗绿）。其中两枚**禁放宽**：
+  `test_prompt_injection.py::test_quote_chain_marker_alone_should_not_pass_unescaped`（**在册注入消毒缺口，诚实钉红**）、
+  `test_memory_bus_read_leg.py::test_common_given_names_still_get_an_identity_slot`（动它＝改生产写侧行为）。
+  另有三枚「两行落地即转绿」属根 `__init__.py`（此刻热面）：`test_memory_read_side` 两枚装配未带 `bus=`
+  （`:7717`）、`test_news_card_outbound::test_assembly_hands_the_render_backend_to_news`（`:4706`/`:10041`）。
+- **S-FILEOUT-LEGS**：走**甲＝维持退役**，依据三处书面记录合一（`…/logs/S-T-FILES-AUDIT.md:158`「该删不该接」、
+  `S-FILES-LAND.md:60`＋§伍 备份 sha、HEAD `restricted_runner.py:1071-1083` 与测试件 `:486-498` 两枚墓碑），
+  六例同批退役（**含一枚此前假绿**）＋清转死 import，`docs/issue-ledger-p2-p3.md` 新立 **§P2-13**；
+  复跑 `47 passed`、邻面 `112 passed`、含文档门 `146 passed`。**主会话独立复跑**（4 件）＝`103 passed`。
+  §P2-13 记的诚实缺口：文件出站只有「打码**有效**」半把锁，缺「打码**失效时**」半把
+  （`redact_local_secrets` 替换式打码，认不出的盘符形态会原样出站）⇒ 归 S-OUTBOUND-REDACT 席。
+- **S-ABSORBER-KEY**：判定＝**「消费点确已读」，无需补接通、亦无需退役**（吸收器 `memory_bus_v2.py:1159`，
+  唯一闸在 `build_memory_bus` `:2048-2058`，关闸连库文件都不建；`absorb` 不判第二次＝无第二闸）。
+  现算硬死桶（零读点名册）里**没有任何** absorb/memory/reflect/extract/knowledge 键（`[]`），
+  `hard_dead == HARD_DEAD_BASELINE`（39，等集）。两笔基线**均未动**：`CORPUS_FLOOR_BASELINE` fields=765／
+  templates=3／py_files=670 逐字相等，direct_reads 现算 1570 落在 1580−200 容差内（并发席重构 control_plane
+  删了读点所致，与吸收器无关）；`UNACCOUNTED_BASELINE=554`/sha `cf3f5dac64820b65` 全等。
+  新增 `tests/test_memory_absorber_guard_lock.py` 三枚锁 ⇒ `3 passed`（并入既有 5 枚 `8 passed`）。
+  它登记的 2 枚既存红：`test_central_named_bucket_names_its_evidence`（`bot_transport_timeout_seconds`
+  按名读点改写、证据行漂）＋`test_poison_6`（control_plane 导入向源码树 `data/` 落库，被卫生守卫拦下自清）。
+- **S-GATE-REASON**：门因进日志三腿**盘上已在**（别席 WIP），只核验未重做；`17 passed`，无第二判定/第二枚举。
+- **S-RUNTIME-VERIFY**：见本节上半（进程 StartTime 分界、`runtime_events.log` 零 ERROR、`RULE=` 生产零次、
+  `person_imagery_usage` 0 行、别名真身在 config 不在表、**生产污染第二起** `3074044503@16:23:53`）。
+
+## §55 复核波·提醒抢道根修·窄腿补牙·分区裁剪判据（2026-09-29 傍晚，主会话 + 4 席；未 commit、未重启；台账 #69）
+
+复核"都做完了吗"时抓出四处，全部按"先根因后修、修完注毒、交卷带尾行"走完。
+
+### 55.1 提醒创建腿误抢（她 16:22 群实况判词："只要有『提醒』两个字，也不分析是什么就直接弹"）
+- Phase 1 插桩读数（进程内，非推断）：`signal_hit=True` ＋ `intent=at=次日10:00 body='最后问一遍群里 9.30鸣潮3.7 你们钱都准备好没'` ＋ `paste_reason=too_long` ⇒ `claims=True`。两条反例各自单立都不进（「别怪我没提醒你啊」有词无时间；「早上10点准时群里发截图作证」有时间无词）。
+- **缺陷形状**＝`_SIGNAL_RE.search(text) and parse_reminder_intent(text) is not None`，即"碰到裸词 ∧ 全文任意一句抠到时间"，**从不问这句话是不是在要求本 bot 提醒谁**；粘贴体守卫（`_pasted_body_reject_reason`）是对的兜底，只是被喂了不该进道的东西 ⇒ 修在路由闸，不修兜底。
+- 新判据三件**同时**成立才抢（`reminder.py:366 _reminder_creation_claim`）：① 指向性 `_ADDRESSIVE_RE`（受事只收 我/我们/咱/俺/本人/偶 ＋ 装置短语「设/记/加/建/定个提醒」「帮我提醒」；**第三人称一律不算**——`别怪我没提醒你`、`提醒大家` 都不开这条口）② 可解析时间（`parse_reminder_intent` 口径一字未改）③ 时间必须落在**含指向性的那一句**（按 `[。！？；!?;\n]` 切原文、逐句判，禁第二时间解析器，句内用同 store 的 `parse_time_target`）。缺一即**不抢**，消息落回人格对话，**绝不回元话**。
+- 零改动面：`_LIST_RE`/`_CANCEL_RE`/笔记面/日程板面/勾选让路判据/总开关语义；配置键零新增。
+- 锁＝`tests/test_reminder.py:233-305` 七枚（训话原文不抢道＋不进能力＋合法四形照旧＋同句成立＋第三人称 False＋跨句 False＋查询/取消/勾选不受影响）。注毒两发分层各拦一层（摘③ ⇒ 跨句锁红；摘①+③ ⇒ 四枚红＝事故原状复现）。
+- 实跑：提醒族＋路由/触发词族 `1750 passed, 2 skipped, 1 xfailed`；笔记/日程/注册表族 `108 passed`。A/B 现算净新增红 0（退回改动前字节，红集合与数字逐枚相同）。触发词两本棘轮加债 0（`raw 95／豁免 51／债 44` 与 `473` 前后等值）。
+- ⚠ 简报里我写过「设个提醒：交报告 照旧 True」——**实测改前改后都是 False**（整句无可解析时间），席子按"前后等值"记账没去动时间口径，判据本身没被放宽。
+- ⚠ 有意的收窄面：「明天8点开会。记得提醒我」这类时间与指向分置两句的合法请求现在**不抢道**（落回人格对话，用户重述一句即记上）——这是判据③的必然后果，不是漏修。
+
+### 55.2 那枚「分区标签缺席」红的真根因（**推翻主会话自己的判词**）
+- 主会话读数 `prompt_chars 2033 < budget 2048 却带裁剪公告` 是**用错了量**：2033 是**裁后**长度。插桩真身装配口：裁前 system 正文 **2311** ⇒ 当轮可用 2033 ⇒ **超 +278**，公告是真的，装箱腿没炸。
+- 增量 120 字符来源＝他侧合法特性（`chat.py:1295` 【知识库】"使用规矩"反照本宣科令 ＋ `chat.py:1289` 「未标注来源」库名诚实标注，后者由 `tests/test_kb_local_hit_attribution_a11.py` 在册执法）。
+- 判性＝**夹具隐式耦合缺省预算 2048**：HEAD 能过纯属刀口恰好落在最后一节**正文内部**（裁 158 没咬到标签），补上 120 后标签整块出局。
+- 修法＝只动判据形状、生产码零改动：A 腿从契约缺省**加倍现算**到真身自报未裁那一档 ⇒ 全部标签齐备＋成序＋`TRUNCATION_NOTICE not in`；B 腿在缺省档断言"缺席必须缺得有规矩"（在场者必须构成前缀、不许中间掏洞、掉了必须有公告作证、`total <= effective`、`_ALWAYS_ON_LABELS` 永不出局）＋一枚参数化不变式锁（公告不许撒谎／没动刀必须给齐／预算越大在场分区只准变多）。不 skip、不删标签、不拿 `in` 换 `index`。
+- 注毒三发各 rc=1（预算够却塞公告／只裁不公告／中段掏洞），全在内存改行为，磁盘 `chat.py` 一字节未动。实跑 `182 passed`（两次尾行）；本波合并复跑 `294 passed`（十族，零红）。
+- 🔴 **新缺牙旗报（未修，要动 `chat.py`）**：`truncated_sections` 只有一个写点（`chat.py:3085`，只认"节级正文自带公告"），尾裁那条腿（`chat.py:3339` 区）挤掉的节**永不进 `truncated_sections`** ⇒ 诊断里 `truncated_sections=()` 而 `clipped_to_context_budget=True` 同时出现，运维日志 `prompt_truncated_sections:-` 长期漏报。本波没碰（并发席在写 `chat.py`）。
+
+### 55.3 `RULE=` 越权形状闸补窄腿（取数请求三件同现才拒）
+- 缺陷：动词表只收 `报出|念出|念一遍|读出|晒出|列一下你的`，而名词（日程/提醒清单/待办）**按设计刻意不入表**（被引号点名时几乎必然是在说"回复里别出现这个词"）⇒「以后每条回复开头都报一下我的日程提醒清单」曾被钉成永久讲法。
+- 新腿＝**动作 × 对象 × 永久性** 三件同现才拒（`_NOTE_DATA_EXFIL_RE`，挂在 `_note_refused()` 判据**或**里）；动作补 `报一下|说一下|念一下|讲一下|告诉我你的|给我看|截图|发一下|汇报`。红线保住两种合法形：「回复里别出现『待办』这个词」（无动作）与「以后别在句尾加"哈哈"」（无对象无动作）。
+- 主体 `_NOTE_REFUSAL_RE`、`_NEVER_EXEMPT_RE`、英文腿 `_NOTE_REFUSAL_EN_RE`（按留空格判的那把尺）与 `classify_rule` 四道闸顺序**一字未动**；新腿进 `test_rule_cue_patterns_have_no_empty_alternative` 名册（台账 #67 那枚"续行 `|` 拼空分支＝恒真"的尺现在也罩住它）。
+- 注毒三发（摘永久性腿／摘 `报一下`／并进主体只收名词）各出真 `FAILED`，还原 sha256 等值。⚠ 一发与预期不符并如实上报：并进主体时红落在**新测试的与式锁**而不是豁免锁——引号点名豁免腿（`_RULE_MENTION_RE`+`_NEVER_EXEMPT_RE`）本来就护着被引号包住的普通名词。
+- 已知边界（闭集，换动词就漏：「以后每条回复都提到我的日程」仍放行）；只治**写侧**，判定提示词那侧没为这一形加例句。实跑 `91 passed`；交叉面 `49 passed`。
+
+### 55.4 册子补面（她点名的第二枚红）
+`test_config_catalog_covers_config_fields` 点名的 4 枚键全部补进 `docs/config-catalog-full.md:A26` 尾部（`_chat_native_tools_enabled` / `_person_profile_enabled` / `_person_profile_max_items(6)` / `_person_profile_max_chars(520)`），缺省值照抄真身 `config.py:1082-1087`，读点写全路径零行号。三面里 `.env.example`（`:228-230/:281`）与 config 字段本来就在册，只缺册子这一面。
+- 🔴 注毒②实证一把门的缺口：**该门只判键名在场、完全不校验缺省值**（把 `6` 改成 `4242` 照样绿）——与"册子把已退役键讲成生效开关"同型病的另一个入口，本波按纪律**没去补门**（不属授权面）。
+- 🔴 顺带查实两枚开关今天都是"拨了走不到路"：`_chat_native_tools_enabled` 装配腿未接（`chat.py` 不 import 本件）；`_person_profile_enabled` 打开后**只写不读**（`compose_person_profile_context` 生产侧零调用方）⇒ 台账 #66/#67 那条"只写不读"线仍未销账。
+
+### 55.5 现算读数与未做
+- 本波合并复跑十族：`294 passed in 20.47s`（授时两族＋策略族＋分区读出＋档位＋预览两族＋persona 标签锁＋文档同步/env 门）。
+- 他侧在飞面造成的残红（**A/B 现算证明非本波**，本波一字未动）：`test_schedule_board.py` 16 枚、`test_capability_manifest_gate.py` 3 枚（读他席 `__init__.py` 340/59）、触发词两本棘轮 3 枚、更宽批 17 枚（`test_sched_a2_quota_privacy` ×5／`test_e2e_acceptance` ×4／`test_memory_secondhand_strip_injg3` ×6／`test_capability_declaration_parity` ×2）——摘掉本波改动复跑，红集合与数字逐枚相同。
+- 仍未做：① 上述诊断缺牙（尾裁挤掉的节不进 `truncated_sections`）；② 越权闸动作表的闭集边界；③ 别席 HANDBOOK 正文里那枚按行号钉 affinity 的坐标（该按符号名重定位）与一行裸字段计数（该指真身）——两枚都由 `test_doc_link_integrity.py` 与 `test_documentation_consistency.py` 点名，属 HANDBOOK 面 owner；④ 真机生效仍需她重启（#10）。
+
+## §56 QQ 原图 flag 探测结论 2026-09-28（表情包 mface 出站腿收口波，2026-09-29；未 commit、未重启）
+
+### 56.1 探测方法与证据等级
+本机 SnowLuma v1.14.19-node 是**源码可见**发行（bundle 平铺可直读），探测＝只读安装目录
+`index.mjs`（编译期常量表与收发两侧 codec 全在其中），比任何二手文档都硬。WebSearch/WebFetch
+只找到仓库壳（README 指向的 `docs/onebot-actions.md` 404，无公开段落册），一律以 bundle 为准。
+
+### 56.2 mface 出站：支持，且只认一种形态（Task A 判定 = yes-supported）
+- 段方向册：`mface.directions = {D,S,P,W 全 "yes"}` ⇒ **发送侧有这条通道**，不是只进不出。
+- 发送段形状（`fromSegment`/`marketFaceElement`）：`{"type":"mface","data":{"emoji_id":<必需>,
+  "emoji_package_id":<非负整，可缺省 0>,"summary":<文本>,"key":<文本>}}`。
+- **唯一硬门**：`emoji_id` 必须**恰好 32 位 hex**（发送前校验 `/^[0-9a-fA-F]{32}$/`，不合形抛
+  `INVALID_FIELD` **整条消息拒发**、连坐同消息文字部件）。这正是收侧把 mface 元素投影成
+  image 段时挂在 `data.emoji_id` 上的那枚 MarketFace GUID ⇒ 「收进来什么形态、发回去什么形态」
+  自成闭环。第二回路也确认存在：`image` 段带 `emoji_id` 会被 `image.fromSegment` 认回 market face。
+- **纠偏一处**：S-MEME-MFACE 初稿把出站门定成「纯数字串」——那把尺与协议端实际校验正好错开
+  （真实 id 多为含字母 hex，纯数字短串协议端又不收），按 bundle 实据改为 32 位 hex，
+  锁随改（`tests/test_onebot_sticker_segment.py`/`tests/test_mface_segment_fallback.py`）。
+- **非标准扩展登记（不接入，只记账）**：SnowLuma 有收藏表情（custom face）一族动作
+  （`addCustomFace` 收本地路径/`file://`/http/`base64://`，返回 `<uin>_0_0_0_<MD5>_0_0` 形态
+  emoji_id，另有 fetch/delete/modify/move）——「把本地图注册成表情」在协议端**有路**，
+  与旧判词「没有注册成表情包的 API」不符（该判词已随本节作废）。bot 今天不接：多一步账号态
+  写操作、且收藏位是人机的，机器人往盘里塞东西属未裁定面。
+
+### 56.3 bot 侧接线（Task B/C 落地）
+`onebot.py` 新增 `_mface_segment`（不合形即 None，绝不自拼 id）；`_sticker_segment` 两级＝
+mface 优先→真图 image 兜底并记 `sticker_via_image_segment_fallback=true` 观测行→都没有＝丢段。
+`renderer.py` 对 `CapabilityResult.images` 条目认 `kind="sticker"` ⇒ 打成 `sticker` 部件
+（允许只带 emoji_id 不带文件），不打 kind／`kind="image"` 的照片通路（/随机图 等）逐字节不变。
+
+### 56.4 「原图」flag：OneBot v11 与 SnowLuma 都没有（B2 结论）
+- bot 现送形态：`image` 段裸本地绝对路径（`_resolve_local_file_ref` 判活后 `file=<绝对路径>`），
+  协议端自己读字节走 highway 上传。
+- OneBot v11 标准 image 段字段只有 `file/url/cache/proxy/timeout`——**没有原图位**。
+- SnowLuma bundle 全文 `原图`/`pack_original` **零命中**；image 发送字段册里
+  `subType/summary/flash/md5Hex/sha1Hex/picFormat/noByteFallback` 中，`noByteFallback` 是
+  **指纹秒传**（不传字节、按 md5+sha1 复用已传资源），与「原图」不是一回事；protoc 里
+  `original/originalParameter` 是收侧 CDN URL 解析参数与视频 proto 硬编码预留位，**发送侧不可设**。
+- bot 侧保证（历波已验证）：随机图/贴纸出站链路**零 PIL/ffmpeg 重编码**，送出去的就是盘上原字节。
+- **诚实结论**：bot 送的是原字节；糊/压是 QQ 服务端 CDN 重编码；OneBot v11 标准里无原图 flag；
+  SnowLuma 非标准扩展中亦无原图开关（有秒传/闪图/收藏表情三族，均已登记 56.2 与册面）。
+  bot 侧无合法手段要求「按原图存」，不许编「已开原图」类话术。
+- 相邻面提醒（不同表面别混）：早前记忆件 `project-outbound-copy-template-wave-20260920.md`
+  记的是**头像 `file://` 引用**那一条腿的坑（`set_qq_avatar` 的四种载荷形态），与本节
+  消息图片编码是两回事——同形不同病，别互相考古。
+
+### 56.5 真机验证状态
+以上全部为**离线**判定（bundle 直读 + mock 段构造），未向 SnowLuma 发过任何一条真消息；
+mface 首发现象（QQ 侧显示「表情包」）待用户重启部署后按 [snowluma-setup.md](snowluma-setup.md)
+§1 能力边界表与验收手册补真机勾。
+
+## 57. 代理链根修 + 不哑兜底波（2026-09-30 凌晨，单席单线程）
+
+> 起因：bot 收消息迟迟不回、某中转站网关侧看不到请求、Clash Party 测速绿标但站不可达。
+> 事故全账另见 `HANDOFF-PROXY-CHAIN-20260930.md`（未跟踪在飞稿，2026-09-30 下午整树清空事故中丢失，git 从未跟踪 ⇒ 不可点）
+> 与操作单 `patches/W2-PROXY-ABC-OPS-20260930.md`（同上，未跟踪稿已丢失）；事故全账以本节正文与门禁现算为准。
+
+### 57.1 根因（verified，实跑证据）
+- **拓扑真相**：bot 的 LLM 唯一出口＝本机 AxonHub 网关（`127.0.0.1:8090`），「多中转站」在网关内部
+  （7 上游域）。bot 侧 `.env` 的 `BOT_DOWNLOAD_PROXY` 经 `model_router.build_model_router` 硬喂进
+  LLM httpx 客户端 ⇒ **连回环都经 Clash 7890 绕行**；AxonHub 进程全渠道 `proxy=environment` ⇒
+  上游全走 7890。09-29 22:09 Clash 拒连 ×778（`proxyconnect tcp: dial 127.0.0.1:7890`）＝全链
+  阵亡实证；09-28/09-29 多站同时 EOF/TLS 握手超时＝共享节点路径阵发型故障。
+- **★ 机制三钉**（回归锁在 `tests/test_llm_loopback_direct.py`）：
+  ① httpx 显式传 `proxy=` 时 **NO_PROXY/环境变量全部无效**（0.28.1 `_get_proxy_map`）；
+  ② `proxy=None` **≠ 直连**——trust_env 回落 env/注册表系统代理（本机用户级 `HTTP_PROXY` 常驻 7890）；
+  ③ 「测速绿」测的是节点本身，不代表节点→目标站全路径。
+- **口径差闭合**：bot 侧 18:03–19:45 的 5xx 与 AxonHub [ACCESS] 零记录并存＝**网关 access log 只记
+  成功转发，上游连接死时的自生成 5xx 不落 access log**（high；两侧行均 UTC+8，非时钟问题）。
+- **群聊全灭静默＝设计现状**（`chat.py` `_llm_error_result`：群聊 SILENT_AUDIT 不回话，私聊五池话术
+  IMMEDIATE）；私聊兜底已实弹验证生效（09-30 00:51：39.6s timeout → 话术 39.9s 发出）。
+  要不要让群聊也说话术＝用户裁定项，本轮未动。
+- **failover 预算超额**（357s>120s）：跳间止损与跳内 `min(remaining)` 钳制均在（`model_router.py`
+  2506-2525/2578），历史超额成因待新证据链（57.3 的 detail 字段）复现归因，本轮未盲改预算逻辑。
+
+### 57.2 拓扑一页账（LLM 链）
+```mermaid
+flowchart LR
+  QQ["QQ/SnowLuma"] --> bot["bot.py (NoneBot2)"]
+  bot -->|"127.0.0.1:8090 硬直连(回环桶 trust_env=False)"| AX["AxonHub 网关"]
+  AX -->|"aiprc.top / newapi.qianqianye.com / starapi.cc / sub.potccv.com<br/>改直连(B案)/Clash DIRECT(A案)"| UP1["4 直连可达域"]
+  AX -->|"toolcode.cc 必须走代理(直连阵发型重置)"| UP2["toolcode.cc"]
+  AX -->|"直连(CN)"| UP3["bigmodel / deepseek"]
+  AX -->|"直连(localhost 免代理)"| OL["Ollama 11434<br/>qwen3.5:9b 应急脑"]
+  bot -.->|"应急直连档 p4"| OL
+  AX -.->|"全部上游(现状)"| CL["Clash 7890 → 一元机场节点"]
+  bot -.->|"TG/天气/订阅/下载"| CL
+```
+渠道对照：bot 注册表（`ChatBot_Runtime/data/settings/runtime_settings_shorekeeper.json`）
+p1 `axon-gemini-38-flash`→gemini-3.8-flash、p2 `axon-grok-46`→grok-4.6、
+p3 `axon-qwen35-local`→qwen3.5:9b(经 AxonHub)、p4 `ollama-qwen35-direct`→qwen3.5:9b(直连地板)，
+全部 base_url 指向 127.0.0.1:8090 除 p4 直连 11434；order 由覆盖册 `overrides.BOT_MODEL_PRIORITY_GROUPS`
+（SETTABLE 热改键，覆盖 .env）展开，「全天」无窗无日=恒命中（`model_router.py:471-494`）。
+上游域→AxonHub 渠道映射见操作单 B 案表（ch4/9/12/15=aiprc、ch5/6=qianqianye、ch11/19/20/21/23/25/26/27/28=starapi、ch18=potccv、ch7/8/10/30=toolcode）。
+
+### 57.3 改动清单（127+18 tests 绿 + ruff 全过；未重启未提交）
+| 文件 | 内容 |
+|---|---|
+| `llm_engine/providers.py` | 回环硬直连桶 `_LOOPBACK_DIRECT_KEY`+`_loopback_endpoint`+`_shared_http_client(force_direct)`（proxy=None+trust_env=False）；`LLMProviderError.detail`（单行≤200，构造咽喉执法）+`_brief_exc` 四分支携带异常原文 |
+| `llm_engine/model_router.py` | 逐跳失败日志补 `detail=%s`（治「timeout 分不清连不上还是读不到」） |
+| `llm_engine/channel_health.py` | 探针回环目标同款硬直连 |
+| `bot.py` | ①轮转文件 sink 接线（`scripts/bot_log_sink`，`<runtime>/logs/bot_runtime.log` 10MB×5，与启动方式解耦——bot_stdout 停在 09-27 的根修）；②启动自检门钩子 `_run_llm_chain_selfcheck` |
+| `scripts/bot_log_sink.py` `scripts/llm_chain_selfcheck.py` | 新模块（可直测，仿 telegram_resilience 先例） |
+| `domains/ops/network_patrol.py` | 巡检：Clash TCP 探活 + 7 域直连/经代理双腿 + 状态差分 + JSONL 落盘（滚动 .1） |
+| `__init__.py` | `_register_network_patrol_scheduler`（15min，变坏边界走 `send_admin_alert_requests` 带外 TG/邮件告警，恢复只记账；首轮建基线不告警） |
+| `config.py` + `.env.example` | `bot_network_patrol_enabled/interval_minutes/domains` 三键（非热改，改 .env 需重启） |
+| `scripts/e2e_acceptance.py` | `--check-llm-chain` 一键体检（只读矩阵，退出码 0=全绿；实弹 PASS） |
+| Runtime 注册表 | p3/p4 应急档 + 覆盖册 order 补 qwen（实跑验证链形） |
+
+### 57.4 全出站面代理审计表（只审计未改分流；改不改待用户裁定）
+| 出站腿 | 代理语义 | Clash 死时 |
+|---|---|---|
+| LLM 主链/视觉/ASR（回环） | 回环硬直连（本轮起） | **不受影响** |
+| LLM 应急地板（11434 直连） | 直连 | **不受影响** |
+| AxonHub→上游 4 直连域 | 现走 7890；A/B 案后直连 | A/B 案后不受影响 |
+| AxonHub→toolcode.cc | 必须走 7890 | 失效（failover 到 4 直连域/应急档） |
+| Telegram 适配器 | `TELEGRAM_PROXY` 显式 7890 | 断连自动重连，恢复即回 |
+| 天气/订阅/音乐/文件下载 | `bot_download_proxy` 显式 | 大陆源直连可达者仍活，海外源失效 |
+| 链接解析 http_util（urllib） | 显式空=env 回落（WinINET/注册表） | 系统代理死则跟随死 |
+| meme 收库/图库 | `BOT_MEME_LIBRARY_PROXY` 空=直连 | 不受影响 |
+| 直连可达性实测（09-30 00:4x） | 7 域双腿全绿含 toolcode 直连本次通（昨夜重置为阵发型，巡检盯着） | — |
+
+### 57.5 验证证据（全部实跑）
+W0：77 passed（补丁验证）→ 全量 127+18 passed + ruff 全过 + 体积门绿；
+链形解析实跑（p1→p4 全天组命中）；Ollama 地板实弹 200（16s 冷启）；
+`--check-llm-chain` 实弹 PASS（7 域双腿矩阵全绿）；09-30 00:51 现行日志证明私聊话术兜底实弹生效。
+
+### 57.6 未决与后续
+① 用户执行 A/B/C 操作单（patches/W2）+ 重启 bot 与 AxonHub；② 提交待用户明示（逐文件 add）；
+③ 群聊全灭要不要说话术＝用户裁定；④ failover 超额归因待新证据链；⑤ LLM 故障时间线视图、
+AxonHub 自动降级重试＝登记后置；⑥ 巡检 JSONL 曲线视图后置。
+
+## 58. 人格表情包体系波（2026-09-30）：表情册四动作 · 贴纸联动两型 · 整树清空事故回铺账
+
+> 口径：本节只记**已实跑成立**的事实，判据一律不放宽。随代码漂移的计数（指令条数、门禁条目数、用例数）按规则 10 指向生成册与门禁现算，本文不写死。
+
+### 58.1 表情册四动作指令面
+- 四条动作＝**统计 / 重扫 / 查重 / 入册**，真身依次为 `plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py` 里的四个模块级函数 `_album_stats`、`_album_rescan`、`_album_dedupe`、`_album_admit`。**坐标写法自本波起改符号派生式（`文件::符号`，同 `test_campus_digest` 那把尺的先例），行号只作附注**：本席 2026-10-01 现算四枚函数头＝1063 / 1132 / 1260 / 1304（现算于 2026-10-01，会漂），本节旧记的四枚行号已整体位移 +2 ~ +28，据此勘误（旧值 `git show HEAD:docs/HANDBOOK.md` 可溯）。触发词与逐参数入口以生成册 `docs/command-catalog.md`、`COMMANDS.md` 现算为准（规则 10），本节不抄清单。
+- 管理员门**照抄现成判据、不另立第三把尺**：`plugins/bot_unified_runtime/domains/chat_reply/policy/roles.py::is_admin_message`（符号名即真身；本席现算该行仍在 151 行未漂，仍不登记裸行号）。
+- 四条 fail-closed 门（各带 `audit` 标签，逐条可查）全住在 `plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py::handle_meme_album_command`，判据就是那四行 `audit=["meme_library", "album", "<门名>"]` 字面量本身：`denied`＝非管理员；`no_store`＝store 缺席；`unconfigured`＝登记根键未配；`root_absent`＝登记根不在盘上（四行现算于 2026-10-01 依次 1017 / 1024 / 1036 / 1047，会漂；本节旧记的 1015 / 1022 / 1034 / 1045 已整体 +2，据此勘误）。后三条的原则是**诚实缺席**：零扫描、零异常、绝不自动建目录、绝不越出容器去别处凑一个能用的根。
+
+### 58.2 册基根裁定＝**甲案**（两枚键、两片目录，不共用）
+- 用户裁定采甲案：册根取表情库的**登记容器** `store.media_container()`，其真身键＝`plugins/bot_unified_runtime/config.py::Config.bot_meme_library_dir`（字段声明现算于 2026-10-01 仍在 909 行）；解析入口＝`plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py::_album_container`（现算 966 行，旧记 964 已位移）。
+- 与贴纸池**分家**：贴纸池键＝`plugins/bot_unified_runtime/config.py::Config.bot_sticker_dir`（现算仍在 981 行）。两枚键两片目录；`_album_container` 拿到 `None` 时不猜、不回落家目录、也不回落贴纸池，一律交回 `unconfigured`/`root_absent` 门如实报缺席。
+
+### 58.3 出处门：`not_admitted`
+- **未过审的行不搬进人格册**。判据真身＝`plugins/bot_unified_runtime/domains/meme/sources/meme_library.py::MemeLibraryStore.admit_into_album` 里那道 `review_state != persona_review.ADMIT` 即 `return "not_admitted"` 的门（现算于 2026-10-01 在 521—522 行，会漂）；同一族状态名字面量（`moved` / `no_row` / `no_file` / `escape` / `duplicate_name` / `not_admitted` / `error`）的登记在该方法自己的 docstring（现算 504—505 行）。⚠ **本节旧记的两枚坐标是「指错」不是「行号漂移」**，故一并改锚：旧文把「状态名登记」记在 488 行——那一行是 `missing_path_rows` 里取 `path` 字段的无关行；旧文把「判据真身」记在 505 行——那一行正是 docstring 那枚清单，不是判定腿。册面对它的处置腿＝`plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py::_album_admit` 内的 `elif status == "not_admitted":` 分支（现算 1450 行，旧记 1422 已位移）。
+
+### 58.4 重扫的分页上界
+- `missing_path_rows(limit)` 的 `limit` 数的是**报出来的失配行数**，不是库里的行：内部按 `_MISSING_WINDOW` 一格一格 `OFFSET` 往下翻（稳定全序 `added_at DESC, md5 ASC`），翻到凑够或库见底为止。第一次改这格时只把常量写下、SQL 仍是裸 `LIMIT`，等于没修（2026-10-01 由对抗复查席抓出、现算 A/B 复证：同一份夹具，裸 `LIMIT` 报 0 行、翻页报 20 行，幽灵行埋在最早一批也能捞到）。⚠ 翻页游标**不跨调用**：一轮内是全覆盖的，跨轮从 0 重来——所以「再报一次接着往下对」只在上一轮那些行真脱离失配集时才向前推进，这条讲法在回执里按此口径写。
+- 出处门的第二条腿：`_album_rescan` 对「文件躺在册目录里但行没过审」的账**只认路径、不认身份**——重链照做（否则那批「行仍指旧位」的账永远修不了，一刀切拒＝「重扫」在生产里失去用途），但 `persona_owned`/`persona_hint` 一个都不替它宣；audit 里第三枚 `unapproved:N` 是**注解不是第四岔**（`relinked + missing` 仍等于待对数）。在册目录里那些未过审文件本身要人工处置，那一格归 D-6 待裁（发送面纯走文件遍历、不看这两列，所以这里挡的是账本造假而非直接外发）。
+- 同批补登四枚「改了要重启」键：`BOT_REACTIONS_MEME_PROBABILITY`/`_COOLDOWN_SECONDS`/`_DAILY_MAX`（与总闸同形读点）与 `BOT_MEME_LIBRARY_DIR`（甲案后升格为册容器根）。另把本波 S2/S3 两条腿的 `getattr(config, "bot_reactions_meme_enabled", True)` 兜底翻成 **False**（缺对象＝不放行，主动外发腿不许有「忘了传」的隐式档；P3 旧腿那两枚归其 owner，本波未动）。
+- `_MISSING_WINDOW = 500`（`plugins/bot_unified_runtime/domains/meme/sources/meme_library.py::_MISSING_WINDOW`，模块级常量，本席现算仍在 80 行未漂）：一次重扫最多报 500 条缺口。**上界不是截断**——续报接着上次位置继续对，报不全时如实说明还有下批，不假装"就这些"。
+
+### 58.5 S2 同消息并图
+- 贴纸与正文走同一条消息出站时，只在既有 `audit_tags` 上打一枚 `sticker_same_message`——真身＝`plugins/bot_unified_runtime/domains/chat_reply/capabilities/chat.py::build_chat_result` 里那行 `audit_tags = [*audit_tags, "sticker_same_message", *attach_tags]`（现算于 2026-10-01 在 4558 行，本节旧记的 4559 已位移），**不另立第二本账**。这枚互斥标的两半一并记清（行号现算、会漂）：**写方**＝`plugins/bot_unified_runtime/__init__.py::_sticker_attach_for_reply` 的记账两行（额度 +1 与 `_reaction_meme_merged[f"meme:{message_id}"] = meme_path`，现算 5751—5752 ），**读方＝双发防护**＝同文件 `_maybe_send_reaction_meme` 开头的注释块加那句 `if ... in _reaction_meme_merged: return`（现算 5357—5367）。⚠ 本节旧文把读方那一处叫「摄取腿的对应注记」并给了个 5355 的点位——**名称与点位双错**（该号落在一条 `sticker_send_routing` 的 import 行上；摄取侧即段归一/引用链反查那一段并无 S2 注记），故此处不写 `文件:行` 形态、只留符号名。
+
+### 58.6 S3 表情段联动补发
+- 入口＝`plugins/bot_unified_runtime/__init__.py::_maybe_send_sticker_for_emoji_like`（函数头现算于 2026-10-01 在 5500 行，本节旧记 5496 已位移）。三条约束都是刻意的：**群聊 only**（私聊无该通道，沿用台账 #35★ 口径）；**零新配置字段**（没有加第三颗键）；额度与冷却**共用同一本帽**＝同文件装配段那枚会话级日帽字典 `_reaction_meme_daily`（现算 5324 行，旧记 5320 已位移；调用点 `await _maybe_send_sticker_for_emoji_like(` 现算 7222 行）——命中就只 +1，绝不开第二本账。
+
+### 58.7 今日整树清空事故与回铺账
+- 工作树今天 15 时 22 分前后被整片清空（`plugins/`、`tests/`、`scripts/`、`personas/` 一度只剩空目录），`.git` 被搬到 `ChatBot_Runtime/git/`；随后由主会话回铺：派生册写回 **2563 枚（当时值）**、HEAD 跟踪件以 `git -C <树> ls-files -z` 现算复齐（当时 2285 枚零缺；分支真身 `v0.0.1-alpha.2`＝`3b3d1aa` 时另报 2287 枚——**判 HEAD 只认 `git -C` 现算**：复制回位那份的 `HEAD` 文件字面停在 `8ad03e4`，是旧祖先）。现存枚数以 `git status --porcelain` 与生成器 `--check` 现算为准（规则 10）。
+- ⚠ **现在盘上有两份 git 库**：工作库 `ChatBot\.git`（回铺时**复制**来的）与旧位 `ChatBot_Runtime\git`（原件未动，另有会话可能仍指着它）。并存量到本波 push 为止：推送成功后旧位改名封存，否则两处各自前进、日后没人仲裁得动。回铺当时的分流判据也记一笔：目标已存在的一律不覆盖（`.env` 属"永不创建/改写"面、`webui/src/` 三枚现场较新件原样保留、唯一冲突 `docs/config-catalog-full.md` 取盘上最全的那份并把被替换件存进 `%TEMP%\cb-rescue\dst-preserved\`）。
+- 事故的**文档面代价**：几份"当时在盘上但从未跟踪"的在飞稿——根目录 `progress.md`、`findings.md`，以及 `HANDOFF-PROXY-CHAIN-20260930.md`、`patches/W2-PROXY-ABC-OPS-20260930.md`——随清空**永久缺席**。缺席证据：`git log --all --diff-filter=A` 对这些路径零命中、`git cat-file -e HEAD:<路径>` 全部失败。**对照腿同批实跑、尺子没坏**：`git ls-files --error-unmatch docs/design/COMPACT-CHECKPOINT.md docs/design/backend-v2-implementation-guide.md` → 两枚均 tracked。
+- 处置：`docs/HANDBOOK.md`（当前交接记录段一处、§57 顶部两处）、`docs/README.md`、`docs/design/backend-v2-implementation-guide.md`、`docs/design/COMPACT-CHECKPOINT.md` 里指向这些缺席稿的**导航链接降级为行内代码字面量**，并就地注明缺席原因——这正是链接门自己的口径（围栏与行内代码内的链接是字面量、不是导航）。**未上调任何基线**（`_BASELINE_MD_DEAD_LINKS` 与 `_BASELINE_ALL_FACE_TOTAL` 一字未动），**未新建 .md 去登记缺席**（新建 .md 本身给门加债）。
+- 交主会话的两件悬案：① 台账 #71 那波的操作单与事故全账原件已丢（未跟踪、git 无副本），若要重建须由 owner 重写而非本席伪造；② `HANDOFF-STICKER-LEAK-AUDIT-20260929.md` 在盘上、索引、HEAD、以及上层目录全树查找里**均零命中**（对照腿：同一 `git ls-files` 尺子列出另外 14 枚 `HANDOFF-*`，且 `tests/test_meme_album_commands.py` 正文仍引用该文件名），故**未按"结案段"追加、也未重建**，缺席事实在此点名交裁。
+
+### 58.8 复跑
+- 文档面两枚门：`python -m pytest tests/test_documentation_consistency.py tests/test_doc_link_integrity.py`（卫生前缀见 AGENTS 规则 6；`BOT_AUTOSYNC=0` 必带，否则 conftest 会静默 `--write` 重生成派生册＝假绿；取退出码用 `${PIPESTATUS[0]}`，`| tail` 之后的 `$?` 是 tail 的）。
+- 派生册：`python scripts/command_catalog.py --write` 重生成，`python scripts/doc_sync.py --check` 校验；正门一律 `scripts/dev.ps1 -Task test|lint|typecheck|runtime-layout`。本席结案时上述两枚文档门全绿，用例数与条目数以实跑输出为准（规则 10）。
+
+### 58.9 审批通路断头路根修（本波自曝，2026-10-01）
+- 现象：出处门 `not_admitted` 的回执承诺「先走一句『表情库 审批』把它批准」，可照做之后落 `review/not_found`——**回执指向一条死路**。根因不在判据而在候选集：`sources/meme_library.py::match_review_key` 的 SQL 写死 `WHERE review_state=?`，调用点恒传 `PENDING`，而生产库 **2971 行里只有 10 行 pending、其余 2961 行是空串＝当时值**（尺＝`ChatBot_Runtime/data/meme_library.sqlite3` 表 `memes`，本席只读现算 **2973 行／pending 10／空串 2963**，bot 在写库、此数每读必漂，见 §58.13 末格）⇒ 空串那批在结构上永远进不了可批集合（`list_review` 只读队列同样看不见它们）。
+- 根修（零新配置字段、判据与管理门一字不碰）：批准落子那一处放开 `state=None ⇒ 不拼 `WHERE review_state=?``；**拒绝腿一寸没放宽**（删行删文件立墓碑＝不可逆，可删集合仍限待审），`list_review(PENDING)` 那条只读队列**原样不动**。回执文案随通路改正：`not_admitted` 不再承诺队列状态、改为直接给出可复跑的编号指令；`not_found`/`ambiguous`/`stale` 三支按批准/拒绝分别措辞。
+- 🔴 一条差点留在里的假绿：只按"放开形参"改，候选集仍是**先 `LIMIT` 截断再在 python 侧筛前缀** ⇒ 该腿只对"最新 N 行"有效，老行照样 `not_found`。探针实测（写成朴素版）`1 failed` 复现同一形状 ⇒ 前缀收窄必须挪到 **SQL 侧** `md5 LIKE ? ESCAPE ?`（绑定参数、`%`/`_` 按字面、转义符 `!`）并在 `LIMIT` **之前**完成，与 `match_md5_prefix` 用同一把尺。
+- 锁面：`tests/test_meme_album_commands.py` 第 12 节新增两枚，走完整通路且**全程不调 `store.set_review_state`**（那枚旁手正是"缺口未测"的原因：既有正路用例全靠它绕过指令面把行判成过审）；夹具刻意造 60 枚比目标行更新的行，专打上面那条 LIMIT 假绿。A/B：未修 `1 failed, 1 passed`（断言原文点名断头路）／修后 `2 passed`；三族合跑 `65 passed rc=0`＝**当时族总**（尺＝album＋review_queue＋schema_order 三件同跑，非单件；本席同尺现算 **80**＝50＋25＋5，见 §58.12 读数行的同类更正），ruff 三件 All checks passed。🔴 两格口径如实降格：A/B 两跑的**命令原文未留**＝当席自述（规则 5），且这批锁全部住在未跟踪件里、`git archive HEAD` 反证腿对它们天生失明（声明见 §58.14 末两行）。
+- 生效面与副作用：bot 未重启 ⇒ 本修复只在盘面（同台账 #10 口径）。重启后：已批编号再批一次落幂等 `approved`（旧为 `not_found`）；4 位前缀在"全库"而非"待审队列"里撞车的概率上升 ⇒ 落 `ambiguous` 先问。**"空串行要不要也拒得动"另立一票**（拒绝腿今天仍看不见它们）。
+- 同批换代的两枚空转哨兵（都在 `tests/test_sticker_pools_consumers.py`，生产腿零改动）：① 「贴纸池模块缺席」夹具只 `delitem(sys.modules)`＋删包属性，件自 `2a8272d` 入库后 `from . import` 就地重载真身 ⇒ 断言看着绿其实什么也没测；换代为 `monkeypatch.setitem(..., None)`（CPython 见 None 直接 ImportError，走生产腿"引不到"那条真分支）＋两枚不空转自证（源件 `exists()`、`pool_verdict()=="module_absent"`，把"引不到"与"在场但池空"分开）。② 旧 AST 匹配器只认直呼形，把现役 `asyncio.to_thread(_pick_poke_meme, …, group_id=…, feature_enabled=…)` 接线读成"已无人调用"⇒ 红在形状盲；改为同认 `to_thread`/`run_in_executor`，判据不松（每处 keywords 仍须含 `feature_enabled`+`group_id`），并用变异腿反证（抽 keyword／摘整条接线／换直呼形）。修前 `2 failed, 89 passed`／修后 `91 passed`（零删零增）。
+
+### 58.10 四道门终态读数与本波责任面（第四次跑窗 02:35–03:19，`BOT_AUTOSYNC=0`；第五次见 58.10 末段、第六次见 58.14）
+- test（全量第四次）：`156 failed, 20769 passed, 19 skipped, 18 xfailed in 2519.19s`，collected 20962（**当次值**，含 20769/20962 这一组；全树用例数一律以实跑为准，见 §58.14 首行现算），**collection errors 0**；dev.ps1 对非零码 throw ⇒ PowerShell 侧 RC 恒 1，被测命令真身退出码要读它自己吐的那行。**本波域净新增红 0**；41 枚转绿（含本波文案债 `copy_single_source` 4、`trigger_*` 4、`verify_hashes` 1、`config_key_poison_11`）。
+- 7 枚"净新增"同一根因、零枚属代码回归：跑期内落了 `data/control_plane_config.sqlite3`，此后 `tests/conftest.py` 源码树写入守卫**连带误报**（含一枚 `assert not (ROOT/"data").exists()`）。反证腿＝`git archive HEAD` 抽仓外同尺复跑这 7 枚 → `7 passed` 且不产残余。属台账 #1 已知卫生环。
+- 🔴 该环的**触发条件**（原账把因果写反了，现按量具＋实测对正）：pytest 9.1.1 断言重写要不要落盘，只看 `_pytest/assertion/rewrite.py::AssertionRewritingHook.exec_module` 里那行 `write = not sys.dont_write_bytecode`；落到哪儿，只看同件 `get_cache_dir()` 读 `sys.pycache_prefix`。⇒ **`PYTHONDONTWRITEBYTECODE=1` 与 `PYTHONPYCACHEPREFIX=<仓外>` 各自单设都挡得住源码树**（本席实测两形：两枚全带→树内 0；只带 PREFIX 不带 DONTWRITEBYTECODE→跑毕 50 passed、树内 `*.pyc`＝0、329 枚全落在前缀目录）。会写出 `tests/__pycache__/conftest.cpython-312-pytest-9.1.1.pyc` 的只有**两枚都不设**那一形（本席复现一次、随即清掉）。原句"三件套全带也不例外／`PYTHONPYCACHEPREFIX` 不被 rewriter 认"＝反向教人漏掉真正管事的那枚变量，作废；正确口径＝**别不带前缀直跑**，跑毕仍按 runtime-layout 现算验收。
+- lint：rc=1、`Found 20 errors`（**12 文件＝5 枚插件件＋7 枚测试件**；原写"5＋8"与"12"自相矛盾，本席同尺现算 20 枚 findings 恰落 12 个文件、插件 5 测试 7，全他席 WIP），与 HEAD 基线 35 枚**集合不相交**；**本波域 0**。typecheck：rc=1、`Found 3 errors` 全在 `domains/files/sources/downloader.py`（他席 SSRF 钉定腿新增件），HEAD 基线该件 0 命中；**本波域 0**。runtime-layout：rc=1、唯一红行＝源码树 Python 缓存路径 **552 枚（106 目录＋446 pyc，本波域内 22 条系 import 副产物）＝当时值、随树漂移不可复核**，现值以 `python scripts/runtime_layout_smoke.py` 自身输出为准（§58.12 记其已转 PASS）。
+- 判词：四道门此刻**都还红，但没有一枚红在本波文件域**；HEAD 基线自身红（lint 35／mypy 6），所以"四道门全绿"在本窗不是可签的目标，只能签「本波净新增 0 ＋ 本波域锁全绿」。
+- 终跑（第五次全量＝本节定稿读数，04:19–04:59 本地，同尺同节点 `3b3d1aa`，入口＝`dev.ps1 -Task test` 且**显式**导出 `BOT_AUTOSYNC=0`——读码得：dev.ps1 只在调用方未设该变量时才补 1；跑毕六件生成物 md5 逐件复核未被重写＝无洗绿面）：`149 failed, 20778 passed, 19 skipped, 18 xfailed in 2382.80s`，collected 20964（＋2＝58.9 那两枚新锁；149/20778/20964 这一组同为**当次值**，规则 10），collection errors 0。与第四次按**节点 ID** 对表：既存 149／转绿 7／**净新增 0**。转绿 7 枚＝5 枚 bystander（被 conftest 连带误报的那批）＋ 58.9 末段两枚换代哨兵；album 由 33 点升到 35 点全绿。
+- 🔴 残余**不是一次性的**（推翻本窗早先"清掉 `data/` 就完"的判词）：从干净树起跑，`data/control_plane_config.sqlite3` 会在全程中段（04:38:41）**再次自建** ⇒ `test_no_source_tree_data_writes::test_source_tree_has_no_data_dir` 与 `test_sticker_packs_pool::test_config_fields_are_registered_and_path_remaps` 在任何整跑里都不可能转绿。**已实名的充分写者（其一）**＝`tests/test_e2e_acceptance.py::test_dry_run_walks_real_pipeline_into_mock_queue`（清树单跑该腿＝`1 failed` 且当场长出 `data/control_plane_config.sqlite3`（28672 B），随后两条 guard `2 failed`＝充分性坐实；该件在两次读数里均为既存红）。🔴 **"唯一真凶"这句是过度判词、作废**：唯一性拿不出覆盖——全树 **66 个测试件**构造裸 `Config()`，而 conftest 守卫取的是 `fresh = _snapshot() - before`＝**第一写者胜出**、后续写者在结构上不可能被点名 ⇒ 现有取证只支撑"已实名的一枚充分写者"，"唯一"要逐件清树复跑才谈得起（与本节末"归属只能靠盘上实证"的口径对齐）。机制＝默认值构造的 `Config` 那三枚路径字段**不读 `BOT_RUNTIME_DATA_DIR`**，根取自字段 `bot_runtime_data_dir` 的缺省字面量 `data`（`config.py` 根解析段现算）⇒ conftest 那条"只 setenv"的隔离缝对这类构造天生失效。判词反过来记：**这两枚红不是"没修好"，是根因在码、按设计该红**（台账 #1 的 tmp_path 化欠账，动 `Config` 根解析属跨面改动、blast radius 覆盖全插件，归用户裁后再动）。
+- 触发词债翻案（纠正本窗早先那句「45 > 42」，那是旧读数且串了两把尺）：表级尺 `TRIGGER_COPY_CEILING=42` 现跑**已绿**；真红在词面尺 `WORD_SITE_CEILING=467` vs 计账 485（raw 547、名册抵销 62）。HEAD 树同尺恰 467 绿 ⇒ 这 18 枚全来自未提交工作树（本波 12、他波 6）。三案：**甲** 复录 485 结构不可行（历史单调不升且上限≤首届 469，`--bless` 只打印不写盘）／**乙** 只清本波 12 枚 → 473 仍差 6／**丙** 18 枚按波分账各自登记 → 485→467 回绿，判据·扫描面·上限一字不动（名册 62→80）。**待裁，推荐丙**（跨波"改引用"不可行：词义冲突≠副本，且 import 他域词表违强隔离常令）。
+
+### 58.11 现网三格哑面 + 网关启动器事故（同日）
+- 三格"代码没问题、盘面没接"的哑面（都要动 `.env`/Runtime，归用户）：① `BOT_REACTIONS_MEME_ENABLED` 不在 `.env` ⇒ 缺省 False ⇒ S2 并图/S3 联动今天整条不发（配置门＋feature 门两门皆 True 才真发）。② `BOT_STICKER_DIR` 也不在 `.env` ⇒ 走缺省 `data/bot_stickers/shorekeeper`，那棵树盘上不存在（三把尺一致）⇒ 是**没有池**不是池空，`pool_available` 恒假。③ 表情库 `review_state` 全库**零枚 approved** ⇒ 出处门今天对所有行判 `not_admitted`；批准入口全树只有三处写入口，指令面那一处即上面刚修的那条。另记：64 行 `persona_owned=1` 全走不写 `review_state` 的旁手 `mark_persona_owned`；1431 张躺在册目录里的图由**不经 DB 的纯文件遍历腿**放下，出处门只守 `admit_into_album` ⇒ 泄露面那半条腿仍没管（4 枚带 `group_id` 的存量图逐枚未变，守岸人册 `group_id` 非空＝0 ⇒ 今天是潜伏态，把 `BOT_STICKER_DIR` 指到 `data/meme_library` 再切人格即引爆——`.env.example` 里正有这条注释掉的写法）。**先清 4 枚，再动键。**
+- AxonHub 网关事故（09-30 21:57 → 10-01 02:07，私聊不可用约 4h10m，根因不在 bot）：`start.bat`/`start.ps1` 把进程工作目录设成 `%LOCALAPPDATA%\AxonHub`，而 AxonHub 靠**工作目录自动发现 `config.yml`**；那儿没有 config.yml ⇒ 静默回落默认 SQLite 空库（进程自写一份），于是 UI 里渠道与模型全空、bot 侧全 401。真身数据在 PostgreSQL **零丢失**（现算 channels／models／enabled api_keys 全在册；判据三件：`.env` 那把 key 的 sha256[:8] 与 PG 里 enabled 那枚逐位相同、`channel_probes` 最大时刻冻结在 21:57、按本地日切窗聚合排除"被别家会话覆写"）。修法＝改用工作目录为安装目录的启动器（`start-background.cmd`／「启动网关.bat」）。修后实证：`GET /v1/models` 200、一次真对话 200 带 usage、`channel_probes` 心跳恢复、`scripts/e2e_acceptance.py --check-llm-chain` rc=0 PASS。
+- 网关侧两格待裁：视觉注册表第三跳 `deepseek-v4-flash-vision-exp` 在网关 31 枚模型里**不存在**（**31＝当时值**：外部服务现值随渠道漂移，本席未联网复核；清单真身＝网关侧渠道/模型表，以 `GET /v1/models` 现读为准。前两跳在册且 enabled ⇒ 识图仍可用，该跳每轮白跑一次）；`ChatBot_Runtime/data/runtime_settings.json` 缺开头 `{`＝非法 JSON，`settings.py` 会 warning＋改名 `*.corrupt-<stamp>` quarantine（覆盖册本就是空 dict ⇒ 没有热改会丢，但下次启动会静默搬走那枚交互计数）。
+- 重启需求面（🔴 **本格原账反向、现按盘面对正**：早先那句"四枚源件 mtime 均早于进程启动 ⇒ 出处门/分页/派发代码已在跑的进程里"与盘面相反）：现役 bot 那次启动＝`bot_stdout.log` 里唯一一条 `10-01 01:38:42 NoneBot is initializing`，而本波四枚源件**只有根 `plugins/bot_unified_runtime/__init__.py`（mtime 00:32:28）早于它**，其余三枚全部晚于＝`domains/meme/sources/meme_library.py` 05:39:49、`domains/meme/capabilities/meme_library.py` 05:58:41、`domains/chat_reply/capabilities/echo.py` 02:08:49（本窗 §58.9／§58.12／§58.13 三批编辑正叠在那两枚 meme_library 上）⇒ **§58.9 起的审批通路根修、拒绝腿 SQL 侧前缀筛、`md5_prefix_gate`、泄露面两脸锁、echo 帮助条目一律未进现役进程＝按台账 #10 待生效**；进程里跑的只是 §58.9 之前那批的旧字节（同一文件后来的改动对它不可见）。⚠ 连"现役"二字都缺盘证：日志末条停在 06:29:21 且尾段是一条未闭合的 `WebSocketClosed(1006)`，此后无新行 ⇒ 判"已生效"前先确认日志还在长。**重启前一律别签"已生效"。**入口 import 探针两轴 rc=0（轴 A 另加根 `__init__` 末段三枚符号 `hasattr` 断言，防"提前 return 的假绿"）⇒ 重启不会只起半个插件。守护开着（supervisor「第 1 次拉起」链，单杀子进程会被自动拉起），熔断未上膛；`restart_bot.ps1` 需 RunAs，其硬写的两枚陈旧 PID 是空打，真管事的是按 CommandLine 匹配 `bot.py` 扫杀。3002 那个第二 OneBot 客户端 refused＝对端没起，重启修不了也不牵连别的插件。⚠ `domains/chat_reply/__init__.py` 只有一行 docstring——表情派发/fail-closed 的真身在**根** `plugins/bot_unified_runtime/__init__.py`，引用时别再指错文件。
+- 交接件缺席案更新：`HANDOFF-STICKER-LEAK-AUDIT-20260929.md` 原件六把尺全零（含 file-history 与两客户端 transcript 逐名普查），且 transcript 对该路径**只有 13 次 Read/Glob/Grep、零 Write/Edit** ⇒ 写重放结构上不可能。但 09-29 20:15Z–09-30 07:00:40Z 有 9 次**整文件** Read 捕获、md5 彼此同值，另两次不同区段偏读逐行对上；末态由一次根目录 `ls` 钉为 10096 B／mtime 09-30 03:52 ⇒ 重建稿 67 行/10097 B（±1 B＝行尾处理）**逐字回采，逐字:补写＝67:0**，落 `%TEMP%\cb-g6\replay\`；另一席独立管道也收敛到同文。两格"原件自带的不一致"按逐字原则保留并标注（§四.1 规定的 echo 别名与现役件实际别名不同、"尾红见四.5"是该节自指错）。**未擅自入库**（新建受管 .md 本身给文档门加债）：甲＝按重建稿入库／乙＝判永久缺席、引用降级为字面量／丙＝只留 §58 指针。本席证据支持甲，裁定归用户。
+- 三案代价已现算成数（预案席，仓库零写入、一字未动基线）：全树对该名字**只有 2 文件 4 处引用、markdown 链接形态 0 枚**（`docs/HANDBOOK.md` 行内代码＋散文两处、`tests/test_meme_album_commands.py` docstring 标签＋字符串常量两处；同尺能列出另外 14 枚根 `HANDOFF-*`＝尺没坏）。🔴 决定性事实＝死链门的采集面是 `DOC_GLOBS=("AGENTS.md","COMMANDS.md","docs/**/*.md")`，**根目录 .md 根本不进坐标/死链扫描面、也不被要求进 `docs/README.md` 索引** ⇒ 甲案在死链门上的债是 0（现读数 unresolved 112/112 顶格、ALL_FACE 112/113 余 1 格，都轮不到它）。真正会咬甲案的是另两族：G-T1 模板头门**今日已红**（对外欠账 372>337，根 HANDOFF 无头件 14 枚在册）＋ ownership 门（unowned **30/159＝当时值**；本席现算 **33/159**，差值恰＝此后落盘的 `.superpowers/sdd/2026-10-01-fixwave/{findings,progress,task_plan}.md` 三枚新页〔mtime 10:12–10:18，正落在第五、六次窗之间〕，同一把尺 `compute_ownership().unowned` ⇒ **以 33 为准**、余量仍足）⇒ 带 `template: handoff` front-matter 入库则不恶化前者、净新增红可为 0；不带＝给**一枚已红的门**再加一格（🔴 "已红"只指 G-T1 模板头门：ownership 那条现算 33/159 仍是**绿**，别让它罩住 ownership）。乙案的"降级清单"**是空集**（那 4 处引用天然已是门口径的字面量形态，动作只剩此处落判词）。丙案＝今日文档门绿读数本身就是丙态的实跑证据。**两格原件自带的不一致**（§四.1 别名 vs `echo.py` 现役条目、"尾红见四.5"自指错）二选一：照原文留（门债 0，风险＝没有文档-代码别名门，后续席可能反向"修"现役条目）／就地加 `> 勘误:` 块引（合既有清洗口径"契约标识符不动、历史加限定"，且"勘误"正是该门认的史实锚词；代价＝破 10097 B/67 行的逐字钉，须在下面记一行）。**主会话采纳的推荐＝乙为主＋甲的外置变体**（重建稿按规则 9 归档规程进 `%TEMP%`→归档包，逐字证据随身、零门债、别名错随文留证；入库版若改裁甲再谈）。归档包实物已压实并验完：`%TEMP%\cb-s16\HANDOFF-STICKER-LEAK-AUDIT-20260929-archive.zip`（100192 B／sha256 前缀 `308cf8a508a0050e524a77bc`，`testzip()`=None、解包 25/25 逐枚 `cmp` 全等），内含 `verbatim/`（10097 B／67 行，与逐字输入 `sha` 等值）与 `annotated/`（11793 B／74 行，只追加两行 `> 勘误:` 注记、原行逐字未动）＋ `MANIFEST.tsv` 23 枚逐件来源账（9 次整读 md5 互同／2 次偏读／2 次检索／6 次命令钉）＋ `SHA256SUMS.txt` 交叉零不一致。⚠ 一句风险如实写：**这个包现在躺在 `%TEMP%`，而原件正是被 `%TEMP%` 所在盘的那次清空吃掉的**——移进 `ChatBot_Archive/2026-10-01/`（规则 9）是同一格裁定的另一半，未裁前不擅自入归档面。
+- §58 坐标换代：当时那节 21 枚带号点位全部现算复核，**17 枚已漂或指错**，全部改成 `文件::符号`＋判据原文（台账 #50★ 那一类），那一轮把裸 `.py:数字` 命中降到 0。⚠ 更正（本窗复查席现算）：**"降到 0"只在那一轮成立**——其后新增的 58.9–58.14 自己又写进了若干裸行号（如该件第 15 节的起止行、`echo.py` 帮助条目行、`board_taxonomy.py` 主题行），门判不出"后来者"，所以这句别再当恒真读；后续席新写坐标一律用 `文件::符号`，已有的裸坐标在下一次动该节时顺手换代（动坐标会碰 `ALL_FACE` 顶格那把尺，改前先现算余量）。其中两枚是**语义指错**（旧文把"判据真身"记在 docstring 行与一句无关取数行上）——门只判越界与可解析，判不出这种，只有逐枚回读才抓得到。文档两枚门复跑 `46 passed rc=0`（首跑那枚红是 conftest 把 `data/` 残余算到不相干节点，同尺复跑转绿＝台账 #1 误伤形）。
+
+### 58.12 审批面续修：拒绝腿断头路、ESCAPE 零锁、假 docstring 变严（同日）
+- 对抗复查把 58.9 那批改动打完之后，补口席修三格（仍零新配置字段、判据与中央管理门一字未碰）：
+- **拒绝腿是第二格断头路**：它仍是"先 `LIMIT` 截断、再在 python 侧筛前缀"，实测 60 枚新 `pending` 能把 1 枚老 `pending` 挤出窗口 ⇒ 拒绝落 `not_found` 而**行仍在**。修法＝批／拒两支共用骨架、`md5 LIKE ? ESCAPE ?` 恒在，只在 `state is not None` 时**追加** `review_state=?`，python 侧 `startswith` 筛删除，调用点照旧传 `PENDING` ⇒ 可删集合的**宽度一寸未放宽**，只是不再被窗口截。锁的承重点在夹具（造 60 枚更新的行把目标顶出窗口，并在用例开头自证它确实在窗口外）——把楔子削成 3 枚，该锁立刻空转。
+- **`ESCAPE` 这条防线此前全树零锁**：三种变异（批准腿去 `ESCAPE`／册面去 `ESCAPE`／helper 退化成 `key+"%"`）全部 60 passed。根因是既有 `test_match_md5_prefix_wildcards_do_not_widen_hits` 里那句 `match(f"{shared}%") == []` 被"非十六进制先挡成 `[]`"那道闸吃掉＝**它自己注释警告过的"跑在空集上自证"**。补两把尺：结构锁（spy 包连接，断言 `ESCAPE ?` 在 SQL 文本里、`LIKE` 在 `LIMIT` **之前**、绑定第二元＝`'!'`、params 全等）＋ `_like_prefix_pattern` 契约锁。⚠ 如实记账：另加的那枚"含 `!` 的 md5 也能被真前缀够着"的行为锁，在补了下面的闸之后会被闸吃掉，**不能算 ESCAPE 的锁**——这正是本项目反复出现的"锁跑在空集上"形态，别再把它当证据。
+- **docstring 讲了一件没发生的事 ⇒ 按"变严"补闸**：`match_review_key` 原写"上游已只放行十六进制"，实测审批腿的 key 是指令面原样透传（单字符前缀最大组 207 行）。新增公开闸 `md5_prefix_gate` 与原因码（`MD5_PREFIX_MIN_LENGTH` 由私有升公开、五处按名同读），两枚查询口共用；回执分两支：太短 ⇒ `ambiguous + prefix_too_short`（明说"说满 4 位；没说清 ≠ 没图可批"）、非十六进制 ⇒ `need_key + prefix_not_hex`，两支**都不查库**。
+- 读数（🔴 原账"该件由 65 → 71 passed"是**单件与族两种口径混用**：65 与 71 都指**三件族总**＝`tests/test_meme_album_commands.py`＋`tests/test_meme_persona_review_queue.py`＋`tests/test_meme_library_schema_order.py`，从来不是 `test_meme_album_commands.py` 单件（单件同窗自账是 45→50，见 §58.13），本批净新增 6 枚锁记在族总那一侧）：族总 65→71＝**当时值**；本席同尺现算该族 **80 passed rc=0**（album 单件 **50**／review_queue **25**／schema_order **5**；规则 10＝随锁面漂移，以实跑为准）。邻面 copy+meme_sticker_wave `84 passed`（当时值），ruff 三件 All checks passed，mypy 本批两枚源件 0 命中；词面尺 raw 547／计账 485 与动手前**逐字相同**（不涨债）。每条新判据都有变异腿把它打回 FAILED（未修的旧写法／丢队列位＝放宽可删集／去 ESCAPE／helper 退化／摘命令面判据 各出真红；🔴 逐条命令原文未留＝当席自述，且锁件未跟踪、复跑受 §58.14 末两行失明声明所限）。
+- 复查另记两格**本波未动**：① `admit_into_album` 四线程并发会多报 `moved`（物理不变量每次都过）＝既存竞态，归在飞的 `S-STICKER-ALBUM`，禁双头改；② 批准腿今天批得动"队列里看不见"的行（生产 **2962/2972＝当时值**；本席只读现算 `memes` 表 **2973 行**、其中 `review_state=''` **2963**、`pending` 10——同一维在 §58.9/§58.12/§58.13 被写了三个值，bot 正在写库，此后一律只记判据形状〔空串远多于 pending〕＋现值以实跑为准），而审批页从不事前展示那张图 ⇒ 自家 invariant「不看图就是盲签」在批准腿弱化，要不要补"批前先看图"的门**归用户裁**。
+- **⑤ 四道门本波定稿终态**：runtime-layout **PASS（rc=0）**——清掉 106 个 `__pycache__`／446 枚 `*.pyc`（🔴 **当时值、永不可复核**：现值以 `python scripts/runtime_layout_smoke.py` 自身输出为准，本席现跑 rc=0、回显 `python_bytecode=absent`／`source_generated_dirs=empty`）与源码树 `data/` 之后转绿；test 第五次 `149 failed, 20778 passed`（当次值）、本波域净新增红 **0**；lint rc=1（20 枚全他席 WIP，与 HEAD 基线 35 枚集合不相交）；typecheck rc=1（3 枚全在 `domains/files/sources/downloader.py` 他席新增腿）。⇒ 目标⑤ 可签的是「**两绿两红、红零枚在本波域**」，不是全绿。
+- 🔴 `data/` 残余**每次全量必复生**（**已实名的充分写者（其一）**＝`tests/test_e2e_acceptance.py::test_dry_run_walks_real_pipeline_into_mock_queue`，04:38:41 那次就在跑期中段自建；"唯一真凶"的写法已作废，理由见 §58.10 同格更正）：删它只是把两枚连带假红推迟到下一次跑。根修两个口径——窄口＝只把那条腿的 Runtime 根指进 `tmp_path`（台账 #1 的既有口径）；正口＝让默认构造的 `Config` 认 `BOT_RUNTIME_DATA_DIR`（一处中央缝，但 blast radius 覆盖全插件路径字段、且需重启与全量复跑验）。**D-20 待裁**，本波不擅自动 `Config` 根解析。
+
+### 58.13 泄露面探测锁落测试面（本波最后一块功能缺口）
+- 库里 `path` 落在人格册目录内的行＝**0 行**（只读复算，`mode=ro`）。真形是「文件被手工搬进别家册、行的 `path` 仍写容器根、根上那份文件已不存在」（死指行 2696/2973＝当时值，本席同尺现算等值：死指 **2696**／`memes` 总行 **2973**）⇒ **只断"行指向册内文件"的锁必然假绿**。故锁必须**两脸同判**：脸 A＝行改道进册（`relink_path` 造得出）／脸 B＝只搬文件不改行＝**现网真实形状**（那 4 枚就是这形）。
+- 落点＝`tests/test_meme_album_commands.py` 第 15 节（1460—1657 行）五枚：锁本体断恒为 `{"relinked": [], "moved": []}`、脸 A 注毒、脸 B 注毒、"两脸分账不重复计且不越界"（散件位带群号／册内无群号行／册内非编号名三格对照一律不报）、"回执形状不外泄绝对路径"（只露审批位数的十六进制前缀，群号用合成值）。尺全用现成的（`store.media_path_for_row`＋`_album_name_for`＋直引 `_walk_album_tree`），**没开第二条 walk**、没新增配置字段、产品件一字未动。注毒两腿各出真红：`{'relinked': ['feedf00d']} != {'relinked': []}` 与 `{'moved': ['feedf00d']} != {'moved': []}`。
+- 读数：该件 45→**50 passed rc=0**（本席现算 album 单件＝50 等值）；邻面 `test_sticker_pools_consumers`＋`test_meme_sticker_wave` `163 passed`（当时值）；"三族合跑 `213 passed rc=0`"＝**album＋那两枚邻面**的组合（50＋163＝213），🔴 与 §58.9／§58.12 说的"三族"（album＋review_queue＋schema_order）**不是同一组件**——两处同名不同尺正是 65/71 被误挂到单件名下的来路，后续引用请写全件名；ruff（不带 `--select`）All checks passed。
+- ⚠ 残余如实记：**锁只在测试面**。生产那半格没接——把探测口（建议 `MemeLibraryStore.group_sourced_rows_in_albums()`）接进「表情册 统计／重扫」回执属在飞的 `S-STICKER-ALBUM` 域，本波不落码（§58.12 归属令）⇒ 那 4 枚潜伏图今天仍无人播报。时序令：**处置动作必须先于任何「表情册 重扫」**，否则重扫会把行 `path` 改道进册、使脸 A 由 0 变 4（把潜伏直接变现役）。
+- 会漂的读数按规则 10 只记当次：🔴 原句"册目录内图 **1431→1708**"是**两把尺拼成一条增长线**（同台账 #69★"拿错量"一族）——三维各值现算（尺＝容器 `ChatBot_Runtime/data/meme_library`）：册目录内（基根第一层 8 本人格册）**1431 枚、至今未变**；容器根散件 **277 枚**；**全树 1708 枚＝1431＋277**。所以涨的是"根散件"那一维（269→277），不是册内在涨。库腿"今天可发的带群号图"两席分别读出 269 与 277（本席只读现算＝**带 `group_id` 且 `path` 指得到盘上文件**的库行 **277**，与容器根散件数恰等，同 §58.11"出处门管不到那一半"的形状）；库行 2971→2973（本席只读现算 `memes` **2973** 行）——**bot 正在写库、图也在被搬动**，任何引用只在该次跑有效。
+
+### 58.14 第六次全量读数与几处旧账更正（同日，本波终稿）
+- 第六次全量（11:58–12:39 本地，入口 `dev.ps1 -Task test` 显式 `BOT_AUTOSYNC=0`）：`149 failed, 20788 passed, 19 skipped, 18 xfailed, 484 warnings in 2406.66s`，collected **20974**＝**当时值**（第五次 20964；🔴 那句"＋10＝本波新增锁全绿"的归因对不上账：§58.12 报净新增 6 枚、§58.13 报 5 枚＝**＋11**，差 1 枚无件级对账单可解释，要么漏记一枚被摘的、要么 ＋10 记错，待按**节点 ID** 复算才可宣；本席现算 `pytest --collect-only -q`＝**20979**，再涨的 5 枚属他席在飞锁面），collection errors 0。四桶：既存 149／转绿 0／**净新增 0**。🔴 无洗绿面的硬证＝241 件生成物（command-catalog／auto-facts／render_hashes／COMMANDS／HANDBOOK／acceptance-manual／route-matrix＋`docs/boards/**`）跑前跑后 md5 **逐件相同**。
+- `data/` 那两枚仍红（`test_no_source_tree_data_writes::test_source_tree_has_no_data_dir`、`test_sticker_packs_pool::test_config_fields_are_registered_and_path_remaps`，断言同为 `assert not (ROOT/"data").exists()`），残余从干净树**再次自建**（12:18:37，起跑后约 20 分钟），缓冲位点名的写者不变（＝§58.10 更正后的口径：**已实名的充分写者（其一）**，不写"唯一真凶"——守卫取 `fresh = 快照 − before`＝第一写者胜出，后写者结构性不可见）。**新取证一条**：这格的"HEAD 副本同尺反证腿"在本机**结构性不成立**——仓外副本不含 gitignored 的 `.env` ⇒ 控制面缺省关、那条腿根本不去构造默认 `Config` 的 `data` 根（副本内单跑 2 passed 不产残余＝假"无责"）。⇒ 归属只能靠盘上实证（时刻＋缓冲位＋自建路径），别拿这类反证当"非我造成"的证据。
+- 勘误：§58.10 首行那个窗（02:35–03:19／`156 failed … 2519.19s`）系**第四次**，第五次窗＝04:19–04:59（实物 `%TEMP%\cb-k2\test.out`）；两行汇总逐字无误，只是本节此前把窗次与读数配错了位。
+- git 面三处旧账更正：① 该推的是工作库 `ChatBot\.git`（`3b3d1aa`）——旧位 `ChatBot_Runtime\git` 零独有对象、零独有 reflog、两份 `config` 逐字节相同，且 48 条 worktree 登记无一指向它；未推 **517 枚**、落后 0 ⇒ 纯 fast-forward，禁 force。② `fsck` 报的 `index file corrupt` 真凶**不是主 index**（`.git/index` 是 DIRC v2／2287 条、`ls-files`/`diff` 全可读），而是残留登记 `.git/worktrees/s58-baseline-wt/index` 整片 NUL；48 条登记 6 活 42 死——别为它跑 `worktree prune`（那是写，且可能是 09-30 取证现场）。③ 「post-commit 钩子把旧字节 staged 回 index」在当前盘面**判 FALSE**：三枚钩子实测都是 10 字节空壳（只一行 shebang），仓外副本 `GIT_TRACE` 实跑 commit 前后 `git diff --cached` 均为 0；症状候选改指"40+ 在飞 worktree 与并发席直写主 index"。提交后查残格的纪律保留，账别再记钩子头上。
+- 脏项口径（提交面前置；🔴 原式 `809 = 377 枚有内容差 + 296 枚幻影` **不闭合**——377+296＝673≠809，缺的是未跟踪那一桶）：本席现算 `git status --porcelain` 分桶＝**809 = 673 M + 136 ??**，"有内容差＋幻影"那两数只活在 **673 M 之内**（尺：`git diff --name-only`＝377、`--ignore-cr-at-eol` 复跑仍 377、673−377＝296 行尾/stat 幻影）⇒ **照"377+296"去挑 add 面会漏掉那 136 枚未跟踪件**（当席原式正是这么写的，等于把 `??` 当成幻影）。幻影别 add；消脏只跑 `git update-index --really-refresh`，🔴 禁 `git add --renormalize`（会把 296 枚行尾改动真造出来）。14 枚未入库源件**有 tracked 引用者**＝极窄口径（尺＝"被 tracked 件 import 到"的那批；🔴 这**不是**未跟踪 .py 总数——本席现算 `git ls-files --others --exclude-standard -- tests plugins scripts` 里 `.py`＝**132** 枚，14 是其中确有 tracked import 边的那部分，逐枚 `文件:行` 见 `%TEMP%\cb-s4\`〔该目录在盘〕），漏 add＝新克隆 import 炸；分组次序 G4（装配骨架）→ … → G10（文档面）。
+- lint／typecheck 归属（都不在本波域）：lint 20 枚全为未提交 WIP，与 HEAD 基线 35 枚**零交集**；本机坑实弹量化＝`ruff check --fix --select RUF100` 会把**自认没用、实则护着裸 `except Exception`** 的 noqa 一并摘掉（🔴 原账两处失真：①"在两文件"未点名＝规则 5 不可复跑；②**"11/11 枚"不是 noqa 数**——那是页脚 `[*] 11 fixable with the --fix option` 的全规则口径。本席现算尺＝`ruff check .` 里的 RUF100 条目：**8 枚、跨 6 文件**＝`domains/chat_reply/llm_engine/channel_health.py`、`domains/files/sources/downloader.py`、`domains/finance/capabilities/fx.py`、`domains/media/ingest/transcribe.py`、`domains/media/ingest/vision_describe.py`×3、`tests/test_downloader_connect_pin.py`；其中 5 枚标 `unused: BLE001`、3 枚标 `non-enabled`〔N801/E501/ANN001〕。原句"含 6 枚在用 BLE001"＝**当时值**，与现算的 5 枚 `unused: BLE001` 不必相等，别当同一枚数）；"全树 blast radius＝303 个 .py 里 1161 枚 noqa"＝**当时值且尺未指明**（本席现算并把口径写全：面＝`plugins`＋`tests`＋`scripts`、**含 noqa 的 .py＝319 个／noqa 枚数＝1195**）⇒ 这类"摘指令留理由"一律手改，不准走 `--fix`。typecheck 3 枚是**作者签名自伤**（`_pinned_connection_class(base: type)` 把基类信息擦掉）＋typeshed 未声明 `_context`，与 httpx 无关（新腿零 httpx，走 stdlib `urllib`/`http.client`）；甲案＝`type[http.client.HTTPConnection]` ＋ `cast` ＋类级 `_context` 注解，探针实测运行期零改动（变体"用 `TypeVar` 绑基类不 cast"反多两枚红＝动态基类 mypy 建模不了）。
+- 现网补洞账（只读，`.env` 一字未动）：幽灵字段 **423**（Config 有、`.env` 无；其中缺省 False 让整条腿结构性走不到的 **27** 枚）、`.env` 有而 Config 无＝被 `extra=ignore` 静默吞 **15** 枚（9 枚别家在读、6 枚真洞，最大一格＝想关的开关因键名里两个字母换位而一直开着）、present-but-empty **16 枚＝当时值**（本席现算 **17**；尺＝`.env` 里 `KEY=` 值为空〔含写作 `""`/`''` 者〕的行，按行与按去重键读数相同＝17、全表无重复键 ⇒ 差的 1 枚属当窗之后新登或被动过的键，`.env` 一字未动）、`.env.example` 教而未填 330／填而未教 20。🔴 门禁盲区：`tests/test_env_example_gate.py` 只管 example↔Config 方向，**全树没有任何 `.env`↔Config 对照门** ⇒ 上面四百来格今天都在暗处（是否补一枚门＝新待裁项 D-25）。
+- 模板头债这格今天判明"单靠加头转不了绿"：G-T1 对外欠账 372 > 上限 337（超 35 枚），但对 372 枚逐页仿真"补头＋填必填参＋注入渲染机器段"后跑同一判据，**零新账者只有 3 枚且全是人格页，而另一把尺禁人格挂 front-matter** ⇒ 净零代价枚数＝0；其余 369 枚当场落 G-T2 小节偏离（`T2_CEILING=1`、现算对外欠账恰 1＝零余量）。唯一安全首批＝6 枚（非历史稿＋不在飞＋只补缺节）；次批 9 枚历史稿需裁定「追加空骨架节算不算改写史档」。ownership 门 unowned 33/159（余量足）。另两枚「分类表↔投影失同步」是**同一支的两条腿**：根因在分类表侧 4 行 `basis` 漂移（那 4 个根 `.md` 已删），生成器无 bug；最小补法＝先改分类表那 4 行口径再 `doc_ownership_sync.py --generate`，一次动作两枚同灭（🔴 禁手改生成物 `board_doc_ownership.py`）。
+- AGENTS 体积终态：本波净增两次、压缩两次，终值以 `wc -c AGENTS.md` 与文档门现算为准；执法面本窗实证＝**只有硬顶 32,768 有执法件（`_ENTRY_SIZE_CEILING`），软上限 30,000 没有任何执法件**——"到线即压"是纪律不是红灯，别再为字节数编造门红。
+- 触发词债 18 枚名册已逐枚出到可粘贴级（`%TEMP%\cb-s9\ROSTER.tsv`）：本波 12 枚＋他波 6 枚，其中 #13/#14 属"HEAD 在册原行复登"、5 枚可同域真改成引用（净 −5）；跨域 import 那条实测 −8 但违强隔离常令且会让 4 枚动词掉出词汇表＝新增盲区，不作主案。三案读数：甲结构不可行／乙 473 仍红／丙 467 回绿（名册 62→80）。**待裁＝D-21**。
+- 目标④「poison_11 尾红」的**当期真值更正**（派单文本写的是 `CORPUS_FLOOR_BASELINE[1]` 1585→1586，那是 09-29/09-30 之交的历史值）：现值＝`tests/test_config_key_registration_ledger.py:289` 的 `(776, 1604, 3, 684)`，容差 `(0,200,0,50)` 一字未动；1586→1598→1604 两次抬升都是**树回铺后按门自身口径「棘轮不等于真值就重录」整维现算复录**（差数＝回铺树把 `_album_container`/`row_hint` 两处新读点与事故前那批未回铺件一起算进来），逐格推导注在常量同行。当期复跑：该文件全量 **36 passed rc=0**（6:16），`test_poison_11_new_field_floor_tracks_the_field_set`＋`test_poison_12_unaccounted_ratchet_is_live_on_the_new_number` 单跑 **2 passed rc=0** ⇒ 门没瞎、两腿都在跑。另记一条本窗自犯的量具坑（同 §58.12 那族的又一形）：审计时手打 CJK 主题名进 `grep` 查 echo 帮助条目得到**假零命中**，改用"从盘上现读码点再匹配"才出真值（`表情册` 在 `echo.py:375` 与 2380 段、`board_taxonomy.py:654` 均在册）——判"某条目不存在"之前永远先怀疑自己那把尺。
+- 🔴 **本波锁件的失明面（声明①，判据级）**：本波锁件 `tests/test_meme_album_commands.py`、`tests/test_sticker_pools_consumers.py` **尚未跟踪、不在 HEAD**（现算：两枚 `git ls-files --error-unmatch` 均 `did not match any file(s) known to git`、`git cat-file -e HEAD:<同路径>` 亦 fatal）⇒ 凡以"`git archive HEAD` 抽仓外副本同尺复跑"作的反证（§58.10 那 7 枚、§58.14 的 `data/` 归属腿）**天生看不见这些锁**——副本里根本没有它们。⇒「本波域净新增红 0」「四道门不可签全绿」这类判词的证明力只覆盖**工作树轴**，HEAD 轴不可签；按规则 5，**入库前这些锁不构成可溯证据**，后续席要复跑只能在工作树里跑。
+- 🔴 **两席 ownership 读数差已归因（声明②）**：§58.11 甲案代价那格记的 `unowned 30/159` 已就地标为**当时值**，本席现算同一把尺 `scripts/doc_ownership_sync.py::compute_ownership().unowned`＝**33/159**（＝§58.14 上文那枚 33，以它为准、余量仍足）；差值恰为 3，逐枚对上 `.superpowers/sdd/2026-10-01-fixwave/` 的 `findings.md`／`progress.md`／`task_plan.md`（mtime 10:12–10:18，正落在第五次窗 04:59 与第六次窗 11:58 之间）⇒ 属**记录时刻差**、非尺不同；未归属腿仍绿，红的两腿是「分类表↔投影失同步」那一支。
+
+### 58.15 本波交付物清单与复跑配方
+
+- **本节用途**：让下一次接手的人自己复跑、自己核对，不必考古对话。判词与因果一律指回 §58.9–§58.14，本节只记四件事：**改了哪里／怎么复跑／取证件在哪／什么还没裁**。坐标写法承 §58.11 末格的换代口径＝`文件::符号`，裸行号不入册；随代码与盘面漂移的枚数按规则 10 指真身处或实跑输出，非要留数者标「当次值」。
+
+- **库侧四把尺**：`plugins/bot_unified_runtime/domains/meme/sources/meme_library.py::missing_path_rows` 的翻页腿（按 `_MISSING_WINDOW` 一格一格 `OFFSET` 下翻，稳定全序 `added_at DESC, md5 ASC`，`limit` 数的是**报出来的失配行数**而非库行窗口）、`::admit_into_album` 的 `cursor.rowcount` 守卫（改不到那一行就不宣成功）与出处门本体（`review_state != persona_review.ADMIT` 即 `return "not_admitted"`，`ADMIT` 的字面值见 `domains/meme/sources/persona_review.py`）、`::match_review_key` 的 `state is None` 一支不拼 `WHERE review_state=?` 与 SQL 侧 `md5 LIKE ? ESCAPE ?`（转义符走绑定参数 `_LIKE_ESCAPE_CHAR`，前缀收窄在 `LIMIT` **之前**完成）、公开闸 `::md5_prefix_gate` 与模块级常量 `MD5_PREFIX_MIN_LENGTH`（由私有升公开、两处查询口与命令面回执按名同读，刻度值以该常量现读为准）。
+
+- **指令面门与措辞两支**：`plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py::handle_meme_album_command` 的 fail-closed 门族（判据真身＝`denied`／`no_store`／`unconfigured`／`root_absent` 那几行 `audit=["meme_library", "album", "<门名>"]` 字面量本身，枚数以该函数现读为准）；出处门的**第二条腿**住在同文件 `::_album_rescan`——对「文件躺在册目录里但行没过审」只认路径不认身份，重链照做而 `persona_owned`/`persona_hint` 一个不替它宣，audit 里那枚 `unapproved:N` 是注解不是第四岔；审批／拒绝两支措辞住在同文件 `::handle_meme_review_command`。硬口径：`handle_meme_album_command` 与 `handle_meme_review_command` 字面相近、**不是一个函数**，四动作的门在前者、编号前缀的形状闸与两支回执在后者，后续席别混指（本节初稿就差点写成一枚，按现算改开）。回执分两支：太短 ⇒ `ambiguous`+`prefix_too_short`、非十六进制 ⇒ `need_key`+`prefix_not_hex`，两支**都不查库**；拒绝腿的可删集合一寸未放宽（见 §58.9）。
+
+- **S2 并图构点**：`plugins/bot_unified_runtime/domains/chat_reply/capabilities/chat.py::build_chat_result` 里那行 `audit_tags = [*audit_tags, "sticker_same_message", *attach_tags]`——贴纸与正文同一条消息出站时只在既有账上打一枚标，不开第二本账；互斥标读写两半的归属见 §58.5。
+
+- **S3 派发与 fail-closed 翻转**：根 `plugins/bot_unified_runtime/__init__.py::_maybe_send_sticker_for_emoji_like`（群聊 only，私聊无该通道＝台账 #35★）为本波新增派发腿，同文件 `::_maybe_send_reaction_meme` 与 `::_sticker_attach_for_reply` 的读点一并把 `getattr(config, "bot_reactions_meme_enabled", …)` 的兜底由 True 翻 **False**（缺对象＝不放行，主动外发腿不许有「忘了传」的隐式档；P3 旧腿那两枚归其 owner，本波未动）。硬口径：**别指错文件**——`domains/chat_reply/__init__.py` 现算仍只有一行 docstring，表情派发与 fail-closed 的真身在**根** `plugins/bot_unified_runtime/__init__.py`；复跑尺＝`wc -l plugins/bot_unified_runtime/domains/chat_reply/__init__.py`。
+
+- **配置键登记**：`plugins/bot_unified_runtime/domains/chat_reply/runtime/settings.py::RESTART_REQUIRED_KEYS` 里同批补登的四枚（`BOT_REACTIONS_MEME_PROBABILITY`／`BOT_REACTIONS_MEME_COOLDOWN_SECONDS`／`BOT_REACTIONS_MEME_DAILY_MAX`／`BOT_MEME_LIBRARY_DIR`）＝装配期冻结、热改态由该字典自拒并写明代价；枚数以该字典自身现读为准（规则 10），"config 字段＋此处登记＋`.env.example`" 三面齐的口径见台账 #68★。
+
+- **文档面两枚在册点**：`plugins/bot_unified_runtime/domains/core/board_taxonomy.py` 分类表的 `help_topics` tuple 里登记了 `表情册` 主题，`plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py::_HELP_ENTRIES` 里有 `表情册` 条目。触发词、别名与逐参数入口的真相源＝生成册 `docs/command-catalog.md` 与 `COMMANDS.md` 现算，本节不抄清单。改这两处之前先现算词面尺余量（触发词债那一格＝D-21）。
+
+- **锁件三枚**：`tests/test_meme_album_commands.py`（册面四动作＋通路锁＋泄露面两脸锁）、`tests/test_sticker_pools_consumers.py`（S2/S3 接线 AST 锁与 §58.9 末格那组换代哨兵）、`tests/test_config_key_registration_ledger.py`（四枚键登记与 poison 棘轮腿）。硬口径：前两枚**未跟踪、不在 HEAD**（本席现算 `git ls-files --error-unmatch` 两枚均 `did not match any file(s) known to git`，与 §58.14 声明① 同读；第三枚 tracked）⇒ 复跑只在工作树里跑，凡以 `git archive HEAD` 抽仓外副本作的反证对它们天生失明，入库前按规则 5 不构成可溯证据。
+
+- **四道门复跑配方（正门四条，命令原文照抄）**：先 `$env:BOT_AUTOSYNC = "0"`，再 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev.ps1 -Task test`（同形换 `-Task lint` / `-Task typecheck` / `-Task runtime-layout`）。两条硬规矩：① **退出码必须取被测命令自己**——`scripts/dev.ps1::Invoke-External` 对非零码 `throw`，PowerShell 侧 RC 因此恒 1，被测命令真身码读它吐的那行 `<tool> exited with code N`（Git Bash 直跑时取 `${PIPESTATUS[0]}`，`| tail` 之后的 `$?` 是 tail 的）；② **`BOT_AUTOSYNC=0` 必带**——`dev.ps1` 只在调用方未设该变量时才补 1，显式 0 原样透传，带 1 或不带 ⇒ conftest 静默 `--write` 重生成派生册＝洗绿面。跑毕的无洗绿硬证＝生成物逐件 md5 跑前后相同（尺见 §58.14 首行）。四道门此刻的判词与归属见 §58.12 ⑤ 与 §58.14：**可签的是「红零枚在本波域」，不是全绿**（HEAD 基线自身红）。
+
+- **runtime-layout 单跑**：`python scripts/runtime_layout_smoke.py`——该件自身输出即现值（`python_bytecode`／`source_generated_dirs` 两维），缓存枚数随树漂移，别引用别处记过的数。绕开 `dev.ps1` 直跑一律带 AGENTS 规则 6 的卫生前缀（`PYTHONDONTWRITEBYTECODE=1` + `-p no:cacheprovider` + `--basetemp=<仓库外>`），且两枚环境变量**各自单设都挡得住源码树**（§58.10 更正后的口径：会写 `tests/__pycache__` 的只有两枚都不设那一形，结论仍以 runtime-layout 现算验收）。
+
+- **本波域窄面（逐条可粘贴；件名写全，不写"三族"这种两义名）**：
+  - 审批通路族（三件同跑）：`python -m pytest tests/test_meme_album_commands.py tests/test_meme_persona_review_queue.py tests/test_meme_library_schema_order.py`
+  - 邻面（两件同跑）：`python -m pytest tests/test_sticker_pools_consumers.py tests/test_meme_sticker_wave.py`
+  - 键登记与棘轮：`python -m pytest tests/test_config_key_registration_ledger.py`
+  - 文档两枚门：`$env:BOT_AUTOSYNC="0"; python -m pytest tests/test_documentation_consistency.py tests/test_doc_link_integrity.py`
+  - 硬口径：「三族」这个名字在本波账里**有两把尺**（§58.9／§58.12 指上面第一组，§58.13 指 album＋邻面两件），同名不同尺正是那组族总读数 **65→71（当时值，§58.12）** 被误挂到单件名下的来路——引用请写全件名，用例数以实跑回显为准。
+  - 通路类判据要**照文案走一遍**（回执承诺的前置动作现算、A/B 都在工作树里跑；§58.9 那条断头路只有照文案做才暴露）。锁的承重点常住在夹具里（把「造若干枚更新的行把目标顶出窗口」那枚楔子削小，该锁立刻空转）——判绿之前先怀疑自己的量具，本项目反复出现的是「锁跑在空集上」那一族形态（§58.12／§58.13）。
+
+- **派生册与生成物**：`python scripts/command_catalog.py --write` 重生成命令册、`python scripts/doc_sync.py --check` 校验同步、`python scripts/doc_ownership_sync.py --check` 读归属。要改归属先改分类表侧漂移的那几行 `basis` 再 `doc_ownership_sync.py --generate`，一次动作两枚同灭；**禁手改生成物** `board_doc_ownership.py`。派生面只走生成器 `--write`，验收一律带 `BOT_AUTOSYNC=0`（台账 #72 末格）。
+
+- **取证件名册（全在 `%TEMP%`，本席 2026-10-01 现算逐枚 `test -d` 全在盘；本节只记去哪找什么、内容不复制进册）**：`cb-g1`＝lint／typecheck／runtime-layout 三门原始输出与逐枚红点归属报告；`cb-k2`／`cb-t2`＝第五次／第六次全量 test 的原始读数与按**节点 ID** 的分桶册；`cb-j1`／`cb-j3`＝审批通路 A/B 两跑实物与变异场（未修的旧写法／丢队列位＝放宽可删集／去 `ESCAPE`／helper 退化／摘命令面判据 各出真红那批）；`cb-s1`＝空转锁变异全表（换代哨兵换代前后对照）；`cb-s2`＝入册并发竞态补丁草案，**未落生产**（`admit_into_album` 多报 `moved` 那一格仍归在飞的 `S-STICKER-ALBUM`，禁双头改）；`cb-s4`＝提交面分组的逐文件名册（add 面与分组次序，组数枚数以该目录自身为准）；`cb-s5`＝未跟踪件逐枚身份账（哪枚属本波、哪枚他席在飞）；`cb-s6`＝`.env`↔Config 对照三表（幽灵字段／被 `extra=ignore` 静默吞／present-but-empty；`.env` 一字未动，现值以那次只读扫描的表为准）；`cb-s9`＝触发词债逐枚名册 `ROSTER.tsv`（可粘贴级，含「HEAD 在册原行复登」那一支）；`cb-s10`＝模板头债名册与逐页仿真（「补头能不能转绿」那把尺的实物）；`cb-s12`＝泄露面锁草案（生产探测口接线那半格未落码的原件）；`cb-s13`／`cb-s14`＝lint／typecheck 红点逐枚归属工单；`cb-g6`／`cb-s16`＝交接件逐字重建稿与已验过的归档包（`testzip`＋解包逐枚 `cmp`＋`MANIFEST.tsv`＋`SHA256SUMS.txt`）；`cb-u1`＝过程稿头覆盖率的判定与恢复脚本的 DRY-RUN 件；`cb-u2`／`cb-v1`＝§58 收官段的错账与纠正记录。注意：这些目录躺在 `%TEMP%`，而 §58.11 那格的原件正是被 `%TEMP%` 所在盘的清空吃掉的——要长期留存按 AGENTS 规则 9 移进 `ChatBot_Archive/`，未裁前本席不搬。
+
+- **交回下一手的悬账（只列编号与本体，裁定不归本席）**：
+  - **D-19** 网关启动器：工作目录必须是安装目录那一枚（`start-background.cmd`／「启动网关.bat」）要不要写进运维面；事故全账见 §58.11（工作目录里没有 `config.yml` ⇒ AxonHub 静默回落空 SQLite）。
+  - **D-20** `data/` 残余根修口径：窄口＝只把 `tests/test_e2e_acceptance.py::test_dry_run_walks_real_pipeline_into_mock_queue` 那一腿的 Runtime 根指进 `tmp_path`；正口＝让默认构造的 `Config` 认 `BOT_RUNTIME_DATA_DIR`（一处中央缝，blast radius 覆盖全插件路径字段、需重启＋全量复跑验）。已在 §58.12 在册。
+  - **D-21** 触发词债三案（甲复录结构不可行／乙只清本波仍红／丙按波分账各自登记、判据·扫描面·上限一字不动）。已在 §58.10／§58.14 在册，逐枚名册＝`cb-s9`。
+  - **D-22** 交接件 `HANDOFF-STICKER-LEAK-AUDIT-20260929.md`：入库／判永久缺席（引用降级为字面量）／外置归档三案；代价已现算、推荐见 §58.11，重建稿与归档包在 `cb-g6`／`cb-s16`。
+  - **D-23** 泄露面存量图处置：**时序令＝处置动作必须先于任何「表情册 重扫」**，否则重扫把行 `path` 改道进册、脸 A 由零变有（潜伏直接变现役）；存量枚数以 §58.13 那把尺现算，生产探测口接线（建议名 `MemeLibraryStore.group_sourced_rows_in_albums`）属在飞的 `S-STICKER-ALBUM`。
+  - **D-24**「不看图就是盲签」：批准腿今天批得动「队列里看不见」的行、审批页又从不事前展示那张图，要不要补「批前先看图」的门——本体见 §58.12 复查②。
+  - **D-25** 要不要立一枚 `.env`↔Config 对照门：今天全树只有 `tests/test_env_example_gate.py` 管 example↔Config 方向，`.env` 侧那几百格全在暗处（读数与尺见 §58.14 现网补洞账，三表在 `cb-s6`）。
+  - **D-26** 过程稿重放头的授权范围：`seat-report` 头按 AGENTS 规则 8 属**伪造历史、不做**；本条只裁「给历史稿重建模板头」算不算改写史档（次批历史稿那一格见 §58.14 模板头债段，覆盖率判定在 `cb-u1`）。
+
+- **生效口径**：**§58.9 起的代码改动未进现役 bot 进程**（审批通路根修、拒绝腿 SQL 侧前缀筛、`md5_prefix_gate`、泄露面两脸锁、echo 帮助条目、四枚键登记、S3 派发与 fail-closed 翻转全在内）——重启一律由用户执行或明示授权，按台账 #10 记为待生效，重启前别签「已生效」；判「已生效」前先确认 `bot_stdout.log` 还在长（取证教训见 §58.11 重启需求面那格）。
+- **派生册新鲜度归谁管（本窗现算坐实的一格误解）**：改完帮助文案后跑「两枚文档门」`46 passed rc=0`，而 `scripts/command_catalog.py --check` 同时报 **stale** ⇒ 那两枚门**不覆盖**命令册新鲜度；真正管它的是 `tests/test_commands_md_generated_index.py`＋`tests/test_command_catalog_ast_eval.py`（＋`--check` 本身）。已按在册口径走生成器 `command_catalog.py --write` 重生成（写盘 97389 B），复跑 `--check`＝`command catalog is current` rc=0、`doc_sync.py --check` rc=0、上述两件新鲜度锁 144 passed。⇒ §58.15 的复跑配方里"改任何帮助/命令词文案 ⇒ 必跑 `command_catalog.py --check`"这条要当硬步骤，别拿文档两枚门的绿当派生册齐。
+- **顺带归因（不属本波、不动）**：与那批新鲜度锁同场复跑出 `tests/test_content_census_s116.py` 两枚红（`test_census_md_renames_both_books_and_states_the_formula`、`test_real_tree_code_ledger_has_first_time_numbers`）。两枚都在**第六次全量的既存红名册里**（`cb-t2\run6_failed_nodes.txt` 第 25-26 行）⇒ 非本窗 echo 文案改动引起。红因是锁用"子串不得出现"判文案，而那本总账把旧断言**放在引号里当被更正的对象**写了一遍（断言原文：`旧「不可能是口径之差」断言回潮`）——即"判据抓文案"抓到了引用形；修法属该册 owner 波次（改成只判未加引号的断言用法、或给更正段一个显式豁免锚），本波不动别人测试件。

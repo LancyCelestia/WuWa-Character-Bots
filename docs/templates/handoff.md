@@ -3,7 +3,7 @@ sections: 需求与裁定? | 概览 | 现状 | 发现与结论? | 改动清单 |
 freeform: on
 params:
 - wave_id | text | literal | req | nonempty
-- handoff_date | text | literal | req | nonempty
+- handoff_date | text | auto:filename_date | req | nonempty
 - audience | text | literal | opt | any
 @aliases: 概览=波次定位|接手须知|现在有什么|项目 30 秒|冷启动清单|开工前必读|一句话现状|一句话总结
 @aliases: 现状=现状基线|现状快照|系统现状快照|项目现状快照|现役状态|进度
@@ -46,8 +46,9 @@ params:
 ---
 ```
 
-- 三枚参数皆为 `literal`（无自动真身来源）：`wave_id` 取波次目录名、`handoff_date` 取落盘日、
-  `audience` 可省略。必填两枚缺失即 `MISSING_PARAM`；表外键即 `EXTRA_PARAM`。
+- `handoff_date` 有真身来源（`auto:filename_date`，由文件名 `HANDOFF-…-(8 位日期).md` 段现算，
+  人手不碰数；文件名无 8 位日期段 ⇒ `PROVIDER_FAIL`，绝不默认某一日）。`wave_id`/`audience`
+  仍为 `literal`（`wave_id` 取波次目录名、`audience` 可省略）。必填缺失即 `MISSING_PARAM`；表外键即 `EXTRA_PARAM`。
 - 正文小节只准用骨架节名（允许「节名（自由补充）」形式，门只比对括号前主干）；必填节为
   `概览 / 现状 / 改动清单 / 问题与处置 / 复跑命令簿` 五节，`禁碰面 / 坑` 可省略但出现时须保持顺序。
 - **一次性事实（计数 / 阈值 / 清单 / 路径）禁裸写**：走「指向真身」句或机器 `auto:` 段，与
@@ -78,7 +79,7 @@ params:
 - `sections`：竖线分隔的有序节序列，尾缀 `?` ＝ 可选节；必填节缺失、出现表外节、顺序偏离，
   各自独立违规码。
 - `params` 每行五列 `key | kind | source | req | domain`；kind ∈ text/number/path/list/enum；
-  source = `literal` 或 `auto:<provider>[:arg]`（本模板全 `literal`）；req ∈ req/opt；
+  source = `literal` 或 `auto:<provider>[:arg]`（本模板 `handoff_date` 走 `auto:filename_date`，其余 `literal`）；req ∈ req/opt；
   domain ∈ nonempty / any / `enum:a,b` / `int:min,max`。
 - 渲染区只准出现 `{{fact:KEY}}`，KEY 必须在 params 内且被消费（否则 `DEAD_PARAM`）。
 - 字节确定性：只 LF 写盘、列表按声明序、机器段零时间戳 ⇒ 同输入两次 `--write` 字节相等。

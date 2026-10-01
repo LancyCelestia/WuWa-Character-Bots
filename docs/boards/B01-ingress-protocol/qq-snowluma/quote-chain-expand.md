@@ -6,7 +6,7 @@
 ## B01.qq-snowluma · 引用与合并转发递归反查
 
 - 层级：一级 B01 → 二级 qq-snowluma → 三级 `quote-chain-expand`
-- 实现落点：`plugins/bot_unified_runtime/sender`、`plugins/bot_unified_runtime/message_context.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/transport/sender/onebot.py`、`plugins/bot_unified_runtime/domains/transport/sender/nonebot.py`、`plugins/bot_unified_runtime/message_context.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

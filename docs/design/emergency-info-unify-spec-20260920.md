@@ -61,14 +61,14 @@ flowchart TD
         COL["采集层 sources/http_get + nmc_alarm + open_data_quakes + gdacs<br/>SourceOutcome 三态 OK/NO_DATA/FAILED"]
         CT["契约层 contracts.py<br/>EmergencyLevel P0..P3 / EmergencyItem / EmergencyStatus"]
         SVC["规则层 service/grading + service/dedupe + service/review<br/>定级 / 键规范 / 审核门（纯函数，时钟注入）"]
-        ST["持久层 domains/emergency_info/sources/store.py<br/>EmergencyStore (source_id,external_id) 幂等"]
-        HTTPC["共享取数件 domains/emergency_info/sources/http_get.py<br/>复用 link_parse http_util + ssrf_guard（不自建第二套）"]
+        ST["持久层 sources/store.py<br/>EmergencyStore (source_id,external_id) 幂等"]
+        HTTPC["共享取数件 sources/http_get.py<br/>复用 link_parse http_util + ssrf_guard（不自建第二套）"]
     end
 
     subgraph WIRE["装配层（未落地，属计划）"]
         POLL["轮询调度器 _register_emergency_info_scheduler<br/>APScheduler interval，抄订阅/send_queue 同型"]
         ADAPT["payload 适配器（采集 dict 到 EmergencyItem）"]
-        CAP["能力层 domains/emergency_info/capabilities/emergency_info.py<br/>is_emergency_command + build_emergency_info_capability"]
+        CAP["能力层 capabilities/emergency_info.py<br/>is_emergency_command + build_emergency_info_capability"]
         FANOUT["fan-out 与 SendRequest 构造<br/>priority=str(level.value) 与 dedupe_key"]
     end
 
@@ -223,14 +223,14 @@ flowchart TD
 
 ## 3. 时序图（一次 P1 红色地震/暴雨预警：从轮询到 SENT + 审计注记）
 
-调用序按**真实函数名**标注；`未落地·` 前缀=本席 grep 0 命中的计划件（不装作在跑）。
+调用序按**真实函数名**标注；`[未落地]` 前缀=本席 grep 0 命中的计划件（不装作在跑）。
 本图主取「过审后自动投递」这一支（源侧官方预警走审核门的路径见 §8.1 的裁量：
 D-8 的原文对象是「人工报料」，官方源是否也要过 pending 属**待用户裁**，见 §8.3-补）。
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant SCH as 未落地·轮询调度器
+    participant SCH as [未落地] 轮询调度器
     participant SRC as nmc_alarm.py
     participant HT as http_get.py
     participant CT as contracts.py
@@ -238,7 +238,7 @@ sequenceDiagram
     participant ST as store.py EmergencyStore
     participant GR as grading.py
     participant DD as dedupe.py
-    participant ASM as 未落地·fanout装配面
+    participant ASM as [未落地] fan-out 装配面
     participant GT as outbound_gate.py
     participant QS as quiet_hours.py
     participant Q as queue.py SQLite 队列
@@ -255,7 +255,7 @@ sequenceDiagram
     HT-->>SRC: RawDoc(payload 或 failure)
     SRC-->>SCH: SourceOutcome(state=OK, items=AlarmAlert..., total_hint=326)
     Note over SCH: FAILED 与 NO_DATA 各走各的出口，绝不同成空列表
-    SCH->>CT: 缝①未落地 build_emergency_item(payload)
+    SCH->>CT: [未落地 缝①] build_emergency_item(payload)
     CT-->>SCH: EmergencyItem 或 None（D-1 不成立即不入库）
     SCH->>RW: submit(item)
     RW->>ST: upsert_item(forced pending，level 与 reviewed_* 已清空)
@@ -272,11 +272,11 @@ sequenceDiagram
     SCH->>ST: set_level(item_id, level=P1) WHERE status='approved'
     SCH->>DD: is_within_validity(item, now, max_age)
     DD-->>SCH: True
-    SCH->>DD: build_emergency_dedupe_key(channel, item_id, target_id, date_key)
+    SCH->>DD: build_emergency_dedupe_key(channel, item_id, target_id, date_key=None)
     DD-->>SCH: emg 前缀四段或五段键（非法即 ValueError）
-    SCH->>ASM: 缝②未落地 构造 SendRequest
+    SCH->>ASM: [未落地 缝②] 构造 SendRequest
     Note over ASM: 生死线=两个字段：priority 必须是 P1 的字面量；dedupe_key 必须过闸侧键规范
-    ASM->>GT: submit_active_push(send_queue, send_request, gate, dedupe_family=once)
+    ASM->>GT: submit_active_push(send_queue, send_request, gate, dedupe_family="once")
     GT->>GT: decide(send_request, now, dedupe_family)
     GT->>QS: settings 与 quiet 两侧均按 callable 实时求值（支持热改）
     QS-->>GT: QuietHoursSettings（窗内/窗外）
@@ -300,8 +300,8 @@ sequenceDiagram
 **三点时序事实（可反驳，且都被现有测试锁着）**：
 
 1. **审核门在定级之前**，且结构性不可绕：`ReviewGate.submit` 会把自带的 `approved`+`P0`+`reviewed_by` 一并钉回
-   pending 并清空（`domains/emergency_info/service/review.py:81-96`），`publishable_level()` 对未过审返回 `None`（`:192-205`），
-   存储侧 `set_level` 的 SQL 还带 `WHERE status='approved'`（`domains/emergency_info/sources/store.py:177-185`）——**三道同向守卫**。
+   pending 并清空（`service/review.py:81-96`），`publishable_level()` 对未过审返回 `None`（`:192-205`），
+   存储侧 `set_level` 的 SQL 还带 `WHERE status='approved'`（`sources/store.py:177-185`）——**三道同向守卫**。
    锁：`tests/test_emergency_info_core.py::test_submit_forces_pending_and_strips_level_and_review_marks` 等（§4 §D）。
 2. **闸不改状态机**：`submit_active_push` 只在 allow 时 `record_send`，defer 用队列原生 `deliver_after`
    （`queue.py:418-438` 的「worker 最早投递时刻 + 声明无内联首投」语义），skip **不触队列**、只出自造 SKIPPED 回执
@@ -325,15 +325,15 @@ sequenceDiagram
 |---|---|---|---|---|
 | `__init__.py`（9） | 域 docstring | 域定位 + 「不新增配置键、不注册路由、不出卡、不接语音、不碰 LLM」自述 | 一行式域 docstring：`domains/weather/__init__.py`、`domains/weather/data/__init__.py` | 已落码 |
 | `contracts.py`（272） | `EmergencyLevel`:49、`_LEVEL_RANK`:73、`LEVEL_COLOR_LABEL`:84、`_COLOR_LABEL_LEVEL`:91、`URGENT_LEVELS`:96、`_LEVEL_RISK_LEVEL`:100、`is_urgent_level`:108、`level_from_color_label`:113、`to_risk_level`:118、`highest_level`:123、`EmergencyStatus`:134、`_ALLOWED_TRANSITIONS`:144、`can_transition`:153、`as_utc`:161、`EmergencyItem`:173、`build_emergency_item`:244 | 单一等级枚举 + 唯一颜色文案口 + 审核三态状态机 + 条目模型 + D-1 安全构造口 | `StrictBaseModel`＝`domains/core/contracts/runtime.py:32-33`；非空校验＝同文件 `:53-59`；区间校验＝`:264-269`；`RiskLevel`＝`:36-40`；**颜色词与序位收编**＝`domains/weather/capabilities/weather.py:112`（本席实读原文 `{"蓝色":1,"黄色":2,"橙色":3,"红色":4}`）；三态 + CHECK＝`domains/chat_reply/character/quirks.py:39-41/:157-176` | 已落码 |
-| `domains/emergency_info/service/grading.py`（175） | `FALLBACK_LEVEL`:38、`GradingRule`:42、`DEFAULT_GRADING_RULES`:51、`matched_levels`:117、`color_levels_in_text`:131、`grade`:143 | D-6 纯规则定级（无网络/无 LLM/时钟注入）：源色 + 正文色词 + 关键词取最高，全不中落 P3，过期压 P3 | 白名单式判定不猜值＝`domains/schedule/service/schedule_dag.py:236-247`；「按颜色取最高」判定序＝`domains/weather/capabilities/weather.py:239` | 已落码 |
-| `domains/emergency_info/service/dedupe.py`（125） | `EMERGENCY_DEDUPE_PREFIX`:27、`_SEGMENT_RE`:30、`_DATE_KEY_RE`:31、`date_key_of`:34、`build_emergency_dedupe_key`:39、`is_emergency_dedupe_key`:70、`is_within_validity`:94 | 键规范唯一出处 + 键形核验口 + 时效窗/日历日键（纯函数） | 键规范原文＝闸规格 §1.3-3；签名口径＝`reports/E5-report.md` §4.3；按日键＝根 `__init__.py:3010/:3177`（`now().astimezone().date().isoformat()`）+ dedupe 先例 `:3205/:3351` | 已落码 |
-| `domains/emergency_info/service/review.py`（212） | `ReviewStore`:38（Protocol）、`ReviewOutcome`:60、`ReviewGate`:70、`submit`:81、`approve`:100、`reject`:111、`_decide`:128、`_failure`:172、`publishable`:187、`publishable_level`:192、`pending_items`:207 | D-8 审核门：入库强制 pending、过审前不参与定级与投递、未注入 authorizer 整体关闭 | propose→approve 形态＝`domains/chat_reply/character/quirks.py:202-290`（propose 只进 pending）、`:292-300`（`WHERE status='pending_review'` 守卫）；最小 Protocol 依赖＝`domains/transport/sender/queue.py:167-176` | 已落码 |
-| `domains/emergency_info/sources/store.py`（243） | `DEFAULT_DB_PATH`:38、`_SCHEMA`:40、`_SELECT_COLUMNS`:69、`_format_utc`:76、`_row_to_item`:84、`EmergencyStore`:97（`upsert_item`:113、`apply_review`:155、`set_level`:177、`get`:189、`list_by_status`:197、`prune`:215）、`build_emergency_store`:226 | 唯一持久层：`(source_id, external_id)` 幂等、只从 pending 转正、按状态读回、90 天裁剪、缺省路径走 runtime_paths 重映射 | 每操作独立连接轻量库＝`domains/assistant/campus/campus_store.py:30`；幂等主键/索引与 prune＝`:17/:23-26/:101-109`；`build_*` 缺省路径重映射＝`domains/chat_reply/character/persona_service.py:739`；铁律 6 先例键 `bot_campus_db_path` | 已落码 |
-| `domains/emergency_info/sources/http_get.py`（312） | `DEFAULT_TIMEOUT_SECONDS`:67、`NMC_ALARM_TIMEOUT_SECONDS`:68、`DEFAULT_RETRY_ATTEMPTS`:72、`RETRY_BACKOFF_SECONDS`:73、`_backoff_sleep`:76、`FetchState`:83、`SourceOutcome`:92、`ALLOWED_HOSTS`:148、`_SAFE_ID_RE`:161、`UnsafeIdentifier`:164、`SsrfRejectedError`:168、`require_safe_id`:172、`check_whitelisted_url`:180、`guard_outbound_url`:189、`RawDoc`:207、`fetch_json_document`:219、`resolve_document`:252、`failed_outcome`:288 | 采集族共享取数件：常量白名单 + 既有 SSRF 护栏两道闸、只重试瞬时故障、**三态显式**（`OK/NO_DATA/FAILED`），治「取数失败说成无预警」 | HTTP 客户端复用＝`domains/link_parse/parsers/http_util.py:255`（`http_get_json`，本席实读在位）；护栏复用＝`domains/link_parse/parsers/ssrf_guard.py:159`（`guard_user_url`）；退避判据＝`domains/finance/data/stock_data.py:90`（`_network_retry`）；次数/基数对齐 `domains/weather/capabilities/weather.py:82-83`（本席实读 `_NMC_RETRY_ATTEMPTS=2`、`_NMC_RETRY_BACKOFF_SECONDS=0.5`）；超时命名＝`domains/weather/data/nmc_weather.py:113` | 已落码 |
-| `domains/emergency_info/sources/nmc_alarm.py`（458） | `SOURCE_ID="nmc"`:56、`ALARM_COLOR_RANK`:66、`AlarmAlert`:84、`StationAlarm`:104、`split_alarm_title`:126、`parse_beijing_time`:151、`absolutize_nmc_url`:164、`build_nmc_alarm_detail_url`:176、`build_nmc_find_alarm_url`:186、`build_nmc_rest_weather_url`:193、`parse_nmc_alarm_page`:235、`parse_nmc_station_alarm`:336、`fetch_nmc_alarms`:395、`fetch_nmc_station_alarm`:420 | NMC 全国在报清单 + 站点级当前预警（`data.real.warn`，现役天气码未消费的白捡位） | 查询/预警族取形＝`domains/weather/capabilities/weather.py`（`parse_alert_title:176-199` 同族颜色词解析；本席不 import 它，见接缝 §8.1） | 已落码 |
-| `domains/emergency_info/sources/open_data_quakes.py`（591） | `ICL_SOURCE_ID="icl"`:52、`USGS_SOURCE_ID="usgs"`:53、`QuakeEvent`:72、`QuakeMatch`:106、`epoch_ms_to_utc`:158、`haversine_km`:171、`build_icl_earlywarnings_url`:188、`parse_icl_earlywarnings`:230、`fetch_icl_earthquakes`:280、`build_usgs_feed_url`:299、`build_usgs_fdsnws_url`:315、`parse_usgs_geojson`:384、`fetch_usgs_quakes`:461、`fetch_usgs_recent_feed`:489、`crosscheck_quakes`:511 | 地震双源（ICL 主 + USGS 核验）与事件匹配（±30min 且震中距 ≤200km） | 交叉核验脚注范式＝股指腾讯源 6 指数核验（AGENTS 第四部分 market 行；E11 §3 口径） | 已落码 |
-| `domains/emergency_info/sources/gdacs.py`（248） | `SOURCE_ID="gdacs"`:43、`SOURCE_LABEL`:44、`GdacsEvent`:67、`parse_gdacs_events`:126、`fetch_gdacs_events`:219 | 国际灾害背景聚合（**不推送**，E11 §2 矩阵判定） | 同上（`fetch_*` 三态返回同族） | 已落码 |
-| `domains/emergency_info/service/__init__.py`（5）、`domains/emergency_info/sources/__init__.py`（6） | 包 docstring | 包标记（不建则不可 import） | 仓内每层目录均有 `__init__.py` | 已落码 |
+| `service/grading.py`（175） | `FALLBACK_LEVEL`:38、`GradingRule`:42、`DEFAULT_GRADING_RULES`:51、`matched_levels`:117、`color_levels_in_text`:131、`grade`:143 | D-6 纯规则定级（无网络/无 LLM/时钟注入）：源色 + 正文色词 + 关键词取最高，全不中落 P3，过期压 P3 | 白名单式判定不猜值＝`domains/schedule/service/schedule_dag.py:236-247`；「按颜色取最高」判定序＝`domains/weather/capabilities/weather.py:239` | 已落码 |
+| `service/dedupe.py`（125） | `EMERGENCY_DEDUPE_PREFIX`:27、`_SEGMENT_RE`:30、`_DATE_KEY_RE`:31、`date_key_of`:34、`build_emergency_dedupe_key`:39、`is_emergency_dedupe_key`:70、`is_within_validity`:94 | 键规范唯一出处 + 键形核验口 + 时效窗/日历日键（纯函数） | 键规范原文＝闸规格 §1.3-3；签名口径＝`reports/E5-report.md` §4.3；按日键＝根 `__init__.py:3010/:3177`（`now().astimezone().date().isoformat()`）+ dedupe 先例 `:3205/:3351` | 已落码 |
+| `service/review.py`（212） | `ReviewStore`:38（Protocol）、`ReviewOutcome`:60、`ReviewGate`:70、`submit`:81、`approve`:100、`reject`:111、`_decide`:128、`_failure`:172、`publishable`:187、`publishable_level`:192、`pending_items`:207 | D-8 审核门：入库强制 pending、过审前不参与定级与投递、未注入 authorizer 整体关闭 | propose→approve 形态＝`domains/chat_reply/character/quirks.py:202-290`（propose 只进 pending）、`:292-300`（`WHERE status='pending_review'` 守卫）；最小 Protocol 依赖＝`domains/transport/sender/queue.py:167-176` | 已落码 |
+| `sources/store.py`（243） | `DEFAULT_DB_PATH`:38、`_SCHEMA`:40、`_SELECT_COLUMNS`:69、`_format_utc`:76、`_row_to_item`:84、`EmergencyStore`:97（`upsert_item`:113、`apply_review`:155、`set_level`:177、`get`:189、`list_by_status`:197、`prune`:215）、`build_emergency_store`:226 | 唯一持久层：`(source_id, external_id)` 幂等、只从 pending 转正、按状态读回、90 天裁剪、缺省路径走 runtime_paths 重映射 | 每操作独立连接轻量库＝`domains/assistant/campus/campus_store.py:30`；幂等主键/索引与 prune＝`:17/:23-26/:101-109`；`build_*` 缺省路径重映射＝`domains/chat_reply/character/persona_service.py:739`；铁律 6 先例键 `bot_campus_db_path` | 已落码 |
+| `sources/http_get.py`（312） | `DEFAULT_TIMEOUT_SECONDS`:67、`NMC_ALARM_TIMEOUT_SECONDS`:68、`DEFAULT_RETRY_ATTEMPTS`:72、`RETRY_BACKOFF_SECONDS`:73、`_backoff_sleep`:76、`FetchState`:83、`SourceOutcome`:92、`ALLOWED_HOSTS`:148、`_SAFE_ID_RE`:161、`UnsafeIdentifier`:164、`SsrfRejectedError`:168、`require_safe_id`:172、`check_whitelisted_url`:180、`guard_outbound_url`:189、`RawDoc`:207、`fetch_json_document`:219、`resolve_document`:252、`failed_outcome`:288 | 采集族共享取数件：常量白名单 + 既有 SSRF 护栏两道闸、只重试瞬时故障、**三态显式**（`OK/NO_DATA/FAILED`），治「取数失败说成无预警」 | HTTP 客户端复用＝`domains/link_parse/parsers/http_util.py:255`（`http_get_json`，本席实读在位）；护栏复用＝`domains/link_parse/parsers/ssrf_guard.py:159`（`guard_user_url`）；退避判据＝`domains/finance/data/stock_data.py:90`（`_network_retry`）；次数/基数对齐 `domains/weather/capabilities/weather.py:82-83`（本席实读 `_NMC_RETRY_ATTEMPTS=2`、`_NMC_RETRY_BACKOFF_SECONDS=0.5`）；超时命名＝`domains/weather/data/nmc_weather.py:113` | 已落码 |
+| `sources/nmc_alarm.py`（458） | `SOURCE_ID="nmc"`:56、`ALARM_COLOR_RANK`:66、`AlarmAlert`:84、`StationAlarm`:104、`split_alarm_title`:126、`parse_beijing_time`:151、`absolutize_nmc_url`:164、`build_nmc_alarm_detail_url`:176、`build_nmc_find_alarm_url`:186、`build_nmc_rest_weather_url`:193、`parse_nmc_alarm_page`:235、`parse_nmc_station_alarm`:336、`fetch_nmc_alarms`:395、`fetch_nmc_station_alarm`:420 | NMC 全国在报清单 + 站点级当前预警（`data.real.warn`，现役天气码未消费的白捡位） | 查询/预警族取形＝`domains/weather/capabilities/weather.py`（`parse_alert_title:176-199` 同族颜色词解析；本席不 import 它，见接缝 §8.1） | 已落码 |
+| `sources/open_data_quakes.py`（591） | `ICL_SOURCE_ID="icl"`:52、`USGS_SOURCE_ID="usgs"`:53、`QuakeEvent`:72、`QuakeMatch`:106、`epoch_ms_to_utc`:158、`haversine_km`:171、`build_icl_earlywarnings_url`:188、`parse_icl_earlywarnings`:230、`fetch_icl_earthquakes`:280、`build_usgs_feed_url`:299、`build_usgs_fdsnws_url`:315、`parse_usgs_geojson`:384、`fetch_usgs_quakes`:461、`fetch_usgs_recent_feed`:489、`crosscheck_quakes`:511 | 地震双源（ICL 主 + USGS 核验）与事件匹配（±30min 且震中距 ≤200km） | 交叉核验脚注范式＝股指腾讯源 6 指数核验（AGENTS 第四部分 market 行；E11 §3 口径） | 已落码 |
+| `sources/gdacs.py`（248） | `SOURCE_ID="gdacs"`:43、`SOURCE_LABEL`:44、`GdacsEvent`:67、`parse_gdacs_events`:126、`fetch_gdacs_events`:219 | 国际灾害背景聚合（**不推送**，E11 §2 矩阵判定） | 同上（`fetch_*` 三态返回同族） | 已落码 |
+| `service/__init__.py`（5）、`sources/__init__.py`（6） | 包 docstring | 包标记（不建则不可 import） | 仓内每层目录均有 `__init__.py` | 已落码 |
 
 ### 4.2 域外中央件（本域依赖，非本域所有）
 
@@ -379,7 +379,7 @@ def highest_level(levels: Iterable[EmergencyLevel]) -> EmergencyLevel    # :123 
 def can_transition(current: EmergencyStatus, target: EmergencyStatus) -> bool   # :153
 def as_utc(moment: datetime) -> datetime                                 # :161  naive 一律按 UTC 归一
 
-# domains/emergency_info/service/grading.py:143 —— D-6 纯规则定级
+# service/grading.py:143 —— D-6 纯规则定级
 def grade(
     item: EmergencyItem,
     *,
@@ -389,7 +389,7 @@ def grade(
 #   辅助：matched_levels(text, rules=DEFAULT_GRADING_RULES) -> list[EmergencyLevel]      :117
 #         color_levels_in_text(text) -> list[EmergencyLevel]                             :131
 
-# domains/emergency_info/service/dedupe.py —— 键规范唯一出处
+# service/dedupe.py —— 键规范唯一出处
 def build_emergency_dedupe_key(
     channel: str, item_id: str, target_id: str,      # 三个位置参
     date_key: str | None = None,                     # 位置可选参（非仅关键字）；按日族必给
@@ -401,7 +401,7 @@ def is_emergency_dedupe_key(key: str, *, require_date_key: bool = False) -> bool
 def is_within_validity(item, *, now: datetime, max_age: timedelta | None = None) -> bool   # :94
 def date_key_of(moment: datetime) -> str             # :34  本地日历日 YYYY-MM-DD
 
-# domains/emergency_info/service/review.py —— D-8 审核门
+# service/review.py —— D-8 审核门
 class ReviewGate:
     def __init__(self, store: ReviewStore, *, authorizer: Callable[[str], bool] | None = None)   # :73
     def submit(self, item: EmergencyItem) -> EmergencyItem                       # :81   钉 pending + 清 level
@@ -411,7 +411,7 @@ class ReviewGate:
     @staticmethod def publishable_level(item, *, now, rules=DEFAULT_GRADING_RULES) -> EmergencyLevel | None  # :192
     def pending_items(self, *, limit: int = 50) -> list[EmergencyItem]            # :207
 
-# domains/emergency_info/sources/store.py —— 唯一持久层
+# sources/store.py —— 唯一持久层
 class EmergencyStore:
     def __init__(self, db_path: str | Path) -> None                              # :100（建表幂等）
     def upsert_item(self, item: EmergencyItem) -> bool                           # :113 True=新行；False=幂等命中
@@ -426,7 +426,7 @@ def build_emergency_store(db_path: str | Path | None = None) -> EmergencyStore  
 ### 5.2 采集层（已落码；三态返回是**规范级要求**，不是偏好）
 
 ```python
-# domains/emergency_info/sources/http_get.py —— 全部源件共用的唯一取数口
+# sources/http_get.py —— 全部源件共用的唯一取数口
 def fetch_json_document(url, *, timeout: float = DEFAULT_TIMEOUT_SECONDS, proxy: str = "",
                         verify_ssl: bool = True, retry: int = DEFAULT_RETRY_ATTEMPTS) -> Any      # :219 失败即抛
 def resolve_document(url, *, fetch: FetchJson | None = None, timeout=..., proxy="",
@@ -530,7 +530,7 @@ deliver_after / priority / request_id / debug_id`；
 | 紧急面集合 | `URGENT_LEVELS = {P0, P1}` | `contracts.py:96` | D-2 判定唯一事实源（`is_urgent_level:108`）；与配置 `bot_outbound_gate_urgent_severities` 互为镜像（§8.3-补2） |
 | 跨面映射 | `P0→CRITICAL, P1→HIGH, P2→MEDIUM, P3→LOW` | `contracts.py:100` + `to_risk_level:118` | 消费方不得自建第二张表 |
 | `EmergencyStatus` | `pending/approved/rejected` | `contracts.py:134` | 入库缺省 **pending**；`_ALLOWED_TRANSITIONS:144` 只允许 pending→{approved,rejected}；终态不可回退（撤回过审/驳回重开=**未做**，待裁 §8.3-补3） |
-| 状态机 SQL 守卫 | `status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected'))` | `domains/emergency_info/sources/store.py:56-57` | 枚举与 CHECK **同源**；`apply_review` 带 `AND status='pending'`（`:172`）、`set_level` 带 `AND status='approved'`（`:182`） |
+| 状态机 SQL 守卫 | `status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected'))` | `sources/store.py:56-57` | 枚举与 CHECK **同源**；`apply_review` 带 `AND status='pending'`（`:172`）、`set_level` 带 `AND status='approved'`（`:182`） |
 
 ### 6.2 severity 载体 = `SendRequest.priority`（跨域契约，最易踩）
 
@@ -560,7 +560,7 @@ deliver_after / priority / request_id / debug_id`；
 | | `REASON_STORE_DEGRADED`:81 | `store_unavailable_fail_open` | store 读失败 fail-open |
 | | `REASON_RECORD_DEGRADED`:82 | `send_count_write_failed` | 放行计数写失败（不拦投递） |
 | | `REASON_QUEUE_NO_DELIVER_AFTER`:83 | `queue_without_deliver_after` | 队列不认 `deliver_after`（InMemory 形态） |
-| 审核 outcome.reason | 字面串（`domains/emergency_info/service/review.py:_decide:128-160`） | `ok` / `blank_item_id` / `blank_reviewer` / `authorizer_not_configured` / `reviewer_not_authorized` / `unknown_item` / `illegal_transition` / `not_pending_anymore` | 八枚，全为「不改状态只回结论」的确定性出口 |
+| 审核 outcome.reason | 字面串（`service/review.py:_decide:128-160`） | `ok` / `blank_item_id` / `blank_reviewer` / `authorizer_not_configured` / `reviewer_not_authorized` / `unknown_item` / `illegal_transition` / `not_pending_anymore` | 八枚，全为「不改状态只回结论」的确定性出口 |
 | 采集 outcome.reason | 前缀式（`sources/*.py`） | `ssrf_rejected:*` / `http_error:*` / `missing_field:<路径>` / `unsafe_stationid:*` / `non_zero_code` | 随 `SourceOutcome.reason`，调用方必须原样入日志 |
 
 ### 6.4 告警 kind 清单（本波新增，全部 `stage="outbound_gate"` 或 `"onebot"`）
@@ -638,7 +638,7 @@ E3 素材5 说「三表」、B1R3 更正为「四处」，本席复核后是**�
 
 | # | 同步面 | 真身坐标 | 会红在 |
 |---|---|---|---|
-| 1 | `echo._HELP_ENTRIES` 一行 | `domains/chat_reply/capabilities/echo.py`（77 条） | — |
+| 1 | `echo._HELP_ENTRIES` 一行 | `capabilities/echo.py:448`（77 条） | — |
 | 2 | `echo._HELP_ENTRY_META` 一行 | `:2455`（运行时 `:3190+` 合并进条目） | `test_documentation_consistency.py:126 test_entry_meta_registered_for_every_topic` |
 | 3 | `HELP_TOPIC_DECLARATIONS` 一行 | `capability_registry.py:451-` | `test_capability_registry.py:402-403`（`_HELP_DECLARED_TOPICS == live_topics` **逐序**，且 `== 77` **写死**⇒ 必改为 78）+ `:412-417` 逐字段（topic/admin_only/capability） |
 | 4 | `_PUBLIC_HELP_TOPICS`（仅当公开） | `echo.py:268-275`（实数 37） | `test_capability_registry.py:428`（集合恒等）+ **`:430` 的字面数 `len(declared_public)==37 and len(declared_admin)==40`**（新主题必改其一，本席新发现：E3/B1R3 均未列此门） |
@@ -664,7 +664,7 @@ E3 素材5 说「三表」、B1R3 更正为「四处」，本席复核后是**�
 
 | 事实 | 证据（本席实跑） |
 |---|---|
-| 采集器**刻意**不 import 内核 | `domains/emergency_info/sources/http_get.py:38` 原文「**不 import `domains/emergency_info/contracts.py`**（B1R3 席域模型）」；且 `grep -rn "EmergencyItem\|build_emergency_item\|ReviewGate\|to_payload" sources/{http_get,nmc_alarm,open_data_quakes,gdacs}.py` → **0 命中** |
+| 采集器**刻意**不 import 内核 | `sources/http_get.py:38` 原文「**不 import `domains/emergency_info/contracts.py`**（B1R3 席域模型）」；且 `grep -rn "EmergencyItem\|build_emergency_item\|ReviewGate\|to_payload" sources/{http_get,nmc_alarm,open_data_quakes,gdacs}.py` → **0 命中** |
 | 内核**刻意**不 import 采集/网络 | `tests/test_emergency_info_core.py::test_kernel_never_imports_network_or_llm`（含「被扫文件数 ≥6」防空转） |
 | **有一条锁把「接缝缺失」本身钉住了** | `tests/test_emergency_info_sources.py::test_sources_do_not_import_the_domain_model_of_the_parallel_seat`（02:50 时点 `:900`）：对该席四个源件做**文本断言** `"emergency_info.contracts" not in source` / `"EmergencyItem" not in source` |
 
@@ -682,25 +682,25 @@ E3 素材5 说「三表」、B1R3 更正为「四处」，本席复核后是**�
 build_emergency_item(payload)                    [contracts.py:244]  ← D-1 唯一安全构造口
         │  None ⇒ 丢弃并记 reason，绝不入库、绝不投递、绝不填假值
         ▼
-ReviewGate.submit(item)                          [domains/emergency_info/service/review.py:81] ← D-8 唯一入库口
+ReviewGate.submit(item)                          [service/review.py:81] ← D-8 唯一入库口
         │  结构性钉 status=pending、清空 level/reviewed_by/reviewed_at
         ▼
-EmergencyStore.upsert_item(item)                 [domains/emergency_info/sources/store.py:113] ← 唯一幂等落库口
+EmergencyStore.upsert_item(item)                 [sources/store.py:113] ← 唯一幂等落库口
         ▼
-（管理员）ReviewGate.approve / reject            [domains/emergency_info/service/review.py:100/:111]
+（管理员）ReviewGate.approve / reject            [service/review.py:100/:111]
         ▼
-ReviewGate.publishable_level(item, now=…)        [domains/emergency_info/service/review.py:192] ← 审核门×定级唯一串联点
+ReviewGate.publishable_level(item, now=…)        [service/review.py:192] ← 审核门×定级唯一串联点
         │  未过审 ⇒ None；内部才调 grade()
         ▼
-EmergencyStore.set_level(item_id, level=…)       [domains/emergency_info/sources/store.py:177]（SQL 带 WHERE status='approved'）
+EmergencyStore.set_level(item_id, level=…)       [sources/store.py:177]（SQL 带 WHERE status='approved'）
         ▼
-is_within_validity(item, now, max_age)           [domains/emergency_info/service/dedupe.py:94]
+is_within_validity(item, now, max_age)           [service/dedupe.py:94]
         ▼
-build_emergency_dedupe_key(channel,item_id,target_id[,date_key])   [domains/emergency_info/service/dedupe.py:39]
+build_emergency_dedupe_key(channel,item_id,target_id[,date_key])   [service/dedupe.py:39]
         ▼
 构造 SendRequest：priority=str(level.value) ＋ dedupe_key ＋ 显式 adapter/bot_id ＋ cooldown_key 非空
         ▼
-submit_active_push(send_queue, request, gate, dedupe_family=…)     [domains/transport/sender/outbound_gate.py:639]
+submit_active_push(send_queue, request, gate, dedupe_family=…)     [transport/sender/outbound_gate.py:639]
         │  ← 主动投递触达队列的唯一触点；禁止直调 send_queue.submit
         ▼
 queue.py SQLite 队列（ON CONFLICT 幂等）→ worker → onebot/nonebot → 回执
@@ -713,7 +713,7 @@ queue.py SQLite 队列（ON CONFLICT 幂等）→ worker → onebot/nonebot → 
 | 采集器里自己 `import contracts` 并直建 `EmergencyItem(...)` | 等级/字段校验第二入口（pydantic 之外的第二条构造路） | 破 **D-1**：`build_emergency_item` 的「不成立即 None」被旁路成「源侧有啥就填啥」，缺字段可用假 id/假时间凑；同时把该源件从「零耦合锁」的保护面里搬出来（`test_sources_do_not_import_...` 变红是**信号**，不是障碍） |
 | 跳过 `ReviewGate.submit` 直接 `EmergencyStore.upsert_item(item)` | 「谁算过审」的第二判据 | 破 **D-8**：入库不再强制 pending（`submit` 的清空动作被跳过），报料方可自带 `approved+P0` 入池并立即参与投递；`store.set_level` 的 SQL 守卫仍在，但状态已被绕过——**审核门只剩一半** |
 | 投递侧直接 `grade(item, now=…)` 而不走 `publishable_level` | 定级结果第二来源（pending 条目也能拿到等级） | 破 **D-8** 的串联契约（`review.py:198-205` 注释原文：「投递侧只认本函数，不得自行 grade(pending_item) 绕门」）；后果=未审报料可穿静默窗 |
-| 采集器自己算等级（按 `ALARM_COLOR_RANK` 直接给 P0） | 等级判定第二处（源件内） | 破 **D-6**（定级=纯规则唯一真身在 `domains/emergency_info/service/grading.py`）；并制造**颜色序位第三表**漂移（见 8.5-B） |
+| 采集器自己算等级（按 `ALARM_COLOR_RANK` 直接给 P0） | 等级判定第二处（源件内） | 破 **D-6**（定级=纯规则唯一真身在 `service/grading.py`）；并制造**颜色序位第三表**漂移（见 8.5-B） |
 | 自建 dedupe 键（`emergency:<id>`、`emg_push:<…>` 等） | 幂等键第二规范 | 破 **§1.3-3 键规范唯一出处**；后果=闸第三道门 `dedupe_key_shape` 一律 `skip`（`outbound_gate.py:259`，`segments[0] != "emg"` 即 False），**紧急信息一条也发不出去**，且日志看着像「被防风暴拦了」 |
 | 新建第二张去重账（域内自己记「已投过」） | 幂等第二执行点 | 破 **G5 单一事实源** + 与 `queue.py:444-476 ON CONFLICT` 语义打架（重启/跨进程时两侧结论不一致 ⇒ 要么重发要么漏发） |
 | 直调 `send_queue.submit(...)` 绕闸 | 主动投递第二触点 | 破 **闸规格 §1.2「唯一插入点」**：静默窗与每主体限流双双失效（现役 6 族今天正是这个状态，T6 结构锁只保护**存量**不豁免**新域**） |
@@ -723,7 +723,7 @@ queue.py SQLite 队列（ON CONFLICT 幂等）→ worker → onebot/nonebot → 
 
 1. **锁 A｜唯一入库口**（建议放 `tests/test_emergency_info_core.py`，与既有 §F 域边界锁同族）
    断言：对 `domains/emergency_info/**` 全件 AST 扫描——任何 `EmergencyStore.upsert_item(` 的调用者
-   只能是 `ReviewGate.submit` 所在文件（`domains/emergency_info/service/review.py`）；除 `domains/emergency_info/sources/store.py` 定义处外，
+   只能是 `ReviewGate.submit` 所在文件（`service/review.py`）；除 `sources/store.py` 定义处外，
    全仓（含装配层新文件）出现 `upsert_item(` 即红。
    反证性：有人图省事在装配面直接落库 ⇒ 立刻红。
 2. **锁 B｜唯一触闸口 + 触闸前必过审核门**（建议放 `tests/test_emergency_info_core.py`）
@@ -740,7 +740,7 @@ queue.py SQLite 队列（ON CONFLICT 幂等）→ worker → onebot/nonebot → 
    反证性：把 daily 报成 once ⇒ 漏发（B4a §R2-3 会错的③）在此暴露。
 5. **锁 E｜颜色序位收敛**（建议放 `tests/test_emergency_info_core.py`，扩既有 AST 收编锁的扫描面）
    断言：全仓颜色→序位映射只允许两份「同源声明」：`weather.py:112 _ALARM_COLOR_RANK` 与
-   `contracts.py:84 LEVEL_COLOR_LABEL`；`domains/emergency_info/sources/nmc_alarm.py:66 ALARM_COLOR_RANK` 第三份必须以
+   `contracts.py:84 LEVEL_COLOR_LABEL`；`sources/nmc_alarm.py:66 ALARM_COLOR_RANK` 第三份必须以
    「与本域 `LEVEL_COLOR_LABEL` 同表」的断言纳入锁，或由 B2 席删除改吃 `level_from_color_label()`。
 6. **对 875/900 那条零耦合锁的处置建议**：**保留其意图、收窄其手段**。
    现形态是文本断言（`"EmergencyItem" not in source`），它会**同时拦住正确的缝合与错误的旁路**；
@@ -781,7 +781,7 @@ queue.py SQLite 队列（ON CONFLICT 幂等）→ worker → onebot/nonebot → 
 
 - **机制坐标**：`outbound_gate.py:248 _severity_of()` 吃 `SendRequest.priority` → `:252 _is_urgent()`
   → `:554 _quiet_verdict()` 决定是否顺延。窗来源两式必须分清（本席实读）：
-  `QuietHoursSettings` 的**类缺省**= `enabled: False / 23:00–07:00`（`domains/chat_reply/policy/quiet_hours.py`）——
+  `QuietHoursSettings` 的**类缺省**= `enabled: False / 23:00–07:00`（`policy/quiet_hours.py:24-27`）——
   即「什么都不传 ⇒ 第一道门整体不生效，P0 与 P3 一视同仁地立刻发」；
   而经 `build_quiet_hours_settings(config)` 投影的**配置实值**= `bot_quiet_hours_enabled=True / 00:00–06:00 /
   Asia_Hong_Kong / session_types=["group"]`（`config.py:1000-1005`，本席 02:5x 复核时点）。
@@ -802,9 +802,9 @@ queue.py SQLite 队列（ON CONFLICT 幂等）→ worker → onebot/nonebot → 
 | # | 现象 | 归属 | 证据 | 影响面 |
 |---|---|---|---|---|
 | A | 简报与 B1R3 §7 所述「三处 ruff 错在采集器」（`http_get.py:293`、`nmc_alarm.py:159`、`:431`）**在本席取证时点已不存在** | B2 | 本席 `ruff check domains/emergency_info` → `All checks passed!`；`http_get.py` mtime **02:30:14**、`nmc_alarm.py` mtime **02:31:39**（均晚于本席开工）⇒ 由 B2 自修完成，**非本席所修** | 已消解；全树 `ruff check .` 仍 **13 errors**（`tests/test_tts_t75.py:675` 等），全在非本域面 |
-| B | 第三份颜色序位表 `domains/emergency_info/sources/nmc_alarm.py:66 ALARM_COLOR_RANK` | B2 | 与 `weather.py:112`、`contracts.py:84` 三处并存；既有 AST 锁只管后两处 | 漂移面；处理建议=§8.1 锁 E |
-| C | `build_emergency_dedupe_key` 校验用 `strip()` 后的值、拼键却用**未 strip 的原参**（`domains/emergency_info/service/dedupe.py:55-61`） | B1R3 | `" qq "` 过校验但产出含空格的键 ⇒ `is_emergency_dedupe_key` 判 False（往返不自洽）。现有一致性用例用干净输入，测不到 | 边界缺陷；装配层若传用户态字符串即触发 skip |
-| D | `domains/emergency_info/sources/gdacs.py` 末尾 `:248` 重复定义 `BEIJING_TZ`（与 `:51` 同值） | B2 | 实读文件尾（`__all__` 之后） | 无害但是「表出多处」形态；顺手清 |
+| B | 第三份颜色序位表 `sources/nmc_alarm.py:66 ALARM_COLOR_RANK` | B2 | 与 `weather.py:112`、`contracts.py:84` 三处并存；既有 AST 锁只管后两处 | 漂移面；处理建议=§8.1 锁 E |
+| C | `build_emergency_dedupe_key` 校验用 `strip()` 后的值、拼键却用**未 strip 的原参**（`service/dedupe.py:55-61`） | B1R3 | `" qq "` 过校验但产出含空格的键 ⇒ `is_emergency_dedupe_key` 判 False（往返不自洽）。现有一致性用例用干净输入，测不到 | 边界缺陷；装配层若传用户态字符串即触发 skip |
+| D | `sources/gdacs.py` 末尾 `:248` 重复定义 `BEIJING_TZ`（与 `:51` 同值） | B2 | 实读文件尾（`__all__` 之后） | 无害但是「表出多处」形态；顺手清 |
 | E | `store.py:229` 注释引用配置键名 `bot_emergency_db_path`，而 B1R3 §3(a) 的落地请求是 `bot_emergency_info_db_path` | B1R3 / 合流席 | 两处字面不一致 | 与裁决点 ① 同批收口，避免键名跟着分裂 |
 | F | B4a 报告 §R2-4-L1 的接线片段形参名写作 `settings=` / `quiet_settings=` | B4a（报告文本） | 真身=`outbound_gate.py:748` 的 `settings_provider` / `quiet_settings_provider` | 照抄即 `TypeError`；接线波注意 |
 | G | `docs/design/emergency-info-outbound-gate-spec-20260920.md` §8 末段「`grep -c bot_outbound config.py` = 0 ⇒ 没有旋钮可开」**已过时** | 规格席旧文 / 合流席 | 本席实跑 `grep -c "bot_outbound" config.py` = **8**（`:234-239` 六键 + `:244` 核验键 + `:1188` path_fields），且 `docs/config-catalog-full.md:846` 已登记（summary §十二-② 记录补录 5 行，提交 `53e8e7f`） | 文档漂移：现状=**键与旋钮都在，只缺接线** |

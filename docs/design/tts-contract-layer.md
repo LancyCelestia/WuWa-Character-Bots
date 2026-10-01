@@ -111,7 +111,7 @@ T29 审计后已有两批修复入树（18:33 批 + c723904/7c566f7），契约�
 | **seed** | int | 任意 int（`-1`=每请求随机重播种，`C:/Software/GPT-SoVITS-V2Pro/GPT_SoVITS/TTS_infer_pack/TTS.py:194-214`） | 见 seed_policy | **不再直配**；由 seed_policy 列派生（§2.3） | M-72 |
 | max_chars / auto_reply_max_chars | int | ≥0；**0=不限（不截断）** | `200` / `120` | 截断语义族收编入 §3 硬顶体系；rationale=「防超长拖垮推理+QQ 时长红线」，两值差异自本列起有出处 | M-14/M-35 |
 | timeout_seconds | float | ≥1.0（唯一既有钳制点保留） | `60.0` | 标量=逐操作 60s（最坏 180s）；预算语义归 S-10/deadline 中央件（本波不实施，登记） | T25 P3-1/M-36 |
-| auto_reply_probability | float | [0,1] | `0.05` | 唯一写了「为什么」的参数（防刷屏/防排队）；数字量化依据=U-03 挂账 | T25 §1#10 |
+| auto_reply_probability | float | [0,1] | `0.10`（2026-09-25 第 8 项裁定由 `0.05` 上调） | 唯一写了「为什么」的参数（防刷屏/防排队）；数字量化依据=U-03 挂账 | T25 §1#10 |
 | ref_pool | list | §2.4 素材清单 | `.env BOT_TTS_REF_AUDIOS` 现行 8 条 | 语料清单治理（M-28/M-69）载体：受控清单+校对状态列，`.env` 降为「用哪几条」 | M-28/M-69 |
 | output | path | runtime_paths 重映射（治 :473 CWD 兜底=M-52） | `data/tts_output` | owner=bot.tts、性质=可再生缓存（**U-04 仍待裁**，本表按 a 案=缓存成文） | M-27 |
 

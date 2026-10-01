@@ -64,7 +64,7 @@ flowchart LR
 - 第一次 CPU 采样为 `unknown/warming_up`；采集失败为 `unknown/source_unavailable`。恢复后重新预热。计数器回退为 `unknown/counter_reset`。
 - 只有一个有效采样窗口证明确实空闲才返回 CPU `0.0`，不会用零代替缺失数据。
 - 采集异常按字段隔离；不返回异常原文、路径、凭证或环境变量。psutil 不可用时 CPU 累计/差分仍可用，内存/线程/运行时长诚实降级。
-- 250ms 内复用最新快照，锁保证并发请求不争抢或重置 CPU 基线；返回深拷贝，调用方无法污染服务缓存。缓存仅一份，不随请求增长。
+- 复用最新快照（复用时窗以控制面真身常量为准），锁保证并发请求不争抢或重置 CPU 基线；返回深拷贝，调用方无法污染服务缓存。缓存仅一份，不随请求增长。
 - 为旧调用方保留顶层 `cpu_time_seconds`、`memory_bytes`、`cpu_percent` 和状态/原因字段。新前端应使用 `measurements`，显示 unknown 原因与单位。
 - 当前按需采样，无定时采样、资源历史归档或资源 SSE。`/protocol.services.resources.history=false`，不可将其画成已采集的历史曲线。
 

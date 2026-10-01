@@ -21,7 +21,7 @@
 ## 派生事实
 
 - 板块 / 二级功能 / 三级入口：10 / 58 / 164
-- 已认领 RouteKind / 帮助主题：37 / 82
+- 已认领 RouteKind / 帮助主题：37 / 83
 - 权威声明源：`plugins/bot_unified_runtime/domains/core/board_taxonomy.py`
 - 规范本体：[_conventions.md](_conventions.md)
 - 重算命令：`python scripts/board_doc_sync.py --write`（体检用 `--check`）

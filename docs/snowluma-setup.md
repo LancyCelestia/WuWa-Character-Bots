@@ -38,16 +38,23 @@
 > 该开关在 `config\runtime.json`，语义为「发现 QQ 进程即自动注入」（`autoLoadOnDiscovery`）；
 > 但本机同时挂着日常 QQ 时，开启它存在把日常 QQ 一并注入的风险，故保持关闭更稳妥。
 
-### 协议端能力边界（实测，2026-09-20）
+### 协议端能力边界（实测，2026-09-20 起；2026-09-27 补「资料面」五格）
 
 写在这里是因为这几条会直接改变 bot 侧的行为设计，不是排障项：
 
 | 项 | 实况 | bot 侧口径 |
 |---|---|---|
-| **主动贴表情只支持群消息**（修法=不发） | SnowLuma 对非群消息直接抛 `emoji reactions are not supported on private messages`（`index.mjs` 三处 `if (!meta.isGroup) throw`，实测该报错 36 次）。QQ 侧本就不存在私聊表情回应通道（OIDB `0x9082` 只有群消息形态），**不是换协议端造成的退化**，也不是需要兜的异常 | `domains/meme/reactions/engine.py` 的 `maybe_react_on_message` 在 `enabled/mid` 判定之后、进入五层门**之前**按 `_is_group_session(session_key)`（只认 `group_<gid>_<uid>`）拒掉私聊：绝不出 `set_msg_emoji_like`，不占每消息去重登记、不刷失败日志。锁死用例：`tests/test_reactions.py::test_private_session_never_calls_set_msg_emoji_like` |
-| 合并转发拉取会空返回 | 日志见 `[Bridge.Action] get_forward_msg failed: download forward message payload is empty`（实测 5 次） | 拉不到就当拉不到，既有降级路径不变；重复出现再评估是否要退到本地消息库 |
+| **主动贴表情只支持群消息**（修法=不发） | SnowLuma 对非群消息直接抛 `emoji reactions are not supported on private messages`（`index.mjs` 三处 `if (!meta.isGroup) throw`，实测该报错 `36` 次）。QQ 侧本就不存在私聊表情回应通道（OIDB `0x9082` 只有群消息形态），**不是换协议端造成的退化**，也不是需要兜的异常 | `domains/meme/reactions/engine.py` 的 `maybe_react_on_message` 在 `enabled/mid` 判定之后、进入五层门**之前**按 `_is_group_session(session_key)`（只认 `group_<gid>_<uid>`）拒掉私聊：绝不出 `set_msg_emoji_like`，不占每消息去重登记、不刷失败日志。锁死用例：`tests/test_reactions.py::test_private_session_never_calls_set_msg_emoji_like` |
+| 合并转发拉取会空返回 | 日志见 `[Bridge.Action] get_forward_msg failed: download forward message payload is empty`（实测 `5` 次） | 拉不到就当拉不到，既有降级路径不变；重复出现再评估是否要退到本地消息库 |
 | 戳一戳可用 | `[Bridge.Action] group_poke params=group_id=… user_id=…` 正常下发 | 无需改动 |
 | 单实例多账号 | 一个 SnowLuma 实例可挂多个号，但**每个号的默认节点端口会互相撞车**：新号自动生成 `http-default@3000` + `ws-default@3001`，与主号同名同端口 → `EADDRINUSE`，该号 OneBot 网络层起不来 | 给第二个号建节点时必须手工改端口（学校号用 3002）并删掉冗余的 `http-default`；只点「加载」不够 |
+| **改自己资料可用**（2026-09-27 真机） | `set_qq_profile(nickname, personal_note, sex)` → OIDB `0x112a`（昵称 fieldId 20002、签名 tag 102、性别 intProfile 20009）。实跑 `retcode 0`，`get_stranger_info` 读回新昵称与新签名，当日所在 8 个群的 `get_group_member_info` 全部回新昵称且 `card` 为空（＝群里显示的就是昵称本身，没被群名片盖掉） | bot 侧 `await bot.call_api("set_qq_profile", …)` 即可，零改造。**但 `get_login_info` 的自身身份缓存不随改动刷新**（实测改后仍回旧昵称，要重登才更新）⇒ bot 想知道「我现在叫什么」必须以人格册为唯一事实源，禁止读 `get_login_info` |
+| **改自己头像可用**（2026-09-27 真机） | `set_qq_avatar(file)` → `apis.profile.setAvatar` → 算 md5/sha1 → highway cmdId **90** 上传即生效，**没有第二步确认包**。`file` 四种形态（`loadBinarySource`）：本地绝对路径 / `file://` / http(s) URL（协议端自己下载，60s 超时）/ `base64://` 与 `data:…;base64,`；默认上限 1 GiB | 实跑 `retcode 0`，一分钟内公网 `q1.qlogo.cn/g?b=qq&nk=<号>&s=0` 即回新图。**别拿 sha256 等值当验收判据**——上传 800×800，CDN 回的是服务端重编码的 1080×1080，哈希必不等；按「尺寸＋肉眼看内容」判 |
+| 个性签名只有**一个**字段 | `set_qq_profile(personal_note=…)` 与 `set_self_longnick(longNick｜long_nick=…)` 写的是同一个 tag 102，不是「短签名/长签名」两回事（SnowLuma 自己在 `set_self_longnick` 的 summary 里就写「设置个性签名」） | 两条任选其一，别当成两个字段互相覆盖 |
+| **生日改不了** | 动作册 `ACTION_REGISTRY`（2026-09-27 现算枚数，编译期常量、以 `config-*.js` 为准）全文 `birthday` 零命中；`set_qq_profile` 只收 nickname/personal_note/sex 三参（go-cqhttp 那版有 birthday，这里没有） | 需要改生日只能人工在 QQ 客户端；bot 侧不许编「已改」 |
+| HTTP 节点可**脱离 bot** 直调 | 主号 `http-default` 监听 `127.0.0.1:3000`，鉴权＝`Authorization: Bearer <token>` 或 `?access_token=`（`isAuthorized` 两条都认，无 `X-Access-Token`）。`get_version_info` 实跑回 `1.14.19-node / v11` | 验协议面能力时走这条，不动 bot 进程、不占消息链路；令牌只在 `config\onebot_<QQ号>.json` 与 `.env.prod`，不写进文档不提交 |
+| **出站 `mface`（表情包）支持**（2026-09-29 bundle 只读探测，未发真消息） | 段方向册 `mface: {D,S,P,W 全 yes}`；发送段形状 `{"type":"mface","data":{"emoji_id",["emoji_package_id","summary","key"]}}`，**`emoji_id` 必须恰好 32 位 hex**（发送前校验不合形抛 `INVALID_FIELD` **整条拒发**连坐文字部件）；收侧 mface 元素投影为 image 段并挂同一枚 `data.emoji_id` ⇒ 收回来自成闭环。第二回路：`image` 段带 `emoji_id` 也被认回 market face。非标准扩展另有**收藏表情**族（`addCustomFace` 等，本地图可注册、返回 `<uin>_0_0_0_<MD5>_0_0` 形态 id）——今天不接（账号态写操作，未裁定）。全账见 HANDBOOK §56 | bot 侧 `onebot._mface_segment`/`_sticker_segment` 两级：可信原生 id ⇒ mface；否则真图 image 兜底＋`sticker_via_image_segment_fallback=true` 观测；**绝不自拼 emoji_id** |
+| **「原图」flag 不存在**（2026-09-29 bundle 探测） | OneBot v11 标准 image 段只有 `file/url/cache/proxy/timeout`；bundle 全文 `原图`/`pack_original` 零命中；`noByteFallback` 是**指纹秒传**不是原图，protoc 里 `original*` 字段发送侧不可设 | 糊/压归因＝QQ 服务端 CDN 重编码，bot 送的是原字节（发送链零重编码）；能力口径＝诚实，不许出现「已开原图」话术。全账见 HANDBOOK §56.4 |
 
 ---
 
@@ -55,7 +62,7 @@
 
 SnowLuma 对 `accessToken` 有强制校验（`assessAccessToken` → `@zxcvbn-ts/core`），**不满足直接拒绝保存**：
 
-1. 长度 **< 16 字符** → 判 `too-short`；
+1. 长度 **< `16` 字符** → 判 `too-short`；
 2. 通过后走 zxcvbn 打分，**score < 3** → 判 `guessable`。
 
 其 zxcvbn 只挂两张字典：`diceware-common`（EFF 7776 词）与 `passwords-common`（常见密码表），
@@ -72,7 +79,7 @@ SnowLuma 对 `accessToken` 有强制校验（`assessAccessToken` → `@zxcvbn-ts
 
 ### 更换 token 时先本地验证
 
-无需联网、无需 npm 装包——SnowLuma 的 `server-*.js` 第 6105–11627 行是自包含的 zxcvbn core + 词表 + checker 实例，
+无需联网、无需 npm 装包——SnowLuma 的 `server-*.js` 第 `6105–11627` 行是自包含的 zxcvbn core + 词表 + checker 实例，
 可截取后用 `new Function` 离线复现官方评分：
 
 ```javascript
@@ -200,7 +207,7 @@ NapCat 目录与配置**未被修改**，回滚只需三步：
 | 「进程」页看不到 QQ | QQ 是否真的在跑、是否以管理员/同权限启动、SnowLuma 是否以管理员启动 |
 | 注入后一直「等待登录」 | QQ 侧登录是否完成；必要时在「进程」页先「卸载」再重「加载」 |
 | bot 连不上 3001 | 先看 SnowLuma「日志」页 OneBot 是否有连接；再核对 token 逐字一致 |
-| 日志每 3 秒刷 `rejected unauthorized WebSocket upgrade` | 客户端令牌与节点令牌不一致：最常见是 `ws-default` 仍是自动生成的随机串，而 bot 用的是 `.env.prod` 里的旧值（改令牌前 bot 未重启、或节点令牌没改）。两边对齐后重启 bot 即消失 |
+| 日志每 `3` 秒刷 `rejected unauthorized WebSocket upgrade` | 客户端令牌与节点令牌不一致：最常见是 `ws-default` 仍是自动生成的随机串，而 bot 用的是 `.env.prod` 里的旧值（改令牌前 bot 未重启、或节点令牌没改）。两边对齐后重启 bot 即消失 |
 | 端口被占 | `netstat -ano \| findstr ":3001"` 反查 PID，确认残留的 NapCat / 旧 QQ 进程已退出 |
 | 日志出现 `[Bridge] session closed` → `[OneBot] session closed`，随后 QQ 进程消失 | QQ 被腾讯踢下线或客户端退出，见下方「被踢下线」 |
 
@@ -236,7 +243,7 @@ bot 侧语音出站（TTS 产物 wav → QQ 语音条）**零自有转码**：wa
 | 项 | 值 |
 |---|---|
 | addon 文件 | `C:\Software\SnowLuma\native\ffmpeg\ffmpegAddon.win32.x64.node` |
-| 体量 / 时间戳 | 6,511,104 B（≈6.5 MB），mtime 2026-09-15 |
+| 体量 / 时间戳 | `6,511,104 B`（≈`6.5 MB`），mtime `2026-09-15` |
 | 文件头 | `4d 5a`（MZ，PE/Windows DLL，与 win32.x64 命名一致） |
 | 内嵌版本串 | `Lavc61.19` / `Lavf61.7` ⇒ **FFmpeg 7.1 系库**（libavcodec 61.x），全量 ffmpeg_src 构建 |
 | dlopen 实证 | **待真机补证**：文件在位 ≠ 加载成功（VC 运行库/架构匹配未验证）。补证动作=真机发一条语音，验收挂 [acceptance-manual.md](acceptance-manual.md) §6.6.11 的 E/R 项（R1 形态即同时判定） |

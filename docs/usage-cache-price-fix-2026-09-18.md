@@ -9,12 +9,12 @@
 
 | 问题 | 根因 | 状态 |
 |---|---|---|
-| 「缓存创建」恒为 0 | 上游根本没上报这个字段。现链 4 个模型全走 OpenAI 兼容中转，该协议只有"缓存读"（`prompt_tokens_details.cached_tokens` / `prompt_cache_hit_tokens`），没有"缓存创建"概念；Anthropic 协议的 `cache_creation_input_tokens` 才会报 | 代码侧已如实标注，不再让人误读 |
+| 「缓存创建」恒为 0 | 上游根本没上报这个字段。现链（当日口径）`4` 个模型全走 OpenAI 兼容中转，该协议只有"缓存读"（`prompt_tokens_details.cached_tokens` / `prompt_cache_hit_tokens`），没有"缓存创建"概念；Anthropic 协议的 `cache_creation_input_tokens` 才会报 | 代码侧已如实标注，不再让人误读 |
 | `/bot model usage` 恒显示"命中 0，创建 0" | 诊断库（`runtime_diagnostics`）**根本没有缓存列**，缓存量只躺在 `audit_tags` 里没人读 | 已修（补列 + 从 tags 回填，旧库自动迁移） |
 | 报告逐模型行看不到缓存 | `build_report_text` / `/bot model usage` 的行文案只拼了「入 / 出」 | 已修（逐模型恒显式输出 缓存读 / 缓存建 + 总账命中率） |
 | 价格维护不上 | **两个价表互不相通**：导入脚本写的是模型注册表（`price_in/price_out/...`），账单读的是 `BOT_MODEL_PRICES`（默认空 dict）。导入一次也白导 | 已修（注册表成为单一来源，全链路合并） |
 | 缓存价配不进去 | `parse_model_prices` 只认 `input/output`；`/bot model price` 也只收这两个键 | 已修（新增 `cache_read` / `cache_creation` / `per_call`） |
-| 缓存命中率 4.2% | 见第四节：**提示词顺序不是主因**，主因是"前缀长度逐条漂移 + 大量一次性辅助调用" | 分析见下，改动待你决定 |
+| 缓存命中率 `4.2%`（当日实测） | 见第四节：**提示词顺序不是主因**，主因是"前缀长度逐条漂移 + 大量一次性辅助调用" | 分析见下，改动待你决定 |
 
 ---
 
@@ -39,7 +39,7 @@
 2. **历史对话不是独立消息，而是塞在 system 尾部的文本块。** 前缀缓存只缓存前缀，
    每次新追加的历史永远在后半段，一分钱缓存都吃不到。这是"两条消息"结构带来的结构性损失。
 3. **大量一次性辅助调用稀释了命中率。** 记忆抽取、反思、视觉描述、视频理解、知识库构建等
-   各自有独立的 system 提示词，彼此不共享任何前缀。全天 166 次调用 / 106 万输入 token，
+   各自有独立的 system 提示词，彼此不共享任何前缀。全天 `166` 次调用 / `106 万` 输入 token，
    平均 6.4K/次——说明大头是几次大上下文辅助调用，它们天然零缓存。
 4. **全仓没有发送任何缓存断点**（`cache_control` 零处）。走 Anthropic 协议的中转渠道
    （claude 系）不会自动缓存，必须显式打断点才有缓存。
@@ -65,11 +65,11 @@
 | `domains/ops/admin/runtime_admin.py` | `/bot model usage` 汇总缓存并逐模型显示；价格来源改为注册表合并；`/bot model price` 新增 `cache_read=` / `cache_creation=` / `per_call=` 三个键 |
 | `domains/chat_reply/capabilities/chat.py` | 记账时把缓存读/创建量一并计入成本（此前按全输入价高估）；`BOT_MODEL_PRICES` 改为**合并**进装配期价表，不再整表替换 |
 | `__init__.py` | 新增 `_assemble_model_prices`：装配期把模型注册表投影成价表，导入一次即全链路生效 |
-| `scripts/import_model_prices.py` | 价目表补齐（POTCCV sol/astra、GLM Coding 5 折）；网关兜底补 `deepseek-v4.1-flash`、`gpt-5.6-luna`；新增 `MODEL_ID_OVERRIDES`（同 host 渠道按 model_id 钉价）与 `--report`（列出未覆盖条目） |
+| `scripts/import_model_prices.py` | 价目表补齐（POTCCV sol/astra、GLM Coding 折扣以价目真身现算为准）；网关兜底补 `deepseek-v4.1-flash`、`gpt-5.6-luna`；新增 `MODEL_ID_OVERRIDES`（同 host 渠道按 model_id 钉价）与 `--report`（列出未覆盖条目） |
 
 **验证**：`ruff` 全过；相关测试 65 passed；全量离线 **8080 passed / 8 failed**——
-8 条失败全部与本次改动无关（`model_router._credential_config` 缺失、`docs/auto-facts.md` 漂移、
-memory_service / parsers / supervisor / lifecycle 各 1~2 条），均为并行批次在飞文件的既有问题。
+`8` 条失败全部与本次改动无关（`model_router._credential_config` 缺失、`docs/auto-facts.md` 漂移、
+memory_service / parsers / supervisor / lifecycle 各 `1~2` 条），均为并行批次在飞文件的既有问题。
 
 ---
 
@@ -84,7 +84,7 @@ cd C:/Users/LancyCelestia/Documents/MyWorkspace/ChatBot/ChatBot
 C:/Users/LancyCelestia/Documents/MyWorkspace/ChatBot/ChatBot_Runtime/venv/Scripts/python.exe scripts/import_model_prices.py --report
 ```
 
-`--report` 只列出**没有价目命中**的条目（会记未计价的那些）。当前实跑结果：**匹配 17 条，未覆盖 0 条**。
+`--report` 只列出**没有价目命中**的条目（会记未计价的那些）。命中/未覆盖条数以该命令现算为准（本次落盘时曾实跑一次，属当时值）。
 
 确认无误后实际写入：
 

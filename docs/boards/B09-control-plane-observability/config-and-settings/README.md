@@ -8,7 +8,7 @@
 > Config 单一入口、SETTABLE_KEYS/RESTART_REQUIRED_KEYS 与读取端点，以及危险参数改动的书面同意命令面（咽喉的四档裁决住 safety_exec）。
 
 - 归属板块：[B09](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/config.py`、`plugins/bot_unified_runtime/domains/core/config`、`plugins/bot_unified_runtime/runtime/settings.py`、`docs/config-catalog-full.md`
+- 实现落点：`plugins/bot_unified_runtime/config.py`、`plugins/bot_unified_runtime/domains/core/config`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/settings.py`、`docs/config-catalog-full.md`
 - 路由席位：`CONSENT`
 - 帮助主题：配置, 设置, 就绪, 书面同意
 

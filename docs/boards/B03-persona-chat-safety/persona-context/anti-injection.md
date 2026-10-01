@@ -26,10 +26,16 @@
   `InjectionAction.ALLOW / QUOTE_AS_UNTRUSTED / BLOCK`。
 - 提示词侧落地（同一事实的第二次防线，不重复判定语义、只做整形）：
   `capabilities/chat.py:_wrap_untrusted_context_block`（包裹）、
-  `_strip_injection_instruction_spans`（**句级**剥离，按 `_SENTENCE_SPLIT_RE` 切句后
-  只丢命中句，避免整行连坐正常内容）、`_sanitize_untrusted_context_text`
+  `_sanitize_untrusted_context_text`
   （把伪造闭合用的引用族标记全角化，防越界伪造块闭合）、
-  形态表常量 `_PROMPT_INJECTION_LINE_RE`。
+  `_strip_injection_instruction_spans`（**句级**剥离，按 `_SENTENCE_SPLIT_RE` 切句后
+  只丢命中句，避免整行连坐正常内容）与形态表常量 `_PROMPT_INJECTION_LINE_RE`。
+  ⚠ 后两者的**真身自 P1-b 收口波起住在 `security/injection.py`**
+  （`strip_injection_instruction_spans` / `has_injection_shape` / `_SENTENCE_SPLIT_RE`
+  / `_PROMPT_INJECTION_LINE_RE`），chat 侧只留指向同一对象的私有别名——判据全树
+  仅此一处定义，出现第二套即 `tests/test_atk_p1b_digest_sanitization.py` 判红。
+  群摘要腿的组合缝＝`character/shared_group.py:sanitize_digest_line`（剥句→全角，
+  整行皆指令则空进空出丢弃、不写占位），执法探针在册于 `AS-SECONDHAND-RETOLD`。
 - 命中后的用户可见出口：`capabilities/chat.py:injection_guard_message`（温和拒答池，
   会话内游标轮换）。
 - 依赖的中央件：文本边界只准走 `domains/core/text_boundary.py`；出站前打码走

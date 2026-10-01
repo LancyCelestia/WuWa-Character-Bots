@@ -6,7 +6,7 @@
 ## B03.content-safety · 亲密档位与双开关
 
 - 层级：一级 B03 → 二级 content-safety → 三级 `intimate-mode`
-- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/content_route.py`、`plugins/bot_unified_runtime/domains/chat_reply/security`
+- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/content_route.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/content_safety.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/memory_sanitize.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

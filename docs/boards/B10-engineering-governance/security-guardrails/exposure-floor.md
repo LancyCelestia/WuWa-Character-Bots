@@ -6,7 +6,7 @@
 ## B10.security-guardrails · 敏感信息不回传
 
 - 层级：一级 B10 → 二级 security-guardrails → 三级 `exposure-floor`
-- 实现落点：`plugins/bot_unified_runtime/domains/core/credentials`、`plugins/bot_unified_runtime/security`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/database_broker.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/core/credentials`、`plugins/bot_unified_runtime/domains/chat_reply/security/__init__.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/injection.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/display_guard.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/spoof_audit.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/database_broker.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

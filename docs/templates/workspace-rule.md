@@ -1,7 +1,7 @@
 <!-- @schema:BEGIN
 sections: 工作区规则 | 项目身份? | 目录地图? | 架构与消息主链路? | 功能清单? | 验证与门禁? | 已知问题台账? | 交接史与权威链?
 params:
-- rules_scope | text | literal | req | nonempty
+- rules_scope | text | auto:filename_stem | req | nonempty
 - owner_board | text | auto:category_owner_board | req | nonempty
 - enforce_gate | text | literal | opt | any
 @schema:END -->
@@ -17,13 +17,14 @@ params:
 ---
 template: workspace-rule
 params:
-  rules_scope: （必填）
-  owner_board: （必填）
+  rules_scope: auto:filename_stem
+  owner_board: auto:category_owner_board
   enforce_gate: （可省略）
 ---
 ```
 
-- `rules_scope` 写这份规则管哪个工作面；`owner_board` 写归属板块；`enforce_gate`（可省略）写执法它的那道门路径。
+- `rules_scope` 有真身来源（`auto:filename_stem`，由文件名主干现算，人手不碰数；空主干/占位符形 ⇒
+  `PROVIDER_FAIL`，绝不发明）；`owner_board` 由类别注册表现算；`enforce_gate`（可省略）写执法它的那道门路径。
 - 条款计数、域数、键数一律「以机器册为准」——与 G-T3 同尺，裸写必红。
 
 ## 骨架（新页照抄；机器段由 --write 注入，节名必须逐字等于 @schema sections）
@@ -53,6 +54,6 @@ params:
 ## @schema 字段语义（门侧口径）
 
 - `sections`：有序节序列，尾缀 `?`＝可选；必填缺失 / 表外节 / 顺序偏离各独立码。
-- `params` 五列 `key | kind | source | req | domain`（本模板全 `literal`，无现算参数）。
+- `params` 五列 `key | kind | source | req | domain`（`rules_scope`/`owner_board` 走现算 `auto:`，`enforce_gate` 为 `literal` 可省略）。
 - 渲染区 `{{fact:KEY}}` 的 KEY 必须在 params 内且被消费（否则 `DEAD_PARAM`）。
 - 字节确定性：LF 写盘、声明序、机器段零时间戳 ⇒ 两次 `--write` 字节相等。

@@ -6,7 +6,7 @@
 
 ## 一、实况：不是"两套完整实现"，而是**两套各自缺半边**
 
-| 面 | `data/draw_store.py`（641 行，**聊天能力在用**） | `domains/divination/store/draw_store.py`（419 行，**控制面 REST 在用**） |
+| 面 | `data/draw_store.py`（行数以该文件真身为准，**聊天能力在用**） | `domains/divination/store/draw_store.py`（行数以该文件真身为准，**控制面 REST 在用**） |
 |---|---|---|
 | 入口证据 | `domains/divination/capabilities/divination.py:40` import；`:443` 文档写明"注入 draw_store 即启用持久化"；`:636/:654` 真消费 | `plugins/bot_unified_runtime/control_plane/api/divination.py:47` import `store.draw_store.DrawError` |
 | **算法**（牌库索引/card_id 反查/牌库版本/发牌 PRNG/日程键） | ✅ **全**：`build_card_index:90`、`card_id_for:115`、`_compute_deck_revision:123`（sha256[:16]）、`validate_spread:181`、`SeededPrng:194`/`HmacPrng:225`（确定性可复现）、`daily_fortune_day_key:261` | ❌ 无，另抄了一份索引：`domains/divination/service/tarot_draw.py:51 build_card_index`、`:86 card_id_for`（牌库本体 `data.tarot.DECK` 是共用的，抄的是**构建与反查**） |

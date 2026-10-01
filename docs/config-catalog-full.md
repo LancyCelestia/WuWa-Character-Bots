@@ -19,9 +19,9 @@
    - 布尔：`true/false/1/0/yes/no/on/off/开/关/是/否`（热更转换器口径；dotenv 由 pydantic 解析）。
 3. **路径重定向**：模型校验器 `_resolve_runtime_data_paths` 把 `data`、`data/...` 前缀的路径统一解析到 `BOT_RUNTIME_DATA_DIR`（相对路径以项目根为基准拼接）。受影响的路径字段全集由 `config.py` 的 `path_fields` 列表定义，另有若干文件列表字段（**数量不在此手写**；此处曾核为 39 + 4，其后即过期）（`bot_persona_files`、`bot_knowledge_files`、`bot_trend_files`、`bot_glossary_files`）。
 4. **热更列（2026-09-20 CATALOG-FIX 三档制；白名单成员一律以代码为准，本文不抄成员与计数）**：
-   - **✅热更** = 该键在 `domains/chat_reply/runtime/settings.py:537 SETTABLE_KEYS` 内，`/bot runtime set` 可写且消费方现读 ⇒ 写了即生效；
-   - **🟡需重启** = 该键已登记同文件 `:333 RESTART_REQUIRED_KEYS`：`/bot runtime set` 拒写并提示需重启，改 `.env` 后重启生效；
-   - **❌无热改面** = 上述两表均未登记 ⇒ 白名单外 `set_override` 直接拒绝；未进合并层 `_RUNTIME_HOT_OVERRIDE_FIELDS`（`__init__.py:733-763`）者更是零消费面。改了不生效，须改 `.env` 并重启；
+   - **✅热更** = 该键在 `domains/chat_reply/runtime/settings.py::SETTABLE_KEYS` 内，`/bot runtime set` 可写且消费方现读 ⇒ 写了即生效；
+   - **🟡需重启** = 该键已登记同文件的 `RESTART_REQUIRED_KEYS`：`/bot runtime set` 拒写并提示需重启，改 `.env` 后重启生效；
+   - **❌无热改面** = 上述两表均未登记 ⇒ 白名单外 `set_override` 直接拒绝；未进根 `__init__.py` 的合并层 `_RUNTIME_HOT_OVERRIDE_FIELDS` 者更是零消费面。改了不生效，须改 `.env` 并重启；
    - 空白 = 历史写法，语义为「不在白名单」，正逐步并档到上两档。已知例外若干枚实测在 `SETTABLE_KEYS` 而列仍空白（**欠标，非假标**，清单见文末 F 节），本席按「只改被证伪的」边界未动。
    本列旧版有 35 处键级「可热更」断言被代码逐条证伪并已回标；判定方法与逐条账见文末 F 节。常驻门 `tests/test_doc_sync_gates.py` 只查「键有没有登记」、**不查本列真假** ⇒ 本文任何标记与代码冲突时以代码为准。
 5. **差异标注**：⚠️ = `.env.example` 样例值与 `config.py` 代码默认不一致（**以 config.py 为准**）；「.env 缺」= `.env.example` 未列出该键，实际生效代码默认。逐项汇总见第 E 节。
@@ -60,6 +60,7 @@
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
 | `BOT_PIPELINE_MAX_WORKERS` | int | `8` | 钳位 1..64 | | 聊天管线专用线程池 worker 数（管线检视 #4）：与默认线程池隔离，避免长任务挤占语音转码/kb 拉取等 to_thread；在途上限为 2 倍（含排队），超限快败记 `pipeline_busy` 审计 | |
+| `BOT_PIPELINE_CAPABILITY_HARD_TIMEOUT_SECONDS` | float | `400.0` | (0, 3600] 秒 | 🟡需重启 | 管线能力单次执行硬超时（超时改造 C1-a / 在册 M-4）：`offload_capability` 到点抛 `CapabilityTimeout` ⇒ 走 `_internal_error` 出统一诊断卡，能力挂死不再「白等到永远」。须严格大于 `BOT_REQUEST_BUDGET_SECONDS`，不足时消费点按「请求预算 + 60s」抬底并留 WARNING | 读点 `runtime/pipeline.py::_resolve_capability_hard_timeout_seconds`（池创建期缓存，同 `BOT_PIPELINE_MAX_WORKERS` 口径）；异常身份复用 `runtime/capability_protocols.py::CapabilityTimeout` |
 | `BOT_GENERATED_FILES_DIR` | str | `data/generated_files` | 路径 | | 聊天回复生成文件落盘目录（`sources/file_reader.build_generated_file` 消费） | data/ 重映射收口 |
 | `BOT_FILE_READ_MAX_CHARS` | int | `120000` | ≥0 | | 文件读取字符上限旋钮；当前源码内暂无读取点（仅 config.py 定义，预留） | |
 
@@ -198,7 +199,14 @@
 | `BOT_REPLY_GROUP_MAX_MESSAGES` | int | `0` | ≥0 | | 群聊回复条数上限 | |
 | `BOT_REPLY_RISK_MAX_MESSAGES` | int | `0` | ≥0 | | 风险场景条数上限 | |
 | `BOT_REPLY_MAX_CHARS_PER_MESSAGE` | int | `0` | 0=不限；热更时必须 ≥200 | ✅热更 | 单条消息字数上限 | 热更转换器 `_reply_chars_converter` |
-| `BOT_REPLY_DETAIL` | str | `auto` | `auto`/`detail`/`concise`（热更接受中文别名 详细/精简/默认） | ✅热更 | 回复详略：auto=知识类自动详尽，detail=2000~4000 字，concise=精炼（样例 detail ⚠️） | |
+| `BOT_REPLY_DETAIL` | str | `auto` | `auto`/`detail`/`concise`（热更接受中文别名 详细/精简/默认） | ✅热更 | 回复详略全局档；各档字数下限/上限唯一真身＝`chat.py:REPLY_LENGTH_TIERS`（本行不抄数值，抄一次过期一次——旧注释「detail=2000~4000 字」从未在判据里存在）（样例 detail ⚠️） | 被 `BOT_REPLY_POLICY_*` 的 per-user 永久策略覆盖 |
+| `BOT_REPLY_POLICY_ENABLED` | bool | `True` | true/false | ❌重启 | 永久性 per-user 回复策略总闸（2026-09-28 用户裁定：有人要长、有人说"字太多短一点"即长期生效）；关＝读与写整条不存在 | 唯一咽喉 `character/reply_policy.py:shared_reply_policy_store`；优先级＝当轮明示 > 永久策略 > `BOT_REPLY_DETAIL` > 缺省档 |
+| `BOT_REPLY_POLICY_DB_PATH` | str | `data/reply_policy.sqlite3` | 任意路径；`data/` 相对值经 runtime_paths 重映射 | ❌重启 | 策略库路径（表 `user_reply_policy`） | owner 登记见 `docs/db-owners.md`；store 懒建后进程级缓存，故非热更 |
+| `BOT_REPLY_POLICY_PERSON_ALIASES` | dict[str,str] | `{}` | JSON 对象串，形如 `{"<本人号>": "<并入的目标号>"}`（左＝号，右＝并入的目标号；样例已填真实号对 ⚠️，写法照本列单花括号抄，双花括号是模板转义残留、写进 `.env` 解析必失败） | ❌重启 | 同一人多号并键（2026-09-28 用户裁定）：让一个人的多个号共用**同一行**回复偏好。🔴 只并「偏好存到哪个键」，**不并权限**——提权/角色/同意判定一律不读本键 | 归并只在 `character/reply_policy.py:ReplyPolicyStore` 一处咽喉（`canonical_person_key`），旧号那行在首次读主号键时前移一次并删旧行、不留第二真身；渗锁 `tests/test_reply_policy_permanent.py::test_person_aliases_never_leak_into_privilege` |
+| `BOT_REPLY_DEFAULT_DIRECTIVES` | str | `literary_prose,imagery_rich` | 受控码或人话（`文学化`/`说人话`/`讲具体`/`铺意象`/`换意象`，逗号分号顿号竖线都认）；`off`/`none`/`关`/`不表态`＝不开 | ❌重启 | 默认讲法（2026-09-28 夜用户裁定「对没表过态的人：只回一段话，但要用自己的人格、世界观与意象来表达，别寡淡」）：只把**这个人没表态过的那一维**顶进提示词，本人明说过的永远优先 | 🔴 三态要分开：写成开⇒出指令；写成关⇒整块不渲染（与今天之前逐字节同形）；写成认不出的乱码⇒**也当没配**，绝不静默给全服派一份未知讲法。判据真身 `character/reply_policy.py::normalize_default_directives` 与补空维表 `_DEFAULT_SUPPRESSED_BY`；人话词表与 `/bot reply set` 共用 `_HUMAN_DIRECTIVE_WORDS`；读点 `reply_policy_section_for_turn`（现读装配期 config 快照，故列 RESTART）；锁 `tests/test_reply_style_imagery_default.py` |
+| `BOT_REACTIONS_SENTIMENT_ENABLED` | bool | `True` | true/false | ❌重启 | 贴纸语义匹配判定腿总闸（她点名「报喜却发委屈/大哭，不行」）：贴之前读 bot 本轮实际回复文本，由大模型判受控情感闭集再选贴 | 真身 `domains/meme/reactions/sentiment_selector.py`；判不了/超时＝整轮不贴 |
+| `BOT_REACTIONS_SENTIMENT_TIMEOUT_SECONDS` | float | `8.0` | >0 秒 | ❌重启 | LLM 情感判定超时预算（8s 量级＝宁可不贴也不拖慢下发） | 超时→`sentiment_unavailable` 可 grep 状态行 |
+| `BOT_REACTIONS_SENTIMENT_CACHE_TTL_SECONDS` | int | `120` | ≥0 秒 | ❌重启 | 同会话判定缓存 TTL，让表情腿与表情包腿共用一次判定（成本意识：只在要贴时才问） | 0＝每腿各问 |
 | `BOT_REPLY_DEFAULT_CONTEXT_BUDGET` | int | `2048` | ≥0（样例 8192 ⚠️） | | 默认场景上下文预算 | |
 | `BOT_REPLY_SUPPORT_CONTEXT_BUDGET` | int | `2560` | ≥0（样例 8192 ⚠️） | | 安抚场景预算 | |
 | `BOT_REPLY_DEEP_HELP_CONTEXT_BUDGET` | int | `3072` | ≥0（样例 12288 ⚠️） | | 深度帮助预算 | |
@@ -274,7 +282,7 @@
 | `BOT_SEND_QUEUE_WORKER_BATCH_SIZE` | int | `20` | ≥1 | | 每批处理条数 | |
 | `BOT_SEND_BOT_UNAVAILABLE_MAX_AGE_SECONDS` | float | `1800.0` | ≥0（秒） | | B-4：`bot_unavailable` 挂起回执的绝对年龄上限——入队超过该时长仍因 NapCat 断线不可投才置 `FAILED_FINAL`（防非终态行无限堆积） | 缺字段 = env 键被 pydantic 丢弃、旋钮恒默认 |
 | `BOT_TRANSPORT_TIMEOUT_SECONDS` | float | `15.0` | **(0, 600]**，拒绝负数/NaN/Infinity | ✅热更 | 发送层单请求硬超时（OneBot/Telegram/Mail 共用）；超时不自动重发正文；0/非法值在 .env 加载与热改两道入口均直接报错拒绝（无静默兜底），仅发送层读取路径在 provider 异常/取到非法值时防御性回退 15 | 校验器+热更转换器双重把关 |
-| `BOT_REQUEST_BUDGET_SECONDS` | float | `150.0` | **(0, 600]** | | 请求级总预算：单次聊天从 LLM/工具循环到发送共用单调 deadline；耗尽后不再发起新网络调用，群/频道静默，仅管理员收安全告警 | 传入 ModelRouter 作为 failover deadline 上界 |
+| `BOT_REQUEST_BUDGET_SECONDS` | float | `300.0` | **(0, 600]**（样例 90 ⚠️） | | 请求级总预算：单次聊天从 LLM/工具循环到发送共用单调 deadline；耗尽后不再发起新网络调用，群/频道静默，仅管理员收安全告警。2026-09-15 实弹由 150 抬到 300（五渠道链在 150s 内必然烧穿尾巴），旧值 150 已不是任何一侧的缺省 | 传入 ModelRouter 作为 failover deadline 上界；`BOT_PIPELINE_CAPABILITY_HARD_TIMEOUT_SECONDS` 须严格大于本键 |
 
 ### A11 情绪 / 心情 / 好感度 / 趋势 / 时间感知（键数以本节为准）
 
@@ -613,12 +621,14 @@
 |---|---|---|---|---|---|---|
 | `BOT_VISION_MODEL_REGISTRY` | dict[str,Any] | `{}` | JSON 注册表（模型/接口/密钥等条目） | | 识图模型注册表（预设名+注册表机制） | 与运行时 vision_registry 叠加（见 C 节） |
 | `BOT_VISION_ENABLED` | bool | `False` | | ✅热更 | 聊天图片/表情识别开关；启用**且**注册表有可用模型才调 VLM | |
-| `BOT_VISION_MODE` | str | `relay` | `relay`（视觉模型先转文字）/ `direct`（图片直传 tags 含 vision/multimodal/vlm 的主模型，失败只回退一次 relay） | ✅热更 | 识别模式 | direct 依赖主模型带视觉 tags |
+| `BOT_VISION_MODE` | str | `direct` | `direct`（图片直传 tags 含 vision/multimodal/vlm 的主模型，失败只回退一次 relay）/ `relay`（视觉模型先转文字）（样例 relay ⚠️） | ✅热更 | 识别模式；代码缺省 direct（主模型均 multimodal，direct 省一层调用） | direct 依赖主模型带视觉 tags |
 | `BOT_VISION_TIMEOUT_SECONDS` | float | `20.0` | >0 | | 识别超时 | |
 | `BOT_VISION_MAX_IMAGES` | int | `2` | ≥0 | | 单次识别图片数上限 | |
 | `BOT_VISION_MAX_CHARS` | int | `500` | ≥0 | | 识别描述字数上限 | |
 | `BOT_VISION_VIDEO_FRAMES` | int | `4` | ≥0（0 视同 1） | | 视频识别抽帧数：ffmpeg 均匀抽帧后单次 VLM 摘要 | |
-| `BOT_VISION_REPLY_PROBABILITY` | float | `1.0` | 0.0~1.0（.env 缺） | | 白名单1 群图片回复概率：1.0=发图即识别回应；0=仅 @ 时看图 | 配合群白1 策略 |
+| `BOT_VISION_CAPTION_CACHE_DB` | str | `data/vision_caption_cache.sqlite3` | SQLite 路径；空串＝关闭整件 | | 图片描述缓存库（按**图片内容 sha256** 命中，同图二次追问不再向 VLM 付费）。真身 `domains/media/registry/vision_caption_cache.py`；表 `vision_caption(sha256, caption, model, created_at, hits)` | 需重启才换库（实例按路径 memo 连接，见 `RESTART_REQUIRED_KEYS`）；落点经 `PATH_REMAPPED_FIELDS` 重映射到运行数据根（铁律 6）；库归属登记见 `docs/db-owners.md` |
+| `BOT_VISION_CAPTION_CACHE_TTL_SECONDS` | int | `86400` | 秒；≤0＝关闭缓存 | | 描述保留时长；`lookup` 命中即刷新 `hits`，过期行读时即删、写侧每 32 次顺带整体清理 | 需重启才改 TTL（同上烘进实例） |
+| `BOT_VISION_REPLY_PROBABILITY` | float | `0.004` | 0.0~1.0（`.env.example` 未列＝实际生效代码默认） | | 🔴 **本键已退役为判定输入**（2026-09-24 用户裁定：图片/表情包/视频类与文字接话用同一个概率）：缺省取自 `config.py::GROUP_PROACTIVE_REPLY_PROBABILITY`（与文字同源，禁两处各写一份数字），抽签实际只经 `domains/chat_reply/policy/gate.py::group_proactive_probability` 唯一读点取值 ⇒ 写本键**不改变任何行为**。想调视觉接话频率请改 `BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY`。旧文案把默认写成 1.0（＝发图即回应）既不等于代码缺省也无现役读点，属假旋钮口径 | 装配层与 pipeline 仍逐字节透传本值（字段删掉会炸构造函数），故在册但 inert；生产 `.env` 若残留 1.0 该行已失效、可删 |
 
 **以图搜图 SauceNAO（domains/media/capabilities/image_search.py + domains/media/search/sauce_search.py）**
 
@@ -788,7 +798,7 @@
 | `_media_archive_max_file_mb` / `_media_archive_daily_limit` / `_media_archive_per_message_limit` | `100` / `50` / `4` | 单文件上限（MB）/每日件数额度/单条消息件数上限 |
 | `_media_archive_summary_enabled` / `_media_archive_video_frames` | `true` / `5` | 聊天记录归档一句话 VLM 摘要开关 / 视频轻量抽帧数（ffmpeg） |
 | `_notes_enabled` / `_notes_db_path` / `_notes_max_per_chat` | `true` / `data/notes.sqlite3` / `200` | 笔记/备忘录（bot.notes）：Markdown 笔记+待办勾选+图片收纳；「做完了/完成了」自然语言勾选；db_path 走 runtime 重映射 |
-| `_time_sync_enabled` / `_time_sync_servers` / `_time_sync_max_drift_ms` | `true` / `ntp.aliyun.com,cn.ntp.org.cn,pool.ntp.org` / `1500` | 联网授时（bot.timesync）：NTP 校准提醒/调度时间基准（不改系统钟，全服务器超时回退系统钟+告警） |
+| `_time_sync_enabled` / `_time_sync_servers` / `_time_sync_max_drift_ms` | `true` / `ntp.aliyun.com,cn.ntp.org.cn,pool.ntp.org` / `1500` | 联网授时（bot.timesync）：NTP 校准提醒/调度时间基准（不改系统钟，全服务器超时回退系统钟+告警）。⚠ 1500 是**单源**可信上限：一家之言超此即拒收；TS-CONSENSUS（2026-09-29）另开一条互证出口——≥2 家**独立供应商**（`_vendor_key` 折到 host 末两节，不是数端点；同家两个子域不算两家）、簇**直径** ≤1.0s（HTTPS `Date` 的一个量化步长）、每枚往返 ≤0.5s（不被建连耗时污染）、中位数 ≤60s 时按中位数采纳，并用 warning 提示"去把系统时间同步打开"；因为旧形态把"本机钟本来就偏 1.6s"钉成永远修不好（离线现算：偏 1.4s 可校、偏 1.6s 起永久失败）。TS-SOCKET 同日修：默认套接字工厂必须显式 `SOCK_DGRAM`——`socket.socket()` 缺省是 TCP，UDP/123 的 SNTP 腿因此静默超时，注入替身的单测全绿而生产从未校成过一次 NTP |
 | `_error_card_enabled` / `_error_card_cooldown_seconds` / `_error_card_stack_frames` | `true` / `60` / `8` | 统一错误报告卡（bot.error_card）：能力异常回云母诊断卡（方法/栈摘录/脱敏配置/版本/协议/IDs/运行时长+求助指引）；同会话冷却防刷屏 |
 | `_render_max_concurrency` / `_render_wait_budget_ms` | `1` / `0` | 渲染 Phase 2：后端并发信号量上限 / 单卡等待预算（超预算纯文本兜底）；0=预算不生效；解锁建议 2 / 1500（性能席实测 warm P50 −64%） |
 | `_reactions_enabled` / `_reactions_probability` / `_reactions_cooldown_seconds` / `_reactions_max_per_hour` | `true` / `0.2` / `30` / `20` | 表情回应（bot.reactions）：识别 QQ(SnowLuma)/TG 贴纸回应注入上下文+主动贴表情；概率/冷却/时限三重防刷屏门。**主动贴表情只支持群消息，私聊一律不派发**——QQ 侧本就没有私聊表情回应通道（**非迁移退化**），SnowLuma 对非群消息直接拒（详见 snowluma-setup.md §1 能力边界） |
@@ -796,7 +806,7 @@
 | `_reactions_meme_enabled` / `_reactions_meme_probability` / `_reactions_meme_cooldown_seconds` / `_reactions_meme_daily_max` | `true` / `0.15` / `120` / `6` | 双层表情·第二层（B 线 2026-09-16）：情绪信号命中且第一层未贴 → 意图匹配表情库 VLM 情绪标签加权抽图小概率发送；独立冷却/每日上限/每小时帽（沿用 `_reactions_max_per_hour`）/C1 悲伤门；互斥=同消息先贴后包 |
 | `_market_enabled` / `_market_timeout_seconds` / `_market_cache_seconds` | `true` / `6.0` / `60.0` | 全球股指能力（东财 17+MOEX ISS，18 指数） |
 | `_stocks_enabled` / `_fx_enabled` | `true` / `true` | 个股行情/汇率路由开关（已落 config.py `bot_stocks_enabled`/`bot_fx_enabled`，.env `BOT_STOCKS_ENABLED`/`BOT_FX_ENABLED` 可关；base_router getattr 读取） |
-| `_commodities_enabled` / `_bond_enabled` / `_northbound_enabled` | `true` / `true` / `true` | 商品（COMEX 金银铜+WTI）/国债收益率/北向资金路由开关。2026-09-21 补键：`base_router.py:364/378/388` 一直 getattr 读这三个名而 Config 无字段 ⇒ 补键前三路 `.env` **完全关不掉**；缺省 True 与补键前逐字节同行为。owner：`base_router` 谓词 + `capabilities/market.py` |
+| `_commodities_enabled` / `_bond_enabled` / `_northbound_enabled` | `true` / `true` / `true` | 商品（COMEX 金银铜+WTI）/国债收益率/北向资金路由开关。2026-09-21 补键：`base_router.py:364/378/388` 一直 getattr 读这三个名而 Config 无字段 ⇒ 补键前三路 `.env` **完全关不掉**；缺省 True 与补键前逐字节同行为。owner：`base_router` 谓词 + `domains/finance/capabilities/market.py` |
 | `_market_retry_on_empty` | `true` | 东财空响应受控重试（限流返回空 JSON 时单次重试+0.6s 退避；真异常不重试；仍空→诚实降级不缓存） |
 | `_randpic_enabled` / `_randpic_dirs` / `_randpic_trigger_words` / `_randpic_max_file_mb` | `true` / `[]` / `[]` / `20` | 随机图：只读用户自定义文件夹（**必须配 `_randpic_dirs`**，JSON 字符串数组），绝不自建目录 |
 | `_poke_enabled` / `_poke_private_cooldown_seconds` / `_poke_group_cooldown_seconds` / `_poke_probability` / `_poke_admin_bypass` / `_poke_reply_enabled` / `_poke_poke_back` / `_poke_group_text` / `_poke_private_text` | 见 config.py | 戳一戳统一分发：回戳（NapCat 扩展 API，失败静默）/话术/冷却/概率。**热改面 2026-09-20 CATALOG-FIX 改口**：本行 9 键无一在 `SETTABLE_KEYS` ⇒ 旧文「除 `_poke_admin_bypass` 外 8 键均可热更 ✅」为假。🟡需重启（`RESTART_REQUIRED_KEYS` 在列）8 键＝`_poke_enabled`/`_poke_private_cooldown_seconds`/`_poke_group_cooldown_seconds`/`_poke_probability`/`_poke_reply_enabled`/`_poke_poke_back`/`_poke_group_text`/`_poke_private_text`；`_poke_admin_bypass` ❌无热改面（两表均未登记）。**2026-09-16 用户裁定：`_poke_poke_back` 缺省 false→true（回戳进五件套）** |
@@ -816,7 +826,7 @@
 | `_tts_ref_audios` | `[]` | 参考音频清单，元素格式 `"路径\|参考文本\|语种"`（如 `"ref/shorekeeper_01.wav\|……\|zh"`）；**必须配**，空=能力返回"缺参考音频"降级文案。约束：3~10 秒干声、单人单情绪、参考文本与音频逐字一致。走 `_parse_file_list` 校验器（不可走 id_list，含 `\|` 与中文逗号） |
 | `_tts_trigger_words` | `[]` | 追加触发词（与内置 `说/语音/念/朗读/tts/say`+拼音词合并）；触发词后须跟正文才命中，裸触发词交回人格对话 |
 | `_tts_output_dir` | `data/tts_output` | 合成 wav 落盘目录（走 runtime 重映射，DATAFIX 收口）；同参数命中 sha256 缓存则复用 |
-| `_time_sync_http_enabled` / `_time_sync_http_url` | `true` / 空（内置 `https://www.baidu.com,https://www.taobao.com,https://www.qq.com`） | HTTPS 授时兜底（R3 停摆批 2026-09-17）：UDP 123 被墙、NTP 全败后 HEAD 取 RFC 7231 `Date` 头估偏移（1s 粒度 +0.5s 量化居中，θ=server−(t0+t3)/2）；失败链 NTP→HTTPS→系统钟每级一行日志；复用 `_time_sync_max_drift_ms` 钳制与 RTT 上限；仅收 `https://` 端点，url 逗号分隔可换 |
+| `_time_sync_http_enabled` / `_time_sync_http_url` | `true` / 空（内置 `https://www.baidu.com,https://www.qq.com`） | HTTPS 授时兜底（R3 停摆批 2026-09-17 立）：当时把它讲成"UDP 123 被墙"，**2026-09-29 实测该端口通**（`ntp.aliyun.com`/`cn.ntp.org.cn`/`pool.ntp.org` 互差 <0.01s）、真凶是 NTP 腿用了 TCP 套接字 ⇒ 本腿定位是"NTP 真的被拦时才用"，不是现役主源；HEAD 取 RFC 7231 `Date` 头估偏移（1s 粒度 +0.5s 量化居中，θ=server−(t0+t3)/2；⚠ 建连整段落在采样窗内 ⇒ 慢链路会把偏移虚报，2026-09-29 实测 3s 建连就能把分毫不差的钟报成超限并拒收）；失败链 NTP→HTTPS→多源互证→系统钟每级一行日志，回退告警带上本轮各源读数；复用 `_time_sync_max_drift_ms` 钳制与 RTT 上限；仅收 `https://` 端点，url 逗号分隔可换。内置表 2026-09-29 移出 taobao（其 `Date` 实测自错 −62.5s，像边缘缓存值不是钟），只留两家**不同供应商**——互证那一级怕的正是同家两台一起错伪造共识 |
 | `_tts_preset` | `shorekeeper` | 语音预设选择（G-2 契约层 2026-09-20，**合成参数唯一缺省源**=`domains/media/tts_presets.py` 中央预设表：带每参数 rationale/引擎域值/seed_policy/读法词典占位/八硬编码收编，其中 `split_bucket=False`=M-76 死意图显式化）；枚举成员=TTS_PRESET_IDS（装载期即拒未知值，与注册表键集一致性由 `tests/test_tts_presets.py` 锁）；下方 `BOT_TTS_*` 数值键降级为管理员覆盖（env 显式值 > preset；v1 预设值=本表缺省值，零行为变更；U-13 周期后收敛） |
 | `_tts_max_chars` | `200` | 单次合成文本上限（超出按句末截断，静默无用户面提示——audit_tags `truncated=true` 留痕）；**`0`=不限（不按字数截断，M-35 语义反转修死，全仓 `*_MAX_CHARS=0 表不限` 惯例自此在 TTS 域成立）**；「不限≠无界」——必过 `_tts_hard_max_chars` 中央硬顶 |
 | `_tts_hard_max_chars` | `2000` | 文本中央硬顶（G2-R3）：超顶=拒绝合成+OperationalIssue 留痕（`tts_service_rejected`+audit `over_hard_cap`）+引导文案，**不静默不拆条**（拆条归 H 波 M-63 修后）；`0`=禁配无界（取内置常量 2000）；自动配音路超顶=静默放弃增益 |
@@ -847,16 +857,26 @@
 | `_schedule_delivery_max_retries` | `3` | 投递失败退避重试上限（指数退避 1/2/… 分钟起；超限置 `delivery_failed` 终态；计数进程内存记账，重启归零随 reconcile 重分流） |
 | `_schedule_exceptions_path` | `data/schedule_exceptions.json` | 调休/节假日例外表 overlay（JSON；随包模板 `domains/schedule/data/calendar_exceptions.json` 先载、本文件同键覆盖）。**年份不在表=unknown 不猜**：只有显式登记的 holiday/workday 才改变 `follow_calendar` 标签实例的投递，unknown 照常投递但回执如实标注 |
 | `_persona_versioned_injection` | **`false`** | 人格核心注入走版本库（V21-PERSONA-001 装配接线，`domains/chat_reply/character/persona_service.py`）：True=chat 链人格核心从 `data/persona_versions.sqlite3` 取（幂等 baseline 灌入→`build_core_injection` 唯一出口，带 version+sha256 溯源；托管 active 指针在场不抢）；False（默认保守灰度）=文件直读路径逐字节不变；任何故障（灌入失败/库空/损坏隔离/全损）fail-open 回退文件路径+一行告警，绝不阻塞消息链。owner：`domains/chat_reply/character/persona_injection.py` |
-| `_file_export_via_queue` | **`false`** | S0 直连收编④（v21r4-b2-direct-collect-plan §3.4，实施席 S0-ROOT-c）：文档导出上传改走统一管线 `CapabilityResult.files` 件→`FileTransferGateway`（群 upload_group_file/私聊 upload_private_file，平台方法面与直连一致）；成功/失败文案由回执态驱动。缺省 False=旧直连逐字节等价，重启生效 |
-| `_group_welcome_via_queue` | **`false`** | S0 直连收编②（§3.2）：入群欢迎语改走统一管线文本件（capability=bot.group_welcome，SENT/REDIRECTED 才记 group_welcome_sent）；与 `_group_welcome_enabled` 双门串联，任一关即不发。缺省 False=旧直连逐字节等价，重启生效 |
-| `_cookie_qr_via_queue` | **`false`** | S0 直连收编③（§3.3）：cookie 登录二维码图片改走统一管线 mixed 件（text=""+image，file:/// 引用与直连段同构；失败静默，文本兜底先行不变）。缺省 False=旧直连逐字节等价，重启生效 |
-| `_cookie_expiry_reminder_via_queue` | **`false`** | S0 直连收编①（§3.1）：cookie 到期每日提醒改走 `_deliver_due_reminders` 提醒范式（SendRequest→SendQueue→内联投递，SENT 才算送达）；dedupe_key/request_id 带本地日期=当日幂等（治同日重复触发重复打扰）；管理员换人重试语义与直连等价。缺省 False=旧直连逐字节等价，重启生效 |
+| 🔴 `_file_export_via_queue`（**已退役，不是 Config 字段**） | 无（`config.py` 零命中） | 2026-09-19 S0-ROOT-c 曾把它做成「门开才走管线」的开关（v21r4-b2-direct-collect-plan §3.4 直连收编④），**2026-09-24 裁定 R-4 已连开关带关态直发分支一并从生产根删净** ⇒ 文档旧写法「默认值 `false`／缺省 False＝旧直连逐字节等价／重启生效」是假旋钮：`Config` 无 `bot_file_export_via_queue` 字段，加上 `extra='ignore'` 后 `.env` 写它等于没写，拨它不改变任何行为。现役唯一路径＝`_send_files_through_unified_pipeline`（`CapabilityResult.files` 件→`FileTransferGateway`，群 upload_group_file/私聊 upload_private_file，成功/失败文案由回执态驱动）。退役判据登记＝`domains/core/decision/outbound_registry.py` 的 DirectSendEntry（该点判 ABSORBED，note 明写「四枚 `*_via_queue` 键在 config.py 零命中」）；本节标题「逐键对 config.py 核实」对本行**不适用**，保留本行只为可溯 |
+| 🔴 `_group_welcome_via_queue`（**已退役，不是 Config 字段**） | 无（`config.py` 零命中） | 同上退役（R-4，收编②）：本键已无字段、无读点，写它不生效；现役唯一路径＝`_send_text_through_unified_pipeline`（capability=bot.group_welcome，SENT/REDIRECTED 才记 group_welcome_sent）。**仍在册的真旋钮是 `_group_welcome_enabled`**（`config.py` 有字段），要关入群欢迎语改那枚、不是本枚。判据登记同 `outbound_registry.py` DirectSendEntry |
+| 🔴 `_cookie_qr_via_queue`（**已退役，不是 Config 字段**） | 无（`config.py` 零命中） | 同上退役（R-4，收编③）：写它不生效；现役唯一路径＝`_send_parts_through_unified_pipeline`（mixed 件 text=""+image，`file:///` 引用由 onebot `_resolve_local_file_ref` 显式解析，失败静默、文本兜底先行不变）。判据登记同 `outbound_registry.py` DirectSendEntry |
+| 🔴 `_cookie_expiry_reminder_via_queue`（**已退役，不是 Config 字段**） | 无（`config.py` 零命中） | 同上退役（R-4，收编①）：写它不生效；现役唯一路径＝`_deliver_cookie_expiry_report_via_queue`（SendRequest→SendQueue→内联投递，SENT 才算送达，dedupe_key/request_id 带本地日期＝当日幂等）。**每日提醒的真开关是 `_cookie_expiry_reminder_enabled`**（`config.py` 有字段，2026-09-21 幽灵读点补键批落地，此前 job 永远注册关不掉）。判据登记同 `outbound_registry.py` DirectSendEntry |
 | `_cookie_expiry_reminder_enabled` / `_divination_fortune_secret` / `_video_deep_cooldown_seconds` / `_subscription_outbox_sent_retention_days` / `_subscription_seen_retention_days` / `_subscription_outbox_max_attempts` / `_subscription_outbox_sending_stale_seconds` | `true` / `''` / `300` / `0` / `0` / `0` / `0` | **幽灵读点补键批（2026-09-21，`tests/test_config_read_points_declared.py` 执法）**：代码一直 `getattr(config, "bot_…", 缺省)` 读这七枚名而 `Config` 无字段 ⇒ 读出来永远是缺省、`.env` 写了也不生效（`extra='ignore'` 连报错都没有）。逐枚缺省**等于原 getattr 缺省** ⇒ 补键当笔现网零行为变更，只是把"假旋钮"变成真旋钮。典型咬痕：cookie 到期提醒 job 此前**永远注册关不掉**；运势 HTTP 面 `fortune_secret` 恒空 ⇒ 永久不启用；订阅 outbox 四枚保留期/重试参数（读点是 `or` 链，0 恒回退模块常量）。owner：`__init__.py` 提醒 job / `domains/divination/{api/facet,store/draw_store}.py` / `domains/chat_reply/capabilities/chat.py` / `domains/subscribe/sources/subscription_store_v2.py` |
 | `_outbound_gate_enabled` | **`false`** | 中央出站防风暴闸总开关（B4-spec §1，真身 `domains/transport/sender/outbound_gate.py::submit_active_push`）：False=直通 `send_queue.submit`，零判定、零 store 读写=现状字节级不动；聚合域（紧急信息等）主动投递**只允许**经此闸触达队列。2026-09-22 统一波（WAVE42 裁定件 `.superpowers/sdd/2026-09-21-unify-wave/decisions/WAVE42-active-push-central-exit.md`）：每日群摘要 / 日常助理两族主动投递已改道本闸（关态＝与裸 `submit` 同形 passthrough，线上零变更）。仍直调 `send_queue.submit` 的族清单以结构锁 `tests/test_outbound_gate.py::test_existing_families_still_submit_directly` 与 `tests/test_outbound_bypass_prohibition_gate.py` 的豁免表为准（本处不手写族数）；旧口径为「存量族只登记不迁移」（当时值，见 `docs/design/emergency-info-unify-summary-20260919.md` §十） |
 | `_outbound_gate_quiet_defer_enabled` 与 `_outbound_gate_urgent_severities` | `true` 与 `["P0","P1"]` | 仅 enabled=True 时生效：非紧急等级在安静时间窗内顺延到窗结束，P0/P1 穿静默（D-2 裁定映射）。窗判定唯一事实源=`domains/chat_reply/policy/quiet_hours.py` 的 `QuietHoursSettings`，**闸内不自造 HH:MM 解析**（T13 锁）；顺延执行用队列原生 `deliver_after` 原语（`queue.py:418-438`），不建第二张 delay 表 |
 | `_outbound_gate_max_per_target_per_minute` 与 `_outbound_gate_max_per_target_per_hour` | `2` 与 `6` | 每主体（键=`target_scope:target_id`）60s 与 3600s 双滑窗上限，超限=defer(now+60s)。**热改语义（B8-MERGE 实证后收紧，勿按字面理解成"写了就生效"）**：闸本体支持 callable 设置源（`outbound_gate.py:137/:324` 每次判定实时求值、求值失败回退缺省关闭），但装配 builder 现在走 `getattr(裸 config)` 快照（`:725-730`）且合并层 `_RUNTIME_HOT_OVERRIDE_FIELDS` 未登记本族键 ⇒ `/bot runtime set` 写了不生效，**七键一律入 `domains/chat_reply/runtime/settings.py:333 RESTART_REQUIRED_KEYS`**（改后需重启）；接线时补登记两行后方可把这两键回白名单（不复刻台账#3「SQLite 限流不支持热改」旧坑的**终态**目标不变）。**与入站 chat 限流是两个对象**：入站真值见 `_rate_limit_chat_*`（代码缺省 60/6/4 + 45s 最小间隔，生产实值取 `.env`），旧口径「每主体 3/分钟·20/小时」只属于**未接线**的日程 v2 引擎（`schedule_service.py:152-153`），不得描述现役生产 |
 | `_outbound_gate_db_path` | `data/outbound_gate.sqlite3` | 闸自身计数 store（单表 `outbound_gate_sends(subject_key, sent_at_utc)`，确定性样板抄 `schedule_send_log`）；**已进 `path_fields` 重映射**（`config.py:1188`，runtime_paths 铁律 6）。store 故障=fail-open 放行 + error 日志 + `outbound_gate_degraded` 告警，**绝不因闸病丢消息**（T4 方向锁） |
 | `_outbound_verify_enabled` | **`false`** | 送达核验 Tier1/Tier2 开关（治「谎报送达」，B4-spec §3.2 与其 §8 Amendment）：开启后 ①发送前摘段丢弃会在 SENT 回执挂 `segment_dropped_local` 审计注记（观测日志本身无条件出，只记类型名零正文）；②装配期给 `drain_send_queue_once` 传 UNKNOWN 段确认器。**一律不改 `ReceiptState`**（枚举冻结锁用例在 `tests/test_delivery_verification_tier1.py`，改判=重投风暴）；Tier2 的「明确不存在→False」被 `_ONEBOT_GET_MSG_NOT_FOUND_PROVEN=False` 取证锁钉成生产不可达，SnowLuma `get_msg` 语义真机取证前不参与重投判定。缺省 False=现状逐字节 |
+
+| `_reply_policy_enabled` / `_reply_policy_db_path` | `true` / `data/reply_policy.sqlite3` | **2026-09-28 §51 波（per-user 永久回复策略）**：总闸关＝读写整条不存在（唯一咽喉 `character/reply_policy.py::shared_reply_policy_store`，装配层 `chat.py` 用 `content_route_config` 快照懒建、进程级按路径缓存 ⇒ 非每请求现读）；db_path 走 runtime 重映射。**热改位＝两枚均 RESTART**（合并表 `_RUNTIME_HOT_OVERRIDE_FIELDS` 未登记）。全行权威见回复域表（`BOT_REPLY_POLICY_*`）。owner 登记见 `docs/db-owners.md` |
+| `_reactions_sentiment_enabled` / `_reactions_sentiment_timeout_seconds` / `_reactions_sentiment_cache_ttl_seconds` | `true` / `8.0` / `120` | **2026-09-28 §51 波（贴纸语义匹配判定腿）**：贴前读 bot 本轮实际回复由大模型判受控情感再选脸；判定腿真身 `domains/meme/reactions/sentiment_selector.py`，engine/capability 调用点直读 Config 快照，合并表未登记本族键 ⇒ `/bot runtime set` 写进去也到不了判据。**热改位＝三枚均 RESTART**。全行权威见回复域表（`BOT_REACTIONS_SENTIMENT_*`） |
+| `_chat_rate_limit_redrive_max_wait_seconds` / `_chat_rate_limit_redrive_max_attempts` | `270.0` / `3` | **2026-09-28 限流补回窗（chat 入站）**：`build_redrive_settings` 从 Config 烘进 `RuntimePipeline` 构造（`policy/rate_limit.py`），装配期一次定值、非合并层实时读 ⇒ **热改位＝两枚均 RESTART**。全行权威见限流域表（`BOT_CHAT_RATE_LIMIT_REDRIVE_*`）；`_redrive_enabled` 早于本波在册 |
+| `_control_plane_files_roots` | `""`（空） | **2026-09-28 F-1 根修（控制面文件读取根白名单）**：`/api/v1/files/read` 据装配期快照构造 `FileReadGateway`（`control_plane/api/platform.py::read_file` 的 `getattr` 字面直读），空⇒503 诚实拒绝绝不回落 cwd；敏感子树/后缀常驻拒读。**热改位＝RESTART**（合并层未登记）。全行权威见控制面文件域表（`BOT_CONTROL_PLANE_FILES_ROOTS`）；锁 `tests/test_control_plane_files_read_scope.py` |
+| `_emergency_info_quiet_breach_levels` | `P0,P1` | **2026-09-28 静默窗源级穿窗表（紧急信息域）**：能力构建期 `getattr` 现读 Config 快照（`capabilities/emergency_info.py`，烘进 frozen 快照 `quiet_breach_levels`），与族级地板取交、只收窄不放宽；紧急十键族整体两表皆不登记，本枚由别席按现算补进 RESTART（同域装配期快照口径）。全行权威见紧急信息表 |
+| `_chat_native_tools_enabled` | **`false`** | **2026-09-29 复原波补登（原生工具调用总门，第 19 项 T1「A-6」）**：唯一读取口 `domains/core/search/native_tools.py::native_tools_enabled`，判据 `getattr(config, KEY, None) is True`——**只认严格 True**，配成字符串 `"true"` 也判关（fail-closed：读不到＝没开）。开＝把中央在册表 `runtime.capability_protocols.CAPABILITY_DESCRIPTOR` 的只读子集投影成 OpenAI `tools` 数组（同件 `build_native_tool_schemas`）交 chat 既有工具循环消费；写侧/权限/出站/自指回路面恒在 `WRITE_OR_PRIVILEGED_DENYLIST` 拒绝清单，往白名单塞写类能力即装配锁红。**⚠ 今天装配腿未接**：`domains/chat_reply/capabilities/chat.py` 不 import 本件（施工图 `.superpowers/sdd/2026-09-27-fullload/patches/G19R-T1-chat-wiring.patch.md`）⇒ 拨它不改任何现网行为，别当成「开了模型就能自己查天气」。🟡需重启（`RESTART_REQUIRED_KEYS` 在列、`SETTABLE_KEYS` 未登记；读点是调用方交来的装配期快照）。锁 `tests/test_native_tools.py` |
+| `_person_profile_enabled` | **`false`** | **2026-09-29 复原波补登（会话画像整链总门，需求 11 线）**：两处读取口同一判据 `getattr(config, …, False)`——`domains/chat_reply/character/person_profile.py::build_person_profile_store`（建库）与同件 `compose_person_profile_context`（渲染）。关＝返回 `None` 且**连库文件都不碰**（写侧 `domains/chat_reply/character/memory_extract.py::_settle_person_profile` 见 `profile is None` 连画像件都不 import ⇒ 缺省关态逐字节不变）。开＝还要 `bot_memory_db_path` 非空、建出的 store `available` 才真生效，抽取到的事实按 `person_profile_key(sender_id, platform_domain)` 现算键落进**记忆库同库**（不另起 db 文件）的画像表族（facet / 言行事件 / 审计 / 墓碑）。**⚠ 现网只写不读**：渲染出口 `compose_person_profile_context` 生产侧零调用方（只在本件 `__all__` 与 `tests/test_person_profile_memory.py` 出现）⇒ 开本门只把画像写进库，不会进提示词。🟡需重启（`RESTART_REQUIRED_KEYS` 在列；热 set 改不动已按 db_path 懒建的进程级 store 缓存） |
+| `_person_profile_max_items` | `6` | **2026-09-29 复原波补登（画像取数条数上限）**：唯一读点在 `domains/chat_reply/character/person_profile.py::compose_person_profile_context`，往下交给同件 `render_profile` ⇒ 一次夹住渲染的两段：`facets(key)[: max(1, n)]`（「关于你」条目）与 `search_events(…, limit=n)`（「你交代过、我留着的话」言行）。缺省 `6` 逐字等于模块常量 `_DEFAULT_MAX_ITEMS`，读式 `int(入参 or 本键 or 该常量)` ⇒ **⚠ 配 `0` 回落 6，不是「一条都不给」**；要收窄最低写 `1`（渲染侧 `max(1, …)` 夹形，永不为 0）。与 `_person_profile_enabled` 同病：只作用在渲染腿，该腿今天无生产调用方。🟡需重启（每次渲染现读快照，合并层未登记） |
+| `_person_profile_max_chars` | `520` | **2026-09-29 复原波补登（画像注入文本字符预算）**：与 `_person_profile_max_items` 同口读入（缺省 `520` 逐字等于模块常量 `_DEFAULT_MAX_CHARS`），交给 `domains/chat_reply/character/person_profile.py` 内的预算裁剪 `_budget`：预算取 `max(40, int(n))`——总长在预算内＝整段原样拼接；超限＝**从尾部逐行丢**（先丢结尾免责行，再丢言行段，最后才轮到画像条目），并如实追加「（另有 N 条没列出）」，**绝不静默截断**（静默截断＝谎报）。**⚠ 两个边界**：配 `0` 经 `or` 链回落 520（不是「无限制」）；配 1~39 一律被夹成 40（最小可读段）。🟡需重启（同上） |
 
 ### 控制面 v1 已登记 Config 字段（后端第一切片）
 
@@ -875,7 +895,7 @@
 | `bot_control_plane_features_file` | `data/control_plane_features.json` | 旧功能状态 JSON 的单次导入源；SQLite 已有状态时不覆盖，原 JSON 保留。显式旧工具配置仍可使用 JSON 兼容存储。 |
 | `bot_control_plane_super_admin_token_sha256` | 空 | 独立超管 Bearer 的 SHA-256 摘要；空值禁用写操作；与只读摘要相同也禁用写操作。不通过配置 API 返回或修改。 |
 
-**非 Config 键（getattr 防御式读取，未入本表字段域）**：`BOT_LLM_BILLING_ENABLED`（计费账本，默认关）。控制面监听键已进入上表 Config 字段域。
+**非 Config 键（getattr 防御式读取，未入本表字段域）**：本条已清空。`BOT_LLM_BILLING_ENABLED` 此前属本形态（读点幽灵），2026-09-26 批已在 `config.py` 补上真字段 `bot_llm_billing_enabled`，登记见文末「欠账批次补录」X6 节。控制面监听键已进入上表 Config 字段域。
 
 ## B. 「LLM 引擎七必配键」专节
 
@@ -1071,16 +1091,16 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 ## F. 热更列复核记账（2026-09-20，CATALOG-FIX 席）
 
 **做了什么**：把本册「热更」列与同句内的可热改叙述按代码**逐键自验**，只改被证伪的，统一成三档标记
-（定义见开头使用说明「热改面三档」条见开头「档位记号」段：✅热更／🟡需重启／❌无热改面）。**没有**为省事把证伪项一律降级为「需重启」——
+（三档定义见本文「0. 通用规则」第 4 条：✅热更／🟡需重启／❌无热改面。**本册没有「使用说明」也没有「档位记号」段**——旧指针指向的是不存在的锚点，已改指实际定义处）。**没有**为省事把证伪项一律降级为「需重启」——
 🟡 与 ❌ 按「是否已登记 `RESTART_REQUIRED_KEYS`」分开记账，真 ✅ 与真可热更键条目保持原样（枚数以节内现算为准）。
 **本节及图例不写行号**：行号随增删漂移（本席插入图例已使后文整体 +5），检索请用键名或节名。
 
 **判据（每键三问，静态解析、零 import 插件包）**
 
-1. 键名 ∈ `plugins/bot_unified_runtime/domains/chat_reply/runtime/settings.py:537 SETTABLE_KEYS`？ → ✅
-2. 否则 ∈ 同文件 `:333 RESTART_REQUIRED_KEYS`？ → 🟡
+1. 键名 ∈ `plugins/bot_unified_runtime/domains/chat_reply/runtime/settings.py::SETTABLE_KEYS`？ → ✅
+2. 否则 ∈ 同文件的 `RESTART_REQUIRED_KEYS`？ → 🟡
 3. 两表皆无 → ❌（`set_override` 白名单外直接抛 `ValueError`；再看是否落在合并层
-   `plugins/bot_unified_runtime/__init__.py:733-763 _RUNTIME_HOT_OVERRIDE_FIELDS`（实测条数见当席报告），
+   根 `plugins/bot_unified_runtime/__init__.py::_RUNTIME_HOT_OVERRIDE_FIELDS`（实测条数见当席报告），
    落在其中的即「读侧空转臂」）。
 
 **复跑口径**：AST 抽取上列三个符号 + 逐行比对第 5 列，探针在 `%TEMP%/catalog-fix/probe_c6b.py`（一次性件，不入库）；
@@ -1093,7 +1113,7 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 |---|---|---|---|
 | 主表（行数以本节为准） | `BOT_MODEL_SCHEDULE`、`BOT_WEB_SEARCH_PROVIDER`、`BOT_WEB_SEARCH_FALLBACK_PROVIDERS`、`BOT_CONTENT_VIDEO_AUTO_SEND`、`BOT_VIDEO_MAX_FRAMES`、`BOT_VIDEO_SKIP_ASR_WITH_SUBTITLE`、`BOT_VIDEO_NATIVE_INPUT`、`BOT_VIDEO_PROGRESS_ACK_ENABLED`、`BOT_VIDEO_FUZZY_FOLLOWUP`、`BOT_VIDEO_DEEP_ENABLED`、`BOT_RENDER_FORWARD_MIN_CHARS`、`BOT_RENDER_FORWARD_MIN_NODES`、`BOT_RENDER_FORWARD_MAX_NODES`、`BOT_RENDER_FORWARD_NODE_CHARS`、`BOT_GROUP_CHAT_AUTO_REPLY_ENABLED`、`BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY`、`BOT_GROUP_PROACTIVE_MAX_REPLIES_PER_HOUR`、`BOT_GROUP_PROACTIVE_COOLDOWN_SECONDS`、`BOT_SHARED_GROUP_CONTEXT_ENABLED` | ✅热更 | 🟡需重启（`RESTART_REQUIRED_KEYS` 在列、`SETTABLE_KEYS` 未登记） |
 | 主表 | `BOT_GROUP_WELCOME_ENABLED` | ✅热更 | ❌无热改面（两表均未登记） |
-| 主表 | `BOT_DAILY_ASSIST_ENABLED`、`BOT_DAILY_ASSIST_PUSH_USER_IDS` | ✅热更 | ❌无热改面（合并表 `__init__.py:757/:759` 在列而写拒＝读侧空转） |
+| 主表 | `BOT_DAILY_ASSIST_ENABLED`、`BOT_DAILY_ASSIST_PUSH_USER_IDS` | ✅热更 | ❌无热改面（合并表 根 `__init__.py::_RUNTIME_HOT_OVERRIDE_FIELDS` 在列而写拒＝读侧空转） |
 | C 节 `_poke_*` 行 | poke 族键组 / `_poke_admin_bypass` | 「除 admin_bypass 外均可热更 ✅」 | 🟡需重启 / ❌无热改面 |
 | C 节 `_shared_group_context_enabled` 行 | 同键 | ✅热更（SETTABLE_KEYS） | 🟡需重启 |
 | C 节 群摘要名单行 | `_group_digest_list_mode`/`_whitelist`/`_blacklist` | 「运行时 store 可热改」 | 🟡需重启（同族 `_push_enabled`/`_push_time` 为 ❌） |
@@ -1110,7 +1130,7 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
   孰真需读 `domains/chat_reply/policy/rate_limit.py` 消费面才能判 ⇒ **保留原文，进未决**（本席不为凑数改口）。
 
 **防再漂（建议，不在本席实现）**：见 `docs/design/link-unification-audit-20260920.md` §8 G-2
-（`tests/test_config_hot_reclaim_consistency.py`：打 ✅ 的键必须 ∈ `SETTABLE_KEYS`，双向负样本自检；
+（建议件真身已另名落地 = `tests/test_config_hotchange_consistency_gate.py`（2026-09-27 核：在册门 `test_catalog_hot_claims_are_backed_by_settable_list`/`test_catalog_restart_claims_are_not_already_hot`/`test_hot_change_lists_are_disjoint`），原文拟名 `test_config_hot_reclaim_consistency.py` 从未存在；判据=打 ✅ 的键必须 ∈ `SETTABLE_KEYS`，双向负样本自检；
 `SETTABLE ∩ RESTART == ∅`；`_RUNTIME_HOT_OVERRIDE_FIELDS − SETTABLE_KEYS` 必须 ⊆ 显式豁免清单）。
 
 
@@ -1123,6 +1143,7 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 | `BOT_EMERGENCY_INFO_AUTO_APPROVE_SOURCES` | list[str] | `[]` | 源 id 子集（同上四真身） | ❌无热改面（两表均未登记；消费方是装配期烘进快照的 `auto_approve_sources` 字段） | 权威源入库自动过审（用户裁定 D-8(a)） | 名单命中的源入库即 `approved`（`reviewed_by=auto:authoritative_source`），其余仍 `pending` 走人工；空名单=整机制关闭＝逐字节旧行为。✅曾经是真死键（快照不搬、`ReviewGate(store)` 裸构造），WIRE-L2 起经 `build_review_gate` 唯一构造口接线并有端到端证据；合法值同样只认 `SOURCE_ID` 真身，写成模块名会静默不命中 |
 | `BOT_EMERGENCY_INFO_POLL_INTERVAL_SECONDS` | int | `300` | >0 秒 | ❌无热改面（⚠️**「建议热改」为假**：值先烘进 frozen 快照（`domains/emergency_info/capabilities/emergency_info.py:124-126`），再在装配期一次性钉进 APScheduler interval job（`__init__.py:9014-9023` `scheduler.add_job(..., "interval", seconds=source.poll_interval_seconds, misfire_grace_time=...)`）；全树无 reschedule/remove 该 job 的面 ⇒ 即便登记白名单写了也不改轮询节奏） | 采集轮询间隔 | 非法值按缺省 300（`_positive_int`）。另被装配期快照复用为新鲜度窗 `max_age=3×间隔`（`__init__.py:8931-8933`）；改 `.env` 重启生效 |
 | `BOT_EMERGENCY_INFO_MIN_LEVEL` | str | `P2` | P0..P3（EmergencyLevel 字面） | ❌无热改面（⚠️**「建议热改」为假**：装配期解算成局部闭包变量一次即定（`__init__.py:8934-8938` `min_rank = EmergencyLevel(source.min_level).rank`，`ValueError` → `None`），此后每轮投递只读该闭包旧值（`__init__.py:8995`）；键本身两表均未登记） | 投递最低等级门槛 | 非法值按缺省处理＝不拦档（D-3：不建第二套枚举，快照「只搬运不校验」`domains/emergency_info/capabilities/emergency_info.py:121-123`）。改 `.env` 重启生效 |
+| `BOT_EMERGENCY_INFO_QUIET_BREACH_LEVELS` | str | `P0,P1` | P0..P3 逗号分隔（非法 token 由 `_level_tokens` 弃置；全空⇒兜回代码缺省 {P0,P1}） | ❌无热改面（装配期烘进 frozen 快照 `quiet_breach_levels`，`domains/emergency_info/capabilities/emergency_info.py:201-204` 读点；root 传参→`grading.may_breach_quiet_window_intersects_floor` 取交判据） | 静默窗源级穿窗表 | **与族级地板取交、只收窄不放宽**（源表配成 `P0,P1,P2,P3` 也架空不了地板）；缺省覆盖全族地板⇒落键当天行为逐字节不变。改 `.env` 重启生效 |
 | `BOT_EMERGENCY_INFO_PUSH_GROUP_WHITELIST` | list[str] | `[]` | 群 id，`*`=显式全群 | ❌无热改面（两表均未登记、合并层未登记） | 群**硬推**腿（可选，不再是装配门） | 2026-09-20 裁定 3.B：装配门缩为 总闸∧有源，本键不再参与判定。名单里的群每轮收全部过 `min_level` 地板的条目、**不受订阅条件约束**；日常按群按条件推送请用群内「紧急信息 订阅 …」（落 `emergency_subscriptions`、每轮现读、当轮生效）。缺省空=这条腿不存在。`*` 只在投递侧按显式全群处理，读侧通配不等于知道有哪些群 |
 | `BOT_EMERGENCY_INFO_PUSH_USER_IDS` | list[str] | `[]` | QQ id 列表 | ❌无热改面（两表均未登记、合并层未登记） | 私聊**硬推**腿（可选，不再是装配门） | 同上一条：降级为可选硬推目标，不受订阅过滤。个人级订阅请在私聊里说「紧急信息 订阅 …」（超管/管理员可设，形态与群内一致） |
 | `BOT_EMERGENCY_INFO_REVIEWER_IDS` | list[str] | `[]` | QQ id 列表 | ❌无热改面（两表均未登记、合并层未登记 ⇒ 写不进去）。**本键消费形态最特殊**：查询读侧每次调用现场重建快照现读 config（`domains/emergency_info/capabilities/emergency_info.py:364` → `:110`），装配侧的 `review_surface_enabled` 则一次定（`:120`） | 审核人名单（不参与装配门） | 空=审核面关闭：料可入库但永远投不出去（安全缺省态）。⚠️旧「装配期快照」对读侧不成立；若日后登记进 `SETTABLE_KEYS`＋合并层，读侧可近瞬时生效而装配侧仍需重启——不要按整族一刀切标热更 |
@@ -1177,3 +1198,193 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 | `BOT_AFFINITY_Z_HARD_BOUND` | float | `0.985` | (0,1) | ❌同上 | tanh 饱和域硬边界 | 越界即钳制 ⇒ score 永不触 ±100，八档边界不再跳变 |
 | `BOT_AFFINITY_QUALITY_WEIGHTS` | str | `""` | JSON（w1..w5） | ❌同上 | 质量分五子信号权重 | 空/非法=按代码缺省并点名一次，不静默猜 |
 | `BOT_AFFINITY_DECAY_TAU_DAYS` | str | `""` | JSON（stable/seasonal/episodic） | ❌同上 | 衰减时间常数 | 同上 |
+
+## 欠账批次补录（2026-09-23~26 各波落键、本日入册，S-FIX-CATALOG 席 2026-09-27）
+
+> 本节逐枚补录 2026-09-27 清点时欠账的 69 枚 `bot_*` 字段：全部已在 `config.py` 落地、`.env.example` 已列激活键，唯独本目录漏登（覆盖门 `tests/test_doc_sync_gates.py::test_config_catalog_covers_config_fields` 红转绿的清偿面）。
+> 逐枚「类型/缺省」取自 `config.py` 字段声明现值，「作用」摘自字段注释与生产消费点实证（不凭键名猜语义）；「热更」列按 `domains/chat_reply/runtime/settings.py` 的 `SETTABLE_KEYS`/`RESTART_REQUIRED_KEYS` 两表现读判定（判定方法见 §0 第 4 条）。
+> 安全声明沿用头部铁律 3：`BOT_AXONHUB_DB_PASSWORD` 等密钥类键只写占位，本目录从未读取真实 `.env`。
+
+### X1 慢回复先行回执（bot.chat_progress_ack 族，选项 C 波登记）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_CHAT_PROGRESS_ACK_ENABLED` | bool | `False` | true/false | 🟡需重启 | 慢回复先行回执总闸（2026-09-23 用户裁定）：真回复仍在跑，先补一句守岸人口吻的等待短句；开启与否按会话走四名单（下方四枚）。装配期读一次，热改当轮不生效——与调度器族同口径（台账 #3 P3） | `domains/chat_reply/runtime/progress_ack.py` |
+| `BOT_CHAT_PROGRESS_ACK_DELAY_SECONDS` | float | `15.0` | >0 秒 | 🟡需重启 | 判定"慢"的固定阈值：能力在此时间内出结果就什么都不发，不发第二条、也不撤回（2026-09-23「15 秒内出结果时不发」）。自适应开启时被下方三枚接管 | 同上 |
+| `BOT_CHAT_PROGRESS_ACK_COOLDOWN_SECONDS` | float | `60.0` | ≥0 秒 | 🟡需重启 | 同一会话两次回执的最小间隔，防刷屏；**只在回执真发成功时占用额度** | 同上 |
+| `BOT_CHAT_PROGRESS_ACK_GROUP_WHITELIST` | list[str] | `[]` | 群 id 列表（id-list 写法） | 🟡需重启 | 群聊白名单：**空 = 群聊整面关闭（绝不猜群）** | 同上 |
+| `BOT_CHAT_PROGRESS_ACK_GROUP_BLACKLIST` | list[str] | `[]` | 群 id 列表 | 🟡需重启 | 群聊黑名单：**永远赢**过白名单 | 同上 |
+| `BOT_CHAT_PROGRESS_ACK_PRIVATE_WHITELIST` | list[str] | `[]` | QQ id 列表 | 🟡需重启 | 私聊白名单：**空 = 私聊放开**（刻意不对称，同 `BOT_CONTENT_ROUTE_*` 族口径） | 同上 |
+| `BOT_CHAT_PROGRESS_ACK_PRIVATE_BLACKLIST` | list[str] | `[]` | QQ id 列表 | 🟡需重启 | 私聊黑名单（最高优先） | 同上 |
+| `BOT_CHAT_PROGRESS_ACK_ADAPTIVE_ENABLED` | bool | `True` | true/false | 🟡需重启 | 回执阈值随网关当下快慢浮动（2026-09-25 裁定：中转站一慢就必触发、误报太多）。开=按「链上各跳 EWMA 延迟 × 倍率」抬高质量阈值并夹在 floor~cap 之间；**关=逐字节回到固定 `..._DELAY_SECONDS`** | 同上 |
+| `BOT_CHAT_PROGRESS_ACK_DELAY_FLOOR_SECONDS` | float | `50.0` | >0 秒（样例 30 ⚠️） | 🟡需重启 | 自适应下限：网关很快时也不早于此值发回执。沿革 15→30（2026-09-26）→**50**（2026-09-29 需求项 6 落进用户口径区间 45~60：现网实测 p50=35.7s、p75=68.9s，地板 30 时过半正常轮会白说一句）。缺省常量唯一真身=同文件 `DEFAULT_ACK_DELAY_FLOOR_SECONDS`，本键与它由 `tests/test_progress_ack_thresholds.py` AST parity 锁现场比对 | 同上 |
+| `BOT_CHAT_PROGRESS_ACK_DELAY_CAP_SECONDS` | float | `60.0` | >0 秒（样例 90 ⚠️） | 🟡需重启 | 自适应上限：网关再慢也不能让用户无限期等不到一句提示。2026-09-29 由 90 收到 **60**（同一裁定要求「结果落在 45~60 区间」，上限 90 会把慢网关的阈值推出区间） | 同上 |
+| `BOT_CHAT_PROGRESS_ACK_LATENCY_MULTIPLIER` | float | `3.0` | >1 倍率（样例 2.0 ⚠️） | 🟡需重启 | 阈值 = 链上**最慢一跳**的 EWMA × 此倍率（取最慢一跳而非当值一跳：回执压的是整轮，检索+联网+LLM 任何一路慢都可能是本轮走的那条）。2026-09-29 由 2.0 抬到 **3.0**：2.0 档下现网慢跳 13.7s 派生 27.4s 恒被地板压住、自适应腿形同虚设 | 同上 |
+
+### X2 折句窗口（bot.chat_message_coalescing 族，登记 2026-09-25 裁定波）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_CHAT_MESSAGE_COALESCING_ENABLED` | bool | `True` | true/false | 🟡需重启 | 折句窗口（2026-09-25 用户裁定）：一句话按逗号拆成两三条发时合成一轮、只回一次。只有「本身像半句话」的消息才会等下一条，**完整句子零额外延迟** | `domains/chat_reply/runtime/message_coalescing.py` |
+| `BOT_CHAT_MESSAGE_COALESCING_MAX_HOLD_SECONDS` | float | `8.0` | >0 秒 | 🟡需重启 | 封顶等待：有人逐字蹦也必须在这时开口，绝不允许一直不回。⚠ 同族曾有「停口窗口」`_quiet_seconds` 一枚**已于 2026-09-27 乙案退役删除**（唯一真身=`message_merge.MERGE_WINDOW_SECONDS` 3s、装配层每轮无条件覆盖，该键系「在册永不算数」的死口）——勿再找那枚键 | 同上 |
+| `BOT_CHAT_MESSAGE_COALESCING_MAX_MESSAGES` | int | `6` | ≥1 条 | 🟡需重启 | 一轮合成最多收编几条消息（越限即封口输出） | 同上（`getattr` 缺省回 `defaults.max_messages`） |
+| `BOT_CHAT_MESSAGE_COALESCING_MAX_CHARS` | int | `1500` | ≥1 字 | 🟡需重启 | 一轮合成文本的字符上限（越限即封口输出） | 同上 |
+
+### X3 限流补回（chat_rate_limit_redrive 族，2026-09-25 裁定第 2 项）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_CHAT_RATE_LIMIT_REDRIVE_ENABLED` | bool | `True` | true/false | 🟡需重启 | 被限流挡下的「明确找我说话」消息改为期后补回，不再静默吞掉（裁定第 2 项：冷却与条数帽把消息吃掉了；「可以延后，不可以丢弃」） | `domains/chat_reply/policy/rate_limit.py` + `policy/redrive_ledger.py`（同人多条被拦消息排开回位） |
+| `BOT_CHAT_RATE_LIMIT_REDRIVE_MAX_WAIT_SECONDS` | float | `270.0` | >0 秒（样例 180 ⚠️） | 🟡需重启 | 最多延后多久补回；还要等更久的**不弃**，改排到最近可用槽（2026-09-28）。270 = 6×点名间隔缺省 45s：连发 6 条 @bot 排得下（上一档 180 只容 5 条，第 6 条起仍被静默吞）；180 = 4×间隔那档的历史理由仍在（连发 5 条装得下） | 同上 |
+| `BOT_CHAT_RATE_LIMIT_REDRIVE_MAX_ATTEMPTS` | int | `3` | ≥1 次（样例 1 ⚠️） | 🟡需重启 | 一条消息最多补回几次，防重放循环。2026-09-28 由 1 抬到 **3**：单次补回仍被限流挡住的形态（同人多条挤同一间隔）此前直接丢弃；上限 3 足够覆盖 6 条连发且不放大刷屏 | 同上 |
+
+### X4 群聊节奏层（rate_limit_group_pacing 族，2026-09-24 T7 波）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_RATE_LIMIT_GROUP_PACING_TOKENS_PER_HOUR` | int | `60` | ≥0；0=整层关 | 🟡需重启 | 令牌桶每小时补充 x 句（治「开局瞬间打光后整段静默」：旧滑动小时窗 2 分钟打光 30 句、随后静默 58 分钟；节奏层把最坏静默压到 3600/x 秒）。0 = 整个节奏层不生效（含分钟帽与最小间隔） | `domains/chat_reply/policy/rate_limit.py`；经装配期 settings_provider 每轮现读**本 Config 值**，但键未进热改合并层（根 `__init__` 冻结、禁插行）⇒ 改 `.env` + 重启 |
+| `BOT_RATE_LIMIT_GROUP_PACING_BURST_CAPACITY` | int | `5` | ≥1 | 🟡需重启 | 桶容量 B = 开局可连发句数（"绝不瞬间打光"的红线；T6 建议值 5 起步） | 同上 |
+| `BOT_RATE_LIMIT_GROUP_PACING_MAX_PER_MINUTE` | int | `3` | ≥0；0=不设 | 🟡需重启 | 节奏层分钟外骨架（她自己的口径"每分钟 3 句"） | 同上 |
+| `BOT_RATE_LIMIT_GROUP_PACING_MIN_INTERVAL_SECONDS` | int | `20` | ≥0 秒；0=不设 | 🟡需重启 | 群非点名两句之间的最小间隔。情绪/好感豁免**只免这类间隔**，不免桶与帽 | 同上 |
+| `BOT_RATE_LIMIT_GROUP_VISION_MIN_INTERVAL_SECONDS` | int | `120` | ≥0 秒；0=不设 | 🟡需重启 | 图片/表情包/视频类**自己的**独立最小间隔：与文字并入同一个桶，另加这道更宽的间隔（2026-09-24 裁定采纳） | 同上（资源归属登记见 `domains/core/capability_resource_ownership.py`） |
+
+### X5 亲密档 L1 自动腿（content_route 族，2026-09-24 裁定 R1 A）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_CONTENT_ROUTE_L1_AUTO_ENABLED` | bool | `True` | true/false | 🟡需重启 | 亲密档浅档（L1）自动腿总闸：好感度达标的用户自动进浅档——**只给关系语气，绝不换模型**（换模型只由显式开/管理员钉/内容信号触发，判据唯一住 `content_route._MODEL_SWITCH_SOURCES`） | `domains/chat_reply/runtime/content_route.py` 的 `_knobs()`（每次判定现读传入的 config）；键未进合并层 ⇒ 需重启 |
+| `BOT_CONTENT_ROUTE_L1_AUTO_MIN_TIER` | int | `1` | 好感档号 | 🟡需重启 | 自动腿门槛：好感度**档号**达到该档及以上才自动进浅档。档号真身住 `character/affinity.py` 的 `_ATTITUDE_TIERS`（取数口 `attitude_tiers()`），本目录不抄档位表；缺省对应「亲近」（id=+1），调高=更严、调到最低档号=对全体建档用户开放、负得离谱等于关（另有上一行总闸） | 同上 |
+
+### X6 LLM 计费账本与网关归因（B5 M1 / B1，2026-09-25 批）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_LLM_BILLING_ENABLED` | bool | `False` | true/false | 🟡需重启 | 计费账本总开关。此前只以 `_ENABLED_CONFIG_KEY` 常量名住在 ledger.py、Config 无字段 ⇒ `extra="ignore"` 把 `.env` 值静默丢掉（「写在 .env 却永远关不上/打不开」，读点幽灵登记项已销账）。关 = 与历史行为逐字节一致（不建库、不写行） | `domains/chat_reply/llm_engine/ledger.py`（`ledger_enabled`）+ `llm_engine/model_router.py` |
+| `BOT_AXONHUB_ATTRIBUTION_ENABLED` | bool | `False` | true/false | 🟡需重启 | 网关归因（B1）：bot 侧注册表只指向 AxonHub、看不见网关内部实际选了哪条上游渠道，也拿不到缓存创建 token 与四项分项价。开=由**账本写线程**按响应体 id（== requests.external_id，实测关联键）去网关库只读反查并回填；刻意不放回复路径（要等网络，挂回复前=拿延迟换报表） | `domains/chat_reply/llm_engine/axonhub_attribution.py` |
+| `BOT_AXONHUB_DB_HOST` | str | `""` | 主机名/IP | 🟡需重启 | 只读账号连接面。host/user 任一空 ⇒ `from_config` 直接返回 None（fail-closed，不存在"看着开了其实没连"） | 同上 |
+| `BOT_AXONHUB_DB_PORT` | int | `5432` | 端口 | 🟡需重启 | 网关库端口 | 同上 |
+| `BOT_AXONHUB_DB_DATABASE` | str | `axonhub` | 库名 | 🟡需重启 | 网关库库名 | 同上 |
+| `BOT_AXONHUB_DB_USER` | str | `""` | 只读角色名 | 🟡需重启 | 必须用只读角色（本机已建 `axonhub_ro`，仅五张表 SELECT）：账本侧对网关库零写需求，给写权限=把故障半径扩到她的生产网关 | 同上 |
+| `BOT_AXONHUB_DB_PASSWORD` | str | `""` | 密钥（占位 `env:`） | 🟡需重启 | 只读账号口令。**真实口令只在 `.env`（铁律 3），代码零硬编码**；本目录只写占位 | 同上 |
+| `BOT_AXONHUB_ATTRIBUTION_TIMEOUT_SECONDS` | float | `3.0` | >0 秒 | 🟡需重启 | 单批反查超时：到点就放弃这一批、标 unavailable，绝不拖慢落库 | 同上 |
+
+### X7 表情包子系统（goal-12 波，2026-09-25）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_MEME_LIBRARY_VLM_FALLBACK_FIRST_PRESET` | bool | `True` | true/false | 🟡需重启 | 打标 VLM 预设名落空时退到注册表里真实存在的第一组。现网实况：`.env` 把 `BOT_MEME_LIBRARY_VLM_PRESET` 写成空串、注册表只有 myvlm 一组，旧实现两侧都取不到 ⇒ 打标静默不跑 ⇒ 库里的图全没标签（表现是「选图像随机」）。**关=逐字节回旧行为**；注册表真为空时两档都不打标（不猜端点） | `domains/meme/sources/meme_library_listener.py` |
+| `BOT_MEME_SHOREKEEPER_ABSORB_ENABLED` | bool | `True` | true/false | 🟡需重启 | 自动吸收「主体是守岸人」的贴纸：VLM 主体判定命中中央别名（`personas/shorekeeper/aliases.txt`）⇒ 标本命、吃本命加权、默认豁免按龄裁剪。**不放宽任何收库门**（群黑白名单与总闸照旧在调用方） | `sources/meme_library_listener.py` + `sources/shorekeeper_absorb.py` |
+| `BOT_MEME_SHOREKEEPER_PROTECT_FROM_PRUNE` | bool | `True` | true/false | 🟡需重启 | 本命贴纸豁免「按天」裁剪（`BOT_MEME_LIBRARY_MAX_AGE_DAYS` 那一刀）；**按量上限（max_files）仍然生效**，否则全标本命就能让库无界增长 | `sources/meme_library_listener.py` |
+| `BOT_MEME_RELEVANCE_MIN` | float | `0.35` | 0~1 | 🟡需重启 | 选图相关性地板：比的是**合格分**（库权重 × 主题相关度），不是排序分——被拦的只有库自判「不算表情/高危」（权重 0.25/0.0）与离题且不熟（0.0）两类；心情降权、口味与本命加成只影响先后顺序，**不参与地板**（否则「低落×中性档」=0.175 会被吃掉，软偏置成硬开关）。0.35 落在中性档 0.5 之下、非表情 0.25 之下 | `domains/meme/capabilities/meme_library.py` |
+| `BOT_MEME_STICKER_SCOPE_MODE` | str | `global` | `global`/`session` | 🟡需重启 | 反重复作用域口径：`global`=本机发过即不再发（缺省，钉「同一张绝不发两次」）；`session`=同时再按会话/群各记一本账（并集判定，比 global 更严，不会更松） | 同上 |
+| `BOT_MEME_LIBRARY_MIN_FILE_KB` | int | `100` | ≥0；0=关 | 🟡需重启 | B1 收库守卫：字节下限（KB），「把所有表情贴纸存下来」收窄为真贴纸——1KB 图标/缩略图拒收（进 `skipped` 的 `guard_*` 代号账） | `sources/meme_library_listener.py` |
+| `BOT_MEME_LIBRARY_MIN_SIDE` | int | `400` | ≥0；0=关（样例 300 ⚠️） | 🟡需重启 | B1 收库守卫：像素短边下限（与 `BOT_RANDPIC_MIN_SIDE` 语义一致、两把闸各自独立——表情包段与本地原图分布本不同）；PIL 解不开按坏件拒（`guard_undecodable`）；文件头魔数验真不待本键即在 `_download_once` 常开 | 同上 + `domains/media/image_guard.py` |
+
+### X8 戳一戳扩臂与主动戳人（P14 波，2026-09-25 裁定「被戳→任意一臂」）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_POKE_EXTRA_ARMS_ENABLED` | bool | `False` | true/false | 🟡需重启 | 臂矩阵扩臂闸：False=mix 轮换池停在旧三臂（fixed/llm/meme）⇒ 与 P14 之前逐字节同形；True=池扩到六臂（+voice/randpic/poke）。`BOT_POKE_REPLY_MODE` 显式指名任一臂**不受本档影响** | `domains/chat_reply/capabilities/poke.py` |
+| `BOT_POKE_FOLLOW_ENABLED` | bool | `False` | true/false | 🟡需重启 | 跟戳总闸：用户 A 在群里戳用户 B 时 bot 有概率跟着戳 B。缺省关 | 根 `__init__.py`（P14 派发腿，`getattr(merged_config, ...)` 现读） |
+| `BOT_POKE_FOLLOW_PROBABILITY` | float | `0.2` | 0~1 | 🟡需重启 | 跟戳概率（getattr 兜底同值） | 同上 |
+| `BOT_POKE_FOLLOW_COOLDOWN_SECONDS` | float | `120.0` | ≥0 秒 | 🟡需重启 | 跟戳独立冷却（QQ 戳很便宜但极刷屏，与回戳**分账不共用门**） | 同上 |
+| `BOT_POKE_FOLLOW_MAX_PER_HOUR` | int | `4` | ≥0 | 🟡需重启 | 跟戳每小时上限 | 同上 |
+| `BOT_POKE_AFTER_REPLY_ENABLED` | bool | `False` | true/false | 🟡需重启 | 回复后/主动发言后戳人总闸：bot 把话说完（含群内主动接话、入群欢迎这类「bot 先开口」）后按概率戳一下对方。两触发共用本族旋钮、各自独立掷骰。安静时间与 blocked 名单是硬门，拨开开关也越不过 | 同上 |
+| `BOT_POKE_AFTER_REPLY_PROBABILITY` | float | `0.15` | 0~1 | 🟡需重启 | 回后戳概率（getattr 兜底同值） | 同上 |
+| `BOT_POKE_AFTER_REPLY_COOLDOWN_SECONDS` | float | `300.0` | ≥0 秒 | 🟡需重启 | 回后戳独立冷却 | 同上 |
+| `BOT_POKE_AFTER_REPLY_MAX_PER_HOUR` | int | `3` | ≥0 | 🟡需重启 | 回后戳每小时上限 | 同上 |
+
+### X9 随机发图派发（P14 波）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_RANDPIC_DISPATCH_ENABLED` | bool | `False` | true/false | 🟡需重启 | 随机发图主动派发总闸（2026-09-25 三触发「回复完用户消息/用户戳 bot/特定指令」中本批加的「回复完主动发图」腿；戳 bot 腿走 `BOT_POKE_REPLY_MODE=randpic` 臂，同一取图口同一本窗账）。缺省全关=只在用户开口要图时发；**开态也过安静时间/blocked 两道硬门** | 根 `__init__.py`（P14 派发腿） |
+| `BOT_RANDPIC_DISPATCH_PROBABILITY` | float | `0.1` | 0~1 | 🟡需重启 | 派发概率门（getattr 兜底同值） | 同上 |
+| `BOT_RANDPIC_DISPATCH_COOLDOWN_SECONDS` | float | `600.0` | ≥0 秒 | 🟡需重启 | 派发独立冷却 | 同上 |
+| `BOT_RANDPIC_DISPATCH_MAX_PER_HOUR` | int | `2` | ≥0 | 🟡需重启 | 派发每小时上限 | 同上 |
+| `BOT_RANDPIC_NO_REPEAT_WINDOW_SECONDS` | float | `0.0` | ≥0 秒；0=关 | 🟡需重启 | 窗内不重发同一张（按会话记账）。0 = 关 = 旧行为逐字节同形（纯随机、可重样） | `domains/meme/capabilities/randpic.py` |
+| `BOT_RANDPIC_MIN_FILE_KB` | int | `100` | ≥0；0=关 | 🟡需重启 | B1 池子守卫：单张字节下限（KB），低于不进候选；任一守卫键 > 0 时同时启用文件头魔数验真（假 .png/HTML 改名件计入 `images_bad_magic`） | 同上（`_min_bytes_for`）+ `domains/media/image_guard.py` |
+| `BOT_RANDPIC_MIN_SIDE` | int | `400` | ≥0；0=关（样例 300 ⚠️） | 🟡需重启 | B1 池子守卫：像素短边下限（与 `BOT_MEME_LIBRARY_MIN_SIDE` 语义一致、两把闸各自独立）；代码注释点名该缺省出自现网图库普查（拒的是 QQ 预览/缩略图＝用户所称「糊」那一段），PIL 只解图头；解不开按坏件记 | 同上（`_min_side_for`）+ `domains/media/image_guard.py` |
+
+### X10 creation 对接点 provider 选择器（中央调度收编波 P5/S09 §7）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_CREATION_IMAGE_PROVIDER` | str | `""` | provider id；空=未配 | 🟡需重启 | creation 绘画对接点的 provider 选择器：空 ⇒ 域内 `reserved_provider.provider_configured` 判 False ⇒ 诚实 UNAVAILABLE。⚠ **登记两键只是把"根本没这个键"改成"有键、待填、待接工厂"，不等于绘画可用**——适配器工厂尚未存在（填了值仍诚实 UNAVAILABLE，探测面转为 DEGRADED）。装配期快照（描述符/探针建表时读） | `domains/creation/reserved_provider.py` + `domains/creation/image/engine_provider.py`/`provider_factory.py` + `domains/core/capability_manifest.py` |
+| `BOT_CREATION_TTS_PROVIDER` | str | `""` | provider id；空=未配 | 🟡需重启 | 同上，creation 语音腿 | `domains/creation/reserved_provider.py` + `domains/creation/tts/engine_provider.py` + `runtime/capability_protocols.py` |
+
+### X11 日程记录与智能代答（裁定第 20 项，2026-09-26 S-SCHEDULE-20 波）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_SCHEDULE_STATUS_REPLY_ENABLED` | bool | `False` | true/false | 🟡需重启 | 代答腿总闸：关着时「她在干嘛」一类问句完全不进日程路由，零行为变更；开着也只按分级表投影公开条目（**隐私判定在出站前，不靠模型自觉**） | `domains/schedule/capabilities/schedule_board.py`（能力/路由侧 `getattr` 现读装配期快照 config，未进合并层 ⇒ 热 set 不可达，C-09 口径） |
+| `BOT_SCHEDULE_NATURAL_CAPTURE_ENABLED` | bool | `False` | true/false | 🟡需重启 | 宽口径自然捕捉闸：关着只认「日程/课表」显式命令与导入；开着才把「明天8点有课」这类带时间+活动词的短句顺手记进她的日程板（缺省隐私） | 同上 |
+
+### X12 联网检索行为阈值（web_search 族）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_WEB_SEARCH_KNOWLEDGE_THRESHOLD` | float | `0.6` | 0.0~1.0（越界装载期拒） | ✅热更（`SETTABLE_KEYS`，`_web_ratio_converter`） | 行为阈值（区别于只记录不决策的遥测）：本地知识可答的门槛，**低于它才补搜**。总闸仍是 `BOT_WEB_SEARCH_ENABLED`；本键只在联网已开时决定 FALLBACK（本地世界观优先）一类问题是否补搜；置信度=查询主题词被知识库覆盖的比例（S13 真身）。缺省 0.60 偏高，须用遥测影子期数据校准 | `domains/chat_reply/capabilities/chat.py` |
+| `BOT_WEB_SEARCH_CONFIDENCE_FLOOR` | float | `0.2` | 0.0~1.0（越界装载期拒） | ✅热更（同上） | 硬底线安全阀：本地知识近乎空白时**无条件补搜一次**，独立于可被调高的 knowledge_threshold，防止误判成「不用搜」 | 同上 |
+| `BOT_WEB_SEARCH_KEYFREE_FALLBACK_ENABLED` | bool | `False` | true/false | 🟡需重启 | 链尾免 key 兜底（DuckDuckGo → Bing）：有 key 的供应商全部失败/未配置时才接管，永不抢在前面。开启会让检索面依赖公开搜索引擎 HTML，结果质量与配额不可控。**只在装配期读一次**（链构造即固化），改动需重启 | `domains/core/search/web_search.py` |
+
+### X13 TTS 长回复拆条（语音 H 波后续）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_TTS_AUTO_REPLY_SPLIT_MAX_CHARS` | int | `0` | ≥0（`Field(ge=0)`）；0=不拆条 | ❌无热改面（`SETTABLE_KEYS`/`RESTART_REQUIRED_KEYS` 两表均未登记） | 长回复拆条的每段音频文本上限：0=不拆条=缺省逐字节现状；超过此值的可朗读文本按句末标点切成多块、逐块合成、多段音频随同一条回复发出。参考量级：60 秒 ≈ 150~180 字（守岸人语速偏慢 speed 0.85，2026-09-23 按听感校准） | `domains/media/tts/result_transform.py`（manifest/ownership 登记见 `domains/core/capability_manifest.py`/`capability_resource_ownership.py`） |
+
+### X14 文件写盘口（需求 16(2)，2026-09-26 S-FILES-LAND 收编波）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_FILES_WRITE_ENABLED` | bool | `True` | true/false | 🟡需重启 | 写盘口总闸（今日在岗）。六枚缺省值**逐字节等于** restricted_runner 内建缺省（8MiB/60/120、白名单回落 export、总闸今日在岗）⇒ 现网零变更；「保守」体现在口本身：白名单外什么都不许写（fail-closed）、可执行扩展名永远拦。缺省常量与运行器同名常量的等值由 `tests/test_files_write_side_assembly.py` 现场对账（改其一必看到另一处红） | `domains/files/capabilities/file_exchange.py::write_policy_from_config`（根 matcher 交装配期快照 config，六枚未进合并层 ⇒ 不做「看着能热改」，C-09 形态） |
+| `BOT_FILES_WRITE_ALLOWED_DIRS` | list[str] | `[]` | 目录列表 | 🟡需重启 | 可写目录白名单；**空=回落 `BOT_DOWNLOAD_DIR/export`**（=今日导出腿唯一落点，现网零变更） | 同上 |
+| `BOT_FILES_WRITE_MAX_BYTES` | int | `8388608`（8 MiB） | >0 字节 | 🟡需重启 | 单文件写入字节上限 | 同上（`WriteLimits.max_file_bytes`） |
+| `BOT_FILES_WRITE_DAILY_CREATE` | int | `60` | ≥0 | 🟡需重启 | 每日新建文件件数额度 | 同上（`WriteLimits.daily_create_limit`） |
+| `BOT_FILES_WRITE_DAILY_REPLACE` | int | `120` | ≥0 | 🟡需重启 | 每日覆盖（替换）件数额度 | 同上（`WriteLimits.daily_replace_limit`） |
+| `BOT_FILES_READ_CONFINED_MAX_BYTES` | int | `8388608`（8 MiB） | >0 字节 | 🟡需重启 | 回读侧单文件限额：与写侧同根策略，只把 max_file_bytes 换成这一枚（`_read_policy_from_config`） | 同上 |
+
+### X15 出站闸自动到期（开闸 A 案第二腿，2026-09-25 裁定「开，A+B」）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_OUTBOUND_GATE_ENABLED_UNTIL` | str | `""` | ISO-8601 字面量 | 🟡需重启（本族键不在 `_RUNTIME_HOT_OVERRIDE_FIELDS`，登记见 settings.py RESTART 表） | 中央出站防风暴闸的**自动到期时刻**：到期即等同 `BOT_OUTBOUND_GATE_ENABLED=false` 并响亮留痕，不需要谁记得回来手工关掉（「临时停用要自动到期、不留人工回滚债」）。缺省空=无到期 ⇒ 有效开启逐字节等于 `BOT_OUTBOUND_GATE_ENABLED` 本身，新键落地零现网读数变更 | 判据唯一真身 `domains/transport/sender/outbound_gate.py::effective_gate_enabled`（读不到/解不出=宁关不猜）；解析真身 `domains/core/moment_parsing.py::parse_moment` |
+
+### X16 SAFE-EXEC 书面同意执法门（裁定第 18 项，2026-09-26）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_SAFETYEXEC_ENABLED` | bool | `True` | true/false | 🟡需重启（护栏**不可被一条命令热关**） | 危险参数设置书面同意执法门总闸。缺省 True＝执法开——「危险的参数设置需要经过超级管理员的书面同意」；关它必须改 `.env` + 重启 | `domains/core/safety_exec/consent.py::ConsentPolicy.from_config`（装配期快照）+ `safety_exec/settings_gate.py`（关 ⇒ 该件整体旁路、行为与接线前逐字节一致）；装载链 `runtime/settings.py::configure_safety_gate` |
+
+### X17 协议端版本目录（诊断卡要素⑤）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_PROTOCOL_CLIENT_DIR` | str | `""` | 路径 | 🟡需重启 | 协议端（SnowLuma）安装目录：诊断卡要素⑤「协议端版本」读它自己的 `package.json` 的 version 字段（OneBot V11 的 `get_version` 本仓从未调用过，而卡片在渲染线程里同步组装，不能为一个版本号往主循环发异步 RPC）。空=走内置探测路径（`error_report._protocol_client_version_label`）；读不到就在卡上写「未取到」，**绝不拿 nonebot-adapter-onebot 的版本顶替** | `domains/ops/monitor/error_report.py` |
+
+### X18 控制面文件读取根白名单（F-1 根修，2026-09-28 SEAT-FIX-ATK-CP）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_CONTROL_PLANE_FILES_ROOTS` | list[str]/str | `""` | 逗号分隔目录列表（绝对或相对 cwd） | 🟡需重启（装配期快照字段，合并表未登记该键，登记见 settings.py RESTART 表） | `/api/v1/files/read` 的读取根白名单（F-1：旧实现以进程 cwd 为根 ⇒ 只读令牌可枚举整棵工作树）。缺省空 ⇒ 端点 503 `files_config_unavailable` 诚实拒绝，**绝不回落 cwd**；只应登记真正的产物/素材目录。`data/`、`logs/`、`webui/node_modules/` 子树与 `.log`/`.env*` 形态为常驻敏感禁区，即便误落登记根内也一律拒读（403 `file_read_denied`，可归因）；路径成员两侧 `resolve()` 后按段判成员，短名/`..` 穿越不逃逸 | `control_plane/api/platform.py::read_file`（getattr 字面直读）→ `control_plane/file_access.py::FileReadGateway`（F-3 收编：守卫唯一执法体）；锁在 `tests/test_control_plane_files_read_scope.py` |
+
+### X19 bot 自有表情私库（STICKER-POOL 波，2026-09-29）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_STICKER_DIR` | str | `data/bot_stickers/shorekeeper` | 目录路径（`data/` 前缀自动折进运行数据根） | 🟡需重启（每次现读调用方交来的装配期快照；换目录里的**图**不用重启，扫池 30s TTL） | bot **自己**的贴纸登记根。与 `BOT_MEME_LIBRARY_DIR`（别人发到群里的图被收进库）分家：本目录只读、不落 SQLite、不打标、不进权重账。目录不存在 ⇒ 诚实不发并记 `dirs_missing`，**绝不自建目录**（先例 randpic） | `domains/meme/sources/sticker_packs.py::configured_sticker_dir`（**唯一**读路径，消费方不得自己 walk）；重映射名册 `config.PATH_REMAPPED_FIELDS` |
+| `BOT_STICKER_ENABLED` | bool | `True` | true/false | 🟡需重启 | 发送侧总闸：P3 情绪时刻 / 戳一戳 / 偷表情 三条腿共用一枚。关掉⇒`pick_sticker` 直接回 `None`（读路径照旧可查库存）。与 feature gate `bot.plugin.sticker_packs` **两道门各管一侧**（那枚是控制面「这条能力在不在产品里」，本枚是业务「今天要不要发」），任一关就不发 | 同上 `sticker_send_enabled`；闸口在 `pick_sticker` 首行 |
+| `BOT_STICKER_RECURSIVE` | bool | `True` | true/false | 🟡需重启 | `os.walk` 递归整棵树 vs 只扫登记根那一层（重解析点两侧都不进树：Windows junction 的 `islink` 为假，判据真身 `path_gate.reparse_point`）。值与目录一同进扫池缓存键 | 同上 `sticker_is_recursive`；剪枝名单懒引 `randpic._should_prune_dir`（禁第二份名单） |
+| `BOT_STICKER_NO_REPEAT_WINDOW_SECONDS` | float | `1800.0` | ≥0 秒；0=关（纯随机、可重样） | 🟡需重启 | 窗内不重发同一张贴纸（按会话记账，群账键由窗账自己收敛成 `group_{G}`）。同图判据=内容 SHA-256，摘要唯一真身 `domains/media/digest.py::media_digest_file`（经 `randpic.image_identity`，本件不抄第二份）。整库都在窗内：指令路退「最久没发」并**明确记成复发**，主动路不发（宁可不发也不刷屏） | 同上 `sticker_window_seconds`；窗口实现复用 `randpic.RecentImageWindow`（`try_claim` 原子占坑，禁第二本窗账） |
+| `BOT_STICKER_PRIVATE_SUBDIR` | str | `私藏` | 子目录**名**（非路径，`BOT_STICKER_DIR` 之下那一层；空串＝整件关闭） | 🟡需重启（每次选图现读的是调用方交来的装配期快照；合并表 `_RUNTIME_HOT_OVERRIDE_FIELDS` 未登记本键；`settings.py::RESTART_REQUIRED_KEYS` 在册） | S4 好感档联动的锁定目标名：命中该名的子目录在「探查」与「最久没发复发」两条路上**整条剔除**——档位不够就当没有这批图，绝不猜档。改这里＝换锁哪一格 | `domains/meme/capabilities/meme_library.py::_locked_sticker_subdirs`（**唯一**判据口，消费方不得自己拼）→ `sticker_packs.py::pick_sticker` 的 `locked_subdirs` 形参（`relative_to(登记根)` 逐段比名）；**不是**落点字段，故不进 `config.PATH_REMAPPED_FIELDS` |
+| `BOT_STICKER_PRIVATE_MIN_TIER` | int | `7` | 好感**档号**下限（现读快照的 `tier`，值大＝更亲近）；档位表真身 `domains/chat_reply/character/affinity.py`，本行不抄；读不出/非数⇒按 `7` 处理 | 🟡需重启（同上一行判据：装配期快照＋合并表未登记＋`RESTART_REQUIRED_KEYS` 在册） | 解锁私藏格所需的最低好感档。快照缺席（没建过档）或取不出 `tier` ⇒ **fail-closed** 按未解锁算，与「档位低」同处置；调高＝更严（关这件另有上一行的空串口） | 同上 `_locked_sticker_subdirs`（档位取 `__init__.py::_poke_affinity_snapshot` 交来的快照 `tier`）；执法面在 `sticker_packs.pick_sticker`；回归锁 `tests/test_sticker_persona_album.py` |
+
+### X20 网络巡检（代理链根修波，2026-09-30）
+
+| 键 | 类型 | 缺省 | 值域 | 热更 | 作用 | 消费点/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_NETWORK_PATROL_ENABLED` | bool | `True` | true/false | 🟡需重启（巡检任务在装配期登记，热改当轮不生效） | 巡检总闸：关掉⇒整条巡检不排班，Clash 探活与上游双腿都不跑（差分带外告警随之静默）。与出站同意门无关，不经 `safety_exec` | `domains/ops/network_patrol.py`（执行体）；装配点 `__init__.py::_register_network_patrol_scheduler`（**唯一**排班处，禁第二处起巡） |
+| `BOT_NETWORK_PATROL_INTERVAL_MINUTES` | int | `15` | >0 分钟 | 🟡需重启 | 巡检周期。首轮只建基线**不告警**；此后只在「变坏边界」走带外告警（TG/邮件），恢复只记账不刷屏 | 同上；落盘 `<runtime>/data/network_patrol.jsonl`，体积上限见该件 `_PATROL_JSONL_MAX_BYTES`（超限滚 `.1`，防无界增长） |
+| `BOT_NETWORK_PATROL_DOMAINS` | str | `""` | 逗号分隔域名；空⇒用内置名册（真身 `network_patrol.PATROL_TARGETS_DEFAULT`，枚数以该件现值为准） | 🟡需重启 | 覆盖巡检目标集，用于临时增删观测域名而不改代码 | 同上 |
+

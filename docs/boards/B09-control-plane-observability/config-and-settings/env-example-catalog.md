@@ -6,7 +6,7 @@
 ## B09.config-and-settings · 示例与目录三处同源
 
 - 层级：一级 B09 → 二级 config-and-settings → 三级 `env-example-catalog`
-- 实现落点：`plugins/bot_unified_runtime/config.py`、`plugins/bot_unified_runtime/domains/core/config`、`plugins/bot_unified_runtime/runtime/settings.py`、`docs/config-catalog-full.md`
+- 实现落点：`plugins/bot_unified_runtime/config.py`、`plugins/bot_unified_runtime/domains/core/config`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/settings.py`、`docs/config-catalog-full.md`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

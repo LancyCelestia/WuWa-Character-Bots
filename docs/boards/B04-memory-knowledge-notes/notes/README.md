@@ -51,14 +51,14 @@ flowchart LR
 - **限额**：单会话笔记数达 `bot_notes_max_per_chat`（缺省值以 `config.py` 该字段为准）时 `add` 返回 None，由能力层给人话提示而不是静默丢弃；单条笔记图片上限 `_MAX_NOTE_IMAGES`、单图字节上限 `_MAX_IMAGE_BYTES`（判据在能力层，store 只认文本）。
 - **图片来源与落点双查**：随笔记发来的图片走 SSRF 入口护栏，`file://`/本地路径读取有字节上限，落盘目录名消毒防穿越；删笔记时图片文件随笔记一起清（引用已不在，留着只会积灰）。
 - **会话隔离**：一切读写都带 `chat_id`（= `message.session_id`），A 群看不到 B 群的笔记；群成员之间是否再按人隔离取决于 session_id 本身含 uid，该粒度目前无测试覆盖（见本页列出的现行缺陷）。
-- **授时降级链**：NTP 全败 → HTTPS `Date` 头估偏移 → 回退系统钟，每级一行日志；`|offset|` 超 `bot_time_sync_max_drift_ms`（缺省值以 `config.py` 该字段为准）或 RTT 超上限的应答视为不可信，拒收该台换下一台。防火墙拦 UDP 123 时回退系统钟**属预期行为**，不是故障。
+- **授时降级链**：NTP 全败 → HTTPS `Date` 头估偏移 → 多源互证 → 回退系统钟，每级一行日志。`|offset|` 超 `bot_time_sync_max_drift_ms`（缺省值以 `config.py` 该字段为准）或 RTT 超上限的应答，在**单源**口径下不可信、拒收换下一台；整轮被全拒后另有一级互证出口（至少两个不同来源彼此一致、且往返干净到没被建连耗时污染，才取中位数，并以 warning 劝运维去开系统时间同步）——四条资格尺与实现真身见 [NTP 授时与钟差钳制](time-sync.md)。防火墙拦 UDP 123 时走 HTTPS、再不成回退系统钟**属预期行为**，不是故障；⚠ 但"回退系统钟"**不等于**"偏差仍被钳在阈值内"——那一刻用的就是系统钟本身，差多少取决于它自己偏多少。
 
 ## 测试与验收
 
 - `tests/test_notes.py`：笔记 CRUD、触发词形态、图片收纳与限额。
 - `tests/test_notes_item_checkoff.py`：单条待办的逐项勾选/取消勾选与歧义语义。
 - `tests/test_timesync.py`、`tests/test_v21r2_stall_timesync_http.py`：SNTP 报文与偏移钳制、HTTPS 兜底与停摆面。
-- 真机：`docs/acceptance-manual.md` 的提醒/笔记面（含「<事项>做完了」并列候选必须追问、不得硬编码矛盾）；重启后看日志里 timesync 首次校时是否成功（本机 UDP 123 被拦时预期看到"回退系统钟"warning 一行）。
+- 真机：`docs/acceptance-manual.md` 的提醒/笔记面（含「<事项>做完了」并列候选必须追问、不得硬编码矛盾）；重启后看日志里 timesync 首次校时是否成功（本机 UDP 123 被拦时会先出现转 HTTPS 的一行，整链仍失败才见"回退系统钟"warning；出现"多源互证"＝本机系统钟自己就偏了，处置是去开系统时间同步）。
 - 用例数以最近一次 `dev.ps1 -Task test` 实跑为准，本文不手写。
 
 ## 现行缺陷

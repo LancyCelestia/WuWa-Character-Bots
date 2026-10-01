@@ -8,7 +8,7 @@
 > part 级幂等、UNKNOWN 确认、PARTIAL 断点续发与投递回执。
 
 - 归属板块：[B08](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/transport/sender/__init__.py`、`plugins/bot_unified_runtime/domains/transport/sender/file_gateway.py`、`plugins/bot_unified_runtime/domains/transport/sender/gateway.py`、`plugins/bot_unified_runtime/domains/transport/sender/outbound_gate.py`、`plugins/bot_unified_runtime/domains/transport/sender/queue.py`、`plugins/bot_unified_runtime/domains/transport/sender/receipts.py`、`plugins/bot_unified_runtime/domains/transport/sender/timeout.py`、`plugins/bot_unified_runtime/domains/transport/sender/worker.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/transport/sender/__init__.py`、`plugins/bot_unified_runtime/domains/transport/sender/failure_class.py`、`plugins/bot_unified_runtime/domains/transport/sender/file_gateway.py`、`plugins/bot_unified_runtime/domains/transport/sender/gateway.py`、`plugins/bot_unified_runtime/domains/transport/sender/outbound_gate.py`、`plugins/bot_unified_runtime/domains/transport/sender/queue.py`、`plugins/bot_unified_runtime/domains/transport/sender/receipts.py`、`plugins/bot_unified_runtime/domains/transport/sender/timeout.py`、`plugins/bot_unified_runtime/domains/transport/sender/worker.py`
 - 帮助主题：回执
 - 配置键前缀：`bot_send_queue_`（逐键以目录册为准）
 

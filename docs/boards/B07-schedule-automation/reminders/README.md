@@ -48,7 +48,7 @@ flowchart LR
 
 ## 边界与降级
 
-- 到点判定与墙钟推算统一走**配置时区** `config.bot_timezone`（缺省 `Asia/Hong_Kong`），naive 输入按配置时区解释、aware 一律换算过去再比较，跨时区部署不再错位；"现在"这个时刻统一经 NTP 授时（`domains/schedule/timesync/timesync.py`）校正，未启用或校准失败时回退系统钟。
+- 到点判定与墙钟推算统一走**配置时区** `config.bot_timezone`（缺省 `Asia/Hong_Kong`），naive 输入按配置时区解释、aware 一律换算过去再比较，跨时区部署不再错位；"现在"这个时刻统一经授时件（`domains/schedule/timesync/timesync.py`）校正，链＝NTP → HTTPS `Date` 头 → 多源互证 → 回退系统钟（逐级降级属预期，全账见 `docs/boards/B04-memory-knowledge-notes/notes/time-sync.md`）；未启用或整链失败时回退系统钟——那一刻用的就是系统钟本身，投递误差不再受任何上限钳制。
 - 单会话待办超限（条数上限以该件常量为准）时**拒绝新增**并提示先取消，不再静默挤掉最旧一条（否则用户以为都记着其实丢了）。
 - 转发粘贴守卫：正文带广告痕迹词、原始多句、超长一律拒绝入库，并对同一事项按去重窗去重（窗宽以该件常量为准），防"粘贴一条缴费广告 → 到点齐炸"。
 - 投递失败只记日志、不销账，下一轮重投前查回执仓防双发；重投受阻时由顺延/作废策略兜底，绝不阻塞主链路。

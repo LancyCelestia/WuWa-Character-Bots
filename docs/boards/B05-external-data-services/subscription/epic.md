@@ -9,7 +9,7 @@
 - 路由席位：`EPIC`（matcher `epic`，command=True）
 - 判定优先级：41
 - 能力 id：`bot.epic`
-- 实现落点：`plugins/bot_unified_runtime/domains/subscribe`、`plugins/bot_unified_runtime/sources/subscriptions`
+- 实现落点：`plugins/bot_unified_runtime/domains/subscribe`、`plugins/bot_unified_runtime/domains/subscribe/adapters`
 - 帮助主题：Epic
 <!-- BOARD-AUTO:END -->
 

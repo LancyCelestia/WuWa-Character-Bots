@@ -17,7 +17,8 @@ flowchart TD
     Store --> Gate[ProductFeatureGate]
     Gate --> Snapshot[异步获取整图不可变快照]
     Snapshot --> Ingress[入站富化与已登记旁路]
-    Gate --> Pipeline[Pipeline 能力级执行门]
+    Gate --> Pipeline[Pipeline 能力级执行门（层 1）]
+    Gate --> Invoker[CapabilityInvoker 执行门面（层 2）]
 ```
 
 - ID 不随显示名变化；alias、父级和依赖由现有注册表校验。
@@ -30,6 +31,38 @@ flowchart TD
 - 快照源故障时细分项 fail-closed；核心恢复服务仍受自身权限保护。没有复用旧快照绕过故障。
 - `gate` 只阻止新调用，不等于资源 drain/reload；没有假造 running_tasks 或 reload_status。
 
+## 层 2 执行门（中央 `CapabilityInvoker`，2026-09-23/24 起开始执法；改动未 commit，重启后装配生效）
+
+旧口径「feature 门只在层 1（`pipeline._prepare`）执法」已作废：绕过 pipeline 直呼
+`runtime/capability_protocols.py::default_invoker` 的 `invoke()` 曾能静默穿过这道关
+（AGENTS 台账 #49 的「在册未执法」项）。现 `CapabilityInvoker.invoke` 在「未登记能力」判定
+之后、角色门之前插入层 2 门，门序与层 1 对齐。三条边界缺一不可，按此口径叙述：
+
+- **只对在册受门者执法**：是否受门的答案是唯一投影
+  `runtime/capability_protocols.py::gate_feature_bindings()`（`gate_scoped=True` 的能力才进这道门）。
+- **未受门 pass-through**：绑定表查不到 ⇒ 放行到后续门，**绝不**照抄层 1 `check_capability`
+  的「未登记 → `feature_unregistered` → 拒绝」语义——那会把今天真在跑的直呼型能力当场挡死
+  （实算出处 `.superpowers/sdd/2026-09-24-central-dispatch/SEAT-S43.md` §1.3；受门/未受门枚数以
+  `gate_feature_bindings()` 现算为准，本文不手写计数）。
+- **读不到状态 fail-closed**：谓词抛异常 ⇒ 拒绝，原因码 `feature_state_unavailable`，终态 `DENIED`、
+  `via="feature_gate"`，并照常走审计 emit——与层 1 `_prepare` 同口径。
+
+单一真身：判定住在 `domains/ops/features/feature_gate.py::ProductFeatureGate.check_capability`，
+历史签名 `__call__(message, capability_id)` 已降为纯转发（真身从不读 message），层 1/层 2 共用同一份
+门序、禁第二套。恢复类旁路 `RECOVERY_CAPABILITIES` 的集合真身唯一住 `domains/ops/features/feature_catalog.py`，
+层 2 不抄副本。注入口唯一：`runtime/capability_protocols.py::attach_default_feature_gate(predicate)`，
+装配在根 `__init__.py`（`ProductFeatureGate` 构造之后一行）；构造形参 `feature_gate` 缺省 `None`＝不执法＝
+该波之前的现网逐字节现状。
+
+**执法面现状（与上段同读，防止把"机制存在"读成"已对所有能力执法"）**：今天绕过 pipeline 直呼
+`invoke()` 的能力全部未受门 ⇒ 层 2 新增执法面**恰好为空**、行为逐字节中性；它的价值是把「未来任何
+直呼入口自动受门」变成结构事实。锁：`tests/test_feature_gate_layer2.py`（pass-through 反例、
+fail-closed、门序先于角色门、拒绝入审计、`__call__` 纯转发、层 2 不抄门与恢复名单、根装配真谓词）。
+
+**副作用如实记（判据来自两处调用点：`orchestrated_command` 走 `default_invoker().invoke`、pipeline 侧
+`_prepare` 也问同一道门，未做运行时测量）**：**受门且经 pipeline** 的能力同一判定会被问两次（真身只读、
+判定幂等，语义不冲突，代价是多一次状态读）。今天直呼面皆未受门，故该双问不产生现行行为差异。
+
 ## 已接入的细分项
 
 | 稳定 ID | 父节点 | 功能 | 执行位置 |
@@ -40,7 +73,7 @@ flowchart TD
 | `bot.ingress.audio_transcode` | `bot.ingress` | 语音段预转码 | `__init__.py#_transcode_record_segments` |
 | `bot.ingress.telegram_media` | `bot.ingress` | Telegram 媒体文件富化 | `__init__.py#_handle_chat` |
 | `bot.ingress.reply_lookup` | `bot.ingress` | 引用链远程反查 | `__init__.py#_handle_chat` |
-| `bot.plugin.chat.recent_image` | `bot.plugin.chat` | 群聊最近图片注入 | `__init__.py#_handle_chat` |
+| `bot.plugin.chat.recent_image` | `bot.plugin.chat` | 最近图片注入（群聊/私聊） | `__init__.py#_handle_chat` |
 | `bot.plugin.chat.forward_lookup` | `bot.plugin.chat` | 合并转发内容反查 | `__init__.py#_handle_chat` |
 | `bot.plugin.chat.video_preprocess` | `bot.plugin.chat` | 视频理解预处理 | `__init__.py#_handle_chat` |
 | `bot.plugin.chat.parrot` | `bot.plugin.chat` | 群聊复读自动回应 | `__init__.py#_handle_chat` |

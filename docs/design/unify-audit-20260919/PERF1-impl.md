@@ -24,15 +24,15 @@ F8 落在我这两个文件的三条（**L-1 暂停积压无界、L-2 每秒整�
 
 | # | 主张（F8 原文坐标为 16:30 快照） | 判定 | 现坐标（20:0x 复跑） | 处置与数字 |
 |---|---|---|---|---|
-| **L-1** | `backlogRef` 暂停期无条件 push、无上限（`logs.tsx:61,102-104`） | **真（Medium）** | `logs.tsx:142,214-228` | 已修：积压与视图同界（≤`MAX_ROWS`），超界最旧行就地裁掉并把枚数暂存 `backlogDroppedRef`，恢复时并入 `droppedCount`。**实测**：20 万行积压 = **95.5 MiB（501 B/行）**，10 条/秒 × 24h = **86.4 万行 ≈ 413 MiB** 无上限堆积；封顶后同场景 **0.24 MiB**（§三-测1 段 3）。账面等价证明见 §四-3（dropped 1200→1200、可见游标序列全等）。 |
+| **L-1** | `backlogRef` 暂停期无条件 push、无上限（`logs.tsx:61,102-104`） | **真（Medium）** | `logs.tsx:142,216-226` | 已修：积压与视图同界（≤`MAX_ROWS`），超界最旧行就地裁掉并把枚数暂存 `backlogDroppedRef`，恢复时并入 `droppedCount`。**实测**：20 万行积压 = **95.5 MiB（501 B/行）**，10 条/秒 × 24h = **86.4 万行 ≈ 413 MiB** 无上限堆积；封顶后同场景 **0.24 MiB**（§三-测1 段 3）。账面等价证明见 §四-3（dropped 1200→1200、可见游标序列全等）。 |
 | **L-2**（§7 版，Medium） | 每秒 `setNowTick` → 整页重渲染，500 行 `formatTime`(Intl) + `detailsOneLine`(JSON) 每帧重算 | **真，且比审计估的更贵** | 原 `logs.tsx:52,126,301-315` → 现 `logs.tsx:56-121,309,395-397` | 已修两刀：①秒表关进叶子（`useSecondTick` + `StatusChip`/`CursorLine`），父页不再每秒渲染；②`const LogRow = memo(...)`，存量行浅比较即跳过。**实测**：500 行一趟取格 = **33.6 ms**（单行 **67.3 µs**，其中 `formatTime` 现场建 Intl formatter 占 29.6 µs）→ 每秒一趟 = **2907 s 主线程/24h**，且**单趟已超一帧预算 16.7ms**；改造后同一趟降为 **0.004 ms**（8524×）。 |
-| **L-3**（Low） | 每条事件一次 `setRows` + 一次 `[rows]` effect（`logs.tsx:101,77-88,148-150`） | **真（但要说清它贵在哪）** | `logs.tsx:159-201` | 已修：到达即判重登记（不变量 a 原样保留），行入 `pendingRef`，**16ms 合并窗口**一次并入。**实测**（同批 k 条）：k=50 → **92.1 µs → 2.8 µs（32.9×）**，k=500 → **1001.6 µs → 6.3 µs（158.5×）**，元素复制 **375,500 → 1,000**；k=1 稳态 **2180 → 1752 ns（1.2×，噪声级，无回退）**。诚实更正审计的一处措辞：React 18+ 自动批处理下，同一 chunk 的 k 条事件**本就只提交一次渲染**，所以贵的不是「k 次渲染」而是 **k 个排队的 `[...current,...fresh]` updater（O(k·n)）**，以及每提交一次的 sessionStorage 写 + `scrollIntoView`（这两项频次随合并窗口同步下降）。 |
-| **表 §1-L-2**（Low） | 每 SSE 事件写一次 `sessionStorage.webui:logsCursor` | **不成立（判「伪」）** | `logs.tsx:252-256`（effect `[rows]` 原样未动） | 该 effect 挂在 **rows 变化**上，不是挂在事件上：改造前同一 chunk 的 k 条事件被 React 合批后**已经只写一次**。合并窗口只是让写入再稀疏一点（≤60 次/秒）。为它单开一刀没有可指的工作量（「k 条 → 1 写」的差值 = 0 到 1 次/秒的 µs 级写），**不做，登记**。 |
+| **L-3**（Low） | 每条事件一次 `setRows` + 一次 `[rows]` effect（`logs.tsx:101,77-88,148-150`） | **真（但要说清它贵在哪）** | `logs.tsx:160-200` | 已修：到达即判重登记（不变量 a 原样保留），行入 `pendingRef`，**16ms 合并窗口**一次并入。**实测**（同批 k 条）：k=50 → **92.1 µs → 2.8 µs（32.9×）**，k=500 → **1001.6 µs → 6.3 µs（158.5×）**，元素复制 **375,500 → 1,000**；k=1 稳态 **2180 → 1752 ns（1.2×，噪声级，无回退）**。诚实更正审计的一处措辞：React 18+ 自动批处理下，同一 chunk 的 k 条事件**本就只提交一次渲染**，所以贵的不是「k 次渲染」而是 **k 个排队的 `[...current,...fresh]` updater（O(k·n)）**，以及每提交一次的 sessionStorage 写 + `scrollIntoView`（这两项频次随合并窗口同步下降）。 |
+| **表 §1-L-2**（Low） | 每 SSE 事件写一次 `sessionStorage.webui:logsCursor` | **不成立（判「伪」）** | `logs.tsx:251-255`（effect `[rows]` 原样未动） | 该 effect 挂在 **rows 变化**上，不是挂在事件上：改造前同一 chunk 的 k 条事件被 React 合批后**已经只写一次**。合并窗口只是让写入再稀疏一点（≤60 次/秒）。为它单开一刀没有可指的工作量（「k 条 → 1 写」的差值 = 0 到 1 次/秒的 µs 级写），**不做，登记**。 |
 | **自查-1** | 绘制 effect 每帧 8 次 `getComputedStyle(documentElement)` + 8 次 `getPropertyValue` | **真** | 原 `memory-canvas.tsx:129-134` → 现 `:61-70`（`palette` useMemo，deps=[themeTick]） | **实测 60 帧拖拽：480 → 8 次（每帧 8.00 → 0.13，60×）**。取色与交互态无关，只该随主题切换重读。 |
 | **自查-2** | 每帧 `new Map(nodes.map(...))` + 每帧 5 项 colors Map + 每帧新建 `matches` 闭包，循环内每条边/每个节点再做 `toLowerCase()+includes()` | **真** | 原 `:128,135-139` → 现 `:59`（`nodeById`，deps=[nodes]）、`:73-82`（`matchedIds` 命中集，deps=[nodes,query]） | **实测 60 帧：Map 构造 120 → 2 次、`String.toLowerCase()` 36,060 → 201 次（每帧 601 → 3.35，179×）**；新增 1 枚 Set（每 query 变化一次，≤200 项）。 |
-| **自查-3** | 每帧无条件 `canvas.width = …` | **真（静态推断为最贵的一项）** | 原 `:121-122` → 现 `:159-165`（尺寸不变则不赋值） | **实测 60 帧：赋值 60 → 1 次**。赋值本身让浏览器丢弃并重建位图：容器 `1100×480`（memory-graph.tsx:213 内联 height:480）@dpr2 = **2200×960×4 B = 8.1 MiB/次** → 拖拽 60 帧/秒 ≈ **483 MiB/秒位图 churn**。**未跑浏览器，此字节数为算术推断**，赋值次数才是实测。 |
-| **自查-4** | 挂载即双绘：`measure()` 立即测一次 + ResizeObserver 强制首报同值 → 两个新对象 → 绘制 effect 白跑一遍 | **真** | 原 `:58` → 现 `:86-98`（同值 `return prev`） | **实测挂载序列：重渲染 2→1、整幅绘制 2→1**。真实绘制成本未测（无浏览器），但每省一次 = 省 200 节点 + 400 边的整幅光栅化。 |
-| **任务书第 3 问**：这两个文件里有没有「只增不减」的 Map/Set/数组 | **无（未发现泄漏证据）** | — | `logs.tsx:158`（seen）、`memory-canvas.tsx:57-82`（layout/degrees/nodeById/matchedIds） | 判重集实测上界 = `MAX_ROWS + 单帧缓冲`：**2 万条连续到达 → seen 峰值 501、终态 500**（§三-测1 段 3c，改造前后同界）；canvas 四个容器全部 ≤200 项（后端 `max_nodes=200` 封顶，`api-client.ts:476`，16:30 快照坐标至今未漂移），且 useMemo 换代即整体替换；ResizeObserver/MutationObserver 均在 cleanup 里 disconnect。合并窗口本身也不随挂机时长增长——后台标签页定时器最坏被节流到 ~1 次/秒，缓冲 = 到达率 × 窗口，不随分钟数累积。 |
+| **自查-3** | 每帧无条件 `canvas.width = …` | **真（静态推断为最贵的一项）** | 原 `:121-122` → 现 `:160-165`（尺寸不变则不赋值） | **实测 60 帧：赋值 60 → 1 次**。赋值本身让浏览器丢弃并重建位图：容器 `1100×480`（memory-graph.tsx:213 内联 height:480）@dpr2 = **2200×960×4 B = 8.1 MiB/次** → 拖拽 60 帧/秒 ≈ **483 MiB/秒位图 churn**。**未跑浏览器，此字节数为算术推断**，赋值次数才是实测。 |
+| **自查-4** | 挂载即双绘：`measure()` 立即测一次 + ResizeObserver 强制首报同值 → 两个新对象 → 绘制 effect 白跑一遍 | **真** | 原 `:58` → 现 `:88-96`（同值 `return prev`） | **实测挂载序列：重渲染 2→1、整幅绘制 2→1**。真实绘制成本未测（无浏览器），但每省一次 = 省 200 节点 + 400 边的整幅光栅化。 |
+| **任务书第 3 问**：这两个文件里有没有「只增不减」的 Map/Set/数组 | **无（未发现泄漏证据）** | — | `logs.tsx:152`（seen）、`memory-canvas.tsx:57-82`（layout/degrees/nodeById/matchedIds） | 判重集实测上界 = `MAX_ROWS + 单帧缓冲`：**2 万条连续到达 → seen 峰值 501、终态 500**（§三-测1 段 3c，改造前后同界）；canvas 四个容器全部 ≤200 项（后端 `max_nodes=200` 封顶，`api-client.ts:476`，16:30 快照坐标至今未漂移），且 useMemo 换代即整体替换；ResizeObserver/MutationObserver 均在 cleanup 里 disconnect。合并窗口本身也不随挂机时长增长——后台标签页定时器最坏被节流到 ~1 次/秒，缓冲 = 到达率 × 窗口，不随分钟数累积。 |
 | L-4 / L-5 / L-6 / L-7 / L-8 | 轮询魔数、apiRequest 超时/abort、TTS 磁盘配额、性能门、路由级 lazy | **不在本席两文件内** | 复跑 `grep -rn "refetchInterval: [0-9]" webui/src/pages` = **10 处**（16:30 快照记 9 处，并发波新增 1 处，如实记） | 本席零改动，只在此点名归属（§七-3）。 |
 
 ---
@@ -45,14 +45,14 @@ F8 落在我这两个文件的三条（**L-1 暂停积压无界、L-2 每秒整�
    节奏与相位与改造前一致（无条件 1000ms `setInterval`，挂载即起，卸载即清）。
 2. `LogRow = memo(...)`（:107）：原 `rows.map` 内联 JSX 整段搬进 memo 子件，`key={row.cursor}` 留在 map 处。
    行对象引用在追加/裁切中保持稳定（只做数组拼接），浅比较即可判定。
-3. `appendRows`（:181）改为「到达即同步判重登记 → 入 `pendingRef`」，新增 `commitPending`（:163）在
+3. `appendRows`（:176）改为「到达即同步判重登记 → 入 `pendingRef`」，新增 `commitPending`（:160）在
    `FLUSH_WINDOW_MS = 16`（:26）的 `setTimeout` 到点时一次性并入视图。三条不变量原样成立：
    **(a)** 判重与登记同在到达瞬间（没有回到「effect 里重建集合」的漏判形态，原注释逐字保留在 :183）；
-   **(b)** 裁出的行当场 `seenRef.delete`（:173）；**(c)** `clearView`（:281）同帧重置 rows + droppedCount + seen，
+   **(b)** 裁出的行当场 `seenRef.delete`（:172）；**(c)** `clearView`（:277）同帧重置 rows + droppedCount + seen，
    并新增「丢弃未入库的 `pendingRef`」——否则已判重的行会越过「清空」重新现身。
-4. 暂停分支（:214-228）加 `MAX_ROWS` 上界 + `backlogDroppedRef` 暂存；恢复分支（:259-268）把暂存枚数并进
+4. 暂停分支（:214-228）加 `MAX_ROWS` 上界 + `backlogDroppedRef` 暂存；恢复分支（:259-270）把暂存枚数并进
    `droppedCount` 后再冲积压。**不**在 `clearView` 里清 backlog（改造前也不清，语义原样）。
-5. 卸载 cleanup（:240-248）多清一个合并窗口定时器并丢弃缓冲（防卸载后 setState）。
+5. 卸载 cleanup（:242-249）多清一个合并窗口定时器并丢弃缓冲（防卸载后 setState）。
 
 ### `webui/src/components/graph/memory-canvas.tsx`（227 → 260 行）
 
@@ -60,8 +60,8 @@ F8 落在我这两个文件的三条（**L-1 暂停积压无界、L-2 每秒整�
 2. 绘制 effect（:152-221）内只留查表 + 落笔：删掉帧内取色、帧内建表、帧内 `toLowerCase`；
    `context.font` / `textBaseline` 从节点循环内提到循环外**各一次**（字符串字面量逐字未改，仍在本文件，
    见 §六-1 关于宪法棘轮的说明）。
-3. `canvas.width/height` 赋值加同值门（:159-165）。
-4. ResizeObserver 回调用函数式 `setSize` 吸收同值回写（:86-98）。
+3. `canvas.width/height` 赋值加同值门（:160-165）。
+4. ResizeObserver 回调用函数式 `setSize` 吸收同值回写（:88-96）。
 5. 绘制 effect 依赖表补 `nodeById/palette/matchedIds`（:220），原 10 项全留：**触发重绘的条件集合不缩小**
    （新增三项的identity变化必然伴随原 dep 变化，不会多画一帧）。
 
@@ -233,7 +233,7 @@ formatDateTime 复用 formatter 逐枚等值 = TRUE
    但要引入「何时有显示」的判定，且首个可见值有相位风险；收益量级 µs → 不做。
 4. **`formatTime` 的 Intl 现场建形制**：单枚 29.6 µs 是日志页残余最贵项，但真身在**只读** `lib/format.ts`，
    且被全站页面消费 → 补丁原文交主会话（§七-1），本席不动一行。
-5. **`pick()` 每次 pointermove 一次 `getBoundingClientRect()`**（`memory-canvas.tsx:128-146`，命中检测必需，鼠标速率级）：
+5. **`pick()` 每次 pointermove 一次 `getBoundingClientRect()`**（:118-141，命中检测必需，鼠标速率级）：
    缓存 rect 需引入 scroll/resize 失效链，风险 > 收益 → 登记不改。
 6. **心跳 `onHeartbeat` 改纯 ref**（可让父页 15s 一次的重渲染也没了）：会把「距今 N 秒」归零显示拖慢 ≤1s，
    属可见差异 → 不改，登记。

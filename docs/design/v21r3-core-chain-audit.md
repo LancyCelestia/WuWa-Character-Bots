@@ -113,6 +113,8 @@ WARN（原描述为 `runtime/timesync.py` 的 `now()` 缺 `global _SHARED`）。
 
 **实测该缺陷早已修复**：真身 `domains/schedule/timesync/timesync.py:493` 已带
 `global _SHARED, _SHARED_SIGNATURE`，直调返回 `2026-09-18 19:43:25+08:00`。
+（2026-09-29 复扫：该行的**行号已位移**——同日 TS-SOCKET/TS-CONSENSUS 两批改了这个文件，
+按 `now()` 函数体现读，别跟行号走；台账 #50★「行号会漂移」同型。）
 
 **风险**：carve-out 会让未来 timesync 的**真实**崩溃被静默吞掉。
 **修法**：移除特判，路由异常一律判 FAIL。验收：selftest 仍 14/14，`route_probe` 显示「路由异常=无」。

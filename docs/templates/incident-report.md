@@ -2,7 +2,7 @@
 sections: 事实与时间线 | 影响面 | 处置 | 摘要? | 复盘与红线?
 freeform: on
 params:
-- report_subject | text | literal | req | nonempty
+- report_subject | text | auto:filename_stem | req | nonempty
 - owner_board | text | auto:category_owner_board | req | nonempty
 - report_window | text | literal | opt | any
 @aliases: 摘要=总览|能力全景|快速上手
@@ -22,14 +22,15 @@ params:
 ---
 template: incident-report
 params:
-  report_subject: （必填）
-  owner_board: （必填）
+  report_subject: auto:filename_stem
+  owner_board: auto:category_owner_board
   report_window: （可省略）
 ---
 ```
 
 - 时间线用绝对日期，不用「今天/昨晚」；每条目要能指向提交哈希或可复跑命令。
-- `report_window`（可省略）写覆盖区间；`report_subject` 写被报告的对象。
+- `report_subject` 有真身来源（`auto:filename_stem`，由文件名主干现算，人手不碰数；空主干/占位符形 ⇒
+  `PROVIDER_FAIL`，绝不发明）；`owner_board` 由类别注册表现算；`report_window`（可省略）写覆盖区间。
 
 ## 骨架（新页照抄；机器段由 --write 注入，节名必须逐字等于 @schema sections）
 
@@ -52,6 +53,6 @@ params:
 ## @schema 字段语义（门侧口径）
 
 - `sections`：有序节序列，尾缀 `?`＝可选；必填缺失 / 表外节 / 顺序偏离各独立码。
-- `params` 五列 `key | kind | source | req | domain`（本模板全 `literal`，无现算参数）。
+- `params` 五列 `key | kind | source | req | domain`（`report_subject`/`owner_board` 走现算 `auto:`，`report_window` 为 `literal` 可省略）。
 - 渲染区 `{{fact:KEY}}` 的 KEY 必须在 params 内且被消费（否则 `DEAD_PARAM`）。
 - 字节确定性：LF 写盘、声明序、机器段零时间戳 ⇒ 两次 `--write` 字节相等。
