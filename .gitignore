@@ -125,3 +125,6 @@ SEAT-S*.md
 !.sdd-reports/seat-s84-embed-throughput.md
 !.sdd-reports/seat-s85-ann-rebuild-cost.md
 .qoder/scheduled_tasks.json
+# 仓库内 pytest basetemp 残留与调试 dump（规则 6；09-30 体检发现 cb-w9chk 未被罩住）
+/cb-w9chk/
+/run.txt
