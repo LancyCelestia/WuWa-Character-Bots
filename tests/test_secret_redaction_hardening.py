@@ -14,6 +14,7 @@ proxy/webhook——bot_disconnect_notice_serverchan_sendkey、bot_download_proxy
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -193,6 +194,115 @@ def test_word_hyphen_number_forms_not_masked() -> None:
         assert redact_local_secrets(text) == text, text
 
 
+# ==================== W3 收尾：`_KEYED_LONG_RUN_RE` 的左右边界 ====================
+# 这枚尺原先只活在 `alerts._alert_token`（喂的是**清洗过的单代号**，词干天然在串首），
+# 升为全局咽喉后没带边界 ⇒ 在自然行文里从词干**内部**起匹配、整段咬掉只剩首字母。
+# 下列反向锁此前**无一条锁住**（票1 段那条 `kind=server-xsk-…` 实为嵌词腿代打），
+# 现按实跑形态钉死：三形必须恒等。
+@pytest.mark.parametrize(
+    "text",
+    (
+        "session-1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",  # 曾→ `s‹已隐藏密钥形态›`
+        "feature-202609301234567890123",  # 曾→ `f‹…›`
+        "anti-disestablishmentarianism 是个长词",  # 曾整词被吞
+        "https://cdn.example.com/files-1a2b3c4d5e6f7a8b9c0d1e/app.js",  # URL 路径段
+        "看 https://example.com/download/session-1a2b3c4d5e6f7a8b9c0d 这里",
+        "构建号 build-20260930-1234 与 debug_id=dbg_a390ad114304 都得原样可 grep",
+    ),
+)
+def test_keyed_long_run_leg_boundaries(text: str) -> None:
+    assert redact_local_secrets(text) == text, text
+
+
+def test_keyed_long_run_residual_risk_on_record() -> None:
+    # **在册残留**（不藏）：≤6 字母词干 + ≥20 位含数字长段仍是本腿的靶形，
+    # 与真 key 无法从词面区分 ⇒ 形如 `build-<20 位纯数字>` 的构建号仍会被吞。
+    # 记成锁＝哪天有人把它「顺手修宽」或「顺手修窄」，这枚红会先叫。
+    out = redact_local_secrets("构建号 build-20260930123456789012 结束")
+    assert "build-20260930123456789012" not in out, out
+
+
+@pytest.mark.parametrize(
+    "secret",
+    (
+        "xproj-0123456789abcdef012345",  # 独立词干 + 数字混合长段：本腿的本职
+        "svc-AbCdEf0123456789AbCdEf",  # 无数字但大小写混排长段
+    ),
+)
+def test_keyed_long_run_leg_still_has_teeth(secret: str) -> None:
+    out = redact_local_secrets(f"令牌 {secret} 收好")
+    assert secret not in out, out
+    assert "‹已隐藏密钥形态›" in out, out
+
+
+def test_keyed_long_run_leg_poison_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 注毒自证：摘掉本腿后真形态必须回落成原样存活（正向锁有牙），
+    # 而被边界挡住的三形仍**恒等**（证明「不吞」不靠别的腿顺手打掉）。
+    leak = "令牌 xproj-0123456789abcdef012345 收好"
+    assert "xproj-0123456789abcdef012345" not in redact_local_secrets(leak)
+    monkeypatch.setattr(_pt, "_KEYED_LONG_RUN_RE", _neutralize(_pt._KEYED_LONG_RUN_RE))
+    assert "xproj-0123456789abcdef012345" in redact_local_secrets(leak)
+    assert redact_local_secrets("session-1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d") == (
+        "session-1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d"
+    )
+
+
+# ==================== W3 收尾：AxonHub 网关 key 形态（`ah-` + 64 位十六进制）====
+# 本机 `.env` 里三个模型/嵌入 key 的实际形态＝`ah-` 后接 64 位十六进制（总长 67，
+# 键名 BOT_CHAT_API_KEY / BOT_EMBEDDING_API_KEY / BOT_EMBEDDING_LOCAL_API_KEY）。
+# 值本体绝不进测试与报告：下面按**同形态合成**。
+#: 32 位 hex × 2 运行时拼接＝本仓在册口径（测试件不许出现可被 F1 尺扫到的连续
+#: 凭据字面量），形态与 `.env` 真值同构（`ah-` + 64 位十六进制，总长 67）。
+_AH_BODY = "0a1b2c3d4e5f60718293a4b5c6d7e8f9" + "0a1b2c3d4e5f60718293a4b5c6d7e8f9"
+_AH_TOKEN = "ah-" + _AH_BODY
+
+
+def test_axonhub_gateway_key_shape_masked() -> None:
+    # 实测结论：**罩得住**——原先靠 `_KEYED_LONG_RUN_RE` 顺带（词干 ah + 长段），
+    # 本席给那把尺补边界与混合性牙齿后改由**独立厂商前缀腿**接管，两形都得掉。
+    assert len(_AH_BODY) == 64
+    for probe in (
+        f"网关 key 是 {_AH_TOKEN} 别贴出来",
+        f"BOT_CHAT_API_KEY={_AH_TOKEN}",
+        f"提示词里回显 ah: {_AH_TOKEN}",
+        f"日志泄漏 https://gw.internal/status?k={_AH_TOKEN}",
+    ):
+        out = redact_local_secrets(probe)
+        assert _AH_BODY not in out, probe
+        assert _AH_TOKEN not in out, probe
+
+
+def test_axonhub_key_masked_even_when_long_run_leg_is_neutralized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 关键取舍：不能挂在启发式长段尺上。摘掉 `_KEYED_LONG_RUN_RE` 与 hex/b64 两腿后，
+    # `ah-` 仍必须被厂商腿打掉（注毒自证＝反过来说，摘厂商腿它就存活）。
+    monkeypatch.setattr(_pt, "_KEYED_LONG_RUN_RE", _neutralize(_pt._KEYED_LONG_RUN_RE))
+    monkeypatch.setattr(_pt, "_BARE_HEX_RE", _neutralize(_pt._BARE_HEX_RE))
+    monkeypatch.setattr(_pt, "_BARE_B64_RE", _neutralize(_pt._BARE_B64_RE))
+    assert _AH_BODY not in redact_local_secrets(f"key {_AH_TOKEN}"), "厂商腿没接管"
+    monkeypatch.setattr(
+        _pt, "_VENDOR_PREFIX_KEY_RE", _neutralize(_pt._VENDOR_PREFIX_KEY_RE)
+    )
+    assert _AH_BODY in redact_local_secrets(f"key {_AH_TOKEN}"), "厂商腿摘掉仍打码 ⇒ 有别的恒真尺"
+
+
+def test_axonhub_stem_in_prose_not_masked() -> None:
+    # 防误伤：`ah-` 只有接 ≥40 位十六进制才算 key；感叹词与常规连字符行文恒等。
+    for text in (
+        "ah- 这算什么写法",
+        "ah-0a1b2c 太短是示例",
+        "haha- 笑死",
+        "sha-1 与 md5 都是旧摘要名",
+    ):
+        assert redact_local_secrets(text) == text, text
+
+
+def test_ah_stem_registered_in_vendor_sentinels() -> None:
+    # 哨兵名册与腿一一对应（漏登记＝静默不走慢路径的旧坑）。
+    assert "ah-" in _pt._VENDOR_KEY_SENTINELS
+
+
 def test_new_legs_idempotent() -> None:
     leak = (
         "visk-EMBEDDEDKEY56789 试sk-ABCDEFGH1234 "
@@ -329,10 +439,14 @@ def test_email_lookalikes_survive(text: str) -> None:
 
 
 # ------------------------------------------------------------- 11 位手机号
+# W3 收尾：本腿**必须带通话类上下文词**才动（原判据不可收敛，见 plain_text._CN_MOBILE_RE
+# 注）。正向锁因此一律写成「通话词 + 号码」形；反向锁把主业务面的整数形钉死。
 def test_cn_mobile_masked_keeps_head_and_tail() -> None:
-    out = redact_local_secrets(f"我的号 {_MOBILE}，有事打")
+    out = redact_local_secrets(f"我的手机号 {_MOBILE}，有事打")
     assert _MOBILE not in out
     assert "138***5678" in out, out
+    # 上下文词逐字保留（掩的是号码，不是「这是谁的号码」这件事）。
+    assert out.startswith("我的手机号 "), out
 
 
 @pytest.mark.parametrize(
@@ -350,6 +464,39 @@ def test_cn_mobile_masked_keeps_head_and_tail() -> None:
 )
 def test_digit_runs_that_are_not_mobile_survive(text: str) -> None:
     assert redact_local_secrets(text) == text, text
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        # W3 收尾补的反向锁：整数形是原锁的**空洞**（旧锁只钉了带小数/带千分位形）。
+        "市值 19550721080 元",  # 11 位整数：东财口径的「元」直送本腿
+        "市值 13,550,721,080 元",  # 同值带千分位
+        "群号：13800000000",  # 全角冒号形＝group_info.py 的 f"群号：{group_id}"
+        "群号 13800000000",
+        "群 13800000000 的白名单已更新",
+        "本群 13800000000 与 1023456789 都在册",
+        "hotel 13800138000 不是电话",  # 左邻字母：tel 认不到 hotel 的尾巴
+        "13800138000 是别人直接贴出来的一串数字",  # 在册缺口：无通话上下文裸号不掩
+    ),
+)
+def test_eleven_digit_integers_without_phone_context_survive(text: str) -> None:
+    # 本腿收窄后**主动放弃**的那一半（无上下文裸号）在此登记成锁，不装成已覆盖。
+    assert redact_local_secrets(text) == text, text
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "手机号：13800138000",
+        "联系电话 13800138000",
+        "我的号码是 13800138000",
+        "call 13800138000 找我",
+        "TEL=13800138000",
+    ),
+)
+def test_phone_context_forms_masked(text: str) -> None:
+    assert "13800138000" not in redact_local_secrets(text), text
 
 
 # --------------------------------------------------------- 内网 IP 字面量
@@ -371,6 +518,11 @@ def test_private_ip_masked_keeps_network_and_last_octet() -> None:
         "超时 10.0 秒，重试 3 次",
         "收益 2.15% 对 3.99%",
         "子网 192.168.1.256 不合法",
+        # IPv6 **整族有意不做**（W3 收尾在 plain_text 里补了注释记账，此处把现状钉住）：
+        # ::1 与 127.0.0.1 同理＝回环；ULA/链路本地在本项目现网零出现；词面正则判
+        # 不对零压缩与 zone id，误伤面却是一切含 `::` 的正常行文。
+        "监听 [::1]:8080 与 fe80::1 与 fd00::1%eth0",
+        "Rust 写法 Foo::new() 与 CSS 的 ::before 选择器",
     ),
 )
 def test_loopback_public_and_four_part_versions_survive(text: str) -> None:
@@ -382,12 +534,20 @@ def test_posix_and_relative_and_unc_paths_masked() -> None:
     home = redact_local_secrets("配置在 /home/celestia/.config/app.yaml 里")
     assert "celestia" not in home
     assert "/home" in home and "app.yaml" in home and "***" in home
+    # W3 收尾：名册补 `/Users`（macOS 家目录，补前实测**原样存活**），且掩码改成
+    # 「留根段与末段、中间整段换 ***」——旧的定长留 5 字符会把 `/Users` `/media`
+    # 这种六字母根名自己截断。
+    users = redact_local_secrets("日志在 /Users/celestia/Library/App/state.db 里")
+    assert "celestia" not in users and "Library" not in users
+    assert "/Users" in users and "***" in users, users
     rel = redact_local_secrets("记忆库 data/chat_memory.sqlite3 涨到 800MB")
     assert "chat_memory" not in rel
     assert "data" in rel and "sqlite3" in rel and "***" in rel
     unc = redact_local_secrets(r"共享 \\nas01\c$\backup\notes.db 读不到")
     assert "nas01" not in unc and "backup" not in unc
     assert "\\\\" in unc and "notes.db" in unc and "***" in unc
+    # 幂等：POSIX 腿的值类不收 `*` ⇒ 产物永不被自己二次吃掉。
+    assert redact_local_secrets(users) == users
 
 
 @pytest.mark.parametrize(
@@ -485,7 +645,7 @@ def test_passwordless_dsn_survives(text: str) -> None:
 # --------------------------------------------------------------- 幂等与不吞正常输出
 def test_new_form_legs_idempotent() -> None:
     leak = (
-        f"联系 {_EMAIL_LEAK} 或 {_MOBILE}；内网 192.168.10.77 与 10.0.0.8；"
+        f"联系 {_EMAIL_LEAK} 或 手机号 {_MOBILE}；内网 192.168.10.77 与 10.0.0.8；"
         "路径 /home/celestia/.config/app.yaml 与 data/chat_memory.sqlite3 与 "
         + r"\\nas01\c$\backup\notes.db"
         + "；Set-Cookie: sid_ab=sample-login-cookie; "
@@ -530,7 +690,7 @@ def test_alert_technical_line_still_survives_new_legs() -> None:
 # 存活（证明判据真的在工作，而不是别腿顺手打掉、或恒真的掩码在自证）。
 _POISON_CASES = (
     ("_EMAIL_RE", "alice.zhang@example.com", "alice.zhang"),
-    ("_CN_MOBILE_RE", "我的号 13812345678", "13812345678"),
+    ("_CN_MOBILE_RE", "手机号 13812345678", "13812345678"),
     ("_PRIVATE_IP_RE", "网关 192.168.10.77", "192.168.10.77"),
     ("_POSIX_PATH_RE", "在 /home/celestia/app.yaml 里", "celestia"),
     ("_REL_SENSITIVE_PATH_RE", "库 data/chat_memory.sqlite3", "chat_memory"),
@@ -598,3 +758,66 @@ def test_ledger_55_embedded_sk_prefix_now_recognised(stem: str) -> None:
     assert body not in out, stem
     assert "sk-<已隐藏>" in out, out
 
+
+# ==================== W3 收尾：单源与「夹带件已退役」两把结构锁 ====================
+_PLAIN_TEXT_TRUE_HOME = (
+    "plugins/bot_unified_runtime/domains/render/plain_text.py"
+)
+
+
+def test_redact_local_secrets_definition_is_unique_in_tree() -> None:
+    """全树只准有一处 ``def redact_local_secrets``（真身住 plain_text）。
+
+    `output/plain_text.py` 是再导出垫片：它可以 import，不许自己定义第二份。
+    扩谱波把这件从 18,670 B 撑到现在的体量，第二真身一旦冒出来，两边会各自
+    长牙、且只有一边被测到（台账 #47 #68 同一族坑）。
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    hits: list[str] = []
+    for path in sorted((repo_root / "plugins").rglob("*.py")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if re.search(r"^def redact_local_secrets\(", text, flags=re.MULTILINE):
+            hits.append(str(path.relative_to(repo_root).as_posix()))
+    assert hits == [_PLAIN_TEXT_TRUE_HOME], f"出站打码出现第二真身：{hits}"
+
+
+# 本波从 humanize_reply 里拆出的夹带件（与打码无关、判据不可收敛）。
+# 撤销理由与实测四类误伤写在 plain_text.py 的退役注释里；这里是随件的账本行：
+# 反例锁随件同批撤、且**不许悄悄长回来**。
+def test_flatten_article_scaffolding_is_retired() -> None:
+    assert not hasattr(_pt, "flatten_article_scaffolding")
+    for gone in ("_ARTICLE_INDEX_HEAD_RE", "_BULLET_HEAD_RE", "_BOLD_MD_RE"):
+        assert not hasattr(_pt, gone), gone
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "一、身份\n\n她叫陈晖洁。",  # 空行必须活着（段间换行归 normalize_paragraph_breaks）
+        "一切都会好的。",  # 曾→「切都会好的。」
+        "一个眼神就说明她在听。",  # 曾→「个眼神就说明她在听。」
+        "二十三日见。",  # 曾→「日见。」
+        "1.5 倍速听着刚好。",  # 曾→「5 倍速听着刚好。」
+        "排行榜\n1. 张三 12.34\n2. 李四 13.10",  # 行首名次必须留着
+    ),
+)
+def test_humanize_reply_no_longer_eats_structure(text: str) -> None:
+    assert _pt.humanize_reply(text) == text, text
+
+
+def test_humanize_reply_still_strips_cliches_after_retirement() -> None:
+    # 退役只拆骨架压平那一腿，客套剥离与内心数值打码一字不动。
+    out = _pt.humanize_reply("好的！以下是干员资料：\n一、 身份与背景来历\n她叫陈晖洁。")
+    assert out == "干员资料：\n一、 身份与背景来历\n她叫陈晖洁。", out
+    inner = _pt.humanize_reply("其实你的好感度已经是 0.78 了哦")
+    assert "0.78" not in inner and "好感度…保密" in inner, inner
+
+
+def test_redact_cost_claim_is_not_zero_cost_wording() -> None:
+    """docstring 不许再写「热路径零成本」：本波实测每条约 15-18µs（走慢路径时）。
+
+    判据只查**措辞**（成本量级会随腿数漂，写成数就是假账——规则 10）。
+    """
+    doc = _pt.redact_local_secrets.__doc__ or ""
+    assert "零成本" not in doc, doc
+    assert "哨兵" in doc, "口径必须说清成本按什么算"

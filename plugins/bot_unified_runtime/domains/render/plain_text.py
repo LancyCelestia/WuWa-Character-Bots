@@ -283,59 +283,30 @@ def _redact_inner_state_number(match: re.Match[str]) -> str:
     return f"{name}…保密"
 
 
-#: 反照本宣科兜底（2026-09-27 用户裁定）：接地块里搬出来的"词条骨架"。
-#: 提示词里已有一道令（chat 的 `_KB_RECITAL_RULE_LINE`），但那是求模型——模型
-#: 不听话时不能把「一、 身份与背景来历」这种目录腔原样发给用户。这一腿只做
-#: **确定性的结构压平**：剥行首 markdown 序号/项目符号/加粗，绝不删正文里的词。
-_ARTICLE_INDEX_HEAD_RE = re.compile(
-    r"^\s*(?:[一二三四五六七八九十]{1,3}|[（(][一二三四五六七八九十\d]{1,3}[）)]|\d+[.)、])"
-    r"\s*[、．.]?\s*"
-)
-_BULLET_HEAD_RE = re.compile(r"^\s*(?:[-*•·])[ \t]+")
-_BOLD_MD_RE = re.compile(r"\*\*(.+?)\*\*")
+# 已退役（2026-09-30 W3 出站打码扩谱收尾席）：本件此前被夹带过一枚
+# ``flatten_article_scaffolding``（剥行首编号/项目符号的「词条骨架压平」），
+# 与打码无关、判据不可收敛，实测四类误伤全在人格回复的必经路上：
+# ①``一切都会好的`` → ``切都会好的``、``二十三日见`` → ``日见``
+#   （行首那一段字符类不要求后接分隔符，第一个汉字就被吃掉）；
+# ②``1.5 倍速`` → ``5 倍速``；③排行榜行首名次 ``1. 张三`` 被剥；
+# ④命中骨架时**整片空行被吞**（``\n\n`` → ``\n``）。
+# 第④条与本件的段落契约面重叠：出站段间换行的唯一真身是
+# ``domains/render/roleplay.py:normalize_paragraph_breaks``（B08
+# outbound-copy/paragraph-breaks 在册承诺「段间恒定单换行」），骨架压平在
+# ``humanize_reply`` 里另起一本空行账＝同一件事两处实现、且它先跑，
+# 于是「谁折叠空行」按输入形态漂移。它该在的地方是**知识库接地块的产出侧**
+# （提示词腿 ``chat._KB_RECITAL_RULE_LINE`` 已在册，HANDBOOK「反照本宣科令」条目
+# 记的是「只验不建」），不是出站咽喉。无处可迁 ⇒ 整块撤销，
+# 反例锁随件同批撤（退役要文件＋账本行同批）。
+def humanize_reply(text: str) -> str:
+    """剥离聊天回复的 AI 客套开场与总结腔；不改变事实与语义。
 
-
-def flatten_article_scaffolding(text: str) -> str:
-    """把"编号 + 小标题 / 连续 bullet"式词条骨架压成连续口吻；无骨架时逐字节原样返回。
-
-    两腿的保守度不同，各自一条反例锁（``tests/test_batch_cdf_modules.py``）：
-    ①编号小标题（``一、`` / ``1.`` / ``（二）``）形态足够特异，单行即压；
-    ②bullet 只在**连续两行以上**时才压——中文行文常以"- 那也算…"起头，
-      单行判成列表会啃掉正常语气。行首缩进一律保留（剥缩进＝改行文）。
+    只做**行内**改写：不删行、不折叠空行、不改行首序号（段间换行归
+    ``roleplay.normalize_paragraph_breaks``，行首 markdown 归 ``naturalize_chat_text``）。
     """
     value = (text or "").strip()
     if not value:
-        return text or ""
-    raw_lines = (text or "").splitlines()
-    bullet_rows = [i for i, line in enumerate(raw_lines) if _BULLET_HEAD_RE.match(line)]
-    # 连续两行（行号相邻）才算列表；孤行 bullet 当行文保留。
-    list_rows = {
-        i for i in bullet_rows if (i - 1) in set(bullet_rows) or (i + 1) in set(bullet_rows)
-    }
-    lines: list[str] = []
-    touched = False
-    for index, raw in enumerate(raw_lines):
-        line = _BOLD_MD_RE.sub(r"\1", raw)
-        if line != raw:
-            touched = True
-        stripped = _ARTICLE_INDEX_HEAD_RE.sub("", line, count=1)
-        if index in list_rows:
-            stripped = _BULLET_HEAD_RE.sub("", stripped, count=1)
-        if stripped != line:
-            touched = True
-        lines.append(stripped.rstrip())
-    if not touched:
-        return text
-    return "\n".join(line for line in lines if line.strip())
-
-
-def humanize_reply(text: str) -> str:
-    """剥离聊天回复的 AI 客套开场与总结腔；不改变事实与语义。"""
-    value = (text or "").strip()
-    if not value:
         return value
-    # 结构压平排在客套剥离之前：编号小标题常紧跟开场语，先拿掉骨架才好判开场。
-    value = flatten_article_scaffolding(value)
     value = _HUMANIZE_OPENING_RE.sub("", value).strip()
     value = _HUMANIZE_CLOSING_RE.sub("", value).strip()
     value = _INNER_STATE_NUM_RE.sub(_redact_inner_state_number, value)
@@ -370,7 +341,29 @@ _EMBEDDED_API_KEY_RE = re.compile(
 # 全局第二形态尺（原 alerts._ALERT_SECRETISH_RE 升格，票1「并入同一咽喉」）：
 # 短词干 + 连字符 + ≥20 位字母数字长段（ah-/xproj- 这类非 sk 词根的嵌 key）。
 # 产物占位符与告警面原样一致（‹…›），既有告警显示形态零漂移。
-_KEYED_LONG_RUN_RE = re.compile(r"[A-Za-z]{1,6}-[A-Za-z0-9]{20,}")
+# 🔴 升格为全局咽喉后必须带边界（W3 收尾）：这枚尺原先只喂
+# ``alerts._alert_token`` 的**清洗后单代号**（非代号字符已被剥光，词干天然在串首），
+# 现在喂的是自然行文，无边界版会在词干内部起匹配、把整段咬掉只剩首字母：
+# ``session-<hex32>`` → ``s‹…›``、``feature-<digits21>`` → ``f‹…›``、
+# ``anti-disestablishmentarianism`` 整词被吞、URL 路径段被吞后链接直接失效。
+# 三条牙：①左邻禁 ``[A-Za-z0-9_./\]`` ＝词干不许从词**内部**起算（7 字母以上的词
+# 天然落空，``{1,6}`` 够不到后面的连字符）；``-`` **不进**左禁类——#55★ 与告警面的
+# ``kind=server-xsk-<24 大写字母>`` 那一形就长在连字符右侧，禁了它＝把老锁的覆盖面
+# 拆了（实测三条反向锁不依赖禁 ``-``）；②尾段须「含数字 / 大小写混排 / 整段全大写」
+# 三者之一＝真 key 的必要成分，纯小写长段是英文复合词不是凭据；③右界不许再贴字母
+# 数字（整段收尾，防半截吞）。
+# 在册代价：紧贴 ``/`` ``.`` 的 key（URL 路径段里的 ``…/ah-<hex>``）不再由本腿接管
+# ——换「链接与代号不被咬断」；赋值/键值/Bearer 形态仍由前序腿整段接管，
+# 厂商前缀族另有 ``_VENDOR_PREFIX_KEY_RE`` 独立腿。
+_KEYED_LONG_RUN_RE = re.compile(
+    r"(?<![A-Za-z0-9_./\\])"
+    r"[A-Za-z]{1,6}-"
+    r"(?=[A-Za-z0-9]{20,}(?![A-Za-z0-9]))"
+    r"(?:(?=[A-Za-z0-9]*[0-9])"
+    r"|(?=[A-Z0-9]{20,}(?![A-Za-z0-9]))"
+    r"|(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*[A-Z]))"
+    r"[A-Za-z0-9]{20,}"
+)
 # 裸高熵串（无词干上下文）：两条都要**字符类别混合**才打——
 # hex：≥40 位且必须同时含 a-f 字母与数字（纯数字长编号不动）；
 # b64：≥40 位连段且必须同时含大写、小写、数字（`AAAA…` 复读/分隔文本不动）。
@@ -402,6 +395,12 @@ _ASCII_DIGIT_RE = re.compile(r"[0-9]")
 # 字母数字，无词干腿）。四类前缀本身即身份，日常行文里不存在「词+下划线
 # 直贴这些串」的歧义写法，故不再叠类别混合守卫；贪婪体吃满整个合法字符集，
 # 产物为占位符、不再命中任何腿（幂等）。
+# W3 收尾追加第五族 ``ah-``＝本机 AxonHub 网关 key 的真实形态（``ah-`` + 64 位
+# 十六进制，实测长度 67）。它原先**只被 `_KEYED_LONG_RUN_RE` 顺带罩住**，而那把
+# 尺本席刚补了边界与混合性牙齿——纯字母尾、紧贴 `/` 的形态从此落空；网关 key 是
+# 「bot 把自己配置里的凭据念进聊天/告警卡」的头号面，不能挂在一把启发式尺上，
+# 故给它一枚独立的厂商前缀腿（判据＝词干 + ≥40 位十六进制 + 左右不贴字母数字）。
+# 左邻 ``(?<![A-Za-z0-9_])`` 让 ``hah-…``/``duh-…`` 一类感叹词尾巴天然落空。
 _VENDOR_PREFIX_KEY_RE = re.compile(
     r"(?<![A-Za-z0-9_])"
     r"(?:"
@@ -409,14 +408,17 @@ _VENDOR_PREFIX_KEY_RE = re.compile(
     r"|github_pat_[A-Za-z0-9_]{16,}"
     r"|xox[abposr]-[A-Za-z0-9][A-Za-z0-9\-]{7,}"
     r"|(?:AKIA|ASIA)[0-9A-Z]{16,}"
+    r"|ah-[0-9a-fA-F]{40,}(?![A-Za-z0-9])"
     r")"
 )
 # 快路径哨兵（与腿一一对应，宁可多扫不能漏）：纯字母体的 ghp_/纯大写字母的
 # AKIA 串**不含数字也不含连字符**，既有哨兵一条都不认——不补这三族，快路径
 # 会把它们原样放回（注毒自证见 test_secret_redaction_hardening.py M-2 段）。
+# ``ah-`` 的词干本身含连字符、体段必为十六进制，``-`` 与「含 ASCII 数字」两条
+# 旧哨兵已覆盖绝大多数现值；仍登记在册＝腿与哨兵一一对应的口径不许破。
 _VENDOR_KEY_SENTINELS = (
     "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat",
-    "xox", "akia", "asia",
+    "xox", "akia", "asia", "ah-",
 )
 # F-01 ①URL userinfo：必须 scheme:// 打头且「user:pass@」两段齐全（无密码的
 # user@host 不动，普通 URL 无 @ 更不动）；只打码凭据段，保留 host:port/路径，
@@ -446,12 +448,13 @@ _BARE_KEY_VALUE_RE = re.compile(
 )
 
 # --- E-04 打码形态表缺口波（INCIDENT-20260930 §五「打码形态缺口」）----------------
-# 卷宗点名、上面那张形态表认不出的八类：邮箱 / 11 位手机号 / 内网 IP 字面量 /
+# 卷宗点名、上面那张形态表认不出的几类：邮箱 / 11 位手机号 / 内网 IP 字面量 /
 # 无盘符 POSIX 路径 / 相对路径（data/x.db 一族）/ UNC（\\host\c$）/ cookie= /
 # 非 Bearer 的裸 Authorization: / 非 http 的 URI userinfo（postgres://、mysql://）。
+# （逐类腿名以本段的 ``_*_RE`` 定义为准，本处不写「几类」这种会漂移的数。）
 # **QQ 号形态有意不做**：5-11 位纯数字与行情价、国债期限、群号、message_id、时间戳
-# 完全同形，判据不可收敛——宁可留缺口，也不吞正常输出（数字类腿只认 1[3-9] 开头的
-# 恰 11 位连段，且左右邻位一律收紧，详见 _CN_MOBILE_RE 注）。
+# 完全同形，判据不可收敛——宁可留缺口，也不吞正常输出（手机号那条腿同理，W3 收尾
+# 后只认「通话类上下文词 + 恰 11 位 1[3-9] 连段」，判据详见 _CN_MOBILE_RE 注）。
 # 掩码取向：新增 PII 形态一律**保守掩码**（留首尾若干字符 + 中间 ``***``，不整段吞）；
 # 凭据本体仍走既有 ``<已隐藏>``，但键名/scheme/host 逐字保留（与 F-01 四腿同形）。
 # 幂等口径：``***`` 与被吃掉的占位符字符一律**不进**任何新腿的字符类与左邻判定，
@@ -488,19 +491,44 @@ def _mask_email(match: re.Match[str]) -> str:
     return f"{_mask_middle(match.group(1), 1, 1)}@{match.group(2)}"
 
 
-# 11 位手机号：`1[3-9]` + 恰 9 位，且左右邻位禁数字/字母/`.`/`:`/`-`/`_`/`/`/`*`。
-# 三条防误伤牙：①**长度必须恰 11**——10 位群号、10/13 位时间戳、19 位 message_id
-# 的任何 11 位窗口都贴着一位数字而落空；②尾邻禁 `.`——行情/市值的
-# `19550721080.0` 一类带小数的长数不动；③左邻禁 `:` 与 `/`——ops 文案里
-# `session=group:13800000000`、URL 路径段是标识符位不是电话。产物 `138***5678`
-# 被 `*` 断连，任何腿（含本腿）都不再命中。
-_CN_MOBILE_RE = re.compile(r"(?<![0-9A-Za-z.:_\-/*])1[3-9][0-9]{9}(?![0-9A-Za-z.])")
+# 11 位手机号：**必须带通话类上下文词**才掩（W3 收尾，原判据不可收敛已收窄）。
+# 无条件版实测吞掉两类核心业务输出——``市值 19550721080 元`` → ``195***1080``、
+# ``群号：13800000000`` → ``138***0000``（QQ 群号 9-11 位、完全可能落在 1[3-9] 段，
+# 而 ``group_info.py`` 的「群号：{group_id}」正是直送本腿的行文；全角 ``：`` 当时
+# 不在左禁类里）。这类数字是 bot 的**主业务面**，每轮都可能出，误伤不可接受；
+# 反过来「上下文明明是别的东西、却恰好贴着 11 位 1[3-9] 数字」的手机号极罕见。
+# 故按项目裁定「误伤不可控就收窄并说明」：判据＝通话词 + 至多 3 个非字母数字的
+# 过渡字符 + 恰 11 位 ``1[3-9]`` 连段。通话词表是**封闭名册**（扩一个＝扩一次
+# 误伤面）；「号码」在册而「群号/编号/订单号」不在册，正是靠整词不相交把群号那一形
+# 挡在外面。左邻禁字母让 ``hotel`` 认不到 ``tel``。三条老牙保留：①长度恰 11
+# （10 位群号、13/10 位时间戳、19 位 message_id 的任何窗口都贴着一位数字而落空）；
+# ②右邻禁 ``.``（行情 ``19550721080.0`` 不动）；③产物 ``138***5678`` 被 ``*`` 断连
+# ⇒ 任何腿不再命中（幂等）。
+# **在册缺口（本席主动放弃的一半）**：无通话上下文的裸号（转发的联系人卡、
+# 一串数字独占一行）今天不掩；掩码取向仍是保守掩码（留 3 前缀 + 4 尾号）。
+_CN_MOBILE_RE = re.compile(
+    r"(?<![A-Za-z])"
+    r"(?P<head>(?i:手机号码|手机号|联系电话|联系方式|电话|手机|致电|拨打|联系|号码"
+    r"|phone|mobile|tel|call)[^\n0-9A-Za-z]{0,3})"
+    r"(?P<num>1[3-9][0-9]{9})(?![0-9A-Za-z.])"
+)
+
+
+def _mask_cn_mobile(match: re.Match[str]) -> str:
+    return match.group("head") + _mask_middle(match.group("num"), 3, 4)
 
 # 内网 IP 字面量：只认 RFC1918 + 链路本地（169.254/16＝云 metadata 面），
 # 每段都过 0-255 值域 ⇒ 四段版本号 `10.0.19045.2` 天然落空。
 # **127.0.0.1 有意不做**：本项目运维面/告警面常驻 `http://127.0.0.1:xxxx`（本地
 # 网关、Embedding、SnowLuma），回环不泄露任何拓扑，打掉只会打断 grep 契约。
 # 网段与末段保留、中间主机位换 ***（`192.168.***.77`），`*` 不进 octet 类 ⇒ 幂等。
+# **IPv6 整族有意不做（W3 收尾补记的在册缺口，原先连这句都没写）**：`::1` 与
+# 127.0.0.1 同理＝回环，不泄露拓扑；ULA（fc00::/7）与链路本地 fe80:: 在本项目现网
+# 零出现（运维面全是 `127.0.0.1:端口`，代理链走本机 Clash 的 HTTP 口）。要把 IPv6
+# 判对必须处理 `::` 零压缩、前缀长度 `/64`、zone id `fe80::1%eth0`——词面正则做出来
+# 的只会是「看着像」的尺，而误伤代价落在一切含 `::` 的正常行文（Rust/C++ 的 `a::b`
+# 作用域分隔符、CSS 的 `::before`、代码里的 `Foo::new()`）。等真出现内网 IPv6 拓扑外泄再补，不预先上
+# 不可收敛的判据（与下方 QQ 号那一条同一口径）。
 _IP_OCTET = r"(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])"
 _PRIVATE_IP_RE = re.compile(
     r"(?<![0-9A-Za-z.:_\-*])(?:"
@@ -525,13 +553,26 @@ _UNC_PATH_RE = re.compile(
     r"[^\s，。；！？、）】」”\"'<>*]{1,200}"
 )
 # 无盘符 POSIX 绝对路径：首段必须是**文件系统根目录名**（home/root/usr/var/etc/
-# opt/proc/srv/mnt/media/tmp/data）且其后还有第二段——`/bot help`、`docs/HANDBOOK.md`
+# opt/proc/srv/mnt/media/tmp/data，W3 收尾补 ``/Users``＝macOS 家目录，实测原样存活）
+# 且其后还有第二段——`/bot help`、`docs/HANDBOOK.md`
 # 里的 `/` 与触发词因此完全碰不到；URL 路径段 `/home/x` 由左邻「字母数字或 /」挡掉。
-_POSIX_PATH_RE = re.compile(
-    r"(?<![A-Za-z0-9._\-/~*<>])(?:"
-    r"/home|/root|/usr|/var|/etc|/opt|/proc|/srv|/mnt|/media|/tmp|/data"
-    r")/[^\s，。；！？、）】」”\"'<>*]{1,200}"
+# 掩码取向 W3 起改为**留根段与末段文件名、中间整段换 ***（原先是定长留 5 字符，
+# 对 `/Users` `/media` 会把根名自己截断）。隐私本体是中间的用户名/项目名。
+_POSIX_ROOTS = (
+    "home|Users|root|usr|var|etc|opt|proc|srv|mnt|media|tmp|data"
 )
+_POSIX_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9._\-/~*<>])(?P<root>/(?:" + _POSIX_ROOTS + r"))"
+    r"/(?P<rest>[^\s，。；！？、）】」”\"'<>*]{1,200})"
+)
+
+
+def _mask_posix_path(match: re.Match[str]) -> str:
+    root, rest = match.group("root"), match.group("rest")
+    _, sep, last = rest.rpartition("/")
+    if not sep:
+        return f"{root}/{_mask_middle(rest, 2, 2)}"
+    return f"{root}/{_PII_MASK_MARK}/{last}"
 # 相对路径只认**在册敏感后缀**（库文件/私钥/凭据册），且必须带目录段：
 # `data/chat_memory.sqlite3` 命中，`docs/HANDBOOK.md`、`config.py`、`data/cards/`
 # 这些正常行文与目录名不动（后缀名册是这把尺的全部判据，扩一个就扩一次误伤面）。
@@ -579,7 +620,17 @@ _COOKIE_PAIR_RE = re.compile(
 
 
 def redact_local_secrets(text: str) -> str:
-    """打码回复文本中的本机敏感形态；无命中时原样返回（热路径零成本）。"""
+    """打码回复文本中的本机敏感形态；**只有快路径哨兵全部落空时**才原样返回。
+
+    口径（W3 收尾改写：旧版把这件事说成「不花钱」，是假话）：成本按**输入字符里有
+    没有标记**算，不按**有没有命中形态**算。哨兵名册见下，``-`` 与「含 ASCII 数字」
+    两条几乎覆盖一切真实回复（行情价、时间戳、代号、URL、日期），所以「一条腿都不
+    跑」的情形只在纯汉字短句出现。现算当时值（2026-09-30，本席位实跑 ``timeit``，
+    随腿数漂移不作承诺）：无标记短句 ≈1.4µs，带一个数字或连字符的常规句 ≈15-18µs，
+    全链二十来枚腿。相对一次模型往返（秒级）可忽略，但**不得再宣称热路径不要钱**。
+    要压成本的正道是给慢路径再加一层按腿分组的前置判定，别改哨兵名册的覆盖面
+    （宁可多扫不能漏）。
+    """
     value = text or ""
     # 快路径哨兵与新正则一一对应，宁可多扫一遍也不能漏（漏=泄漏）：
     # 原三条：BOT_ / sk- / 盘符（:\ 与 :/）；F-01 四条：@（userinfo）、
@@ -591,6 +642,9 @@ def redact_local_secrets(text: str) -> str:
     # `:\` 组合，`\\host\share` 整条不含冒号）、`cookie`、`authorization`（两条新
     # 词干腿；Bearer 腿只认 bearer，认不到 `Authorization: Basic`）。手机号与内网 IP
     # 由既有的「含 ASCII 数字」覆盖，邮箱由 `@` 覆盖，DSN userinfo 由 `:/` 覆盖。
+    # W3 收尾未新增哨兵字符（一条腿没删、只收窄与加边界），但把 `ah-` 登进
+    # `_VENDOR_KEY_SENTINELS`：它的词干含 `-`、体段是十六进制，旧两条本就覆盖，
+    # 登记是为了「哨兵名册与腿一一对应」这条口径不许悄悄破功。
     lowered = value.lower()
     if ("BOT_" not in value and "sk-" not in value and ":\\" not in value
             and ":/" not in value and "@" not in value and "eyJ" not in value
@@ -604,7 +658,7 @@ def redact_local_secrets(text: str) -> str:
         return value
     # 顺序：先整段打掉 BOT_XXX=赋值（值里可能含路径/key），再打独立 key 与
     # 嵌词 key（ATK-OUTB 票1 两腿，独立腿在前保证 `sk-` 词根一次吃满整个连段），
-    # 接着 M-2 厂商前缀腿（ghp_/github_pat_/xox*/AKIA/ASIA，与 sk 两腿同属
+    # 接着 M-2 厂商前缀腿（ghp_/github_pat_/xox*/AKIA/ASIA/ah-，与 sk 两腿同属
     # 「词形家族」层，先于结构性腿接管 key 本体），
     # 然后 F-01 四形态（userinfo → JWT → Bearer → 裸键值对；JWT 先于 Bearer，
     # 整条 JWT 一次打掉），最后打剩余的盘符绝对路径；路径之后再上新三腿
@@ -633,12 +687,12 @@ def redact_local_secrets(text: str) -> str:
     value = _BARE_KEY_VALUE_RE.sub(r"\1=" + _SECRET_VALUE_PLACEHOLDER, value)
     value = _LOCAL_PATH_RE.sub(_LOCAL_PATH_PLACEHOLDER, value)
     value = _UNC_PATH_RE.sub(lambda m: _mask_middle(m.group(0), 2, 12), value)
-    value = _POSIX_PATH_RE.sub(lambda m: _mask_middle(m.group(0), 5, 12), value)
+    value = _POSIX_PATH_RE.sub(_mask_posix_path, value)
     value = _REL_SENSITIVE_PATH_RE.sub(lambda m: _mask_middle(m.group(0), 4, 12), value)
     value = _KEYED_LONG_RUN_RE.sub(_KEYED_RUN_PLACEHOLDER, value)
     value = _BARE_HEX_RE.sub(_SECRET_VALUE_PLACEHOLDER, value)
     value = _BARE_B64_RE.sub(_SECRET_VALUE_PLACEHOLDER, value)
-    value = _CN_MOBILE_RE.sub(lambda m: _mask_middle(m.group(0), 3, 4), value)
+    value = _CN_MOBILE_RE.sub(_mask_cn_mobile, value)
     value = _PRIVATE_IP_RE.sub(_mask_private_ip, value)
     value = _EMAIL_RE.sub(_mask_email, value)
     return value
