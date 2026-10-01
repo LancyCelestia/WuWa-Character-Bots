@@ -179,6 +179,9 @@ def _make_adapter() -> ResilientMailAdapter:
     adapter.driver = cast(Any, _FakeDriver())
     adapter.bots = {}
     adapter.tasks = set()
+    # F2 在飞门真身（MAILINGRESS-F2 格 A 落进 `__init__`）；本 harness 走 `__new__`
+    # 绕开构造器，配对格 D 显式补这枚属性。
+    adapter._inflight_uids = set()
     return adapter
 
 
@@ -281,12 +284,19 @@ async def test_fetch_new_mail_fetches_by_uid_and_never_plain_fetch() -> None:
     await adapter._fetch_new_mail(bot)
     await _drain_tracked_tasks(adapter)
 
-    assert fake.uid_calls == [
-        ("FETCH", "7", "(RFC822)"),
-        ("STORE", "7", "+FLAGS", "\\Seen"),
-        ("FETCH", "9", "(RFC822)"),
-        ("STORE", "9", "+FLAGS", "\\Seen"),
-    ]
+    # 格 D（MAILINGRESS-F2 配对锁）：旧断言钉的是「FETCH 7, STORE 7, FETCH 9, STORE 9」
+    # 这条 \Seen 前置的严格全序；\Seen 后置到派发成功之后，跨封交错变成
+    # FETCH/FETCH/handle/handle/STORE/STORE 一类形态，全序断言会误伤。
+    # 拆成分组断言后仍锁住两件事：① 两封都先取（FETCH 先行、无裸 fetch）；
+    # ② 两封各自回执（STORE 恰好 7/9 各一次）。「handle 先于 STORE」由
+    # tests/test_mail_ingress_locks.py::test_f2_seen_committed_only_after_successful_dispatch
+    # 的顺序锁执法，本处不重复钉第二把尺。
+    fetches = [call[1] for call in fake.uid_calls if call[0] == "FETCH"]
+    stores = [call[1] for call in fake.uid_calls if call[0] == "STORE"]
+    assert fetches == ["7", "9"]
+    assert stores == ["7", "9"], (
+        "F2 翻序后：两封先取、后各自在派发任务的 handle 成功回执里 STORE"
+    )
     assert fake.plain_fetch_calls == [], "取信不得走按序号寻址的裸 fetch()"
     assert handled == ["<7@example.com>", "<9@example.com>"]
 

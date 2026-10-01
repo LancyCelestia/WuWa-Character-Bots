@@ -157,6 +157,13 @@ def _task_done(task: asyncio.Task[Any], *, label: str) -> None:
 class ResilientMailAdapter(MailAdapter):
     """Mail adapter with reconnecting IMAP workers and explicit Seen flags."""
 
+    def __init__(self, driver: Any) -> None:
+        super().__init__(driver)
+        # F2 在飞门名册：(bot.self_id, uid) → 已派发未回执的邮件。
+        # 只拒绝同一封的并发重复派发（\Seen 后置后 UNSEEN 可见窗变宽），
+        # 不作去重账——去重真身＝中央事件幂等表 + MailBridgeState（SEAT-MAILINGRESS F6）。
+        self._inflight_uids: set[tuple[str, str]] = set()
+
     def _track_task(self, coroutine: Any, *, label: str) -> asyncio.Task[Any]:
         task = asyncio.create_task(coroutine)
         self.tasks.add(task)
@@ -320,13 +327,18 @@ class ResilientMailAdapter(MailAdapter):
             return
         uids = response.lines[0].decode().split()
         for uid in uids:
+            inflight_key = (str(bot.self_id), str(uid))
             try:
+                if inflight_key in self._inflight_uids:
+                    # F2 在飞门：\Seen 后置后，派发未完成的邮件仍是 UNSEEN、会被
+                    # 下一轮 poll 再搜到——同一封的并发重复派发在这里拒绝。中央事件
+                    # 幂等表（mail|bot|Message-ID）仍是第二层，本处不另建去重账。
+                    continue
                 # 必须走 UID FETCH：适配器 fetch_mail_of_uid 是按序号寻址的普通
                 # FETCH，错位即取错信/取不到（详见 fetch_mail_by_uid 文档）。
                 mail = await fetch_mail_by_uid(bot.imap_client, uid)
                 if mail is None:
                     continue
-                await mark_mail_seen(bot.imap_client, uid)
                 payload = model_dump(mail)
                 # 需求 16②：附件字节在这一刻还在手上（model_dump 之后段还是段），
                 # 就在这颗咽喉取文 + 逐份 T2 打标，取到什么一律并成 text 段交下游，
@@ -349,12 +361,60 @@ class ResilientMailAdapter(MailAdapter):
                         {"type": "text", "data": {"text": "\n".join(blocks)}}
                     )
                 event = QuietMailMessageEvent(**payload)
-                self._track_task(bot.handle_event(event), label=f"{bot.self_id} event")
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - one bad mail must not kill the connection.
+                # F2 修复腿①：构造/取文炸 ⇒ **不标 \Seen**，本封下一轮重投（旧形制
+                # \Seen 先落定＝永久静默丢信）。告警走本文件既有咽喉 mail_log＋
+                # describe_mail_error（首行截断、可读、零正文、非裸 print）。
                 mail_log(
-                    "WARNING",
-                    f"Mail {bot.self_id} skip uid={uid}: {describe_mail_error(exc)}",
+                    "ERROR",
+                    f"Mail {bot.self_id} prepare uid={uid} failed, will retry: "
+                    f"{describe_mail_error(exc)}",
                 )
                 continue
+            self._inflight_uids.add(inflight_key)
+            # F2 修复腿②：派发成功（handle_event 正常返回）后才回执 \Seen，
+            # 见 _dispatch_and_ack_seen；并发面不变——派发仍是 tracked task。
+            self._track_task(
+                self._dispatch_and_ack_seen(bot, uid, event, inflight_key),
+                label=f"{bot.self_id} event",
+            )
+
+    async def _dispatch_and_ack_seen(
+        self,
+        bot: MailBot,
+        uid: str,
+        event: QuietMailMessageEvent,
+        inflight_key: tuple[str, str],
+    ) -> None:
+        r"""派发先落定、`\Seen` 后回执（F2：at-most-once → at-least-once）。
+
+        `handle_event` 抛错 ⇒ 不标已读，本封下轮 poll 重投；重投的重复副作用由
+        双层幂等挡（中央事件幂等表 + MailBridgeState 持久 claim，SEAT-MAILINGRESS
+        F6 在册——这条安全网正是为今日翻序预铺的）。回执 `\Seen` 失败只出声不阻断
+        （文本已投出，重投同样被幂等表去重）。任何失败路径都留 mail_log ERROR
+        可读告警；finally 清在飞门，异常不 escaping（tracked task 炸＝worker 杀）。
+        """
+        try:
+            try:
+                await bot.handle_event(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - 单封派发失败不杀 worker。
+                mail_log(
+                    "ERROR",
+                    f"Mail {bot.self_id} dispatch uid={uid} failed, will retry: "
+                    f"{describe_mail_error(exc)}",
+                )
+                return
+            try:
+                await mark_mail_seen(bot.imap_client, uid)
+            except Exception as exc:  # noqa: BLE001 - 已投递，回执失败只出声。
+                mail_log(
+                    "ERROR",
+                    f"Mail {bot.self_id} seen-ack uid={uid} failed: "
+                    f"{describe_mail_error(exc)}",
+                )
+        finally:
+            self._inflight_uids.discard(inflight_key)

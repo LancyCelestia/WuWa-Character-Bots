@@ -1,17 +1,26 @@
-r"""S-MAILINGRESS（50 号席）邮件入站/出站审计派生锁 ＋ S-FIX-MAILINGRESS-R（63 号席）修复锁。
+r"""S-MAILINGRESS（50 号席）邮件入站/出站审计派生锁 ＋ S-FIX-MAILINGRESS-R（63 号席）修复锁
+＋ 席 N1（2026-10-02）把 F2/F3 两包**从待叠变成已叠**（P3.12：挂着的 skip 不算覆盖）。
 
 结构（全离线 mock，零外发）：
 - F1（已修复·直改）：安静时间可覆盖 mail 会话（`quiet_hours.py` 枚收录 email，
   与 QQ 私聊同形制＝可收、opt-in）。下方为「修复后行为锁」。
-- F2（补丁待叠）：`mail_adapter.py` 在飞（63/4），修法＝\Seen 后置于派发成功，
-  写面在 `patches/MAILINGRESS-F2-mailadapter.patch.md`。本文件保留「现状 at-most-once
-  锁」（叠补丁前生产未变、须继续绿）＋「目标形制桩锁」（skip，补丁落盘同笔去 skip
-  并翻转现状锁）。
-- F3（补丁待叠）：`sender/nonebot.py` 在飞（16/0），root `__init__.py` 禁直编且
-  本席现算**无需改格**，写面在 `patches/MAILINGRESS-F3-root.patch.md`。锁形制同 F2。
-- deny 面 / 幂等键：现状锁，与本席改动无关，保持逐字不动。
+- F2（**已叠**）：`mail_adapter.py` 的 `\Seen` 后置于派发成功（at-most-once →
+  at-least-once）。真身＝
+  `.superpowers/sdd/2026-09-27-fullload/patches/MAILINGRESS-F2-mailadapter.patch.md`
+  格 A/B；配对锁＝本文件下方两枚顺序/失败路径行为锁 ＋
+  `tests/test_mail_adapter_resilience.py` 格 D 的 IMAP 命令分组断言。
+  两枚病态形现状锁（`\Seen` 先落定、构造失败静默丢信）同批**删除**——
+  留着等于把修坏过一次的形制再钉一遍，下次改动会同时打红两把相反的尺。
+- F3（**已叠**）：认领重投腿 `event=None` 的 mail 语义降级。真身＝
+  `.superpowers/sdd/2026-09-27-fullload/patches/MAILINGRESS-F3-root.patch.md`
+  格 A/B（root `__init__.py` 无需改格，修复落 `sender/nonebot.py`）；
+  病态形现状锁 `test_f3_redrive_text_leg_degrades_to_plain_send_to` 同批删除，
+  继任者＝`test_f3_redrive_text_leg_restores_thread_headers`。
+  「直接调构造器传 None」的四枚契约锁逐字不动（替身只在 `send_nonebot_message` 内部立）。
+- deny 面 / 幂等键：现状锁。幂等键那枚在 N1 波随 P3.10 洗段翻转（见该格注记）。
 
-对应票号详见 logs/SEAT-MAILINGRESS.md 与 logs/SEAT-FIX-MAILINGRESS-R.md。
+对应票号详见 logs/SEAT-MAILINGRESS.md 与 logs/SEAT-FIX-MAILINGRESS-R.md；
+本波工单 patches/N1-NOTICE-ROLES-MAIL-20261002.md。
 """
 
 from __future__ import annotations
@@ -27,7 +36,6 @@ from pydantic import ValidationError
 from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     PrivacyLevel,
-    ReceiptState,
     RenderedOutput,
     SendPolicy,
     SendRequest,
@@ -42,6 +50,10 @@ from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import ROLE_BLO
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.event_idempotency import (
     EventIdempotencyTable,
     build_event_dedupe_key,
+)
+from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
+    active_push_key_segment,
+    is_legal_segment,
 )
 from plugins.bot_unified_runtime.domains.transport.mail import mail_adapter
 from plugins.bot_unified_runtime.domains.transport.mail.mail_adapter import (
@@ -60,6 +72,10 @@ from plugins.bot_unified_runtime.domains.transport.sender.nonebot import (
 # ---------------------------------------------------------------------------
 # 辅助构造
 # ---------------------------------------------------------------------------
+
+#: 事件幂等键的连接符（`event_idempotency._KEY_SEPARATOR` 的测试侧镜像；段合法性一律
+#: 回喂中央谓词 `is_legal_segment`，本文件不写第二套字符集）。
+_SEG_SEPARATOR = "|"
 
 
 def _email_message(**overrides: Any) -> IncomingMessage:
@@ -194,12 +210,26 @@ def test_email_session_falls_to_direct_chat_allow() -> None:
 
 # ---------------------------------------------------------------------------
 # 幂等键：mail|bot|Message-ID（F6 前置件；缺号则跳过去重）
+#
+# 【席 N1 2026-10-02 翻转】旧断言写的是**未洗段**的直拼形。连接符 `|` 不是段内合法字符，
+# 而 mail 的 Message-ID 由发件方邮件服务器决定（`<…@…>`，可控文本）——不洗则含 `|` 的
+# Message-ID 能与另一枚 bot_id 拼出同一串键＝两条不同来信共用一个幂等桶（静默吞第二条）。
+# 现在逐段过中央洗段口（读侧谓词 `is_legal_segment`，台账 #46★ 同一把尺），键仍一一对应。
+# 同批另见 tests/test_notice_event_dedupe_fallback.py::
+#   test_separator_in_inbound_id_cannot_fold_two_events_into_one_bucket
 # ---------------------------------------------------------------------------
 
 
 def test_event_dedupe_key_stable_for_mail_and_blank_without_id() -> None:
     key = build_event_dedupe_key(_email_message())
-    assert key == "mail|shorekeeper@foxmail.com|<stable-1@example.com>"
+    assert key == _SEG_SEPARATOR.join(
+        active_push_key_segment(part)
+        for part in ("mail", "shorekeeper@foxmail.com", "<stable-1@example.com>")
+    ), key
+    assert all(
+        is_legal_segment(part) for part in key.split(_SEG_SEPARATOR)
+    ), f"mail 键段未过中央谓词：{key!r}"
+    # 缺 Message-ID 且带正文＝合成轮，幂等真身在出站队列 ⇒ 入站不建键（旧语义不动）。
     assert build_event_dedupe_key(_email_message(message_id=None)) == ""
 
     table = EventIdempotencyTable()
@@ -208,9 +238,15 @@ def test_event_dedupe_key_stable_for_mail_and_blank_without_id() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F2：适配器 at-most-once 现状锁（**待翻转**——补丁包
-# patches/MAILINGRESS-F2-mailadapter.patch.md 叠笔同 commit 摘掉桩锁 skip、
-# 按补丁包【配对锁】节翻转这两枚现状锁；叠补丁前它们必须继续绿＝病态形在册留痕）
+# F2：适配器 at-least-once 顺序锁（席 N1 2026-10-02 **已叠**
+# `.superpowers/sdd/2026-09-27-fullload/patches/MAILINGRESS-F2-mailadapter.patch.md`
+# 格 A/B，并按该包【配对锁】格 C 摘掉两枚桩锁的 skip、删除两枚病态形现状锁）
+#
+# 病态形（\Seen 落定在任何派发之前 ⇒ 构造失败/进程崩溃＝永久静默丢信）的继任者就是
+# 下面第一枚；旧现状锁 `test_f2_seen_is_committed_before_dispatch` 与
+# `test_f2_event_build_failure_drops_mail_silently_no_retry` 同 commit 删除——
+# 留着它们等于把"已经修坏过一次的形制"再钉一遍，下一次改动会同时打红两把相反的尺。
+# 同批配对锁的另一半在 tests/test_mail_adapter_resilience.py::格 D（IMAP 命令分组断言）。
 # ---------------------------------------------------------------------------
 
 
@@ -225,8 +261,8 @@ class _AdapterHarness:
         adapter.driver = cast(Any, SimpleNamespace())
         adapter.bots = {}
         adapter.tasks = set()
-        # F2 补丁包（MAILINGRESS-F2-mailadapter.patch.md 格 A）叠后在飞门真身；
-        # 现生产未用到这枚属性——先挂上，桩锁翻转时零额外改动。
+        # F2 在飞门真身（补丁格 A 落进 `ResilientMailAdapter.__init__`）；
+        # 本 harness 走 `__new__` 绕开 `__init__`，故显式补这枚属性。
         adapter._inflight_uids = set()
 
         async def _search(client: Any, **kwargs: Any) -> Any:
@@ -272,13 +308,7 @@ class _AdapterHarness:
             await asyncio.gather(*pending)
 
 
-@pytest.mark.asyncio
-async def test_f2_seen_is_committed_before_dispatch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    harness = _AdapterHarness()
-    adapter, bot = harness.install(monkeypatch)
-
+def _quiet_event_class(harness: _AdapterHarness) -> Any:
     class _Event:
         def __init__(self, **payload: Any) -> None:
             harness.calls.append(f"build:{payload.get('id')}")
@@ -286,65 +316,18 @@ async def test_f2_seen_is_committed_before_dispatch(
             self.sender = SimpleNamespace(id="x@example.com")
             self.subject = ""
 
-    monkeypatch.setattr(mail_adapter, "QuietMailMessageEvent", _Event)
-    await adapter._fetch_new_mail(bot)
-    await harness.drain(adapter)
-
-    assert harness.calls == [
-        "search",
-        "fetch:7",
-        "seen:7",
-        "build:<7@example.com>",
-        "handle:<7@example.com>",
-    ], "at-most-once：\\Seen 落定在任何派发之前（崩溃/异常即永久丢信，F2 现状）"
+    return _Event
 
 
 @pytest.mark.asyncio
-async def test_f2_event_build_failure_drops_mail_silently_no_retry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """seen 之后构造抛错 ⇒ 该封只被跳过、不重投也不回滚已读（F2 静默丢弃面）。"""
-    harness = _AdapterHarness()
-    adapter, bot = harness.install(monkeypatch, uids="7 8")
-
-    def _boom(**payload: Any) -> Any:
-        raise RuntimeError("event construction exploded")
-
-    monkeypatch.setattr(mail_adapter, "QuietMailMessageEvent", _boom)
-    await adapter._fetch_new_mail(bot)
-    await harness.drain(adapter)
-
-    seen = [call for call in harness.calls if call.startswith("seen:")]
-    handled = [call for call in harness.calls if call.startswith("handle:")]
-    assert seen == ["seen:7", "seen:8"], "两封都已被标已读"
-    assert handled == [], "构造失败后没有任何派发、也没有重投通道"
-
-
-# --- F2 目标形制桩锁（待叠 patches/MAILINGRESS-F2-mailadapter.patch.md）------
-# 叠包同 commit：摘除下面两枚桩的 skip，并按补丁包【配对锁】节翻转上方两枚现状锁。
-# 桩体即翻转后的期望形——现在跑必然红（生产未叠），故 skip 留桩在册（63 号席简报：
-# 补丁路径的锁「留桩注明待叠」）。
-
-
-@pytest.mark.asyncio
-@pytest.mark.skip(
-    reason="待叠 patches/MAILINGRESS-F2-mailadapter.patch.md；叠笔同 commit 去 skip",
-)
-async def test_f2_seen_after_dispatch_target(
+async def test_f2_seen_committed_only_after_successful_dispatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     r"""目标序锁：search → fetch → build → handle → **seen**（\Seen 后置于派发成功）。"""
     harness = _AdapterHarness()
     adapter, bot = harness.install(monkeypatch)
+    monkeypatch.setattr(mail_adapter, "QuietMailMessageEvent", _quiet_event_class(harness))
 
-    class _Event:
-        def __init__(self, **payload: Any) -> None:
-            harness.calls.append(f"build:{payload.get('id')}")
-            self.id = str(payload.get("id", ""))
-            self.sender = SimpleNamespace(id="x@example.com")
-            self.subject = ""
-
-    monkeypatch.setattr(mail_adapter, "QuietMailMessageEvent", _Event)
     await adapter._fetch_new_mail(bot)
     await harness.drain(adapter)
 
@@ -358,10 +341,7 @@ async def test_f2_seen_after_dispatch_target(
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(
-    reason="待叠 patches/MAILINGRESS-F2-mailadapter.patch.md；叠笔同 commit 去 skip",
-)
-async def test_f2_build_failure_leaves_mail_unseen_target(
+async def test_f2_build_failure_leaves_mail_unseen_for_next_poll_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     r"""目标行为锁：构造炸 ⇒ **不标 \Seen**（下轮 poll 重投），只留可读告警。"""
@@ -382,10 +362,15 @@ async def test_f2_build_failure_leaves_mail_unseen_target(
 
 
 # ---------------------------------------------------------------------------
-# F3：SendQueue 认领重投腿 event=None 的 mail 降级（**现状锁待翻转**——补丁包
-# patches/MAILINGRESS-F3-root.patch.md：root 无需改格、修复落 sender/nonebot.py；
-# 叠笔同 commit 摘桩锁 skip 并删除 test_f3_redrive_text_leg_degrades_to_plain_send_to，
-# 其余 F3 现状锁（直接调构造器传 None 的契约）叠包后逐字仍真、保持不动）
+# F3：SendQueue 认领重投腿 mail 语义（席 N1 2026-10-02 **已叠**
+# `.superpowers/sdd/2026-09-27-fullload/patches/MAILINGRESS-F3-root.patch.md`：
+# root `__init__.py` 无需改格，修复落 `sender/nonebot.py` 格 A/B。同批按该包【三】节
+# 删除病态形现状锁 `test_f3_redrive_text_leg_degrades_to_plain_send_to`、摘两枚桩锁 skip）
+#
+# 保持不动的 F3 契约锁（直接调构造器传 None 的形制——替身只在 send_nonebot_message
+# 内部立）：`test_f3_inline_text_leg_keeps_thread_headers_and_deterministic_id`／
+# `test_f3_redrive_attachment_envelope_has_no_allowlisted_recipient`／
+# `test_f3_empty_allowlist_is_hard_rejected`／`test_f3_mail_reply_message_requires_recipient_fact`。
 # ---------------------------------------------------------------------------
 
 
@@ -443,26 +428,33 @@ def _mail_send_request(
 
 
 @pytest.mark.asyncio
-async def test_f3_redrive_text_leg_degrades_to_plain_send_to() -> None:
-    """event=None（worker 认领重投，__init__.py transport 闭包 :1681-1691）⇒
-    文本腿走 bot.send_to：不进 send_mail、无任何线程头（In-Reply-To/References
-    /确定性 Message-ID 全部丢失）。锁死 F3 文本腿现状。"""
+async def test_f3_redrive_text_leg_restores_thread_headers() -> None:
+    """目标：event=None 的 mail 重投文本腿走 send_mail——线程头回填
+    origin_message_id、同 request_id 重投同号（atkfix R3 语义在重投臂恢复成立）、
+    不再降级 send_to。
+
+    继任者身份：本枚取代旧病态形现状锁
+    `test_f3_redrive_text_leg_degrades_to_plain_send_to`（同 commit 删除）。
+    """
     bot = _FakeMailBot()
+    request = _mail_send_request("req-redrive-2", origin_message_id="<orig-9@example.com>")
 
-    receipt = await send_nonebot_message(bot, None, _mail_send_request())
+    await send_nonebot_message(bot, None, request)
+    await send_nonebot_message(bot, None, request)
 
-    assert receipt.state is ReceiptState.SENT
-    assert bot.send_mail_calls == [], "重投腿不走 _build_mail_reply_message/send_mail"
-    assert len(bot.send_to_calls) == 1
-    recipient, text, kwargs = bot.send_to_calls[0]
-    assert (recipient, text) == ("visitor@example.com", "回信正文")
-    assert kwargs == {}, "send_to 未获任何主题/线程头参数"
+    assert bot.send_to_calls == [], "重投文本腿不再走 send_to 兜底"
+    assert len(bot.send_mail_calls) == 2
+    first, second = bot.send_mail_calls
+    assert first["In-Reply-To"] == "<orig-9@example.com>"
+    assert first["References"] == "<orig-9@example.com>"
+    assert first["Message-ID"] == second["Message-ID"], "确定性 Message-ID 在重投臂成立"
+    assert first["To"] == "visitor@example.com"
 
 
 @pytest.mark.asyncio
 async def test_f3_inline_text_leg_keeps_thread_headers_and_deterministic_id() -> None:
-    """对照锁：inline 腿（event 在场）必带 In-Reply-To=来信号，且同一 request_id
-    重投两次得同一 Message-ID（atkfix R3 去重保证只在 inline 腿成立）。"""
+    """对照锁（F3 修复前后逐字仍真）：inline 腿（event 在场）必带 In-Reply-To=来信号，
+    且同一 request_id 重投两次得同一 Message-ID（atkfix R3 去重保证）。"""
     bot = _FakeMailBot()
     event = SimpleNamespace(
         id="<incoming-42@example.com>",
@@ -479,6 +471,24 @@ async def test_f3_inline_text_leg_keeps_thread_headers_and_deterministic_id() ->
     assert first["References"] == "<incoming-42@example.com>"
     assert first["Message-ID"] == second["Message-ID"], "同 request_id 重投同号"
     assert bot.send_to_calls == []
+
+
+def test_f3_redrive_surrogate_fills_attachment_roster() -> None:
+    """目标：请求侧事实替身喂给附件信封 ⇒ 名册=(target_id,)，
+    resolve_mail_recipient(target_id, 名册) 一致放行——附件重投不再恒 FAILED_FINAL。"""
+    from plugins.bot_unified_runtime.domains.transport.sender.nonebot import (
+        _MailRedriveEvent,
+    )
+
+    bot = _FakeMailBot()
+    request = _mail_send_request("req-redrive-3", origin_message_id="<orig-10@example.com>")
+    envelope = _build_mail_attachment_envelope(
+        bot, _MailRedriveEvent(request), "正文", daily_count=0
+    )
+    assert envelope.recipients_allowlisted == ("visitor@example.com",)
+    # 网关比对同闸同真身：target_id 与名册一致 ⇒ 放行且不抛。
+    resolved = resolve_mail_recipient(request.target_id, envelope.recipients_allowlisted)
+    assert str(resolved) == "visitor@example.com"
 
 
 def test_f3_redrive_attachment_envelope_has_no_allowlisted_recipient() -> None:
@@ -506,53 +516,3 @@ def test_f3_mail_reply_message_requires_recipient_fact() -> None:
     bot = _FakeMailBot()
     with pytest.raises(ValueError):
         _build_mail_reply_message(bot, None, "正文", message_salt="req-x")
-
-
-# --- F3 目标形制桩锁（待叠 patches/MAILINGRESS-F3-root.patch.md）-------------
-# 叠包同 commit：摘除 skip、删除上方 test_f3_redrive_text_leg_degrades_to_plain_send_to
-# （病态形继任者即下面第一枚）。替身类由补丁格 A 落进 nonebot.py，桩内**惰性导入**
-# ——skip 态不执行桩体，未叠包时不会 ImportError 炸收集。
-
-
-@pytest.mark.asyncio
-@pytest.mark.skip(
-    reason="待叠 patches/MAILINGRESS-F3-root.patch.md；叠笔同 commit 去 skip",
-)
-async def test_f3_redrive_text_leg_restores_thread_headers_target() -> None:
-    """目标：event=None 的 mail 重投文本腿走 send_mail——线程头回填
-    origin_message_id、同 request_id 重投同号（atkfix R3 语义在重投臂恢复成立）、
-    不再降级 send_to。"""
-    bot = _FakeMailBot()
-    request = _mail_send_request("req-redrive-2", origin_message_id="<orig-9@example.com>")
-
-    await send_nonebot_message(bot, None, request)
-    await send_nonebot_message(bot, None, request)
-
-    assert bot.send_to_calls == [], "重投文本腿不再走 send_to 兜底"
-    assert len(bot.send_mail_calls) == 2
-    first, second = bot.send_mail_calls
-    assert first["In-Reply-To"] == "<orig-9@example.com>"
-    assert first["References"] == "<orig-9@example.com>"
-    assert first["Message-ID"] == second["Message-ID"], "确定性 Message-ID 在重投臂成立"
-    assert first["To"] == "visitor@example.com"
-
-
-@pytest.mark.skip(
-    reason="待叠 patches/MAILINGRESS-F3-root.patch.md；叠笔同 commit 去 skip",
-)
-def test_f3_redrive_surrogate_fills_attachment_roster_target() -> None:
-    """目标：请求侧事实替身喂给附件信封 ⇒ 名册=(target_id,)，
-    resolve_mail_recipient(target_id, 名册) 一致放行——附件重投不再恒 FAILED_FINAL。"""
-    from plugins.bot_unified_runtime.domains.transport.sender.nonebot import (
-        _MailRedriveEvent,
-    )
-
-    bot = _FakeMailBot()
-    request = _mail_send_request("req-redrive-3", origin_message_id="<orig-10@example.com>")
-    envelope = _build_mail_attachment_envelope(
-        bot, _MailRedriveEvent(request), "正文", daily_count=0
-    )
-    assert envelope.recipients_allowlisted == ("visitor@example.com",)
-    # 网关比对同闸同真身：target_id 与名册一致 ⇒ 放行且不抛。
-    resolved = resolve_mail_recipient(request.target_id, envelope.recipients_allowlisted)
-    assert str(resolved) == "visitor@example.com"
