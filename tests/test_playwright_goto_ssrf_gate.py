@@ -29,8 +29,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.domains.link_parse.fetchers import playwright_backend as pb
-from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import ParseHttpError
+from plugins.bot_unified_runtime.domains.link_parse.fetchers import (
+    playwright_backend as pb,
+)
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    ParseHttpError,
+)
 
 _PUBLIC = "http://93.184.216.34/page"
 _INTERNALS = [

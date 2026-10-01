@@ -30,6 +30,7 @@ import io
 import os
 import urllib.request as urlrequest
 from pathlib import Path
+from typing import ClassVar
 from urllib.parse import quote_plus
 from urllib.response import addinfourl
 
@@ -80,8 +81,8 @@ class _FakeTransportHTTP(urlrequest.HTTPHandler):
     """假传输层：按路由表应答（handler_order 调低 ⇒ 抢先于钉定件，绝不建真 socket）。"""
 
     handler_order = 300
-    routes: dict[str, tuple[int, str, bytes]] = {}
-    requested: list[str] = []
+    routes: ClassVar[dict[str, tuple[int, str, bytes]]] = {}
+    requested: ClassVar[list[str]] = []
 
     def http_open(self, req):
         return _respond(req.full_url)

@@ -6,11 +6,14 @@
 127.0.0.1/169.254.169.254，咽喉的全部判据当场形同虚设。本文件的锁＝
 「判定与连接共用同一次解析」：
 
-①连接层拿到的地址必须是咽喉判定过的那枚 IP（域名不再进 socket）；
+①连接层拿到的地址必须是咽喉判定过的那册 IP（域名不再进 socket）；
 ②连接时刻再解一次若翻到内网 ⇒ 抛 ``RejectedUrlError`` 且 **一个 socket 都不建**；
 ③代理在场时绝不钉（红线台账 #71★：bot 全链拴 Clash，钉死等于绕过代理）；
 ④缺省 ``ProxyHandler`` 仍读环境（``trust_env`` 回落语义不许顺手关掉——temporal 天气依赖它）；
-⑤IPv6 字面量与 IPv4-mapped（::ffff:127.0.0.1）折算不破。
+⑤IPv6 字面量与 IPv4-mapped（::ffff:127.0.0.1）折算不破；
+⑥W4 补：主钉死了要能回退到**同一次解析**的其余地址（多 A 记录兜底不许被钉掉，
+   且回退一律只用判定过的地址册、绝不二次解析）；
+⑦W4 补：全树装配面必须与在册清单一字不差（「本体存在」不等于「缺口④收口」）。
 
 全离线纪律：``socket.getaddrinfo`` / ``socket.create_connection`` 全部打桩，
 ``AbstractHTTPHandler.do_open`` 只记账不建连；域名一律走假解析，字面量 IP
@@ -77,13 +80,35 @@ def _capture_do_open(monkeypatch) -> dict[str, object]:
     """把 ``do_open`` 换成记账件：只留「交给连接层的 http_class + 连接参数」，不建连。"""
     captured: dict[str, object] = {}
 
-    def fake_do_open(self, http_class, req, **kwargs):  # noqa: ANN001 - 替身签名
+    def fake_do_open(self, http_class, req, **kwargs):  # 替身签名（不注解，账在记账键里）
         captured["http_class"] = http_class
         captured["conn_kwargs"] = kwargs
         return "stubbed-response"
 
     monkeypatch.setattr(urlrequest.AbstractHTTPHandler, "do_open", fake_do_open)
     return captured
+
+
+def _patch_flaky_create_connection(
+    monkeypatch: pytest.MonkeyPatch, dead: frozenset[str]
+) -> list[tuple[str, int]]:
+    """连接记账件：``dead`` 里的地址一律按「端口拒绝」失败，其余返回哨兵不建真 socket。
+
+    用于验「主钉 + 同一次解析的其余地址可回退」（W4）：只钉一枚那版会把
+    ``socket.create_connection`` 自带的多 A 记录轮询兜底一起钉掉。
+    """
+    used: list[tuple[str, int]] = []
+    sentinel = object()
+
+    def fake_create_connection(address, *args, **kwargs):
+        ip, port = str(address[0]), int(address[1])
+        used.append((ip, port))
+        if ip in dead:
+            raise ConnectionRefusedError("simulated dead IP")
+        return sentinel
+
+    monkeypatch.setattr(socket, "create_connection", fake_create_connection)
+    return used
 
 
 def _pin_handler_pair() -> tuple[urlrequest.HTTPHandler, urlrequest.HTTPSHandler]:
@@ -294,6 +319,116 @@ def test_resolver_returns_addresses_for_allowed_url(monkeypatch) -> None:
     _patch_getaddrinfo(monkeypatch, [["93.184.216.34", "93.184.216.35"]])
     assert check_download_url_resolved("http://multi.example.test/x") == frozenset(
         {"93.184.216.34", "93.184.216.35"}
+    )
+
+
+# --------------------------------------------------------------------------- #
+# ⑥多地址兜底：主钉死了换同一次解析的下一枚，不许二次解析、不许静默成功
+# --------------------------------------------------------------------------- #
+def test_dead_primary_ip_falls_back_within_the_same_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CDN 有一枚死 IP：旧版只钉排序后第一枚 ⇒ 硬失败；现在按同册顺序回退。
+
+    RED（修复前）：``_pick_pinned_address`` 只交一枚，第二枚根本没进连接序，
+    ``used`` 只有一条且抛 ``ConnectionRefusedError``。
+    回退的合法性边界：候选册＝**同一次**已判定的解析结果（``resolved`` 只被点一次），
+    换地址不换「判定」，所以 rebinding 窗口仍是零。
+    """
+    resolved = _patch_getaddrinfo(
+        monkeypatch, [["93.184.216.34", "93.184.216.35"]]
+    )
+    used = _patch_flaky_create_connection(monkeypatch, frozenset({"93.184.216.34"}))
+    captured = _capture_do_open(monkeypatch)
+    handler, _https = _pin_handler_pair()
+
+    handler.http_open(urlrequest.Request("http://cdn.example.test/cover.png"))
+
+    connection = captured["http_class"]("cdn.example.test", timeout=2)
+    sock = connection._create_connection(("cdn.example.test", 80), 2.0, None)
+    assert sock is not None, "回退到下一枚候选后必须真的连上"
+    assert used == [("93.184.216.34", 80), ("93.184.216.35", 80)]
+    assert resolved == ["cdn.example.test"], "回退只许吃已判定的册子，不许再解一次 DNS"
+
+
+def test_ipv4_keeps_the_primary_slot_and_ipv6_stays_a_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """IPv4 优先保留（v6 无路由是常态故障源），但 v6 仍是同册里的合法回退候选。"""
+    _patch_getaddrinfo(monkeypatch, [[_PUBLIC_V6, _PUBLIC_V4]])
+    used = _patch_flaky_create_connection(monkeypatch, frozenset({_PUBLIC_V4}))
+    captured = _capture_do_open(monkeypatch)
+    handler, _https = _pin_handler_pair()
+
+    handler.http_open(urlrequest.Request("http://dual.example.test/x"))
+
+    connection = captured["http_class"]("dual.example.test", timeout=2)
+    connection._create_connection(("dual.example.test", 443), 2.0, None)
+    assert used == [(_PUBLIC_V4, 443), (_PUBLIC_V6, 443)]
+
+
+def test_all_candidates_dead_propagates_the_real_oserror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """全册皆败：抛最后一次的真实异常（不伪造原因、不静默返回 None）。"""
+    _patch_getaddrinfo(monkeypatch, [["93.184.216.34", "93.184.216.35"]])
+    used = _patch_flaky_create_connection(
+        monkeypatch, frozenset({"93.184.216.34", "93.184.216.35"})
+    )
+    captured = _capture_do_open(monkeypatch)
+    handler, _https = _pin_handler_pair()
+
+    handler.http_open(urlrequest.Request("http://cdn.example.test/x"))
+
+    connection = captured["http_class"]("cdn.example.test", timeout=2)
+    with pytest.raises(ConnectionRefusedError):
+        connection._create_connection(("cdn.example.test", 80), 2.0, None)
+    assert len(used) == 2, "两枚候选各试一次就收，不许无限打转"
+
+
+# --------------------------------------------------------------------------- #
+# ⑦装配面在册锁：「装了没」是纸面口径的唯一凭据
+# --------------------------------------------------------------------------- #
+#: 在册清单＝``downloader.build_pinning_handlers`` 装配面段落与
+#: ``patches/W4-SSRF-PIN-ASSEMBLY-20260930.md`` 三处同批（改一处必改其余）。
+_PINNING_ASSEMBLY_ROSTER = frozenset({"domains/food/capabilities/eat.py"})
+
+
+def test_pinning_assembly_roster_is_the_recorded_one() -> None:
+    """钉定件调用点必须与在册清单一字不差（多装少装都红）。
+
+    为什么必须有这把尺（W4）：钉定「本体」早已存在，但全树只有 ``eat`` 一条腿装上，
+    解析链咽喉 ``http_util._build_opener`` 与 ``notes``/``vision_describe``/
+    ``media_archive``/meme 监听器一律未装 ⇒ 生产主面的 rebinding 窗口零改善，
+    而台账很容易读成「缺口④已收口」。本锁把「谁在装」变成机器可判的事实：
+    - 有人**新装**一条腿却不改清单/口径 ⇒ 红（逼着复核该腿的 ``except`` 面与代理态，
+      见 ``RejectedUrlError`` 与 ``build_pinning_handlers`` 的装配注意 a/b）；
+    - 在册腿被拆掉而清单不动 ⇒ 同样红（假账）。
+    现算是本锁的立场：不缓存、不读文档正文，只按 AST 认调用点。
+    """
+    import ast
+    from pathlib import Path
+
+    pkg_root = Path(dl.__file__).resolve().parents[3]
+    found: set[str] = set()
+    for source in sorted(pkg_root.rglob("*.py")):
+        try:
+            text = source.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):  # pragma: no cover - 非 py3 源/坏编码
+            continue
+        if "build_pinning_handlers(" not in text:
+            continue
+        tree = ast.parse(text)
+        called = any(
+            isinstance(node, ast.Call)
+            and getattr(node.func, "id", "") == "build_pinning_handlers"
+            for node in ast.walk(tree)
+        )
+        if called:
+            found.add(source.relative_to(pkg_root).as_posix())
+    assert found == set(_PINNING_ASSEMBLY_ROSTER), (
+        "钉定件装配面与在册清单不符 ⇒ 要么有腿未登记，要么账面虚高。"
+        f"实算={sorted(found)} 在册={sorted(_PINNING_ASSEMBLY_ROSTER)}"
     )
 
 

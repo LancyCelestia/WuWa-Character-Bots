@@ -7,6 +7,12 @@
 - ``domains/files/sources/downloader.py:probe``
   —— 同文件 ``download()`` 过 ``check_download_url``，``probe()`` 从未过；
   ``content_parser.py:739/759`` 把页面派生 URL（``audio_url``/``canonical_url``）直送 ``probe()``。
+- ``domains/music/capabilities/music.py:_default_audio_downloader``（**W7 扩面**，2026-10-31）
+  —— 入口过了咽喉，却把跳转整段交给 httpx（客户端自动跟随），逐跳钩子只剥凭证、不判内网，
+  全文对 ``response.url`` 零复查 ⇒ 公网直链 302→``127.0.0.1:3001`` / ``169.254.169.254``
+  即盲连，响应字节落盘成 ``song_<sha1>.<ext>`` 再发进群＝内网读原语。
+  活性锁（注毒 302→内网必拒 + 公网正向）在 ``tests/test_music_audio_leg_ssrf_hop.py``，
+  本文件只补**结构钉面**——AST 锁与代码必须同批改（台账 #68★：只改代码不改锁＝下次照样漏）。
 
 本文件的锁三件事（缺一不可）：
 1. **咽喉被调**：被拦地址在发出任何请求/交给 yt-dlp 之前就被拒（``requested == []``）。
@@ -40,6 +46,7 @@ from plugins.bot_unified_runtime.domains.files.sources.downloader import (
 from plugins.bot_unified_runtime.domains.meme.sources import (
     meme_library_listener as listener,
 )
+from plugins.bot_unified_runtime.domains.music.capabilities import music
 
 # 字面量公网地址（咽喉直接放行，不触 DNS）与三类必拦地址。
 PUBLIC_ENTRY = "http://93.184.216.34/a.png"
@@ -63,9 +70,9 @@ BLOCKED_URLS = [
 # --------------------------------------------------------------------------- #
 # 探针：AST 级「咽喉调用点份数」计数（证明同源复用，不是复制两份校验逻辑）
 # --------------------------------------------------------------------------- #
-def _ast_call_count(module) -> int:
-    """模块内对 ``check_download_url`` 的**调用**次数（不含 def 与 import）。"""
-    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+def _call_count_source(source: str) -> int:
+    """源码文本里对 ``check_download_url`` 的**调用**次数（注毒自证要拿改过的文本喂尺）。"""
+    tree = ast.parse(source)
     calls = 0
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -75,6 +82,11 @@ def _ast_call_count(module) -> int:
         if name == "check_download_url":
             calls += 1
     return calls
+
+
+def _ast_call_count(module) -> int:
+    """模块内对 ``check_download_url`` 的**调用**次数（不含 def 与 import）。"""
+    return _call_count_source(Path(module.__file__).read_text(encoding="utf-8"))
 
 
 def _shared_guard_call_count(module, helper: str) -> int:
@@ -333,3 +345,96 @@ def test_guard_definition_is_unique_across_plugin_tree() -> None:
         fromlist=["check_download_url"],
     )
     assert media_archive.check_download_url is downloader_mod.check_download_url
+
+
+# --------------------------------------------------------------------------- #
+# 3) W7 扩面：点歌「试听音频下载腿」入钉（同批改锁，台账 #68★）
+#
+# 为什么必须同批：本文件的 AST 尺原先只钉「``check_download_url`` 唯一定义 +
+# downloader/listener 两处调用数」⇒ music 那条腿对门**完全不可见**，入口挂了闸、
+# 逐跳零复查的洞就这么活着被审计现算出来。只改代码不改锁＝下次照样漏。
+# 行为面（注毒必拒 / 公网直链仍能下载 / magic bytes / 限额）的活性锁在
+# ``tests/test_music_audio_leg_ssrf_hop.py``；本节的职责是**结构射程**：
+# 让「新增一条跟跳转的下载腿却不自查落点」这类改动当场红，而不是等人来审计。
+# --------------------------------------------------------------------------- #
+
+#: 「手动逐跳跟随时绝不许把跳转交给客户端」的在册腿（标签 → 模块）。
+#: 新加一条腿必须同批入本表；表内腿一旦改回自动跟随即红。
+MANUAL_HOP_LEGS: dict[str, object] = {
+    "meme 收库腿": listener,
+    "music 试听下载腿": music,
+}
+
+#: 三种写法都要抓到：``follow_redirects=True``（关键字）、``"follow_redirects": True``
+#: （字典项，本仓下载腿的实际形态）、以及引号在冒号内外的变体。少一种＝棘轮留空档。
+AUTO_FOLLOW_RE = re.compile("""follow_redirects["']?\\s*[=:]\\s*["']?True""")
+CENTRAL_THROAT_MODULE = "plugins.bot_unified_runtime.domains.files.sources.downloader"
+
+
+def _throat_import_modules(module) -> set[str]:
+    """本文件里 ``check_download_url`` 是从哪个模块 import 来的（判据零副本锁）。"""
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and any(
+            alias.name == "check_download_url" for alias in node.names
+        ):
+            found.add(str(node.module))
+    return found
+
+
+def _auto_follow_violations(label: str, source: str) -> list[str]:
+    """在册腿的棘轮判据本体（注毒自证也走这一个口，禁两把尺各写一遍）。
+
+    两问：① 有没有把跳转交给客户端自动完成；② 咽喉**被调用**了没有——只查
+    「字面量出现」不算，注释里提一句 ``check_download_url`` 就把尺糊过去。
+    """
+    problems: list[str] = []
+    if AUTO_FOLLOW_RE.search(source):
+        problems.append(f"{label}：把跳转交给客户端自动完成（逐跳落点因此没人复查）")
+    if _call_count_source(source) < 1:
+        problems.append(f"{label}：全文未见中央咽喉调用")
+    return problems
+
+
+def test_music_audio_leg_stops_at_the_entry_hop() -> None:
+    """咽喉调用点唯一：入口与每一跳共用同一处调用（与 listener 同格口径）。"""
+    assert _ast_call_count(music) == 1, (
+        "music 试听腿的 check_download_url 调用点必须唯一（多一处＝第二套判据的苗头）"
+    )
+
+
+def test_music_audio_leg_imports_only_the_central_throat() -> None:
+    """判据零副本：本腿的内网判定只许来自中央咽喉那一个模块。"""
+    assert _throat_import_modules(music) == {CENTRAL_THROAT_MODULE}
+
+
+def test_every_registered_manual_hop_leg_passes_the_ratchet() -> None:
+    """棘轮射程＝在册名册：每条腿都既挂着咽喉、又不自动跟随。"""
+    problems: list[str] = []
+    for label, module in MANUAL_HOP_LEGS.items():
+        source = Path(module.__file__).read_text(encoding="utf-8")  # type: ignore[attr-defined]
+        problems += _auto_follow_violations(label, source)
+    assert problems == [], "逐跳复查棘轮被破：\n" + "\n".join(problems)
+
+
+def test_poison_music_leg_auto_redirect_is_named() -> None:
+    """注毒自证（第一腿）：把 music 的手动逐跳改回自动跟随 ⇒ 尺**必红**。
+
+    不跑这一步就说不清这条棘轮到底抓不抓得住——原洞的形态正是「跟着写了逐跳钩子、
+    钩子里却不判内网」，源码文本层面唯一的可分辨特征就是自动跟随重新出现。
+    """
+    source = Path(music.__file__).read_text(encoding="utf-8")
+    poisoned = source.replace('"follow_redirects": False', '"follow_redirects": True', 1)
+    assert poisoned != source, "注毒锚点已失效（手动逐跳形态漂了，先修锚再谈锁）"
+    problems = _auto_follow_violations("music 试听下载腿", poisoned)
+    assert any("自动完成" in problem for problem in problems), f"毒没被抓：{problems}"
+
+
+def test_poison_music_leg_throat_removal_is_named() -> None:
+    """注毒自证（第二腿）：把咽喉调用摘掉 ⇒ 同一把尺也必红。"""
+    source = Path(music.__file__).read_text(encoding="utf-8")
+    poisoned = source.replace("check_download_url(target)", "_no_guard(target)", 1)
+    assert poisoned != source, "注毒锚点已失效（逐跳咽喉那行漂了，先修锚再谈锁）"
+    problems = _auto_follow_violations("music 试听下载腿", poisoned)
+    assert any("未见中央咽喉" in problem for problem in problems), f"毒没被抓：{problems}"

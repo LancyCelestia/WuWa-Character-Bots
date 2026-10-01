@@ -133,8 +133,13 @@ def test_route_registered_and_fulfills_local_bytes(asset_dir: Path) -> None:
     backend = _make_backend()
     page = _FakePage()
     assert _render(backend, page, MERMAID_HTML) == b"png-bytes"
-    assert len(page.routes) == 1
-    pattern, handler = page.routes[0]
+    # 锁随扩面同批改（W4 2026-10-01，台账 #68★「扩面要文件＋锁同批」）：
+    # MERMAID_HTML 的 ``<script src=https://…>`` 本身就是「远程资源引用」⇒
+    # M-1 之后先注册一条 "**/*"（ORB/SSRF 闸），再注册精确 CDN URL（本地供给）。
+    # mermaid 本地支必须仍是**第二条**（后注册者优先匹配，换血才生效）。
+    assert len(page.routes) == 2
+    assert page.routes[0][0] == "**/*"
+    pattern, handler = page.routes[1]
     assert pattern == rb._MERMAID_CDN_URL
     fake_route = _FakeRoute()
     handler(fake_route)
@@ -148,7 +153,9 @@ def test_route_not_registered_when_local_asset_missing(asset_dir: Path) -> None:
     backend = _make_backend()
     page = _FakePage()
     assert _render(backend, page, MERMAID_HTML) == b"png-bytes"  # 优雅降级照常出图
-    assert page.routes == []  # 放行走网络
+    # 本地素材缺失 ⇒ 只关「mermaid 换血」这一条；远程资源闸（"**/*"）与素材
+    # 缺席无关，必须照旧在场（否则素材一掉链子 SSRF 闸也跟着消失）。
+    assert [pattern for pattern, _ in page.routes] == ["**/*"]
 
 
 def test_route_not_registered_for_non_mermaid_html(asset_dir: Path) -> None:

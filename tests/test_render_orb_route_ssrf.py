@@ -6,11 +6,12 @@
 本身即探测）。ORB 代捞腿仅 sinaimg/weibocdn 后缀白名单内（内网字面不可能入名单），
 故缺口在「非 ORB 名单的远程图直接 ``route.continue_()``」这一支。
 
-修法（本席，写面严格限 ``_orb_route`` 一跳守卫）：对 ``resource_type=="image"`` 的
-http(s) 请求，非 ORB 名单支先过**中央唯一判据** ``check_download_url``——明确拒绝
-即 ``route.abort()``（模板 onerror 已有灰图兜底，行为兼容），放行才 ``continue_()``。
-ORB 名单支维持既有「python 侧代捞」不变（不为它引入咽喉调用，避免测试里对
-sinaimg 图床触发真 DNS）。
+修法（本席，写面严格限 ``_orb_route`` 一跳守卫）：对**任意 http(s)** 请求（W4
+2026-10-01 起不再只挑 ``resource_type=="image"``），先过 ``scheme`` 门（非 http(s)
+＝本地形态，交回浏览器 continue_），ORB 名单图走 python 侧代捞，其余一律先过
+**中央唯一判据** ``check_download_url``——明确拒绝即 ``route.abort()``（模板
+onerror 已有灰图兜底，行为兼容），放行才 ``continue_()``。ORB 名单支维持既有
+「python 侧代捞」不变（不为它引入咽喉调用，避免测试里对 sinaimg 图床触发真 DNS）。
 
 全离线纪律：沿用 ``test_render_image_cache`` 的假 page/route/opener（无真 Chromium、
 无真网络）；内网/公网全用字面量 IP，``check_download_url`` 离线判定零 DNS。
@@ -114,10 +115,52 @@ def test_orb_route_orb_prone_still_fetched_via_proxy_leg(
     assert opener.calls == [_IMG_URL]
 
 
-def test_orb_route_non_image_still_continues(monkeypatch: pytest.MonkeyPatch) -> None:
-    """非图片资源维持原样 continue_()（守卫只收窄图片支，不扩面）。"""
+def test_orb_route_non_image_public_still_continues(monkeypatch: pytest.MonkeyPatch) -> None:
+    """正向锁：非图片但公网可达的请求（外链 CSS/JS）仍 continue_()，不过度拦。"""
     handler, opener = _install_orb_handler(monkeypatch)
-    route = _FakeRoute(_INTERNAL, resource_type="script")
+    route = _FakeRoute(_PUBLIC, resource_type="script")
+    handler(route)
+    assert route.continued is True and route.aborted is False
+    assert opener.calls == []
+
+
+def test_orb_route_non_image_intranet_aborts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """W4 扩面锁：``resource_type!="image"`` 不再是免检通道。
+
+    旧实现首行「非 image 一律 continue_()」，而注册判据与 docstring 都自称罩住
+    「任意远程资源」⇒ 卡里一枚 ``<script src='http://127.0.0.1:3001/x.js'>``
+    （或外链 CSS/XHR）由本机 Chromium 盲连，F-3 判据根本不执行——端口探测面
+    从「图」这一形收窄出来的口子，实际等于没关。RED（扩面前）：本锁红在
+    ``continued is True``。口径既已改，锁与生产件同批改（台账 #68★）。
+    """
+    handler, opener = _install_orb_handler(monkeypatch)
+    for resource_type in ("script", "stylesheet", "xhr", "document", "font"):
+        route = _FakeRoute(_INTERNAL, resource_type=resource_type)
+        handler(route)
+        assert route.aborted is True, f"{resource_type} 腿内网请求必须发不出"
+        assert route.continued is False
+    assert opener.calls == []  # 内网请求既不放行也不代捞
+
+
+@pytest.mark.parametrize(
+    ("url", "resource_type"),
+    [
+        ("data:image/png;base64,AAAA", "image"),
+        ("blob:https://example.test/6f2f1c", "image"),
+        ("about:blank", "document"),
+        ("file:///C:/Windows/win.ini", "image"),
+    ],
+)
+def test_orb_route_local_schemes_never_aborted(
+    monkeypatch: pytest.MonkeyPatch, url: str, resource_type: str
+) -> None:
+    """scheme 门前置锁：非 http(s) 形态交回浏览器，绝不被咽喉按「协议非法」误杀。
+
+    没有这道显式判定，扩面后 ``data:``/``blob:`` 本地图会进 ``check_download_url``
+    ⇒ 非 http/https ⇒ RejectedUrlError ⇒ abort ⇒ 卡面内联图全灰（渲染契约回归面）。
+    """
+    handler, opener = _install_orb_handler(monkeypatch)
+    route = _FakeRoute(url, resource_type=resource_type)
     handler(route)
     assert route.continued is True and route.aborted is False
     assert opener.calls == []

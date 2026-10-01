@@ -25,6 +25,7 @@ from __future__ import annotations
 import email.message
 import io
 import urllib.request as urlrequest
+from typing import ClassVar
 from urllib.response import addinfourl
 
 import pytest
@@ -58,8 +59,8 @@ def _respond(url: str):
 class _FakeTransportHTTP(urlrequest.HTTPHandler):
     """假传输层（继承 HTTPHandler 才会顶掉默认真实处理器；内网落点故意不建路由）。"""
 
-    routes: dict[str, tuple[int, str, bytes]] = {}
-    requested: list[str] = []
+    routes: ClassVar[dict[str, tuple[int, str, bytes]]] = {}
+    requested: ClassVar[list[str]] = []
 
     def http_open(self, req):
         return _respond(req.full_url)
@@ -194,7 +195,7 @@ def test_failure_contract_unchanged_when_guard_rejects(monkeypatch: pytest.Monke
     _install_transport(monkeypatch, {_ORB_ENTRY: (302, _LOOPBACK_LANDING, b"moved")})
     try:
         assert rb._fetch_image_bytes(_ORB_ENTRY) is None
-    except Exception as exc:  # pragma: no cover - 修复若改抛错，这里当场红
+    except Exception as exc:  # noqa: BLE001 - 兜住一切外抛形态，判定权在断言不在异常类型
         pytest.fail(f"护栏拒绝不得外抛（渲染降级契约破坏）：{exc!r}")
 
 

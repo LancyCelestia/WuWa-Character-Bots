@@ -6,12 +6,16 @@ ORB 名单（sinaimg/weibocdn）图」——不含新浪图的卡（多数）根
 拦截器，判据与拦截器同生同死，外链图由本机 Chromium 盲连。
 修法（S-FIX-RENDER-SSRF 2026-09-28）：注册判据改为「HTML 含任何
 http(s) 资源引用」（复用 ``_HTML_URL_RE`` 单一形态真身）；无外链则仍
-不注册，保留零处理器快路径。本文件锁三件事：
+不注册，保留零处理器快路径。本文件锁五件事：
 
 ①含非 sinaimg 外链图的 HTML 也挂闸（闸真生效＝内网图在建连前被拒）；
 ②闸拦 loopback/私网/链路本地/元数据地址（假 page 下 aborted 即
   「请求不发出」，且绝不改走 python 代捞——opener 零调用）；
-③无任何 http(s) 外链的 HTML 注册数＝0（零开销快路径不回归）。
+③无任何 http(s) 外链的 HTML 注册数＝0（零开销快路径不回归）；
+④W4 扩形态：只有 ``href=`` 外链 CSS/JS 的 HTML 同样挂闸（旧尺只认 ``src=``/
+  ``url(``，外链 CSS 是漏网的一形）；
+⑤W4 扩面：闸本体不再免检非 image 请求（``_orb_route`` 的口径见
+  ``test_render_orb_route_ssrf``，那里改的锁与生产件同批）。
 
 全离线纪律：假 page/route/opener（复用 ``test_render_image_cache``
 替身），公网/内网全用字面量 IP 或黑名单主机名——``check_download_url``
@@ -159,6 +163,27 @@ def test_no_remote_resource_html_registers_no_handler(
     )
     handlers, opener, _ = _render_and_get_handlers(monkeypatch, html)
     assert handlers == []
+    assert opener.calls == []
+
+
+def test_href_only_external_stylesheet_registers_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """锁④（W4 扩形态）：只有 ``href=`` 外链（CSS/JS）的卡也必须挂闸。
+
+    RED（修复前）：``_HTML_URL_RE`` 只认 ``src=`` / ``url(`` 两形 ⇒ 一枚
+    ``<link href="http://127.0.0.1:9/x.css">`` 让注册判据返回 False、拦截器根本
+    不在场，Chromium 直连内网端口（探测面从「图」这一形漏出去）。挂闸证明＝
+    喂 stylesheet 形态的内网请求，处理器必须当场 abort。
+    """
+    handlers, opener, _ = _render_and_get_handlers(
+        monkeypatch,
+        "<div class='card'><link rel='stylesheet' href='http://93.184.216.34/a.css'></div>",
+    )
+    assert handlers, "href= 外链同样是远程资源引用，注册判据不许只认 src="
+    route = _FakeRoute(_LOOPBACK, resource_type="stylesheet")
+    handlers[0](route)
+    assert route.aborted is True and route.continued is False
     assert opener.calls == []
 
 

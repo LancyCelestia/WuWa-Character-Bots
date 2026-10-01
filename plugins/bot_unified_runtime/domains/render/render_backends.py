@@ -35,7 +35,9 @@ _LOGGER = logging.getLogger(__name__)
 # Chromium 的 ORB（Opaque Response Blocking）会对部分图床（实测 wx*.sinaimg.cn：
 # 微博配图）的 <img> no-cors 请求直接拦断（net::ERR_BLOCKED_BY_ORB，卡上
 # 封面/头像全灰）。对命中名单的请求改走 python 侧取回字节再 fulfill，
-# 彻底绕开浏览器网络栈；名单外不拦截，避免每图双重下载。
+# 彻底绕开浏览器网络栈；名单**外**的远程请求不代捞（避免每图双重下载），
+# 但**仍被拦截器判定过**（F-3/W4：任意 http(s) 请求建连前过中央咽喉）——
+# 「不代捞」≠「不判定」，两件事别混着记（W4 口径对齐）。
 # 取回用直连 + curl 形态极简头：新浪图床 WAF 对「浏览器 UA 但缺完整浏览器头
 # 的请求」与代理出口 IP 均回 403（实测矩阵：curl 极简头直连/代理皆 200）。
 _ORB_PRONE_HOST_SUFFIXES = ("sinaimg.cn", "weibocdn.com")
@@ -63,9 +65,15 @@ def _build_orb_fetch_opener() -> urllib.request.OpenerDirector:
     拒绝的外在表现仍旧是「取不到字节」：``_fetch_image_bytes`` 吞异常返回 None
     → ``route.abort`` → 模板 ``onerror`` 灰图兜底，渲染降级链零新增故障面。
 
-    已知残余（登记不硬做）：这条腿只钉「落点不许是内网」，未装连接层解析钉定件
-    （``downloader.build_pinning_handlers``）——渲染热路径每图多一次解析与选路
-    的取舍归渲染席裁定，本件不擅自扩面。
+    已知残余（本席**裁定维持**，不是待办）：这条腿只钉「落点不许是内网」，未装
+    连接层解析钉定件（``downloader.build_pinning_handlers``，装配在册清单见该件
+    docstring 与 ``tests/test_downloader_connect_pin.py::test_pinning_assembly_roster_is_the_recorded_one``）。
+    取舍理由三条：①本腿首行就是 ``ProxyHandler({})`` 强制直连，装了钉定件也不改变
+    「谁去连」，只多一次解析；②命中条件是「主机名以 sinaimg.cn/weibocdn.com 结尾」
+    的**固定大厂域**，要 rebinding 得先接管该域 DNS，而入口判定本就未做（下面那条
+    口径），钉定单点收益近零；③渲染热路径每图一次解析 + 一次选路，代价压在用户
+    可感的出卡延迟上。真要铺开，先改的是解析链咽喉 ``http_util._build_opener``
+    （口径/坑见 ``build_pinning_handlers`` 装配面段落 a/b 两条），不是这里。
     """
     from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
         _GuardedShortLinkRedirectHandler,
@@ -89,20 +97,25 @@ def _orb_prone_url(url: str) -> bool:
     return any(host == suffix or host.endswith(f".{suffix}") for suffix in _ORB_PRONE_HOST_SUFFIXES)
 
 
-_HTML_URL_RE = re.compile(r"""(?:src=|url\()[\'"]?(https?://[^\'")\s>]+)""", re.IGNORECASE)
-
-
-def _html_mentions_orb_prone_image(html: str) -> bool:
-    return any(_orb_prone_url(url) for url in _HTML_URL_RE.findall(html or ""))
+# 卡面「远程资源引用」的形态真身（单一一份，本模块的注册判据与拦截器共用）。
+# W4 扩判据（2026-10-01）：旧尺只认 ``src=`` / ``url(`` ⇒ ``<link href>``/
+# ``<script href>`` 形态的外链 CSS/JS 根本不触发拦截器注册，Chromium 盲连。
+# ``href=`` 一并收进来（宁可多注册一条 ``**/*`` 路由，也不许留「判据看不见
+# 所以不拦」的洞）；``url(`` 支保留 CSS 背景图形态。
+_HTML_URL_RE = re.compile(
+    r"""(?:src=|href=|url\()[\'"]?(https?://[^\'")\s>]+)""",
+    re.IGNORECASE,
+)
 
 
 def _html_mentions_remote_resource(html: str) -> bool:
-    """HTML 是否含任何 http(s) 资源引用（``src=`` / ``url(`` 形态）。
+    """HTML 是否含任何 http(s) 资源引用（``src=`` / ``href=`` / ``url(`` 形态）。
 
-    SEAT-ATK-RENDER M-1（2026-09-28）：``_orb_route`` 的注册判据——闸要罩住
-    「任意远程资源」，不是只罩 ORB 名单。复用 ``_HTML_URL_RE`` 单一形态
-    真身（本模块不写第二套 URL 判定），无任何 http(s) 引用时返回 False，
-    供渲染路径保留「零路由处理器注册」快路径。
+    SEAT-ATK-RENDER M-1（2026-09-28）+ W4 扩形态（2026-10-01）：``_orb_route``
+    的注册判据——闸要罩住「任意远程资源」，不是只罩 ORB 名单，也不是只罩
+    ``src=`` 一形。复用 ``_HTML_URL_RE`` 单一形态真身（本模块不写第二套 URL
+    判定），无任何 http(s) 引用时返回 False，供渲染路径保留「零路由处理器
+    注册」快路径。
     """
     return bool(_HTML_URL_RE.search(html or ""))
 
@@ -662,12 +675,28 @@ class PlaywrightRenderBackend:
                     )
                 try:
                     def _orb_route(route: Any) -> None:
+                        # 拦「任意 http(s) 远程请求」，不止图片（W4 口径对齐，
+                        # 2026-10-01）：旧实现首行就把非 image 一律 continue_()，
+                        # 而 docstring 与注册判据都自称「罩住任意远程资源」⇒
+                        # 外链 CSS/JS/XHR 实际零判定（Chromium 盲连 127.0.0.1:3001）。
+                        # 这里两轨分开，一条都不许含糊：
+                        # ①ORB 名单图（sinaimg/weibocdn）＝python 侧代捞换字节；
+                        # ②其余**任意 http(s)** 请求＝建连前过中央咽喉，拒即 abort。
                         request = route.request
                         url = str(request.url)
-                        if request.resource_type != "image":
+                        # 先判 scheme，再谈拒绝：data:/blob:/about:/file: 不是远程
+                        # 资源（本地素材与内联图是渲染常态），一律交回浏览器。
+                        # 少了这道，纯本地图会被咽喉按「非 http/https 协议」拒掉
+                        # ⇒ 无差别 abort ⇒ 卡面图全灰（W4 缺口⑤之二）。
+                        if not url.startswith(("http://", "https://")):
                             route.continue_()
                             return
-                        if _orb_prone_url(url):
+                        # 轨①：ORB 名单图仍走 python 代捞（直连 + curl 头），
+                        # 取不到字节才 abort（模板 onerror 灰图兜底）。
+                        if (
+                            str(getattr(request, "resource_type", "") or "") == "image"
+                            and _orb_prone_url(url)
+                        ):
                             fetched = _fetch_image_bytes(url)
                             if fetched is None:
                                 route.abort()
@@ -677,23 +706,21 @@ class PlaywrightRenderBackend:
                                 status=200, body=data, content_type=content_type
                             )
                             return
-                        # F-3 收口（2026-09-27 席位 S-ATKFIX-SSRF2）：非 ORB 名单
-                        # 的远程 http(s) 图此前由本机 Chromium 直连、零 SSRF 判定
-                        # （盲连内网/端口探测面）。建连前先过**中央唯一判据**
-                        # check_download_url——明确拒绝即 abort（模板 onerror 已有
-                        # 灰图兜底，行为兼容），放行才 continue_()。ORB 名单支维持
-                        # python 侧代捞不变（不为其引入咽喉调用，避免对图床触发 DNS）。
-                        if url.startswith(("http://", "https://")):
-                            from plugins.bot_unified_runtime.domains.files.sources.downloader import (
-                                RejectedUrlError,
-                                check_download_url,
-                            )
+                        # 轨②：F-3 收口（2026-09-27 S-ATKFIX-SSRF2）+ W4 扩面。
+                        # 建连前先过**中央唯一判据** check_download_url——明确
+                        # 拒绝即 abort（灰图/缺资源兜底已有），放行才 continue_()。
+                        # 名单内域本就不可能指内网，故代捞支不引咽喉调用（避免对
+                        # 图床触发 DNS）这条口径维持不变。
+                        from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+                            RejectedUrlError,
+                            check_download_url,
+                        )
 
-                            try:
-                                check_download_url(url)
-                            except RejectedUrlError:
-                                route.abort()
-                                return
+                        try:
+                            check_download_url(url)
+                        except RejectedUrlError:
+                            route.abort()
+                            return
                         route.continue_()
 
                     # M-1 收口（SEAT-ATK-RENDER 2026-09-28，S-FIX-RENDER-SSRF）：
@@ -704,8 +731,15 @@ class PlaywrightRenderBackend:
                     # 仍不注册，保留零处理器开销快路径。拒绝判据本体仍是
                     # 中央咽喉 check_download_url（domains/files/sources/
                     # downloader.py），本件不复制第二套 SSRF 正则。
-                    if _html_mentions_remote_resource(html):
-                        page.route("**/*", _orb_route)
+                    # W4 补守卫（同批改锁，台账 #68★「扩面要文件＋锁同批」）：
+                    # ``callable(register_route)`` 这道闸隔壁 mermaid 支本就有，
+                    # 上面这条注册却直呼 ``page.route`` ⇒ 无 route 的假 page 测试
+                    # 替身当场 AttributeError 被外层吞掉、整卡降级成 None
+                    # （test_mermaid_local_asset 三枚红的真身）。注册件一次取回、
+                    # 两支共用，判据只此一处。
+                    register_route = getattr(page, "route", None)
+                    if callable(register_route) and _html_mentions_remote_resource(html):
+                        register_route("**/*", _orb_route)
                     # mermaid 本地供给（F1）：模板 src 是 CDN URL，传输层拦截
                     # 换血为本地字节。注册在 ORB 路由之后（Playwright 按注册
                     # 逆序匹配，后注册者优先），精确 URL 模式不碰其他请求。
@@ -713,7 +747,6 @@ class PlaywrightRenderBackend:
                     # page 测试替身）→ 同样跳过，零回归。
                     if _MERMAID_CDN_URL in html:
                         mermaid_js = _mermaid_asset_bytes()
-                        register_route = getattr(page, "route", None)
                         if mermaid_js is not None and callable(register_route):
 
                             def _mermaid_route(route: Any) -> None:

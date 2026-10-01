@@ -288,7 +288,21 @@ def _analysis_from_info(info: dict) -> MediaAnalysis:
 
 
 class RejectedUrlError(Exception):
-    """URL 被下载护栏拒绝（SSRF / 协议 / 内网地址）。"""
+    """URL 被下载护栏拒绝（SSRF / 协议 / 内网地址）。
+
+    异常族口径（W4 记账，别留给下一个人重新踩）：本类**不是** ``URLError``／
+    ``OSError`` 的子类，所以「只 ``except URLError``」的消费方兜不住它。今天两条
+    消化路径都在场，因此不改族（改＝``str(exc)`` 形态随之变化，而这段文本正是要
+    进群卡的拒绝原因）：
+
+    - 入口调用点（``download``/``probe``/``eat``/``ssrf_guard``/渲染 ``_orb_route``）
+      一律 ``except RejectedUrlError`` 自己吞掉，转成既有的降级形态。
+    - 连接层钉定件（``build_pinning_handlers``）把异常从 ``http_open`` 里抛出，
+      经 ``opener.open`` 抵达消费方的 broad ``except Exception``——实测两条腿都
+      收得住：解析链转 ``ParseHttpError``，``credential_health`` 探针转
+      ``network_error`` 报告。⇒ **装配面铺到新的 except 面窄的腿之前，先复核那条腿
+      的 except 子句**（这条复核义务也写进 ``build_pinning_handlers`` 的装配清单）。
+    """
 
 
 # 内网与保留网段黑名单（评审 H6）：/bot download 对普通用户开放，若不做地址
@@ -388,6 +402,9 @@ def check_download_url_resolved(url: str) -> frozenset[str]:
     - 本文件内的咽喉调用点只有一处（``_url_rejection_reason``），``download()`` 与
       ``probe()`` 共享同一闸门；跨模块消费方见 ``ssrf_guard``（解析链）、
       ``media_archive``/``notes``/``eat``/``file_gateway``（各自下载口）。
+    - 装配面口径（W4）：上面这套「判定 → 同一册地址」的闭环**只在装了钉定件的腿**
+      成立，全树装配清单见 ``build_pinning_handlers`` docstring（在册锁比对），
+      未装的腿今天的窗口仍旧是「入口判一次、连接再解一次」的老形态。
     - 已知残余：yt-dlp 自己会跟随播放列表/清单里的子 URL，且另有独立的重定向
       解析路径，本函数只在入口校验一次；彻底收敛需在 yt-dlp 侧挂连接级钩子
       （登记为后续项，不在本次修复范围）。
@@ -459,26 +476,34 @@ def _url_rejection_reason(url: str) -> str | None:
 # 形态＝http.client 留出的官方接缝：``HTTPConnection.__init__`` 里
 # ``self._create_connection = socket.create_connection``（stdlib 注释明确写着
 # 「stored as an instance variable to allow unit tests to replace it」）。
-# 我们只在实例层把它换成「拿判定过的 IP 去连」，**不动** self.host：
+# 我们只在实例层把它换成「拿判定过的那册 IP 去连」（主钉 + 同一次解析的其余地址
+# 可回退，多 A 记录兜底不丢），**不动** self.host：
 # Host 头、TLS SNI（``server_hostname=self.host``）与证书主机名校验全部原样。
 #
 # 红线（台账 #71★）：代理在场时一律不钉。钉死目标 IP ＝绕过 Clash，
 # 那是刚修好的通路；且代理在场时本机根本不解析目标域，判定的语义也不成立。
 # 缺省 ``ProxyHandler``（读环境＝trust_env 回落，temporal 天气依赖它）同样
 # 由 ``build_pinning_handlers`` 保持不动——本件只装连接类，不装代理件。
+# 全树「哪些腿真的装了这套件」＝``build_pinning_handlers`` 的装配清单 +
+# ``test_downloader_connect_pin.py`` 的在册比对锁（别按「本体存在」记账收口）。
 # ---------------------------------------------------------------------------
 
 
-def _pick_pinned_address(resolved: frozenset[str]) -> str:
-    """从判定过的地址册里选一枚钉住：IPv4 优先，其余按稳定字典序。
+def _pick_pinned_addresses(resolved: frozenset[str]) -> tuple[str, ...]:
+    """把判定过的地址册排成「主钉 + 同一次解析的其余地址可回退」的连接序。
 
-    双栈机器上「解析到 IPv6 但本机无 v6 路由」是常态故障源，故先 IPv4；
-    排序保证同一册子每次选到同一枚（可复现，不把下载/取图变成掷硬币）。
+    为什么是**一册**而不是**一枚**（W4 收口，2026-10-01）：旧版只返回排序后的第一枚，
+    等于把 ``socket.create_connection`` 自带的「多 A 记录轮询兜底」一并钉掉了——
+    CDN 有一枚死 IP 时今日会换下一枚，只钉一枚就变成硬失败。现在主钉仍是第一位，
+    同一次解析（同一册子，判定过的）其余地址按序可回退：rebinding 窗口照样归零
+    （连接层一个域名字符都不看），CDN 自愈能力也不丢。
+    排序与优先级：IPv4 先于 IPv6（双栈机器上「解析到 v6 但本机无 v6 路由」是常态
+    故障源），组内按稳定字典序 ⇒ 同一册子每次排出同一序（可复现，不把下载/取图
+    变成掷硬币）。
     """
     v4 = sorted(address for address in resolved if ":" not in address)
-    if v4:
-        return v4[0]
-    return sorted(resolved)[0]
+    v6 = sorted(address for address in resolved if ":" in address)
+    return tuple(v4 + v6)
 
 
 def _connect_target_is_proxied(req: Any) -> bool:
@@ -508,28 +533,47 @@ def _connect_target_is_proxied(req: Any) -> bool:
     return connect_host != origin_host
 
 
-def _pinned_connection_class(base: type, ip: str) -> type:
-    """造「只连判定过的那枚 IP」的连接类（闭包捕获 IP，域名不再进 socket）。"""
+def _pinned_connection_class(base: type, ips: tuple[str, ...]) -> Any:
+    """造「只连判定过的那册 IP」的连接类（闭包捕获 IP，域名不再进 socket）。
+
+    返回类型刻意是 ``Any`` 而不是 ``type``：这里造的是运行期动态子类，mypy 无从
+    核对它是否满足 stdlib ``AbstractHTTPHandler.do_open`` 的 ``_HTTPConnectionProtocol``
+    ——那把尺只约束「可调用形态」，声明成 ``type`` 会在两个 ``do_open`` 调用点
+    报假红（typecheck 门由绿转红的正是这里）。动态件按定义是 Any，桩一次即可，
+    **不用** ``# type: ignore``（ignore 会让这行以后彻底失能）。
+
+    回退语义：按 ``ips`` 序逐个试，前一枚 ``OSError``（拒绝/超时/不可达）才换下一枚，
+    全败则抛最后一次的异常——与 ``socket.create_connection`` 对多地址的做法同形。
+    候选册来自**同一次**已判定的解析，回退不引入新的 DNS 查询、也就不开 rebinding 窗口。
+    """
     import socket
 
     default_timeout = getattr(socket, "_GLOBAL_DEFAULT_TIMEOUT", None)
 
     def _create_pinned(address, timeout=default_timeout, source_address=None):
         port = address[1] if len(address) > 1 else 0
-        return socket.create_connection(
-            (ip, port), timeout=timeout, source_address=source_address
-        )
+        last_error: OSError | None = None
+        for ip in ips:
+            try:
+                return socket.create_connection(
+                    (ip, port), timeout=timeout, source_address=source_address
+                )
+            except OSError as exc:  # 死 IP / 端口拒绝：换同一次解析的下一枚候选。
+                last_error = exc
+        # 全册皆败：抛最后一次的真实异常（超时/拒绝语义原样保留，不伪造原因）。
+        # ``ips`` 永不为空（咽喉判定过才交回），``or`` 分支只让类型收敛、不吞信息。
+        raise last_error or OSError("解析钉定无可用地址")
 
-    class _PinnedConnection(base):  # noqa: N801 - 动态基类，名字按形态起
+    class _PinnedConnection(base):
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             super().__init__(*args, **kwargs)
-            self._pinned_ip = ip
+            self._pinned_ips = ips
             self._create_connection = _create_pinned
 
     return _PinnedConnection
 
 
-def _pinned_connection_class_for(req: Any, base: type) -> type | None:
+def _pinned_connection_class_for(req: Any, base: type) -> Any | None:
     """连接时刻现判现钉：判定与连接共用这一次解析（rebinding 窗口归零）。
 
     返回 ``None`` ＝「本请求不钉」（代理在场 / 形态判不清），调用方交回
@@ -539,7 +583,7 @@ def _pinned_connection_class_for(req: Any, base: type) -> type | None:
     if _connect_target_is_proxied(req):
         return None
     resolved = check_download_url_resolved(req.full_url)
-    return _pinned_connection_class(base, _pick_pinned_address(resolved))
+    return _pinned_connection_class(base, _pick_pinned_addresses(resolved))
 
 
 class _PinningHTTPHandler(urllib.request.HTTPHandler):
@@ -556,6 +600,12 @@ class _PinningHTTPHandler(urllib.request.HTTPHandler):
 
 class _PinningHTTPSHandler(urllib.request.HTTPSHandler):
     """https 腿钉定件：ssl context 照旧透传（证书校验一点不松）。"""
+
+    # 运行时真身：stdlib ``HTTPSHandler.__init__`` 里 ``self._context = context``
+    # （context 缺省＝``ssl._create_default_https_context()``，verify_mode=CERT_REQUIRED
+    # + check_hostname=True）。typeshed 不给私有成员立账 ⇒ 纯类型桩噪声，
+    # 这里显式声明一次把属性登记进类型面，**不** 用 ``# type: ignore``。
+    _context: Any
 
     def https_open(self, req: urllib.request.Request):  # type: ignore[override]
         import http.client
@@ -579,6 +629,37 @@ def build_pinning_handlers() -> list[Any]:
     ``build_opener`` 按 ``isinstance`` 去重，本对件会顶掉缺省 ``HTTPHandler`` /
     ``HTTPSHandler``（只此一条 http 链，不存在第二套通路）；缺省 ``ProxyHandler``
     不在此列——代理语义（含环境回落）一律不动。
+
+    🔴 装配面现状（**缺口④只算「本体已修」，全树铺开未做**，W4 2026-10-01 现算）：
+    本函数的调用点全树**只有一处**，装配清单以 ``tests/test_downloader_connect_pin.py
+    ::test_pinning_assembly_roster_is_the_recorded_one`` 逐模块现算比对（清单漂了就红，
+    防止台账把「本体存在」读成「缺口已收口」）：
+
+    - **在装**：``domains/food/capabilities/eat.py`` 的 ``_guarded_image_opener``
+      （菜品封面取图腿，缺口②）。
+    - **未装（如实登记，勿宣称收口）**：
+      ① ``link_parse/parsers/http_util._build_opener``——解析链全部出站咽喉。
+        实测装上即撞 **3 枚跨席锁**（``test_auditfix_parsers
+        ::test_resolve_short_link_via_local_redirect_server`` 与
+        ``test_credential_health_probe_throat`` 两枚跨 host 剥凭证锁）：那三把尺拿
+        ``127.0.0.1``/``localhost`` 真监听器当「两个 host」的替身，而钉定件在建连前
+        就会把本机目标拒掉（判据正确、测试替身不兼容）。修法归属＝解析链席位，
+        要连着改那三把尺的替身形（改端口打桩或显式豁免本机探测），不是本席能顺手
+        合并进来的写面。
+      ② ``media/ingest/vision_describe`` / ``media/capabilities/media_archive`` /
+        ``meme/sources/meme_library_listener``（httpx 腿，形态另算）——W5 写面。
+      ③ ``notes`` 图片腿、``render_backends._ORB_FETCH_OPENER``（渲染热路径的每图
+        多解析取舍，见该件 docstring 自陈）、中央 ``download()``/``probe()``
+        （yt-dlp 自带传输层，urllib 件挂不上去，要钉得走 yt-dlp 侧钩子）。
+    - **装的时候两件易踩的坑**（给后续席）：
+      a) 目标腿若自带 ``HTTPSHandler(context=...)``（如 ``http_util`` 的
+         ``verify_ssl=False`` 支），**先加的赢**（``OpenerDirector`` 按
+         ``handler_order``/装配序取第一个 ``https_open``）——钉定件必须
+         ``_PinningHTTPSHandler(context=同一个 ctx)`` 形态顶上去，否则要么丢钉、
+         要么悄悄把「不校验证书」改回「校验」＝行为漂移。
+      b) 生产进程若在 Clash 档（``getproxies()`` 有值），``_connect_target_is_proxied``
+         一律判「代理在场」⇒ 钉定**静默不生效**（红线，故意如此）。所以「装了」≠
+         「在钉」，验收要按当轮代理态现算，别拿一次通过当永久。
     """
     import http.client
 
