@@ -24,6 +24,9 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Protocol
 
+from plugins.bot_unified_runtime.domains.chat_reply.character.addressing import (
+    group_cast_prohibition,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
     guard_secondhand_text,
     neutralize_internal_markers,
@@ -278,8 +281,9 @@ class SQLiteGroupDigestProvider:
             return SharedGroupContext(request_id=request_id, enabled=False)
         summary = (
             "最近群聊公共话题（确定性摘要，不含个人私聊内容；"
-            "发言成员均为群友，不存在唯一主角，不要称任何成员为漂泊者）：\n"
-            + "\n".join(lines)
+            # 主角边界禁令走单一真身 addressing.group_cast_prohibition（席 E2）：
+            # 此处旧留一份自写副本，措辞与 LLM 压缩腿两样、判据一条，改一处漏一处。
+            f"{group_cast_prohibition()}）：\n" + "\n".join(lines)
         )
         return SharedGroupContext(
             request_id=request_id,
@@ -368,8 +372,7 @@ class OpenAICompatibleGroupSummarizer:
         prompt = (
             "请把下面的群聊公共消息压缩成 3-5 条中性话题摘要，"
             "不保留任何个人敏感信息，不评价、不编造；"
-            "成员一律按其原有称呼呈现，均为群友，"
-            "不得把任何成员塑造成唯一主角或称为漂泊者：\n"
+            f"成员一律按其原有称呼呈现，{group_cast_prohibition()}：\n"
             # 群聊历史行是群成员产出的**二手内容**：入 prompt 前过统一咽喉
             # （S-FIX-ATK-NOTES 2026-09-27；旧形态裸拼接——「双隔离」只隔离
             # 人格词（漂泊者称呼），不隔离注入；开关默认关、开即实锤）。

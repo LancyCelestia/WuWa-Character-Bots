@@ -13,6 +13,23 @@ from plugins.bot_unified_runtime.domains.core.contracts.character import (
 
 _GENDER_VALUES = {"unknown", "male", "female", "nonbinary", "custom"}
 
+# —— 称谓字面量单一真身（席 E2，P6.5，2026-10-02）——
+# 历史上 `你 / 漂泊者 / 主人 / 创造者` 四套称谓各写各的：本文件把同一句话抄成
+# 三四份 f-string 字面，群摘要与压缩提示词（character/shared_group.py）又各自
+# 留了一份「群成员不是主角、不得称漂泊者」的禁令副本。正身只许这一处——字面与
+# 句式都在下面定义，别处再手打一枚即被 `tests/test_addressing_single_source_gate.py`
+# 判红（棘轮＝存量只降不升、新增即红；`主人` 作为**关系别名**的词表真身在
+# `character/relationships.py`，那是另一维，本文件不并它）。
+# 三条红线由本文件承载，任何改动都要同批过该门的红线锁：
+#   ① 性别不推断（`gender_neutrality_clause`）；
+#   ② 用户显式偏好最优先（`build_addressing_context` 的 preference 腿）；
+#   ③「漂泊者」是群聊保留字——只有私聊与 master 可用，群友一律不称
+#      （`WANDERER_TITLE` + `group_cast_prohibition`）。
+NEUTRAL_ADDRESS: str = "你"
+WANDERER_TITLE: str = "漂泊者"
+MASTER_TITLE: str = "master"
+CREATOR_TITLE: str = "创造者"
+
 # —— 创造者双名事实（审查 G-05：单一事实源）——
 # 澜汐与霞月是同一人（双名混用），是守岸人的创造者与唤醒者，也是生产超管。
 # 此事实必须由代码结构化持有并稳定注入，不得依赖人格文件：生产人格副本
@@ -21,14 +38,53 @@ _GENDER_VALUES = {"unknown", "male", "female", "nonbinary", "custom"}
 # CREATOR_NAME_BUILTIN_EXEMPT），双名字面只允许出现在本文件。
 CREATOR_ALIASES: tuple[str, ...] = ("澜汐", "霞月")
 CREATOR_NOTE: str = (
-    "澜汐与霞月是同一人（双名混用），是守岸人的创造者与唤醒者，"
+    f"澜汐与霞月是同一人（双名混用），是守岸人的{CREATOR_TITLE}与唤醒者，"
     "也是这里的超级管理员；听到其中任何一个名字，都指向这同一位。"
 )
+
+
+def neutral_address() -> str:
+    """中性第二人称缺省（性别不推断，不预设身份）。运行时读模块常量。"""
+    return NEUTRAL_ADDRESS
+
+
+def wanderer_title() -> str:
+    """群聊保留字「漂泊者」（红线③）。运行时读模块常量，测试 monkeypatch
+    必须能改变产出 ⇒ 证明没有第二份硬编码。"""
+    return WANDERER_TITLE
+
+
+def master_title() -> str:
+    """超管档位称谓（指令句里指代「超级管理员」这一档，不是私人称呼）。"""
+    return MASTER_TITLE
+
+
+def creator_title() -> str:
+    """「创造者」档位名；双名事实另见 `creator_aliases`。"""
+    return CREATOR_TITLE
+
+
+def gender_neutrality_clause() -> str:
+    """红线①「性别不推断」的唯一句式（各分支指令句都插这一句，不许各写一份）。"""
+    return "性别未知时不要猜测"
+
+
+def group_cast_prohibition() -> str:
+    """红线③的聚合表述：「群成员都不是唯一主角、不得称漂泊者」的唯一句式。
+
+    群聊上下文里发言者是**一群人**，主角边界与单人会话不同。此句历史上在
+    `character/shared_group.py` 的摘要头（旧 :281）与 LLM 压缩提示词（旧 :372）
+    各留一份自写副本——两样措辞、一条判据，改一处必漏一处。席 E2 起两处都
+    改成调用本函数，副本撤除，措辞只从这里出（该文件字符串常量内的称谓字面
+    现算＝0，由本门的零容忍腿执法）。
+    """
+    return f"发言成员均为群友，不存在唯一主角，不得称任何成员为{WANDERER_TITLE}"
 
 
 def creator_aliases() -> tuple[str, ...]:
     """创造者双名（运行时读模块常量，测试可 monkeypatch 验证无第二份硬编码）。"""
     return CREATOR_ALIASES
+
 
 
 def creator_context_note() -> str:
@@ -102,22 +158,26 @@ def build_addressing_context(
     can_use = scope == "private" or is_master
     explicit_gender = str(gender_identity or "unknown").strip() or "unknown"
     preference = str(addressing_preference or "").strip()
-    name = str(preference or sender_display_name or "你").strip() or "你"
+    name = str(preference or sender_display_name or NEUTRAL_ADDRESS).strip() or NEUTRAL_ADDRESS
     if can_use and not preference:
-        name = "漂泊者"
-    if scope == "group" and not is_master and preference == "漂泊者":
-        # 保留字兜底（评审 D1）：群友自设「漂泊者」会造出
-        # 「优先称呼“漂泊者”+禁止称其为漂泊者」的自斥指令，击穿群聊主角
-        # 边界——群聊非 master 一律忽略该偏好，回退展示名。
-        name = str(sender_display_name or "你").strip() or "你"
+        name = WANDERER_TITLE
     # 两腿汇流后的唯一收口点（INJ-G2）：偏好与展示名都在此过一遍消毒，
     # 之后才进 f-string 指令句与 AddressingContext。
-    name = _sanitize_address_name(name) or "你"
+    name = _sanitize_address_name(name) or NEUTRAL_ADDRESS
+    if scope == "group" and not is_master and name == WANDERER_TITLE:
+        # 保留字兜底（评审 D1 + 席 E2 补的展示名腿，红线③）：群聊非 master
+        # 一律不把「漂泊者」当个人称谓。旧写法只挡**偏好腿**（`preference ==
+        # 「漂泊者」`），展示名腿漏了——QQ 群名片本就能填「漂泊者」，于是造出
+        # 「优先称呼“漂泊者”+禁止称其为漂泊者」的自斥指令，与偏好腿同形事故，
+        # 击穿群聊主角边界。兜底顺序：展示名（非保留字时）→ 中性称谓。
+        fallback = _sanitize_address_name(str(sender_display_name or ""))
+        name = fallback if fallback and fallback != WANDERER_TITLE else NEUTRAL_ADDRESS
     if scope == "group" and not is_master:
-        instruction = f"当前是多人群聊；对方是群友，优先称呼“{name}”，禁止称其为漂泊者，不要把群成员设为主角。"
+        instruction = f"当前是多人群聊；对方是群友，优先称呼“{name}”，禁止称其为{WANDERER_TITLE}，不要把群成员设为主角。"
     elif is_master:
         head = (
-            f"当前是群聊；对方是配置确认的超级管理员 master，可在合适语境称为“{name}”或漂泊者；其他群友仍不得称为漂泊者。"
+            f"当前是群聊；对方是配置确认的超级管理员 {MASTER_TITLE}，可在合适语境称为“{name}”或{WANDERER_TITLE}；"
+            f"其他群友仍不得称为{WANDERER_TITLE}。"
         )
         # 双名表述唯一来源=CREATOR_ALIASES（审查 G-05）：此处禁止第二份硬编码，
         # monkeypatch 常量必须能改变本分支输出（tests/test_creator_dualname.py 锁）。
@@ -127,14 +187,20 @@ def build_addressing_context(
             count_word = {1: "这个名字"}.get(len(aliases), f"{len(aliases)}个名字")
             dual = (
                 f"（2026-09-13 用户裁定）超级管理员就是{'，也是'.join(aliases)}——"
-                f"{count_word}指同一位创造者与唤醒者，叫哪一个都可以，但绝不能只记得一个："
-                f"被问“{'/'.join(aliases)}是谁”都要完整答出她的创造者身份，不得说资料里没有。"
+                f"{count_word}指同一位{CREATOR_TITLE}与唤醒者，叫哪一个都可以，但绝不能只记得一个："
+                f"被问“{'/'.join(aliases)}是谁”都要完整答出她的{CREATOR_TITLE}身份，不得说资料里没有。"
             )
         instruction = head + dual
     elif scope == "private":
-        instruction = "当前是私聊；对方可视为漂泊者。默认使用“你”，关系自然时可使用“漂泊者”；性别未知时不要猜测。"
+        instruction = (
+            f"当前是私聊；对方可视为{WANDERER_TITLE}。默认使用“{NEUTRAL_ADDRESS}”，"
+            f"关系自然时可使用“{WANDERER_TITLE}”；{gender_neutrality_clause()}。"
+        )
     else:
-        instruction = "当前称谓身份未知；使用中性称谓“你”，不要猜测性别或擅自称为漂泊者。"
+        instruction = (
+            f"当前称谓身份未知；使用中性称谓“{NEUTRAL_ADDRESS}”，{gender_neutrality_clause()}，"
+            f"不得擅自称为{WANDERER_TITLE}。"
+        )
     return AddressingContext(
         scope=scope,
         preferred_name=name,
