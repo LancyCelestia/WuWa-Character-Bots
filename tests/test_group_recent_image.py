@@ -10,8 +10,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from plugins.bot_unified_runtime import (
-    _RECENT_IMAGES_BY_SESSION,
     _RECENT_IMAGE_TTL_SECONDS,
+    _RECENT_IMAGES_BY_SESSION,
     _latest_fresh_session_image,
     _learned_name_is_admin_identity,
     _remember_session_images,

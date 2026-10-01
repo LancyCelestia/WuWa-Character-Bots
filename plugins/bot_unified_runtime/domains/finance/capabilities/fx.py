@@ -155,7 +155,7 @@ def build_fx_capability(
             # P-G3 第二波（2026-09-29）：卡面署名走自称唯一读法（人格册→兼容显示名），
             # 不再自取配置名并手抄品牌字面量；空串交胶囊统一回落（契约锁
             # tests/test_rendering_contract.py：RenderPayload().bot_name == ""）。
-            from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (  # noqa: E501
+            from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
                 active_persona_id,
                 current_bot_nickname,
             )

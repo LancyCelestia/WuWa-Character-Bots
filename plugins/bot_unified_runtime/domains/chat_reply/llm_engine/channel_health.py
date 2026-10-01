@@ -221,7 +221,7 @@ class ChannelHealthStore:
             )
 
             safe_summary = redact_local_secrets(str(error_summary or ""))
-        except Exception:  # noqa: BLE001 - 拿不到打码件就少这一段诊断，不猜它干净
+        except Exception:
             logger.warning("channel_health: 打码层不可用，last_error 落占位", exc_info=True)
             safe_summary = "unavailable (redaction layer failed)"
         cooldown_until = ""
