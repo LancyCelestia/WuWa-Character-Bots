@@ -64,10 +64,17 @@ def _message(
     session_type: SessionType = SessionType.PRIVATE,
     plain_text: str = "/bot status",
     message_id: str = "m-1",
+    platform_name: str = "qq",
     **kwargs: Any,
 ) -> IncomingMessage:
+    # 受众分级门（W9）之后「全量诊断」只在**管理员私聊**态给。本文件的既有锁测的
+    # 全是那一档（栈帧/配置键名/IDs/兜底文本），故缺省把 u1 建模成中央角色事实里的
+    # admin——`sender_roles` 就是流水线 `_prepare` 写入的那份真身
+    # （`roles.RoleSettings.resolve_roles` 的产物），不是本文件自造的权限。
+    # 群态与非管理态的裁剪由文件尾的 W9 双向锁专测（它们也吃这个桩，显式覆盖即可）。
+    kwargs.setdefault("sender_roles", ["admin"])
     return IncomingMessage(
-        platform="qq",
+        platform=platform_name,
         adapter="onebot",
         bot_id="10000",
         session_id=session_id,
@@ -290,18 +297,18 @@ def test_report_payload_sections_complete() -> None:
     assert ids["message_id"] == "m-1"
     assert ids["request_id"] == message.request_id
     assert ids["告警关联"] == message.debug_id
-    # 群聊会话标注群号。
+    # 群聊会话标注群号——W9 受众分级后群态那张卡**不再带 IDs 节**，这一格改由
+    # 告警面锁（`test_alert_error_card.py::test_issue_card_session_identity_rows_follow_the_caller`
+    # 走 `_session_label_for(GROUP, group_id)` 同一真身）继续执法；这里锁的是分级本身。
     group_report = build_error_report(
         _message("group:g1", SessionType.GROUP, group_id="g1"),
         "bot.market",
         _captured_exc(),
         config_getter=lambda name: None,
     )
-    group_env = {row["label"]: row["value"] for row in group_report["env_pairs"]}
-    assert "会话" not in group_env
-    # 群聊会话在 IDs 那一行带上群号（形态+群号+会话键并成一格）。
-    group_ids = {row["label"]: row["value"] for row in group_report["id_pairs"]}
-    assert group_ids["会话"] == "群聊 g1 group:g1"
+    assert group_report["env_pairs"] == []
+    assert {row["label"] for row in group_report["id_pairs"]} == {"触发时刻"}
+    assert group_report["stack_lines"] == []
 
 
 def test_human_text_persona_tone_and_rotation() -> None:
@@ -755,24 +762,30 @@ def test_protocol_and_connection_use_explicit_mapping() -> None:
 
 
 def test_id_pairs_add_sender_bot_group_ids() -> None:
-    """E-06：sender_id/bot_id/group_id 有则显示、无则整行省略。"""
-    group_report = build_error_report(
-        _message("group:g1", SessionType.GROUP, group_id="g1"),
-        "bot.market",
-        _captured_exc(),
-        config_getter=lambda name: None,
-    )
-    ids = {row["label"]: row["value"] for row in group_report["id_pairs"]}
-    assert ids["sender_id"] == "u1"
-    assert ids["bot_id"] == "10000"
-    assert ids["group_id"] == "g1"
+    """E-06：sender_id/bot_id/group_id 有则显示、无则整行省略。
+
+    W9 受众分级门（2026-10-01）之后这些行只在**全量档**存在，所以"群号那一行"改由
+    告警卡面锁（`test_alert_error_card.py::test_issue_card_session_identity_rows_follow_the_caller`
+    ——同吃 `_rows`/`_kv` 的省略规则，且告警载荷走管理员目标、本就是全量档）；
+    异常卡这边锁的是「有则显示（管理员私聊档）」「无则整行不出」「群态那张根本不配
+    拥有 ids 节」三件事。
+    """
     # 私聊无群号 → group_id 行省略；兜底文本自动携带（通用 pairs）。
     private_report = build_error_report(
         _message(), "bot.market", _captured_exc(), config_getter=lambda name: None
     )
     private_ids = {row["label"] for row in private_report["id_pairs"]}
     assert "group_id" not in private_ids
+    assert {"sender_id", "bot_id", "message_id"} <= private_ids
     assert "sender_id=u1" in build_text_fallback(private_report)
+    # 群态：IDs 节只剩「触发时刻」一枚（内部关联 id 不外泄）。
+    group_report = build_error_report(
+        _message("group:g1", SessionType.GROUP, group_id="g1"),
+        "bot.market",
+        _captured_exc(),
+        config_getter=lambda name: None,
+    )
+    assert {row["label"] for row in group_report["id_pairs"]} == {"触发时刻"}
 
 
 def test_trigger_time_prefers_message_timestamp() -> None:
@@ -1007,3 +1020,286 @@ def test_cooldown_reply_samples_once_for_body_and_fallback(monkeypatch):
     request = pipeline.send_queue.requests[0]
     assert request.content.content_ref["text"] == request.content.text_fallback
     assert len(calls) == 1
+
+
+# ==================== W9 受众分级裁剪门（2026-10-01）====================
+# 病根：卡投回**事发会话**本体（带 gate:bypass_by_design），而 stack_lines /
+# config_pairs / env_pairs / version_pairs / id_pairs 曾是无条件渲染的——群内任意
+# 非管理员都能读到源码文件名+行号+函数名+源码行+配置键名（值经打码，键名与模块
+# 结构不脱）。下面这一节是双向锁：对外档必须裁干净、管理员私聊档必须留全量
+# （裁到查不了＝下次线上出问题没人能定位）。
+_ROSTER: dict[str, Any] = {
+    "bot_admin_user_ids": ["u1"],
+    "bot_super_admin_user_ids": ["999"],
+    "bot_admin_profiles": {"999": "澜汐"},
+    "bot_market_timeout_seconds": 6.0,
+    "bot_market_api_key": "sk-abcdefghijklmnop",
+}
+
+
+def _roster_getter(name: str) -> object:
+    return _ROSTER.get(name)
+
+
+def _leaky_exc() -> ValueError:
+    """一枚原文里带键名/盘符路径/源码片段的异常（分级门的靶子）。"""
+    try:
+        raise ValueError(
+            "缺 bot_market_timeout_seconds 且 BOT_TOKEN=<x> 在 "
+            "C:/Users/LancyCelestia/Runtime/private.sqlite3；def inner(x): 走歪了"
+        )
+    except ValueError as exc:
+        return exc
+
+
+def _group_message(**kwargs: Any) -> IncomingMessage:
+    """群态消息（`_message` 缺省把 u1 建模成 admin，这里只覆盖形态）。"""
+    return _message("group:g1", SessionType.GROUP, group_id="g1", **kwargs)
+
+
+def _labels(rows: Any) -> list[str]:
+    return [str(row["label"]) for row in rows or ()]
+
+
+def _artifact_text(report: dict[str, Any]) -> str:
+    """把载荷里**会被印到卡上/写进文本**的内容拼成一段（只看值，不看载荷字典
+    自己的键名——`bot_name`/`bot_avatar_url` 这类载荷键名不是卡面内容，拿 `repr`
+    当靶子会把"实现细节"误判成泄露）。"""
+    parts = [
+        str(report.get(key) or "")
+        for key in (
+            "card_title", "exc_type", "exc_message", "human_text", "trigger_echo",
+            "help_text", "fallback_help_text", "bot_name", "bot_name_en",
+        )
+    ]
+    parts.extend(str(line) for line in report.get("stack_lines") or ())
+    for key in (
+        "method_pairs", "self_review_pairs", "contact_pairs", "config_pairs",
+        "version_pairs", "env_pairs", "id_pairs",
+    ):
+        for row in report.get(key) or ():
+            parts.append(f"{row.get('label')}={row.get('value')}")
+    return "\n".join(parts)
+
+
+def test_group_audience_payload_drops_every_internal_section() -> None:
+    """注毒腿：群态那张卡六面内部结构全裁，联系方式不点名不报号。"""
+    report = build_error_report(
+        _group_message(), "bot.market", _leaky_exc(), config_getter=_roster_getter
+    )
+    assert error_report._audience_tier(_group_message(), _roster_getter) == (
+        error_report.AUDIENCE_PUBLIC
+    )
+    assert report["stack_lines"] == []
+    assert report["exc_message"] == ""
+    assert report["config_pairs"] == []
+    assert report["version_pairs"] == []
+    assert report["env_pairs"] == []
+    assert report["self_review_pairs"] == []
+    # 「函数/路由/归属」＝代码符号＋内部枚举＋模块归属，正是"模块结构不脱"那一面。
+    assert _labels(report["method_pairs"]) == ["能力", "原因"]
+    assert _labels(report["id_pairs"]) == ["触发时刻"]
+    blob = _artifact_text(report)
+    assert "999" not in blob and "澜汐" not in blob, "对外档不许印管理端联系方式"
+    assert error_report.public_tier_leaks(blob) == []
+
+
+def test_admin_private_payload_keeps_the_full_diagnostic_surface() -> None:
+    """反向腿：管理员私聊那张卡**必须仍是全量**——裁到查不了等于把运维的眼睛戳瞎。"""
+    report = build_error_report(
+        _message(), "bot.market", _leaky_exc(), config_getter=_roster_getter
+    )
+    assert error_report._audience_tier(_message(), _roster_getter) == (
+        error_report.AUDIENCE_ADMIN_FULL
+    )
+    assert report["stack_lines"], "栈帧被裁没了＝下次线上出问题查不了"
+    assert any(".py:" in line for line in report["stack_lines"])
+    assert {"函数", "路由", "归属"} <= set(_labels(report["method_pairs"]))
+    assert "bot_market_timeout_seconds" in _labels(report["config_pairs"])
+    assert report["version_pairs"] and report["env_pairs"]
+    assert {"message_id", "sender_id", "告警关联", "会话"} <= set(_labels(report["id_pairs"]))
+    assert "def inner" in report["exc_message"]
+    assert len(report["self_review_pairs"]) == 2
+    assert "999" in repr(report["contact_pairs"]), "管理员档联系方式本来就该给"
+
+
+def test_public_tier_does_not_even_compute_the_env_inventory() -> None:
+    """对外档连"算了又要扔"的贵件都不算（回执/渲染线程不为看不到的数据付秒级代价）。"""
+    seen: list[str] = []
+
+    def spy(name: str) -> object:
+        seen.append(name)
+        return _ROSTER.get(name)
+
+    build_error_report(
+        _group_message(), "bot.market", _leaky_exc(), config_getter=spy, include_env=True
+    )
+    assert not [n for n in seen if n.startswith("bot_market_")], seen
+    assert "bot_protocol_client_dir" not in seen, "环境盘点没跳过＝秒级扫描白付"
+    # 反向自检：同一把尺在管理员档确实会读快照键（否则上面那条断言是恒真的空炮）。
+    seen.clear()
+    build_error_report(
+        _message(), "bot.market", _leaky_exc(), config_getter=spy, include_env=True
+    )
+    assert [n for n in seen if n.startswith("bot_market_")], seen
+
+
+def test_private_non_admin_audience_is_trimmed_as_well() -> None:
+    """私聊但触发者不在管理名单＝同样对外档（转发一次就完成了群广播）。"""
+    message = _message(sender_roles=["user"])
+    report = build_error_report(
+        message, "bot.market", _leaky_exc(), config_getter=lambda name: None
+    )
+    assert error_report._audience_tier(message, lambda name: None) == error_report.AUDIENCE_PUBLIC
+    assert report["stack_lines"] == [] and report["config_pairs"] == []
+    assert error_report.public_tier_leaks(_artifact_text(report)) == []
+    assert error_report.public_tier_leaks(build_text_fallback(report)) == []
+
+
+def test_audience_gate_grants_via_roster_and_blocks_cross_platform_lookalike() -> None:
+    """分级门只认中央角色口：名单腿能给，跨平台同号不能给（F-A 同源 fail-closed）。"""
+    roster_leg = _message(sender_roles=["user"], platform_name="qq")
+    assert error_report._audience_tier(roster_leg, _roster_getter) == (
+        error_report.AUDIENCE_ADMIN_FULL
+    ), "is_admin_message 没接上＝分级门只吃 sender_roles，旁路口会一律降级"
+    lookalike = _message(sender_roles=["user"], platform_name="telegram")
+    assert error_report._audience_tier(lookalike, _roster_getter) == (
+        error_report.AUDIENCE_PUBLIC
+    ), "QQ 裸号名单被 TG 同号借走＝跨平台提权把全量诊断递给无权限的脸"
+    # 超管走角色事实腿（resolve_roles 里超管自动叠 admin）。
+    assert error_report._audience_tier(
+        _message(sender_roles=["user", "admin", "super_admin"]), lambda name: None
+    ) == error_report.AUDIENCE_ADMIN_FULL
+
+
+def test_audience_gate_fails_closed_when_the_config_getter_explodes() -> None:
+    """判据取不到＝落对外档（少给信息，不多给），且绝不把卡自己搞挂。"""
+    def angry(name: str) -> object:
+        raise RuntimeError("config 面塌了")
+
+    message = _message(sender_roles=["user"])
+    assert error_report._audience_tier(message, angry) == error_report.AUDIENCE_PUBLIC
+    report = build_error_report(message, "bot.market", _leaky_exc(), config_getter=angry)
+    assert report["card_title"] == "运行异常"
+    assert report["human_text"] and report["trigger_echo"] == "/bot status"
+
+
+def test_group_audience_trim_survives_the_two_phase_rebuild(tmp_path: Path) -> None:
+    """两段式：后台渲染线程重建全量报告时受众信息仍在（吃的是同一枚 message 闭包），
+    补出来的**卡图 HTML 与兜底文本**都不许带内部结构——回执/卡/文本三条腿同档。"""
+    backend = _FakeBackend()
+    pipeline = _PipelineStub()
+    maybe_submit_error_card(
+        pipeline, _group_message(), "bot.market", _leaky_exc(),
+        settings=ErrorCardSettings(enabled=True, cooldown_seconds=60, stack_frames=8),
+        gate=_ManualGate([True]), backend=backend, card_dir=str(tmp_path),
+        render_pool=_InlinePool(),
+    )
+    assert len(pipeline.send_queue.requests) == 2
+    assert backend.calls, "后台没重建全量＝这条腿压根没跑"
+    body = str(backend.calls[-1]["html"]).split("<body>", 1)[-1]
+    for marker in (".py:", "def ", "BOT_", "bot_", "C:/", "C:\\", "/home/", "澜汐", "999"):
+        assert marker not in body, f"群态卡面 HTML 带出 {marker!r}"
+    # 四节整节消失（模板按 `{% if pairs %}` 显隐，渲染契约零改动）；「标识与时间」
+    # 这一节**留着**但只剩「触发时刻」一行——它不是 id，是管理员对账的抓手。
+    for token in ("栈摘录", "配置快照", "版本与构建", "平台与协议"):
+        assert token not in body, f"整节没裁干净：{token}"
+    assert "标识与时间" in body and "触发时刻" in body
+    assert "message_id" not in body and "sender_id" not in body and "debug" not in body
+    card = pipeline.send_queue.requests[1]
+    assert error_report.public_tier_leaks(card.content.text_fallback) == []
+    assert error_report.public_tier_leaks(str(card.content.content_ref["parts"][1]["text"])) == []
+
+
+def test_admin_private_card_render_still_carries_the_stack(tmp_path: Path) -> None:
+    """反向腿（渲染产物面）：管理员私聊那张卡的 HTML 里栈帧与配置快照照旧在。"""
+    backend = _FakeBackend()
+    maybe_submit_error_card(
+        _PipelineStub(), _message(), "bot.market", _leaky_exc(),
+        settings=ErrorCardSettings(enabled=True, cooldown_seconds=60, stack_frames=8),
+        gate=_ManualGate([True]), backend=backend, card_dir=str(tmp_path),
+        render_pool=_InlinePool(),
+    )
+    html = str(backend.calls[-1]["html"])
+    assert ".py:" in html and "bot_market_timeout_seconds" in html
+
+
+def test_audience_tag_is_stamped_on_ack_card_and_cooldown_paths(tmp_path: Path) -> None:
+    """审计留痕：三态（回执/卡/冷却降级）都带 audience 档，且 gate:bypass 语义不动。"""
+    for message, expected in (
+        (_group_message(), "audience:public"),
+        (_message(), "audience:admin_full"),
+    ):
+        pipeline = _PipelineStub()
+        maybe_submit_error_card(
+            pipeline, message, "bot.market", _captured_exc(),
+            settings=ErrorCardSettings(enabled=True, cooldown_seconds=60, stack_frames=8),
+            gate=_ManualGate([True]), backend=_FakeBackend(), card_dir=str(tmp_path),
+            render_pool=_InlinePool(),
+        )
+        for request in pipeline.send_queue.requests:
+            assert expected in request.audit_tags, request.audit_tags
+            assert "gate:bypass_by_design" in request.audit_tags
+    cooldown = _PipelineStub()
+    maybe_submit_error_card(
+        cooldown, _group_message(), "bot.market", _captured_exc(),
+        settings=ErrorCardSettings(enabled=True), gate=_ManualGate([False]),
+        backend=_FakeBackend(), render_pool=_InlinePool(),
+    )
+    assert "audience:public" in cooldown.send_queue.requests[0].audit_tags
+
+
+def test_gate_removed_payload_would_leak_proving_the_lock_has_teeth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """注毒腿：把裁决口钉成全量档，群态载荷必须立刻带出栈帧与键名——否则上面那批
+    "没有 X"的断言可能只是靶子本身是空的（恒真锁）。"""
+    monkeypatch.setattr(
+        error_report, "_audience_tier", lambda *_a, **_k: error_report.AUDIENCE_ADMIN_FULL
+    )
+    report = build_error_report(
+        _group_message(), "bot.market", _leaky_exc(), config_getter=_roster_getter
+    )
+    leaked = error_report.public_tier_leaks(_artifact_text(report))
+    assert leaked, "门被摘掉都不漏＝本节的裁剪断言全是空炮"
+    assert ".py:" in leaked and "bot_" in leaked
+
+
+def test_public_help_text_points_at_the_admin_tier_instead_of_missing_sections() -> None:
+    """页脚必须如实说明"这一份只留人话与归类"，且 E-11 口径不破（非截图/日志真落点）。"""
+    group = build_error_report(
+        _group_message(), "bot.market", _leaky_exc(), config_getter=_roster_getter
+    )
+    admin = build_error_report(
+        _message(), "bot.market", _leaky_exc(), config_getter=_roster_getter
+    )
+    assert group["help_text"] == error_report._HELP_TEXT_PUBLIC
+    assert admin["help_text"] == error_report._HELP_TEXT
+    for text, keys in (
+        (
+            group["help_text"],
+            ("自动生成", "不是控制台截图", "runtime 事件日志", "私聊任一管理员"),
+        ),
+        (
+            group["fallback_help_text"],
+            ("没能出", "runtime 事件日志", "私聊任一管理员"),
+        ),
+    ):
+        for key in keys:
+            assert key in text, f"{key} 缺失：{text}"
+    assert "把这张卡截图" not in group["help_text"]
+    assert "截图" not in group["fallback_help_text"]
+
+
+def test_audience_gate_body_calls_the_central_role_check() -> None:
+    """结构锁（同 test_admin_origin_platform_domain_k1b.py 的规矩）：分级门必须照抄
+    中央口 `roles.is_admin_message`，不许在 ops 侧养第二套名单判定。含注毒腿。"""
+    source = Path(error_report.__file__).read_text(encoding="utf-8")
+    start = source.index("def _sender_is_admin(")
+    body = source[start:source.index("def _audience_tier(", start)]
+    assert "is_admin_message(" in body, "分级门没走中央管理判定口＝造了第二套权限判定"
+    assert "sender_roles" in body, "分级门没吃中央角色事实（超管那一腿会瞎）"
+    poisoned = body.replace("is_admin_message(", "raw_id_check(", 1)
+    assert "is_admin_message(" not in poisoned, "注毒没打掉中央调用＝这发毒无效"
+    for second_system in (" in admin_ids", "sender_id in", '== "admin"'):
+        assert second_system not in body, f"门里出现自判形态 {second_system!r}"

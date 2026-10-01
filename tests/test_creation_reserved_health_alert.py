@@ -567,6 +567,11 @@ def _card_report(exc: BaseException, capability_id: str) -> dict[str, Any]:
         session_id="private:s115",
         session_type=SessionType.PRIVATE,
         sender_id="u115",
+        # W9 受众分级门（2026-10-01）之后，「异常原文进卡」只在**管理员私聊**档成立
+        # （对外档裁掉 exc_message/配置键名）。本锁要证的是「归因串进得了卡面」这条
+        # 结构通路，故把触发者建模成中央角色事实里的 admin——只有管理员才改得动
+        # 缺位的配置键，归因的收件人本来就是这一档。
+        sender_roles=["admin"],
         plain_text="/bot 画一张",
         message_id="m-s115",
     )
@@ -737,6 +742,9 @@ def error_report_build_with_values(exc: BaseException, values: dict[str, str]) -
         session_id="private:s115",
         session_type=SessionType.PRIVATE,
         sender_id="u115",
+        # 同 `_card_report`：本锁证的是「快照覆盖不到 ⇒ 归因只能进文案」这条通路，
+        # 而文案进卡属管理员私聊档（W9 受众分级门），非管理态那张卡看不到键名。
+        sender_roles=["admin"],
         plain_text="/bot 画一张",
         message_id="m-s115b",
     )

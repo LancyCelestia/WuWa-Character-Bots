@@ -34,6 +34,24 @@ IDs 与时间（2026-09-25 起卡面与纯文本两面统一作「标识与时�
   对话回合内触发（门禁在 pipeline._prepare 先行），本模块有意不复查门禁
   （复查=同义反复，复查限流还会双扣预算）；防刷屏由会话冷却闸承担。
   审计标签 ``gate:bypass_by_design`` 把该取舍显式化。
+
+受众分级裁剪门（W9，2026-10-01）：
+- 卡投回**事发会话**本身，群/频道态那张卡旁观者都看得见；此前只有「联系方式」
+  一档做了分级（``_admin_contact_pairs(group_facing=...)``），栈帧/模块归属/
+  配置键名/env 快照/内部 id 是无条件渲染的——群内任意非管理员都能读到源码文件名、
+  行号、函数名与配置键名（值虽经打码，键名与模块结构不脱）。
+- 现口径：``AUDIENCE_ADMIN_FULL``（管理员**私聊**态）保留全量诊断；
+  ``AUDIENCE_PUBLIC``（群/频道态，或私聊但触发者不在管理名单）只给人话区、触发回显、
+  能力名与中文归类、对外联系方式格与档级页脚。
+- 裁剪落在 **payload 唯一组装口** `build_error_report` 的出口（不在渲染口造第二把尺）：
+  卡片、纯文本兜底、两段式的后台重建全量报告三条腿共用同一份载荷，漏改一处也不会
+  出现「卡裁了、兜底文本没裁」的第二通路。空节由模板/文本面按 ``{% if pairs %}``
+  自然整节消失，渲染契约零改动。
+- 分级判据**复用中央角色口**（``policy/roles.py``）：优先吃摄取/流水线已解析好的
+  ``message.sender_roles``（真身＝``RoleSettings.resolve_roles``，超管自动叠 admin），
+  角色事实未装配时回落 ``is_admin_message``（同一批中央原语、同一份名单）。本件零名单副本。
+- ``redact_local_secrets`` 不能被这一门替代，这一门也不能替代它：前者只脱**值**
+  （密钥形态/盘符路径），键名、模块名、栈帧结构要靠在门外；本门只管**受众可见面**。
 """
 
 from __future__ import annotations
@@ -122,6 +140,20 @@ _HELP_TEXT = (
 _FALLBACK_HELP_TEXT = (
     "这条是文字版诊断，图这次没能出。内容同样脱敏，"
     "转给创造者就行。完整调用栈和全量配置在 runtime 事件日志里。"
+)
+# W9 受众分级：对外档（群/频道态，或私聊非管理员）那张卡的页脚。诚实说明「这一份
+# 只留人话与归类、内部细节在管理员私聊的那张上」——不说清楚就会被读成"卡坏了"，
+# 而指路必须是私聊管理员（群内不点名任何管理端联系方式）。口径与 E-11 同族：
+# 自动生成非截图、完整栈的真落点是 runtime 事件日志。
+_HELP_TEXT_PUBLIC = (
+    "这张卡是我自动生成的，不是控制台截图。发在群里的这一份只留人话与归类，"
+    "调用栈、模块与配置键名这些内部细节只在管理员私聊的那张卡上给；"
+    "完整调用栈和全量配置在 runtime 事件日志里。要修就私聊任一管理员，把这张卡发过去。"
+)
+_FALLBACK_HELP_TEXT_PUBLIC = (
+    "这条是文字版诊断，图这次没能出。群里的这一份只留人话与归类，"
+    "调用栈、模块与配置键名这些内部细节只在管理员私聊的诊断上给；"
+    "完整调用栈和全量配置在 runtime 事件日志里。要修就私聊任一管理员，把这段发过去。"
 )
 
 # 文本回执尾注：告知诊断卡随后补发（两段式，2026-09-14 P0 修复）。
@@ -455,10 +487,18 @@ def _persona_signature(getter: Callable[[str], object]) -> tuple[str, str]:
         brand_name_en_for,
     )
 
-    persona_id = str(getter("bot_persona_profile_id") or "").strip()
-    name = current_bot_nickname(persona_id) or str(
-        getter("bot_persona_display_name") or ""
-    ).strip()
+    persona_id = ""
+    name = ""
+    try:
+        # 取值失败降级空署名（渲染侧统一回落品牌形态，见 mica_shell.brand_capsule_html）：
+        # 本件的纪律是"任何子块失败降级空块、不抛异常"，署名这一腿此前是裸调用，
+        # config 面一炸整张诊断卡就组装不出来——而卡恰恰是 config 面出事时最需要出的那张。
+        persona_id = str(getter("bot_persona_profile_id") or "").strip()
+        name = current_bot_nickname(persona_id) or str(
+            getter("bot_persona_display_name") or ""
+        ).strip()
+    except Exception:  # 署名件 fail-open，缺署名比缺卡好。
+        logger.debug("error card persona signature unavailable", exc_info=True)
     return name, brand_name_en_for(persona_id)
 
 
@@ -1133,10 +1173,12 @@ def _admin_contact_pairs(
     给名字，有名字就一并显示。取不到时明确写「未配置」而不是留空行——
     这张卡的用途就是「出事了找谁」，空值会被读成"没有超管"。
 
-    ``group_facing=True``＝这张卡要发进群/频道（旁观者看得见）：异常卡的投递
-    目标就是事发会话本体，把真名+QQ 印上去等于向全群广播管理端联系方式，违反
-    既有隐私契约 A69-C1（创造者真名不得入卡）。这一格退成「几位、请私聊任一
-    管理员」，要素⑬仍在，只是不公开号码。告警卡走管理员私聊，永远 False。
+    ``group_facing=True``＝这张卡落在**对外档**（W9 受众分级门的裁决结果，不只是群态：
+    群/频道态**或**私聊但触发者不在管理名单）。异常卡的投递目标是事发会话本体，
+    把真名+号码印上去等于向全群广播管理端联系方式，违反既有隐私契约 A69-C1
+    （创造者真名不得入卡）；私聊侧那张卡同样发给一个没有管理权限的人，他转发一次
+    就完成同样的广播。这一格退成「几位、请私聊任一管理员」，要素⑬仍在，只是不公开号码。
+    告警卡走管理员目标，永远不过这道门（全量档）。
     """
     try:
         raw = getter("bot_super_admin_user_ids")
@@ -1165,6 +1207,11 @@ def _admin_contact_pairs(
         if str(k).strip() and str(v).strip()
     }
     if not ids:
+        # 空名单那一格原本直出配置键名（`BOT_SUPER_ADMIN_USER_IDS`）——对管理员是
+        # 可执行的修名，对对外档就是「配置键名上卡」，正落在 W9 分级门要挡的面上，
+        # 所以退档时只说没配、不报键名（键名的真身在 config.py，不在卡面）。
+        if group_facing:
+            return [{"label": "超管联系方式", "value": "未配置，请私聊任一管理员核对超管名单"}]
         return [{"label": "超管联系方式", "value": "未配置（BOT_SUPER_ADMIN_USER_IDS 为空）"}]
     # 评审（2026-09-25 菲比）：两行「超管」各占一格不直观——并成一条，用顿号分隔，
     # 每条都带昵称/备注，联系谁一眼可辨。
@@ -1176,7 +1223,7 @@ def _admin_contact_pairs(
         return [
             {
                 "label": f"超管 {len(people)} 位",
-                "value": "名单与号码不在群内公开，请私聊任一管理员并把本卡发过去",
+                "value": "名单与号码不对外公开，请私聊任一管理员并把本卡发过去",
             }
         ]
     return [{"label": f"超管 {len(people)} 位", "value": "、".join(people)}]
@@ -1243,6 +1290,176 @@ def _version_pairs(getter: Callable[[str], object]) -> list[dict[str, str]]:
     )
 
 
+# ==================== 受众分级裁剪门（W9，2026-10-01）====================
+#: 全量诊断档：管理员**私聊**触发的这张卡才给（栈帧/模块归属/配置键名/env 快照/
+#: 内部关联 id 全在）。线上出问题要查，查的就是这一档。
+AUDIENCE_ADMIN_FULL = "admin_full"
+#: 对外档：群/频道态（旁观者看得见），或私聊但触发者不在管理名单——只留人话与归类。
+AUDIENCE_PUBLIC = "public"
+
+#: 群面会话档（联系方式分级与受众分级门共用这一枚比较，别在两处各写一遍枚举）。
+_GROUP_FACING_SESSION_VALUES = frozenset(
+    {SessionType.GROUP.value, SessionType.CHANNEL.value}
+)
+
+#: 对外档在「定位与原因」里保留的行：能力名＝用户自己敲的那条指令，原因是中文归类；
+#: 被挡掉的「函数 / 路由 / 归属」三行分别是代码符号、内部枚举名与模块归属——
+#: 正是「模块结构不脱」的那一面（对管理员没用不到的信息，对旁观者是地图）。
+_PUBLIC_METHOD_LABELS = ("能力", "原因")
+#: 对外档在「标识与时间」里保留的行：触发时刻不是标识符，却是管理员收到转发卡后
+#: 去 runtime 事件日志对账的唯一抓手；message/session/request/debug id 一律不出。
+_PUBLIC_ID_LABELS = ("触发时刻",)
+
+#: 对外档**绝不许出现在卡面/兜底文本里**的内部结构形态。这张表是分级门的靶子，
+#: 也是锁件的靶子——两边读同一份，锁才不会和实现各说各话（历史教训：兜底文本面
+#: 曾自成一套节题，改名后锁还在指旧串）。含义：
+#: - ``.py:``  栈帧「文件名:行号」；``def `` 源码行本体；
+#: - ``BOT_`` 配置键名（env 侧大写形态，如 BOT_SUPER_ADMIN_USER_IDS）；
+#: - ``bot_`` 配置字段名（snake_case 形态，如 bot_market_timeout_seconds）；
+#: - ``C:\`` / ``C:/`` / ``/home/`` 本机与服务器路径；``/app/`` 容器内路径。
+#: 值级密钥由 `redact_local_secrets` 兜（另一层，互不替代）；本表管的是**结构与键名**。
+_PUBLIC_FORBIDDEN_MARKERS: tuple[str, ...] = (
+    ".py:",
+    "def ",
+    "BOT_",
+    "bot_",
+    "C:\\",
+    "C:/",
+    "/home/",
+    "/app/",
+)
+
+
+def public_tier_leaks(text: str) -> list[str]:
+    """一段对外档产物里还剩哪些内部结构形态（返回命中的靶子，空＝干净）。
+
+    实现与回归锁共用同一张靶子：门用它给自己兜底（将来新增字段忘了分级 ⇒ 至少留痕，
+    不静默；兜底只留痕不改写，因为留下来的两格是**用户自己那句话**与人话话术，
+    机器去洗人家的原话是另一类事故），锁用它双向自检（注毒腿必须打红、
+    管理员私聊档必须打得红）。
+    """
+    return [marker for marker in _PUBLIC_FORBIDDEN_MARKERS if marker in text]
+
+
+def _session_is_group_facing(message: IncomingMessage) -> bool:
+    """会话形态 → 是否有旁观者（群/频道）。SessionType 兼容枚举与裸值两形。"""
+    return (
+        str(getattr(message.session_type, "value", message.session_type) or "")
+        in _GROUP_FACING_SESSION_VALUES
+    )
+
+
+def _sender_is_admin(message: IncomingMessage, getter: Callable[[str], object]) -> bool:
+    """触发者有无管理权限——**只读中央角色口，本件零名单副本**。
+
+    两条腿同源（``policy/roles.py`` 一枚真身）：
+    1. ``message.sender_roles``＝``RoleSettings.resolve_roles`` 的产物（流水线在
+       ``_prepare`` 里填；超管自动叠 admin，所以超管也走这一腿）；
+    2. 角色事实没来得及装配（``role_settings=None`` 的装配口、旁路调用）时回落
+       ``roles.is_admin_message``——它就是为「旁路点手里只有鸭子 config」而存在的
+       中央复用口（台账 #72 的缺席门同口径照抄）。
+    两条腿都自带平台域判据（QQ 裸号只在 QQ 域生效），取不到就 False：本门 False 的
+    后果是**少给信息**（fail-closed 到对外档），不是多给。
+    """
+    try:
+        roles = {
+            str(role).strip().lower()
+            for role in (getattr(message, "sender_roles", None) or ())
+        }
+    except Exception:  # noqa: BLE001 - 角色面读不动就退名单腿，绝不让卡自己崩。
+        roles = set()
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
+            ROLE_ADMIN,
+            ROLE_SUPER_ADMIN,
+        )
+
+        if roles & {ROLE_ADMIN, ROLE_SUPER_ADMIN}:
+            return True
+    except Exception:  # roles 不可用时下面那条腿同样会留痕。
+        logger.debug("error card audience: roles constants unavailable", exc_info=True)
+    try:
+        from types import SimpleNamespace
+
+        from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
+            is_admin_message,
+        )
+
+        roster = SimpleNamespace(
+            bot_admin_user_ids=getter("bot_admin_user_ids"),
+            bot_telegram_admin_user_ids=getter("bot_telegram_admin_user_ids"),
+        )
+        return bool(is_admin_message(roster, message))
+    except Exception:  # 判定失败按对外档（少给信息，不多给）。
+        logger.debug("error card audience: admin roster check failed", exc_info=True)
+        return False
+
+
+def _audience_tier(message: IncomingMessage, getter: Callable[[str], object]) -> str:
+    """受众分级**唯一裁决口**：群态 或 非管理员触发者 ⇒ 对外档；否则全量档。
+
+    判据异常一律落对外档（``AUDIENCE_PUBLIC``）——分级门失效的默认形态必须是"看得少"。
+    """
+    try:
+        if _session_is_group_facing(message):
+            return AUDIENCE_PUBLIC
+        if _sender_is_admin(message, getter):
+            return AUDIENCE_ADMIN_FULL
+    except Exception:  # 载荷组装的每一条腿都不许抛（全链 fail-open）。
+        logger.debug("error card audience tier failed; trimming", exc_info=True)
+    return AUDIENCE_PUBLIC
+
+
+def _keep_named_rows(rows: object, keep_labels: tuple[str, ...]) -> list[dict[str, str]]:
+    """按标签白名单留行（保持原顺序）；非列表/脏行一律丢掉，绝不抛。"""
+    source = rows if isinstance(rows, (list, tuple)) else ()
+    return [
+        row
+        for row in source
+        if isinstance(row, dict) and str(row.get("label") or "") in keep_labels
+    ]
+
+
+def _apply_audience(report: dict[str, Any], tier: str) -> dict[str, Any]:
+    """把对外档不该出现的内部结构从载荷里摘掉（**唯一落点**，卡片/文本兜底共用）。
+
+    被摘的六面各自对应一类泄露：``stack_lines``（文件名+行号+函数名+源码行）、
+    ``exc_message``（异常原文里常带键名/路径/模块名）、``config_pairs``（配置键名）、
+    ``version_pairs`` + ``env_pairs``（运行时环境与协议栈指纹）、``id_pairs``
+    （内部关联 id）、``method_pairs`` 的代码符号三行与 ``self_review_pairs``
+    （debug 建议指着不存在的节说话——同一张卡上写「看栈顶帧」却没有栈，是无效引导）。
+    留：人话区、触发回显（用户自己那句话，已脱敏）、异常类型名、能力名、中文归类、
+    对外联系方式格、档级页脚。
+    """
+    if tier != AUDIENCE_PUBLIC:
+        return report
+    report["exc_message"] = ""
+    report["stack_lines"] = []
+    report["method_pairs"] = _keep_named_rows(report.get("method_pairs"), _PUBLIC_METHOD_LABELS)
+    report["self_review_pairs"] = []
+    report["config_pairs"] = []
+    report["version_pairs"] = []
+    report["env_pairs"] = []
+    report["id_pairs"] = _keep_named_rows(report.get("id_pairs"), _PUBLIC_ID_LABELS)
+    report["help_text"] = _HELP_TEXT_PUBLIC
+    report["fallback_help_text"] = _FALLBACK_HELP_TEXT_PUBLIC
+    # 兜底自检（只留痕不改写）：将来有人往载荷里加了没分级的字段，这一行会先喊出来，
+    # 而不是等群里有人截图问「为什么我的卡上有 BOT_XXX」。异常一律吞——观察件
+    # 不许把卡本身搞挂（全链 fail-open 纪律）。
+    try:
+        residue = public_tier_leaks(" ".join(
+            [str(report.get("exc_type") or ""), str(report.get("human_text") or ""),
+             str(report.get("trigger_echo") or ""), build_text_fallback(report)]
+        ))
+        if residue:
+            logger.warning(
+                "error card public tier still carries internal structure: %s", residue
+            )
+    except Exception:  # 自检失败照样出卡（卡比自检重要）。
+        logger.debug("error card audience self-check skipped", exc_info=True)
+    return report
+
+
 def build_error_report(
     message: IncomingMessage,
     capability_id: str,
@@ -1259,8 +1476,16 @@ def build_error_report(
     路径（文本回执先行）使用——回执只需要 human_text/exc_type/触发回显，
     毫秒级契约不能被秒级环境扫描阻塞；全量报告由渲染线程重建（两段式
     设计的本意）。轻量与全量在这些共用字段上字节级一致。
+
+    受众分级（W9）：本函数是卡载荷的**唯一**组装口，分级也在这里裁决——
+    `_apply_audience` 落刀，卡片 / 纯文本兜底 / 两段式后台重建三条腿共用同一份
+    已裁剪载荷（渲染口 `bridge.render_error_card_html` 保持纯渲染，不养第二把尺）。
+    对外档连"算了又要扔掉"的贵件（配置快照、环境盘点）都不再计算——回执与渲染
+    线程都不该为一档看不到的数据付秒级代价。
     """
     getter = config_getter or _default_config_getter
+    tier = _audience_tier(message, getter)
+    full = tier != AUDIENCE_PUBLIC
     exc_type = type(exc).__name__ or "Exception"
     # ATK-OUTB 票2：先洗后截（旧写法 [:300] 在打码前，截口残密钥头，探针 2 实锤）。
     exc_message = redact_local_secrets(str(exc))[:300]
@@ -1289,61 +1514,66 @@ def build_error_report(
         ]
     )
     signature = _persona_signature(getter)
-    return {
-        "card_variant": "error",
-        "card_title": "运行异常",
-        "exc_type": exc_type,
-        "exc_message": exc_message,
-        "human_text": _persona_text(message.session_id, exc_type),
-        "trigger_echo": _trigger_echo(message),
-        "stack_lines": stack_lines,
-        "method_pairs": _rows(
-            [
-                _kv("能力", capability_id),
-                _kv("函数", _innermost_frame_name(stack_lines)),
-                _kv("路由", _route_kind_label(capability_id)),
-                # ⑩「哪个模块的哪个功能」：能力 id 只给到 bot.xxx，域归属另给一行。
-                _kv("归属", _module_ownership(capability_id)),
-                # ⑨报错原因按异常类型给一句中文归类；「未归类」是把异常名换个
-                # 说法再念一遍，没有增量（评审：与代号撞车），整行不出。
-                _kv(
-                    "原因",
-                    ""
-                    if _reason_label(exc_type, exc_message).startswith("未归类")
-                    else _reason_label(exc_type, exc_message),
-                ),
-            ]
-        ),
-        # ⑪自我审查 + ⑫debug 建议：句子必须带「推测」，不许冒充确诊。
-        "self_review_pairs": _rows(
-            [
-                _kv("大概原因", review),
-                _kv("建议", advice),
-            ]
-        ),
-        # ⑬联系方式按收件人分级：群/频道态不公开真名与号码（A69-C1 同域）。
-        "contact_pairs": _admin_contact_pairs(
-            getter,
-            group_facing=str(getattr(message.session_type, "value", message.session_type) or "")
-            in {SessionType.GROUP.value, SessionType.CHANNEL.value},
-        ),
-        "config_pairs": _config_snapshot(capability_id, getter),
-        "version_pairs": _version_pairs(getter) if include_env else [],
-        # 「会话」只在 IDs 那一节留一处（评审：卡上同一件事写了三遍）。
-        "env_pairs": _rows(
-            [
-                _kv("平台", message.platform),
-                _kv("协议", _protocol_label(message.adapter)),
-                _kv("通信", _connection_mode(message.adapter)),
-            ]
-        ),
-        "id_pairs": id_pairs,
-        "help_text": _HELP_TEXT,
-        "fallback_help_text": _FALLBACK_HELP_TEXT,
-        "bot_name": signature[0],
-        "bot_name_en": signature[1],
-        "bot_avatar_url": _card_avatar_uri(getter),
-    }
+    return _apply_audience(
+        {
+            "card_variant": "error",
+            "card_title": "运行异常",
+            "exc_type": exc_type,
+            "exc_message": exc_message,
+            "human_text": _persona_text(message.session_id, exc_type),
+            "trigger_echo": _trigger_echo(message),
+            "stack_lines": stack_lines,
+            "method_pairs": _rows(
+                [
+                    _kv("能力", capability_id),
+                    _kv("函数", _innermost_frame_name(stack_lines)),
+                    _kv("路由", _route_kind_label(capability_id)),
+                    # ⑩「哪个模块的哪个功能」：能力 id 只给到 bot.xxx，域归属另给一行。
+                    _kv("归属", _module_ownership(capability_id)),
+                    # ⑨报错原因按异常类型给一句中文归类；「未归类」是把异常名换个
+                    # 说法再念一遍，没有增量（评审：与代号撞车），整行不出。
+                    _kv(
+                        "原因",
+                        ""
+                        if _reason_label(exc_type, exc_message).startswith("未归类")
+                        else _reason_label(exc_type, exc_message),
+                    ),
+                ]
+            ),
+            # ⑪自我审查 + ⑫debug 建议：句子必须带「推测」，不许冒充确诊。
+            # 对外档整节不出：建议句指的是「栈顶帧/request_id 对账/按代号立规则」这些
+            # 只有管理员够得着的动作，指着一份不存在的节说话＝无效引导（同 :892 那条纪律）。
+            "self_review_pairs": _rows(
+                [
+                    _kv("大概原因", review),
+                    _kv("建议", advice),
+                ]
+            ),
+            # ⑬联系方式按收件人分级：对外档不公开真名与号码（A69-C1 同域）——现在
+            # 判据从"是不是群态"换成"是不是对外档"，私聊非管理员同样不给号码。
+            "contact_pairs": _admin_contact_pairs(
+                getter, group_facing=not full
+            ),
+            # 贵件按档取：对外档不算配置快照/环境盘点（算了也是马上扔，白付秒级代价）。
+            "config_pairs": _config_snapshot(capability_id, getter) if full else [],
+            "version_pairs": _version_pairs(getter) if (include_env and full) else [],
+            # 「会话」只在 IDs 那一节留一处（评审：卡上同一件事写了三遍）。
+            "env_pairs": _rows(
+                [
+                    _kv("平台", message.platform),
+                    _kv("协议", _protocol_label(message.adapter)),
+                    _kv("通信", _connection_mode(message.adapter)),
+                ]
+            ),
+            "id_pairs": id_pairs,
+            "help_text": _HELP_TEXT,
+            "fallback_help_text": _FALLBACK_HELP_TEXT,
+            "bot_name": signature[0],
+            "bot_name_en": signature[1],
+            "bot_avatar_url": _card_avatar_uri(getter),
+        },
+        tier,
+    )
 
 
 def _issue_time_label() -> str:
@@ -1398,6 +1628,11 @@ def build_issue_report(
     - ``human_text`` 由调用方（alerts 的人话主句）递进来，本件不重算第二套；
     - ``trigger_echo`` 恒空——告警没有"触发它的那句用户话"可回显，栈摘录也给不
       出（issue 不带 traceback），两者允许为空，渲染端与文本兜底都已容忍空值。
+
+    受众档：告警载荷**不做对外裁剪**——它的收件人由 alerts 的管理名单目标口给出
+    （`AdminTarget`，全是管理员侧会话），本身就是 W9 分级门里的全量档；异常卡那条
+    腿（`build_error_report`）才是要分级的一条，因为它投回**事发会话**本体。
+    这里的 ``session_type`` 说的是"事发现场"，不是"谁在看这张卡"，别拿它当分级判据。
     """
     getter = config_getter or _default_config_getter
     stage = _issue_code(issue.stage)
@@ -1897,6 +2132,9 @@ def maybe_submit_error_card(
             "error_report:v1",
             f"source:{capability_id}",
             f"exc:{exc_type}",
+            # W9 受众分级留痕：审计里要能看出这张卡给谁看过什么（同一裁决口、
+            # 同一 message，与载荷里的裁剪结果必然同档——由锁件钉死）。
+            f"audience:{_audience_tier(message, _default_config_getter)}",
             _GATE_BYPASS_TAG,
         ]
         emitted = session_gate.allow(message.session_id)

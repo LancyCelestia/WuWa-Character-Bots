@@ -46,6 +46,11 @@ def _message(
     message_id: str = "m-1",
     **kwargs: Any,
 ) -> IncomingMessage:
+    # 受众分级门（W9）：本文件测的是两段式投递几何与兜底文本的**完整性**，那是
+    # 管理员私聊档的载荷；缺省把 u1 建模成中央角色事实里的 admin（`sender_roles`
+    # ＝流水线写入的 `resolve_roles` 产物）。群态裁剪由 test_error_report.py 的
+    # W9 双向锁专测，本文件的群例（target 路由）显式覆盖形态即可、不吃载荷细节。
+    kwargs.setdefault("sender_roles", ["admin"])
     return IncomingMessage(
         platform="qq",
         adapter="onebot",
