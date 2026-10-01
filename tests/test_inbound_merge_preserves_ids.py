@@ -32,6 +32,7 @@ from __future__ import annotations
 import ast
 import asyncio
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -68,23 +69,33 @@ from plugins.bot_unified_runtime.domains.transport.sender.queue import (
 _ROOT = Path(__file__).resolve().parents[1]
 ROOT_INIT = _ROOT / "plugins" / "bot_unified_runtime" / "__init__.py"
 
-# 快窗：测语义不测秒表（真值五键的缺省形态另有一把等值锁，见文末）。
+# 快窗：测语义不测秒表（在册四键的缺省形态与窗口常量权威另有一把等值锁，见文末）。
 FAST = CoalescingSettings(
     enabled=True, quiet_seconds=0.05, max_hold_seconds=0.5
 )
 
 
 def _config_stub(**over: object) -> SimpleNamespace:
-    """装配期 Config 的最小替身：只带五枚在册键，值可覆盖。"""
+    """装配期 Config 的最小替身：只带在册四键（quiet 键 2026-09-27 乙案退役），值可覆盖。"""
     values: dict[str, object] = {
         "bot_chat_message_coalescing_enabled": FAST.enabled,
-        "bot_chat_message_coalescing_quiet_seconds": FAST.quiet_seconds,
         "bot_chat_message_coalescing_max_hold_seconds": FAST.max_hold_seconds,
         "bot_chat_message_coalescing_max_messages": FAST.max_messages,
         "bot_chat_message_coalescing_max_chars": FAST.max_chars,
     }
     values.update({f"bot_chat_message_coalescing_{k}": v for k, v in over.items()})
     return SimpleNamespace(**values)
+
+
+def _coalescing_settings(**over: object) -> CoalescingSettings:
+    """按根装配同形状取本轮设置：build(在册四键) → 窗口权威值。
+
+    生产里等待窗不再经 Config（乙案退役），由根装配段每轮
+    ``message_merge.apply_merge_window_seconds`` 写死 3 秒裁定值；本锁复刻同形状
+    但把窗口换成 FAST 快窗——测语义不测秒表。
+    """
+    settings = build_coalescing_settings(_config_stub(**over))
+    return replace(settings, quiet_seconds=FAST.quiet_seconds)
 
 
 def _message(
@@ -170,7 +181,7 @@ async def _drive_fragments(messages: Sequence[IncomingMessage]) -> dict[str, Any
     pipeline = RuntimePipeline(queue, audit)
     calls: list[IncomingMessage] = []
     capability = _counting_capability(calls)
-    coalescer = shared_coalescer(build_coalescing_settings(_config_stub()))
+    coalescer = shared_coalescer(_coalescing_settings())
     coalescer.reset()  # 共享单例：清掉别的用例可能残留的窗口
     owner_id_batches: list[list[str]] = []
     folded_away: list[str] = []
@@ -252,7 +263,7 @@ async def test_group_fragments_mentioning_bot_reply_once_not_per_fragment() -> N
     pipeline = RuntimePipeline(queue, audit)
     calls: list[IncomingMessage] = []
     capability = _counting_capability(calls, privacy=PrivacyLevel.GROUP)
-    coalescer = shared_coalescer(build_coalescing_settings(_config_stub()))
+    coalescer = shared_coalescer(_coalescing_settings())
     coalescer.reset()
     owner_id_batches: list[list[str]] = []
     folded_away: list[str] = []
@@ -299,10 +310,8 @@ async def test_kill_power_disabled_coalescing_replies_to_every_fragment() -> Non
     pipeline = RuntimePipeline(queue, audit)
     calls: list[IncomingMessage] = []
     capability = _counting_capability(calls)
-    coalescer = shared_coalescer(
-        build_coalescing_settings(_config_stub(enabled=False))
-    )
-    assert coalescer.settings.enabled is False  # 键到得了运行时参数（五键通路的开关位）
+    coalescer = shared_coalescer(_coalescing_settings(enabled=False))
+    assert coalescer.settings.enabled is False  # 键到得了运行时参数（在册四键通路的开关位）
     coalescer.reset()
     owner_id_batches: list[list[str]] = []
     folded_away: list[str] = []
@@ -402,16 +411,13 @@ def test_reply_target_from_later_fragment_survives_the_merge() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ④ 五键通路：配置快照 → build_coalescing_settings 的逐值映射与保守缺省
+# ④ 在册四键通路：配置快照 → build_coalescing_settings 的逐值映射与保守缺省
 # ---------------------------------------------------------------------------
 
 
 def test_config_snapshot_maps_into_coalescing_settings_value_by_value() -> None:
-    cfg = _config_stub(
-        quiet_seconds=0.25, max_hold_seconds=2.5, max_messages=4, max_chars=999
-    )
+    cfg = _config_stub(max_hold_seconds=2.5, max_messages=4, max_chars=999)
     settings = build_coalescing_settings(cfg)
-    assert settings.quiet_seconds == 0.25
     assert settings.max_hold_seconds == 2.5
     assert settings.max_messages == 4
     assert settings.max_chars == 999
@@ -425,16 +431,30 @@ def test_missing_config_falls_back_to_conservative_defaults() -> None:
 
 
 def test_module_defaults_match_registered_config_field_defaults() -> None:
-    """模块缺省 == config.py 在册缺省：两处数值漂移会造出「装配与文档两套窗」。"""
+    """在册四键：模块缺省 == config.py 在册缺省；quiet 键已退役并被常量锁钉死。
+
+    期望值为什么变（乙案落地，禁止悄悄放宽）：COALESCE-DUALAUTH 审计证实
+    `bot_chat_message_coalescing_quiet_seconds` 每轮被
+    `message_merge.MERGE_WINDOW_SECONDS`（用户 2026-09-27 裁定 3s）无条件覆盖，
+    是「在册永不算数」的死口 ⇒ 键退役（config.py 字段与 getattr 读点一并摘除），
+    本锁从「quiet 字段缺省 == 1.8」改判为三格：
+    ① 该字段**不在** Config（防复活）；
+    ② dataclass 缺省 quiet == 3.0（1.8 双胞胎同批消籍）；
+    ③ dataclass 缺省 quiet == MERGE_WINDOW_SECONDS（唯一真身等值锁，
+        仿 progress_ack 地板值的 parity 先例）。
+    其余四键的 parity 断言逐字保留，未动任何容差。
+    """
     from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime import message_merge
 
     fields = Config.model_fields
     defaults = CoalescingSettings()
-    assert fields["bot_chat_message_coalescing_enabled"].default is defaults.enabled
-    assert (
-        fields["bot_chat_message_coalescing_quiet_seconds"].default
-        == defaults.quiet_seconds
+    assert "bot_chat_message_coalescing_quiet_seconds" not in fields, (
+        "quiet 键已被读回 Config —— 乙案退役作废，等待窗唯一真身是常量"
     )
+    assert defaults.quiet_seconds == 3.0
+    assert defaults.quiet_seconds == message_merge.MERGE_WINDOW_SECONDS
+    assert fields["bot_chat_message_coalescing_enabled"].default is defaults.enabled
     assert (
         fields["bot_chat_message_coalescing_max_hold_seconds"].default
         == defaults.max_hold_seconds
@@ -471,16 +491,11 @@ def _handle_chat_node(source: str) -> ast.AsyncFunctionDef | None:
     return found[0]
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "MERGE-IDS-DOWNSTREAM-WIRE：根 __init__.py:8621 只取 _turn.message，"
-        "_turn.folded_message_ids 即被丢弃 ⇒ 逐条 id 账进不了 pipeline_enter/"
-        "审计面（AGENTS「保留逐条 message_id」硬约束目前只在折句器与装配锁之间"
-        "存活）。接线坐标见 .superpowers/sdd/2026-09-25-goal18-wave/logs/"
-        "S-T-MERGE-2.md §5；主会话接线后**摘掉本标记**当转正判据。"
-    ),
-)
+# MERGE-IDS-DOWNSTREAM-WIRE 转正（席位 S-XFAIL-AUDIT 2026-09-29 --runxfail 实跑绿）：
+# 根 __init__.py 现于 _handle_chat 内消费 _turn.folded_message_ids（9018/9028 折叠账
+# folded_ids=…），逐条 id 已进下游。按原 reason「主会话接线后摘掉本标记当转正判据」执行：
+# 从此这条是活锁，谁把 folded_message_ids 再丢回下游之外本条即报红。
+# 复跑尺：pytest tests/test_inbound_merge_preserves_ids.py::test_folded_id_ledger_is_still_dropped_before_the_pipeline
 def test_folded_id_ledger_is_still_dropped_before_the_pipeline() -> None:
     handler = _handle_chat_node(ROOT_INIT.read_text(encoding="utf-8"))
     assert handler is not None

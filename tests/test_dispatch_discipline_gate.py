@@ -11,6 +11,16 @@ SUBAGENTS_GLOB = "projects/*/8f099879-3e30-4289-8ff7-6bb73ef3b440/subagents/*.js
 SEAT_TOOL_CALL_CEILING = 40
 
 PUBLIC_READONLY_BASELINE_AT_RULE_TIME = frozenset({
+    # 〔2026-09-29 主会话单点登记〕下面四枚不是"规则当时的既存脏件"，而是本锁自证的合法通道本身
+    # ——「要改只能主会话单点改」：06:30:29 那次外部还原把 S-SHIM-WAVE1 T5/T6 **已退役的 tracked 垫片**
+    # 连文件带 `board_shim_ledger.SHIM_ROWS` 行一起写回盘上，主会话按原裁定再退一次（逐枚字节备份在
+    # `.superpowers/sdd/2026-09-27-fullload/recovered/shim-retire-batch/`，落地前置校验＝逐枚 grep 真 import 计数全 0）。
+    # 取证复跑：`python scripts/shim_retirement_census.py --report` ⇒ 域外 66／待退役 15／④引用超上限 0。
+    # 登记只此四枚；席位再往公共只读面上添新件，本锁照红。
+    "plugins/bot_unified_runtime/capabilities/auto_send/__init__.py",
+    "plugins/bot_unified_runtime/sender/__init__.py",
+    "plugins/bot_unified_runtime/sources/fetchers/__init__.py",
+    "plugins/bot_unified_runtime/sources/subscriptions/__init__.py",
     "docs/templates/handoff.md",
     "docs/templates/ledger.md",
     "docs/templates/seat-report.md",

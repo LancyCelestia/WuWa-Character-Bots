@@ -43,6 +43,7 @@ v7 顶格巨变与 v5 IntegrityError 都精确复现 ⇒ 本件的「零位移�
 from __future__ import annotations
 
 import ast
+import dataclasses
 import math
 import sqlite3
 import time
@@ -445,9 +446,14 @@ def _no_nan_guard(raw, default):  # 等价「改动前」形态：只挡非数�
 def test_teeth_removing_the_guard_restores_the_old_swing_and_the_old_crash(
     monkeypatch, tmp_path
 ) -> None:
-    """差分证据：把真身 `_finite_float_or` 换成无 NaN 卫版本（三道闸同源失效）后——
-    ① v7 `observe(delta_override=nan)` 一发把展示分推高 ≥40 分（旧实况 +88.4）；
-    ② v5 同输入 `sqlite3.IntegrityError` 复发。
+    """差分证据（A-1 后改判为三层对账，原"拿掉消毒口⇒必现 88 分巨变"的差分面
+    现需**连 A-1 双帽一起摘掉**才复现——这本身就是纵深防线的差分锁）：
+    ① 只把真身 `_finite_float_or` 换成无 NaN 卫版本（A-1 双帽在场）：
+      v7 `observe(delta_override=nan)` 的伤害从 +88.4 收敛到单事件帽量级
+      （≤ `v7_display_move_for_z_cap(0.10z)` ≈ 10 分）——**消毒口不再是唯一防线**；
+    ② 再经在册配置面把两枚帽同放到 99z（逐字等价"A-1 之前"的正向直穿形态）：
+      同一发旧巨变（≥40 分，实测 +88）精确复现 ⇒ ①的 ≤10 分断言非同义反复；
+    ③ v5 路同输入 `sqlite3.IntegrityError` 复发（该路无 z 域帽，判据不变）。
     monkeypatch 出作用域自动还原 ⇒ 对真实源码零注毒。"""
     monkeypatch.setattr(_affinity, "_finite_float_or", _no_nan_guard)
 
@@ -458,8 +464,33 @@ def test_teeth_removing_the_guard_restores_the_old_swing_and_the_old_crash(
     before = _peek_fraction(store, "u1")
     store.observe("u1", "positive", delta_override=float("nan"))
     after = _peek_fraction(store, "u1")
-    assert (after - before) * 100.0 > 40.0, (
-        "拿掉消毒口竟仍无巨变 ⇒ 本件的位移断言没咬到真身（同义反复）"
+    capped_move = (after - before) * 100.0
+    cap_ceiling = v7_display_move_for_z_cap(_affinity._V7_DEFAULT_NEGATIVE_EVENT_CAP_Z)
+    assert capped_move <= cap_ceiling + 0.05, (
+        f"消毒口摘掉后伤害 {capped_move:.1f} 分越出单事件帽界 {cap_ceiling:.1f} 分"
+        " ⇒ A-1 正向帽没接住这一层（纵深失守）"
+    )
+    assert capped_move > 0.0, "摘掉消毒口竟零位移 ⇒ 本段在空跑"
+
+    real_resolve = _affinity.resolve_v7_settings
+    monkeypatch.setattr(
+        _affinity,
+        "resolve_v7_settings",
+        lambda config: dataclasses.replace(
+            real_resolve(config),
+            negative_event_cap_z=99.0,
+            daily_move_cap_z=99.0,
+        ),
+    )
+    clock_pre = _Clock()
+    store_pre = _store(tmp_path, "teeth_v7_preA1.sqlite3", clock_pre, v7=True)
+    store_pre.observe("u1", "neutral", text="先建个档")
+    clock_pre.advance(61)
+    before_pre = _peek_fraction(store_pre, "u1")
+    store_pre.observe("u1", "positive", delta_override=float("nan"))
+    after_pre = _peek_fraction(store_pre, "u1")
+    assert (after_pre - before_pre) * 100.0 > 40.0, (
+        "摘掉消毒口+摘掉双帽竟仍无巨变 ⇒ 本件的位移断言没咬到真身（同义反复）"
     )
 
     clock2 = _Clock()

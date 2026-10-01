@@ -241,7 +241,7 @@ def test_render_failure_followup_full_diagnostic_text(tmp_path: Path) -> None:
     assert fallback.content.content_type == "text"
     assert fallback.content.content_ref["text"] == fallback.content.text_fallback
     assert "栈摘录" in fallback.content.text_fallback
-    assert "IDs 与时间" in fallback.content.text_fallback
+    assert "标识与时间" in fallback.content.text_fallback
     assert "text_only" in fallback.audit_tags
 
 

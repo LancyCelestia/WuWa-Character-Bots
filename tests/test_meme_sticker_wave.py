@@ -523,6 +523,12 @@ def test_subject_hit_is_alias_bounded() -> None:
 
 
 def test_absorb_marks_persona_owned_and_keeps_weight_single_source(tmp_path: Path) -> None:
+    """本命行的权重**只有一个来源**（``_score_weight``），本件不另算一份。
+
+    2026-09-30 随需求 12 重述：原先只喂 VLM 一面证据就宣称本命——那条洞正是审核制
+    要堵的（单面证据只入待审）；这里补上包名线索走合法路径，**门的形状一字未动**，
+    锁的本意（权重单源）也一直没变。
+    """
     store = MemeLibraryStore(tmp_path / "meme_library.sqlite3", prefer=["守岸人"])
     image = _png(tmp_path, "p1.png", "body-1")
     digest = content_sha256_of_bytes(image.read_bytes())
@@ -536,6 +542,7 @@ def test_absorb_marks_persona_owned_and_keeps_weight_single_source(tmp_path: Pat
               "scene_tags": [], "persona_hint": "守岸人", "nsfw_score": 0.0},
         nsfw_delete=0.8,
         persona_terms=("守岸人", "岸宝"),
+        naming_hints=("守岸人表情包合集",),
     )
     assert decision.action == "accepted" and decision.persona_owned is True
     with store._connect() as connection:
@@ -998,7 +1005,13 @@ def test_keyword_argument_protect_persona_is_passed() -> None:
 # ------------------------------------------------------------------ E 吸收四态
 
 
-def _outcome(tmp_path: Path, tags: dict, *, enabled: bool = True):
+def _outcome(
+    tmp_path: Path,
+    tags: dict,
+    *,
+    enabled: bool = True,
+    naming_hints: tuple[str, ...] = (),
+):
     seed = abs(hash(str(tags)))
     store = MemeLibraryStore(tmp_path / f"lib-{seed}.sqlite3", prefer=["守岸人"])
     name = f"s{seed}.png"
@@ -1010,16 +1023,27 @@ def _outcome(tmp_path: Path, tags: dict, *, enabled: bool = True):
         tags=tags, nsfw_delete=0.8,
         persona_terms=("守岸人", "岸宝", "shorekeeper"),
         persona_absorb_enabled=enabled,
+        naming_hints=naming_hints,
     )
     return store, decision, name
 
 
 def test_absorb_positive_subject_hint_marks(tmp_path: Path) -> None:
-    """正例①（强证据）：persona_hint 指向她 ⇒ 标本命吸收。"""
+    """正例①（强证据）：persona_hint 指向她 **且有第二条独立线索** ⇒ 标本命吸收。
+
+    2026-09-30 随需求 12 重述：本锁的本意一直是「主体判对时标本命」，换代前它只喂
+    VLM 一面证据就宣称本命——那正是审核制要堵的洞（单面证据只入待审，见
+    ``test_meme_persona_review_queue.py::test_absorb_single_evidence_lands_in_pending_queue``）。
+    这里补的是**合法路径**（包名线索＝``naming`` 第二面），不是把红线放宽。
+    """
     store, decision, name = _outcome(
-        tmp_path, {"description": "递茶", "persona_hint": "守岸人", "nsfw_score": 0.0}
+        tmp_path,
+        {"description": "递茶", "persona_hint": "守岸人", "nsfw_score": 0.0},
+        naming_hints=("守岸人表情包合集",),
     )
     assert decision.persona_owned is True and decision.subject_term == "守岸人"
+    # 字面量锁的是**落库线值**（``persona_review.ADMIT``），不是本件的内部枚举。
+    assert decision.review_state == "approved"
     with store._connect() as connection:
         marked = int(connection.execute(
             "SELECT persona_owned FROM memes WHERE md5=?", (name,)
@@ -1028,9 +1052,12 @@ def test_absorb_positive_subject_hint_marks(tmp_path: Path) -> None:
 
 
 def test_absorb_positive_description_fallback_marks(tmp_path: Path) -> None:
-    """正例②（补强证据）：hint 无归属（common）但描述句有她 ⇒ 标本命。"""
+    """正例②（补强证据）：hint 无归属（common）但描述句有她 ⇒ 走 VLM 面；
+    第二面由包名线索补上才标本命（2026-09-30 随需求 12 重述，同上锁的口径）。"""
     _, decision, _ = _outcome(
-        tmp_path, {"description": "守岸人 递茶", "persona_hint": "common", "nsfw_score": 0.0}
+        tmp_path,
+        {"description": "守岸人 递茶", "persona_hint": "common", "nsfw_score": 0.0},
+        naming_hints=("岸宝贴纸包",),
     )
     assert decision.persona_owned is True and decision.subject_term == "守岸人"
 

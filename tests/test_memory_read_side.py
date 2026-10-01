@@ -170,6 +170,46 @@ def _seed_legacy(
         )
 
 
+def _seed_legacy_stock(
+    db: Path, seeds: list[tuple[str, str]], *, session_id: str = PRIVATE
+) -> None:
+    """造「闸前存量」：SQL 直插，绕过写腿消毒闸。
+
+    S-FIX-ATK-MEMORY-FIX C/D 之后，生产写入口对硬线内容是**正当拒收**的——
+    清洗面（``sanitize_memory_db``）要防的恰是闸门落地**之前**已经躺在库里的
+    历史行，那种形态如今经写入口再也造不出来。夹具绕闸直插，断言面一字不动；
+    这不是放宽守卫，是复现守卫管不到的存量现场。
+    """
+    with sqlite3.connect(db) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS memory_facts (
+                fact_id TEXT PRIMARY KEY,
+                subject_user_id TEXT NOT NULL,
+                session_id TEXT NOT NULL DEFAULT '',
+                memory_kind TEXT NOT NULL,
+                text TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 0.8,
+                source TEXT NOT NULL DEFAULT 'sqlite',
+                sensitivity TEXT NOT NULL DEFAULT 'personal',
+                scope_key TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        stamp = "2026-09-21T10:00:00+00:00"
+        for text, sensitivity in seeds:
+            connection.execute(
+                "INSERT OR REPLACE INTO memory_facts VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    build_fact_id(SENDER, session_id, text), SENDER, session_id,
+                    "manual", text, 1.0, "manual_command", sensitivity, "",
+                    stamp, stamp,
+                ),
+            )
+
+
 def _list_body(
     db: Path,
     *,
@@ -341,7 +381,7 @@ def test_closed_state_graph_equals_frozen_baseline(tmp_path: Path) -> None:
 def test_closed_state_sanitize_report_and_render_equal_frozen_baseline(tmp_path: Path) -> None:
     """关态清洗的扫描数/命中/分类/渲染文案/隔离表内容与基线逐字段相等。"""
     db = tmp_path / "memory.sqlite3"
-    _seed_legacy(
+    _seed_legacy_stock(
         db,
         [
             ("喜欢柠檬茶", "personal"),
@@ -383,7 +423,7 @@ def test_closed_state_reads_cause_no_schema_side_effects(tmp_path: Path) -> None
     图谱/清洗若为了能读 v21 就先把表建出来，现网库形制就被改坏了。
     """
     db = tmp_path / "memory.sqlite3"
-    _seed_legacy(db, [("喜欢柠檬茶", "personal"), (HARD_LINE_TEXT, "personal")])
+    _seed_legacy_stock(db, [("喜欢柠檬茶", "personal"), (HARD_LINE_TEXT, "personal")])
 
     assert _command_bus(db, bus_enabled=False) is None
     _list_body(db)
@@ -583,7 +623,7 @@ def test_sanitize_on_legacy_only_db_never_creates_bus_tables_even_when_applying(
 ) -> None:
     """``_forget_bus_rows`` 只在真扫到总线行时才建 store——纯旧库跑清洗零建表。"""
     db = tmp_path / "memory.sqlite3"
-    _seed_legacy(db, [("干净的偏好", "personal"), (HARD_LINE_TEXT, "personal")])
+    _seed_legacy_stock(db, [("干净的偏好", "personal"), (HARD_LINE_TEXT, "personal")])
 
     assert sanitize_memory_db(db, apply=True).quarantined == 1
     assert _db_tables(db) == [MEMORY_LEGACY_TABLE, "memory_quarantine"]

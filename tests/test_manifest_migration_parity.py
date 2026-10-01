@@ -333,7 +333,8 @@ def test_poison_reordered_declaration_is_flagged() -> None:
 GATE = ROOT / "tests" / "test_capability_manifest_gate.py"
 
 #: 真身册 `CapabilityFacets` 的每一维 → 门件里执法它的那把常驻腿函数名（AST 现算存在性）。
-#: 一腿管一维、职责不重叠：可解析性 / 镜像等值 / 行号 / 指针 / 票根 / 直呼点 / 配置键 / 臂 / 板块指针 / id 在册。
+#: 一腿管一维、职责不重叠：可解析性 / 镜像等值 / 锚点活性（47 号席：行号降级为附注，判据按符号名锚定）/
+#: 指针 / 票根 / 直呼点 / 配置键 / 臂 / 板块指针 / id 在册。
 #: `entry_kinds` 无独立腿（docstring 明确"自由声明、没有外部活性校验"），
 #: 但它被腿㉓ 双向消费（`arms ⊆ entry_kinds` 且 `arms == entry_kinds ∩ 活形集`）⇒ 有真执法。
 DIMENSION_TO_LEG: dict[str, str] = {
@@ -342,7 +343,7 @@ DIMENSION_TO_LEG: dict[str, str] = {
     "tags": "test_leg6_native_tags_require_evidence",
     "trigger_source": "test_leg4_trigger_source_is_a_pointer",
     "implementation_ref": "test_leg2c_manifest_impl_ref_matches_descriptor",
-    "implementation_line": "test_leg2d_execution_body_line_matches_ast",
+    "implementation_line": "test_leg2d_execution_body_symbol_anchor_matches_ast",
     "direct_callsites": "test_leg8_direct_callsites_declared_match_census",
     "config_keys": "test_leg9_config_keys_declared_match_descriptors",
     "arms": "test_leg23_arms_pinned_bidirectionally_to_liveness",

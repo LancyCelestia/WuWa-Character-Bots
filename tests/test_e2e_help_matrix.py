@@ -356,7 +356,10 @@ def test_legacy_matrix_untouched_by_new_mode() -> None:
     config = Config(bot_quiet_hours_enabled=False, bot_affinity_enabled=False)
     runtime = e2e.E2eRuntime(
         config=config,
-        runtime_settings=SimpleNamespace(get=lambda key, cfg: None),
+        runtime_settings=SimpleNamespace(
+            get=lambda key, cfg: None,
+            get_persona_override=lambda: None,
+        ),
         render_backend=None,
         execute=False,
         city="北京",
@@ -393,7 +396,10 @@ def test_execute_item_still_works_alongside_new_engine() -> None:
     config = Config(bot_quiet_hours_enabled=False, bot_affinity_enabled=False)
     runtime = e2e.E2eRuntime(
         config=config,
-        runtime_settings=SimpleNamespace(get=lambda key, cfg: None),
+        runtime_settings=SimpleNamespace(
+            get=lambda key, cfg: None,
+            get_persona_override=lambda: None,
+        ),
         render_backend=None,
         execute=False,
         city="北京",

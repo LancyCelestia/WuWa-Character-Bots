@@ -14,7 +14,9 @@
   （set_override / gate.approve / set_override 重试），不碰任何私有件；
 - L5 fail-closed：门本体装不起来 ⇒ 同意档一律拒、只有 R0 直写（`_refuse_without_gate`
   的档位判别今天真有读者）；
-- 缺省态不骗人：总闸关 与 从未装配 两个形态，写入结果与落盘文件**逐字节一致**；
+- 缺省态不骗人（F-2/SEAT-ATKFIX-CFG12 起改形）：总闸关 与 **显式声明** no-gate
+  两个形态写入结果与落盘文件逐字节一致；而「从未装配且未声明」的裸 store 已
+  fail-closed 翻转——写非 R0 当场拒（与门坏兜底同口径），不再无声放行；
 - 工单不刷二张（`pending_tickets` 返回 ConsentTicket 壳、绑定在 `.row` 上——
   首版把壳当行用会在**第二次撞门**时抛 AttributeError，本锁顺带钉死这条回归）；
 - 空 actor 重试必命中凭证：卡上 requester 与 binding 的 requester 必须同源归一。
@@ -92,9 +94,6 @@ def _super_admin_message(text: str) -> IncomingMessage:
         bot_id="10000",
         session_id="private_3865067623",
         session_type=SessionType.PRIVATE,
-        # 批准人与发起人是**两个**人：本件用例批的这条卡是以另一枚号（1722380002） 的名义
-        # 发起的（见下方 actor=），否则撞上同意账的防自批阶梯（DenyKind.SELF_CONSENT）——
-        # 那一条正是「发起人不得批自己发起的卡」，被拦下才是对的行为。
         sender_id="3865067623",
         sender_roles=list(SUPER_ROLES),
         plain_text=text,
@@ -116,7 +115,7 @@ def test_r2_write_denied_without_ticket_and_passes_with_one(tmp_path: Path) -> N
     store = _wired_store(tmp_path, enabled=True)
     # ① 没票：拒绝，且**什么都没写**。
     with pytest.raises(RuntimeChangeNeedsConsent) as first:
-        store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:1722380002")
+        store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:3865067623")
     assert first.value.target == R2_SETTABLE_KEY
     assert first.value.tier == "R2"
     assert store.list_overrides() == {}, "被拒的写把值落下去了——拒绝路径泄了"
@@ -135,7 +134,7 @@ def test_r2_write_denied_without_ticket_and_passes_with_one(tmp_path: Path) -> N
     assert isinstance(verdict, ConsentGrant), f"批语没成立：{verdict}"
 
     # ③ 带票重试（同 key/值/actor）：这才真落库。
-    applied = store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:1722380002")
+    applied = store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:3865067623")
     assert applied is False
     assert store.list_overrides()[R2_SETTABLE_KEY] is False
 
@@ -160,7 +159,7 @@ def test_same_request_reuses_the_one_pending_ticket(tmp_path: Path) -> None:
     ids: list[str] = []
     for _ in range(3):
         with pytest.raises(RuntimeChangeNeedsConsent) as caught:
-            store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:1722380002")
+            store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:3865067623")
         ids.append(caught.value.consent_id)
     assert len(set(ids)) == 1, f"同一件事刷出了多张卡：{ids}"
     assert store.list_overrides() == {}
@@ -184,13 +183,13 @@ def test_empty_actor_retry_still_consumes_the_grant(tmp_path: Path) -> None:
 
 def test_reset_single_key_r0_passes_but_reset_all_needs_ticket(tmp_path: Path) -> None:
     store = _wired_store(tmp_path, enabled=True)
-    assert store.set_override(R0_SETTABLE_KEY, R0_VALUE, actor="qq:1722380002") == 45.0
+    assert store.set_override(R0_SETTABLE_KEY, R0_VALUE, actor="qq:3865067623") == 45.0
     # R0 键单撤：按该键分级（R0）⇒ 直放，但审计必须有它的流水。
-    assert store.reset_override(R0_SETTABLE_KEY, actor="qq:1722380002") == 1
+    assert store.reset_override(R0_SETTABLE_KEY, actor="qq:3865067623") == 1
     assert store.list_overrides() == {}
     # 先挂一条 R2 覆盖（批一次），再试「全撤」——聚合目标无单键可分级，落缺省 R2 ⇒ 要票。
     with pytest.raises(RuntimeChangeNeedsConsent):
-        store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:1722380002")
+        store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:3865067623")
     gate = store.safety_gate
     need = gate.pending_tickets()[0]
     verdict = gate.approve(
@@ -198,16 +197,16 @@ def test_reset_single_key_r0_passes_but_reset_all_needs_ticket(tmp_path: Path) -
         message=_super_admin_message("x"),
     )
     assert isinstance(verdict, ConsentGrant)
-    store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:1722380002")
+    store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:3865067623")
     with pytest.raises(RuntimeChangeNeedsConsent) as reset_all:
-        store.reset_override(None, actor="qq:1722380002")
+        store.reset_override(None, actor="qq:3865067623")
     assert reset_all.value.target == ALL_OVERRIDES_TARGET
     assert store.list_overrides()[R2_SETTABLE_KEY] is False, "全撤绕过了票"
 
 
 def test_r0_write_lands_and_is_audited_gate_records_source(tmp_path: Path) -> None:
     store = _wired_store(tmp_path, enabled=True)
-    assert store.set_override(R0_SETTABLE_KEY, R0_VALUE, actor="qq:1722380002") == 45.0
+    assert store.set_override(R0_SETTABLE_KEY, R0_VALUE, actor="qq:3865067623") == 45.0
     changes = _read_jsonl(tmp_path / "safetyexec_change_audit.jsonl")
     row = [r for r in changes if r["target"] == R0_SETTABLE_KEY and r["state"] == "applied"]
     assert row and "source=unattended" in row[-1]["reason"]
@@ -216,15 +215,19 @@ def test_r0_write_lands_and_is_audited_gate_records_source(tmp_path: Path) -> No
 
 
 # ===========================================================================
-# 缺省态不骗人：关闸 与 从未装配，行为逐字节一致（且都不产生账本文件）
+# 缺省态不骗人（F-2 起三态分形）：关闸 ≡ 显式声明 no-gate（逐字节一致、零账本）；
+# 「从未装配且未声明」不再等同无声放行——非 R0 写当场拒。
 # ===========================================================================
 
 
-def test_master_off_is_byte_identical_to_never_wired(tmp_path: Path) -> None:
+def test_master_off_is_byte_identical_to_declared_no_gate(tmp_path: Path) -> None:
     off_dir = tmp_path / "off"
     legacy_dir = tmp_path / "legacy"
     off_store = _wired_store(off_dir, enabled=False)
-    legacy_store = InstanceSettingsManager(legacy_dir).get("default")  # 从未 configure
+    # 显式出口 = 测试/夹具声明的旧形态；裸构造（未声明）已改道 fail-closed（见下锁）。
+    legacy_store = settings_mod.RuntimeSettingsStore(
+        legacy_dir / "runtime_settings_default.json", allow_no_gate=True
+    )
     off_result = off_store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:1")
     legacy_result = legacy_store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:1")
     assert off_result == legacy_result is False
@@ -234,8 +237,23 @@ def test_master_off_is_byte_identical_to_never_wired(tmp_path: Path) -> None:
     for directory in (off_dir, legacy_dir):
         assert not (directory / "safetyexec_consent.jsonl").exists()
         assert not (directory / "safetyexec_change_audit.jsonl").exists()
-    # reset 两面同形：关闸与未装配都不许被门挡。
+    # reset 两面同形：关闸与显式声明 no-gate 都不许被门挡。
     assert off_store.reset_override(R2_SETTABLE_KEY) == legacy_store.reset_override(R2_SETTABLE_KEY) == 1
+
+
+def test_never_wired_store_is_fail_closed_not_silent(tmp_path: Path) -> None:
+    """F-2 行为锁：从未装配、也未显式声明 no-gate 的裸 store——非 R0 写必须与
+    「门本体坏了」的兜底拒**同口径**（同一句话），R0 仍按档直写，零账本文件。
+    旧形态的「未装配=放行」是洞，不是特性：本锁钉住它已被关死。"""
+    bare_dir = tmp_path / "bare"
+    bare_store = InstanceSettingsManager(bare_dir).get("default")  # 真的从未装配
+    with pytest.raises(ValueError) as refused:
+        bare_store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:1")
+    assert "装载失败" in str(refused.value)
+    assert bare_store.list_overrides() == {}, "被拒的写把值落下去了——拒绝路径泄了"
+    assert bare_store.set_override(R0_SETTABLE_KEY, R0_VALUE, actor="qq:1") == 45.0
+    assert not (bare_dir / "safetyexec_consent.jsonl").exists()
+    assert not (bare_dir / "safetyexec_change_audit.jsonl").exists()
 
 
 # ===========================================================================
@@ -252,11 +270,11 @@ def test_gate_load_failure_refuses_consent_tiers_and_still_passes_r0(
     monkeypatch.setattr(settings_gate, "build_gate_for_store", explode)
     store = _wired_store(tmp_path, enabled=True)
     with pytest.raises(ValueError) as refused:
-        store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:1722380002")
+        store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:3865067623")
     assert "装载失败" in str(refused.value)
     assert store.list_overrides() == {}
     # 同一颗坏门上 R0 仍直写：兜底判据是「按档放行」，不是「一坏全堵」也不是「一坏全放」。
-    assert store.set_override(R0_SETTABLE_KEY, R0_VALUE, actor="qq:1722380002") == 45.0
+    assert store.set_override(R0_SETTABLE_KEY, R0_VALUE, actor="qq:3865067623") == 45.0
     assert store.safety_gate is None  # 装载失败态如实可见
 
 
@@ -333,7 +351,7 @@ def test_throat_wiring_ast_lock_has_teeth() -> None:
 def _r2_write_lands(store) -> bool:
     """一次 R2 写有没有**绕过同意直接落地**（True=绕过了，执法半边没了）。"""
     try:
-        store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:1722380002")
+        store.set_override(R2_SETTABLE_KEY, R2_VALUE, actor="qq:3865067623")
     except RuntimeChangeNeedsConsent:
         return False
     return store.list_overrides().get(R2_SETTABLE_KEY) is False
@@ -377,6 +395,6 @@ def test_master_switch_key_cannot_be_hot_set(tmp_path: Path) -> None:
     assert "BOT_SAFETYEXEC_ENABLED" in settings_mod.RESTART_REQUIRED_KEYS
     store = _wired_store(tmp_path, enabled=True)
     with pytest.raises(ValueError) as refused:
-        store.set_override("BOT_SAFETYEXEC_ENABLED", "false", actor="qq:1722380002")
+        store.set_override("BOT_SAFETYEXEC_ENABLED", "false", actor="qq:3865067623")
     assert "不支持运行时热改" in str(refused.value)
     assert store.list_overrides() == {}

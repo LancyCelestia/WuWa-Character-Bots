@@ -9,7 +9,10 @@
 - start==end → 全天静默。
   审查 A-15：全天静默语义待产品裁定，此处仅按实现现状如实锁死。
 - 豁免优先级：enabled 开关 > bypass_roles（大小写不敏感）> session_types 过滤
-  > 窗口判定 > direct_request（mentions_bot / 非 bot.chat·bot.content 能力）。
+  > 窗口判定 > direct_request。
+- E05 缺口三改判据后的形状：direct_request 缺省＝`@bot` **且**命令类能力才豁免
+  （`∧`）；`session_types` 缺省含 private。旧 `∨` 形状经
+  `direct_bypass_requires_both=False` 止血回退（配对锁见本文件 direct_request 段）。
 - 非法时间串/时区在 pydantic 校验期即拒绝（ValidationError）；settings 为
   callable 时求值异常或类型不对 → 回退默认（enabled=False，不误拦消息）。
 """
@@ -224,12 +227,22 @@ def test_role_bypass_precedes_session_type_filter() -> None:
 
 
 # ---------------------------------------------------------------------------
-# SESSION_TYPES 过滤（默认只 ["group"]）
+# SESSION_TYPES 过滤（E05 缺口三：缺省含 group + private）
 # ---------------------------------------------------------------------------
 
 
-def test_private_session_excluded_by_default() -> None:
+def test_private_session_is_covered_by_default() -> None:
+    """缺省会话册含 private ⇒ 私聊不再整条免检（旧行为：session_type_excluded）。"""
     checker = _checker(clock=lambda: _utc(23, 30))
+    decision = checker.check(_msg(SessionType.PRIVATE), "bot.chat")
+    assert decision.allowed is False
+    assert decision.reason == "quiet_hours"
+
+
+def test_email_still_opt_in() -> None:
+    """email 属配置面 opt-in（F1 口径不动）：新缺省册里没有它，未登记就是缺席。"""
+    assert QuietHoursSettings().session_types == ["group", "private"]
+    checker = _checker(_settings(session_types=["group"]), clock=lambda: _utc(23, 30))
     decision = checker.check(_msg(SessionType.PRIVATE), "bot.chat")
     assert decision.allowed is True
     assert decision.reason == "session_type_excluded"
@@ -275,22 +288,76 @@ def test_session_types_rejects_unknown_value() -> None:
 
 
 # ---------------------------------------------------------------------------
-# direct_request 豁免：mentions_bot / 非 chat·content 能力
+# direct_request 豁免（E05 缺口三：`@` 与非 chat 能力**同现**才旁路）
+# 判据不吃文本形状——mentions_bot 与 capability_id 两维就够（命令文本长什么样
+# 属路由侧的事，安静时间不该再第二条判据）。
 # ---------------------------------------------------------------------------
 
 
-def test_mentions_bot_bypass_inside_window() -> None:
+def test_mentioned_command_bypasses_inside_window() -> None:
+    """合法形：`@bot` + 命令类能力＝真点名办事，夜间照旧要能救。"""
     checker = _checker(clock=lambda: _utc(23, 30))
-    decision = checker.check(_msg(mentions=True), "bot.chat")
+    decision = checker.check(_msg(mentions=True), "bot.music")
     assert decision.allowed is True
     assert decision.reason == "direct_request_bypass"
+    assert "quiet_hours:direct_request_bypass" in decision.audit_tags
 
 
-def test_non_chat_capability_bypass() -> None:
+def test_command_without_mention_is_blocked() -> None:
+    """越界形：不打 @ 的任意命令能力夜里不再白拿旁路（这就是缺口本身）。"""
     checker = _checker(clock=lambda: _utc(23, 30))
     decision = checker.check(_msg(), "bot.music")
+    assert decision.allowed is False
+    assert decision.reason == "quiet_hours"
+    assert decision.audit_tags == [
+        "quiet_hours:blocked",
+        "quiet_hours:session:group",
+        "quiet_hours:capability:bot.music",
+    ]
+
+
+def test_mentioned_chat_is_blocked_by_default() -> None:
+    """只 @ 不说事（bot.chat）夜里不唤醒 bot——安静时间就是给 bot 睡觉用的。"""
+    checker = _checker(clock=lambda: _utc(23, 30))
+    decision = checker.check(_msg(mentions=True), "bot.chat")
+    assert decision.allowed is False
+    assert decision.reason == "quiet_hours"
+
+
+@pytest.mark.parametrize(
+    ("mentions", "capability_id", "expect_allowed"),
+    [
+        (True, "bot.chat", False),  # 旧形状里这一腿靠 mentions 免检
+        (False, "bot.music", False),  # 旧形状里这一腿靠非 chat 免检
+        (True, "bot.music", True),  # 两条件同现才免检
+        (False, "bot.chat", False),
+    ],
+)
+def test_and_truth_table(
+    mentions: bool, capability_id: str, expect_allowed: bool
+) -> None:
+    checker = _checker(clock=lambda: _utc(23, 30))
+    decision = checker.check(_msg(mentions=mentions), capability_id)
+    assert decision.allowed is expect_allowed
+
+
+def test_legacy_or_bypass_available_via_flag() -> None:
+    """止血开关：direct_bypass_requires_both=False 逐字节回退旧 `∨` 语义。"""
+    checker = _checker(
+        _settings(direct_bypass_requires_both=False), clock=lambda: _utc(23, 30)
+    )
+    assert checker.check(_msg(mentions=True), "bot.chat").reason == (
+        "direct_request_bypass"
+    )
+    assert checker.check(_msg(), "bot.music").reason == "direct_request_bypass"
+
+
+def test_role_bypass_still_precedes_the_direct_leg() -> None:
+    """顺序红线：admin 的 role_bypass 仍在最前，本门只动直连豁免那条腿。"""
+    checker = _checker(clock=lambda: _utc(23, 30))
+    decision = checker.check(_msg(roles=("admin",)), "bot.chat")
     assert decision.allowed is True
-    assert decision.reason == "direct_request_bypass"
+    assert decision.reason == "role_bypass"
 
 
 @pytest.mark.parametrize("capability_id", ["bot.chat", "bot.content"])
@@ -426,6 +493,7 @@ class _Config:
     bot_quiet_hours_timezone: ClassVar[str] = "UTC"
     bot_quiet_hours_session_types: ClassVar[list[str]] = ["group", "private"]
     bot_quiet_hours_bypass_roles: ClassVar[list[str]] = ["admin", "super_admin"]
+    bot_quiet_hours_direct_bypass_requires_both: ClassVar[bool] = False
 
 
 def test_build_settings_from_config_maps_all_fields() -> None:
@@ -436,6 +504,7 @@ def test_build_settings_from_config_maps_all_fields() -> None:
     assert settings.timezone_name == "UTC"
     assert settings.session_types == ["group", "private"]
     assert settings.bypass_roles == ["admin", "super_admin"]
+    assert settings.direct_bypass_requires_both is False
 
 
 def test_build_settings_defaults_on_plain_object() -> None:
@@ -443,8 +512,10 @@ def test_build_settings_defaults_on_plain_object() -> None:
     assert settings.enabled is False
     assert settings.start_time == "23:00"
     assert settings.end_time == "07:00"
-    assert settings.session_types == ["group"]
+    assert settings.session_types == ["group", "private"]
     assert settings.bypass_roles == ["admin"]
+    # 缺口三的新缺省＝收紧形（Config 无字段时也照样生效，不靠三面登记才生效）。
+    assert settings.direct_bypass_requires_both is True
 
 
 def test_build_checker_uses_provider_when_given() -> None:

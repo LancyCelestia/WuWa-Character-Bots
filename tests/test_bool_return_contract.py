@@ -79,9 +79,12 @@ def violations(src: str, origin: str) -> list[str]:
         if not list_names:
             continue
         for ret in ast.walk(fn):
-            if isinstance(ret, ast.Return) and isinstance(ret.value, ast.Name):
-                if ret.value.id in list_names:
-                    found.append(f"{origin}:{ret.lineno} {fn.name} -> {ret.value.id}")
+            if (
+                isinstance(ret, ast.Return)
+                and isinstance(ret.value, ast.Name)
+                and ret.value.id in list_names
+            ):
+                found.append(f"{origin}:{ret.lineno} {fn.name} -> {ret.value.id}")
     return found
 
 

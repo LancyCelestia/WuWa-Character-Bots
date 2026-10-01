@@ -663,6 +663,9 @@ def test_bus_exception_degrades_with_audit_trace(
         source_event_id="e_bus",
     )
     _seed_memory_facts(db, [("fact_legacy", SENDER, GROUP_A, "我住在海边", _days_ago(0))])
+    provider = _read_provider(_config_for(_BusOn, tmp_path) | {}, monkeypatch) if False else None
+    assert provider is None  # 占位防误用：下面按真实配置构造
+
     config = _config_for(_BusOn, tmp_path)
     config.bot_memory_db_path = str(db)
     provider = _read_provider(config, monkeypatch)
@@ -713,6 +716,9 @@ def test_non_bus_leg_failure_is_attributed_to_that_leg(
     """关态反思腿故障：日志点名，但不得伪报「统一打分器挂了」（归因要分得清）。"""
     db = tmp_path / "memory.sqlite3"
     _seed_memory_facts(db, [("fact_a", SENDER, GROUP_A, "我喜欢柠檬茶", _days_ago(1))])
+    provider = _read_provider(_config_for(_Config, tmp_path) | {"bot_memory_db_path": str(db)}, monkeypatch) if False else None
+    assert provider is None
+
     config = _config_for(_Config, tmp_path)
     config.bot_memory_db_path = str(db)
     provider = _read_provider(config, monkeypatch)

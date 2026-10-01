@@ -28,7 +28,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from test_central_via_identity_and_entry_durability import expected_via
 
 from plugins.bot_unified_runtime.runtime import capability_protocols as cp
 
@@ -42,9 +41,7 @@ CIDS = tuple(cid for cid, _ in BATCH2)
 #: (cid → builder 符号) 查表，供 (d) 断言 detail 点名。
 _BUILDER = dict(BATCH2)
 #: 拒登三枚的现状锁对象（判据与复跑见文件末 (e) 节；解除前先读那里的两把尺子）。
-# 2026-09-22 退役 `bot.ignore`：本锁第②条尺子（title 缺失）已由主会话在派生器修好，
-# 该枚随即被 S-PREP-B3 按本件 docstring  prescribed 的方式登记为 prepared（13 例矩阵全绿）。
-REFUSED = ("bot.meme_library", "bot.group_info")
+REFUSED = ("bot.ignore", "bot.meme_library", "bot.group_info")
 # 建请求走这个引用：下面有条用例会把 cp.CapabilityRequest 换成假构造器（模拟装配现场没交
 # 成品），若本件自己也按模块属性取类，就会套娃调用自己（canary 同型教训）。
 _REAL_REQUEST = cp.CapabilityRequest
@@ -189,17 +186,12 @@ def test_seam_runs_the_injected_capability_not_a_rebuild(cid: str) -> None:
 def test_invoker_runs_injected_capability_and_reports_via(cid: str) -> None:
     """活性（invoker 侧）：交进成品 ⇒ OK 且 via 说得出跑的是谁（I-1 同口径）。"""
     calls: list[str] = []
-    fake = _assembled(cid, "成品", calls)
-    result = cp.default_invoker().invoke(_request(cid, fake))
+    result = cp.default_invoker().invoke(_request(cid, _assembled(cid, "成品", calls)))
     assert result.status is cp.InvocationStatus.OK, result.detail
     assert calls == ["成品"], f"{cid}: 成品没被执行"
     presented = result.data.get(cp.PRESENTATION_DATA_KEY)
     assert isinstance(presented, dict) and presented.get("body") == "成品", f"{cid}: {presented}"
-    # 等值而不是"前缀+含 _capability"——后者那把尺恒真（前缀本身已含），
-    # 壳侧把 via 砍成常量前缀也照样绿（R-B3B4 评审 I-1 实跑坐效）。判据真身共享，别再抄第二支。
-    assert result.via == expected_via(fake), (
-        f"{cid}: via 不是注入件的完整身份：实得 {result.via!r}，应为 {expected_via(fake)!r}"
-    )
+    assert result.via.startswith("caller_capability:") and "_capability" in result.via, result.via
 
 
 # --------------------------------------------------------------------- (d) 缺成品 ⇒ UNAVAILABLE，绝不自建

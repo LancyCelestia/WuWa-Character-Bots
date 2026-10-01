@@ -177,10 +177,9 @@ DUP_ID_AUTHOR_EXCEPTIONS: dict[str, tuple[str, frozenset[str]]] = {
         "域内能力 + 根装配各构造一张（根=兜底/预览回执）；待 owner 判定是否收成单点。",
         frozenset({"__init__.py", "domains/meme/capabilities/meme_library.py"}),
     ),
-    "bot.moegirl": (
-        "moegirl 能力 + 根降级回执共享 id；设计语义（问句/显式两路同归 bot.moegirl）。",
-        frozenset({"__init__.py", "domains/location/capabilities/moegirl.py"}),
-    ),
+    # bot.moegirl 双作者（域内能力 + 根降级回执）已于 2026-09-27 百科接地批收敛为
+    # 单点：根处理程序不再字面构造 bot.moegirl 回执（命中只作接地块交 bot.chat，
+    # 锁 tests/test_kb_grounding_chat.py 结构面）⇒ 例外清单同步移除（清单只减不增）。
     "bot.parse": (
         "解析能力 + 解析历史支持件（parse_history）共享 id；设计语义（同一能力的历史视图出口）。",
         frozenset({"__init__.py", "domains/link_parse/support/parse_history.py"}),

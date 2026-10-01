@@ -922,19 +922,42 @@ def test_campus_capability_id_literals_all_registered() -> None:
     assert campus_ids <= set(capability_feature_bindings())
 
 
-def _campus_matcher_coordinate() -> int:
-    source = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8").splitlines()
+_CAMPUS_ANCHOR = "__init__.py::campus_record_matcher:on_message"
+
+
+def _campus_matcher_assign() -> ast.Assign:
+    """按符号名 AST 现算 campus 注册赋值：唯一 `campus_record_matcher = on_message(`。
+
+    2026-09-28 席位 S-FIX-COORD-REANCHOR（主任务板 #33 诚实路径①）：本读点原按
+    文本行定位再拿登记册「file:line」实比——登记坐标已改符号派生式（file::symbol），
+    行号只作附注，本读点改按 AST 符号解析，行号不再进判据（pins/…/
+    LINE-COORD-RATCHET-TO-SEMANTIC-ANCHOR-S662.md §3.2 设计样）。
+    """
+    tree = ast.parse((_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8"))
     hits = [
-        index + 1
-        for index, line in enumerate(source)
-        if "campus_record_matcher = on_message(" in line
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "campus_record_matcher"
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "on_message"
     ]
-    assert len(hits) == 1, f"campus matcher 定义应恰一处，现={hits}"
+    assert len(hits) == 1, f"campus matcher 注册赋值应按符号名唯一命中，现={len(hits)} 处"
     return hits[0]
 
 
+def _matcher_call_kwargs(node: ast.Assign) -> dict[str, object]:
+    return {
+        kw.arg: kw.value.value
+        for kw in node.value.keywords
+        if isinstance(kw.value, ast.Constant)
+    }
+
+
 def test_outbound_registry_campus_coordinate_is_live() -> None:
-    """出站登记表 campus 一条改为收编后真实坐标（同波审计：整册 0/50 命中）。"""
+    """campus 一枚＝登记锚与根真身符号解析一致＋AST 形态腿（行号零参与）。"""
     from plugins.bot_unified_runtime.domains.core.decision.outbound import (
         build_default_takeover_registry,
     )
@@ -943,11 +966,23 @@ def test_outbound_registry_campus_coordinate_is_live() -> None:
     entries = [e for e in reg.matchers if e.name == "campus_record_matcher"]
     assert len(entries) == 1
     entry = entries[0]
-    assert entry.location == f"__init__.py:{_campus_matcher_coordinate()}", (
-        f"登记坐标必须与真行号一致，现={entry.location}"
+    # ① 登记式＝符号锚语法（file::symbol:callee，恰此字面量，无行号）
+    assert entry.location == _CAMPUS_ANCHOR, (
+        f"登记坐标必须是符号派生式 {_CAMPUS_ANCHOR}，现={entry.location}"
     )
+    # ② 解析腿：按符号名在根真身唯一命中（0/多即锚漂移，当场红）
+    assign = _campus_matcher_assign()
+    # ③ 形态腿：callee 与被登记 matcher_type 一致（防被改判/换注册器）
     assert entry.matcher_type == "on_message"
-    assert entry.priority == 8, "priority=8/block=False 是 campus matcher 的真实形态"
+    assert isinstance(assign.value.func, ast.Name)
+    assert assign.value.func.id == entry.matcher_type
+    # ④ 形态腿：priority/block 以 AST kwargs 为真身（登记册随迁，不钉行号）
+    kwargs = _matcher_call_kwargs(assign)
+    assert kwargs.get("priority") == entry.priority == 8, (
+        f"priority=8/block=False 是 campus matcher 的真实形态，登记={entry.priority} "
+        f"真身={kwargs.get('priority')}"
+    )
+    assert kwargs.get("block") is False
     assert "U17-CAMPUS-WIRE" in entry.note and "中央管线" in entry.note
 
 

@@ -2,6 +2,14 @@
 
 网络层（urllib.urlopen）整体替换为本地字节表，零真实请求；
 图片字节用 PIL 现场生成（高熵噪声，保证过 1KB 字节下限）。
+
+2026-09-30 复原波（缺口②）：候选取字节从裸 ``urlopen`` 改成护栏 opener
+``eat._guarded_image_opener()``（逐跳落点建连前复查 + 连接层解析钉定）。本文件
+的断言一字未动，只是把打桩点从 ``urlopen`` **补一层委托**：假 opener 在调用时刻
+取当下被 monkeypatch 的 ``urllib.request.urlopen``，所以每个用例自带的字节表
+照旧生效，搜索腿（固定 cn.bing.com，非用户可控）也仍旧走同一个假传输件。
+逐跳护栏本身的行为锁在 ``tests/test_eat_image_ssrf_hop.py``（真 opener + 假
+传输件，摘掉护栏必红）。
 """
 
 from __future__ import annotations
@@ -24,6 +32,25 @@ from plugins.bot_unified_runtime.domains.food.capabilities.eat import _fetch_dis
 DISH = "宫保鸡丁"
 # 公网字面量 IP：过 SSRF 护栏（http + 非保留网段），字面量不做 DNS → 零网络。
 _HOST = "93.184.216.34"
+
+
+class _DelegatingOpener:
+    """护栏 opener 替身：``.open()`` 在调用时刻委托被 patch 的 ``urlopen``。"""
+
+    def open(self, request: object, timeout: object = None) -> object:
+        import urllib.request
+
+        return urllib.request.urlopen(request, timeout=timeout)  # type: ignore[call-overload]
+
+
+@pytest.fixture(autouse=True)
+def _route_guarded_opener_through_fake_urlopen(monkeypatch: pytest.MonkeyPatch) -> None:
+    """把候选腿（护栏 opener）接回各用例自己装的假 ``urlopen``（断言零改动）。"""
+    from plugins.bot_unified_runtime.domains.food.capabilities import eat as eat_module
+
+    monkeypatch.setattr(
+        eat_module, "_guarded_image_opener", lambda: _DelegatingOpener()
+    )
 
 TINY_SIZE = (80, 60)  # min 边 60 < 300 → 拒
 NORMAL_SIZE = (640, 480)  # 正常菜品图 → 过

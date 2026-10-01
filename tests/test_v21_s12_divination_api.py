@@ -737,6 +737,49 @@ def test_render_draw_card_success_and_fallback(tmp_path: Path) -> None:
     assert path3 == "" and plain3 == projection.plain_text
 
 
+def test_render_draw_card_prunes_stale_card_dirs(tmp_path: Path) -> None:
+    """票⑥回归锁（S-FIX-ATK-DIVRNG）：render_draw_card 写卡成功后必须接上
+    与聊天腿同形的清理（卡根只留 mtime 最新 120 个目录）；清理不得反噬出图。"""
+    import os
+
+    class _MkdirRenderer:
+        def __call__(self, backend: Any, item: Any, *, config: Any, card_dir: str) -> dict[str, Any]:
+            target = Path(card_dir)
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "card.png").write_bytes(b"png")
+            return {"file": str(target / "card.png")}
+
+    tarot = _tarot_result(tmp_path)
+    projection = build_draw_projection(_result_from(tarot))
+    cards_root = tmp_path / "cards"
+    config = SimpleNamespace(bot_card_render_dir=str(cards_root))
+    divination_root = cards_root / "divination"
+    divination_root.mkdir(parents=True)
+
+    stale: list[Path] = []
+    for i in range(1, 121):  # 120 个旧目录，stale[0] 最旧
+        d = divination_root / f"stale{i:03d}"
+        d.mkdir()
+        os.utime(d, (1_000_000 + i, 1_000_000 + i))
+        stale.append(d)
+    newer = divination_root / "stale999"  # mtime 大、必须活到下一轮
+    newer.mkdir()
+    os.utime(newer, (2_000_000, 2_000_000))
+
+    path, _plain = render_draw_card(
+        projection,
+        _FakeBackend(available=True),
+        config,
+        dedupe_key="prune-lock-key",
+        card_renderer=_MkdirRenderer(),
+    )
+    assert path, "清理接入后成功出图照旧返回卡路径"
+    # 共 122 目录（120 旧 + 1 较新 + 1 本次写入），keep=120 ⇒ 恰最旧两枚被删。
+    assert not stale[0].exists() and not stale[1].exists()
+    assert stale[2].exists() and newer.is_dir()
+    assert Path(path).parent.is_dir()
+
+
 # ---------------------------------------------------------------------------
 # 工具
 # ---------------------------------------------------------------------------

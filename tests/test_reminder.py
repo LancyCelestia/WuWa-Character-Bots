@@ -7,11 +7,21 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.contracts import (
+    IncomingMessage,
+    SessionType,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
+    RouteKind,
+    classify_message_route,
+    clear_route_decision_cache,
+)
 from plugins.bot_unified_runtime.domains.schedule.capabilities import (
     reminder as reminder_cap_mod,
 )
 from plugins.bot_unified_runtime.domains.schedule.capabilities.reminder import (
+    _SIGNAL_RE,
+    _pasted_body_reject_reason,
     build_reminder_capability,
     clear_checkoff_pending_for_tests,
     is_reminder_command,
@@ -206,6 +216,91 @@ def test_is_reminder_command_matrix() -> None:
     assert is_reminder_command("取消提醒 abc123")
     assert not is_reminder_command("提醒我一下")
     assert not is_reminder_command("今天天气怎么样")
+
+
+# ---------- 创建腿的指向性 + 同句判据（S30，2026-09-29 群实况事故波）----------
+#
+# 事故：超管在群里看到 bot 对一段鸣潮冲榜的转发式训话回「这一大段像是原样转发的
+# 文字，我就不放进待办啦」。她的判词＝"只要有『提醒』这两个字，也不分析到底是什么
+# 东西，就直接弹出来"。实测读数（进程内插桩）＝缺陷形状是「碰到裸信号词」∧
+# 「全文任意一句抠到时间」两条各自单立时都不进，**同现**才误抢——训话里
+# 「别怪我没提醒」没有时间、「早上10点准时群里发累充截图作证」没有指向性。
+# 判据（创建腿三件，缺一不抢这条道，消息落回人格对话、绝不回元话）：
+#   ① 指向性（对本 bot 之外第一人称的祈使形 / 显式装置短语，你·他·大家·各位不算）
+#   ② 可解析时间（口径仍走 parse_reminder_intent，一字未改）
+#   ③ 时间来自含指向性的那一句（按 [。！？；\n] 切原文）
+
+_GROUP_RANT = (
+    "最后问一遍群里 9.30鸣潮3.7 你们钱都准备好没。别怪我没提醒你们啊，"
+    "这次3.7上下两个池子摆在一起，抽卡资源怎么算自己心里得有本账，"
+    "别到时候又喊没出、又怪组里没提前说清楚，话我今天就放到这里了，"
+    "谁爱冲谁冲不冲的也别在群里带节奏。"
+    "早上10点准时群里发累充截图作证，"
+    "谁没到谁自己解释，别到时候又说我不知道进度，截图我都留着呢。"
+)
+
+
+def test_forwarded_rant_is_not_claimed_by_reminder_route() -> None:
+    """训话原文：信号词命中、时间也抠得出来（缺陷前提照实钉住），但不抢提醒道。"""
+    assert len(_GROUP_RANT) > 160, "实况那段是粘贴级超长（paste 读数 too_long 的前提）"
+    assert _SIGNAL_RE.search(_GROUP_RANT) is not None, "前提①：裸信号词依旧命中（词面没动）"
+    intent = parse_reminder_intent(_GROUP_RANT)
+    assert intent is not None, "前提②：全文依旧抠得出时间（解析口径一字未改）"
+    # 事故当时的唯一屏障＝粘贴体兜底。它没错，错在被喂了不该进这条道的东西。
+    assert _pasted_body_reject_reason(_GROUP_RANT, intent.text) == "too_long"
+    assert is_reminder_command(_GROUP_RANT) is False
+
+
+def test_forwarded_rant_never_reaches_reminder_capability() -> None:
+    """能力层同一口径：整条不被 claim，训话落回正常链路（不是"我没看懂"）。"""
+    config = SimpleNamespace()  # 开关字段缺省=启用（与生产默认一致）。
+    clear_route_decision_cache()
+    decision = classify_message_route(_GROUP_RANT, config=config)
+    assert decision.kind is not RouteKind.REMINDER
+    assert decision.reason != "提醒", decision.reason
+
+
+def test_addressive_creation_shapes_still_claimed() -> None:
+    """合法四形照旧成立（改前实测全 True，改后必须仍 True）。"""
+    for text in (
+        "12点提醒我写作业",
+        "明天早上8点叫我起床",
+        "提醒我下午三点喝水",
+        "设个提醒：下午三点交报告",
+    ):
+        assert is_reminder_command(text) is True, text
+    # 「记得叫我」既有形：叫我 本身命中 (叫)…我，天然保住。
+    assert is_reminder_command("明天8點記得叫我起床") is True
+    assert is_reminder_command("半小时后叫我") is True
+
+
+def test_time_in_same_sentence_as_addressive_claims() -> None:
+    """④时间与指向性同在一句（逗号切句不算切句）→ 照旧抢下。"""
+    assert is_reminder_command("10点提醒我，然后把这段话记下来") is True
+
+
+def test_third_person_reminder_words_do_not_claim() -> None:
+    """第三人称指向（大家/你们/他）不是"要求本 bot 提醒谁"——不抢这条道。"""
+    for text in (
+        "早上10点提醒大家交材料",
+        "10点通知你们集合",
+        "别怪我没提醒你啊，明天8点要交表",
+    ):
+        assert is_reminder_command(text) is False, text
+
+
+def test_addressive_and_time_in_different_sentences_do_not_claim() -> None:
+    """③的同句腿单独有牙：两句各自只满足一件 → 不抢。"""
+    assert is_reminder_command("提醒我一下。早上10点群里发截图作证") is False
+    assert is_reminder_command("早上10点群里发截图作证。记得提醒我") is False
+
+
+def test_query_and_checkoff_surfaces_unaffected_by_addressive_leg() -> None:
+    """查询/取消/勾选面没有指向性也合法（动了就是回归）。"""
+    assert is_reminder_command("提醒列表") is True
+    assert is_reminder_command("我的提醒") is True
+    assert is_reminder_command("取消提醒 abc123") is True
+    assert is_reminder_command("作业做完了") is True
 
 
 # ---------- 存储 ----------

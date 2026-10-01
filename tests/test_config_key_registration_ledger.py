@@ -173,7 +173,16 @@ HARD_DEAD_BASELINE: frozenset[str] = frozenset({
     "bot_share_groups", "bot_share_read_only", "bot_subscribe_card_enabled",
     "bot_subscribe_jitter_ratio",
 })
-TEMPLATE_COVERED_BASELINE = 18
+TEMPLATE_COVERED_BASELINE = 17
+# 2026-09-29 席 FLOW 现算复录 18 → 17（需求项 D2「五枚红桶门」定位结论）：
+#   现算尺 17 格，成员逐一可点（全在 bot_search_acg_/bot_subscribe_platform_/
+#   bot_web_search_ 三族里，本席把成员名单同刻打进取证件比对过）。
+#   **归属照实写**：本席另开一份 HEAD 快照（git archive HEAD → 仓库外临时目录，
+#   零 git 写操作）跑同一把尺，HEAD 现算也是 17 ⇒ 这一格不是本波或任何在飞波
+#   改出来的，是基线记在更早一个状态上的旧账；本桶按门自身口径
+#   （「面在缩水（动态读法改直读）是好事 ⇒ 降到实况」）复录到真值，未动任何判据。
+#   取证：HEAD_FIELDS=748 HEAD_DIRECT_READS=1554 HEAD_AST_DEAD=101
+#   HEAD_TEMPLATE_COVERED=17；工作树＝761/1567/101/17。
 # 2026-09-25 席 MAIN-B1 现算复录（尺身份＝本件 `read_point_leg()`，复跑命令见上方 RERUN_COMMAND）：
 #   38 → 39。逐格点名核过：这新增一枚**不是本波造成的**——本波八枚键
 #   （`bot_llm_billing_enabled` + 七枚 `bot_axonhub_*`）全部走 `getattr(config, "<字面量>")`
@@ -208,7 +217,11 @@ DEBT_ROSTER_SET_SHA = "7d16b0a81871fd65"
 #   形参转手 ⇒ AST 直读尺结构上看不见，与 sync_drift 七枚同形），键名字面在场于
 #   consent.py/settings_gate.py 生产件 ⇒ 落**字面桶**、不落硬死（待修总账 41 与
 #   各指纹逐字未动，下方逐桶恒等式现场复算兜底）。
-AST_DEAD_BASELINE = 102  # = 18 + 43 + 1 + 1 + 39（恒等式由 test_bucket_arithmetic_holds 现场核）
+AST_DEAD_BASELINE = 101  # = 17 + 43 + 1 + 1 + 39（恒等式由 test_bucket_arithmetic_holds 现场核）
+# 2026-09-29 席 FLOW 现算复录 102 → 101：上面模板桶那一格降到实况后，五桶之和随之
+#   为 101；HEAD 快照与工作树两把尺都现算 101（取证见 TEMPLATE_COVERED_BASELINE 注），
+#   硬死/字面/中央/绕中央四桶逐桶未动（39/43/1/1），待修总账 40 与指纹 7d16b0a81871fd65
+#   一字未改 ⇒ 本次复录**不给任何一枚键发健康证**，只是将落后的棘轮对齐真值。
 # 2026-09-27 席 S-SWITCH-REG-IMPL 现算复录 100 → 102：+3 全进字面桶（日程板三枚，
 #   见上 LITERAL_COVERED 注）；同批 `bot_schedule_enabled` 长出真直读点摘硬死一枚
 #   （AST 零直读集里它已消失），两笔相抵后恒等式现场复算成立。
@@ -245,7 +258,112 @@ GHOST_BY_NAME_SET_SHA = "01daed191cb06480"
 #     中间态、他们一落地就红），结果被 `test_poison_11` 揭穿是错的——地板落后真值 23 时，
 #     「一次性砍穿容差」那发注毒变成 `DID NOT RAISE`＝**这一维的检测力被自己的保守吃掉了**。
 #     容差 200 未动 ⇒ 收紧后仍有 200 条余量，他波回退不会立刻红，红的是"集体变瞎"。
-CORPUS_FLOOR_BASELINE = (748, 1541, 3, 654)  # 2026-09-27 席 S-SWITCH-REG-IMPL（批⑦b）现算复录字段维 746→748：
+# 2026-09-28 夜 主会话复录（748→754，余三维未动）：本波 §51 新增五枚字段
+# （`bot_reactions_sentiment_*` 三枚＝贴纸语义匹配、`bot_reply_policy_*` 两枚＝永久性
+# per-user 回复策略），同树另一只手另加两枚 ⇒ 现算字段维 754。⚠ 本行今晚被并发覆盖回
+# 748 一次（两只手写同一件，非笔误）——再动它之前先现算，别信注释。热改面：五枚新键 +
+# 另一只手那枚 `BOT_EMERGENCY_INFO_QUIET_BREACH_LEVELS` 均已进
+# `settings.py:RESTART_REQUIRED_KEYS`（能力构建期 getattr 现读快照＝非热更，据现算记）。
+# 2026-09-28 席 J（接手别席在途账·九枚键登记核）现算复录 1543→1554 / 655→657，字段维 754
+# 与模板维 3 与上席现算等值未动。尺身份＝本件 `read_point_leg()`＋`census.py_files()`，
+# 现算时刻 2026-09-28T06:24+08（MEASURED 见 `../ChatBot_Runtime` 外的临时复算，产物不落源码树）。
+#   直读维 +11 的归属照实写：**本波九枚键今天共有 13 处直读点**（逐枚现算＝
+#   `reply_policy.py` 2、`rate_limit.py` 2、`engine.py` 2＋`meme_library.py` 2（sentiment_enabled 四处）、
+#   `sentiment_selector.py` 2、`platform.py` 2、`emergency_info.py` 1）；其中 `platform.py` 那两处
+#   已含在上席 1543 里，余下各处的落账时点随各件入库，**本席不逐枚冒领**；差数里另有个位数
+#   属他波在飞件（`mail_ingress_files.py`/`failure_class.py`/`reserved_gap_ledger.py` 等未跟踪新件）。
+#   .py 维 +2 ＝ 上述在飞新件入库，照实计入真值。
+# 2026-09-30 席 人格分册收尾 现算复录（本行现值＝**776 / 1585 / 3 / 676**）：
+#   尺身份＝本件 `read_point_leg()`＋`census.py_files(list(DEFAULT_SCOPES))`，单趟现算。
+#   字段维 771→776 ＝ +5：本席 **2** 枚（`bot_sticker_private_subdir` / `_min_tier`，S4
+#     私藏档联动，读点 domains/meme/capabilities/meme_library.py::_locked_sticker_subdirs，
+#     每次选图现读快照 config ⇒ RESTART_REQUIRED_KEYS）＋ 继承在飞 WIP **3** 枚
+#     （`bot_network_patrol_enabled/_interval_minutes/_domains`，读点根装配注册函数
+#     __init__.py 装配期一次性读快照 ⇒ 同表），逐枚照实点名、不冒领。
+#   直读维 +9＝本席贴纸池人格分册读点（sticker_packs/sticker_send_routing/meme_library
+#     门面与根装配两调用点）＋ 在飞件，差数不逐枚冒领。
+#   .py 维 +3＝本席 tests/test_sticker_persona_album.py ＋ 在飞新件。
+#   UNACCOUNTED_BASELINE 554→553、指纹 cf3f5dac64820b65→df029f79b20e229d：本批登记六枚
+#     （上列五枚＋`bot_reactions_meme_enabled`，最后一枚读点＝根装配 reaction-meme 腿
+#     ProactiveActionKnobs 字面键名，同批补接线）⇒ 未表态集合只降不升，合法降向。
+CORPUS_FLOOR_BASELINE = (776, 1604, 3, 684)  # 2026-09-30 席 树回铺后现算复录（直读 1586→1598、.py 676→684；差数＝回铺树把 W9a 的 `_album_container`/`row_hint` 两处新读点与事故前那批未回铺件一起算进来了，逐枚归属未做，按门自身口径「棘轮不等于真值就重录」整维对齐；判据与容差 (0,200,0,50) 一字未动）。上一值 (776,1586,3,676) 为 09-30 席「人格分册收尾」在替身树上的复录；再上行为前账：2026-09-29 席 FLOW（需求项 D2）现算复录 1554→1567 / 657→659：
+#   根因照实写：上一席只把**字段维**对齐真值，直读维与 .py 维留在容差 (0,200,0,50) 内
+#   没动 ⇒ `test_poison_11_new_field_floor_tracks_the_field_set` 的「一次性砍穿直读维才红」
+#   那一发打不红（DID NOT RAISE）——地板不等于真值时，容差就把杀伤力吃掉了。本席按
+#   门自身口径（「棘轮不等于真值，重录它」）把四维全部钉到现算：
+#   复跑取证（只读，产物不落源码树）＝fields=761 / direct_reads=1567 / templates=3 /
+#   py_files=659；HEAD 快照（git archive HEAD → 仓库外临时目录）＝748/1554/3/—，
+#   差值 +13 直读点全部来自**在飞各波的未提交件**（本席不逐枚冒领归属，只钉真值）。
+#   ⚠ 只降不升这条对本维不适用：地板升＝尺更利（更容易红），不是放宽；容差一字未动。
+# 2026-09-29 席 BASECFG-棘轮五枚 现算复录（本行现值＝765 / 1580 / 3 / **670**，只动 `.py` 维 678→670）：
+#   尺身份＝本件 `read_point_leg()`＋`census.py_files(list(DEFAULT_SCOPES))`；本席两趟现算
+#   （2026-09-29T08:14Z 与 08:22Z，同一读法）四维逐维等值 ⇒ 读数非瞬态，
+#   复跑取证（只读、产物不落源码树）＝fields=765 / direct_reads=1580 / templates=3 / py_files=670。
+#   `.py` 维 −8 的归属照实写＝**全属他席在飞重构的删除，本席零贡献**：同刻对照
+#   `git ls-tree -r --name-only HEAD` 口径 HEAD＝658（plugins 657 ＋ bot.py 1），工作树现算 670
+#   ＝ 658 ＋ 未跟踪新件 19 − `git status --short -- plugins scripts` 现算 `^ D` 8 枚（顶层
+#   `sender/`、`security/`、`runtime/`、`sources/subscriptions/` 一族被搬进 `domains/`，删除尚未入库）。
+#   上席在册的 678 是**那批删除发生前**的现算真值、不是笔误；本维不进任何等值腿（`test_poison_11`
+#   只逐字钉字段维与模板维），按本门口径「四维必须等于现算」钉回真值 ⇒ 地板 678−50 → 670−50，
+#   容差一字未动＝没放宽判据（地板跟着真值降＝尺没变钝，把它留在 678 才是拿真值当前摸不到的数当尺）。
+#   字段维 761→765 与直读维 1567→1580 本席复算与上席等值 ⇒ 一字未改。HEAD↔工作树字段差现算
+#   ＝18 枚新增 / 1 枚摘除（尺＝`git show HEAD:plugins/bot_unified_runtime/config.py` 与工作树
+#   同正则 `^\s{4}(bot_[a-z0-9_]+)\s*[:=]` 对减，HEAD 748 → 工作树 765）：18 枚**全部尚未入库**
+#   （config.py 自身是 ` M` 在飞件），其中本席可点名的只有「复原-主树还原」那四枚
+#   （`bot_chat_native_tools_enabled`＋`bot_person_profile_{enabled,max_items,max_chars}`），
+#   余 14 枚＝randpic 双下限 / meme_library 双下限 / reactions_sentiment 三枚 / pipeline 硬超时 /
+#   reply_policy 三枚 / control_plane_files_roots / emergency_info_quiet_breach_levels /
+#   reply_default_directives，归各席；摘除那枚＝`bot_chat_message_coalescing_quiet_seconds`（批⑦乙案退役）。
+# 2026-09-29 席 复原-主树还原 现算复录（761→765）：
+#   字段维 +4 ＝ 本席四枚，照实点名（三面齐备＝config.py 字段＋settings.py RESTART 清单
+#     ＋.env.example 申报行）：`bot_chat_native_tools_enabled`（读点唯一在
+#     domains/core/search/native_tools.py::native_tools_enabled，缺省关、只认严格 True）、
+#     `bot_person_profile_enabled / _max_items / _max_chars`（读点 character/person_profile.py
+#     的 build/compose 两处，关⇒整链空串）。四枚的读点都是 getattr(config, …) 现读**装配期
+#     快照**、未进 _RUNTIME_HOT_OVERRIDE_FIELDS（该表归根文件、本波禁写）⇒ 全进
+#     RESTART_REQUIRED_KEYS（C-09 口径，不做「看着能热改」），故 UNACCOUNTED_BASELINE=554
+#     本批不改——补齐登记正是让 558 回到 554 的那一步。
+#     取证（只读、产物不落源码树，复跑＝`python -c` 载入本件调 read_point_leg()）：
+#     现算四维＝fields=765 / direct_reads=1580 / templates=3 / py_files=678。
+#     2026-09-29 本席同批把**直读维与 .py 维也钉到现算**（1567→1580、659→678）——理由照抄
+#     上一席 FLOW 的诊断：地板低于真值时，容差 (0,200,0,50) 会把「一次性砍穿直读维才红」
+#     那一发毒吃掉（实测 1580−201=1379 仍≥1567−200=1367 ⇒ DID NOT RAISE）。差值 +13/+19
+#     全来自各席今天新落盘的未入库件（ledger / randpic / schedule_board / file_reader 等），
+#     本席只钉真值、不逐枚冒领归属；容差一字未动＝没放宽判据。
+# 2026-09-29 席 T8-默认文采与意象轮换 现算复录（755→761）：（下段原账逐字保留）
+#   字段维 +6 ＝ 本席一枚照实点名：`bot_reply_default_directives`（T8 续批，用户裁
+#     「对没表过态的人也要有文采，但别寡淡」；三面齐备＝config.py 字段＋settings.py
+#     RESTART 清单＋.env.example 申报行，读点在 reply_policy.py::reply_policy_section_for_turn）。
+#     余 +5 属**他席未入库的 config.py 改动**（工作树对 HEAD 的字段差共 13 枚新增/1 枚摘除，
+#     含 randpic 双下限、meme_library 双下限、reactions_sentiment 三枚、pipeline 硬超时等），
+#     本席只钉真值、不逐枚冒领归属（照实计入＝棘轮等于现算，不等于本席账）。
+#     取证脚本（只读）：现算 fields=761 / direct=1567 / templates=3 / py_files=658，
+#     直读维与 .py 维各 +13/+1 仍在容差 (0,200,0,50) 内，故只改字段维。
+#   同批外部债两笔**本席不代修**（点名给接线的那席）：AST 零直读基线 102 vs 现算 101、
+#     动态模板覆盖基线 18 vs 现算 17 —— 判据内部自洽（五桶之和＝零直读总数＝101），
+#     只是各桶基线还停在旧数；现算证据：template=17｜literal=43｜central=1｜env=1｜hard_dead=39。
+#     〔2026-09-29 席 FLOW 收口：这两笔已按同一份现算复录（AST 102→101、模板 18→17），
+#     并另跑一份 HEAD 快照证明 HEAD 现算同为 101/17 ⇒ 属基线落后真值的旧账，非放宽判据；
+#     待修总账 40 与指纹 7d16b0a81871fd65 一字未动＝没给任何一枚键发健康证。〕
+# 2026-09-28 席 T8-并号 现算复录（754→755）：
+#   字段维 +1 ＝ `bot_reply_policy_person_aliases`（同一人多号并键，用户裁定
+#     「3865067623 + 1722380002 一起」），三面齐备：config.py 字段＋catalog 待录
+#     ＋.env.example 申报行＋settings.py RESTART 清单（表在 store 懒建时吃值）。
+#     读点只有 reply_policy.py 一处，且渗锁禁止权限面读它
+#     （tests/test_reply_policy_permanent.py::test_person_aliases_never_leak_into_privilege）。
+#   直读维/`.py` 维/模块维零变化（现算 1554/657/3 与基线逐维相等，故只改字段维）。
+# 2026-09-28 席 S-FIX-ATK-CP 现算复录（747→748 / 1541→1543 / 3→3 / 654→655）：
+#   字段维 +1 ＝ F-1 `bot_control_plane_files_roots` 四处同生登记（config.py 字段＋catalog X18
+#     ＋.env.example 活性行＋settings.py RESTART）。
+#   直读维 +2 ＝ 本席 platform.py::read_file 的 `getattr(config, "bot_control_plane_files_roots"…)` +1
+#     （census 已点名命中），另 +1 属他波在飞件，照实计入真值不摘。
+#   .py 维 +1 ＝ 他波在飞件，照实计入。
+# 2026-09-27 席 S-COALESCE-IMPL（乙案退役波）现算复录：
+#   字段维 748→747＝退役 `bot_chat_message_coalescing_quiet_seconds`（COALESCE-DUALAUTH
+#   乙案：装配层每轮被 message_merge.MERGE_WINDOW_SECONDS 覆盖的死口键，.env/覆盖册
+#   零在册 ⇒ 零行为差）；直读维本波 −1（message_coalescing.py 的该枚 getattr 读点摘除），
+#   与另席在飞 +1 相抵后现算恰回到 1541（复跑口径见尺身份三元组，毒发 11 亦当场转绿）。
+#   模板维 3、.py 维 654 未动。——以下为 2026-09-27 席 S-SWITCH-REG-IMPL（批⑦b）现算复录字段维 746→748：
 #   +2 ＝ `bot_schedule_natural_capture_enabled` / `bot_schedule_status_reply_enabled`，
 #   随批⑦ 日程板 `6b57654` 入库（config.py 对 HEAD 现算零 diff，两枚按提交逐个 git show
 #   归因；属已入库批次欠账，非本波引入）。
@@ -277,6 +395,22 @@ CORPUS_FLOOR_BASELINE = (748, 1541, 3, 654)  # 2026-09-27 席 S-SWITCH-REG-IMPL�
 #   progress_ack 各新读口，另含他波在飞件——按本门口径"四维必须等于现算"复录，
 #   逐维归属如上，不代他波降账）、641→642（py 文件 +1＝本波新件
 #   domains/chat_reply/runtime/message_coalescing.py）。
+# 2026-09-29 席 STICKER-POOL 现算复录（本行现值＝**771 / 1576 / 3 / 673**）：
+#   尺身份＝本件 `read_point_leg()`＋`census.py_files(list(DEFAULT_SCOPES))`；本席一趟现算
+#   取证＝fields=771 / direct_reads=1576 / templates=3 / py_files=673（只读，产物不落源码树）。
+#   逐维归属照实写：
+#     字段维 765→771 ＝ 本席 **4** 枚（`bot_sticker_dir` / `_enabled` / `_recursive` /
+#       `_no_repeat_window_seconds`，三面齐备＝config.py 字段＋`settings.py` RESTART 清单
+#       ＋`.env.example` 申报行＋catalog X19）＋ 他席在飞 **2** 枚（本席不点名、不冒领）。
+#       四枚的读点全在 `domains/meme/sources/sticker_packs.py` 的四个薄口
+#       （`getattr(config, "<字面量>")` 真直读）⇒ 逐枚现算**不落任何债桶**：
+#       hard_dead 39 / env_direct 1 / central_named 1 / template 17 / literal 43 /
+#       ast_dead 101 / 待修总账 40（指纹 7d16b0a81871fd65）/ 未表态 554
+#       （指纹 cf3f5dac64820b65）本批**六桶两指纹一字未动**。
+#     直读维 1580→1576（−4）＝本席 +4（四枚薄口各一处）与他席在飞删读点相抵后的**现算真值**；
+#       本席不替他人归因，按门自身口径「棘轮必须等于现算」钉回读数。
+#     .py 维 670→673（+3）＝本席 1 枚新件（sticker_packs.py）＋他席在飞 2 枚。
+#     模板维 3 未动。容差 (0,200,0,50) 一字未动＝没放宽判据。
 CORPUS_FLOOR_SLACK = (0, 200, 0, 50)
 
 # 热改面腿基线：数量 + 集合指纹（同刻现算）。指纹防"进 N 出 N 而数量不变"。
@@ -291,8 +425,17 @@ CORPUS_FLOOR_SLACK = (0, 200, 0, 50)
 # ed6e20e6a08cc2c5 → cf3f5dac64820b65：八枚运行开关（TTS 双闸、表情库双闸、记忆总线、
 # 好感度 v7、维基知识库、控制面）按 SWITCH-REG-PREP 判据全登 RESTART_REQUIRED_KEYS，
 # 未表态 8 枚出账；同批 W24 门基线同步下调（两门读同一群键，见 test_third_state_authority_is_the_w24_ledger）。
-UNACCOUNTED_BASELINE = 554
-UNACCOUNTED_SET_SHA = "cf3f5dac64820b65"
+# 2026-09-30 席 人格分册收尾 现算复录 554 → 553、指纹 cf3f5dac64820b65 → df029f79b20e229d：
+# 六枚补登 RESTART_REQUIRED_KEYS（`bot_sticker_private_subdir/_min_tier`＝S4 私藏档，
+# `bot_network_patrol_enabled/_interval_minutes/_domains`＝巡检装配期冻结三键，
+# `bot_reactions_meme_enabled`＝P3 情绪发图闸（同批根装配补第 4 旋钮字面接线）），
+# 未表态 4 枚出账后净 −1（在飞期 557 含 3 枚在飞未登记，本批一并收口）。
+# 2026-10-01 席 表情册波收尾 现算复录 553 → 549、指纹 df029f79b20e229d → 9fb2a62679b67652：
+# 本批把四枚键从「无表态」搬进 RESTART_REQUIRED_KEYS（`bot_reactions_meme_probability/
+# _cooldown_seconds/_daily_max` 三枚旋钮与总闸同形读点，`bot_meme_library_dir`＝册基根甲案后
+# 升格为册容器根/越界守门尺）。未表态集合只降不升 ⇒ 合法降向；判据与容差一字未动。
+UNACCOUNTED_BASELINE = 549
+UNACCOUNTED_SET_SHA = "9fb2a62679b67652"
 
 
 # ---------------------------------------------------------------------------

@@ -342,11 +342,11 @@ def test_central_builder_key_lands_in_read_side_prefix() -> None:
 # **只许缩水不许长大**：某条不再命中即报陈旧，逼后来者删条目。
 _LEGACY_SHAPE_GUESS_BASELINE: frozenset[tuple[str, str, str]] = frozenset(
     {
-        (
-            "plugins/bot_unified_runtime/__init__.py",
-            "split",
-            'scope, _, target = session_id.partition(":")',
-        ),
+        # 2026-09-27 S-FIX-INGEST（审计 A-ING-3）：根 `_build_memory_writer` 提醒腿的
+        # `session_id.partition(":")` 已收编（作用域派生改调中央
+        # `session_keys.parse_session_key`，消费者零自拆），回潮由
+        # `tests/test_reminder_scope_session_keys.py` 三形态锁钉死。
+        # 按本门自订规程「该处已收编⇒把条目从基线删掉」摘牌。
         (
             "plugins/bot_unified_runtime/__init__.py",
             "membership",

@@ -185,7 +185,9 @@ def test_store_override_beats_assembly_time_config(tmp_path: Path, key: str) -> 
     chat.py 唯一取数口是 ``get_or(key, config_default)``，所以这条锁的是
     「覆盖优先」这一方向本身，不是重复实现一遍判定。
     """
-    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json")
+    # allow_no_gate：F-2 后裸构造 store 写非 R0 键会被咽喉门拒；本族锁 store>config
+    # 优先级与 converter 拒绝，档位执法另由 test_atkfix_cfg12_throat_import_locks 锁。
+    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json", allow_no_gate=True)
     config_default = 0.60 if key.endswith("THRESHOLD") else 0.20
     # 控制组：库里没有这条覆盖时，取数口必须回落到装配期 config 值。
     assert store.get_or(key, config_default) == pytest.approx(config_default)
@@ -202,7 +204,7 @@ def test_store_override_beats_assembly_time_config(tmp_path: Path, key: str) -> 
 @pytest.mark.parametrize("key", [t[1] for t in _PRECEDENCE_TARGETS])
 def test_reset_override_restores_config_precedence(tmp_path: Path, key: str) -> None:
     """撤销覆盖后必须回到 config 那份（防止「store 里其实一直是空的」被当成方向正确）。"""
-    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json")
+    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json", allow_no_gate=True)
     config_default = 0.60 if key.endswith("THRESHOLD") else 0.20
     store.set_override(key, "0.90" if key.endswith("THRESHOLD") else "0.05")
     assert store.get_or(key, config_default) != pytest.approx(config_default)
@@ -213,9 +215,9 @@ def test_reset_override_restores_config_precedence(tmp_path: Path, key: str) -> 
 def test_store_precedence_survives_reload_from_disk(tmp_path: Path) -> None:
     """覆盖落盘后由**新实例**读回仍然优先——生产是跨进程重启后继续生效的那一条。"""
     path = tmp_path / "runtime_settings.json"
-    writer = RuntimeSettingsStore(path)
+    writer = RuntimeSettingsStore(path, allow_no_gate=True)
     writer.set_override("BOT_WEB_SEARCH_KNOWLEDGE_THRESHOLD", "0.90")
-    reloaded = RuntimeSettingsStore(path)
+    reloaded = RuntimeSettingsStore(path, allow_no_gate=True)
     assert reloaded.get_or("BOT_WEB_SEARCH_KNOWLEDGE_THRESHOLD", 0.60) == pytest.approx(0.90)
 
 
@@ -310,7 +312,9 @@ def test_poison_hardcoded_default_instead_of_config_is_detected(chat_source: str
     ],
 )
 def test_illegal_threshold_values_are_rejected_not_clamped(tmp_path: Path, raw: str) -> None:
-    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json")
+    # allow_no_gate 不可省：不豁免时咽喉门也会抛同型 ValueError，会把「converter 被摘出
+    # 白名单／坏成钳制」伪造成拒绝而假绿。豁免后门旁路，本锁的牙才唯一落在 converter。
+    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json", allow_no_gate=True)
     key = "BOT_WEB_SEARCH_KNOWLEDGE_THRESHOLD"
     with pytest.raises(ValueError):
         store.set_override(key, raw)
@@ -321,7 +325,9 @@ def test_illegal_threshold_values_are_rejected_not_clamped(tmp_path: Path, raw: 
 
 @pytest.mark.parametrize("key", ["BOT_WEB_SEARCH_KNOWLEDGE_THRESHOLD", "BOT_WEB_SEARCH_CONFIDENCE_FLOOR"])
 def test_illegal_floor_values_rejected_too(tmp_path: Path, key: str) -> None:
-    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json")
+    # 同 test_illegal_threshold_values_are_rejected_not_clamped：豁免咽喉门，
+    # 确保 ValueError 只可能来自 converter 而非门（禁假绿）。
+    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json", allow_no_gate=True)
     for raw in ("1.5", "-0.1", "abc", "nan"):
         with pytest.raises(ValueError):
             store.set_override(key, raw)
@@ -331,7 +337,7 @@ def test_illegal_floor_values_rejected_too(tmp_path: Path, key: str) -> None:
 @pytest.mark.parametrize("raw", ["0", "0.0", "1", "1.0", " 0.60 ", "0.2"])
 def test_legal_closed_interval_values_are_accepted_verbatim(tmp_path: Path, raw: str) -> None:
     """闭区间端点必须放行——否则上一条「拒绝」可以是「什么都拒」这种假锁。"""
-    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json")
+    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json", allow_no_gate=True)
     key = "BOT_WEB_SEARCH_KNOWLEDGE_THRESHOLD"
     assert store.set_override(key, raw) == pytest.approx(float(raw.strip()))
     assert store.get_or(key, 0.60) == pytest.approx(float(raw.strip()))
@@ -361,7 +367,7 @@ def test_poison_clamping_converter_is_caught_by_rejection_lock(tmp_path: Path, m
 
     key = "BOT_WEB_SEARCH_KNOWLEDGE_THRESHOLD"
     monkeypatch.setitem(SETTABLE_KEYS, key, _clamping)
-    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json")
+    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json", allow_no_gate=True)
     store.set_override(key, "1.5")  # 钳制型 converter 不拒 ⇒ 坏值入库
     assert store.get_or(key, 0.60) == pytest.approx(1.0)
 

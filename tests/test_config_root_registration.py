@@ -38,6 +38,11 @@ from plugins.bot_unified_runtime.config import (
 )
 from plugins.bot_unified_runtime.domains.core.safety_exec import paths
 from scripts.load_runtime_config import load_runtime_config
+from scripts.runtime_paths import (
+    RUNTIME_DATA_DIR_ENV,
+    TEST_PROCESS_ENV,
+    production_runtime_data_dirs,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -57,6 +62,34 @@ EXTERNAL_REFERENCE_FIELDS: dict[str, str] = {
     # 外部知识语料 .md（.env.prod 逐值在册）：读侧材料，写面不落到这里。
     "bot_knowledge_files": "外部知识语料文件（只读引用；是否入根待裁，见席位报告）",
 }
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _audit_reads_declared_production_layout():
+    """本件审的是**盘上声明**那一套落点 ⇒ Runtime 根隔离缝（L1）在本模块内要让路。
+
+    2026-09-30 L1 落地时现算：conftest 的装配把进程 env 的 ``BOT_RUNTIME_DATA_DIR`` 挤成
+    临时隔离根，于是 ``load_runtime_config`` 造的在册值被重映射进隔离根，``safety_exec.paths``
+    的允许根尺亦按隔离根解析 ⇒ ①节整片被判 ``outside_allowed_roots``（只摘标记不还原 env 也红，
+    因为 ``Config`` 的路径名册按 env 优先读数；实测两半都要动）。修法＝把本模块临时还原成
+    「非测试进程」视图：标记摘掉（``_effective_data_root_text`` 的 seam-footprint 回退腿，与在册锁
+    ``test_guard_is_inert_for_non_test_processes`` 同一形态）＋数据根回到
+    ``production_runtime_data_dirs()``（全仓唯一"什么叫生产根"读数器，禁第二副本）。
+    作用域必须是 **module** 且 autouse：``production_config`` 同为 module 级，函数级还原晚一步。
+    零放宽判据、零写盘：本件只问 ``check_registered_domain`` 那把登记域尺，不建库不开文件；
+    生产值真落在生产根外照样打红（②节反向锁在册）。
+    """
+    declared = production_runtime_data_dirs()
+    patch = pytest.MonkeyPatch()
+    patch.delenv(TEST_PROCESS_ENV, raising=False)
+    if declared:
+        patch.setenv(RUNTIME_DATA_DIR_ENV, str(declared[0]))
+    paths.set_default_policy(None)
+    try:
+        yield
+    finally:
+        paths.set_default_policy(None)
+        patch.undo()
 
 
 @pytest.fixture(autouse=True)

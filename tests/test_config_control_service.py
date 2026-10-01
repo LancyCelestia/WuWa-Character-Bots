@@ -15,6 +15,8 @@ from plugins.bot_unified_runtime.control_plane.services import ControlServiceErr
 from plugins.bot_unified_runtime.domains.chat_reply.runtime import settings
 
 KEY = "BOT_CHAT_TEMPERATURE"
+#: F-1（SEAT-ATKFIX-CFG12）后 legacy 导入只带 R0 档：迁移/导入腿改用超时族真字段。
+R0_KEY = "BOT_TRANSPORT_TIMEOUT_SECONDS"
 ADMIN = Principal("test-admin", ("super_admin",))
 
 
@@ -31,7 +33,9 @@ def api():
 def setup(api, tmp_path):
     backend = api.Store(tmp_path / "config.sqlite3")
     config = SimpleNamespace(bot_chat_temperature=0.5, bot_chat_model="default-model")
-    runtime = settings.RuntimeSettingsStore(tmp_path / "legacy.json", backend=backend)
+    # allow_no_gate：本件测的是事务/CAS/审计语义，不是档位执法（咽喉测试在
+    # test_safety_exec_session_throat / test_control_plane_consent_throat）。
+    runtime = settings.RuntimeSettingsStore(tmp_path / "legacy.json", backend=backend, allow_no_gate=True)
     service = api.Service(config, backend, runtime_settings=runtime)
     return backend, runtime, service
 
@@ -177,22 +181,24 @@ def test_listener_observes_committed_state_and_audit(api, setup):
 
 def test_legacy_import_once_reset_never_resurrects(api, tmp_path):
     path = tmp_path / "legacy.json"
-    original = json.dumps({"overrides": {KEY: 0.7}, "nicknames": ["keeper"], "model_registry": {"x": {"model": "x"}}})
+    # 迁移腿必须用 R0 键：F-1 后非 R0 档不经咽喉绝不入库（拒入留痕由
+    # tests/test_atkfix_cfg12_throat_import_locks.py 的行为锁钉死）。
+    original = json.dumps({"overrides": {R0_KEY: 5.0}, "nicknames": ["keeper"], "model_registry": {"x": {"model": "x"}}})
     path.write_text(original, encoding="utf-8")
     backend = api.Store(tmp_path / "config.sqlite3")
-    runtime = settings.RuntimeSettingsStore(path)
+    runtime = settings.RuntimeSettingsStore(path, allow_no_gate=True)
     runtime.attach_config_backend(backend)
-    assert runtime.get_or(KEY, 0.5) == 0.7 and backend.snapshot().version == 1
+    assert runtime.get_or(R0_KEY, 0.5) == 5.0 and backend.snapshot().version == 1
     assert path.read_text(encoding="utf-8") == original
-    runtime.reset_override(KEY)
-    assert KEY in backend.snapshot().tombstones and runtime.get_or(KEY, 0.5) == 0.5
+    runtime.reset_override(R0_KEY)
+    assert R0_KEY in backend.snapshot().tombstones and runtime.get_or(R0_KEY, 0.5) == 0.5
     assert path.read_text(encoding="utf-8") == original
     reopened = settings.RuntimeSettingsStore(path, backend=api.Store(backend.path))
-    assert reopened.get(KEY, SimpleNamespace(bot_chat_temperature=0.5)) == 0.5
+    assert reopened.get(R0_KEY, SimpleNamespace(bot_transport_timeout_seconds=0.4)) == 0.4
     assert reopened.list_overrides() == {} and len(backend.changes()) == 2
     assert reopened.list_nicknames() == ["keeper"] and reopened.list_model_registry() == {"x": {"model": "x"}}
     reopened.add_nickname("shore")
-    assert json.loads(path.read_text(encoding="utf-8"))["overrides"] == {KEY: 0.7}
+    assert json.loads(path.read_text(encoding="utf-8"))["overrides"] == {R0_KEY: 5.0}
     assert reopened.list_overrides() == {}
 
 
@@ -238,7 +244,7 @@ def test_two_concurrent_cas_writers_only_one_wins(api, tmp_path):
 
 
 def test_attach_failure_does_not_switch_source(api, tmp_path, monkeypatch):
-    runtime = settings.RuntimeSettingsStore()
+    runtime = settings.RuntimeSettingsStore(allow_no_gate=True)
     runtime.set_override(KEY, "0.7")
     backend = api.Store(tmp_path / "state.sqlite3")
     def fail(*args, **kwargs):
@@ -269,7 +275,7 @@ def test_manager_binds_all_instances_and_cache_includes_database(api, tmp_path):
 
 def test_no_backend_json_compatibility(tmp_path):
     path = tmp_path / "settings.json"
-    runtime = settings.RuntimeSettingsStore(path)
+    runtime = settings.RuntimeSettingsStore(path, allow_no_gate=True)
     assert runtime.set_override(KEY, "0.8") == 0.8
     assert settings.RuntimeSettingsStore(path).get_or(KEY, 0) == 0.8
     assert runtime.reset_override(KEY) == 1
@@ -330,13 +336,13 @@ def test_import_failure_is_retryable_and_audited(api, tmp_path):
     with sqlite3.connect(backend.path) as conn:
         conn.execute("CREATE TRIGGER fail_import BEFORE INSERT ON config_audit BEGIN SELECT RAISE(ABORT, 'failure'); END")
     with pytest.raises(sqlite3.DatabaseError):
-        backend.import_legacy({KEY: 0.7})
+        backend.import_legacy({R0_KEY: 5.0})
     assert backend.snapshot().version == 0 and backend.snapshot().overrides == {}
     with sqlite3.connect(backend.path) as conn:
         conn.execute("DROP TRIGGER fail_import")
-    assert backend.import_legacy({KEY: 0.7}) is True
-    assert backend.import_legacy({KEY: 0.9}) is False
-    assert backend.snapshot().overrides == {KEY: 0.7}
+    assert backend.import_legacy({R0_KEY: 5.0}) is True
+    assert backend.import_legacy({R0_KEY: 0.9}) is False
+    assert backend.snapshot().overrides == {R0_KEY: 5.0}
     assert backend.changes()[0]["actor"] == "legacy_import"
 
 
@@ -392,7 +398,7 @@ def test_sql_reads_ignore_later_json_edits(api, setup, tmp_path):
 
 
 def test_no_backend_failed_json_write_retains_legacy_notification(tmp_path, monkeypatch):
-    runtime = settings.RuntimeSettingsStore(tmp_path / "legacy.json")
+    runtime = settings.RuntimeSettingsStore(tmp_path / "legacy.json", allow_no_gate=True)
     notices = []
     runtime.register_change_listener(lambda: notices.append(runtime.get_or(KEY, 0)))
     def fail(*args):
@@ -490,7 +496,7 @@ def test_shared_backend_concurrent_runtime_writers_do_not_deadlock(api, setup, t
     from threading import Event, Thread
 
     backend, first, _ = setup
-    second = settings.RuntimeSettingsStore(tmp_path / "second.json", backend=backend)
+    second = settings.RuntimeSettingsStore(tmp_path / "second.json", backend=backend, allow_no_gate=True)
     committed = Event()
     barrier = Barrier(2)
     notify = backend._notify

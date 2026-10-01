@@ -3,6 +3,13 @@
 锁定 telegram_media 的四条硬承诺：任何失败返回 None 绝不抛、超 20MB 上限
 返回 None、token 绝不进日志、enrich 成功把字节落临时文件写回 data.file 而
 失败保持段原样（标签降级行为不变）。
+
+fixture 纪律（席位 S-FIX-TGMEDIA，WP1 §7 迁移计划落地）：下载腿已接中央
+SSRF 咽喉逐跳复查（check_download_url，解析失败=拒绝）+图像/视频段落盘前
+归档 magic-bytes 真身 QC——本文件的下载目标一律用**字面量公网 IP**
+（93.184.216.3x，咽喉离线判定放行，零 DNS 零真网络），载荷一律用**合法
+magic bytes**（JPEG/PNG 起始签名），旧 .example.org 字面域名夹具按计划在
+本波迁走。
 """
 from __future__ import annotations
 
@@ -38,14 +45,18 @@ _OtherEvent.__module__ = "nonebot.adapters.onebot.v11.event"
 
 
 class _FakeBot:
-    """call_api(get_file) 假适配器；file_path 可为相对路径或完整 URL。"""
+    """call_api(get_file) 假适配器；file_path 可为相对路径或完整 URL。
+
+    api_server 默认字面量公网 IP（离线咽喉判定放行、零 DNS），不再走
+    api.telegram.org 真域解析。
+    """
 
     def __init__(
         self,
         file_path: str = "photos/img.jpg",
         *,
         token: str = "123456:secret",
-        api_server: str = "",
+        api_server: str = "https://93.184.216.34/",
         fail: bool = False,
     ) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -96,14 +107,14 @@ def test_resolve_success_downloads_bytes_and_enrich_writes_temp_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     seen_urls: list[str] = []
-    _install_download(monkeypatch, b"\xff\xd8jpeg-bytes", seen_urls)
-    bot = _FakeBot(file_path="photos/img.jpg", api_server="https://tg.example.org/")
+    _install_download(monkeypatch, b"\xff\xd8\xff\xe0jpeg-bytes", seen_urls)
+    bot = _FakeBot(file_path="photos/img.jpg", api_server="https://93.184.216.34/")
 
     payload = asyncio.run(resolve_telegram_file_bytes(bot, "fid-1"))
-    assert payload == b"\xff\xd8jpeg-bytes"
+    assert payload == b"\xff\xd8\xff\xe0jpeg-bytes"
     assert bot.calls == [("get_file", {"file_id": "fid-1"})]
     # 相对 file_path → {api_server}/file/bot<token>/<path>；api_server 尾斜杠被规整。
-    assert seen_urls == ["https://tg.example.org/file/bot123456:secret/photos/img.jpg"]
+    assert seen_urls == ["https://93.184.216.34/file/bot123456:secret/photos/img.jpg"]
 
     # enrich：成功后字节落临时文件，data.file 指向本机路径，原 file_id 保留。
     segments = [{"type": "photo", "data": {"file": "fid-1"}}]
@@ -112,7 +123,7 @@ def test_resolve_success_downloads_bytes_and_enrich_writes_temp_file(
     written = Path(data["file"])
     assert data["file_id"] == "fid-1"
     assert written.suffix == ".jpg"
-    assert written.read_bytes() == b"\xff\xd8jpeg-bytes"
+    assert written.read_bytes() == b"\xff\xd8\xff\xe0jpeg-bytes"
     written.unlink()
 
 
@@ -120,12 +131,12 @@ def test_full_url_file_path_downloads_directly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen_urls: list[str] = []
-    _install_download(monkeypatch, b"url-bytes", seen_urls)
+    _install_download(monkeypatch, b"\x89PNG\r\n\x1a\nurl-bytes", seen_urls)
     # 自定义 api server 的 get_file 可能直接回完整 URL → 原样下载，不拼 token。
-    bot = _FakeBot(file_path="https://media.example.org/photos/img.jpg")
+    bot = _FakeBot(file_path="https://93.184.216.35/photos/img.png")
 
-    assert asyncio.run(resolve_telegram_file_bytes(bot, "fid-url")) == b"url-bytes"
-    assert seen_urls == ["https://media.example.org/photos/img.jpg"]
+    assert asyncio.run(resolve_telegram_file_bytes(bot, "fid-url")) == b"\x89PNG\r\n\x1a\nurl-bytes"
+    assert seen_urls == ["https://93.184.216.35/photos/img.png"]
 
 
 def test_oversized_download_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:

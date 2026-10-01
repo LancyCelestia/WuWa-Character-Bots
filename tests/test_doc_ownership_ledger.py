@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -336,7 +338,7 @@ def _add_table_row(repo: Path, anchor: str, new_row: str, path: str) -> None:
     created.write_text("extra", encoding="utf-8")
 
 
-def _check(repo: Path, capsys: Any) -> tuple[int, str]:
+def _check(repo: Path, capsys: pytest.Capturer) -> tuple[int, str]:
     """跑真入口，返回 (rc, stdout)。诊断是否点名只能从出口取证。"""
     rc = dos.main(["--check"], repo=repo)
     return rc, capsys.readouterr().out
@@ -372,7 +374,7 @@ def test_s88_poison_states_are_seven_and_next_step_covers_each() -> None:
         )
 
 
-def test_s88_state_absent_is_named_and_says_generate(tmp_path: Path, capsys: Any) -> None:
+def test_s88_state_absent_is_named_and_says_generate(tmp_path: Path, capsys: pytest.Capturer) -> None:
     """态 1/7 声明源不在盘：整文件比对的旧形状在这里同样红，但只有新腿能说出**为什么**红。"""
     repo = _fresh_repo(tmp_path, capsys)
     _decl_of(repo).unlink()
@@ -382,7 +384,7 @@ def test_s88_state_absent_is_named_and_says_generate(tmp_path: Path, capsys: Any
     assert "--generate" in out, f"该态的下一步必须就是重投影：\n{out}"
 
 
-def test_s88_state_unparseable_named_syntax(tmp_path: Path, capsys: Any) -> None:
+def test_s88_state_unparseable_named_syntax(tmp_path: Path, capsys: pytest.Capturer) -> None:
     """态 2a/7 声明源不可解析（语法崩形）：手改改崩到读不动。"""
     repo = _fresh_repo(tmp_path, capsys)
     _write_decl(repo, "这不是 python 语法 =(")
@@ -393,7 +395,7 @@ def test_s88_state_unparseable_named_syntax(tmp_path: Path, capsys: Any) -> None
                         silent=(dos.K_MISSING, dos.K_EXTRA, dos.K_FIELD, dos.K_DUP, dos.K_FORMAT))
 
 
-def test_s88_state_unparseable_named_element_form(tmp_path: Path, capsys: Any) -> None:
+def test_s88_state_unparseable_named_element_form(tmp_path: Path, capsys: pytest.Capturer) -> None:
     """态 2b/7 声明源不可解析（非法条目形）：文件读得动，但某一格不是 `DocOwner(...)`。"""
     repo = _fresh_repo(tmp_path, capsys)
     raw = _read_decl(repo)
@@ -407,7 +409,7 @@ def test_s88_state_unparseable_named_element_form(tmp_path: Path, capsys: Any) -
     assert "条目形" in out, f"该点名「条目形」这一格：\n{out}"
 
 
-def test_s88_state_missing_entry_names_the_path(tmp_path: Path, capsys: Any) -> None:
+def test_s88_state_missing_entry_names_the_path(tmp_path: Path, capsys: pytest.Capturer) -> None:
     """态 3/7 盘上缺条目（＝改了分类表没跑重投影）：方向必须是「上游有、盘上无」。"""
     repo = _fresh_repo(tmp_path, capsys)
     lines = _read_decl(repo).split("\n")
@@ -421,7 +423,7 @@ def test_s88_state_missing_entry_names_the_path(tmp_path: Path, capsys: Any) -> 
     assert "上游有" in out and "盘上无" in out, f"方向措辞要能分辨「上游有/盘上无」：\n{out}"
 
 
-def test_s88_state_extra_entry_names_the_path(tmp_path: Path, capsys: Any) -> None:
+def test_s88_state_extra_entry_names_the_path(tmp_path: Path, capsys: pytest.Capturer) -> None:
     """态 4/7 盘上多条目（＝手改生成物，或上游行被删）：方向必须是「盘上有、上游无」。"""
     repo = _fresh_repo(tmp_path, capsys)
     lines = _read_decl(repo).split("\n")
@@ -436,7 +438,7 @@ def test_s88_state_extra_entry_names_the_path(tmp_path: Path, capsys: Any) -> No
     assert "盘上有" in out and "上游现算无" in out, f"方向措辞要能分辨「盘上有/上游无」：\n{out}"
 
 
-def test_s88_field_drift_is_named_as_field_not_missing(tmp_path: Path, capsys: Any) -> None:
+def test_s88_field_drift_is_named_as_field_not_missing(tmp_path: Path, capsys: pytest.Capturer) -> None:
     """态 5/7 字段漂移（反向自测①）：改 basis 必须报**字段漂移**，不许退化成「缺条目」。
 
     这正是 S69 真咬到的那一条（清扫席改了依据列没随迁）。旧形状只说"不一致"，
@@ -455,7 +457,7 @@ def test_s88_field_drift_is_named_as_field_not_missing(tmp_path: Path, capsys: A
     assert "docs/full-path.md" in out, f"字段漂移要点名受害 path：\n{out}"
 
 
-def test_s88_state_duplicate_path_named(tmp_path: Path, capsys: Any) -> None:
+def test_s88_state_duplicate_path_named(tmp_path: Path, capsys: pytest.Capturer) -> None:
     """态 6/7 盘上重复路径（反向自测③）：投影器按 path 去重 ⇒ 重复只可能来自手改。"""
     repo = _fresh_repo(tmp_path, capsys)
     lines = _read_decl(repo).split("\n")
@@ -468,7 +470,7 @@ def test_s88_state_duplicate_path_named(tmp_path: Path, capsys: Any) -> None:
     assert "docs/full-path.md" in out, f"重复态必须点名重复的 path：\n{out}"
 
 
-def test_s88_state_format_only_drift_named(tmp_path: Path, capsys: Any) -> None:
+def test_s88_state_format_only_drift_named(tmp_path: Path, capsys: pytest.Capturer) -> None:
     """态 7/7 非条目级漂移：条目级三态全平、只有注释/空白不一致。
 
     这态存在的意义＝**不许**把"字节不同"糊成"没问题"。旧形状在这红，但说不出只是排版。
@@ -481,7 +483,7 @@ def test_s88_state_format_only_drift_named(tmp_path: Path, capsys: Any) -> None:
     assert "字节" in out, f"排版态要给两边字节数：\n{out}"
 
 
-def test_s88_direction_symmetry_across_two_trees(tmp_path: Path, capsys: Any) -> None:
+def test_s88_direction_symmetry_across_two_trees(tmp_path: Path, capsys: pytest.Capturer) -> None:
     """反向自测②＋结构锁 (a)：造 A/B 两棵**不同**的树，把 A 的声明源塞进 B。
 
     期望两个方向同时成立且各点到对的 path：B 上游有而盘上没有 →「盘上缺条目」；
@@ -510,7 +512,7 @@ def test_s88_direction_symmetry_across_two_trees(tmp_path: Path, capsys: Any) ->
     assert "docs/a-only.md" in out, f"A 独有行须记「盘上多条目」：\n{out}"
 
 
-def test_s88_parse_accepts_both_assign_forms(tmp_path: Path, capsys: Any) -> None:
+def test_s88_parse_accepts_both_assign_forms(tmp_path: Path, capsys: pytest.Capturer) -> None:
     """结构锁 (b)：`ast.Assign` 与 `ast.AnnAssign` **双形态都认**（防第 28 号形态复发）。
 
     S76 自曝的真事故：`parse_declaration` 只认 `Assign`，而声明源三张表全是
@@ -547,7 +549,7 @@ def test_s88_parse_accepts_both_assign_forms(tmp_path: Path, capsys: Any) -> Non
     )
 
 
-def test_s88_poison_then_follow_next_step_returns_green(tmp_path: Path, capsys: Any) -> None:
+def test_s88_poison_then_follow_next_step_returns_green(tmp_path: Path, capsys: pytest.Capturer) -> None:
     """「下一步」不许是空话：字段漂移后照它跑 `--generate`，必须回 CLEAN。
 
     反向自测的还原半——只证"会红"不证"红得可修"，等于把判据写成抱怨。
@@ -610,7 +612,7 @@ ALL_POISONS: tuple[tuple[str, object], ...] = (
 )
 
 
-def test_s88_naming_comes_from_exactly_one_rendering_path(tmp_path: Path, capsys: Any) -> None:
+def test_s88_naming_comes_from_exactly_one_rendering_path(tmp_path: Path, capsys: pytest.Capturer) -> None:
     """结构锁：七态的「点名」只准出自**一条**渲染出口（禁两条码路）。
 
     本席变异探针实测到的真缺陷：`声明源不在盘` 这一态原先在 `check_sync` 里**手搓三行**输出，
@@ -644,7 +646,7 @@ def test_s88_naming_comes_from_exactly_one_rendering_path(tmp_path: Path, capsys
     assert not rc_changed, f"拔掉渲染层后 rc 语义被改（0/1 必须与旧版逐字一致）：{rc_changed}"
 
 
-def test_s88_real_tree_is_clean_at_entry_level_too(tmp_path: Path, capsys: Any) -> None:
+def test_s88_real_tree_is_clean_at_entry_level_too(tmp_path: Path, capsys: pytest.Capturer) -> None:
     """真树逐态全平（不是"没扫到"）：现算比对要真看见 386 量级条目后判全平。
 
     专防假绿形态：诊断腿扫 0 页也"全绿"。这里断言被看过的条目数与现算同源且远大于零。

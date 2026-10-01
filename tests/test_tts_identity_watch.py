@@ -240,6 +240,19 @@ def all_subproc_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(prc, "run_cmd", lambda args, cwd, timeout=600: (0, "[绿] OK", ""))
 
 
+@pytest.fixture(autouse=True)
+def _drop_ambient_runtime_data_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """假项目根只由 ``tmp_path`` 决定 ⇒ 宿主进程 env 的数据根必须摘掉（同 test_pre_restart_check.py）。
+
+    ``prc.load_env``＝「os.environ 优先于文件」，而 conftest 的 L1 Runtime 根隔离装配
+    （2026-09-30）会在进程 env 放一枚空隔离根，顶掉夹具 ``.env`` 里的
+    ``BOT_RUNTIME_DATA_DIR`` ⇒ ``env_paths`` 那项由 PASS 飘 FAIL，
+    ``test_main_exit_code_propagates_voice_fail`` 的「唯一 FAIL＝tts_voice」当场红。
+    只读存在性检查，不开库、不碰生产根。
+    """
+    monkeypatch.delenv("BOT_RUNTIME_DATA_DIR", raising=False)
+
+
 def _make_full_project(tmp_path: Path, yaml_text: str) -> tuple[Path, Path]:
     """在 watch 项目上补齐既有九项的最小通过面（env_paths 需要）."""
     root, engine = make_watch_project(tmp_path, yaml_text)

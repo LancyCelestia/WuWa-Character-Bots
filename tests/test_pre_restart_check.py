@@ -88,6 +88,21 @@ def all_subproc_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(prc, "run_cmd", fake_run)
 
 
+@pytest.fixture(autouse=True)
+def _drop_ambient_runtime_data_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """本件的假项目根完全由 ``tmp_path`` 构造 ⇒ 宿主进程 env 里的数据根必须摘掉。
+
+    读数器 ``prc.load_env`` 经 ``load_runtime_env_values``＝「os.environ 优先于文件」，
+    而 ``tests/conftest.py`` 的 L1 装配（2026-09-30，Runtime 根隔离缝）会把一枚**隔离
+    根**放进进程 env ⇒ 夹具 ``.env`` 里那枚 ``BOT_RUNTIME_DATA_DIR=<tmp>/rt_data`` 被顶掉，
+    检查面转去看空隔离根 ⇒ 五枚用例由 PASS 飘成 FAIL/SKIP（现算见席位报告
+    S-FIX-RTPATH-L1）。摘掉后回到本件的设计不变量：落点只由夹具 ``.env`` 决定。
+    本件只做**只读存在性**检查（``pre_restart_check`` 不 import scripts.runtime_paths、
+    自己那枚 ``runtime_data_dir(env, root)`` 是纯函数），因此不碰生产根、也不触发隔离判定。
+    """
+    monkeypatch.delenv("BOT_RUNTIME_DATA_DIR", raising=False)
+
+
 # ---------------------------------------------------------------------------
 # 1. env_paths：PASS / 各类 FAIL
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@
 
 方向一（字段 → 文档）：`config.py` 的 `Config` 字段全集，必须在 `.env.example`
   有同名激活键行（``KEY=``，**注释形态不算**，理由见 `_documented_keys` 文档串）。
-  存量缺口 114 项走 ``UNDOCUMENTED_FIELD_LEDGER`` 挂账，门只拦**新增**缺失。
+  存量缺口 114 项走 ``UNDUCUMENTED_FIELD_LEDGER`` 挂账，门只拦**新增**缺失。
 方向二（文档 → 字段）：`.env.example` 的激活键必须能对上 `Config` 字段；
   适配器/第三方组件自读的 12 个非 ``BOT_`` 环境变量走 ``EXTERNAL_ENV_KEYS`` 显式豁免
   （每条带理由），且**禁止 ``BOT_*`` 借道该表**（防止幻影 BOT_ 键被当成"外部键"藏起来）。
@@ -46,7 +46,7 @@ ENV_EXAMPLE = ROOT / ".env.example"
 LEDGER_BASELINE = 110  # 现算 @2026-09-24T07:01Z：裁定 R-4 退役四枚 *_via_queue 键（114→110，只减不增）
 
 
-UNDOCUMENTED_FIELD_LEDGER: frozenset[str] = frozenset(
+UNDUCUMENTED_FIELD_LEDGER: frozenset[str] = frozenset(
     {
         "bot_affinity_db_path", "bot_affinity_enabled", "bot_api_key_aiprc_gemini",
         "bot_api_key_aiprc_grok", "bot_api_key_axonhub", "bot_api_key_qianqianye_night",
@@ -172,7 +172,7 @@ def test_env_example_declares_all_config_fields() -> None:
     documented = _documented_keys()
     assert len(documented) >= 400, f".env.example 键解析异常（仅 {len(documented)} 个）"
 
-    missing = sorted(fields - documented - UNDOCUMENTED_FIELD_LEDGER)
+    missing = sorted(fields - documented - UNDUCUMENTED_FIELD_LEDGER)
     assert not missing, (
         "config.py 新增字段未在 .env.example 声明，且不在存量挂账台账内"
         "（新字段必须补一行 ``BOT_XXX=`` 示例键；确需豁免须经评审进台账，"
@@ -182,8 +182,8 @@ def test_env_example_declares_all_config_fields() -> None:
 
 
 def test_ledger_ratchet_only_shrinks() -> None:
-    assert len(UNDOCUMENTED_FIELD_LEDGER) <= LEDGER_BASELINE, (
-        f"存量缺口台账从 {LEDGER_BASELINE} 涨到 {len(UNDOCUMENTED_FIELD_LEDGER)}——"
+    assert len(UNDUCUMENTED_FIELD_LEDGER) <= LEDGER_BASELINE, (
+        f"存量缺口台账从 {LEDGER_BASELINE} 涨到 {len(UNDUCUMENTED_FIELD_LEDGER)}——"
         "棘轮只减不增：新字段请补进 .env.example，不要往台账里塞"
     )
 
@@ -192,14 +192,14 @@ def test_ledger_entries_are_still_undocumented() -> None:
     """台账不得成为过期坟场：条目要么仍真缺，要么已消失，要么已补录（须摘除）。"""
     fields = _config_field_names()
     documented = _documented_keys()
-    gone = sorted(UNDOCUMENTED_FIELD_LEDGER - fields)
+    gone = sorted(UNDUCUMENTED_FIELD_LEDGER - fields)
     assert not gone, (
         "台账里有 config.py 已不存在的字段（该字段被删/改名，请摘除条目）：\n- "
         + "\n- ".join(gone)
     )
-    documented_but_listed = sorted(UNDOCUMENTED_FIELD_LEDGER & documented)
+    documented_but_listed = sorted(UNDUCUMENTED_FIELD_LEDGER & documented)
     assert not documented_but_listed, (
-        "这些键已补录进 .env.example，必须同时从 UNDOCUMENTED_FIELD_LEDGER 摘除"
+        "这些键已补录进 .env.example，必须同时从 UNDUCUMENTED_FIELD_LEDGER 摘除"
         "（否则台账会虚报规模、掩盖真实缺口）：\n- " + "\n- ".join(documented_but_listed)
     )
 
@@ -273,8 +273,8 @@ def test_missing_direction_gate_has_teeth() -> None:
     fake = "bot_isync_negative_probe_not_a_real_field"
     fields = _config_field_names()
     documented = _documented_keys()
-    assert fake not in fields and fake not in documented and fake not in UNDOCUMENTED_FIELD_LEDGER
-    assert sorted(({fake} | fields) - documented - UNDOCUMENTED_FIELD_LEDGER) == [fake]
+    assert fake not in fields and fake not in documented and fake not in UNDUCUMENTED_FIELD_LEDGER
+    assert sorted(({fake} | fields) - documented - UNDUCUMENTED_FIELD_LEDGER) == [fake]
 
 
 def test_phantom_direction_gate_has_teeth() -> None:
@@ -290,11 +290,11 @@ def test_ledger_is_not_self_satisfying() -> None:
     """台账不能靠「键名对不上」蒙绿：每条都必须真对应一个在场字段、且真缺声明。"""
     fields = _config_field_names()
     documented = _documented_keys()
-    assert UNDOCUMENTED_FIELD_LEDGER <= fields, (
-        f"台账含非 config.py 字段（写法漂移）：{sorted(UNDOCUMENTED_FIELD_LEDGER - fields)}"
+    assert UNDUCUMENTED_FIELD_LEDGER <= fields, (
+        f"台账含非 config.py 字段（写法漂移）：{sorted(UNDUCUMENTED_FIELD_LEDGER - fields)}"
     )
-    assert not (UNDOCUMENTED_FIELD_LEDGER & documented), "台账与 .env.example 声明集重叠，见上条提示"
-    assert len(UNDOCUMENTED_FIELD_LEDGER) == LEDGER_BASELINE, (
-        f"存量缺口实际 {len(UNDOCUMENTED_FIELD_LEDGER)} 项，"
+    assert not (UNDUCUMENTED_FIELD_LEDGER & documented), "台账与 .env.example 声明集重叠，见上条提示"
+    assert len(UNDUCUMENTED_FIELD_LEDGER) == LEDGER_BASELINE, (
+        f"存量缺口实际 {len(UNDUCUMENTED_FIELD_LEDGER)} 项，"
         "台账规模已变化（补齐后请同步下调 LEDGER_BASELINE，只减不增）"
     )

@@ -638,7 +638,7 @@ def test_deliver_emergency_holds_and_touches_nothing_when_not_wake_worthy() -> N
     queue = _RecordingQueue()
     orange = _graded(
         _item(source_id="gdacs", source_kind="global_disaster", category_id="wildfire",
-              title="野火橙色", color_label="橙色"),
+              title="野火橙色", color_label="橙色", occurred_at=_NIGHT - timedelta(hours=1)),
         EmergencyLevel.P1,
     )
     verdict = push.deliver_emergency(queue, gate, orange, _group_target(), now=_NIGHT)
@@ -649,7 +649,10 @@ def test_deliver_emergency_holds_and_touches_nothing_when_not_wake_worthy() -> N
 def test_deliver_emergency_still_allows_a_wake_worthy_red_at_night() -> None:
     gate = _real_gate(now=_NIGHT)
     queue = _RecordingQueue()
-    red = _graded(_item(category_id="rainstorm", title="暴雨红色预警", color_label="红色"),
+    # occurred_at 显式落在 `_NIGHT` **之前**：F-1 时效腿（`push.SKIP_EXPIRED`）对
+    # 「发生在投递钟之后」的条目 fail-closed 不投，本件验的是安静窗击穿而不是时效。
+    red = _graded(_item(category_id="rainstorm", title="暴雨红色预警", color_label="红色",
+                        occurred_at=_NIGHT - timedelta(hours=1)),
                   EmergencyLevel.P0)
     verdict = push.deliver_emergency(queue, gate, red, _group_target(), now=_NIGHT)
     assert verdict == "allow"
@@ -668,7 +671,8 @@ def test_missing_gate_settings_fail_open_to_the_gate_itself() -> None:
     class _Opaque:
         pass
 
-    orange = _graded(_item(source_id="gdacs", category_id="wildfire", title="野火"),
+    orange = _graded(_item(source_id="gdacs", category_id="wildfire", title="野火",
+                           occurred_at=_NIGHT - timedelta(hours=1)),
                      EmergencyLevel.P1)
     assert push.should_hold_for_quiet_window(orange, _Opaque(), now=_NIGHT) is False
     assert push.should_hold_for_quiet_window(orange, None, now=_NIGHT) is False

@@ -309,7 +309,10 @@ def scan_q03_scope() -> list[Finding]:
 def test_scope_covers_sources_layer() -> None:
     """扫描面自证：capabilities 与 sources 都在面内（Q-01 主战场在 sources）。"""
     for rel in (
-        "plugins/bot_unified_runtime/capabilities/market.py",
+        # S-SHIM-WAVE1R T7（LIBS-SHIM-TICKETS 波二 2026-09-28）：顶层
+        # capabilities/market.py 垫片已退役，代表件照上方 RET3 先例改钉 canonical 真身
+        # （仍是 capabilities 层，扫描面自证语义不变）。
+        "plugins/bot_unified_runtime/domains/finance/capabilities/market.py",
         # v21r4-B RET3：sources/market_data 垫片已退役，代表件改钉 canonical 真身。
         "plugins/bot_unified_runtime/domains/finance/data/market_data.py",
         "plugins/bot_unified_runtime/domains/chat_reply/capabilities/user_copy.py",

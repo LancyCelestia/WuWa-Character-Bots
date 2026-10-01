@@ -35,6 +35,10 @@ _CANONICAL_MEMORY_SANITIZE = (
     "plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize"
 )
 _LEGACY_MEMORY_SANITIZE = "plugins.bot_unified_runtime.security.memory_sanitize"
+# 2026-09-28 S-SHIM-WAVE1R（LIBS-SHIM-TICKETS T6）：旧垫片 memory_sanitize 已退役，
+# 现网取样枚换钉为**长期仍在册**的 PEP562 形垫片 runtime/pipeline.py（其 docstring 自证
+# "若已退役请同步更新本用例"——该枚属消化队列桶四，须先过循环导入回归才动，不会今日消失）。
+_SAMPLING_PEP562_SHIM = "plugins.bot_unified_runtime.runtime.pipeline"
 
 # 同时覆盖三种写法：
 #   @("-m", "plugins.x.y")  /  @(\n  "-m",\n  "plugins.x.y")  /  & $python -m plugins.x.y
@@ -338,8 +342,17 @@ def test_shim_classifier_catches_both_known_shim_forms_and_passes_real_module():
 
 
 def test_real_repo_shim_is_detected_by_classifier():
-    """现网取样：存量 PEP562 垫片（本次缺陷现场）必须被同一判据认出。"""
-    path = _module_source_file(_LEGACY_MEMORY_SANITIZE)
-    assert path is not None, "旧垫片不在盘（若已退役，请同步更新本用例与守卫说明）"
+    """现网取样：存量 PEP562 垫片必须被同一判据认出（取样枚随退役波换钉，见上注）。
+
+    2026-09-28 S-SHIM-WAVE1R：原取样枚 `security/memory_sanitize.py` 已按工单退役，
+    本用例改钉长期在册的 `runtime/pipeline.py`（同形 PEP562 壳）；同时把退役件本体
+    升级为**防复活断言**——旧垫片路径若在盘上复活，`-m` 假成功缺陷形态即回来。
+    """
+    path = _module_source_file(_SAMPLING_PEP562_SHIM)
+    assert path is not None, "取样垫片不在盘（若已退役，请同步更新本用例与守卫说明）"
     tags = _module_tags(path.read_text(encoding="utf-8"))
     assert "PEP562_SHIM" in tags, tags
+    retired = _module_source_file(_LEGACY_MEMORY_SANITIZE)
+    assert retired is None, (
+        f"已退役垫片复活的第二真身形态在盘：{retired}（S-SHIM-WAVE1R T6 已摘，禁止回写）"
+    )

@@ -94,6 +94,13 @@ def _config_values(name: str) -> object:
         "bot_error_card_cooldown_seconds": 60,
         "bot_quiet_hours_enabled": False,
         "bot_reminder_enabled": True,
+        # 卡面署名 2026-09-28 起跟**生效人格**走（`_persona_signature` 的唯一入参就是
+        # 这两枚装配层键）。此前替身 getter 没教它们 ⇒ 载荷 `bot_name` 恒空，撞在
+        # 「除栈/回显/头像三格外不得为空」的要素契约上。回落规则只住在渲染侧
+        # （`test_error_card_persona_identity` 执法），不许挪进载荷侧。
+        # 值与生产 `.env` 同形（在册人格 + 兼容显示名），不在测试里另认名字真身。
+        "bot_persona_profile_id": "shorekeeper",
+        "bot_persona_display_name": "守岸人",
     }.get(name)
 
 

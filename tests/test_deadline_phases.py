@@ -452,7 +452,7 @@ def test_root_real_exhausted_request_receipt_is_self_explanatory(tmp_path) -> No
     class _SlowRetrievalProvider(NullCharacterContextProvider):
         def build_context(self, *args: object, **kwargs: object):
             time.sleep(0.06)
-            return super().build_context(*args, **kwargs)  # type: ignore[misc,arg-type]
+            return super().build_context(*args, **kwargs)  # type: ignore[misc]
 
     class _MustNotBeCalledLLM:
         def generate(self, *args: object, **kwargs: object) -> object:

@@ -3,8 +3,9 @@
 此前 P1-1 类洞在两套单测里各自绿灯：handler 单测只测反查+ack，能力层单测
 只测消费 reply_video_path——没人验证"handler 塞进的文件真的被能力层吃掉"。
 这里用 asyncio.run 把两段真实代码串起来锁死接缝：
-- handler 反查产物（reply_video_path）原样交到能力层，能力层现场分析并注入
-  "[视频档案" 简报，档案以 reply_id 为锚登记（user_sent）；
+- handler 反查产物（reply_video_path）原样交到能力层，能力层现场分析并经
+  咽喉（`guard_secondhand_text`）注入视频档案转述块，档案以 reply_id 为锚登记
+  （user_sent）；
 - 档案缓存命中时两端一致：handler 零 ack 零反查，能力层直接吃缓存简报；
 - 再导出路径（runtime._prepare_video_understanding_message）与定义处同一
   函数对象，节流状态随定义处模块走（patch 必须打在 video_pipeline）。
@@ -214,7 +215,7 @@ def test_handler_fetch_feeds_capability_analysis(
     capability(prepared, _decision())
     assert calls and calls[0]["video_source"] == str(clip)
     user_prompt = _user_text(llm.messages[0])
-    assert "[视频档案" in user_prompt
+    assert "以下是视频档案" in user_prompt  # 2026-09-27 M-02 收口：断言靶改咽喉产物特征
     assert "画面：猫。" in user_prompt
     assert registry.registered and registry.updated_briefs  # 以 reply_id 为锚建档
 
@@ -280,7 +281,7 @@ def test_cached_brief_hit_agrees_on_both_sides(
     )
     capability(prepared, _decision())
     assert calls == []  # 能力层同样零现场分析
-    assert "[视频档案" in _user_text(llm.messages[0])
+    assert "以下是视频档案" in _user_text(llm.messages[0])
     assert "画面：猫。" in _user_text(llm.messages[0])
 
 

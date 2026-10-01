@@ -154,9 +154,9 @@ _SNAPSHOT_INTERFACE_MANIFEST: tuple[tuple[str, str, str, str, int | None, str, s
 _SNAPSHOT_INTERNAL_NOTES: tuple[tuple[str, str], ...] = (
     ("bot.stocks", "个股行情（英伟达/AMD/英特尔股价兜底，触发词见 capabilities/stocks.py；帮助页 topic=个股行情）"),
     ("bot.fx", "汇率查询（美元兑人民币/汇率面板，触发词见 capabilities/fx.py；帮助页 topic=汇率）"),
-    ("bot.commodities", "商品行情（黄金/白银/原油/铜现货与 30 日走势，触发词见 capabilities/market.py；帮助页 topic=商品行情）"),
-    ("bot.bond", "国债收益率（国债/期限利差/收益率曲线，触发词见 capabilities/market.py；帮助页 topic=国债收益率）"),
-    ("bot.northbound", "北向资金（北向资金/沪股通/深股通成交总额，触发词见 capabilities/market.py；帮助页 topic=北向资金）"),
+    ("bot.commodities", "商品行情（黄金/白银/原油/铜现货与 30 日走势，触发词见 domains/finance/capabilities/market.py；帮助页 topic=商品行情）"),
+    ("bot.bond", "国债收益率（国债/期限利差/收益率曲线，触发词见 domains/finance/capabilities/market.py；帮助页 topic=国债收益率）"),
+    ("bot.northbound", "北向资金（北向资金/沪股通/深股通成交总额，触发词见 domains/finance/capabilities/market.py；帮助页 topic=北向资金）"),
 )
 
 

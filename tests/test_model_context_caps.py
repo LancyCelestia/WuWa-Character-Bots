@@ -1,7 +1,7 @@
 """全局上下文钳制回归（2026-09-17 用户裁定：输入 128K / 输出 64K）。"""
 from __future__ import annotations
 
-from plugins.bot_unified_runtime.llm.model_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
     DEFAULT_MAX_INPUT_TOKENS,
     DEFAULT_MAX_OUTPUT_TOKENS,
     _enforce_context_caps,

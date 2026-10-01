@@ -48,9 +48,10 @@ REGISTERED_GHOSTS: dict[tuple[str, str], str] = {
         "缺省 None ⇒ 逐模型改价覆盖不可用，:396 注释的承诺是假的（他席审计 F-14 同指）",
     (GHOST + "domains/divination/store/draw_store.py", "bot_control_plane_divination_db"):
         "缺省 None ⇒ draw_store_from_config 恒 None ⇒ 聊天侧从未拿到收编后实例（现网跑 rng.sample 老路径）",
-    (GHOST + "domains/emergency_info/capabilities/emergency_info.py",
-     "bot_emergency_info_quiet_breach_levels"):
-        "缺省 '' ⇒ 安静窗破例等级名单恒空，#47 波补的 allowed_levels 拿不到配置来源",
+    # 〔2026-09-29 复原波销账一枚〕原登记 (emergency_info.py, bot_emergency_info_quiet_breach_levels)
+    # 的幽灵条件已消失：他席把该键真补进了 config.py 字段（＋.env.example 申报行），读点不再是
+    # 「键不在 Config 上」那种死路 ⇒ 按本门口径「补 Config 字段后从清单删」摘除。摘前的现算证据：
+    # test_ghost_read_points_exactly_match_registry 的第二腿报「登记项 real 集里没有」正是这一枚。
     (GHOST + "domains/food/capabilities/eat.py", "bot_food_image_dir"):
         "缺省 '' 由下游兜到 data/food_images ⇒ 与 scripts 那处缺省不一致（补字段须连带裁定）",
     (GHOST + "domains/media/registry/media_registry.py", "bot_media_registry_ttl_seconds"):

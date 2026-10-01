@@ -29,6 +29,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.natural_language imp
     detect_natural_command,
 )
 from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
+    _QUERY_VARIANTS_MAX,
     _WEATHER_RE,
     _query_variants,
     is_weather_command,
@@ -133,6 +134,18 @@ def test_f18_variant_chain_unbroken() -> None:
     assert is_weather_command("天气 河北-大城") is True
     assert _query_variants("湘潭 雨湖") == ["湘潭 雨湖", "湘潭雨湖", "雨湖"]
     assert _query_variants("河北-大城") == ["河北-大城", "河北大城", "大城"]
+
+
+def test_f18_variant_chain_capped() -> None:
+    """S-FIX-WXSSL L2：变体链封顶 _QUERY_VARIANTS_MAX，单消息外呼链有界。
+
+    每条变体最坏 ≈2 次 NMC 重试 + Open-Meteo geocode/forecast（10s 超时），
+    段数多的查询不得把变体数乘进外呼链；保留原串与最末段（区县级）。
+    """
+    assert _QUERY_VARIANTS_MAX == 3
+    variants = _query_variants("河北-北京-天津")
+    assert len(variants) <= _QUERY_VARIANTS_MAX
+    assert variants == ["河北-北京-天津", "河北北京天津", "天津"]
 
 
 def test_district_named_chengduo_not_blocked() -> None:

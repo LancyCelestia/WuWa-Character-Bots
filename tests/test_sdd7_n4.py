@@ -26,6 +26,9 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.reflection import 
     quirk_proposal_texts,
     run_reflection,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+    baseline_effort,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.policy import gate as gate_module
 from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
     PolicySettings,
@@ -48,7 +51,6 @@ from plugins.bot_unified_runtime.domains.subscribe.feeds.news_feeds import (
     _FEEDS,
     parse_feed,
 )
-from plugins.bot_unified_runtime.llm.model_router import baseline_effort
 
 # ---------------------------------------------------------------------------
 # 打桩工具。

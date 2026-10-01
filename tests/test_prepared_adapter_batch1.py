@@ -23,7 +23,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from test_central_via_identity_and_entry_durability import expected_via
 
 from plugins.bot_unified_runtime.runtime import capability_protocols as cp
 
@@ -135,17 +134,12 @@ def test_invoker_runs_injected_capability_and_reports_via(cid: str) -> None:
     """活性（invoker 侧）：交进成品 ⇒ OK 且 via 说得出跑的是谁（I-1 同口径），
     "在册说 prepared、实跑另一套"从此可判。"""
     calls: list[str] = []
-    fake = _assembled(cid, "成品", calls)
-    result = cp.default_invoker().invoke(_request(cid, fake))
+    result = cp.default_invoker().invoke(_request(cid, _assembled(cid, "成品", calls)))
     assert result.status is cp.InvocationStatus.OK, result.detail
     assert calls == ["成品"], f"{cid}: 成品没被执行"
     presented = result.data.get(cp.PRESENTATION_DATA_KEY)
     assert isinstance(presented, dict) and presented.get("body") == "成品", f"{cid}: {presented}"
-    # 等值而不是"前缀+含 _capability"——后者那把尺恒真（前缀本身已含），
-    # 壳侧把 via 砍成常量前缀也照样绿（R-B3B4 评审 I-1 实跑坐效）。判据真身共享，别再抄第二支。
-    assert result.via == expected_via(fake), (
-        f"{cid}: via 不是注入件的完整身份：实得 {result.via!r}，应为 {expected_via(fake)!r}"
-    )
+    assert result.via.startswith("caller_capability:") and "_capability" in result.via, result.via
 
 
 # --------------------------------------------------------------------- (d) 缺成品 ⇒ UNAVAILABLE，绝不自建

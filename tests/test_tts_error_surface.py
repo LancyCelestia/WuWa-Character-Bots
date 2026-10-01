@@ -576,7 +576,7 @@ def test_surface_autodub_no_ref_maps_through_central_to_issue(
         bot_tts_auto_reply_max_chars=0,
         bot_tts_voice_hook_enabled=True,
     )
-    out = ve.build_voice_enricher(cfg)(_msg("无所谓"), _decision(), _chat_result("潮汐很安静"))
+    out = ve.build_voice_enricher(cfg)(_msg("无所谓"), None, _chat_result("潮汐很安静"))
 
     assert stats["calls"] == 0
     issue = out.operational_issue
@@ -621,7 +621,7 @@ def test_surface_hook_synth_failure_maps_issue_via_prefix_taxonomy(
         lambda: _private_invoker("media.tts.autodub_transform", "media.tts.autodub"),
     )
     out = ve.build_voice_enricher(_hook_cfg(tmp_path))(
-        _msg("无所谓"), _decision(), _chat_result("潮汐很安静")
+        _msg("无所谓"), None, _chat_result("潮汐很安静")
     )
 
     issue = out.operational_issue
@@ -650,7 +650,7 @@ def test_surface_hook_internal_exception_attaches_visible_issue(
         lambda: _private_invoker("media.tts.autodub_transform", "media.tts.autodub"),
     )
     out = ve.build_voice_enricher(_hook_cfg(tmp_path))(
-        _msg("无所谓"), _decision(), _chat_result("潮汐很安静")
+        _msg("无所谓"), None, _chat_result("潮汐很安静")
     )
 
     issue = out.operational_issue
@@ -682,7 +682,7 @@ def test_surface_hook_partial_chunks_fail_without_issue(
         lambda: _private_invoker("media.tts.autodub_transform", "media.tts.autodub"),
     )
     cfg = _hook_cfg(tmp_path, bot_tts_auto_reply_split_max_chars=8)
-    out = ve.build_voice_enricher(cfg)(_msg("无所谓"), _decision(), _chat_result("一二三四五。六七八九十。"))
+    out = ve.build_voice_enricher(cfg)(_msg("无所谓"), None, _chat_result("一二三四五。六七八九十。"))
 
     assert calls["n"] == 2
     assert len(out.audio or []) == 1, "首块成品照发"
@@ -714,7 +714,7 @@ def test_gap_hook_timeout_ignores_invoker_error_key_no_card(
     monkeypatch.setattr(ve, "default_invoker", lambda: _TimeoutInvoker())
     monkeypatch.setattr(ve, "synthesize", lambda **_kw: (_ for _ in ()).throw(AssertionError("不该被跑到")))
     out = ve.build_voice_enricher(_hook_cfg(tmp_path))(
-        _msg("无所谓"), _decision(), _chat_result("潮汐很安静")
+        _msg("无所谓"), None, _chat_result("潮汐很安静")
     )
 
     assert out.operational_issue is not None, "TIMEOUT 至少要有 issue（M-13 自动半在册）"

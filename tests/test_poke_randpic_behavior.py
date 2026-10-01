@@ -29,6 +29,7 @@ import ast
 import asyncio
 import copy
 import functools
+import io
 import random
 import sys
 import types
@@ -562,13 +563,36 @@ def test_root_wiring_knob_fallbacks_match_config_defaults() -> None:
 # ============================================================================
 
 
+def _png_bytes(tag: str) -> bytes:
+    """PIL 可解的真 PNG 字节，尺寸/字节数按 Config 真身下限现算（不写第二套数字）。
+
+    为什么必须是真的：B1 池子守卫波（2026-09-28，``domains/media/image_guard.py``）
+    之后，``_scan_dir`` 除了看扩展名还看**文件头魔数 + 像素短边**，两道闸的下限都取
+    Config 真身字面缺省（``bot_randpic_min_side`` / ``bot_randpic_min_file_kb``）。
+    旧夹具写「``\\x89PNG`` 头 + 一段文本」＝魔数对得上而 PIL 解不开 ⇒ 计入
+    ``images_bad_magic`` 全数拒收 ⇒ 池子空 ⇒ 主动腿诚实不发（守卫没错，夹具旧了）。
+    尾部填充不影响解码；``tag`` 决定像素颜色 ⇒ 内容互异，身份（sha256）也互异。
+    """
+    from PIL import Image
+
+    side = max(64, int(_default("bot_randpic_min_side") or 0) + 80)
+    min_bytes = max(1024, int(_default("bot_randpic_min_file_kb") or 0) * 1024 + 1024)
+    payload = sum(tag.encode("utf-8", "ignore")) % 251
+    buffer = io.BytesIO()
+    Image.new("RGB", (side, side), (payload, 7, 11)).save(buffer, format="PNG")
+    data = buffer.getvalue()
+    # tag 原文进尾部（IEND 之后的字节不参与解码）⇒ 内容身份必然互异，不依赖像素色撞不撞。
+    data = data + tag.encode("utf-8", "ignore")
+    return data + b"\x00" * max(0, min_bytes - len(data))
+
+
 def _gallery(root: Path, count: int, *, tag: str = "seat") -> list[Path]:
     """在 tmp_path 下造 ``count`` 张**内容互异**的假图（绝不碰真实图库目录）。"""
     root.mkdir(parents=True, exist_ok=True)
     made: list[Path] = []
     for index in range(count):
         path = root / f"pic-{index}.png"
-        path.write_bytes(b"\x89PNG\r\n\x1a\n" + f"{tag}-{index}".encode())
+        path.write_bytes(_png_bytes(f"{tag}-{index}"))
         made.append(path)
     return made
 
@@ -702,11 +726,11 @@ def test_two_paths_with_identical_bytes_are_one_picture(tmp_path: Path) -> None:
     """两份不同路径、同一份字节 = 一张图：窗内只算一次。"""
     root = tmp_path / "gallery"
     root.mkdir(parents=True)
-    payload = b"\x89PNG\r\n\x1a\n" + b"same-picture"
+    payload = _png_bytes("same-picture")
     (root / "copy-a.png").write_bytes(payload)
     (root / "copy-b.png").write_bytes(payload)
     other = root / "different.png"
-    other.write_bytes(b"\x89PNG\r\n\x1a\n" + b"another-picture")
+    other.write_bytes(_png_bytes("another-picture"))
     config = _randpic_config(root)
     identities: list[str] = []
     for index in range(3):
@@ -724,7 +748,7 @@ def test_identity_lock_has_teeth_when_identity_degrades_to_path(
     """注毒自证：把身份换成路径 ⇒ 同图不重复必须当场露馅（证明 C 组锁有牙）。"""
     root = tmp_path / "gallery"
     root.mkdir(parents=True)
-    payload = b"\x89PNG\r\n\x1a\n" + b"one-and-the-same"
+    payload = _png_bytes("one-and-the-same")
     (root / "first.png").write_bytes(payload)
     (root / "second.png").write_bytes(payload)
     monkeypatch.setattr(randpic, "image_identity", lambda path: str(path))
@@ -992,7 +1016,11 @@ def test_private_guard_sits_before_the_gate_in_the_source() -> None:
         for node in ast.walk(function)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "allow"
+        # 2026-09-28 第 9 项观测波：编排层进门调用从 allow 改判门真身
+        # verdict（allow 降级为 verdict 纯布尔壳，门语义锁见
+        # test_reactions_silence_reason_lock.py）。本锁语义「私聊硬闸必须在
+        # 进门判定之前」不放宽——两个名字都算「进门判定」。
+        and node.func.attr in {"allow", "verdict"}
     ]
     assert guard_lines and allow_lines, (
         f"守卫 {guard_lines} / 门 {allow_lines} ⇒ 判据形态变了，先确认私聊口径再改锁"

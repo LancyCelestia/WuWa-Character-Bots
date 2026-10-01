@@ -468,6 +468,58 @@ COPY_NOT_DEBT: Final[tuple[NotDebtCopy, ...]] = (
         "照 S131「结构数据以词为键」判例点名。R8 甲·S-R8-TRIGGER-c 归因凭据：同为 "
         "HEAD→现树新增（未跟踪新文件，HEAD 树零命中）。",
     ),  # R8甲归因新增｜真身 echo.py:2129:dict:aliases（在账）
+    NotDebtCopy(
+        file="plugins/bot_unified_runtime/domains/chat_reply/runtime/conversation_profile.py",
+        label="coll",
+        words_text="email、mail",
+        kind="结构数据",
+        reason="_common_absent_cells 里「ctx.platform in {email, mail}」的**比较实参**：平台枚举值"
+        "判定（邮件通道两枚别名共用「无群概念」判定支），不驱动任何路由；删任一词面即把该别名"
+        "通道的画像缺席格打成假象。S-BASE 基线席归因凭据（2026-09-29 现算）：ed802d3 核账树→"
+        "现树新增，载体为未跟踪在飞件（会话画像波）。"
+        "⚠ 在飞件：该件词集再编辑即本条虚设转红，由件 owner 按四把牙重登记，本席不替在飞件预设未来形态",
+    ),  # S-BASE归因新增｜真身 echo.py:1367:dict:aliases（在账）｜现算位 750
+    NotDebtCopy(
+        file="plugins/bot_unified_runtime/domains/chat_reply/runtime/conversation_profile.py",
+        label="coll",
+        words_text="email、mail",
+        kind="结构数据",
+        reason="_PLANS 路由表（(platform, chat_type)→画像拼装函数）中「(mail, email)」一枚"
+        "**元组键**：键是通道×会话形态二元组、值是 Callable（AST 实证）＝寻址表不是词表，"
+        "与上一枚同词集但不同声明位，按「一条至多消费一枚」逐枚点名。S-BASE 基线席归因凭据"
+        "（2026-09-29）：同为 ed802d3→现树新增（未跟踪在飞件，会话画像波）。"
+        "⚠ 在飞件同前：词集再编辑即虚设转红，由件 owner 重登记",
+    ),  # S-BASE归因新增｜真身 echo.py:1367:dict:aliases（在账）｜现算位 1300
+    NotDebtCopy(
+        file="tests/test_reply_policy_preset_command.py",
+        label="dictkeys",
+        words_text="简洁、讲全、详尽、适中、默认",
+        kind="探针字面量",
+        reason="test_set_every_mode_alias_maps_to_one_registered_mode 的词→模式对照表："
+        "键是 `/bot reply set` 命令面的五枚档位别名、值＝rp.LENGTH_MODE_* 常量引用——被验收标的"
+        "「每个别名都必须落到已注册模式」正是这五个词面本身，派生自真身 _PRESET_LENGTH_WORDS 会让"
+        "别名↔模式映射检查退化成用真身验真身。归因凭据：fb084a0（2026-09-28 T8 三件套入库波）"
+        "新增件、已跟踪无工作树 diff。真身 character/reply_policy.py 为禁改面，本条只点名测试侧。",
+    ),  # S-BASE归因新增（fb084a0 已入库）｜真身 reply_policy.py:1200:_PRESET_LENGTH_WORDS#dictkeys（在账）
+    NotDebtCopy(
+        file="tests/test_reply_style_imagery_default.py",
+        label="coll",
+        words_text="换意象、讲具体、铺意象",
+        kind="探针字面量",
+        reason="parametrize 三枚讲法码词面：断言「新词不进用法行就等于没有这条路」——"
+        "PRESET_USAGE_TEXT 是否逐词收录这三枚就是被验收的文案面，独立于真身才有牙。"
+        "归因凭据：ed802d3→现树新增，载体为未跟踪在飞件（T8 文风意象波 ⑨ 段）。"
+        "⚠ 在飞件：词集再编辑即本条虚设转红，由件 owner 按四把牙重登记",
+    ),  # S-BASE归因新增｜真身 reply_policy.py:181:_HUMAN_DIRECTIVE_WORDS#dictkeys（在账）｜现算位 458
+    NotDebtCopy(
+        file="tests/test_reply_style_imagery_default.py",
+        label="regexstr",
+        words_text="文学化、讲具体",
+        kind="探针字面量",
+        reason="「文学化｜竖线拼讲具体」入参串形态（normalize 是否把竖线当分词符＝被测命题本身）："
+        "字面串形态即验收标的，派生化会让分隔符兼容检查失去可读形态。归因凭据：同为 "
+        "ed802d3→现树新增（未跟踪 T8 在飞件 ⑨ 段）。⚠ 在飞件：词集再编辑即本条虚设转红，由件 owner 重登记",
+    ),  # S-BASE归因新增｜真身 reply_policy.py:181:_HUMAN_DIRECTIVE_WORDS#dictkeys（在账）｜现算位 654
 )
 
 #: **ruleA 不计账名册（11 簇在册镜像对，2026-09-26 随同意门入第 11 簇；另「订阅」簇为跨能力撞词、刻意不入本册＝继续记账经移交）**。

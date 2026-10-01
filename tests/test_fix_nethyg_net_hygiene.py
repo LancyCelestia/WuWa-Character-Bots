@@ -249,7 +249,9 @@ def _install_fake_opener(monkeypatch: pytest.MonkeyPatch, response: _FakeRawResp
 
 
 def _run_detail() -> dict:
-    return K._kuro_post_detail("123", cookie_header="user_token=SECRET-TOKEN")
+    # 假凭据显式命名（尺的 F2「夹具显式假值」面认 FAKE/EXAMPLE；旧写 SECRET-TOKEN
+    # 落进 F1 欠账形、而点名册棘轮 32/32 满额无位可登记——S-BASE 基线席 2026-09-29 现算）。
+    return K._kuro_post_detail("123", cookie_header="user_token=FAKE-TOKEN-EXAMPLE")
 
 
 def test_kurobbs_read_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:

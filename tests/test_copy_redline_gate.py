@@ -7,7 +7,7 @@
 
 扫描范围：由「扫描面坐标」三组常量唯一派生（SCOPE_PY_GLOBS / SCOPE_ANCHOR_FILES /
 SCOPE_PERSONA_GLOBS，逐条来历与 2026-09-25 S263 根修说明见其上方注释）——
-capabilities 族（含 auto_send/ 子目录，2026-09-14 扩面）+ character 族 +
+capabilities 族（auto_send/ 子目录族已随 2026-09-28 垫片退役摘除，见下方退役断言）+ character 族 +
 monitor 族锚点（2026-09-14 二次扩面，A69-I1）+ 已点名跟进的
 domains/{schedule,chat_reply,ops} 三域 + 2026-09-25 S263 起按族派生的
 domains/*/{capabilities,character,monitor} 真身族（其余 17 域的能力真身此前
@@ -90,7 +90,8 @@ _TEXT_SUFFIXES = frozenset({".md", ".txt"})
 SCOPE_PY_GLOBS: tuple[str, ...] = (
     # 旧布局层：v21r2 重组后只余再导出垫片，仍留在面上（垫片文案同样用户可见）。
     "capabilities/*.py",
-    "capabilities/auto_send/**/*.py",
+    # 2026-09-28 S-SHIM-WAVE1 T5：capabilities/auto_send/ 唯一垫片摘除、空目录随删，
+    # 本族匹配 0 文件＝坐标活性锁红，故整族摘出；退役语义改到下方「退役断言」作证。
     "character/*.py",
     # 2026-09-18 起逐域点过名的三个域（覆盖面比单层族更宽：store/ data/ runtime/ 全含）。
     "domains/schedule/**/*.py",
@@ -552,8 +553,8 @@ def test_gate_scope_sanity() -> None:
     # 旧路径 runtime/usage_monitor.py 已不存在（gate_scope 的 exists() 过滤即退役），pin 随迁。
     assert (RUNTIME_PKG / "domains" / "ops" / "monitor" / "usage_monitor.py") in scope
     assert (RUNTIME_PKG / "domains" / "ops" / "monitor" / "error_report.py") in scope
-    # 2026-09-14 扩面：capabilities/auto_send/ 子目录入扫描面。
-    assert (RUNTIME_PKG / "capabilities" / "auto_send" / "__init__.py") in scope
+    # 2026-09-14 扩面的 capabilities/auto_send/__init__.py 垫片已于 2026-09-28
+    # S-SHIM-WAVE1 T5 退役（存在 pin 随摘，退役断言在下方「退役断言」族作证）。
     # 2026-09-19：legacy capabilities/auto_send/parser.py 已随 v21r2 迁 schedule 域
     # （下方 schedule 域真身 pin 覆盖），旧路径 pin 退役。
     # 2026-09-18 v21r2 W10 随真身扩面：schedule 域真身在扫描面内（垫片不算数）。
@@ -574,10 +575,11 @@ def test_gate_scope_sanity() -> None:
     ):
         assert (RUNTIME_PKG / newly_covered) in scope, f"S263 扩面后新纳入的真身不在面上：{newly_covered}"
     # --- 退役断言（原为「钉住不存在路径」的 scope pin，按简报③挪到断言侧作证） ---
-    # 语义：这三枚旧坐标是**历史路径**，钉在扫描面上只会造成静默缩面（见文件头注释）；
+    # 语义：这些旧坐标是**历史路径**，钉在扫描面上只会造成静默缩面（见文件头注释）；
     # 它们该证明的是「旧布局确实不再有余留件」，那是断言侧的活，不是面上的活。
     for retired in (
         RUNTIME_PKG / "capabilities" / "echo.py",
+        RUNTIME_PKG / "capabilities" / "auto_send" / "__init__.py",
         RUNTIME_PKG / "character" / "addressing.py",
         RUNTIME_PKG / "runtime" / "usage_monitor.py",
         RUNTIME_PKG / "runtime" / "error_report.py",

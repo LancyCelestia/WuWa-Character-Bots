@@ -8,7 +8,9 @@ import pytest
 
 from plugins.bot_unified_runtime.domains.transport.mail.mail_bridge import (
     MailBridgeState,
+    build_mail_notification,
     mail_event_dedupe_id,
+    notify_telegram_admins,
     send_mail_from_account,
     unresolved_mail_aliases,
 )
@@ -148,3 +150,69 @@ def test_unresolved_mail_aliases_reports_only_missing_auth_targets() -> None:
             "missing@example.com": "other@example.com",
         },
     ) == ["missing@example.com->other@example.com"]
+
+
+# ---------------------------------------------------------------------------
+# S-FIX-ATK-MAIL R1：邮件→TG 管理员提醒腿出站前必须过中央咽喉 redact_local_secrets
+# 该腿不经渲染整形咽喉、不经 outbound_gate 清洗，是根 _handle_mail_notice ->
+# notify_telegram_admins -> telegram.send_to 的直发腿；正文/主题来自不可信邮件。
+# ---------------------------------------------------------------------------
+
+
+class _TelegramAdapter:
+    def get_name(self) -> str:
+        return "Telegram"
+
+
+class _TelegramBot:
+    adapter = _TelegramAdapter()
+    self_id = "telegram-bot"
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    async def send_to(self, chat_id: str, message: str, **kwargs: object) -> None:
+        self.sent.append((chat_id, message))
+
+
+def _notice_event(body: str, subject: str):
+    return SimpleNamespace(
+        sender=SimpleNamespace(id="attacker@example.com", name="外部来信"),
+        subject=subject,
+        get_plaintext=lambda: body,
+    )
+
+
+def test_build_mail_notification_redacts_local_secret_forms() -> None:
+    forged_body = (
+        "hello BOT_SECRET=hunter2sk and key sk-abcdefghijklmnopqrstuvwx done "
+        "path C:\\Users\\lancy\\secrets.txt"
+    )
+    notification = build_mail_notification(
+        _notice_event(forged_body, "BOT_TOKEN=supersecret"),
+        account="shorekeeper@foxmail.com",
+    )
+    # 明文密钥/盘符路径必须被换成占位符，原始形态一律不外泄。
+    assert "hunter2sk" not in notification
+    assert "abcdefghijklmnopqrstuvwx" not in notification
+    assert "supersecret" not in notification
+    assert "C:\\Users\\lancy\\secrets.txt" not in notification
+    # 复用的是同一把中央尺（占位符文案与 plain_text 一致）。
+    assert "<已隐藏>" in notification or "‹已隐藏密钥形态›" in notification
+    assert "C:" not in notification
+
+
+@pytest.mark.asyncio
+async def test_notify_telegram_admins_delivers_only_redacted_notification() -> None:
+    tg = _TelegramBot()
+    notification = build_mail_notification(
+        _notice_event("payload BOT_PASSWORD=*** sk-abcdefghijklmnopqrstuvwxyz0", "re: hi"),
+        account="shorekeeper@foxmail.com",
+    )
+    sent = await notify_telegram_admins({"telegram": tg}, ["111", "222"], notification)
+    assert sent == 2
+    assert len(tg.sent) == 2
+    for _chat_id, text in tg.sent:
+        assert "dummypw" not in text
+        assert "abcdefghijklmnopqrstuvwxyz0" not in text
+

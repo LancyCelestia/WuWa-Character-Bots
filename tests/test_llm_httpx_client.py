@@ -42,7 +42,9 @@ def _mock_provider(
     handler: Callable[[httpx.Request], httpx.Response],
 ) -> OpenAICompatibleLLMProvider:
     client = httpx.Client(transport=httpx.MockTransport(handler))  # type: ignore[arg-type]
-    monkeypatch.setattr(providers_module, "_shared_http_client", lambda proxy="": client)
+    monkeypatch.setattr(
+        providers_module, "_shared_http_client", lambda proxy="", **_kw: client
+    )
     return OpenAICompatibleLLMProvider(
         api_key="test-key",
         model="model-a",
@@ -153,7 +155,7 @@ def test_production_transport_reuses_shared_client_across_requests(
     )
     seen: list[httpx.Client] = []
 
-    def spy(proxy: str = "") -> httpx.Client:
+    def spy(proxy: str = "", **_kw: object) -> httpx.Client:
         seen.append(client)
         return client
 
@@ -197,7 +199,10 @@ def test_per_request_timeout_maps_to_httpx_timeout(
     provider.generate([{"role": "user", "content": "hi"}])
     default = seen_timeouts[1]
     assert isinstance(default, dict)
-    assert default["connect"] == provider.timeout_seconds
+    # 2026-09-29 断言翻转（同批事故根修）：本腿此前锁的是"connect 随读预算
+    # 放大"＝标量传法把四档一起改成 30s，客户端那份 connect 快败从未生效。
+    # 读预算照旧交调用方，connect 恒守快败上限。
+    assert default["connect"] == providers_module._CONNECT_TIMEOUT_SECONDS
     assert default["read"] == provider.timeout_seconds
 
 

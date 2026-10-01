@@ -916,13 +916,39 @@ def test_credential_bot_selection_chooses_matching_onebot_only() -> None:
     assert selected is qq
 
 
+def _roles_message(sender_id: str, *, platform: str) -> IncomingMessage:
+    """按平台构造最小入站事实（角色判定只吃 platform + sender_id）。"""
+    return IncomingMessage(
+        platform=platform,
+        adapter="onebot" if platform == "qq" else platform,
+        bot_id="bot-1",
+        session_id=f"private:{sender_id}",
+        session_type=SessionType.PRIVATE,
+        sender_id=sender_id,
+        plain_text="在吗",
+    )
+
+
 def test_role_settings_keep_qq_and_telegram_admin_ids_separate() -> None:
     config = Config(
         bot_admin_user_ids=["1001"],
         bot_telegram_admin_user_ids=["2002"],
     )
     roles = build_role_settings(config)
-    assert roles.admin_user_ids == frozenset({"1001", "2002"})
+    # F-A 2026-09-28：两份名单不再并成一集——QQ 条目留裸号（原生平台＝QQ），
+    # Telegram 条目带 `telegram:` 域前缀。判定处按平台域吃条目，跨平台同号
+    # 无从借另一侧名单拿 admin 脸（锁见 tests/test_admin_roster_and_roles.py）。
+    assert roles.admin_user_ids == frozenset({"1001", "telegram:2002"})
+    assert roles.resolve_roles(  # QQ 侧：只认 QQ 条目
+        _roles_message("1001", platform="qq")
+    ) == ["user", "admin"]
+    assert roles.resolve_roles(  # TG 侧：只认带域前缀条目
+        _roles_message("2002", platform="telegram")
+    ) == ["user", "admin"]
+    assert roles.resolve_roles(  # 同号跨侧＝缺陷真身，必须落回普通用户
+        _roles_message("2002", platform="qq")
+    ) == ["user"]
+    assert roles.resolve_roles(_roles_message("1001", platform="telegram")) == ["user"]
     targets = build_typed_admin_targets(
         qq_admin_ids=config.bot_admin_user_ids,
         telegram_user_ids=config.bot_telegram_admin_user_ids,

@@ -643,12 +643,17 @@ class TestTakeoverRegistryIntegrity:
         assert census == {"on_message": 41, "on_notice": 7, "on_command": 2}
 
     def test_matcher_locations_unique_and_wellformed(self) -> None:
+        # 2026-09-28 S-FIX-COORD-REANCHOR（主任务板 #33 诚实路径①）：matcher 坐标
+        # 整体改符号派生式 `file::symbol[:callee]`，行号退出判据（旧判据
+        # 「line_part.isdigit()」随批作废）；本条升级为**派生覆盖锁**——登记式
+        # 必须恰等于按条目自身字段推得的锚串，逐枚同步＝改一处即红。
         reg = build_default_takeover_registry()
         locations = [entry.location for entry in reg.matchers]
         assert len(locations) == len(set(locations))
-        for location in locations:
-            file_part, _, line_part = location.rpartition(":")
-            assert file_part and line_part.isdigit(), location
+        for entry in reg.matchers:
+            assert entry.location == (
+                f"__init__.py::{entry.name}:{entry.matcher_type}"
+            ), f"matcher 登记式必须是符号派生式，现={entry.location}"
 
     def test_all_entries_default_legacy_with_checklist(self) -> None:
         reg = build_default_takeover_registry()
@@ -676,39 +681,87 @@ class TestTakeoverRegistryIntegrity:
             "control_plane/api/platform.py": 0,
         }
 
+    # BYPASS_SUSPECT 期望面 = 显式名册 ↔ registry 点名对账（棘轮：只降不升）。
+    # 历史四枚根直连嫌疑（cookie 提醒/入群欢迎/二维码双通道/文档导出上传）已于
+    # ed802d3（2026-09-26，裁定 R-4 + S174 现算）整批改判 ABSORBED——旧判据
+    # 「计数==4 + 坐标 4440/5378/5730/5526」随改判失效且锁未随迁（该改判当时
+    # 只动了 registry，HEAD 即红，归因见 SEAT-VERIFY-BYPASS-ATTRIB）。
+    # 现算在册嫌疑唯一在岗＝_deliver_v2_event（S-FIX-SUB-SEC 2026-09-28 按
+    # SEAT-ATK-SUB 评审 F-2 补登，符号形态坐标；2026-09-28 S-FIX-COORD-REANCHOR
+    # 主任务板 #33 批把名册语法统一为 `file::symbol` 双冒号派生式）；
+    # F-1 根修落地后本条应随迁改判
+    # ABSORBED、此名册归零——届时同步改本名册，不许反向抬棘轮。
+    _BYPASS_SUSPECT_ROSTER: frozenset[str] = frozenset({"__init__.py::_deliver_v2_event"})
+    # ABSORBED 四枚按「在岗后继符号」（api 锚名）点名，不钉根文件行号（根多席
+    # 在飞编辑、行号必漂——同 test_v21_s0_collect 本件先例的读时快照纪律）。
+    _ABSORBED_ROSTER: frozenset[str] = frozenset(
+        {
+            "send_private_msg → _deliver_cookie_expiry_report_via_queue",
+            "send_group_msg → _send_text_through_unified_pipeline",
+            "send_group_msg + send_private_msg → _send_parts_through_unified_pipeline",
+            "upload_group_file + upload_private_file → _send_files_through_unified_pipeline",
+        }
+    )
+    # 原四枚嫌疑旧坐标＝历史死号（note/evidence 散文留痕合法，location 必须清零）。
+    _A1_STALE_ROOT_COORDINATES: tuple[str, ...] = ("4440", "5378", "5730", "5526")
+
     def test_direct_send_categories_cover_a1(self) -> None:
-        # 4 组绕队列嫌疑（S0-COLLECT 补登；S0-ROOT-c 收编为 *_via_queue 门开分支，
-        # 门关旧直连仍在）+ poke/reactions by-design（L34/L35 executor 面已收编）
-        # + 通道本体（onebot + file_gateway 改判 CHANNEL_BODY）。
+        # 类别判据（BYPASS_SUSPECT/ABSORBED/By_DESIGN/CHANNEL_BODY/PENDING_RULING）
+        # 全部锁名册与符号锚名，不锁裸计数——改判/补登必须两处同批跟随（一处变更
+        # 处处跟随），registry 单方面漂移即红。
         reg = build_default_takeover_registry()
         suspects = [
             e
             for e in reg.direct_sends
             if e.category is DirectSendCategory.BYPASS_SUSPECT
         ]
-        assert len(suspects) == 4
-        # REG-REFRESH 2026-09-19 grep 复核（门关分支旧直连现坐标）：cookie 提醒 /
-        # 入群欢迎 / 二维码双通道 / 文档导出上传；S0-COLLECT 快照 4300/5184/5481/
-        # 5303 已随根文件在飞编辑漂移清零。
-        assert any("4440" in e.location for e in suspects)
-        assert any("5378" in e.location for e in suspects)
-        assert any("5730" in e.location for e in suspects)
-        assert any("5526" in e.location for e in suspects)
-        # 状态=已收编（门缺省关：重启不拨门=生产零变更，不写「已生效」）：
-        # note 记 via_queue 门与收编语义；pending-on-RWC5-b 仅以前态注记保留
-        # （S0-COLLECT 契约锁仍钉该字面量，见 test_v21_s0_collect.py）。
-        assert all("已收编" in e.note for e in suspects)
-        assert all("via_queue" in e.note for e in suspects)
+        # 名册对账（少一枚＝静默退役嫌疑、多一枚＝未裁决新绕行，都判红）。
+        assert {e.location for e in suspects} == self._BYPASS_SUSPECT_ROSTER, (
+            f"BYPASS_SUSPECT 名册漂移（棘轮基线见类常量注释），"
+            f"registry 现={[e.location for e in suspects]}"
+        )
+        for entry in suspects:
+            # 在册嫌疑不得静默常置：note 须带 F-1 随迁改判承诺。
+            assert "随迁" in entry.note, (
+                f"嫌疑条目 note 缺随迁改判承诺（F-1 落地后改 ABSORBED）：{entry.location}"
+            )
+        absorbed = [
+            e for e in reg.direct_sends if e.category is DirectSendCategory.ABSORBED
+        ]
+        assert {e.api for e in absorbed} == self._ABSORBED_ROSTER, (
+            f"ABSORBED 名册漂移（ed802d3 改判四枚须逐一点名在岗后继符号），"
+            f"registry 现={sorted(e.api for e in absorbed)}"
+        )
+        absorbed_locations = " | ".join(e.location for e in absorbed)
+        assert all(e.location.startswith("__init__.py:") for e in absorbed)
+        for stale in self._A1_STALE_ROOT_COORDINATES:
+            assert stale not in absorbed_locations, (
+                f"改判条目 location 仍钉历史死号 {stale}"
+                f"（应只存活于 note 留痕）：{absorbed_locations}"
+            )
+        # 原锁的 note 语义判据（已收编 + via_queue 门）平移到改判后的 ABSORBED 条目：
+        # R-4 把门与关态直发分支一并从生产退役，此族投递只剩统一管线一条路。
+        assert all("已收编" in e.note for e in absorbed)
+        assert all("via_queue" in e.note for e in absorbed)
         by_design = [
             e for e in reg.direct_sends if e.category is DirectSendCategory.BY_DESIGN
         ]
         coordinates = " | ".join(e.location for e in by_design)
         # poke 直连点已不存在→L34 执行器面；reaction 真身=domains/meme/reactions/
-        # engine.py（runtime/ 旧路径为 compat shim）；delete_msg 现坐标 :4978。
-        assert "control_plane/dispatcher.py:162" in coordinates  # poke executor
-        assert "reactions/engine.py:754" in coordinates  # set_msg_emoji_like
-        assert "reactions/engine.py:785" in coordinates  # TG set_message_reaction
-        assert "4978" in coordinates  # delete_msg（dirty guard）
+        # engine.py（runtime/ 旧路径为 compat shim）。
+        # 2026-09-28 S-FIX-COORD-REANCHOR：三枚 BY_DESIGN 坐标已改符号派生式，
+        # 名册点名换锚名（行号 162/754/785 退为各条 note 里的当时值附注）。
+        assert "control_plane/dispatcher.py::execute:call_api" in coordinates  # poke executor
+        assert (
+            "reactions/engine.py::_build_qq_reaction_intent" in coordinates
+        )  # set_msg_emoji_like
+        assert (
+            "reactions/engine.py::_build_telegram_reaction_intent" in coordinates
+        )  # TG set_message_reaction
+        # delete_msg（dirty guard）改按 api 锚名点名：根行号随插删漂移
+        # （4978→S181 5371→S-ORC-1 5407→…），历史坐标一律只许存活于 note。
+        assert any(e.api == "delete_msg" for e in by_design)
+        assert "4978" not in coordinates  # delete_msg 历史死号在 location 清零
         assert "4745" not in coordinates  # poke 陈旧直连坐标清零
         assert "runtime/reactions.py" not in coordinates  # shim 旧路径清零
         bodies = [

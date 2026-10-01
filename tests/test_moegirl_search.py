@@ -218,10 +218,13 @@ def test_question_lookup_exact_hit_fetches_summary():
     outcome = question_lookup(
         "洛天依是谁", search_fn=fake_search, page_fn=fake_page
     )
+    # 2026-09-27 甲批：命中=接地块（无链接），不再是「摘要+🔗」自答。
     assert outcome.status == "hit"
-    assert "洛天依" in outcome.body
-    assert "虚拟歌手" in outcome.body
-    assert "https://zh.moegirl.org.cn/洛天依" in outcome.body
+    assert outcome.grounding is not None
+    assert "洛天依" in outcome.grounding.label
+    assert "虚拟歌手" in outcome.grounding.text
+    assert "http" not in outcome.grounding.text
+    assert "🔗" not in outcome.grounding.text
     assert calls == ["search:洛天依", "page:洛天依"]
 
 
@@ -229,9 +232,15 @@ def test_question_lookup_unique_candidate_hits_without_page():
     def fake_search(query, **kwargs):
         return [_hit("初音未来", "虚拟歌姬。")]
 
-    outcome = question_lookup("初音未来是谁", search_fn=fake_search, page_fn=None)
+    outcome = question_lookup(
+        "初音未来是谁",
+        search_fn=fake_search,
+        page_fn=lambda title, **kw: None,  # 离线纪律：不真打萌百摘要腿
+    )
     assert outcome.status == "hit"
-    assert "初音未来" in outcome.body
+    assert outcome.grounding is not None
+    assert "初音未来" in outcome.grounding.label
+    assert "http" not in outcome.grounding.text
 
 
 def test_question_lookup_ambiguous_degrades_to_chat():
@@ -270,7 +279,9 @@ def test_question_lookup_miss_or_error_degrades(hits, exc):
 
     outcome = question_lookup("冷门角色是谁", search_fn=fake_search, page_fn=None)
     assert outcome.status == "degrade"
-    assert outcome.body == ""
+    assert outcome.grounding is None
+    # 三类失败可判别（甲批 D 项）：空结果=no_entry，异常=network_error。
+    assert outcome.degrade_reason == ("no_entry" if exc is None else "network_error")
 
 
 def test_question_lookup_page_miss_falls_back_to_search_snippet():
@@ -284,8 +295,10 @@ def test_question_lookup_page_miss_falls_back_to_search_snippet():
 
     outcome = question_lookup("洛天依是谁", search_fn=fake_search, page_fn=fake_page)
     assert outcome.status == "hit"
-    assert "洛天依" in outcome.body
-    assert "虚拟歌手" in outcome.body
+    assert outcome.grounding is not None
+    assert "洛天依" in outcome.grounding.label
+    assert "虚拟歌手" in outcome.grounding.text
+    assert "http" not in outcome.grounding.text
 
 
 # ---------------------------------------------------------------- 路由

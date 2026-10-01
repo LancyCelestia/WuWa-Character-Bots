@@ -83,8 +83,6 @@ _TRACKED_D: dict[str, str] = {
     "build_today_history_capability": _CAP_HISTORY,
     "build_subscribe_capability": _CAP_SUBSCRIBE,
     "build_subscribe_capability_v2": _CAP_SUBSCRIBE,
-    # 主动投递面的内容生成真身**跨域借自 link_parse**（root:4367 offload_capability 直呼）
-    "build_subscription_push_capability": _CAP_SUBSCRIBE,
 }
 
 _DEF_FILES_D: dict[str, set[str]] = {
@@ -104,8 +102,6 @@ _DEF_FILES_D: dict[str, set[str]] = {
     "build_today_history_capability": {"domains/subscribe/capabilities/today_history.py"},
     "build_subscribe_capability": {"domains/subscribe/capabilities/subscribe.py"},
     "build_subscribe_capability_v2": {"domains/subscribe/capabilities/subscribe_v2.py"},
-    "build_subscription_push_capability": {
-        "domains/link_parse/capabilities/content_parser.py"},
 }
 
 _CID_TO_CAP_D: dict[str, str] = {cap: cap for cap in _CAPS_D}
@@ -204,8 +200,8 @@ def test_real_tree_matches_wave3d_ledger(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_wave3d_symbols_are_actually_tracked(monkeypatch: pytest.MonkeyPatch) -> None:
-    """分类面自证：17 真身全在追踪表、定义文件存在且被豁免（漏登记=直呼永不红=门变哑）。"""
-    assert len(_TRACKED_D) == 17
+    """分类面自证：16 真身全在追踪表、定义文件存在且被豁免（漏登记=直呼永不红=门变哑）。"""
+    assert len(_TRACKED_D) == 16
     assert set(_TRACKED_D.values()) == _CAPS_D
     for symbol, def_files in _DEF_FILES_D.items():
         assert symbol in _TRACKED_D
@@ -670,8 +666,8 @@ def test_e2e_blocked_role_denied_without_payload() -> None:
 # ---------------------------------------------------------------------------
 # ③ 注毒自证（四态各杀各锁）
 # ---------------------------------------------------------------------------
-def _poison_direct_src(target_path: str, symbol: str) -> dict[str, str]:
-    return {target_path: f"from x import {symbol}\ndef f(cfg):\n    return {symbol}(cfg)(None, None)\n"}
+def _poison_direct_src(module: str, symbol: str) -> dict[str, str]:
+    return {module: f"from x import {symbol}\ndef f(cfg):\n    return {symbol}(cfg)(None, None)\n"}
 
 
 def test_poison_new_direct_site_is_red(monkeypatch: pytest.MonkeyPatch) -> None:

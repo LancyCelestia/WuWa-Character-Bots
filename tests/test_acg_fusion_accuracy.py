@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import re
 from datetime import date
 from types import SimpleNamespace
 
@@ -317,4 +316,6 @@ def test_honesty_line_matches_what_is_actually_rendered(
     assert "新鲜度未知" in acg_search.TIMELINESS_HONESTY_LINE
     # 声明与实际互证：竖源行确实带日期，通用行确实不带——反过来才叫说谎。
     assert "2026-09-24" in vertical_line
+    import re
+
     assert not re.search(r"20\d{2}-\d{2}-\d{2}", web_line), "通用网页行凭空有了日期＝声明又变假话"

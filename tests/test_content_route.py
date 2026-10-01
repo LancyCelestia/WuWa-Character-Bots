@@ -12,6 +12,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+    ModelRouter,
+    ModelSpec,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
     INTIMATE_SOURCE_MASTER_LOVE,
     ContentRouteEngine,
@@ -19,7 +23,6 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import
     match_manual_command,
     match_master_love_admin,
 )
-from plugins.bot_unified_runtime.llm.model_router import ModelRouter, ModelSpec
 
 
 def _config(**overrides: object) -> SimpleNamespace:
@@ -348,7 +351,9 @@ def test_build_router_cb_reads_config_provider_each_call() -> None:
 def test_intimate_session_suppresses_complex_effort_upgrade() -> None:
     """成本裁定（2026-09-17）：INTIMATE 会话抑制复杂任务 effort 升档——
     RP 长文本易误触发 ≥300 字/关键词判据，把 grok 顶到家族最高档白烧 token。"""
-    from plugins.bot_unified_runtime.llm.model_router import _intimate_mode_for_session
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+        _intimate_mode_for_session,
+    )
 
     now = [100.0]
     engine = _engine(now)

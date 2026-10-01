@@ -103,6 +103,51 @@ def healthy_entry() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# 环境隔离（2026-09-29 席 S-FIX-TAGRP18 补）
+#
+# `prc.load_env` 自 M-68 收口起与生产 `bot.py` 同构：**os.environ 覆盖 .env 里的
+# 同名键**（见 `load_runtime_env_values` 末段）。ambient 里只要挂着
+# `BOT_RUNTIME_DATA_DIR`——各席跑测试的卫生前缀必带它——上面 `make_project` 说的话
+# 就被整片盖掉：体检项读到的是**环境的数据根**而不是本例的 tmp_path，FAIL/SKIP 腿
+# 静默变 PASS＝一把不咬人的锁（2026-09-29 现算：ambient 版 8 红 / 裸环境版 25 绿）。
+# 更坏的一面：`write_registry` 经 `load_env` 反解落点，于是把夹具注册表**写进那个
+# 数据根**（生产 `.env` 的缺省落点＝ChatBot_Runtime/settings/），一枚
+# `runtime_settings_shorekeeper.json` 就能把之后每一轮的判定钉成"健康"——跨进程、
+# 跨席位互相污染。environ 只覆盖"文件里出现的键"，故把这几枚摘掉即**充分**。
+# 键名从构造器自己的输出反解，不手写第二份清单（手写就是会过期的副本）。
+# ---------------------------------------------------------------------------
+
+def _keys_the_fake_env_writes() -> tuple[str, ...]:
+    """本文件假 `.env` 写了哪几枚键——现算取，唯一真身＝`make_project` 的产物.
+
+    两种构造形态都要过：`BOT_MODEL_REGISTRY` 只在传了 `env_registry` 时才落进
+    .env（漏了它，ambient 的 BOT_MODEL_REGISTRY 会整片盖掉路 ③ 那两条遮蔽腿——
+    2026-09-29 本席拿一枚假 `BOT_MODEL_REGISTRY` 当注毒实测，正是这条先红）。
+    """
+    import tempfile
+
+    variants = (
+        {"registry": None},
+        {"registry": None, "env_registry": "{}"},
+    )
+    with tempfile.TemporaryDirectory() as td:
+        keys: set[str] = set()
+        for index, kwargs in enumerate(variants):
+            keys |= set(prc.load_env(make_project(Path(td) / f"probe{index}", **kwargs)))
+    return tuple(sorted(keys))
+
+
+_ENV_KEYS_TO_SCRUB = _keys_the_fake_env_writes()
+
+
+@pytest.fixture(autouse=True)
+def hermetic_fake_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """每例把假 `.env` 会写的那几枚键从 os.environ 摘掉（monkeypatch 自动还原）."""
+    for key in _ENV_KEYS_TO_SCRUB:
+        monkeypatch.delenv(key, raising=False)
+
+
 def run_check(root: Path) -> prc.CheckResult:
     return prc.check_channel_capability_tags(prc.load_env(root), root)
 

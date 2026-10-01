@@ -23,7 +23,7 @@
 from __future__ import annotations
 
 import ast
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +69,8 @@ def _item(
     level: EmergencyLevel | None = EmergencyLevel.P0,
     *,
     item_id: str = "nmc-20260920-0001",
+    occurred_at: datetime = _NOON,
+    expires_at: datetime | None = None,
 ) -> EmergencyItem:
     """一条已过审的紧急条目（审核面归 A3，本件只吃它的产物形态）。"""
     return EmergencyItem(
@@ -79,8 +81,9 @@ def _item(
         title="暴雨红色预警",
         body="预计 6 小时内降雨量超过 100 毫米。",
         url="https://example.invalid/alarm/0001",
-        occurred_at=_NOON,
+        occurred_at=occurred_at,
         fetched_at=_NOON,
+        expires_at=expires_at,
         level=level,
         status=EmergencyStatus.APPROVED,
         credibility=0.9,
@@ -284,6 +287,110 @@ def test_ungraded_item_cannot_build_a_request() -> None:
     """建请求口同样拒未定级条目（`deliver_emergency` 之外的旁路也得撞墙）。"""
     with pytest.raises(ValueError, match="ungraded"):
         push.build_emergency_send_request(_item(None), _group_target(), now=_NOON)
+
+
+# ---------------------------------- F-1 活性锁｜唯一出口上的时效腿（SEAT-ATK-EMERGENCY-SUB F-1）
+
+
+def test_expired_shapes_never_reach_the_queue() -> None:
+    """已到期 / 发生在未来 / 超龄：三形态一律 `skip_expired`，队列零提交。
+
+    本票来自攻击复核（`logs/SEAT-ATK-EMERGENCY-SUB.md` F-1）：`is_within_validity`
+    定义在全仓零生产调用点，而按日重投的幂等键**日期段每天换新** ⇒ `ON CONFLICT`
+    拦不住跨天，陈旧预警在保留期内每天再投一回。本用例用**关闸直通**夹具
+    （`enabled=False` 按契约直通），能挡住这些条目的只剩时效腿这一处。
+    """
+    shapes = {
+        "expires_at 已到期": _item(expires_at=_NOON),
+        "occurred_at 在未来": _item(occurred_at=_NOON + timedelta(hours=1)),
+        "occurred_at 超默认窗": _item(occurred_at=_NOON - timedelta(days=2)),
+    }
+    for label, item in shapes.items():
+        queue = _RecordingQueue()
+        verdict = push.deliver_emergency(
+            queue, _real_gate(now=_NOON, enabled=False), item, _group_target(), now=_NOON
+        )
+        assert verdict == push.SKIP_EXPIRED, f"{label} 的结论不是 skip_expired"
+        assert queue.calls == [], f"{label} 仍然入了队＝时效腿被旁路"
+
+
+def test_within_window_item_still_ships() -> None:
+    """反证不过杀：发生 20 小时前、未到期、非未来 ⇒ 照常 allow 且恰入队一条。
+
+    时效腿若把窗口内条目也拦下，本域就整链哑了——这条与上一条互为反证。
+    """
+    queue = _RecordingQueue()
+    verdict = push.deliver_emergency(
+        queue,
+        _real_gate(now=_NOON, enabled=False),
+        _item(occurred_at=_NOON - timedelta(hours=20)),
+        _group_target(),
+        now=_NOON,
+    )
+    assert verdict == "allow"
+    assert len(queue.calls) == 1
+
+
+def test_max_age_override_relaxes_only_the_age_leg() -> None:
+    """显式 `max_age=None` 只放宽③超龄；①未来与②已到期保持无条件 fail-closed。
+
+    与 `dedupe.is_within_validity` 的判序一字不差（同文件教义，不另写第二套）。
+    """
+    queue = _RecordingQueue()
+    assert push.deliver_emergency(
+        queue,
+        _real_gate(now=_NOON, enabled=False),
+        _item(occurred_at=_NOON - timedelta(days=2)),
+        _group_target(),
+        now=_NOON,
+        max_age=None,
+    ) == "allow"
+    assert len(queue.calls) == 1
+
+    expired_queue = _RecordingQueue()
+    assert push.deliver_emergency(
+        expired_queue,
+        _real_gate(now=_NOON, enabled=False),
+        _item(expires_at=_NOON),
+        _group_target(),
+        now=_NOON,
+        max_age=None,
+    ) == push.SKIP_EXPIRED
+    assert expired_queue.calls == []
+
+
+def test_validity_predicate_is_enforced_at_the_single_touchpoint() -> None:
+    """AST 活性锁：`deliver_emergency` 体内恰有一处 `is_within_validity` 调用，
+    且位于 `submit_active_push` 触闸点**之前**。
+
+    上面几条证「过期不出板」；这条防「判据搬去调用方」——执法留在唯一出口
+    是本仓纪律（根文件只计数 `allow`，旁路一旦开出来测试全绿也拦不住）。
+    """
+    tree = ast.parse((DOMAIN_DIR / "service" / "push.py").read_text(encoding="utf-8"))
+    entry = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "deliver_emergency"
+    )
+    validity = [
+        node.lineno
+        for node in ast.walk(entry)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "is_within_validity"
+    ]
+    touches = [
+        node.lineno
+        for node in ast.walk(entry)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "submit_active_push"
+    ]
+    assert len(validity) == 1, f"时效判定应恰在唯一出口调用一处（实读 {validity}）"
+    assert len(touches) == 1
+    assert validity[0] < touches[0], (
+        f"时效腿（行 {validity[0]}）必须在触闸（行 {touches[0]}）之前——过闸后再判＝消息已出板"
+    )
 
 
 # ------------------------------------------------ 键形同源（禁止第二套键形）

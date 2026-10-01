@@ -192,6 +192,7 @@ def test_scenario1_end_to_end_nightly_reflection_to_prompt(
     config.bot_memory_db_path = str(memory_db)
     config.bot_reflection_db_path = str(reflection_db)
     config.bot_history_db_path = str(history_db)
+    config.bot_quirks_db_path = str(tmp_path / "persona_quirks.sqlite3")
 
     report = run_nightly_reflection(config)
     assert report.get("skipped") is None, report
@@ -556,6 +557,7 @@ def test_bus_disabled_nightly_reflection_writes_only_legacy_table(tmp_path: Path
     config.bot_memory_db_path = str(memory_db)
     config.bot_reflection_db_path = str(tmp_path / "reflection.sqlite3")
     config.bot_history_db_path = str(history_db)
+    config.bot_quirks_db_path = str(tmp_path / "persona_quirks.sqlite3")
 
     report = run_nightly_reflection(config)
     assert int(report.get("facts_saved") or 0) == 1, report

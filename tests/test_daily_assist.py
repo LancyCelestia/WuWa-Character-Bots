@@ -27,6 +27,7 @@ from plugins.bot_unified_runtime.contracts import PrivacyLevel, SendPolicy, Sess
 from plugins.bot_unified_runtime.domains.assistant.daily.capabilities.daily_assist import (
     _CAPTURE_VARIANTS,
     _HELP_VARIANTS,
+    _QUERY_DENIED_VARIANTS,
     _QUERY_EMPTY_VARIANTS,
     _QUERY_LISTING_VARIANTS,
     build_daily_assist_capability,
@@ -279,6 +280,7 @@ def _all_copy_pools() -> dict[str, tuple[str, ...]]:
         "capability_help": _HELP_VARIANTS,
         "capability_query_empty": _QUERY_EMPTY_VARIANTS,
         "capability_query_list": _QUERY_LISTING_VARIANTS,
+        "capability_query_denied": _QUERY_DENIED_VARIANTS,
         "capability_capture": _CAPTURE_VARIANTS,
     }
 
@@ -342,9 +344,26 @@ def test_is_daily_assist_command() -> None:
     assert not is_daily_assist_command("shoujianxiangqq")
 
 
-def _run_capability(config, text: str):
-    message = SimpleNamespace(plain_text=text, request_id="req-test")
-    return build_daily_assist_capability(config)(message, None)
+def _run_capability(
+    config,
+    text: str,
+    *,
+    sender_id: str = "10001",
+    session_type: Any = SessionType.PRIVATE,
+    decision: Any = None,
+):
+    # S-FIX-ATK-NOTES（实锤 3 读侧降档）：裸查询只对推送名单开放，
+    # 夹具默认以名单内身份发问；名单外降档行为由对抗锁单独罩住
+    # （tests/test_atknotes_inbox_guard.py）。
+    # S-FIX-SCHED20-H4（第 20 项）：语境同样入夹具——默认私聊，
+    # 群聊/缺失语境的降档由 H4 两枚锁罩住。
+    message = SimpleNamespace(
+        plain_text=text,
+        request_id="req-test",
+        sender_id=sender_id,
+        session_type=session_type,
+    )
+    return build_daily_assist_capability(config)(message, decision)
 
 
 def test_capability_capture_and_query(assist_env, tmp_path) -> None:
@@ -372,6 +391,54 @@ def test_capability_long_body_truncated(assist_env, tmp_path) -> None:
     _run_capability(config, "收件箱 " + "啊" * 2500)
     assert "啊" * 2000 in inbox_path(config).read_text(encoding="utf-8")
     assert "啊" * 2001 not in inbox_path(config).read_text(encoding="utf-8")
+
+
+def test_capability_group_context_never_lists_inbox(assist_env, tmp_path) -> None:
+    """H-4 锁①（第 20 项隐私修法）：群语境不出私密行。
+
+    收件箱行无「公/密」分级、拿不出任何一行可证明为「公」，读侧 fail-closed
+    口径与 schedule_board G2 自视图同源：裸查询只在私聊出内容。名单主
+    （owner 侧）在群聊里发裸查询也一律降档拒答——不透条目、不透条数。
+    """
+    config = _make_config(tmp_path)
+    _run_capability(config, "收件箱 买牛奶")  # 私聊记一条（全员速记=写面设计）
+    private = _run_capability(config, "收件箱")
+    assert "买牛奶" in private.body and "1 件" in private.body, "私聊基线不许被修坏"
+    group = _run_capability(config, "收件箱", session_type=SessionType.GROUP)
+    assert "买牛奶" not in group.body
+    assert "1 件" not in group.body, "拒答也不许漏条数"
+    assert group.body in _QUERY_DENIED_VARIANTS
+    assert "query_denied" in group.audit_tags
+
+
+def test_capability_group_gate_binds_admin_and_fail_closed_context(assist_env, tmp_path) -> None:
+    """H-4 锁②：语境门罩超管、缺语境按非私聊判；群内速记（写面）照旧可用。
+
+    「降档只降读、不降写」——第 20 项要的是不外泄，不是把群友记事的功能
+    一起砍掉；同时拒绝放宽任何既有守卫：超管身份不再能穿透群语境门。
+    """
+    config = _make_config(tmp_path)
+    _run_capability(config, "收件箱 周五前还信用卡")
+    admin_decision = SimpleNamespace(actor_roles=["super_admin"])
+    group_admin = _run_capability(
+        config,
+        "收件箱",
+        sender_id="99999",
+        session_type=SessionType.GROUP,
+        decision=admin_decision,
+    )
+    assert "信用卡" not in group_admin.body
+    assert group_admin.body in _QUERY_DENIED_VARIANTS
+    # 语境字段缺失按非私聊判（fail-closed：未知=最严档）。
+    no_context = build_daily_assist_capability(config)(
+        SimpleNamespace(plain_text="收件箱", request_id="req-nx", sender_id="10001"),
+        None,
+    )
+    assert no_context.body in _QUERY_DENIED_VARIANTS
+    # 写面豁免不变：群聊丢一条照样进收件箱（全员速记设计）。
+    capture = _run_capability(config, "收件箱 顺手记一笔", session_type=SessionType.GROUP)
+    assert "顺手记一笔" in capture.body
+    assert any("顺手记一笔" in item for item in read_pending_inbox(inbox_path(config)))
 
 
 # ---------------------------------------------------------------------------

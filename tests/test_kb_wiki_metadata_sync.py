@@ -602,6 +602,126 @@ def test_broken_sink_cannot_break_sync(tmp_path: Path) -> None:
         kb_wiki.set_kb_sync_alert_sink(None)
 
 
+# ------------------------------------------- 4b after 三态（2026-09-27 汇总默认 0 修复）
+
+
+_AFTER_KEYS = ("documents_after", "chunks_after", "embedded_after")
+
+
+def test_cancelled_round_persists_after_as_null_not_zero(tmp_path: Path) -> None:
+    """取消轮：落盘摘要的 after 三件必须是 null（未测得），不是伪装成测得的 0。
+
+    取证定案（SEAT-KB-SUMMARY-DEBUG）：三件真值只在统计点回填，取消出口
+    return 在其之前，finally 无差别落盘把 `_empty_kb_result` 的默认 0 一起
+    写了出去——读侧（WebUI/进度页）把"没测"读成"测得 0"。本锁钉修复：
+    ① 成功轮三件为 int 真值；② 随后的取消轮三件为 None；③ 内存结果字典
+    形状不变（取消轮 result 里仍是 int——只有落盘摘要走三态）。
+    """
+    rows = [_corpus_row("梗知识/moegirl/A", "三态正文。" * 30)]
+    _write_corpus(tmp_path, documents=rows, updates=rows)
+    store = _store(tmp_path / "afterstate.sqlite3")
+    config = _config(tmp_path)
+
+    ok = kb_wiki.run_kb_sync_task(config, store=store, embed=False)
+    assert ok["ok"] is True
+    summary = kb_wiki.read_kb_sync_summary(store)
+    assert all(isinstance(summary[key], int) for key in _AFTER_KEYS), summary
+    assert summary["documents_after"] == 1
+
+    kb_wiki.cancel_kb_sync_task(reason="unit-test-after-state")
+    cancelled = kb_wiki.run_kb_sync_task(config, store=store, embed=False)
+    assert cancelled["error_kind"] == "cancelled" and cancelled["ok"] is False
+    # ③ 内存形状逐字节不变：取消轮的 result 三件仍是 int（默认 0）。
+    assert cancelled["after_stats_measured"] is False
+    assert all(isinstance(cancelled[key], int) for key in ("total_after", "embedded_after", "documents_after"))
+    # ② 落盘摘要三态：未测得 = null。
+    summary = kb_wiki.read_kb_sync_summary(store)
+    assert summary["ok"] is False and summary["error_kind"] == "cancelled"
+    assert all(summary[key] is None for key in _AFTER_KEYS), summary
+
+
+def test_kb_missing_and_exception_rounds_persist_after_as_null(tmp_path: Path, monkeypatch) -> None:
+    """kb_missing / exception 两个失败出口同样落 null（三出口统一收在摘要一处）。"""
+    store = _store(tmp_path / "afternull.sqlite3")
+    result = kb_wiki.run_kb_sync_task(_config(tmp_path), store=store)  # 无清单文件
+    assert result["error_kind"] == "kb_missing"
+    summary = kb_wiki.read_kb_sync_summary(store)
+    assert all(summary[key] is None for key in _AFTER_KEYS), summary
+
+    rows = [_corpus_row("梗知识/moegirl/A", "异常轮正文。" * 30)]
+    _write_corpus(tmp_path, documents=rows, updates=rows)
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("同步中途炸")
+
+    exc_store = _store(tmp_path / "afternull-exc.sqlite3")
+    monkeypatch.setattr(kb_wiki, "sync_kb_wiki", _boom)
+    result = kb_wiki.run_kb_sync_task(_config(tmp_path), store=exc_store)
+    assert result["error_kind"] == "exception"
+    summary = kb_wiki.read_kb_sync_summary(exc_store)
+    assert summary["error_kind"] == "exception"
+    assert all(summary[key] is None for key in _AFTER_KEYS), summary
+
+
+def test_failed_round_does_not_run_counting_queries(tmp_path: Path) -> None:
+    """成本红线：失败轮绝不为了补测 after 而现算 COUNT（实测冷缓存 ≈5.5 分钟）。
+
+    把 store 的两个计数口武装成"被调用即记数"，取消轮跑完后计数必须为 0；
+    有人日后往 finally/except 里塞 stats()/document_count() 补测，本锁当场红。
+    """
+    rows = [_corpus_row("梗知识/moegirl/A", "计数红线正文。" * 30)]
+    _write_corpus(tmp_path, documents=rows, updates=rows)
+    store = _store(tmp_path / "costguard.sqlite3")
+    counts = {"stats": 0, "document_count": 0}
+    real_stats, real_docs = store.stats, store.document_count
+
+    def _spy_stats():
+        counts["stats"] += 1
+        return real_stats()
+
+    def _spy_docs():
+        counts["document_count"] += 1
+        return real_docs()
+
+    store.stats = _spy_stats  # type: ignore[method-assign]
+    store.document_count = _spy_docs  # type: ignore[method-assign]
+    kb_wiki.cancel_kb_sync_task(reason="unit-test-cost-guard")
+    result = kb_wiki.run_kb_sync_task(_config(tmp_path), store=store, embed=False)
+    assert result["error_kind"] == "cancelled"
+    assert counts == {"stats": 0, "document_count": 0}, "失败轮不得现算计数查询"
+
+
+def test_sync_summary_three_state_contract() -> None:
+    """`_sync_summary` 三态判据自身的锁（不经整轮同步，直接打摘要函数）。"""
+    bare = kb_wiki._empty_kb_result("incremental")
+    summary = kb_wiki._sync_summary(bare)
+    assert all(summary[key] is None for key in _AFTER_KEYS)
+    bare["after_stats_measured"] = True
+    bare["documents_after"] = 7
+    bare["total_after"] = 8
+    bare["embedded_after"] = 9
+    summary = kb_wiki._sync_summary(bare)
+    assert summary["documents_after"] == 7
+    assert summary["chunks_after"] == 8
+    assert summary["embedded_after"] == 9
+    # 外部构造、不带标记键的结果字典按"已测"透传（既有夹具/直调方兼容）。
+    legacy = {"documents_after": 3, "total_after": 4, "embedded_after": 5}
+    summary = kb_wiki._sync_summary(legacy)
+    assert summary["documents_after"] == 3 and summary["chunks_after"] == 4
+    assert summary["embedded_after"] == 5
+
+
+def test_null_after_survives_webui_projection(tmp_path: Path) -> None:
+    """WebUI 读侧透出 null 原样（投影是白名单直取，三态不在读侧塌回 0）。"""
+    store = _store(tmp_path / "webuinull.sqlite3")
+    kb_wiki.run_kb_sync_task(_config(tmp_path), store=store)  # kb_missing 轮
+    summary = kb_wiki.read_kb_sync_summary(store)
+    projected = {
+        key: summary[key] for key in webui_knowledge._KB_SYNC_PUBLIC_FIELDS if key in summary
+    }
+    assert all(projected[key] is None for key in _AFTER_KEYS), projected
+
+
 # ---------------------------------------------------------------- 契约一致性
 
 

@@ -141,6 +141,30 @@ def _system_join(provider: _CapturingProvider) -> str:
 
 # ---------------------------------------------------------------- 会话态互斥注入
 
+
+def _section_header(instruction: str) -> str:
+    """段落头从常量**真身**派生（字面量收单源，家规同 chat 的 TIER_LINE_PREFIX）。
+
+    他席改标题措辞（2026-09-28 实跑：「亲密场景」→「亲密与成人向场景」）时，硬编码
+    的第二份字面量会当场失配、把这条互斥锁变成假红。派生之后仍然咬得住：本文件
+    正反两面都判（亲密态判「日常头不在」＋日常态判「亲密头不在」），注入腿一旦断，
+    presence 那侧必红。
+    """
+    head, marker, _ = instruction.partition("】")
+    assert marker, "场景散文常量丢了【…】段落头，注入面无法辨识"
+    assert head.startswith("【"), "段落头必须以【开头"
+    return f"{head}{marker}"
+
+
+_INTIMATE_HEADER = _section_header(INTIMATE_RP_STYLE_INSTRUCTION)
+_NORMAL_HEADER = _section_header(NORMAL_NO_ACTION_INSTRUCTION)
+
+
+def test_two_scene_sections_have_distinct_headers() -> None:
+    """互斥判据的前提：两段各有自己的头。同头 ⇒ 上面那三条 not in 全是空判。"""
+    assert _INTIMATE_HEADER != _NORMAL_HEADER
+
+
 def test_intimate_session_gets_action_directive() -> None:
     session = "private:rp-style-intimate-1"
     cfg = _config()
@@ -155,10 +179,14 @@ def test_intimate_session_gets_action_directive() -> None:
         content_route_config=cfg,
     )
     joined = _system_join(provider)
-    assert "【亲密场景的叙述】" in joined
-    assert "能详则详" in joined
+    assert _INTIMATE_HEADER in joined
+    # T8（2026-09-28 用户裁定「档位风格统一」）：亲密段不再自带篇幅口径（旧断言的
+    # 「能详则详」已从常量里摘掉，篇幅唯一真身＝那一行长度分档指令）。这一段现在
+    # 只准管**描写维度**，所以断言改判它承诺过的那一维。
+    assert "动作、神态、呼吸、触感、心理" in joined
+    assert "能详则详" not in joined and "放宽篇幅" not in joined
     assert "动作" in joined
-    assert "【日常对话的叙述】" not in joined  # 互斥：不并存
+    assert _NORMAL_HEADER not in joined  # 互斥：不并存
     assert "不加括号" not in joined
 
 
@@ -175,9 +203,9 @@ def test_normal_session_gets_no_action_directive() -> None:
         content_route_config=cfg,
     )
     joined = _system_join(provider)
-    assert "【日常对话的叙述】" in joined
+    assert _NORMAL_HEADER in joined
     assert "不加括号" in joined
-    assert "【亲密场景的叙述】" not in joined  # 互斥：不并存
+    assert _INTIMATE_HEADER not in joined  # 互斥：不并存
 
 
 def test_route_disabled_still_gets_normal_directive() -> None:
@@ -192,8 +220,8 @@ def test_route_disabled_still_gets_normal_directive() -> None:
         content_route_config=None,
     )
     joined = _system_join(provider)
-    assert "【日常对话的叙述】" in joined
-    assert "【亲密场景的叙述】" not in joined
+    assert _NORMAL_HEADER in joined
+    assert _INTIMATE_HEADER not in joined
 
 
 # ---------------------------------------------------------------- 复读三连治理

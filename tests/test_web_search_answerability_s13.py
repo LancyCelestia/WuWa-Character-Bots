@@ -6,7 +6,7 @@ BOT_WEB_DECISION_*）当成"联网开关"，真正左右行为的是
 阈值又偏高，导致绝大多数本地世界观问题被误判成「知识库够用、不用搜」。
 
 本文件锁三件事（全离线、零网络、零副作用）：
-  1. ``knowledge_confidence_from_evidence`` 是真实信号：偶然命中≠能答（不再虚高），
+  1. ``knowledge_confidence_from_evidence`` 是真实信号：偶然命中不等于能答（不再虚高），
      主题被充分覆盖才算能答，且可复现。
   2. ``decide_web_search`` 是行为开关：总闸关=永不搜；PRIMARY 必搜；
      FALLBACK 按阈值/硬底线补搜；闲聊/创作/自带内容/explicit_no_web 永不被拖上网。
@@ -280,7 +280,7 @@ def test_e2e_should_search_but_did_not_direction() -> None:
     """(a) 该搜却没搜：本地世界观问题、知识库里几乎没有相关内容 → 必须搜。"""
     query = "守岸人 泰缇斯系统 第三实例 的 设定 是什么"
     decision = classify_question_intent(query)
-    # 命中本地域词（守岸人/泰缇斯）走 FALLBACK，可回退联网。
+    # 命中本地域词（守岸人/泰缇斯）且无时效/显式搜索信号 → FALLBACK，可回退联网。
     assert decision.decision is WebDecision.FALLBACK, (decision.reason, decision.category)
     weak_evidence = ["守岸人静静地望着海面。"]  # 只有偶然命中，主题词几乎不覆盖
     confidence = knowledge_confidence_from_evidence(query, weak_evidence)
@@ -302,9 +302,7 @@ def test_e2e_local_knowledge_is_enough_direction() -> None:
     query = "守岸人 声骸 共鸣者 是什么"
     decision = classify_question_intent(query)
     assert decision.decision is WebDecision.FALLBACK, (decision.reason, decision.category)
-    good_evidence = [
-        "守岸人负责保管与解析声骸，并引导共鸣者完成调律。"
-    ]
+    good_evidence = ["守岸人负责保管与解析声骸，并引导共鸣者完成调律。"]
     confidence = knowledge_confidence_from_evidence(query, good_evidence)
     do_web = decide_web_search(
         web_enabled=True,

@@ -157,8 +157,8 @@ def test_write_lands_exactly_inside_the_whitelisted_root(tmp_path) -> None:
     assert inside in outcome.path.parents
     assert list(outside.iterdir()) == []
     assert outcome.verb == rr.VERB_CREATE
-    assert outcome.written_bytes == len("# 报告\n".encode())
-    assert outcome.sha256 == media_digest("# 报告\n".encode())
+    assert outcome.written_bytes == len(b"# \xe6\x8a\xa5\xe5\x91\x8a\n")
+    assert outcome.sha256 == media_digest(b"# \xe6\x8a\xa5\xe5\x91\x8a\n")
 
 
 def test_nested_ref_creates_subdirs_inside_whitelist_only(tmp_path) -> None:
@@ -166,7 +166,7 @@ def test_nested_ref_creates_subdirs_inside_whitelist_only(tmp_path) -> None:
     outcome = _create(tmp_path, root, "sub/dir/deep.md", "# 深\n".encode())
     assert outcome.ok, outcome.error_message()
     assert outcome.path == root / "sub" / "dir" / "deep.md"
-    assert outcome.path.read_bytes() == "# 深\n".encode()
+    assert outcome.path.read_bytes() == b"# \xe6\xb7\xb1\n"
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +208,7 @@ def test_replace_of_oversize_keeps_original_bytes(tmp_path) -> None:
         "doc.md", "# 新版的超长内容\n".encode() * 10, policy=strict, **_staging(tmp_path)
     )
     assert failed.reason_code == rr.DenyCode.TOO_LARGE
-    assert outcome.path.read_bytes() == "# 原版\n".encode()
+    assert outcome.path.read_bytes() == b"# \xe5\x8e\x9f\xe7\x89\x88\n"
     assert not list(root.rglob("*.part"))
 
 
@@ -331,18 +331,18 @@ def test_create_refuses_to_overwrite_and_replace_refuses_to_create(tmp_path) -> 
     assert first.ok
     again = _create(tmp_path, root, "doc.md", "# 二版\n".encode())
     assert again.reason_code == rr.DenyCode.ALREADY_EXISTS
-    assert first.path.read_bytes() == "# 一版\n".encode()
+    assert first.path.read_bytes() == b"# \xe4\xb8\x80\xe7\x89\x88\n"
 
     missing = rr.replace_bytes("ghost.md", "# 无\n".encode(), policy=_policy(root), **_staging(tmp_path))
     assert missing.reason_code == rr.DenyCode.TARGET_MISSING
     assert not (root / "ghost.md").exists()
 
     updated = rr.write_document(
-        "doc.md", "# 二版\n".encode(), policy=_policy(root), **_staging(tmp_path)
+        "doc.md", b"# \xe4\xba\x8c\xe7\x89\x88\n", policy=_policy(root), **_staging(tmp_path)
     )
     assert updated.ok
     assert updated.verb == rr.VERB_REPLACE
-    assert first.path.read_bytes() == "# 二版\n".encode()
+    assert first.path.read_bytes() == b"# \xe4\xba\x8c\xe7\x89\x88\n"
 
 
 def test_external_verdict_seam_denies_and_never_echoes_the_path(tmp_path) -> None:
@@ -372,7 +372,7 @@ def test_external_verdict_seam_denies_and_never_echoes_the_path(tmp_path) -> Non
 
     broken = rr.create_bytes(
         "doc.md",
-        "# 内容\n".encode(),
+        b"# \xe5\x86\x85\xe5\xae\xb9\n",
         policy=_policy(root, external_verdict=raising_guard),
         **_staging(tmp_path),
     )
@@ -381,7 +381,7 @@ def test_external_verdict_seam_denies_and_never_echoes_the_path(tmp_path) -> Non
     root2 = tmp_path / "vault2"
     ok = rr.create_bytes(
         "doc.md",
-        "# 内容\n".encode(),
+        b"# \xe5\x86\x85\xe5\xae\xb9\n",
         policy=_policy(root2, external_verdict=lambda _candidate: ""),
         **_staging(tmp_path),
     )
@@ -496,6 +496,28 @@ def test_code_files_are_created_but_never_executed(tmp_path, monkeypatch) -> Non
 # tests/test_file_gateway_phase1.py。**回滚点**：从 %TEMP% 备份恢复
 # restricted_runner.py 与被删六例（备份位置见席位日志 S-FILES-LAND.md §伍），
 # 并把 tests/test_files_domain_audit.py 的 S-16-ALIGNED-OUTBOUND 出账注释改回 xfail。
+#
+# **退役记录（2026-09-29 S-FILEOUT-LEGS）**：上述六例曾被 09-29 复原波连文件带账写回
+# ——盘上测试件与 `.superpowers/sdd/2026-09-27-fullload/recovered/lint2/after/` 同名件
+# **逐字节相同**，而该目录按规矩只是复原用的历史副本、非权威。于是页首「③④ 已出账」与
+# 正文「⑧ 三通道对齐」自相矛盾，并把 5 枚确定性红带回门禁，红形＝`AttributeError`：
+# `restricted_runner` 里两枚**零生产调用点**的符号（`build_aligned_file_outbound` /
+# `plain_outbound_body`）不存在。裁定走**甲＝维持退役**，依据三处书面记录合一：
+# `S-T-FILES-AUDIT.md:158/218`「该删不该接」、`S-FILES-LAND.md` §壹-7 与 §伍（八枚符号
+# 移除＋%TEMP 备份与 sha256 前 16 位）、本件与 `restricted_runner.py`（盘＝HEAD，零差异）
+# 各自的墓碑，外加防回潮锁 `test_files_domain_audit.py::test_aligned_outbound_helper_is_wired_or_gone`
+#（符号不在即判绿）。**不补实现腿、不开第二条出站通路**（第四部分「文件出站」红线＝取字节前
+# 统一判定，禁第二通路）。行为面现役锁：`test_file_outbound_channels.py:309→:337`
+# （真网关＋真邮件腿，断言正文一个「盘符+分隔符」形态都不剩、`sk-` 不残留、附件字节不被改写）
+# 与 `test_file_gateway_phase1.py`。
+#
+# ⚠ 唯一**没有替身**的口径＝末例那条后置兜底「洗完仍带盘符形态就整段隐去」。如实记账：
+#   它当年锁的就是死件（全仓零生产调用点），**没有任何现役能力曾拥有这层后置抑制**，
+#   故退役不降低现存覆盖面；中央真身 `domains/render/plain_text.py::redact_local_secrets`
+#   是**替换**式打码（键名保留、值洗成 `<已隐藏>`），不是整段隐去，文件出站面今天
+#   **既无该实现也无该锁**＝一条敞着的安全欠账，不许静默消失：已立
+#   `docs/issue-ledger-p2-p3.md` §P2-13（修法只准加在出站咽喉，禁在 files 域长第二份打码）。
+# 回滚点仍是上面那个 %TEMP% 备份（六例原文逐字可取回）。
 
 
 # ---------------------------------------------------------------------------

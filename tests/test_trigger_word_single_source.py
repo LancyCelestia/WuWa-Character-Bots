@@ -577,12 +577,22 @@ INTENTIONAL_UNITS: Final[tuple[DeclaredUnit, ...]] = (
     #    ⚠ 在飞件约定同第三批次：该第一人称表词集若再编辑（摘「我」或「自己」）、或这两处旧位
     #    被改写为引用真身形态，本批对应条即虚设转红，由件 owner 按四把牙重登记/摘牌。
     #    有效期至 2026-10-04：到期由核账席逐枚复验词形在场，不在即摘牌，不自动续期。
-    DeclaredUnit("我", "inline:plugins/bot_unified_runtime/domains/chat_reply/capabilities/affinity.py", "bot.affinity",
-                 "亲密度命令的自指参数解析（参数为 我、自己、me 三形之一时看本人板而非群板）：人称代词语法用法非触发面，本波因 schedule_board 第一人称头词新表在场才被记债"),
-    DeclaredUnit("我", "inline:plugins/bot_unified_runtime/domains/chat_reply/character/reflection.py", "chat_reply/character",
-                 "反思回路 quirk 提案筛选「无类目事实须以『我』开头」的沉淀文法判据（startswith 单字自指），与日程问句头词表词面重合属代词常用字撞词，不驱动路由"),
+    #    2026-09-29 S-BASE 基线席提前复验：现算该位清单为空（'我' @ inline:affinity 已不在场，
+    #    活性锁当场点名）⇒ 按本注「不在即摘牌」摘此一枚；同比较式「自己」一枚今仍在场、照留。
+    #    同日复验第二枚：'我' @ inline:reflection 亦虚设（批⑰ ae2e7c1 重写反思消毒腿后
+    #    startswith 判据换形，现算清单为空、活性锁点名）⇒ 同批摘牌；抵销 60→58 如实入账。
     DeclaredUnit("自己", "inline:plugins/bot_unified_runtime/domains/chat_reply/capabilities/affinity.py", "bot.affinity",
                  "同枚自指参数集的第二词面「自己」：与上「我」同一比较式逐词点名，参数语义为「查我自己」，跨能力撞代词非同源抄表"),
+    # ── 表情册审批面（T25，2026-10-01）：双向门方向 1（路由有词、help 册须有落点）要求
+    #    bot.meme_library 的路由词「待审」在帮助册在场，落点取
+    #    ``echo._HELP_ENTRY_META["表情册"].triggers_nl``（走 META 不走 aliases＝保住
+    #    「待审」的检索主落点仍归「紧急信息」，别名表按 aliases 先建、META 后 setdefault）。
+    #    路由真身 meme_library 的审批正则照旧留账；同批新位上的「审批」一枚现算只有
+    #    一处声明（len(keys)<2 不记债），按「逐枚干活锁」不进本册。
+    #    ⚠ 失效约定同前三批：表情册 triggers_nl 摘掉这枚词面、或紧急信息那两位收敛成
+    #    引用真身形态 ⇒ 本条虚设转红，由件 owner 按四把牙复登记/摘牌，不自动续期。
+    DeclaredUnit("待审", "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#t1:dict:triggers_nl", "bot.meme_library",
+                 "表情册审批面的帮助册镜像位（双向门方向 1 的落点），真身是 meme_library 审批正则；紧急信息侧 aliases 与 alias:triggers_nl 两处属另一能力词表，不作同源抵销"),
 )
 
 

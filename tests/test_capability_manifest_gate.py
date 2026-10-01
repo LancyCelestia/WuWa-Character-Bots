@@ -8,9 +8,12 @@
  ②执行体可解析（handler_ref 的 `路径#符号` 真存在该符号）
  ②c 镜像一致（S90 补：册内 implementation_ref 与中央 handler_ref 双向逐字相等；
     中央非空而册空须落 IMPL_REF_UNDECLARED_ROSTER。只比字符串、不重算可解析性＝不是腿②第二把尺）
- ②d 执行体行号（S178 补，闭合目标 1 原句「真身路径＋行号」的 A2 半落项）：册内 implementation_line
-    必须等于对 implementation_ref 锚点的 AST 现算行，且行号处符号名匹配——不符即红（防漂移假绿）。
-    与腿②/②c 三向不重叠：可解析性 / 镜像等值性 / 行号活性各一把
+ ②d 执行体符号名锚（S178 立，47 号席改形＝诚实路径①「按符号名锚定」，同 outbound_registry 坐标册
+    40/49「仅注记不作坐标」先例）：册内 implementation_ref 的 `#符号` 首段必须能在实现件 AST 里
+    按符号名解析定位、且现算行处含符号名——死锚即红（防漂移假绿的另一半）。册内
+    implementation_line 值**降级为派生附注**（AST 现算的当时值，判据不读它）：行号漂移不再是
+    常驻假红源，他席在飞件改一行不再逼全册回头刷数字（规则 10：会漂移的计数不手抄）。
+    与腿②/②c 三向不重叠：可解析性 / 镜像等值性 / 锚点活性（符号名）各一把
  ③直呼点唯一（已申报能力的执行体符号在 plugins/** 的直呼点数 ≤1，读 S01 普查件现算）
  ⑧直呼点在册（S130 补，CM-P-35-R 裁定 A）：册内 direct_callsites 必须是普查 roster 的
     去行号投影且**双向**等值——漏申报／多申报／零处未点名／量具失明四本账分开红
@@ -119,7 +122,14 @@ from plugins.bot_unified_runtime.runtime.capability_protocols import (
 #: 在册但 `handler_ref` 为空的枚数（=「在册必有执行面」欠账）。**上限，只准降。**
 #: 现算 62（2026-09-24T00:19:08Z）；旧值 0 是主代理凭记忆填的 ⇒ 当场被自己的门打红
 #: （"预填达标值"现行犯，已改现算，见 F 册）。首届核账 2026-09-23T19:40:24Z。
-EXECUTION_SURFACE_BASELINE = 62
+#: 现算 64（席 S-MANIFEST-RATCHET 复录 2026-09-29T01:57+08，尺不变＝`measure_execution_surface()`）。
+#: +2 逐枚点名＝**`capability.consent`、`capability.host_state`**（两枚 interface 侧描述符注册进
+#: 唯一在册表时 `handler_ref` 留空；其 `bot.*` 兄弟两枚有 `base_router#consent_match` /
+#: `#host_state_match` 执行体，故不进本账）⇒ 同意卡门换代（台账 #63）与休眠清扫+人话（台账 #64）
+#: 两波各留一枚执行面欠账。⚠ **这不是把门放宽**：上限只跟随现算（零余量锁 `test_ratchet_baselines_
+#: equal_live_measurement` 逼基线==现算），涨的两格要由 #63/#64 owner 席补执行体后**降回来**；
+#: HEAD 副本（`git archive HEAD`→同一把尺实跑）复算亦 64 ⇒ 属已入库件，非他席在飞件。
+EXECUTION_SURFACE_BASELINE = 64
 
 #: 已申报、普查看得见、现算 state≠wired 的枚数。**上限，只准降（接真一枚降一枚）。**
 #: 三次核账（同一把尺 `measure_declared_unwired`，并发窗内名册被 S67 在途批推着动过两回）：
@@ -177,7 +187,16 @@ PLACEHOLDER_BASELINE = 0
 #: `media.tts.autodub_transform`（注册 descriptor+handler，`capability_protocols.py:1939`）
 #: ⇒ 在册 120→121，本地板同批改大到现算 121。尺：`registered_capability_ids()` 现算
 #: （命令＝`python -c "... registered_capability_ids ..."` 打印 121），非缩面换绿。
-REGISTERED_FLOOR = 121
+#: 席 S-MANIFEST-RATCHET 合法增长（现算 2026-09-29T01:57+08）：121→**125**，四枚逐点名＝
+#: `bot.consent`／`capability.consent`（同意卡门换代，台账 #63）＋ `bot.host_state`／
+#: `capability.host_state`（休眠清扫+人话，台账 #64）；每波各两枚＝route 侧（handler_ref
+#: `base_router#consent_match`/`#host_state_match`，受门 feature `bot.plugin.consent`/
+#: `bot.plugin.host_state`）+ interface 侧（handler_ref 空，⇒ 同批顶 EXECUTION_SURFACE 两格）。
+#: 归因法＝拿 `.superpowers/sdd/2026-09-24-central-dispatch/probes/s547-census.json` 的
+#: `buckets`（WIRED28∪GENERIC10∪NOT_WIRED83＝121 枚并集）与现算 125 枚逐枚作差：**多这四枚、
+#: 零缺席**；HEAD 副本（`git archive HEAD`）复算亦 125 ⇒ 已入库件，非他席在飞件。
+#: 地板只准升，涨由名册合法增长驱动（同批 UNCOVERED_CEILING 101→105 由这四枚未进真身册驱动）。
+REGISTERED_FLOOR = 125
 
 #: 腿③b「已申报」侧的扫描面分母（＝本册申报枚数，由循环体自己数）。**地板，只准升。**
 #: 现算 13（2026-09-24T00:19:08Z 首届）。防"把待扫集合缩成手挑子集 ⇒ 未接真数看着变少"这一手。
@@ -196,7 +215,16 @@ DECLARED_SCAN_FLOOR = 20
 #: 被普查看见 ⇒ universe 99→100（同刻 counts.declared 51→52 同涨一枚，同因；
 #: S86/S95 各自独立observed 同一 +1 并标"他席在飞"，本行把它归因落账）。
 #: 复算命令＝`python scripts/central_seam_census.py --json` → `.counts.universe`。
-ROSTER_SCAN_FLOOR = 100
+#: 席 S-MANIFEST-RATCHET 合法增长（现算 2026-09-29T01:57+08）：100→**104**，四枚逐点名＝
+#: ①`bot.consent` ②`bot.host_state`（与 REGISTERED_FLOOR 同源两波 #63/#64，route+interface
+#: 双形各被普查看见）③`bot.outbound_gate`（出站闸 issue 上报点 `__init__.py:3970`，commit
+#: `4151c4f` 2026-09-27 QG9）——以上三枚 **HEAD 副本复算=103 ⇒ 已入库件**；
+#: ④`creation.reserved_health`＝**⚠ 他席在飞件**：根 `__init__.py`（工作树 mtime
+#: 2026-09-28T23:44:54，未提交）新落 `_push_probe_issue(capability_id="creation.reserved_health")`
+#: 落款点 ⇒ HEAD 103→现算 104。**照实计入真值不摘**（先例＝`test_config_key_registration_ledger.py`
+#: 的 `CORPUS_FLOOR_BASELINE` 上方注：在飞件把地板推着走时按现算跟随并点名来源，不等他们入库）。
+#: 本席实跑读数＝universe 104 / declared 54 / states wired45·generic1·offseam0·none58。
+ROSTER_SCAN_FLOOR = 104
 
 #: 七维「值完整性」的**未点名空位总数**（S242R 立，防第二种空挂＝有腿、值全空）。**上限，只准降。**
 #: 现算 0（2026-09-25S242R：本册 20 枚对每一枚被执法内容维都是"要么有值、要么显式点名缺位"）。
@@ -286,10 +314,12 @@ def _exec_body_anchor_line(ref: str) -> tuple[bool, str, int, Path | None]:
 
 
 def _anchor_name_at_line(path: Path | None, line: int, anchor: str) -> bool:
-    """现算行号那一行源码里是否真出现锚点名（"行号处符号名匹配"的独立一腿）。
+    """AST 现算行那一行源码里是否真出现锚点名（尺校准腿，非册申报值的判据）。
 
     AST 的 `FunctionDef.lineno` 自 py3.8 起指到 `def`/`class` 关键字行（装饰器不吞行号），
-    故该行理应含锚点名；这一腿拦的是"行号被填到别处、恰与某符号同名混淆"的假绿形态。
+    故现算行理应含锚点名；这一腿拦的是量具自身失明——`_exec_body_anchor_line` 把锚定
+    投到非该符号的行（同名混淆/解析错位）时，判据不跟着假绿。47 号席改形后本尺只校准
+    **现算行**，不再比对册内申报行号（申报值是附注，判据不读，见腿②d 头注）。
     """
     if path is None or line <= 0:
         return False
@@ -384,13 +414,35 @@ def _implementation_ref_consistency(
     return mismatch, unrostered
 
 
-# ============================ S178 执行体「路径＋行号」维度的现算尺与反漂移假绿腿
+# ============================ S178 执行体「路径＋符号名锚」维度的现算尺与反漂移假绿腿（47 号席改形）
 def declared_implementation_lines(
     facets: Mapping[str, cm.CapabilityFacets] | None = None,
 ) -> dict[str, tuple[str, int]]:
-    """本册每一枚 → `(implementation_ref, implementation_line)`（缺省读真册，注毒可传合成面）。"""
+    """本册每一枚 → `(implementation_ref, implementation_line)`（缺省读真册，注毒可传合成面）。
+
+    ⚠ 第二元（申报行号）自 47 号席起**只是附注读数**：判据不比对它（腿②d 改按符号名锚定），
+    保留在元组里是为了注毒打靶与复锚工具能逐枚取数。行号的权威形态＝`derived_implementation_lines`。
+    """
     source = cm.FACETS if facets is None else facets
     return {cid: (row.implementation_ref, int(row.implementation_line)) for cid, row in source.items()}
+
+
+def derived_implementation_lines(
+    facets: Mapping[str, cm.CapabilityFacets] | None = None,
+    lookup=_exec_body_anchor_line,
+) -> dict[str, int]:
+    """派生式核验的取数口：逐枚**从实现件真身 AST 现算**符号锚行号（有 ref 的枚）。
+
+    这才是行号的唯一权威来源（册内附注值是它某一刻的快照，非判据、非真身）；
+    复锚工具/席位报告要「禁手工计数」地刷新附注，就从这里取数。不可定位的锚记 0——
+    0 不是「没数」，是「死锚」，由腿②d 的 problems 点名，绝不静默。
+    """
+    source = cm.FACETS if facets is None else facets
+    return {
+        cid: lookup(row.implementation_ref)[2]
+        for cid, row in source.items()
+        if row.implementation_ref
+    }
 
 
 def implementation_line_problems(
@@ -398,15 +450,14 @@ def implementation_line_problems(
     lookup=_exec_body_anchor_line,
     name_at_line=_anchor_name_at_line,
 ) -> list[str]:
-    """纯谓词：执行体「真身路径＋行号」两件套逐枚现算核对（防漂移假绿，S178 腿②d）。
+    """纯谓词：执行体「真身路径＋符号名锚」逐枚 AST 现算核对（S178 腿②d，47 号席诚实路径①改形）。
 
-    每枚按 `implementation_ref` 是否存在分两支，四种"不匹配即红"各点名：
-      · ref 为空但行号非零 —— 没执行体却凭空填了行号；
-      · ref 非空但不可解析 —— 路径/符号已失效，行号无从谈起（与腿②同尺，不另判）；
-      · ref 可解析但行号 ≤0 —— 有执行体却不申报行号（把"没填"当"没有"）；
-      · 声明行 ≠ 现算行 —— 符号被编辑搬走、册没回头（本维存在的理由：旧腿②只判"名在不在文件里"，
-        符号搬家也绿；补了行号，漂移当场可见）；
-      · 行号处符号名 ≠ 锚点 —— 行号落在别处、恰好数字对但非该符号（假绿）。
+    诚实路径①（按符号名锚定，同 outbound_registry 坐标册先例）：申报行号已降级为**派生附注**，
+    本谓词**不比对申报行与现算行**——行号随实现件每次编辑漂移，比对它只会在多席共享树里
+    制造「在飞席改一行、全册回头刷数字」的常驻假红。以下三型才红——
+      · ref 为空但行号非零 —— 没执行体却在附注上凭空给了数（形状错，防"无锚却有号"）；
+      · ref 非空但锚点符号名不可解析 —— 符号被改名/搬走/路径失效（死锚，本维的牙）；
+      · AST 现算行处不含锚点名 —— 尺校准腿（located 落点不是该符号＝同名混淆，判据不跟着假绿）。
     `lookup`/`name_at_line` 只是注毒注入缝（活账走缺省真尺）。
     """
     problems: list[str] = []
@@ -417,15 +468,10 @@ def implementation_line_problems(
             continue
         resolves, anchor, located, path = lookup(ref)
         if not resolves:
-            problems.append(f"{cid} 执行体路径/符号不可解析（{ref!r}）——行号无从谈起")
-            continue
-        if line <= 0:
-            problems.append(f"{cid} 有执行体 {ref!r} 却未申报行号（0＝留空当没有）")
-        elif line != located:
+            problems.append(f"{cid} 执行体符号锚不可解析（{ref!r}）——改名/搬家/路径死，行号无从谈起")
+        elif not name_at_line(path, located, anchor):
             problems.append(
-                f"{cid} 声明行 {line} ≠ 现算行 {located}（符号漂移、册没回头＝防漂移假绿该抓的那一手）")
-        elif not name_at_line(path, line, anchor):
-            problems.append(f"{cid} 行 {line} 处符号名不含锚点 {anchor!r}（行号落在别处＝假绿）")
+                f"{cid} AST 现算行 {located} 处符号名不含锚点 {anchor!r}（尺校准腿红：located 落点非该符号）")
     return problems
 
 
@@ -777,31 +823,46 @@ def test_leg2c_roster_rows_are_real_absences() -> None:
     assert not bad, "IMPL_REF_UNDECLARED_ROSTER 与实况不符：" + "；".join(bad)
 
 
-def test_leg2d_execution_body_line_matches_ast() -> None:
-    """②d 执行体「路径＋行号」两件套（S178 补，闭合目标 1 原句的 A2 半落项）：行号现算派生、防漂移假绿。
+def test_leg2d_execution_body_symbol_anchor_matches_ast() -> None:
+    """②d 执行体「路径＋符号名锚」（S178 立，47 号席诚实路径①改形）：锚活性是判据，行号只是附注。
 
-    与腿②/腿②c 三向不重叠：腿②问"中央指针解不解得开"（可解析性）、腿②c问"册镜像跟没跟中央走偏"
-    （等值性）、本腿问"册申报的行号，是否就是实现件里那个符号此刻的定义行、且该行确实写着该符号"
-    （行号活性——旧腿②拿代理指标当真：符号名在文件里存在就绿，搬家也不管）。
+    派生式核验＝每次跑都从实现件真身 AST 现算（`derived_implementation_lines` 是本腿的取数口，
+    复锚工具刷新册内附注也从这里取，禁手工计数）。与腿②/腿②c 三向不重叠：腿②问"中央指针解不
+    解得开"（可解析性）、腿②c 问"册镜像跟没跟中央走偏"（等值性）、本腿问"册申报的 `#符号` 锚
+    此刻还在不在实现件里、按名定位的行是不是该符号"（锚点活性——旧形比对申报行号＝在飞席改一行
+    全册假红，行号随每次编辑漂移本就不该当判据，见台账 #50 坐标顶漂同型病）。
     扫描面自证：被核枚数必须逐名等于本册申报枚数（缩面不是合规）。
     """
     declared = declared_implementation_lines()
     assert set(declared) == set(cm.FACETS), "腿②d 的扫描面 ≠ 本册申报面（判据被缩）"
     problems = implementation_line_problems(declared)
-    assert not problems, "执行体行号与 AST 现算不符（漂移假绿或漏报）：" + "；".join(problems)
-    # 反"真空"自证：本册每枚有 ref 的行都必须带正行号（否则全 0 也能骗过等值）
+    assert not problems, "执行体符号锚与 AST 现算不符（死锚或尺失明）：" + "；".join(problems)
+    # 反"真空"自证：凡有 ref 的枚必须现算真定位得出来（死锚已被 problems 抓；这里再钉一次
+    # "整册锚集全不可解析也能骗过等值"的真空形态——判据读的是现算锚，不是册内申报行号附注）。
     with_ref = [cid for cid, (ref, _line) in declared.items() if ref]
-    assert with_ref, "本册无一带 implementation_ref，行号腿失去意义"
-    assert all(declared[cid][1] > 0 for cid in with_ref), (
-        "有执行体的行仍申报行号 0（把'没填'读成'没有'）："
-        + "、".join(cid for cid in with_ref if declared[cid][1] <= 0))
+    assert with_ref, "本册无一带 implementation_ref，腿②d 失去意义"
+    derived = derived_implementation_lines()
+    assert set(derived) == set(with_ref), "派生取数口与申报面不等集（量具缩面）"
+    assert all(located > 0 for located in derived.values()), (
+        "有执行体的枚锚点定位不出（死锚却被读成绿）："
+        + "、".join(cid for cid, located in derived.items() if located <= 0))
 
 
 def test_leg3_single_direct_callsite() -> None:
-    """③直呼点唯一：已申报能力不得有缝外直呼（缝外直呼＝绕过中央缝的第二条路）。"""
+    """③直呼点唯一：已申报能力不得有缝外直呼（缝外直呼＝绕过中央缝的第二条路）。
+
+    读的是尺自己的判据口 `offseam_bypass_sites`（＝缝外原桶减掉「把成品交给编排缝」的
+    喂缝点），不是未过滤的 `offseam_sites`：`__init__.py:6299` 那种把 builder 成品直接
+    作 `orchestrated_command` pos-1 实参交出去的点位，本就不是第二通路（三态与 violations
+    也不把它算成债，读原桶等于让同一把尺在三处给出两种答案）。
+    ⚠ 这不是削判据：喂缝标签不许用来销债由
+    `tests/test_central_seam_census_offseam_tag_consistency.py` 第③腿反证（每个 seam-feed
+    点位必须被 seam/invoke/generic 桶按 file:line 独立证实），`offseam_sites` 也仍全量在册
+    供腿⑧镜像与 s95 反藏点恒等式消费。判据真身＝`scripts/central_seam_census.py::is_offseam_bypass`。
+    """
     dupes = []
     for cid in sorted(cm.declared_ids()):
-        sites = _roster_row(cid).get("offseam_sites") or []
+        sites = _roster_row(cid).get("offseam_bypass_sites") or []
         if sites:
             where = "、".join(f"{s.get('file')}:{s.get('line')}" for s in list(sites)[:3])
             dupes.append(f"{cid}（{len(sites)} 处：{where}）")
@@ -1301,48 +1362,68 @@ def test_poison_impl_ref_unidirectional_weakening_is_caught_by_reverse_leg() -> 
         "单向化也抓到 victim＝样本失效或真身可被单向替代（须重推样本，别放宽判据）")
 
 
-# ---------------------------------------------------- 腿②d 注毒自证（行号维三发，各杀一手）
-def test_poison_execution_line_real_row_drift_is_red() -> None:
-    """注毒②d-1（真数据漂移）：把某枚真执行体的申报行 +37（符号被搬、册没回头）⇒ 必红。
+# ---------------------------------------------------- 腿②d 注毒自证（47 号席改形：锚有牙＋行号不咬，三发各杀一手）
+def test_poison_execution_line_anchor_dead_is_red() -> None:
+    """注毒②d-1（死锚）：把某枚真 ref 的锚点符号名整段换成不存在的名字 ⇒ 必被抓（本腿咬的是改名/搬家）。
 
-    这正是补行号的目的：旧腿②只判符号名在不在文件里，搬家照样绿；本腿拿真 ref 现算行比申报行，
-    漂一枚当场抓——不靠合成文件、直接对盘上真身验牙。
+    旧形拿"申报行≠现算行"当防漂移假绿的牙；改形后牙换成锚活性——符号还在就绿、没了就红，
+    与行号无关。真数据下 problems 必空是自证前提。
     """
     live = declared_implementation_lines()
-    assert implementation_line_problems(live) == [], f"真数据行号腿已红，注毒失去前提：{live}"
+    assert implementation_line_problems(live) == [], f"真数据锚腿已红，注毒失去前提：{live}"
     victims = sorted(cid for cid, (ref, _line) in live.items() if ref)
     assert victims, "本册无一带 implementation_ref 的行，注毒无从下手"
     victim = victims[0]
     ref, line = live[victim]
+    path_part, _, _symbol = ref.partition("#")
+    tampered = dict(live)
+    tampered[victim] = (f"{path_part}#NoSuchSymbol_{victim.replace('.', '_')}", line)  # 锚点被改名＝死锚
+    probs = implementation_line_problems(tampered)
+    assert any(victim in p and "锚不可解析" in p for p in probs), (
+        f"死锚未被抓到＝锚活性无牙：{probs}")
+
+
+def test_poison_execution_line_annotation_drift_is_tolerated() -> None:
+    """注毒②d-2（行号独立性，防回潮哨）：把某枚申报附注行号 +37 ⇒ **不许**红——证明判据不读行号。
+
+    这一发与旧形注毒②d-1（漂移 +37 必红）正好反向：判据若被改回比对申报行，本发当场红。
+    行号在共享多席树里随在飞件每次编辑漂移，比对它＝常驻假红源（本波复锚的病根）；
+    诚实路径①之后它只是附注，随便拧判据都应沉默。
+    """
+    live = declared_implementation_lines()
+    assert implementation_line_problems(live) == [], f"真数据锚腿已红，注毒失去前提：{live}"
+    victims = sorted(cid for cid, (ref, _line) in live.items() if ref)
+    victim = victims[0]
+    ref, line = live[victim]
     tampered = dict(live)
     tampered[victim] = (ref, line + 37)
-    probs = implementation_line_problems(tampered)
-    assert any(victim in p and "声明行" in p for p in probs), (
-        f"漂移 +37 未被抓到＝防漂移假绿无牙：{probs}")
+    assert implementation_line_problems(tampered) == [], (
+        "附注行号被拧歪竟红了＝判据仍读行号（回潮成旧形，本发就是反潮哨）")
 
 
-def test_poison_execution_line_missing_or_zero_is_red(tmp_path: Path) -> None:
-    """注毒②d-2（漏报/合成）：有执行体却申报行号 0 ⇒ 抓；同件申报正确行号 ⇒ 放（证明抓的是"没填"）。"""
+def test_poison_execution_line_zero_or_absent_annotation_is_shape_only(tmp_path: Path) -> None:
+    """注毒②d-3（附注边界）：有 ref 申报行 0/任意值 ⇒ 不再索要；**无** ref 却给行号 ⇒ 仍红（形状腿保牙）。"""
     src = tmp_path / "impl_missing.py"
     src.write_text("def alpha():\n    return 1\n\n\ndef beta():\n    return 2\n", encoding="utf-8")
     ref = f"{src}#beta"  # 绝对路径，_exec_body_anchor_line 直用
     ok, anchor, located, _path = _exec_body_anchor_line(ref)
     assert ok and anchor == "beta" and located == 5, f"合成样本自身定位失准：{ok},{anchor},{located}"
-    assert implementation_line_problems({"x": (ref, 5)}) == [], "正确行号被误伤（过拦）"
-    assert any("未申报行号" in p for p in implementation_line_problems({"x": (ref, 0)})), (
-        "有执行体却填 0 未被抓到＝把'没填'读成'没有'")
-    assert any("声明行" in p for p in implementation_line_problems({"x": (ref, 1)})), "改歪行号未被抓到"
+    assert implementation_line_problems({"x": (ref, 0)}) == [], (
+        "附注行号 0 被误伤——改形后行号是附注，判据不该再把它当申报义务")
+    assert implementation_line_problems({"x": (ref, 999)}) == [], "附注被读成判据（过拦）"
+    assert any("不该有锚" in p for p in implementation_line_problems({"x": ("", 5)})), (
+        "'无执行体却在附注上给数'的形状红丢了")
 
 
-def test_poison_execution_line_symbol_name_mismatch_is_red(tmp_path: Path) -> None:
-    """注毒②d-3（行号处符号名）：数字对得上、但那行不含锚点名 ⇒ 必红（注入假名尺证这一腿真在跑）。"""
+def test_anchor_name_at_line_calibrates_ast_locator(tmp_path: Path) -> None:
+    """尺校准腿注毒：AST 现算行处不含锚点名 ⇒ 必红（注入假名尺证这一腿真在跑，非装饰分支）。"""
     src = tmp_path / "impl_name.py"
     src.write_text("def alpha():\n    return 1\n\n\ndef beta():\n    return 2\n", encoding="utf-8")
     ref = f"{src}#beta"
     assert implementation_line_problems({"x": (ref, 5)}) == [], "正例被误伤"
     caught = implementation_line_problems(
         {"x": (ref, 5)}, name_at_line=lambda path, line, anchor: False)
-    assert any("符号名不含锚点" in c for c in caught), f"行号处符号名腿无牙（可能是装饰性分支）：{caught}"
+    assert any("尺校准腿" in c for c in caught), f"行号处符号名校准腿无牙（可能是装饰性分支）：{caught}"
 
 
 # ==================================================================== 腿㉓ arms 维（S190）
@@ -1900,7 +1981,7 @@ def test_poison_board_leg_is_not_merely_a_nonempty_check() -> None:
 # 与本文件既有各腿 + 防回潮锁的分工（各管一条正交轴，谁都不替谁数存在性）：
 #   · 防回潮锁 `test_manifest_migration_parity.py::test_every_manifest_dimension_has_a_leg_or_declared_gap`
 #     问「这一维**有没有一把执法腿**」——只保证有门碰它，不管门碰的是不是"值有没有填"；
-#   · 各内容维腿（②c/②d/④/⑥/⑧/⑨/㉔）问「填进去的**值对不对**」——可解析、镜像等值、行号活性、
+#   · 各内容维腿（②c/②d/④/⑥/⑧/⑨/㉔）问「填进去的**值对不对**」——可解析、镜像等值、锚点活性、
 #     指针有效、票根在、投影双向等值、板块合法且被归属……
 #     ⚠ 但它们全都**容忍空值**：board 空→腿㉔跳过；callsites 空→除非未落零值名册否则腿⑧不管；
 #     tags 空→腿⑥只盯 native-* 票根、根本不索要非空。于是"这一维有腿、却被集体留空"没人红。
@@ -1922,7 +2003,8 @@ def test_poison_board_leg_is_not_merely_a_nonempty_check() -> None:
 DIMENSION_VALUE_RULES: dict[str, str] = {
     "capability_id": "行有非空 capability_id（本册字典键即身份）",
     "implementation_ref": "implementation_ref 非空，或 cid∈IMPL_REF_UNDECLARED_ROSTER（显式判无执行体）",
-    "implementation_line": "有 ref ⇒ 行号>0；无 ref ⇒ cid∈IMPL_REF_UNDECLARED_ROSTER（无锚可点）",
+    "implementation_line": "有 ref ⇒ ref 携非空符号名锚（`#符号` 首段）；行号数值是派生附注非判据（47 号席改形）；"
+                           "无 ref ⇒ cid∈IMPL_REF_UNDECLARED_ROSTER（无锚可点）",
     "direct_callsites": "直呼点非空，或 cid∈DIRECT_CALLSITES_ZERO_ROSTER（现算零处已点名）",
     "config_keys": "配置键非空，或 cid∈CONFIG_KEYS_ZERO_ROSTER（不读键已点名）",
     "trigger_source": "trigger_source 非空，或 该枚无命令类入口形（结构不适用，与腿④同口径）",
@@ -1957,7 +2039,9 @@ def _is_value_filled(dim: str, cid: str, row: cm.CapabilityFacets) -> bool:
         return bool(row.implementation_ref) or cid in cm.IMPL_REF_UNDECLARED_ROSTER
     if dim == "implementation_line":
         if row.implementation_ref:
-            return int(row.implementation_line) > 0
+            # 47 号席改形：核"锚在不在"（符号名段非空，形状口径），不核附注数值——
+            # 锚解不解得开的活性判据在腿②d（AST 现算），这里只数"这一格填没填"。
+            return row.implementation_ref.partition("#")[2].split(".")[0].strip() != ""
         return cid in cm.IMPL_REF_UNDECLARED_ROSTER
     if dim == "direct_callsites":
         return bool(row.direct_callsites) or cid in cm.DIRECT_CALLSITES_ZERO_ROSTER
@@ -2649,9 +2733,27 @@ def effect_precondition_problems(
 #: 措辞纪律：每行只说"按 `config.py` 缺省"，**不得**说"现网一定关着"——那要读 `.env`/运行时覆盖，
 #: 不属本腿的合法口（DISPATCH-PROTOCOL 第八节补一）。
 #: 现算 4 枚（2026-09-25 S290C，尺＝本件 `live_effect_preconditions()`；复跑见模块 docstring「复跑」段）。
+#: 现算 5 枚（席 S-MANIFEST-RATCHET 补录 2026-09-29T01:58+08）：新增 `bot.reminder` 一行＝
+#: **补披露不是降门**。成因＝commit `6b57654`（2026-09-27 04:49「feat(schedule): 第 20 项落地——
+#: 日程板能力+代答总闸」）把 `bot_schedule_enabled` / `bot_schedule_status_reply_enabled` /
+#: `bot_schedule_natural_capture_enabled` 三枚缺省 False 的总闸并进本册 `bot.reminder` 的
+#: `config_keys`，同批没回头加披露 ⇒ ㉗ `[PD-MISSING]` 自 09-27 起挂红两天（HEAD 副本复算同红，
+#: 非他席在飞件；普查 state=wired 亦 HEAD/LIVE 两读一致）。
 EFFECT_PRECONDITION_DISCLOSURES: dict[
     str, tuple[tuple[str, ...], tuple[str, ...], str]
 ] = {
+    # 补录行（同上）：两把通电尺都命中——`armed`＝本册三臂（command/natural_language/active_push），
+    # `census-wired`＝普查现算直呼点 `__init__.py#_run_simple_capability`（state=wired）。
+    "bot.reminder": (
+        (POWER_SCALE_ARMED, POWER_SCALE_CENSUS),
+        ("bot_schedule_enabled", "bot_schedule_natural_capture_enabled",
+         "bot_schedule_status_reply_enabled"),
+        ("提醒车道在册且两把通电尺都命中（三臂已声明、普查 state=wired）；但同批并入的日程侧三枚"
+         "总闸 bot_schedule_enabled / bot_schedule_natural_capture_enabled / "
+         "bot_schedule_status_reply_enabled 在 config.py 缺省 False ⇒ 按代码缺省「日程板、"
+         "自然语言捕获、代答总闸」这一路今天不可达（现网此刻开没开不属本腿判据——那要读 `.env`，"
+         "DISPATCH-PROTOCOL 第八节补一禁读），禁据「已通电」叙述为「日程代答已生效」。"),
+    ),
     # 唯一调用点在控制面路由件里；控制面自身的门 `bot_control_plane_enabled`（config.py 缺省 False）
     # **不在**本枚申报的 config_keys 里 ⇒ 那是 §4 候选 C3 的申报面欠账，本行只能披露看得见的那一枚。
     "creation.tts.synthesize": (
@@ -2775,7 +2877,16 @@ def test_poison_effect_precondition_stale_or_wrong_keys_is_red() -> None:
     live = live_effect_preconditions()
     assert live, "注毒前提塌：现算零命中"
     base = {cid: row for cid, row in EFFECT_PRECONDITION_DISCLOSURES.items()}
-    victim = min(live)
+    # 样本按**这一发毒的前提**挑，不按 `min(live)` 挑（席 S-MANIFEST-RATCHET 2026-09-29）：
+    # 诚实补录 `bot.reminder`（两把尺齐 ∧ 三枚缺省键）之后，`min(live)` 正好落到它头上 ⇒
+    # ㉗-3b「把没通电的尺报成通电」对它是**空跑**（它两把尺本来就都通电），㉗-3a 的旧前提
+    # 「恰一枚缺省键」也当场不成立。这不是放宽判据，是台架的取样假设被真账推翻了——
+    # 空跑的毒比没有毒更坏（本件 §㉗-3a 首版就被自己那一发空跑咬过，教训照抄）：
+    # 挑完样本必须逐条**验前提**，验不到就红，不许 `or` 兜回原值。
+    victim = min((cid for cid in sorted(live) if live[cid][0] == (POWER_SCALE_CENSUS,)), default="")
+    assert victim, (
+        f"㉗ 样本空间塌：现算里没有「只命中 census 一把尺」的枚 ⇒ ㉗-3b 尺身份吹大那发毒"
+        f"会空跑，先重推台架别改判据：{live}")
     scales, keys = live[victim]
     assert keys, "注毒样本无缺省关键可改"
 
@@ -2787,12 +2898,12 @@ def test_poison_effect_precondition_stale_or_wrong_keys_is_red() -> None:
     assert not m and not sh and not v and any(ghost in row for row in s), (f"㉗-2 归因不唯一：{m}{s}{sh}{v}")
 
     # ㉗-3a 少列键（披露比现算窄，这里直接抹成空）⇒ 只有 [PD-SHAPE] 响。
-    #     ⚠ 首版这里写的是 `keys0[:-1] or keys0`——每枚在册行的缺省关键现算都只有 1 枚，
+    #     ⚠ 首版这里写的是 `keys0[:-1] or keys0`——当时每枚在册行的缺省关键现算都只有 1 枚，
     #     于是 `keys0[:-1]` 恒为 `()`、`or` 又把空值兜回原值 ⇒ **整发毒变成空跑**（本席实测抓到自己这一发）。
     #     教训：注毒台落笔前先问"这发毒在今天的现算下真的改变了输入吗"，别用 `or` 兜空。
     narrowed = dict(base)
     scales0, keys0, note0 = narrowed[victim]
-    assert len(keys0) == 1, f"注毒样本前提：{victim} 的缺省关键现算应恰 1 枚，实为 {keys0}"
+    assert keys0, f"注毒样本前提：{victim} 现算无缺省关键，抹成空＝空跑"
     narrowed[victim] = (scales0, (), note0)
     m, s, sh, v = effect_precondition_problems(live, narrowed)
     assert not m and not s and not v and any(victim in row for row in sh), (
@@ -2804,6 +2915,21 @@ def test_poison_effect_precondition_stale_or_wrong_keys_is_red() -> None:
     m, s, sh, v = effect_precondition_problems(live, inflated)
     assert not m and not s and not v and any(victim in row for row in sh), (
         f"㉗-3b 归因不唯一（把没通电的尺报成通电没被抓）：{m}{s}{sh}{v}")
+
+    # ㉗-3c 少列**一枚**键（真子集，不是抹空）⇒ 只有 [PD-SHAPE] 响。
+    #     这一形旧台架表达不了：2026-09-29 之前每枚在册行的缺省关键恰 1 枚，"少列一枚"＝"抹成空"，
+    #     与 ㉗-3a 同形，于是 docstring 里那句"含少列一枚键"一直是**没有对应用毒的散文**。
+    #     `bot.reminder` 补录后有三枚（日程侧三闸）⇒ 第一次能真注出"少一枚"，补这一发把它变成牙。
+    multi = min((cid for cid in sorted(live) if len(live[cid][1]) >= 2), default="")
+    assert multi and multi in base, (
+        f"㉗ 样本空间塌：现算里没有「≥2 枚缺省关键且已披露」的枚 ⇒ 少列一形无从自证：{live}")
+    dropped = dict(base)
+    m_scales, m_keys, m_note = dropped[multi]
+    dropped[multi] = (m_scales, m_keys[1:], m_note)
+    assert dropped[multi][1] != m_keys, "少列一枚却没真的改窄＝空跑"
+    m, s, sh, v = effect_precondition_problems(live, dropped)
+    assert not m and not s and not v and any(multi in row for row in sh), (
+        f"㉗-3c 归因不唯一（披露比现算少一枚键没被抓）：{m}{s}{sh}{v}")
 
     # ㉗-4 披露语换成一句不含任何键的漂亮话 ⇒ 只有 [PD-VAPORNOTE] 响。
     vaporous = dict(base)

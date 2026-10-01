@@ -50,7 +50,14 @@ def _runtime_stub(**config_kwargs) -> e2e.E2eRuntime:
         bot_affinity_enabled=False,
         **config_kwargs,
     )
-    settings = SimpleNamespace(get=lambda key, cfg: None)
+    # P-G3 第二波（2026-09-29）把验收面的合并转发署名统一到唯一读法
+    # e2e._bot_self_name → persona_profile.current_bot_nickname(active_persona_id(
+    # override_provider=runtime.runtime_settings.get_persona_override))。真身方法＝
+    # runtime/settings.py 的 ``get_persona_override(self) -> str``，调用面是**零参**
+    # （active_persona_id 的 override_provider: Callable[[], object]）。替身要跟着长：
+    # 离线不表态切换态 → 返回空串，回落 config 主人格档现读，与台账 #60★
+    # 「禁读 get_login_info 认自身名」同一口径（生产侧本来就没读它）。
+    settings = SimpleNamespace(get=lambda key, cfg: None, get_persona_override=lambda: "")
     return e2e.E2eRuntime(
         config=config,
         runtime_settings=settings,

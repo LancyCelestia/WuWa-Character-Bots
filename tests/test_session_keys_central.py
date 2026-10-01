@@ -33,11 +33,13 @@ from plugins.bot_unified_runtime.domains.core.session_keys import (
     UNKNOWN_SENDER,
     build_session_key,
     group_id_of_session_key,
+    group_scope_key,
     group_session_prefix,
     is_group_session_key,
     normalize_session_key,
     parse_session_key,
     private_session_key,
+    sanitize_key_segment,
 )
 
 # 真实群号/用户号样本（取自 .env 现行白名单与 AGENTS 台账实证形态）。
@@ -297,3 +299,86 @@ def test_adjacent_group_numbers_are_not_confused() -> None:
     assert short == "group_123456_"
     assert not long_key.startswith(short)
     assert parse_session_key(long_key).group_id == "1234567"
+
+
+# ---------------------------------------------------------------- 群作用域键（T-1 构造钉死，2026-09-27）
+
+
+_GROUP_SCOPE_MATRIX: list[tuple[str, str]] = [
+    # 逐成员下划线生产键 → 整群作用域键（写侧与读侧共用这一把）。
+    (build_session_key(GROUP, SENDER), f"{LEGACY_GROUP_SCHEME}{GROUP}"),
+    # 冒号形按构造即整群：幂等收拢。
+    (f"{LEGACY_GROUP_SCHEME}{GROUP}", f"{LEGACY_GROUP_SCHEME}{GROUP}"),
+    # 成员派生键同样收拢（拆键前整喂也不改变群号段判读）。
+    (f"group_{GROUP}_{SENDER}||u:1722380002", f"{LEGACY_GROUP_SCHEME}{GROUP}"),
+    # 大小写不敏感 + 两端空白先剥（与 parse 判据同源）。
+    (f"  GROUP_{GROUP}_{SENDER}  ", f"{LEGACY_GROUP_SCHEME}{GROUP}"),
+    # 非群/半截/空形态：一律 ""（调用方自行回落，绝不造无主群键）。
+    ("", ""),
+    (SENDER, ""),
+    (f"private_{SENDER}", ""),
+    (f"group_{GROUP}", ""),
+    (f"group_{GROUP}\n_x", ""),
+]
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"), _GROUP_SCOPE_MATRIX, ids=range(len(_GROUP_SCOPE_MATRIX))
+)
+def test_group_scope_key_matrix(key: str, expected: str) -> None:
+    assert group_scope_key(key) == expected
+
+
+def test_group_scope_key_is_shared_and_collision_free() -> None:
+    """同群全员收拢到同一把键；作用域键不可能等于任何逐成员生产键。"""
+    scoped_a = group_scope_key(build_session_key(GROUP, "111"))
+    scoped_b = group_scope_key(build_session_key(GROUP, "222"))
+    assert scoped_a == scoped_b == f"{LEGACY_GROUP_SCHEME}{GROUP}"
+    assert group_scope_key(scoped_a) == scoped_a  # 幂等
+    personal = {
+        build_session_key(GROUP, "111"),
+        build_session_key(GROUP, "222"),
+        build_session_key(GROUP, ""),  # unknown 发送者段的兜底键也不与群桶相撞
+        f"{build_session_key(GROUP, '111')}||u:111",
+    }
+    assert scoped_a not in personal
+    # 相邻群号不串台（下划线形 partition 只切第一个下划线，群号判读不变）。
+    assert group_scope_key(build_session_key("123456", "1")) != group_scope_key(
+        build_session_key("1234567", "1")
+    )
+    assert group_scope_key(None) == ""
+
+
+# ---------------------------------------------------------------- 键段消毒（T-2，2026-09-27）
+
+
+_SANITIZE_MATRIX: list[tuple[Any, str]] = [
+    ("1722380002", "1722380002"),          # 数字 id：清洗口径逐字节不变
+    ("  a b  ", "a b"),                    # 只 trim 两端；段内空白沿用 _clean_identifier 口径
+    ("a||u:b", "ab"),                      # 单次出现：整段删除
+    ("||u:", ""),                          # 纯分隔符 → 空段
+    ("a||u:||u:b", "ab"),                  # 连续出现：一轮全删
+    ("||u||u::", ""),                      # 删后再合成新分隔符：必须循环到不动点
+    (None, ""),
+    (0, ""),
+    ("group:900", "group:900"),            # 合法形态不受伤
+]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"), _SANITIZE_MATRIX, ids=range(len(_SANITIZE_MATRIX))
+)
+def test_sanitize_key_segment_matrix(value: Any, expected: str) -> None:
+    assert sanitize_key_segment(value, forbidden="||u:") == expected
+
+
+def test_sanitize_key_segment_empty_forbidden_is_clean_identifier() -> None:
+    """forbidden 为空 = 纯既有清洗口径（不吞字符、不造行为差）。"""
+    assert sanitize_key_segment(" a||u:b ", forbidden="") == "a||u:b"
+    assert sanitize_key_segment(None, forbidden="") == ""
+
+
+def test_sanitize_key_segment_never_yields_forbidden() -> None:
+    """不动点自反锁：消毒输出恒不含分隔符（恶意嵌套输入在构造点封死）。"""
+    for hostile in ("||u:", "a||u:b", "||u||u::", "|", "||u" * 9 + "::"):
+        assert "||u:" not in sanitize_key_segment(hostile, forbidden="||u:")

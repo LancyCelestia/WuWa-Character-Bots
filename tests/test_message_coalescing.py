@@ -63,8 +63,14 @@ def test_comma_split_fragments_are_treated_as_unfinished(text: str) -> None:
     assert looks_unfinished(text) is True
 
 
-@pytest.mark.parametrize("text", ["今天天气不错。", "你在干嘛？", "好呀！", "走不走？"])
+@pytest.mark.parametrize("text", ["你在干嘛？", "好呀！", "走不走？"])
 def test_complete_sentences_are_not_held(text: str) -> None:
+    """句末终止语气（？！）＝明确说完：不开窗。
+
+    2026-09-29 需求 1 改判：旧名册里的「今天天气不错。」这类**带句号的短句**现在
+    归入短窗轻等（一句短句一个气泡的连发场景），锁住在
+    tests/test_coalescing_sentence_completion.py；本锁继续守「明确说完零延迟」底线。
+    """
     assert looks_unfinished(text) is False
 
 
@@ -120,9 +126,14 @@ async def test_split_sentence_yields_exactly_one_replyable_turn() -> None:
 
 @pytest.mark.asyncio
 async def test_complete_sentence_returns_immediately_without_waiting() -> None:
-    """正常完整句子不得为折句多等——这是零额外延迟的硬要求。"""
+    """明确说完的句子不得为折句多等——这是零额外延迟的硬要求。
+
+    2026-09-29 改例：换用带疑问终止语气的「你在干嘛？」（明确说完、不开窗）；
+    带句号短句改走自适应短窗，其延迟上限由
+    test_coalescing_sentence_completion.py 的自适应窗用例锁住。
+    """
     batcher = MessageCoalescer(CoalescingSettings(quiet_seconds=5.0, max_hold_seconds=5.0))
-    message = _message("今天天气不错。")
+    message = _message("你在干嘛？")
 
     started = time.monotonic()
     turn = await batcher.offer(_key(message), message)

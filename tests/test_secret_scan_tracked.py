@@ -24,6 +24,17 @@
 
 ⚠ 本文件自身禁止出现任何可被该尺扫到的凭据字面量形态（前缀键一律运行时拼接，
 点名册只存 sha256[:16] 裸十六进制——它不匹配任何 F1 家族正则）。
+
+锁①的豁免面（夹具级，不是第五把锁）
+------------------------------------
+``FIXTURE_FAKE_EXEMPTIONS``：测试夹具里**由该测试自己合成的假凭据**（形态落 F1、任何服务面上
+都不存在、把它摘掉等于摘掉那条回归锁本身）一律**不进** ``F1_DEBT_ROSTER``。理由照实写：名册记的
+是「tracked 源里硬编码真凭据」这笔**欠账**，欠账总出现次数被 ``ROSTER_CEILING``（32＝建账现值）
+钉死只准降；把合成值塞进名册＝拿假债顶穿上限，唯一出路是抬上限，而抬上限＝放宽判据，本门明令禁。
+夹具不是债，就按夹具处理：**逐枚 (件, 指纹) 豁免 + 写明它是哪条断言的料**。豁免同样**绝不扩成
+「整件免检」**——同件里另一枚形态相同但值不同的凭据、或同一枚被多印，都照旧落回潮腿（两条牙见
+``test_fixture_exemption_teeth_*``）；豁免条目在今天的树上扫不到也照红（不许留幽灵预豁免未来凭据，
+与名册的 missing 腿同一条口径）。
 """
 from __future__ import annotations
 
@@ -89,6 +100,24 @@ F1_DEBT_ROSTER: dict[tuple[str, str], tuple[int, tuple[int, ...]]] = {
     ("tests/test_v21_s9_llm_api.py", "ca86684ee63d2d4d"): (1, (57,)),
 }
 
+# 夹具级豁免（**不是欠账**）：形如 (相对路径, sha256[:16]) -> (豁免枚数, 逐枚理由)。
+# 理由必须写清「它是哪条断言的料、为什么摘不得」——写不出＝它不是夹具，是真债，走还债流程。
+# 本表按 (件, 指纹) 逐枚生效：同件另一枚凭据、同一枚被多印，都照样落回潮腿（见文件头
+# 「锁①的豁免面」与 `test_fixture_exemption_teeth_*` 三条）；条目今天在树上扫不到＝幽灵预豁免，当场红。
+FIXTURE_FAKE_EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
+    ("tests/test_alert_plain_text.py", "b576db5ca548c08e"): (
+        1,
+        (
+            "2026-09-29 席 BASECFG 现算归因：该件 `test_detail_cut_leaves_no_key_head` 的「先洗后截」回归料"
+            "——padding 串与一枚 `sk-` 前缀合成键（掩码形态 `sk-********89`、len=24）拼进 `safe_summary`，"
+            "断言的是打码必须排在截断**之前**、截口不许把密钥头部留在出站文本上。值是当场硬写的假值，不存在于"
+            "任何服务面；摘掉它＝拆掉这条回归锁本身（换成别的形态就验不到同一件事）。取证：该件对 HEAD 的 diff"
+            "里这一行是**新增**（HEAD 无此串）⇒ 属他席在飞件的夹具，不是历史欠账。按名册口径它不进"
+            "「tracked 源里硬编码真凭据」那笔债 ⇒ 不进 F1_DEBT_ROSTER、不动 ROSTER_CEILING。"
+        ),
+    ),
+}
+
 # 棘轮上限 = 建账现值「总出现次数」（去脆化前 len(三元组)=32 的原语义，此处沿用计数和=32）。
 # 还债后想降：删条目或降次数即可（本锁只拦升）。
 ROSTER_CEILING = 32
@@ -115,6 +144,34 @@ def _roster_counts() -> Counter[tuple[str, str]]:
     return Counter({(p, d): c for (p, d), (c, _nav) in F1_DEBT_ROSTER.items()})
 
 
+def _exempt_counts() -> Counter[tuple[str, str]]:
+    """夹具级豁免的 (件, 指纹) -> 豁免枚数 视图（理由在此丢弃，由逐枚理由用例执法）。"""
+    return Counter({(p, d): c for (p, d), (c, _why) in FIXTURE_FAKE_EXEMPTIONS.items()})
+
+
+def _tree_after_fixture_exemption(
+    tree: Counter[tuple[str, str]],
+) -> tuple[Counter[tuple[str, str]], list[tuple[tuple[str, str], int]]]:
+    """扣掉夹具豁免后的树上多集 ＋「豁免条目今天在树上扫不到」的幽灵清单。
+
+    两件事一起返回是刻意的：豁免面必须与名册的 missing 腿同口径反查——条目一旦从树上消失
+    （他席把这条夹具摘了或改写了值），留在表里就等于给未来的凭据预发免检证，必须当场红。
+    """
+    exempt = _exempt_counts()
+    return tree - exempt, sorted((exempt - tree).items())
+
+
+def _exemption_reasons_are_written() -> list[str]:
+    """豁免面自锁：逐枚理由非空、且必须点名它属于哪条断言（写不出料=不配豁免）。"""
+    bad = []
+    for (path, digest), (count, why) in FIXTURE_FAKE_EXEMPTIONS.items():
+        if count < 1 or not path.startswith("tests/") or len(digest) != 16:
+            bad.append(f"{path}:{digest} 形态不合法（枚数<1／不在 tests/／指纹非 16 位）")
+        if not why.strip() or "`test_" not in why:
+            bad.append(f"{path}:{digest} 的理由没点名它属于哪条用例")
+    return bad
+
+
 def _debt_delta(
     tree: Counter[tuple[str, str]],
     roster: Counter[tuple[str, str]],
@@ -132,9 +189,15 @@ def test_f1_findings_are_exactly_known_debt_roster(
     full_scan: tuple[int, list[Finding]],
 ) -> None:
     """(件, 指纹) 计数双向闭合：树上任何册外/多出的 F1 = 新硬编码凭据回潮；名单里点名了
-    但树上已无 = 未摘净/幽灵条目（不许靠删册自我豁免）。行号漂移不再触发假红。"""
+    但树上已无 = 未摘净/幽灵条目（不许靠删册自我豁免）。行号漂移不再触发假红。
+    夹具级豁免（测试自己合成的假凭据）在比对前按 (件,指纹) 逐枚扣减；扣完仍多出＝照样红。"""
     _scanned, findings = full_scan
-    extra, missing = _debt_delta(_counts(findings), _roster_counts())
+    tree, stale_exemptions = _tree_after_fixture_exemption(_counts(findings))
+    assert not stale_exemptions, (
+        "夹具豁免条目点名了、今天树上却扫不到（该随夹具一起摘，不许留着当预豁免）："
+        f"{stale_exemptions}"
+    )
+    extra, missing = _debt_delta(tree, _roster_counts())
     assert not extra, (
         "git 已跟踪源出现册外/超次的 F1 硬编码凭据命中（(件,指纹) -> 多出的出现次数，全掩码）："
         f"{sorted(extra.items())}"
@@ -282,3 +345,62 @@ def test_lock1_teeth_cannot_pad_roster_with_ghost_entry() -> None:
     assert missing and missing[ghost] == 1, (
         "幽灵点名未被反查腿抓住——名单可以虚填达标值，牙断了"
     )
+
+
+# ------------------------------------------------------------------ 夹具级豁免的三条牙
+def test_fixture_exemption_entries_are_justified_and_do_not_move_the_ceiling() -> None:
+    """豁免面自锁：逐枚理由要点名它属于哪条断言；名册与上限**一字未动**（豁免不是还债通道）。"""
+    bad = _exemption_reasons_are_written()
+    assert not bad, "夹具豁免条目不合法：" + "｜".join(bad)
+    assert not (set(FIXTURE_FAKE_EXEMPTIONS) & set(F1_DEBT_ROSTER)), (
+        "同一枚 (件,指纹) 既进豁免又进欠账名册＝两本账互相补洞，先判它到底是哪一种"
+    )
+    total = sum(c for (c, _nav) in F1_DEBT_ROSTER.values())
+    assert total <= ROSTER_CEILING, "豁免面被拿去当抬上限的台阶——棘轮锁②仍按建账现值执法"
+
+
+def test_fixture_exemption_teeth_extra_copy_still_red() -> None:
+    """豁免只按枚数放行：同一枚被多印 ⇒ 超出的份数照旧落回潮腿（绝不扩成「整件免检」）。"""
+    exempt = _exempt_counts()
+    assert exempt, "豁免表为空 ⇒ 本条牙在空跑（先把该登记的夹具登记回来再谈）"
+    key = min(exempt)
+    tree = _roster_counts() + exempt
+    padded = tree.copy()
+    padded[key] += 1  # 同值多印一份
+    extra, _missing = _debt_delta(_tree_after_fixture_exemption(padded)[0], _roster_counts())
+    assert extra and extra[key] == 1, (
+        f"多印的豁免夹具未被判为回潮（应只放行豁免枚数）：{sorted(extra.items())}"
+    )
+
+
+def test_fixture_exemption_teeth_other_digest_in_same_file_still_red() -> None:
+    """同件另一枚（指纹不同）不在豁免面内 ⇒ 仍落回潮腿：豁免逐枚生效，不是按件免检。"""
+    exempt = _exempt_counts()
+    assert exempt
+    (path, _digest), _n = min(exempt.items())
+    other = (path, "f" * 16)  # 同件、不同指纹
+    tree = _roster_counts() + exempt + Counter({other: 1})
+    extra, _missing = _debt_delta(_tree_after_fixture_exemption(tree)[0], _roster_counts())
+    assert other in extra and extra[other] == 1, (
+        f"同件另一枚凭据被豁免洗绿了：{sorted(extra.items())}"
+    )
+
+
+def test_fixture_exemption_teeth_ghost_entry_turns_red() -> None:
+    """豁免条目在今天的树上扫不到 ⇒ stale 腿非空（不许留着当未来凭据的预豁免）。"""
+    exempt = _exempt_counts()
+    assert exempt
+    tree = _roster_counts()  # 树上只有名册那批，豁免那枚不见了
+    _after, stale = _tree_after_fixture_exemption(tree)
+    assert stale and set(dict(stale)) == set(exempt), (
+        f"消失的夹具豁免未被反查腿抓住：{stale}"
+    )
+
+
+def test_fixture_exemption_does_not_blind_the_seeded_poison() -> None:
+    """注毒联动：豁免面存在时，新种一枚高熵假凭据仍必须落回潮腿（尺没被豁免面洗瞎）。"""
+    fake = _fake_prefixed_key()
+    probe = ("tests/test_poison_probe.py", fingerprint(fake))
+    tree = _roster_counts() + _exempt_counts() + Counter({probe: 1})
+    extra, _missing = _debt_delta(_tree_after_fixture_exemption(tree)[0], _roster_counts())
+    assert extra and probe in extra, "注入的新凭据被豁免面洗绿——豁免扩成免检了"

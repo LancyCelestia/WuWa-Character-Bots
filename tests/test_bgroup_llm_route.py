@@ -120,7 +120,9 @@ def _httpx_provider(
 ) -> OpenAICompatibleLLMProvider:
     client = httpx.Client(transport=httpx.MockTransport(handler))  # type: ignore[arg-type]
     _OPEN_MOCK_CLIENTS.append(client)
-    monkeypatch.setattr(providers_module, "_shared_http_client", lambda proxy="": client)
+    monkeypatch.setattr(
+        providers_module, "_shared_http_client", lambda proxy="", **_kw: client
+    )
     return OpenAICompatibleLLMProvider(
         api_key="test-key",
         model="model-a",

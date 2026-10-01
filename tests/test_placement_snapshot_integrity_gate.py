@@ -63,11 +63,32 @@ import physical_placement_census as pc  # 唯一取数口（与姊妹门同一�
 #: ① 域外 py（find 尺）成员数。起点值（当时）100。
 MIN_A1_OUTSIDE_PY = 50
 #: ② 面A 受管行数。起点值（当时）460。
-MIN_A2_MANAGED_LINES = 200
+#: 2026-09-29 重录（席 S-FIX-PLACE-FLOOR；判定＝**地板陈旧**，非尺塌）：460 是 2026-09-23
+#: 批量套头的暂态——头把 23 枚审计/过程件从面B 顶进面A（0→460），用户裁定 3.A（席 S201）落地
+#: `FACE_BY_CATEGORY`＋`GOVERNED_LINE_PATHS` 桶表后按设计蒸发（四把锁在
+#: `tests/test_board_taxonomy_gate.py`，含旧头耦合尺 `_old_hat_coupled_face` 对照）。
+#: 三基线现算：HEAD(3ea0dfb) 干净 checkout＝**80**（=名录 4 页 79 行＋板块人工区 1 行，全枚在册）／
+#: 23:52 保险 zip 未含取数口与那四页（即 zip 态尺==HEAD ⇒ 同 80 量级）／工作树＝**95**（多出的
+#: 15 枚是 `.superpowers` 过程副本上的 K-1 `UNVERIFIED_AUTO_ZONE` 行，非治理债）。
+#: 尺身证明：`spec_gates_census.py`/`doc_fact_discipline.py` 与全部 worktree/暂存副本逐字节同 hash
+#: （108209 B / ccdce239…），取数口未塌、SKIP 未放宽、目录未改名。地板按「实测一半量级」重录
+#: （干净 checkout 80 之半＝40；容差一字不动，台账 #68 口径）。⚠ 面A 目标硬零（G-T3 面定义），
+#: 名录页还清后本腿仍会再红——届时按本件边界条走「条件断言」并在 `SEAT-S99.md` 留账，禁删腿。
+#: 复跑：PYTHONDONTWRITEBYTECODE=1 BOT_AUTOSYNC=0 PYTHONIOENCODING=utf-8 \
+#:   ../ChatBot_Runtime/venv/Scripts/python.exe scripts/physical_placement_census.py --four-accounts-human
+MIN_A2_MANAGED_LINES = 40
 #: ② 面B 未归位页数。起点值（当时）170。
 MIN_A2_UNMOVED_PAGES = 80
 #: ④ 在册名册条目数。起点值（当时）47。
-MIN_A4_ROSTER_ENTRIES = 20
+#: 2026-09-29 主树还原波收尾复录 20→15（现算）：`board_shim_ledger.SHIM_ROWS` 在册枚数＝本尺的取数对象。
+#:   06:30:29 那次外部还原把 S-SHIM-WAVE1 已退役的 **8 枚 tracked 垫片连行带件一起写回**，本批按原裁定
+#:   同批退役（逐枚先 grep 真 import 计数＝0 再删；字节备份
+#:   `.superpowers/sdd/2026-09-27-fullload/recovered/shim-retire-batch/`），在册行随之少 7 枚
+#:   （`auto_send` 一枚由上一档 22 那批已摘）。复跑取证：`python scripts/shim_retirement_census.py --report`
+#:   ⇒「账上登记垫片: 15 枚」与「待退役(垫片) 15」两数一致；配对尺
+#:   `tests/test_shim_retirement_ledger.py::MIN_SHIM_FLOOR` 同批由 22 复录为 15。
+#:   ⚠ 本尺只准随**真退役**下降；下一次降必须先给出同两份现算证据，不许为转绿而动。
+MIN_A4_ROSTER_ENTRIES = 15
 
 #: 名册天然不得有重名（路径／页名／id 三形）；t3_managed 是「rel: 值」行、
 #: 同页两行合法，故**不**列入本表（列进去就是把合法形态判成造假）。

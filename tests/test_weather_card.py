@@ -104,11 +104,14 @@ def _group_message(text: str) -> IncomingMessage:
     )
 
 
+# 桩形参显式具名 `timeout=None`（S-FIX-WX-T6 的 `timeout=` 下传腿）：
+# 这里不用 `**kwargs` 兜底——生产再加一条下传腿时必须继续炸在测试里，
+# 而不是被兜底吞成一次静默降级（与 test_wx_t6_timeout_plumbing.py 同口径）。
 def _patch_nmc_hit(monkeypatch: pytest.MonkeyPatch, *, alerts: bool) -> None:
     """NMC 主通道命中：报告打桩；预警支路按需给一条呼玛黄色大雾。"""
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.weather.capabilities.weather.nmc_weather_query",
-        lambda query, proxy="": _NMC_REPORT,
+        lambda query, proxy="", timeout=None: _NMC_REPORT,
     )
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.weather.capabilities.weather.http_get_json",
@@ -120,11 +123,11 @@ def _patch_overseas(monkeypatch: pytest.MonkeyPatch) -> None:
     """NMC 未命中 → Open-Meteo 兜底（海外路径）。"""
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.weather.capabilities.weather.nmc_weather_query",
-        lambda query, proxy="": None,
+        lambda query, proxy="", timeout=None: None,
     )
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.weather.capabilities.weather.open_meteo_query",
-        lambda query, proxy="": {"latitude": 35.68, "current": {}},
+        lambda query, proxy="", timeout=None: {"latitude": 35.68, "current": {}},
     )
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.weather.capabilities.weather.format_open_meteo",
@@ -240,11 +243,11 @@ class TestWeatherCardFallback:
         # 群聊查不到城市：静默审计路径（SILENT_AUDIT），任何后端都不出卡。
         monkeypatch.setattr(
             "plugins.bot_unified_runtime.domains.weather.capabilities.weather.nmc_weather_query",
-            lambda query, proxy="": None,
+            lambda query, proxy="", timeout=None: None,
         )
         monkeypatch.setattr(
             "plugins.bot_unified_runtime.domains.weather.capabilities.weather.open_meteo_query",
-            lambda query, proxy="": None,
+            lambda query, proxy="", timeout=None: None,
         )
         backend = _FakeBackend()
         capability = build_weather_capability(
@@ -265,7 +268,7 @@ class TestWeatherCardFallback:
 
         monkeypatch.setattr(
             "plugins.bot_unified_runtime.domains.weather.capabilities.weather.nmc_weather_query",
-            lambda query, proxy="": None,
+            lambda query, proxy="", timeout=None: None,
         )
         monkeypatch.setattr(
             "plugins.bot_unified_runtime.domains.weather.capabilities.weather.open_meteo_query",

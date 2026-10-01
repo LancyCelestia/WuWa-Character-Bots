@@ -589,14 +589,11 @@ def test_live_leg_vertical_identity_is_consumed_by_the_existing_call_site() -> N
     assert "BACKGROUND_AUTHORITY_WEIGHTS" in acg_text, "权重又变回本模块自持的字面量了"
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "S-T-ACG-1 挂账（禁写面未接）：知识命中的身份呈现与跨源判据的生产调用点"
-        "还不在 chat.py/providers.py 里——代接坐标见席位日志 §肆。"
-        "接上之后请把这个标记摘成硬锁，别让真身变成第二条'在册但不通电'。"
-    ),
-)
+# S-T-ACG-1 转正（席位 S-XFAIL-AUDIT 2026-09-29 --runxfail 实跑绿，单跑/合跑皆绿）：
+# 生产腿已接——chat.py 含 knowledge_context_block、providers.py 引用
+# resolve_answer_order。按原 reason 的交代「接上之后把这个标记摘成硬锁」执行：
+# 从此这条是活锁，谁把真身退回「在册但不通电」本条即报红。
+# 复跑尺：pytest tests/test_acg_kb_retrieval_accuracy.py::test_production_consumers_of_kb_presentation_bodies_are_wired
 def test_production_consumers_of_kb_presentation_bodies_are_wired() -> None:
     chat_text = _source_of("domains/chat_reply/capabilities/chat.py")
     providers_text = _source_of("domains/chat_reply/character/providers.py")

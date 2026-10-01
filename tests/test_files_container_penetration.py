@@ -348,7 +348,7 @@ def test_reserved_name_judgment_is_head_before_first_dot() -> None:
     assert rr._is_reserved_device_name("aux.tar.gz") is True
     assert rr._is_reserved_device_name("com1") is True
     assert rr._is_reserved_device_name("COM9.txt") is True
-    assert rr._is_reserved_device_name("lpt0.md") is False  # 设备号从 1 起，不过拦
+    assert rr._is_reserved_device_name("lpt0.md") is True  # 2026-09-27 F-G2：LPT0 亦保留（旧注释「设备号从 1 起」经现算证伪）
     assert rr._is_reserved_device_name("com10.md") is False  # 不是 com1+"0"
     assert rr._is_reserved_device_name("concise.md") is False  # 首段整词比对非前缀
     assert rr._is_reserved_device_name("null-point.md") is False

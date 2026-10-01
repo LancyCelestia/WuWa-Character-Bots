@@ -114,7 +114,18 @@ def _probe_hits_all(probe: str) -> list[str]:
 # 运行时由路由优先级兜底（group_info 41 < moegirl_question 46，群信息稳定先接），
 # 词表层双命中让路对登记于此（与 music_mode/music 让路对同形态）。
 KNOWN_CONFLICT_WORDS: frozenset[tuple[str, str]] = frozenset(
-    {("bot.group_info", "群主是谁")}
+    {
+        ("bot.group_info", "群主是谁"),
+        # 2026-10-01 T25 现算：「待审」是**两能力各自独立的只读队列头**——
+        # emergency_info._PENDING_WORDS（人工报料待审）与 meme_library 审批正则
+        # （表情库待审档，S-MEME2-REVIEW 有意「命令前缀可省，裸词也认」）。
+        # 运行时由路由优先级兜底：meme_library 22 < emergency_info 44 ⇒ 裸「待审」
+        # 稳定先由表情库这一面接（该腿另有管理判定门）；BOT_MEME_LIBRARY_ENABLED=false
+        # 时 meme_library_match 早退，这一句落到紧急信息。两侧词面都要收敛须改命令面
+        # 词表＝行为变更（重启验收），本波不动，故按既有让路对形态登记两枚。
+        ("bot.emergency_info", "待审"),
+        ("bot.meme_library", "待审"),
+    }
 )
 
 # ASCII 词边界违规：胶合探针命中自身能力（_alias_hit 纪律：ASCII 词须词边界）。

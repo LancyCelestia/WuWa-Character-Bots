@@ -243,7 +243,7 @@ def test_leg_consumes_timeout_payload_into_issue_evidence(
     _never_synthesize(monkeypatch)
     result = _chat_result()
 
-    enriched = ve.build_voice_enricher(_hook_config(tmp_path))(_message(), _decision(), result)
+    enriched = ve.build_voice_enricher(_hook_config(tmp_path))(_message(), None, result)
 
     assert enriched.body == result.body, "增益腿挂死不得伤正文（fail-open 红线）"
     assert not enriched.audio
@@ -271,7 +271,7 @@ def test_leg_consumes_degraded_payload_beyond_detail(
     monkeypatch.setattr(ve, "default_invoker", lambda: invoker)
     _never_synthesize(monkeypatch)
 
-    enriched = ve.build_voice_enricher(_hook_config(tmp_path))(_message(), _decision(), _chat_result())
+    enriched = ve.build_voice_enricher(_hook_config(tmp_path))(_message(), None, _chat_result())
 
     issue = enriched.operational_issue
     assert issue is not None and issue.kind == "tts_synthesize_failed"
@@ -298,7 +298,7 @@ def test_leg_payload_absent_degrades_to_detail_and_taxonomy_intact(
     )
     monkeypatch.setattr(ve, "default_invoker", lambda: invoker)
     _never_synthesize(monkeypatch)
-    enriched = ve.build_voice_enricher(_hook_config(tmp_path))(_message(), _decision(), _chat_result())
+    enriched = ve.build_voice_enricher(_hook_config(tmp_path))(_message(), None, _chat_result())
 
     issue = enriched.operational_issue
     assert issue is not None
@@ -320,7 +320,7 @@ def test_leg_payload_wrong_shape_degrades_to_detail(
     monkeypatch.setattr(ve, "default_invoker", lambda: invoker)
     _never_synthesize(monkeypatch)
 
-    enriched = ve.build_voice_enricher(_hook_config(tmp_path))(_message(), _decision(), _chat_result())
+    enriched = ve.build_voice_enricher(_hook_config(tmp_path))(_message(), None, _chat_result())
 
     issue = enriched.operational_issue
     assert issue is not None
@@ -348,13 +348,13 @@ def test_leg_egress_is_issue_only_card_hook_and_bubble_stay_zero(
     )
     monkeypatch.setattr(ve, "default_invoker", lambda: invoker)
     _never_synthesize(monkeypatch)
-    pipeline, queue = _make_pipeline(ve.build_voice_enricher(_hook_config(tmp_path)))
+    pipeline = _make_pipeline(ve.build_voice_enricher(_hook_config(tmp_path)))
 
     receipt = asyncio.run(
         pipeline.handle_async(_message(), _static_capability(_chat_result()), "bot.chat")
     )
 
-    request = queue.sent_requests[-1]
+    request = pipeline.send_queue.sent_requests[-1]
     assert receipt.state == ReceiptState.SENT, "正文必须照常投递（增益失败不压体）"
     assert request.operational_issue is not None
     assert "CapabilityTimeout" in request.operational_issue.safe_summary
@@ -382,13 +382,13 @@ def test_gap_hook_structural_no_card_raise_would_kill_reply(
     def raising_enricher(message: Any, decision: Any, result: Any) -> Any:
         raise boom  # 「与 image provider 同法」的字面版：把载荷交回层 1
 
-    pipeline, queue = _make_pipeline(raising_enricher)
+    pipeline = _make_pipeline(raising_enricher)
     receipt = asyncio.run(
         pipeline.handle_async(_message(), _static_capability(_chat_result()), "bot.chat")
     )
 
     # A 案代价（实跑）：卡有了，回复没了。
-    assert len(queue.sent_requests) == 0, "raise 版=正文根本没入队"
+    assert len(pipeline.send_queue.sent_requests) == 0, "raise 版=正文根本没入队"
     assert receipt.state == ReceiptState.FAILED_FINAL
     assert receipt.operational_issue is not None
     assert receipt.operational_issue.kind == "internal_error"
@@ -415,7 +415,7 @@ def test_gap_hook_structural_no_card_today_evidence_is_issue_borne(
     _never_synthesize(monkeypatch)
     enricher = ve.build_voice_enricher(_hook_config(tmp_path))
 
-    enriched = enricher(_message(), _decision(), _chat_result())
+    enriched = enricher(_message(), None, _chat_result())
     assert card_tripwire == [], "现行腿不存在任何触卡路径（结构性，非遗漏）"
     assert enriched.operational_issue is not None
     assert "CapabilityTimeout" in enriched.operational_issue.safe_summary

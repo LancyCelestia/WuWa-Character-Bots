@@ -5,13 +5,17 @@
 一秒的事），ntotal 取 SQLite 里的代际证明，并按体积只 stat 两个 ANN 文件。
 
 五态各一例（PASS / REFUSED / UNSTAMPED / MEMORY_SKIP / NOT_APPLICABLE），
-外加两枚：签名不符与文件缺席（防"证明自洽但磁盘没东西"的假绿）、键名与阈值
-同源锁（判据不许写第二把尺）。
+外加签名不符与文件缺席两枚（防"证明自洽但磁盘没东西"的假绿）、键名与阈值
+同源锁（判据不许写第二把尺），以及 S159 代次覆盖锁（发现 2 的假 PASS 形态：
+戳/签名/文件全对但当前代次 > 盖章代次 ⇒ 必须红并同屏点名两个数）与
+注毒自证（造代次超前状态必红、还原逐字节 cmp，兼证体检只读不写库）。
 """
 
 from __future__ import annotations
 
+import filecmp
 import json
+import shutil
 import sqlite3
 import sys
 from pathlib import Path
@@ -36,6 +40,8 @@ ANN_SIG_KEY = "ann_signature"
 EMBED_SIG_KEY = "embedding_signature"
 MEMORY_SKIP_KEY = "ann_build_last_memory_skip"
 SUMMARY_KEY = "kb_sync_last_summary"
+GENERATION_KEY = "ann_embed_generation"
+ATTEST_GENERATION_FIELD = "embed_generation"
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +60,8 @@ def make_wiki_db(
     order_bytes: int | None = 56,
     memory_skip: dict[str, object] | None = None,
     summary: dict[str, object] | None = None,
+    embed_generation: str | None = None,
+    attested_generation: int | None = None,
     write_files: bool = True,
     with_meta_table: bool = True,
     slot: str = "a",
@@ -63,6 +71,8 @@ def make_wiki_db(
     返回 (db_path, env)：env 只带 BOT_KB_WIKI_DB_PATH 一枚键（绝对路径，
     不经 runtime_paths 重映射，保持夹具可读）。`slot` 让同一 tmp_path 下
     能并排放多座互不干扰的库（一枚用例里要比两种形态时用它分开）。
+    `embed_generation`（meta 行原文）与 `attested_generation`（证明 JSON 字段）
+    分别控制 S159 代次闸的两侧——两者都缺省 = 存量库形态（两行俱无 ⇒ 0 对 0）。
     """
     data_root = tmp_path / f"rt_data_{slot}"
     data_root.mkdir(parents=True, exist_ok=True)
@@ -76,19 +86,22 @@ def make_wiki_db(
         rows: dict[str, str] = {}
         if stamp is not None:
             rows[STAMP_KEY] = stamp
+        if embed_generation is not None:
+            rows[GENERATION_KEY] = embed_generation
         if attested_signature is not None or live_signature:
             rows[ANN_SIG_KEY] = live_signature
             rows[EMBED_SIG_KEY] = live_signature
         if attested_signature is not None:
-            rows[ATTESTATION_KEY] = json.dumps(
-                {
-                    "ntotal": ntotal,
-                    "count": ntotal if count is None else count,
-                    "signature": attested_signature,
-                    "index_bytes": index_bytes if index_bytes is not None else 0,
-                    "order_bytes": order_bytes if order_bytes is not None else 0,
-                }
-            )
+            attestation_payload: dict[str, object] = {
+                "ntotal": ntotal,
+                "count": ntotal if count is None else count,
+                "signature": attested_signature,
+                "index_bytes": index_bytes if index_bytes is not None else 0,
+                "order_bytes": order_bytes if order_bytes is not None else 0,
+            }
+            if attested_generation is not None:
+                attestation_payload[ATTEST_GENERATION_FIELD] = attested_generation
+            rows[ATTESTATION_KEY] = json.dumps(attestation_payload)
         if memory_skip is not None:
             rows[MEMORY_SKIP_KEY] = json.dumps(memory_skip)
         if summary is not None:
@@ -282,6 +295,119 @@ def test_ann_pair_signature_mismatch_and_absent_files_are_named(tmp_path: Path) 
     assert prc.check_ann_generation_pair(env, tmp_path).status == FAIL
 
 
+def test_ann_pair_generation_ahead_is_refused_and_names_both_numbers(tmp_path: Path) -> None:
+    """S159 形态（发现 2 的假 PASS）：戳/签名/文件全对，但当前代次 > 盖章代次 ⇒ 必红.
+
+    真身 load_ann_index 在这一格必然 coverage refused（删+嵌同轮把标量戳拉回原值，
+    `ntotal >= 戳` 恒成立却没装下新那批）；预检若照旧 PASS 就是第二把尺失真——
+    必须 REFUSED(coverage) 并把两个数字同屏点名（headline 与事实行都要有）。
+    """
+    verdict, db_path = verdict_of(
+        tmp_path,
+        stamp="740996",
+        ntotal=740996,
+        embed_generation="7",
+        attested_generation=5,
+    )
+    assert verdict.state == prc.ANN_STATE_REFUSED
+    assert verdict.reason == "coverage_behind_generation"
+    assert verdict.missing == 0  # 戳判全过——红只能来自代次这发
+    assert "7" in verdict.headline and "5" in verdict.headline
+    joined = "\n".join(verdict.facts)
+    assert "嵌入代次：当前 7 ／ 证明盖章代次 5" in joined
+    assert "代次超前" in joined
+
+    result = prc.check_ann_generation_pair(
+        {"BOT_KB_WIKI_DB_PATH": str(db_path)}, tmp_path
+    )
+    assert result.status == FAIL
+    assert "回落暴力扫描" in result.message
+    assert "knowledge-sync" in result.fix_hint
+
+
+def test_ann_pair_generation_equal_and_legacy_forms_stay_pass(tmp_path: Path) -> None:
+    """两值相等 ⇒ PASS；存量形态（两行俱无 0 对 0、证明缺字段）放行语义一字不变.
+
+    只严不松的另一半：真身代次闸只拦 `generation > covered`（covered > generation
+    的非自然态由 plugins 侧另案登记——发现 4，不在预检这格改口，禁第二把尺）。
+    """
+    equal, _ = verdict_of(
+        tmp_path, slot="eq", stamp="1000", ntotal=1000,
+        embed_generation="3", attested_generation=3,
+    )
+    assert equal.state == prc.ANN_STATE_PASS
+    assert "嵌入代次：当前 3 ／ 证明盖章代次 3" in "\n".join(equal.facts)
+
+    legacy, _ = verdict_of(tmp_path, slot="legacy", stamp="1000", ntotal=1000)
+    assert legacy.state == prc.ANN_STATE_PASS  # 两行俱无 ⇒ 0 对 0，现状逐字节同形
+
+    covered_ahead, _ = verdict_of(
+        tmp_path, slot="ahead", stamp="1000", ntotal=1000,
+        embed_generation="1", attested_generation=2,
+    )
+    assert covered_ahead.state == prc.ANN_STATE_PASS  # 真身同判：只拦反方向
+
+
+def test_ann_pair_generation_malformed_folds_to_zero_like_true_source(tmp_path: Path) -> None:
+    """代次取数口径同 `_parse_embed_generation`：缺行/畸形/负值折 0，不许读成已证.
+
+    `True` 这类布尔垃圾折 0（`int(str(True))` 抛错）⇒ 对 5 不构成超前；
+    证明里缺 `embed_generation` 字段 ⇒ 盖章 0 = 从未证过任何一批，当前 9 > 0 ⇒ 红。
+    """
+    garbage, _ = verdict_of(
+        tmp_path, slot="garbage", stamp="1000", ntotal=1000,
+        embed_generation="True", attested_generation=5,
+    )
+    assert garbage.state == prc.ANN_STATE_PASS
+
+    no_field, _ = verdict_of(
+        tmp_path, slot="nofield", stamp="1000", ntotal=1000, embed_generation="9",
+    )
+    assert no_field.state == prc.ANN_STATE_REFUSED
+    assert no_field.reason == "coverage_behind_generation"
+    assert "证明盖章代次 0" in "\n".join(no_field.facts)
+
+    negative, _ = verdict_of(
+        tmp_path, slot="neg", stamp="1000", ntotal=1000, embed_generation="-2",
+    )
+    assert negative.state == prc.ANN_STATE_PASS  # 负值折 0（真身 max(0, parsed) 同口径）
+
+
+def test_ann_pair_generation_poison_flips_red_and_restore_is_byte_exact(tmp_path: Path) -> None:
+    """注毒自证：同一座库插一行「代次超前」⇒ 必红；撤毒还原后逐字节一致、复绿.
+
+    毒插 INSERT（不是改判据），还原用快照回写 + `filecmp(shallow=False)` 逐字节
+    对账——这同时反证体检只读不写库：PASS 态与还原态的字节都要等于 pristine 快照。
+    """
+    db_path, env = make_wiki_db(
+        tmp_path, slot="poison", stamp="1000", ntotal=1000,
+        embed_generation="1", attested_generation=1,
+    )
+    snapshot = tmp_path / "poison_db.snapshot"
+    shutil.copy2(db_path, snapshot)
+
+    assert prc.inspect_ann_generation_pair(env, tmp_path).state == prc.ANN_STATE_PASS
+    assert filecmp.cmp(str(db_path), str(snapshot), shallow=False)  # 体检跑过，字节未动
+
+    try:
+        con = sqlite3.connect(str(db_path))
+        con.execute(
+            "UPDATE knowledge_meta SET value = ? WHERE key = ?",
+            ("2", GENERATION_KEY),
+        )  # 注毒：当前代次抬到盖章代次之上（自然形态 = 盖章后又嵌了一批）
+        con.commit()
+        con.close()
+        poisoned = prc.inspect_ann_generation_pair(env, tmp_path)
+        assert poisoned.state == prc.ANN_STATE_REFUSED, "代次超前不判红 = 发现 2 的假绿复发"
+        assert poisoned.reason == "coverage_behind_generation"
+        assert prc.check_ann_generation_pair(env, tmp_path).status == FAIL
+    finally:
+        shutil.copy2(snapshot, db_path)  # 撤毒：快照回写
+
+    assert filecmp.cmp(str(db_path), str(snapshot), shallow=False), "撤毒必须逐字节还原"
+    assert prc.inspect_ann_generation_pair(env, tmp_path).state == prc.ANN_STATE_PASS
+
+
 def test_ann_pair_keys_and_threshold_match_single_source() -> None:
     """判据不许有第二把尺：键名与 `_ANN_COMPLETENESS_MAX_MISSING` 逐字对住真身.
 
@@ -308,6 +434,15 @@ def test_ann_pair_keys_and_threshold_match_single_source() -> None:
     assert prc.ANN_ATTESTATION_META_KEY == literal_of("_ANN_ATTESTATION_KEY")
     assert prc.ANN_MEMORY_SKIP_META_KEY == literal_of("_ANN_MEMORY_SKIP_META_KEY")
     assert ATTESTATION_KEY == prc.ANN_ATTESTATION_META_KEY
+    # S159 代次闸两侧的名字也要对住真身（发现 2 的修复纳入单源锁）；且代次键
+    # 必须在取数名册里——不在名册 = 读不到 = 假 PASS 复发的结构形态
+    assert prc.ANN_EMBED_GENERATION_META_KEY == literal_of("_EMBED_GENERATION_KEY")
+    assert prc.ANN_ATTEST_EMBED_GENERATION_FIELD == literal_of(
+        "_ATTEST_EMBED_GENERATION_FIELD"
+    )
+    assert GENERATION_KEY == prc.ANN_EMBED_GENERATION_META_KEY
+    assert ATTEST_GENERATION_FIELD == prc.ANN_ATTEST_EMBED_GENERATION_FIELD
+    assert prc.ANN_EMBED_GENERATION_META_KEY in prc._ANN_META_KEYS
 
     kb_wiki_src = (
         PROJECT_ROOT

@@ -63,7 +63,7 @@ def test_persona_probability_weights_normalized() -> None:
         "b": AltPersonaSpec(profile_id="b", display_name="乙", weight=0.6),
         "c": AltPersonaSpec(profile_id="c", display_name="丙", weight=0.6),
     }
-    selector = PersonaSelector(specs)
+    selector = PersonaSelector(lambda: specs)
     # 总权重 1.8：归一化后 draw=0.9 应落在第三人格（旧实现恒被前两个截胡）。
     picked = selector.select(rng=random.Random(0), weights={"a": 0.6, "b": 0.6, "c": 0.6})
     # 用确定采样验证可达性：draw∈(1.2,1.8] 区间必然命中 c。

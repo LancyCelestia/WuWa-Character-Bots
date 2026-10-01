@@ -202,7 +202,7 @@ def _wiki_records(caplog) -> list[str]:
 
 
 def test_store_failure_is_logged_instead_of_becoming_invisible(
-    caplog
+    caplog, monkeypatch
 ) -> None:
     """`KBWikiRetriever.retrieve` 的 except 旧写法一句日志不打。
 

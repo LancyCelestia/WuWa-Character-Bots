@@ -361,6 +361,10 @@ def _real_spec(family: str, tmp_path, monkeypatch: pytest.MonkeyPatch):
     if family == "weather":
         # 叶子=nmc_weather_query（NMC HTTP）/fetch_city_alerts（预警 HTTP）/render_card_png
         # （weather 函数级 import 消费的真身属性=出图）。码表/变体链/报告文本/审计 tags 全真。
+        # ⚠ 补丁点必须是**真身** `domains/link_parse/capabilities/content_parser`：
+        #    `domains/weather/capabilities/weather.py:298` 那条函数级 import 取的就是真身名，
+        #    打在旧布局垫片 `capabilities/content_parser` 上＝垫片自己多一个绑定、真身未动
+        #    ⇒ 桩根本不生效（2026-09-29 主树还原波把这一枚从真身形回退成垫片形，本批改回）。
         import plugins.bot_unified_runtime.domains.weather.capabilities.weather as weather_mod
         from plugins.bot_unified_runtime.domains.link_parse.capabilities import (
             content_parser as card_body,

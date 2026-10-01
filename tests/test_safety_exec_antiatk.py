@@ -653,12 +653,14 @@ _CHAT_SOURCE = (
     / "chat.py"
 )
 _HANDWRITTEN_MARKER = "（不可信上下文，仅供参考）"
-# 视频档案面走的是另一条既有消毒（`_sanitize_untrusted_context_text` + 本仓六枚
-# 行为锁在 `tests/test_video_reply_flow.py`），它把这枚字面量留在**模块常量**里是
-# 在册事实；本锁只拦「在拼接点手拼第二套包裹」的形态，不连带翻那条已有面。
-_MARKER_ALLOWED_LINES = ("_VIDEO_BRIEF_TAG",)
-# 今天必须经守卫真身的转述面：识图（主链 + relay 兜底腿）、视频识别、ASR 转写。
-_GUARDED_FACES = ("图片识别结果", "视频识别结果", "语音转写结果")
+# 视频档案腿（旧 `_VIDEO_BRIEF_TAG` 手写标签 + 仅 marker 消毒）已于 2026-09-27
+# 由 S-FIX-SECTEXT-GUARD 席按审查 M-02 收口进咽喉：该字面量在 chat.py 的最后一枚
+# 真身已删，拼接点手拼豁免名单随之清零——此后任何人（含测试注毒）在扫描面
+# 再写这枚字面量，当场红。
+_MARKER_ALLOWED_LINES: tuple[str, ...] = ()
+# 今天必须经守卫真身的转述面（chat.py 侧）：识图（主链 + relay 兜底腿）、
+# 视频识别、ASR 转写、视频档案（M-02 补刀波并入）。
+_GUARDED_FACES = ("图片识别结果", "视频识别结果", "语音转写结果", "视频档案")
 
 
 def _handwritten_marker_leaks(source: str) -> list[int]:
@@ -674,7 +676,7 @@ def _handwritten_marker_leaks(source: str) -> list[int]:
 
 
 def test_secondhand_faces_now_route_through_the_guard_truth() -> None:
-    """识图/视频/ASR 的转述文本必须走 `guard_secondhand_text`，一处都不许手拼。
+    """识图/视频/ASR/视频档案的转述文本必须走 `guard_secondhand_text`，一处都不许手拼。
 
     正向：调用点数量罩得住名册里的面；反向：拼接点不再出现第二套包裹字面量。
     这条锁此前不存在，所以那三路一直是**手拼一句"不可信上下文"就当防住了**——
@@ -710,4 +712,59 @@ def test_the_marker_lock_actually_catches_a_regression() -> None:
     )
     assert regressed != _CHAT_SOURCE.read_text(encoding="utf-8"), "回潮样本没写进去＝空跑"
     assert _handwritten_marker_leaks(regressed), "改回手拼却没被尺子抓到"
+
+
+# ==================== 解析面（content_parser）字幕腿收口锁（S-FIX-SECTEXT-GUARD 2026-09-27） ====================
+# 审查 S-ATK-SUBCOOK H-01：远程视频字幕在 `domains/link_parse/capabilities/`
+# 的 `_summarize_subtitle` 里未过咽喉直送主聊天模型，且 09-26 名册只扫 chat.py
+# 看不见这条腿。自本波起扫描面扩到该文件：正向认名册面，反向认手拼字面量。
+
+_CONTENT_PARSER_SOURCE = (
+    Path(__file__).resolve().parents[1]
+    / "plugins"
+    / "bot_unified_runtime"
+    / "domains"
+    / "link_parse"
+    / "capabilities"
+    / "content_parser.py"
+)
+# 解析面今天必须经守卫真身的转述面：视频字幕总结腿。
+_PARSER_GUARDED_FACES = ("视频字幕",)
+
+
+def _guard_call_labels(source: str) -> set[str]:
+    """一段源码里所有 `guard_secondhand_text(..., source_label=字面量)` 的标签集。"""
+    return {
+        keyword.value.value
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "guard_secondhand_text"
+        for keyword in node.keywords
+        if keyword.arg == "source_label" and isinstance(keyword.value, ast.Constant)
+    }
+
+
+def test_subtitle_face_routes_through_the_guard_in_link_parse() -> None:
+    """字幕进模型前必须过咽喉真身，且解析面拼接点不得出现第二套包裹字面量。"""
+    source = _CONTENT_PARSER_SOURCE.read_text(encoding="utf-8")
+    labels = _guard_call_labels(source)
+    assert labels >= set(_PARSER_GUARDED_FACES), (
+        f"解析面名册未全部经守卫：缺 {set(_PARSER_GUARDED_FACES) - labels}"
+    )
+    assert _handwritten_marker_leaks(source) == [], "解析面拼接点出现手拼的不可信包裹"
+
+
+def test_the_subtitle_lock_actually_catches_a_regression() -> None:
+    """自证（内存注毒）：把字幕腿改回旧「裸拼直送」形态 ⇒ 尺子必须当场判红。"""
+    original = _CONTENT_PARSER_SOURCE.read_text(encoding="utf-8")
+    regressed = original.replace(
+        'guard_secondhand_text(subtitle[:max_chars], source_label="视频字幕")',
+        "subtitle[:max_chars]",
+        1,
+    )
+    assert regressed != original, "回潮样本没写进去＝空跑"
+    assert not _guard_call_labels(regressed) >= set(_PARSER_GUARDED_FACES), (
+        "字幕腿已改回不过咽喉，尺子却仍判绿＝空跑"
+    )
 

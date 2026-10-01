@@ -745,3 +745,66 @@ def test_volatile_count_gate_requires_structure_not_words(tmp_path: Path) -> Non
     doc.write_text("示例写法：`26 库`。\n", encoding="utf-8")
     assert not _volatile_count_findings(tmp_path, ("docs/CODE-MAP.md",)), "行内代码被误拦"
 
+
+# ---------------------------------------------------------------------------
+# 每次会话全量进上下文的「入口件」体积顶（2026-09-27 用户裁定）
+# ---------------------------------------------------------------------------
+# AGENTS.md 曾被历次波次的过程账顶到 214,615 字节（其中台账正文占 83%），
+# 每一轮都付这份上下文成本。裁定＝硬顶 32,768 字节，超了就地删/压过时内容，
+# 次序与「不许动的两把尺」写在 AGENTS.md 页首。本门把那页散文变成能咬的锁：
+# 顶是**字面整数**（不由所执法对象派生——否则门结构上不可能红）。
+
+_ENTRY_SIZE_CEILING = 32768
+
+#: 被执法的入口件（每次会话自动载入的那些）。
+_ENTRY_SIZE_DOCS: tuple[str, ...] = ("AGENTS.md",)
+
+
+def _entry_size_findings(root: Path, docs: tuple[str, ...]) -> list[str]:
+    """纯取数口：返回超顶的入口件 + 最重的几节（让人一句话定位该删哪里）。"""
+    rows: list[str] = []
+    for rel in docs:
+        path = root / rel
+        if not path.is_file():
+            continue
+        data = path.read_bytes()
+        if len(data) <= _ENTRY_SIZE_CEILING:
+            continue
+        text = data.decode("utf-8", errors="replace")
+        weights: dict[str, int] = {}
+        section = "(页首)"
+        for line in text.splitlines():
+            if line.startswith("## "):
+                section = line[3:].split("：")[0]
+            weights[section] = weights.get(section, 0) + len(line.encode("utf-8")) + 1
+        worst = sorted(weights.items(), key=lambda kv: -kv[1])[:5]
+        rows.append(
+            f"{rel}：实测 {len(data)} 字节 > 顶 {_ENTRY_SIZE_CEILING}"
+            f"（超 {len(data) - _ENTRY_SIZE_CEILING}）⇒ 按该文件页首「体积硬顶」的次序删/压："
+            "① 台账行正文（编号不许删不许重排）② 第四部分说明列（载体列一字不删）"
+            "③ 合并被取代的旧交接入口 ④ 散文。最重的几节（降序）："
+            + "，".join(f"{name} {size}B" for name, size in worst)
+        )
+    return rows
+
+
+def test_entry_docs_within_size_ceiling() -> None:
+    """入口件超顶即红（AGENTS.md 每会话全量进上下文，体积＝每一轮的固定税）。"""
+    findings = _entry_size_findings(ROOT, _ENTRY_SIZE_DOCS)
+    assert not findings, "\n".join(findings)
+
+
+def test_size_gate_bites_on_oversized_and_spares_small(tmp_path: Path) -> None:
+    """双向自证：注毒必红、达标必放行——否则这锁等于没锁。"""
+    fat = tmp_path / "AGENTS.md"
+    fat.write_text("## 第六部分：x\n\n" + ("填充中文用于把文件推过体积顶。" * 60 + "\n") * 20, encoding="utf-8")
+    assert fat.stat().st_size > _ENTRY_SIZE_CEILING, "注毒件没真超顶＝本发自证无效"
+    hit = _entry_size_findings(tmp_path, ("AGENTS.md",))
+    assert hit, "超顶件未被判红＝体积门是永假条件的锁"
+    assert "第六部分" in hit[0], f"判决没点名最重的节，无法定位该删哪里：{hit[0][:80]}"
+
+    thin = tmp_path / "COMMANDS.md"
+    thin.write_text("## 命令\n\n短。\n", encoding="utf-8")
+    assert not _entry_size_findings(tmp_path, ("COMMANDS.md",)), "达标件被误拦"
+    assert not _entry_size_findings(tmp_path, ("不存在的件.md",)), "缺件应静默跳过而不是崩"
+

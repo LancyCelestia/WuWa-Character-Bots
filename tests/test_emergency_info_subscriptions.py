@@ -11,8 +11,9 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -254,6 +255,60 @@ def test_dimensions_are_anded() -> None:
     assert not sub.matches_subscription(_item(title="湘潭市高温橙色预警", level=EmergencyLevel.P1), rule)
 
 
+# --------------------------------------------- F-3｜裸半径无锚点 ⇒ 不放行（SEAT-ATK F-3）
+
+
+def test_radius_only_rule_passes_nothing() -> None:
+    """`radius=50` 单独一条 ≠ 收全部：半径拿不到锚点坐标，文字∨半径两腿皆无 ⇒ 不放行。
+
+    攻击票 F-3：命令面「订阅后不接条件=查看」的裸订防护，被一个 `radius=` 参数
+    旁路成静默全量订阅。修法不是新规则集——把「半径意图」并进同一条
+    「文字∨半径两边都拿不到不放行」的判定腿（镜像用例见
+    `test_text_only_area_never_passes_a_coordinate_only_item`）。
+    """
+    rule = _rule("radius=50")
+    assert rule.radius_km == 50.0
+    assert not rule.has_area and not rule.has_point
+    assert not sub.matches_subscription(_item(), rule), "radius-only 退化成了收全部"
+    assert not sub.matches_subscription(
+        _item(source_id="usgs", title="M6.0 earthquake", latitude=27.87, longitude=112.94),
+        rule,
+    )
+    assert not sub.matches_subscription(
+        _item(title="湘潭市暴雨红色预警", latitude=27.87, longitude=112.94), rule
+    )
+
+
+def test_bare_subscribe_still_receives_everything() -> None:
+    """反证：空文本＝订仍是既有裁定（510 腿），F-3 修的是"半径意图无锚点"，不误杀这条。"""
+    assert sub.matches_subscription(_item(), _rule(""))
+
+
+def test_radius_with_anchor_is_unaffected() -> None:
+    """有锚点（coord=/area=）的形态一寸不少：半径圈照圈、地名文字照匹配。"""
+    near = _rule("coord=27.9,113.0 radius=50")
+    quake = _item(source_id="usgs", title="M6.0 earthquake", latitude=27.87, longitude=112.94)
+    assert sub.matches_subscription(quake, near)
+    assert sub.matches_subscription(_item(), _rule("area=湘潭 radius=50"))
+
+
+def test_radius_intent_survives_store_round_trip(tmp_path: Path) -> None:
+    """半径意图要能持久：读回来的 radius-only 行仍判「不放行」，不能退回收全部。"""
+    store = _store(tmp_path)
+    rule = _rule("radius=50")
+    assert store.save_subscription(rule, at=_NOW) is True
+    again = store.get_subscription(rule.target_key)
+    assert again is not None and again.radius_set is True
+    assert not sub.matches_subscription(_item(), again)
+
+
+def test_radius_only_rule_says_so_in_describe() -> None:
+    """观测面诚实：`订阅 看` 里的 radius-only 必须明说「不放行」，而不是"地点=不限"。"""
+    described = _rule("radius=50").describe()
+    assert "不放行" in described
+    assert _rule("area=湘潭 radius=50").describe().count("不放行") == 0
+
+
 # ------------------------------------------------------------------ 存储往返
 
 
@@ -310,15 +365,30 @@ def test_match_observability_is_written_and_read_back(tmp_path: Path) -> None:
     assert after.last_matched_at is not None
 
 
-def test_half_coordinate_row_is_dropped_not_delivered(tmp_path: Path) -> None:
-    """库里混进半个坐标（手工改库/旧写入路径）时：读回判 None，绝不拿它算距离。"""
+def test_half_coordinate_row_is_dropped_and_named(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """库里混进半个坐标（手工改库/旧写入路径）时：读回判 None，绝不拿它算距离；
+    且**丢之前点名**（SEAT-ATK 检查点4 注记：静默滤行与家规「绝不静默收下」有一齿缝）。
+
+    活性判据：warning 出自 `list_subscriptions` 真实读取的那一遍，摘掉日志行本用例即红
+    （注毒自证见席位报告）。
+    """
     store = _store(tmp_path)
     store.save_subscription(_rule("area=湘潭"), at=_NOW)
     with sqlite3.connect(store.db_path) as connection:
         connection.execute(
             "UPDATE emergency_subscriptions SET latitude = 27.87, longitude = NULL"
         )
-    assert store.list_subscriptions() == []
+    with caplog.at_level(
+        logging.WARNING,
+        logger="plugins.bot_unified_runtime.domains.emergency_info.sources.store",
+    ):
+        assert store.list_subscriptions() == []
+    assert any(
+        "malformed" in record.getMessage() and "group:1108838060" in record.getMessage()
+        for record in caplog.records
+    ), "脏行被静默吞掉＝用户只剩『配了从没命中』的不可解现象，家规未执法"
     assert store.get_subscription("group:1108838060") is None
 
 
@@ -552,19 +622,33 @@ class _ConfigStub:
         self.bot_emergency_info_reviewer_ids: list[str] = []
 
 
-def _seed_approved(store: EmergencyStore, *, item_id: str, title: str, color: str) -> None:
-    built = build_emergency_item(
-        {
-            "item_id": item_id,
-            "source_id": "nmc",
-            "external_id": item_id,
-            "title": title,
-            "color_label": color,
-            "occurred_at": _NOW,
-            "fetched_at": _NOW,
-            "status": "approved",
-        }
-    )
+def _seed_approved(
+    store: EmergencyStore,
+    *,
+    item_id: str,
+    title: str,
+    color: str,
+    occurred_at: datetime | None = None,
+    expires_at: datetime | None = None,
+) -> None:
+    # 缺省发生时刻=**墙钟前 5 分钟**：真 job 的 now 读墙钟，投递面时效腿（F-1 接线后）
+    # 按注入 now 判龄——钉死日期的夹具在真实日历下会变成"未来条目"，那等于让
+    # 本文件端到端用例测的不是生产形态。注入时刻的本意（D-6）在 job 读墙钟的
+    # 端到端面上无法保持逐字节确定，这里只把"新鲜度"对齐生产、断言一寸未动。
+    moment = occurred_at if occurred_at is not None else datetime.now(timezone.utc) - timedelta(minutes=5)
+    payload: dict[str, Any] = {
+        "item_id": item_id,
+        "source_id": "nmc",
+        "external_id": item_id,
+        "title": title,
+        "color_label": color,
+        "occurred_at": moment,
+        "fetched_at": moment,
+        "status": "approved",
+    }
+    if expires_at is not None:
+        payload["expires_at"] = expires_at
+    built = build_emergency_item(payload)
     assert built is not None, "夹具不合契约＝后面的断言全在自证"
     assert store.upsert_item(built) is True
 
@@ -692,3 +776,42 @@ def test_env_hardwired_list_still_delivers_without_a_filter(
     scheduler.job()
     assert _sessions(queue) == ["private:3865067623"]
     assert queue.requests[0].target_scope is SessionType.PRIVATE
+
+
+# ------------------------------------- F-1 端到端活性锁｜过期条目在真 job 轮里零投递（SEAT-ATK F-1）
+
+
+def test_expired_items_never_ship_in_a_real_round(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """真 job 一轮：同题匹配的新鲜条目投出，超龄（10 天，未及 90 天保留期）与
+    `expires_at` 已到期两条**零投递**。
+
+    本票 F-1 的形态：幂等键的日期段每天换新，`ON CONFLICT` 拦不住跨天重投；
+    时效判定（`dedupe.is_within_validity`）此前生产零调用点。本轮跑**关闸直通**
+    态（`_closed_gate`）——条目投不出去的唯一原因就只剩投递出口的时效腿，
+    这条腿被摘掉时本用例必红（注毒已验，见席位报告）。
+    """
+    store = _store(tmp_path)
+    store.save_subscription(_rule("area=湘潭"), at=_NOW)
+    _seed_approved(store, item_id="nmc-f1ok", title="湘潭市暴雨红色预警", color="红色")
+    _seed_approved(
+        store,
+        item_id="nmc-f1stale",
+        title="湘潭市暴雨红色预警（陈旧）",
+        color="红色",
+        occurred_at=datetime.now(timezone.utc) - timedelta(days=10),
+    )
+    _seed_approved(
+        store,
+        item_id="nmc-f1dead",
+        title="湘潭市暴雨红色预警（已到期）",
+        color="红色",
+        occurred_at=datetime.now(timezone.utc) - timedelta(hours=3),
+        expires_at=datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+    queue = _round(tmp_path, store, monkeypatch)
+    assert _targets_for(queue, "nmc-f1ok") == ["group:1108838060"]
+    assert _targets_for(queue, "nmc-f1stale") == [], "超龄 10 天的条目仍出板＝时效腿未执法"
+    assert _targets_for(queue, "nmc-f1dead") == [], "expires_at 已到期的条目仍出板"
+    assert len(queue.requests) == 1

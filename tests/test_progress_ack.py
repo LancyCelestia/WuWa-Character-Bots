@@ -432,9 +432,10 @@ def _pipeline(
     ``adaptive_enabled`` 缺省**关**（DEFECT-5，本席现算）：这里测的是「固定阈值」
     旧口径（与 `tests/test_progress_ack_thresholds.py` 的双态断言同口径）。设置
     字段缺省是 True，而 `effective_ack_delay_seconds()` 在 EMA>0 时把阈值抬到
-    `max(delay_seconds, delay_floor_seconds)`（下限 30 秒，2026-09-26 用户裁定 D2 由
-    15 抬来）——若夹具日后给管线
-    注了探针，0.02 秒测试阈值会被静默抬成 15 秒，全部「慢该发 / 快不该发」格子
+    `max(delay_floor_seconds, 派生值)` 再夹 cap（地板真身＝
+    `progress_ack.DEFAULT_ACK_DELAY_FLOOR_SECONDS`，2026-09-26 用户裁定 D2 由 15 抬来）
+    ——若夹具日后给管线
+    注了探针，0.02 秒测试阈值会被静默抬到地板，全部「慢该发 / 快不该发」格子
     一起翻。写死 False 让口径显式在场。
     """
     settings = ProgressAckSettings(
@@ -1046,7 +1047,8 @@ _GATE_ON = ProgressAckSettings(
     delay_seconds=0.02,
     cooldown_seconds=60.0,
     # 口径①测的是**固定阈值**旧判据；不钉死这枚，日后夹具给管线注了探针，
-    # `effective_ack_delay_seconds()` 会把 0.02 秒抬到 floor(15 秒)，整张矩阵
+    # `effective_ack_delay_seconds()` 会把 0.02 秒抬到地板（真身
+    # `progress_ack.DEFAULT_ACK_DELAY_FLOOR_SECONDS`），整张矩阵
     # 「该发」格全翻红（DEFECT-5 的坑，与 `_pipeline` 里同一条现算）。
     adaptive_enabled=False,
     group_whitelist=frozenset({"662948429", "631785829"}),
@@ -1241,17 +1243,17 @@ async def test_an_unidentifiable_private_sender_is_not_acked() -> None:
 
 
 @pytest.mark.asyncio
-async def test_group_side_gate_is_still_bare_id_matching_across_platforms() -> None:
-    """现状锁（DEFECT-2，登记不修）：群侧白名单只按裸号匹配、**不分平台**。
+async def test_group_side_gate_no_longer_matches_bare_id_across_platforms() -> None:
+    """判据锁（DEFECT-2 已补，2026-09-28 S-ACK 接收腿）：群侧名单只吃 QQ 协议域。
 
-    生产里 TG 频道消息带 `group_id`＝chat.id（根 `__init__.py:1340-1341`），于是
-    同号的 QQ 群被白名单放行时，TG 那一路也一并放行 = 同号不同平台误投。紧急域为
-    同类问题已立平台门（`capabilities/emergency_info.py` 非 QQ 拒收，台账 #46），
-    回执面缺这一腿。
-    本发**故意锁现状**：哪天补上平台腿，这里必红一次，逼接手的人改判据而不是忘。
-    修法坐标（两处皆本席禁写面）：`pipeline.py:1443` 的 `progress_ack_allowed(...)`
-    多传一腿 `platform=str(getattr(message, "platform", ""))`，
-    `progress_ack.progress_ack_allowed` 群侧加 `platform in {"qq", ""}` 门。
+    生产里 TG 频道消息带 `group_id`＝chat.id（根 `__init__.py:1340-1341`），而群白名单
+    记的是 QQ 群号那一本账 ⇒ 旧判据下同号的 TG 那一路被一并放行＝同号不同平台误投。
+    紧急域同类问题早就立了平台门（`capabilities/emergency_info.py` 非 QQ 拒收，台账 #46）。
+    本发原先**故意锁现状**（"哪天补上平台腿，这里必红一次"），平台腿现已在两处落地：
+    `pipeline.py` 把 `message.platform` 传进门、`progress_ack.progress_ack_allowed`
+    群侧加 `_ack_platform_allowed_on_group_side`。⇒ 按锁自己的交代改成断 0，QQ 同号那一格
+    断 1，两格各咬一次，防止"把整面关死"被当成"补了平台腿"蒙过去。
+    ⚠ DEFECT-2 台账摘牌（`docs/HANDBOOK.md` §47 那张「三枚缺陷均未修」表）不在本席写面。
     """
     leaky = ProgressAckSettings(
         **{
@@ -1264,9 +1266,13 @@ async def test_group_side_gate_is_still_bare_id_matching_across_platforms() -> N
         SessionType.CHANNEL, group_id="662948429", platform="telegram"
     )
     assert normalize_session_type(same_id_channel.session_type) == "group"
-    assert await _emit_once(same_id_channel, leaky) == 1, (
-        "现状变了＝平台腿已补：把本发改成断 0 并在 DEFECT-2 台账摘牌"
+    assert await _emit_once(same_id_channel, leaky) == 0, (
+        "平台腿失守：同号的 TG 频道又被 QQ 群白名单带走了"
     )
+    assert (
+        await _emit_once(_typed_message(SessionType.GROUP, group_id="662948429"), leaky)
+        == 1
+    ), "QQ 域那一格必须照旧放行，否则平台腿被写成了整面关死"
 
 
 # ---------------------------------------------------------------------------

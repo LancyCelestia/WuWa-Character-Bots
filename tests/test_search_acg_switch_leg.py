@@ -9,7 +9,8 @@ False、竖源一次都没跑过。同一枚开关的另一腿（`capability_pro
 读的是 Config——一个开关名、两个取数口，这就是「开关是 True 但路永远走不到」的完整形态。
 
 修法（本锁钉住的现行形状）：`get_or` 的缺省改从 content_route_config 的同名**字段**取
-（覆盖在册仍赢；Config 未注入的 smoke/console/backend_unit 工具路走 config.py 声明缺省），
+（覆盖在册仍赢；smoke/console/backend_unit 三条工具路自 09-29 起都已交 config，
+只有 config 缺席这一历史/兜底形态才走 config.py 声明缺省），
 六枚键逐枚经 `_acg_leg_config_default`。
 
 四把锁全部是**活性**（真驱 `capability()` 闭包、断言竖源派发口真被走到/真没被走到），
@@ -111,7 +112,7 @@ def _decision(message: Any):
 
 def _fresh_store(tmp_path: Path) -> RuntimeSettingsStore:
     """真 store、空覆盖册、落 tmp（不碰生产 JSON/SQLite，也不写源码树）。"""
-    return RuntimeSettingsStore(tmp_path / "runtime_settings_test.json", instance="acg-leg")
+    return RuntimeSettingsStore(tmp_path / "runtime_settings_test.json", instance="acg-leg", allow_no_gate=True)
 
 
 def _run_turn(

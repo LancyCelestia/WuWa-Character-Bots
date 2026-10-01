@@ -12,10 +12,13 @@
 2. 「走统一路径」链路锁：transport 文件部件分支经
    ``get_default_file_gateway().stage → deliver``（onebot.py B3 阶段 1 既有链），
    上游 renderer ``CapabilityResult.files`` → media_parts 映射在位；
-3. 根 ``__init__.py`` 四处 BYPASS_SUSPECT 坐标刷新至读时快照（含补登记的
-   文档导出上传直连），旧陈旧坐标（4070/4878/5175-5182）清零；
-   pending-on-RWC5-b 语义显式入注——根内四处**行为收编**归 RWC5-b 交付后的
-   后续席，本文件只锁登记表与真值的对应关系，不宣称生产行为已收编。
+3. 根 ``__init__.py`` 原四处 BYPASS_SUSPECT 已于 ed802d3（2026-09-26，裁定 R-4
+   + S174 现算）整批改判 ABSORBED——本锁判据随之改为**显式名册 ↔ registry
+   点名对账**（棘轮：嫌疑只降不升；现算在册嫌疑唯一在岗＝``_deliver_v2_event``，
+   SEAT-ATK-SUB 评审 F-2 补登，F-1 根修落地后随迁改判、名册归零）；
+   陈旧坐标（4070/4878/5175）与历史死号（4440/5378/5730/5526）在 location
+   清零（note/evidence 散文留痕合法）。原「pending-on-RWC5-b」注记语义已随
+   行为收编兑现而退役（盘上 registry 该字面量零命中），不再作判据。
 
 全离线：零网络、零 NoneBot 启动、零真实发送、零根 ``__init__.py`` 改动。
 """
@@ -37,6 +40,23 @@ _PLUGIN_ROOT = _REPO_ROOT / "plugins" / "bot_unified_runtime"
 
 # WIRE-DIRECT 移交、经本席 grep 复核已陈旧的根坐标字面量（登记表中必须清零）。
 _STALE_ROOT_COORDINATES = ("4070", "4878", "5175")
+
+# ed802d3（2026-09-26）改判后的 BYPASS_SUSPECT 显式名册（棘轮：只降不升；
+# F-1 根修落地后本条随迁改判 ABSORBED、名册归零——届时同步本常量，禁抬棘轮）。
+# 2026-09-28 S-FIX-COORD-REANCHOR（主任务板 #33 诚实路径①）：登记式统一为
+# `file::symbol` 符号派生式，名册语法随批。
+_BYPASS_SUSPECT_ROSTER = ("__init__.py::_deliver_v2_event",)
+
+# 原四处根直连改判 ABSORBED 后的名册：api 锚名=在岗后继统一管线函数
+# （行号随根在飞编辑必漂，本件先例纪律=不钉根文件行号、按符号名点名）。
+_ABSORBED_API_ROSTER = frozenset(
+    {
+        "send_private_msg → _deliver_cookie_expiry_report_via_queue",
+        "send_group_msg → _send_text_through_unified_pipeline",
+        "send_group_msg + send_private_msg → _send_parts_through_unified_pipeline",
+        "upload_group_file + upload_private_file → _send_files_through_unified_pipeline",
+    }
+)
 
 
 def _file_gateway_entry_location() -> tuple[Path, str]:
@@ -79,31 +99,41 @@ def test_file_gateway_entry_reclassified_channel_body_at_real_path() -> None:
 
 
 def test_file_gateway_entry_resolves_to_deliver_onebot_inner_loop() -> None:
-    """登记坐标必须落在真身 ``_deliver_onebot`` 函数体内（自检型登记表）。
+    """登记锚必须符号解析到真身 ``_deliver_onebot`` 且含 call_api 调用腿。
 
-    防再次出现「坐标指到 compat shim / 别的函数」的陈旧漂移。
+    防再次出现「锚指到 compat shim / 别的函数」的陈旧漂移。
+    2026-09-28 S-FIX-COORD-REANCHOR：判据由「行号区间落在 def 跨度内」改为
+    符号派生式——登记式恰等于锚串、按 AST 唯一命中、callee 腿在体内 ≥1 命中
+    （行号随插删必漂，退出判据）。
     """
     real_path, location = _file_gateway_entry_location()
     assert real_path.is_file(), f"登记真身不存在：{real_path}"
+    assert location == (
+        "domains/transport/sender/file_gateway.py::_deliver_onebot:call_api"
+    ), f"登记式必须是符号派生式，现={location}"
     source = real_path.read_text(encoding="utf-8")
     assert "async def _deliver_onebot" in source
     assert "upload_group_file" in source and "upload_private_file" in source
 
     tree = ast.parse(source)
-    func = next(
+    defs = [
         node
         for node in ast.walk(tree)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         and node.name == "_deliver_onebot"
-    )
-    _relative, _, line_part = location.partition(":")
-    start_s, _, end_s = line_part.partition("-")
-    start = int(start_s)
-    end = int(end_s) if end_s else start
-    assert func.lineno <= start and end <= (func.end_lineno or func.lineno), (
-        f"登记坐标 {location} 未落在 _deliver_onebot "
-        f"（AST 实际跨度 {func.lineno}-{func.end_lineno}）内"
-    )
+    ]
+    assert len(defs) == 1, f"_deliver_onebot 应按符号名唯一命中，现={len(defs)} 处"
+    func = defs[0]
+    callee_hits = [
+        node
+        for node in ast.walk(func)
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Attribute) and node.func.attr == "call_api")
+            or (isinstance(node.func, ast.Name) and node.func.id == "call_api")
+        )
+    ]
+    assert callee_hits, "登记 callee 腿 call_api 在 _deliver_onebot 体内零命中＝锚已漂"
 
 
 # ---------------------------------------------------------------------------
@@ -143,36 +173,50 @@ def test_unified_file_outbound_chain_consumes_file_gateway() -> None:
 
 
 def test_root_bypass_suspects_refreshed_and_doc_export_registered() -> None:
-    """四处根直连（WIRE-DIRECT 移交口径）全部在册、旧坐标清零、pending 入注。
+    """四处根直连（WIRE-DIRECT 移交口径）全部在册、在册嫌疑按名册、旧坐标清零。
 
-    注意：本测试锁**登记表完整性**，不锁根文件行号（根正被 RWC5-b 在飞编辑，
+    注意：本测试锁**登记表完整性**，不锁根文件行号（根正被多席在飞编辑，
     行号必漂——登记 note/evidence 带快照标记，实施席以符号 grep 复核）。
+    判据形态＝显式名册 ↔ registry 点名对账：原四处 BYPASS_SUSPECT 已于
+    ed802d3（2026-09-26，R-4 裁定 + S174 现算）整批改判 ABSORBED；现算在册
+    嫌疑唯一在岗＝_deliver_v2_event（SEAT-ATK-SUB F-2 补登，F-1 落地后随迁
+    改判、届时名册归零）。旧「计数==4 + pending-on-RWC5-b」判据随收编兑现
+    退役（盘上 registry 该字面量零命中，留判据＝永久红＝无咬合力的摆设）。
     """
     reg = build_default_takeover_registry()
     suspects = [
         e for e in reg.direct_sends if e.category is DirectSendCategory.BYPASS_SUSPECT
     ]
-    # cookie 提醒 / 入群欢迎 / 二维码双通道 / 文档导出上传（原登记缺口，补齐）。
-    assert len(suspects) == 4, (
-        f"根直连嫌疑应四处全登记，现={[(e.location, e.api) for e in suspects]}"
+    absorbed = [
+        e for e in reg.direct_sends if e.category is DirectSendCategory.ABSORBED
+    ]
+    # 名册对账（棘轮只降不升）：少一枚＝静默退役嫌疑、多一枚＝未裁决新绕行。
+    assert tuple(e.location for e in suspects) == _BYPASS_SUSPECT_ROSTER, (
+        f"BYPASS_SUSPECT 名册漂移，现={[(e.location, e.api) for e in suspects]}"
     )
-    joined = " | ".join(e.location for e in suspects)
+    # cookie 提醒 / 入群欢迎 / 二维码双通道 / 文档导出上传——改判后仍逐一在册。
+    assert {e.api for e in absorbed} == _ABSORBED_API_ROSTER, (
+        f"改判四枚应逐一点名在岗后继符号，现={sorted(e.api for e in absorbed)}"
+    )
+    joined = " | ".join(e.location for e in suspects + absorbed)
     for stale in _STALE_ROOT_COORDINATES:
         assert stale not in joined, f"陈旧坐标 {stale} 仍在登记：{joined}"
-    assert all(e.location.startswith("__init__.py:") for e in suspects)
-    apis = sorted(e.api for e in suspects)
-    assert apis == [
-        "send_group_msg",
-        "send_group_msg + send_private_msg",
-        "send_private_msg",
-        "upload_group_file + upload_private_file",
-    ], f"api 面漂移：{apis}"
-    for entry in suspects:
-        assert "pending-on-RWC5-b" in entry.note, (
-            f"根直连条目须带 pending-on-RWC5-b 注记（行为收编归后续席）：{entry.location}"
+    assert all(e.location.startswith("__init__.py:") for e in suspects + absorbed)
+    for entry in absorbed:
+        # 收编证据链：已收编状态 + via_queue 后继门 + R-4 改判来源。
+        assert "已收编" in entry.note and "via_queue" in entry.note and "R-4" in entry.note, (
+            f"ABSORBED 条目 note 缺收编证据链：{entry.location}"
         )
         assert "v21r4-b S0-COLLECT" in entry.evidence, (
             f"证据串须带本席快照标记（行号会漂，实施席以符号 grep 复核）：{entry.location}"
+        )
+    for entry in suspects:
+        # 在册嫌疑不得静默常置：note 须带 F-1 随迁改判承诺；证据带评审来源。
+        assert "随迁" in entry.note, (
+            f"嫌疑条目须带随迁改判承诺（F-1 落地后改 ABSORBED）：{entry.location}"
+        )
+        assert "SEAT-ATK-SUB" in entry.evidence, (
+            f"嫌疑条目证据须带评审快照标记：{entry.location}"
         )
 
 

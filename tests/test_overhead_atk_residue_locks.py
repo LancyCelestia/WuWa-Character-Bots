@@ -47,9 +47,11 @@ def _definitions_of(func_name: str) -> set[str]:
         except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - 树内不应出现
             raise AssertionError(f"unparsable plugin file: {py}")
         for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if node.name == func_name:
-                    found.add(py.relative_to(_PLUGIN_ROOT.parent).as_posix())
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == func_name
+            ):
+                found.add(py.relative_to(_PLUGIN_ROOT.parent).as_posix())
     return found
 
 

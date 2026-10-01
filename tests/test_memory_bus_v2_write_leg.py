@@ -652,16 +652,12 @@ def test_memory_writer_runs_off_the_event_loop() -> None:
     assert threaded, "memory_writer 不再经 threading.Thread 派发 = 阻塞写落回事件循环"
 
 
-# ---------------------------------------------------------------- 生产接线活性（挂账）
+# ---------------------------------------------------------------- 生产接线活性（已转正）
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "S-T-MEM-1 写腿的**装配腿**在禁写面（根 __init__.py:399），交主代理落。"
-        "落码后本条转 XPASS ⇒ 摘掉本标记即可。"
-    ),
-)
+# 挂账结案（2026-09-27 S-FIX-ATK-MEMORY-FIX A 票）：装配腿已落码——根 __init__.py
+# _build_memory_writer 构造 SQLiteMemoryRepository 时传入 bus=（开关关时该值为
+# None、不碰库，缺省关态逐字节不变）。原 xfail(strict=False) 标记按台账约定摘除。
 def test_production_memory_writer_builds_repository_with_bus() -> None:
     """生产抽取写入器必须把总线传给仓储，否则本席写的这条腿在现网仍是死件。
 

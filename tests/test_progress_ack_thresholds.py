@@ -346,13 +346,43 @@ def test_settings_are_an_immutable_snapshot_with_no_mutable_default() -> None:
 
 
 @pytest.mark.parametrize("ema_ms", [None, 0, -1, "not-a-number", 0.0])
-def test_unmeasured_gateway_falls_back_to_the_static_bar_byte_identically(
-    ema_ms: object,
-) -> None:
-    """观测面坏了不得把回执功能一起带走：缺测 ⇒ 与旧固定阈值逐字节同值。"""
+def test_unmeasured_gateway_opens_no_earlier_than_the_floor(ema_ms: object) -> None:
+    """缺测 ⇒ `max(静态值, 地板)`（2026-09-28 用户裁定收掉 D2a 那一半）。
+
+    旧裁定是"逐字节退回静态值"，代价＝冷启动窗口（刚重启还没有样本）里 D2 抬起来的
+    地板根本不生效、仍按 15 秒开口——那正是她要收的口。观测面坏了依旧**不带走功能**
+    （只是不再比地板更早开口），fail-open 的方向没变，变的只是开口时刻的下界。
+    """
     settings = _production_settings()
     got = effective_ack_delay_seconds(settings, ema_ms)  # type: ignore[arg-type]
-    assert got == settings.delay_seconds
+    assert got == max(settings.delay_seconds, settings.delay_floor_seconds)
+    assert got >= settings.delay_floor_seconds
+
+
+def test_cold_start_bar_never_sits_below_the_static_bar() -> None:
+    """缺测那一档在整段静态配置上单调不降，且永远不小于地板。
+
+    只测现网那一格的话，`return max(15.0, 30.0)` 写死也能绿；这里横扫静态值两侧
+    （静态低于地板 / 高于地板），把"取 max"这条判据本身钉住。
+    """
+    for static in (0.5, 5.0, 15.0, 30.0, 45.0, 120.0):
+        settings = dataclasses.replace(_production_settings(), delay_seconds=static)
+        got = effective_ack_delay_seconds(settings, None)
+        assert got == max(static, settings.delay_floor_seconds), f"静态 {static}s 时实测 {got}s"
+        assert got >= static, f"缺测把配置值就地改小了：静态 {static}s → {got}s"
+
+
+def test_adaptive_disabled_still_honours_the_static_bar_exactly() -> None:
+    """显式关死自适应＝逐字节回到「配多少判多少」，地板不参与（测试旋钮依赖这一条）。
+
+    缺测抬地板只作用于"自适应开着但读不到数"这一支；把自适应关掉是**人为选择固定值**，
+    再拿地板去顶它就成了配置被静默改写。下游亚秒夹具全走这条支路，故必须钉死。
+    """
+    settings = dataclasses.replace(
+        _production_settings(), adaptive_enabled=False, delay_seconds=0.02
+    )
+    assert effective_ack_delay_seconds(settings, None) == 0.02
+    assert effective_ack_delay_seconds(settings, 99_000.0) == 0.02
 
 
 @pytest.mark.parametrize("ema_ms", [1.0, 500.0, 4_500.0, 13_700.0, 60_000.0, 500_000.0])
@@ -397,41 +427,51 @@ def test_threshold_band_is_bounded_and_cap_below_floor_does_not_invert() -> None
         )
 
 
-def test_missing_observation_keeps_static_threshold_cold_start_hole_pinned() -> None:
-    """把「缺测**不**被下限顶起」钉成显式判据——这是已知代价，不是没人知道的洞。
+def test_missing_observation_no_longer_reopens_the_cold_start_hole() -> None:
+    """D2a 已收口（2026-09-28 用户裁定）：缺测不再逐字节退回未抬的静态旧地板。
 
-    现况：EWMA 拿不到（健康库未启用／读失败／**刚重启还没有样本**）⇒ 阈值退回静态
-    `delay_seconds`（现值 15.0），不受 30 秒下限约束。于是 D2 抬地板在冷启动窗口内
-    不生效，那一段仍可能按 15 秒开口。
+    旧现状（挂账 D2a 时钉住的）：EWMA 拿不到（健康库未启用／读失败／**刚重启还没有
+    样本**）⇒ 阈值退回静态 `delay_seconds`（15.0），不受 30 秒下限约束 ⇒ D2 抬地板在
+    冷启动窗口内不生效，那一段仍按 15 秒误开口。本用例当时把那个洞**显式钉成判据**，
+    今天是把它翻正成"洞已收"：缺测形态一律 `max(静态值, 地板)`。
 
-    为什么不顺手改成 `max(static, floor)`：
-    ①「观测面坏了不得把回执功能一起带走」是既有裁定（见 `effective_ack_delay_seconds`
-      docstring），本用例只负责让它**可见**；
-    ②下限属于"自适应带"，把缺测顶进带里＝把"无观测"当成"最慢观测"，方向相反；
-    ③下游管线用例按亚秒阈值跑（静态值被当测试旋钮用），改这条会连带改写 60+ 例前提。
-    ⇒ 要收这个口需用户裁定（挂账 D2a）。本用例的作用是：在被裁定之前，任何人把它
-      误当成"已生效"都会当场撞红；真要改，请连本 docstring 与裁定一起更新。
+    仍然在场的两半（不许被这次改动带走）：
+    ① 观测面坏了**不许把回执功能一起带走**——缺测照样有一个可开口的阈值，只是不早于地板；
+      探针抛异常/返回垃圾都只退成这一个下界（见 `test_probe_that_raises_or_returns_junk_...`，
+      它自带亚秒地板，语义不变）。
+    ② 静态值本身仍是**下界**：本次只抬不压，配置填得比地板高时按配置走。
+    她想把静态改成 40 属配置面（`.env`/`config.py`，本席禁写）——注意静态一旦抬到 40，
+    因为 `floor = max(static, delay_floor_seconds)`，整条自适应带的下界也一起抬到 40。
     """
     settings = _production_settings()
     assert settings.adaptive_enabled is True
     for missing in (None, 0.0, "not-a-number"):
         got = effective_ack_delay_seconds(settings, missing)  # type: ignore[arg-type]
-        assert got == settings.delay_seconds, (
-            f"缺测形态 {missing!r} 必须逐字节退回静态值，实测 {got}"
+        assert got == max(settings.delay_seconds, settings.delay_floor_seconds), (
+            f"缺测形态 {missing!r} 应抬到地板，实测 {got}"
         )
-    assert got == settings.delay_seconds == DEFAULT_ACK_DELAY_SECONDS, (
-        "静态值就是那枚未抬的旧地板 ⇒ 冷启动窗口的误触发面仍在（D2a 待裁）。哪天有人"
-        "把缺测也顶进下限，这条会红——那时请连同裁定与本用例一起改，别只把期望值抹绿"
+    assert settings.delay_floor_seconds == DEFAULT_ACK_DELAY_FLOOR_SECONDS, (
+        "地板真身漂移：本用例的期望值来自 `progress_ack.DEFAULT_ACK_DELAY_FLOOR_SECONDS`，"
+        "与 `config.py` 的缺省由上面的 parity 锁同源比对"
+    )
+    assert settings.delay_seconds == DEFAULT_ACK_DELAY_SECONDS, (
+        "静态值仍是那枚没抬过的 "
+        f"{DEFAULT_ACK_DELAY_SECONDS} 秒（config.py/.env 两侧都还没跟上她的 40 秒口径）："
+        "缺测现在抬到地板，所以 15 与 30 并存的冷启动误触发面已收；但静态本身若要抬到"
+        "40，因为 `floor = max(static, delay_floor_seconds)`，整条自适应带的下界会一起"
+        "被顶到 40 —— 那是配置面动作，坐标见交卷 `_hub 补丁申请_`"
     )
 
 
 @pytest.mark.parametrize(
     ("ema_ms", "expected_seconds"),
     [
-        # 下限 2026-09-26 由 15 抬到 30（用户裁定 D2）：派生值低于下限时**下限说话**。
-        (4_500.0, 30.0),  # 快网关：派生 9 秒 < 下限 ⇒ 落在 30 秒（旧口径这里是 15）
-        (13_700.0, 30.0),  # 现网 grok 慢跳：派生 27.4 秒仍低于新下限 ⇒ 30 秒封顶在下限
-        (19_900.0, 39.8),  # 现网 grok 单跳最大：派生≈40 秒，高于下限 ⇒ 用派生值
+        # 地板 15→30（09-26 D2）→ 55（09-29 中途）→ **50**（09-29 需求项 6 终稿：
+        # 用户口径「结果必须落在 45~60 秒」，地板 50 把 30-45 秒的正常联网轮整段
+        # 盖过去，又给自适应腿留出上沿）。派生值低于下限时**下限说话**。
+        (4_500.0, DEFAULT_ACK_DELAY_FLOOR_SECONDS),  # 快网关：派生 13.5 秒 < 地板 ⇒ 地板说话
+        (13_700.0, DEFAULT_ACK_DELAY_FLOOR_SECONDS),  # 现网 grok 慢跳：派生 41.1 秒仍低于地板 ⇒ 地板说话
+        (19_900.0, 59.7),  # 现网 grok 单跳最大：3.0 倍率派生≈59.7 秒，高于地板 ⇒ 用派生值
         (500_000.0, DEFAULT_ACK_DELAY_CAP_SECONDS),  # 网关炸了：上限兜住
     ],
 )
@@ -440,6 +480,41 @@ def test_threshold_at_observed_gateway_states(
 ) -> None:
     assert effective_ack_delay_seconds(_production_settings(), ema_ms) == pytest.approx(
         expected_seconds
+    )
+
+
+def test_effective_delay_lands_inside_the_ruling_band_on_the_shipped_defaults() -> None:
+    """需求项 6 的原话尺：「有效触发延迟必须落进 45~60 秒」。
+
+    这不是把断言放宽，而是把**用户的口径**本身钉进门里：旧形态 floor 30 / cap 90 /
+    倍率 2.0 时，30-35 秒的正常联网轮必然先开口（实测误触 19/34＝55.9%），结果既
+    出过区间下沿、也出过区间上沿，谁都没守着这条线。
+
+    覆盖面＝生产装配形态（`ProgressAckSettings.from_config(Config())`，即 `.env`
+    不动键时的真值）× 现网全部观测态（含缺测、含网关炸穿上限）：任何一格都不许
+    落到 45 秒以下或 60 秒以上。
+
+    ⚠ 刻意**不**覆盖 `adaptive_enabled=False`：那一支是人为选择「配多少判多少」，
+    本件另有用例钉它逐字节回到静态值（`test_adaptive_off_is_the_old_ruling_...`）。
+    关自适应又想把开口时刻留在区间内，动作在配置面——把
+    `BOT_CHAT_PROGRESS_ACK_DELAY_SECONDS` 钉进 45~60，不是让代码去顶掉用户填的数。
+    """
+    from plugins.bot_unified_runtime.config import Config
+
+    settings = ProgressAckSettings.from_config(Config())
+    assert settings.enabled is False, "总闸缺省关（本用例只管阈值尺，不管开关）"
+    assert settings.adaptive_enabled is True, "生产缺省开自适应 ⇒ 区间尺由地板/上限守住"
+    assert 45.0 <= settings.delay_floor_seconds <= settings.delay_cap_seconds <= 60.0, (
+        f"地板/上限本身先出区间：{settings.delay_floor_seconds}/{settings.delay_cap_seconds}"
+    )
+    for ema_ms in (None, 0.0, "junk", 1.0, 4_500.0, 13_700.0, 19_900.0, 60_000.0, 5e6):
+        got = effective_ack_delay_seconds(settings, ema_ms)
+        assert 45.0 <= got <= 60.0, (
+            f"观测态 {ema_ms!r} 下有效阈值 {got}s 出界（用户口径 45~60 秒）"
+        )
+    # 静态腿在缺测时也不许把结果推出区间下沿：静态值高于地板时会顶高下界。
+    assert settings.delay_seconds <= 60.0, (
+        f"静态阈值 {settings.delay_seconds}s 会把缺测形态顶出区间上沿"
     )
 
 
@@ -452,9 +527,9 @@ def test_adaptive_off_is_the_old_ruling_and_on_is_the_new_one(
         _production_settings(), adaptive_enabled=adaptive_enabled
     )
     got = effective_ack_delay_seconds(settings, 13_700.0)
-    assert got == pytest.approx(15.0 if not adaptive_enabled else 30.0), (
+    assert got == pytest.approx(15.0 if not adaptive_enabled else DEFAULT_ACK_DELAY_FLOOR_SECONDS), (
         "关自适应＝逐字节回到固定 15 秒（显式停用，下限不参与）；"
-        "开自适应＝按实测 EWMA 抬档，但派生 27.4 秒低于新下限 30 秒 ⇒ 下限说话"
+        "开自适应＝派生 41.1 秒低于地板 ⇒ 地板说话（09-29 需求项 6 新尺）"
     )
 
 
@@ -469,14 +544,22 @@ def _ack_would_fire(reply_seconds: float, ema_ms: float | None, *, adaptive: boo
     ("ema_ms", "reply_seconds", "expected_ack", "why"),
     [
         (4_500.0, 12.0, False, "快网关 + 12 秒回复：阈值内出结果，什么都不发"),
-        (4_500.0, 28.0, False, "★ 新下限咬住误报：快网关 + 28 秒（旧口径 15 秒会发）"),
-        (4_500.0, 32.0, True, "快网关但 32 秒已越过 30 秒下限 ⇒ 该发"),
-        (13_700.0, 20.0, False, "★ 误报收口：grok 慢跳下 20 秒是这条路的正常耗时"),
-        (13_700.0, 30.0, False, "边界：等于阈值不发（判据是 `>` 不是 `>=`）"),
-        (13_700.0, 32.0, True, "同样慢网关，32 秒已明显超出该走的那条路 ⇒ 还是要发"),
-        (19_900.0, 35.0, False, "单跳最大实测 19.9s 时阈值≈40s，35 秒不算慢"),
-        (60_000.0, 120.0, True, "网关整体炸到上限（90s）之外也要出声，不能永远沉默"),
-        (None, 18.0, True, "缺测 ⇒ 回到固定 15 秒，18 秒照发（观测坏了不带走功能）"),
+        (4_500.0, 28.0, False, "★ 正常联网轮收口：快网关 + 28 秒（旧口径 30 秒会发）"),
+        (4_500.0, 60.0, True, "快网关但 60 秒已越过地板 ⇒ 该发"),
+        (13_700.0, 20.0, False, "grok 慢跳下 20 秒是这条路的正常耗时"),
+        (13_700.0, 40.0, False, "★ 30-45 秒正常轮：地板把它收在阈值内（旧地板 30 必发）"),
+        (
+            13_700.0,
+            DEFAULT_ACK_DELAY_FLOOR_SECONDS,
+            False,
+            "边界：等于阈值不发（判据是 `>` 不是 `>=`）",
+        ),
+        (13_700.0, 60.0, True, "慢网关 + 60 秒越过地板 ⇒ 该发"),
+        (19_900.0, 50.0, False, "单跳最大 19.9s 派生≈59.7s，50 秒不越阈值"),
+        (19_900.0, 60.0, True, "60 秒越过派生阈值 59.7 ⇒ 该发（地板以上派生说话）"),
+        (60_000.0, 120.0, True, "网关整体炸到上限之外也要出声，不能永远沉默"),
+        (None, 18.0, False, "缺测抬到地板：18 秒不再按旧低值开口"),
+        (None, 60.0, True, "缺测且真回复越过地板照样要出声（功能不被观测面带走）"),
     ],
 )
 def test_send_or_stay_silent_truth_table(
@@ -514,7 +597,10 @@ async def test_probe_is_consumed_on_the_emission_path_high_ema_stays_silent() ->
         delay=0.02, submits=submitted, order=order, floor=0.05,
         probe=lambda: 40_000.0,
     )
-    assert _delay_for_probe(40_000.0) == pytest.approx(80.0), "夹具前提：阈值被抬到 80 秒"
+    assert _delay_for_probe(40_000.0) == pytest.approx(DEFAULT_ACK_DELAY_CAP_SECONDS), (
+        "夹具前提：40 秒 EWMA × 倍率 3.0=120 被上限夹住 ⇒ 阈值＝上限那一格"
+        "（09-29 需求项 6 把上限从 90 收到 60，正是为了把结果钉回 45~60 区间）"
+    )
 
     async def reply(cap_msg, decision):
         await asyncio.sleep(0.2)
@@ -738,16 +824,6 @@ async def test_failed_submit_releases_the_slot_so_the_next_ask_can_still_be_acke
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "DEFECT-1：pipeline.py:1471-1474 的 `except TimeoutError: pass` 不区分"
-        "「我们等的这次到点」与「能力自己抛 TimeoutError」⇒ 0.05 秒就失败的请求"
-        "照样先发一句回执，随后错误面再回一句（承诺被当场打破）。"
-        "实弹证据 logs/S-T-ACK-1.md §5。摘牌＝pipeline.py 该 except 内补"
-        "`if task.done(): raise` 后删掉本标记，期望值不改。"
-    ),
-)
 @pytest.mark.asyncio
 async def test_capability_raised_timeout_error_is_not_misread_as_our_deadline() -> None:
     import asyncio

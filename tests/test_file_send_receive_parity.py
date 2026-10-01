@@ -428,19 +428,57 @@ async def test_file_scheme_reference_never_leaves_the_machine(tmp_path: Path) ->
 # ---------------------------------------------------------------------------
 
 
-def test_inbound_telegram_document_segment_is_produced_but_never_fetched() -> None:
+def test_inbound_telegram_document_segment_is_produced_and_fetched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """TG 来信带 document：段**进得来**（type=document / data.file=file_id），
-    但字节**取不到** —— 富化名单刻意不含 ``document``（该文件 :52 注释自认
-    「document 不在本次范围」）。⇒ 需求 16(3) 的 TG 收件半边今天未闭。
+    字节**取得到** —— 富化名单已含 ``document``（需求 16①，S-FIX-TG-DOC 2026-09-30
+    落地），落点是根入站唯一认得的 file 段形状。
 
-    翻转指引：读取侧席位（16a）把 ``document`` 接进富化链后，本锁会变红，
-    那时请把本条改成断言「字节已落到 data.file」，不要删锁。
+    本条原形是「钉现状」的反向锁（旧名 ``…_is_produced_but_never_fetched``，docstring
+    里的翻转指引要求「接进富化链后把本条改成断言字节已落到 data.file，不要删锁」）。
+    现按该指引翻向，锁不删：摘掉 document 腿或改坏落点形状时本条当场红。
+    读取语义不在此表态——读文件正文一律归根入站 ``read_supported_file`` 那颗咽喉。
     """
-    assert "document" not in telegram_media.TELEGRAM_FILE_ID_SEGMENT_TYPES
-    # 段的来源事实：适配器入站只给 file_id，连文件名都不给。
+    assert "document" in telegram_media.TELEGRAM_FILE_ID_SEGMENT_TYPES
+    # 段的来源事实：适配器入站只给 file_id，连文件名都不给（名字只能取自 get_file）。
     seg_data = {"file": "ABC123"}
     assert telegram_media._segment_file_id(seg_data) == "ABC123"
     assert "file_name" not in seg_data
+
+    payload = b"%PDF-1.4\nhello\n%%EOF\n"
+
+    async def _fake_download(url: str, **kwargs: Any) -> bytes:
+        return payload
+
+    class _Event:  # 只在 __module__ 上带 .telegram 标记的假事件
+        ...
+
+    _Event.__module__ = "nonebot.adapters.telegram.event"
+
+    class _Bot:
+        bot_config = SimpleNamespace(token="123456:secret", api_server="https://93.184.216.34/")
+        self_id = "123456"
+        adapter = SimpleNamespace(adapter_config=SimpleNamespace(telegram_bots=[]))
+
+        async def call_api(self, action: str, **params: Any) -> Any:
+            assert action == "get_file"
+            return SimpleNamespace(file_path="files/合同 2026.pdf")
+
+    monkeypatch.setattr(telegram_media, "_download_bytes", _fake_download)
+    monkeypatch.setattr(telegram_media, "_FILE_PATH_CACHE", {})
+    monkeypatch.setattr(telegram_media, "_FILE_PATH_CACHE_ORDER", [])
+    segments: list[dict[str, Any]] = [{"type": "document", "data": {"file": "ABC123"}}]
+    asyncio.run(telegram_media.enrich_telegram_file_segments(_Bot(), _Event(), segments))
+
+    stored = Path(segments[0]["data"]["file"])
+    try:
+        assert segments[0]["type"] == "file", "落点不是根入站认得的 file 段形状＝TG 文件仍全盲"
+        assert stored.is_file(), "字节没落到本机暂存件"
+        assert stored.read_bytes() == payload
+        assert segments[0]["data"]["name"] == "合同 2026.pdf"
+    finally:
+        stored.unlink(missing_ok=True)
 
 
 def test_inbound_mail_attachment_bytes_arrive_inline() -> None:

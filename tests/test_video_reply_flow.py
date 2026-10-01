@@ -207,6 +207,24 @@ def _user_text(messages: list[dict[str, str]]) -> str:
     )
 
 
+# SECTEXT-GUARD 波（台账 #58★）后，「视频档案」这块边界标签的真身写手是**中央二手
+# 咽喉**：chat.py 视频腿调 guard_secondhand_text(video_brief_text,
+# source_label='视频档案')，由 injection._SECONDHAND_LEAD_TEMPLATE 拼出引导句。
+# 帽字 `[视频档案]` 只由简报合成器 video_understanding.build_video_brief 首行自写，
+# 而本档用 _stub_brief／_asset(brief_text=...) 把合成器整颗换成桩，桩文本天然缺帽
+# ⇒ 旧靶 `[视频档案` 量的是替身的手拼，不是生产的那条腿（HEAD 起 7 枚红）。
+# 重锚到咽喉自己的不变量：引导句里嵌着 source_label，一句同时锁住
+# ①简报确实注入 ②确实过中央件 ③标签归谁写。正例与反例共用本常量——
+# 反例若仍锚旧帽字，那条断言会在简报真的注入时也恒绿（静丢牙）。
+_VIDEO_GUARD_LEAD = "以下是视频档案的转述内容"
+
+
+def _all_user_text(calls: list[list[dict[str, str]]]) -> str:
+    """整轮聚合：一轮回复会触发**多次** generate（复核／改写二遍），反例腿只看
+    messages[0] 会漏掉"简报只在后面某遍溜进来"这一形——凡判"不该注入"就全本轮看。"""
+    return "\n".join(_user_text(call) for call in calls)
+
+
 def test_reply_known_asset_with_cached_brief_injects_and_touches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -216,7 +234,7 @@ def test_reply_known_asset_with_cached_brief_injects_and_touches(
     result = _run(registry, llm, _message(reply_to_message_id="M1"))
     user_text = _user_text(llm.messages[0])
     system_prompt = llm.messages[0][0]["content"]
-    assert "[视频档案" in user_text
+    assert _VIDEO_GUARD_LEAD in user_text
     assert "猫跳上桌" in user_text
     assert "媒体应对守则" in system_prompt
     assert registry.touched == ["M1"]
@@ -241,7 +259,7 @@ def test_reply_known_asset_without_brief_analyzes_and_updates(
     assert calls[0]["subtitle_text"] == "大家好欢迎收看"
     assert "测试视频" in str(calls[0]["metadata_text"])
     assert registry.updated_briefs and registry.updated_briefs[0][0] == "media-M1"
-    assert "[视频档案" in _user_text(llm.messages[0])
+    assert _VIDEO_GUARD_LEAD in _user_text(llm.messages[0])
 
 
 def test_current_video_message_analyzes_and_registers(
@@ -266,7 +284,7 @@ def test_current_video_message_analyzes_and_registers(
     assert record.chat_message_id == "M2"
     assert record.local_path == str(clip)
     assert registry.updated_briefs and registry.updated_briefs[0][0] == record.media_id
-    assert "[视频档案" in _user_text(llm.messages[0])
+    assert _VIDEO_GUARD_LEAD in _user_text(llm.messages[0])
 
 
 def test_disabled_switch_keeps_legacy_and_registry_untouched(
@@ -286,7 +304,7 @@ def test_disabled_switch_keeps_legacy_and_registry_untouched(
     )
     assert calls == []
     assert registry.touched == []
-    assert "[视频档案" not in _user_text(llm.messages[0])
+    assert _VIDEO_GUARD_LEAD not in _all_user_text(llm.messages)
 
 
 def test_reply_unknown_video_without_fetch_does_nothing(
@@ -298,7 +316,7 @@ def test_reply_unknown_video_without_fetch_does_nothing(
     _run(registry, llm, _message(reply_to_message_id="M9"))
     assert calls == []
     assert registry.registered == []
-    assert "[视频档案" not in _user_text(llm.messages[0])
+    assert _VIDEO_GUARD_LEAD not in _all_user_text(llm.messages)
 
 
 def test_fuzzy_followup_uses_recent_asset_when_enabled(
@@ -314,7 +332,7 @@ def test_fuzzy_followup_uses_recent_asset_when_enabled(
         _message(plain_text="刚才那个视频讲了什么"),
         media_config=cfg,
     )
-    assert "[视频档案" in _user_text(llm.messages[0])
+    assert _VIDEO_GUARD_LEAD in _user_text(llm.messages[0])
     assert registry.touched
 
 
@@ -335,7 +353,7 @@ def test_deep_request_reanalyzes_cached_brief(
     )
     assert calls and calls[0].get("deep") is True
     assert registry.updated_briefs
-    assert "[视频档案" in _user_text(llm.messages[0])
+    assert _VIDEO_GUARD_LEAD in _user_text(llm.messages[0])
 
 
 def test_fuzzy_deictic_reference_triggers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -348,7 +366,7 @@ def test_fuzzy_deictic_reference_triggers(monkeypatch: pytest.MonkeyPatch) -> No
         _message(plain_text="刚才那个讲了什么"),
         media_config=SimpleNamespace(bot_video_fuzzy_followup=True),
     )
-    assert "[视频档案" in _user_text(llm.messages[0])
+    assert _VIDEO_GUARD_LEAD in _user_text(llm.messages[0])
 
 
 def test_fuzzy_injection_rate_limited_within_window(
@@ -365,12 +383,21 @@ def test_fuzzy_injection_rate_limited_within_window(
         _message(plain_text="刚才那个讲了什么"),
         media_config=cfg,
     )
+    # 一轮回复可能触发**多次** generate（复核／改写二遍），_CaptureLLM 按调用追加：
+    # 旧写法拿 llm.messages[1] 当"第二条消息"，实际量到的是**第一轮自己的第二遍**，
+    # 而它确实带着简报——旧靶 `[视频档案` 从不出现所以恒绿，把索引错位盖住了。
+    # 现按轮次切界，并对**本轮全部** generate 调用下判据（简报要么整轮都在、
+    # 要么整轮都不在，逐遍不一致同样是缺陷）。
+    first_run_end = len(llm.messages)
     second = _run(
         registry,
         llm,
         _message(plain_text="开头唱的什么歌"),
         media_config=cfg,
     )
-    assert "[视频档案" in _user_text(llm.messages[0])
-    assert "[视频档案" not in _user_text(llm.messages[1])
+    first_run = llm.messages[:first_run_end]
+    second_run = llm.messages[first_run_end:]
+    assert first_run and second_run
+    assert all(_VIDEO_GUARD_LEAD in _user_text(m) for m in first_run)
+    assert all(_VIDEO_GUARD_LEAD not in _user_text(m) for m in second_run)
     assert second.audit_tags  # 第二条正常回复，只是不背简报

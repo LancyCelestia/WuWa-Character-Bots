@@ -88,7 +88,19 @@ def test_nested_capability_closure_does_not_freevar_contract_names() -> None:
     # co_names（那张表只装全局名）。用 co_names 筛靶子会把真凶整个筛掉——
     # 本锁第一版就栽在这里，故此处显式不按 co_names 过滤。
     nested = [c for c in _walk(host) if c is not host and c.co_name == "capability"]
-    assert nested, "内层 capability 闭包不在了——本锁失去靶子，请复核是不是被重构成别的形状"
+    if not nested:
+        # 2026-09-27 百科接地批：`_handle_moegirl_question` 的自答闭包整个删除
+        # （命中改走接地块交 bot.chat 一次生成），本锁的靶子随重构物理消失——
+        # 这是**预期方向**而非回潮。判据收敛到宿主层：宿主（含其协程体）的
+        # cell/free 名册里再出现契约名，只可能来自「重新自答 + 函数体导入」的
+        # 回潮写法，仍必红。
+        leaked_cells = sorted(
+            (set(host.co_cellvars) | set(host.co_freevars)) & set(_CONTRACT_NAMES)
+        )
+        assert not leaked_cells, (
+            f"宿主把契约名绑成了 cell/freevar（cellvar 遮蔽回潮）：{leaked_cells}"
+        )
+        return
     for inner in nested:
         leaked = sorted(set(inner.co_freevars) & set(_CONTRACT_NAMES))
         assert not leaked, f"内层 capability 把契约名当 freevar 取用（cellvar 遮蔽回潮）：{leaked}"

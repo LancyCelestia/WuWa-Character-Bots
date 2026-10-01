@@ -82,7 +82,7 @@ REGISTRY: tuple[ClusterFamily, ...] = (
         home="plugins/bot_unified_runtime/domains/chat_reply/runtime/capability_registry.py",
         reason="两份清单同描述双写（base_router.InterfaceEntry ↔ capability_registry.InterfaceDecl）。⚠ 2026-09-22 更正：本族 42 簇**并非全出自接口清单**——成员里混着路由 reason 与内部 note（如\"提醒（12点提醒我…）\"\"预留：游戏直播事件接入\"\"内部：桥接层\"），故只收 InterfaceEntry 一侧清不掉整族；逐条组成与分批见 decisions/INTERFACE-DECL-DEDUP-PLAN-20260922.md。好消息：两侧**没有分叉**，test_capability_registry 已逐字段双向锁等值⇒收编属观察输出零变更。收编方向=单一声明源由调度层投影，属 WP8 Wave 1-4 挂账，本门只钉住不再加第三份",
         members=(
-            Cluster("005d53d28e15", "北向资金（北向资金/沪股通/深股通成交总额，触发词见 capabilities/mark"),
+            Cluster("6e191d3a45ff", "北向资金（北向资金/沪股通/深股通成交总额，触发词见 domains/finance/c"),
             Cluster("1218d3bdb801", "SnowLuma / OneBot V11 传输"),
             Cluster("1dd9646999f6", "OneBot V11 群 API（get_group_info/成员列表/公告/精华）："),
             Cluster("273eeb1b38e2", "提醒（12点提醒我写作业/提醒列表/取消提醒）"),
@@ -104,7 +104,7 @@ REGISTRY: tuple[ClusterFamily, ...] = (
             Cluster("8308fdf09241", "萌百 MediaWiki 公开 API：显式指令 + 二次元问句自动查询（未命中降级人格"),
             Cluster("87e4aff64e1f", "人格档案 + 向量知识库 + 世界观注入的大模型回复"),
             Cluster("89c81bd9ca25", "调用本地 meme-generator-rs HTTP API 生成表情包"),
-            Cluster("8a22c3551f85", "商品行情（黄金/白银/原油/铜现货与 30 日走势，触发词见 capabilities/"),
+            Cluster("fe0cac5ddf2d", "商品行情（黄金/白银/原油/铜现货与 30 日走势，触发词见 domains/finan"),
             Cluster("995c938b5ad7", "媒体归档（收藏/归档/存图+媒体；存聊天记录）"),
             Cluster("9c4a97e72b45", "作为上下文能力注入，不单独占用文本路由"),
             Cluster("9ed6e9952242", "监听群图片异步下载、MD5 去重、权重筛选、VLM 打标与 NSFW 过滤"),
@@ -122,8 +122,20 @@ REGISTRY: tuple[ClusterFamily, ...] = (
             Cluster("e9eeae0737ed", "收件箱随手记 + 定时吃什么推荐与早晚简报（BOT_DAILY_ASSIST_*，纯文本"),
             Cluster("ef2d2b3a1556", "网易云/酷我/酷狗/QQ音乐/Apple Music/Spotify 搜索"),
             Cluster("f127c2a333fd", "本机 GPT-SoVITS v2ProPlus HTTP API（api_v2.py 的"),
-            Cluster("f6c37a70f8b4", "国债收益率（国债/期限利差/收益率曲线，触发词见 capabilities/market"),
+            Cluster("fd36ee743a21", "国债收益率（国债/期限利差/收益率曲线，触发词见 domains/finance/cap"),
             Cluster("f900aae234b9", "MediaWiki 公开 API"),
+            # S-BASE 基线席 2026-09-29 逐簇补账：批⑪／同意门／需求 5 三波把 InterfaceEntry ↔
+            # InterfaceDecl 双写形照旧复制了四枚说明句（同族判据：两侧无分叉、双向锁等值、
+            # 收编=调度层投影挂 WP8 账），本门只钉住不再加第三份。
+            # S-BASE 续账（同批现算换键）：财经域分家把三枚说明句里的触发词路径由
+            # ``capabilities/market.py`` 改写为 ``domains/finance/capabilities/market.py``，
+            # base_router 与 capability_registry 两侧**同批同形**改写（判据不变：两侧零分叉）
+            # ⇒ 旧 key 005d53d28e15 / 8a22c3551f85 / f6c37a70f8b4 按本门规矩作废（STALE 即删），
+            # 三枚新 key 由 census 现算照抄，族、home、reason 一字未动。
+            Cluster("2e3fccff9b1c", "宿主机状态（机器状态/机器配置/宿主状态；超管视图卡片）"),
+            Cluster("3415ed002b8e", "书面同意（同意卡 待批/看/批/驳；危险参数改动的批准入口，仅管理员）"),
+            Cluster("42a17383b6c5", "危险参数改动（R1/R2）签出的同意卡在这里批/驳/看：判定唯一住 safety_exe"),
+            Cluster("e882f39e8078", "本机运行时事实（版本族/硬件/占用率）经 host_metrics 单一取数口现读，Mica 卡片出图；仅超管视图，读数"),
         ),
     ),
     ClusterFamily(
@@ -139,6 +151,9 @@ REGISTRY: tuple[ClusterFamily, ...] = (
             Cluster("437ff9e07b09", ".env（模型注册表；/bot model 亦可视图）"),
             Cluster("590ebb163d3b", "matcher:IGNORE（空消息静默；未知命令形态回引导）"),
             Cluster("e59f05a2dd37", "bot.moegirl（二次元问句路由同归此能力）"),
+            # S-BASE 基线席 2026-09-29 补账：亲密档（台账 #36 R 系列）帮助条目与声明面同句双写，
+            # 同族判据（echo._HELP_ENTRIES ↔ capability_registry 声明），收编方向不变。
+            Cluster("c555ddcb459f", "bot.chat（整句「亲密模式 开/深开/关」；关系档子命令见 /bot identity）"),
         ),
     ),
     # 2026-09-22 SEAT-S-AFFCOPY：affinity-tier-attitude 族 6 簇已收编（展示表与
@@ -182,6 +197,27 @@ REGISTRY: tuple[ClusterFamily, ...] = (
             Cluster("d31be0c054f4", "该配置尚无安全热更新路径，请修改 .env 并重启。", home="plugins/bot_unified_runtime/control_plane/config_store.py", note="热改拒绝话术两件同句（其中一件少句号＝标点已飘）；收编方向=错误目录枚举"),
             Cluster("da3cab50c19e", "LLM就绪：，ready_for_real_llm=", home="plugins/bot_unified_runtime/domains/ops/smoke/diagnostics.py", note="/bot status 与诊断件拼同一状态行前缀；收编方向=状态行单一构造口"),
             Cluster("e8a4dba1f095", "（该页面无法直接提取内容，点开链接查看）", home="plugins/bot_unified_runtime/domains/link_parse/parsers/types.py", note="三件解析器同句「无法直接提取内容」兜底；收编方向=parsers 共用常量件"),
+            # ---- S-BASE 基线席 2026-09-29 逐簇补账（现算 sha256[:12] 由 census 输出照抄，勿手改 key）。
+            # 归因：以下 15 簇全部为 ed802d3/近期提交之后的波次新增副本；多为在飞件，登记 note 逐枚
+            # 写明「为什么暂时容得下」与收编方向；在飞件文案被改写时本登记即 STALE 转红，由页主跟办。
+            Cluster("01b6c150e9d1", "job 形请求未过契约自验：", home="plugins/bot_unified_runtime/domains/creation/tts/engine_provider.py", note="image/tts 两枚引擎 provider 同句拒绝（契约自验失败）；两件同波新建、措辞零分叉，收编方向=creation 契约自验话术共用常量件"),
+            Cluster("4bd85cb95be3", "非成功终态但未给出原因（不应发生：诚实说明缺失）", home="plugins/bot_unified_runtime/domains/creation/tts/engine_provider.py", note="同上一对 provider 的第二枚同句（诚实缺因兜底）；与上枚分开点名，防「一条糊两枚」，收编方向同上"),
+            Cluster("16312d3d1b77", "邮件没有「群」这种对象：群名、群号、公告、精华、群主、成员名单这些格子在这里是空的——S", home="plugins/bot_unified_runtime/domains/chat_reply/capabilities/group_info.py", note="会话画像波（在飞件 conversation_profile.py，未跟踪）复制 group_info 邮件空态说明；⚠ 在飞件文案一改本条即虚设转红，页主按本门规矩重登记；收编方向=邮件空态共用常量件"),
+            Cluster("27e6500e5971", "公告：接口这会儿没回应，拿不到（可能需要我有管理员身份）。", home="plugins/bot_unified_runtime/domains/chat_reply/capabilities/group_info.py", note="画像格复制群信息「接口没回应」诚实失败句（公告枚）；逐枚点名，收编方向=群信息失败话术单一出处"),
+            Cluster("9b36a0fb7fc4", "精华：接口这会儿没回应，拿不到（可能需要我有管理员身份）。", home="plugins/bot_unified_runtime/domains/chat_reply/capabilities/group_info.py", note="同一话术族的精华枚（与公告枚同形不同字段），按「一条至多消费一簇」逐枚点名"),
+            Cluster("7de8f7d0e9d9", "发件人昵称（From 显示名）：", home="plugins/bot_unified_runtime/domains/chat_reply/capabilities/group_info.py", note="画像侧沿用群信息邮件昵称字段标签措辞；字段标签同句属两读同一事实，收编方向=邮件字段标签共用常量"),
+            Cluster("7ff6e0d73e0a", "我这儿还没有人说过话的记录——这不等于这屋里没人说过话，只是我这边没记下。", home="plugins/bot_unified_runtime/domains/chat_reply/capabilities/group_info.py", note="参与者读空诚实句被画像侧照抄（台账 #51「没检索禁写它没有」同源话术）；收编方向=缺席话术单一出处"),
+            Cluster("95e441a6be45", "（这条记录的昵称与账号都没回）", home="plugins/bot_unified_runtime/domains/chat_reply/capabilities/group_info.py", note="同话术族的记录级兜底短括号句；逐枚点名，收编方向同上"),
+            Cluster("2b6df43c6b22", "（用户发送了图片/表情包/视频，未附文字。）", home="plugins/bot_unified_runtime/__init__.py", note="合并波（在飞件 message_merge.py）复制摄取层空段占位句；__init__.py 属禁碰面，登记而不要求改根文件（b34892eecd03 同型判例）；⚠ 在飞件文案一改即转红，页主跟办"),
+            Cluster("4ba06a0e2a41", "（用户发送了语音消息，未附文字。）", home="plugins/bot_unified_runtime/__init__.py", note="同上一对占位句的语音枚（摄取真身 vs 合并副本），按逐枚点名分列两条，不许一条糊两枚"),
+            Cluster("7b3d4ce531a8", "占卜服务尚未装配（未配置持久化路径），先不假装能抽牌。", home="plugins/bot_unified_runtime/domains/divination/routes.py", note="控制面 api/divination.py 端点复制聊天侧真身的未装配拒绝句（台账 #47 真身合并波的残余）；收编方向=占卜未装配话术单一出处"),
+            Cluster("db89b54acddd", "（娱乐参考口径见牌面本地解读；本端点当前固定返回 503。）", home="plugins/bot_unified_runtime/domains/divination/routes.py", note="同一对文件的第二枚同句（503 尾注），逐枚点名；收编方向同上"),
+            Cluster("908c790cd78c", "宿主机卡未出图（渲染后端不可用），以上读数即全部结果。", home="plugins/bot_unified_runtime/domains/ops/capabilities/host_state.py", note="echo 命令面兜底支复制 host_state 真身渲染失败句（需求 5 波残余；台账 #55「失败→纯文本兜底」同源）；收编方向=卡片渲染失败话术单一出处"),
+            Cluster("9458e559b539", "注意：写进去再读回来是 ，与批的 不一致（转换器改了形），已如实记账，不谎称一致。", home="plugins/bot_unified_runtime/domains/core/safety_exec/consent.py", note="settings_gate 复制 consent 的 roundtrip 不一致诚实记账句（同意门换代波，台账 #63）；收编方向=safety_exec 共用 roundtrip 警告"),
+            Cluster("f9459fbd684c", "我自查的大概原因（推测）与建议", home="plugins/bot_unified_runtime/domains/ops/monitor/error_report.py", note="统一错误报告卡真身与 card_render/bridge 文本兜底同标签（台账 #62 卡面波，error_report 正被页主改写）；⚠ 在飞件文案一改即转红，页主跟办；收编方向=告警段落标签单一出处"),
+            # 会话画像波（在飞件 conversation_profile.py）第三枚同句补账，同 16312d3d1b77/
+            # 7ff6e0d73e0a 判例：真身住 group_info 的个性签名空态话术，画像侧照抄。
+            Cluster("c7b8052ac91c", "接口回了空——多半是没设置，也可能没回，不替你断言。", home="plugins/bot_unified_runtime/domains/chat_reply/capabilities/group_info.py", note="画像格复制群信息「个性签名空态」诚实句（会话画像波残余，与同文件 27e6500e5971/9b36a0fb7fc4 同话术族）；收编方向=群信息失败与空态话术单一出处"),
         ),
     ),
 )

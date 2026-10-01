@@ -140,14 +140,18 @@ def test_enablement_is_not_hot_settable() -> None:
     )
 
     key = "BOT_MEMORY_BUS_ENABLED"
-    # 不在 SETTABLE：`/bot runtime set` 走 settings.py 白名单外即拒。
+    # 不在 SETTABLE：`/bot runtime set` 走 settings.py 白名单外即拒。此断言同时是
+    # 绊线：谁把它加进 SETTABLE 而读路仍冻结在装配期（providers.build_character_
+    # context_provider 构造 memory_provider 一次），本测试必须红并逼施工者先接合并
+    # 层现读。
     assert key not in runtime_settings.SETTABLE_KEYS
-    # 不在 RESTART 登记表：合并层根本没有该族的读点，登记了反而是「看着能热改」的
-    # 假面（config.py 注释与 2026-09-21 裁定同口径）。两本账都不在册 ⇒ 唯一杠杆
-    # = .env + 重启。此断言同时是绊线：谁把它加进 SETTABLE 而读路仍冻结在装配期
-    # （providers.build_character_context_provider 构造 memory_provider 一次），
-    # 本测试必须红并逼施工者先接合并层现读。
-    assert key not in runtime_settings.RESTART_REQUIRED_KEYS
+    # 在 RESTART 登记表（2026-09-27 切换裁定收编，HEAD 批「存量开关归册」）：总线
+    # 读写两腿已接线，消费点读装配期快照 ⇒ 唯一杠杆 = .env + 重启，按 C-09「宁可
+    # 拒绝，不可假成功」如实登册。旧断言「两本账都不在册」的前提「合并层根本没有
+    # 该族的读点」已被切换推翻；现锁的是**在册且带理由**——谁删登记而消费点仍冻结，
+    # 或把重启键粉饰成热改键，都要在此变红。
+    assert key in runtime_settings.RESTART_REQUIRED_KEYS
+    assert "重启" in runtime_settings.RESTART_REQUIRED_KEYS[key]
 
 
 def test_enablement_key_is_consent_tier() -> None:

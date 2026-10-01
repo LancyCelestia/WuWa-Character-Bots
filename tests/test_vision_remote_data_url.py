@@ -114,7 +114,13 @@ def test_image_size_caps_are_25mb() -> None:
 def test_remote_download_accepts_just_under_cap_and_rejects_over(
     monkeypatch,
 ) -> None:
-    """25MB 上限的边界语义：恰好等于上限可收，超出 1 字节即拒。"""
+    """25MB 上限的边界语义：恰好等于上限可收，超出 1 字节即拒。
+
+    2026-09-27 席位 S-ATKFIX-SSRF1 跟随 F-1 改动：取图腿不再走裸 urlopen，
+    改走 ``_guarded_image_opener``（重定向逐跳落点复查）；注入点随之从
+    ``urllib.request.urlopen`` 换到该工厂，只替传输、不替护栏。入口咽喉
+    用字面量公网 IP（离线判定，零 DNS）。
+    """
     cap = V._MAX_REMOTE_IMAGE_BYTES
 
     class _Resp:
@@ -130,8 +136,9 @@ def test_remote_download_accepts_just_under_cap_and_rejects_over(
         def __exit__(self, *exc: object) -> bool:
             return False
 
-    def _fake_urlopen(request, timeout=None):
-        return _Resp(b"\0" * (cap + 1))
+    class _FakeOpener:
+        def open(self, request, timeout=None):
+            return _Resp(b"\0" * (cap + 1))
 
-    monkeypatch.setattr(V.urllib.request, "urlopen", _fake_urlopen)
-    assert V._download_image_bytes("http://cdn.example/big.jpg") is None
+    monkeypatch.setattr(V, "_guarded_image_opener", lambda: _FakeOpener())
+    assert V._download_image_bytes("http://93.184.216.34/big.jpg") is None

@@ -470,15 +470,44 @@ def test_primary_timeout_is_still_a_terminal_state_and_never_raises() -> None:
     assert rig.invocations == ["primary_hangs"], rig.invocations
 
 
-@pytest.mark.xfail(
+# 具名标记变量（非 `@pytest.mark.xfail(reason=<变量名>)`）：`tests/test_defer_expiry_gate.py`
+# 的 AST 尺只从**字面量**折 reason，传名字进 `reason=` 会被读成 dynamic ⇒ 三件套查无实据。
+# 变量形态是它明文支持的（定义位判一次、使用位不重判），故挂账三件写在这里。
+#: R-FBAKE-1 现状（2026-09-29 复验，超时改造 C1-e 这一格核过）。
+#: 行号不进本串（台账 #50★「行号会漂移」同规）——根因按**代码形状**描述，改天照形状找。
+_XFAIL_R_FBAKE_1 = pytest.mark.xfail(
     reason=(
-        "R-FBAKE-1（待用户裁，见 SEAT-F-BAKE §9）：主 attempt **超时**（区别于抛异常）"
-        "根本不进降级链，registered 降级腿对「挂死到超时」这一整类故障仍不可达。"
-        "修它要同时动 test_v21_s10_protocols::test_timeout_reported_honestly 锁住的"
-        "既有判据（超时直落终态），不属本席授权面。本用例期望红＝现状钉桩，非放宽任何门。"
+        "R-FBAKE-1（待用户裁定，出处 SEAT-F-BAKE §9）：主 attempt **超时**（区别于抛异常）"
+        "根本不进降级链，registered 降级腿对「挂死到超时」这一整类故障仍不可达。\n"
+        "根因现算在此（不是猜的）：`capability_protocols.py` 里 "
+        "`except concurrent.futures.TimeoutError:` 那支走的是 "
+        "`return _finish(InvocationStatus.TIMEOUT, …)`——这个 return 发生在**外层 try "
+        "之内**，异常当场被视为已处理，永远到不了下面那句 `except Exception`，而它是 "
+        "`_run_fallbacks` 的唯一调用点 ⇒ 超时这一故障形结构性进不了降级链。\n"
+        "C1-b 没修好它，也不许被当成修好了：C1-b（2026-09-28 落，"
+        "`domains/chat_reply/runtime/pipeline.offload_capability` 到点抛 "
+        "`CapabilityTimeout` ⇒ `_internal_error` ⇒ 出诊断卡，锁 "
+        "`tests/test_pipeline_hard_timeout.py`）动的是**管线侧那一刀**；bot.chat 的根 "
+        "本来就不经过中央 invoker，invoker 自己的超时处理 C1-b 一字未动。两码事，"
+        "C1-e 复核时曾假设「C1-b 一抛这枚就该转绿」，实跑证否。\n"
+        "修它要同批动两枚既有判据（不属复核席授权面）："
+        "① 本文件 `test_primary_timeout_is_still_a_terminal_state_and_never_raises`——"
+        "现钉「超时的 invocations 只有主 attempt 一枚」，即超时**不许**起第二次尝试；"
+        "② `test_v21_s10_protocols.py::test_timeout_reported_honestly`——现钉状态仍是 "
+        "TIMEOUT 且必须经 `INVOKER_ERROR_DATA_KEY` 把 `CapabilityTimeout` 交回层 1（C1 "
+        "那一族卡的判据）。⇒ 正确形状是「超时也走降级腿，但链尽仍诚实落 TIMEOUT 且照旧"
+        "交回异常」，属裁定不属顺手改。\n"
+        "复跑取证：`pytest tests/test_central_fallback_budget.py --runxfail -q` ⇒ 本用例 "
+        "FAILED（左只有 `primary_hangs`、右多出 `vlm_candidate`），整文件其余全绿。"
+        "本用例期望红＝现状钉桩，非放宽任何门。\n"
+        "〔expiry=2026-12-31 owner=SEAT-TIMEOUT-C1-REMAINING 摘牌=用户裁定超时应起降级腿、"
+        "并同批改动上述①②两枚判据后删本标记转正〕"
     ),
     strict=False,
 )
+
+
+@_XFAIL_R_FBAKE_1
 def test_registered_fallback_should_reach_a_hanging_primary_too() -> None:
     """同一族缺口的第二半：挂死到超时也该有降级可用（今日不成立，故期望红）。"""
     rig = Rig()

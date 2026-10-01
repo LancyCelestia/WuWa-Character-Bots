@@ -11,12 +11,22 @@ usage_report_state.json。根因是三类入口绕过 BOT_RUNTIME_DATA_DIR 重�
 
 本文件在「env 设置」与「env 未设置（dotenv 亦空）」两种环境下断言解析结果，
 锁定源码树 data/ 不再成为解析目标。
+
+下半部分（2026-09-29 追加，P0）：**测试进程的 Runtime 根隔离**——同一枚解析器
+的另一侧事故：`.env` 把 `BOT_RUNTIME_DATA_DIR` 指向**生产**根，conftest 只守源码树
+`data/`，于是装配腿里没传隔离根的构造点会在测试进程里直接打开生产的
+`reply_policy.sqlite3`。判据一律量**解析结果**、不量夹具写法（写法可以被
+`**llm_options` 静默吞掉，见本文件 C 组）。
 """
 
 from __future__ import annotations
 
+import ast
+import os
+import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -200,3 +210,326 @@ def test_tts_gptsovits_dir_remap_semantics(tmp_path: Path, monkeypatch) -> None:
 
     config = Config(bot_runtime_data_dir=str(tmp_path))
     assert config.bot_tts_gptsovits_dir == ""
+
+
+# ===========================================================================
+# P0（2026-09-29）测试进程 Runtime 根隔离：一条中央缝 ＋ 判解析结果的三组腿
+# ===========================================================================
+# 现算危险面（判据＝(文件, 被调符号, 是否传隔离件)，行号只作辅助）：
+#   `build_chat_capability(content_route_config=<非 None>)` 且未注 store 的构造点
+#   在测试树里成族存在；该函数体经 reply_policy.shared_reply_policy_store →
+#   providers.build_runtime_data_path → **本文件的 runtime_path** 解析 store 落点，
+#   而 ReplyPolicyStore.__post_init__ 是 mkdir + connect + PRAGMA journal_mode=WAL
+#   + CREATE TABLE ⇒ 「跑一次就动盘」与有没有逻辑行变化无关。
+# 执法次序（缺一枚就退回今天的形状）：
+#   L1 tests/conftest.py 装配期调用 isolate_test_runtime_environment（**赋值**式）
+#   L2 scripts/runtime_paths.guard_test_runtime_root（全仓唯一判定实现，两态）
+#   L3 本文件：A 组量 L1、B 组量 L2、C 组量「注了 store 却被子形参吞掉」。
+# 注毒三形（本席实跑读数见席位报告）：摘 L1 ⇒ A1/A3/C1 红；摘 L2 ⇒ B1/B2 红；
+# 从形参表里删掉 reply_policy_store ⇒ C2 红；把赋值改成 setdefault ⇒ A2 红。
+
+CAPABILITY_BUILDERS: tuple[str, ...] = ("build_chat_capability", "build_chat_result")
+REPLY_POLICY_STORE_PARAM = "reply_policy_store"
+REPLY_POLICY_LAZY_FACTORY = "shared_reply_policy_store"
+CHAT_CAPABILITY_SOURCE = "plugins/bot_unified_runtime/domains/chat_reply/capabilities/chat.py"
+REPLY_POLICY_SOURCE = "plugins/bot_unified_runtime/domains/chat_reply/character/reply_policy.py"
+
+
+def _seam(name: str) -> Any:
+    """取真身符号；缺席即 pytest.fail（不许退成 AttributeError/ERROR，也不许 skip）。"""
+    symbol = getattr(runtime_paths, name, None)
+    if symbol is None:
+        pytest.fail(f"scripts/runtime_paths 缺少中央缝符号 {name} ⇒ 测试进程无人拦生产根")
+    return symbol
+
+
+def _forbidden_roots() -> tuple[Path, ...]:
+    reader = _seam("production_runtime_data_dirs")
+    roots = tuple(reader())
+    if not roots:
+        pytest.fail(
+            "本检出既没在盘上 .env/.env.prod 声明 BOT_RUNTIME_DATA_DIR，也没有 "
+            "BOT_TEST_FORBIDDEN_RUNTIME_ROOTS ⇒ 本锁在此检出无法执法。"
+            "故意不用 pytest.skip：零执法的锁会被在册尺算作在场（假绿形态册）。"
+        )
+    return roots
+
+
+def _under(path: Path, roots: tuple[Path, ...]) -> bool:
+    return any(path == root or path.is_relative_to(root) for root in roots)
+
+
+# ---------------------------------------------------------------------------
+# A 组：量 L1（conftest 的赋值式重定向到底跑没跑）
+# ---------------------------------------------------------------------------
+
+
+def test_pytest_process_runtime_root_is_never_the_production_root() -> None:
+    """在册测试件跑起来时，解析出的数据根不得是生产根（量结果，不量夹具写法）。"""
+    active = _seam("test_runtime_isolation_active")
+    guard = _seam("guard_test_runtime_root")
+    roots = _forbidden_roots()
+    if not active():
+        pytest.fail(f"tests/conftest.py 的 L1 缺席：本进程未开启 Runtime 根隔离（禁写根={roots}）")
+    resolved = runtime_data_dir()
+    if _under(resolved, roots):
+        pytest.fail(f"测试进程把数据根解析进了生产根：{resolved}")
+    # 缝必须真在链路上（不是只住在 conftest 的 if 里）：对同一枚解析器再问一次。
+    assert guard(resolved) == resolved, "缝对本进程已解析出的安全根应当原样放行"
+
+
+def test_lazy_leg_default_store_path_lands_outside_production_root() -> None:
+    """装配腿没注 store 时走的那条缺路径，解析结果必须在生产根之外。
+
+    常量从真身取（AST 读 reply_policy.py 的赋值，不 import 插件包＝不建库）。
+    """
+    tree = ast.parse((PROJECT_ROOT / REPLY_POLICY_SOURCE).read_text(encoding="utf-8"))
+    literal = ""
+    for node in ast.walk(tree):
+        # 两种赋值形态都要认：``X = "..."``（Assign）与 ``X: Final[str] = "..."``
+        # （AnnAssign）——真身用的是后者，只认 Assign 会把活着的符号读成"改名"。
+        if isinstance(node, ast.Assign):
+            targets: list[ast.expr] = list(node.targets)
+            value: ast.expr | None = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            targets = [node.target]
+            value = node.value
+        else:
+            continue
+        if value is None or not isinstance(value, ast.Constant):
+            continue
+        if any(isinstance(t, ast.Name) and t.id == "REPLY_POLICY_DB_FALLBACK_PATH" for t in targets):
+            literal = str(value.value)
+    if not literal:
+        pytest.fail(
+            "reply_policy.py 里读不到 REPLY_POLICY_DB_FALLBACK_PATH"
+            " ⇒ 真身改名或换了赋值形态，本锁已瞎"
+        )
+    roots = _forbidden_roots()
+    resolved = runtime_path(literal)
+    if _under(resolved, roots):
+        pytest.fail(f"缺路径解析进生产根（构造即动盘）：{resolved}")
+    assert resolved.name.endswith(".sqlite3"), f"缺路径形状变了：{resolved}"
+
+
+# ---------------------------------------------------------------------------
+# B 组：量 L2（唯一判定实现的两态）
+# ---------------------------------------------------------------------------
+
+
+def test_isolation_helper_overrides_preexisting_value_by_assignment() -> None:
+    """赋值 vs setdefault：本仓已两次实测 setdefault 对已启动解释器无效。
+
+    父进程带着「生产值」进来时，L1 必须把它**挤掉**并登记成禁写根；写成
+    setdefault 的话生产值原样活着 ⇒ 本腿当场红。
+    """
+    isolate = _seam("isolate_test_runtime_environment")
+    decoy = "Z:/decoy/production-runtime/data"
+    replacement = "Z:/tmp/chatbot-pytest-runtime/4242"
+    environ = {runtime_paths.RUNTIME_DATA_DIR_ENV: decoy}
+    recorded = tuple(isolate(environ, replacement_root=replacement, dotenv_reader=lambda key: ""))
+    assert environ[runtime_paths.RUNTIME_DATA_DIR_ENV] == replacement, (
+        "L1 必须是赋值：setdefault 只在键缺席时写，生产值会活下来"
+    )
+    assert environ[runtime_paths.TEST_PROCESS_ENV] == "1"
+    assert environ[runtime_paths.TEST_RUNTIME_DATA_DIR_ENV] == replacement
+    assert decoy in {str(p) for p in recorded}, "被挤掉的那一枚必须登记成禁写根"
+
+
+def test_seam_redirects_a_production_root_hit_into_the_test_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """显式把 env 指回生产根 ⇒ 缝把它挪走（挪走＝在册件不误伤，不是打死）。"""
+    roots = _forbidden_roots()
+    prod = roots[0]
+    replacement = (tmp_path / "isolated-runtime").resolve()
+    monkeypatch.setenv(runtime_paths.RUNTIME_DATA_DIR_ENV, str(prod))
+    monkeypatch.setenv(runtime_paths.TEST_PROCESS_ENV, "1")
+    monkeypatch.setenv(runtime_paths.TEST_RUNTIME_DATA_DIR_ENV, str(replacement))
+    monkeypatch.setenv(runtime_paths.TEST_RUNTIME_GUARD_MODE_ENV, "redirect")
+    monkeypatch.setenv(runtime_paths.TEST_FORBIDDEN_ROOTS_ENV, os.pathsep.join(str(r) for r in roots))
+    got = runtime_data_dir()
+    assert got != prod, "缝没生效：测试进程仍解析到生产根"
+    assert got == replacement, f"重定向落点不是登记过的隔离根：{got}"
+
+
+def test_seam_refuses_production_root_in_refuse_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """refuse 态＝命中即抛；异常必须住 BaseException 族（普通 Exception 会被咽）。
+
+    真身链路上 ReplyPolicyStore.__post_init__ 与 shared_reply_policy_store 的解析段
+    全裹 ``except Exception`` ⇒ Exception 族只会被降级成两声日志＝静默绿。
+    """
+    violation = _seam("RuntimeIsolationViolation")
+    assert issubclass(violation, BaseException), "违规族必须是 BaseException 子族"
+    assert not issubclass(violation, Exception), (
+        "违规族不得是 Exception：懒建腿与 __post_init__ 的双层 except Exception 会把它咽成日志"
+    )
+    roots = _forbidden_roots()
+    guard = _seam("guard_test_runtime_root")
+    monkeypatch.setenv(runtime_paths.TEST_PROCESS_ENV, "1")
+    monkeypatch.setenv(runtime_paths.TEST_RUNTIME_DATA_DIR_ENV, str((tmp_path / "unused").resolve()))
+    monkeypatch.setenv(runtime_paths.TEST_RUNTIME_GUARD_MODE_ENV, "refuse")
+    monkeypatch.setenv(runtime_paths.TEST_FORBIDDEN_ROOTS_ENV, os.pathsep.join(str(r) for r in roots))
+    with pytest.raises(violation):
+        guard(roots[0] / "reply_policy.sqlite3")
+
+
+def test_guard_is_inert_for_non_test_processes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """生产语义零变化：非测试进程里缝必须原样放行（不许静默改生产落点）。"""
+    roots = _forbidden_roots()
+    guard = _seam("guard_test_runtime_root")
+    monkeypatch.delenv(runtime_paths.TEST_PROCESS_ENV, raising=False)
+    assert guard(roots[0]) == roots[0], "生产进程里缝改了落点＝越权改生产语义"
+    assert runtime_data_dir() == roots[0], "生产缺省落点必须还是 .env 声明的那一枚"
+
+
+# ---------------------------------------------------------------------------
+# C 组：判「注入有没有真生效」——写法面只有一枚真身尺：被调函数的形参表
+# ---------------------------------------------------------------------------
+
+
+def _builder_signatures(chat_tree: ast.AST) -> dict[str, tuple[set[str], str, bool]]:
+    """{函数名: (形参名, **兜底名, 函数体是否用懒建工厂)}；用名字不用行号。"""
+    out: dict[str, tuple[set[str], str, bool]] = {}
+    for node in ast.walk(chat_tree):
+        if not isinstance(node, ast.FunctionDef) or node.name not in CAPABILITY_BUILDERS:
+            continue
+        params = {a.arg for a in node.args.args} | {a.arg for a in node.args.kwonlyargs}
+        catch_all = node.args.kwarg.arg if node.args.kwarg else ""
+        used_names = {
+            n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+        }
+        out[node.name] = (params, catch_all, REPLY_POLICY_LAZY_FACTORY in used_names)
+    return out
+
+
+def _audit_store_injection(
+    code_root: Path,
+    *,
+    isolation_active: bool,
+) -> list[str]:
+    """现算测试树里「够得着 store 却没被隔离」与「注了 store 却被吞」两类站。
+
+    两类判据都来自真身，不来自写法约定：
+    * 够得着＝被调函数体里真出现懒建工厂名（哪天 build_chat_result 也长出懒建腿，
+      它当场并入，不靠人记得改本锁）；
+    * 被吞＝传了关键字，但被调函数形参表里没有这个名字、却有 ``**`` 兜底 ⇒
+      Python 语义上这个关键字进了兜底字典，注入根本没生效（＝「注了 store
+      不等于已隔离」的机械形态）。
+    """
+    chat = code_root / CHAT_CAPABILITY_SOURCE
+    if not chat.is_file():
+        pytest.fail(f"真身缺席：{CHAT_CAPABILITY_SOURCE} ⇒ 本锁尺已瞎")
+    signatures = _builder_signatures(ast.parse(chat.read_text(encoding="utf-8")))
+    for name in CAPABILITY_BUILDERS:
+        if name not in signatures:
+            pytest.fail(f"真身函数 {name} 已改名/搬走 ⇒ 本锁必须跟着改，不许静默零命中")
+    violations: list[str] = []
+    for test_file in sorted((code_root / "tests").glob("*.py")):
+        tree = ast.parse(test_file.read_text(encoding="utf-8"))
+        for container in ast.walk(tree):
+            calls: list[ast.Call] = []
+            if isinstance(container, ast.FunctionDef):
+                calls = [n for n in ast.walk(container) if isinstance(n, ast.Call)]
+                patches_factory = any(
+                    isinstance(n, ast.Call)
+                    and getattr(n.func, "attr", "") == "setattr"
+                    and len(n.args) > 1
+                    and isinstance(n.args[1], ast.Constant)
+                    and n.args[1].value == REPLY_POLICY_LAZY_FACTORY
+                    for n in calls
+                )
+            elif isinstance(container, ast.Module):
+                # 收的是 **Call 节点**（不是包着它的 Expr）：取 Expr 会让下面的
+                # ``call.func`` 当场 AttributeError（尺自己瞎＝零命中假绿）。
+                calls = [
+                    n.value
+                    for n in container.body
+                    if isinstance(n, ast.Expr) and isinstance(n.value, ast.Call)
+                ]
+                for call in list(calls):
+                    calls.extend(
+                        n for n in ast.walk(call) if isinstance(n, ast.Call) and n is not call
+                    )
+                patches_factory = False
+            else:
+                continue
+            for call in calls:
+                func = call.func
+                callee = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+                if callee not in CAPABILITY_BUILDERS:
+                    continue
+                params, catch_all, reaches_store = signatures[callee]
+                kwargs = {k.arg: ast.unparse(k.value) for k in call.keywords if k.arg}
+                injected = REPLY_POLICY_STORE_PARAM in kwargs
+                route = kwargs.get("content_route_config", "").strip()
+                reaches = reaches_store and route not in {"", "None"}
+                tag = f"{test_file.name}:{call.lineno} {callee}"
+                if injected and catch_all and REPLY_POLICY_STORE_PARAM not in params:
+                    violations.append(f"{tag} 注入被 **{catch_all} 静默吞掉（形参表里没有这个名字）")
+                elif reaches and not injected and not patches_factory and not isolation_active:
+                    violations.append(f"{tag} 够得着 store 却没传隔离根，且本进程未开启 Runtime 根隔离")
+    return violations
+
+
+def test_store_injection_sites_are_neither_swallowed_nor_unprotected() -> None:
+    """现役树：既不许有被吞的注入，也不许有「没隔离又没缝」的构造点。"""
+    active = _seam("test_runtime_isolation_active")
+    violations = _audit_store_injection(PROJECT_ROOT, isolation_active=bool(active()))
+    assert not violations, "构造点注入形＝假隔离：\n" + "\n".join(violations)
+
+
+def test_auditor_bites_when_the_store_param_is_swallowed(tmp_path: Path) -> None:
+    """注毒①：从形参表里摘掉 reply_policy_store ⇒ 同一枚尺必须报「被吞」。
+
+    在 tmp_path 副本上注毒（先验锚点、逐字节核对未动的部分），主树一件不动。
+    """
+    anchor = f"    {REPLY_POLICY_STORE_PARAM}: Any | None = None,\n"
+    source = (PROJECT_ROOT / CHAT_CAPABILITY_SOURCE).read_text(encoding="utf-8")
+    if source.count(anchor) != 1:
+        pytest.fail(f"注毒锚点不再是唯一一枚（命中 {source.count(anchor)}），本毒未验先落＝作废")
+    staged = tmp_path / "tree"
+    (staged / "tests").mkdir(parents=True)
+    poisoned = source.replace(anchor, "", 1)
+    assert anchor not in poisoned and len(poisoned) == len(source) - len(anchor)
+    (staged / CHAT_CAPABILITY_SOURCE).parent.mkdir(parents=True, exist_ok=True)
+    (staged / CHAT_CAPABILITY_SOURCE).write_text(poisoned, encoding="utf-8")
+    donor = PROJECT_ROOT / "tests" / "test_reply_policy_permanent.py"
+    if not donor.is_file():
+        pytest.fail("注毒供体件缺席（本毒要靠一枚真会注 store 的在册件）")
+    shutil.copyfile(donor, staged / "tests" / donor.name)
+
+    violations = _audit_store_injection(staged, isolation_active=True)
+    assert any("静默吞掉" in line for line in violations), (
+        f"摘掉形参后尺子没咬住（读数={violations}）⇒ 这把锁只会量已知的绿"
+    )
+
+
+def test_auditor_bites_when_a_live_site_drops_its_isolation(tmp_path: Path) -> None:
+    """注毒②：构造点不传隔离根 ⇒ 同一枚尺在「缝没开」时必须报红。
+
+    两半都要：缝关掉 ⇒ 必须命中；缝开着 ⇒ 必须放行（证明中央缝真的在替这族
+    构造点兜底，而不是本锁放过它们）。
+    """
+    staged = tmp_path / "tree"
+    (staged / "tests").mkdir(parents=True)
+    # copyfile 不建父目录：仓外副本的 plugins/... 一层不存在 ⇒ 本毒会在自己家
+    # fixture 上 FileNotFoundError（注毒腿炸在装配面＝从没验过尺，等于零执法）。
+    (staged / CHAT_CAPABILITY_SOURCE).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(PROJECT_ROOT / CHAT_CAPABILITY_SOURCE, staged / CHAT_CAPABILITY_SOURCE)
+    site = (
+        "from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (\n"
+        "    build_chat_capability,\n"
+        ")\n\n\n"
+        "def test_unprotected_site(cfg) -> None:\n"
+        "    build_chat_capability(content_route_config=cfg)\n"
+    )
+    (staged / "tests" / "test_poison_site.py").write_text(site, encoding="utf-8")
+
+    off = _audit_store_injection(staged, isolation_active=False)
+    assert any("没传隔离根" in line for line in off), f"缝关掉后尺子没咬住：{off}"
+    on = _audit_store_injection(staged, isolation_active=True)
+    assert on == [], f"缝开着却仍报这族构造点＝中央缝没真正兜底（读数={on}）"
+

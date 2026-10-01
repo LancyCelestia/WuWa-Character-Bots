@@ -108,6 +108,10 @@ def test_factory_default_off_and_explicit_true(
 ) -> None:
     """装配工厂消费 bot_persona_versioned_injection：缺键 getattr 缺省 False。"""
     captured: dict[str, object] = {}
+    # 哨兵：证明工厂确实经现役装配闸取记忆 provider（lambda 返回 None 时
+    # FileCharacterContextProvider.__init__ 有 `memory_provider or NullMemoryProvider()`
+    # 强转，工厂不调闸测试照样绿——哨兵把"patch 变摆设"这层堵死）。
+    _memory_gate_sentinel = object()
 
     class _Capture:  # 拦截 provider 构造，捕获装配 kwargs
         def __init__(self, **kwargs: object) -> None:
@@ -116,7 +120,13 @@ def test_factory_default_off_and_explicit_true(
     monkeypatch.setattr(providers_mod, "FileCharacterContextProvider", _Capture)
     monkeypatch.setattr(providers_mod, "_shared_affinity_store", lambda config: None)
     monkeypatch.setattr(providers_mod, "_shared_addressing_preferences", lambda config: None)
-    monkeypatch.setattr(providers_mod, "build_memory_provider", lambda config: None)
+    # 记忆读取装配闸真身 = providers.build_memory_read_provider（工厂唯一调用点
+    # providers.py:1119；构造点唯一性由 test_memory_bus_read_leg.py:307 AST 锁执法）。
+    # 旧名 build_memory_provider 是 memory_bus_v2 波之前的装配口，装配面收编后
+    # 已不再是 providers 的成员（#47 第 6 项跟随欠账，2026-09-27 清偿）。
+    monkeypatch.setattr(
+        providers_mod, "build_memory_read_provider", lambda config: _memory_gate_sentinel
+    )
     monkeypatch.setattr(providers_mod, "build_reflection_memory_provider", lambda config: None)
     monkeypatch.setattr(providers_mod, "build_conversation_history_provider", lambda config: None)
     monkeypatch.setattr(providers_mod, "build_emotion_provider", lambda config: None)
@@ -141,6 +151,8 @@ def test_factory_default_off_and_explicit_true(
     # config stub 缺键（旧测试兼容面）→ False。
     build_character_context_provider(SimpleNamespace(bot_affinity_enabled=False))
     assert captured["persona_versioned_injection"] is False
+    # 工厂必经现役闸（非摆设自证；显式 True 分支共享同一 return，一处即够）。
+    assert captured["memory_provider"] is _memory_gate_sentinel
     # 显式 True → 透传 True。
     build_character_context_provider(
         SimpleNamespace(

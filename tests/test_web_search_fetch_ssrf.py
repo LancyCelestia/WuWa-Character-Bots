@@ -169,6 +169,25 @@ def test_redirect_hook_blocks_internal_hop(url: str) -> None:
         web_search._ssrf_request_guard(req)
 
 
+# 302 后落点为非法协议（判据层必拒的三形态；加固 SEAT-ATK-SSRF-LOCKS.md 追加三问 #3）。
+# 锁 4 的表内已有 file://（入口/落点同表），此处把「落点专用」参数表补全三形态：
+# 公网主机两枚只被协议白名单拦住（摘 ``_ALLOWED_SCHEMES`` 那一步即穿），
+# ``file://`` 另有「缺少主机名」兜底——注毒归因在席报里分开记账。
+ILLEGAL_SCHEME_LANDINGS = [
+    "file:///etc/passwd",
+    "gopher://8.8.8.8:11211/_probe",
+    "dict://8.8.8.8:11211/x",
+]
+
+
+@pytest.mark.parametrize("url", ILLEGAL_SCHEME_LANDINGS)
+def test_redirect_hook_blocks_illegal_scheme_hop(url: str) -> None:
+    """逐跳钩子本体：302 落点协议不在中央白名单即拦——判据不只认内网地址。"""
+    req = httpx.Request("GET", url)
+    with pytest.raises(web_search._SSRFBlockedError):
+        web_search._ssrf_request_guard(req)
+
+
 def test_redirect_hook_allows_public_hop() -> None:
     # 不抛即放行（公网 IP 字面量，不触 DNS）。
     web_search._ssrf_request_guard(httpx.Request("GET", "https://93.184.216.34/page"))

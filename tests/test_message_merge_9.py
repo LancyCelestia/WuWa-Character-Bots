@@ -341,8 +341,27 @@ def test_dual_trigger_head_set_covers_only_argless_command_branches() -> None:
 
 _ROOT = Path(__file__).resolve().parents[1]
 ROOT_INIT = _ROOT / "plugins" / "bot_unified_runtime" / "__init__.py"
+ROOT_COALESCING = (
+    _ROOT
+    / "plugins"
+    / "bot_unified_runtime"
+    / "domains"
+    / "chat_reply"
+    / "runtime"
+    / "message_coalescing.py"
+)
 _SOURCE = ROOT_INIT.read_text(encoding="utf-8")
 _TREE = ast.parse(_SOURCE)
+_COALESCING_TREE = ast.parse(ROOT_COALESCING.read_text(encoding="utf-8"))
+
+
+def _find_func_in(tree: ast.AST, name: str):
+    """在任意一棵树里按名字取函数（折句接缝 2026-09-29 收进
+    `message_coalescing.fold_inbound_turn`，活性锁必须跟着锚点走）。"""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name:
+            return node
+    raise AssertionError(f"找不到 {name}——活性锁的锚没了")
 
 
 def _find_async_func(name: str) -> ast.AsyncFunctionDef:
@@ -386,22 +405,29 @@ def _first_log_with_tag(func: ast.AsyncFunctionDef, tag: str) -> ast.Call:
 
 
 def test_chat_handler_applies_three_second_window_after_coalescer() -> None:
-    """规格 1 活性：_handle_chat 里 shared_coalescer 之后、offer 之前，
-    settings 被 apply_merge_window_seconds 就地换窗——顺序错一步，
-    要么 3s 不生效（先 offer 后换），要么被 shared_coalescer 的
-    settings 重置覆盖（先换后取）。"""
-    chat = _find_async_func("_handle_chat")
-    shared = _first_call(chat, "shared_coalescer")
-    applied = _first_call(chat, "apply_merge_window_seconds")
+    """规格 1 活性：`shared_coalescer` 之后、`offer` 之前，settings 被
+    `apply_merge_window_seconds` 就地换窗——顺序错一步，要么 3s 不生效
+    （先 offer 后换），要么被 `shared_coalescer` 的 settings 重置覆盖（先换后取）。
+
+    锚点搬家（2026-09-29 需求 1「实现暂缓、接缝留干净」）：这三步从根
+    `_handle_chat` 收进唯一入口 `message_coalescing.fold_inbound_turn`，
+    所以**判据跟着搬进那一件**；同时把新形态的核心承诺也钉上——
+    ① 根装配段只准调 `fold_inbound_turn` 一次（第二处＝第二通路，红线）；
+    ② 根装配段不得再自己碰 `shared_coalescer`/`apply_merge_window_seconds`/`offer`
+      （否则「只动一处即启用」的承诺就假了）。
+    """
+    seam = _find_func_in(_COALESCING_TREE, "fold_inbound_turn")
+    shared = _first_call(seam, "shared_coalescer")
+    applied = _first_call(seam, "apply_merge_window_seconds")
     assert applied.lineno > shared.lineno
-    # 且应用在 offer(...之前) —— offer 经 Await 调用，按属性名定位。
-    offers = [call for call in _calls(chat) if _call_name(call) == "offer"]
-    assert offers, "_handle_chat 不再调用 offer ⇒ 折句整体下线？活性锁报错"
+    # 且应用在 offer(...) 之前。
+    offers = [call for call in _calls(seam) if _call_name(call) == "offer"]
+    assert offers, "fold_inbound_turn 不再调用 offer ⇒ 折句整体下线？活性锁报错"
     assert applied.lineno < min(call.lineno for call in offers)
-    # 应用形如 `_coalescer.settings = apply_merge_window_seconds(...)`：
-    # 赋值目标必须是 _coalescer.settings（换错对象=3s 不生效）。
+    # 应用形如 `coalescer.settings = apply_merge_window_seconds(...)`：
+    # 赋值目标必须是那枚折句器的 `.settings`（换错对象=3s 不生效）。
     assign_found = False
-    for node in ast.walk(chat):
+    for node in ast.walk(seam):
         if (
             isinstance(node, ast.Assign)
             and isinstance(node.value, ast.Call)
@@ -410,12 +436,24 @@ def test_chat_handler_applies_three_second_window_after_coalescer() -> None:
                 isinstance(target, ast.Attribute)
                 and target.attr == "settings"
                 and isinstance(target.value, ast.Name)
-                and target.value.id == "_coalescer"
                 for target in node.targets
             )
         ):
             assign_found = True
-    assert assign_found, "3s 应用没有落在 _coalescer.settings 上"
+    assert assign_found, "3s 应用没有落在折句器的 .settings 上"
+
+    # ①② 根装配段这一侧的两条承诺。
+    chat = _find_async_func("_handle_chat")
+    entries = [call for call in _calls(chat) if _call_name(call) == "fold_inbound_turn"]
+    assert len(entries) == 1, (
+        f"_handle_chat 里 fold_inbound_turn 出现 {len(entries)} 次"
+        "（要求恰 1 次）⇒ 折句有了第二处调用点＝第二通路"
+    )
+    for stray in ("shared_coalescer", "apply_merge_window_seconds", "offer"):
+        assert not [c for c in _calls(chat) if _call_name(c) == stray], (
+            f"_handle_chat 里还直接调用 {stray} ⇒ 接缝没收口，"
+            "「将来启用只动三处」的承诺不成立"
+        )
 
 
 def test_chat_handler_silence_gate_is_wired_before_pipeline() -> None:

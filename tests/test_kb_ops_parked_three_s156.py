@@ -159,13 +159,8 @@ def test_sink_not_injected_when_operational_roster_empty(monkeypatch) -> None:
         bot_admin_user_ids=[],
         bot_super_admin_user_ids=["999-super-only"],
     )
-    namespace = {
-        "config": config,
-        "pipeline": object(),
-        "logging": logging,
-        "__name__": "s156_empty_roster",
-    }
-    exec(code, namespace)  # noqa: S102
+    exec(code, {"config": config, "pipeline": object(), "logging": logging,  # noqa: S102
+                "__name__": "s156_empty_roster"})
     assert kb_wiki.current_kb_sync_alert_sink() is None
     assert not injected, "空运行态名单仍被注入 ⇒ 内存门告警自立了一本名单账"
 

@@ -429,7 +429,7 @@ def test_market_capability_full_and_filtered(monkeypatch) -> None:
     ]
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
-        lambda timeout_seconds, cache_seconds: list(quotes),
+        lambda timeout_seconds, cache_seconds, budget=None: list(quotes),
     )
     capability = build_market_capability(config=None)
 
@@ -449,7 +449,7 @@ def test_market_capability_full_and_filtered(monkeypatch) -> None:
 def test_market_capability_fetch_failure_degrades(monkeypatch) -> None:
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
-        lambda timeout_seconds, cache_seconds: [],
+        lambda timeout_seconds, cache_seconds, budget=None: [],
     )
     capability = build_market_capability(config=None)
     result = capability(_make_message("行情"), _make_decision())
@@ -465,7 +465,7 @@ def test_market_capability_unknown_filter_falls_back_to_all(monkeypatch) -> None
     quotes = [IndexQuote("上证指数", "1.000001", 3934.4, -0.43, None)]
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
-        lambda timeout_seconds, cache_seconds: list(quotes),
+        lambda timeout_seconds, cache_seconds, budget=None: list(quotes),
     )
     capability = build_market_capability(config=None)
     # 「韩股行情」的「韩」命中过滤词，但夹具只有上证 → 回退全部而非空回复。

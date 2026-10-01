@@ -10,7 +10,7 @@ def test_memory_writer_uses_supplied_model_router(monkeypatch):
     captured = {}
 
     class Repo:
-        def __init__(self, _path):
+        def __init__(self, _path, *, bus=None):  # bus= 为装配层新传参（A 票）
             pass
 
     def fake_extract(provider, **_kwargs):
@@ -71,7 +71,7 @@ def test_memory_uses_runtime_selection_and_multiple_keys_without_mutating_chat(m
     router = build_model_router(config, provider_factory=Provider, dynamic_registry=settings.list_model_registry)
     router.last_attempts = ["chat:success"]
     monkeypatch.setattr("plugins.bot_unified_runtime.domains.chat_reply.character.memory.SQLiteMemoryRepository",
-        lambda path: SimpleNamespace(upsert_fact=lambda **kw: facts.append(kw)))
+        lambda path, bus=None: SimpleNamespace(upsert_fact=lambda **kw: facts.append(kw)))
     writer = runtime_module._build_memory_writer(config, model_router=router, runtime_settings=settings)
     writer(user_text="我喜欢蝴蝶", reply_text="记住了", sender_id="u", session_id="private:u")
     assert [(x[0], x[1]) for x in calls] == [("selected", "invalid-key"), ("selected", "valid-dynamic")]
@@ -90,7 +90,7 @@ def test_memory_failure_is_safe_and_cools_down(monkeypatch, caplog):
         def generate(self, *args, **kwargs):
             calls.append(1)
             raise LLMProviderError("Authorization: Bearer PRIVATE-SECRET", error_kind="auth")
-    monkeypatch.setattr("plugins.bot_unified_runtime.domains.chat_reply.character.memory.SQLiteMemoryRepository", lambda path: None)
+    monkeypatch.setattr("plugins.bot_unified_runtime.domains.chat_reply.character.memory.SQLiteMemoryRepository", lambda path, bus=None: None)
     config = Config(bot_memory_enabled=True, bot_memory_db_path="unused.sqlite3", bot_chat_provider="openai_compatible")
     writer = runtime_module._build_memory_writer(config, model_router=Router())
     for _ in range(2):

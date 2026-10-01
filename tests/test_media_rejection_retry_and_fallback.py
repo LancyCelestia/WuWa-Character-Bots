@@ -18,10 +18,17 @@
 离线运行：
 
     PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/test_media_rejection_retry_and_fallback.py -q
+
+前提重构（B1 波，2026-09-28）：本件旧写法用**不存在的绝对路径**构造「媒体在、平台拒」
+（当时 onebot image 面无死引用闸，report-T100 §偏差登记留白）。B1 把 image 面闸装上后，
+死路径会被构段期摘掉、根本到不了平台，「平台拒」前提必须改用**在场的真文件**——
+落 tempfile 目录（源码树零写入），fake bot 依旧对 image 段抛 rich media 拒绝，
+事故语义（明确拒绝不退内联重试、终败一次性文本降级）逐字不变。
 """
 
 from __future__ import annotations
 
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -45,6 +52,14 @@ from plugins.bot_unified_runtime.domains.transport.sender.worker import (
 )
 
 T0 = datetime(2026, 9, 15, 5, 0, 0, tzinfo=timezone.utc)
+
+# 「媒体在、平台拒」的真身夹具（B1 波前提重构）：onebot image 面死引用闸装上后，
+# 假路径会被构段期摘掉、模拟不出平台拒绝——这里给一枚**在场的非空文件**
+# （%TEMP% 下，不进源码树，规则 6），拒绝由 RejectingBot 冒充 NapCat 时期
+# ``result:-1 rich media transfer failed`` 的退码形态，事故语义原样保留。
+_CARD_IMAGE_DIR = Path(tempfile.mkdtemp(prefix="chatbot-w1-rejection-"))
+_CARD_IMAGE = _CARD_IMAGE_DIR / "usage_report_x.png"
+_CARD_IMAGE.write_bytes(b"\x89PNG\r\n\x1a\n" + b"card-rendered-bytes")
 
 
 class FakeActionFailed(Exception):
@@ -104,7 +119,7 @@ def _mixed_image_text_request(request_id: str = "req-mixed-1") -> SendRequest:
         content_type="mixed",
         content_ref={
             "parts": [
-                {"type": "image", "file": "C:/rt/data/cards/usage_report_x.png"},
+                {"type": "image", "file": str(_CARD_IMAGE)},
                 {"type": "text", "text": "[预警] 模型用量账单报告 · 账单 1.23 元"},
             ]
         },
@@ -132,7 +147,7 @@ def _image_only_request(request_id: str = "req-img-1") -> SendRequest:
     rendered = RenderedOutput(
         request_id=request_id,
         content_type="image",
-        content_ref={"file": "C:/rt/data/cards/usage_report_x.png"},
+        content_ref={"file": str(_CARD_IMAGE)},
         text_fallback="[预警] 卡片纯文本版 · 账单 1.23 元",
         privacy_level=PrivacyLevel.PERSONAL,
     )

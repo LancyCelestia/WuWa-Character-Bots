@@ -72,7 +72,10 @@ def test_vision_enabled_hot_toggle_via_store() -> None:
     )
 
     store = RuntimeSettingsStore(
-        Path(tempfile.mkdtemp(prefix="dsh-vision-")) / "settings.json"
+        Path(tempfile.mkdtemp(prefix="dsh-vision-")) / "settings.json",
+        # 在飞席 SEAT-ATKFIX-CFG12 F-2：咽喉「未装配」翻成 fail-closed，
+        # 测试夹具走其登记出口 allow_no_gate=True（本测锁热切换，不锁档位执法）。
+        allow_no_gate=True,
     )
     config = SimpleNamespace(
         bot_vision_enabled=False,
@@ -105,6 +108,10 @@ def test_dynamic_vision_provider_failover(monkeypatch: pytest.MonkeyPatch) -> No
             return SimpleNamespace(text="ok", provider="x", model="x", confidence=1.0)
 
     monkeypatch.setattr(vision_describe, "OpenAICompatibleLLMProvider", _FakeInner)
+    # 2026-09-27 席位 S-ATKFIX-SSRF1（审查 F-2）：咽喉明确拒绝（假域名=解析失败=拒绝）
+    # 不再透传原 URL。本测锁定的是 provider 故障转移，取图腿按「公网判定成立但瞬时
+    # 失败」形态替掉（返回 None=保留原 URL 兜底），不触真网络。
+    monkeypatch.setattr(vision_describe, "_download_image_bytes", lambda url, **kw: None)
     config = SimpleNamespace(
         bot_vision_enabled=True,
         bot_download_proxy="",
@@ -137,7 +144,15 @@ class _CaptureProvider:
         return SimpleNamespace(text=self.text, provider="fake", model="fake", confidence=1.0)
 
 
-def test_describe_images_builds_multimodal_message_and_caps_images() -> None:
+def test_describe_images_builds_multimodal_message_and_caps_images(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # F-2 口径跟随（席位 S-ATKFIX-SSRF1）：假域名在咽喉=解析失败=拒绝→丢图，
+    # 不再走「失败保留原 URL」兜底；本测意图是消息形态与 max_images 上限，
+    # 故把下载腿替成「公网判定成立但瞬时失败」形态（返回 None→保留原 URL）。
+    from plugins.bot_unified_runtime.domains.media.ingest import vision_describe
+
+    monkeypatch.setattr(vision_describe, "_download_image_bytes", lambda url, **kw: None)
     provider = _CaptureProvider()
     urls = ["https://img.example/1.jpg", "https://img.example/2.jpg"]
     result = describe_images(provider, image_urls=urls, query_text="看这个", max_images=1)
@@ -151,12 +166,25 @@ def test_describe_images_builds_multimodal_message_and_caps_images() -> None:
     assert "看这个" in content[0]["text"]
 
 
-def test_describe_images_failure_returns_empty() -> None:
+def test_describe_images_failure_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # F-2 口径跟随：假域名会被咽喉拒绝→全部丢图，原断言会「空跑」通过；
+    # 替下载腿成瞬时失败形态，保持本测锁「provider 报错→返回空」的本意。
+    from plugins.bot_unified_runtime.domains.media.ingest import vision_describe
+
+    monkeypatch.setattr(vision_describe, "_download_image_bytes", lambda url, **kw: None)
     provider = _CaptureProvider(fail=True)
     assert describe_images(provider, image_urls=["https://img.example/1.jpg"]) == ""
 
 
-def test_describe_images_long_text_clipped() -> None:
+def test_describe_images_long_text_clipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # F-2 口径跟随：同 test_describe_images_builds…——替下载腿，锁裁剪语义。
+    from plugins.bot_unified_runtime.domains.media.ingest import vision_describe
+
+    monkeypatch.setattr(vision_describe, "_download_image_bytes", lambda url, **kw: None)
     provider = _CaptureProvider(text="角" * 900)
     result = describe_images(
         provider, image_urls=["https://img.example/1.jpg"], max_chars=500
@@ -249,10 +277,17 @@ def test_model_top_level_command_via_runtime_handler() -> None:
     assert "sk-1" not in listed
 
 
-def test_direct_vision_message_builder_attaches_images_only_once() -> None:
+def test_direct_vision_message_builder_attaches_images_only_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
         build_direct_vision_messages,
     )
+    from plugins.bot_unified_runtime.domains.media.ingest import vision_describe
+
+    # F-2 口径跟随：本测锁「同图去重+只挂一次」，下载腿替成瞬时失败形态
+    # （返回 None→保留原 URL），不真连假域名。
+    monkeypatch.setattr(vision_describe, "_download_image_bytes", lambda url, **kw: None)
 
     messages = build_direct_vision_messages(
         [{"role": "system", "content": "system"}],
@@ -279,7 +314,9 @@ def test_vision_command_roundtrip() -> None:
     )
 
     store = RuntimeSettingsStore(
-        Path(tempfile.mkdtemp(prefix="dsh-vision-")) / "s.json"
+        Path(tempfile.mkdtemp(prefix="dsh-vision-")) / "s.json",
+        # CFG12 F-2 同因：命令面夹具走 allow_no_gate 出口（本测锁 vision 命令往返）。
+        allow_no_gate=True,
     )
     config = SimpleNamespace(
         bot_vision_enabled=True,

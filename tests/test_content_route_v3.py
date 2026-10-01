@@ -560,6 +560,22 @@ def _system_join(provider: _CapturingProvider) -> str:
     )
 
 
+# 段落头从常量**真身**派生（字面量收单源，家规同 tests/test_rp_style_directives.py 的
+# _section_header）。本文件四条「亲密头不在」负锁曾硬编码旧头「【亲密场景的叙述】」：
+# T8 改名（2026-09-28，「亲密与成人向场景的叙述」）后该字面量生产永不产出 ⇒ not in
+# 恒真＝空判锁——看着是锁，零执法。派生化后：换头不误伤，错误段落一旦泄进必红；
+# 咬得住的自证＝本文件 test_intimate_header_negative_lock_bites_poison_proof。
+def _section_header(instruction: str) -> str:
+    head, marker, _ = instruction.partition("】")
+    assert marker, "场景散文常量丢了【…】段落头，注入面无法辨识"
+    assert head.startswith("【"), "段落头必须以【开头"
+    return f"{head}{marker}"
+
+
+_INTIMATE_HEADER = _section_header(INTIMATE_RP_STYLE_INSTRUCTION)
+_NORMAL_HEADER = _section_header(NORMAL_NO_ACTION_INSTRUCTION)
+
+
 # 共享引擎是进程级单例：集成用例各自使用独立群号/会话键，防钉死态跨用例泄漏。
 _GROUP = "group:v3-it-1"
 _GROUP_ADMIN = "group:v3-it-2"
@@ -597,7 +613,7 @@ def test_group_member_command_scopes_to_self() -> None:
         content_route_config=cfg,
     )
     joined_a = _system_join(provider_a)
-    assert "【亲密场景的叙述】" in joined_a
+    assert "【亲密与成人向场景的叙述】" in joined_a
     # B 完全不受影响：普通叙述档。
     provider_b = _CapturingProvider()
     msg_b = _group_message(_GROUP, "b", "今天天气怎么样？", ["user"])
@@ -610,7 +626,7 @@ def test_group_member_command_scopes_to_self() -> None:
     )
     joined_b = _system_join(provider_b)
     assert "【日常对话的叙述】" in joined_b
-    assert "【亲密场景的叙述】" not in joined_b
+    assert _INTIMATE_HEADER not in joined_b
     # A 关闭后回到普通档。
     msg_off = _group_message(_GROUP, "a", "亲密模式 关", ["user"])
     result_off = build_chat_result(
@@ -630,7 +646,7 @@ def test_group_member_command_scopes_to_self() -> None:
         llm_provider=provider_a3,
         content_route_config=cfg,
     )
-    assert "【亲密场景的叙述】" not in _system_join(provider_a3)
+    assert _INTIMATE_HEADER not in _system_join(provider_a3)
 
 
 def test_group_admin_command_scopes_to_group() -> None:
@@ -657,7 +673,7 @@ def test_group_admin_command_scopes_to_group() -> None:
         content_route_config=cfg,
     )
     joined = _system_join(provider_b)
-    assert "【亲密场景的叙述】" in joined
+    assert "【亲密与成人向场景的叙述】" in joined
 
 
 def test_group_member_command_rejected_when_per_user_disabled() -> None:
@@ -698,7 +714,7 @@ def test_group_blacklisted_group_closes_intimacy_face() -> None:
         content_route_config=cfg,
     )
     assert result.body != MANUAL_ON_REPLY  # 面都关了，指令不受理
-    assert "【亲密场景的叙述】" not in _system_join(provider)
+    assert _INTIMATE_HEADER not in _system_join(provider)
 
 
 def test_private_blacklist_blocks_intimacy_end_to_end() -> None:
@@ -715,7 +731,7 @@ def test_private_blacklist_blocks_intimacy_end_to_end() -> None:
         content_route_config=cfg,
     )
     assert result.body != MANUAL_ON_REPLY  # 黑名单：指令不受理
-    assert "【亲密场景的叙述】" not in _system_join(provider)
+    assert _INTIMATE_HEADER not in _system_join(provider)
     assert NORMAL_NO_ACTION_INSTRUCTION in _system_join(provider)
     # 对照组：非黑名单用户私聊照常可拨。
     cfg_ok = _config()
@@ -728,6 +744,33 @@ def test_private_blacklist_blocks_intimacy_end_to_end() -> None:
         content_route_config=cfg_ok,
     )
     assert result_ok.body == MANUAL_ON_REPLY
+
+
+def test_intimate_header_negative_lock_bites_poison_proof() -> None:
+    """注毒自证（2026-09-29 复原波）：负锁必须能红，能红的才叫锁。
+
+    本文件四条「亲密头不在」曾硬编码旧头「【亲密场景的叙述】」——T8 改名后该串
+    生产永不产出，not in 恒真＝空判。现判 _INTIMATE_HEADER（从常量真身派生）。
+    沙箱三腿钉死它咬得住：
+    ① 把亲密段真身拼进 prompt（模拟错误段落泄进普通轮）⇒ 派生头必在、负表达式
+       必为 False（真跑到泄漏处即红）；
+    ② 只含日常段 ⇒ 负表达式为 True，不误伤正常轮；
+    ③ 亲密头 ≠ 日常头（两段同头则上面两腿同时失真，判据作废——同头守卫先于两腿）；
+    尾腿留档旧空判根因：死字面量对两段常量都不出现（旧头若在真身复活，此腿必红）。
+    """
+    # ③ 异头守卫：互斥判据的前提。
+    assert _INTIMATE_HEADER != _NORMAL_HEADER, "两段同头 ⇒ 正反两向的 not in 全是空判"
+    # ① 泄漏沙箱：亲密段整段拼进 prompt。
+    leaked = f"{NORMAL_NO_ACTION_INSTRUCTION}\n{INTIMATE_RP_STYLE_INSTRUCTION}"
+    assert _INTIMATE_HEADER in leaked, "派生头不在亲密段真身里 ⇒ _section_header 派生坏了"
+    # 负锁语义＝`_INTIMATE_HEADER not in prompt_text`；泄漏串上必须判 False。
+    assert (_INTIMATE_HEADER not in leaked) is False
+    # ② 干净串（只含日常段）上同一表达式必须为 True——否则锁常红＝误伤。
+    assert (_INTIMATE_HEADER not in NORMAL_NO_ACTION_INSTRUCTION) is True
+    # 尾腿：旧死字面量对现役两段常量都不出现（这正是四条锁当年变空判的根因）。
+    dead_old_header = "【亲密场景的叙述】"
+    assert dead_old_header not in INTIMATE_RP_STYLE_INSTRUCTION
+    assert dead_old_header not in NORMAL_NO_ACTION_INSTRUCTION
 
 
 # ============================ S40 缺陷 D2：Master Love 逐消息重钉续掉了 TTL ==========

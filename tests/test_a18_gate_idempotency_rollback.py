@@ -507,3 +507,146 @@ def test_sqlite_rollback_proactive_allowed_pops_proactive_bucket(tmp_path: Path)
 
     third = limiter.check_and_record(message, "bot.chat", proactive=True)
     assert (third.allowed, third.reason) == (True, "proactive_allowed")
+
+
+# ==================== 限流器 rollback 单元（E05 缺口二 · 命令腿） ====================
+# 命令腿的记账 reason=command_allowed 必须与 check 侧对称：只弹 command_* 两格、
+# 每格 safe_amount；被拒的 command_rate_limited 零记账 ⇒ rollback 必为 noop；
+# 且绝不碰 chat 桶（两本账，混用会退错账）。InMemory 与 SQLite 各跑一遍。
+
+
+def _command_caps(**overrides: object) -> dict:
+    caps: dict = _window_caps(command_sender_max_requests=2, command_group_max_requests=2)
+    caps.update(overrides)
+    return caps
+
+
+def _command_message(message_id: str = "m-1") -> IncomingMessage:
+    return _msg(message_id, session_type=SessionType.GROUP, text="/bot music", mentions_bot=False)
+
+
+def test_memory_rollback_command_allowed_pops_command_buckets() -> None:
+    clock = _Clock()
+    limiter = InMemoryRateLimiter(RateLimitSettings(**_command_caps()), clock=clock)
+    message = _command_message()
+    assert limiter.check_and_record(message, "bot.music").reason == "command_allowed"
+    assert limiter.check_and_record(message, "bot.music").reason == "command_allowed"
+    blocked = limiter.check_and_record(message, "bot.music")
+    assert (blocked.allowed, blocked.reason) == (False, "command_rate_limited")
+
+    limiter.rollback(message, "bot.music", amount=1, reason="command_allowed")
+
+    refilled = limiter.check_and_record(message, "bot.music")
+    assert (refilled.allowed, refilled.reason) == (True, "command_allowed")
+    assert not limiter.check_and_record(message, "bot.music").allowed
+
+
+def test_sqlite_rollback_command_allowed_pops_command_buckets(tmp_path: Path) -> None:
+    clock = _Clock()
+    limiter = SQLiteRateLimiter(
+        tmp_path / "cmd_rollback.db", RateLimitSettings(**_command_caps()), clock=clock
+    )
+    message = _command_message()
+    assert limiter.check_and_record(message, "bot.music").reason == "command_allowed"
+    assert limiter.check_and_record(message, "bot.music").reason == "command_allowed"
+    assert not limiter.check_and_record(message, "bot.music").allowed
+
+    limiter.rollback(message, "bot.music", amount=1, reason="command_allowed")
+
+    assert limiter.check_and_record(message, "bot.music").allowed is True
+    assert limiter.check_and_record(message, "bot.music").allowed is False
+
+
+def test_memory_rollback_amount_two_refunds_two_command_slots() -> None:
+    clock = _Clock()
+    limiter = InMemoryRateLimiter(
+        RateLimitSettings(
+            **_command_caps(command_sender_max_requests=4, command_group_max_requests=4)
+        ),
+        clock=clock,
+    )
+    message = _command_message()
+    assert limiter.check_and_record(message, "bot.music", amount=2).allowed
+    # sender 腿 2+3 > 4 拒；先判后记 ⇒ 群腿此刻仍停在 2 格（没被这条拒单写脏）。
+    assert not limiter.check_and_record(message, "bot.music", amount=3).allowed
+
+    limiter.rollback(message, "bot.music", amount=2, reason="command_allowed")
+
+    # 两格都退回到 0 ⇒ amount=3 这一单（sender 3/4、group 3/4）应能过。
+    assert limiter.check_and_record(message, "bot.music", amount=3).allowed
+
+
+def test_memory_rollback_blocked_command_reason_is_noop() -> None:
+    clock = _Clock()
+    limiter = InMemoryRateLimiter(RateLimitSettings(**_command_caps()), clock=clock)
+    message = _command_message()
+    assert limiter.check_and_record(message, "bot.music").allowed
+    assert limiter.check_and_record(message, "bot.music").allowed
+    assert not limiter.check_and_record(message, "bot.music").allowed
+
+    # 拒掉那条从没记过账 ⇒ 按它的 reason 回滚必须一格不退（否则每拒一次松一格）。
+    limiter.rollback(message, "bot.music", reason="command_rate_limited")
+
+    assert not limiter.check_and_record(message, "bot.music").allowed
+
+
+def test_sqlite_rollback_blocked_command_reason_is_noop(tmp_path: Path) -> None:
+    clock = _Clock()
+    limiter = SQLiteRateLimiter(
+        tmp_path / "cmd_noop.db", RateLimitSettings(**_command_caps()), clock=clock
+    )
+    message = _command_message()
+    assert limiter.check_and_record(message, "bot.music").allowed
+    assert limiter.check_and_record(message, "bot.music").allowed
+    assert not limiter.check_and_record(message, "bot.music").allowed
+
+    limiter.rollback(message, "bot.music", reason="command_rate_limited")
+
+    assert not limiter.check_and_record(message, "bot.music").allowed
+
+
+def test_memory_command_rollback_does_not_touch_chat_buckets() -> None:
+    """两本账锁：命令退账不许松开 chat 句数帽（退错账＝同一句被回两次）。"""
+    clock = _Clock()
+    limiter = InMemoryRateLimiter(
+        RateLimitSettings(
+            **_window_caps(
+                chat_sender_max_requests=1,
+                command_sender_max_requests=5,
+                command_group_max_requests=0,
+            )
+        ),
+        clock=clock,
+    )
+    chat_message = _msg("m-1", text="你好")
+    assert limiter.check_and_record(chat_message, "bot.chat").reason == "allowed"
+    command = _command_message("m-2")
+    assert limiter.check_and_record(command, "bot.music").reason == "command_allowed"
+
+    limiter.rollback(command, "bot.music", reason="command_allowed")
+
+    # chat 桶仍满：命令腿的退账没替它松一格。
+    assert not limiter.check_and_record(chat_message, "bot.chat").allowed
+
+
+def test_sqlite_command_rollback_does_not_touch_chat_buckets(tmp_path: Path) -> None:
+    clock = _Clock()
+    limiter = SQLiteRateLimiter(
+        tmp_path / "two_ledgers.db",
+        RateLimitSettings(
+            **_window_caps(
+                chat_sender_max_requests=1,
+                command_sender_max_requests=5,
+                command_group_max_requests=0,
+            )
+        ),
+        clock=clock,
+    )
+    chat_message = _msg("m-1", text="你好")
+    assert limiter.check_and_record(chat_message, "bot.chat").reason == "allowed"
+    command = _command_message("m-2")
+    assert limiter.check_and_record(command, "bot.music").reason == "command_allowed"
+
+    limiter.rollback(command, "bot.music", reason="command_allowed")
+
+    assert not limiter.check_and_record(chat_message, "bot.chat").allowed

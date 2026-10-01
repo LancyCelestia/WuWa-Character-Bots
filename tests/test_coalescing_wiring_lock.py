@@ -78,17 +78,36 @@ def _root_source() -> str:
 HANDLER_NAME = "_handle_chat"
 MODULE_ALIAS = "_coalescing"  # `import message_coalescing as _coalescing`
 COALESCER_VAR_HINT = "_coalescer"
+# 需求 1（2026-09-29 用户裁定「实现暂缓、只留接缝」）：根装配段原先散着四处调用
+# （supports_coalescing / build_coalescing_settings / shared_coalescer / offer），
+# 现已收敛成**一个**显式入口 `message_coalescing.fold_inbound_turn(config, message)`。
+# 本锁因此分两面打：根件面锁「唯一入口 + 位置先后 + 短路 return」，
+# 模块面锁「入口内部那四件仍在场且形状不变」。任何一面被摘掉都必须红——
+# 判据没有放宽，只是跟着真身搬了家。
+ENTRY_NAME = "fold_inbound_turn"
+ENTRY_ALIAS_ATTR = "fold_inbound_turn"
+# 入口内部那四件（收敛前住在根件、收敛后住在真身件）——两面条都用这枚名册，
+# 不在测试里抄第二份判据（规则 10：名单会漂）。
+COALESCING_INTERNAL_CALLS = (
+    "supports_coalescing",
+    "build_coalescing_settings",
+    "shared_coalescer",
+    "utterance_turn_key",
+)
 TURN_VAR_HINT = "_turn"
 
 COALESCING_CONFIG_KEYS = frozenset(
     {
         "bot_chat_message_coalescing_enabled",
-        "bot_chat_message_coalescing_quiet_seconds",
         "bot_chat_message_coalescing_max_hold_seconds",
         "bot_chat_message_coalescing_max_messages",
         "bot_chat_message_coalescing_max_chars",
     }
 )
+# 2026-09-27 乙案（COALESCE-DUALAUTH 报告）：`bot_chat_message_coalescing_quiet_seconds`
+# 已从 Config 退役——等待窗唯一真身是 message_merge.MERGE_WINDOW_SECONDS（用户裁定 3s），
+# 装配层每轮 apply 权威值 ⇒ roster 五枚收四枚。下面的键名锁因此同时是「防复活锁」：
+# 谁再把 quiet 读回 config，read_keys==roster 当场红。
 
 
 def _loads(source: str, origin: str) -> ast.Module:
@@ -110,6 +129,42 @@ def _loads(source: str, origin: str) -> ast.Module:
 def _parse(path: Path) -> ast.Module:
     """按路径读再解析（并发半写单独点名，别让它混成「我的锁红了」）。"""
     return _loads(path.read_text(encoding="utf-8"), path.name)
+
+
+def _coalescing_source() -> str:
+    """折句真身（唯一入口现在的家）。同样只读文本、零 import、零执行。"""
+    return _COALESCING.read_text(encoding="utf-8")
+
+
+def _entry(source: str) -> ast.AsyncFunctionDef:
+    """定位 `fold_inbound_turn`（根装配层唯一可调的折句入口，恰一枚）。
+
+    入口一旦被删，模块仍然自测全绿（家族行为锁测的是模块内部），而线上没人调它
+    ⇒ 这正是本锁存在的全部理由，只是坐标从根件搬到了真身件。
+    """
+    tree = _loads(source, "message_coalescing.py")
+    found = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == ENTRY_NAME
+    ]
+    assert len(found) == 1, (
+        f"折句唯一入口 {ENTRY_NAME} 应恰一枚，实={len(found)}"
+        "（0=接缝被摘干净，>1=长出第二通路）"
+    )
+    return found[0]
+
+
+def _seam_container(source: str) -> ast.AST:
+    """折句接缝现在的宿主：模块里是入口函数，根件里仍是 _handle_chat。
+
+    四件内部判据（门/设置/折句器/offer）靠它定位，因此**不关心接缝住在哪个文件**——
+    真身搬家不必放宽判据，只需两面各喂各的源码。
+    """
+    try:
+        return _entry(source)
+    except AssertionError:
+        return _handler(source)
 
 
 def _handler(source: str) -> ast.AsyncFunctionDef:
@@ -174,7 +229,7 @@ def check_gate_present_and_not_constant(src: str) -> None:
     （写成常量 = 要么永不折、要么对所有消息一律折）；② ``and`` 的合取项里不得出现
     裸常量 —— 那正是「把门条件改成永假」的写法，而存在性检查照样绿。
     """
-    handler = _handler(src)
+    handler = _seam_container(src)
     gates = [
         node
         for node in ast.walk(handler)
@@ -193,13 +248,19 @@ def check_gate_present_and_not_constant(src: str) -> None:
 
 
 def _has_predicate(test: ast.expr) -> bool:
-    """test 里是否含 `supports_coalescing(名字为 message 的实参)` 这一 Call 节点。"""
+    """test 里是否含 `supports_coalescing(名字为 message 的实参)` 这一 Call 节点。
+
+    两种调用形都认：根件里的 `_coalescing.supports_coalescing(message)`（Attribute）
+    与真身件里的 `supports_coalescing(message)`（Name）。认的是**谓词与实参**，
+    不是限定名——放宽的只是"写法"，"常量决定门"那一半照旧拦（见 _constant_conjuncts）。
+    """
     for node in ast.walk(test):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "supports_coalescing"
-        ):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        attr = getattr(func, "attr", None)
+        name_id = getattr(func, "id", None)
+        if attr == "supports_coalescing" or name_id == "supports_coalescing":
             return _arg_is_name(node, 0, "message")
     return False
 
@@ -230,26 +291,44 @@ def _walk_nodes(nodes: Iterable[ast.AST]) -> list[ast.AST]:
     return out
 
 
+def _calls_named(container: ast.AST, name: str) -> list[ast.Call]:
+    """`name(...)` 与 `pkg.name(...)` 两种写法都收（收敛后调用点住在真身件里是裸名）。
+
+    认的是**函数名与实参形状**，不是限定名——这不放宽任何判据：常量决定门、硬编码设置、
+    随手 new 折句器这三类失效在下面的断言里照旧逐条点名。
+    """
+    out: list[ast.Call] = []
+    for node in ast.walk(container):
+        if not isinstance(node, ast.Call):
+            continue
+        if (
+            getattr(node.func, "attr", None) == name
+            or getattr(node.func, "id", None) == name
+        ):
+            out.append(node)
+    return out
+
+
+def _named_callee(call: ast.Call, name: str) -> bool:
+    return getattr(call.func, "attr", None) == name or getattr(
+        call.func, "id", None
+    ) == name
+
+
 def check_settings_built_from_config(src: str) -> None:
     """``build_coalescing_settings(config)`` 的实参必须是那个 ``config`` 对象。
 
-    传 None / 传 ``CoalescingSettings()`` / 传字面量，五枚配置键会当场变成死键，
+    传 None / 传 ``CoalescingSettings()`` / 传字面量，四枚在册配置键会当场变成死键，
     而"设置构造调用在场"这种存在性断言完全看不出来。
     """
-    handler = _handler(src)
-    builds = [
-        node
-        for node in ast.walk(handler)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "build_coalescing_settings"
-    ]
+    handler = _seam_container(src)
+    builds = _calls_named(handler, "build_coalescing_settings")
     assert len(builds) == 1, f"设置构造应恰一处，实={len(builds)}"
     assert len(builds[0].args) == 1, "build_coalescing_settings 只该收一个 config"
     arg = builds[0].args[0]
     assert isinstance(arg, ast.Name), (
         f"设置实参不是变量而是常量/表达式（{type(arg).__name__}）"
-        " ⇒ 五枚折句键不再参与装配"
+        " ⇒ 四枚在册折句键不再参与装配"
     )
     assert arg.id == "config", (
         f"设置实参应为 config（装配期那份 Config），实={arg.id}"
@@ -260,27 +339,21 @@ def check_settings_reach_the_coalescer(src: str) -> None:
     """构造出的设置必须真的喂进 ``shared_coalescer``。
 
     写成 ``shared_coalescer(CoalescingSettings())`` 时：调用在场、参数是 Call、
-    一切"看起来接上了"，但每轮都拿硬编码缺省值 ⇒ 五枚键全成死键。
+    一切"看起来接上了"，但每轮都拿硬编码缺省值 ⇒ 四枚在册键全成死键。
     """
-    handler = _handler(src)
-    holders = [
-        node
-        for node in ast.walk(handler)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "shared_coalescer"
-    ]
+    handler = _seam_container(src)
+    holders = _calls_named(handler, "shared_coalescer")
     assert len(holders) == 1, f"折句器构造点应恰一处，实={len(holders)}"
     call = holders[0]
     assert len(call.args) == 1 and not call.keywords, (
         "shared_coalescer 的参数形状变了，请同步本锁与装配段"
     )
     arg = call.args[0]
-    assert isinstance(arg, ast.Call) and isinstance(
-        arg.func, ast.Attribute
-    ), "喂给折句器的不是构造调用 = 十有八九是硬编码常量"
-    assert arg.func.attr == "build_coalescing_settings", (
-        f"折句器拿到的设置来自 {arg.func.attr}，不是 build_coalescing_settings"
+    assert isinstance(arg, ast.Call), (
+        "喂给折句器的不是构造调用 = 十有八九是硬编码常量"
+    )
+    assert _named_callee(arg, "build_coalescing_settings"), (
+        f"折句器拿到的设置来自 {ast.unparse(arg.func)}，不是 build_coalescing_settings"
         " ⇒ 配置键到不了运行时"
     )
 
@@ -294,14 +367,13 @@ def check_offer_awaited_with_key_and_message(src: str) -> None:
        局部折句器 = 窗口状态不跨事件共享 = 永远折不住，而调用形状一模一样）；
     ③ 分键必须由 ``utterance_turn_key(message)`` 现算，且第二个实参是 Name message。
     """
-    handler = _handler(src)
+    handler = _seam_container(src)
     coalescer_names = {
         node.targets[0].id
         for node in ast.walk(handler)
         if isinstance(node, ast.Assign)
         and isinstance(node.value, ast.Call)
-        and isinstance(node.value.func, ast.Attribute)
-        and node.value.func.attr == "shared_coalescer"
+        and _named_callee(node.value, "shared_coalescer")
         and len(node.targets) == 1
         and isinstance(node.targets[0], ast.Name)
     }
@@ -332,16 +404,38 @@ def check_offer_awaited_with_key_and_message(src: str) -> None:
         f"offer 需要 (分键, 消息) 两个实参，实={len(call.args)}"
     )
     key = call.args[0]
-    assert isinstance(key, ast.Call) and isinstance(
-        key.func, ast.Attribute
-    ), "折句分键不是现算出来的（写死常量 = 全服共用一个窗口，串会话串人）"
-    assert key.func.attr == "utterance_turn_key", (
+    assert isinstance(key, ast.Call), (
+        "折句分键不是现算出来的（写死常量 = 全服共用一个窗口，串会话串人）"
+    )
+    assert _named_callee(key, "utterance_turn_key"), (
         f"分键来自 {ast.unparse(key.func)}，不是 utterance_turn_key"
     )
     assert _arg_is_name(key, 0, "message"), "utterance_turn_key 的实参必须是 message"
     assert _arg_is_name(call, 1, "message"), (
         "offer 第二实参必须是当前消息；写死或换对象 = 折进去的不是这条内容"
     )
+
+
+def _fold_await_calls(container: ast.AST) -> list[ast.Call]:
+    """根装配段里「把这一条交给折句接缝」的那一句 await。
+
+    收敛后根件只准出现 `await _coalescing.fold_inbound_turn(config, message)`；
+    旧的 `await _coalescer.offer(...)` 若回到根件，说明有人绕过入口另开通路
+    （见 test_wiring_block_is_singled_out_not_duplicated 的第二通路禁令）。
+    """
+    return [
+        node.value
+        for node in ast.walk(container)
+        if isinstance(node, ast.Await)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Attribute)
+        and node.value.func.attr == ENTRY_NAME
+    ]
+
+
+def _fold_await_lines(container: ast.AST) -> list[int]:
+    """上面那一句的行号（顺序判据只用它，不用"字符串出现过"）。"""
+    return [node.lineno for node in _fold_await_calls(container)]
 
 
 def check_non_owned_turn_short_circuits(src: str) -> None:
@@ -404,11 +498,11 @@ def check_merged_message_flows_to_pipeline(src: str) -> None:
         and isinstance(node.value, ast.Await)
         and isinstance(node.value.value, ast.Call)
         and isinstance(node.value.value.func, ast.Attribute)
-        and node.value.value.func.attr == "offer"
+        and node.value.value.func.attr == ENTRY_NAME
         and len(node.targets) == 1
         and isinstance(node.targets[0], ast.Name)
     }
-    assert turn_names, "找不到 offer 结果的接收变量"
+    assert turn_names, f"找不到 {ENTRY_NAME} 结果的接收变量"
     rebinds = [
         node
         for node in ast.walk(handler)
@@ -462,14 +556,7 @@ def check_folding_precedes_chat_pipeline(src: str) -> None:
     """
     handler = _handler(src)
     call = _chat_pipeline_call(handler)
-    fold_lines = [
-        node.lineno
-        for node in ast.walk(handler)
-        if isinstance(node, ast.Await)
-        and isinstance(node.value, ast.Call)
-        and isinstance(node.value.func, ast.Attribute)
-        and node.value.func.attr == "offer"
-    ]
+    fold_lines = _fold_await_lines(handler)
     assert fold_lines, "找不到折句 offer 的 await，无从比顺序"
     assert max(fold_lines) < call.lineno, (
         f"折句（行 {fold_lines}）不再早于进聊天管道（行 {call.lineno}）"
@@ -500,14 +587,7 @@ def check_folding_follows_ingest_enrichment(src: str) -> None:
     上游任一步被人摘掉或挪到折句之后 ⇒ 折出来的一句话会丢掉后补上的正文。
     """
     handler = _handler(src)
-    fold_lines = [
-        node.lineno
-        for node in ast.walk(handler)
-        if isinstance(node, ast.Await)
-        and isinstance(node.value, ast.Call)
-        and isinstance(node.value.func, ast.Attribute)
-        and node.value.func.attr == "offer"
-    ]
+    fold_lines = _fold_await_lines(handler)
     if not fold_lines:
         return  # 装配没了由 check_offer_awaited_* 点名，这里不重复红一次
     video = [
@@ -538,16 +618,55 @@ def check_folding_follows_ingest_enrichment(src: str) -> None:
     )
 
 
+def check_root_awaits_single_entry(src: str) -> None:
+    """根装配段必须 `await _coalescing.fold_inbound_turn(config, message)` 恰一处。
+
+    收敛后这就是"核心那一句"（原来散在根件的四件调用搬进了真身件，见 ENTRY_CHECKS）：
+    不 await＝拿到协程对象、owned 判定永远走偏；第一实参不是装配期 config＝四枚在册
+    折句键到不了运行时；第二实参不是 message＝折进去的不是这条内容。
+    """
+    handler = _handler(src)
+    calls = _fold_await_calls(handler)
+    assert len(calls) == 1, (
+        f"根件里对唯一入口 {ENTRY_NAME} 的 await 应恰一处，实={len(calls)}"
+        "（0=接缝没人调，线上立刻退回逐条各回一句；>1=长出第二通路）"
+    )
+    call = calls[0]
+    assert len(call.args) == 2, f"入口需要 (config, message) 两个实参，实={len(call.args)}"
+    assert _arg_is_name(call, 0, "config"), (
+        f"入口第一实参应为装配期 config，实={ast.unparse(call.args[0])}"
+    )
+    assert _arg_is_name(call, 1, "message"), (
+        f"入口第二实参应为当前 message，实={ast.unparse(call.args[1])}"
+    )
+
+
+def check_root_has_no_second_path(src: str) -> None:
+    """根件里绝不许再直接摸那四件内部调用——绕过入口即契约失效。"""
+    tree = _loads(src, "根 __init__.py")
+    for attr in (*COALESCING_INTERNAL_CALLS, "offer"):
+        hits = _bare_or_attribute_call_names(tree, attr)
+        assert not hits, (
+            f"根 __init__.py 第 {hits} 行又直接用了 {attr} ⇒ 出现第二条折句通路，"
+            "唯一入口 fold_inbound_turn 被绕过"
+        )
+
+
 CHECKS = (
     check_in_handler_import,
-    check_gate_present_and_not_constant,
-    check_settings_built_from_config,
-    check_settings_reach_the_coalescer,
-    check_offer_awaited_with_key_and_message,
+    check_root_awaits_single_entry,
+    check_root_has_no_second_path,
     check_non_owned_turn_short_circuits,
     check_merged_message_flows_to_pipeline,
     check_folding_precedes_chat_pipeline,
     check_folding_follows_ingest_enrichment,
+)
+# 入口内部那四件（2026-09-29 收敛后住在 message_coalescing.py 里）。
+ENTRY_CHECKS = (
+    check_gate_present_and_not_constant,
+    check_settings_built_from_config,
+    check_settings_reach_the_coalescer,
+    check_offer_awaited_with_key_and_message,
 )
 
 
@@ -566,19 +685,25 @@ def test_module_imported_inside_the_handler() -> None:
 
 
 def test_gate_calls_supports_coalescing_on_message() -> None:
-    check_gate_present_and_not_constant(_root_source())
+    """门条件住在唯一入口里（2026-09-29 收敛）：判据本体一字未改。"""
+    check_gate_present_and_not_constant(_coalescing_source())
 
 
 def test_settings_come_from_the_assembly_config() -> None:
-    check_settings_built_from_config(_root_source())
+    check_settings_built_from_config(_coalescing_source())
 
 
 def test_settings_are_fed_into_the_shared_coalescer() -> None:
-    check_settings_reach_the_coalescer(_root_source())
+    check_settings_reach_the_coalescer(_coalescing_source())
 
 
 def test_offer_is_awaited_on_shared_coalescer_with_per_sender_key() -> None:
-    check_offer_awaited_with_key_and_message(_root_source())
+    check_offer_awaited_with_key_and_message(_coalescing_source())
+
+
+def test_root_awaits_the_single_entry_with_config_and_message() -> None:
+    """根件必须 await 唯一入口、实参＝(config, message)。判据本体见 CHECKS 第 2 把。"""
+    check_root_awaits_single_entry(_root_source())
 
 
 def test_non_owned_fragment_returns_without_replying_and_leaves_a_trace() -> None:
@@ -597,31 +722,57 @@ def test_folding_sits_after_the_ingest_enrichment() -> None:
     check_folding_follows_ingest_enrichment(_root_source())
 
 
+def _bare_or_attribute_call_names(tree: ast.AST, name: str) -> list[int]:
+    """`name(...)` 的调用点行号，`name(...)` 与 `pkg.name(...)` 两种写法都算。"""
+    hits: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if getattr(func, "attr", None) == name or getattr(func, "id", None) == name:
+            hits.append(node.lineno)
+    return hits
+
+
 def test_wiring_block_is_singled_out_not_duplicated() -> None:
-    """全根只准有一处折句装配（禁第二真身，板块规范硬门）。"""
-    tree = _loads(_root_source(), "根 __init__.py")
-    for attr in (
-        "supports_coalescing",
-        "build_coalescing_settings",
-        "shared_coalescer",
-        "utterance_turn_key",
-    ):
-        hits = [
-            node.lineno
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == attr
-        ]
-        assert len(hits) == 1, f"{attr} 的调用点应全根唯一，实={hits}"
+    """禁第二通路（两面各钉一次）：根件只准调唯一入口，四件内部调用全住在真身件。
+
+    2026-09-29 需求 1 收敛前，这四件散在根 `_handle_chat` 里，本锁钉的是"全根唯一"；
+    收敛后根件里它们一枚都不该再出现——**判据没有放宽，只是换了边**：
+    ① 根件里 `fold_inbound_turn` 的调用恰一处；
+    ② 根件里 supports_coalescing / build_coalescing_settings / shared_coalescer /
+       utterance_turn_key / offer 全部 **0 处**（长出任何一枚＝绕过入口另开通路，
+       入口 docstring 里的契约当场作废）；
+    ③ 真身件的入口内部这四件各恰一处（摘掉任一枚＝入口不再干活，而模块自测照绿）。
+    """
+    root_tree = _loads(_root_source(), "根 __init__.py")
+    assert len(_bare_or_attribute_call_names(root_tree, ENTRY_NAME)) == 1, (
+        "根件里对唯一入口的调用不是恰一处"
+    )
+    for attr in (*COALESCING_INTERNAL_CALLS, "offer"):
+        hits = _bare_or_attribute_call_names(root_tree, attr)
+        assert not hits, (
+            f"根 __init__.py 第 {hits} 行又直接用了 {attr} ⇒ 出现第二条折句通路，"
+            "唯一入口 fold_inbound_turn 被绕过（契约失效）"
+        )
+    entry = _entry(_coalescing_source())
+    for attr in COALESCING_INTERNAL_CALLS:
+        hits = _bare_or_attribute_call_names(entry, attr)
+        assert len(hits) == 1, (
+            f"唯一入口里的 {attr} 调用应恰一处，实={hits}"
+            "（0=入口不再干活，>1=入口内部长出第二条腿）"
+        )
 
 
 def test_coalescing_keys_are_real_config_fields() -> None:
-    """五枚键名必须真是 ``Config`` 的字段。
+    """在册四枚键名必须真是 ``Config`` 的字段，且读键集合恰等于名册（防复活）。
 
-    ``getattr(config, "bot_chat_message_coalescing_quiet_seconds", 缺省)`` 拼错一个
+    ``getattr(config, "bot_chat_message_coalescing_max_hold_seconds", 缺省)`` 拼错一个
     字母不会报错，只会永远回落缺省值 ⇒ 键"在册、有读点、从不生效"。
     折句族的行为锁与装配锁都不碰这一层，故在此补一把纯 AST 的键名锁。
+    2026-09-27 乙案改籍：quiet_seconds 键退役（唯一真身
+    ``message_merge.MERGE_WINDOW_SECONDS``），名册五枚→四枚——读点集合若重新长出
+    quiet 或其它野键，本锁当场红。
     """
     module = _parse(_COALESCING)
     builder = next(
@@ -648,7 +799,7 @@ def test_coalescing_keys_are_real_config_fields() -> None:
         ):
             read_keys.add(str(node.args[1].value))
     assert read_keys == set(COALESCING_CONFIG_KEYS), (
-        f"折句读到的配置键与在册五枚不符：多={read_keys - COALESCING_CONFIG_KEYS} "
+        f"折句读到的配置键与在册四枚不符：多={read_keys - COALESCING_CONFIG_KEYS} "
         f"少={COALESCING_CONFIG_KEYS - read_keys}"
     )
 
@@ -718,7 +869,7 @@ def _drop_wiring_block(src: str) -> str:
     assert start < ends[0]
     del lines[start : ends[0] + 1]
     out = "".join(lines)
-    assert "supports_coalescing" not in out, "注毒③没真的删掉装配段"
+    assert f"{ENTRY_NAME}(" not in out, "注毒③没真的删掉装配段（入口调用仍在）"
     return out
 
 
@@ -738,10 +889,12 @@ def _assert_parses(src: str, label: str) -> None:
     _loads(src, f"{label}（注毒副本）")
 
 
-def _assert_any_check_fails(src: str, label: str) -> list[str]:
+def _assert_any_check_fails(
+    src: str, label: str, checks: tuple = CHECKS
+) -> list[str]:
     """返回变红的判据名；一个都没红 = 本锁对这种回归无杀伤力。"""
     failed: list[str] = []
-    for check in CHECKS:
+    for check in checks:
         try:
             check(src)
         except AssertionError:
@@ -762,37 +915,53 @@ def _check_fails(check, src: str) -> bool:
 
 
 def test_kill_power_deleting_the_offer_call_turns_the_lock_red() -> None:
-    """注毒①：删掉 ``_turn = await _coalescer.offer(...)`` 那一句。
+    """注毒①：删掉根件里 `await _coalescing.fold_inbound_turn(...)` 那一句。
 
-    这正是简报点名的回归：行为锁 28 例对这种删法完全无感（模块自己没被改），
-    线上却立刻退回逐条各回一句。
+    这正是简报点名的回归：模块行为锁全家对这种删法完全无感（真身一字未动），
+    线上却立刻退回逐条各回一句。收敛后"那一句"就是入口调用，删它仍必须红。
     """
-    src = _drop_statement(_root_source(), "await _coalescer.offer(")
+    src = _drop_statement(_root_source(), "await _coalescing.fold_inbound_turn(")
+    _assert_parses(src, "注毒①根件")
     assert _check_fails(
-        check_offer_awaited_with_key_and_message, src
-    ), "删掉调用那一句，核心判据竟然还绿"
+        check_root_awaits_single_entry, src
+    ), "删掉入口调用那一句，核心判据竟然还绿"
     failed = _assert_any_check_fails(src, "注毒①删调用")
-    assert "check_offer_awaited_with_key_and_message" in failed
+    assert "check_root_awaits_single_entry" in failed
 
 
 def test_kill_power_never_false_gate_turns_the_lock_red() -> None:
-    """注毒②：把门条件改成永假（``... and False``）。
+    """注毒②：把门条件改成永假（``... and False``）——门现在住在唯一入口内部。
 
     门、调用、return 全部字面在场，只有真值变了——纯存在性锁对这种写法是瞎的，
     所以本锁额外锁「合取项里不得出现裸常量」。
     """
     src = _replace_once(
-        _root_source(),
+        _coalescing_source(),
         "supports_coalescing(message)",
         "supports_coalescing(message) and False",
     )
+    _assert_parses(src, "注毒②入口")
     assert _check_fails(
         check_gate_present_and_not_constant, src
     ), "门被钉成永假，门判据竟然还绿"
-    _assert_any_check_fails(src, "注毒②门永假")
+    _assert_any_check_fails(src, "注毒②门永假", ENTRY_CHECKS)
 
 
-# ---- 追加两发：证明锁不是只对着那两行字面量 --------------------------------
+def test_kill_power_deleting_the_entry_itself_turns_the_lock_red() -> None:
+    """注毒②b（收敛新增的一发）：把唯一入口整段摘掉 ⇒ 入口定位判据必红。
+
+    这一发证明「搬家」没把杀伤力搬空：真身里没了 fold_inbound_turn，
+    四件内部判据全都无宿主可寻，而不是"安静地绿着"。
+    """
+    src = _drop_statement(_coalescing_source(), f"async def {ENTRY_NAME}(")
+    _assert_parses(src, "注毒②b 入口件")
+    failed = _assert_any_check_fails(src, "注毒②b摘掉入口", ENTRY_CHECKS)
+    assert len(failed) == len(ENTRY_CHECKS), (
+        f"入口都没了，只红 {len(failed)} 把：{failed}"
+    )
+
+
+# ---- 追加几发：证明锁不是只对着那两行字面量 --------------------------------
 
 
 def test_kill_power_deleting_the_whole_wiring_block_turns_many_locks_red() -> None:
@@ -803,21 +972,42 @@ def test_kill_power_deleting_the_whole_wiring_block_turns_many_locks_red() -> No
 
 
 def test_kill_power_hardcoded_settings_turns_the_key_wiring_red() -> None:
-    """注毒④：折句器改吃硬编码缺省设置（五枚配置键当场变死键）。
+    """注毒④：折句器改吃硬编码缺省设置（四枚配置键当场变死键）。
 
     这是最阴的一种：调用形状、await、门、return 全在，配置却再也到不了运行时。
+    四件里有一枚（设置来源）就在真身件内部 ⇒ 本发改在真身源码的副本上注毒。
     """
     src = _replace_once(
-        _root_source(),
-        "_coalescing.build_coalescing_settings(config)",
-        "_coalescing.CoalescingSettings()",
+        _coalescing_source(),
+        "build_coalescing_settings(config)",
+        "CoalescingSettings()",
     )
+    _assert_parses(src, "注毒④入口")
     assert _check_fails(
         check_settings_reach_the_coalescer, src
     ), "设置被换成硬编码常量，喂入判据竟然还绿"
     assert _check_fails(
         check_settings_built_from_config, src
     ), "设置构造被换掉，来源判据竟然还绿"
+
+
+def test_kill_power_second_path_in_root_turns_the_lock_red() -> None:
+    """注毒⑤（禁第二通路）：根件里绕过入口直接摸 offer ⇒ 必须当场红。
+
+    契约写死在入口 docstring 上；这条注毒证明"契约"不是注释里的空话：
+    真有席在根件里另开一路，本锁拦得住。
+    """
+    live = _root_source()
+    marker = "        message = _turn.message\n"
+    assert live.count(marker) == 1, "注毒锚点不唯一"
+    src = live.replace(
+        marker,
+        marker + "        _ = await _coalescer.offer(_key, message)\n",
+    )
+    _assert_parses(src, "注毒⑤第二通路")
+    assert _check_fails(check_root_has_no_second_path, src), (
+        "根件长出第二条折句通路而本锁全绿 ⇒ 唯一入口只是文档上的约定"
+    )
 
 
 # ---- 注毒台自身的两条自证（防"以为在测毒、其实在测真身"）-------------------
@@ -839,13 +1029,14 @@ def test_env_override_really_redirects_the_lock(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         copy = Path(tmp) / "root_init_mutated.py"
         copy.write_text(
-            _drop_statement(live, "await _coalescer.offer("), encoding="utf-8"
+            _drop_statement(live, "await _coalescing.fold_inbound_turn("),
+            encoding="utf-8",
         )
         monkeypatch.setenv(ROOT_OVERRIDE_ENV, str(copy))
         redirected = _root_source()
         assert redirected != live, "设了开关却没改变读取源 = 注毒台是假的"
-        assert "await _coalescer.offer(" not in redirected
+        assert "await _coalescing.fold_inbound_turn(" not in redirected
         # 从"副本"这条路进来，判据同样必须红（与 test_kill_power_* 同一条杀伤力，
         # 只是走的是外部可复跑的路径）。
         with pytest.raises(AssertionError):
-            check_offer_awaited_with_key_and_message(redirected)
+            check_root_awaits_single_entry(redirected)

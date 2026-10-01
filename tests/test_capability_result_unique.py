@@ -402,7 +402,7 @@ _POISON_ENVELOPE = (
 )
 
 
-def _stage_tree(tmp_path: Path, rel: str) -> Path:
+def _stage_tree(tmp_path: Path, rel: str, extra_dir: str = "") -> Path:
     """把仓库真身文件按**同相对路径**复刻进 tmp_path，返回该临时树根。
 
     绝不往源码树写东西（项目铁律：源码树零残留）——注毒只发生在 pytest 私有临时目录。
@@ -410,6 +410,8 @@ def _stage_tree(tmp_path: Path, rel: str) -> Path:
     target = tmp_path / rel
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text((REPO_ROOT / rel).read_text(encoding="utf-8"), encoding="utf-8")
+    if extra_dir:
+        (tmp_path / extra_dir).mkdir(parents=True, exist_ok=True)
     return tmp_path
 
 
@@ -418,7 +420,7 @@ def test_detector_bites_on_a_third_presentation_contract(tmp_path: Path):
 
     若本测试红了，说明上面两条唯一性判据是恒过的假锁（"存在性糊过活性判据"）。
     """
-    staged = _stage_tree(tmp_path, PRESENTATION_HOME)
+    staged = _stage_tree(tmp_path, PRESENTATION_HOME, "")
     poison = staged / "plugins" / "poison_second_contract.py"
     poison.write_text("class CapabilityResult:\n    pass\n", encoding="utf-8")
 
@@ -434,7 +436,7 @@ def test_detector_bites_on_a_third_presentation_contract(tmp_path: Path):
 
 def test_detector_bites_on_a_second_envelope(tmp_path: Path):
     """注毒：第二份 ``class InvocationResult``（含缩进/嵌套形态，两路数都必须抓住）。"""
-    staged = _stage_tree(tmp_path, ENVELOPE_HOME)
+    staged = _stage_tree(tmp_path, ENVELOPE_HOME, "")
     (staged / "tests").mkdir(parents=True, exist_ok=True)
     (staged / "tests" / "poison_shell.py").write_text(_POISON_ENVELOPE, encoding="utf-8")
     ast_hits, regex_hits = scan_class_definitions(staged, "InvocationResult")

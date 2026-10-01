@@ -87,7 +87,9 @@ def _httpx_router(
     specs: list[ModelSpec],
 ) -> tuple[ModelRouter, list[_RecordingProvider], list[str]]:
     client = httpx.Client(transport=httpx.MockTransport(handler))  # type: ignore[arg-type]
-    monkeypatch.setattr(providers_module, "_shared_http_client", lambda proxy="": client)
+    monkeypatch.setattr(
+        providers_module, "_shared_http_client", lambda proxy="", **_kw: client
+    )
     calls: list[str] = []
     wrappers: list[_RecordingProvider] = []
 

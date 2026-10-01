@@ -87,7 +87,7 @@ def test_persist_failure_is_logged_and_not_silent(tmp_path: Path, monkeypatch: p
     with caplog.at_level("ERROR"):
         assert store.set_override("BOT_VISION_MODE", "direct") is not None
 
-    messages = [record.getMessage() for record in caplog.records if record.levelname == "ERROR"]
+    messages = [record.message for record in caplog.records if record.levelname == "ERROR"]
     assert any("failed to persist" in message for message in messages), messages
     assert any("LOST on restart" in message for message in messages), (
         "日志必须把『重启即失效』说破，运维才看得懂后果"
@@ -121,6 +121,6 @@ def test_non_object_settings_file_is_quarantined(
     assert store.list_overrides() == {}
     assert not path.exists(), "非对象设置文件必须被移走（*.corrupt 保全），不得原地静默读空"
     assert list(tmp_path.glob("runtime_settings.json.corrupt*")), list(tmp_path.iterdir())
-    assert any("not a JSON object" in record.getMessage() for record in caplog.records), [
-        record.getMessage() for record in caplog.records
+    assert any("not a JSON object" in record.message for record in caplog.records), [
+        record.message for record in caplog.records
     ]

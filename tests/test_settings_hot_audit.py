@@ -102,7 +102,10 @@ KEEP_HOT_SAMPLE = (
 @pytest.mark.parametrize("key", NEW_SETTABLE_KEYS)
 def test_new_settable_keys_accepted_and_read_back(tmp_path, key: str) -> None:
     raw, converted = NEW_SETTABLE_KEYS[key]
-    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json")
+    # allow_no_gate：本件审的是白名单成员与合并传播，不审档位执法（咽喉测试住在
+    # test_safety_exec_throat_wire / test_safety_exec_session_throat）。摘门只为让
+    # set_override 走通白名单腿；键的 SETTABLE 成员资格仍由下面的断言锁死。
+    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json", allow_no_gate=True)
     assert store.set_override(key, raw) == converted
     # 消费接口（store.get / get_or）必须读到覆盖值——chat 能力每消息即以此形态消费。
     assert store.get(key, object()) == converted
@@ -166,7 +169,9 @@ def test_merged_config_poke_dead_vs_quiet_live() -> None:
     from plugins.bot_unified_runtime.config import Config
 
     config = Config()
-    store = RuntimeSettingsStore(None)
+    # allow_no_gate：本件实证合并层传播（poke 死开关 / quiet 活通路），不审档位执法
+    # （咽喉测试住在 test_safety_exec_throat_wire）。此处的 set_override 只为造 quiet 覆盖。
+    store = RuntimeSettingsStore(None, allow_no_gate=True)
     if "BOT_POKE_ENABLED" in SETTABLE_KEYS:
         pytest.skip("poke 键已回白名单（合并表接线后），本实证不再适用")
     # 直注内部覆盖（绕过 set_override 的白名单校验）：模拟审计前经 set 写入的

@@ -71,12 +71,29 @@ DRIVE_FORM_RE = re.compile(r"[A-Za-z]:[\\/]")
 #: 2026-09-27 A-8 裁定「改落点 + 登记根和守卫补完善」补登第三枚：``daily_assist``
 #: 语料根装配问 ``check_sendable()`` 一次（「允许写入的生成落点 ∈ 允许根」强制点），
 #: 判定零副本；活性锁见 ``tests/test_a8_guard_landing.py``。
+#: 2026-09-27 S-FIX-PERSONA-R2（F-C/F-D，主代理授权票内补登）第四枚：
+#: ``persona_profile`` 装载/下发两处问同一枚 ``check_sendable()``（头像出站闸，
+#: TOCTOU 复核）并以 ``check_staged_target()`` 判册子清单锚定，判定零副本；
+#: 活性锁见 ``tests/test_seat_fix_persona_r2.py``。
+#: 2026-09-27 S-ATK-FILE F-G9（主代理代落）第五枚：``notes`` 能力取图字节前问
+#: 同一枚 ``check_sendable()``（SSRF 入口+落点双查的入口腿，SEAT-ATK-FILE 判定
+#: 该调用合法在册 ⇒ 补登名册而非剥守卫）；消费判据即本文件 :844 的 AST 真消费扫描。
+#: 2026-09-30 E02 席（INCIDENT-20260930-TREEWIPE-RECOVERY §5 P0 行「本地路径无域门 →
+#: 任意文件读+外发」，主代理简报点名 check_sendable 为许可落点之一）第六枚：
+#: ``media/ingest/vision_describe`` 的带门判据只取**禁触名册那两枚判据**问一次
+#: （凭据/库/人格/日志类任何位置都拒），容器归属归 ``domains/media/path_gate``；
+#: 形态类判据刻意不取（本机 %TEMP% 即 8.3 短名形态，取 ``short_name_form`` 会整族误杀
+#: 暂存面＝S-T-FILE-2 在册教训），判定零副本；活性锁见
+#: ``tests/test_vision_local_path_domain_gate.py``。
 ALLOWED_CONSUMERS = frozenset(
     {
         "plugins/bot_unified_runtime/domains/core/safety_exec/paths.py",
         "plugins/bot_unified_runtime/domains/transport/sender/file_gateway.py",
         "plugins/bot_unified_runtime/domains/files/sender/restricted_runner.py",
         "plugins/bot_unified_runtime/domains/assistant/daily/store/daily_assist.py",
+        "plugins/bot_unified_runtime/domains/chat_reply/character/persona_profile.py",
+        "plugins/bot_unified_runtime/domains/notes/capabilities/notes.py",
+        "plugins/bot_unified_runtime/domains/media/ingest/vision_describe.py",
     }
 )
 
@@ -913,8 +930,12 @@ def test_only_the_registered_consumer_imports_the_truth_source() -> None:
     # 2026-09-27 A-8 波经主代理裁定补登第二枚：``daily_assist`` 语料根装配是
     # mandate 的「允许写入的生成落点 ∈ 允许根」强制点，判定零副本（只调
     # check_sendable 问一次），活性锁见 ``tests/test_a8_guard_landing.py``。
+    # 2026-09-27 S-ATK-FILE F-G9（主代理代落）第三枚：``notes`` 能力取图字节前问
+    # 同一枚 ``check_sendable()``（SSRF 入口+落点双查的入口腿，SEAT-ATK-FILE 判定
+    # 该调用合法在册 ⇒ 补登名册而非剥守卫），消费判据即本文件 :844 的 AST 真消费扫描。
     assert sorted(consumers) == [
         "plugins/bot_unified_runtime/domains/assistant/daily/store/daily_assist.py",
+        "plugins/bot_unified_runtime/domains/notes/capabilities/notes.py",
         "plugins/bot_unified_runtime/domains/transport/sender/file_gateway.py",
     ], f"路径域真身的 import 消费点必须与登记名册一致，实得 {consumers}"
 

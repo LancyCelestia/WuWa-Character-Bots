@@ -169,7 +169,10 @@ def test_consumer_legs_hold_no_second_codepoint_roster() -> None:
         assert path.exists(), f"接线点漂移：{path} 不在了，请复核本锁指的腿还是不是这两条"
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                if any(marker in node.value for marker in forbidden):
-                    offenders.append(f"{path.name}:{getattr(node, 'lineno', 0)}")
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and any(marker in node.value for marker in forbidden)
+            ):
+                offenders.append(f"{path.name}:{getattr(node, 'lineno', 0)}")
     assert not offenders, f"接线侧长出第二份码点表：{offenders}"

@@ -303,10 +303,17 @@ def test_part_progress_atomic_rollback_on_mid_txn_fault(
     assert progress_before.records[0].state == PART_STATE_PENDING
 
     # 注入：在 _refresh_request_part_summary_in 抛 sqlite3.Error
+    # （SEAT-FIX-QKEY 跟随：真身新增行身份寻址参数 dedupe_key/row_identity，
+    # 故障替身签名同步扩展，注入点与断言语义零改动）
     original_refresh = queue._refresh_request_part_summary_in
 
     def _fault_refresh(
-        conn: sqlite3.Connection, request_id: str, *, now: datetime
+        conn: sqlite3.Connection,
+        request_id: str,
+        *,
+        now: datetime,
+        dedupe_key: str | None = None,
+        row_identity: str | None = None,
     ) -> None:
         raise sqlite3.OperationalError("TXN-B 注入：part 汇总步骤故障")
 

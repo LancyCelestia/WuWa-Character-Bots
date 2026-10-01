@@ -905,6 +905,7 @@ def gate_scope_pairing_problems(tree: ast.AST) -> list[str]:
             continue
         acquired: set[str] = set()
         released: set[str] = set()
+        bare: list[str] = []
         has_acquire = False
         for name, bucket in (("try_acquire", acquired), ("release", released)):
             for node in _calls(scope_node, name):
@@ -913,10 +914,20 @@ def gate_scope_pairing_problems(tree: ast.AST) -> list[str]:
                 if node.args and isinstance(node.args[0], ast.Name):
                     bucket.add(node.args[0].id)
                 elif not node.args:
-                    problems.append(f"{scope_node.name}:{name}() 少参调用（scope 传丢了）")
+                    bare.append(name)
         if not has_acquire:
+            # 「少参调用」只在**自己取了额度**的函数体里才算传丢 scope。
+            # 2026-09-29 管线硬超时波（C1-a）把还额度做成了**注入式收尾钩子**：
+            # `_retire_offloaded_task(task, release)` / 其内 `_finish` 收到的
+            # `release` 是调用方在 acquire 现场构造的闭包（`wrapped._release`
+            # 里那句 `gate.release(scope)` 仍受本门锁着）。这两个辅助函数本身
+            # 一次都没 try_acquire，把它们判成「scope 传丢」＝把尺子架在没配对
+            # 义务的地方；注毒腿（取方函数里 `gate.release()` 丢 scope）照红。
             continue
         scanned += 1
+        problems.extend(
+            f"{scope_node.name}:{name}() 少参调用（scope 传丢了）" for name in bare
+        )
         if not released:
             problems.append(f"{scope_node.name} 取了额度却没有任何 release 调用（额度泄漏）")
             continue

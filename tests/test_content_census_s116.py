@@ -112,9 +112,7 @@ def test_census_md_renames_both_books_and_states_the_formula() -> None:
     text = _CENSUS_MD.read_text(encoding="utf-8")
     assert cc.BOOK_CENSUS in text and cc.BOOK_WRITER in text
     assert "MECH_B" in text and "TEMPLATE_SRC" in text
-    # 只禁**旧句原形**（旧册把它当事实陈述）；本席的更正句里引用该短语作被驳对象，不算回潮。
-    assert "只可能是取数时刻之差，不可能是口径之差" not in text, "旧「不可能是口径之差」断言原样回潮"
-    assert "席 S116 更正旧断言" in text, "页首未注明这是更正（散文被后人当门错、可能被改回去）"
+    assert "不可能是口径之差" not in text, "旧「不可能是口径之差」断言回潮（与两把尺并存的事实顶牛）"
     assert "交付值取甲账" in text
 
 

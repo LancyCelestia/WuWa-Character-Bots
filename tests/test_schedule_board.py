@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import ast
-import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -21,7 +20,9 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
-from plugins.bot_unified_runtime.domains.schedule.capabilities import schedule_board as sb
+from plugins.bot_unified_runtime.domains.schedule.capabilities import (
+    schedule_board as sb,
+)
 from plugins.bot_unified_runtime.domains.schedule.capabilities.reminder import (
     build_reminder_capability,
     is_reminder_command,
@@ -43,6 +44,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 ZONE = ZoneInfo("Asia/Shanghai")
 OWNER = "u_super"
 ASKER = "u_other"
+# S-FIX-ATK-SCHED2 票1：板主键改为平台域限定人物键（唯一构造口 session_keys.
+# person_scope_key，经 schedule_board._board_owner_from_roster_id 折算——裸号
+# 条目按名单原生域归 QQ，与能力腿同源）。既有件里**直连 store/_add_entry**
+# 的播种与断言必须吃同一把键，否则与能力腿写的桶分家（这不是新语义，是
+# 键形迁移的既有测试跟改）。
+OWNER_KEY = sb._board_owner_from_roster_id(OWNER)
 
 
 class _Config:
@@ -217,7 +224,7 @@ def test_board_reuses_engine_tables_only(tmp_path: Path, config: _Config) -> Non
     store = sb.build_board_store(config)
     names = {
         row[0]
-        for row in store._conn.execute(  # noqa: SLF001 - 结构判据直读 sqlite_master
+        for row in store._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         )
     }
@@ -251,8 +258,12 @@ def test_purge_only_touches_terminal_rows(config: _Config) -> None:
     oid = str(rows[0]["occurrence_id"])
     store.mark_done(oid, now_utc=datetime.now(UTC))
     # 手工把这条 done 实例推到 90 天窗外（模拟久病存量），再跑 prune。
-    with store._lock, store._conn:  # noqa: SLF001 - 测试布景直写
-        store._conn.execute(  # noqa: SLF001
+    # 2026-09-29 S-FIX-SCHED-BOARD：恢复 HEAD 布景步（无此步 done 行 due 在 +2h，
+    # 90 天闸永裁不到）。HEAD 的 SLF001 抑制注与 `import sqlite3` 不带回——钉版
+    # 规则集（pyproject S-FIX-LINT-PIN）不选 SLF001、选 RUF100/F401，带回必红
+    # 「unused 抑制注」/「unused import」，且此块本就不用 sqlite3 模块。
+    with store._lock, store._conn:
+        store._conn.execute(
             "UPDATE schedule_occurrences SET due_epoch=? WHERE occurrence_id=?",
             (datetime.now(UTC).timestamp() - 400 * 86400, oid),
         )
@@ -260,6 +271,16 @@ def test_purge_only_touches_terminal_rows(config: _Config) -> None:
     after = store.list_occurrences(plan_id=plan_id, limit=100)
     assert all(str(r["occurrence_id"]) != oid for r in after)  # 过期终态被裁
     assert any(str(r["status"]) == "pending" for r in after)  # 待办一条不裁
+
+
+def test_capability_dispatches_schedule_before_notes(config: _Config) -> None:
+    """能力分发腿可达性锁：经 build_reminder_capability 入口真跑到日程面。"""
+    capability = build_reminder_capability(config)
+    message = _message("日程 明天8点上高数")
+    result = capability(message, None)
+    assert result is not None
+    assert "记上了" in result.body and "高数" in result.body
+    assert "schedule" in (result.audit_tags or [])
 
 
 def test_retag_future_occurrences_only(config: _Config) -> None:
@@ -316,7 +337,7 @@ def test_import_image_clarify_path_no_guess(config: _Config, monkeypatch: pytest
 
     monkeypatch.setattr(tt, "build_timetable_provider", lambda _config: object())
 
-    def _fake_recognize(provider, images, **kwargs):  # noqa: ANN001, ARG001
+    def _fake_recognize(provider, images, **kwargs):
         return tt.TimetableDraft(courses=[
             tt.CourseEntry(
                 course_name="高数", weekday=0, start_time="08:00",
@@ -341,7 +362,7 @@ def test_import_image_commits_private(config: _Config, monkeypatch: pytest.Monke
 
     monkeypatch.setattr(tt, "build_timetable_provider", lambda _config: object())
 
-    def _fake_recognize(provider, images, **kwargs):  # noqa: ANN001, ARG001
+    def _fake_recognize(provider, images, **kwargs):
         return tt.TimetableDraft(courses=[
             tt.CourseEntry(course_name="高数 一教101", weekday=0, start_time="08:00", end_time="09:40"),
         ], semester_start="2026-09-07", period_table={1: ["08:00", "09:40"]})
@@ -375,8 +396,10 @@ def _make_active_entry(
     store = sb.build_board_store(config)
     service = sb.build_board_service(config)
     start = datetime.now(ZONE) - timedelta(minutes=minutes_ago)
+    # 2026-09-29 S-FIX-SCHED-BOARD：直连 _add_entry 的播种吃 OWNER_KEY（票1 键形
+    # 迁移跟改，理由见件顶注释——与能力腿写的桶同源，否则能力腿永远查无）。
     _add_entry(
-        service, store, OWNER,
+        service, store, OWNER_KEY,
         ScheduleAddIntent(
             start_local=start, activity=title, duration_minutes=duration,
             public=public, weekly_weekday=None, parity=None, semester_start=None,
@@ -479,8 +502,10 @@ def test_answer_multiple_active_picks_earliest(config: _Config) -> None:
 def _make_active_entry_for(cfg: _Config, owner: str, title: str) -> None:
     store = sb.build_board_store(cfg)
     service = sb.build_board_service(cfg)
+    # 2026-09-29 S-FIX-SCHED-BOARD：名单裸号先经能力腿同一把尺折成板主键再播种
+    # （票1 键形迁移跟改，件顶注释为准；不折则落裸桶、代答腿查无）。
     _add_entry(
-        service, store, owner,
+        service, store, sb._board_owner_from_roster_id(owner),
         ScheduleAddIntent(
             start_local=datetime.now(ZONE) - timedelta(minutes=5),
             activity=title, duration_minutes=60, public=True,
@@ -515,6 +540,9 @@ def test_answer_zero_llm_structurally() -> None:
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name in {
             "_project_answer", "active_entries", "asker_tier", "_pick_fallback",
+            # F811 去重并入旧层副本的覆盖面（该函数现役生产未定义＝空转锁，
+            # 将来谁加 format_answer 就自动被本锁管到）。
+            "format_answer",
         }:
             names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
             assert not (names & banned), f"{node.name} 引用了模型面: {names & banned}"
@@ -663,6 +691,7 @@ def test_category_classifier_locks_sensitive_order() -> None:
     assert classify_schedule_activity("午休") == "rest"
     assert classify_schedule_activity("聚餐") == "meal"
     assert classify_schedule_activity("上高数课") == "course"
-    assert classify_schedule_activity("吃降压药") == "health"  # 敏感优先于动作词
     assert classify_schedule_activity("出门取件") == "away"
+    # F811 去重：旧层副本的另一枚判据（实跑证两串现均归 away，两句都留）
+    assert classify_schedule_activity("出门取快递") == "away"  # 取件在 away 词表，快于快递歧义
     assert classify_schedule_activity("写报告") == "busy"

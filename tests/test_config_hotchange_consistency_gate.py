@@ -144,7 +144,11 @@ DELIBERATELY_UNLISTED_BASELINE = 17
 # 2026-09-27 席 S-SWITCH-REG-IMPL（批⑦b 存量开关归册）现算复录 562 → 554：八枚运行开关
 # （TTS 双闸/表情库双闸/记忆总线/好感度 v7/维基知识库/控制面）补登 RESTART_REQUIRED_KEYS，
 # 未表态 8 枚出账（判据与逐枚点名见 reports/SWITCH-REG-PREP.md §3.1；ledger 门同批对钉）。
-UNACCOUNTED_BASELINE = 554
+# 2026-09-30 席 人格分册收尾 现算复录 554 → 553：六枚补登 RESTART_REQUIRED_KEYS
+# （sticker_private 双键 / network_patrol 三键 / reactions_meme_enabled，逐枚点名与
+# 读形判据见 tests/test_config_key_registration_ledger.py 同日块），未表态 4 枚出账
+# 净 −1；ledger 门同批对钉（两门读同一群键，指纹 df029f79b20e229d）。
+UNACCOUNTED_BASELINE = 549
 
 # ---------------------------------------------------------------------------
 # 腿 A 台账 3：在名单里但**没有**同名 Config 字段的正当形态（override-only）

@@ -22,6 +22,8 @@
 """
 from __future__ import annotations
 
+import os
+import tempfile
 from types import SimpleNamespace
 
 import pytest
@@ -340,8 +342,17 @@ def test_hard_line_registry_contains_excretion() -> None:
 # ---------------------------------------------------------------------------
 
 
+# DATAFIX：称谓偏好 store 无键时走生产 getattr 缺省 "data/addressing_preferences.sqlite3"，
+# 会把测试读写的 sqlite 落到运行数据根或源码树 data/。显式注入本件独有临时绝对路径，
+# 只改测试构造参数、不动生产缺省逻辑。
+_TMP_DATA_DIR = tempfile.mkdtemp(prefix="thyg-cs4-")
+
+
 def _config(**overrides: object) -> SimpleNamespace:
     base: dict[str, object] = {
+        "bot_addressing_preferences_db_path": os.path.join(
+            _TMP_DATA_DIR, "addressing_preferences.sqlite3"
+        ),
         "bot_content_route_enabled": True,
         "bot_content_route_model": "grok-4.6",
         "bot_content_route_order": "grok-4.6,gemini-3.8-flash",
@@ -501,11 +512,19 @@ def test_not_eligible_session_routes_with_empty_session_id() -> None:
         model_router=router,
         content_route_config=cfg,
     )
-    assert router.session_ids == [""]  # 修复前：[f"{_STALE_SESSION}"]
+    # 判**性质**而不是跳数：出口硬地板（T6）不够长时会多问一次，一跳还是两跳
+    # 随本轮档位与回复长度变；这条锁要钉的是「没有任何一跳把真实键喂进路由」。
+    assert router.session_ids, "本件根本没走到路由 ⇒ 探针空跑"
+    assert set(router.session_ids) == {""}, f"不合格会话的任一都不该带真实键：{router.session_ids}"
 
 
 def test_eligible_session_still_passes_route_key() -> None:
-    """对照组：合资格私聊会话照常传 route_key（正常亲密路由语义不破）。"""
+    """对照组：合资格私聊会话**每一跳**都照常传 route_key（正常亲密路由语义不破）。
+
+    判性质不判跳数：T6 出口硬地板不够长时会多问一次，地板那一跳丢键就是真 bug
+    （亲密档追长度时会被当成「无会话」请求换渠道），所以这里断言的是
+    「出现过的键只有这一把」，而不是「只出现过一次」。
+    """
     from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
         build_chat_result,
     )
@@ -529,7 +548,9 @@ def test_eligible_session_still_passes_route_key() -> None:
         model_router=router,
         content_route_config=cfg,
     )
-    assert router.session_ids == [session]
+    assert set(router.session_ids) == {session}, (
+        f"合资格会话的每一跳都得带这把键（地板重问丢键＝{router.session_ids}）"
+    )
 
 
 # ---------------------------------------------------------------------------

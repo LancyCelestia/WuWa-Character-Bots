@@ -8,6 +8,11 @@
    for humans, but the change itself always leaves a trace.
 2. Source-tree ``data/`` guard: fail any test that creates new files under
    the source-tree ``data/``.
+3. Runtime-root isolation (L1, right below the hygiene block): ``.env`` points
+   ``BOT_RUNTIME_DATA_DIR`` at the *production* runtime data root, so the test
+   process displaces it to a per-pid temp root and registers the production root
+   as forbidden (fail-closed ``refuse``).  Guard 2 only watches the source tree;
+   without L1 a test could open the production SQLite files themselves.
 
 Repo rules (AGENTS.md #2/#6): the source tree must never contain ``data/`` --
 runtime paths resolve through ``scripts/runtime_paths.py`` into
@@ -24,6 +29,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import warnings
 from pathlib import Path
@@ -56,6 +62,40 @@ _PYCACHE_PREFIX = str(_RUNTIME_ROOT / "pycache")
 os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 os.environ.setdefault("PYTHONPYCACHEPREFIX", _PYCACHE_PREFIX)
 sys.dont_write_bytecode = True
+
+# ---------------------------------------------------------------------------
+# 测试进程 Runtime 根隔离装配（L1，2026-09-30 落地）
+# ---------------------------------------------------------------------------
+# 判据实现在 scripts/runtime_paths.py（L2，全仓唯一判定），执法锁＝
+# tests/test_datafix_runtime_paths.py 下半部分 A 组。本段只做装配。
+# 为什么非它不可：``.env`` 把 BOT_RUNTIME_DATA_DIR 指向**生产**根，而上面的 G1
+# 守卫只快照源码树 data/ ⇒ "装配腿没传隔离根"的构造点（ReplyPolicyStore 之类
+# __post_init__ 即 mkdir + connect + WAL）会在测试进程里直接打开生产库。台账 #66
+# 那句「凡走 /bot reply 命令面的测试必须 monkeypatch shared_reply_policy_store，
+# 因为 .env 的 Runtime 根指向生产、conftest 只守源码树」记的就是同一个洞——本段
+# 是它的根治，旧写法继续有效（不再必需），两者都不许回退。
+# 三条形态，逐枚被在册用例钉着，动本段前先读那三处：
+#   ① **赋值式**调用 isolate_test_runtime_environment：函数内部就是赋值，把生产值
+#      挤掉并登记成禁写根；外面套 setdefault ⇒ 带进来的生产值原样活着（B1 实测）；
+#   ② 位置＝任何插件 import 之前（conftest 是 pytest 最早加载的一层，本段又在
+#      conftest 自身其余段落之前）⇒ 没有测试模块导入时还看得见生产根；
+#   ③ 缺省 refuse＝fail-closed：不注入 BOT_TEST_RUNTIME_GUARD_MODE，在册的只读
+#      对照用例自己设 redirect；xdist 每 worker 独立进程 ⇒ 按 pid 各拿一枚隔离根。
+# 不得由 runtime_paths 自行装配（那会把本段缺席洗成"一直在"＝规格明令禁止的假绿）。
+# scripts/runtime_paths.py 缺席只发生在 tests/_autosync_fixture.py 拷出的骨架最小仓
+# ⇒ 只容这一种缺席；真树里缝坏了由 A1 当场红，不许在本段退成"静默没装配"。
+if str(REPO_ROOT) not in sys.path:  # 裸跑 pytest 时仓库根不在 sys.path（经 dev.ps1 才在）
+    sys.path.insert(0, str(REPO_ROOT))
+
+if (REPO_ROOT / "scripts" / "runtime_paths.py").is_file():
+    from scripts.runtime_paths import isolate_test_runtime_environment
+
+    _PYTEST_RUNTIME_ROOT = (
+        Path(tempfile.gettempdir()) / "chatbot-pytest-runtime" / f"pid{os.getpid()}"
+    )
+    _DISPLACED_PROD_ROOTS: tuple[str, ...] = isolate_test_runtime_environment(
+        os.environ, replacement_root=_PYTEST_RUNTIME_ROOT
+    )
 
 # ---------------------------------------------------------------------------
 # BOT_AUTOSYNC 常驻自动同步钩子（session 级，人完全无感）

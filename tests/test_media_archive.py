@@ -3,7 +3,8 @@
 覆盖：触发判定（含胶合拒绝）、路由判定、角色门（默认仅超管）、本地媒体归档
 （VLM 判 类别×IP）、指令覆盖参数、VLM 失败降级、sha256 去重、路径穿越消毒、
 聊天记录 Markdown 归档、每日额度、data/ 路径重映射、SSRF 拒绝不中断整批
-（审查 F-06）。
+（审查 F-06）、保留设备名判定收道中央真身且拒走失败面（攻击审计 A-1）、
+下载超限拒绝不截断谎报（攻击审计 A-4）。
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from plugins.bot_unified_runtime.domains.files.sources.downloader import (
 )
 from plugins.bot_unified_runtime.domains.media.archive.media_archive import (
     UNKNOWN_IP,
+    ArchiveReservedNameError,
     MediaArchiveStore,
     sanitize_dirname,
 )
@@ -362,10 +364,15 @@ def test_store_subpath_boundary() -> None:
     assert "evil" in resolved.parts[-2].lower() or "evil" not in str(target)
 
 
-def test_reserved_windows_names_prefixed() -> None:
-    """M-4：CON/NUL 等保留设备名加下划线前缀，mkdir 不再抛 OSError。"""
-    assert sanitize_dirname("CON") == "_CON"
-    assert sanitize_dirname("nul") == "_nul"
+def test_reserved_windows_names_rejected() -> None:
+    """A-1 反向旧锁：M-4 的「保留名加 `_` 前缀」洗名行为已废除——改拒走失败面。
+
+    旧断言 ``sanitize_dirname("CON") == "_CON"`` 锁的是静默近似值（同 A-3 口径
+    属谎报形态），现改为点名拒绝（详锁见文末 A-1 段）。
+    """
+    for bad in ("CON", "nul"):
+        with pytest.raises(ArchiveReservedNameError):
+            sanitize_dirname(bad)
 
 
 # ---------------------------------------------------------------------------
@@ -437,3 +444,153 @@ def test_redirect_rejection_raises_after_logging(caplog: pytest.LogCaptureFixtur
     text = "\n".join(r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
     assert "rejected redirect" in text
     assert "该地址属于内网/保留网段" in text
+
+
+# ---------------------------------------------------------------------------
+# 审查 A-1 回归锁：保留设备名判定收敛中央真身（media 侧不留第二真身）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad_dir", ["nul", "NUL.txt", "con.md", "CON", "COM1.png", "aux"])
+def test_sanitize_dirname_rejects_reserved_forms_with_human_reason(bad_dir: str) -> None:
+    """NUL.txt/nul/con.md 三类目录段一律拒绝且理由含「保留设备名」。
+
+    旧判据是全名比对（放行带扩展名形态→mkdir OSError→误导性「写入失败」）+
+    ``_`` 前缀洗名；两样都已废除，判定与理由同走中央件。
+    """
+    from plugins.bot_unified_runtime.domains.files.sender import restricted_runner
+
+    with pytest.raises(ArchiveReservedNameError) as boom:
+        sanitize_dirname(bad_dir)
+    reason = str(boom.value)
+    assert "保留设备名" in reason, "拒绝理由必须出自中央人话表（DENY_PLAIN_TEXT）"
+    assert reason == restricted_runner.plain_reason(restricted_runner.DenyCode.RESERVED_NAME)
+
+
+def test_sanitize_dirname_delegates_check_to_central_source(monkeypatch) -> None:
+    """收敛锁：判定必须真调中央真身的模块属性，而不是 media 侧另抄点号切分。"""
+    from plugins.bot_unified_runtime.domains.files.sender import restricted_runner
+
+    calls: list[str] = []
+    real = restricted_runner._is_reserved_device_name
+
+    def spy(segment: str) -> bool:
+        calls.append(segment)
+        return real(segment)
+
+    monkeypatch.setattr(restricted_runner, "_is_reserved_device_name", spy)
+    assert sanitize_dirname("cosplay收藏") == "cosplay收藏"
+    assert calls == ["cosplay收藏"], "必须经中央真身的模块属性调用（单一判据）"
+
+
+def test_sanitize_dirname_other_semantics_unchanged() -> None:
+    """反向锁（防过收紧）：非保留名的既有清洗语义逐字节不变。"""
+    assert sanitize_dirname("") == "未命名"
+    assert sanitize_dirname("  ..  ", fallback="照片") == "照片"
+    assert sanitize_dirname("a/b\\c:d*e") == "a_b_c_d_e"
+    assert sanitize_dirname("x" * 50) == "x" * 40
+    assert sanitize_dirname("nully") == "nully"  # 含「nul」字样但不是设备名首段
+    assert sanitize_dirname("null.txt") == "null.txt"
+
+
+def test_store_save_rejects_reserved_segment_without_side_effects(tmp_path: Path) -> None:
+    """活性锁：store 三个目录入口（类别/IP/子路径）任一保留名段都拒绝且不落盘。"""
+    root = tmp_path / "archive"
+    store = MediaArchiveStore(tmp_path / "db.sqlite3", root)
+    with pytest.raises(ArchiveReservedNameError):
+        store.save(PNG_BYTES, media_type="image", category="NUL.txt", ip_source="测试")
+    with pytest.raises(ArchiveReservedNameError):
+        store.save(PNG_BYTES, media_type="image", category="照片", ip_source="con.md")
+    with pytest.raises(ArchiveReservedNameError):
+        store.save(PNG_BYTES, media_type="image", category="照片", ip_source="测试", subpath="nul")
+    assert list(root.rglob("*")) == [], "拒绝路径不得留下任何文件/目录"
+
+
+def test_capability_reserved_override_hits_failure_surface(tmp_path: Path) -> None:
+    """用户可见失败面：分类=NUL.txt → × 行人话含「保留设备名」，不写文件，不拦后续。"""
+    capability = _capability(tmp_path, provider=_FakeProvider())
+    image = _image_file(tmp_path)
+    result = capability(
+        _message(plain_text="收藏 分类=NUL.txt", raw_segments=[{"type": "image", "data": {"path": image}}]),
+        None,
+    )
+    assert "×" in result.body and "保留设备名" in result.body
+    assert "skip_reserved_name_image" in result.audit_tags
+    assert list((tmp_path / "archive").rglob("*.png")) == [], "拒绝路径不得落盘"
+    ok = capability(
+        _message(plain_text="收藏", raw_segments=[{"type": "image", "data": {"path": image}}]), None
+    )
+    assert "✔" in ok.body, "保留名被拒后正常归档照常（不是一拦永拦）"
+
+
+# ---------------------------------------------------------------------------
+# 审查 A-4 回归锁：下载超限走拒绝分支，不截断谎报（钳制口径：静默截断=谎报）
+# ---------------------------------------------------------------------------
+
+
+class _FakeFetchResponse:
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def readable(self) -> bool:
+        return True
+
+    def read(self, amt: int = -1) -> bytes:
+        return self._payload[:amt] if amt and amt > 0 else b""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+class _FakeFetchOpener:
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def open(self, request, timeout=20.0):
+        return _FakeFetchResponse(self._payload)
+
+
+def test_fetch_url_over_limit_is_rejected_not_truncated() -> None:
+    """A-4：源站字节数超过限额 ⇒ None（旧形态返回截断后的 max_bytes 件）。"""
+    payload = PNG_BYTES + b"\x00" * 32
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(media_archive_module, "_OPENER", _FakeFetchOpener(payload))
+        assert media_archive_module._fetch_url_media(_PUBLIC_LITERAL_URL, len(payload) - 1) is None
+
+
+def test_fetch_url_at_exact_limit_still_accepted() -> None:
+    """反向锁（防过收紧）：恰好 max_bytes 的合法文件原样收，逐字节一致。"""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(media_archive_module, "_OPENER", _FakeFetchOpener(PNG_BYTES))
+        assert media_archive_module._fetch_url_media(_PUBLIC_LITERAL_URL, len(PNG_BYTES)) == PNG_BYTES
+
+
+def test_capability_oversized_download_honest_skip(tmp_path: Path) -> None:
+    """链路活性：max_file_mb=1 下 1MB+1 的下载走既有「没能取到内容（…超限…）」
+    分支——不写文件、不回 ✔；随后同限额内正常件照常归档。"""
+    capability = _capability(tmp_path, provider=_FakeProvider(), bot_media_archive_max_file_mb=1)
+    over = PNG_BYTES + b"\x00" * (1024 * 1024 - len(PNG_BYTES) + 1)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(media_archive_module, "_OPENER", _FakeFetchOpener(over))
+        result = capability(
+            _message(raw_segments=[{"type": "image", "data": {"url": _PUBLIC_LITERAL_URL}}]), None
+        )
+    assert "没能取到内容" in result.body and "超限" in result.body
+    assert "✔" not in result.body, "超限件不得谎报已归档（主断言）"
+    assert list((tmp_path / "archive").rglob("*.png")) == [], "拒绝不得留截断件"
+
+
+def test_capability_download_at_exact_limit_archives(tmp_path: Path) -> None:
+    """链路反向活性：恰好 1MB 的合法 PNG 照收（证明拒的是「超限」不是「大文件」）。"""
+    capability = _capability(tmp_path, provider=_FakeProvider(), bot_media_archive_max_file_mb=1)
+    exact = PNG_BYTES + b"\x00" * (1024 * 1024 - len(PNG_BYTES))
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(media_archive_module, "_OPENER", _FakeFetchOpener(exact))
+        result = capability(
+            _message(raw_segments=[{"type": "image", "data": {"url": _PUBLIC_LITERAL_URL}}]), None
+        )
+    assert "✔" in result.body
+    assert list((tmp_path / "archive").rglob("*.png"))

@@ -41,6 +41,9 @@ _ALARM_FIXTURE: dict[str, Any] = {
 }
 
 
+# 桩形参显式具名 `timeout=None`（S-FIX-WX-T6 的 `timeout=` 下传腿）：这里不用
+# `**kwargs` 兜底——生产再加一条下传腿时必须继续炸在测试里，而不是被兜底吞成
+# 一次静默降级（与 test_wx_t6_timeout_plumbing.py 同口径）。
 def _no_backoff(monkeypatch) -> None:
     monkeypatch.setattr(
         weather_mod, "_NMC_RETRY_BACKOFF_SECONDS", 0
@@ -64,7 +67,7 @@ def test_retry_succeeds_on_second_attempt(monkeypatch) -> None:
     _no_backoff(monkeypatch)
     calls: list[tuple[str, str]] = []
 
-    def _flaky(query: str, proxy: str = "") -> str | None:
+    def _flaky(query: str, proxy: str = "", timeout: float | None = None) -> str | None:
         calls.append((query, proxy))
         if len(calls) == 1:
             return None  # 模拟瞬时超时/空 data（fetch 层吞错后返回 None）
@@ -82,7 +85,9 @@ def test_unknown_city_skips_retry_and_network(monkeypatch) -> None:
     _no_backoff(monkeypatch)
     calls: list[str] = []
     monkeypatch.setattr(
-        weather_mod, "nmc_weather_query", lambda q, proxy="": calls.append(q)
+        weather_mod,
+        "nmc_weather_query",
+        lambda q, proxy="", timeout=None: calls.append(q),
     )
     assert _nmc_query_with_retry("Tokyo", proxy="") is None
     assert calls == []
@@ -95,7 +100,7 @@ def test_retry_exhausted_returns_none(monkeypatch) -> None:
     monkeypatch.setattr(
         weather_mod,
         "nmc_weather_query",
-        lambda q, proxy="": calls.append(q) or None,
+        lambda q, proxy="", timeout=None: calls.append(q) or None,
     )
     assert _nmc_query_with_retry("黑龙江-呼玛", proxy="") is None
     assert len(calls) == 2  # 默认 _NMC_RETRY_ATTEMPTS = 2
@@ -108,7 +113,7 @@ def test_proxy_forwarded_on_every_attempt(monkeypatch) -> None:
     monkeypatch.setattr(
         weather_mod,
         "nmc_weather_query",
-        lambda q, proxy="": seen.append(proxy) or None,
+        lambda q, proxy="", timeout=None: seen.append(proxy) or None,
     )
     _nmc_query_with_retry("北京", proxy="http://127.0.0.1:7890")
     assert seen == ["http://127.0.0.1:7890", "http://127.0.0.1:7890"]
@@ -121,7 +126,7 @@ def test_capability_recovers_nmc_and_alerts_after_transient_failure(
     _no_backoff(monkeypatch)
     attempts: list[str] = []
 
-    def _flaky(query: str, proxy: str = "") -> str | None:
+    def _flaky(query: str, proxy: str = "", timeout: float | None = None) -> str | None:
         attempts.append(query)
         if len(attempts) == 1:
             return None  # 首次瞬时失败
@@ -145,12 +150,14 @@ def test_capability_unknown_city_falls_back_without_nmc_calls(monkeypatch) -> No
     _no_backoff(monkeypatch)
     nmc_calls: list[str] = []
     monkeypatch.setattr(
-        weather_mod, "nmc_weather_query", lambda q, proxy="": nmc_calls.append(q)
+        weather_mod,
+        "nmc_weather_query",
+        lambda q, proxy="", timeout=None: nmc_calls.append(q),
     )
     monkeypatch.setattr(
         weather_mod,
         "open_meteo_query",
-        lambda query, proxy="": {"latitude": 35.7, "current": {}},
+        lambda query, proxy="", timeout=None: {"latitude": 35.7, "current": {}},
     )
     monkeypatch.setattr(
         weather_mod, "format_open_meteo", lambda payload: "【海外】Sunny"

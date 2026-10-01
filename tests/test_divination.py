@@ -131,6 +131,46 @@ class TestBaziVectors:
         with pytest.raises(ValueError):
             bazi_chart(datetime(2101, 6, 1, tzinfo=CST))
 
+    @pytest.mark.parametrize(
+        ("year", "month", "day"),
+        [
+            (1899, 12, 31),
+            (1900, 1, 1),
+            (1900, 6, 15),
+            (1900, 12, 31),
+            (2100, 1, 1),
+            (2100, 6, 15),
+            (2100, 12, 31),
+            (2101, 1, 1),
+        ],
+    )
+    def test_years_outside_window_rejected_at_gate_with_accurate_year(
+        self, year: int, month: int, day: int
+    ) -> None:
+        # 边界回归锁（票①）：越界年必须被八字闸干净拦下、报出**提交的年份**本身。
+        # 修复前症状：1900/2100 过外层闸后被内层节气闸杀死，报错年份误导（1899/2101）。
+        with pytest.raises(ValueError, match=rf"收到 {year}"):
+            bazi_chart(datetime(year, month, day, 12, tzinfo=CST))
+
+    @pytest.mark.parametrize(
+        ("year", "month", "day"),
+        [
+            (1901, 1, 1),
+            (1901, 2, 4),
+            (1901, 12, 31),
+            (2099, 1, 1),
+            (2099, 12, 31),
+        ],
+    )
+    def test_window_boundary_years_fully_computable(
+        self, year: int, month: int, day: int
+    ) -> None:
+        # 边界回归锁（票①）：可算窗口首尾年的全年端点都要能完整排盘
+        # （月柱依赖 year±1 节气，端点年是最容易越出节气窗口的）。
+        chart = bazi_chart(datetime(year, month, day, 12, tzinfo=CST))
+        assert len(chart.pillars) == 4
+        assert all(p.name for p in chart.pillars)
+
 
 class TestNayinAndElements:
     """纳音 30 表与五行计数（验收向量在 2026-09-12 21:51 复现）。"""
@@ -490,6 +530,23 @@ class TestCapabilityResults:
         assert result.kind == "divination"
         assert "超出" in result.body
         assert any("out_of_range" in tag for tag in result.audit_tags)
+
+    def test_bazi_graceful_hint_promise_matches_computable_window(self) -> None:
+        # 票①不变式：提示词承诺区间 == 实际可算区间（同源，且两端年份行为一致）。
+        from plugins.bot_unified_runtime.domains.divination.data import ganzhi
+
+        lo, hi = ganzhi._MIN_YEAR, ganzhi._MAX_YEAR
+        promise = f"{lo}-{hi}"
+        # 提示文案承诺的区间就是闸放行区间（单源派生，不再硬编码）。
+        # 锁精确短语而非子串：闸门异常文本 {exc} 也含区间，防其掩盖提示词漂移。
+        result = _capability()(_message(f"排盘 {lo - 1}年6月15日"), None)
+        assert f"换个 {promise} 年之间" in result.body
+        # 承诺区间内任意年份（含首尾边界年）必可算；区间外整年必被闸拦下。
+        bazi_chart(datetime(lo, 1, 1, 12, tzinfo=CST))
+        bazi_chart(datetime(hi, 12, 31, 23, tzinfo=CST))
+        for bad_year in (lo - 1, hi + 1, hi + 2):
+            with pytest.raises(ValueError):
+                bazi_chart(datetime(bad_year, 6, 15, 12, tzinfo=CST))
 
     def test_bazi_without_date_uses_now_and_hint(self) -> None:
         result = _capability()(_message("算命"), None)

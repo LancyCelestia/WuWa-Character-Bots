@@ -25,12 +25,22 @@ from pathlib import Path
 import pytest
 
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities import chat
+from plugins.bot_unified_runtime.domains.chat_reply.security import injection
+from plugins.bot_unified_runtime.domains.core.contracts.character import KnowledgeChunk
 from plugins.bot_unified_runtime.domains.core.search.search_service import (
+    KB_SOURCE_PERSONA,
+    KB_SOURCE_WIKI,
     LOCAL_KB_SOURCE_IDS,
+    chunk_source_library,
     resolve_answer_order,
 )
 
 CHAT_SOURCE = Path(inspect.getfile(chat))
+# S-PATCH-ATK-P1B（收口波）：指令形态剥离家族整体迁入 security/injection.py，
+# 下面「判定入口唯一」两把锁随之改锚到真身新家——判据只搬家、不改形（牙齿不减：
+# 改锚后「一条语句内只准一次 .search 直调」在 injection.py 里同样恰好一处命中，
+# 复制第二真身 / chat 侧别名断链由 tests/test_atk_p1b_digest_sanitization.py 判红）。
+INJECTION_SOURCE = Path(inspect.getfile(injection))
 
 # ---------------------------------------------------------------------------
 # ① 注入形态：编码伪装必须被判出来
@@ -130,7 +140,7 @@ def test_regex_is_matched_only_through_the_single_predicate() -> None:
     """``_PROMPT_INJECTION_LINE_RE.search`` 在全文件只允许出现一次，
     且就在唯一谓词内部。第二处直调 = 一处吃归一、一处不吃，
     归一化当场退化成装饰（本仓栽过的"两个真身"同型）。"""
-    tree = ast.parse(CHAT_SOURCE.read_text(encoding="utf-8"))
+    tree = ast.parse(INJECTION_SOURCE.read_text(encoding="utf-8"))
     direct_calls: list[int] = []
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
@@ -143,12 +153,12 @@ def test_regex_is_matched_only_through_the_single_predicate() -> None:
         if isinstance(owner, ast.Name) and owner.id == "_PROMPT_INJECTION_LINE_RE":
             direct_calls.append(node.lineno)
     assert len(direct_calls) == 1, (
-        f"注入形态判定必须只经 _has_injection_shape 一个口，实际直调 {direct_calls}"
+        f"注入形态判定必须只经 has_injection_shape 一个口，实际直调 {direct_calls}"
     )
     caller = next(
         node
         for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "_has_injection_shape"
+        if isinstance(node, ast.FunctionDef) and node.name == "has_injection_shape"
     )
     assert caller.lineno < direct_calls[0]
 
@@ -156,26 +166,64 @@ def test_regex_is_matched_only_through_the_single_predicate() -> None:
 def test_injection_pattern_still_requires_anchoring_or_a_colon() -> None:
     """形态表的两条"不扩面"约定要用测试钉住，否则后人顺手放宽就会洗语料：
     角色前缀分支必须行首锚定、中文前缀分支必须带冒号。"""
-    pattern = chat._PROMPT_INJECTION_LINE_RE.pattern
+    pattern = injection._PROMPT_INJECTION_LINE_RE.pattern
     assert r"^\s*(?:system|assistant" in pattern
     assert r"(?:指令|命令|提示词)\s*[:：]" in pattern
     assert not re.search(r"[^\[]系统[：:]", pattern)
 
 
 # ---------------------------------------------------------------------------
-# ③ 命中→来源计数
+# ③ 命中→来源计数（换代后口径：键＝合并点标注的**库名**，不是页级 source_id）
 # ---------------------------------------------------------------------------
+
+#: 页级 source_id 样本，与库名**刻意不同形**（71 字符、带斜杠，超 `library` 的 64 上限）。
+#: 注毒自证就吃这个不对称：实现若退回"拿页级 id 当库名"（2026-09-27 生产
+#: ``bot.chat:ValidationError`` 的成因，全账见 ``tests/test_kb_local_hit_attribution_a11.py``），
+#: ③ 的键当场变成这串页级 id ⇒ 三条断言全红；实现若反过来把归属读点抹掉
+#: （``_chunk_hit_library`` 恒回哨兵），stamped 腿的 ``local_hit_first`` 当场红。
+#: 两头都对不上 ⇒ 本组锁不是重言。
+_PAGE_ID = "鸣潮/fandom_wutheringwaves/正文/Retribution and Customs (2025-10-30)__37468"
+
+#: 哨兵名从实现取（单一真身），不在测试里抄第二份字面量。
+_SENTINEL = chat._UNSTAMPED_LIBRARY_LABEL
 
 
 class _Chunk:
-    def __init__(self, source_id: object) -> None:
+    """合并点标注后的命中替身：库名与页级 id 分家（真身＝``KnowledgeChunk`` 两字段）。"""
+
+    def __init__(self, source_library: object, *, source_id: object = _PAGE_ID) -> None:
+        self.source_library = source_library
         self.source_id = source_id
 
 
-def test_hits_by_source_counts_per_library_and_drops_empty_ids() -> None:
-    assert chat._kb_hits_by_source(
-        [_Chunk("kb_wiki"), _Chunk("kb_wiki"), _Chunk("persona"), _Chunk(""), _Chunk(None)]
-    ) == {"kb_wiki": 2, "persona": 1}
+def test_double_and_read_point_name_the_same_field() -> None:
+    """读取侧与被读侧**必须同名**——本文件那两枚红就是这么来的：读点已迁到合并点
+    标注的 ``source_library``（a11 换代），假块却还停在页级 ``source_id``，于是"按库
+    归类"整条腿静默退化成全落哨兵，而断言只看得见"计数对不上"、看不见是谁没跟随。
+    这一枚把两侧的字段名字面钉在一起：任一侧改名不跟随 ⇒ 当场红。"""
+    real_fields = set(KnowledgeChunk.model_fields)
+    assert {"source_library", "source_id"} <= real_fields, (
+        f"真身 KnowledgeChunk 字段已变（现 {sorted(real_fields)}）：读点与假块要同批改"
+    )
+    assert '"source_library"' in inspect.getsource(chunk_source_library), (
+        "唯一读点不再读 source_library＝有人改了字段名却没跟真身"
+    )
+
+
+def test_hits_by_source_counts_per_library_and_folds_unstamped_into_sentinel() -> None:
+    """按库名计数；没标注（空 / None / 表外伪造名）折进哨兵占位，**不猜前缀**。"""
+    counted = chat._kb_hits_by_source(
+        [
+            _Chunk(KB_SOURCE_WIKI),
+            _Chunk(KB_SOURCE_WIKI),
+            _Chunk(KB_SOURCE_PERSONA),
+            _Chunk(""),
+            _Chunk(None),
+            _Chunk("kb_wiki2"),  # 表外名：判"没标注"，绝不被并进 kb_wiki
+        ]
+    )
+    assert counted == {KB_SOURCE_WIKI: 2, KB_SOURCE_PERSONA: 1, _SENTINEL: 3}
+    assert _PAGE_ID not in counted, "页级 source_id 混进库名位＝撞 64 字符上限的旧口径回潮"
 
 
 def test_hits_by_source_survives_objects_without_the_attribute() -> None:
@@ -184,7 +232,36 @@ def test_hits_by_source_survives_objects_without_the_attribute() -> None:
     class _NoId:
         pass
 
-    assert chat._kb_hits_by_source([_NoId(), _Chunk("persona")]) == {"persona": 1}
+    assert chat._kb_hits_by_source([_NoId(), _Chunk(KB_SOURCE_PERSONA)]) == {
+        _SENTINEL: 1,
+        KB_SOURCE_PERSONA: 1,
+    }
+
+
+def test_erased_attribution_degrades_instead_of_faking_a_local_hit() -> None:
+    """归属一被抹掉，本轮必须**如实降级**，不许判成"本地已命中"。
+
+    把 ③ 的计数与 ④ 的阶梯接成一条：哨兵名若在 ``LOCAL_KB_SOURCE_IDS`` 里（＝有人
+    往阶梯的本地档里塞了个假库名），本地命中会被结构性判真，每条无标注的轮次都不再
+    联网——正是 a11 那一刀的镜像失效面。
+    """
+    assert _SENTINEL not in LOCAL_KB_SOURCE_IDS
+
+    erased = resolve_answer_order(
+        hits_by_source=chat._kb_hits_by_source([_Chunk(""), _Chunk(None)]),
+        wants_latest=False,
+        web_search_intended=False,
+    )
+    assert erased.degrade_to_web is True
+    assert erased.reason == "no_local_hit"
+
+    stamped = resolve_answer_order(
+        hits_by_source=chat._kb_hits_by_source([_Chunk(KB_SOURCE_WIKI)]),
+        wants_latest=False,
+        web_search_intended=False,
+    )
+    assert stamped.reason == "local_hit_first"
+    assert stamped.degrade_to_web is False
 
 
 # ---------------------------------------------------------------------------

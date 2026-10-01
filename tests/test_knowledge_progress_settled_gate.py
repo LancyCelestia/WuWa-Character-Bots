@@ -113,6 +113,33 @@ def test_missing_summary_is_reported_honestly(monkeypatch, tmp_path, capsys):
     assert "已投完收工" not in out
 
 
+def test_null_after_fields_render_unmeasured_not_zero(monkeypatch, tmp_path, capsys):
+    """失败轮摘要的 after 三件是 null（未测得）：进度页打「未测得」，判据判未收工。
+
+    2026-09-27 汇总修复的读侧跟随：`_sync_summary` 不再把未回填的默认 0 落盘，
+    改写 null；本脚本若把 None 折回 0（旧 `num()` 行为），"没测"就又被读成
+    "测得 0"——三态在展示与判据两处都必须保住。
+    """
+    failed = dict(
+        SUMMARY_COMPLETE,
+        ok=False,
+        error_kind="cancelled",
+        documents_after=None,
+        chunks_after=None,
+        embedded_after=None,
+    )
+    _make_store(tmp_path, embedded_rows=40, summary=failed, ann_expected=40)
+    out = _run(monkeypatch, tmp_path, capsys)
+    assert "documents_after=未测得" in out
+    assert "chunks_after=未测得" in out
+    assert "embedded_after=未测得" in out
+    # 判据行同样报「未测得」，且不得出现伪装成测得值的 "embedded_after=0"。
+    assert "库内已嵌(未测得)" in out
+    assert "embedded_after=0" not in out
+    assert "已投完收工" not in out
+    assert "未收工" in out
+
+
 def test_stale_round_before_baseline_never_counts_as_tonight_settled(monkeypatch, tmp_path, capsys):
     """**上一轮**完全收工，但今晚这档还没开跑 ⇒ 不许打「已投完收工」。
 

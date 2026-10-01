@@ -12,6 +12,12 @@
  ① `_is_admin_origin` 体内必须出现 `is_admin_message` 调用；
  ② 同一体内禁再现 `config.bot_admin_user_ids` 直读；
  ③ 根文件全域禁再出现「裸比名单」那一句原形（防拆了正门另开一窗）。
+
+量具口径（别再收窄）：①② 里的"体内"由 `_func_source` 取，而 `_is_admin_origin` 是
+ `_register_nonebot_handlers` 的**嵌套**函数——只扫模块顶层（`tree.body`）＝这把锁自己
+ 失明。盘上曾出现这种收窄，判明是 wave-2 replay 把**入库前的旧稿**盖回已提交件
+ （台账 #68 同型 stale-base），不是"要求顶层定义"的有意加严；全案与注毒自证见
+ `.superpowers/sdd/2026-09-27-fullload/reports-m2/S-FIX-K1B-LOCK.md`。
 """
 
 from __future__ import annotations
@@ -30,16 +36,24 @@ def _root_text() -> str:
 
 
 def _func_source(text: str) -> str:
-    fn = next(
-        (
-            n
-            for n in ast.walk(ast.parse(text))
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == FUNC
-        ),
-        None,
+    # 量具口径＝扫**全树**，不是只扫模块顶层：真身 `_is_admin_origin` 是
+    # `_register_nonebot_handlers` 的**嵌套**函数（现算尺：ast.walk 命中 1、tree.body
+    # 命中 0），只扫顶层＝本锁对自己失明——判不出委托，也判不出没判据。
+    # 更坏的一种静默：顶层若冒出同名空壳（垫片/复刻），tree.body 会拿空壳当证据读，
+    # 嵌套真身退回裸比名单反而绿着过关。
+    # 同族坑＝台账 #50★：单尺必漏一维（行号会漂移、局部名要并 co_cellvars），
+    # 故这里既不写死行号，也不接受"命中多枚随便挑一枚"——唯一性断言钉死可判前提。
+    cands = [
+        n
+        for n in ast.walk(ast.parse(text))
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == FUNC
+    ]
+    assert len(cands) == 1, (
+        f"根文件里 {FUNC} 锚点现算命中 {len(cands)} 枚（实读行号 "
+        f"{[getattr(n, 'lineno', None) for n in cands]}）：0 枚＝坐标已漂、本锁失明；"
+        "≥2 枚＝同名遮蔽或另开一窗——两种都不许猜着往下判，先修锚点"
     )
-    assert fn is not None, f"根文件里找不到 {FUNC}＝坐标已漂，本锁失明"
-    return ast.get_source_segment(text, fn) or ""
+    return ast.get_source_segment(text, cands[0]) or ""
 
 
 def test_admin_origin_delegates_to_central_role_judgment() -> None:

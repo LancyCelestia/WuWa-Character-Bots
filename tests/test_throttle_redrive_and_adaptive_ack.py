@@ -27,6 +27,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
     RuntimePipeline,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.progress_ack import (
+    MS_PER_SECOND,
     ProgressAckSettings,
     effective_ack_delay_seconds,
 )
@@ -72,26 +73,52 @@ def _denied(reason: str, retry_after: int = 30) -> RateLimitDecision:
 
 
 @pytest.mark.parametrize("gateway_ema_ms", [None, 0, -1, "not-a-number"])
-def test_missing_measurement_falls_back_to_configured_threshold(
+def test_missing_measurement_opens_no_earlier_than_the_floor(
     gateway_ema_ms: object,
 ) -> None:
-    """测不到就按原值判——观测面坏了不许把回执功能一起带走。"""
+    """测不到（冷启动/读失败）⇒ `max(静态值, 地板)`，不再逐字节退回静态值。
+
+    旧判据"退静态值"的代价：`.env` 的静态值仍是 15 而地板已抬到 30 ⇒ 每次刚重启
+    那一段都按 15 秒误开口（D2 在冷启动窗口内等于没生效）。2026-09-28 用户裁定
+    收掉这一半；全账与两半仍在场的判据见
+    `tests/test_progress_ack_thresholds.py::test_missing_observation_no_longer_reopens_the_cold_start_hole`。
+    """
     settings = ProgressAckSettings(enabled=True, delay_seconds=15.0)
-    assert effective_ack_delay_seconds(settings, gateway_ema_ms) == 15.0  # type: ignore[arg-type]
+    got = effective_ack_delay_seconds(settings, gateway_ema_ms)  # type: ignore[arg-type]
+    assert got == max(settings.delay_seconds, settings.delay_floor_seconds)
+    assert got >= settings.delay_floor_seconds, "缺测不许比地板更早开口"
 
 
 def test_fast_gateway_still_uses_the_floor_not_the_raw_multiplication() -> None:
     settings = ProgressAckSettings(enabled=True, delay_seconds=15.0)
-    # 2000ms × 2.0 = 4s，但下限 15s ⇒ 仍按 15s（不比旧口径更早开口）。
-    assert effective_ack_delay_seconds(settings, 2000) == 15.0
+    # 派生值（2000ms × 倍率）落在地板以下 ⇒ **地板说话**。期望值与地板都由真身派生：
+    # 地板 2026-09-26 由 15 抬到 30（用户裁定 D2），本件早先写死 15.0 因此过期而红。
+    derived = 2_000.0 / MS_PER_SECOND * settings.latency_multiplier
+    assert derived < settings.delay_floor_seconds, "夹具前提：这一格确实是被地板压住的那一侧"
+    assert effective_ack_delay_seconds(settings, 2_000) == settings.delay_floor_seconds
 
 
 def test_slow_gateway_raises_the_bar_so_jitter_stops_triggering_acks() -> None:
-    """现网实测的慢跳（grok ema 13.7s）必须把阈值抬到远高于 15s。"""
+    """现网实测的慢跳（grok ema 13.7s）必须把开口时刻抬到远高于配置的 15 秒。"""
     settings = ProgressAckSettings(enabled=True, delay_seconds=15.0)
-    raised = effective_ack_delay_seconds(settings, 13700)
-    assert raised == pytest.approx(27.4)
-    assert raised > settings.delay_seconds
+    raised = effective_ack_delay_seconds(settings, 13_700)
+    # 地板 15→30（2026-09-26 用户裁定 D2）后，派生 27.4 秒落在地板以下 ⇒ 地板说话。
+    # 期望值由真身派生，不再写字面量（本件早先写死 27.4 因此过期而红）。
+    assert raised == settings.delay_floor_seconds
+    assert raised > settings.delay_seconds, "自适应必须比固定值更晚开口，否则误报面没收口"
+
+
+def test_derived_bar_above_the_floor_is_used_as_is() -> None:
+    """地板以上的那一侧：派生值说话（19.9s 是现网 grok 单跳实测最大 EWMA）。
+
+    只锁"被地板压住"那一侧的话，`return floor` 写死也能绿；这一发把「抬档」这条腿
+    单独钉住，两侧各咬一次。
+    """
+    settings = ProgressAckSettings(enabled=True, delay_seconds=15.0)
+    ema_ms = 19_900.0
+    derived = ema_ms / MS_PER_SECOND * settings.latency_multiplier
+    assert derived > settings.delay_floor_seconds, "夹具前提：这一格确实越过地板"
+    assert effective_ack_delay_seconds(settings, ema_ms) == pytest.approx(derived)
 
 
 def test_threshold_is_capped_so_a_broken_gateway_still_warns() -> None:
@@ -104,14 +131,24 @@ def test_adaptive_off_is_byte_identical_to_old_behaviour() -> None:
     assert effective_ack_delay_seconds(settings, 99_000) == 15.0
 
 
-def test_configured_threshold_is_never_silently_rewritten() -> None:
-    """本函数不得给 delay_seconds 兜下限（下限钳制归 from_config）。
+def test_configured_threshold_is_never_silently_lowered() -> None:
+    """本函数只准把开口时刻**推晚**，永不准把它改早——两侧各钉一次。
 
-    写这条是因为第一版就犯了 max(1.0, …) 的错，把亚秒配置就地改写，
-    三条既有回执用例当场红。
+    原判据「本函数不得给 delay_seconds 兜下限」在 2026-09-28 收窄成两半：
+    ① 显式关死自适应＝配多少判多少（亚秒配置照旧可用，下游管线夹具全靠这条腿）；
+    ② 自适应开着但缺测＝抬到地板（只抬不压）；静态值高于地板时按静态值走，
+       所以"把配置就地改写小"这种病仍然一次都不许犯。
+    写这条的最初原因（第一版在这里夹 `max(1.0, …)` 把亚秒配置改写）由 ① 继续看着。
     """
-    settings = ProgressAckSettings(enabled=True, delay_seconds=0.02)
-    assert effective_ack_delay_seconds(settings, None) == 0.02
+    off = ProgressAckSettings(enabled=True, delay_seconds=0.02, adaptive_enabled=False)
+    assert effective_ack_delay_seconds(off, None) == 0.02
+    assert effective_ack_delay_seconds(off, 99_000) == 0.02
+
+    on = ProgressAckSettings(enabled=True, delay_seconds=0.02)
+    assert effective_ack_delay_seconds(on, None) == on.delay_floor_seconds
+
+    above = ProgressAckSettings(enabled=True, delay_seconds=120.0)
+    assert effective_ack_delay_seconds(above, None) == 120.0, "缺测把静态配置改小了"
 
 
 def test_from_config_reads_the_four_new_keys() -> None:
@@ -191,12 +228,24 @@ def test_allowed_decision_never_redrives() -> None:
     )
 
 
-def test_wait_beyond_the_cap_is_dropped_not_deferred_forever() -> None:
-    """小时级帽在拦时，隔一小时突然冒一句比不回更糟。"""
+def test_wait_beyond_the_cap_is_clamped_to_the_nearest_available_slot() -> None:
+    """超窗不再"弃"：排到窗口这一格再判一次（2026-09-28 需求 2 残留收口）。
+
+    旧判据 `return None` 把"排队排到窗口外"读成"不必回"，连发 6 条的第 6 条
+    （账本回位 225 秒 > 旧窗口 180 秒）就是这么被吞的。钳制之后那条老约束仍在场：
+    上界还是窗口本身，所以**不会**出现"隔一小时突然冒一句"；到点那一轮走完整链路，
+    多半仍被小时帽拦住，然后按 `max_attempts` 收口为静默（有界，不重放循环）。
+    """
+    settings = RedriveSettings(max_wait_seconds=90.0)
+    assert (
+        redrive_wait_seconds(settings, _message(), "bot.chat", _denied("sender_min_interval", 3600))
+        == 90.0
+    )
+    # 额度用尽仍然收口为不补：钳制不等于无限顺延。
     assert (
         redrive_wait_seconds(
-            RedriveSettings(max_wait_seconds=90.0),
-            _message(),
+            settings,
+            _message(redrive_count=3),
             "bot.chat",
             _denied("sender_min_interval", 3600),
         )

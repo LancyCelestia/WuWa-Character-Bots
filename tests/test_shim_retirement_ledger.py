@@ -49,7 +49,25 @@ LEDGER = s34.LEDGER_PY
 #: （本席实测 `--report` 域外 100、三态铺满），是地板 stale 过高误报进展为塌陷。现按现算写入。
 #: 复跑取值：`python scripts/shim_retirement_census.py --report`（「域外 py」行 + 「三态: … 待退役」段）。
 #: 铁律：此地板只准随归位继续下降，**永不因某波把件挪回域外而抬**（那是要红、不是搬账）。
-MIN_OUTSIDE_FLOOR = 74  # 2026-09-27 现算 74（原 76）：席 S-W2-EXEC-B3-R2 退 W2 批3 SH-14/SH-16 两枚垫片
+MIN_OUTSIDE_FLOOR = 66  # 2026-09-29 主树还原波收尾现算 66（原 73；再往前 74/76）：06:30:29 那次还原把
+#   S-SHIM-WAVE1 T5/T6 已退役的 **8 枚 tracked 垫片连行带件**一起写回盘上（auto_send/__init__.py、
+#   capabilities/market.py、runtime/settings.py、security/memory_sanitize.py、sender/__init__.py、
+#   sender/onebot.py、sources/fetchers/__init__.py、sources/subscriptions/__init__.py），本批按原裁定
+#   再退一次：件退役（逐枚字节存 `.superpowers/sdd/2026-09-27-fullload/recovered/shim-retire-batch/*.PRE-RETIRE`）
+#   ＋`board_shim_ledger.SHIM_ROWS` 同批摘行 ⇒ 域外**真少七枚**，非扫描面塌陷。
+#   落地前置校验＝逐枚 grep 真 import 计数全为 0；落地后复跑 `python scripts/shim_retirement_census.py --report`
+#   ＝「域外 py 66 / 三态之和 66 / 账上登记垫片 15 / ④引用超上限 0」。配对锁见
+#   `tests/test_dev_ps1_no_shim_module_targets.py`（取样枚已换钉 runtime/pipeline）与
+#   `tests/test_copy_redline_gate.py::test_gate_scope_sanity`。
+#   〔承前〕74＝2026-09-27 S-W2-EXEC-B3-R2 退 SH-14/SH-16 两枚垫片后的现算：`capabilities/auto_send/__init__.py`
+#   那枚垫片是 **tracked** 件，06:30:29 那次外部 `restore` 把「已退役的文件＋`board_shim_ledger.SHIM_ROWS`
+#   那行」一起写回盘上 ⇒ `test_copy_redline_gate::test_gate_scope_sanity` 报「旧布局路径复活」。
+#   本批改回原裁定形状：文件退役（字节存 `.superpowers/sdd/2026-09-27-fullload/recovered/capabilities__auto_send____init__.py.PRE-RETIRE`，
+#   sha256[:16]=fa0b59156fdf8352）＋账本行同批摘除 ⇒ 域外**真少一枚**，非扫描面塌陷。
+#   复跑取证：`python scripts/shim_retirement_census.py --report` 读「域外 py（不在 domains/ 下）」=73；
+#   配对锁 `pytest tests/test_copy_redline_gate.py` 29 passed（退役断言腿在内）。
+#   写法随上一档口径：每退一枚垫片就降一档、逐枚点名，不静默下调。
+#   上一档 74＝2026-09-27 现算（原 76）：席 S-W2-EXEC-B3-R2 退 W2 批3 SH-14/SH-16 两枚垫片
 #   （output/card_render/usage_cards.py=SH-14、output/render_backends.py=SH-16），域外真少两枚，
 #   非扫描面塌陷。复跑：`python scripts/shim_retirement_census.py --report` 读「域外 py」。
 #   本批旧件已按规程备份 %TEMP%/w2b3r2-backup/（工作树全 20 件）＋同目录 githead-shim-usage_cards.py
@@ -68,7 +86,13 @@ MIN_OUTSIDE_FLOOR = 74  # 2026-09-27 现算 74（原 76）：席 S-W2-EXEC-B3-R2
 #   地板方向＝只准降不升（降须带这种"归位/退役"证据行）；本批旧件已按规程备份
 #   %TEMP%/shim-w2b4-backup-20260927/（decision-trace.py 613B、decision-init.py 664B、
 #   mail_bridge.py 173B、mail_adapter.py 329B，`git show HEAD:` 只读抽取）。
-MIN_SHIM_FLOOR = 23  # 2026-09-27 同上批：现算待退役 23（原 25），W2 批3 SH-14/SH-16 两枚已摘；账由 `--write-ledger` 现算刷新。
+MIN_SHIM_FLOOR = 15  # 2026-09-29 主树还原波收尾现算 15（原 22；再往前 23/25/28）：与上方 MIN_OUTSIDE_FLOOR
+#   同批同因——还原写回的 8 枚垫片按原裁定再退一次，`--report` 现读「待退役(垫片) 15」与「账上登记垫片: 15 枚」
+#   两数一致＝记号面没被改窄，只是在册垫片真少了七枚。原 22 一档的注记逐字保留在下一行起。：`capabilities/auto_send/__init__.py`
+#   随 06:30 还原被写回、本批按原裁定再退一次（文件退役＋`board_shim_ledger.SHIM_ROWS` 行摘除，
+#   取证见同文件 `MIN_OUTSIDE_FLOOR` 上方那段的 sha/备份名）⇒ 待退役**真少一枚**，非判据改窄。
+#   复跑：`python scripts/shim_retirement_census.py --report` 读「账上登记垫片: 22 枚」与「待退役(垫片) 22」。
+#   2026-09-27 同上批：现算待退役 23（原 25），W2 批3 SH-14/SH-16 两枚已摘；账由 `--write-ledger` 现算刷新。
 #   上一档 25 系席 S-W2-EXEC-B4 退 W2 批4 SH-05/SH-09/mail_adapter 三枚已摘所降（原 28）。
 
 #: 与三态之和同门记账的豁免上限 = `BASELINE.md` 起点值（只准降）。本席**只读**该账，不改它一个字。

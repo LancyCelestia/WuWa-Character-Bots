@@ -46,10 +46,11 @@ def _config_defaults(source: str) -> dict[str, object]:
 
 def _root_fallbacks(source: str) -> dict[str, object]:
     """现读根 `_record_poke_affinity` 里的 ``getattr(cfg, "<键>", 兜底) [or 兜底]``。"""
+    tree = ast.parse(source)
     fn = next(
         (
             n
-            for n in ast.walk(ast.parse(source))
+            for n in tree.body
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == FUNC
         ),
         None,
@@ -87,7 +88,7 @@ def test_root_poke_affinity_lock_bites_on_poisoned_copy(tmp_path: Path) -> None:
     src = ROOT_INIT.read_text(encoding="utf-8-sig")
     assert '"bot_poke_affinity_delta"' in src, "锚点不在＝注毒会空跑"
     poisoned = re.sub(
-        r'(getattr\(\w+, "bot_poke_affinity_delta", )([0-9.]+)',
+        r'(getattr\(config, "bot_poke_affinity_delta", )([0-9.]+)',
         lambda m: f"{m.group(1)}{float(m.group(2)) + 1.0}",
         src,
         count=1,
