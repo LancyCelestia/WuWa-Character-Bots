@@ -63,9 +63,12 @@ def test_u12_datasource_temp_failure_snapshot() -> None:
 
 
 def test_q01_datasource_pool_shape() -> None:
-    """Q-01 池形态：3-5 条、首条=U12 原模板、{reason} 槽位齐全、无重复、可渲染。"""
+    """Q-01 池形态：首条=U12 原模板、{reason} 槽位齐全且**起手即原因**、无重复、
+    可渲染。条数下限 15 由 ``tests/test_error_copy_pool_gate.py`` 统一执法
+    （E1 2026-10-02：旧上限 5 是「每池一句半」时代的尺，随变体池波上调）。
+    """
     pool = user_copy.DATASOURCE_FAILURE_TEMPLATES
-    assert 3 <= len(pool) <= 5
+    assert 15 <= len(pool) <= 20
     assert pool[0] == user_copy.DATASOURCE_TEMP_FAILURE
     assert len(set(pool)) == len(pool)
     assert all("{reason}" in variant for variant in pool)

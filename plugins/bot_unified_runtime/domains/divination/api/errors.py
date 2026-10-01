@@ -2,6 +2,9 @@
 
 - DrawError 的码全部取自 ``domains/core/contracts/errors.py`` 注册表（W5 约束）；
   本模块只把 (码 → HTTP 状态/retryable/人话兜底) 投影出来，不注册新全局码。
+- 人话兜底走 **`render_error_message`（族壳轮换取句的唯一出口）**，不直读
+  ``spec.message_template``——直读就是「同一枚错误永远同一句」的第二通路
+  （席 E1 2026-10-02；锁见 `tests/test_error_copy_pool_gate.py` 判据⑤）。
 - ``not_wired``（LLM 解释未接线）按控制面本码前例处理
   （config_store_unavailable / traces_unavailable 同类，不入全局注册表）——
   诚实位是交付的一部分：没接线就明说没接线，不冒充模型解读。
@@ -11,7 +14,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from plugins.bot_unified_runtime.domains.core.contracts.errors import ERROR_REGISTRY
+from plugins.bot_unified_runtime.domains.core.contracts.errors import (
+    ERROR_REGISTRY,
+    render_error_message,
+)
 from plugins.bot_unified_runtime.domains.divination.store.draw_store import DrawError
 
 __all__ = [
@@ -70,8 +76,12 @@ def project_draw_error(exc: DrawError) -> HttpErrorProjection:
             message=exc.message or exc.code,
             retryable=False,
         )
-    message = exc.message if exc.message and exc.message != exc.code else (
-        spec.message_template
+    # 服务层给了具体人话就用具体的；没给就走族壳轮换取句（**不直读规范句**，
+    # 直读＝同一枚码永远同一句的第二通路）。占位符由注册表模板自己吃。
+    message = (
+        exc.message
+        if exc.message and exc.message != exc.code
+        else render_error_message(exc.code)
     )
     return HttpErrorProjection(
         status_code=spec.http_status,
