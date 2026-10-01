@@ -98,7 +98,10 @@ def test_query_embed_memo_dedupes_single_text(monkeypatch, _reset_embed_memo):
         calls.append(inputs)
         return _fake_embed_response(count=len(inputs))
 
-    monkeypatch.setattr(vk.httpx, "post", fake_post)
+    # S1 收口 ①：嵌入传输从模块级 httpx.post 改为复用有界连接池的
+    # `_embed_http_post` 接缝——假回包改挂到该接缝上，判据（同 query 命中
+    # memo、批量不走 memo）一字不动。
+    monkeypatch.setattr(vk, "_embed_http_post", fake_post)
     provider = _provider()
 
     assert len(provider.embed_texts(["你好"])) == 1

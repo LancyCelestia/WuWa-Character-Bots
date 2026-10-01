@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any, Protocol
 from urllib import error, request
@@ -190,7 +191,16 @@ _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _MAX_ERROR_BODY_BYTES = 8192
 
 _HTTP_CLIENT_LOCK = threading.Lock()
-_HTTP_CLIENTS: dict[str, httpx.Client] = {}
+# 进程级 httpx.Client 连接桶（管线检视 #7 + S1 无界资源收口 2026-10-02）。
+# 键 = 代理值维度（`str(proxy).strip()`）∪ 回环哨兵键，全部来自 config
+# （`bot_download_proxy` 等）与本机固定哨兵，不是每请求新用户输入。现网实测
+# 存活桶数 = 3（空代理 `""` 默认桶 / `BOT_DOWNLOAD_PROXY` 1 枚代理值 /
+# `_LOOPBACK_DIRECT_KEY` 回环桶），故上界取 3 的 ≥2× 余量 **8 桶**——
+# 覆盖"改配置换过一枚代理值"的热改代次窗口，绝不因代理键轮换无限堆积
+# 已关闭的旧 Client。溢出按 LRU 关最旧桶（`OrderedDict.move_to_end` 记访问序，
+# 淘汰 `popitem(last=False)`＝最久未用者），并 close 释放 socket，杜绝句柄泄漏。
+_HTTP_CLIENTS: OrderedDict[str, httpx.Client] = OrderedDict()
+_HTTP_CLIENTS_MAX_BUCKETS = 8
 
 # 连接阶段上限：网络/代理/网关不可达时快败，交回 fail-fast 逐跳判定。
 # 每请求覆盖超时时必须保住这一档——传标量会把四档一起改成同一个值。
@@ -236,11 +246,18 @@ def _shared_http_client(proxy: str = "", *, force_direct: bool = False) -> httpx
     key = _LOOPBACK_DIRECT_KEY if force_direct else str(proxy or "").strip()
     cached = _HTTP_CLIENTS.get(key)
     if cached is not None and not cached.is_closed:
+        with _HTTP_CLIENT_LOCK:
+            # 记访问序（LRU）：命中即挪到队尾，淘汰时只可能踢掉最久未用者。
+            _HTTP_CLIENTS.move_to_end(key, last=True)
         return cached
     with _HTTP_CLIENT_LOCK:
         cached = _HTTP_CLIENTS.get(key)
         if cached is not None and not cached.is_closed:
+            _HTTP_CLIENTS.move_to_end(key, last=True)
             return cached
+        if cached is not None and cached.is_closed:
+            # 同键旧实例已被关闭：先摘掉，避免占着名额又不可用。
+            _HTTP_CLIENTS.pop(key, None)
         client = httpx.Client(
             proxy=None if force_direct else (key or None),
             trust_env=not force_direct,
@@ -259,7 +276,30 @@ def _shared_http_client(proxy: str = "", *, force_direct: bool = False) -> httpx
             ),
         )
         _HTTP_CLIENTS[key] = client
+        _HTTP_CLIENTS.move_to_end(key, last=True)
+        # 有界淘汰：代理键维度虽由 config 约束，但热改换值会留下已关闭的
+        # 旧 Client，绝不无界堆积。超出上界即按 LRU 关最旧桶并释放 socket。
+        _enforce_http_client_bound(current_key=key)
         return client
+
+
+def _enforce_http_client_bound(current_key: str) -> None:
+    """把 ``_HTTP_CLIENTS`` 收进 ``_HTTP_CLIENTS_MAX_BUCKETS`` 上界（须持锁调用）。
+
+    溢出按 LRU 淘汰：``OrderedDict`` 队首＝最久未用者，关闭并弹出它释放 socket；
+    绝不弹出 ``current_key``（刚挪到队尾，理论上不在队首，防御性放回并止环）。
+    生产稳态存活 3 桶 < 上界 8，本腿只在代理值热改换代的过渡窗口触发。
+    """
+    while len(_HTTP_CLIENTS) > _HTTP_CLIENTS_MAX_BUCKETS:
+        evict_key, evicted = _HTTP_CLIENTS.popitem(last=False)
+        if evict_key == current_key:
+            # 理论上不会命中（刚挪到队尾）；放回并止环，别把在用桶关了。
+            _HTTP_CLIENTS[evict_key] = evicted
+            break
+        try:
+            evicted.close()
+        except Exception:  # noqa: S110, BLE001 - 关闭失败不得阻断取用（socket 交 GC）。
+            pass
 
 
 def _brief_exc(exc: BaseException) -> str:

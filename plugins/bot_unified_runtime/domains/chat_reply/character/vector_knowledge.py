@@ -19,6 +19,7 @@ except Exception:  # noqa: BLE001 - faiss 可选，缺失回退 numpy 暴力检�
     faiss = None  # type: ignore[assignment]
 import sqlite3
 import threading
+from collections import OrderedDict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from math import isnan, sqrt
@@ -30,6 +31,19 @@ import httpx
 from plugins.bot_unified_runtime.contracts import KnowledgeChunk
 from plugins.bot_unified_runtime.domains.chat_reply.character.documents import (
     load_character_document,
+)
+
+# 嵌入传输复用 llm_engine 的进程级有界连接池（S1 无界资源收口 2026-10-02）：
+# 旧腿每条消息每次嵌入都调模块级 ``httpx.post``＝新建即弃连接（人格库+kb_wiki
+# 库各一次 × 模型回退链，热路径 TCP+TLS 握手税与句柄 churn 无回收）。这里按
+# character→llm_engine 单向依赖复用同一 `_shared_http_client`（temporal 天气
+# 已走同一入口、同向、无环）。#71★ 三条在册事实尊重：回环目标 force_direct
+# 硬直连（绕开本机常驻 HTTP_PROXY）；非回环走空代理键＝保留 httpx 默认
+# trust_env 环境回落语义，绝不"顺手"关掉。
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    _CONNECT_TIMEOUT_SECONDS,
+    _loopback_endpoint,
+    _shared_http_client,
 )
 from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 
@@ -259,8 +273,15 @@ def _parse_model_list(model: str | list[str]) -> list[str]:
 
 
 # 单文本查询嵌入 memo：聊天检索热路径（每条消息至少人格库+kb_wiki 库各一次）
-# 对同一 query 的重复嵌入跨库去重；TTL 过后自然失效，不做逐条淘汰。
-_QUERY_EMBED_MEMO: dict[tuple[str, str], tuple[float, list[list[float]]]] = {}
+# 对同一 query 的重复嵌入跨库去重；TTL 过后自然失效。
+# S1 无界资源收口（2026-10-02）：键 = (signature, query_text)，query_text 是
+# **任意用户输入**＝无界键空间，故必须封顶并逐条淘汰——旧腿在溢出时 `.clear()`
+# 一把全清，把当轮热键连同刚写入的冷键一起丢掉，下个查询即集体回源重嵌
+# （thundering herd）。改真 LRU：命中挪队尾、溢出只踢最久未用的一枚。
+# 上界实测分档：生产 wuwa_history 6373 轮对话滚动 60s 窗（TTL 即此窗）内
+# 到达文本数 p99=2、max=14，×人格/kb 双签名放大 ≤ 28–56 枚存活键 ⇒ 256 给到
+# ≥4–9× 余量，既不 OOM 也不误清热键。dim=1024 的向量列表按此封顶驻留内存有界。
+_QUERY_EMBED_MEMO: OrderedDict[tuple[str, str], tuple[float, list[list[float]]]] = OrderedDict()
 _QUERY_EMBED_MEMO_LOCK = threading.Lock()
 _QUERY_EMBED_MEMO_TTL_SECONDS = 60.0
 _QUERY_EMBED_MEMO_MAX_ENTRIES = 256
@@ -270,19 +291,27 @@ def _query_embed_memo_get(key: tuple[str, str]) -> list[list[float]] | None:
     now = time.monotonic()
     with _QUERY_EMBED_MEMO_LOCK:
         hit = _QUERY_EMBED_MEMO.get(key)
-    if hit is None or now - hit[0] >= _QUERY_EMBED_MEMO_TTL_SECONDS:
-        return None
+        if hit is None:
+            return None
+        if now - hit[0] >= _QUERY_EMBED_MEMO_TTL_SECONDS:
+            # 过期即删（读侧顺手清），别让死键占 LRU 名额。
+            _QUERY_EMBED_MEMO.pop(key, None)
+            return None
+        # 记访问序：命中即挪到队尾，淘汰只踢最久未用者。
+        _QUERY_EMBED_MEMO.move_to_end(key, last=True)
     return hit[1]
 
 
 def _query_embed_memo_put(key: tuple[str, str], vectors: list[list[float]]) -> None:
     with _QUERY_EMBED_MEMO_LOCK:
-        if len(_QUERY_EMBED_MEMO) >= _QUERY_EMBED_MEMO_MAX_ENTRIES:
-            _QUERY_EMBED_MEMO.clear()
         _QUERY_EMBED_MEMO[key] = (
             time.monotonic(),
             [list(vector) for vector in vectors],
         )
+        _QUERY_EMBED_MEMO.move_to_end(key, last=True)
+        # 逐条淘汰最久未用，绝不整表清空。
+        while len(_QUERY_EMBED_MEMO) > _QUERY_EMBED_MEMO_MAX_ENTRIES:
+            _QUERY_EMBED_MEMO.popitem(last=False)
 
 
 def reset_query_embed_memo() -> None:
@@ -1033,6 +1062,37 @@ def _stat_stamp(path: Path) -> tuple[int, int] | None:
     return (int(info.st_size), int(info.st_mtime_ns))
 
 
+def _embed_http_post(
+    endpoint: str,
+    *,
+    headers: dict[str, str],
+    json: dict[str, Any],
+    timeout_seconds: float,
+) -> httpx.Response:
+    """嵌入单次 POST 的传输腿——复用 llm_engine 进程级有界连接池（S1 收口 ①）。
+
+    旧实现每条消息每次嵌入都调模块级 ``httpx.post``：新建即用即弃的连接池，
+    人格库+kb_wiki 库各一次、再乘模型回退链，热路径上反复付 TCP+TLS 握手税、
+    句柄无回收。现按代理维度复用同一 ``_shared_http_client``（temporal 天气走
+    同一入口、character→llm_engine 单向无环）。#71★ 三条事实逐条尊重：
+
+    - 回环目标（本机 Ollama 11434 / AxonHub 8090）`force_direct=True`＝硬直连，
+      绕开本机常驻 ``HTTP_PROXY``（不关天气那条腿，天气走的是空代理键非此分支）；
+    - 非回环走空代理键＝保留 httpx 默认 ``trust_env`` 环境/注册表回落，
+      绝不"顺手"把回落关掉（temporal 天气依赖的正是这个语义）；
+    - 每请求只覆盖读预算，``connect`` 恒守快败上限（与 llm 主链路同一纪律，
+      传标量会把四档一起放大、connect 快败形同虚设）。
+
+    独立成模块级函数＝可测接缝：测试 monkeypatch 本函数即可注入假回包。
+    """
+    client = _shared_http_client("", force_direct=_loopback_endpoint(endpoint))
+    request_timeout = httpx.Timeout(
+        timeout=max(0.5, float(timeout_seconds)),
+        connect=min(_CONNECT_TIMEOUT_SECONDS, max(0.5, float(timeout_seconds))),
+    )
+    return client.post(endpoint, headers=headers, json=json, timeout=request_timeout)
+
+
 class OpenAICompatibleEmbeddingProvider:
     """按链顺序请求：本地（如 Ollama bge-m3）优先，远程付费模型兜底。
 
@@ -1140,11 +1200,11 @@ class OpenAICompatibleEmbeddingProvider:
                         if chain.api_key
                         else {}
                     )
-                    response = httpx.post(
+                    response = _embed_http_post(
                         f"{chain.base_url}/embeddings",
                         headers=headers,
                         json=body,
-                        timeout=chain.timeout_seconds,
+                        timeout_seconds=chain.timeout_seconds,
                     )
                     response.raise_for_status()
                     payload = response.json()
