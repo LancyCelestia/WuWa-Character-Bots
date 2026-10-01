@@ -49,6 +49,14 @@ class OperationalIssue(StrictBaseModel):
     safe_summary: str = ""
     attempts: int = 1
     elapsed_ms: float | None = None
+    # 失败可重投分类（TG 告警卡连接期修复波 2026-09-28）。判定真身＝
+    # domains/transport/sender/failure_class.py（纯函数三值），这里只是承载位。
+    # 缺省 ""＝未分类 ⇒ 消费方（worker mixed 重投臂 / inline 记账 / 告警文本
+    # 直发腿）行为与新增本字段之前逐字节一致；只有 "connect_phase"（连接建立
+    # 期失败，请求零字节出网 ⇒ 必未送达）放行重投，"uncertain"（请求可能已被
+    # 对方处理）与未分类一律维持台账 #47 M-63 的 UNKNOWN/停放语义。
+    # stage/kind/safe_summary/retryable 的既有语义一字未动（kind 是逐字承重串）。
+    retry_safety: str = ""
 
     @field_validator("stage", "kind")
     @classmethod
@@ -56,6 +64,16 @@ class OperationalIssue(StrictBaseModel):
         normalized = str(value).strip()
         if not normalized:
             raise ValueError("operational issue stage/kind must be non-blank")
+        return normalized
+
+    @field_validator("retry_safety")
+    @classmethod
+    def require_known_retry_safety(cls, value: str) -> str:
+        # 三值名册与 failure_class.py 的 RETRY_SAFETY_* 常量同形（改动必须两处
+        # 同步；本验证器只拦拼写错误，不承载判定逻辑）。
+        normalized = str(value).strip()
+        if normalized not in {"", "connect_phase", "uncertain"}:
+            raise ValueError(f"unknown retry_safety: {normalized!r}")
         return normalized
 
     @field_validator("attempts")
@@ -186,6 +204,12 @@ class IncomingMessage(StrictBaseModel):
     # 被限流拦下的明确请求不再静默丢弃，而是等解禁后补跑一次；本字段就是
     # 那条补跑的计数上限，缺省 0=从未补过（既有构造点零改动、零行为变更）。
     redrive_count: int = 0
+    # 折句合并轮的逐条原始 message_id 账（需求 1，2026-09-29 用户裁定）：多条气泡
+    # 折成一轮供管线消费时，除开门者自身的 message_id 外，其余各条的 id 也必须跟着
+    # 走完全链路——幂等反查、回执指认、补投定位都要用它。真身写点在
+    # `runtime/message_coalescing.merge_turn()`；未折过条的轮次恒为空表（既有构造点
+    # 零改动、零行为变更）。
+    folded_message_ids: list[str] = Field(default_factory=list)
     risk_level: RiskLevel = RiskLevel.LOW
     privacy_level: PrivacyLevel | None = None
     debug_id: str = Field(default_factory=new_debug_id)

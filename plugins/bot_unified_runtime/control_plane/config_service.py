@@ -172,6 +172,7 @@ class ConfigControlService:
 
     def _guarded_apply(self, *, target: str, value: Any, restore_default: bool,
                        principal: Principal, request_id: str,
+                       session_key: str = "",
                        apply: Callable[[], Any]) -> Any:
         """把一次实际落库动作交给门；门缺席或总闸关 ⇒ 直接 `apply()`，与接线前
         逐字节同形（`settings.py::_throat_guard` 的三态口径，本层不自创第四态）。
@@ -180,11 +181,14 @@ class ConfigControlService:
         工单号/短码/批准指引原文原样带出去（HTTP 面由 `_app.py` 的
         exception_handler 装进 envelope 的 error.message）。
 
-        session_key 交空串：咽喉对「确实拿不到会话的写点」的既有口径
-        （settings.py `_throat_guard` 注释）——控制面侧不存在入站会话，拼一个
-        真会话里不存在的键会让 R1 的「在原会话里确认」判据（consent.py：
-        `and row.source_session_key`）永无被人满足＝死信卡；空串＝该判据对本
-        渠道不启用，R2 的超管私聊书面亲批不受影响（全链在锁①②实证）。
+        session_key 由调用方申报（需求 18②，席位 S-FILESAFE 2026-09-28 那一票的
+        实现半片）：控制面自身没有入站会话，但**发起这一笔的人可能知道它该绑到哪
+        个会话**（例如替某个群里的诉求重放改动）。这一格以前硬写空串，等于把「调用
+        方其实知道会话」那一格也钉死，R1「在原会话里确认」（consent.py：
+        `and row.source_session_key`）因此在控制面渠道整体退化成 R2 式跨会话批。
+        现在它透传到门：空串＝该判据对这笔不启用（旧形态逐字节保持，未表过态的
+        调用方一寸行为都没变）；填了会话＝批准必须真出现在那个会话里。**只收紧
+        不放宽**——填错只会批不下来，不会多批；R2 的超管私聊书面亲批不受影响。
         """
         from plugins.bot_unified_runtime.domains.core.safety_exec.consent import (
             DenyKind,
@@ -201,7 +205,7 @@ class ConfigControlService:
             return gate.guarded_write(
                 key=target, value=value, restore_default=restore_default,
                 actor=principal.subject, request_id=request_id,
-                session_key="", apply=apply,
+                session_key=session_key, apply=apply,
             )
         except RuntimeChangeNeedsConsent as exc:
             # 409 有 actions.py `confirmation_required` 的同状态码先例；原文直传。
@@ -216,7 +220,8 @@ class ConfigControlService:
             raise ControlServiceError("change_refused", exc.plain_text, status) from None
 
     def _write(self, key: str, value: Any, *, reset: bool, principal: Principal,
-               expected_version: int, request_id: str) -> dict[str, Any]:
+               expected_version: int, request_id: str,
+               session_key: str = "") -> dict[str, Any]:
         self._authorize(principal, expected_version, request_id)
         key = self._key(key, writable=True)
         converted = None if reset else self._convert(key, value)
@@ -230,7 +235,7 @@ class ConfigControlService:
             # 必须住在 apply= 实参的子树里。两判据同绿＝既在册又活性。
             snapshot = self._guarded_apply(
                 target=key, value=converted, restore_default=reset,
-                principal=principal, request_id=request_id,
+                principal=principal, request_id=request_id, session_key=session_key,
                 apply=lambda: (
                     self.backend.reset_override(
                         key, expected_version=expected_version,
@@ -248,14 +253,19 @@ class ConfigControlService:
         return self._row(key, snapshot)
 
     def set(self, key: str, value: Any, *, principal: Principal, expected_version: int,
-            request_id: str = "") -> dict[str, Any]:
+            request_id: str = "", session_key: str = "") -> dict[str, Any]:
+        """写一笔覆盖；`session_key` 是调用方对来源会话的申报（见 `_guarded_apply`），
+        省缺空串＝不申报＝旧形态。"""
         return self._write(key, value, reset=False, principal=principal,
-                           expected_version=expected_version, request_id=request_id)
+                           expected_version=expected_version, request_id=request_id,
+                           session_key=session_key)
 
     def reset(self, key: str, *, principal: Principal, expected_version: int,
-              request_id: str = "") -> dict[str, Any]:
+              request_id: str = "", session_key: str = "") -> dict[str, Any]:
+        """撤一笔覆盖；会话申报口径同 `set`。"""
         return self._write(key, None, reset=True, principal=principal,
-                           expected_version=expected_version, request_id=request_id)
+                           expected_version=expected_version, request_id=request_id,
+                           session_key=session_key)
 
     def reset_all(self, *, principal: Principal, expected_version: int,
                   request_id: str = "") -> dict[str, int]:
@@ -268,6 +278,10 @@ class ConfigControlService:
         N 次批准 + 部分生效，语义直接走样；`RuntimeSettingsStore.reset_override
         (None)` 走 `_throat_guard(target=None)` 用的就是同一个聚合名，两本判据
         合一，不留第二套规则。
+
+        会话面同口径：聚合目标没有「这一笔属于哪个会话」可言，故本方法**不吃**
+        `session_key`（`_guarded_apply` 缺省空串＝同会话判据对整批不启用）。要它
+        也能 R1 得另开一票，并同批改 `test_control_plane_consent_throat.py` 的名册。
         """
         self._authorize(principal, expected_version, request_id)
         before = self._snapshot()

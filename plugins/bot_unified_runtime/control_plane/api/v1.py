@@ -20,8 +20,9 @@ from ..services import FeatureControlService
 from .protocol import (
     ERROR_RESPONSES,
     ApiEnvelope,
-    ConfigResetPayload,
     ConfigValuePayload,
+    ConfigWriteResetPayload,
+    ConfigWriteValuePayload,
     FeatureChangePayload,
     FeatureItem,
     FeatureList,
@@ -165,12 +166,12 @@ def build_v1_router(
         return _ok(require_config_service().preview(key, payload.value, principal=principal, expected_version=payload.expected_version, request_id=request.state.cp_request_id))
 
     @router.post("/config/{key}/set")
-    def set_config(key: str, payload: ConfigValuePayload, request: Request, principal: Principal = Depends(write_dependency)) -> dict[str, Any]:
-        return _ok(require_config_service().set(key, payload.value, principal=principal, expected_version=payload.expected_version, request_id=request.state.cp_request_id))
+    def set_config(key: str, payload: ConfigWriteValuePayload, request: Request, principal: Principal = Depends(write_dependency)) -> dict[str, Any]:
+        return _ok(require_config_service().set(key, payload.value, principal=principal, expected_version=payload.expected_version, request_id=request.state.cp_request_id, session_key=payload.session_key))
 
     @router.post("/config/{key}/reset")
-    def reset_config(key: str, payload: ConfigResetPayload, request: Request, principal: Principal = Depends(write_dependency)) -> dict[str, Any]:
-        return _ok(require_config_service().reset(key, principal=principal, expected_version=payload.expected_version, request_id=request.state.cp_request_id))
+    def reset_config(key: str, payload: ConfigWriteResetPayload, request: Request, principal: Principal = Depends(write_dependency)) -> dict[str, Any]:
+        return _ok(require_config_service().reset(key, principal=principal, expected_version=payload.expected_version, request_id=request.state.cp_request_id, session_key=payload.session_key))
 
     if event_service is None:
         @router.get("/logs")

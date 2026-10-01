@@ -37,6 +37,57 @@ logger = logging.getLogger(__name__)
 _THRESHOLD_JOB_ID = "bot_usage_threshold_alerts"
 _REPORT_JOB_ID = "bot_usage_scheduled_report"
 
+# 主账单行账本换源的口径注记（F-1 镜像面，与 runtime_admin `/bot model usage`
+# 同款文案）。仅账本开且窗口内无行/读不到时才落到事件逐行毫厘，此时必须
+# 明说「与渠道子行不同源」，否则读者会把塌零主行误当成全量账单。
+_LEDGER_FALLBACK_NOTE = (
+    "（口径注记：账本窗口内无行，账单取自事件逐行毫厘，与渠道子行不同源）"
+)
+
+
+def _apply_ledger_main_row(
+    event_aggregate: dict[str, Any],
+    *,
+    db_path: str,
+    start_day: str,
+    end_day: str,
+    since_iso: str = "",
+    allow_fallback_note: bool = True,
+) -> tuple[dict[str, Any], str]:
+    """把「主账单行」的钱从事件逐行毫厘换到账本微元聚合（与渠道子行同源）。
+
+    定时报告的主行/家族行此前只读 ``runtime_event_log`` 的逐行整数毫厘，
+    而渠道子行读账本微元——亚毫厘单价每行取整塌零 ⇒ 主行 ≠ 子行之和，与
+    SEAT-ATK-BILLING F-1 在 `/bot model usage` 主行修掉的病灶同源（同一天花
+    几百发、单发 <0.5 毫厘的账，旧口径恒 0）。本函数取账本聚合
+    （``aggregate_usage_totals``，微元求和、末端一次取整、可按 ``since_iso``
+    与子行同窗口）作为主行数据源。
+
+    取舍与 runtime_admin 三级源逐字一致：
+      - ``db_path`` 为空（账本关）⇒ 原样返回事件聚合、无注记（逐字节不变）；
+      - 账本开且窗口有行 ⇒ 用账本聚合、无注记（主行与子行同源）；
+      - 账本开但读不到（None）/ 窗口真空（有键无行）⇒ 回落事件聚合 + 口径注记。
+    复用 ``ledger.aggregate_usage_totals``，**不建第二条取整/计价管线**。
+    """
+    if not str(db_path or "").strip():
+        # 账本关：连库都不该去碰。走下面的 try 分支时 aggregate_usage_totals("")
+        # 会返回「无行」，于是主行明明什么都没换却被挂上「窗口内无行」的注记——
+        # 那是把「没开账本」谎报成「开了但查空」。原样返回、零注记，逐字节旧行为。
+        return event_aggregate, ""
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.ledger import (
+            aggregate_usage_totals,
+        )
+
+        candidate = aggregate_usage_totals(
+            db_path, start_day=start_day, end_day=end_day, since_iso=since_iso
+        )
+    except Exception:  # noqa: BLE001 - 主行读账本失败只回落事件毫厘，不阻塞监控。
+        return event_aggregate, (_LEDGER_FALLBACK_NOTE if allow_fallback_note else "")
+    if candidate and (candidate.get("by_model") or candidate.get("calls")):
+        return candidate, ""
+    return event_aggregate, (_LEDGER_FALLBACK_NOTE if allow_fallback_note else "")
+
 
 # ==================== 阈值判定（纯函数） ====================
 def threshold_alert_items(
@@ -355,12 +406,15 @@ def build_report_text(
     window_label: str,
     prices: dict[str, dict[str, float]] | None = None,
     channel_stats: dict[str, dict[str, dict[str, int]]] | None = None,
+    cost_basis_note: str = "",
 ) -> str:
     """定时报告的纯文本版本（渲染失败/控制台回退）。
 
     ``channel_stats`` 提供时（账本渠道聚合），家族行下缩进渲染渠道子行：
     ``└ 渠道 <channel_id>：N 次 / 费 X.XX 元``（按费用降序）——同模型跨
     渠道的费用差异在此追溯，贴 /bot model usage 报告的逐行风格。
+    ``cost_basis_note`` 为账本主行回落事件毫厘时的口径注记（空串=主行已
+    与子行同源，无需注记），末行浮出。
     """
     lines = [
         f"[用量报告] {window_label}",
@@ -392,6 +446,8 @@ def build_report_text(
     unpriced = int(aggregate.get("unpriced_calls", 0) or 0)
     if unpriced:
         lines.append(f"（{unpriced} 次调用未计价：价格未配置，未计入账单）")
+    if cost_basis_note:
+        lines.append(cost_basis_note)
     return "\n".join(lines)
 
 
@@ -403,6 +459,7 @@ def build_report_alert(
     prices: dict[str, dict[str, float]] | None = None,
     channel_stats: dict[str, dict[str, dict[str, int]]] | None = None,
     extra_24h_channel_stats: dict[str, dict[str, dict[str, int]]] | None = None,
+    cost_basis_note: str = "",
 ) -> AlertContent:
     """定时报告 -> 五要素 AlertContent（info 级）。"""
     what = build_report_text(
@@ -410,6 +467,7 @@ def build_report_alert(
         window_label=window_label,
         prices=prices,
         channel_stats=channel_stats,
+        cost_basis_note=cost_basis_note,
     )
     if extra_24h is not None:
         what += "\n\n过去 24 小时总花费：\n" + build_report_text(
@@ -646,6 +704,22 @@ def register_usage_monitor_scheduler(
                 target[field_name] += int((bucket or {}).get(field_name, 0) or 0)
         return stats or None
 
+    def _window_aggregate(
+        event_aggregate: dict[str, Any], *, since: datetime, now: datetime
+    ) -> tuple[dict[str, Any], str]:
+        """主账单行换源：账本开且窗口有行 ⇒ 账本微元聚合（与子行同窗口）。
+
+        账本关（``channel_stats_db_path`` 空）⇒ 原样返回事件聚合、无注记，
+        行为逐字节不变；账本开却读不到/窗口空 ⇒ 回落事件毫厘并带口径注记。
+        """
+        return _apply_ledger_main_row(
+            event_aggregate,
+            db_path=channel_stats_db_path,
+            start_day=since.date().isoformat(),
+            end_day=now.date().isoformat(),
+            since_iso=since.isoformat(timespec="seconds"),
+        )
+
     def _dispatch(alert: AlertContent, *, image_path: str = "") -> None:
         try:
             send_admin_alert_requests(
@@ -698,7 +772,15 @@ def register_usage_monitor_scheduler(
         try:
             now = datetime.now(zone)
             today = now.date().isoformat()
-            aggregate = usage_log.aggregate_llm_usage(today)
+            midnight = datetime.combine(
+                now.date(), datetime.min.time(), tzinfo=zone
+            )
+            # 阈值巡检的当日账单同样换账本口径：旧事件逐行毫厘会把日账单塌向
+            # 零 ⇒ 恰恰让「当日账单超限」这条告警在最该响时静默（低估比缺失
+            # 更危险）。账本关 ⇒ 逐字节回到旧事件毫厘。
+            aggregate, _cost_note = _window_aggregate(
+                usage_log.aggregate_llm_usage(today), since=midnight, now=now
+            )
             items = threshold_alert_items(
                 aggregate,
                 output_limit=output_limit,
@@ -742,13 +824,21 @@ def register_usage_monitor_scheduler(
             window_label = (
                 f"{since.strftime('%m-%d %H:%M')} 至 {now.strftime('%m-%d %H:%M')}"
             )
-            aggregate = _aggregate_since(usage_log, since=since, now=now)
+            aggregate, cost_note = _window_aggregate(
+                _aggregate_since(usage_log, since=since, now=now),
+                since=since,
+                now=now,
+            )
             window_channel_stats = _channel_stats_for(since, now)
             extra_24h = None
             extra_24h_channel_stats = None
             if now.hour == 13:
                 day_ago = now - timedelta(hours=24)
-                extra_24h = _aggregate_since(usage_log, since=day_ago, now=now)
+                extra_24h, _ = _window_aggregate(
+                    _aggregate_since(usage_log, since=day_ago, now=now),
+                    since=day_ago,
+                    now=now,
+                )
                 extra_24h_channel_stats = _channel_stats_for(day_ago, now)
             image_path = _render_report_card(
                 aggregate,
@@ -768,6 +858,7 @@ def register_usage_monitor_scheduler(
                     prices=prices,
                     channel_stats=window_channel_stats,
                     extra_24h_channel_stats=extra_24h_channel_stats,
+                    cost_basis_note=cost_note,
                 ),
                 image_path=image_path,
             )

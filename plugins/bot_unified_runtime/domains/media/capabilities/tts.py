@@ -954,12 +954,51 @@ def _output_dir(config: Any) -> Path:
     return runtime_path("data/tts_output")
 
 
+_AUDIO_BYTES_PER_SECOND = 64_000
+"""字节→秒的**换算尺**：v2ProPlus 产物恒定 32000Hz／16bit／单声道 ⇒ 64,000 B/s。
+
+阈值真身在 ``domains/media/tts_presets.py`` 的 ``MAX_AUDIO_BYTES_FALLBACK``（8 MiB），
+本处只做读数换算、**不设第二把阈值**。报给用户的秒数是这把代理尺的换算口径，
+不是 QQ 语音条的平台裁定（时长红线属 U-02 悬案，见 ``_inspect_wav_bytes`` 的
+「不判时长上限」边界）——故文案一律用「约」，不写成承诺。
+"""
+
+# 两枚锚只认本域**自己拼出**的原因串，不认引擎原文（引擎错误体常带本机路径，
+# 出门只走 ``_issue`` 的 ``redact_local_secrets``）：
+# ① ``synthesize`` 拼的「产物 N 字节超字节顶 M」② ``_request_tts`` 拼的「服务返回 NNN：」。
+# 锚字错一个字符＝**静默死腿**（文案照旧泛化、除 item8 那枚锁外全树无门可抓）
+# ⇒ 改动后必须拿事故原文实跑一次 ``_degrade`` 现算，不许只看测试变绿。
+_BYTES_OVER_CAP_RE = re.compile(r"产物 (?P<got>\d+) 字节超字节顶 (?P<cap>\d+)")
+_ENGINE_STATUS_RE = re.compile(r"服务返回 (?P<code>\d{3})")
+
+
 def _degrade(reason: str) -> str:
-    """合成失败时的守岸人口吻降级文案（不暴露内部细节，只给可读方向）。"""
+    """合成失败时的守岸人口吻降级文案（不暴露内部细节，只给可读方向）。
+
+    分支顺序＝**越具体越先**，且不改动既有两腿的优先级：不可达 / 参考音频在前
+    （4xx 带「参考音频」时那条比返回码可读），字节顶与引擎返回码两腿补在泛化句
+    **之前**——它们此前掉进泛化句，用户既不知道「为什么」也不知道「下一步怎么办」
+    （用户第 8 项 C 组）。内部单位（字节）与原因串原文一律不出门。
+    """
     if "不可达" in reason:
         return "嗓子还没接上——语音服务好像没在跑，稍后再叫我一次吧。"
     if "3~10秒" in reason or "参考音频" in reason:
         return "还差一段合适的参考音频：3 到 10 秒的干声，我才能借到自己的音色。"
+    over_cap = _BYTES_OVER_CAP_RE.search(reason)
+    if over_cap:
+        # 只报换算出的秒数，「字节」这个内部单位不进用户侧。
+        spoke = int(over_cap.group("got")) // _AUDIO_BYTES_PER_SECOND
+        limit = int(over_cap.group("cap")) // _AUDIO_BYTES_PER_SECOND
+        return (
+            f"这条我得念上约 {spoke} 秒，太长了我不敢递给你——一次最长约 {limit} 秒。"
+            "说短一些我就念得出来，文字的话我照样打得给你看。"
+        )
+    status = _ENGINE_STATUS_RE.search(reason)
+    if status:
+        return (
+            f"语音服务这一回拒了我（返回码 {status.group('code')}）——"
+            "先看看我打字说的话，待一会儿你再叫我一次。"
+        )
     return "这次没能发出声音……等一下再试，或者先听听我打字说的话吧。"
 
 
@@ -1150,6 +1189,7 @@ def build_tts_capability(config: Any | None = None) -> Any:
                 kind="text",
                 body=(
                     "这段话太长了，我一口气念不完——拆成几句再说给我听好不好？"
+                    f"这句有 {len(speech)} 字，我最多一次能念 {hard_cap} 字。"
                 ),
                 audit_tags=[
                     "tts",

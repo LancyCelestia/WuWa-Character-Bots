@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 import re
 import time
@@ -45,6 +46,9 @@ from plugins.bot_unified_runtime.domains.core.contracts.finance import (
     status_or_unknown,
 )
 from plugins.bot_unified_runtime.domains.finance.data.market_data import (
+    _budget_or_new,
+    budget_allows_retry,
+    budget_expired,
     empty_backoff_sleep,
     retry_on_empty_enabled,
 )
@@ -133,7 +137,10 @@ def build_snapshot_from_payload(
                     rate = float(value)
                 except ValueError:
                     rate = None
-            if isinstance(rate, float) and rate > 0:
+            # FIN-N1：er-api 快照口径可带 Infinity 字面量（json.loads 默认接受），
+            # 裸 ``rate > 0`` 挡不住 inf——补 math.isfinite 闸，非有限汇率不进表、
+            # 记入 missing_currencies（缺数如实点名，绝不进汇率表、绝不乘进换算）。
+            if isinstance(rate, float) and math.isfinite(rate) and rate > 0:
                 normalized[str(code).strip().upper()] = rate
         for code in wanted:
             rate = normalized.get(code)
@@ -214,7 +221,9 @@ def cross_rate_from_usd(
 ) -> float | None:
     """以 USD 为桥的三角交叉价：base→quote = table[quote]/table[base]。
 
-    任何输入缺失/非法（≤0）返回 None——换不出来就承认换不出来。
+    任何输入缺失/非法（≤0、NaN、Infinity、溢出）返回 None——换不出来就承认
+    换不出来。FIN-N1：``Infinity`` 能过 ``>0`` 却过不了 ``math.isfinite``，
+    ``NaN`` 令 ``<=`` 恒假——两处都以有限闸收口，非有限值绝不外流被乘进总额。
     """
     if not isinstance(usd_table, dict):
         return None
@@ -225,10 +234,11 @@ def cross_rate_from_usd(
             not isinstance(value, (int, float))
             or isinstance(value, bool)
             or value <= 0
+            or not math.isfinite(float(value))
         ):
             return None
     result = float(quote_rate) / float(base_rate)  # type: ignore[arg-type]
-    return result if result > 0 else None
+    return result if result > 0 and math.isfinite(result) else None
 
 
 def format_fx_snapshot_brief(snapshot: FxRateSnapshot) -> str:
@@ -321,18 +331,27 @@ def fx_pair_availability() -> dict[str, str]:
 
 
 def _as_float(value: Any) -> float | None:
-    """fltt=2 下正常值是小数/整数；缺数时可能是 "-" 或缺失。"""
+    """fltt=2 下正常值是小数/整数；缺数时可能是 "-" 或缺失。
+
+    FIN-N1（汇率面）：上游 JSON 可携带 ``NaN``/``Infinity`` 字面量
+    （``json.loads`` 默认接受），非有限汇率一律视为缺数（None）——走既有
+    「暂无数据」诚实通道，绝不让 nan/inf 进卡片数字槽、更不乘进换算总额
+    （``format_fx_rate_line`` 的 ``amount/unit_base*rate`` 从此只吃有限值）。
+    None≠0 与缺数语义不变。
+    """
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     text = str(value).strip()
     if not text:
         return None
     try:
-        return float(text)
+        number = float(text)
     except ValueError:
         return None
+    return number if math.isfinite(number) else None
 
 
 def _fetch_payload(secids: str, timeout_seconds: float) -> Any:
@@ -387,12 +406,19 @@ def fetch_fx_rates(
     pair_keys: Sequence[str] | None = None,
     timeout_seconds: float = 6.0,
     cache_seconds: float = _FX_CACHE_TTL_DEFAULT_SECONDS,
+    *,
+    budget: Any | None = None,
 ) -> list[FxRate]:
     """批量拉取汇率快照（东财主源）；失败返回 []，绝不抛异常。
 
     ``pair_keys=None`` 拉全部宇宙表货币对；给列表则按宇宙表顺序过滤子集。
     去重 secid 后单次批量外呼 + 进程内 TTL 缓存（默认 60s）；失败不缓存，
     下一次调用立即重试。``unit_base=100`` 的中间价（JPY/CNY）按 100 日元口径。
+
+    FIN-R1：与行情/个股/商品共用一条端到端网络预算（``budget`` 关键字，未传
+    则自造 per-call 兜底预算，既有调用方零改动）——预算尽 ⇒ 不发起新外呼、
+    弃剩余 G2 重试，走既有「失败不缓存、静默缺席=[]」诚实降级，绝不因预算把
+    取数打挂，也绝不跨层把退避睡眠相乘钉死有界聊天 worker。
     """
     wanted: set[str] | None = None
     if pair_keys is not None:
@@ -409,12 +435,15 @@ def fetch_fx_rates(
         for _pair, secid, *_rest in _FX_PAIR_UNIVERSE:
             if secid not in secids:
                 secids.append(secid)
+        budget = _budget_or_new(budget)
         # G2：东财限流=HTTP 200 空响应（空 JSON/缺行）→ 退避后至多重试 1 次；
         # 真异常（网络错/非 200）不重试；仍空照旧不缓存。仅东财主源重试，
         # er-api 快照链路（fetch_fx_snapshot）不在重试范围。
         attempts = 2 if retry_on_empty_enabled() else 1
         all_rates = []
         for attempt in range(attempts):
+            if budget_expired(budget):
+                break  # FIN-R1：预算尽不发起新网络调用（失败不缓存纪律不变）。
             try:
                 payload = _fetch_payload(
                     ",".join(secids), max(1.0, float(timeout_seconds))
@@ -424,7 +453,7 @@ def fetch_fx_rates(
             except Exception:  # noqa: BLE001 - 汇率失败静默降级，不阻塞会话链路。
                 all_rates = []
                 break  # 真异常不重试。
-            if all_rates or attempt + 1 >= attempts:
+            if all_rates or attempt + 1 >= attempts or not budget_allows_retry(budget):
                 break
             empty_backoff_sleep()
         if all_rates:

@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 from hashlib import sha1
 from typing import Any
@@ -41,11 +41,21 @@ from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     IncomingMessage,
     SendPolicy,
+    SessionType,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.ingest.message_context import (
+    INTERNAL_MARKER_PATTERN,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
+    PLATFORM_QQ,
     ROLE_ADMIN,
     ROLE_SUPER_ADMIN,
     ROLE_TRUSTED,
+    platform_domain_of,
+)
+from plugins.bot_unified_runtime.domains.core.session_keys import (
+    PERSON_SCOPE_SEP,
+    person_scope_key,
 )
 from plugins.bot_unified_runtime.domains.schedule.service.board_store import (
     BOARD_PLAN_PREFIX,
@@ -125,12 +135,39 @@ _QUESTION_HEAD_RE = re.compile(r"^(?:@[^\s，,]+|守岸人|机器人|岸宝)?[\s
 _QUESTION_CORE = (
     r"(?:在干(?:什么|啥|嘛)|在忙(?:什么|啥)?|干(?:什么|啥|嘛)|做(?:什么|啥)"
     r"|忙(?:什么|啥)|去哪(?:儿|里)?了?|出去(?:了)?(?:吗|么)|在(?:哪|哪儿|哪里)"
-    r"|有何(?:安排|事)|有安排(?:吗|么)?)"
+    r"|有何(?:安排|事)|有安排(?:吗|么)?"
+    # G2(a) 未来窗代答（S-FIX-SCHED20B，简报点名三形）：有空吗/几点有事/什么时候忙。
+    # 「有空吗」不带窗状语时按"现在有没有空"读（走 active_entries 现在腿），
+    # 带窗或"什么时候/几点"形则走未来窗腿——判据唯一在 _window_days，别处不另判。
+    r"|有空(?:吗|么)?|什么时候(?:忙|有事)|几点(?:有事|有空|忙))"
 )
-_QUESTION_HEAD_WORDS = "她|他|主人"
+# 未来窗状语词面（G2(a)）：**单一串**，问句正则（_QUESTION_ADVERB）与取数解析
+# （_window_days）共用同一份，禁第二真身。刻意不含「今天/今晚」——「今天」词面
+# 已有中央单一来源真身（domains/core/temporal_words.TODAY_ADVERB_WORDS），
+# 不在别处再落该词位的字面；问"今天"的让位现在腿/聊天，宁漏不误。
+_QUESTION_WINDOW_TERMS = (
+    r"下周末|本周末|这周末|周末"
+    r"|下周(?:[一二三四五六日天])?|本周|这周"
+    r"|明天|明日|(?<!大)后天"
+    r"|(?:周|星期|礼拜)(?:[一二三四五六日天])"
+    r"|\d{1,2}月\d{1,2}[日号]"
+)
+_QUESTION_ADVERB = r"(?:现在|这会儿|这时候|此刻|" + _QUESTION_WINDOW_TERMS + r")?"
+# 头词分两半登记（G1）：第三人称=代答面（别人问「她/他/主人」），第一人称=自看面
+# （她亲口问「我…」）。两半并进 _QUESTION_HEAD_WORDS 供问句正则命中，但只有第一人称
+# 命中时才把取数收窄到会话所有者本人的板子（见 _handle_status_question + _is_first_person_question）。
+# 第一人称词我/我的/本人/自己在简繁同形（无独立繁体字），故无第二份词表；刻意只用
+# 简报点名的这四枚、不加「咱/俺」等方言面，尽量少给触发词单一来源棘轮添新词位。
+_QUESTION_THIRD_PERSON_HEAD_WORDS = "她|他|主人"
+_QUESTION_FIRST_PERSON_HEAD_WORDS = "我的|我|本人|自己"
+_QUESTION_HEAD_WORDS = (
+    f"{_QUESTION_FIRST_PERSON_HEAD_WORDS}|{_QUESTION_THIRD_PERSON_HEAD_WORDS}"
+)
 _QUESTION_RE = re.compile(
-    rf"^(?:{_QUESTION_HEAD_WORDS})\s*(?:现在|这会儿|这时候|此刻)?\s*{_QUESTION_CORE}[\s？？！？。，.!]*$"
+    rf"^(?:{_QUESTION_HEAD_WORDS})\s*{_QUESTION_ADVERB}\s*{_QUESTION_CORE}[\s？？！？。，.!]*$"
 )
+# 只判「这句是不是她亲口问自己」——用于第一人称路径的 owner 收窄，不改第三人称取数。
+_QUESTION_FIRST_PERSON_HEAD_RE = re.compile(rf"^(?:{_QUESTION_FIRST_PERSON_HEAD_WORDS})")
 _QUESTION_NATURAL_ALIASES: tuple[str, ...] = (
     "她在干嘛",
     "她在忙什么",
@@ -259,7 +296,7 @@ def _question_pattern(config: Any | None) -> re.Pattern[str]:
 @lru_cache(maxsize=16)
 def _QUESTION_RE_CACHED(_base_heads: str, head: str) -> re.Pattern[str]:
     return re.compile(
-        rf"^(?:{head})\s*(?:现在|这会儿|这时候|此刻)?\s*{_QUESTION_CORE}[\s？？！？。，.!]*$"
+        rf"^(?:{head})\s*{_QUESTION_ADVERB}\s*{_QUESTION_CORE}[\s？？！？。，.!]*$"
     )
 
 
@@ -309,6 +346,11 @@ def is_status_question(text: str, *, config: Any | None = None) -> bool:
     return bool(_question_pattern(config).match(normalized))
 
 
+def _is_first_person_question(text: str) -> bool:
+    """这句是不是她亲口问自己（第一人称头词）——决定代答取数是否收窄到本人板子。"""
+    return bool(_QUESTION_FIRST_PERSON_HEAD_RE.match(_normalized_question_text(text)))
+
+
 def is_schedule_surface(text: str, *, config: Any | None = None) -> bool:
     """路由与能力共用的唯一日程判据（一处判据、两腿同源，禁第二份）。"""
     return (
@@ -316,6 +358,31 @@ def is_schedule_surface(text: str, *, config: Any | None = None) -> bool:
         or is_status_question(text, config=config)
         or is_schedule_natural(text, config=config)
     )
+
+
+def capture_clean_text(message: IncomingMessage) -> str | None:
+    """捕获/添加腿的**唯一**取文本口径（G4 残余①：引用拼接污染拒捕）。
+
+    摄取层把被引用正文拼进 ``plain_text``（``[引用回复 层级N 名] …`` 等块，
+    真身正则 ``message_context.INTERNAL_MARKER_PATTERN``，此处不复制第二份），
+    而 ``command_text`` 只认拼接**之前**的本人原文。回退链必须守住两条：
+
+    1. ``command_text`` 非空 ⇒ 只吃它（引用块里的话永远进不了板子）；
+    2. ``command_text`` 为空 ⇒ 兼容从未填充该契约字段的摄取路径，可读
+       ``plain_text``，但其中**引用/转发标记在场即整条拒捕**——
+       别人的话宁可漏记，绝不脏记上板（状态只从她亲口说的话取）。
+
+    返回 ``None``＝拒捕（调用方必须让位、不承接），``""``＝无文本可捕。
+    """
+    command = str(message.command_text or "").strip()
+    if command:
+        return command
+    plain = str(message.plain_text or "").strip()
+    if not plain:
+        return ""
+    if INTERNAL_MARKER_PATTERN.search(plain):
+        return None
+    return plain
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +447,21 @@ def _end_from_phrase(phrase: str, start: datetime) -> datetime | None:
     return end
 
 
+def _neutralize_entry_title(text: str) -> str:
+    """条目题面唯一消毒口（票3 ATK-SCHED）：全角化内部边界标记 + 限长。
+
+    消毒真身只有一把——``chat_reply/security/injection.neutralize_internal_markers``
+    （唯一判据 INTERNAL_MARKER_PATTERN），本函数不复制第二套正则、不开新标记名；
+    落点选在**意图构造出口**（解析腿与导入腿各一处调用），使入库、幂等比对、
+    回执重放、代答投影四面消费同一份净题面（G3 去重键不因消毒口径分叉）。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
+        neutralize_internal_markers,
+    )
+
+    return neutralize_internal_markers(str(text or ""))[:_MAX_ACTIVITY_CHARS]
+
+
 def parse_schedule_add(text: str, *, now: datetime | None = None) -> ScheduleAddIntent | None:
     """命令正文（或自然捕捉整句）→ 条目意图；无未来可解析时刻 → None（绝不猜点）。"""
     raw = (text or "").strip()
@@ -426,13 +508,57 @@ def parse_schedule_add(text: str, *, now: datetime | None = None) -> ScheduleAdd
         activity = "她记下的安排"
     return ScheduleAddIntent(
         start_local=start,
-        activity=activity[:_MAX_ACTIVITY_CHARS],
+        # 票3（ATK-SCHED，S-FIX-ATK-SCHED2）：题面**入库即净**——提醒腿 T3 先例同尺
+        # （reminder.py add 腿走 neutralize_internal_markers，唯一真身
+        # INTERNAL_MARKER_PATTERN，不开第二套正则）。日程条目会以她的口吻进
+        # 回执/代答（capture_clean_text 规则 1 让 command_text 原样通过是 G4 的
+        # 引用隔离，不是标记消毒——两者正交），字面 [TRUSTED_SYSTEM] 一类标记
+        # 就此被全角化；用户正常书写的方括号文本不在标记名册，逐字不动。
+        activity=_neutralize_entry_title(activity),
         duration_minutes=duration,
         public=public,
         weekly_weekday=weekday if (weekly or parity) else None,
         parity=parity,
         semester_start=semester_start,
     )
+
+
+# ---------------------------------------------------------------------------
+# 板主键（票1 ATK-SCHED，2026-09-28 S-FIX-ATK-SCHED2）：(平台域, sender_id) 人物键
+# ---------------------------------------------------------------------------
+
+
+def _board_owner_of(message: IncomingMessage) -> str:
+    """入站消息 → 板主身份键（唯一构造口＝中央件 ``session_keys.person_scope_key``）。
+
+    病根：旧版 ``owner = str(message.sender_id)`` 裸号建键——QQ 号与 TG uid
+    同数即跨平台同号接管（读[密]条目时刻→翻公开→删→投毒全链，零角色要求，
+    探针 ATKSCHED-1）。平台事实吃 ``message.platform``，经 ``platform_domain_of``
+    （名单侧同一归一真身）折成平台域；不认识的平台落空域段＝独立桶（fail-closed，
+    绝不继承 qq/telegram 任何一家的板）。段消毒在中央件构造口内完成，
+    本函数不拼字面、不造第二键形。
+    """
+    return person_scope_key(
+        platform_domain_of(getattr(message, "platform", "")), message.sender_id
+    )
+
+
+def _board_owner_from_roster_id(raw_id: str) -> str:
+    """名单/配置里的用户号 → 板主身份键（裸号＝QQ 原生域，与 roles 名单裁定同尺）。
+
+    ``policy/roles._qualify_entries`` 的在册口径：裸号条目归属名单原生平台（QQ），
+    带域前缀条目（``telegram:2002``）只在同域生效，且**前缀同样过
+    ``platform_domain_of`` 归一**（``tg:2002`` 与 ``telegram:2002`` 同条目）——
+    本函数与消息腿 ``_board_owner_of`` 用同一把尺折键，别名前缀不会折出配不上
+    消息键的孤儿桶。代答腿拿到的 owner 候选来自配置
+    （``bot_super_admin_user_ids``），QQ 超管的板从此只对 ``qq`` 域消息可写，
+    同号 TG 用户拼不出这把键。
+    """
+    head, separator, tail = str(raw_id or "").strip().partition(PERSON_SCOPE_SEP)
+    if separator and head and tail:
+        domain = platform_domain_of(head) or head
+        return person_scope_key(domain, tail)
+    return person_scope_key(PLATFORM_QQ, raw_id)
 
 
 # ---------------------------------------------------------------------------
@@ -473,7 +599,19 @@ def _resubmit(service: Any, payload: dict[str, Any], *, expected_revision: int |
 def _add_entry(service: Any, store: Any, owner: str, intent: ScheduleAddIntent) -> str:
     """一条意图 → plan 增改 + 落库 + 物化；返回展示行。限额/DAG 校验由引擎闸负责。"""
     plan, payload, existed = _board_plan_for_write(store, service, owner)
-    seq = len(payload.get("tasks") or []) + 1
+    # 票4（ATK-SCHED，S-FIX-ATK-SCHED2）：编号**只进不退**——取板上既有 eNNN 号
+    # 最大值 +1，而非现存条数 +1。旧式 len(tasks)+1 在「日程 删课」删掉非末尾条目后
+    # 回退撞仍存在的旧 task_id，被引擎 duplicate task_id 拒（schedule_dag.py:392-397），
+    # 该板所有后续新增永久失败且用户不可自愈（探针 ATKSCHED-4）。
+    # 最小修法取舍：只改取号式、task_id 形不变 ⇒ 板上历史条目零迁移、引擎/展示面
+    # 零改动；「task_id 含代次/时间戳」要改 id 词法并处理新旧两形并存，改动面更大。
+    tasks = payload.get("tasks") or []
+    max_seq = 0
+    for task in tasks:
+        head, digits = str(task.get("task_id") or "")[:1], str(task.get("task_id") or "")[1:]
+        if head == "e" and digits.isdigit():
+            max_seq = max(max_seq, int(digits))
+    seq = max(len(tasks) + 1, max_seq + 1)
     task_id = f"e{seq:03d}"
     rule_id = f"r_{task_id}"
     tags: list[str] = []
@@ -540,6 +678,39 @@ def _display_when(start_local: datetime, duration_minutes: int | None) -> str:
         end = start_local + timedelta(minutes=duration_minutes)
         when += f"–{end:%H:%M}"
     return when
+
+
+def _entry_already_on_board(
+    service: Any, store: Any, owner: str, intent: ScheduleAddIntent
+) -> bool:
+    """板上是否已有「同天 + 同标题 + 同刻」的等价条目（G3 幂等，刻意只做这一层）。
+
+    判据只锚定她说过的原句能否与既有条目逐字对齐：一次性条目比 start_date 的日历日，
+    周期条目比同一星期槽（weekly_weekday 缺省退到 start_local 的星期）；标题与本地
+    时刻必须都相同才算重复——不同时刻/不同标题一律另起一条，不做花哨去重。
+    """
+    plan = _load_plan(service, store, owner)
+    if plan is None:
+        return False
+    title = str(intent.activity)
+    time_str = intent.start_local.strftime("%H:%M")
+    date_str = intent.start_local.date().isoformat()
+    start_weekday = intent.start_local.weekday()
+    for rule in plan.rules:
+        task = plan.task_by_id(rule.task_id)
+        if task is None or str(task.title) != title:
+            continue
+        if str(rule.local_time) != time_str:
+            continue
+        kind = str(getattr(rule.kind, "value", rule.kind))
+        if kind == "once":
+            if str(rule.start_date) == date_str:
+                return True
+        else:
+            slot = intent.weekly_weekday if intent.weekly_weekday is not None else start_weekday
+            if slot in (rule.weekdays or []):
+                return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -628,11 +799,20 @@ def asker_tier(message: IncomingMessage, owner: str) -> str:
 
     owner 档只在**私聊且本人是超管**时成立——群聊里连她自己问，也不把隐私条目
     摆上全群可见的回复面（收紧方向唯一：只会更少外显）。
+
+    票1（ATK-SCHED）：同号比对吃**板主身份键**（平台域, sender_id），不吃裸号——
+    键形与板腿同源（``_board_owner_of``），别处不另判一份。owner 参数为
+    ``_board_owner_from_roster_id``/``_board_owner_of`` 产出的键形。
     """
     roles = {str(role).strip().lower() for role in (message.sender_roles or [])}
-    sender = str(message.sender_id or "").strip()
+    asker_owner = _board_owner_of(message)
     is_group = str(getattr(message.session_type, "value", message.session_type)) == "group"
-    if sender and sender == str(owner) and ROLE_SUPER_ADMIN in roles and not is_group:
+    if (
+        asker_owner
+        and asker_owner == str(owner).strip()
+        and ROLE_SUPER_ADMIN in roles
+        and not is_group
+    ):
         return "owner"
     if ROLE_SUPER_ADMIN in roles or ROLE_ADMIN in roles or ROLE_TRUSTED in roles:
         return "named"
@@ -692,6 +872,136 @@ def active_entries(
     return [replace(item, seq=index) for index, item in enumerate(items, start=1)]
 
 
+_WINDOW_TERMS_RE = re.compile(f"({_QUESTION_WINDOW_TERMS})")
+_WINDOW_MONTH_DAY_RE = re.compile(r"^(\d{1,2})月(\d{1,2})[日号]$")
+_FUTURE_IMPLIED_RE = re.compile(r"什么时候(?:忙|有事)|几点(?:有事|有空|忙)")
+
+
+def _window_days(text: str, today: date) -> tuple[date, date, str] | None:
+    """问句 → 未来窗 (起始日, 截止日, 展示词)；None＝不是未来窗问句（走现在腿）。
+
+    G2(a) 确定性唯一判据（代答文案与取数共用，禁第二判据口）：
+    - 命中窗词面（_QUESTION_WINDOW_TERMS 唯一串）按词族解：明天/后天/本周/
+      下周[周X]/周末/周X/星期X/M月D日；
+    - 落在"今天或过去"的窗一律 None——拿半天已过的日子答"忙不忙"不如让位
+      现在腿（宁漏不误）；
+    - "什么时候忙/几点有事"无窗词 = 默认明天起 7 天窗；
+    - 大后天/下下周/节假日等未点名形态不猜，恒 None。
+    """
+    stripped = str(text or "")
+    match = _WINDOW_TERMS_RE.search(stripped)
+    if match is None:
+        if _FUTURE_IMPLIED_RE.search(stripped):
+            return today + timedelta(days=1), today + timedelta(days=7), "未来一周"
+        return None
+    term = match.group(1)
+    week_sunday = today + timedelta(days=6 - today.weekday())
+    if term in ("明天", "明日"):
+        return today + timedelta(days=1), today + timedelta(days=1), "明天"
+    if term == "后天":
+        return today + timedelta(days=2), today + timedelta(days=2), "后天"
+    if term in ("本周", "这周"):
+        if today == week_sunday:
+            return None  # 周日问"本周"：只剩今天，让位现在腿（同日窗不答）
+        return today, week_sunday, "本周"
+    if term in ("下周末", "本周末", "这周末", "周末"):
+        saturday = week_sunday - timedelta(days=1)
+        if term == "下周末":
+            saturday += timedelta(days=7)
+        elif today > saturday:
+            return None  # 已是周日：本周末没有未来日可答
+        return saturday, saturday + timedelta(days=1), "周末"
+    if term.startswith("下周"):
+        next_monday = today + timedelta(days=7 - today.weekday())
+        suffix = term[len("下周"):]
+        if suffix:
+            weekday_day = next_monday + timedelta(days=_WEEKDAY_VALUE[suffix])
+            return weekday_day, weekday_day, f"下周{suffix if suffix != '天' else '日'}"
+        return next_monday, next_monday + timedelta(days=6), "下周"
+    md = _WINDOW_MONTH_DAY_RE.match(term)
+    if md is not None:
+        # 枚/日只在这支是整数；命名与「周X」支的 date 型 day 分开，
+        # 否则同函数体内一名两型（mypy 两红就是这条遮蔽链）。
+        month_no, day_no = int(md.group(1)), int(md.group(2))
+        if not 1 <= month_no <= 12:
+            return None
+        candidate: date | None = None
+        for year in (today.year, today.year + 1):
+            try:
+                probe = date(year, month_no, day_no)
+            except ValueError:
+                probe = None
+            if probe is not None and probe >= today:
+                candidate = probe
+                break
+        if candidate is None or candidate == today:
+            return None  # 纯过去日不接（宁漏不误）
+        return candidate, candidate, f"{month_no}月{day_no}日"
+    if term[-1] in _WEEKDAY_VALUE:  # 周X/星期X/礼拜X
+        suffix = term[-1]
+        offset = _WEEKDAY_VALUE[suffix]
+        day = today + timedelta(days=(offset - today.weekday()) % 7)
+        if day == today:
+            return None  # "今天恰是周X"：半天已过，让位现在腿
+        return day, day, f"周{suffix if suffix != '天' else '日'}"
+    return None
+
+
+def window_entries(
+    service: Any, store: Any, owner: str, text: str, *, now: datetime | None = None
+) -> tuple[str, list[BoardItem]] | None:
+    """未来窗代答取数（G2(a)）：解得出的窗问句 ⇒ (窗词, 窗内实例)（**含隐私**）。
+
+    None＝非窗问句 / 窗落在今天或过去 ⇒ 调用方回退 ``active_entries`` 现在腿。
+    与 ``active_entries`` 同构：从 plan 规则**现算**（recurrence 不受 30 天
+    物化窗约束），每条规则取窗内最早命中一次；投影前不得直接外发。
+    """
+    from plugins.bot_unified_runtime.domains.schedule.service.schedule_rrule import (
+        iter_rule_dates,
+        resolve_local,
+    )
+
+    now_utc = (now or datetime.now(UTC)).astimezone(UTC)
+    plan = _load_plan(service, store, owner)
+    if plan is not None:
+        zone = _plan_zone(plan)
+    else:
+        zone = now_utc.astimezone().tzinfo  # 无板：仅需解窗词，日期基准退系统本地
+    spec = _window_days(text, now_utc.astimezone(zone).date())
+    if spec is None:
+        return None
+    start_day, end_day, label = spec
+    if plan is None:
+        return label, []
+    start_day = max(start_day, now_utc.astimezone(zone).date())
+    task_index = {task.task_id: task for task in plan.tasks}
+    items: list[BoardItem] = []
+    for rule in plan.rules:
+        task = task_index.get(rule.task_id)
+        if task is None:
+            continue
+        days = iter_rule_dates(rule, start_day, end_day)
+        if not days:
+            continue
+        resolution = resolve_local(zone, days[0], rule.local_time)
+        items.append(
+            BoardItem(
+                seq=0,
+                plan_id=plan.plan_id,
+                rule_id=rule.rule_id,
+                task_id=rule.task_id,
+                occurrence_id="",
+                title=task.title,
+                start_local=resolution.utc_value.astimezone(zone),
+                duration_minutes=int(task.duration_minutes or 0),
+                public=VIS_PUBLIC in (task.tags or []),
+                rule_kind=rule.kind.value,
+            )
+        )
+    items.sort(key=lambda item: item.start_local)
+    return label, [replace(item, seq=index) for index, item in enumerate(items, start=1)]
+
+
 _FALLBACK_LINES: tuple[str, ...] = (
     "（偏头）她这会儿有事情，不太方便讲～",
     "她眼下不在状态里，像是有事～要捎话我记下。",
@@ -718,14 +1028,26 @@ def _project_answer(
     items: list[BoardItem],
     *,
     fallback_seed: str,
+    when_label: str | None = None,
 ) -> str:
     """分级投影（**隐私判定就发生在这里，出站前**）。
 
     字段白名单：只读 title / start_local / duration_minutes / public / 类别。
     地点（loc: 标签）、溯源（src: 标签）在本函数**结构上不可达**——BoardItem
     根本不带这两个字段，不是"忘了外显"而是没有取数路径（注毒锁执法）。
+
+    ``when_label``（G2(a) 未来窗）只改时位措辞，**不改任何一档的隐私口径**：
+    owner 档窗内无数给诚实的"没安排"；非本人档窗内无公开条目仍回与"全隐私"
+    **逐字相同**的模糊句——空窗与满隐私窗对外不可分辨（设计 §5.2 铁律）。
     """
     if tier == "owner":
+        if when_label is not None:
+            lines = [
+                f"你{when_label}挂着：{item.title}（{_format_span(item)}，"
+                f"{'公开' if item.public else '隐私'}）"
+                for item in items[:3]
+            ]
+            return "\n".join(lines) if lines else f"你{when_label}没安排～"
         lines = [
             f"你现在挂着：{item.title}（{_format_span(item)}，"
             f"{'公开' if item.public else '隐私'}）"
@@ -739,11 +1061,20 @@ def _project_answer(
         return _pick_fallback(fallback_seed)
     item = visible[0]
     category = classify_schedule_activity(item.title)
+    when = when_label or "正在"
     if tier == "named" and category not in _SENSITIVE_CATEGORIES:
-        body = f"她正在忙这个：{item.title}，{_format_span(item)}。"
+        body = (
+            f"她{when}有这个：{item.title}，{_format_span(item)}。"
+            if when_label is not None
+            else f"她正在忙这个：{item.title}，{_format_span(item)}。"
+        )
     else:
         phrase = CATEGORY_PHRASES["busy" if category in _SENSITIVE_CATEGORIES else category]
-        body = f"她{phrase}，{_format_span(item)}。"
+        body = (
+            f"她{when}{phrase}，{_format_span(item)}。"
+            if when_label is not None
+            else f"她{phrase}，{_format_span(item)}。"
+        )
     if tier == "named" and str(getattr(message.session_type, "value", "")) == "group":
         body += "\n（她本人的完整日程，只在私聊里对她自己讲。）"
     return body
@@ -816,12 +1147,15 @@ def build_schedule_board_capability(config: Any | None = None) -> Any:
     def _prune_quietly(store: Any) -> None:
         try:
             store.purge_terminal(before_epoch=purge_cutoff_epoch())
-        except Exception:  # noqa: BLE001 - 卫生失败只记日志，绝不阻塞记录与回答。
+        except Exception:
             logger.warning("schedule board prune failed (ignored)", exc_info=True)
 
     def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult | None:
         text = (message.command_text or message.plain_text or "").strip()
-        owner = str(message.sender_id or "")
+        # 票1（ATK-SCHED）：板主键=平台域限定的 (域, sender_id) 人物键，
+        # 唯一构造口 _board_owner_of（中央件 person_scope_key）——裸号建键的
+        # 跨平台同号接管链（读[密]/翻公开/删/投毒）自此拼不出同一把键。
+        owner = _board_owner_of(message)
 
         if is_status_question(text, config=config):
             return _handle_status_question(message, text)
@@ -844,17 +1178,31 @@ def build_schedule_board_capability(config: Any | None = None) -> Any:
 
         try:
             store, service = build_board_store(config), build_board_service(config)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("schedule board store unavailable", exc_info=True)
             return _result(message, "这会儿日程表没接上（存储未就绪），稍后再说一次。", tags=["error"])
 
-        intent = parse_schedule_add(text)
+        # 捕获/添加腿唯一取文本口径（G4 残余①）：**不再用上面的 `text`**——
+        # `text` 允许 `command_text or plain_text` 回退，可能含引用拼接体；
+        # 本腿只吃 `capture_clean_text`（拒捕=None / 空文="" 一律让位，不硬接）。
+        capture_text = capture_clean_text(message)
+        if not capture_text:
+            return None  # 诚实静默：别人的话（或无文本）不记，交回提醒/聊天原流程
+        intent = parse_schedule_add(capture_text)
         if intent is None:
-            if is_schedule_natural(text, config=config):
+            if is_schedule_natural(capture_text, config=config):
                 return None  # 判定与解析之间不一致（窄窗）：让位，不硬接
             return _result(message, _NEED_TIME_TEXT, tags=["need_time"])
         if intent.parity and not intent.semester_start:
             return _result(message, _NEED_SEMESTER_TEXT, tags=["need_semester"])
+        if _entry_already_on_board(service, store, owner, intent):
+            # 同一句说第二遍：不双记（状态只从她亲口说的话取——她说过的不重复累加）。
+            return _result(
+                message,
+                f"这条已经记过了：{intent.activity}｜"
+                f"{_display_when(intent.start_local, intent.duration_minutes)}，不重复记。",
+                tags=["add_duplicate"],
+            )
         intent = replace(intent, source_message_id=str(message.message_id or ""))
         try:
             line = _add_entry(service, store, owner, intent)
@@ -880,9 +1228,13 @@ def build_schedule_board_capability(config: Any | None = None) -> Any:
         try:
             store, service = build_board_store(config), build_board_service(config)
             items = list_board_items(service, store, owner)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("schedule list failed", exc_info=True)
             return _result(message, "这会儿翻不开日程表（存储没准备好），回头再说一次。", tags=["error"])
+        # 隐私自看面（G2）：无论群聊/私聊，本清单只落「序号 + 时刻 + [公]/[密] 标记」，
+        # **逐字不取条目标题**——隐私条目的存在与否都只以 [密] 标记体现，标题（活动正文）
+        # 结构上不进这条投影（redact 之前就没有取数路径）。注毒锁：一旦把这行改成含
+        # {item.title} 的形态，[密] 条目的题面立刻出现在自看清单里 → 隐私断言当场红。
         if not items:
             return _result(
                 message, "日程表还空着。想记就说「日程 明天8点到9点半 高数」。", tags=["list_empty"]
@@ -936,11 +1288,16 @@ def build_schedule_board_capability(config: Any | None = None) -> Any:
                         message, "这条刚刚不在待办里了——再「日程表」看一眼？", tags=["delete_gone"]
                     )
             _prune_quietly(store)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("schedule delete failed", exc_info=True)
             return _result(message, "这条这会儿放不下（存储没接稳），再试一次或稍后说一声。", tags=["error"])
         scope = "整条安排不再出现" if whole_rule else f"{_display_when_local(target)}那次"
-        return _result(message, f"好，放下了：{target.title}（{scope}）。", tags=["deleted"])
+        # 票2：私聊保持原题面文案逐字不变；群面折成清单腿同型指针（见 _receipt_ref）。
+        return _result(
+            message,
+            f"好，放下了：{_receipt_ref(message, target, with_when=False)}（{scope}）。",
+            tags=["deleted"],
+        )
 
     def _handle_visibility(message: IncomingMessage, owner: str) -> CapabilityResult:
         text = (message.command_text or message.plain_text or "").strip()
@@ -978,16 +1335,19 @@ def build_schedule_board_capability(config: Any | None = None) -> Any:
                 public=make_public,
                 after_epoch=service.now().timestamp(),
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("schedule visibility failed", exc_info=True)
             return _result(message, "这一档这会儿改不动（存储没接稳），稍后再说一次。", tags=["error"])
+        # 票2：语境门同上（_receipt_ref）——只有私聊回执带原题面，其余形态折指针。
         if make_public:
             body = (
-                f"好，「{target.title}」对别人可答了：只说在做什么和几点到几点，"
+                f"好，「{_receipt_ref(message, target)}」对别人可答了：只说在做什么和几点到几点，"
                 "地点与你写下的其余字不出口。"
             )
         else:
-            body = f"好，「{target.title}」收回隐私档——别人问起，我只会说你有事情。"
+            body = (
+                f"好，「{_receipt_ref(message, target)}」收回隐私档——别人问起，我只会说你有事情。"
+            )
         return _result(message, body, tags=["visibility", "public" if make_public else "private"])
 
     def _handle_import(message: IncomingMessage, owner: str, text: str) -> CapabilityResult:
@@ -1070,7 +1430,7 @@ def build_schedule_board_capability(config: Any | None = None) -> Any:
                 refs,
                 semester_start=semester_match.group(1) if semester_match else None,
             )
-        except Exception:  # noqa: BLE001 - 识图失败=诚实告知，绝不编课程
+        except Exception:
             logger.warning("timetable recognize failed", exc_info=True)
             return _result(
                 message, "这张图这会儿没读成——识图后端没接稳，把课表文字发我也行。",
@@ -1143,6 +1503,11 @@ def build_schedule_board_capability(config: Any | None = None) -> Any:
         }
         added = failed = 0
         for weekday, anchor, duration, title, location, parity in parsed:
+            # 票3（ATK-SCHED）：导入腿（文本行/识图草稿）同走入库即净——课表行的名称段
+            # 是 `.+?` 宽取，识图标题来自外部模型输出（二手材料），两者都可能在
+            # 题面里带内部边界标记字面；消毒与板存/去重指纹共用这一份净形（幂等比对
+            # 的 signature 必须取净题面，否则重发同一张表会因口径分叉而双记）。
+            title = _neutralize_entry_title(title)
             signature = (title, weekday, anchor.strftime("%H:%M"))
             if signature in known:
                 continue  # 幂等：同一份课表重发不双记（引擎之外的板级去重，指纹同 timetable）
@@ -1152,6 +1517,7 @@ def build_schedule_board_capability(config: Any | None = None) -> Any:
                 continue
             intent = ScheduleAddIntent(
                 start_local=start,
+                # 题面消毒在循环头（title 已是净形，见上）——此处不再二次调用。
                 activity=title,
                 duration_minutes=duration,
                 public=False,  # 导入 ≠ 公开：公开是她对外的单独决定（设计 §2.2）
@@ -1171,23 +1537,44 @@ def build_schedule_board_capability(config: Any | None = None) -> Any:
 
     def _handle_status_question(message: IncomingMessage, text: str) -> CapabilityResult:
         """代答腿主入口（分级表实现 = ``_project_answer`` 一处，判据不再分散）。"""
-        owners = resolve_status_owners(config, text)
+        if _is_first_person_question(text):
+            # 她亲口问自己：只答会话所有者本人的板子，不外溢去猜别的超管（G1）。
+            # 票1：候选与板腿同键形（平台域限定），裸号桶不再互相认领。
+            owner_key = _board_owner_of(message)
+            owners = (
+                [owner_key]
+                if owner_key
+                else [_board_owner_from_roster_id(x) for x in resolve_status_owners(config, text)]
+            )
+        else:
+            # 第三人称：配置名单里的号折成板主键（裸号=QQ 原生域，与 roles 名单裁定同尺）。
+            owners = [
+                _board_owner_from_roster_id(x) for x in resolve_status_owners(config, text)
+            ]
         try:
             store, service = build_board_store(config), build_board_service(config)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("schedule status store unavailable", exc_info=True)
             return _result(
                 message, _pick_fallback(message.request_id), tags=["answer_error"]
             )
-        rows: list[tuple[str, str, list[BoardItem]]] = []
+        rows: list[tuple[str, str, list[BoardItem], str | None]] = []
         for owner_id in owners:
             tier = asker_tier(message, owner_id)
-            items = active_entries(service, store, owner_id)
-            rows.append((owner_id, tier, items))
-        # 只有「进行中且公开」（或本人 owner 档）的对象才可答；谁都不可答 → 模糊句。
+            # G2(a)：先问窗——解得出未来窗走 window_entries，解不出（含非窗问句、
+            # 窗落今天/过去）回退 active_entries 现在腿，现在腿行为逐字不变。
+            windowed = window_entries(service, store, owner_id, text)
+            if windowed is None:
+                rows.append((owner_id, tier, active_entries(service, store, owner_id), None))
+            else:
+                # 局部名与下面解包的 `label: str | None` 分开：同名会让
+                # mypy 把窄化后的 str 当成声明型，解包处判成不兼容赋值。
+                window_label, window_items = windowed
+                rows.append((owner_id, tier, window_items, window_label))
+        # 只有「窗内/此刻可答且公开」（或本人 owner 档）的对象才可答；谁都不可答 → 模糊句。
         answerable = [
-            (owner_id, tier, items)
-            for owner_id, tier, items in rows
+            (owner_id, tier, items, label)
+            for owner_id, tier, items, label in rows
             if tier == "owner" or any(item.public for item in items)
         ]
         if not answerable:
@@ -1195,16 +1582,20 @@ def build_schedule_board_capability(config: Any | None = None) -> Any:
             return _result(
                 message, _pick_fallback(message.request_id), tags=["answer_fallback"]
             )
-        if len({owner_id for owner_id, _tier, _items in answerable}) > 1:
+        if len({owner_id for owner_id, _tier, _items, _label in answerable}) > 1:
             # 多位超管同时可答：绝不猜人，回模糊句（要指名道姓问）。
             return _result(
                 message,
                 _pick_fallback(message.request_id + "|multi"),
                 tags=["answer_ambiguous_owner"],
             )
-        owner_id, tier, items = answerable[0]
-        body = _project_answer(message, tier, items, fallback_seed=message.request_id)
-        return _result(message, body, tags=["answered", tier])
+        owner_id, tier, items, label = answerable[0]
+        body = _project_answer(
+            message, tier, items, fallback_seed=message.request_id, when_label=label
+        )
+        return _result(
+            message, body, tags=["answered", tier] + (["window"] if label else [])
+        )
 
     return capability
 
@@ -1221,6 +1612,30 @@ def _display_when_local(item: BoardItem) -> str:
         end = (item.start_local + timedelta(minutes=item.duration_minutes)).strftime("%H:%M")
         base += f"–{end}"
     return base
+
+
+def _receipt_ref(
+    message: IncomingMessage, target: BoardItem, *, with_when: bool = True
+) -> str:
+    """删除/可见性回执的条目指针（票2 ATK-SCHED，S-FIX-ATK-SCHED2）。
+
+    病根：G2 把清单收成「时刻+[公]/[密]」、代答纪律「完整日程只私聊对本人讲」，
+    但删除/可见性回执不分群聊私聊，逐字复述**默认隐私条目**的题面（就诊/复诊类）
+    ——群里做一次管理动作＝全群当场看见隐私题面（探针 ATKSCHED-2）。
+
+    语境门判据与收件箱域 daily_assist `_may_read_inbox`（S-FIX-SCHED20-H4）**同源
+    同尺**：str Enum 等值判 `session_type`，语境缺失按非私聊判（fail-closed）——
+    不是群才收，是**只有私聊**才给原题面。私聊文案逐字不变，其余会话形态折成
+    与清单腿同型的「第 N 条（时刻）」指针（题面在取数前就没有通路）。
+
+    ``with_when=False`` 供删除腿用：那里的 ``scope`` 尾巴已带时刻，指针只落编号
+    不重复报时（文案守岸人语气，不为省字吞信息）。
+    """
+    if getattr(message, "session_type", None) == SessionType.PRIVATE:
+        return str(target.title)
+    if with_when:
+        return f"第 {target.seq} 条（{_display_when_local(target)}）"
+    return f"第 {target.seq} 条"
 
 
 def _rule_revision(plan: Any, rule_id: str) -> int:
@@ -1251,8 +1666,13 @@ def _parse_import_line(
         return None
     if not (0 <= end_hour <= 23 and 0 <= end_minute <= 59):
         return None
-    anchor = datetime(1970, 1, 1, start_hour, start_minute)  # naive 锚：只承载日内时刻
-    end = datetime(1970, 1, 1, end_hour, end_minute)
+    # 1970 只是承载日内时刻的占位日期；真缺陷是"naive 锚被混了本机 UTC 偏移"
+    # （台账 #29★/#6★），不是"必须豁免"。两枚挂 tzinfo=UTC＝复用本域既有
+    # `datetime.now(UTC)` 那把尺，不新建第二套时区尺：(end - anchor) 同为 UTC，
+    # 当日差值不变；`_next_weekday_datetime` 只读 .hour/.minute 整数（candidate
+    # 由已 aware 的 `today` 构造，落配置时区仍只在那一处发生）⇒ 行为逐字不变。
+    anchor = datetime(1970, 1, 1, start_hour, start_minute, tzinfo=UTC)
+    end = datetime(1970, 1, 1, end_hour, end_minute, tzinfo=UTC)
     duration = max(0, int((end - anchor).total_seconds() // 60))
     parity_raw = match.group(7)
     parts = re.split(r"\s+", name.strip(), maxsplit=1)
@@ -1273,8 +1693,10 @@ def _hhmm_to_minute_pair(
         return None
     if not (0 <= sh <= 23 and 0 <= sm <= 59 and 0 <= eh <= 23 and 0 <= em <= 59):
         return None
-    anchor = datetime(1970, 1, 1, sh, sm)
-    end = datetime(1970, 1, 1, eh, em)
+    # 同族（见 _parse_import_line）：1970 只承载时分，挂 tzinfo=UTC 复用本域
+    # `datetime.now(UTC)` 那把尺；落配置时区只在 `_next_weekday_datetime` 一处，此处不第二套尺。
+    anchor = datetime(1970, 1, 1, sh, sm, tzinfo=UTC)
+    end = datetime(1970, 1, 1, eh, em, tzinfo=UTC)
     duration = max(0, int((end - anchor).total_seconds() // 60))
     return anchor, duration
 

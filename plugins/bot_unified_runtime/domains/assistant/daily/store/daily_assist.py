@@ -418,7 +418,11 @@ def summarize_with_llm(config: Any, body: str, *, instruction: str) -> str:
     if not stripped:
         return ""
     try:
-        from plugins.bot_unified_runtime.llm.model_router import build_model_router
+        # 2026-09-29 席 S-FIX-SHIM-REFS：旧布局垫片 `llm/model_router` ⇒ 改指真身（符号同名，
+        # 真身 `build_model_router` :2681）；账见 `domains/core/board_shim_ledger.py` SHIM_ROWS。
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+            build_model_router,
+        )
 
         router = build_model_router(config)
         guarded = guard_secondhand_text(stripped[:4000], source_label="收件箱内容")

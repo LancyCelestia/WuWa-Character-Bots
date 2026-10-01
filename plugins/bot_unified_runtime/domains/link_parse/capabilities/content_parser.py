@@ -450,10 +450,14 @@ def render_card_png(
             or extras.get("badge")
             or any(key not in {"cover_url", "images"} for key in extras)
         ) or platform in universal_platforms
-        bot_name = (
-            str(getattr(config, "bot_persona_display_name", "") or "").strip()
-            or "守岸人"
+        # 署名唯一读法（P-G3 第二波）：人格册按当前生效人格现读 → 兼容显示名 → 空串
+        # 交品牌胶囊统一回落；不再自取配置名并手抄「守岸人」。禁 get_login_info（#60★）。
+        from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+            active_persona_id,
+            current_bot_nickname,
         )
+
+        bot_name = current_bot_nickname(active_persona_id(config), config=config)
         resolved_bot_avatar_url = (
             str(bot_avatar_url or "").strip()
             or bot_avatar_uri(config)

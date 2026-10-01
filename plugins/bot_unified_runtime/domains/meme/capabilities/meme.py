@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import re
 import threading
 from collections.abc import Callable
@@ -38,6 +39,8 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
 )
 from plugins.bot_unified_runtime.domains.media.digest import media_digest
+
+logger = logging.getLogger(__name__)
 
 _COMMAND_RE = re.compile(
     r"^[/!！]?(?:表情|表情包|表情生成|表情包生成|表情制作|表情包制作|"
@@ -70,6 +73,13 @@ _COMMAND_RE = re.compile(
 _LIST_VERBS = {"列表", "菜单", "全部", "list", "all", "keys"}
 _HELP_VERBS = {"帮助", "用法", "help", "?"}
 
+# key 硬白名单（攻击审计 A-3 修复）：key 原样拼进后端 URL（/memes/{key}、
+# /memes/{key}/info）与本地文件名（meme_{key}_{digest}.png 后 write_bytes），
+# 旧版零清洗——点号/分隔符/编码形态全部直达。非合规键一律拒绝走失败面，
+# 绝不静默洗成近似值。代价：含 CJK 的 key（如「文字表情」）不再可达，
+# 帮助文案示例同步改为合规键（meme-generator-rs 均有字母键位可用）。
+_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
 # 可注入的请求函数便于单元测试：request_fn(method, path, json=None) -> (status, body)
 RequestFn = Callable[..., tuple[int, Any]]
 # 图片抓取注入缝：image_fetch_fn(url) -> bytes | None（None=抓取失败）。
@@ -101,12 +111,37 @@ def _collect_image_sources(message: IncomingMessage) -> list[str]:
 
 
 def _default_image_fetch_fn(url: str) -> bytes | None:
+    """抓消息图片字节：SSRF 咽喉逐跳受护（攻击审计 A-2 修复）。
+
+    旧实现把跳转整个交给 httpx（``follow_redirects=True``）、且入口也不问过
+    咽喉——协议端一条 302 就能把 bot 引向内网/云元数据。修法不造第二套判据：
+    沿用 telegram_media/transcribe 的 httpx request 事件钩子形态——每一跳
+    （初始请求 + 每个 30x 落点）在 transport 建连之前过同一个
+    ``check_download_url``，命中即抛，内网零连接。
+
+    返回形态不变（None = 抓不到、按无图降级），但咽喉拒绝在抛出点 WARNING
+    留痕（URL 过既有脱敏），不静默混淆「瞬时失败」（口径同
+    meme_library_listener._download_once）。
+    """
     import httpx
+
+    from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+        RejectedUrlError,
+        check_download_url,
+    )
+    from plugins.bot_unified_runtime.domains.render.plain_text import (
+        redact_local_secrets,
+    )
+
+    def _guard_hop(request: httpx.Request) -> None:
+        # httpx 每一跳在发出请求之前触发本钩子；拒绝即抛 RejectedUrlError。
+        check_download_url(str(request.url))
 
     try:
         with httpx.Client(
             timeout=10.0,
             follow_redirects=True,
+            event_hooks={"request": [_guard_hop]},
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
         ) as client, client.stream("GET", url) as response:
             if response.status_code != 200:
@@ -119,8 +154,34 @@ def _default_image_fetch_fn(url: str) -> bytes | None:
                     return None
                 chunks.append(chunk)
         return b"".join(chunks) or None
+    except RejectedUrlError as exc:
+        logger.warning(
+            "meme image fetch rejected by SSRF guard: %s (url=%s)",
+            exc,
+            redact_local_secrets(url),
+        )
+        return None
     except Exception:  # noqa: BLE001 - 图片抓取失败按无图处理。
         return None
+
+
+def _output_name_rejection(filename: str) -> str | None:
+    """落盘文件名过中央写路径判据（攻击审计 A-1 收敛）：拒→人话理由，放→None。
+
+    判定真身 = ``domains/files/sender/restricted_runner.sanitize_write_segments``
+    （Win32 设备名「点号前首段」判定的唯一真身，理由出自单表 ``DENY_PLAIN_TEXT``；
+    本席只调用、不修改）。key 白名单已挡住点号与分隔符，本判是纵深兜底：
+    万一将来拼接形态变化，也不会把 ``nul.txt`` 类设备名写进盘再炸一个
+    误导性 OSError。绝不在此复刻点号切分判据（避免第二真身漂移）。
+    """
+    from plugins.bot_unified_runtime.domains.files.sender import restricted_runner
+
+    try:
+        restricted_runner.sanitize_write_segments(filename)
+    except Exception as exc:  # noqa: BLE001 - _Rejected 携带代号，转中央人话表
+        code = str(getattr(exc, "code", "") or "")
+        return restricted_runner.plain_reason(code) if code else f"落盘名被中央路径护栏拒绝（{type(exc).__name__}）"
+    return None
 
 
 def is_meme_command(text: str) -> bool:
@@ -159,7 +220,7 @@ def _usage_body() -> str:
         "表情包用法：\n"
         "1. /表情 列表 —— 列出可用表情 key\n"
         "2. /表情 <key> <文字> —— 生成表情，如『/表情 petpet 可爱』\n"
-        "   多段文字用 ｜ 分隔：『/表情 文字表情 早上好｜晚上好』\n"
+        "   多段文字用 ｜ 分隔：『/表情 5000choyen 你好｜世界』\n"
         "3. 需要图片的表情（如 petpet）：发图或 @ 群友后输命令，"
         "不带图时会用你的头像\n"
         "4. /表情帮助 —— 查看本说明\n"
@@ -200,6 +261,24 @@ def _default_request_fn(base_url: str, timeout_seconds: float) -> RequestFn:
         return response.status_code, body
 
     return request
+
+
+def _display_safe_name(value: str) -> str:
+    """表情名（后端 key）进用户可见文案前的显示伪装处置（ANTIATTACK P2-d）。
+
+    后端 `/meme/keys` 返回的名字既不由 bot 生成、也不在任何入站话术门里，一枚带
+    反向覆写或全角近似形的 key 就是「显示面零扫描」的现成入口。判据零副本：真身住
+    `core/safety_exec/attack_surface`，处置口住
+    `chat_reply/security/injection::render_safe_display_name`；**局部导入**——meme
+    域对 chat_reply 只做函数级复用（先例：`meme/reactions/sentiment_selector.py`
+    局部导入 `guard_secondhand_text`），不开模块级跨域依赖。空进空出，合法名逐字节
+    不变（守岸人语感：干净的名字照常念，只在骗眼肉的那一格才收口）。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
+        render_safe_display_name,
+    )
+
+    return render_safe_display_name(value)
 
 
 def build_meme_capability(
@@ -256,7 +335,11 @@ def build_meme_capability(
             status, body = requester("GET", "/meme/keys")
             if status != 200 or not isinstance(body, list) or not body:
                 return _service_down_result(message, requester, base_url)
-            preview = "、".join(str(item) for item in body[:200])
+            # P2-d：外部服务返回的名字是攻击者可控显示面——逐个过显示伪装处置
+            # （剥不可见伪装 / 折同形角色词 / 折不动的整格屏蔽）。这里**不**改
+            # `[:200]` 有界化与 `meme_keys:{len(body)}` 计数口径：两者都以
+            # **原始 body** 为准，屏蔽只影响肉眼看到的那一格。
+            preview = "、".join(_display_safe_name(str(item)) for item in body[:200])
             tail = f"\n…共 {len(body)} 个" if len(body) > 200 else f"\n共 {len(body)} 个"
             return CapabilityResult(
                 request_id=message.request_id,
@@ -267,6 +350,17 @@ def build_meme_capability(
                 risk_level=RiskLevel.LOW,
                 privacy_level=PrivacyLevel.PUBLIC,
                 audit_tags=["meme", f"meme_keys:{len(body)}"],
+            )
+
+        # 硬白名单（攻击审计 A-3）：key 会拼进后端 URL 与本地文件名，
+        # 非合规形态在触碰任何端点之前即拒绝，走帮助失败面。
+        if not _KEY_RE.match(key):
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.meme",
+                kind="text",
+                body=_usage_body(),
+                audit_tags=["meme", "meme_invalid_key"],
             )
 
         # 图片表情：按 info 的参数决定是否带图（info 拿不到时按纯文字处理，
@@ -343,14 +437,25 @@ def build_meme_capability(
         status, content = requester("GET", f"/image/{image_id}")
         if status != 200 or not isinstance(content, (bytes, bytearray)):
             return _service_down_result(message, requester, base_url, key=key)
+        # [:12] 截短是消费侧缓存文件名决定（蓝图 §3.1：算法不截短）。
+        digest_prefix = media_digest(bytes(content))[:12]
         try:
-            out_dir.mkdir(parents=True, exist_ok=True)
-            # [:12] 截短是消费侧缓存文件名决定（蓝图 §3.1：算法不截短）。
-            digest = media_digest(bytes(content))[:12]
-            # petpet 等表情产物是 GIF 动图；按魔数定扩展名，避免 QQ 端按
-            # 扩展名渲染失败。
             suffix = ".gif" if bytes(content)[:3] == b"GIF" else ".png"
-            path = out_dir / f"meme_{key}_{digest}{suffix}"
+            filename = f"meme_{key}_{digest_prefix}{suffix}"
+            # A-1 纵深兜底：写盘前最后一道用中央判据（判定不过=拒写并留痕，
+            # 不洗名、不写近似文件）。放在 mkdir 之前，拒绝路径零文件系统副作用。
+            denied_reason = _output_name_rejection(filename)
+            if denied_reason is not None:
+                logger.warning("meme output name rejected by central path guard: %s", denied_reason)
+                return CapabilityResult(
+                    request_id=message.request_id,
+                    capability_id="bot.meme",
+                    kind="text",
+                    body="表情生成成功，但保存名未通过安全护栏，已拒绝落盘。",
+                    audit_tags=["meme", "meme_save_failed"],
+                )
+            out_dir.mkdir(parents=True, exist_ok=True)
+            path = out_dir / filename
             path.write_bytes(bytes(content))
             try:
                 from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (

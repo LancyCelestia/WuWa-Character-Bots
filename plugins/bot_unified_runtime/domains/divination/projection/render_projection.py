@@ -200,6 +200,19 @@ def render_draw_card(
             card_dir=card_dir,
         )
         file_path = str(payload.get("file") or "") if payload else ""
+        if file_path:
+            # 票⑥（SEAT-ATK-DIVINATION）：本面写卡不落 prune 的潜伏泄漏——
+            # 接上与聊天腿（capabilities/divination.py 渲染成功后 keep=120）同一
+            # 真身清理：卡根下只留 mtime 最新 120 个卡目录。清理失败照旧吞掉，
+            # 绝不反噬已成功的卡路径返回。
+            try:
+                from plugins.bot_unified_runtime.domains.divination.capabilities.divination import (
+                    _prune_card_dirs,
+                )
+
+                _prune_card_dirs(Path(card_dir).parent, keep=120)
+            except Exception:  # noqa: S110, BLE001 - 配额清理不阻塞出图。
+                pass
         return file_path, plain_text
     except Exception:  # noqa: BLE001 - 渲染失败回退纯文本（既有契约）。
         return "", plain_text

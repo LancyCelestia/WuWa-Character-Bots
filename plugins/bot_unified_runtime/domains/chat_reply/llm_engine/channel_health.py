@@ -209,6 +209,21 @@ class ChannelHealthStore:
         """
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat(timespec="seconds")
+        # ATKLLM-4（P4）：上游 4xx 回显体可能带密钥形态，原样进 SQLite `last_error`
+        # 就是**静止存留**——出站总闸覆盖不到 at-rest（备份 / 导库 / 直读 data 根即成
+        # 暴露面）。顺序要紧：先过中央打码件、再截断；反过来把 key 切成半截，
+        # `_API_KEY_RE` 就不认得了。打码层自身出问题不得挡住健康度落库（fail-open
+        # 于「存」），但那时收紧成占位、绝不回落原文（与 persona_profile /
+        # safety_exec.paths 的「中央件缺失走保守分支」同调）。延迟导入避开模块级环。
+        try:
+            from plugins.bot_unified_runtime.domains.render.plain_text import (
+                redact_local_secrets,
+            )
+
+            safe_summary = redact_local_secrets(str(error_summary or ""))
+        except Exception:  # noqa: BLE001 - 拿不到打码件就少这一段诊断，不猜它干净
+            logger.warning("channel_health: 打码层不可用，last_error 落占位", exc_info=True)
+            safe_summary = "unavailable (redaction layer failed)"
         cooldown_until = ""
         if cooldown_seconds and cooldown_seconds > 0:
             # 微秒精度：短冷却（测试/小值）在秒级截断下会退化成「已过期」。
@@ -243,7 +258,7 @@ class ChannelHealthStore:
                         state,
                         fails,
                         cooldown_until,
-                        error_summary[:300],
+                        safe_summary[:300],
                         now,
                         (row or {}).get("last_ok_at", ""),
                         now,
@@ -558,6 +573,10 @@ def probe_entry(
     """
     import httpx
 
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+        _loopback_endpoint,
+    )
+
     api_key = str(api_key_override or "").strip()
     if not api_key:
         raw_key = str(getattr(spec, "api_key", "") or "")
@@ -576,7 +595,14 @@ def probe_entry(
     }
     started = time.monotonic()
     try:
-        with httpx.Client(timeout=timeout_seconds, proxy=proxy or None) as client:
+        # 回环网关探针硬直连：本机渠道健康度不得被代理进程存活绑架
+        # （2026-09-29 22:09 Clash 7890 拒连窗实证）。
+        loopback = _loopback_endpoint(url)
+        with httpx.Client(
+            timeout=timeout_seconds,
+            proxy=None if loopback else (proxy or None),
+            trust_env=not loopback,
+        ) as client:
             response = client.post(
                 url,
                 json=payload,

@@ -320,6 +320,37 @@ class OpenMeteoWeatherProvider:
         return snapshot
 
 
+def _clocked_now(zone: ZoneInfo) -> datetime:
+    """「现在」的唯一取法：先问进程内那把**共享校时器**，拿不到才回落系统钟。
+
+    为什么必须有这一枚（S24 复核席实跑抓到的口径自相矛盾）：分区底下那一行
+    ``clock_sync_readout()`` 印的是「SNTP 校时在线（当前偏移 +361 毫秒）」，
+    而首行的墙钟当时出自 ``datetime.now(zone)``——**同一分区一边宣称已校时、
+    一边报没校正的系统钟**。``timesync.now()`` 那把校正过的钟当时只喂提醒与
+    笔记两条腿。
+
+    口径：
+    - 只走模块级 ``timesync.now()``（T2 之后它只*派发*一轮后台校时、调用线程
+      零网络，未绑定/未校准=如实交回系统钟）。**不在这里 ``getattr`` 偏移再
+      手加一遍**——那就是第二真身，还把钳制、多源互证、病态钟三级兜底全绕掉了。
+    - aware→aware 一律 ``.astimezone(zone)``：同一瞬间换区，不重解释墙钟。
+    - 交回 naive 钟、拿不到共享实例、或抛任何异常 ⇒ 回 ``datetime.now(zone)``。
+      校时面塌了不许把【当前时间】分区一起带走（fail-open：宁少一枚校正，
+      不可没有时间分区）。
+    """
+    try:
+        from plugins.bot_unified_runtime.domains.schedule.timesync import (
+            timesync as _timesync,
+        )
+
+        moment = _timesync.now()
+        if moment.tzinfo is None or moment.utcoffset() is None:
+            raise ValueError(f"共享校时器交出 naive 钟：{moment!r}")
+        return moment.astimezone(zone)
+    except Exception:  # noqa: BLE001 - 校时面不可用只是这一枚时刻退回系统钟
+        return datetime.now(zone)
+
+
 class RuleBasedTemporalProvider:
     """组合时间/节气/节日/天气的默认实现。"""
 
@@ -342,7 +373,7 @@ class RuleBasedTemporalProvider:
             zone = ZoneInfo(self.timezone)
         except ZoneInfoNotFoundError:
             zone = ZoneInfo("UTC")
-        now = datetime.now(zone)
+        now = _clocked_now(zone)
         weather_summary = self.weather_provider.current_weather(request_id).strip()
         return TemporalContext(
             request_id=request_id,
@@ -417,9 +448,13 @@ def clock_sync_readout() -> str:
     """校时状态一行（复用 timesync 共享实例的公开属性，绝不触发联网）。
 
     读的是装配期 ``configure_from`` 绑定好的那把进程内共享校时器：
-    ``enabled``/``offset_seconds`` 都是带锁的属性读，不碰 ``now()``（那会按
-    节奏发起 SNTP）。拿不到共享实例（未绑定/模块搬家）回诚实短语，
-    绝不谎称「已校时」。
+    ``enabled``/``offset_seconds`` 都是带锁的属性读。这里刻意不叫 ``now()``
+    ——**不是因为 ``now()`` 会按节奏发起 SNTP**（T2 之后它只*派发*一轮后台校时、
+    调用线程零网络，S21 已把这一层重建完），而是因为本行只要**状态**，叫
+    ``now()`` 会为了一行文案去推一次校时节奏。取时刻是另一枚口：
+    :func:`_clocked_now`（``snapshot`` 走它），两者读同一把钟，所以分区里
+    「当前偏移 +NNN 毫秒」与首行墙钟天然同源。
+    拿不到共享实例（未绑定/模块搬家）回诚实短语，绝不谎称「已校时」。
     """
     try:
         from plugins.bot_unified_runtime.domains.schedule.timesync import (

@@ -40,7 +40,43 @@ _LOGGER = logging.getLogger(__name__)
 # 的请求」与代理出口 IP 均回 403（实测矩阵：curl 极简头直连/代理皆 200）。
 _ORB_PRONE_HOST_SUFFIXES = ("sinaimg.cn", "weibocdn.com")
 _ORB_FETCH_HEADERS = {"User-Agent": "curl/8.0.1", "Accept": "*/*"}
-_ORB_FETCH_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _build_orb_fetch_opener() -> urllib.request.OpenerDirector:
+    """ORB 代捞腿的 opener：缺省直连 + **逐跳** SSRF 复查（缺口①，2026-09-30 复原波）。
+
+    两件事各管一件，都不许少：
+    - ``ProxyHandler({})``＝强制直连。新浪图床 WAF 对代理出口 IP 回 403
+      （实测矩阵：curl 极简头直连 200），这是这条腿存在的前提，不动。
+    - 逐跳护栏＝复用链上**唯一**的
+      ``link_parse.parsers.http_util._GuardedShortLinkRedirectHandler``。旧装配
+      只有代理件，urllib 默认 handler 盲跟 30x：图床（或卡里那枚 ``src=``）
+      回一跳 302 就能把 bot 的出站请求送进 127.0.0.1:3001 / 169.254.169.254，
+      字节还会经 ``route.fulfill`` 变成像素回显在群卡上。F-3 的 ``_orb_route``
+      闸只罩「非 ORB 名单」支，名单内这支此前根本没被判据看过。
+      现在每一跳落点在**建连之前**过 ``ssrf_guard.check_fetch_landing``
+      （判据仍是中央 ``downloader.check_download_url``，本件不造第二套 URL 判据）；
+      跨 host 剥凭证的语义随父类一起继承。
+      入口域名不查（名单后缀本就不可能指内网，且避免对图床触发 DNS）——
+      这条口径与 F-3 席一致，``_orb_route`` 的行为契约零变化。
+
+    拒绝的外在表现仍旧是「取不到字节」：``_fetch_image_bytes`` 吞异常返回 None
+    → ``route.abort`` → 模板 ``onerror`` 灰图兜底，渲染降级链零新增故障面。
+
+    已知残余（登记不硬做）：这条腿只钉「落点不许是内网」，未装连接层解析钉定件
+    （``downloader.build_pinning_handlers``）——渲染热路径每图多一次解析与选路
+    的取舍归渲染席裁定，本件不擅自扩面。
+    """
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+        _GuardedShortLinkRedirectHandler,
+    )
+
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), _GuardedShortLinkRedirectHandler()
+    )
+
+
+_ORB_FETCH_OPENER = _build_orb_fetch_opener()
 
 
 def _orb_prone_url(url: str) -> bool:
@@ -58,6 +94,17 @@ _HTML_URL_RE = re.compile(r"""(?:src=|url\()[\'"]?(https?://[^\'")\s>]+)""", re.
 
 def _html_mentions_orb_prone_image(html: str) -> bool:
     return any(_orb_prone_url(url) for url in _HTML_URL_RE.findall(html or ""))
+
+
+def _html_mentions_remote_resource(html: str) -> bool:
+    """HTML 是否含任何 http(s) 资源引用（``src=`` / ``url(`` 形态）。
+
+    SEAT-ATK-RENDER M-1（2026-09-28）：``_orb_route`` 的注册判据——闸要罩住
+    「任意远程资源」，不是只罩 ORB 名单。复用 ``_HTML_URL_RE`` 单一形态
+    真身（本模块不写第二套 URL 判定），无任何 http(s) 引用时返回 False，
+    供渲染路径保留「零路由处理器注册」快路径。
+    """
+    return bool(_HTML_URL_RE.search(html or ""))
 
 
 # ---- 封面图进程内 LRU 缓存（审查 L-07）----
@@ -616,20 +663,48 @@ class PlaywrightRenderBackend:
                 try:
                     def _orb_route(route: Any) -> None:
                         request = route.request
-                        if (
-                            request.resource_type != "image"
-                            or not _orb_prone_url(str(request.url))
-                        ):
+                        url = str(request.url)
+                        if request.resource_type != "image":
                             route.continue_()
                             return
-                        fetched = _fetch_image_bytes(str(request.url))
-                        if fetched is None:
-                            route.abort()
+                        if _orb_prone_url(url):
+                            fetched = _fetch_image_bytes(url)
+                            if fetched is None:
+                                route.abort()
+                                return
+                            data, content_type = fetched
+                            route.fulfill(
+                                status=200, body=data, content_type=content_type
+                            )
                             return
-                        data, content_type = fetched
-                        route.fulfill(status=200, body=data, content_type=content_type)
+                        # F-3 收口（2026-09-27 席位 S-ATKFIX-SSRF2）：非 ORB 名单
+                        # 的远程 http(s) 图此前由本机 Chromium 直连、零 SSRF 判定
+                        # （盲连内网/端口探测面）。建连前先过**中央唯一判据**
+                        # check_download_url——明确拒绝即 abort（模板 onerror 已有
+                        # 灰图兜底，行为兼容），放行才 continue_()。ORB 名单支维持
+                        # python 侧代捞不变（不为其引入咽喉调用，避免对图床触发 DNS）。
+                        if url.startswith(("http://", "https://")):
+                            from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+                                RejectedUrlError,
+                                check_download_url,
+                            )
 
-                    if _html_mentions_orb_prone_image(html):
+                            try:
+                                check_download_url(url)
+                            except RejectedUrlError:
+                                route.abort()
+                                return
+                        route.continue_()
+
+                    # M-1 收口（SEAT-ATK-RENDER 2026-09-28，S-FIX-RENDER-SSRF）：
+                    # 旧判据「仅命中 ORB 名单图才注册」让上面的 SSRF 闸与 ORB
+                    # 子集同生同死——不含 sinaimg 图的卡（多数）零拦截器，
+                    # 外链图由本机 Chromium 盲连，F-3 判据根本不执行。
+                    # 新判据＝「HTML 含任何 http(s) 资源引用」；完全无外链
+                    # 仍不注册，保留零处理器开销快路径。拒绝判据本体仍是
+                    # 中央咽喉 check_download_url（domains/files/sources/
+                    # downloader.py），本件不复制第二套 SSRF 正则。
+                    if _html_mentions_remote_resource(html):
                         page.route("**/*", _orb_route)
                     # mermaid 本地供给（F1）：模板 src 是 CDN URL，传输层拦截
                     # 换血为本地字节。注册在 ORB 路由之后（Playwright 按注册

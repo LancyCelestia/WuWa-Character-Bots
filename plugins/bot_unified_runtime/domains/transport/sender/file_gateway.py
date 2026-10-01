@@ -464,6 +464,36 @@ class FileTransferGateway:
         # 阶段 1 默认 staging 目录不依赖插件配置（bot_download_dir 接线归阶段 3）。
         self.staging_dir = staging_dir or (Path(tempfile.gettempdir()) / "bot_file_staging")
         self._url_downloader = url_downloader
+        # atkfix R2：邮件附件**当日已投件数**的权威计数册。全部邮件附件都经本
+        # 网关的 ``_deliver_mail`` 这一条喉道投递，故计数与执法同处一地＝单一
+        # 事实源（不另建第二本账）；跨进程如需共享再落持久层，本席先在喉道上
+        # 把「在册未执法」的日限接活。按 UTC 日翻篇，只在**确认 SENT** 时自增。
+        self._mail_daily_lock = threading.Lock()
+        self._mail_day = ""
+        self._mail_count_today = 0
+
+    # -------------------- mail 日计数（atkfix R2） --------------------
+
+    def mail_attachment_count_today(self) -> int:
+        """当日（UTC）已确认投出的邮件附件件数——供装配层读入信封的 ``daily_count``。
+
+        翻篇即时归零：跨日第一次读值即把计数复位，绝不把昨天的份数算进今天。
+        """
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        with self._mail_daily_lock:
+            if day != self._mail_day:
+                self._mail_day = day
+                self._mail_count_today = 0
+            return self._mail_count_today
+
+    def _record_mail_attachment_sent(self) -> None:
+        """仅在附件**确认 SENT** 后自增；超时/未知失败不计数（保守，绝不高估已投）。"""
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        with self._mail_daily_lock:
+            if day != self._mail_day:
+                self._mail_day = day
+                self._mail_count_today = 0
+            self._mail_count_today += 1
 
     # -------------------- stage --------------------
 
@@ -816,6 +846,9 @@ class FileTransferGateway:
                 str(exc)[:120],
             )
             raise FileTransferError("mail_send_failed_or_unknown") from exc
+        # atkfix R2：确认出口回执在场（非超时/非未知失败）方计入当日已投件数，
+        # 让下一次 ``_build_mail_attachment_envelope`` 读到真实递增后的日计数。
+        self._record_mail_attachment_sent()
         return FileTransferReceipt(
             request_id=target.request_id,
             ticket_id=ticket.ticket_id,

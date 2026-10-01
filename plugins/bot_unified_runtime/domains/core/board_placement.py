@@ -60,7 +60,11 @@ G_P2_EXEMPT: tuple[tuple[str, str], ...] = (
     ("plugins/bot_unified_runtime/domains/transport/mail/__init__.py", "包命名空间占位（§5-A）：层目录占位"),
     ("plugins/bot_unified_runtime/runtime/__init__.py", "包命名空间占位（§5-A）：旧顶层包退役中，仅剩命名空间"),
     ("plugins/bot_unified_runtime/sources/__init__.py", "包命名空间占位（§5-A）：旧顶层包退役中，仅剩命名空间"),
-    ("plugins/bot_unified_runtime/sources/fetchers/__init__.py", "包命名空间占位（§5-A）：旧顶层子包退役中"),
+    # 〔2026-09-29 主树还原波收尾摘除一条假豁免〕`sources/fetchers/__init__.py` 原在此列，
+    # 那是"旧顶层子包退役中"的命名空间占位；06:30:29 那次外部还原把该**已退役 tracked 件**写回，
+    # 本批按 S-SHIM-WAVE1 原裁定再退一次（字节备份 `.superpowers/sdd/2026-09-27-fullload/recovered/shim-retire-batch/`，
+    # 退役前 grep 真 import 计数＝0）⇒ 路径已不存在，豁免留着就是"假豁免"，
+    # 由 `tests/test_physical_placement_gate.py::test_g_p2_exemptions_are_literal_existing_and_still_needed` 当场判红。
     ("plugins/bot_unified_runtime/sources/parsers/__init__.py", "包命名空间占位（§5-A）：旧顶层子包退役中"),
     # ---- B. 启动件（进程入口不是二级功能）----
     ("bot.py", "NoneBot 启动 + 崩溃守卫（§5-B）：仓库根唯一 py，属进程入口而非功能实现"),

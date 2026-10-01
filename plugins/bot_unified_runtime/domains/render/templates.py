@@ -244,3 +244,4 @@ def render_universal_card_html(payload: dict[str, Any]) -> str:
 def render_song_candidates_html(payload: dict[str, Any]) -> str:
     """渲染点歌候选选择卡 HTML（card_render.bridge 的转发入口）。"""
     return _render_song_candidates_html(payload)
+

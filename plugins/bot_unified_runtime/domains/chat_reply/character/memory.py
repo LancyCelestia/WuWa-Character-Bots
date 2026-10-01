@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -8,6 +9,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from plugins.bot_unified_runtime.contracts import MemoryRetrievalResult, PrivacyLevel
+
+logger = logging.getLogger(__name__)
 
 MEMORY_SENSITIVITIES = frozenset({"public", "group", "personal", "credentialed"})
 
@@ -102,6 +105,41 @@ class SQLiteMemoryRepository:
                 sensitivity=sensitivity,
             )
             return str(getattr(outcome, "memory_id", "") or fact_id)
+        # 写前消毒闸（S-FIX-ATK-MEMORY-FIX C/D）：legacy 分支（bus=None，即
+        # 现网 bus-off 态）过去不设防——命令面 ``记忆 add`` 与抽取腿的生料直落
+        # memory_facts。此处接上与总线 absorb 闸同词表（memory_sanitize
+        # ``_match_category`` 单一来源）的 ``pre_write_sanitize``：硬红线⇒拒存
+        # 并返回空串（命令面据此如实回话），内部边界标记⇒全角消毒；干净文本
+        # 逐字节不变。懒导入断环（memory_sanitize 顶层 import 本件）。
+        from plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize import (
+            pre_write_sanitize,
+        )
+
+        safe_text = pre_write_sanitize(text)
+        if safe_text is None:
+            # 观测面纪律同总线闸：拒收留一行结构化日志，不静默丢弃；日志不带
+            # 正文（不把被拒的硬红线文本二次注入日志面）。
+            logger.warning(
+                "memory fact refused by hard line subject=%s session=%s",
+                subject_user_id,
+                session_id,
+            )
+            return ""
+        text = safe_text
+        # ``kind`` 列的派生只有一张口：``memory_bus_v2.derive_memory_kind``（禁第二
+        # 副本）。调用方传的 ``memory_kind`` 多是**来源标签**（抽取面 auto、命令面
+        # manual），说的是「这句从哪来」而不是「这是哪一类事实」；裸标签进列后
+        # 渲染层只能「原样点名」，注入条目就带着 auto/manual 进 prompt。开态由
+        # ``absorb`` 派生，关态在此同口派生——两张写面一把尺。显式语义类目
+        # （夜间归纳传的 preference 等）在该口内一律原样优先，不被文本现算翻案。
+        # 来源账不丢：它本来就记在 ``source`` 列上，那一列一字不动。
+        # 懒导入与本件其余总线引用同形（``retrieve`` / ``build_memory_read_path``
+        # 都懒引），既避开模块级相互引用，也不新增第二处依赖方向。
+        from plugins.bot_unified_runtime.domains.chat_reply.character.memory_bus_v2 import (
+            derive_memory_kind,
+        )
+
+        stored_kind = derive_memory_kind(memory_kind, text)
         self._ensure_schema()
         now = datetime.now(UTC).isoformat()
         normalized_sensitivity = normalize_memory_sensitivity(sensitivity)
@@ -138,7 +176,7 @@ class SQLiteMemoryRepository:
                     fact_id,
                     subject_user_id,
                     session_id,
-                    memory_kind,
+                    stored_kind,
                     text,
                     confidence,
                     source,
@@ -321,6 +359,22 @@ class SQLiteMemoryRepository:
         return connection
 
 
+def _log_recall_assembly(primary: Any, fallback: Any) -> None:
+    """装配期点名一行：本轮取数口径是谁、兜底腿是谁（可 grep 的归因账）。
+
+    「记忆质量差」这个症状要能落到具体口径上：`memory_bus`=统一打分召回，
+    `legacy_newest_n`=按时间取最近 N 条且**不看本轮查询**，`disabled`=记忆面整关
+    （``NullMemoryProvider`` 没有 ``recall_mode``，缺席要说成缺席）。兜底腿
+    ``none``=关态本就没有第二条腿可降。装配只在启动/烟测/预览处发生，不是每轮
+    一条，故不做「每库一次」的去重机械——去重会把重启后第一轮的账也吞掉。
+    """
+    logger.info(
+        "memory recall assembled mode=%s fallback=%s",
+        getattr(primary, "recall_mode", "disabled"),
+        getattr(fallback, "recall_mode", "none"),
+    )
+
+
 def build_memory_read_path(
     config: object,
 ) -> tuple[MemoryProvider, MemoryProvider | None]:
@@ -338,7 +392,9 @@ def build_memory_read_path(
     enabled = bool(getattr(config, "bot_memory_enabled", False))
     db_path = str(getattr(config, "bot_memory_db_path", "")).strip()
     if not enabled or not db_path:
-        return NullMemoryProvider(), None
+        null_provider = NullMemoryProvider()
+        _log_recall_assembly(null_provider, None)
+        return null_provider, None
     repository = SQLiteMemoryRepository(db_path)
     from plugins.bot_unified_runtime.domains.chat_reply.character.memory_bus_v2 import (
         MemoryBusProvider,
@@ -349,8 +405,11 @@ def build_memory_read_path(
         config, legacy_explicit_reader=repository.list_rows_for_subject
     )
     if bus is None:
+        _log_recall_assembly(repository, None)
         return repository, None
-    return MemoryBusProvider(bus), repository
+    bus_provider = MemoryBusProvider(bus)
+    _log_recall_assembly(bus_provider, repository)
+    return bus_provider, repository
 
 
 def build_memory_repository(config: object) -> MemoryProvider:

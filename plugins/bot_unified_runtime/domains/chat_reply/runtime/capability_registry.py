@@ -436,7 +436,7 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         label="商品行情", reason="商品行情（黄金/金价/白银/原油/铜价/大宗商品）",
         tags=("base_route:commodities",), command=True, has_rule=True,
         matcher_name="commodities_match",
-        note="商品行情（黄金/白银/原油/铜现货与 30 日走势，触发词见 capabilities/market.py；帮助页 topic=商品行情）",
+        note="商品行情（黄金/白银/原油/铜现货与 30 日走势，触发词见 domains/finance/capabilities/market.py；帮助页 topic=商品行情）",
         # prepared 形（P1/B1）：builder 除 config 还要运行期 render_backend（根 :4351）。
         execution=CapabilityExecution(
             implementation_ref=(
@@ -456,7 +456,7 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         label="国债收益率", reason="国债收益率（国债/期限利差/收益率曲线）",
         tags=("base_route:bond",), command=True, has_rule=True,
         matcher_name="bond_match",
-        note="国债收益率（国债/期限利差/收益率曲线，触发词见 capabilities/market.py；帮助页 topic=国债收益率）",
+        note="国债收益率（国债/期限利差/收益率曲线，触发词见 domains/finance/capabilities/market.py；帮助页 topic=国债收益率）",
         # prepared 形（P1/B1）：builder 除 config 还要运行期 render_backend（根 :4354）。
         execution=CapabilityExecution(
             implementation_ref=(
@@ -476,7 +476,7 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         label="北向资金", reason="北向资金（北向资金/沪股通/深股通）",
         tags=("base_route:northbound",), command=True, has_rule=True,
         matcher_name="northbound_match",
-        note="北向资金（北向资金/沪股通/深股通成交总额，触发词见 capabilities/market.py；帮助页 topic=北向资金）",
+        note="北向资金（北向资金/沪股通/深股通成交总额，触发词见 domains/finance/capabilities/market.py；帮助页 topic=北向资金）",
         # prepared 形（P1/B1）：builder 除 config 还要运行期 render_backend（根 :4357）。
         execution=CapabilityExecution(
             implementation_ref=(
@@ -1038,6 +1038,9 @@ HELP_TOPIC_DECLARATIONS: tuple[HelpTopicDecl, ...] = (
     HelpTopicDecl(topic="聊天", admin_only=False, capability="bot.chat"),
     HelpTopicDecl(topic="戳一戳", admin_only=False, capability="on_notice:戳一戳"),
     HelpTopicDecl(topic="表情收库", admin_only=False, capability="meme_absorb（群图自动收库，无命令）"),
+    # S-ALBUM（2026-09-30）表情册面：管理员册账，能力仍走 bot.meme_library（路由席
+    # 已把「表情册」并进 is_meme_library_command），故 RouteCapabilityDecl 零改动。
+    HelpTopicDecl(topic="表情册", admin_only=True, capability="bot.meme_library"),
     HelpTopicDecl(topic="自然语言", admin_only=False, capability="bot.natural_command"),
     HelpTopicDecl(topic="忽略", admin_only=True, capability="matcher:IGNORE（空消息静默；未知命令形态回引导）"),
     HelpTopicDecl(topic="决策", admin_only=True, capability="/bot decision"),

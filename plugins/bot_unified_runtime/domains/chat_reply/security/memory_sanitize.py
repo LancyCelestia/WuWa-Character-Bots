@@ -16,10 +16,24 @@ explicit 会话内已放开的亲密内容（软性 SM、触手、breeding 等�
 ``memory_entries_v21``），判定只走 ``capabilities/memory.iter_stored_memory_rows``
 这一个中央入口——本件不读总线开关。支持 dry-run 只报告不删。
 
+S-FIX-MEM-REFL②（本席）：另开**反思库**（``reflection.sqlite3``）第二连接。写前
+过闸（``pre_write_sanitize``，见反思两档写腿）闭合的是「今后」，开闸前沉淀进
+``reflection_facts`` 的**历史**硬线行此前不在任何扫描面。反思腿判定复用同一个
+``_match_category``（六硬线+minors，词表单一真身，不另造第二套口径），同样
+dry-run 缺省零写入；apply 时在反思专连里先隔离后摘除，并逐条归因 + 守恒断言
+（``ReflectionConservationError``，纪律参照 ``scripts/migrate_memory_bus_v2``
+的 ``assert_conservation``）。隔离证据落在**反思库自己**的 ``memory_quarantine``
+表（表形与记忆库同款，``source_table='reflection_facts'``）。一处例外如实报备：
+``reflection_facts`` 没有属主删除接口（``ReflectionStore`` 写面只有 save_*/
+supersede 退役），摘除 SQL 由本件专连直写，理由钉在 ``_purge_reflection_rows``
+的 docstring；记忆两表「本件不持有一张 SQL」的纪律不变。
+
 用法（须用 canonical 模块路径；旧 ``security/`` 下的同名件已是兼容垫片，
 ``python -m`` 打进垫片只会 import 完就静默退出、参数被吞，等于假成功）：
     python -m plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize --dry-run
     python -m plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize --apply
+    # 反思库默认读 BOT_REFLECTION_DB_PATH（缺文件即零副作用）；--reflection-db 可覆盖。
+    # 显式 --db 且不给 --reflection-db = 单库点扫（旧版语义，反思腿整条关闭）。
 入口也可走 dev.ps1 -Task memory-sanitize。
 """
 
@@ -48,6 +62,7 @@ from .content_safety import (
     minor_ambiguity_hit,
     normalize_for_matching,
 )
+from .injection import neutralize_internal_markers
 
 #: 清洗面的列集要求：只认「有主体、有正文」，其余列缺了照样扫（隐私清扫不因表形
 #: 降级）。图谱那侧要时间戳才能做窗口过滤，用的是它自己的严格列集——差异由调用方
@@ -56,6 +71,23 @@ _SANITIZE_MINIMUM_COLUMNS = {
     MEMORY_LEGACY_TABLE: frozenset({"fact_id", "subject_user_id", "text"}),
     MEMORY_BUS_TABLE: frozenset({"memory_id", "owner_id", "text"}),
 }
+
+#: 反思腿的表名（S-FIX-MEM-REFL②）。中央读口的表清单钉死为记忆两表
+#: （capabilities/memory.py 非本席写面，也不该让图谱等调用面凭空多扫一张
+#: 不属于记忆库的表），反思投影在本件里镜像同一纪律自建。
+MEMORY_REFLECTION_TABLE = "reflection_facts"
+
+#: 反思腿扫描所需的最低列集：与记忆腿宽松集同型（有主键、有归属、有正文）。
+_REFLECTION_MINIMUM_COLUMNS = frozenset({"fact_id", "sender_id", "fact_text"})
+
+
+class ReflectionConservationError(RuntimeError):
+    """反思清洗不守恒即抛：隔离/摘除任何一步对不上逐条归因账就不提交。
+
+    纪律出处是 ``scripts/migrate_memory_bus_v2.assert_conservation``——行数差
+    必须逐条归因，不许静默丢行；本件把这条纪律用在自己的反思专连事务里，
+    抛错 ⇒ 事务回滚 ⇒ 反思库保持清洗前原状（失败可比对，不出现半丢行状态）。
+    """
 
 
 @dataclass(frozen=True)
@@ -81,6 +113,28 @@ class SanitizeReport:
         return "\n".join(lines)
 
 
+def _merge_reports(*reports: SanitizeReport) -> SanitizeReport:
+    """合并多库报告：扫描/命中求和，分账字典逐键相加（任何一条明细都不丢）。
+
+    单腿时等价于原报告；反思库缺失时合并结果与旧输出逐字节一致（求和恒等、
+    字典不增键），这是「非反思库不受影响」锁的成立根据。
+    """
+    scanned = 0
+    quarantined = 0
+    by_category: dict[str, int] = {}
+    by_table: dict[str, int] = {}
+    for report in reports:
+        scanned += report.scanned
+        quarantined += report.quarantined
+        for category, count in report.by_category.items():
+            by_category[category] = by_category.get(category, 0) + count
+        for table, count in report.by_table.items():
+            by_table[table] = by_table.get(table, 0) + count
+    return SanitizeReport(
+        scanned=scanned, quarantined=quarantined, by_category=by_category, by_table=by_table
+    )
+
+
 def _match_category(text: str) -> str | None:
     # 匹配前统一归一化（NFKC/零宽/空白折叠），全角或夹零宽字符的变体
     # 也能命中既有规则；归一化文本只用于匹配，不写回任何存储。
@@ -92,6 +146,25 @@ def _match_category(text: str) -> str | None:
     if minor_ambiguity_hit(normalized):
         return "minor_ambiguity"
     return None
+
+
+def pre_write_sanitize(text: str) -> str | None:
+    """写前消毒单一口径（S-FIX-ATK-MEMORY-FIX C/D）：沉淀腿落库前必须过这道闸。
+
+    判据只有一处：硬红线=本文件 ``_match_category``（六硬线+minors，与总线
+    ``absorb`` 闸、事后清洗 CLI 同一个词表真身——不复制第二套正则）；消毒=
+    ``injection.neutralize_internal_markers``（内部边界标记全角化，幂等）。
+    命中硬红线 ⇒ 返回 ``None``=拒存（与总线闸同口径：拒收并留结构化日志，
+    不静默改写）；其余文本原样返回（无标记的干净文本逐字节不变，现网存量
+    形态不受扰动）。调用方：反思 legacy 写腿、``SQLiteMemoryRepository``
+    legacy 写腿（命令面 ``记忆 add`` 与抽取腿共用同一入口）。
+    """
+    body = text or ""
+    if not body.strip():
+        return body
+    if _match_category(body) is not None:
+        return None
+    return neutralize_internal_markers(body)
 
 
 def _ensure_quarantine_schema(connection: sqlite3.Connection) -> None:
@@ -170,6 +243,7 @@ def _forget_bus_rows(path: Path, rows: Sequence[StoredMemoryRow]) -> int:
 def sanitize_memory_db(
     db_path: str | Path,
     *,
+    reflection_db_path: str | Path | None = None,
     apply: bool = False,
 ) -> SanitizeReport:
     """扫描库里**物理存在的每张记忆表**；apply=True 时先隔离再摘除命中行。
@@ -181,10 +255,19 @@ def sanitize_memory_db(
     里），所以清洗的读集必须是「召回能读回的一切」的超集，否则红线内容换个表躺
     着就等于没清。旧表被写腿退役（迁移跑完、影子读下线）之后，这里自然只剩一张表
     可扫，无需改判据。
+
+    ``reflection_db_path``（S-FIX-MEM-REFL②）：给定时同轮扫反思库第二连接并合并
+    报告（见 ``sanitize_reflection_db``）；``None``（既有全部调用方的缺省）=
+    纯记忆腿，输出与今天逐字节一致。
     """
     path = Path(db_path)
     if not path.exists():
-        return SanitizeReport(scanned=0, quarantined=0, by_category={}, by_table={})
+        report = SanitizeReport(scanned=0, quarantined=0, by_category={}, by_table={})
+        if reflection_db_path is None:
+            return report
+        return _merge_reports(
+            report, sanitize_reflection_db(reflection_db_path, apply=apply)
+        )
     by_category: dict[str, int] = {}
     by_table: dict[str, int] = {}
     scanned = 0
@@ -242,6 +325,171 @@ def sanitize_memory_db(
             _forget_bus_rows(path, [row for row in flagged if row.is_from_bus])
     finally:
         connection.close()
+    report = SanitizeReport(
+        scanned=scanned, quarantined=len(flagged), by_category=by_category, by_table=by_table
+    )
+    if reflection_db_path is None:
+        return report
+    return _merge_reports(report, sanitize_reflection_db(reflection_db_path, apply=apply))
+
+
+def _iter_reflection_rows(connection: sqlite3.Connection) -> list[StoredMemoryRow]:
+    """把反思库里物理存在的 ``reflection_facts`` 逐行投影成统一行形状。
+
+    不走中央读口 ``iter_stored_memory_rows`` 的原因写在 ``MEMORY_REFLECTION_TABLE``
+    常量旁（表清单钉死为记忆两表，且该件非本席写面）；这里镜像它的四条纪律：
+    宽松列集（缺列**整表跳过**、绝不拿默认值糊行造数）、``ORDER BY rowid``
+    确定性、空主键行不落账（无从归因也无从摘除）、按整数下标取值不依赖
+    row_factory。superseded 行照扫：清洗的读集是「库里躺着的一切」的超集，
+    投影里如实标 ``status='superseded'`` 供审计。
+    """
+    names = {
+        str(record[0])
+        for record in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    if MEMORY_REFLECTION_TABLE not in names:
+        return []
+    present = {
+        str(record[1])
+        for record in connection.execute(f"PRAGMA table_info({MEMORY_REFLECTION_TABLE})")
+    }
+    if not _REFLECTION_MINIMUM_COLUMNS <= present:
+        return []
+    wanted = ["fact_id", "sender_id", "fact_text"]
+    wanted += [column for column in ("session_key", "created_at", "superseded") if column in present]
+    rows: list[StoredMemoryRow] = []
+    for record in connection.execute(
+        f"SELECT {', '.join(wanted)} FROM {MEMORY_REFLECTION_TABLE} ORDER BY rowid ASC"
+    ):
+        values = {name: record[index] for index, name in enumerate(wanted)}
+        row_id = str(values["fact_id"] or "")
+        if not row_id:
+            continue
+        rows.append(
+            StoredMemoryRow(
+                row_id=row_id,
+                subject_user_id=str(values["sender_id"] or ""),
+                session_id=str(values.get("session_key") or ""),
+                kind="reflection",
+                text=str(values["fact_text"] or ""),
+                sensitivity="personal",
+                status="superseded" if values.get("superseded") else "active",
+                created_at=str(values.get("created_at") or ""),
+                updated_at="",
+                store_table=MEMORY_REFLECTION_TABLE,
+            )
+        )
+    return rows
+
+
+def _purge_reflection_rows(
+    connection: sqlite3.Connection,
+    rows: Sequence[StoredMemoryRow],
+    *,
+    now_text: str,
+) -> None:
+    """反思腿的「先隔离、后摘除」：同连接同事务，逐条归因 + 总量守恒断言。
+
+    为什么这里直写 SQL（记忆两表在本件里一张都不直写）：``reflection_facts``
+    没有属主删除接口——``ReflectionStore`` 的写面只有 save_*/supersede 退役
+    （退役≠清除正文，硬线文本仍躺在库里），本席写面也不允许在 reflection.py
+    新增删除函数（只准只读辅助）。于是隔离与摘除都在本件自开的专连里完成，
+    例外与归属登记在席位报告。事务性比记忆腿还收紧一步：隔离写不进去就不摘、
+    摘一行对不上账就整笔回滚，绝不出现「删了但没留证据」或半丢行状态。
+
+    守恒纪律参照 ``scripts/migrate_memory_bus_v2.assert_conservation``：
+    每条命中行必须恰好 1 次隔离插入 + 1 次摘除（逐条归因），
+    总量再对一次 ``before - after == len(rows)``，任一不满足即抛
+    ``ReflectionConservationError`` 回滚。
+    """
+    if not rows:
+        return
+    _ensure_quarantine_schema(connection)
+    before = int(
+        connection.execute(f"SELECT COUNT(*) FROM {MEMORY_REFLECTION_TABLE}").fetchone()[0]
+    )
+    with connection:  # 正常离开=commit；任何 raise=rollback（反思库回到清洗前原状）
+        for row in rows:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO memory_quarantine
+                    (fact_id, subject_user_id, session_id, memory_kind, text, category,
+                     quarantined_at, source_table)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row.row_id,
+                    row.subject_user_id,
+                    row.session_id,
+                    row.kind,
+                    row.text,
+                    _match_category(row.text or "") or "unknown",
+                    now_text,
+                    row.store_table,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ReflectionConservationError(
+                    f"反思隔离未落账：fact_id={row.row_id}（隔离插入 rowcount={cursor.rowcount}）"
+                )
+            cursor = connection.execute(
+                f"DELETE FROM {MEMORY_REFLECTION_TABLE} WHERE fact_id = ?", (row.row_id,)
+            )
+            if cursor.rowcount != 1:
+                raise ReflectionConservationError(
+                    f"反思摘除行数异常：fact_id={row.row_id}（删除 rowcount={cursor.rowcount}）"
+                )
+        after = int(
+            connection.execute(f"SELECT COUNT(*) FROM {MEMORY_REFLECTION_TABLE}").fetchone()[0]
+        )
+        if before - after != len(rows):
+            raise ReflectionConservationError(
+                f"反思清洗不守恒：before={before} after={after} flagged={len(rows)}"
+            )
+
+
+def sanitize_reflection_db(
+    reflection_db_path: str | Path,
+    *,
+    apply: bool = False,
+) -> SanitizeReport:
+    """反思库第二连接（SEAT-FIX-ATK-MEMORY 挂账②闭合）：扫 ``reflection_facts`` 历史行。
+
+    判据与记忆腿**同一点**（``_match_category``：六硬线+minors，词表单一真身）；
+    dry-run 缺省——不建隔离表、不写一行。``apply=True`` 时先隔离后摘除并做
+    逐条归因守恒（见 ``_purge_reflection_rows``）。隔离证据落在反思库自己的
+    ``memory_quarantine`` 表（``source_table='reflection_facts'``），与记忆腿
+    「证据不离开案发库」的口径一致。
+
+    库文件不存在 ⇒ 空报告零副作用；文件在但没有（列齐的）``reflection_facts``
+    表 ⇒ 同样零扫描零写入——非反思库不受影响由测试件锁死。专连专关
+    （connect-and-close，Windows 上不残留文件句柄），``timeout=5.0`` 与
+    ``ReflectionStore`` 的并发纪律同形。
+    """
+    path = Path(reflection_db_path)
+    if not path.exists():
+        return SanitizeReport(scanned=0, quarantined=0, by_category={}, by_table={})
+    by_category: dict[str, int] = {}
+    by_table: dict[str, int] = {}
+    scanned = 0
+    now_text = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    connection = sqlite3.connect(path, timeout=5.0)
+    connection.row_factory = sqlite3.Row
+    try:
+        rows = _iter_reflection_rows(connection)
+        flagged: list[StoredMemoryRow] = []
+        for row in rows:
+            scanned += 1
+            by_table[row.store_table] = by_table.get(row.store_table, 0) + 1
+            category = _match_category(row.text or "")
+            if category is None:
+                continue
+            by_category[category] = by_category.get(category, 0) + 1
+            flagged.append(row)
+        if flagged and apply:
+            _purge_reflection_rows(connection, flagged, now_text=now_text)
+    finally:
+        connection.close()
     return SanitizeReport(
         scanned=scanned, quarantined=len(flagged), by_category=by_category, by_table=by_table
     )
@@ -259,29 +507,68 @@ def resolve_memory_db_path(config: object) -> Path | None:
     return _resolve_relative_cookie_path(Path(raw))
 
 
+def resolve_reflection_db_path(config: object) -> Path | None:
+    """反思库路径解析：与 ``resolve_memory_db_path`` 同套映射（data/ → Runtime 数据根）。
+
+    取值口径跟 ``run_nightly_reflection`` 读的是同一个配置项
+    ``bot_reflection_db_path``；未配置 ⇒ ``None``（反思腿整条不跑，零副作用）。
+    """
+    raw = str(getattr(config, "bot_reflection_db_path", "") or "").strip()
+    if not raw:
+        return None
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.cookies import (
+        _resolve_relative_cookie_path,
+    )
+
+    return _resolve_relative_cookie_path(Path(raw))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="sanitize long-term memory DB")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--dry-run", action="store_true", help="只报告命中，不删除")
     group.add_argument("--apply", action="store_true", help="隔离并删除命中记忆")
     parser.add_argument("--db", default="", help="覆盖记忆库路径（默认读 BOT_MEMORY_DB_PATH）")
+    parser.add_argument(
+        "--reflection-db",
+        default="",
+        help="覆盖反思库路径（默认读 BOT_REFLECTION_DB_PATH；缺文件则反思腿零副作用）",
+    )
     args = parser.parse_args(argv)
 
-    if args.db:
-        db_path: Path | str = args.db
-    else:
+    config: object | None = None
+    if not args.db:
         from plugins.bot_unified_runtime.domains.ops.smoke.smoke import (
             load_smoke_config,
         )
 
-        resolved = resolve_memory_db_path(load_smoke_config())
+        config = load_smoke_config()
+    if args.db:
+        db_path: Path | str = args.db
+    else:
+        resolved = resolve_memory_db_path(config)
         if resolved is None:
             print("未配置 BOT_MEMORY_DB_PATH，无事可做。")
             return 2
         db_path = resolved
-    report = sanitize_memory_db(db_path, apply=args.apply)
+    if args.reflection_db:
+        reflection_path: Path | str | None = args.reflection_db
+    elif args.db:
+        # 显式 --db（不给 --reflection-db）= 单库点扫：与旧版 CLI 输出逐字节一致，
+        # 也绝不误碰 Runtime 数据里的反思库——该活性由
+        # ``tests/test_dev_ps1_no_shim_module_targets.py`` 的「零 Runtime 接触」锁
+        # 与反思腿测试件同型钉住。
+        reflection_path = None
+    else:
+        reflection_path = resolve_reflection_db_path(config)
+    report = sanitize_memory_db(
+        db_path, reflection_db_path=reflection_path, apply=args.apply
+    )
     print(report.render(applied=args.apply))
     print(f"数据库：{db_path}")
+    # 反思库真在场才多这一行——反思腿缺席时 main 的输出与今天逐字节一致。
+    if reflection_path is not None and Path(reflection_path).exists():
+        print(f"反思库：{reflection_path}")
     return 0
 
 

@@ -64,6 +64,7 @@ from plugins.bot_unified_runtime.domains.divination.data.ganzhi import (
     STEMS,
     BaziChart,
     bazi_chart,
+    bazi_supported_range_text,
     format_bazi_text,
 )
 from plugins.bot_unified_runtime.domains.divination.data.iching import (
@@ -901,7 +902,7 @@ def build_divination_capability(
                 title="占卜",
                 body=(
                     f"这个时点超出了可排盘的范围（{exc}），"
-                    "换个 1900-2100 年之间的时间试试？"
+                    f"换个 {bazi_supported_range_text()} 年之间的时间试试？"
                 ),
                 audit_tags=[*tags, "divination:out_of_range"],
             )

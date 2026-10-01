@@ -29,8 +29,11 @@
   次数与退避基数缺省对齐 `domains/weather/capabilities/weather.py:82-83`
   （`_NMC_RETRY_ATTEMPTS = 2`、`_NMC_RETRY_BACKOFF_SECONDS = 0.5`）。
 - 超时参数命名 = `domains/weather/data/nmc_weather.py:113`
-  （`timeout: float` 关键字参数，`proxy: str = ""`）；`verify_ssl=False`
-  的用法同 `nmc_weather.py:119`（nmc.cn 证书链不完整，既有做法）。
+  （`timeout: float` 关键字参数，`proxy: str = ""`）。TLS 一律缺省验证：
+  S-FIX-WXSSL M1（2026-09-27）已实测证伪并撤销「nmc.cn 证书链不完整、
+  verify_ssl=False 是既有做法」的旧说法（见 `nmc_weather.py:117-121` 现文），
+  两域的 `test_weather_tls_verification.py` / `test_emergency_nmc_tls_verification.py`
+  已上锁——勿再传 `verify_ssl=False`，也不得引用它作先例。
 - sleep 注入点 = `http_util.py:133-134`（模块级 `_sleep`，测试 monkeypatch
   免真等）；本文件同形态提供 `_backoff_sleep`。
 

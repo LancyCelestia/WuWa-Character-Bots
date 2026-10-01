@@ -153,7 +153,7 @@ DENY_PLAIN_TEXT: Final[dict[str, str]] = {
     DenyCode.ALREADY_EXISTS: "同名文件已在，创建动词不覆盖",
     DenyCode.TARGET_MISSING: "目标不存在，修改动词不新建",
     DenyCode.RESERVED_NAME: (
-        "文件名撞上 Windows 保留设备名（nul/con/aux/com1 一族）。"
+        "文件名撞上 Windows 保留设备名（nul/con/aux/com0-9/lpt0-9/clock$ 一族）。"
         "这类名字写出去后，常规工具打不开也删不掉，落盘口与受限回读都不收。"
     ),
     DenyCode.DAILY_QUOTA: "今日件数配额已用满",
@@ -272,10 +272,14 @@ _SEGMENT_MAX_LEN: Final[int] = 120
 #: ``_LEGAL_SEGMENT_RE`` 同族：同一个名字在别的 API 里是设备不是文件，落盘口收它
 #: 只会产出一枚常规工具打不开也删不掉的挂件（实测 ``os.replace`` 能把
 #: ``nul.txt`` 造进目录并回报成功，而 cmd 的 ``del nul.txt`` 把删除动作送进了空设备）。
+#: 名册按微软「Naming Files, Paths, and Namespaces」保留名全集收齐（2026-09-27
+#: 攻击审计 F-G2 补全）：COM0–COM9 / LPT0–LPT9 含 0 号（09-26 首版按「设备号从 1
+#: 起」收窄了一格），另补历史/控制台边角 ``CLOCK$`` / ``CONIN$`` / ``CONOUT$``；
+#: COM10/LPT10 不在保留集（现算负样本锁在 tests/test_seat_fix_rnames.py）。
 _RESERVED_WIN32_BASENAMES: Final[frozenset[str]] = frozenset(
-    {"con", "prn", "aux", "nul"}
-    | {f"com{i}" for i in range(1, 10)}
-    | {f"lpt{i}" for i in range(1, 10)}
+    {"con", "prn", "aux", "nul", "clock$", "conin$", "conout$"}
+    | {f"com{i}" for i in range(10)}
+    | {f"lpt{i}" for i in range(10)}
 )
 
 

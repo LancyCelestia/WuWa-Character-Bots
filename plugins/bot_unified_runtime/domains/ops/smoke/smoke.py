@@ -283,6 +283,8 @@ def run_chat_smoke(
     capability = build_chat_capability(
         character_provider=build_character_context_provider(config),
         llm_provider=provider,
+        # 默认讲法腿的口径来源：这条链不交 config ⇒ 自检渲染口收到 None。
+        content_route_config=config,
         # 仅当由 config 自行构建真实 provider 时启用模型路由；
         # 测试注入的自定义 provider 与 static 离线配置保持原语义。
         model_router=(
@@ -581,6 +583,8 @@ def run_why_smoke(
     capability = build_chat_capability(
         character_provider=build_character_context_provider(config),
         llm_provider=provider,
+        # 默认讲法腿的口径来源：这条链不交 config ⇒ 自检渲染口收到 None。
+        content_route_config=config,
         fast_mode=config.bot_chat_fast_mode,
         reply_detail=config.bot_reply_detail,
         fast_max_tokens=config.bot_chat_fast_max_tokens,

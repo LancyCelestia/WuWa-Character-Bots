@@ -42,8 +42,13 @@ _RECORD_SEGMENT_TYPES = {"record", "voice", "audio"}
 _MAX_ASR_FAILOVER_ATTEMPTS = 3
 # 超大音频上传徒增超时风险；20MB 足够容纳数分钟语音。
 _MAX_AUDIO_BYTES = 20_000_000
-_FALLBACK_SUFFIXES = {".mp3", ".wav"}
-_SUFFIX_MIME = {".mp3": "audio/mpeg", ".wav": "audio/wav"}
+_FALLBACK_SUFFIXES = {".mp3", ".wav", ".oga", ".ogg"}
+_SUFFIX_MIME = {
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".oga": "audio/ogg",
+    ".ogg": "audio/ogg",
+}
 
 
 def _find_ffmpeg_locate() -> str:
@@ -87,10 +92,17 @@ def extract_audio_source(raw_segments: list[dict[str, Any]] | None) -> str | Non
 
 
 # 原生直传给主模型的音频容器（与网关实测可被理解的形态一致）。
+# 2026-09-28 修 .oga/.opus：Telegram 语音文件真身是 OGG 容器（承载 Opus codec），
+# TG 官方 file_path 常见后缀是 `.oga`；此前白名单只认 `.ogg`，导致 Gemini 系
+# 声明了 native-audio 也走不通直吞路径，被硬推回 ASR——而 ASR 兜底同样栽在
+# 后缀字面上 ⇒ 无 ffmpeg 时语音直接哑。`.oga`/`.opus` 一律映射到 `"ogg"`
+# （容器一致，format 字段只吃容器名不吃 codec），与 `.ogg` 同处理。
 _NATIVE_AUDIO_FORMATS = {
     ".wav": "wav",
     ".mp3": "mp3",
     ".ogg": "ogg",
+    ".oga": "ogg",
+    ".opus": "ogg",
     ".flac": "flac",
     ".m4a": "m4a",
     ".aac": "aac",
@@ -138,7 +150,11 @@ def _flatten_asr_entries(
 
     列表形态按 ``id#序号`` 展开；resolve_key 时把 env: 引用解析成真实密钥。
     """
-    from plugins.bot_unified_runtime.llm.model_router import _resolve_api_key
+    # 2026-09-29 席 S-FIX-SHIM-REFS：旧布局垫片 `llm/model_router` ⇒ 改指真身（`_resolve_api_key`
+    # 真身 :652 在册）；账见 `domains/core/board_shim_ledger.py` SHIM_ROWS。
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+        _resolve_api_key,
+    )
 
     flattened: dict[str, dict[str, Any]] = {}
     if not isinstance(registry, dict):
@@ -471,16 +487,26 @@ def _clip(value: str, max_chars: int) -> str:
     return f"{value[: max_chars - 1]}…"
 
 
-def transcribe_audio(
+def transcribe_audio_with_status(
     provider: Any,
     *,
     audio_source: str,
     timeout_seconds: float = 20.0,
     max_chars: int = 300,
-) -> str:
-    """语音 → 文本的完整链路；任何失败返回空串，绝不阻断主回复。"""
-    if provider is None or not audio_source:
-        return ""
+) -> tuple[str, str]:
+    """语音转写并**如实报告结果类别**：`(文本, kind)`，kind 口径同视觉那条腿。
+
+    治的账（审计缺陷 5）：旧口把「没开 ASR」「本轮没语音」「转写挂了」全压成
+    空串，失败完全静默。四值判据：
+    - ``"disabled"``＝没有 provider（没开）；
+    - ``"empty"``＝本轮没有音频段，或模型回了空文本；
+    - ``"failed"``＝有音频且这一趟真没转成（字节准备失败/超限/接口抛错）；
+    - ``"ok"``＝拿到转写文本。
+    """
+    if provider is None:
+        return "", "disabled"
+    if not audio_source:
+        return "", "empty"
     work_dir = tempfile.mkdtemp(prefix="bot_asr_")
     try:
         prepared = _prepare_audio(
@@ -489,8 +515,11 @@ def transcribe_audio(
             timeout_seconds=timeout_seconds,
         )
         if prepared is None:
-            logger.info("asr skipped: audio source unusable type=%s", type(audio_source).__name__)
-            return ""
+            logger.info(
+                "asr skipped: audio source unusable type=%s",
+                type(audio_source).__name__,
+            )
+            return "", "failed"
         audio_bytes, filename = prepared
         try:
             text = provider.generate(
@@ -504,12 +533,33 @@ def transcribe_audio(
                 exc.error_kind,
                 getattr(provider, "last_attempts", []),
             )
-            return ""
-        except Exception:  # 转写失败不阻断聊天。
+            return "", "failed"
+        except Exception:  # noqa: BLE001 - 转写失败不阻断聊天，但"失败了"要留下事实。
             logger.exception("asr transcribe failed")
-            return ""
+            return "", "failed"
         if not text:
-            return ""
-        return _clip(text, max(80, int(max_chars)))
+            return "", "empty"
+        return _clip(text, max(80, int(max_chars))), "ok"
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def transcribe_audio(
+    provider: Any,
+    *,
+    audio_source: str,
+    timeout_seconds: float = 20.0,
+    max_chars: int = 300,
+) -> str:
+    """语音 → 文本的完整链路；任何失败返回空串，绝不阻断主回复。
+
+    文本投影口（既有签名与调用点零改动）；要区分失败/没开/没图的调用方用
+    ``transcribe_audio_with_status``。
+    """
+    text, _kind = transcribe_audio_with_status(
+        provider,
+        audio_source=audio_source,
+        timeout_seconds=timeout_seconds,
+        max_chars=max_chars,
+    )
+    return text

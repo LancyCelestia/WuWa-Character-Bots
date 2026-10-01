@@ -32,6 +32,9 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     tier_name_for_affinity,
 )
 from plugins.bot_unified_runtime.domains.render.bot_avatar import bot_avatar_uri
+from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
+    BRAND_THEME,
+)
 
 _COMMAND_RE = re.compile(
     # affinity(?![a-z0-9])：ASCII 别名右侧词边界（wiki _alias_hit 先例），
@@ -152,10 +155,21 @@ def _accent_color(config: Any | None) -> str:
 
 
 def _bot_name(config: Any | None) -> str:
-    return (
-        str(getattr(config, "bot_persona_display_name", "") or "").strip()
-        or "守岸人"
+    """卡面/正文署名的中文自称——走唯一读法（P-G3 第二波换腿，2026-09-29）。
+
+    此前直读 ``config.bot_persona_display_name`` 再手抄「守岸人」兜底：切人格时该
+    配置项不动 ⇒ 好感度卡继续显旧名，与人格自称分家。现经
+    ``persona_profile.current_bot_nickname``（先查人格册、按**当前生效**人格 id
+    现读，再回落兼容显示名）；两者都取不到 ⇒ 空串，由品牌胶囊统一回落品牌名，
+    本层不留第二处字面量（契约锁＝``bridge.RenderPayload().bot_name == ""``）。
+    绝不读 ``get_login_info``（台账 #60★）。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+        active_persona_id,
+        current_bot_nickname,
     )
+
+    return current_bot_nickname(active_persona_id(config), config=config)
 
 
 def _rules_chips() -> list[dict[str, str]]:
@@ -232,14 +246,20 @@ def build_algorithm_payload(
     accent_color: str,
     subtitle: str = "算法 · 因人而异 · 档位回应方式",
     bot_avatar_url: str = "",
+    bot_name: str = "",
 ) -> dict[str, Any]:
-    """算法说明卡 payload：规则速览 + 请求者的因子画像（定性）+ 档位态度对照。"""
+    """算法说明卡 payload：规则速览 + 请求者的因子画像（定性）+ 档位态度对照。
+
+    ``bot_name``＝调用方经 ``_bot_name(config)``（唯一读法）取到的自称；缺省空串＝
+    不表态，署名回落品牌胶囊单一源。此处**不许**再写死「守岸人」——那正是 P-G3
+    「自称与页面名分家」的形态（切人格后这张卡仍显旧名）。
+    """
     return {
         "pc": accent_color,
         "title": "好感度算法",
         "subtitle": subtitle,
         "mode": "algorithm",
-        "bot_name": "守岸人",
+        "bot_name": bot_name,
         "bot_avatar_url": bot_avatar_url,
         "feature_label": "好感度",
         "bot_score": f"{bot_score:.1f}",
@@ -362,6 +382,7 @@ def build_affinity_capability(
                 steps=steps,
                 accent_color=accent,
                 bot_avatar_url=bot_avatar_uri(config),
+                bot_name=bot_name,
             )
             card = _render_card(payload, render_backend, resolved_card_dir, request_id)
             return CapabilityResult(
@@ -401,7 +422,10 @@ def build_affinity_capability(
             payload = build_group_payload(
                 rows,
                 me_id=me_id,
-                subtitle=f"有印象 {len(rows)} 人 · 分数=守岸人的印象好感（-100~+100）",
+                subtitle=(
+                    f"有印象 {len(rows)} 人 · 分数="
+                    f"{bot_name or BRAND_THEME.display_name}的印象好感（-100~+100）"
+                ),
                 accent_color=accent,
             )
         else:

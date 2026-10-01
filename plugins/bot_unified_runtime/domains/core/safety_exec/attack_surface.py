@@ -235,6 +235,7 @@ _DEDUPE = "plugins.bot_unified_runtime.domains.emergency_info.service.dedupe"
 _MENTION = "plugins.bot_unified_runtime.domains.chat_reply.runtime.mentions"
 _ROLES = "plugins.bot_unified_runtime.domains.chat_reply.policy.roles"
 _CHAT = "plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat"
+_SG = "plugins.bot_unified_runtime.domains.chat_reply.character.shared_group"
 _FGW = "plugins.bot_unified_runtime.domains.transport.sender.file_gateway"
 _READER = "plugins.bot_unified_runtime.domains.files.sources.file_reader"
 
@@ -531,6 +532,9 @@ ATTACK_SURFACE_REGISTER: Final[tuple[SurfaceEntry, ...]] = (
         current_defender=(
             "injection.neutralize_internal_markers / guard_secondhand_text（同一包裹真身，"
             "零第二套标记）+ memory_extract 两条沉淀腿落库前消毒 + renderer 出站咽喉"
+            "+ shared_group.sanitize_digest_line 逐行剥离/全角化（群摘要腿，P1-b 收口；"
+            "真身同在 injection.py：strip_injection_instruction_spans 本波自 chat.py 迁入，"
+            "chat 侧只留私有别名——同一判据全树仅此一处定义）"
         ),
         failure_mode=(
             "旧形态是**结构性**的：check_prompt_injection 只吃 message.plain_text"
@@ -538,19 +542,35 @@ ATTACK_SURFACE_REGISTER: Final[tuple[SurfaceEntry, ...]] = (
             "composed_query，从未过注入处置；且全角化只发生在 QUOTE_AS_UNTRUSTED 分支，"
             "ALLOW 路径下正文里的 `[/UNTRUSTED_USER_TEXT]`+`[TRUSTED_SYSTEM]` 原样进模型，"
             "可提前闭合边界冒充系统段。沉淀腿更糟——一次污染，之后每轮召回都是载荷。"
+            "群摘要腿（ANTIATTACK-BRAIN B14/P1-b，含夜间推送链）旧形态同病："
+            "SQLiteGroupDigestProvider 把群成员原文逐条仅截断裸拼、summarize 又把摘要"
+            "整块裸拼进 prompt（LLM 失败回退腿与 chat 侧 `_shared_group_lines` 弱 choke "
+            "只全角、不剥指令句）——最坏情形是 **bot 自己的署名**每晚把成员伪造的"
+            "「系统指令」逐字复述回全群。本波由 sanitize_digest_line 逐行收口，"
+            "channels 词表不动（新造通道值须同改 trust.ContentOrigin，那件在飞且"
+            "超「零新机制」授权——理由见 P1B-attack_surface-register.patch.md §1）。"
         ),
         minimal_landing=(
             "残余三格均在**生产根文件与在飞件**内、须由装配点同批改：①chat.py 视觉转译"
             "与 `f\"{composed_query}\\n[语音转写结果…]\"` 那两处拼接改调 "
             "guard_secondhand_text；②providers.py 记忆渲染腿对**存量未消毒库**补读侧"
             "neutralize（写侧已消毒，历史条目仍是裸文本）；③字幕摘要 content_parser "
-            "的 `_summarize_subtitle` 入参。逐格坐标见名册 ANTATK-ROSTER-2"
+            "的 `_summarize_subtitle` 入参。逐格坐标见名册 ANTATK-ROSTER-2。"
+            "④群摘要腿（P1-b/B14）**已落**：sanitize_digest_line 逐行组合两件真身，"
+            "接在 SQLiteGroupDigestProvider.load 取文处与 summarize 入参处（含 LLM "
+            "失败回退腿），推送腿因此自动闭合；下方探针即它的执法"
         ),
         probes=(
             DefenceProbe(_INJ, "neutralize_internal_markers"),
             DefenceProbe(_INJ, "guard_secondhand_text"),
+            DefenceProbe(_INJ, "strip_injection_instruction_spans"),
             DefenceProbe(_MEMEX, "store_extracted_memories"),
             DefenceProbe(_MEMEX, "store_extracted_reminders"),
+            DefenceProbe(
+                _SG,
+                "sanitize_digest_line",
+                note="群摘要腿逐条处置组合缝（P1-b）——被删/改名本条即红",
+            ),
         ),
         handoff_ref="H5",
     ),
@@ -958,6 +978,8 @@ _BIDI_RLE = chr(0x202B)
 _BIDI_PDF = chr(0x202C)
 _BIDI_LRO = chr(0x202D)
 _BIDI_RLO = chr(0x202E)
+_BIDI_LRM = chr(0x200E)
+_BIDI_RLM = chr(0x200F)
 _BIDI_LRI = chr(0x2066)
 _BIDI_RLI = chr(0x2067)
 _BIDI_FSI = chr(0x2068)
@@ -974,6 +996,13 @@ _BIDI_CONTROLS: Final[Mapping[str, str]] = {
     _BIDI_LRE: "lre", _BIDI_RLE: "rle", _BIDI_PDF: "pdf",
     _BIDI_LRO: "lro", _BIDI_RLO: "rlo", _BIDI_LRI: "lri",
     _BIDI_RLI: "rli", _BIDI_FSI: "fsi", _BIDI_PDI: "pdi",
+    # F-G7（2026-09-29 SEAT-R3-MARKER）：LRM/RLM 是零宽双向**标记**（U+200E/U+200F），
+    # 与 LRE/RLE/LRO/RLO 同族——不可见、剥除不改变可见内容。旧表把 202A..202E/2066..2069
+    # 收全了却漏掉 200E/200F 这两枚，攻击者在出站文本 / 文件名 / 名片里嵌一枚 RLM
+    # 就能把「rtl-\u200Epm.txt」这类形态显示成倒序，而 `strip_display_controls` 视若无物。
+    # 修在**中央唯一表**这一处，`file_gateway.sanitize_file_name` / `injection.sanitize_display_name`
+    # / `display_guard.neutralize_visual_spoof` 自动继承，不新抄第二张码点表。
+    _BIDI_LRM: "lrm", _BIDI_RLM: "rlm",
 }
 # value 以 "_exempt" 结尾者不报警（ZWJ 见注释）。
 _INVISIBLE_CONTROLS: Final[Mapping[str, str]] = {
@@ -1090,7 +1119,8 @@ def find_visual_spoof_controls(text: str) -> tuple[str, ...]:
     """返回文本里的**显示伪装**控制形态标签（有序去重）。
 
     命中类别：
-    - ``bidi_override:xxxx``：出现 Bidi 覆写/隔离（U+202A–U+202E / U+2066–U+2069）；
+    - ``bidi_override:xxxx``：出现 Bidi 覆写/隔离/方向标记
+      （U+200E–U+200F 方向标记 / U+202A–U+202E 覆写 / U+2066–U+2069 隔离）；
     - ``invisible_control:xxxx``：出现零宽空格/零宽非连接/BOM/软连字符/单词连接符等
       **表情不合法使用之外**的不可见字符（ZWJ `‍` 被显式豁免为表情连字，不报）；
     - ``homoglyph_role_keyword:xxxx``：**混码**串折 ASCII 后含角色关键词（admin/root/…），

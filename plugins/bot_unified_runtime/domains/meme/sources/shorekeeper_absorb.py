@@ -11,11 +11,15 @@
    指向他人；hint 无归属时退看 ``description``；情绪/场景标签**不算**主体证据
    （旧口径摊平四字段求交，会把「主体是别人、角落出现她」的图误标本命）。
    不引入新的视觉模型调用、不立第二套标签体系。
-2. **命中即收藏**：主体是她的贴纸标 ``persona_owned=1``，并沿用既有
-   ``MemeLibraryStore._score_weight`` 的本命加权（``_PRIORITY_HINTS`` 首档 8.0）
-   ——权重只由那一个函数决定，本件不另算一份分数。``persona_owned`` 的**唯一**
-   额外语义是「豁免按龄裁剪」：她的图是收藏，不是三十天流水（见
-   ``meme_library.cleanup`` 的 ``protect_persona``）。
+2. **双证据才收藏，单证据入待审**（S-MEME2-REVIEW，2026-09-29 需求 12）：一条证据
+   不定音——``vlm_tag ∧ (naming ∨ embedding ∨ human)``，或人审终裁面单独成立，才标
+   ``persona_owned=1`` 并沿用既有 ``MemeLibraryStore._score_weight`` 的本命加权
+   （``_PRIORITY_HINTS`` 首档 8.0）；单面证据只占队列位 ``review_state=pending``。
+   判据本体在 ``persona_review``，本件是它的执法点；停 8.0 档由
+   ``set_review_state`` 现算复算，本件不另算一份分数。缺省 **fail-closed**：没审过的
+   模型主张到不了「自动标本命」。``persona_owned`` 的**唯一**额外语义仍是「豁免按龄
+   裁剪」：她的图是收藏，不是三十天流水（见 ``meme_library.cleanup`` 的
+   ``protect_persona``）。
 3. **隔离不复活**：NSFW 命中删除阈值时，删文件删行**并且**立内容级墓碑；
    吸收前先查墓碑，命中直接拒收。旧实现只有前者，于是同一张图再被发一次
    就会原样复活（重新入库、重新打标、重新可发送）——这是本件补的真实漏口。
@@ -147,6 +151,9 @@ class AbsorbDecision:
     md5: str = ""
     content_sha256: str = ""
     persona_owned: bool = False
+    #: 待审队列位（``persona_review`` 的三态字面值：``approved``/``pending``/``""``）。
+    #: 读侧（listener 的 outcome 日志、审批面）取的就是这一格——缺它决策件就少一条腿。
+    review_state: str = ""
     subject_term: str = ""
     reason: str = ""
     audit: tuple[str, ...] = field(default=())
@@ -198,8 +205,9 @@ def apply_tagged_outcome(
     nsfw_delete: float,
     persona_terms: Sequence[str],
     persona_absorb_enabled: bool = True,
+    naming_hints: Sequence[str] = (),
 ) -> AbsorbDecision:
-    """打标**之后**的落库判定：NSFW 删除并立碑 / 本命标记 / 普通入库。
+    """打标**之后**的落库判定：NSFW 删除并立碑 / 本命标记 / 待审 / 普通入库。
 
     三个分支互斥且顺序固定（高危先走，绝不因为「是她」而豁免 NSFW 闸）。
 
@@ -208,6 +216,9 @@ def apply_tagged_outcome(
     裁剪、选图时吃 ``_PRIORITY_HINTS`` 的 8.0 加权）。关掉它不改变「图片照常入库」
     这件事——收库门本身（``bot_meme_library_enabled`` + 群黑白名单）在调用方，
     本件不放宽、也不越权代开。
+
+    ``naming_hints`` 是包名/文件名/来源线索这类**模型之外**的证据面，由调用方
+    （listener / 补标道）注入；缺省空 ⇒ 只有 VLM 一张嘴，按待审处理。
     """
     sha = str(content_sha256_value or "").strip().lower()
     nsfw = float((tags or {}).get("nsfw_score", 0.0) or 0.0)
@@ -232,32 +243,59 @@ def apply_tagged_outcome(
         persona_hint=str((tags or {}).get("persona_hint", "common"))[:24],
         nsfw_score=nsfw,
     )
-    hit, subject_code = (
-        decide_subject(tags, persona_terms)
-        if persona_absorb_enabled
-        else ("", "absorb_switch_off")
+    # 局部导入：``persona_review`` 模块级反向依赖本件（取证面只准用 ``subject_hit``
+    # 那把尺），提到模块级就成环。同包内互引一律走这个形状（先例 sticker_pool）。
+    from plugins.bot_unified_runtime.domains.meme.sources import persona_review
+
+    admission, evidence = persona_review.admit_evidence(
+        tags=tags,
+        naming_hints=naming_hints,
+        terms=persona_terms,
+        md5=str(md5 or ""),
+        absorb_enabled=persona_absorb_enabled,
     )
-    if not hit:
-        # 「不标」也要能区分三种真因（她裁定的观测面：判不出/主体是别人/开关关）。
-        # 结论代号进 audit——listener 把它落日志，事后「这张为什么没成她的收藏」
-        # 有据可查，不是静默丢弃。
+    if admission.state == persona_review.ADMIT:
+        # 证据齐（或人审终裁）才标本命（豁免按龄裁剪）；队列位与 8.0 复档都交给
+        # ``set_review_state``——权重真身仍是 ``_score_weight``，本件不另算一份。
+        store.set_review_state(md5, persona_review.ADMIT)
+        store.mark_persona_owned(md5, owned=True)
         return AbsorbDecision(
             action="accepted",
             md5=str(md5),
             content_sha256=sha,
-            reason="" if persona_absorb_enabled else "absorb_switch_off",
-            audit=("meme_absorb", "tagged", subject_code),
+            persona_owned=True,
+            review_state=persona_review.ADMIT,
+            subject_term=admission.subject_term,
+            audit=("meme_absorb", "tagged", admission.code),
         )
-    # 主体是她：标本命（豁免按龄裁剪）。权重不在此另算——``apply_tags`` 已经
-    # 走过 ``_score_weight``，``_PRIORITY_HINTS`` 首档对「守岸人/岸宝」给 8.0。
-    store.mark_persona_owned(md5, owned=True)
+    if admission.state == persona_review.PENDING:
+        # 单面证据（VLM 一句话／只有文件名线索）：**不标本命**，只占待审队列位。
+        # 停本命档由 ``set_review_state`` 现成复算（勿在此重造），图仍照普通梗图
+        # 可发——「待审」是「没确认」，不是「不能发」（需求 12 红线的另一半）。
+        store.set_review_state(md5, persona_review.PENDING)
+        return AbsorbDecision(
+            action="accepted",
+            md5=str(md5),
+            content_sha256=sha,
+            review_state=persona_review.PENDING,
+            subject_term=admission.subject_term,
+            audit=("meme_absorb", "tagged", admission.code),
+        )
+    # 「不标」也要能区分三种真因（她裁定的观测面：判不出/主体是别人/开关关）。
+    # 结论代号进 audit——listener 把它落日志，事后「这张为什么没成她的收藏」
+    # 有据可查，不是静默丢弃。无主张那一路沿用主体判定的代号（观测面口径不变）。
+    code = (
+        evidence.subject_code
+        if admission.code == persona_review.CODE_NO_CLAIM
+        else admission.code
+    )
     return AbsorbDecision(
         action="accepted",
         md5=str(md5),
         content_sha256=sha,
-        persona_owned=True,
-        subject_term=hit,
-        audit=("meme_absorb", "persona_owned"),
+        reason="" if persona_absorb_enabled else persona_review.CODE_SWITCH_OFF,
+        review_state=admission.review_state,
+        audit=("meme_absorb", "tagged", code),
     )
 
 

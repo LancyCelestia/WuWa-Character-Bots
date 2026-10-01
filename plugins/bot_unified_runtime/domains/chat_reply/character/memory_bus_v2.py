@@ -104,10 +104,21 @@ _CATEGORY_DECAY: dict[str, str] = {
     "event": DECAY_EPISODIC,
 }
 
+# 类目 → ``kind`` 列取值。``kind`` 的唯一用途是**类型标签**（渲染腿
+# ``providers._memory_kind_label``），所以这里的取值一律留在
+# ``memory_service.MemoryKind`` 封闭枚举内（preference/fact/event 三支）——
+# 枚举外的值渲染层只「原样点名」，注入条目就会带着英文碎片进 prompt（需求 11
+# 「带中文类型标签」不成立）。细分类目（personality/need/identity）在本表折进
+# 枚举三支，**不新建第二套枚举**：她要的是「按类目记、按类目说得出」，
+# 而枚举扩充要动的是被安全锁钉住的封闭集（``test_memory_service_v21
+# ::test_kind_enum_closed_no_persona_permission_route``），归主会话裁定。
 _KIND_BY_CATEGORY: dict[str, str] = {
     "preference": "preference",
-    "identity": "fact",
+    "need": "preference",
+    "personality": "fact",
     "activity": "fact",
+    "identity": "fact",
+    "fact": "fact",
     "plan": "event",
     "event": "event",
     "": "fact",
@@ -372,6 +383,136 @@ def _looks_like_form_of_address(value: str) -> bool:
     if not _FORM_OF_ADDRESS_CJK.fullmatch(normalized):
         return False
     return not bool(_FORM_OF_ADDRESS_REJECT.search(normalized))
+
+
+# ---- 语义类目判据（S-MEMAFF，需求 11「按类目落库、注入带中文类型标签」）----
+
+CATEGORY_NEED = "need"
+CATEGORY_EVENT = "event"
+CATEGORY_ACTIVITY = "activity"
+CATEGORY_PERSONALITY = "personality"
+CATEGORY_IDENTITY = "identity"
+CATEGORY_PREFERENCE = "preference"
+CATEGORY_FACT = "fact"
+
+_WHITESPACE_PATTERN = re.compile(r"\s+")
+
+# **顺序即优先级**（先具体后泛化），这是本表唯一的判据形状：
+# 「以后别在群里@我」既是要求又含时间词，要求腿必须赢；
+# 「我下周要出差」是计划，不得被行为腿（含「下周」不成习惯）抢先；
+# 「我喜欢喝柠檬茶」在偏好腿兜住，落不进前面任何一条。
+# 全部**锚定句首的第一人称/祈使形态**，认不出⇒``fact``（保守，绝不猜成偏好）。
+_SEMANTIC_CATEGORY_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        CATEGORY_NEED,
+        re.compile(
+            r"^(?:请|麻烦|切记|记住|以后(?:请|要|别|不要|不许|不准|记得|记得)|"
+            r"下次(?:别|不要|记得)|别再|不要再|不要|不许|不准|别)"
+            r"|^(?:我|本人)(?:真的)?(?:希望|想要|要求|需要|求你|拜托)"
+            r"|^\s*(?:please|do\s*not|don't|dont|never|remember|always)\b"
+            r"|\bi\s+(?:want|need|would\s+like)\s+(?:you\s+)?(?:to\s+)?"
+            r"|\bmy\s+(?:preference|rule)\s+is\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        CATEGORY_EVENT,
+        re.compile(
+            r"^(?:我|本人)(?:下周|下礼拜|下个月|下月|明天|明日|后天|今儿|这周|本周|"
+            r"周末|过几天|月底|月初|期末|寒假|暑假|下周三|星期五|周[一二三四五六日])"
+            r"|^(?:我|本人)(?:打算|计划|准备|将要|要|得|会)(?:去|参加|考|出差|搬家|回|看|买|做|汇报|交)"
+            r"|\bi\s+(?:will|am\s+going\s+to|plan\s+to|have\s+to)\b"
+            r"|\b(?:next|this)\s+(?:week|month|monday|tuesday|wednesday|thursday|friday)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        CATEGORY_ACTIVITY,
+        re.compile(
+            r"^(?:我|本人)(?:每天|天天|每日|每周|每月|常常|经常|通常|一般|平时|习惯|一向|"
+            r"每次都|老是|总是|早晚|睡前|起床后|下班后)"
+            r"|^(?:我|本人)(?:正在|在|开始在|坚持|最近在|这几天在)(?:学|练|读|看|写|画|弹|跑|游|健|备|复习)"
+            r"|\bi\s+(?:usually|often|always|run|swim|jog|read|practice|work\s*out)\b"
+            r"|\b(?:every|each)\s+(?:day|morning|evening|week|night)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        CATEGORY_PERSONALITY,
+        re.compile(
+            r"^(?:我|本人)(?:这个)?人的?(?:性格|性子|脾气|个性|为人|人格)"
+            r"|^(?:我|本人)(?:的)?(?:性格|性子|脾气|个性)(?:是|比较|有点|挺|很|蛮|偏|天生|本来就|一向|算)?"
+            r"|^(?:我|本人)(?:这个)?人(?:比较|有点|挺|很|蛮|天生|本来就|一向|从小)?"
+            r"(?:内向|外向|慢热|怕生|社恐|细心|粗心|乐观|悲观|敏感|多疑|直接|腼腆|害羞|随和|固执|急性子|大大咧咧)"
+            r"|\bmy\s+personality\b|\bi\s*'?m\s+(?:quite|very|a\s+bit|rather)?\s*"
+            r"(?:shy|introverted?|extroverted?|outgoing|quiet|sensitive|optimistic|pessimistic|stubborn)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        CATEGORY_IDENTITY,
+        re.compile(
+            r"^(?:我|本人)(?:是|属于)(?:个|一名|一位|一个)?"
+            r"[^，,。;；]{0,10}(?:人|学生|老师|程序员|玩家|粉丝|独生女|独生子|左撇子|右撇子)"
+            r"|^(?:我|本人)是(?:00后|90后|80后|i人|e人|infp|intj|enfp|isfp|entp)"
+            r"|\bmy\s+mbti\s+is\b|\bi\s+am\s+an?\s+(?:only\s+child|introvert|extrovert)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        CATEGORY_PREFERENCE,
+        re.compile(
+            r"^(?:我|本人)(?:不|才|没)?(?:很|超|最|挺|蛮|真的|平时|通常|一般|特别)?"
+            r"(?:喜欢|喜爱|爱|偏好|爱好|迷恋|沉迷于|钟情于|热衷于|中意|青睐|爱吃|爱喝|爱听|爱看|爱玩|受不了|不喜欢)"
+            r"|^(?:我|本人)对[^，,。;；]{1,16}(?:感兴趣|有兴趣|着迷|无感)"
+            r"|^(?:我|本人)(?:的)?(?:口味|爱好|兴趣|喜好)(?:是|都在|偏向)"
+            r"|\bi\s+(?:like|love|enjoy|prefer|dislike|hate)\b"
+            r"|\bmy\s+favo(?:u)?rite\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+def classify_fact_category(text: str) -> str:
+    """一条事实的**语义类目**（文本的纯函数，写侧读侧同形，判据单一真身）。
+
+    为什么判据只看文本、不看调用方给的 ``category``：抽取面今日恒传
+    ``"auto"``、命令面恒传 ``"manual"``（``slot_namespace`` 已把它们折进空命名
+    空间），那两串说的是「这句话从哪来」而不是「这是哪一类事实」。若类目取自
+    来源标签，同一句话经两条腿就落成两个类目，注入条目要么带「裸 auto」要么
+    按来源偏科；取自文本才与 ``identity_attribute`` 立的同一条硬口径一致
+    （纯函数、两面同形，见其 docstring「为什么**不看 category**」）。
+
+    为什么**不喂槽位命名空间**：``slot_key`` 一改，现网已落库的行全部对不上，
+    「又说起=确认」当场失效，那是需要迁移的破坏性改动（本波红线＝存量零迁移）。
+    类目只喂 ``kind`` 列（类型标签），一个字的合并语义都不动。
+    """
+    folded = (text or "").strip().casefold()
+    if not folded:
+        return CATEGORY_FACT
+    # 两种形态都试：带空格的原形给拉丁词界用（``i like lemon tea`` 剥掉空格就
+    # 全废）；再试一次**剥净空白**的紧凑形，兜住「LLM 抽取把中文词切散」
+    # （``我 喜欢 喝 柠檬茶``）这类真实产物——中文没有词界，空格纯属噪声。
+    compact = _WHITESPACE_PATTERN.sub("", folded)
+    for category, pattern in _SEMANTIC_CATEGORY_RULES:
+        if pattern.search(folded) or (compact != folded and pattern.search(compact)):
+            return category
+    return CATEGORY_FACT
+
+
+def derive_memory_kind(category: str, text: str) -> str:
+    """``kind`` 列的唯一派生口（总线写腿与 legacy 旧表写腿共用，禁第二副本）。
+
+    调用方给的 ``category`` 若是**来源标签**（``auto``/``manual``/``sqlite``/…，
+    见 ``_SOURCE_LABEL_CATEGORIES``）或空串，就按文本现算语义类目；显式语义类目
+    （夜间归纳传的 ``preference`` 等）一律原样优先。返回值恒在
+    ``memory_service.MemoryKind`` 枚举内 ⇒ 渲染层必出中文标签。
+    """
+    folded = (category or "").strip().casefold()
+    if not folded or folded in _SOURCE_LABEL_CATEGORIES:
+        folded = classify_fact_category(text)
+    return _KIND_BY_CATEGORY.get(folded, "fact")
 
 
 _RECALL_RECENCY_HALF_LIFE_DAYS = 30.0
@@ -751,18 +892,18 @@ def _pick_rival(rivals: list[dict[str, Any]], *, is_attribute: bool) -> Any | No
     )
 
 
-def _kind_for(signature: FactSignature, category: str) -> str:
+def _kind_for(signature: FactSignature, category: str, text: str) -> str:
     """行的 ``kind`` 取值。
 
     身份属性类**用属性名当 kind**（``name``/``nickname``/``gender``/…）：渲染腿
     （S-T-MEM-3，需求 11「kind=昵称/名字/身份…进分区」）要的就是这个信息，写侧
-    把它压成 ``fact`` 就等于让她从文本里再猜一次。其余仍走既有词表
-    （``fact``/``preference``/``event``），一个不动。渲染面对未登记 kind 的既有
-    口径是「短标识原样点名、不编造」⇒ 新增取值不会让注入面瞎。
+    把它压成 ``fact`` 就等于让她从文本里再猜一次。其余走 ``derive_memory_kind``
+    单一派生口（来源标签⇒按文本现算语义类目），一个不动。渲染面对未登记 kind 的
+    既有口径是「短标识原样点名、不编造」⇒ 新增取值不会让注入面瞎。
     """
     if signature.is_attribute:
         return signature.attribute
-    return _KIND_BY_CATEGORY.get((category or "").strip().casefold(), "fact")
+    return derive_memory_kind(category, text)
 
 
 def _initial_status(
@@ -812,6 +953,26 @@ def _sanitize_violation(text: str) -> str | None:
     except Exception as exc:  # noqa: BLE001
         logger.warning("memory bus sanitize check failed type=%s", type(exc).__name__)
         return None
+
+
+def _neutralize_markers(text: str) -> str:
+    """总线写腿的边界标记消毒（判据/消毒口与 ``pre_write_sanitize`` 同一真身）。
+
+    来源不可用⇒原样返回并点名一次（fail-open 到**今日实况**，不换成第二套判据）；
+    幂等：全角产物不再被内部标记正则命中，重跑零副作用。
+    """
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
+            neutralize_internal_markers,
+        )
+    except Exception as exc:  # noqa: BLE001 - 消毒来源不可用=维持今日行为
+        logger.warning("memory bus marker sanitizer unavailable type=%s", type(exc).__name__)
+        return text
+    try:
+        return neutralize_internal_markers(text)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("memory bus marker sanitize failed type=%s", type(exc).__name__)
+        return text
 
 
 # ---- 单一打分器的候选池（消费腿，需求 11）----
@@ -1026,6 +1187,14 @@ class MemoryBus:
                 audit_only_reason or "n-a",
             )
             return AbsorbOutcome("rejected", "", reason=f"hard_line:{violation}")
+        # 边界标记消毒（S-MEMAFF，需求 17 交叉面）：硬红线判了、标记不消毒，是
+        # 本件过去最刺眼的一处「开起来反而更松」——同一句话经 legacy 写腿（
+        # ``SQLiteMemoryRepository.upsert_fact``→``pre_write_sanitize``）会被全角化，
+        # 经总线反而原样落库，并在后续每一轮被逐条注回 prompt（ providers 渲染腿），
+        # 成为可复用的伪造边界载荷。消毒口唯一 = ``injection.neutralize_internal_markers``
+        # （幂等、只动标记、干净文本逐字节不变），失败=维持实况并点名一次，
+        # 与 ``_sanitize_violation`` 同一条 fail-open 口径，绝不静默换成第二套判据。
+        body = _neutralize_markers(body)
         resolved_scope = scope or derive_scope(session_id)
         if provenance != PROVENANCE_EXPLICIT and not resolved_scope.key:
             # 归纳侧的脏/空作用域不配拿到「全会话可见」——v1 的 fail-open 在此关死。
@@ -1125,6 +1294,15 @@ class MemoryBus:
                 upgraded or provenance == PROVENANCE_EXPLICIT
             ) and str(same_polarity.get("status") or "") != STATUS_ACTIVE:
                 fields["status"] = STATUS_ACTIVE
+            # 来源探针**只补空位**（台账 #68 复原波 / B 锁）：建行那次没带探针、后来
+            # 带探针的事件来确认，就把这条记忆「来自哪一次事件」补进库里——否则这
+            # 笔来源账永久缺席，迁移重跑也无从判重（第二遍会再确认一次、计数白涨）。
+            # 已有探针者一字不动：建行事件自己的幂等账归建行者，确认腿不得抢写；
+            # ``source`` 列同理不跟写（「谁建的行」与「谁来确认」是两本账）。
+            if source_event_id and not str(
+                same_polarity.get("source_event_id") or ""
+            ).strip():
+                fields["source_event_id"] = source_event_id
             self._store.update_bus_fields(memory_id, fields)
             return AbsorbOutcome(
                 "confirmed", memory_id, confirm_count=confirm_count
@@ -1159,7 +1337,7 @@ class MemoryBus:
             "owner_id": owner,
             # session_id 列保留旧语义（既有服务/投影按它取值）：global 或本次会话键。
             "session_id": resolved_scope.key or "global",
-            "kind": _kind_for(signature, category),
+            "kind": _kind_for(signature, category, body),
             "status": _initial_status(
                 provenance=provenance,
                 confidence=confidence,

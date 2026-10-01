@@ -112,11 +112,31 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 
 
 class ConfigResetPayload(BaseModel):
+    """CAS 基座：只有版本戳。工作区/动作等「不带会话」的端点直接复用本类，
+    所以 **不许** 在这里加 `session_key`——那会把「申报来源会话」静默放宽给
+    不相干的端点（收了字段却没人消费＝第二套吞字段的形态）。会话申报只准住在
+    下面两枚真正的写腿载荷上。"""
     model_config = ConfigDict(extra="forbid")
     expected_version: int = Field(strict=True, ge=0)
 
 
 class ConfigValuePayload(ConfigResetPayload):
+    """预览（dry-run）载荷：不碰同意门 ⇒ 不接会话申报，strictness 与旧形态一致。"""
+    value: Any
+
+
+class ConfigWriteResetPayload(ConfigResetPayload):
+    """实际写腿（reset）载荷：CAS + 来源会话申报（需求 18②，R1「原会话内确认」）。
+
+    `session_key` 缺省空串＝本请求不声明会话 ⇒ 同意门的同会话判据对该笔不启用，
+    与透传落地前逐字节同形。填了会话只会**更严**（批准必须真出现在那个会话里），
+    不会多批。`extra="forbid"` 继承基类：除本格之外一律 422，不放宽。
+    """
+    session_key: str = Field(default="", strict=True, max_length=256)
+
+
+class ConfigWriteValuePayload(ConfigWriteResetPayload):
+    """实际写腿（set）载荷：在写腿基座之上带值。"""
     value: Any
 
 

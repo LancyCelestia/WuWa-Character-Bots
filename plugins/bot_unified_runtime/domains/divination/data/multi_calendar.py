@@ -529,11 +529,15 @@ def tibetan_year_lines(gregorian_year: int) -> list[str]:
     """藏历面（诚实边界见模块 docstring：不给月/日、不给洛萨日期）。"""
     cycle, year_in_cycle = rabjung_year(gregorian_year)
     return [
-        f"藏历：饶迥第{cycle}轮第{year_in_cycle}年"
-        f"（公历{gregorian_year} 对应 {tibetan_year_name(gregorian_year)}，"
-        f"饶迥元年=公历{_RABJUNG_EPOCH_YEAR}）",
-        "藏历的月与日、以及藏历新年（洛萨）：需时轮历（Kalachakra）历表与逐年颁定，"
-        "本仓无源故不推算——被问到就直说这一处没资料，别拿农历或公历日期顶替。",
+        (
+            f"藏历：饶迥第{cycle}轮第{year_in_cycle}年"
+            f"（公历{gregorian_year} 对应 {tibetan_year_name(gregorian_year)}，"
+            f"饶迥元年=公历{_RABJUNG_EPOCH_YEAR}）"
+        ),
+        (
+            "藏历的月与日、以及藏历新年（洛萨）：需时轮历（Kalachakra）历表与逐年颁定，"
+            "本仓无源故不推算——被问到就直说这一处没资料，别拿农历或公历日期顶替。"
+        ),
     ]
 
 
@@ -600,15 +604,21 @@ def orthodox_calendar_lines(year: int, month: int, day: int) -> list[str]:
     old_gregorian = orthodox_pascha_gregorian(year)
     new_pascha = new_rite_pascha_gregorian(year)
     return [
-        f"东正教历：公历{year}-{month:02d}-{day:02d} = 儒略历"
-        f"{julian_day.year}-{julian_day.month:02d}-{julian_day.day:02d}（今日两历差{offset}天）",
-        "修订儒略历（密兰科维奇历）只改置闰规则：1900-2299 之间它与公历完全同日，"
-        "差别只在「哪些教会用哪条历法」；两历（儒略历对公历）同日之差现在是 "
-        f"{offset} 天（1900-03-13 起 13 天、2100-03-15 起 14 天）。",
-        f"{year} 年复活节：旧历 computus = 儒略历{old_julian[0]}月{old_julian[1]}日"
-        f" = 公历{old_gregorian.month}月{old_gregorian.day}日；"
-        f"修订儒略历/公历 computus = 公历{new_pascha.month}月{new_pascha.day}日。"
-        "某个教会走哪条历法要按该教会自身规定回答，本件只给两条历法各自算出的日子。",
+        (
+            f"东正教历：公历{year}-{month:02d}-{day:02d} = 儒略历"
+            f"{julian_day.year}-{julian_day.month:02d}-{julian_day.day:02d}（今日两历差{offset}天）"
+        ),
+        (
+            "修订儒略历（密兰科维奇历）只改置闰规则：1900-2299 之间它与公历完全同日，"
+            "差别只在「哪些教会用哪条历法」；两历（儒略历对公历）同日之差现在是 "
+            f"{offset} 天（1900-03-13 起 13 天、2100-03-15 起 14 天）。"
+        ),
+        (
+            f"{year} 年复活节：旧历 computus = 儒略历{old_julian[0]}月{old_julian[1]}日"
+            f" = 公历{old_gregorian.month}月{old_gregorian.day}日；"
+            f"修订儒略历/公历 computus = 公历{new_pascha.month}月{new_pascha.day}日。"
+            "某个教会走哪条历法要按该教会自身规定回答，本件只给两条历法各自算出的日子。"
+        ),
     ]
 
 
@@ -653,8 +663,12 @@ def rich_calendar_lines(today: date | None = None) -> list[str]:
     )
     leap = lunar_leap_month(lunar.year)
     new_year = lunar_new_year(lunar.year)
-    term_clauses = ["干支纪年以农历正月初一换年"
-                    "（八字另有以立春换年的口径，两者口径不同、不可混用）"]
+    term_clauses = [
+        (
+            "干支纪年以农历正月初一换年"
+            "（八字另有以立春换年的口径，两者口径不同、不可混用）"
+        )
+    ]
     if previous_name:
         term_clauses.append(
             f"节气位置：{previous_name}（{previous_when.month}月{previous_when.day}日）之后"
@@ -664,15 +678,21 @@ def rich_calendar_lines(today: date | None = None) -> list[str]:
             f"下一节气 {next_name}（{next_when.month}月{next_when.day}日）"
         )
     lines = [
-        f"公历{today.year}年{today.month}月{today.day}日 {_WEEKDAY_NAMES[today.weekday()]}"
-        f"（儒略日数 {gregorian_to_jdn(today.year, today.month, today.day)}）",
-        f"农历{lunar.year_ganzhi}{lunar.zodiac}年{lunar.month_name}{lunar.day_name}"
-        f"（本月{'是闰月' if lunar.is_leap_month else '不闰'}；"
-        f"该农历年的闰月：{'闰' + _LUNAR_MONTH_NAMES[leap - 1] if leap else '无'}；"
-        f"该农历年正月初一＝公历{new_year.isoformat()}）",
+        (
+            f"公历{today.year}年{today.month}月{today.day}日 {_WEEKDAY_NAMES[today.weekday()]}"
+            f"（儒略日数 {gregorian_to_jdn(today.year, today.month, today.day)}）"
+        ),
+        (
+            f"农历{lunar.year_ganzhi}{lunar.zodiac}年{lunar.month_name}{lunar.day_name}"
+            f"（本月{'是闰月' if lunar.is_leap_month else '不闰'}；"
+            f"该农历年的闰月：{'闰' + _LUNAR_MONTH_NAMES[leap - 1] if leap else '无'}；"
+            f"该农历年正月初一＝公历{new_year.isoformat()}）"
+        ),
         "；".join(term_clauses) + "。",
-        f"南传佛历{today.year + 543}年 · 黄帝纪元{today.year + 2697}年 · "
-        f"拜占庭历{byzantine_year(today.year, today.month, today.day)}年",
+        (
+            f"南传佛历{today.year + 543}年 · 黄帝纪元{today.year + 2697}年 · "
+            f"拜占庭历{byzantine_year(today.year, today.month, today.day)}年"
+        ),
         f"伊斯兰历约{year_h}年{month_h}月{day_h}日（Kuwaiti 历表推算，与月相观测可差 ±1 天）",
     ]
     era_text = japan_era(today.year, today.month, today.day)

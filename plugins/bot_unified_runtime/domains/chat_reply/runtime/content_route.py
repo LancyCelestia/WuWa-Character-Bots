@@ -27,7 +27,9 @@ protocols"），连无辜消息都被拒。检测改为纯本地信号，零模�
 
 v21r5 双开关扩展（2026-09-19 用户裁定）：
 
-5. 群聊两级状态：管理员「亲密模式 开」=群级钉（群键，全群生效，既有语义）；
+5. 群聊两级状态：管理员「亲密模式 开」=群级钉（**群作用域键**——中央件
+   ``session_keys.group_scope_key`` 构造，全群共享一把，全群生效；T-1 修复
+   2026-09-27：生产群键逐成员，原样落键=只钉管理员自己）；
    普通成员「亲密模式 开」=个人级钉（成员派生键 ``(群键, 用户号)``，仅本人）。
    群消息的路由/注入键=成员派生键 ``member_session_key(群键, sender_id)``，
    判定时先查群级钉（群 ON→全员 intimate；群 OFF 不压制成员个人档——开关一
@@ -62,6 +64,10 @@ from typing import Any
 
 from plugins.bot_unified_runtime.domains.chat_reply.character.relationships import (
     relation_instruction,
+)
+from plugins.bot_unified_runtime.domains.core.session_keys import (
+    group_scope_key,
+    sanitize_key_segment,
 )
 
 # 会话状态 LRU 封顶：防长跑慢泄漏（poke/_POKE_LAST_CAP 同款纪律）。
@@ -224,17 +230,25 @@ def match_master_love_admin(sender_id: str, group_id: str, entries: list[str]) -
 
 # ---------------------------------------------------------------- v21r5 双开关：群聊两级状态
 
-# 成员派生键分隔符：双竖线 + "u:" 前缀。群 session_id 形如 "group:123"、
-# 私聊 "private:456"（摄取层惯例），不会天然含该形态；个人级状态分桶 (群,用户)。
+# 成员派生键分隔符：双竖线 + "u:" 前缀。生产群键=中央件下划线形
+# `group_<群号>_<发送者>`（逐成员一把）、私聊=裸 QQ 号；冒号形 `group:<gid>`
+# 只存在于合成/开发/出站命名空间（判据见 domains/core/session_keys 模块头，
+# 旧注释"群 session_id 形如 group:123（摄取层惯例）"即本仓点名过的误导源，
+# T-1 缺陷的根。QQ 数字 id 使这些形态都不天然含 `||u:`；构造侧仍把两段过
+# 中央件消毒（T-2），用户可控输入伪不出嵌套键。个人级状态分桶 (群,用户)。
 _MEMBER_SCOPE_SEP = "||u:"
 
 
 def member_session_key(group_session_key: str, sender_id: str) -> str:
-    """群聊成员派生键：开关一（个人级亲密状态）的载体 = (群键, 用户号)。"""
-    return (
-        f"{str(group_session_key or '').strip()}"
-        f"{_MEMBER_SCOPE_SEP}{str(sender_id or '').strip()}"
-    )
+    """群聊成员派生键：开关一（个人级亲密状态）的载体 = (群键, 用户号)。
+
+    T-2（2026-09-27）：两段先经中央件 ``sanitize_key_segment`` 消毒（既有清洗
+    口径 + 剔除分隔符子串至不动点）。消毒只在这一处构造点发生，拆键侧
+    （``split_member_session_key``）不另立第二套清洗判据。
+    """
+    base = sanitize_key_segment(group_session_key, forbidden=_MEMBER_SCOPE_SEP)
+    member = sanitize_key_segment(sender_id, forbidden=_MEMBER_SCOPE_SEP)
+    return f"{base}{_MEMBER_SCOPE_SEP}{member}"
 
 
 def split_member_session_key(session_key: str) -> tuple[str, str] | None:
@@ -569,6 +583,40 @@ class ContentRouteEngine:
                 head.append(name)
         return head
 
+    # ---- 群作用域钉（读侧唯一入口，T-1 修复 2026-09-27） ----
+
+    def _group_pin_state(
+        self, session_key: str, *, knobs: dict[str, Any], now: float
+    ) -> _SessionState | None:
+        """任意形态群键 → 已钉 intimate 的群作用域状态；无群钉返回 None。
+
+        作用域键的构造只准经中央件 ``group_scope_key``——与写侧
+        （``chat.py:_manual_command_scope_key`` 管理员分支）同一真身，读写
+        从构造上不可能分叉。覆盖三种来键：
+
+        - 成员派生键 ``X||u:Y`` → 拆出群键段 X 再收拢；
+        - 逐成员下划线原始键 ``group_<gid>_<uid>`` → 直接收拢（per_user 关闭
+          时路由读的就是这把键）；
+        - 请求键本身就是整群作用域键（合成/开发态冒号形）→ 返回 None，
+          交给个人档路径（那把键的 state 与自己同一桶，不重复查）。
+
+        fail-safe：作用域键拆不出生成（非群形态）或消毒前遗留的嵌套形态
+        （含分隔符）一律不查，宁少不增多。
+        """
+        key = str(session_key or "")
+        scope = split_member_session_key(key)
+        base = scope[0] if scope is not None else key
+        pin_key = group_scope_key(base)
+        if not pin_key or pin_key == key or _MEMBER_SCOPE_SEP in pin_key:
+            return None
+        state = self._state(
+            pin_key,
+            max_ttl_minutes=knobs["max_ttl_minutes"],
+            intimate_ttl_minutes=knobs["intimate_ttl_minutes"],
+            now=now,
+        )
+        return state if state.pin == MODE_INTIMATE else None
+
     @_synchronized
     def route_verdict(self, session_key: str, config: Any = None) -> dict[str, Any]:
         """只读判定；返回 {"mode", "head_models", "source", "tier"}。
@@ -592,28 +640,20 @@ class ContentRouteEngine:
                     "tier": INTIMATE_TIER_NONE,
                 }
             now = float(self.clock())
-            scope = split_member_session_key(str(session_key))
-            if scope is not None:
-                group_key, _member_id = scope
-                group_state = self._state(
-                    group_key,
-                    max_ttl_minutes=knobs["max_ttl_minutes"],
-                    intimate_ttl_minutes=knobs["intimate_ttl_minutes"],
-                    now=now,
-                )
-                if group_state.pin == MODE_INTIMATE:
-                    group_state.last_mode = MODE_INTIMATE
-                    group_state.updated = now
-                    group_source = _pin_source(group_state)
-                    group_tier = _pin_tier(group_state)
-                    return {
-                        "mode": MODE_INTIMATE,
-                        "head_models": self._head_if_switchable(
-                            knobs, group_source, group_tier
-                        ),
-                        "source": group_source,
-                        "tier": group_tier,
-                    }
+            group_state = self._group_pin_state(session_key, knobs=knobs, now=now)
+            if group_state is not None:
+                group_state.last_mode = MODE_INTIMATE
+                group_state.updated = now
+                group_source = _pin_source(group_state)
+                group_tier = _pin_tier(group_state)
+                return {
+                    "mode": MODE_INTIMATE,
+                    "head_models": self._head_if_switchable(
+                        knobs, group_source, group_tier
+                    ),
+                    "source": group_source,
+                    "tier": group_tier,
+                }
             state = self._state(
                 session_key,
                 max_ttl_minutes=knobs["max_ttl_minutes"],
@@ -672,6 +712,22 @@ class ContentRouteEngine:
                     "tier": INTIMATE_TIER_NONE,
                 }
             now = float(self.clock())
+            group_state = self._group_pin_state(session_key, knobs=knobs, now=now)
+            if group_state is not None:
+                # 群级钉短路：与 `route_verdict` 同一助手、同一构造，逐字段一致
+                # （预览不许在"群钉在场"这一格与真实判定分叉）。预览只不记账：
+                # 不动 last_mode/updated（`_group_pin_state` 内的 `_state` 惰性
+                # 过期与既有预览对个人键的 `_state` 同一量级，非新增副作用种类）。
+                group_source = _pin_source(group_state)
+                group_tier = _pin_tier(group_state)
+                return {
+                    "mode": MODE_INTIMATE,
+                    "head_models": self._head_if_switchable(
+                        knobs, group_source, group_tier
+                    ),
+                    "source": group_source,
+                    "tier": group_tier,
+                }
             state = self._state(
                 session_key,
                 max_ttl_minutes=knobs["max_ttl_minutes"],
@@ -772,17 +828,8 @@ class ContentRouteEngine:
             if not knobs["enabled"] or not str(session_key or "").strip():
                 return None
             now = float(self.clock())
-            scope = split_member_session_key(str(session_key))
-            if scope is not None:
-                group_key, _member_id = scope
-                group_state = self._state(
-                    group_key,
-                    max_ttl_minutes=knobs["max_ttl_minutes"],
-                    intimate_ttl_minutes=knobs["intimate_ttl_minutes"],
-                    now=now,
-                )
-                if group_state.pin == MODE_INTIMATE:
-                    return MODE_INTIMATE
+            if self._group_pin_state(session_key, knobs=knobs, now=now) is not None:
+                return MODE_INTIMATE
             state = self._state(
                 session_key,
                 max_ttl_minutes=knobs["max_ttl_minutes"],

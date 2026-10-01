@@ -66,6 +66,21 @@ def normalize_quirk_text(text: str) -> str:
     return " ".join((text or "").split()).casefold()
 
 
+def _sanitize_proposal_text(text: str) -> str | None:
+    """提案腿写前消毒闸（ATK-AFFINITY 票③·2026-09-28 收编）：单一判据复用
+    ``security/memory_sanitize.pre_write_sanitize``——与反思事实腿
+    （``save_facts``）、记忆腿（``store_extracted_memories``）同一道闸，本件不
+    复制第二套正则。硬红线命中 ⇒ ``None``（调用方拒入 pending，与事实腿拒存
+    同口径）；内部边界标记 ⇒ 全角化；干净文本逐字节不变。懒导入断环（家规同
+    reflection._sanitize_fact_text：memory_sanitize 顶层 import character 层组件）。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize import (
+        pre_write_sanitize,
+    )
+
+    return pre_write_sanitize(text)
+
+
 def _quirk_id_for(normalized: str) -> str:
     return hashlib.sha1(normalized.encode("utf-8")).hexdigest()
 
@@ -218,15 +233,23 @@ class QuirkStore:
           scope_kind="user" + scope_key=来源 sender；未显式给 scope 的调用
           （兼容旧签名）落 global。user 条目缺 scope_key 时照常入库但永远
           渲染不到任何人（render 对空 sender 一律只给 global，fail-closed）。
+        - 写前消毒（ATK-AFFINITY 票③·2026-09-28）：提案文本先过
+          ``_sanitize_proposal_text``（=记忆/反思腿同一道 ``pre_write_sanitize``）——
+          硬红线命中 raise 拒入 pending（与事实腿拒存同口径，「approve 后必不过毒」
+          不再单赖人眼）；内部边界标记全角化后入库（幂等，干净文本逐字节不变）。
+          注：``add_direct`` 是管理员直添通道（本人即审核主体），本闸不覆盖它。
         """
-        normalized = normalize_quirk_text(text)
+        safe_text = _sanitize_proposal_text(text or "")
+        if safe_text is None:
+            raise ValueError("quirk 提案命中硬红线，拒入 pending（与事实腿拒存同口径）")
+        normalized = normalize_quirk_text(safe_text)
         if not normalized:
             raise ValueError("quirk text 不能为空")
         kind = (scope_kind or SCOPE_GLOBAL).strip()
         if kind not in _SCOPE_KINDS:
             raise ValueError(f"未知 scope_kind：{scope_kind}")
         key = " ".join((scope_key or "").split())
-        display_text = " ".join((text or "").split())
+        display_text = " ".join(safe_text.split())
         quirk_id = _quirk_id_for(normalized)
         now_text = self._now_text()
         with self._lock, self._connect() as connection:

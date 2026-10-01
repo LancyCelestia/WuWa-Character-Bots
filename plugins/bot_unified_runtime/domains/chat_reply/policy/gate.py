@@ -75,6 +75,12 @@ class PolicySettings:
     # 动态名单 provider：返回 {black1/black2/white1/white2: 群号集合}。
     # 返回的键会覆盖对应静态集合（管理员热改优先于 .env），未返回的键保持静态。
     group_lists_provider: Callable[[], dict[str, frozenset[str]]] | None = None
+    # 命令态群须在册（E05 缺口一）：群不属于任何一张名单（含动态 provider 四档）时，
+    # `/bot` 与别名命令一律否决。缺省 True＝收紧；置 False 仅供事故止血回退旧行为。
+    # **只动命令腿**：被动回复侧语义一字未改（未触发群消息照旧 fail-close 到
+    # `passive_group_message`），黑白名单四档判据与硬否决顺序也一字未动。
+    # 读点真身＝`_effective_group_lists` 的同一份四册，禁第二份名单名（规则 10）。
+    command_requires_listed_group: bool = True
 
 
 def _resolve_probability(value: float | Callable[[], float] | None) -> float:
@@ -211,6 +217,20 @@ def _effective_group_lists(settings: PolicySettings) -> dict[str, frozenset[str]
     return effective
 
 
+def group_is_listed(
+    group_lists: dict[str, frozenset[str]], group_id: str,
+    slots: tuple[str, ...] = GROUP_POLICY_SLOTS,
+) -> bool:
+    """群是否出现在**任意一张**策略册里（四档槽位真身＝`GROUP_POLICY_SLOTS`）。
+
+    命令态在册门（缺口一）与调用侧共用此谓词：名单名只有一份，不在这里抄第二遍。
+    缺键按缺席处理（provider 只回一部分键时不炸）。空 group_id 视为未在册。
+    """
+    if not group_id:
+        return False
+    return any(group_id in (group_lists.get(slot) or frozenset()) for slot in slots)
+
+
 def _has_supported_url(text: str, settings: PolicySettings) -> bool:
     """Return whether text contains a URL handled by the content parser registry.
 
@@ -335,6 +355,19 @@ def evaluate_policy(
                     natural_triggered = False
             supported_url_triggered = _has_supported_url(text, active_settings)
 
+        # E05 缺口一 · 命令态群须在册。
+        # 落点在此的理由（也是"黑白名单语义零变更"的结构性证明）：未在册群必然
+        # 四档皆不命中，black1/black2/white1/white2 的既有分支在上面已全部走过且
+        # 不会为它返回；下面的 R4 软点名腿与被动腿（:not command_triggered）都
+        # 以"非命令态"为前提，与本门不同维 ⇒ 本门只可能收紧命令腿，动不到被动腿
+        # 与硬否决的判据、顺序、reason 字符串。
+        if (
+            command_triggered
+            and active_settings.command_requires_listed_group
+            and not group_is_listed(group_lists, group_id)
+        ):
+            return _denied("command_group_unlisted", ("command_group_unlisted",))
+
         # R4 场景化回应（2026-09-12 用户裁定）：长文本里只是「顺带提到昵称」
         # （软点名、非 @/回复/指令/开头称呼、且无问句意图）不抢答——找存在感
         # 刷的是算力和别人的屏。开头称呼（「岸宝 你觉得…」）与问句仍正常回复。
@@ -360,12 +393,19 @@ def evaluate_policy(
             # （T6 报告成因 ii）。图类另受节奏层的独立最小间隔约束（rate_limit.py）。
             if (
                 white1_group
+                and active_settings.group_auto_reply_enabled
                 and message_has_visual_content(message)
                 and deterministic_group_reply_lottery(
                     f"vision:{message.session_id}:{message.message_id or message.request_id}",
                     group_proactive_probability(active_settings),
                 )
             ):
+                # 与下方文字腿同读同一枚总闸、同一枚 N4 好感门（M2-31 定真的漏接：
+                # 视觉腿此前无条件位）。总闸关＝只观察；好感门拦＝主动接话不分腿。
+                if not _proactive_affinity_allows(message.sender_id):
+                    return _denied(
+                        "proactive_affinity_gate", ("proactive_affinity_gate",)
+                    )
                 return PolicyEvaluation(
                     request_id=message.request_id,
                     allowed=True,

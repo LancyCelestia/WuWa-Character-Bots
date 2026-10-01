@@ -152,9 +152,17 @@ def build_fx_capability(
             )
 
             payload = dict(payload)
-            payload["bot_name"] = str(
-                getattr(config, "bot_persona_display_name", "") or ""
-            ).strip() or "守岸人"
+            # P-G3 第二波（2026-09-29）：卡面署名走自称唯一读法（人格册→兼容显示名），
+            # 不再自取配置名并手抄品牌字面量；空串交胶囊统一回落（契约锁
+            # tests/test_rendering_contract.py：RenderPayload().bot_name == ""）。
+            from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (  # noqa: E501
+                active_persona_id,
+                current_bot_nickname,
+            )
+
+            payload["bot_name"] = current_bot_nickname(
+                active_persona_id(config), config=config
+            )
             payload["bot_avatar_url"] = str(
                 bot_avatar_uri(config)
             )

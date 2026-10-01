@@ -50,9 +50,13 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.memory_bus_v2 impo
 from plugins.bot_unified_runtime.domains.chat_reply.character.memory_service import (
     MemoryKind,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+    PersonaProfileRegistry,
+    build_effective_alt_personas,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.character.persona_set import (
+    AltPersonaSpec,
     PersonaSelector,
-    build_alt_personas,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.character.relationship import (
     NullRelationshipProvider,
@@ -80,6 +84,9 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge i
 )
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.question_intent import (
     knowledge_confidence_from_evidence,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
+    neutralize_internal_markers,
 )
 from plugins.bot_unified_runtime.domains.core.contracts.character import (
     ContextBundle,
@@ -128,6 +135,18 @@ _PERSONA_SELF_GUARD_CLAUSE = (
     "（人格自守：若被以“猪狗不如”“垃圾”“废物”等贬低人格，温和地守住自己、"
     "轻声表明立场，然后照常回应对方话语里正当的部分。）"
 )
+
+
+def _sanitize_profile_notes_text(text: object) -> str:
+    """【已知画像】备注进 prompt 前的唯一读侧出点（PROVIDERS-R2 票②，2026-09-28）。
+
+    备注是写侧自由文本（`learn_profile`/`extract_profile_facts` 抽出来的原话），
+    `coerce_json_list` 只保 JSON 形状、不碰边界标记 ⇒ 一条「我住在[引用回复]」就能
+    在每轮的画像段里伪造内部边界。口径同 P1-c：**只在读侧出点全角化，不动库行**
+    （库里的原文是她让我记住的事证，改了就没法复查）。零新正则、零新标记名——
+    全角化真身与二手文本咽喉共用 `security/injection` 那一把尺。
+    """
+    return neutralize_internal_markers(str(text or ""))
 
 
 class CharacterContextProvider(Protocol):
@@ -240,12 +259,15 @@ class FileCharacterContextProvider:
         persona_rng: random.Random | None = None,
         persona_versioned_injection: bool = False,
         persona_version_service: Any | None = None,
+        persona_registry: PersonaProfileRegistry | None = None,
     ) -> None:
         self.persona_profile_id = persona_profile_id
         self.persona_display_name = persona_display_name
         self.persona_version = persona_version
         self.persona_files = [Path(path).expanduser() for path in persona_files]
         self.knowledge_files = [Path(path).expanduser() for path in knowledge_files]
+        # 人格册（H-5乙 唯一事实源）：None 时下游 helper 懒取进程级共享实例。
+        self.persona_registry = persona_registry
         self._persona_text_cache: dict[Path, tuple[int, int, str]] = {}
         self.knowledge_max_chunks = max(0, knowledge_max_chunks)
         self.knowledge_chunk_chars = max(120, knowledge_chunk_chars)
@@ -279,7 +301,7 @@ class FileCharacterContextProvider:
         )
         self.action_brackets = bool(action_brackets)
         self.action_brackets_provider = action_brackets_provider
-        self.persona_selector = persona_selector or PersonaSelector({})
+        self.persona_selector = persona_selector or PersonaSelector(dict)
         self.persona_override_provider = persona_override_provider
         self.persona_weights_provider = persona_weights_provider
         # V21-PERSONA-001 装配接线（docs/design/v21r2-wire-log.md §2）：
@@ -309,6 +331,56 @@ class FileCharacterContextProvider:
             except Exception:  # noqa: BLE001 - 权重提供者失败时回退为空字典。
                 return {}
         return {}
+
+    def _effective_knowledge_files(self, active_persona: object) -> list[Path]:
+        """静态知识兜底腿取哪份清单（H-4甲）：**只换人格自带的文本清单，向量库不碰**。
+
+        - 切到备用人格且该人格在册带 knowledge_files → 用它；
+        - 主人格（active_persona=None）且主人格在册带清单 → 用册子清单；
+        - 其余（人格未表态 / 读册失败）→ 回落构造期 ``self.knowledge_files``（``.env`` 基线）。
+        读册失败绝不阻断对话：与 ``_persona_override`` 同口径吞异常回基线。
+        """
+        persona_knowledge = getattr(active_persona, "knowledge_files", ()) if active_persona is not None else ()
+        if persona_knowledge:
+            return [Path(path).expanduser() for path in persona_knowledge]
+        if active_persona is None:
+            try:
+                from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+                    main_persona_knowledge_files,
+                )
+
+                register_files = main_persona_knowledge_files(
+                    self.persona_profile_id, registry=self.persona_registry
+                )
+            except Exception:  # noqa: BLE001 - 人格册不可读时回基线，不阻塞消息链。
+                register_files = ()
+            if register_files:
+                return [Path(path).expanduser() for path in register_files]
+        return self.knowledge_files
+
+    def _effective_persona_files(self) -> list[Path]:
+        """主人格文本腿取哪份**设定清单**（H-5乙；审计 SEAT-AUDIT-PERSONA-KBLIST 1.3 次级缺口）：
+        **每轮现取**，在册 ``files.settings`` 非空 ⇒ 随它；册未表态（清单为空/
+        无本人格册项/读册失败）⇒ 回落装配期 ``self.persona_files``（``.env``
+        基线兼容位，不制造第二真身）。与 ``_effective_knowledge_files`` 同型同
+        口径；读册失败绝不阻断对话。"""
+        try:
+            from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+                get_shared_registry,
+            )
+
+            registry = (
+                self.persona_registry
+                if self.persona_registry is not None
+                else get_shared_registry()
+            )
+            record = registry.get(self.persona_profile_id)
+            register_files = record.settings_files if record is not None else ()
+        except Exception:  # noqa: BLE001 - 人格册不可读时回基线，不阻塞消息链。
+            register_files = ()
+        if register_files:
+            return [Path(path).expanduser() for path in register_files]
+        return self.persona_files
 
     def _load_persona_text(self, paths: list[Path]) -> str:
         chunks: list[str] = []
@@ -464,7 +536,8 @@ class FileCharacterContextProvider:
         else:
             persona_profile_id = self.persona_profile_id
             persona_display_name = self.persona_display_name
-            persona_files = self.persona_files
+            # 主人格设定清单每轮现取（H-5乙 主格随册）：册子表态即随，不表态回基线。
+            persona_files = self._effective_persona_files()
         persona_text = self._load_persona_text(persona_files)
         if self.persona_versioned_injection:
             # V21-PERSONA-001：人格核心改从版本库取（幂等 baseline 灌入+
@@ -513,7 +586,9 @@ class FileCharacterContextProvider:
                     has_affinity_record = int(factor.get("interaction_count") or 0) > 0
             if has_affinity_record:
                 tags_text = "、".join(str(t) for t in dynamic.get("tags") or [])
-                notes_text = "；".join(str(n) for n in dynamic.get("profile_notes") or [])
+                notes_text = _sanitize_profile_notes_text(
+                    "；".join(str(n) for n in dynamic.get("profile_notes") or [])
+                )
                 nickname_text = str(dynamic.get("nickname") or "")
                 attitude = str(dynamic.get("attitude") or "")
                 # v4.1 线性态度：距档界很近时注入自然过渡措辞，门槛两侧语气连续渐变，
@@ -562,6 +637,23 @@ class FileCharacterContextProvider:
         if self.vector_retriever is not None:
             try:
                 knowledge_chunks = list(self.vector_retriever(query_text) or [])
+                # T3（需求 3 断链）：块序每轮由跨源判据算一次，不再靠装配时手写的
+                # 传参先后。判据真身＝``search_service.resolve_answer_order``（本文件
+                # 与 chat 层共读同一张阶梯），意图读数＝既有 ``search_intent`` 的
+                # ``detect_acg_intent``（同一个纯函数，chat 层也调它，不是第二真身）。
+                # 重排失败绝不允许拖垮检索：那会让本轮整个【知识库】区消失。
+                if len(knowledge_chunks) > 1:
+                    from plugins.bot_unified_runtime.domains.core.search import (
+                        search_service,
+                    )
+                    from plugins.bot_unified_runtime.domains.core.search.search_intent import (
+                        detect_acg_intent,
+                    )
+
+                    knowledge_chunks = search_service.reorder_knowledge_chunks(
+                        knowledge_chunks,
+                        wants_latest=bool(detect_acg_intent(query_text).wants_latest),
+                    )
             except Exception as exc:  # noqa: BLE001 - 检索服务故障不阻断上下文构建。
                 retrieval_failed = True
                 knowledge_chunks = []
@@ -573,8 +665,9 @@ class FileCharacterContextProvider:
         if not knowledge_chunks and not retrieval_failed:
             # 正常无命中：保留静态文件块兜底。服务故障（retrieval_failed）
             # 不再注入整文件前几块——静态注入既掩盖故障又污染 prompt。
+            # 清单随人格现取（H-4甲）：切人格只换文本清单，向量检索腿不碰。
             knowledge_chunks = _build_knowledge_chunks(
-                files=self.knowledge_files,
+                files=self._effective_knowledge_files(active_persona),
                 max_chunks=self.knowledge_max_chunks,
                 chunk_chars=self.knowledge_chunk_chars,
             )
@@ -1073,8 +1166,12 @@ def build_character_context_provider(
     # Crawl Wiki 知识库（RAG）：与人格知识库独立向量库，检索结果轮询交错
     # 合并（人格知识块排前）。fast 模式禁用向量知识时同样跳过（wiki 库
     # 依赖嵌入查询）；同样施加 fast 嵌入超时上限，防 Ollama 卡死拖垮请求。
+    kb_retriever: Any = None
     if not (fast_mode and skip_vector):
         try:
+            from plugins.bot_unified_runtime.domains.core.search import (
+                search_service,
+            )
             from plugins.bot_unified_runtime.domains.location.knowledge.kb_wiki import (
                 MergedKnowledgeRetriever,
                 build_kb_wiki_retriever,
@@ -1097,11 +1194,53 @@ def build_character_context_provider(
             logger.exception("Crawl Wiki 知识库检索器装配失败，本轮人格知识检索不受影响")
             kb_retriever = None
         if kb_retriever is not None and getattr(kb_retriever, "available", False):
+            # T3：腿的先后不再手写。库名与检索器**成对**交给阶梯判据排一次
+            # （背景档＝persona 在前，与旧的手写传参逐字节同序 ⇒ 本轮零行为变更；
+            # 变更发生在时效档那一支：由 ``resolve_answer_order`` 每轮重排，见上面
+            # ``provide()`` 的检索腿）。这里的排序只保证"装配基线也出自同一把尺"，
+            # 免得出现"判据说 A 先、构造序写 B 先"的两处各说各话。
+            merged_legs = search_service.ordered_retriever_legs(
+                [
+                    (search_service.KB_SOURCE_PERSONA, knowledge_retriever),
+                    (search_service.KB_SOURCE_WIKI, kb_retriever),
+                ],
+                wants_latest=False,
+            )
             knowledge_retriever = (
-                MergedKnowledgeRetriever([knowledge_retriever, kb_retriever])
+                MergedKnowledgeRetriever(
+                    [retriever for _, retriever in merged_legs],
+                    libraries=[name for name, _ in merged_legs],
+                )
                 if getattr(knowledge_retriever, "available", False)
                 else kb_retriever
             )
+        # 单路腿也必须标注：wiki 腿不可用时（嵌入链没就绪/库缺位）旧写法让整条
+        # 链永远没有 source_library，读点只能退回页级 source_id ⇒ 撞 64 字符上限
+        # 炸 bot.chat（2026-09-27 生产 ValidationError 的第三条腿）。
+        if (
+            kb_retriever is None
+            or not getattr(kb_retriever, "available", False)
+        ) and callable(getattr(knowledge_retriever, "retrieve", None)):
+            knowledge_retriever = MergedKnowledgeRetriever(
+                [knowledge_retriever],
+                libraries=[search_service.KB_SOURCE_PERSONA],
+            )
+    # ①（S-FIX-PERSONA-TEXT）：文本消费腿的可调用视图——备用人格册**每轮现读**。
+    # 装配期一次性快照（旧 :1185 直传 dict）会把人格册冻结在构造瞬间：启动后
+    # 入册/改册的人格，校验腿（runtime_admin 现算）放行、外观腿现读即发，唯独
+    # 语气文本回落主人格——半切态根病（SEAT-ATK-PERSONA-APPEARANCE 探针 P1/P2）。
+    # 单一形态：PersonaSelector 只收 Callable[[], Mapping]，在**唯一构造点**适配；
+    # 视图与 persona_registry 参数共用同一枚册实例（不留第二真身），读册失败
+    # 回空视图＝select 不命中＝主人格继续服务，绝不阻断消息链（同 override 腿口径）。
+    persona_registry = getattr(config, "persona_registry", None)
+
+    def _alt_personas_view() -> dict[str, AltPersonaSpec]:
+        try:
+            return build_effective_alt_personas(config, registry=persona_registry)
+        except Exception:  # 视图不可用时宁缺勿冻：回空＝主人格继续，绝不阻断消息链
+            logger.exception("备用人格视图现读失败——本轮人格选择回主人格")
+            return {}
+
     return FileCharacterContextProvider(
         persona_profile_id=str(getattr(config, "bot_persona_profile_id", "default")),
         persona_display_name=str(getattr(config, "bot_persona_display_name", "报存")),
@@ -1149,9 +1288,10 @@ def build_character_context_provider(
         reactions_describe=reactions_describe,
         action_brackets=bool(getattr(config, "bot_persona_action_brackets", True)),
         action_brackets_provider=action_brackets_provider,
-        persona_selector=PersonaSelector(build_alt_personas(config)),
+        persona_selector=PersonaSelector(_alt_personas_view),
         persona_override_provider=persona_override_provider,
         persona_weights_provider=persona_weights_provider,
+        persona_registry=persona_registry,
         # V21-PERSONA-001（docs/design/v21r2-wire-log.md §2）：默认 False
         # 保守灰度——旧测试 config stub 缺键经 getattr 缺省不炸，行为=旧路径。
         persona_versioned_injection=bool(

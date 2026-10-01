@@ -39,6 +39,7 @@ import stat as _stat
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -98,6 +99,10 @@ class StickerFacts:
     images_read_failed: int = 0   # 读不到文件头＝不知道，不折成「它不是图」
     images_reparse_rejected: int = 0   # 文件自身是 junction/符号链接 ⇒ 真身在登记面之外
     images_outside_root: int = 0       # resolve 后落在登记根之外
+    #: 给了人格册名而基根下**没有一个**同名子目录（人格在册而册不在＝诚实缺席）。
+    #: 与 ``dirs_missing`` 分格：那一格是「路径不存在」，这一格是「人格分册制度下
+    #: 现役人格的册还没建」。措辞由 verdict 代号派生，两格不许混说。
+    persona_album_missing: int = 0
     usable: int = 0               # 真进了候选清单的张数
 
     @property
@@ -117,6 +122,8 @@ class StickerFacts:
             return "send_disabled"
         if not self.dir_configured:
             return "unconfigured"
+        if self.persona_album_missing:
+            return "persona_album_missing"
         if self.usable > 0:
             return "usable"
         if self.dirs_missing:
@@ -166,6 +173,70 @@ def configured_sticker_dir(config: Any) -> Path | None:
     # 键形（大小写/短名），把「同一目录两次读命中同一份缓存」这件事打歪（同 randpic）。
     # 越界判定另有真身（``path_gate``），在真需要它的两处各判一次。
     return Path(raw).expanduser()
+
+
+def persona_album_root(
+    base: Path | None, persona_names: Sequence[str] | tuple[str, ...] = ()
+) -> Path | None:
+    """现役人格的**册根**：基根下第一个真实存在的同名子目录（人格分册，2026-09-29）。
+
+    ``persona_names``（展示名在前、人格 id 垫后，由调用方按现役人格现算）：
+    * 空 ⇒ 基根本身（旧语义：没按人格分册的摆法照旧工作）；
+    * 有名字 ⇒ 按序找第一个 ``base/<名字>`` 且**真是目录**的；命中即册根；
+    * 一个都没命中 ⇒ ``None``＝册缺（诚实缺席）。**绝不回落基根**——基根下还有
+      别人格的册与未归档散件，回落就是把别的角色/杂图发出去（隐私红线，用户裁定：
+      「只能调取现役人格里面的表情包」）。
+    """
+    if base is None:
+        return None
+    names = _clean_album_names(persona_names)
+    if not names:
+        return base
+    for name in names:
+        candidate = base / name
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _clean_album_names(persona_names: Sequence[str]) -> tuple[str, ...]:
+    """册名候清洗：去空白、去重、去空；带路径分隔符或 ``.``/``..`` 的名字一律剔除。
+
+    名字来自人格册（可信面），但这道筛让「目录拼接」这一步**结构性**走不出基根——
+    与 ``path_gate`` 的出口复核互为两道闸，各防一侧。
+    """
+    out: list[str] = []
+    for raw in persona_names:
+        name = str(raw or "").strip()
+        if not name or name in {".", ".."}:
+            continue
+        if os.sep in name or (os.altsep and os.altsep in name):
+            continue
+        if name not in out:
+            out.append(name)
+    return tuple(out)
+
+
+def _album_mode(persona_names: Sequence[str]) -> tuple[tuple[str, ...], bool]:
+    """册名候选清洗 + 模式判定：``(合法册名, 调用方是否给过册名)``。
+
+    「给过但全被清洗掉」（全空白/``.``/``..``/带分隔符）≠「没给」：前者按**册缺**
+    算（fail-closed，绝不退化成扫基根），后者才是旧语义的基根模式。
+    """
+    cleaned = _clean_album_names(persona_names)
+    had_input = any(str(raw or "").strip() for raw in persona_names)
+    return cleaned, had_input
+
+
+def _effective_root(config: Any, persona_names: Sequence[str]) -> Path | None:
+    """本次取图的登记面：给了册名 ⇒ 册根（缺/全非法＝``None``）；没给 ⇒ 基根。"""
+    base = configured_sticker_dir(config)
+    if base is None:
+        return None
+    names, had_input = _album_mode(persona_names)
+    if not names:
+        return None if had_input else base
+    return persona_album_root(base, names)
 
 
 def sticker_send_enabled(config: Any) -> bool:
@@ -336,19 +407,23 @@ def _scan_root(root: Path, *, recursive: bool) -> _ScanResult:
     )
 
 
-def _collect(config: Any) -> tuple[list[Path], StickerFacts]:
+def _collect(
+    config: Any, *, persona_names: Sequence[str] = ()
+) -> tuple[list[Path], StickerFacts]:
     """**唯一**的池子读数口：清单与事实出自同一次扫描、同一份缓存（绝不各扫一遍）。
 
-    ⚠ 缓存键只有「登记根 + 是否递归」两格：窗闸与开关**不进键**，读出来时按当次
-    ``config`` 覆写 ``send_enabled``。生产一个进程一把尺，这个前提成立；测试里跨配置
-    复用同一目录要自担（同 randpic 那侧关于阈值的注意事项一字同义）。
+    ⚠ 缓存键是「基根 + 册名序 + 是否递归」三格：册名变了（人格热切换）键就变，
+    两本人格册各缓存各的；窗闸与开关**不进键**，读出来时按当次 ``config`` 覆写
+    ``send_enabled``。生产一个进程一把尺，这个前提成立；测试里跨配置复用同一目录
+    要自担（同 randpic 那侧关于阈值的注意事项一字同义）。
     """
     enabled = sticker_send_enabled(config)
-    root = configured_sticker_dir(config)
-    if root is None:
+    base = configured_sticker_dir(config)
+    if base is None:
         return [], StickerFacts(send_enabled=enabled, dir_configured=False)
     recursive = sticker_is_recursive(config)
-    key = f"{root}|{int(recursive)}"
+    names, had_input = _album_mode(persona_names)
+    key = f"{base}|{int(recursive)}|{'>'.join(names) or ('<invalid>' if had_input else '<base>')}"
     now = time.monotonic()
     with _CACHE_LOCK:
         cached = _SCAN_CACHE.get(key)
@@ -357,8 +432,31 @@ def _collect(config: Any) -> tuple[list[Path], StickerFacts]:
             return list(cached[1]), replace(cached[2], send_enabled=enabled)
         # 过期键在读取路径上惰性清除（覆盖写无法收缩字典占位），随后重扫自然回填。
         _SCAN_CACHE.pop(key, None)
-    result = _scan_root(root, recursive=recursive)
-    facts = replace(result.facts, send_enabled=enabled, dir_path=str(root))
+    if names:
+        resolved = persona_album_root(base, names)
+        if resolved is None:
+            # 人格在册而册不在：诚实缺席，**不扫基根**（基根是别人格的册＋散件）。
+            result = _ScanResult(
+                facts=StickerFacts(
+                    dir_configured=True,
+                    persona_album_missing=1,
+                    dir_path=str(base / names[0]),
+                )
+            )
+        else:
+            result = _scan_root(resolved, recursive=recursive)
+    elif had_input:
+        # 册名给过但全是非法名（``..``/空白/带分隔符）：同册缺，fail-closed。
+        result = _ScanResult(
+            facts=StickerFacts(
+                dir_configured=True,
+                persona_album_missing=1,
+                dir_path=str(base),
+            )
+        )
+    else:
+        result = _scan_root(base, recursive=recursive)
+    facts = replace(result.facts, send_enabled=enabled)
     with _CACHE_LOCK:
         _SCAN_CACHE[key] = (now, tuple(result.paths), facts)
         while len(_SCAN_CACHE) > _SCAN_CACHE_LRU_CAP:
@@ -366,20 +464,22 @@ def _collect(config: Any) -> tuple[list[Path], StickerFacts]:
     return list(result.paths), facts
 
 
-def list_sticker_images(config: Any) -> list[Path]:
-    """登记目录里**当前可用**的贴纸（30 秒 TTL 缓存；未配置/不存在 ⇒ 空清单）。
+def list_sticker_images(
+    config: Any, *, persona_names: Sequence[str] = ()
+) -> list[Path]:
+    """登记册里**当前可用**的贴纸（30 秒 TTL 缓存；未配置/册缺 ⇒ 空清单）。
 
     清单按路径去重后以 ``str().lower()`` 稳定排序 ⇒ 同一批输入两次读数逐条相同。
     想知道「为什么是空的」走 :func:`sticker_facts`（同一次扫描、同一份缓存，不多扫一遍）。
     """
-    images, _seen = _collect(config)
+    images, _seen = _collect(config, persona_names=persona_names)
     return sorted(dict.fromkeys(images), key=lambda item: str(item).lower())
 
 
-def sticker_facts(config: Any) -> StickerFacts:
+def sticker_facts(config: Any, *, persona_names: Sequence[str] = ()) -> StickerFacts:
     """读池子的**观察事实**版：``dirs_missing`` / ``files_seen`` / ``images_seen`` /
     ``usable`` 逐格分开，外加发送闸与登记根。降级措辞只能由这些格子派生。"""
-    _images, facts = _collect(config)
+    _images, facts = _collect(config, persona_names=persona_names)
     return facts
 
 
@@ -427,6 +527,18 @@ def _probe_order(
     return picked
 
 
+def _tag_matches(part: str, tag: str) -> bool:
+    """标签 ↔ 路径段匹配：全等或互含（``生气`` 命中 ``生气``/``生气了``/``有点生气``）。
+
+    大小写不敏感（Windows 路径本就无大小写承诺）；空串两侧一律不命中。
+    """
+    p = str(part or "").strip().lower()
+    t = str(tag or "").strip().lower()
+    if not p or not t:
+        return False
+    return p == t or t in p or p in t
+
+
 def pick_sticker(
     config: Any,
     *,
@@ -435,8 +547,11 @@ def pick_sticker(
     window: RecentImageWindow | None = None,
     rng: random.Random | None = None,
     allow_exhausted: bool = True,
+    persona_names: Sequence[str] = (),
+    prefer_tags: Sequence[str] = (),
+    locked_subdirs: Sequence[str] = (),
 ) -> Path | None:
-    """按「窗内不重发」从 bot 自己的贴纸库里取一张；取不出 ⇒ ``None``（诚实不发）。
+    """按「窗内不重发」从 bot 自己的贴纸册里取一张；取不出 ⇒ ``None``（诚实不发）。
 
     参数（后三枚都带缺省，简报给的调用形 ``pick_sticker(config, session_key=…, seed=…)``
     逐字可用）：
@@ -448,6 +563,13 @@ def pick_sticker(
     * ``allow_exhausted`` —— 整库都在窗内时怎么办：``True``（指令路，如「偷表情」）退
       「最久没发」那张并**明确记成第二次**；``False``（主动路，如 P3 情绪时刻）本轮不发。
       主动动作宁可不发也不刷屏，用户开口要的东西不该拿「怕重复」当拒因。
+    * ``persona_names`` —— 人格册名候选（展示名在前、id 垫后）：**只准从现役人格的
+      同名子目录取**（2026-09-29 用户裁定）。给了名字而没有命中子目录 ⇒ 整册缺席
+      ＝ ``None``，绝不回落基根（基根下是别人格的册与散件）。不给 ⇒ 基根（旧语义）。
+    * ``prefer_tags`` —— 语境标签（情绪词等）：命中子目录名的候选**排到探查序最前**，
+      不改变组内相对顺序，命中组为空 ⇒ 整册原序（语境只是偏好，不是判据）。
+    * ``locked_subdirs`` —— 锁定的子目录名（S4 好感档联动：``私藏`` 一类）：命中者
+      **整条剔除**，探查与「最久没发」复发两条路都过这道筛——档位不够就当没有这批图。
 
     三道出口判据，逐张过（任何一道不过就换下一张，绝不把不合格的路径交给出站链）：
     :func:`guard_sticker_path`（0 字节 / 魔数）→ 登记面复核（越界不发）→
@@ -455,24 +577,60 @@ def pick_sticker(
     """
     if not sticker_send_enabled(config):
         return None
-    pool = list_sticker_images(config)
-    if not pool:
+    base = configured_sticker_dir(config)
+    root = _effective_root(config, persona_names)
+    pool = list_sticker_images(config, persona_names=persona_names)
+    if not pool or root is None:
         return None
-    root = configured_sticker_dir(config)
+    locks = tuple(
+        str(name or "").strip() for name in locked_subdirs if str(name or "").strip()
+    )
+
+    def _under_locked_dir(candidate: Path) -> bool:
+        """候选是否落在任一锁定子目录之下（相对基根判，基根本身不受锁约束）。"""
+        if not locks or base is None:
+            return False
+        try:
+            rel = candidate.relative_to(root)
+        except ValueError:
+            return False
+        return any(
+            _tag_matches(part, lock) for part in rel.parts[:-1] for lock in locks
+        )
+
     seconds = sticker_window_seconds(config)
     store = window if window is not None else _DEFAULT_STICKER_WINDOW
 
     def _alive(candidate: Path) -> Path | None:
-        """出口三问：还在不在、是不是真图、在不在登记面之内。"""
+        """出口四问：还在不在、是不是真图、在不在登记面之内、有没有踩锁定子目录。"""
         if guard_sticker_path(candidate) is None:
             _drop_from_listing(candidate)  # 死引用/坏件：别让它下次再占一个坑
             return None
-        if root is not None and not path_gate.is_within_registered(candidate, [root]):
+        if not path_gate.is_within_registered(candidate, [root]):
             logger.warning("sticker pool candidate outside registered root, held")
+            return None
+        if _under_locked_dir(candidate):
             return None
         return candidate
 
     ordered = _probe_order(pool, seed, rng=rng)
+    tags = tuple(
+        str(tag or "").strip() for tag in prefer_tags if str(tag or "").strip()
+    )
+    if tags:
+        def _has_tag(candidate: Path) -> bool:
+            try:
+                rel = candidate.relative_to(root)
+            except ValueError:
+                return False
+            return any(
+                _tag_matches(part, tag) for part in rel.parts[:-1] for tag in tags
+            )
+
+        head = [item for item in ordered if _has_tag(item)]
+        if head:
+            seen_head = set(head)
+            ordered = [*head, *(item for item in ordered if item not in seen_head)]
 
     if seconds <= 0:
         # 窗关掉＝不做不重发判定（纯随机，可重样）。仍要验活，仍受登记面约束。
@@ -535,6 +693,7 @@ __all__ = [
     "configured_sticker_dir",
     "guard_sticker_path",
     "list_sticker_images",
+    "persona_album_root",
     "pick_sticker",
     "reset_sticker_state",
     "sticker_facts",

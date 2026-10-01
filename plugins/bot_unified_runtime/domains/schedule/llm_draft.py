@@ -455,7 +455,7 @@ def draft_to_plan_payload(
 
 # ---------------------------------------------------------------- 生产装配助手
 def build_schedule_llm(config: Any) -> Any:
-    """惰性组装既有主路由的 ``generate`` 可调用（只读消费 PEP 562 垫片）。
+    """惰性组装既有主路由的 ``generate`` 可调用（只读消费真身路由，不走旧布局垫片）。
 
     返回值直接可作为 ``parse_schedule_draft`` 的 ``generate`` 参数；开关
     ``bot_schedule_llm_draft_enabled=False`` 或路由不可用 → None（调用方降级为
@@ -463,7 +463,11 @@ def build_schedule_llm(config: Any) -> Any:
     """
     if not bool(getattr(config, "bot_schedule_llm_draft_enabled", False)):
         return None
-    from plugins.bot_unified_runtime.llm.model_router import build_model_router
+    # 2026-09-29 席 S-FIX-SHIM-REFS：原走旧布局垫片 `llm/model_router`（`board_shim_ledger`
+    # 在册待退役枚，上限 9）⇒ 改指真身，符号同名（真身 `build_model_router` :2681）。
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+        build_model_router,
+    )
 
     return build_model_router(config).generate
 

@@ -147,6 +147,7 @@ PATH_REMAPPED_FIELDS: Final[tuple[str, ...]] = (
     "bot_campus_db_path",
     "bot_emergency_info_db_path",
     "bot_reactions_db_path",
+    "bot_reply_policy_db_path",
     "bot_teaching_db_path",
     "bot_tts_output_dir",
     "bot_schedule_db_path",
@@ -208,6 +209,11 @@ class Config(BaseModel):
     bot_control_plane_actions_db: str = "data/control_plane_actions.sqlite3"
     bot_control_plane_features_file: str = "data/control_plane_features.json"
     bot_control_plane_super_admin_token_sha256: str = ""
+    # F-1（SEAT-ATK-CP）：/api/v1/files/read 的读取根白名单（逗号分隔或列表，同
+    # host_allowlist 形态）。缺省空 ⇒ 端点 503 诚实拒绝，绝不回落进程 cwd。
+    # 消费点＝control_plane/api/platform.py 现读装配期快照经 file_access 网关执法；
+    # 未进运行时合并表 ⇒ 热改不可达，已登 settings.py::RESTART_REQUIRED_KEYS（C-09）。
+    bot_control_plane_files_roots: list[str] | str = ""
     bot_shared_export_enabled: bool = False
     bot_shared_export_include_private: bool = False
     bot_shared_export_max_chars: int = 200
@@ -643,6 +649,13 @@ class Config(BaseModel):
     bot_credential_probe_timeout_seconds: float = 8.0
     bot_credential_check_enabled: bool = False
     bot_credential_check_interval_hours: int = 6
+    # ---- 网络巡检（2026-09-30 代理链事故波）：Clash 存活 + 上游域双路探活 ----
+    # 缺省开、15 分钟一档：09-29 全链被拴在 Clash 单腿上死了 4 小时无人知晓，
+    # 巡检就是「变坏即知」的那条腿。探针全部 fail-open，巡检自身故障不影响主链。
+    # 不进热改白名单（装配期读快照，改 .env 需重启）。
+    bot_network_patrol_enabled: bool = True
+    bot_network_patrol_interval_minutes: int = 15
+    bot_network_patrol_domains: str = ""
     bot_glossary_files: list[str] = []
     bot_glossary_max_entries: int = 30
     bot_glossary_max_chars: int = 1500
@@ -708,6 +721,10 @@ class Config(BaseModel):
     bot_emergency_info_auto_approve_sources: list[str] = []
     bot_emergency_info_poll_interval_seconds: int = 300
     bot_emergency_info_min_level: str = "P2"
+    # 静默窗源级穿窗表：与族级地板取交后才是可穿窗集合（源表只收窄、不放宽）。
+    # 缺省 "P0,P1" 覆盖全族地板（wake_levels ⊆ {P0,P1}）⇒ 落键当天行为与现状逐字节相同。
+    # 消费腿：capabilities 快照 `quiet_breach_levels`（:201-204）→ root 传参 → grading 取交判据。
+    bot_emergency_info_quiet_breach_levels: str = "P0,P1"
     # 这两键自 2026-09-20 起是**可选硬推腿**（不参与装配门）：名单里的目标每轮收全部
     # 已过 min_level 地板的条目，**不受订阅条件约束**。日常按群/按条件推送请用
     # 「紧急信息 订阅 …」（群里设、当轮生效），不必动这里。缺省空=这条腿不存在。
@@ -973,6 +990,11 @@ class Config(BaseModel):
     # ``RecentImageWindow`` 同一本窗口形状）。缺省 1800 秒=半小时：主动发贴纸
     # 是社交动作，同一张连发两次比不发更尴尬；0=关（纯随机，可重样）。
     bot_sticker_no_repeat_window_seconds: float = 1800.0
+    # S4 好感档联动（2026-09-29）：册内「私藏」类子目录只对好感档 ≥ 阈值的对象解锁
+    # （8 档体系，档位读 affinity snapshot 的 ``tier``，值大＝更亲近；快照缺席或读
+    # 不出 ⇒ 按未解锁算，fail-closed）。子目录名空串＝功能整体关闭。
+    bot_sticker_private_subdir: str = "私藏"
+    bot_sticker_private_min_tier: int = 7
     bot_vision_model_registry: dict[str, Any] = {}
     # 聊天图片/表情包识别开关：启用且注册表里有可用模型时才会调用 VLM。
     bot_vision_enabled: bool = False
@@ -1088,16 +1110,35 @@ class Config(BaseModel):
     bot_reactions_store_days: int = 90
     # 双层表情·第二层（情绪时刻发表情包）：从表情库按 VLM 情绪标签加权抽图
     # 发送；与第一层贴小表情互斥（同消息先贴后包）；C1 悲伤词族整条不贴。
-    bot_reactions_meme_enabled: bool = True
+    # 2026-09-28 用户实弹复现"没命令自己甩图"后 default True→False：这条腿历史上
+    # 结构性依赖 feature_catalog 的第一道门，而那一枚的 default_enabled 与它自身注释
+    # (:37-41) 相矛盾地写成 True——两枚同时 True 时，群友甩过的截图会被当表情包
+    # 甩出来。拨回 False 与纪律对齐；打开走超管控制面/WebUI（feature 门）或本键
+    # 显式 True（配置门）任一即可，两门均须 True 才真发。
+    bot_reactions_meme_enabled: bool = False
     bot_reactions_meme_probability: float = 0.15
     bot_reactions_meme_cooldown_seconds: int = 120
     bot_reactions_meme_daily_max: int = 6
+    # 贴纸语义匹配（2026-09-28 用户裁定「报喜却发委屈/大哭，不行」）：贴之前先读
+    # bot 本轮实际回复文本，由大模型判受控情感闭集再选贴；判不了/超时 ⇒ 整轮不贴
+    # （错配比不贴更糟），绝不降级成随便贴一张。表情腿与表情包腿共用一次判定。
+    bot_reactions_sentiment_enabled: bool = True
+    bot_reactions_sentiment_timeout_seconds: float = 8.0
+    bot_reactions_sentiment_cache_ttl_seconds: int = 120
     # NSFW 直接删除阈值（淫秽色情不存储）：>= 该分数删除文件与记录。
     bot_meme_library_nsfw_delete: float = 0.8
     # 群图下载代理（默认直连 QQ 多媒体源；外网源可走 7890）。
     bot_meme_library_proxy: str = ""
     # 自然语言命令层（基层路由优先级 45）：“帮我查天气”等归一化执行。
     bot_natural_command_enabled: bool = True
+    # 原生工具调用（chat 能力侧）：读点 domains/core/search/native_tools.py:202
+    # 是 ``getattr(config, KEY, None) is True``——缺省关＝今天行为逐字节不变。
+    bot_chat_native_tools_enabled: bool = False
+    # 会话画像（person_profile 波）：读点 character/person_profile.py:1163/1192/1207-1208
+    # （门缺省 False＝整链关；6/520 即该模块的 _DEFAULT_MAX_ITEMS/_DEFAULT_MAX_CHARS）。
+    bot_person_profile_enabled: bool = False
+    bot_person_profile_max_items: int = 6
+    bot_person_profile_max_chars: int = 520
     # 群聊自动接话：enabled=true 时按 probability 对未点名的群消息
     # 抽签回复（确定性哈希，不是随机数）；默认关闭，点名/命令不受影响。
     bot_group_chat_auto_reply_enabled: bool = False
@@ -1419,7 +1460,9 @@ class Config(BaseModel):
     # 装配期读一次，热改当轮不生效——与调度器族同口径（台账 #3 P3），不做成"看起来能热改"。
     bot_chat_progress_ack_enabled: bool = False
     # 判定"慢"的阈值（秒）：能力在此时间内出结果就什么都不发，不发第二条、也不撤回。
-    # 缺省 15.0 —— 2026-09-23 用户裁定「15 秒内出结果时不发」。
+    # 现网钉 40（2026-09-28 用户改）。**这枚数字只在"没有网关观测数据"时说话**
+    # （刚重启、健康库关了、读失败）；一旦有实况，开口时刻改由下面三枚（自适应/地板/上限）
+    # 决定，本键不参与——旧写法让它同时顶高自适应下界，已根修（progress_ack）。
     bot_chat_progress_ack_delay_seconds: float = 15.0
     # 同一会话两次回执的最小间隔（秒），防刷屏；只在回执真发成功时占用额度。
     bot_chat_progress_ack_cooldown_seconds: float = 60.0
@@ -1433,23 +1476,30 @@ class Config(BaseModel):
     # 开时按「链上各跳 EWMA 延迟 × 倍率」抬高质量阈值，并夹在 floor~cap 之间；
     # 关时逐字节回到上面那枚固定的 delay_seconds。
     bot_chat_progress_ack_adaptive_enabled: bool = True
-    # 自适应的下限（秒）：网关很快时也不早于此值发回执。2026-09-26 由 15 抬到 30——
-    # 15 秒实测「每一轮都发」（34 条里 19 条），地板低于本轮耗时常态时它就退化成
-    # 每条先开口；缺省值唯一真身在 progress_ack.DEFAULT_ACK_DELAY_FLOOR_SECONDS，
-    # 这枚字段由 tests/test_progress_ack_thresholds.py 的 AST parity 锁现算比对。
-    bot_chat_progress_ack_delay_floor_seconds: float = 30.0
-    # 自适应的上限（秒）：网关再慢也不能让用户无限期等不到一句提示。
-    bot_chat_progress_ack_delay_cap_seconds: float = 90.0
+    # 自适应的下限（秒）：网关很快时也不早于此值发回执。2026-09-26 由 15 抬到 30，
+    # 2026-09-29 需求项 6 落进**用户口径区间 45~60**：现网 Runtime 事件日志实测
+    # （transport_receipt 成功轮 n=167，毫秒字段换算）p50=35.7 秒、p75=68.9 秒，
+    # 地板 30 时 54.5% 的正常轮会白说一句；地板 50 把 30-45 秒这段正常联网轮全部
+    # 盖过去（误触率降到约 35%），剩下的开口本来就是真慢。缺省值唯一真身在
+    # progress_ack.DEFAULT_ACK_DELAY_FLOOR_SECONDS，本字段由
+    # tests/test_progress_ack_thresholds.py 的 AST parity 锁现算比对。
+    bot_chat_progress_ack_delay_floor_seconds: float = 50.0
+    # 自适应的上限（秒）：网关再慢也不能让用户无限期等不到一句提示。今天由 90 收到
+    # **60**——同一裁定要求「结果落在 45~60 区间」，上限 90 会让慢网关把阈值推到区间外。
+    bot_chat_progress_ack_delay_cap_seconds: float = 60.0
     # 倍率：阈值 = 链上最慢一跳的 EWMA × 此倍率。取「最慢一跳」而不是「当值那一跳」，
     # 理由是回执压的是整轮（检索+联网+LLM），任何一条路慢都可能是本轮走的那条。
-    # 现网实测（gemini ema 4.5s / grok ema 13.7s、grok 单跳最大 19.9s）下
-    # 2.0 把阈值从 15s 抬到约 27s——仍在「真等久了」的量级，不再一抖就报。
-    bot_chat_progress_ack_latency_multiplier: float = 2.0
-    # 折句窗口（2026-09-25 用户裁定）：一句话按逗号拆成两三条发时合成一轮、只回一次。
-    # 只有「本身像半句话」的消息才会等下一条，完整句子零额外延迟。
+    # 2026-09-29 由 2.0 抬到 **3.0**：2.0 下现网慢跳 13.7s 派生 27.4s 恒被地板压住，
+    # 自适应腿形同虚设；3.0 让单跳 EWMA ≥18.3s 的真抖动起后阈值跟着实况走。
+    bot_chat_progress_ack_latency_multiplier: float = 3.0
+    # 折句窗口（2026-09-25 用户裁定；2026-09-29 需求项 1 判据升级）：用户按逗号/句号
+    # 断句、一句短句一个气泡时合成一轮、只回一次。开不等窗的判据＝可解释的
+    # 句子完结信号组（连接词/量词/破折号/左引号/换行收尾、无终止语气短句、
+    # 自带句号的短气泡），停口窗按信号强度自适应缩放、硬封顶照回。
     bot_chat_message_coalescing_enabled: bool = True
-    # 停口多久算这句话说完了（秒）——这是分句发送者唯一付出的额外延迟。
-    bot_chat_message_coalescing_quiet_seconds: float = 1.8
+    # 停口窗口（原 bot_chat_message_coalescing_quiet_seconds）已于 2026-09-27
+    # 乙案退役：唯一真身 = message_merge.MERGE_WINDOW_SECONDS（用户裁定 3s），
+    # 装配层每轮无条件覆盖 ⇒ 本键此前是「在册永不算数」的死口，不留假口。
     # 封顶等待（秒）：有人逐字蹦也必须在这时开口，绝不允许一直不回。
     bot_chat_message_coalescing_max_hold_seconds: float = 8.0
     bot_chat_message_coalescing_max_messages: int = 6
@@ -1457,14 +1507,15 @@ class Config(BaseModel):
     # 被限流挡下的「明确找我说话」的消息改为期后补回，不再静默吞掉
     # （2026-09-25 用户裁定第 2 项：冷却与条数帽把消息吃掉了）。
     bot_chat_rate_limit_redrive_enabled: bool = True
-    # 最多延后多久补回（秒）；还要等更久的不补（避免隔半小时突然冒一句）。
-    # 180 = 4×点名间隔缺省 45：连发 5 条 @bot 排队补回装得下整轮
-    # （2026-09-25 用户裁定第 2 项「可以延后，不可以丢弃」；
-    # `policy/redrive_ledger.py` 给同人多条被拦消息排开回位后，
-    # 上一档 90 秒只容 2 个回位、第 3 条起仍被丢）。
-    bot_chat_rate_limit_redrive_max_wait_seconds: float = 180.0
-    # 一条消息最多补回几次，防重放循环。
-    bot_chat_rate_limit_redrive_max_attempts: int = 1
+    # 最多延后多久补回（秒）；还要等更久的**不弃**，改排到最近可用槽（2026-09-28）。
+    # 270 = 6×点名间隔缺省 45：连发 6 条 @bot 排得下（上一档 180 只容 5 条，
+    # 第 6 条起仍被静默吞＝她需求 2「不能因为冷却把消息吞了」的残留面）。
+    # 180 = 4×间隔那档的历史理由仍在：连发 5 条装得下；`policy/redrive_ledger.py`
+    # 给同人多条被拦消息排开回位（2026-09-25 用户裁定「可以延后，不可以丢弃」）。
+    bot_chat_rate_limit_redrive_max_wait_seconds: float = 270.0
+    # 一条消息最多补回几次，防重放循环。1→3：单次补回仍被限流挡住的形态
+    # （同人多条挤同一间隔）此前直接丢弃；上限 3 足够覆盖 6 条连发且不放大刷屏。
+    bot_chat_rate_limit_redrive_max_attempts: int = 3
     bot_chat_fast_embedding_timeout_seconds: float = 3.0
     bot_chat_fast_skip_web_pages: bool = True
     bot_chat_fast_disable_vector_knowledge: bool = False
@@ -1498,8 +1549,28 @@ class Config(BaseModel):
     bot_reply_group_max_messages: int = 0
     bot_reply_risk_max_messages: int = 0
     bot_reply_max_chars_per_message: int = 0
-    # 回复详略：auto=科普/知识类自动详尽，detail=全部详尽(2000~4000字)，concise=精炼。
+    # 回复详略：auto=按题型自动分档，detail=全部走详尽档，concise=精炼。
+    # 各档字数下限/上限与措辞唯一真身＝chat.py 的 REPLY_LENGTH_TIERS（规则 10：
+    # 本行不抄数值，抄一次就过期一次——旧注释写「detail=2000~4000字」从未在判据里存在）。
     bot_reply_detail: str = "auto"
+    # 永久性 per-user 回复策略（2026-09-28 用户裁定：她说要长、有人嫌字多）：
+    # 用户明示一次「短一点/详细点」即长期生效，直到本人再次明示覆盖。
+    # 优先级链＝当轮明示 > 永久策略 > 上面这枚全局键 > 缺省档。
+    bot_reply_policy_enabled: bool = True
+    bot_reply_policy_db_path: str = "data/reply_policy.sqlite3"
+    # 同一人多号并键（2026-09-28 用户裁定「3865067623 + 1722380002 一起」）：
+    # 形如 {"3865067623": "1722380002"}，读法＝左边的号把回复偏好写到右边那把键上。
+    # 🔴 只并"偏好存到哪个键"，**不并权限**：提权/角色/同意判定一律不读本键
+    #     （执法锁＝tests/test_reply_policy_permanent.py::test_person_aliases_never_leak_into_privilege）。
+    # 归并发生在 ReplyPolicyStore 一处咽喉；键的形状仍由 domains/core/session_keys 构造。
+    bot_reply_policy_person_aliases: dict[str, str] = {}
+    # 默认讲法（2026-09-28 夜用户裁定「对没表过态的人也要有文采，但别寡淡」）：
+    # 这个人**一条讲法都没明说过的**时候，顶进提示词的那几枚受控码（人话与码名都认，
+    # 逗号分号顿号都行）。取值口径与 ``/bot reply set`` 共用同一张人话表。
+    # 🔴 三态必须分开：写成开⇒出指令；写成 off/none/关/不表态⇒整块不渲染（与今天之前
+    #     逐字节同形）；写成认不出的乱码⇒**也当没配**，绝不静默给全服派一份未知讲法。
+    # 🔴 优先级：本人明说 > 本键。她或任何人说一句「说人话」就把默认拧掉，默认腿不许反向压人。
+    bot_reply_default_directives: str = "literary_prose,imagery_rich"
     bot_generated_files_dir: str = "data/generated_files"
     bot_file_read_max_chars: int = 120000
     # ---- 文件写盘口（需求 16(2)，2026-09-26 S-FILES-LAND 收编波）----
@@ -1969,6 +2040,7 @@ class Config(BaseModel):
         "bot_model_schedule",
         "bot_model_prices",
         "bot_mail_sender_aliases",
+        "bot_reply_policy_person_aliases",
         "bot_vision_model_registry",
         "bot_asr_model_registry",
         mode="before",

@@ -218,6 +218,85 @@ SHELL_WASH_GRADIENT = (
     "color-mix(in srgb, var(--wash-3) 80%, var(--wash-mist)) 100%)"
 )
 
+# ==================== 壳层渐变·按面派生（goal-7 二波 2026-09-28，澜汐需求 7）====
+# 用户明令「背景釉瑚渐变漂移彩色中颜色的布局不得完全一样」。旧态：SHELL_WASH_GRADIENT
+# 单源 ⇒ 11 个面逐字节共用同一份色标布局，差异只来自 --phase 色斑相位——只满足
+# "飘逸"不满足"布局各面不同"。本段把**色标布局**改为按 face 派生：
+# - 色板不变（同族 --wash-mist/1/2/3/blob-1，全部本命蓝派生 ⇒ 同一角色本命色不跨面变味）；
+# - 变的是**停点位置 + 哪支洗色落在哪一档**（rotation），两两组合使任意两面逐字节不同；
+# - face="" 恒返回 SHELL_WASH_GRADIENT（旧缺省路径逐字节不变，兼容未入册面与样张基线）；
+# - 首色标恒 `linear-gradient(145deg, var(--wash-mist) 0%` 形态（雾底打底锁 +
+#   test_pc_never_paints_brand_base 按该前缀取相，任何面不得改写）。
+# 面序唯一（_WASH_FACE_ORDER 里每个已登记面占唯一索引）+ 取模周期（10 布局 × 6 rotation，
+# lcm=30）⇒ 索引 < 30 的面彼此布局必互异；机器门
+# tests/test_template_visual_audit.py::test_shell_wash_layout_pairwise_distinct 现算兜底。
+_WASH_STOP_PALETTE: tuple[tuple[str, int], ...] = (
+    ("--wash-blob-1", 78),
+    ("--wash-1", 96),
+    ("--wash-3", 88),
+    ("--wash-2", 62),
+    ("--wash-1", 94),
+    ("--wash-3", 80),
+)
+# 六档尾停的位置骨架（0% 雾底 + 这五个内停 + 100% 末停）；每档一种疏密节奏。
+# 首档刻意不等于 canon 的 (15,32,50,64,82)——face 索引 0（universal）若同时命中
+# rotation=0 与 canon 位置就会复现 canon（"布局各面不得雷同"当场破功）。
+_WASH_POS_LAYOUTS: tuple[tuple[int, int, int, int, int], ...] = (
+    (14, 31, 52, 66, 84),
+    (12, 34, 46, 68, 84),
+    (18, 30, 54, 62, 86),
+    (10, 28, 48, 70, 80),
+    (20, 36, 52, 66, 88),
+    (14, 26, 44, 60, 78),
+    (16, 40, 56, 72, 84),
+    (8, 30, 42, 66, 90),
+    (22, 38, 58, 74, 82),
+    (12, 26, 50, 62, 78),
+)
+# 消费壳层釉瑚渐变的**唯一面序**（新增壳面在此登记一枚索引，不得重复）。
+_WASH_FACE_ORDER: tuple[str, ...] = (
+    "universal",
+    "market",
+    "finance",
+    "song",
+    "news_digest",
+    "affinity",
+    "error",
+    "mermaid",
+    "media",
+    "usage",
+    "help",
+    "debug",
+)
+_WASH_STOP_COUNT = len(_WASH_STOP_PALETTE)
+_WASH_LAYOUT_COUNT = len(_WASH_POS_LAYOUTS)
+
+
+def shell_wash_for_face(face: str) -> str:
+    """face → 该面的壳层釉瑚渐变串（色板同族、色标布局按面互异）。
+
+    缺省 ``face=""`` 与历史 ``SHELL_WASH_GRADIENT`` 逐字节一致；已登记面按其
+    ``_WASH_FACE_ORDER`` 索引确定性派生（rotation 换洗色落位、layout 换停点疏密）；
+    未登记面落回 canon（保持向后兼容，不臆造新布局）。纯函数、无随机、跨进程稳定。
+    """
+    if not face:
+        return SHELL_WASH_GRADIENT
+    try:
+        index = _WASH_FACE_ORDER.index(face)
+    except ValueError:
+        return SHELL_WASH_GRADIENT
+    rotation = index % _WASH_STOP_COUNT
+    layout = _WASH_POS_LAYOUTS[(index // _WASH_STOP_COUNT) % _WASH_LAYOUT_COUNT]
+    stops = [_WASH_STOP_PALETTE[(j + rotation) % _WASH_STOP_COUNT] for j in range(_WASH_STOP_COUNT)]
+    # 前五档用 layout 疏密，末档钉 100%（保雾底↔本命洗收尾）。
+    positions = (*layout, 100)
+    body = ", ".join(
+        f"color-mix(in srgb, var({key}) {mix}%, var(--wash-mist)) {pos}%"
+        for (key, mix), pos in zip(stops, positions)
+    )
+    return f"linear-gradient(145deg, var(--wash-mist) 0%, {body})"
+
+
 # ==================== 层次化阴影 + 辉光 + 表面/分隔线/字号（vis4）====================
 # 用户裁定升级：所有元素都要有层次阴影区分 + 辉光 + 清晰区分线；相邻色块
 # 颜色不得过于相似。全部 token 化钉在本模块——模板只允许 var()/常量引用，
@@ -668,5 +747,6 @@ __all__ = [
     "derive_wash_tokens",
     "get_platform_theme",
     "platform_accent",
+    "shell_wash_for_face",
     "theme_to_css_vars",
 ]

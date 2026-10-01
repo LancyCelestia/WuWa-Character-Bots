@@ -72,6 +72,7 @@ FAMILY_MEMBERS: dict[str, tuple[str, ...]] = {
 #: ＋ `config.py` 的 `bot_vision_* / bot_video_* / bot_asr_* / bot_tts_*` 段，逐枚抄录不臆造。
 FAMILY_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "visual": (
+        "bot_request_budget_seconds",
         "bot_vision_enabled",
         "bot_vision_mode",
         "bot_vision_model_registry",
@@ -102,6 +103,7 @@ FAMILY_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
         # 把它算作某一族专属＝虚假声明。它在下方 SHARED_RESOURCES 里作为共享存储登记。
     ),
     "audio": (
+        "bot_request_budget_seconds",
         "bot_tts_enabled",
         "bot_tts_api_url",
         "bot_tts_gptsovits_dir",

@@ -139,6 +139,9 @@ def _build_runtime(config: Config) -> tuple[RuntimePipeline, Any]:
         "fast_context_budget": int(
             getattr(config, "bot_chat_fast_context_budget", 2400) or 2400
         ),
+        # 默认讲法腿问 config 要口径：这条链不交 ⇒ 渲染口收到 None，运维自检绿而
+        # 生产另一套（台账 #66）。hermetic 由 run_backend_unit 的 config 覆写钉死。
+        "content_route_config": config,
         "fast_web_max_queries": int(
             getattr(config, "bot_chat_fast_web_max_queries", 1) or 1
         ),
@@ -209,6 +212,10 @@ def run_backend_unit(
             "bot_embedding_local_enabled": False,
             "bot_knowledge_db_path": "",
             "bot_runtime_settings_dir": "",
+            # 离线单跑绝不懒建进程级 store（那会按 .env 的 Runtime 根落到**生产**
+            # reply_policy 库），也绝不给 ACG 竖源开外网腿。台账 #66 的 hermetic 判据。
+            "bot_reply_policy_enabled": False,
+            "bot_search_acg_enabled": False,
         }
     )
     pipeline, capability = _build_runtime(runtime_config)

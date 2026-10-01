@@ -78,8 +78,12 @@ from plugins.bot_unified_runtime.domains.core.contracts.finance import (
     status_or_unknown,
 )
 from plugins.bot_unified_runtime.domains.finance.data.market_data import (
+    _budget_or_new,
+    budget_allows_retry,
+    budget_expired,
     empty_backoff_sleep,
     retry_on_empty_enabled,
+    sanitize_remote_text,
 )
 from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
     ParseHttpError,
@@ -87,18 +91,27 @@ from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
 )
 
 
-def _network_retry(fetch, *, attempts: int = 3):
+def _network_retry(fetch, *, attempts: int = 3, budget: Any | None = None):
     """瞬时网络故障退避重试（vis3 2026-09-13 实测：push2his 会 RemoteDisconnected
     掉线——「暂无历史走势」与 ParseHttpError 的共同根因）。ParseHttpError/
-    ConnectionError/TimeoutError 各退避重试，其他异常原样抛。"""
+    ConnectionError/TimeoutError 各退避重试，其他异常原样抛。
+
+    FIN-R1（2026-09-27 评审票）：① 429 不跨层重试——链接层已在单调用内尊重
+    Retry-After（60s 封顶）并重试到位，数据层再叠就把 60s 睡眠按层相乘，正是
+    慢源钉死 worker 的根因；② 退避睡眠受端到端网络预算门控（budget=None 时
+    上层 fetch 入口已自造兜底预算），预算尽弃剩余尝试。"""
     last_exc: Exception | None = None
     for attempt in range(max(1, attempts)):
         try:
             return fetch()
         except (ParseHttpError, ConnectionError, TimeoutError) as exc:
             last_exc = exc
+            if getattr(exc, "status_code", None) == 429:
+                raise  # 429 已由链接层尊重 Retry-After，不再叠加层间等待
             if attempt + 1 >= attempts:
                 raise
+            if not budget_allows_retry(budget):
+                raise  # 预算尽弃剩余重试；失败不缓存、静默缺席语义不变
             empty_backoff_sleep()
     raise last_exc if last_exc is not None else RuntimeError("unreachable")  # pragma: no cover
 
@@ -602,18 +615,25 @@ def _fetch_kline_payload(ticker: str, days: int, timeout: float) -> Any:
 
 
 def _as_float(value: Any) -> float | None:
-    """fltt=2 下正常值是小数；停牌/缺数可能是 "-" 或缺失。"""
+    """fltt=2 下正常值是小数；停牌/缺数可能是 "-" 或缺失。
+
+    FIN-N1（2026-09-27 评审票）：非有限值（上游 JSON 的 NaN/Infinity 字面量，
+    ``json.loads`` 默认接受）一律视为缺数 None——走既有状态对象/「暂无」
+    诚实通道，绝不让 "nan"/"inf" 进卡片数字槽。
+    """
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     text = str(value).strip()
     if not text:
         return None
     try:
-        return float(text)
+        number = float(text)
     except ValueError:
         return None
+    return number if math.isfinite(number) else None
 
 
 def _first_diff_row(payload: Any) -> dict[str, Any] | None:
@@ -662,7 +682,9 @@ def _parse_quote(
     # 标记：真机核验 push2 字段单位后在此恢复映射（诚实优先于功能保持）。
     return EquityQuote(
         ticker=ticker,
-        name=str(row.get("f14") or (ref.display if ref else "") or ""),
+        # FIN-I1（2026-09-27 评审票）：f14 为远端自由文本，入展示字段前在
+        # 数据边界做控制字符清洗+长度钳制（截断加省略号），不动信任语义。
+        name=sanitize_remote_text(row.get("f14")) or (ref.display if ref else ""),
         exchange=ref.exchange if ref else "",
         currency=currency,
         price=price,
@@ -783,8 +805,43 @@ def _non_public_quote(ticker: str) -> EquityQuote:
 # ==================== 对外抓取入口（绝不抛异常） ====================
 
 
-def fetch_stock_quote(ticker: str, timeout_seconds: float = 6.0) -> EquityQuote:
-    """上市股票现价快照；失败走 UNAVAILABLE 状态，绝不抛异常。"""
+def _unavailable_quote(normalized: str, ref: CompanyRef, note: str) -> EquityQuote:
+    """预算耗尽等主动放弃路径的 UNAVAILABLE 现价（与拉取失败同构，绝不造数）。"""
+    return EquityQuote(
+        ticker=normalized,
+        name=ref.display,
+        exchange=ref.exchange,
+        currency=ref.currency,
+        price=None,
+        source=_SOURCE_QUOTE,
+        as_of=_now_utc(),
+        status=FinanceDataStatus.UNAVAILABLE,
+        delayed=True,
+        note=note,
+    )
+
+
+def _unavailable_market_cap(normalized: str, note: str) -> MarketCap:
+    """预算耗尽等主动放弃路径的 UNAVAILABLE 市值（value=None，绝不 0）。"""
+    return MarketCap(
+        ticker=normalized,
+        value=None,
+        currency="USD",
+        source=_SOURCE_QUOTE,
+        as_of=_now_utc(),
+        status=FinanceDataStatus.UNAVAILABLE,
+        note=note,
+    )
+
+
+def fetch_stock_quote(
+    ticker: str, timeout_seconds: float = 6.0, *, budget: Any | None = None
+) -> EquityQuote:
+    """上市股票现价快照；失败走 UNAVAILABLE 状态，绝不抛异常。
+
+    FIN-R1：不传 budget 时自造 per-call 端到端网络预算（兜底形态，
+    既有调用方零改动）；预算尽弃剩余重试，诚实降级路径不变。
+    """
     normalized = (ticker or "").strip().upper()
     ref = _COMPANY_BY_TICKER.get(normalized)
     if normalized in NON_PUBLIC_EQUITIES:
@@ -796,12 +853,18 @@ def fetch_stock_quote(ticker: str, timeout_seconds: float = 6.0) -> EquityQuote:
             status=FinanceDataStatus.UNAVAILABLE,
             note="未注册的公司（注册表见 list_listed_companies）",
         )
+    budget = _budget_or_new(budget)
     # G2：单 secid 请求整行缺失（缺行）= 限流空响应签名 → 退避重试一次；
     # 行在但字段缺失（停牌等）不重试，照旧按字段缺失降级；真异常不重试。
     attempts = 2 if retry_on_empty_enabled() else 1
     for attempt in range(attempts):
+        if budget_expired(budget):
+            return _unavailable_quote(normalized, ref, "行情拉取放弃（网络预算耗尽）")
         try:
-            payload = _network_retry(lambda: _fetch_quote_payload(normalized, timeout_seconds))
+            payload = _network_retry(
+                lambda: _fetch_quote_payload(normalized, timeout_seconds),
+                budget=budget,
+            )
         except Exception as exc:  # noqa: BLE001 - 行情失败静默降级。
             return EquityQuote(
                 ticker=normalized,
@@ -817,14 +880,23 @@ def fetch_stock_quote(ticker: str, timeout_seconds: float = 6.0) -> EquityQuote:
             )
         if _first_diff_row(payload) is not None or attempt + 1 >= attempts:
             return _parse_quote(normalized, ref, payload)
+        if not budget_allows_retry(budget):
+            return _unavailable_quote(normalized, ref, "行情拉取放弃（网络预算耗尽）")
         empty_backoff_sleep()
     raise AssertionError("unreachable")  # pragma: no cover - 末次必返回
 
 
 def fetch_stock_ohlcv(
-    ticker: str, days: int = 90, timeout_seconds: float = 6.0
+    ticker: str,
+    days: int = 90,
+    timeout_seconds: float = 6.0,
+    *,
+    budget: Any | None = None,
 ) -> OHLCVSeries:
-    """上市股票近 N 日 K 线（旧→新）；失败/非上市走状态对象，绝不抛异常。"""
+    """上市股票近 N 日 K 线（旧→新）；失败/非上市走状态对象，绝不抛异常。
+
+    FIN-R1：不传 budget 时自造 per-call 端到端网络预算；预算尽弃剩余重试。
+    """
     normalized = (ticker or "").strip().upper()
     ref = _COMPANY_BY_TICKER.get(normalized)
     if normalized in NON_PUBLIC_EQUITIES:
@@ -836,12 +908,18 @@ def fetch_stock_ohlcv(
             status=FinanceDataStatus.UNAVAILABLE,
             note="未注册的公司（注册表见 list_listed_companies）",
         )
+    budget = _budget_or_new(budget)
     # G2：空 klines（空 JSON/缺行）退避后至多重试 1 次；真异常不重试；
     # 仍空走既有 UNAVAILABLE 状态对象。
     attempts = 2 if retry_on_empty_enabled() else 1
     for attempt in range(attempts):
+        if budget_expired(budget):
+            break  # FIN-R1：预算尽弃剩余尝试，走末态 UNAVAILABLE 诚实降级。
         try:
-            payload = _network_retry(lambda: _fetch_kline_payload(normalized, days, timeout_seconds))
+            payload = _network_retry(
+                lambda: _fetch_kline_payload(normalized, days, timeout_seconds),
+                budget=budget,
+            )
             series = _parse_klines(payload, ref)
         except Exception as exc:  # noqa: BLE001
             return OHLCVSeries(
@@ -857,12 +935,29 @@ def fetch_stock_ohlcv(
             )
         if series.bars or attempt + 1 >= attempts:
             return series
+        if not budget_allows_retry(budget):
+            return series
         empty_backoff_sleep()
-    raise AssertionError("unreachable")  # pragma: no cover - 末次必返回
+    return OHLCVSeries(
+        ticker=normalized,
+        name=ref.display,
+        currency="USD",
+        bars=[],
+        source=_SOURCE_KLINE,
+        as_of=_now_utc(),
+        status=FinanceDataStatus.UNAVAILABLE,
+        delayed=True,
+        note="K 线拉取放弃（网络预算耗尽；失败不缓存，下轮自动重试）",
+    )
 
 
-def fetch_market_cap(ticker: str, timeout_seconds: float = 6.0) -> MarketCap:
-    """总市值快照；f20 缺失/非法 → value=None + UNAVAILABLE（绝不 0）。"""
+def fetch_market_cap(
+    ticker: str, timeout_seconds: float = 6.0, *, budget: Any | None = None
+) -> MarketCap:
+    """总市值快照；f20 缺失/非法 → value=None + UNAVAILABLE（绝不 0）。
+
+    FIN-R1：不传 budget 时自造 per-call 端到端网络预算；预算尽弃剩余重试。
+    """
     normalized = (ticker or "").strip().upper()
     ref = _COMPANY_BY_TICKER.get(normalized)
     if normalized in NON_PUBLIC_EQUITIES:
@@ -904,11 +999,17 @@ def fetch_market_cap(ticker: str, timeout_seconds: float = 6.0) -> MarketCap:
             ),
         )
     # G2：缺行=限流空响应签名 → 退避重试一次；行在但 f20 缺失不重试；
-    # 真异常不重试。
+    # 真异常不重试。FIN-R1：预算尽即弃剩余尝试，走同构 UNAVAILABLE 降级。
+    budget = _budget_or_new(budget)
     attempts = 2 if retry_on_empty_enabled() else 1
     for attempt in range(attempts):
+        if budget_expired(budget):
+            return _unavailable_market_cap(normalized, "市值拉取放弃（网络预算耗尽）")
         try:
-            payload = _network_retry(lambda: _fetch_quote_payload(normalized, timeout_seconds))
+            payload = _network_retry(
+                lambda: _fetch_quote_payload(normalized, timeout_seconds),
+                budget=budget,
+            )
         except Exception as exc:  # noqa: BLE001
             return MarketCap(
                 ticker=normalized,
@@ -941,8 +1042,10 @@ def fetch_market_cap(ticker: str, timeout_seconds: float = 6.0) -> MarketCap:
                 status=FinanceDataStatus.OK,
                 note="",
             )
+        if not budget_allows_retry(budget):
+            return _unavailable_market_cap(normalized, "市值拉取放弃（网络预算耗尽）")
         empty_backoff_sleep()
-    raise AssertionError("unreachable")  # pragma: no cover - 末次必返回
+    return _unavailable_market_cap(normalized, "市值拉取放弃（网络预算耗尽）")
 
 
 # ==================== 指标计算（纯函数，离线可验证） ====================
@@ -1529,20 +1632,26 @@ def _parse_quotes(payload: Any, timestamp: str) -> list[StockQuote]:
 
 
 def _fetch_all_quotes(
-    timeout_seconds: float, cache_seconds: float
+    timeout_seconds: float, cache_seconds: float, *, budget: Any | None = None
 ) -> list[StockQuote]:
-    """拉全量 9 只快照；成功才进 TTL 缓存，失败返回 [] 且不缓存。"""
+    """拉全量 9 只快照；成功才进 TTL 缓存，失败返回 [] 且不缓存。
+
+    FIN-R1：不传 budget 时自造 per-call 端到端网络预算；预算尽弃剩余重试。
+    """
     global _QUOTE_CACHE
     now = time.monotonic()
     cached = _QUOTE_CACHE
     if cached is not None and now - cached[0] <= max(0.0, float(cache_seconds)):
         return list(cached[1])
+    budget = _budget_or_new(budget)
     secids = ",".join(secid for secid, *_rest in _STOCK_UNIVERSE)
     # G2：东财限流=HTTP 200 空响应（空 JSON/缺行）→ 退避后至多重试 1 次；
     # 真异常（网络错/非 200）不重试；仍空照旧不缓存。
     attempts = 2 if retry_on_empty_enabled() else 1
     quotes: list[StockQuote] = []
     for attempt in range(attempts):
+        if budget_expired(budget):
+            break  # FIN-R1：预算尽 → 如实返回 []（不缓存），下轮再来。
         try:
             payload = _fetch_payload(secids, max(1.0, float(timeout_seconds)))
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1550,7 +1659,7 @@ def _fetch_all_quotes(
         except Exception:  # noqa: BLE001 - 行情失败静默降级，不阻塞会话链路。
             quotes = []
             break  # 真异常不重试。
-        if quotes or attempt + 1 >= attempts:
+        if quotes or attempt + 1 >= attempts or not budget_allows_retry(budget):
             break
         empty_backoff_sleep()
     if quotes:
@@ -1562,18 +1671,22 @@ def fetch_stock_quotes(
     symbols: Sequence[str] | None = None,
     timeout_seconds: float = 6.0,
     cache_seconds: float = _QUOTE_CACHE_TTL_DEFAULT_SECONDS,
+    *,
+    budget: Any | None = None,
 ) -> list[StockQuote]:
     """批量拉取科技巨头快照；失败返回 []，绝不抛异常。
 
     ``symbols=None`` 拉全部 9 只；给列表则按宇宙表顺序过滤子集
     （单次批量外呼 + 进程内 TTL 缓存，默认 60s；失败不缓存，下次立即重试）。
+
+    FIN-R1：不传 budget 时自造 per-call 端到端网络预算；预算尽返回 []。
     """
     wanted: set[str] | None = None
     if symbols is not None:
         wanted = {str(s).strip().upper() for s in symbols if str(s).strip()}
         if not wanted:
             return []
-    all_quotes = _fetch_all_quotes(timeout_seconds, cache_seconds)
+    all_quotes = _fetch_all_quotes(timeout_seconds, cache_seconds, budget=budget)
     if wanted is None:
         return all_quotes
     return [q for q in all_quotes if q.symbol in wanted]
@@ -1616,11 +1729,15 @@ def fetch_stock_history(
     days: int = 30,
     timeout_seconds: float = 6.0,
     cache_seconds: float = _HISTORY_CACHE_TTL_SECONDS,
+    *,
+    budget: Any | None = None,
 ) -> tuple[PricePoint, ...]:
     """单只股票近 N 根日 K（旧→新）；失败/未知 symbol 返回 ()，绝不抛。
 
     复用 K 线单点网络出口（lmt 固定 60），days 截断在客户端完成；
     进程内 TTL 缓存默认 10 分钟，失败/空结果不缓存（立即重试）。
+
+    FIN-R1：不传 budget 时自造 per-call 端到端网络预算；预算尽返回 ()。
     """
     normalized = (symbol or "").strip().upper()
     if normalized not in _COMPANY_BY_TICKER:
@@ -1630,19 +1747,25 @@ def fetch_stock_history(
     if cached is not None and now - cached[0] <= max(1.0, float(cache_seconds)):
         points = cached[1]
     else:
+        budget = _budget_or_new(budget)
         points = ()
         # G2：空 klines（空 JSON/缺行）退避后至多重试 1 次；真异常不重试；
         # 仍空不缓存（空结果不缓存纪律不变）。
         attempts = 2 if retry_on_empty_enabled() else 1
         for attempt in range(attempts):
+            if budget_expired(budget):
+                break  # FIN-R1：预算尽 → 如实返回 ()（不缓存）。
             try:
-                payload = _network_retry(lambda: _fetch_kline_payload(
-                    normalized, _MAX_HISTORY_POINTS, max(1.0, float(timeout_seconds))
-                ))
+                payload = _network_retry(
+                    lambda: _fetch_kline_payload(
+                        normalized, _MAX_HISTORY_POINTS, max(1.0, float(timeout_seconds))
+                    ),
+                    budget=budget,
+                )
                 points = _parse_history_points(payload)
             except Exception:  # noqa: BLE001 - K 线失败静默缺席。
                 return ()
-            if points or attempt + 1 >= attempts:
+            if points or attempt + 1 >= attempts or not budget_allows_retry(budget):
                 break
             empty_backoff_sleep()
         if points:

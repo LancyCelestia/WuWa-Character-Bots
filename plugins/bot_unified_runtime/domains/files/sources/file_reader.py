@@ -29,8 +29,9 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from zipfile import BadZipFile
+from zipfile import BadZipFile, ZipFile
 
+from plugins.bot_unified_runtime.domains.core.safety_exec import trust
 from plugins.bot_unified_runtime.domains.files.sender.restricted_runner import (
     WriteLimits,
     create_bytes,
@@ -122,6 +123,10 @@ PARSE_STATUS_SENTENCES: dict[str, str] = {
     # 单列一态而不是并进 parse_failed：把程序故障说成"你的文件坏了"是谎报，
     # 说成"没这个问题"更是——它只保证不再打断消息入站（S-16-PDF-EXC-SURFACE）。
     "internal_parse_error": "解析这个文件时程序自己出了错，没读出内容（不是你的文件损坏）",
+    # 归档类容器（docx/xlsx/pptx）解压前体检没过＝我方限额挡下的形态。既不是文件
+    # 损坏（它可能完好），也不是环境缺件；说成"损坏"是把责任记到她身上（S-FILESAFE，
+    # 需求 17 / AS-RESOURCE-ARCHIVE-BOMB）。
+    "archive_expansion_limited": "文件解压后的体量超出安全上限，未解析（防解压炸弹）",
 }
 
 
@@ -176,6 +181,101 @@ DECODE_ACCEPT_RATIO = 0.8
 #: 键位开通前不猜数（本席禁改 config.py，见 S-T-PDF-3 日志 §5）。
 PDF_SCAN_MAX_PAGES = 60
 
+# ---------------------------------------------------------------------------
+# 归档类（OOXML＝zip）解压前体检（需求 17 / AS-RESOURCE-ARCHIVE-BOMB，S-FILESAFE）
+#
+# 为什么必须先体检再交给解析器：``.docx/.xlsx/.pptx`` 都是 zip 容器，python-docx /
+# openpyxl / python-pptx 会**自行**把成员解出来。旧链只有 ``max_chars`` 这道出口闸，
+# 而字符是在解完之后才截的——几十 KB 的容器声明解出几 GB，字节先进内存，截断那条
+# 永远轮不到说话（登记名册 AS-RESOURCE-ARCHIVE-BOMB 的失效形态）。本节的判据只看
+# zip **中央目录**的申报值（不解压、成本与文件大小无关），超限当场点名降级。
+# 申报值会说谎，所以另加一条「真读一段」的实体展开门：OOXML 的成员里出现内部
+# DTD 实体声明（``<!ENTITY``）就不是合法 Office 文档（合法件里零出现），而
+# billion-laughs 的定义正躲在文档开头——读每枚 XML 成员的开头一小段即可拦住，
+# 读的是**截断后的真实字节**，不是申报值。
+# 限额走本文件常量真身，不散抄进各分支；``character/documents.py`` 那条独立腿
+# （F-D，S-FIX-PERSONA-R2）数值口径不同、各有其主，此处不复述也不去改它。
+# ---------------------------------------------------------------------------
+
+#: 单容器成员数上限（合法 Office 文档实测数十到数百枚；2000 已远超日常形态）。
+ARCHIVE_MAX_MEMBER_COUNT = 2000
+#: 单个成员**申报**的解压后字节上限。
+ARCHIVE_MAX_MEMBER_BYTES = 32 * 1024 * 1024
+#: 全容器**申报**的解压后字节合计上限。
+ARCHIVE_MAX_TOTAL_BYTES = 64 * 1024 * 1024
+#: 实体展开门：每枚 XML 成员只真读开头这么多字节（解出来的真实字节，非申报值）。
+ARCHIVE_XML_HEAD_BYTES = 64 * 1024
+#: 实体展开门最多真读多少成员（防病态容器把门本身跑成 IO 炸弹）。
+ARCHIVE_MAX_SCANNED_MEMBERS = 64
+
+_INTERNAL_ENTITY_MARKER = b"<!entity"
+
+
+def archive_expansion_violation(source: Path) -> str:
+    """归档类解析前的体检。返回 ``""``＝放行；否则点名超限代号。
+
+    代号（进 ``metadata["format"]`` 短语，**不含冒号与路径**）：
+    ``member_count`` / ``member_bytes`` / ``total_bytes`` / ``internal_entity``。
+    容器根本打不开（非 zip / 中央目录损坏）**不在这里归因**——返回 ``""`` 交各分支
+    既有捕获说「损坏或不是有效的 …」，本口不抢那句（S-PDF-1 的归因纪律）。
+    """
+    try:
+        with ZipFile(source) as archive:
+            infos = archive.infolist()
+            if len(infos) > ARCHIVE_MAX_MEMBER_COUNT:
+                return "member_count"
+            total = 0
+            for info in infos:
+                declared = int(getattr(info, "file_size", 0) or 0)
+                if declared > ARCHIVE_MAX_MEMBER_BYTES:
+                    return "member_bytes"
+                total += declared
+                if total > ARCHIVE_MAX_TOTAL_BYTES:
+                    return "total_bytes"
+            scanned = 0
+            for info in infos:
+                if not str(info.filename).lower().endswith(".xml"):
+                    continue
+                scanned += 1
+                if scanned > ARCHIVE_MAX_SCANNED_MEMBERS:
+                    break
+                try:
+                    # 真读一小段：申报值会说谎，这里吃的是解压出来的实际字节。
+                    with archive.open(info) as stream:
+                        head = stream.read(ARCHIVE_XML_HEAD_BYTES)
+                except (BadZipFile, OSError, ValueError):
+                    # 单成员解不开＝坏容器，交各分支既有捕获归因，本口不猜。
+                    continue
+                if _INTERNAL_ENTITY_MARKER in head.lower():
+                    return "internal_entity"
+    except (BadZipFile, OSError, ValueError):
+        return ""
+    return ""
+
+
+#: 违规代号 → 归类短语（``_degrade`` 的 ``label`` 位，只说形态、不带路径与冒号）。
+ARCHIVE_VIOLATION_LABELS: dict[str, str] = {
+    "member_count": f"容器成员数超上限（{ARCHIVE_MAX_MEMBER_COUNT} 枚）",
+    "member_bytes": f"单成员解压后尺寸超上限（{ARCHIVE_MAX_MEMBER_BYTES} 字节）",
+    "total_bytes": f"解压后合计尺寸超上限（{ARCHIVE_MAX_TOTAL_BYTES} 字节）",
+    "internal_entity": "XML 成员含内部 DTD 实体声明（实体展开攻击形态）",
+}
+
+
+def _archive_guard(source: Path, kind: str) -> FileReadResult | None:
+    """三条 OOXML 腿共用的体检闸；放行返回 ``None``，超限返回降级结果。"""
+    violation = archive_expansion_violation(source)
+    if not violation:
+        return None
+    label = ARCHIVE_VIOLATION_LABELS.get(violation, "解压前体检未放行")
+    return FileReadResult(
+        source,
+        kind,
+        "",
+        source.name,
+        {"status": "archive_expansion_limited", "format": label, "code": violation},
+    )
+
 _CJK_RANGES = (
     (0x4E00, 0x9FFF),
     (0x3400, 0x4DBF),
@@ -225,8 +325,8 @@ def cjk_decode_ratio(text: str) -> float | None:
 def file_read_failure_note(result: FileReadResult) -> str:
     """入站归一注入对话面的一行：中文主句 + 可核对技术事实。
 
-    覆盖四族（S-T-PDF-3 扩两族；S-FILES-LAND 补第三格）：
-    ① ``parse_failed`` / ``parser_unavailable`` 两枚诚实降级态（``PARSE_STATUS_SENTENCES``）；
+    覆盖四族（S-T-PDF-3 扩两族；S-FILES-LAND 补第三格；S-FILESAFE 补归档体检态）：
+    ① ``PARSE_STATUS_SENTENCES`` 那张表里的各枚诚实降级态（含归档体检那一枚）；
     ② ``password_protected``（``NOTE_STATUS_SENTENCES``）——同挂「读取失败」标签但句子
        明说口令、不说损坏；
     ③ PDF「读到但没字」四态（``SCAN_EMPTY_SENTENCES``，经 ``metadata["pdf_scan"]``）
@@ -285,11 +385,46 @@ class GeneratedFile:
     kind: str
 
 
+def _text_prefix_bytes(max_chars: int) -> int:
+    """文本腿最多**从盘上取**多少字节（UTF-8 单字最宽 4 字节，故 4×字符预算）。"""
+    return max(0, int(max_chars)) * 4
+
+
 def _text(path: Path, max_chars: int) -> str:
-    raw = path.read_bytes()[: max_chars * 4]
+    """流式取**前缀**解码，绝不整档进内存（需求 17 / AS-RESOURCE-UNBOUNDED，S-FILESAFE）。
+
+    旧写法是 ``path.read_bytes()[: max_chars * 4]``——先把整份文件读进内存再切前缀，
+    一个 5GB 的 ``.txt``/``.log`` 就能把 bot 进程顶到 OOM（本仓 2026-09-26 已有两次
+    OOM 前例，台账见 HANDBOOK）。现在只 ``read(budget)``：读到的字节数与文件大小无关。
+    NUL 探测仍只看前 4096 字节（二进制判定口径不变）。
+    """
+    budget = _text_prefix_bytes(max_chars)
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(budget) if budget else b""
+    except OSError:
+        return ""
     if b"\x00" in raw[:4096]:
         return ""
     return raw.decode("utf-8", errors="replace")[:max_chars]
+
+
+def _text_truncation_note(path: Path, max_chars: int) -> str:
+    """文本腿「只读了前一段」的显式说明（不变量③：没读不许写成没有）。
+
+    只在盘上字节确实多于预算时开口；判据用 ``stat().st_size``，不再读第二遍。
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return ""
+    budget = _text_prefix_bytes(max_chars)
+    if not budget or size <= budget:
+        return ""
+    return (
+        f"[本次只读取了文件开头约 {max_chars} 字符（盘上共 {size} 字节，"
+        f"读取预算 {budget} 字节）。后面的内容没有读，没读不等于没有内容。]"
+    )
 
 
 def _degrade(source: Path, kind: str, label: str, *, status: str) -> FileReadResult:
@@ -304,6 +439,72 @@ def _degrade(source: Path, kind: str, label: str, *, status: str) -> FileReadRes
 
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# 文件正文进上下文的**唯一打标咽喉**（需求 17 漏口①，S-SEC-NARROW 2026-09-28）
+#
+# 为什么这一对在 file_reader、而不是让每个消费方各自去 import trust：
+# ①``read_supported_file`` 的公开面是「文件正文」这个**产物**，产物离开解析出口时
+#   应当已经带上「谁说的」这一句结构化事实——这正是登记件 ``trust`` 教义的落点
+#   （正文恒 T2，超管亲手上传也不升档）；
+# ②消费方散在根 ``__init__.py``（禁写）、``runtime/capability_protocols.py``（禁写）、
+#   控制面（禁写）与邮件腿（本席可写）。真身放在出口，等 hub 落下补丁时那几腿
+#   **只是换一行调用**，不需要各自重写判据；本席先把邮件腿这条能接的接上；
+# ③判据零副本：本文件不 import re、不自己拼前导行、不自己定档——定档与检测全在
+#   ``trust.label_file_body`` 背后（它再下游调 ``check_prompt_injection``）。
+# 空正文（读不出、降级、只读到 0 字）**不打标**：那种形态要说的是「我没读到」，
+# 措辞唯一真身是 ``file_read_failure_note``；给一句不存在的外部资料加来源行，
+# 等于把「没读」写成「读到了」，违反不变量③。
+# ---------------------------------------------------------------------------
+
+
+def labelled_text(
+    result: FileReadResult,
+    *,
+    display_name: str = "",
+    request_id: str = "",
+    origin: trust.ContentOrigin | str = trust.ContentOrigin.FILE_BODY,
+) -> str:
+    """已读出的 ``FileReadResult`` → 带 T2 来源前导行的上下文文本。
+
+    ``display_name`` 是**给人看的那个名字**（邮件附件名、用户上传名）：解析出口拿到
+    的往往是临时件名，调用方手上有真名就该传进来，否则来源行会写成临时文件名——
+    那不是谎报，但是句没人能对得上的废话。
+    ``origin`` 让调用方**申报来源种类**（文件正文／邮件附件同族都写 ``file_body``；
+    申报不出的一律由 ``trust`` 收敛成 UNKNOWN ⇒ T3，fail-closed，不默认升级）。
+    空正文返回空串（调用方据此走降级措辞）。
+    """
+    body = str(getattr(result, "text", "") or "")
+    if not body.strip():
+        return ""
+    name = str(display_name or result.title or result.path.name or "")
+    if origin == trust.ContentOrigin.FILE_BODY:
+        # 文件正文这一族走它自己的命名口（也是邮件腿那枚注毒锁钉的调用面）。
+        return trust.label_file_body(name, body, request_id=request_id)
+    return trust.label_ingress_content(
+        body=body, origin=origin, source_name=name, request_id=request_id
+    )
+
+
+def read_file_for_context(
+    path: str | Path,
+    *,
+    display_name: str = "",
+    request_id: str = "",
+    max_chars: int = 120000,
+    scan_max_pages: int | None = None,
+) -> str:
+    """「读文件并把正文交进上下文」的一行式口：读 + 逐份 T2 打标，一次调用完成。
+
+    读不出/没字 → 返回空串，**降级措辞仍由调用方走** ``file_read_failure_note``
+    （两态措辞唯一真身，本口不复制、不并态）。根 ``__init__.py`` 附件腿与中央
+    ``files.read.*`` handler 的替换形态就是这一枚函数（见席位报告 hub 补丁申请）。
+    """
+    result = read_supported_file(
+        path, max_chars=max_chars, scan_max_pages=scan_max_pages
+    )
+    return labelled_text(result, display_name=display_name, request_id=request_id)
 
 
 def read_supported_file(
@@ -361,13 +562,28 @@ def _read_supported_file_body(
         return FileReadResult(source, "missing", "")
     ext = source.suffix.lower()
     if ext in _TEXT_EXTS:
+        body = _text(source, max_chars)
+        note = _text_truncation_note(source, max_chars)
+        if not note:
+            return FileReadResult(
+                source,
+                "code" if ext in _CODE_EXTS else "text",
+                body,
+                source.name,
+            )
+        # 截断如实说明（既有行为是静默切前缀）：正文加一行、metadata 另留可核对尺寸，
+        # 控制面/卡片侧要判「读全了没」只看 metadata 就够。
         return FileReadResult(
             source,
             "code" if ext in _CODE_EXTS else "text",
-            _text(source, max_chars),
+            (body + "\n" + note) if body else note,
             source.name,
+            {"text_truncated": True, "read_bytes_budget": _text_prefix_bytes(max_chars)},
         )
     if ext == ".docx":
+        guarded = _archive_guard(source, "document")
+        if guarded is not None:
+            return guarded
         try:
             from docx import Document
             from docx.opc.exceptions import OpcError
@@ -400,6 +616,9 @@ def _read_supported_file_body(
             {"status": "parser_unavailable", "format": "legacy .xls (OLE2)"},
         )
     if ext == ".xlsx":
+        guarded = _archive_guard(source, "spreadsheet")
+        if guarded is not None:
+            return guarded
         try:
             import openpyxl
             from openpyxl.utils.exceptions import InvalidFileException
@@ -442,6 +661,9 @@ def _read_supported_file_body(
             {"status": "parser_unavailable", "format": "legacy .ppt (OLE2)"},
         )
     if ext == ".pptx":
+        guarded = _archive_guard(source, "presentation")
+        if guarded is not None:
+            return guarded
         try:
             from pptx import Presentation
             from pptx.exc import PackageNotFoundError

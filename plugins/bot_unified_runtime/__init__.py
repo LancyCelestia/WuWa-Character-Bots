@@ -104,7 +104,8 @@ from .domains.link_parse.capabilities.content_parser import build_content_capabi
 from .domains.location.capabilities.moegirl import (
     build_moegirl_capability,
     extract_moegirl_query,
-    question_lookup, resolve_grounding_for_entity,  # 2026-09-27 百科接地批（行数不变：7087/7088 在册 matcher 坐标零顶漂）
+    question_lookup,  # 2026-09-27 百科接地批（行数不变：7087/7088 在册 matcher 坐标零顶漂）
+    resolve_grounding_for_entity,
 )
 from .domains.location.capabilities.wiki import build_wiki_capability
 from .domains.media.capabilities.media_archive import build_media_archive_capability
@@ -159,6 +160,9 @@ from .domains.meme.reactions.engine import (
     maybe_react_on_message as _maybe_react_on_message,
 )
 from .domains.meme.reactions.engine import (
+    maybe_react_telegram_message as _maybe_react_telegram_message,
+)
+from .domains.meme.reactions.engine import (
     normalize_onebot_emoji_like as _normalize_onebot_emoji_like,
 )
 from .domains.music.capabilities.music import build_music_capability
@@ -183,6 +187,7 @@ from .domains.ops.smoke.diagnostics import (
     build_diagnostics_store,
     build_runtime_diagnostic,
     build_why_result,
+    infer_policy_gate_fields,
 )
 from .domains.render.render_backends import build_render_backend
 from .domains.schedule.capabilities.reminder import build_reminder_capability
@@ -336,6 +341,10 @@ OFFLOADED_CAPABILITY_IDS = frozenset(
         "bot.media_archive",
         "bot.search",
         "bot.affinity",
+        # bot.status（/bot status 宿主机附块）：读数含 wmic/注册表/磁盘等同步阻塞调用，
+        # 留在事件循环里会冻整轮。此前不在册 ⇒ echo 侧恒走"只读缓存不出卡"降级
+        # （S-VISUAL 现算，需求 5「说出宿主机状态并出卡」的那半截断在这枚名单）。
+        "bot.status",
     }
 )
 
@@ -398,6 +407,16 @@ def _build_memory_writer(
         store_extracted_memories,
     )
 
+    # 画像腿（需求 11）：装配口只负责「拿库 + 算键」，判据全在 person_profile 那侧。
+    # build_person_profile_store 先判 bot_person_profile_enabled 再建库 ⇒ 门没开时
+    # 返回 None 且**连库文件都不碰**（缺省关态逐字节不变，同 bus 那条腿的家规）。
+    # 键必须由 person_profile_key(sender_id, platform_domain) 现算：读侧将来也用
+    # 这一把，任何一边自拼 f"{domain}:{uid}" 或漏传域 ⇒ 两形永不相交（台账 #33★）。
+    from .domains.chat_reply.character.person_profile import (
+        build_person_profile_store,
+        person_profile_key,
+    )
+
     # A（bus 开闸前置，S-FIX-ATK-MEMORY-FIX）：抽取腿必须带总线构造仓储——开关开时
     # derived 事实直落总线（provenance=derived），不再写旧表被影子读洗成 explicit。
     # 开关关（现网缺省）时 build_memory_bus_for_writer 返回 None 且**不碰库**
@@ -416,7 +435,14 @@ def _build_memory_writer(
             return runtime_settings.get_or(key, default)
         return default
 
-    def _writer(*, user_text: str, reply_text: str, sender_id: str, session_id: str) -> None:
+    def _writer(
+        *,
+        user_text: str,
+        reply_text: str,
+        sender_id: str,
+        session_id: str,
+        platform_domain: str = "",
+    ) -> None:
         nonlocal cooldown_until
         memory_extract_on = bool(setting(
             "BOT_MEMORY_EXTRACT_ENABLED", config.bot_memory_extract_enabled))
@@ -454,8 +480,19 @@ def _build_memory_writer(
                         getattr(config, "bot_memory_extract_max_tokens", 200)))),
                 )
                 if texts:
-                    store_extracted_memories(repository, subject_user_id=sender_id,
-                                             session_id=session_id, texts=texts)
+                    profile_store = build_person_profile_store(config)
+                    store_extracted_memories(
+                        repository,
+                        subject_user_id=sender_id,
+                        session_id=session_id,
+                        texts=texts,
+                        profile=profile_store,
+                        person_key=(
+                            person_profile_key(sender_id, platform_domain)
+                            if profile_store is not None else ""
+                        ),
+                        original_user_text=user_text,
+                    )
             if reminder_extract_on:
                 from .domains.chat_reply.character.memory_extract import (
                     extract_reminder_drafts,
@@ -534,9 +571,13 @@ def _make_onebot_reply_lookup(bot: Any) -> Any:
         getter = getattr(bot, "get_msg", None)
         if not callable(getter) or not message_id:
             return None
+        # OneBot v11 的 message_id 是整数，TG/Discord 一类适配器给的是任意字符串。
+        # 旧写法先 int() 再调，非数字 id 会在 try 之前就被 ValueError 吞成 None ⇒
+        # 那条腿在字符串 id 的平台上永久哑火，且读数与「反查失败」一模一样。
+        looked_up = int(message_id) if str(message_id).isdigit() else message_id
         try:
             payload = await asyncio.wait_for(
-                getter(message_id=int(message_id)), timeout=3.0
+                getter(message_id=looked_up), timeout=3.0
             )
         except (asyncio.TimeoutError, ValueError, TypeError):
             return None
@@ -1287,6 +1328,37 @@ def _runtime_tag_values(send_request: SendRequest | None) -> dict[str, object]:
     return dict(result, **deadline.deadline_receipt_view(send_request.audit_tags))  # 预算耗尽回执自解释（S-T-DEADLOG-2；刻意行内等值替换＝净 0 行，插行会顶漂 campus matcher 登记坐标；组装口与提取口同在 domains/chat_reply/runtime/deadline.py）
 
 
+def _policy_gate_values(
+    audit_logger: AuditRepository | None,
+    receipt: DeliveryReceipt,
+    message: IncomingMessage | None,
+) -> dict[str, object]:
+    """门禁「门因」回读：把拦下这条消息的哪一层/哪道门写成事件行上的受控字段。
+
+    病形（2026-09-29 实跑取证）：群侧大量 ``event=pipeline_result
+    receipt_state=blocked transport=policy`` 读不出**为什么**被拦——判定链上的
+    reason 一直在（``policy/gate.py::_denied``），但 ``DeliveryReceipt`` 不承载
+    它、blocked 腿又没有 SendRequest，于是唯一留着门因的地方只剩 pipeline 拦截
+    时 append 的那条 ``AuditRecord(stage="policy")``。本函数把它读回日志行。
+
+    三条红线（各有一枚回归锁，tests/test_policy_gate_reason_observability.py）：
+    ① 取值只认封闭枚举（规则 3）——判据真身在
+    ``domains/ops/smoke/diagnostics.py::infer_policy_gate_fields``，自由文本结构上
+    进不了字段；② 零判定——被拦的照旧被拦，本函数不产决策、不新增发送；
+    ③ 非 policy 腿（transport=runtime/onebot）连审计库都不读，正常发送腿一字节
+    不多。读不到留痕/读库异常一律退回旧行形态（空 dict），观测面绝不牵动消息链路。
+    根文件只「取记录 + 转交」，不许在发射点旁长出第二份解析逻辑（同一枚锁执法）。
+    """
+    if receipt is None or message is None or receipt.transport != "policy":
+        return {}
+    if audit_logger is None:
+        return {}
+    try:
+        return infer_policy_gate_fields(audit_logger.list_records(message.request_id))
+    except Exception:  # noqa: BLE001 - 留痕读不到就退回旧行形态，不许牵动链路。
+        return {}
+
+
 def _incoming_from_nonebot_event(
     event: Any,
     bot_id: str = "unknown",
@@ -1381,7 +1453,15 @@ def _incoming_from_nonebot_event(
             candidate = str(data.get("file") or data.get("path") or "").strip()
             if candidate:
                 parsed_file = file_reader.read_supported_file(candidate)
-                note = f"[文件内容：{parsed_file.title or parsed_file.path.name}]\n{parsed_file.text}" if parsed_file.text else file_reader.file_read_failure_note(parsed_file)
+                note = (
+                    f"[文件内容：{parsed_file.title or parsed_file.path.name}]\n"
+                    # T2 打标唯一咽喉（S-SAFE2 2026-09-28 hub 申请 1）：文件正文一律外部
+                    # 低信任内容，来源行由 file_reader 生成，不在这里手抄第二份措辞。
+                    + file_reader.labelled_text(
+                        parsed_file,
+                        display_name=str(parsed_file.title or parsed_file.path.name),
+                    )
+                ) if parsed_file.text else file_reader.file_read_failure_note(parsed_file)
                 file_context += [note] if note else []
     except (ImportError, OSError, ValueError, TypeError):
         file_context = []
@@ -1495,9 +1575,11 @@ def _incoming_from_nonebot_event(
         sender_display_name = (
             _sanitize_sender_display_name(sender_display_name) or None
         )
-    if group_id is not None:
-        _remember_group_images(
-            str(group_id), normalized_message.segments or raw_segments
+    # 最近图片登记（MM-VIS-1 缺陷 3）：旧判据 `group_id is not None` 把私聊整段挡在
+    # 门外＝私聊连"刚才那张图"的兜底都没有。键位换成两型都存在的 session_id。
+    if session_id:
+        _remember_session_images(
+            str(session_id), normalized_message.segments or raw_segments
         )
     return IncomingMessage(
         platform=platform,
@@ -1827,6 +1909,151 @@ def _register_credential_check_scheduler(
     }
 
 
+def _register_network_patrol_scheduler(
+    *,
+    scheduler: Any,
+    config: Config,
+    audit_logger: AuditRepository,
+    pipeline: Any,
+    bot_provider: Any,
+    receipt_repository: ReceiptRepository | None,
+    send_queue: Any,
+) -> dict[str, object]:
+    """网络巡检（2026-09-30 代理链事故波，W1-③ + Clash 探针）：Clash 7890
+    存活 + 上游域「直连/经代理」双路低频探活。
+
+    - 状态差分只在「变坏/恢复」边界发声（首轮只建基线，防启动即风暴）；
+    - 变坏走**带外告警**（send_admin_alert_requests → TG/邮件，不经 LLM
+      链——告警系统不和病人共用一条血管）；恢复只记审计账不刷屏；
+    - 一轮结果追加 data/network_patrol.jsonl（滚动 .1），供事后画时间线；
+    - 探针全部 fail-open：巡检自身异常绝不拖累主链。
+    """
+    from .domains.ops.network_patrol import (
+        PATROL_TARGETS_DEFAULT,
+        append_patrol_jsonl,
+        format_alert_lines,
+        run_patrol,
+        state_delta,
+    )
+
+    if not bool(getattr(config, "bot_network_patrol_enabled", True)):
+        return {"registered": False, "reason": "disabled"}
+    interval_minutes = max(
+        1, int(getattr(config, "bot_network_patrol_interval_minutes", 15))
+    )
+    raw_domains = str(getattr(config, "bot_network_patrol_domains", "") or "").strip()
+    targets = (
+        [part.strip() for part in raw_domains.replace(";", ",").split(",") if part.strip()]
+        if raw_domains
+        else list(PATROL_TARGETS_DEFAULT)
+    )
+    proxy_url = (
+        str(getattr(config, "bot_download_proxy", "") or "").strip()
+        or "http://127.0.0.1:7890"
+    )
+    jsonl_path = (
+        Path(str(getattr(config, "bot_runtime_data_dir", "data") or "data"))
+        / "network_patrol.jsonl"
+    )
+    # 差分基线挂在闭包上（本任务单实例 max_instances=1，无并发串号面）。
+    state_holder: dict[str, object] = {"last": None}
+
+    async def _patrol_job() -> None:
+        try:
+            # 同步探针族（每域两跳 HTTPS，最坏 targets×2×timeout 秒）必须
+            # 下放线程，否则巡检期间事件循环冻结（凭据检查同款判据）。
+            report = await asyncio.to_thread(
+                run_patrol, targets=targets, clash_proxy=proxy_url
+            )
+        except Exception as exc:  # noqa: BLE001 - 巡检自身故障不影响主链。
+            audit_logger.append(
+                AuditRecord(
+                    request_id="bot_network_patrol",
+                    session_id="runtime",
+                    capability_id="bot.network_patrol",
+                    stage="scheduler",
+                    event="network_patrol_error",
+                    severity=RiskLevel.LOW,
+                    public_message="网络巡检执行失败。",
+                    private_debug=repr(exc),
+                )
+            )
+            return
+        append_patrol_jsonl(jsonl_path, report)
+        current = report.state()
+        delta = state_delta(state_holder.get("last"), current)  # type: ignore[arg-type]
+        state_holder["last"] = current
+        if not delta:
+            return
+        lines = format_alert_lines(delta)
+        got_worse = any(not ok for _, ok in delta)
+        audit_logger.append(
+            AuditRecord(
+                request_id="bot_network_patrol",
+                session_id="runtime",
+                capability_id="bot.network_patrol",
+                stage="scheduler",
+                event="network_patrol_state_change",
+                severity=RiskLevel.MEDIUM if got_worse else RiskLevel.LOW,
+                public_message="；".join(lines)[:300],
+                private_debug=" ".join(
+                    f"{key}={'ok' if ok else 'DOWN'}" for key, ok in current.items()
+                )[:400],
+            )
+        )
+        if not got_worse:
+            return
+        alert = AlertContent(
+            title="网络巡检：出站路径变化",
+            what_happened="；".join(lines)[:500],
+            impact="对应出站腿上的能力（LLM 渠道/订阅/图源等）会失败或走不通。",
+            fix_suggestion=(
+                "先看 127.0.0.1:7890 是否活着（Clash Party 进程），"
+                "再看该域直连是否可达；分流矩阵见 patches/W2-PROXY-ABC-OPS-20260930.md。"
+            ),
+            location="bot.network_patrol 定时任务",
+            level="warning",
+        )
+        bots = bot_provider()
+        bot = _select_credential_bot(bots)
+        qq_bot_id = str(getattr(bot, "self_id", "") or "").strip() if bot else ""
+        created = send_admin_alert_requests(
+            pipeline,
+            list(config.bot_admin_user_ids),
+            alert,
+            qq_bot_id=qq_bot_id or "queued-onebot",
+        )
+        if bot is None:
+            return
+        for _admin_id, request_id in created:
+            request = _find_sent_request(send_queue, request_id)
+            if request is None:
+                continue
+            await _deliver_onebot_send_request(
+                bot,
+                request,
+                audit_logger,
+                receipt_repository,
+                send_queue,
+            )
+
+    scheduler.add_job(
+        _patrol_job,
+        "interval",
+        minutes=interval_minutes,
+        id="bot_network_patrol",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    return {
+        "registered": True,
+        "reason": "registered",
+        "interval_minutes": interval_minutes,
+        "targets": targets,
+    }
+
+
 def _register_today_history_scheduler(
     *,
     scheduler: Any,
@@ -2081,23 +2308,33 @@ def _record_runtime_diagnostic(
     return diagnostics_store.record(diagnostic)
 
 
-# ---- 群聊最近图片上下文（vis3 2026-09-13 用户指令）----
+# ---- 最近图片上下文（vis3 2026-09-13 用户指令 · MM-VIS-1 2026-09-29 扩到私聊）----
 # 实战：群里别人刚发图，另一用户 @bot "总结一下"——vision 只看提问者自带图，
-# 读不到图。环形缓存按群记最近 5 分钟的 http 图片（最多 5 张），chat 在
+# 读不到图。环形缓存按**会话**记最近 5 分钟的 http 图片（最多 5 张），chat 在
 # 「无自带图 + 文本带看图意图」时注入最新一张（标注"取自群里最近图片"）。
-_GROUP_RECENT_IMAGES: dict[str, deque[tuple[float, str]]] = {}
-_GROUP_RECENT_IMAGE_TTL_SECONDS = 300.0
-_GROUP_RECENT_IMAGE_MAX = 5
+#
+# 为什么键从群号换成 `session_id`（缺陷 3）：私聊同样有"先发一张图、隔几秒再补一句
+# 问话"的连发形状，而私聊此前**完全没有兜底**——环只按 group_id 建，私聊消息
+# `group_id is None`，登记与注入两条腿都不进。`session_id` 对群是 `group:<id>`、
+# 对私聊是 `private:<id>`（摄取处 `event.get_session_id()`），两型都有 ⇒ 一个键位
+# 同时罩住两条腿，且不新增第二本账。⚠ 段类型仍只认 `image`（与 vis3 逐字节同判据）：
+# 扩类型会顺手改动群聊侧既有行为，不属本席授权面，登记为边界不静默放宽。
+_RECENT_IMAGES_BY_SESSION: dict[str, deque[tuple[float, str]]] = {}
+_RECENT_IMAGE_TTL_SECONDS = 300.0
+_RECENT_IMAGE_MAX = 5
 _VISION_HINT_RE = re.compile(
     r"总结|概括|识别|看看|看一下|这图|什么图|分析|读懂|描述|梳理|讲了什么|说了什么"
 )
 
 
-def _remember_group_images(group_id: str, segments: list[dict[str, Any]]) -> None:
-    """摄取侧登记：群消息里的 http 图片进环形缓存（进程内，重启即清）。"""
+def _remember_session_images(session_id: str, segments: list[dict[str, Any]]) -> None:
+    """摄取侧登记：本会话消息里的 http 图片进环形缓存（进程内，重启即清）。"""
+    key = str(session_id or "").strip()
+    if not key:
+        return
     now = time.monotonic()
-    bucket = _GROUP_RECENT_IMAGES.setdefault(
-        str(group_id), deque(maxlen=_GROUP_RECENT_IMAGE_MAX)
+    bucket = _RECENT_IMAGES_BY_SESSION.setdefault(
+        key, deque(maxlen=_RECENT_IMAGE_MAX)
     )
     for segment in segments:
         if str(segment.get("type", "")).strip().lower() != "image":
@@ -2107,12 +2344,12 @@ def _remember_group_images(group_id: str, segments: list[dict[str, Any]]) -> Non
             bucket.append((now, url))
 
 
-def _latest_fresh_group_image(group_id: str, now: float) -> str:
-    """取群内 TTL 内最新一张 http 图片；过期条目（最旧端）顺手清理。"""
-    bucket = _GROUP_RECENT_IMAGES.get(str(group_id))
+def _latest_fresh_session_image(session_id: str, now: float) -> str:
+    """取本会话 TTL 内最新一张 http 图片；过期条目（最旧端）顺手清理。"""
+    bucket = _RECENT_IMAGES_BY_SESSION.get(str(session_id or "").strip())
     if not bucket:
         return ""
-    while bucket and now - bucket[0][0] > _GROUP_RECENT_IMAGE_TTL_SECONDS:
+    while bucket and now - bucket[0][0] > _RECENT_IMAGE_TTL_SECONDS:
         bucket.popleft()
     return bucket[-1][1] if bucket else ""
 
@@ -2401,6 +2638,29 @@ def _record_transport_receipt(
     send_queue: Any | None = None,
 ) -> DeliveryReceipt:
     issue = receipt.operational_issue or send_request.operational_issue
+    if issue is None and receipt.state.value == "failed_final":
+        # 出站终态失败的告警出口（2026-09-29 需求项 2 之 4）：max_attempts 烧尽后
+        # 置 FAILED_FINAL 的那几条以前**不带 issue**，而 worker 的告警闸
+        # （`worker._notify_operational_issue_safely`）第一行就是「无 issue 直接返回」
+        # ⇒ 一条消息出了终态就凭空消失，管理员侧零痕迹（现网日志实证：本窗口
+        # failed_final 3 条、blocked 群轮 2688 条，全部无痕）。
+        # 这里只补一枚**分类未定**的 OperationalIssue（retry_safety 缺省 ""＝未分类
+        # ⇒ 重投语义与新增该字段前逐字节一致，见 contracts/runtime.py 的字段注），
+        # 告警本身沿用既有链条：queue.mark_final_failure → worker → operational_notifier
+        # → runtime/alerts 的抑制窗与出卡，不新造机制、不新增第二条静默闸。
+        # kind 是逐字承重串：`alerts._KIND_PLAIN` 与 `error_report` 两面还没登记它，
+        # 缺登记时告警走既有兜底句（"原因我不猜，请按代号补登记"），已列为交别席项。
+        issue = OperationalIssue(
+            stage="transport",
+            kind="send_failed_final",
+            retryable=False,
+            severity=RiskLevel.MEDIUM,
+            safe_summary=(
+                f"capability={send_request.capability_id} transport={receipt.transport} "
+                f"state=failed_final"
+            ),
+        )
+        receipt = receipt.model_copy(update={"operational_issue": issue})
     if issue is not None:
         receipt = receipt.model_copy(update={"public_message": "", "operational_issue": issue})
     if send_queue is not None:
@@ -2692,7 +2952,9 @@ def build_character_affinity_store(config: object):
     with _AFFINITY_STORES_LOCK:
         store = _AFFINITY_STORES.get(cache_key)
         if store is None:
-            store = DynamicAffinityStore(db_path)
+            # config 句柄传入＝12 枚 v7 键逐调用现读（消装配期快照：她改 .env 重启即生效，
+            # 不必等下一轮重建单例；S-MEMAFF 2026-09-28 hub 申请 C 项）。
+            store = DynamicAffinityStore(db_path, config=config)
             _AFFINITY_STORES[cache_key] = store
         return store
 
@@ -4022,8 +4284,16 @@ def _register_nonebot_handlers() -> None:
                 dedupe_namespace=ACK_DEDUPE_NAMESPACE,
             )
             verdict = outcome.verdict
+            if verdict.action == "skip":
+                # DEFECT-4/6（2026-09-28 主会话落 S-ACK hub 申请 H-5）：skip＝这条**永远不会
+                # 送出**。原样静默 return 的话，本轮已经占掉的那次回执冷却坑就白烧了——用户
+                # 此后一段时间再也收不到一句等待提示，而现场一行日志都没有。抛给 pipeline
+                # （其 :1532-1534 见抛即退坑），让冷却额度回到可复用状态。
+                raise RuntimeError(
+                    f"progress ack skipped by outbound gate (reason={verdict.reason})"
+                )
             if verdict.action != "allow" or verdict.deliver_after is not None:
-                return outcome  # 闸拦下或判了顺延：交回队列，不占冷却坑
+                return outcome  # 闸判了顺延：交回队列，不占冷却坑
             # 首参必须是 provider 可调用对象而非其返回值：传 dict 会被吞成 None=静默不发（本波实犯）。
             bot = _select_queue_bot(_all_online_bots, request)
             if bot is None:
@@ -4250,11 +4520,24 @@ def _register_nonebot_handlers() -> None:
         bot: Any,
         request: SendRequest,
     ) -> DeliveryReceipt:
-        if target.adapter == "onebot":
-            return await send_onebot_v11(bot, request)
-        from .domains.transport.sender.nonebot import send_nonebot_message
+        async def _resend() -> DeliveryReceipt:
+            if target.adapter == "onebot":
+                return await send_onebot_v11(bot, request)
+            from .domains.transport.sender.nonebot import send_nonebot_message
 
-        return await send_nonebot_message(bot, None, request)
+            return await send_nonebot_message(bot, None, request)
+
+        receipt = await _resend()
+        # 直发腿不入队（无 part 账、无退避、无重投）⇒ 一次代理瞬断就是一条永久
+        # 消失的管理员告警。只对 connect_phase（连接建立期失败＝零字节出网、必
+        # 未送达）后台补发**一次**，短退避、不阻塞事件循环；补发再失败维持现状
+        # （success=False、不入队、不再补）。不确定类一律不补＝M-63 红线（#47）。
+        from .domains.transport.sender.failure_class import (
+            schedule_connect_phase_resend,
+        )
+
+        schedule_connect_phase_resend(request, receipt, _resend)
+        return receipt
 
     async def _notify_operational_receipt(
         message: IncomingMessage,
@@ -4273,10 +4556,12 @@ def _register_nonebot_handlers() -> None:
                 session_type=str(getattr(message, "session_type", "")),
                 session_id=str(getattr(message, "session_id", "")),
             )
-        # LLM 截止超时是常态降级（模型慢/网络抖动，用户侧已有兜底回复），
-        # 不值得私聊管理员，直接跳过避免刷屏。
-        if getattr(issue, "stage", "") == "llm" and getattr(issue, "kind", "") == "deadline_exceeded":
-            return
+        # LLM 截止超时（stage=llm / kind=deadline_exceeded）**照常进管理员告警链**
+        # （超时改造 C1-c，2026-09-28 用户裁定）。这里曾有一句按该 kind 的早退，
+        # 代价正是这条线反复付过的学费：把一类故障从可见面上摘掉，它就再也没人修
+        # （台账 #49「在册未执法」同族、#51「没检索禁写它没有」同规）。刷屏由
+        # operational_alert_suppression 的抑制窗统一承担（runtime/alerts.py），
+        # 本处不再自建第二道静默闸。
         targets = _operational_alert_targets()
         if not targets:
             return
@@ -4352,9 +4637,19 @@ def _register_nonebot_handlers() -> None:
     # 中央调度收编波 P5-E3：creation 预留面（绘画/语音对接点）的「要而不得」告警**共用**
     # 上面那个 sink（同 `_push_probe_issue`、同 `operational_alert_suppression` 300s 抑制），
     # 不另造第二条投递路（宪法：跨域装配只在装配层；告警口唯一）。
+    # 2026-09-28 探针正名：此前本腿直吃 sink 缺省，告警「发出账号」显示 `tts-probe`、
+    # 能力顶 `bot.tts`——与语音无关的创作缺位被挂到探针名下，误导用户查语音腿。
+    # 改法＝薄包装只补署名、仍转发同一个中央口（语音腿不动、继续吃缺省）。
     from .domains.creation.reserved_health_alert import install_reserved_alert_sink
 
-    install_reserved_alert_sink(_push_probe_issue)
+    def _push_creation_patrol_issue(issue: Any) -> None:
+        _push_probe_issue(
+            issue,
+            source_bot="creation-patrol",
+            capability_id="creation.reserved_health",
+        )
+
+    install_reserved_alert_sink(_push_creation_patrol_issue)
     # 执行体在场性探针（S50/S37 同点实锤 GAP-CREAT-ALERT-STALE）：presence 键里
     # `bot_tts_api_url` 生产缺省恒非空 ⇒ 只按"键填了没"判"要而不得"，会在 P4-C2
     # 接上语音执行体之后每次 /bot status 投一条"实现工厂未接入"的假告警。
@@ -4363,6 +4658,19 @@ def _register_nonebot_handlers() -> None:
     from .runtime.capability_protocols import has_registered_handler
 
     install_execution_presence_probe(has_registered_handler)
+    # S-CREATION-GAP-LEDGER（2026-09-28 现场）：`_not_configured_fired` 只活在进程内存
+    # ⇒ 一天约 10 次重启把同一件「预留位没接后端、不是故障」的缺位报了约 7 波
+    # （每波 2 收件人 ×（文本＋卡）＝4 条，合计约 28 条私聊）。门语义本身没错，缺的是
+    # 跨进程记忆 ⇒ 由运维层给一枚本地 JSON 露头账本，同 sink/probe 手法递进本域
+    # （creation 域是纯协议壳，禁 os/pathlib/sqlite3，自己不能碰盘）。
+    # 账本只在**成功投递后**记账、坏盘 fail-open 偏向多报、24h 窗口后允许重新露头，
+    # 所以「缺位必须巡检可见」这条 mandate 不被削掉。撤掉本注入＝退回旧的每进程一次。
+    from .domains.creation.reserved_health_alert import install_not_configured_ledger
+    from .domains.ops.monitor.reserved_gap_ledger import ReservedGapLedger
+
+    install_not_configured_ledger(
+        ReservedGapLedger(_runtime_scripts_path("data/creation_reserved_gap.json"))
+    )
 
     # SEAT-S102-PATROL-WIRE：把 creation 缺位告警从「只有 /bot status 手动触发」升为周期驱动。
     # 注册一条后台任务，按固定间隔调用巡检唯一入口 patrol_reserved_health；复用上面已注入的
@@ -4629,6 +4937,16 @@ def _register_nonebot_handlers() -> None:
                 receipt_repository=receipt_repository,
                 send_queue=send_queue,
             )
+        # 网络巡检（enabled 缺省 True，函数内自gate）：Clash 探针 + 上游双路巡检。
+        _register_network_patrol_scheduler(
+            scheduler=scheduler,
+            config=config,
+            audit_logger=audit_logger,
+            pipeline=pipeline,
+            bot_provider=_all_online_bots,
+            receipt_repository=receipt_repository,
+            send_queue=send_queue,
+        )
         from .domains.chat_reply.llm_engine.model_schedule import (
             _register_model_schedule_scheduler,
         )
@@ -4978,6 +5296,8 @@ def _register_nonebot_handlers() -> None:
         MemeLibraryStore(
             str(getattr(config, "bot_meme_library_db_path", "data/meme_library.sqlite3") or ""),
             prefer=list(getattr(config, "bot_meme_library_prefer", []) or []),
+            # 容器门收窄（B3）：容器=库目录本身，不再宽到整个 data 根。
+            library_dir=str(getattr(config, "bot_meme_library_dir", "data/meme_library") or ""),
         )
         if getattr(config, "bot_meme_library_enabled", False)
         else None
@@ -4991,9 +5311,23 @@ def _register_nonebot_handlers() -> None:
     # 双层表情·第二层（情绪时刻发表情包）：独立五门（开关/每消息去重/
     # 确定性概率/会话冷却/每小时时限）+ 每会话每日上限 + C1 悲伤门；
     # 与第一层贴小表情互斥（第一层贴过则本层整条让路）。
-    # 选图自 S-T-STK-2（2026-09-26）起走四路合一门面 select_sticker_for_turn（原顶层 pick_reaction_meme 直呼已删，函数内局部 import，先例 _pick_poke_meme）；反重复在 MemeLibraryStore.weighted_pick 咽喉执法，与本腿调用点无关。
+    # 选图自 S-T-STK-2（2026-09-26）起走门面 select_sticker_for_turn（原顶层
+    # pick_reaction_meme 直呼已删，函数内局部 import，先例 _pick_poke_meme）；反重复
+    # 在 MemeLibraryStore.weighted_pick 咽喉执法，与本腿调用点无关。
+    # S-STICKER-POOLS（2026-09-29）**改只吃贴纸池**：本腿以 ``pool_policy=packs_only``
+    # 调门面，门面内部只问 ``sticker_packs.pick_sticker``，挑不出就整条不发——
+    # **绝不回退 ``bot_meme_library_dir`` 那盘群聊吸收截图**（用户实弹点名的正是它）。
+    # 同波补齐三道此前缺失的硬门：``bot.plugin.sticker_packs`` 特性门 +
+    # blocked 名单 + 安静时间（前两道走 sticker_send_routing，第三道在
+    # proactive_action_allowed 里与五层门一并执法）。
     _REACTION_MEME_GATE = _ReactionProactiveGateClass()
     _reaction_meme_daily: dict[str, tuple[int, int]] = {}
+    # S2 案二（2026-09-30 席位 W4R）：回执并图成功后登记「本轮这条消息已并图」，
+    # P3 腿入口查标即跳过——**双发防护只有这一本**：键与腿的 `message_key` 同形
+    # （`meme:<message_id>`），值只留那张图的路径供事后查，进程内有界、不落盘。
+    # 额度账/冷却账不另立：仍是下面的 `_reaction_meme_daily` 与 `_REACTION_MEME_GATE`。
+    _reaction_meme_merged: dict[str, str] = {}
+    _REACTION_MEME_MERGED_MAX = 512
 
     async def _maybe_send_reaction_meme(
         bot: Bot,
@@ -5002,27 +5336,85 @@ def _register_nonebot_handlers() -> None:
         session_key: str,
         text: str,
         meme_config: Any,
+        reply_text: str = "",
+        feature_enabled: Any = None,
     ) -> None:
-        if meme_library_store is None or not bool(
-            getattr(meme_config, "bot_reactions_meme_enabled", True)
-        ):
+        """情绪时刻发一张贴纸：**只**从管理员登记的贴纸池拿。
+
+        ``feature_enabled``：本轮特性开关快照的 ``enabled`` 查询口（由调用点注入，
+        与 ``_poke_voice_pair`` 同一约定）。**没给＝按不通过算**——本腿是主动外发，
+        宁可什么都不发，也不许「忘了传快照」变成无条件放行。
+
+        挑不出贴纸＝静默返回（不发、不报错、不回退吸收池）；审计轨
+        ``sticker_send_routing.last_pool_for(session_key)`` 留 ``none`` 可查。
+        """
+        from .domains.chat_reply.capabilities.poke import (
+            ProactiveActionKnobs,
+            proactive_action_allowed,
+        )
+        from .domains.meme.sources import sticker_send_routing
+
+        # S2 案二·双发防护（本轮正文里已经并了同一张贴纸 ⇒ 本腿不再另发一条空文本
+        # 图消息）。键与下面 ``message_key`` 同形，登记方是本文件里的附图钩子；留痕
+        # 走正文那条的 ``audit_tags``（`sticker_same_message`），本腿只在日志留一声。
+        merged_message_id = str(getattr(event, "message_id", "") or "")
+        if merged_message_id and f"meme:{merged_message_id}" in _reaction_meme_merged:
+            logger.debug(
+                "reaction meme leg skipped: sticker merged into reply"
+                " (sticker_same_message) message_id=%s",
+                merged_message_id,
+            )
+            return
+        if not bool(getattr(meme_config, "bot_reactions_meme_enabled", False)):
+            return
+        # 硬门 ①：贴纸池特性开关（未登记即 False ⇒ 本腿结构性不发）。
+        if not sticker_send_routing.sticker_feature_enabled(feature_enabled):
             return
         if _is_sad_reaction_message(text):
             return  # C1：悲伤消息绝不发表情包（红线级，与第一层同口径）。
         intent = _infer_reaction_signal_intent(text)
-        if intent is None:
+        if intent is None and not str(reply_text or "").strip():
+            # 2026-09-28 贴纸语义匹配波：过去这一门要求用户原话命中情绪关键词，
+            # 于是"喜事没关键词就根本不进选贴腿"。现在只要有本轮回复文本就交给
+            # 语义判定（它读的是 bot 自己说了什么）；两者皆无 ⇒ 不贴（错配比不贴更糟）。
+            return
+        group_id = str(getattr(event, "group_id", "") or "")
+        sender = str(getattr(event, "sender_id", "") or "")
+        # 硬门 ②③：blocked 名单 + 安静时间（判据真身在 poke.py，本处零自造）。
+        # 先于五层门跑：那两道的名单与窗都是**无副作用**读，放在 ``allow`` 之后
+        # 就被记进冷却了——「被窗拦下」反咬后续动作是 poke 波立过的判据。
+        if not sticker_send_routing.social_gates_allow(
+            meme_config, group_id=group_id, user_id=sender
+        ):
             return
         message_id = str(getattr(event, "message_id", "") or "")
-        if not message_id or not _REACTION_MEME_GATE.allow(
-            session_key,
-            f"meme:{message_id}",
-            enabled=True,
-            probability=float(getattr(meme_config, "bot_reactions_meme_probability", 0.15) or 0.15),
-            cooldown_seconds=float(
-                getattr(meme_config, "bot_reactions_meme_cooldown_seconds", 120) or 120
-            ),
-            max_per_hour=int(getattr(meme_config, "bot_reactions_max_per_hour", 20) or 20),
+        # 硬门 ④：开关→有目标→名单→窗→五层门（同一提交点，替代原先裸调
+        # ``gate.allow``：那只兜住了概率/冷却/时限，名单与窗一条都没接上）。
+        if not message_id or not proactive_action_allowed(
+            meme_config,
+            prefix="bot_reactions_meme_",
+            gate=_REACTION_MEME_GATE,
+            session_key=session_key,
+            message_key=f"meme:{message_id}",
+            group_id=group_id,
+            user_id=sender,
             salt="reaction-meme",
+            # 字面键名取数（与 poke / randpic 两族同判据）：见 ProactiveActionKnobs 的 why。
+            knobs=ProactiveActionKnobs(
+                # 开关真身 bot_reactions_meme_enabled（config.py 缺省 False，.env 用户侧
+                # 已置 true）；兜底 True 只服务缺这枚字段的旧鸭子桩——真 pydantic
+                # Config 字段恒在，兜底走不到。
+                enabled=bool(getattr(meme_config, "bot_reactions_meme_enabled", False)),
+                probability=float(
+                    getattr(meme_config, "bot_reactions_meme_probability", 0.15) or 0.15
+                ),
+                cooldown_seconds=float(
+                    getattr(meme_config, "bot_reactions_meme_cooldown_seconds", 120) or 120
+                ),
+                max_per_hour=int(
+                    getattr(meme_config, "bot_reactions_max_per_hour", 20) or 20
+                ),
+            ),
         ):
             return
         day = int(time.strftime("%Y%m%d", time.localtime()))
@@ -5033,21 +5425,347 @@ def _register_nonebot_handlers() -> None:
         if daily_max > 0 and used >= daily_max:
             return
         from .domains.meme.capabilities.meme_library import select_sticker_for_turn
-        sender = str(getattr(event, "sender_id", "") or "")
-        picked, _sticker_tags = await asyncio.to_thread(
-            select_sticker_for_turn, meme_library_store, turn_text=text,
+
+        # ``meme_library_store`` 在这里**只当作「库腿不参与」的占位**传进去：
+        # ``packs_only`` 门面在池子挑不出时就返回 None，根本不碰它（本腿不再
+        # 从吸收池出图，所以 ``bot_meme_library_enabled`` 关掉也不再拦本腿）。
+        picked, sticker_tags = await asyncio.to_thread(
+            select_sticker_for_turn, None, turn_text=text,
+            reply_text=reply_text,
             session_key=session_key, sender_id=sender, config=meme_config,
             mood_valence_fn=lambda: _mood_valence(meme_config),
             affinity_snapshot=_poke_affinity_snapshot(meme_config, sender),
+            pool_policy=sticker_send_routing.POOL_POLICY_PACKS_ONLY,
+            pool_seed=f"reaction-meme:{session_key}:{message_id}",
+            persona_albums=_persona_album_names(meme_config),
         )
         meme_path = str((picked or {}).get("path") or "").strip()
         if not meme_path:
-            return
+            return  # 静默跳过：贴纸池空/挑不出＝不发，绝不退化成发吸收池那张。
         _reaction_meme_daily[session_key] = (day, used + 1)
         await _send_parts_through_unified_pipeline(
             bot, event, text="", image=meme_path,
-            audit_tags=["reaction_meme", f"intent:{intent}"],
+            audit_tags=[
+                "sticker_pack",
+                "reaction_meme",
+                f"intent:{intent}",
+                *[tag for tag in sticker_tags if str(tag).startswith("sticker_pool:")],
+            ],
             capability_id="bot.chat")
+
+    async def _reaction_target_message_text(bot: Bot, message_id: str) -> str:
+        """反查「被贴表情那条消息」的正文，**只在它确实是我自己发的**时交回文本。
+
+        文本源判定的结论（本腿唯一的可靠正文口，三条候选各自的下场）：
+
+        * ``_REACTION_BUFFER``（``domains/meme/reactions/engine.py:511``）**没存正文**：
+          它按会话存「谁给哪条消息贴了什么」（:533 ``record``）与我自己发出的消息
+          **id**（:545 ``register_bot_message`` 只收 id），没有任何 message_id→正文
+          的口，所以「被回应的那句到底说了什么」在缓冲里结构性缺席。
+        * ``_reaction_store``（``domains/meme/sources/reaction_store.py:35``）只有
+          ``emoji_stats``/``user_stats`` 两枚聚合读口（:96/:118），表里连正文列都没有
+          （:18 ``reaction_events``）＝同样取不到。
+        * ⇒ 真身只剩协议反查：``_make_onebot_reply_lookup``（本文件 :567，``get_msg``
+          的既有注入口，3s 超时、失败一律 ``None``）。它是「引用链反查」那条腿的同一个
+          喉，本腿不另开第二条取数路。
+        """
+        lookup = _make_onebot_reply_lookup(bot)
+        if not callable(lookup):  # pragma: no cover - 装配口恒定可调用，防御性一拦
+            return ""
+        payload = await lookup(str(message_id))
+        if not isinstance(payload, dict):
+            return ""  # 反查失败＝取不到，绝不猜
+        sender = payload.get("sender")
+        sender = sender if isinstance(sender, dict) else {}
+        # 「对我的消息」的判据＝协议侧读数：被回应消息的发送者就是我本人的 id。
+        # 不用缓冲的 bot 消息登记（:545）当判据——它只在
+        # ``bot.plugin.chat.reactions.after_reply`` 开着时才记账、TTL 600s、重启即清，
+        # 拿它当唯一凭证会造出「另一枚开关决定本腿生死」的隐式耦合。
+        self_id = str(getattr(bot, "self_id", "") or "").strip()
+        sender_id = str(sender.get("user_id", "") or "").strip()
+        if not self_id or not sender_id or sender_id != self_id:
+            return ""  # 不是我的消息 / 认不出发送者＝没有可靠正文，交回空串
+        parts: list[str] = []
+        for segment in payload.get("message") or []:
+            if not isinstance(segment, dict):
+                continue
+            if str(segment.get("type", "")) != "text":
+                continue  # 图片/语音/卡片段不算正文：本腿要的是「说了什么」这句话
+            data = segment.get("data")
+            value = str((data or {}).get("text", "")).strip() if isinstance(data, dict) else ""
+            if value:
+                parts.append(value)
+        return " ".join(parts).strip()
+
+    async def _maybe_send_sticker_for_emoji_like(
+        bot: Bot,
+        event: Event,
+        *,
+        reaction_event: Any,
+        meme_config: Any,
+        feature_enabled: Any = None,
+    ) -> None:
+        """S3 face 回应联动：群里有人对我的消息贴了表情 ⇒ 小概率补发一张册贴纸。
+
+        ``feature_enabled`` 与 P3 腿同一约定：本轮特性快照的 ``enabled`` 查询口由调用点
+        注入，**没给＝按不通过算**（主动外发腿不许有「忘了传快照」的隐式放行档）。
+        特性门只认已在册的 id（``bot.plugin.sticker_packs`` 走
+        ``sticker_send_routing.sticker_feature_enabled``、
+        ``bot.plugin.chat.reactions.meme`` 由调用点在派发前判）——未登记 id 在真目录里
+        恒关，拿它当门＝永久哑巴。
+
+        **群聊 only（AGENTS 台账 #35 红线）**：判据两枚都用现成中央口——
+        ``domains/meme/reactions/engine.py`` 的 ``_is_group_session``（会话键真身）
+        ∧ 事件 ``group_id`` 必在场。私聊形态的 ``private_msg_emoji_like`` 到这里
+        一次都不成立，QQ 侧本就无私聊表情回应通道，更不该有私聊主动出图。
+
+        **文本源**（本腿最难的一格，判定过程写在
+        :func:`_reaction_target_message_text` 的 docstring 里）：notice 侧只有
+        ``emoji_text``/``emoji_id``，被回应那句正文既不在缓冲也不在库里，只能按
+        ``message_id`` 走 ``get_msg`` 反查，且只在协议读数证明「那条是我的消息」时
+        才算可靠。取不到可靠正文 ⇒ **诚实不发**（P3 波立过的判据：错配比不贴更糟）。
+        ``emoji_text`` 交 ``turn_text``（用户此刻的表达），反查正文交 ``reply_text``
+        （我上一轮实际说了什么）——两个槽位各自装各自的真身，语义与 P3 完全同形。
+
+        任何岔子（无 id / 无群号 / 私聊 / 取不到正文 / 门没过 / 挑不出图 / 抛异常）
+        一律「不发 + debug 痕」，绝不让 notice 链路报错——识别与落库那段先完成、
+        本腿坏了也不回滚它。
+        """
+        from .domains.chat_reply.capabilities.poke import (
+            ProactiveActionKnobs,
+            proactive_action_allowed,
+        )
+        from .domains.meme.capabilities.meme_library import select_sticker_for_turn
+        from .domains.meme.reactions.engine import _is_group_session
+        from .domains.meme.sources import sticker_send_routing
+
+        try:
+            session_key = str(getattr(reaction_event, "session_key", "") or "").strip()
+            message_id = str(getattr(reaction_event, "message_id", "") or "").strip()
+            sender = str(getattr(reaction_event, "user_id", "") or "").strip()
+            emoji_text = str(getattr(reaction_event, "emoji_text", "") or "").strip()
+            group_id = str(getattr(event, "group_id", "") or "").strip()
+            if not message_id or not group_id:
+                logger.debug(
+                    "emoji-like sticker leg skipped: no group_id/message_id "
+                    "(group=%s message=%s)",
+                    group_id, message_id,
+                )
+                return
+            if not _is_group_session(session_key):
+                return  # #35：私聊绝不补发（会话键才是判定口，带群号也不算）。
+            if not bool(getattr(meme_config, "bot_reactions_meme_enabled", False)):
+                return
+            # 硬门 ①：贴纸池特性开关（与 P3 腿同一枚口，未登记即 False ⇒ 结构性不发）。
+            if not sticker_send_routing.sticker_feature_enabled(feature_enabled):
+                return
+            if _is_sad_reaction_message(emoji_text):
+                return  # C1：悲伤表达绝不配笑脸（与 P3 同一把尺，读用户此刻的表意）。
+            replied_text = await _reaction_target_message_text(bot, message_id)
+            if not replied_text:
+                # 取不到可靠正文＝不发。这里不留「猜一张」的档：本腿是主动外发，
+                # 语境错配的贴纸比沉默更伤人（P3 波判据原样适用）。
+                logger.debug(
+                    "emoji-like sticker leg skipped: no reliable source text "
+                    "(message_id=%s)",
+                    message_id,
+                )
+                return
+            if _is_sad_reaction_message(replied_text):
+                return  # C1 在本腿多读一面：我自己那句本身就是丧事场合时同样不配图。
+            intent = _infer_reaction_signal_intent(emoji_text)
+            if intent is None and not str(replied_text or "").strip():
+                return  # 语义门槛（与 P3/钩子同判据）：两者皆无＝不贴。
+            # 硬门 ②③：blocked 名单 + 安静时间（判据真身在 poke.py，本处零自造）。
+            # 依旧先于 ``allow`` 跑：那两道是无副作用的读，放在 allow 之后就成了
+            # 「被窗拦下反咬后续动作」（poke 波立过的判据）。
+            if not sticker_send_routing.social_gates_allow(
+                meme_config, group_id=group_id, user_id=sender
+            ):
+                return
+            # 硬门 ④：同一枚五层门、同一个 prefix、同一个 salt；只有 ``message_key``
+            # 换成本腿自己的形（``emoji:`` 前缀，不占 P3 的 ``meme:`` 命名空间）。
+            if not proactive_action_allowed(
+                meme_config,
+                prefix="bot_reactions_meme_",
+                gate=_REACTION_MEME_GATE,
+                session_key=session_key,
+                message_key=f"emoji:{message_id}",
+                group_id=group_id,
+                user_id=sender,
+                salt="reaction-meme",
+                # 字面键名取数（与 P3 / 钩子 / poke / randpic 同判据）：见
+                # ProactiveActionKnobs 的 why。四枚旋钮全复用，零新增字段。
+                knobs=ProactiveActionKnobs(
+                    enabled=bool(getattr(meme_config, "bot_reactions_meme_enabled", False)),
+                    probability=float(
+                        getattr(meme_config, "bot_reactions_meme_probability", 0.15) or 0.15
+                    ),
+                    cooldown_seconds=float(
+                        getattr(meme_config, "bot_reactions_meme_cooldown_seconds", 120) or 120
+                    ),
+                    max_per_hour=int(
+                        getattr(meme_config, "bot_reactions_max_per_hour", 20) or 20
+                    ),
+                ),
+            ):
+                return
+            day = int(time.strftime("%Y%m%d", time.localtime()))
+            used_day, used = _reaction_meme_daily.get(session_key, (day, 0))
+            if used_day != day:
+                used = 0
+            daily_max = int(getattr(meme_config, "bot_reactions_meme_daily_max", 6) or 6)
+            if daily_max > 0 and used >= daily_max:
+                return
+            # ``store=None`` 与 P3 同形：packs_only 门面挑不出就返回 None，
+            # 本腿因此**永远不会**从群聊吸收池出图（那条红线不因换了触发点而松）。
+            picked, sticker_tags = await asyncio.to_thread(
+                select_sticker_for_turn, None, turn_text=emoji_text,
+                reply_text=replied_text,
+                session_key=session_key, sender_id=sender, config=meme_config,
+                mood_valence_fn=lambda: _mood_valence(meme_config),
+                affinity_snapshot=_poke_affinity_snapshot(meme_config, sender),
+                pool_policy=sticker_send_routing.POOL_POLICY_PACKS_ONLY,
+                pool_seed=f"reaction-emoji:{session_key}:{message_id}",
+                persona_albums=_persona_album_names(meme_config),
+            )
+            meme_path = str((picked or {}).get("path") or "").strip()
+            if not meme_path:
+                return  # 池子空/挑不出＝不发，绝不端吸收池那张。
+            _reaction_meme_daily[session_key] = (day, used + 1)  # 同一本账，只 +1
+            await _send_parts_through_unified_pipeline(
+                bot, event, text="", image=meme_path,
+                audit_tags=[
+                    "sticker_pack",
+                    "reaction_emoji_sticker",
+                    "reaction_meme",
+                    f"intent:{intent}",
+                    *[tag for tag in sticker_tags if str(tag).startswith("sticker_pool:")],
+                ],
+                capability_id="bot.chat")
+        except Exception:  # noqa: BLE001 - notice 链路的补发腿不许把异常送回主链。
+            logger.debug("emoji-like sticker leg failed", exc_info=True)
+            return
+
+    def _sticker_attach_for_reply(
+        *,
+        text: str = "",
+        reply_text: str = "",
+        session_key: str = "",
+        group_id: str = "",
+        sender_id: str = "",
+        message_id: str = "",
+        feature_enabled: Any = None,
+    ) -> tuple[str, tuple[str, ...]] | None:
+        """S2 案二：本轮回复**同一条消息**附图的判定钩子（注入 chat 回执构造点）。
+
+        为什么要有它：P3 腿跑在 `transport_receipt.state == "sent"` **之后**，正文
+        已经出站，腿里并图在结构上不可能——于是贴纸永远是第二条空文本消息。本钩子在
+        回执构造期（发送之前）问一次，点头就把那张塞进 `images`，腿随后查标跳过。
+
+        **绝不绕门、绝不起第二本账**：门链与 P3 腿逐条同序同参——
+        `bot_reactions_meme_enabled` → `bot.plugin.sticker_packs` 特性门（快照查询口
+        由外部注入，没给＝不通过）→ C1 悲伤门 → 语义门槛 → `social_gates_allow`
+        （blocked 名单 + 安静时间，判据真身在 poke.py）→ `proactive_action_allowed`
+        （同一枚 `_REACTION_MEME_GATE`、同一个 `message_key=f"meme:{message_id}"`）→
+        同一本 `_reaction_meme_daily`（同一个帽）→ 门面 `select_sticker_for_turn`
+        （`packs_only` ∧ `persona_albums=_persona_album_names(...)`，prefer_tags 由
+        门面按 turn/reply 文本自算）。额度只在**成功附图**时 +1，与腿互斥不双计。
+
+        **只发群聊**（AGENTS 台账 #35 红线口径）：私聊本钩子一次都不成立，私聊那条
+        腿的行为与改前逐字节一致——挪动的是「群里的第二条消息」，不是「私聊新增外发」。
+        任何岔子（无 id、无群号、挑不出、抛异常）⇒ 返回 ``None``＝退回纯文字，
+        P3 腿照旧补发单图，贴纸不会凭空消失。
+        """
+        from .domains.chat_reply.capabilities.poke import (
+            ProactiveActionKnobs,
+            proactive_action_allowed,
+        )
+        from .domains.meme.capabilities.meme_library import select_sticker_for_turn
+        from .domains.meme.reactions.engine import _is_group_session
+        from .domains.meme.sources import sticker_send_routing
+
+        try:
+            if not str(message_id or "").strip() or not str(group_id or "").strip():
+                return None  # 无群号＝不是群聊这一族；无 id＝无从登记互斥标，宁可不附。
+            if not _is_group_session(str(session_key or "")):
+                return None  # #35：主动外发图这一族的群/私判定吃中央会话键真身。
+            meme_config = _config_with_runtime_overrides(config, runtime_settings)
+            if not bool(getattr(meme_config, "bot_reactions_meme_enabled", False)):
+                return None
+            if not sticker_send_routing.sticker_feature_enabled(feature_enabled):
+                return None
+            if _is_sad_reaction_message(text):
+                return None
+            intent = _infer_reaction_signal_intent(text)
+            if intent is None and not str(reply_text or "").strip():
+                return None
+            if not sticker_send_routing.social_gates_allow(
+                meme_config, group_id=group_id, user_id=sender_id
+            ):
+                return None
+            if not proactive_action_allowed(
+                meme_config,
+                prefix="bot_reactions_meme_",
+                gate=_REACTION_MEME_GATE,
+                session_key=session_key,
+                message_key=f"meme:{message_id}",
+                group_id=group_id,
+                user_id=sender_id,
+                salt="reaction-meme",
+                knobs=ProactiveActionKnobs(
+                    enabled=bool(getattr(meme_config, "bot_reactions_meme_enabled", False)),
+                    probability=float(
+                        getattr(meme_config, "bot_reactions_meme_probability", 0.15) or 0.15
+                    ),
+                    cooldown_seconds=float(
+                        getattr(meme_config, "bot_reactions_meme_cooldown_seconds", 120) or 120
+                    ),
+                    max_per_hour=int(
+                        getattr(meme_config, "bot_reactions_max_per_hour", 20) or 20
+                    ),
+                ),
+            ):
+                return None
+            day = int(time.strftime("%Y%m%d", time.localtime()))
+            used_day, used = _reaction_meme_daily.get(session_key, (day, 0))
+            if used_day != day:
+                used = 0
+            daily_max = int(getattr(meme_config, "bot_reactions_meme_daily_max", 6) or 6)
+            if daily_max > 0 and used >= daily_max:
+                return None
+            picked, sticker_tags = select_sticker_for_turn(
+                None, turn_text=text,
+                reply_text=reply_text,
+                session_key=session_key, sender_id=sender_id, config=meme_config,
+                mood_valence_fn=lambda: _mood_valence(meme_config),
+                affinity_snapshot=_poke_affinity_snapshot(meme_config, sender_id),
+                pool_policy=sticker_send_routing.POOL_POLICY_PACKS_ONLY,
+                pool_seed=f"reaction-meme:{session_key}:{message_id}",
+                persona_albums=_persona_album_names(meme_config),
+            )
+            meme_path = str((picked or {}).get("path") or "").strip()
+            if not meme_path:
+                return None  # 池子挑不出＝不附，绝不端吸收池那张（与腿同一红线）。
+            # 成了才记账：额度 +1（同一本）、登记互斥标（腿随后据此跳过，不双发）。
+            _reaction_meme_daily[session_key] = (day, used + 1)
+            _reaction_meme_merged[f"meme:{message_id}"] = meme_path
+            while len(_reaction_meme_merged) > _REACTION_MEME_MERGED_MAX:
+                _reaction_meme_merged.pop(next(iter(_reaction_meme_merged)), None)
+            return meme_path, (
+                "sticker_pack",
+                "reaction_meme",
+                f"intent:{intent}",
+                *(
+                    tag
+                    for tag in sticker_tags
+                    if str(tag).startswith("sticker_pool:")
+                ),
+            )
+        except Exception:  # noqa: BLE001 - 贴纸钩子任何岔子都不许波及对话。
+            logger.debug("sticker attach hook failed", exc_info=True)
+            return None
+
     playwright_fetch_backend = None
     if getattr(config, "bot_fetch_playwright_enabled", True):
         try:
@@ -5195,6 +5913,13 @@ def _register_nonebot_handlers() -> None:
             llm_preflight_errors=llm_generation_parameter_errors(config),
             output_max_chars_per_message=config.bot_reply_max_chars_per_message,
             generated_files_dir=str(getattr(config, "bot_generated_files_dir", "data/generated_files") or "data/generated_files"),
+            # S2 案二（席位 W4R）：同消息附图钩子。每轮**现取**特性快照查询口
+            # （`product_feature_gate.snapshot()` 是 `snapshot_async` 的同步真身，
+            # 本钩子在 offload 线程里跑，取不到快照＝fail-closed 不附）。
+            # 先例形参注入面：`content_route_cb=` / `mood_valence_fn=` / `feature_enabled=`。
+            sticker_attach_hook=lambda **hook_kwargs: _sticker_attach_for_reply(
+                feature_enabled=product_feature_gate.snapshot().enabled, **hook_kwargs
+            ),
         )
     )
     # 语音自动配音（bot.tts）：把人格回复正文一并合成语音随消息发出。
@@ -5896,24 +6621,67 @@ def _register_nonebot_handlers() -> None:
         except Exception:  # noqa: BLE001 - 口味层失败不影响发不发表情包。
             return None
 
+    def _persona_album_names(pconfig: Any) -> tuple[str, ...]:
+        """现役人格的**册名候选**（展示名在前、人格 id 垫后；人格分册 2026-09-29）。
+
+        每轮现算不留快照：``active_persona_id`` 的既有序（runtime 切换态 → 配置
+        主人格档）＋ ``current_bot_nickname`` 的取名单口（人格册 → 配置回落）。
+        任何异常都折回配置展示名——册名取不到 ≠ 人格没了；两条腿（P3 / 戳一戳）
+        靠它把「只能发现役人格册里的表情包」钉死，判据真身在
+        ``sticker_packs.persona_album_root``（缺册＝诚实缺席，绝不回落基根）。
+        """
+        names: list[str] = []
+        try:
+            from .domains.chat_reply.character.persona_profile import (
+                active_persona_id,
+                current_bot_nickname,
+            )
+
+            pid = active_persona_id(pconfig)
+            names.append(current_bot_nickname(pid, config=pconfig))
+            names.append(pid)
+        except Exception:  # noqa: BLE001 - 取不到现役人格 ≠ 不发：折回配置展示名。
+            names.append(str(getattr(pconfig, "bot_persona_display_name", "") or ""))
+        out: list[str] = []
+        for raw in names:
+            name = str(raw or "").strip()
+            if name and name not in out:
+                out.append(name)
+        return tuple(out)
+
     def _pick_poke_meme(
         store: Any,
         poke_config: Any,
         *,
         session_key: str = "",
         sender_id: str = "",
+        group_id: str = "",
+        feature_enabled: Any = None,
     ) -> str | None:
-        """表情包形态选图：走 goal-12 的**四路合一**门面（主题 × 本命 × 口味 × 心情）。
+        """戳一戳 ``meme`` 臂选图：**只准**从管理员登记的贴纸池拿（S-STICKER-POOLS）。
 
-        旧实现只有 ``store.weighted_pick(keyword="", nsfw_max=…)``：反重复确实在存储层
-        默认作用域里生效，但「她本人的图优先」「按对方口味」「心情低落少吵闹」这三条腿
-        一条都没接上——门面 ``select_sticker_for_turn`` 建好之后**只有测试在调**，
-        这与「配置键在册却无人读」是同一型失效形态（装配期绿、生产空转）。
-        选不出（相关性不过地板 / 全部发过）一律返回 None → 调用方回退固定话术，
-        **绝不回退成随便发一张或重发一张**（NSFW 阈值仍由 ``bot_meme_library_nsfw_max`` 定）。
+        2026-09-29 换池：这一臂此前与被 P3 缺陷清单点名的吸收池（``bot_meme_library_dir``
+        = 别人群里偷来的截图）同盘。现以 ``pool_policy=packs_only`` 走门面
+        ``select_sticker_for_turn``，门面内部只问 ``sticker_packs.pick_sticker``；
+        挑不出＝返回 ``None`` → 调用方 ``resolve_poke_reply`` 落回 ``fixed_text``
+        固定话术。**绝不回退吸收池**——宁可回一句话，也不把群聊截图甩给戳的人。
+        （旧形态"选不出回退固定话术"本来就是这条臂的正确退路，本波只是把
+        "回退"从"退到另一张不该发的图"钉成"退到不发表情包"。）
+
+        三道硬门同样在这条臂上生效（缺一道就 ``None``＝只回话术，不改判、不吞回复）：
+        ``bot.plugin.sticker_packs`` 特性门 / blocked 名单 / 安静时间。
+        ``store`` 形参在 ``packs_only`` 下**不参与选图**（库腿被排除），保留只为
+        调用点与既有替身的形状不变。
         """
         from .domains.meme.capabilities.meme_library import select_sticker_for_turn
+        from .domains.meme.sources import sticker_send_routing
 
+        if not sticker_send_routing.sticker_feature_enabled(feature_enabled):
+            return None
+        if not sticker_send_routing.social_gates_allow(
+            poke_config, group_id=group_id, user_id=sender_id
+        ):
+            return None
         try:
             picked, _tags = select_sticker_for_turn(
                 store,
@@ -5923,6 +6691,9 @@ def _register_nonebot_handlers() -> None:
                 config=poke_config,
                 mood_valence_fn=lambda: _mood_valence(poke_config),
                 affinity_snapshot=_poke_affinity_snapshot(poke_config, sender_id),
+                pool_policy=sticker_send_routing.POOL_POLICY_PACKS_ONLY,
+                pool_seed=f"poke-meme:{session_key}:{sender_id}",
+                persona_albums=_persona_album_names(poke_config),
             )
         except Exception:  # noqa: BLE001 - 选图失败回退固定话术。
             return None
@@ -6347,6 +7118,8 @@ def _register_nonebot_handlers() -> None:
                     else f"private_{poker_id}"
                 ),
                 sender_id=poker_id,
+                group_id=poker_group,
+                feature_enabled=switches.enabled,
             )
         elif reaction.mode == "randpic":
             randpic_path = await asyncio.to_thread(
@@ -6397,10 +7170,13 @@ def _register_nonebot_handlers() -> None:
             capability_id="bot.poke",
         )
 
-    # 表情贴纸回应识别（bot.reactions）：SnowLuma 贴纸回应 notice 只做归一与
-    # 会话缓冲登记（供 chat 注入【表情回应】分区），本 handler 不回话、不贴表
-    # 情——主动贴表情在 chat 链路的情绪信号/回复后触发点完成。私聊等价形态
-    # 按容错解析，生产实机待验证；失败静默不影响任何主链路。
+    # 表情贴纸回应识别（bot.reactions）：SnowLuma 贴纸回应 notice 先做归一与会话
+    # 缓冲登记（供 chat 注入【表情回应】分区），识别段本身不回话、不贴表情——主动
+    # 贴表情在 chat 链路的情绪信号/回复后触发点完成。S3（席位 W7S，2026-09-30）
+    # 在其**之后**追加一条小概率补发腿：群里有人对我的消息贴了表情 ⇒ 过同一族门
+    # 后可能补发一张现役人格册贴纸。补发段整块 try 住、异常只留 debug 痕，识别与
+    # 落库那段的行为与改前逐字一致。私聊等价形态按容错解析，生产实机待验证；
+    # 失败静默不影响任何主链路。
     async def _is_msg_emoji_like_event(event: Event) -> bool:
         return str(getattr(event, "notice_type", "")) in {
             "group_msg_emoji_like",
@@ -6412,10 +7188,14 @@ def _register_nonebot_handlers() -> None:
 
     @emoji_like_notice.handle()
     async def _handle_msg_emoji_like_notice(bot: Bot, event: Event) -> None:
-        if not (await product_feature_gate.snapshot_async()).enabled("bot.plugin.chat.reactions.receive"):
+        switches = await product_feature_gate.snapshot_async()
+        if not switches.enabled("bot.plugin.chat.reactions.receive"):
             return
+        first_reaction: Any = None
         try:
             for reaction_event in _normalize_onebot_emoji_like(event):
+                if first_reaction is None:
+                    first_reaction = reaction_event
                 _REACTION_BUFFER.record(reaction_event)
                 # B 线双写：缓冲管当前语境注入，落库管长期记忆与统计
                 # （幂等合并；失败静默不碰识别链路）。
@@ -6431,6 +7211,24 @@ def _register_nonebot_handlers() -> None:
                 )
         except Exception:  # noqa: BLE001, S110 - 回应识别失败不影响主链路。
             pass
+        # S3 face 回应联动补发（席位 W7S）。一次 notice 最多补发一张：同一条消息的
+        # 多枚 likes 归一后 message_id 相同，取第一条即代表这次回应；剩下的交给
+        # 五层门的每消息去重（``emoji:<message_id>``），不另立去重账。
+        # 特性门 ``bot.plugin.chat.reactions.meme`` 判在派发前（与 P3 的调用点同形：
+        # P3 那枚也在 chat 派发处判、腿内只判贴纸池门），本腿内再判池子门。
+        if first_reaction is None or not switches.enabled("bot.plugin.chat.reactions.meme"):
+            return
+        try:
+            await _maybe_send_sticker_for_emoji_like(
+                bot,
+                event,
+                reaction_event=first_reaction,
+                meme_config=_config_with_runtime_overrides(config, runtime_settings),
+                # 快照查询口照传（与 P3 / 钩子同一约定）：漏传＝不发。
+                feature_enabled=switches.enabled,
+            )
+        except Exception:  # noqa: BLE001 - 补发失败绝不影响识别链路与投递结果。
+            logger.debug("emoji-like sticker dispatch failed", exc_info=True)
 
     async def _is_group_increase_notice(event: Event) -> bool:
         return str(getattr(event, "notice_type", "")) == "group_increase"
@@ -8032,9 +8830,36 @@ def _register_nonebot_handlers() -> None:
                     ),
                 )
 
+        elif command_text.startswith("reply ") and (
+            command_text.removeprefix("reply").strip().lower().split(maxsplit=1)[0]
+            in {"set", "show", "clear"}
+        ):
+            # 2026-09-28 用户裁定 Q3「甲+乙」的甲半边：`set|show|clear` 三个子命令动的是
+            # **按人**永久策略（user_reply_policy 那一行，跨群跨私聊、换人格都跟着人），
+            # 而下面那条老分支动的是全局档 BOT_REPLY_DETAIL。两条各只有一条写腿，
+            # 且都折算到 chat 那同一张长度表上——不另立第二把长度尺。
+            capability_id = "bot.reply"
+            reply_preset_argument = command_text.removeprefix("reply").strip().lower()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                from .domains.chat_reply.character.reply_policy import (
+                    build_reply_policy_preset_result,
+                )
+
+                return build_reply_policy_preset_result(
+                    config,
+                    request_id=message.request_id,
+                    sender_id=message.sender_id,
+                    actor_roles=_decision.actor_roles,
+                    command_text=reply_preset_argument,
+                )
+
         elif command_text == "reply" or command_text.startswith("reply "):
             capability_id = "bot.reply"
             reply_mode = command_text.removeprefix("reply").strip().lower()
+            # 别名表只住在 `settings._reply_detail_converter` 一处（同一张表也服务
+            # `/bot runtime set BOT_REPLY_DETAIL=...`）；这里只认最常见的三枚，
+            # 其余档名（适中/讲全/掰碎）由那条通用运行时设置口去改，避免两处各抄一份。
             mode_map = {
                 "详细": "detail", "科普": "detail", "详尽": "detail", "detail": "detail",
                 "精简": "concise", "简洁": "concise", "brief": "concise", "concise": "concise",
@@ -8059,7 +8884,9 @@ def _register_nonebot_handlers() -> None:
                         kind="text",
                         body=(
                             f"未知的回复详略参数：{reply_mode}。\n"
-                            "用法：/bot reply <详细|精简|默认>"
+                            "用法：/bot reply <详细|精简|默认>＝改全局档；"
+                            "按人永久策略＝/bot reply set <QQ号> <默认|简洁|适中|讲全|详尽> "
+                            "[文学化|说人话]，show 复查、clear 撤销"
                         ),
                         audit_tags=["reply_detail", f"invalid:{reply_mode}"],
                     )
@@ -8071,11 +8898,18 @@ def _register_nonebot_handlers() -> None:
                         kind="text",
                         body=(
                             f"当前回复详略：{current}。\n"
-                            "用法：/bot reply <详细|精简|默认>"
+                            "用法：/bot reply <详细|精简|默认>＝改全局档；"
+                            "按人永久策略＝/bot reply set <QQ号> <默认|简洁|适中|讲全|详尽> "
+                            "[文学化|说人话]，show 复查、clear 撤销"
                         ),
                         audit_tags=["reply_detail", f"current:{current}"],
                     )
-                runtime_settings.set_override("BOT_REPLY_DETAIL", normalized_mode)
+                runtime_settings.set_override(
+                    "BOT_REPLY_DETAIL", normalized_mode,
+                    actor=f"{message.platform}:{message.sender_id}",
+                    request_id=message.request_id,
+                    session_key=message.session_id,
+                )
                 return CapabilityResult(
                     request_id=message.request_id,
                     capability_id="bot.reply",
@@ -8236,21 +9070,74 @@ def _register_nonebot_handlers() -> None:
                         audit_tags=["group_policy", "missing_id"],
                     )
                 current = list(snapshot[mode_key])
+                # 身份接线（席位 D 2026-09-27 用户裁定，取证席钉死的接线 bug）：
+                # 这一族写点此前一律不传 actor/session_key，咽喉缺省把申请人记成
+                # `runtime_internal`（runtime/settings.py 的 set_override 缺省），
+                # 于是 ①防自批那一判据（consent.redeem_from_message）结构上永不咬，
+                # ②超管 R1 免单门（settings_gate.guarded_write）永远命中不到真人。
+                # 传法照 domains/ops/admin/runtime_admin.py 的规范腿：actor 用
+                # `平台:号`（与 consent._approver_of 同形，两边才能对上同人）。
+                # message 由摄取层从真事件构造，platform/sender_id 为结构化事实；
+                # 拿不到号时（sender_id 空）actor 落成 `平台:` 空号形，
+                # 由门侧 fail-closed 判它不是真人，绝不伪造一个身份。
+                actor = f"{message.platform}:{message.sender_id}"
                 try:
                     if action == "add":
                         merged = list(dict.fromkeys([*current, *group_ids]))
-                        runtime_settings.set_override(mode_key, ";".join(merged))
+                        runtime_settings.set_override(
+                            mode_key, ";".join(merged),
+                            actor=actor, request_id=message.request_id,
+                            session_key=message.session_id,
+                        )
                     elif action == "del":
                         removed = set(group_ids)
                         runtime_settings.set_override(
                             mode_key,
                             ";".join(item for item in current if item not in removed),
+                            actor=actor, request_id=message.request_id,
+                            session_key=message.session_id,
                         )
                     elif action == "set":
-                        runtime_settings.set_override(mode_key, ";".join(group_ids))
+                        runtime_settings.set_override(
+                            mode_key, ";".join(group_ids),
+                            actor=actor, request_id=message.request_id,
+                            session_key=message.session_id,
+                        )
                     else:  # clear
-                        runtime_settings.set_override(mode_key, "")
+                        runtime_settings.set_override(
+                            mode_key, "",
+                            actor=actor, request_id=message.request_id,
+                            session_key=message.session_id,
+                        )
                 except ValueError as exc:
+                    from .domains.core.safety_exec.settings_gate import (
+                        RuntimeChangeNeedsConsent,
+                    )
+                    if isinstance(exc, RuntimeChangeNeedsConsent):
+                        # 待批工单（用户裁定 2026-09-27）：首行说人话（咽喉文案已改），
+                        # 并给工单出一张通用卡（零新模板，仿 host_card）；出图失败
+                        # fail-open 退回纯文本工单、正文仍在、零契约破坏。
+                        images: list[dict[str, Any]] = []
+                        gate = getattr(runtime_settings, "safety_gate", None)
+                        ticket = (
+                            gate.ticket(exc.consent_id) if gate is not None else None
+                        )
+                        if ticket is not None:
+                            from .domains.ops.capabilities.consent_admin import (
+                                render_consent_card_png,
+                            )
+
+                            png = render_consent_card_png(ticket.row)
+                            if png:
+                                images = [{"file": png}]
+                        return CapabilityResult(
+                            request_id=message.request_id,
+                            capability_id="bot.group_policy",
+                            kind="text",
+                            body=str(exc),
+                            images=images,
+                            audit_tags=["group_policy", "needs_consent"],
+                        )
                     return CapabilityResult(
                         request_id=message.request_id,
                         capability_id="bot.group_policy",
@@ -8484,11 +9371,14 @@ def _register_nonebot_handlers() -> None:
             reply_chain=resolved_chain,
             feature_enabled=switches.enabled,
         )
-        # 群聊最近图片上下文（vis3 2026-09-13）：无自带图 + 看图意图 →
-        # 注入群里 TTL 内最新一张；模型视角即"总结这张图"。
+        # 最近图片上下文（vis3 2026-09-13 · MM-VIS-1 缺陷 3 扩到私聊）：
+        # 无自带图 + 看图意图 → 注入本会话 TTL 内最新一张；模型视角即"总结这张图"。
+        # 判据里 `message.group_id` 换成 `message.session_id`——私聊没有群号，
+        # 旧写法让私聊那条"隔几秒再补一句问话"的常见形状完全没有兜底。
+        # 其余四条件一字未动（开关 / 有文本 / 命中看图意图 / 本轮无自带图）。
         if (
             switches.enabled("bot.plugin.chat.recent_image")
-            and message.group_id
+            and message.session_id
             and message.plain_text
             and _VISION_HINT_RE.search(message.plain_text)
             and not any(
@@ -8496,16 +9386,19 @@ def _register_nonebot_handlers() -> None:
                 for s in message.raw_segments or []
             )
         ):
-            recent_url = _latest_fresh_group_image(message.group_id, time.monotonic())
+            recent_url = _latest_fresh_session_image(
+                message.session_id, time.monotonic()
+            )
             if recent_url:
                 message.raw_segments.append(
                     {"type": "image", "data": {"url": recent_url}}
                 )
-                # 来源附注（vis3）：随图注入让模型知道这是群里最近的图，非提问者上传。
+                # 来源附注（vis3）：随图注入让模型知道这是最近发过的图、非本轮上传。
+                # 措辞不再写死"群里"——同一枚注入现在也服务私聊，写死就是谎报场景。
                 message.raw_segments.append(
                     {
                         "type": "text",
-                        "data": {"text": "（附注：这张图取自群里最近发送的图片。）"},
+                        "data": {"text": "（附注：这张图取自本会话最近发送的图片。）"},
                     }
                 )
         # 表情贴纸回应·触发 B（bot.reactions）：用户消息命中情绪信号时，
@@ -8747,8 +9640,11 @@ def _register_nonebot_handlers() -> None:
                 "video understanding preprocess skipped type=%s",
                 type(exc).__name__,
             )
-        # 折句窗口（2026-09-25 用户裁定）：一句话被逗号拆成两三条发时，合成一轮、
-        # 只回一次——省下的正是多出来的回复次数与算力，也顺带不再撞同人冷却。
+        # 折句窗口（2026-09-29 用户裁定需求 1：**实现暂缓、只把接缝留干净**）。
+        # 生产 `.env: BOT_CHAT_MESSAGE_COALESCING_ENABLED=false` ⇒ 今天逐字节等于
+        # 不折句（一条气泡一次回复）；调用细节全收进唯一入口
+        # `message_coalescing.fold_inbound_turn`（本文件不再散写第二处＝禁第二通路），
+        # 「将来启用只动哪三处 + 两条已知判据短板」写在该入口上方的注释块里。
         # 位置刻意在「合并转发已展开」「视频预处理已完成」之后、进管道之前：
         # 再早就会丢掉后补上的正文。import 放函数体内，不在文件顶部插行，
         # 免得把 campus_record_matcher 的登记坐标顶漂（同 5a 的先例）。
@@ -8759,30 +9655,31 @@ def _register_nonebot_handlers() -> None:
             message_merge as _merge,
         )
 
-        if _coalescing.supports_coalescing(message):
-            _coalescer = _coalescing.shared_coalescer(
-                _coalescing.build_coalescing_settings(config)
+        _turn = await _coalescing.fold_inbound_turn(config, message)
+        if not _turn.owned:
+            # 已被折进别人那一轮：这一条不再单独回一句（省的就是这一次）。
+            _log_runtime_event(
+                runtime_event_log,
+                "INFO",
+                "chat_turn_folded",
+                message=message,
+                capability_id="bot.chat",
             )
-            # 用户 2026-09-27 裁定 3s：折句等待窗以模块常量为权威
-            # （message_merge.MERGE_WINDOW_SECONDS），只换 quiet_seconds，
-            # 条数/字数/封顶等护栏仍从 Config 现读 ⇒ 不吞消息语义不变。
-            _coalescer.settings = _merge.apply_merge_window_seconds(
-                _coalescer.settings
+            return
+        message = _turn.message
+        if _turn.folded_count > 1 and _turn.folded_message_ids:
+            # MERGE-IDS-DOWNSTREAM 转正（需求 1 之 3，2026-09-29）：折进这一轮的
+            # 每一条原始 message_id 都要留可反查的账——幂等/回执/补投按头 id 走，
+            # 逐条对账看这条事件（merge_turn 同时把账挂在合并轮身上）。
+            _log_runtime_event(
+                runtime_event_log,
+                "INFO",
+                "chat_turn_folded_ledger",
+                message=message,
+                capability_id="bot.chat",
+                folded_ids=",".join(str(item) for item in _turn.folded_message_ids),
+                folded_count=_turn.folded_count,
             )
-            _turn = await _coalescer.offer(
-                _coalescing.utterance_turn_key(message), message
-            )
-            if not _turn.owned:
-                # 已被折进别人那一轮：这一条不再单独回一句（省的就是这一次）。
-                _log_runtime_event(
-                    runtime_event_log,
-                    "INFO",
-                    "chat_turn_folded",
-                    message=message,
-                    capability_id="bot.chat",
-                )
-                return
-            message = _turn.message
         # 规格 2（用户 2026-09-27 睡前定稿·第 9 项）：bot 已回复后对方再发
         # 裸表情/贴纸 ⇒ 当「静默」类。判据是可判定规则函数而非写死白名单
         # （见 message_merge.should_silence_emoji_reaction docstring）；
@@ -8847,6 +9744,7 @@ def _register_nonebot_handlers() -> None:
             transport=receipt.transport,
             duration_ms=round((time.perf_counter() - started_at) * 1000, 1),
             **_runtime_tag_values(sent_request),
+            **_policy_gate_values(audit_logger, receipt, message),
         )
         history_should_record = False
         if sent_request:
@@ -8905,6 +9803,13 @@ def _register_nonebot_handlers() -> None:
                 reaction_meme_config = _config_with_runtime_overrides(
                     config, runtime_settings
                 )
+                # 贴纸语义匹配（她 2026-09-28 点名「报喜却发委屈/大哭，不行」）：
+                # 贴之前把 bot 本轮**实际下发的文本**一并交出去，选贴按它判情感，
+                # 不再只看用户原话的关键词。取唯一出口文本，不另拼第二份。
+                reply_text_for_reaction = str(
+                    getattr(getattr(sent_request, "content", None), "text_fallback", "")
+                    or ""
+                ).strip()
                 reacted_with_emoji = False
                 if switches.enabled("bot.plugin.chat.reactions.after_reply") and ".mail" not in event_module:
                     try:
@@ -8913,21 +9818,47 @@ def _register_nonebot_handlers() -> None:
                             _REACTION_BUFFER.register_bot_message(
                                 message.session_id, bot_sent_id
                             )
-                        reacted_with_emoji = await _maybe_react_on_message(
-                            bot,
-                            session_key=message.session_id,
-                            user_message_id=str(
-                                getattr(event, "message_id", "") or ""
-                            ),
-                            text=message.plain_text,
-                            config=reaction_meme_config,
-                            trigger="after_reply",
-                            gate=_REACTION_PROACTIVE_GATE,
-                        )
+                        _react_platform = str(
+                            getattr(message, "platform", "") or ""
+                        ).strip().lower()
+                        if "telegram" in _react_platform:
+                            # Telegram 侧同一条腿（她点名「QQ 和 Telegram 都要」）：通道在册
+                            # 可达（outbound_registry 的 set_message_reaction），此前缺的只是
+                            # 触发点。群组判定吃 chat.type，不吃 group_id（TG 频道也带号）。
+                            _tg_chat_type = str(
+                                getattr(getattr(event, "chat", None), "type", "") or ""
+                            ).strip().lower()
+                            reacted_with_emoji = await _maybe_react_telegram_message(
+                                bot,
+                                chat_id=getattr(event, "chat_id", "") or "",
+                                message_id=str(
+                                    getattr(event, "message_id", "") or ""
+                                ),
+                                session_key=message.session_id,
+                                text=message.plain_text,
+                                reply_text=reply_text_for_reaction,
+                                config=reaction_meme_config,
+                                is_group=_tg_chat_type in {"group", "supergroup"},
+                                gate=_REACTION_PROACTIVE_GATE,
+                            )
+                        else:
+                            reacted_with_emoji = await _maybe_react_on_message(
+                                bot,
+                                session_key=message.session_id,
+                                user_message_id=str(
+                                    getattr(event, "message_id", "") or ""
+                                ),
+                                text=message.plain_text,
+                                reply_text=reply_text_for_reaction,
+                                config=reaction_meme_config,
+                                trigger="after_reply",
+                                gate=_REACTION_PROACTIVE_GATE,
+                            )
                     except Exception:  # noqa: BLE001 - 贴表情失败绝不影响投递结果。
                         reacted_with_emoji = False
-                # 第二层：情绪信号命中且第一层未贴 → 小概率发一张表情包
-                # （意图匹配 VLM 情绪标签加权；独立冷却/每日上限/悲伤门）。
+                # 第二层：情绪信号命中且第一层未贴 → 小概率发一张**贴纸池**贴纸
+                # （S-STICKER-POOLS 2026-09-29 起不再从群聊吸收表情库出图；独立
+                # 冷却/每日上限/悲伤门/blocked 名单/安静时间/贴纸池特性门）。
                 if (
                     not reacted_with_emoji
                     and switches.enabled("bot.plugin.chat.reactions.meme")
@@ -8939,7 +9870,11 @@ def _register_nonebot_handlers() -> None:
                             event,
                             session_key=message.session_id,
                             text=message.plain_text,
+                            reply_text=reply_text_for_reaction,
                             meme_config=reaction_meme_config,
+                            # 快照查询口照传（与 _poke_voice_pair 同一约定）：漏传
+                            # 本腿按「未开」算＝不发，主动外发腿不许有隐式放行档。
+                            feature_enabled=switches.enabled,
                         )
                     except Exception:  # noqa: BLE001, S110 - 表情包层失败绝不影响投递结果。
                         pass
@@ -9236,7 +10171,9 @@ def _register_nonebot_handlers() -> None:
             audit_logger=audit_logger,
             receipt_repository=receipt_repository,
             diagnostics_store=diagnostics_store,
-            capability=build_group_info_capability(config, api=api, cache=group_info_cache),
+            capability=build_group_info_capability(
+                config, api=api, cache=group_info_cache, group_file_store=group_file_store
+            ),
             capability_id="bot.group_info",
             message=message,
             offload_sync_capability=True,

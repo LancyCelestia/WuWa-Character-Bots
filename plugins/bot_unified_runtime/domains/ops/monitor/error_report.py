@@ -377,7 +377,10 @@ def _stack_excerpt(exc: Exception, frames_n: int) -> list[str]:
         return []
     lines: list[str] = []
     for frame in extracted[-frames_n:]:
-        source = (frame.line or "").strip()
+        # ATK-OUTB 票2（先洗后截）：旧写法先钳 160 再打码，截口恰落在密钥中段
+        # 时卡面尾巴残留未打码的密钥头部字符（探针 2 实锤 ` sk-` 片段）。
+        # 现在源码行先过全局咽喉再钳长——截口只可能落在占位符上，不落密钥上。
+        source = redact_local_secrets((frame.line or "").strip())
         if len(source) > _FRAME_LINE_MAX_CHARS:
             source = source[: _FRAME_LINE_MAX_CHARS - 1] + "…"
         raw = f"  {Path(frame.filename).name}:{frame.lineno} in {frame.name}: {source}"
@@ -441,7 +444,9 @@ def _persona_signature(getter: Callable[[str], object]) -> tuple[str, str]:
     ``get_login_info``**（其自身身份缓存改后不刷新，台账 #60★）。英文名由人格册的
     ``persona_id``（拉丁 slug）经 ``theme_tokens.brand_name_en_for`` 派生。
     取不到就交空串给渲染侧统一回落品牌形态（``BRAND_THEME.display_name`` /
-    ``BRAND_NAME_EN``），卡面既不许出现空署名、也不许在这里再抄一份回落规则。
+    ``BRAND_NAME_EN``），卡面既不许出现空署名、也不许在这里再抄一份回落规则
+    （单口锁＝``tests/test_error_card_persona_identity.py``；载荷侧的「要素不得为空」
+    由装配层供键达成，见 ``tests/test_alert_error_card.py`` 的 ``_config_values``）。
     """
     from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
         current_bot_nickname,
@@ -973,9 +978,28 @@ _ISSUE_REASON_LABELS: dict[str, str] = {
     "empty_response": "对方回了空内容",
     "internal_error": "内部抛异常",
     "pipeline_busy": "队列排满，这条挤不进去",
+    # LLM 侧其余在册代号（真身=chat 的 `_SAFE_LLM_ERROR_KINDS`）。缺任一枚时卡上
+    # 会落到按异常名的归类，而 kind 串里并没有异常名 ⇒ 「报错原因」显示成未归类。
+    # 覆盖由 `tests/test_alert_plain_text.py` 对告警主句与本表两面同把锁执法。
+    "server": "对方服务返回错误（HTTP 5xx）",
+    "rate_limited": "对方限流",
+    "auth": "鉴权未通过",
+    "http": "非预期的 HTTP 状态",
+    "model_not_found": "对方那里没有这个模型",
+    "unsupported_model": "对方不支持该模型",
+    "unsupported_parameter": "请求里的参数不被接受",
+    "invalid_request": "请求格式被拒",
+    "bad_request": "请求被 4xx 拒绝",
+    # queue 观测族与 creation 巡检的观测 kind（真身=worker.py / reserved_health_alert.py
+    # 模块常量）。与 `alerts._KIND_PLAIN` 两面同步登记（2026-09-28），缺任一面时另一面
+    # 照样漏代号／落「未归类」。覆盖由 `tests/test_alert_plain_text.py` 从真身派生执法。
     "send_queue_dormant_partial": "旧任务发到一半停住，等自动归档出清",
     "send_queue_inflight_saturated": "在途投递占满窗口，新消息在排队",
     "creation_not_configured": "创作预留位未接后端，功能未启用",
+    # 紧急预警域（真身=collector.ISSUE_KIND 与 push.ISSUE_KIND_PUSH_EXPIRED，
+    # stage 同一枚 `emergency_info`）。两面同步登记，缺任一面即另一面漏代号／落「未归类」。
+    "collect_failed": "权威源头本轮采集失败",
+    "push_expired": "预警已过时效，按设计不再推送",
 }
 
 
@@ -1043,6 +1067,9 @@ _ISSUE_STAGE_OWNERSHIP: dict[str, str] = {
     "action_resolver": "core 域 / 动作解析",
     "campus": "assistant 域 / campus（校园转发）",
     "creation": "creation 域 / 生成预留面",
+    # 紧急预警域（2026-09-30 随 `alerts._STAGE_PLAIN` 同批补，两把尺不许各自漂）：
+    # stage 词唯一真身=collector.ISSUE_STAGE，采集腿与投递腿共用。
+    "emergency_info": "emergency_info 域 / service（采集与主动推送唯一出口）",
     "generation": "creation 域 / 生成执行",
     "history": "chat_reply 域 / character（对话历史）",
     "idempotency_gate": "transport 域 / 幂等门",
@@ -1235,7 +1262,8 @@ def build_error_report(
     """
     getter = config_getter or _default_config_getter
     exc_type = type(exc).__name__ or "Exception"
-    exc_message = redact_local_secrets(str(exc)[:300])
+    # ATK-OUTB 票2：先洗后截（旧写法 [:300] 在打码前，截口残密钥头，探针 2 实锤）。
+    exc_message = redact_local_secrets(str(exc))[:300]
     stack_lines = _stack_excerpt(exc, stack_frames)
     review, advice = _self_review(exc_type, stack_lines)
     # E-07：触发时刻优先消息时间戳；E-06：sender/bot/群号有则显示、**无则整行不出**
@@ -1334,9 +1362,11 @@ def _issue_code(raw: object, *, limit: int = 40) -> str:
     可能被拼进 kind（`blocked_<transport>` 一族就是运行期拼出来的），带出去之前
     宁可让它显示成被裁过的样子。这里不 import alerts 的那枚私名尺（monitor 内的
     两个方向都保持"alerts → error_report"单向依赖，不留反向 import 边）。
+    ATK-OUTB 票1/票3（2026-09-27）：形态摘除不再本地抄正则——字符白名单是
+    代号面的结构清洗，密钥形态一律交全局咽喉 `redact_local_secrets`（嵌词/
+    短密钥/长段/裸高熵已并入该尺），本件只保留白名单与钳长。
     """
-    text = re.sub(r"[^A-Za-z0-9_.:\-]", "", str(raw or "").strip())
-    text = re.sub(r"[A-Za-z]{1,6}-[A-Za-z0-9]{20,}", "‹已隐藏›", text)
+    text = redact_local_secrets(re.sub(r"[^A-Za-z0-9_.:\-]", "", str(raw or "").strip()))
     if not text:
         return "未记名"
     return text if len(text) <= limit else text[:limit] + "…"
@@ -1373,7 +1403,8 @@ def build_issue_report(
     stage = _issue_code(issue.stage)
     kind = _issue_code(issue.kind)
     exc_type = f"{stage}/{kind}"
-    exc_message = redact_local_secrets(str(issue.safe_summary or "")[:400]).strip()
+    # ATK-OUTB 票2：先洗后截（旧写法 [:400] 在打码前，截口残密钥头）。
+    exc_message = redact_local_secrets(str(issue.safe_summary or ""))[:400].strip()
     frames = [redact_local_secrets(str(line)) for line in (stack_lines or []) if str(line)]
     review, advice = _self_review(exc_type, frames, issue_kind=str(issue.kind))
     human_text = redact_local_secrets(str(headline or "").strip()) or _persona_text(

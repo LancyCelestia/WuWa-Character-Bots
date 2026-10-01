@@ -414,6 +414,7 @@ def _card_root_tokens(
     wash_blob_mix: int = 18,
     include_phase: bool = True,
     include_wash: bool = True,
+    face: str = "",
 ) -> str:
     """7 张模板共用的 ``:root`` token 块（转调 ``mica_shell.render_root_tokens``）。
 
@@ -447,6 +448,7 @@ def _card_root_tokens(
         wash_blob_mix=wash_blob_mix,
         include_phase=include_phase,
         include_wash=include_wash,
+        face=face,
     )
 
 
@@ -1643,7 +1645,7 @@ def render_universal_card_html(payload_dict: dict[str, Any] | None = None) -> st
     # 选择器：公共段只在视频卡块声明一次（基础块只出 accent 家族与语义色），
     # 否则同一 token 会重复定义（渲染契约测试禁止族内重复）。
     context["root_tokens"] = _card_root_tokens(
-        payload.platform_color, phase=context["phase"]
+        payload.platform_color, phase=context["phase"], face="universal"
     )
     # 品牌胶囊（CAP1）：单一产出经 mica_shell；功能名无能力语境时整段省略
     # （旧模板「feature 空则显 Shorekeeper」的占位语义作废——英文名常驻）。
@@ -1772,7 +1774,7 @@ def render_market_card_html(payload_dict: dict[str, Any] | None = None) -> str:
         # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，同 universal 段）。
         **_vis4_context(),
         # :root 公共段单一产出（v21r3 步 5）：模板里只留 {{ root_tokens }} 与卡特有 token。
-        root_tokens=_card_root_tokens(color, phase=payload_phase(data, face="market")),
+        root_tokens=_card_root_tokens(color, phase=payload_phase(data, face="market"), face="market"),
     )
 
 
@@ -1855,7 +1857,7 @@ def render_finance_card_html(payload_dict: dict[str, Any] | None = None) -> str:
         # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，同 universal 段）。
         **_vis4_context(),
         # :root 公共段单一产出（v21r3 步 5）。
-        root_tokens=_card_root_tokens(color, phase=payload_phase(data, face="finance")),
+        root_tokens=_card_root_tokens(color, phase=payload_phase(data, face="finance"), face="finance"),
     )
 
 
@@ -1919,7 +1921,7 @@ def render_song_candidates_html(payload_dict: dict[str, Any] | None = None) -> s
         # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，同 universal 段）。
         **_vis4_context(),
         # :root 公共段单一产出（v21r3 步 5）。
-        root_tokens=_card_root_tokens(color, phase=payload_phase(data, face="song")),
+        root_tokens=_card_root_tokens(color, phase=payload_phase(data, face="song"), face="song"),
     )
 
 
@@ -1981,7 +1983,7 @@ def render_news_digest_card_html(payload_dict: dict[str, Any] | None = None) -> 
         # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，同 universal 段）。
         **_vis4_context(),
         # :root 公共段单一产出（v21r3 步 5）。
-        root_tokens=_card_root_tokens(color, phase=payload_phase(data, face="news_digest")),
+        root_tokens=_card_root_tokens(color, phase=payload_phase(data, face="news_digest"), face="news_digest"),
     )
 
 
@@ -2080,7 +2082,7 @@ def render_affinity_card_html(payload_dict: dict[str, Any] | None = None) -> str
         # :root 公共段单一产出（v21r3 步 5）。pc 走 _safe_css_color 归一——
         # 模板侧已改用 |safe 注入，此处必须先把非法值挡在 CSS 之外。
         root_tokens=_card_root_tokens(
-            _safe_css_color(pc, UNKNOWN_PLATFORM_COLOR), phase=payload_phase(data, face="affinity")
+            _safe_css_color(pc, UNKNOWN_PLATFORM_COLOR), phase=payload_phase(data, face="affinity"), face="affinity"
         ),
     )
 
@@ -2163,10 +2165,11 @@ def render_error_card_html(payload_dict: dict[str, Any] | None = None) -> str:
             phase=payload_phase(data, face="error"),
             # 洗色分档（2026-09-25 两轮点名）：两档的 --wash-* 都按本命蓝派生
             # （见 _card_root_tokens），差别只在壳层——
-            #   calm  = 不覆盖壳层，走公共 SHELL_WASH_GRADIENT 多段彩漂。
+            #   calm  = 不覆盖壳层，走按面派生的 --mica-shell-wash（error 面色标布局）。
             #           旧写法在此另抄一条四段蓝→蓝直线渐变，把"飘逸"做成了
             #           加深色块，已退役。
-            #   alert = 蓝→红是这张卡的语义本身，保留登记字面量。
+            #   alert = 蓝→红是这张卡的语义本身，extras 覆盖 --mica-shell-wash，保留登记字面量。
+            face="error",
             extras={
                 # 色斑两档都要覆盖：render_root_tokens 里 --wash-blob-1 恒与
                 # var(--accent) 混（契约"平台色斑"的定义），诊断卡的 accent 是
@@ -2326,7 +2329,7 @@ def render_mermaid_html(
         # :root 公共段单一产出（v21r3 步 5）。本卡主色恒为中性灰（模板原硬编码
         # #607080 = UNKNOWN_PLATFORM_COLOR），与 wash 同源。
         root_tokens=_card_root_tokens(
-            UNKNOWN_PLATFORM_COLOR, phase=payload_phase(code or "", face="mermaid")
+            UNKNOWN_PLATFORM_COLOR, phase=payload_phase(code or "", face="mermaid"), face="mermaid"
         ),
     )
 

@@ -603,6 +603,35 @@ class ReactionBuffer:
 
 _REACTION_LRU_CAP = 4096
 
+# 静默原因受控词表（第 9 项「看情况静默」可判别口径，2026-09-28 S-IMPL-ITEM9）：
+# 「为什么这条消息没得到表情回应」必须可按码 grep——参照本仓 skip_reserved_name_*
+# 审计码先例；散文注释不算观测，每个 return False 决策点都落一行留痕。
+# 名册与发射点由 tests/test_reactions_silence_reason_lock.py 双向锁死
+# （发射码不在册=红；在册码无发射点=红）。
+REACTION_SKIP_REASONS: frozenset[str] = frozenset(
+    {
+        # maybe_react_on_message 前置判定
+        "disabled",            # 总开关关（bot_reactions_enabled=False）
+        "no_message_id",       # 拿不到可贴的 message_id
+        "private_session",     # 私聊无表情通道（QQ 侧协议不支持，派发前拒）
+        "third_party_chat",    # 情绪信号触发但对话与 bot 无关（审计 I2 口径）
+        "no_emotion_signal",   # 文本未命中情绪信号关键词
+        "sad_message",         # 悲伤/低落词族整条不贴（审计 C1 口径）
+        # 主动贴门控（maybe_react_on_message 前置判定）
+        "gate_disabled",       # 门内 enabled=False（编排层已挡，门自身留码）
+        "gate_invalid_key",    # 会话键/消息键为空
+        "gate_already_reacted",  # 每消息去重：这条已贴过
+        "gate_already_rolled",   # 双骰护栏：这条已掷过概率骰
+        "gate_cooldown",       # 会话冷却未到
+        "gate_hourly_cap",     # 每小时滑窗限额已满
+        "gate_probability",    # 确定性概率骰未中
+        "gate_unknown",        # 哨兵码：门内新增无码拒因理论上不可达，若长出即现形不吞
+        # S-STICKER 情感判定腿（只在拿到 bot 本轮实际回复文本后才可能触发）
+        "sentiment_unavailable",  # 大模型看过回复后的情感判定失败/超时/枚举外 ⇒ 本轮不贴
+        "sentiment_avoid",        # 判定成立但该情感场合不该贴小黄脸（如 conflict 被骂/争执）
+    }
+)
+
 
 class ProactiveGate:
     """主动贴表情五层门：开关→每消息去重→确定性概率→冷却→每小时滑窗。
@@ -625,7 +654,7 @@ class ProactiveGate:
         # 后 A 换 salt 重掷）只掷一次概率骰，登记发生在实际掷骰前。
         self._rolled: OrderedDict[tuple[str, str], None] = OrderedDict()
 
-    def allow(
+    def verdict(
         self,
         session_key: str,
         message_key: str,
@@ -636,22 +665,26 @@ class ProactiveGate:
         max_per_hour: int,
         salt: str = "",
         now: float | None = None,
-    ) -> bool:
+    ) -> tuple[bool, str]:
+        """判定 + 拒因（第 9 项可判别口径）：返回 (放行?, REACTION_SKIP_REASONS 码)。
+
+        放行时码为 ``""``；判定与 commit 语义与 ``allow`` 逐字节同一真身。
+        """
         if not enabled:
-            return False
+            return False, "gate_disabled"
         key = str(session_key)
         msg_key = str(message_key)
         if not key or not msg_key:
-            return False
+            return False, "gate_invalid_key"
         message_dedupe = (key, msg_key)
         if message_dedupe in self._reacted:
-            return False
+            return False, "gate_already_reacted"
         if message_dedupe in self._rolled:
-            return False
+            return False, "gate_already_rolled"
         current = self.clock() if now is None else float(now)
         last = self._last.get(key, -1e9)
         if current - last < max(0.0, float(cooldown_seconds)):
-            return False
+            return False, "gate_cooldown"
         # 审查 L-02：触达即 move_to_end + 超界淘汰最旧键（与 _last/_reacted/
         # _rolled 同款三连）；被淘汰的会话键再进来按全新空桶处理，不复活旧
         # 滑窗。键数未达上界时五层门判定与旧实现逐字节一致——纯内存治理。
@@ -662,7 +695,7 @@ class ProactiveGate:
         while window and current - window[0] > 3600.0:
             window.popleft()
         if len(window) >= max(1, int(max_per_hour)):
-            return False
+            return False, "gate_hourly_cap"
         # 登记已骰（先于掷骰）：无论中不中，这条消息不再二次掷骰——
         # 否则触发 B 概率败后触发 A 换 salt 仍可独立命中。
         self._rolled[message_dedupe] = None
@@ -676,7 +709,7 @@ class ProactiveGate:
             16,
         ) / 0xFFFFFFFF
         if digest > max(0.0, min(1.0, float(probability))):
-            return False
+            return False, "gate_probability"
         # 全门通过，commit 所有状态。
         self._reacted[message_dedupe] = None
         self._reacted.move_to_end(message_dedupe)
@@ -687,7 +720,12 @@ class ProactiveGate:
         while len(self._last) > _REACTION_LRU_CAP:
             self._last.popitem(last=False)
         window.append(current)
-        return True
+        return True, ""
+
+    def allow(self, session_key: str, message_key: str, **kwargs: Any) -> bool:
+        """纯布尔壳：判定真身＝``verdict``，与 2026-09-28 之前的 allow 逐字节同语义。"""
+        allowed, _reason = self.verdict(session_key, message_key, **kwargs)
+        return allowed
 
     def has_rolled(self, session_key: str, message_key: str) -> bool:
         """本消息是否已掷过概率骰（跨 salt/跨触发共享：同消息只骰一次）。"""
@@ -869,6 +907,59 @@ def reaction_knobs(config: Any) -> dict[str, Any]:
     }
 
 
+def _log_reaction_skip(reason: str, session_key: str, mid: str, trigger: str) -> None:
+    """静默观测**唯一发射喉**：每个「为什么这条没得到表情」都落这一行可 grep 的
+    受控码留痕（REACTION_SKIP_REASONS）。QQ/Telegram 两侧编排共用此喉——
+    ``reaction skip: reason=%s`` 字面量全文件只许出现一次
+    （``tests/test_reactions_silence_reason_lock.py::test_skip_log_is_single_greppable_choke``
+    执法），任何新增派发路径都不得再写第二份格式串。"""
+    logger.info(
+        "reaction skip: reason=%s session=%s mid=%s trigger=%s",
+        reason, session_key, mid, trigger,
+    )
+
+
+async def _resolve_reply_sentiment(
+    config: Any,
+    *,
+    user_text: str,
+    reply_text: str,
+    session_key: str,
+    sentiment_classifier: Any | None = None,
+) -> Any | None:
+    """看过 bot 实际回复后的情感判定；任何失败/超时/枚举外一律 ``None``（不贴）。
+
+    真判定腿（``sentiment_selector.classify_sticker_sentiment``）会走 LLM 阻塞请求，
+    一律下放线程池（``asyncio.to_thread``），绝不在事件循环里同步等网络——贴纸是
+    增益腿，不许把主回复/主链拖下水。``sentiment_classifier`` 为测试注入口，可传
+    返回 ``SentimentVerdict|None`` 的同步函数（或协程），此时不发真请求。
+    """
+    import asyncio
+
+    if sentiment_classifier is None:
+        try:
+            from .sentiment_selector import classify_sticker_sentiment
+
+            return await asyncio.to_thread(
+                classify_sticker_sentiment,
+                config,
+                user_text=user_text,
+                reply_text=reply_text,
+                session_key=session_key,
+            )
+        except Exception:  # noqa: BLE001 - 判定腿缺席＝本轮不贴。
+            return None
+    try:
+        result = sentiment_classifier(
+            config, user_text=user_text, reply_text=reply_text, session_key=session_key
+        )
+        if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+            return await result
+        return result
+    except Exception:  # noqa: BLE001 - 注入腿抛错同样按不贴处置。
+        return None
+
+
 async def maybe_react_on_message(
     bot: Any,
     *,
@@ -880,6 +971,8 @@ async def maybe_react_on_message(
     gate: ProactiveGate | None = None,
     now: float | None = None,
     bot_related: bool | None = None,
+    reply_text: str = "",
+    sentiment_classifier: Any | None = None,
 ) -> bool:
     """主动贴表情编排：门控全过 → 给用户这条消息贴一个表情。
 
@@ -900,29 +993,42 @@ async def maybe_react_on_message(
     - ``after_reply``：bot 刚回复完，意图按确定性哈希从温和池里挑；
       消息命中悲伤/低落词族时整条不贴（审计 C1：刚安慰完转头贴笑脸
       等同嘲讽），呲牙/偷笑/憨笑等笑脸族因此到不了悲伤场景。
+      **S-STICKER（2026-09-28）**：调用方若在回复发出后把本轮实际回复文本经
+      ``reply_text`` 传入，则选脸不再走上面的兜底随机脸，而改由大模型同时读
+      「用户消息 + 回复内容」判情感再选贴；判定不中一律不贴（见内联注释）。
 
     bot_related 仅约束触发 B（after_reply 时 bot 已参与对话，天然相关）。
     """
     knobs = reaction_knobs(config)
     mid = str(user_message_id or "").strip()
-    if not knobs["enabled"] or not mid:
+
+    def _skip(reason: str) -> bool:
+        # 第 9 项「看情况静默」可判别口径：每个静默决策点落一行可 grep 的
+        # 受控码留痕（REACTION_SKIP_REASONS），失败仍返回 False——只加观测，
+        # 不改判定语义。发射喉唯一（_log_reaction_skip）。
+        _log_reaction_skip(reason, session_key, mid, trigger)
         return False
+
+    if not knobs["enabled"]:
+        return _skip("disabled")
+    if not mid:
+        return _skip("no_message_id")
     if not _is_group_session(session_key):
-        return False
+        return _skip("private_session")
     if trigger == "emotion_signal":
         if bot_related is not True:
-            return False
+            return _skip("third_party_chat")
         intent = infer_signal_intent(text)
         if intent is None:
-            return False
+            return _skip("no_emotion_signal")
         salt = f"signal:{intent}"
     else:
         if is_sad_message(text):
-            return False
+            return _skip("sad_message")
         intent = ""
         salt = "reply"
     active_gate = gate if gate is not None else SHARED_PROACTIVE_GATE
-    if not active_gate.allow(
+    gate_ok, gate_reason = active_gate.verdict(
         session_key,
         mid,
         enabled=True,  # 开关已在上面判过；这里保持门内状态一致。
@@ -931,8 +1037,37 @@ async def maybe_react_on_message(
         max_per_hour=knobs["max_per_hour"],
         salt=salt,
         now=now,
-    ):
-        return False
+    )
+    if not gate_ok:
+        return _skip(gate_reason or "gate_unknown")
+    # S-STICKER（2026-09-28 用户点名缺陷）：当调用方把 bot 本轮**实际回复文本**
+    # （reply_text）交进来时，选贴不再靠「用户原话关键词 + 兜底随机脸」，而是
+    # 让大模型**同时看过用户消息与回复内容**判情感，再据此选脸。判不了 / 超时 /
+    # 枚举外 ⇒ 本轮不贴（错配比缺席更糟）；判定为 conflict 等「不该上小黄脸」的
+    # 场合同样不贴。reply_text 为空＝时序前置不满足（尚未回复定型），退回旧行为，
+    # 绝不为凑数猜一张。情感腿只在门控放行、即将贴纸时才发问（成本门）。
+    if reply_text and bool(getattr(config, "bot_reactions_sentiment_enabled", True)):
+        verdict = await _resolve_reply_sentiment(
+            config,
+            user_text=text,
+            reply_text=reply_text,
+            session_key=session_key,
+            sentiment_classifier=sentiment_classifier,
+        )
+        if verdict is None:
+            return _skip("sentiment_unavailable")
+        sentiment_intent = verdict.emoji_intent
+        if sentiment_intent is None:
+            logger.info(
+                "reaction sentiment: label=%s session=%s mid=%s（该场合不贴小黄脸）",
+                verdict.label, session_key, mid,
+            )
+            return _skip("sentiment_avoid")
+        logger.info(
+            "reaction sentiment: label=%s intent=%s session=%s",
+            verdict.label, sentiment_intent, session_key,
+        )
+        intent = sentiment_intent
     emoji_id = select_reaction_emoji(intent, f"{session_key}:{mid}")
     logger.info(
         "reaction select: trigger=%s intent=%s emoji=%s session=%s",
@@ -941,8 +1076,84 @@ async def maybe_react_on_message(
     return await react_to_message(bot, message_id=mid, emoji_id=emoji_id)
 
 
-# ------------------------------------------------------- 进程级共享实例
+async def maybe_react_telegram_message(
+    bot: Any,
+    *,
+    chat_id: Any,
+    message_id: Any,
+    session_key: str,
+    text: str,
+    reply_text: str,
+    config: Any,
+    is_group: bool = True,
+    gate: ProactiveGate | None = None,
+    sentiment_classifier: Any | None = None,
+    now: float | None = None,
+) -> bool:
+    """Telegram 主动表情回应编排（S-STICKER T3，2026-09-28）。
 
+    通道客观可达：出站 ``set_message_reaction`` 已在
+    ``domains/core/decision/outbound_registry.py`` 登记（REACTION→telegram），并由
+    :func:`react_telegram_message` wrapper 经统一出站面派发（既有接线断言见
+    ``tests/test_v21_dispatch_outbound_wiring.py``）。此前**缺的只是触发点**——本函数
+    即内容感知的触发侧编排：门控放行后，让大模型看过「用户消息 + bot 回复」判情感，
+    再映射到一个 unicode 表情字符贴上去。
+
+    与 QQ 侧同等的诚实边界与 fail-safe：
+    - ``is_group=False``（私聊/非群会话）直接不贴——TG ``set_message_reaction``
+      仅当 bot 在该群为管理员时可用，私聊无此通道（协议限制，非实现偷懒）；
+    - 判定失败/超时/枚举外/conflict ⇒ 不贴并留可 grep 行；
+    - 情感腿只在门控放行、即将贴纸时才发问（成本门）。
+
+    生产接线（在 TG 回复成功后调用本函数）属根装配面，见交回的 hub 申请。
+    """
+    knobs = reaction_knobs(config)
+    mid = str(message_id or "").strip()
+
+    def _skip(reason: str) -> bool:
+        _log_reaction_skip(reason, session_key, mid, "telegram")
+        return False
+
+    if not knobs["enabled"]:
+        return _skip("disabled")
+    if not mid:
+        return _skip("no_message_id")
+    if not is_group:
+        return _skip("private_session")
+    if not reply_text:
+        return _skip("no_emotion_signal")  # 无回复文本＝时序未到，退回不贴。
+    if not bool(getattr(config, "bot_reactions_sentiment_enabled", True)):
+        return _skip("disabled")  # 情感腿关闭时 TG 侧不发无内容依据的贴（无关键词兜底语义）。
+    active_gate = gate if gate is not None else SHARED_PROACTIVE_GATE
+    gate_ok, gate_reason = active_gate.verdict(
+        session_key,
+        f"tg:{mid}",
+        enabled=True,
+        probability=knobs["probability"],
+        cooldown_seconds=knobs["cooldown_seconds"],
+        max_per_hour=knobs["max_per_hour"],
+        salt="telegram",
+        now=now,
+    )
+    if not gate_ok:
+        return _skip(gate_reason or "gate_unknown")
+    verdict = await _resolve_reply_sentiment(
+        config,
+        user_text=text,
+        reply_text=reply_text,
+        session_key=session_key,
+        sentiment_classifier=sentiment_classifier,
+    )
+    if verdict is None:
+        return _skip("sentiment_unavailable")
+    emoji = verdict.telegram_emoji
+    if not emoji:
+        return _skip("sentiment_avoid")
+    logger.info("reaction telegram select: label=%s emoji=%s session=%s", verdict.label, emoji, session_key)
+    return await react_telegram_message(bot, chat_id=chat_id, message_id=mid, emoji=emoji)
+
+
+# ------------------------------------------------------- 进程级共享实例
 SHARED_REACTION_BUFFER = ReactionBuffer()
 SHARED_PROACTIVE_GATE = ProactiveGate()
 

@@ -113,6 +113,9 @@ class KnowledgeChunk(StrictBaseModel):
     title: str
     content: str
     source_url: str | None = None
+    #: 来源库的**库名**（`persona` / `kb_wiki`），由唯一合并点按路标注；页级 `source_id`
+    #: 不是库名（它可超 64 字符，且永远对不上「谁先答」阶梯）。空=没标注（单路腿）。
+    source_library: str = ""
     privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC
 
 

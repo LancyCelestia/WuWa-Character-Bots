@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import random
+import shutil
 import sqlite3
 import threading
 import time
@@ -11,10 +13,24 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from plugins.bot_unified_runtime.domains.media import path_gate
+from plugins.bot_unified_runtime.domains.meme.sources import persona_review
 from plugins.bot_unified_runtime.domains.meme.sources.send_history import (
     DEFAULT_RETENTION_DAYS,
     DEFAULT_WINDOW,
 )
+
+logger = logging.getLogger(__name__)
+
+
+class MemeMediaPathError(ValueError):
+    """库行 ``path`` 折算后落在表情库容器**之外**（S-MEME-CONTAIN，2026-09-29）。
+
+    这不是「文件不见了」，而是「这条记录想让 bot 去容器外面删文件/发文件」——
+    逃逸面与缺席面必须能被分开记账，所以它是独立异常而不是 ``OSError`` 的别名，
+    也绝不在此悄悄退回容器内的某个替身路径（那等于把洞换个形状留下）。
+    只携带路径字符串，不携带文件内容。
+    """
 
 # 权重偏好：守岸人最高，其次鸣潮/战双/库洛，再次 ACG，最后普通。
 _PRIORITY_HINTS = [
@@ -55,19 +71,115 @@ _PICK_SCAN_LIMIT = 1000
 # 落库永久复用，所以这条上限只在「旧库首次过筛」时生效，之后为 0 成本。
 _SHA_FILL_LIMIT = 64
 
+# 表情册与审批两面的指令刻度：前缀太短＝整表扫，limit 没上界＝一次拉穿内存。
+# 判不出就诚实缺席——这里没有任何「放宽成扫全库/扫别处」的口子。
+# ``MD5_PREFIX_MIN_LENGTH`` 是**公开名**：命令面措辞回执要引用同一枚刻度，跨模块抓
+# 下划线名不合规，而起别名＝两份数字迟早分叉（本项目两枚前缀查询口共读本函数）。
+MD5_PREFIX_MIN_LENGTH = 4
+_PREFIX_LIMIT_MAX = 200
+_MISSING_LIMIT_MAX = 5000
+#: 库内一次取的 DB 行数（失配判定要在 python 侧做，所以按窗推进、不是单条 SQL 筛）。
+_MISSING_WINDOW = 500
+#: ``LIKE ... ESCAPE ?`` 的转义符（绑定参数传入，SQL 文本里不拼值）。
+_LIKE_ESCAPE_CHAR = "!"
+_HEX_DIGITS = frozenset("0123456789abcdef")
+
+# 前缀闸门的三种拒收原因（``''``＝放行）。**唯一一把尺**：两枚前缀查询口
+# （``match_md5_prefix`` / ``match_review_key``）与命令面回执都读 :func:`md5_prefix_gate`，
+# 第二处判据一律算违令——回执与查询长成两张脸，就是「库里没有」和「你没说清」
+# 被混进同一句话的那类误导。
+MD5_PREFIX_ACCEPTED = ""
+MD5_PREFIX_EMPTY = "empty"
+MD5_PREFIX_TOO_SHORT = "too_short"
+MD5_PREFIX_NOT_HEX = "not_hex"
+MD5_PREFIX_REJECTIONS: frozenset[str] = frozenset(
+    {MD5_PREFIX_EMPTY, MD5_PREFIX_TOO_SHORT, MD5_PREFIX_NOT_HEX}
+)
+
 # 家规（先例=affinity 三列、emergency_subscriptions 坐标两列）：新增列一律
 # ALTER-if-missing，不重建表、不动既有行。
 #   sha256        = 内容身份（发送史与隔离墓碑的键；文件名会变，md5 行也会因
 #                   重新入库换 ext，只有内容哈希能跨改名/跨库认出同一张图）
 #   persona_owned = 本命贴纸（守岸人主体），豁免按龄裁剪，见 ``cleanup``
+#   review_state  = 待审队列位（S-MEME2-REVIEW，2026-09-29，需求 12）：
+#                   ``''``=无主张（含全部存量行，逐字节旧行为）/ ``pending``=
+#                   只有一条证据、等管理员点头 / ``approved``=证据齐或人已批。
+#                   判据本体在 ``persona_review``，这里只存它给出的字面值。
+#   native_emoji_id / native_package_id = 入库时那条 QQ 表情段自带的协议端 id
+#                   （S-MEME2-MFACE）：出站腿可以据此回原生 ``mface`` 段，
+#                   不必把同一张图再当普通图片传一次；空值＝没有可信 id，
+#                   出站侧必须诚实回落 image 段（绝不自拼，见 onebot._sticker_segment）。
 _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("sha256", "ALTER TABLE memes ADD COLUMN sha256 TEXT NOT NULL DEFAULT ''"),
     ("persona_owned", "ALTER TABLE memes ADD COLUMN persona_owned INTEGER NOT NULL DEFAULT 0"),
+    ("review_state", "ALTER TABLE memes ADD COLUMN review_state TEXT NOT NULL DEFAULT ''"),
+    ("native_emoji_id", "ALTER TABLE memes ADD COLUMN native_emoji_id TEXT NOT NULL DEFAULT ''"),
+    (
+        "native_package_id",
+        "ALTER TABLE memes ADD COLUMN native_package_id TEXT NOT NULL DEFAULT ''",
+    ),
+)
+
+# 依赖 ``_MIGRATIONS`` 才补齐的列（``review_state``）的索引：必须**列已齐后**再建。
+# 家规＝ALTER-if-missing 先行、索引后建（先例 character/affinity.py、addressing.py）。
+# 放进 ``_SCHEMA`` 会让任何全新空库在建表阶段当场抛
+# ``sqlite3.OperationalError: no such column: memes.review_state``（列尚未 ALTER 出来），
+# 生产老库若该列也缺席则在下次重启时同样炸——所以这枚索引绝不能与建表脚本同批执行。
+# 幂等：``IF NOT EXISTS``，重复启动零副作用。
+_POST_MIGRATION_INDEXES: tuple[str, ...] = (
+    "CREATE INDEX IF NOT EXISTS idx_memes_review ON memes(review_state)",
 )
 
 
 def _now() -> float:
     return time.time()
+
+
+def _like_prefix_pattern(key: str) -> str:
+    """md5 前缀 → LIKE 模式：转义符、``%``、``_`` 一律按字面化。
+
+    进来之前先过 :func:`md5_prefix_gate`（十六进制之外的字符一个不放），所以正常
+    路径下这里等于恒等。**但闸门不是它的替身**：这一枚是把「通配符放大命中集」在
+    形态上焊死的第二道防线，谁哪天把闸门挪走或放宽，这道还在（``ESCAPE`` 的锁见
+    ``tests/test_meme_album_commands.py``：SQL 文本里 ``ESCAPE`` 必在、绑定第二元必是
+    本转义符、且 ``LIKE`` 必在 ``LIMIT`` 之前）。
+    """
+    escaped = key.replace(_LIKE_ESCAPE_CHAR, _LIKE_ESCAPE_CHAR * 2)
+    for wildcard in ("%", "_"):
+        escaped = escaped.replace(wildcard, _LIKE_ESCAPE_CHAR + wildcard)
+    return escaped + "%"
+
+
+def md5_prefix_gate(key: Any) -> str:
+    """表情编号前缀的形状闸门：合格 ⇒ ``''``，否则点名原因码（**不查库**那一格）。
+
+    清洗口径（``strip`` + ``lower``）写在这里、只写一份，两枚查询口各自先过这一句
+    再拿同一串去查，回执与查询不会两张脸。三格判据：
+
+    - 空 / 纯空白 ⇒ :data:`MD5_PREFIX_EMPTY`（调用方另有「没说编号」那一支）。
+    - 短于 ``MD5_PREFIX_MIN_LENGTH`` ⇒ :data:`MD5_PREFIX_TOO_SHORT`。太短＝整表撞号，
+      拒得对，但**回执不许说成「库里没有」**：那是把「你没说清」伪装成「没图可批」。
+    - 十六进制之外还有一个字符 ⇒ :data:`MD5_PREFIX_NOT_HEX`。这一格把 ``%``/``_``
+      与转义符 ``!`` 全部挡在 SQL 之前，:func:`_like_prefix_pattern` 由此从
+      「唯一防线」降格成「第二道防线」。
+
+    曾有过的一段假账：``match_review_key`` 的 docstring 写着「上游已只放行十六进制」，
+    而审批腿的 ``key`` 是指令面**原样透传**（实测单字符前缀最大组 207 行）——一句
+    没发生的事。今天这句归本函数自己执法，不再依赖调用方自觉。
+    """
+    prefix = str(key or "").strip().lower()
+    if not prefix:
+        return MD5_PREFIX_EMPTY
+    if len(prefix) < MD5_PREFIX_MIN_LENGTH:
+        return MD5_PREFIX_TOO_SHORT
+    if not all(char in _HEX_DIGITS for char in prefix):
+        return MD5_PREFIX_NOT_HEX
+    return MD5_PREFIX_ACCEPTED
+
+
+def md5_prefix_is_accepted(key: Any) -> bool:
+    """闸门放行与否（命令面判「该不该开口要长一点的编号」用，别手抄判据）。"""
+    return md5_prefix_gate(key) == MD5_PREFIX_ACCEPTED
 
 
 class MemeLibraryStore:
@@ -83,9 +195,17 @@ class MemeLibraryStore:
         history_window: int = DEFAULT_WINDOW,
         history_retention_days: int = DEFAULT_RETENTION_DAYS,
         default_scope: str | None = None,
+        library_dir: str | Path | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # 容器门收窄（B3，2026-09-30）：给了库目录 ⇒ 容器=库目录本身（而非 db 的
+        # 父目录=整个 data 根）。库行指向 `data/downloads` 等库外子目录的旧/污染行
+        # 从此进不了发送面。``None``＝旧语义（测试桩与历史构造形逐字兼容）。
+        # 空串/纯空白与 ``None`` 同义（旧语义），所以先判在场再判读数非空。
+        self._library_dir: Path | None = None
+        if library_dir is not None and str(library_dir).strip():
+            self._library_dir = Path(library_dir)
         self.prefer = [str(item).strip() for item in (prefer or []) if str(item).strip()]
         self._lock = threading.Lock()
         with self._connect() as connection:
@@ -96,6 +216,9 @@ class MemeLibraryStore:
             for name, statement in _MIGRATIONS:
                 if name not in columns:
                     connection.execute(statement)
+            # 列齐之后再补依赖新列的索引（见 ``_POST_MIGRATION_INDEXES`` 注释）。
+            for statement in _POST_MIGRATION_INDEXES:
+                connection.execute(statement)
         # ---- 反重复：本文件是三条发送腿的共同咽喉，账本就挂在这里 ----
         # ``no_repeat=False`` 或账本构造失败 ⇒ 逐字节退回旧行为（宁可可能重发，
         # 也不因为一个新挂载点把表情功能整个打死）。生产缺省开。
@@ -166,7 +289,9 @@ class MemeLibraryStore:
         known = str(row["sha256"] or "").strip().lower()
         if known:
             return known
-        target = self._resolve_media_path(str(path or row["path"] or ""))
+        target = self.media_path_for_row(str(path or row["path"] or ""), where="ensure_content_sha")
+        if target is None:
+            return ""
         from plugins.bot_unified_runtime.domains.meme.sources.send_history import (
             content_sha256_of_path,
         )
@@ -238,6 +363,38 @@ class MemeLibraryStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def media_container(self) -> Path:
+        """贴纸文件的**容器根**（S-MEME-CONTAIN，2026-09-29 用户点名的 CRITICAL 洞）。
+
+        收窄（B3，2026-09-30）：构造时给了 ``library_dir`` ⇒ 容器=库目录本身；
+        否则退 ``db_path.parent``（旧语义：历史构造形与测试桩逐字兼容）。库行里
+        既存过 ``data/meme_library/x.png``（相对源 CWD 的旧口径），也存过绝对路径，
+        两者都落在同一个 Runtime 数据根下；容器收窄后，指向库外（``data/downloads``
+        等别处落点）的旧行/污染行**进不了发送面**。``.resolve()`` 先把 ``..``、重复
+        分隔符、符号链接/junction 折算掉，之后只问一句「解析完还在不在容器里」。
+        """
+        if self._library_dir is not None:
+            try:
+                return self._library_dir.resolve()
+            except OSError:  # 解析失败也不放宽门：退回未解析的库目录。
+                return self._library_dir
+        try:
+            return self.db_path.parent.resolve()
+        except OSError:  # 解析失败也不放宽门：退回未解析的父目录。
+            return self.db_path.parent
+
+    def confine_media_path(self, candidate: Path) -> Path:
+        """把已解析的路径按容器门收口；越界 ⇒ :class:`MemeMediaPathError`。
+
+        单点判据（全仓只有这一处「库行 path → 磁盘真身」的裁决）：等于容器根本身
+        也算越界——那是目录，``unlink()`` 会炸、``read_bytes()`` 会把别人的目录当图发。
+        """
+        resolved = candidate.resolve()
+        container = self.media_container()
+        if resolved == container or not resolved.is_relative_to(container):
+            raise MemeMediaPathError(str(resolved))
+        return resolved
+
     def _resolve_media_path(self, value: str | Path) -> Path:
         """Resolve current and legacy meme paths from the external Runtime.
 
@@ -245,16 +402,219 @@ class MemeLibraryStore:
         to the source CWD. The database now lives in Runtime/data, so resolve
         those records relative to the database's data directory instead of the
         caller's working directory.
+
+        **容器门（S-MEME-CONTAIN）**：旧实现把绝对路径**原样返回**，而本类的
+        ``remove``/``cleanup`` 直接对返回值 ``unlink()``、``weighted_pick`` 直接把它
+        当发送源 ⇒ 一条被污染的库行就等于「任意路径删文件 / 任意路径发图」。现在
+        无论绝对还是相对，一律折算后过 :meth:`confine_media_path`；越界不静默降级
+        （静默＝把逃逸藏成"这张图没了"），而是抛 :class:`MemeMediaPathError`，由各
+        IO 点按各自语义处置。
         """
-        path = Path(value).expanduser()
+        path = Path(str(value)).expanduser()
         if path.is_absolute():
-            return path
-        normalized = str(path).replace("\\", "/")
-        if normalized == "data":
-            return self.db_path.parent
-        if normalized.startswith("data/"):
-            return self.db_path.parent / normalized[5:]
-        return self.db_path.parent / path
+            candidate = path
+        else:
+            normalized = str(path).replace("\\", "/")
+            if normalized == "data":
+                candidate = self.db_path.parent
+            elif normalized.startswith("data/"):
+                candidate = self.db_path.parent / normalized[5:]
+            else:
+                candidate = self.db_path.parent / path
+        return self.confine_media_path(candidate)
+
+    def media_path_for_row(self, value: Any, *, where: str) -> Path | None:
+        """``_resolve_media_path`` 的观测包装：越界/解不开 ⇒ ``None`` + 一行 WARNING。
+
+        只判越界与留痕，**不代做决定**——各 IO 点的正确降级不一样（选图要跳候选、
+        清理要删行但不删容器外文件、补标要记 skip），把决定权留在调用点，才不会
+        在这里长出第二套语义。日志只记调用点标签，不记路径（路径可能含用户目录名）。
+        """
+        try:
+            return self._resolve_media_path(value)
+        except MemeMediaPathError:
+            logger.warning("meme media path outside container where=%s", where)
+        except OSError:
+            logger.warning("meme media path unresolvable where=%s", where)
+        return None
+
+    # ---------------------------------------------------- 表情册指令面（S-STICKER-ALBUM）
+
+    def match_md5_prefix(self, key: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        """按 md5 前缀取命中行（任意 ``review_state`` 都算；只读反查，不加锁）。
+
+        返回形与 :meth:`missing_path_rows` **同构**：每枚是 ``{md5, path, persona_hint,
+        ext}`` 的行字典。只交回裸 md5 的话，命令面就永远读不到行上的 ``persona_hint``
+        （F2，2026-09-30）——「目标册＝该行提示」这条路径会退化成「一律落现役人格册」，
+        还会顺手把行上原有的提示覆写掉，所以这一枚交回整行。
+
+        空 / 短于 ``MD5_PREFIX_MIN_LENGTH`` / 非十六进制 ⇒ 直接 ``[]`` 且不查库（判据真身＝
+        :func:`md5_prefix_gate`，与 :meth:`match_review_key` 同一把尺）。前缀里的
+        ``%`` 与 ``_`` 按字面处理（``ESCAPE`` 绑定传入），通配符不得放大命中集。
+        """
+        prefix = str(key or "").strip().lower()
+        if md5_prefix_gate(prefix):
+            return []
+        bounded = max(1, min(int(limit), _PREFIX_LIMIT_MAX))
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT md5, path, persona_hint, ext FROM memes"
+                " WHERE md5 LIKE ? ESCAPE ?"
+                " ORDER BY added_at DESC LIMIT ?",
+                (_like_prefix_pattern(prefix), _LIKE_ESCAPE_CHAR, bounded),
+            ).fetchall()
+        return [
+            {
+                "md5": str(row["md5"]),
+                "path": str(row["path"] or ""),
+                "persona_hint": str(row["persona_hint"] or ""),
+                "ext": str(row["ext"] or ""),
+            }
+            for row in rows
+        ]
+
+    def relink_path(
+        self,
+        md5: str,
+        new_path: str,
+        *,
+        persona_hint: str = "",
+        persona_owned: bool = True,
+    ) -> bool:
+        """把某行的 ``path`` 改指到 ``new_path``；越界一律拒收，绝不写越界路径。
+
+        尺只有 :meth:`media_path_for_row` 一把（其本体即 :meth:`confine_media_path`，
+        越界时已经留过一行 WARNING），这里只把「判不出」翻译成 ``False``。路径串
+        **照调用方给的原样入库**（口径同 :meth:`add`，读取时再折算）。
+        ``persona_hint`` 空串＝不改这一列（``COALESCE(NULLIF(?, ''), 原值)``）。
+        """
+        if self.media_path_for_row(new_path, where="relink_path") is None:
+            return False
+        hint = str(persona_hint or "").strip()
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE memes
+                   SET path=?, persona_owned=?,
+                       persona_hint=COALESCE(NULLIF(?, ''), persona_hint)
+                 WHERE md5=?
+                """,
+                (str(new_path), 1 if persona_owned else 0, hint, str(md5)),
+            )
+            linked = cursor.rowcount > 0
+        return linked
+
+    def missing_path_rows(self, limit: int = 500) -> list[dict[str, Any]]:
+        """列出「库里有记录、盘上够不着」的行——**只报不删**，删与改道归命令面裁。
+
+        判失配的尺同 :meth:`media_path_for_row`：越界、解不开、或解析后不是文件，
+        都算失配。不因此新增任何回落基根或去别处找的通道。
+
+        ``limit`` 数的是**报出来的失配行数**，不是库里的行数（这一点曾只在门面注释里
+        写着、这里其实是裸 ``LIMIT``＝最老那批永远对不完，2026-10-01 现算纠正）：内部按
+        ``_MISSING_WINDOW`` 一格一格往下翻，翻到凑够 ``limit`` 条失配或库里没有行为止。
+        翻页次序是 ``added_at DESC, md5 ASC`` 的稳定全序，所以同一轮里既不重也不漏。
+        """
+        bounded = max(1, min(int(limit), _MISSING_LIMIT_MAX))
+        out: list[dict[str, Any]] = []
+        offset = 0
+        while len(out) < bounded:
+            window = min(_MISSING_WINDOW, bounded)
+            with self._connect() as connection:
+                rows = connection.execute(
+                    "SELECT md5, path, persona_hint, ext, review_state FROM memes"
+                    " ORDER BY added_at DESC, md5 ASC LIMIT ? OFFSET ?",
+                    (window, offset),
+                ).fetchall()
+            if not rows:
+                break
+            for row in rows:
+                target = self.media_path_for_row(row["path"], where="missing_path_rows")
+                if target is not None and target.is_file():
+                    continue
+                out.append(
+                    {
+                        "md5": str(row["md5"]),
+                        "path": str(row["path"]),
+                        "persona_hint": str(row["persona_hint"] or ""),
+                        "ext": str(row["ext"] or ""),
+                        "review_state": str(row["review_state"] or ""),
+                    }
+                )
+                if len(out) >= bounded:
+                    break
+            offset += len(rows)
+            if len(rows) < window:
+                break  # 库已见底
+        return out
+
+    def admit_into_album(self, md5: str, album_dir: str | Path, *, persona_hint: str = "") -> str:
+        """把贴纸文件搬进 ``album_dir`` 并让库行改道跟过去。
+
+        返回只取七个字面：``moved`` / ``no_row`` / ``no_file`` / ``escape`` /
+        ``duplicate_name`` / ``not_admitted`` / ``error``。其中 ``not_admitted``＝该行
+        还没过审（出处门，见下）。目标越界判定复用 :mod:`domains.media.path_gate`
+        的 :func:`~plugins.bot_unified_runtime.domains.media.path_gate.contain_within`
+        （两侧都折算），**判定先于 mkdir**，不自写第二把 resolve 比较尺。
+        旧行越界与旧文件缺席同落 ``no_file``：没有任何东西被搬动，库行原样不动。
+        """
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT path, ext, group_id, review_state FROM memes WHERE md5=?",
+                (str(md5),)
+            ).fetchone()
+        if row is None:
+            return "no_row"
+        # 入册＝把这张图交给别的会话看，所以只准已过审的行进册。群聊收来的图
+        # （`review_state` 为 ''/pending）一律拒：贴纸腿是纯文件遍历、不过 DB 判据，
+        # 一张图一旦进了人格册就等着被主动发出去。
+        if str(row["review_state"] or "").strip() != persona_review.ADMIT:
+            return "not_admitted"
+        source = self.media_path_for_row(row["path"], where="admit_into_album")
+        if source is None or not source.is_file():
+            return "no_file"
+        try:
+            target = path_gate.contain_within(
+                Path(str(album_dir or "")).expanduser() / source.name,
+                [self.media_container()],
+                base=self.db_path.parent,
+            )
+        except path_gate.PathEscapeError:
+            return "escape"
+        if target.exists():
+            return "duplicate_name"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source), str(target))
+        except (OSError, shutil.Error):
+            logger.warning("meme album move failed md5=%s", md5)
+            return "error"
+        hint = str(persona_hint or "").strip()
+        try:
+            with self._lock, self._connect() as connection:
+                cursor = connection.execute(
+                    """
+                    UPDATE memes
+                       SET path=?, persona_owned=?,
+                           persona_hint=COALESCE(NULLIF(?, ''), persona_hint)
+                     WHERE md5=?
+                    """,
+                    (str(target), 1, hint, str(md5)),
+                )
+            # 文件已经搬走而行没被改（0 行）＝账实分家，不能宣成 ``moved``：
+            # 报错并回滚，让「盘上有、账上没有」这一格永远不成立。
+            if int(getattr(cursor, "rowcount", 0) or 0) != 1:
+                raise sqlite3.Error("album admit updated no row")
+        except sqlite3.Error:
+            logger.warning("meme album relink failed md5=%s", md5)
+            try:
+                shutil.move(str(target), str(source))
+            except (OSError, shutil.Error):
+                # 回滚也没成：文件在册目录、库行仍指旧位置——下一轮
+                # ``missing_path_rows`` 会把它报出来，``relink_path`` 能收；这里绝不删行。
+                logger.error("meme album rollback failed md5=%s 需人工收", md5)
+            return "error"
+        return "moved"
 
     def exists(self, md5: str) -> bool:
         with self._lock, self._connect() as connection:
@@ -270,14 +630,21 @@ class MemeLibraryStore:
         group_id: str = "",
         content_sha256: str = "",
         persona_owned: bool = False,
+        native_emoji_id: str = "",
+        native_package_id: str = "",
     ) -> dict[str, Any]:
         sha = str(content_sha256 or "").strip().lower()
+        # id 一律照原样存（不筛形态）：能不能出 mface 段由出站腿那把唯一硬尺判
+        # 硬门判（``transport.sender.onebot._sticker_segment``），这里筛形态＝第二判据。
+        emoji_id = str(native_emoji_id or "").strip()[:64]
+        package_id = str(native_package_id or "").strip()[:64]
         with self._lock, self._connect() as connection:
             cursor = connection.execute(
                 """
                 INSERT OR IGNORE INTO memes
-                (md5, path, ext, group_id, added_at, weight, sha256, persona_owned)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (md5, path, ext, group_id, added_at, weight, sha256, persona_owned,
+                 native_emoji_id, native_package_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     md5,
@@ -288,6 +655,8 @@ class MemeLibraryStore:
                     1.0,
                     sha,
                     1 if persona_owned else 0,
+                    emoji_id,
+                    package_id,
                 ),
             )
             inserted = cursor.rowcount > 0
@@ -346,12 +715,22 @@ class MemeLibraryStore:
                 ),
             )
 
-    def _score_weight(self, *, is_meme: bool, nsfw_score: float, text: str) -> float:
+    def _score_weight(
+        self, *, is_meme: bool, nsfw_score: float, text: str, persona_credit: bool = True
+    ) -> float:
+        """权重真身（唯一算分处）。
+
+        ``persona_credit=False`` 只停**本命那一档**（``_PRIORITY_HINTS`` 首档 8.0），
+        其余折扣逐字不变——这是 S-MEME2-REVIEW 的落点：待审图的「她」是未经确认的
+        模型主张，不配顶到选图前排，但它仍然是张合法梗图（普通 prefer/ACG 档照吃）。
+        缺省 ``True``＝旧行为，存量行一律不变。
+        """
         if float(nsfw_score) >= 0.8:
             return 0.0  # 高危图绝不发送
         weight = 1.0 if is_meme else 0.25
         lowered = text.lower()
-        for hints, multiplier in _PRIORITY_HINTS:
+        tiers = _PRIORITY_HINTS if persona_credit else _PRIORITY_HINTS[1:]
+        for hints, multiplier in tiers:
             if any(hint.lower() in lowered for hint in hints):
                 weight *= multiplier
         for term in self.prefer:
@@ -360,6 +739,139 @@ class MemeLibraryStore:
         if float(nsfw_score) >= 0.2:
             weight *= 0.3
         return round(weight, 6)
+
+    # ------------------------------------------------------------ 待审队列
+
+    @staticmethod
+    def _row_tag_text(row: Any) -> str:
+        """从库行重建成 ``apply_tags`` 当年喂给权重函数的那段文本（同一把尺）。"""
+        parts: list[str] = [str(row["description"] or "")]
+        for column in ("emotion_tags", "scene_tags"):
+            raw = str(row[column] or "")
+            try:
+                parsed = json.loads(raw)
+            except (TypeError, ValueError):
+                parsed = None
+            if isinstance(parsed, list):
+                parts.extend(str(item) for item in parsed)
+            else:
+                parts.append(raw)
+        parts.append(str(row["persona_hint"] or ""))
+        return " ".join(parts)
+
+    def set_review_state(self, md5: str, state: str) -> bool:
+        """写队列位并**按状态重算权重**（S-MEME2-REVIEW 的执法点）。
+
+        ``approved`` ⇒ 标本命 + 本命加权复档；``pending`` ⇒ 不标本命 + 停本命档；
+        ``''`` ⇒ 无主张（只清队列位，权重按旧口径复算，存量行零位移）。
+        返回该行是否存在——不存在就是不存在，绝不静默建行（去重/墓碑的账还在别处）。
+        """
+        safe_state = str(state or "").strip()
+        if safe_state not in ("", persona_review.PENDING, persona_review.ADMIT):
+            raise ValueError(f"unknown review state: {safe_state!r}")
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT description, emotion_tags, scene_tags, persona_hint, is_meme,"
+                " nsfw_score FROM memes WHERE md5=?",
+                (str(md5),),
+            ).fetchone()
+            if row is None:
+                return False
+            weight = self._score_weight(
+                is_meme=bool(row["is_meme"]),
+                nsfw_score=float(row["nsfw_score"] or 0.0),
+                text=self._row_tag_text(row),
+                persona_credit=(safe_state != persona_review.PENDING),
+            )
+            connection.execute(
+                "UPDATE memes SET review_state=?, weight=?, persona_owned=? WHERE md5=?",
+                (
+                    safe_state,
+                    weight,
+                    1 if safe_state == persona_review.ADMIT else 0,
+                    str(md5),
+                ),
+            )
+        return True
+
+    def reject_review(self, md5: str, *, ledger: Any = None, reason: str = "manual_review_reject") -> bool:
+        """人审拒绝 ⇒ 删行删文件 + 内容级墓碑（同图重发不复活，口径同 NSFW 删除）。
+
+        注入 ``ledger`` 时同时记到该账本（测试/外部账）；库自己的默认墓碑账本由
+        :meth:`remove` 负责，两条路都不许留「删了但没立碑」的半截状态。
+        """
+        sha = ""
+        with self._connect() as connection:
+            row = connection.execute("SELECT sha256, path FROM memes WHERE md5=?", (str(md5),)).fetchone()
+        if row is not None:
+            sha = str(row["sha256"] or "").strip().lower()
+            if not sha:
+                target = self.media_path_for_row(row["path"], where="reject_review")
+                if target is not None:
+                    from plugins.bot_unified_runtime.domains.meme.sources.send_history import (
+                        content_sha256_of_path,
+                    )
+
+                    sha = content_sha256_of_path(target) or ""
+        removed = bool(self.remove(str(md5), tombstone_reason=reason))
+        if ledger is not None and sha:
+            try:
+                ledger.add(sha, reason=reason[:120])
+            except Exception:  # noqa: BLE001 - 外部账本写不进去不许改删除结果。
+                logger.warning("meme review reject ledger add failed md5=%s", md5)
+        return removed
+
+    def list_review(self, state: str = persona_review.PENDING, *, limit: int = 20) -> list[dict[str, Any]]:
+        """队列查询面：按状态列行（md5/描述/权重/路径），供审批与统计用。"""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT md5, description, weight, path, review_state FROM memes"
+                " WHERE review_state=? ORDER BY added_at DESC LIMIT ?",
+                (str(state or ""), max(1, int(limit))),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def match_review_key(
+        self, key: str, *, state: str | None = persona_review.PENDING, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """管理员给的短前缀 → 匹配到的行（0/1/N 三种都由调用方分辨）。
+
+        本件**不**替调用方决定「不唯一怎么办」——列出来交给命令面说破，比在这里
+        悄悄挑一张诚实（猜＝替管理员签了他没写的字）。
+
+        **形状闸门在本函数自己这儿**（:func:`md5_prefix_gate`，与
+        :meth:`match_md5_prefix` 同一把尺）：空 / 短于 ``MD5_PREFIX_MIN_LENGTH`` /
+        十六进制之外还有一个字符 ⇒ ``[]`` 且**一次 SQL 都不发**。旧 docstring 把这
+        件事记成「上游已只放行十六进制」，而审批腿的 ``key`` 是指令面原样透传——那句
+        当时没发生。命令面要先问同一枚闸门再措辞回执：「前缀太短」不能说成「没图可批」。
+
+        ``state`` 这一维只有一处可动：``None`` ⇒ **不按队列位设限**（只给「审批落子」
+        那条腿用）。存量行的 ``review_state`` 是空串而不是 ``pending``，把可批集合焊死
+        在 ``pending`` 上＝那批行在结构上永远批不动，而回执却指着管理员「先去审批」——
+        断头路。非 ``None``（拒绝那条腿）照旧带 ``review_state=?``：**可删集合宽度一寸
+        不放宽**（删行删文件加立墓碑＝不可逆，「空串行要不要也拒得动」另立一票）。
+
+        两条腿共用一条 SQL 骨架，前缀收窄**永远发生在** ``LIMIT`` **之前**（SQL 侧
+        ``md5 LIKE ? ESCAPE ?``，值走绑定参数）。曾经的写法是「设限那一支先 ``LIMIT``
+        截断、再在 python 侧筛前缀」⇒ 那一支只对最新 N 行有效：实测 60 枚新 pending
+        把 1 枚老 pending 挤出窗口，拒绝落 ``not_found`` 而行仍在——把洞换个尺寸留下。
+        """
+        needle = str(key or "").strip().lower()
+        if md5_prefix_gate(needle):
+            return []
+        conditions = ["md5 LIKE ? ESCAPE ?"]
+        params: list[Any] = [_like_prefix_pattern(needle), _LIKE_ESCAPE_CHAR]
+        if state is not None:
+            conditions.append("review_state=?")
+            params.append(str(state or ""))
+        sql = (
+            "SELECT md5, description, path, review_state FROM memes"
+            " WHERE " + " AND ".join(conditions) + " ORDER BY added_at DESC LIMIT ?"
+        )
+        params.append(max(1, int(limit)))
+        with self._connect() as connection:
+            rows = connection.execute(sql, tuple(params)).fetchall()
+        return [dict(row) for row in rows]
 
     def remove(self, md5: str, *, tombstone_reason: str = "") -> bool:
         """删除记录与文件（NSFW 等场景）；返回是否真的删掉了文件。
@@ -371,6 +883,7 @@ class MemeLibraryStore:
         with self._lock, self._connect() as connection:
             row = connection.execute("SELECT path, sha256 FROM memes WHERE md5=?", (md5,)).fetchone()
         sha = ""
+        media_target = self.media_path_for_row(row["path"], where="remove") if row is not None else None
         if row is not None and str(tombstone_reason or "").strip():
             sha = str(row["sha256"] or "").strip().lower()
             if not sha:
@@ -379,13 +892,20 @@ class MemeLibraryStore:
                     content_sha256_of_path,
                 )
 
-                sha = content_sha256_of_path(self._resolve_media_path(str(row["path"]))) or ""
+                sha = (
+                    content_sha256_of_path(media_target)
+                    if media_target is not None
+                    else ""
+                ) or ""
         with self._lock, self._connect() as connection:
             if row is not None:
-                try:
-                    self._resolve_media_path(row["path"]).unlink(missing_ok=True)
-                except OSError:
-                    pass
+                if media_target is not None:
+                    # 越界 path 的文件**一个字节都不碰**：行照删（账本要干净），
+                    # 盘上那个容器外的东西不归本库处置（那正是逃逸要保住的现场）。
+                    try:
+                        media_target.unlink(missing_ok=True)
+                    except OSError:
+                        pass
                 connection.execute("DELETE FROM memes WHERE md5=?", (md5,))
         if row is not None and sha and str(tombstone_reason or "").strip():
             try:
@@ -438,7 +958,8 @@ class MemeLibraryStore:
             rows = connection.execute(
                 """
                 SELECT md5, path, ext, description, emotion_tags, scene_tags,
-                       weight, nsfw_score, sha256
+                       weight, nsfw_score, sha256, review_state,
+                       native_emoji_id, native_package_id
                 FROM memes WHERE weight > 0
                 ORDER BY added_at DESC
                 LIMIT ?
@@ -461,8 +982,9 @@ class MemeLibraryStore:
                 continue
             if float(row_dict.get("nsfw_score", 0.0) or 0.0) > nsfw_max:
                 continue
-            media_path = self._resolve_media_path(row_dict["path"])
-            if not media_path.exists():
+            media_path = self.media_path_for_row(row_dict["path"], where="weighted_pick")
+            if media_path is None or not media_path.exists():
+                # 越界行不参选（否则就是把容器外的文件当贴纸发出去，还可能发给第三者）。
                 continue
             row_dict["path"] = str(media_path)
             sha = str(row_dict.get("sha256", "") or "").strip().lower()
@@ -559,7 +1081,8 @@ class MemeLibraryStore:
                 continue
             if float(row_dict.get("nsfw_score", 0.0) or 0.0) > nsfw_max:
                 continue
-            if not self._resolve_media_path(str(row_dict["path"])).exists():
+            media_path = self.media_path_for_row(row_dict["path"], where="count_sendable")
+            if media_path is None or not media_path.exists():
                 continue
             sha = str(row_dict.get("sha256", "") or "").strip().lower()
             if already and sha and sha in already:
@@ -568,18 +1091,23 @@ class MemeLibraryStore:
         return count
 
     def list_untagged(self, *, limit: int = 20) -> list[dict[str, Any]]:
-        """未打标图片（description 为空），启动补标队列用；md5+path。"""
+        """未打标图片（description 为空），启动补标队列用；md5+path+来源位。
+
+        ``group_id`` 一并给出：它同时是**来源线索**（离线导入写成 ``pack:<包名>``），
+        补标腿要靠它凑齐本命准入的第二条证据（判据见 ``persona_review``）。
+        """
         with self._lock, self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT md5, path FROM memes
+                SELECT md5, path, group_id FROM memes
                 WHERE IFNULL(description, '') = ''
                 ORDER BY added_at ASC LIMIT ?
                 """,
                 (max(1, int(limit)),),
             ).fetchall()
         return [
-            {"md5": str(row["md5"]), "path": str(row["path"])} for row in rows
+            {"md5": str(row["md5"]), "path": str(row["path"]), "group_id": str(row["group_id"] or "")}
+            for row in rows
         ]
 
     def stats(self) -> dict[str, Any]:
@@ -590,11 +1118,23 @@ class MemeLibraryStore:
             persona = connection.execute(
                 "SELECT COUNT(*) AS c FROM memes WHERE persona_owned = 1"
             ).fetchone()["c"]
+            # 待审队列（S-MEME2-REVIEW）：证据不齐的图**有专门的队列位**，不再拿
+            # 「描述句为空」当替身——旧替身把「从没打过标」和「打过标但没认出主角」
+            # 混成一个数，管理员看到的就是假数。两个数分开报，各说各的事。
+            pending = connection.execute(
+                "SELECT COUNT(*) AS c FROM memes WHERE review_state = ?",
+                (persona_review.PENDING,),
+            ).fetchone()["c"]
+            untagged = connection.execute(
+                "SELECT COUNT(*) AS c FROM memes WHERE IFNULL(description, '') = ''"
+            ).fetchone()["c"]
         out: dict[str, Any] = {
             "total": int(total),
             "used_total": int(used),
             "nsfw_blocked": int(flagged),
             "persona_owned": int(persona),
+            "pending_review": int(pending),
+            "untagged": int(untagged),
         }
         history = self.history
         if history is not None:
@@ -628,10 +1168,13 @@ class MemeLibraryStore:
                     (cutoff,),
                 ).fetchall()
                 for row in rows:
-                    try:
-                        self._resolve_media_path(row["path"]).unlink(missing_ok=True)
-                    except OSError:
-                        pass
+                    # 越界行：删行、不删容器外的文件（同 remove 的口径）。
+                    media_target = self.media_path_for_row(row["path"], where="cleanup_age")
+                    if media_target is not None:
+                        try:
+                            media_target.unlink(missing_ok=True)
+                        except OSError:
+                            pass
                     connection.execute("DELETE FROM memes WHERE md5=?", (row["md5"],))
                     removed += 1
             if max_files > 0:
@@ -659,10 +1202,12 @@ class MemeLibraryStore:
                         ).fetchall()
                         rows = list(rows) + list(extra)
                     for row in rows:
-                        try:
-                            self._resolve_media_path(row["path"]).unlink(missing_ok=True)
-                        except OSError:
-                            pass
+                        media_target = self.media_path_for_row(row["path"], where="cleanup_cap")
+                        if media_target is not None:
+                            try:
+                                media_target.unlink(missing_ok=True)
+                            except OSError:
+                                pass
                         connection.execute("DELETE FROM memes WHERE md5=?", (row["md5"],))
                         removed += 1
         return {"removed": removed}

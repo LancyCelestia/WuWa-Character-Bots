@@ -302,6 +302,13 @@ def normalize_help_topic(query: str) -> str | None:
     return _HELP_ALIAS_MAP.get((query or "").strip().lower())
 
 
+# 帮助命令头词表：本文件内的前缀判定只读 `HELP_COMMAND_HEAD_WORDS`（定义在
+# `_HELP_ENTRY_META` 之后，值＝真身 `_HELP_ENTRY_META["帮助"]["triggers_nickname"]` 的派生引用），
+# 禁在他处再列同形字面量——尺＝tests/test_trigger_word_copy_ratchet.py（S33 触发词无副本棘轮），
+# 口径出处＝台账 #48/#52「指针合法、字面量副本是债」。它与帮助条目的 `aliases`（含「菜单」）
+# 两用不同集：`aliases` 是主题别名册，命令头只认 help／帮助 两形。
+
+
 def parse_help_command_text(command_text: str) -> str:
     """把 '/bot help <主题>'、'/bot 帮助 <主题>'、'帮助 <主题>' 中的主题提取出来。"""
     text = (command_text or "").strip()
@@ -313,7 +320,7 @@ def parse_help_command_text(command_text: str) -> str:
             text = text[len(prefix):].strip()
             lowered = text.lower()
             break
-    for prefix in ("help", "帮助"):
+    for prefix in HELP_COMMAND_HEAD_WORDS:
         if lowered == prefix:
             return ""
         if lowered.startswith((prefix + " ", prefix + "　")):
@@ -331,9 +338,8 @@ def resolve_help_query(command_text: str) -> str:
     # /bot commands：命令目录（机器可读），与 help 总览分开，不渲染卡片。
     if lowered in _COMMANDS_CATALOG_QUERY:
         return "commands"
-    if (
-        lowered in {"help", "帮助"}
-        or lowered.startswith(("help ", "帮助 ", "help　", "帮助　"))
+    if lowered in HELP_COMMAND_HEAD_WORDS or lowered.startswith(
+        tuple(head + space for head in HELP_COMMAND_HEAD_WORDS for space in (" ", "　"))
     ):
         return parse_help_command_text(text)
     return ""
@@ -366,7 +372,7 @@ _HELP_CATEGORIES = (
             "暂停", "回复", "设置", "凭据", "群策略", "群文件", "文件",
             "身份", "怪癖", "限流", "合并转发", "群摘要", "视频理解", "运行开关",
             "邮件", "Telegram", "供应商", "忽略", "媒体归档", "决策", "功能管理", "紧急信息",
-            "宿主机状态", "书面同意",
+            "宿主机状态", "书面同意", "表情册",
         },
     ),
     ("大模型相关", {"模型", "用量", "搜索"}),
@@ -888,11 +894,14 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '回复',
             "admin_only": True,
             "aliases": ('回复', 'reply', '详略'),
-            "index": '【回复】回复详略：/bot reply <详细|精简|默认>',
+            "index": '【回复】回复详略：/bot reply <详细|精简|默认>｜按人 /bot reply set|show|clear',
             "title_line": '【回复】调整回复详略档位',
             "lines": [
                 '/bot reply：作用=查看当前详略档位；参数=无；内容=当前 BOT_REPLY_DETAIL 值与用法提示；意义=确认现状再决定改不改。',
                 '/bot reply <模式>：作用=设置详略档位；参数=模式（必填，详细|精简|默认；别名 科普/详尽=详细，简洁=精简，自动=默认；未知值会回用法不再静默当默认）；内容=已设为 detail/concise/auto；意义=控制回答是展开讲还是短平快，持久保存。',
+                '/bot reply set <QQ号> <默认|简洁|适中|讲全|详尽> [文学化|说人话] [讲具体|铺意象|换意象]：作用=替某个号钉**永久**回复策略；参数=目标 QQ 号（必填）＋ 长度档（必填其一）＋ 文风（可省，两枚互斥、后说顶掉先说）＋ 讲法（可省，多枚并存：讲具体／铺意象／换意象，换意象会按人轮换意象族）；内容=已为该号设定的长度与讲法；意义=策略按人存，跨群跨私聊、切换人格都跟着这个人走。',
+                '/bot reply show <QQ号>：作用=复查该号当前的策略与最近变更时间；参数=目标 QQ 号（必填）；内容=长度档、文风/讲法、来源（本人说的 explicit／模型推断 inferred）；意义=先看现状再决定改不改，不写任何东西。',
+                '/bot reply clear <QQ号>：作用=撤销该号的策略、回到全局档；参数=目标 QQ 号（必填）；内容=已撤销确认；意义=只删这一行，绝不批量清（别人的策略不受牵连）。',
             ],
             "detail": (
                 '【板块介绍】\n'
@@ -903,7 +912,18 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '【权限与效果】\n'
                 '  权限=仅管理员。写入运行时覆盖，持久保存，立即生效。\n'
                 '  相关键：BOT_CHAT_MAX_TOKENS（输出上限）、BOT_CHAT_FAST_MODE（快速模式）。\n'
-                '【示例】/bot reply 详细｜/bot reply 精简｜/bot reply 默认'
+                '【按人永久策略（与上面的全局档分开）】\n'
+                '  set/show/clear 三个子命令动的是 user_reply_policy 里那一个人的\n'
+                '  一行（库＝BOT_REPLY_POLICY_DB_PATH），不是全局档：跨群跨私聊同一个键，\n'
+                '  切换人格也照样跟着这个人走。长度值与全局档共用 chat 的同一张分档表，\n'
+                '  所以不会长出第二把长度尺；文风两枚（文学化／说人话）互斥，只改怎么讲，\n'
+                '  不授予任何描写维度——动作与神态能不能写仍由内容政策与场景档决定。\n'
+                '  被设目标是超管时，只有超管能改（普通管理员不许横跨提权面）。\n'
+                '  本人在聊天里说一句「以后回我短一点／详细点／文学一点」会自动落同一行，\n'
+                '  反悔说一句即可覆盖；全局档则用 /bot runtime set BOT_REPLY_DETAIL=…。\n'
+                '【示例】/bot reply 详细｜/bot reply 精简｜/bot reply 默认\n'
+                '  按人：/bot reply set 1000000001 适中 说人话｜/bot reply show 1000000001｜'
+                '/bot reply clear 1000000001'
             ),
         },
         {
@@ -2038,15 +2058,15 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '  分级表唯一住 domains/core/safety_exec/config_risk.py，同意账唯一住 domains/core/safety_exec/consent.py，\n'
                 '  执法点唯一住 domains/core/safety_exec/settings_gate.py——本命令面零判定、零第二本账，只把一句入站消息交给它。\n'
                 '【档位是什么】\n'
-                '  R0 不问就改（每次照记一行流水）；R1 由管理员在原会话里确认；R2 要超级管理员在私聊里亲口批；\n'
+                '  R0 不问就改（每次照记一行流水）；R1 由管理员在原会话里确认（超管本人发起的 R1 免卡直改）；R2 要超级管理员在私聊里亲口批；\n'
                 '  R3 连批都不给，只允许出待审补丁，部署由主人亲手做。\n'
                 '【权限与效果】\n'
                 '  权限=管理员可看单；一张具体的卡够不够格批，由账上的阶梯判：可信级、私聊门、原会话门、\n'
-                '  发起人不得批自己发起的那张、一次性、到点作废（不可续）。判据只有一处，这里不复制。\n'
+                '  发起人不得批自己发起的那张（超管例外）、一次性、到点作废（不可续）。判据只有一处，这里不复制。\n'
                 '  效果=改动的真身在批之前一个字节都不动；短码对不上不算批也不算驳，那张卡照旧待批，但这次尝试会落一条流水。\n'
                 '【批了之后】\n'
-                '  批准只记下「谁批的、批的是哪件事」；真正落笔要原来发起这件事的人用同一参数再说一次，凭证一次有效。\n'
-                '  账本装不上、值与当初批的对不上、没有热改路径的，一律不改，并且明说为什么没改——不做「看起来改了」那种回显。\n'
+                '  批准即当场落地：核销那一刻我照卡上冻结的那件事直接落笔，不用再发一遍；凭证一次有效。\n'
+                '  账本装不上、值与当初批的对不上、没有热改路径的，一律不改并退回同参重发，明说为什么——不做「看起来改了」那种回显。\n'
                 '【示例】同意卡 待批｜同意卡 看 3f2a1b｜同意卡 批 3f2a1b 8c1d4e7a｜书面同意 驳 3f2a1b 8c1d4e7a'
             ),
         },
@@ -2357,6 +2377,36 @@ _HELP_ENTRIES: list[HelpEntry] = [
             ),
         },
         {
+            "topic": '表情册',
+            "admin_only": True,
+            "aliases": ('表情册', '表情相冊'),
+            "index": '【表情册】表情库的册账：表情册 [统计|重扫|查重|入册 <编号前缀>]（待审／审批在「表情库」那面，别在表情册上打）',
+            "title_line": '【表情册】数图、认路径、查同名，再挑一行落进人格册',
+            "lines": [
+                '表情册：作用=摊开册账；参数=无（裸命令走统计那条腿，误触不亏）；内容=册根在不在、每册多少张；意义=先看清家底。',
+                '表情册 统计：作用=逐册数图；参数=无；内容=各册张数，以及对不上文件的行；意义=摸底，只读不动盘。',
+                '表情册 重扫：作用=把认不出路径的行再认一遍；参数=无；内容=重认的结果；意义=图挪过窝时把它认回来；文件一张都不搬。',
+                '表情册 查重：作用=跨册认同名；参数=无；内容=同名不同处、同图不同名的候选；意义=攒重了心里有数，它自己不落地。',
+                '表情册 入册 <编号前缀>：作用=把库里那一行落到人格册目录；参数=编号前缀（必填，指库里那一行）；内容=落进哪一册、成没成；意义=这条要动盘——文件会移动，库也跟着改，不点名不落地。',
+                '表情库 待审：作用=端出证据不齐、卡在待审档的清单（待审／审批这族命令归「表情库」面，把动词打在表情册上只会折回册面统计）；参数=无；内容=待审队列；意义=只读，一张都不改库。',
+                '表情库 审批 通过|拒绝 <编号前缀>：作用=把待审那一行放行入册或驳回（同属「表情库」面）；参数=编号前缀（必填，须唯一命中，0 条或多条都不落子）；内容=落子回执；意义=审核制的唯一写口，没点名就不替管理员决定。',
+            ],
+            "detail": (
+                '【板块介绍】\n'
+                '  表情册是表情库的册账：数图、认路径、查同名，再把挑中的那一行落进\n'
+                '  人格册目录。我只读登记好的册根——册根没配或不在，我就明说缺，不去\n'
+                '  别处翻图，也不自己造目录。总开关 BOT_MEME_LIBRARY_ENABLED；册根与库位\n'
+                '  在 BOT_MEME_LIBRARY_DIR、BOT_MEME_LIBRARY_DB_PATH（管理员写进 .env，改完要重启）。\n'
+                '  册根走的是表情库那枚键，和贴纸池 BOT_STICKER_DIR 是两键两片目录，拿后者顶不了数。\n'
+                '  随机讨一张还是归「偷表情」，本模块管的是册子本身。\n'
+                '【权限与效果】\n'
+                '  权限=仅管理员。统计、重扫、查重站在读的一侧；入册站在动盘的一侧，\n'
+                '  它会移动文件并改库，所以非点名不落地。待审队列同属读的一侧，\n'
+                '  审批（通过／拒绝）是这一面唯一的写口，同样要指名编号前缀。\n'
+                '【示例】表情册｜表情册 查重｜表情册 入册 3f2a'
+            ),
+        },
+        {
             "topic": '自然语言',
             "admin_only": False,
             "aliases": ('自然语言', '自然语言命令'),
@@ -2631,8 +2681,16 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "capability": "/bot reply",
         "network": False,
         "outputs": ("文本",),
-        "config_vars": ("BOT_REPLY_DETAIL", "BOT_CHAT_MAX_TOKENS", "BOT_CHAT_FAST_MODE"),
-        "examples": ("/bot reply 详细",),
+        "config_vars": (
+            "BOT_REPLY_DETAIL", "BOT_CHAT_MAX_TOKENS", "BOT_CHAT_FAST_MODE",
+            "BOT_REPLY_POLICY_ENABLED", "BOT_REPLY_POLICY_DB_PATH",
+        ),
+        "examples": ("/bot reply 详细", "/bot reply set 1000000001 适中 说人话"),
+        "tests": (
+            "tests/test_reply_policy_permanent.py",
+            "tests/test_reply_policy_preset_command.py",
+            "tests/test_reply_length_tier.py",
+        ),
     },
     "模型": {
         "capability": "/bot model",
@@ -3305,6 +3363,23 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "network": True,
         "outputs": ("无直接输出（图片异步入库）",),
     },
+    "表情册": {
+        "capability": "bot.meme_library",
+        "network": False,
+        # 审批面两枚命令词（S-MEME2-REVIEW）：真身＝meme_library 的审批正则，
+        # 这里只作 help 检索键（双向门方向 1：路由有词、help 册须有落点）。
+        # 走 META 而非 aliases＝`_HELP_ALIAS_MAP` 里 aliases 先建、META 后 setdefault，
+        # 故「待审」的检索落点仍归「紧急信息」（它先登记），本主题只多一条可搜到的键。
+        "triggers_nl": ("审批", "待审"),
+        "outputs": ("文本（册账 / 待选清单 / 落地回执）",),
+        "config_vars": (
+            "BOT_MEME_LIBRARY_ENABLED",
+            "BOT_MEME_LIBRARY_DIR",
+            "BOT_MEME_LIBRARY_DB_PATH",
+        ),
+        "examples": ("表情册", "表情册 查重", "表情册 入册 3f2a"),
+        "tests": ("tests/test_meme_domain_fixes.py",),
+    },
     "自然语言": {
         "capability": "bot.natural_command",
         "outputs": ("归一化后转目标模块执行",),
@@ -3325,6 +3400,14 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
 
 # 追加式补充说明：与 _HELP_ENTRY_META 同理以字面量侧表维护，保持文本帮助与
 # 渲染帮助卡的操作指引一致，并让静态目录能合并出与运行时相同的内容。
+#: 帮助命令头词表：**派生引用真身** ``_HELP_ENTRY_META["帮助"]["triggers_nickname"]``（bot.help 的
+#: 昵称触发位），不在本文件另起第二处字面量——尺＝tests/test_trigger_word_copy_ratchet.py（S33）
+#: 与 tests/test_trigger_word_single_source.py（S53），口径出处＝台账 #48/#52「指针合法、字面量副本是债」。
+#: 真身缺席即 KeyError（装配期炸，绝不留「静默丢前缀」的兜底字面量）。
+HELP_COMMAND_HEAD_WORDS: tuple[str, ...] = tuple(
+    str(word).lower() for word in _HELP_ENTRY_META["帮助"]["triggers_nickname"]
+)
+
 _HELP_EXTRA_LINES: dict[str, tuple[str, ...]] = {
     "回复": (
         "/bot reply 详细：先说明结论、身份、关系、关键经历和资料缺口，不强制凑字数。",
@@ -3620,7 +3703,8 @@ def _help_mica_html(
         header_sub = "回复「/bot help 模块名」看这个模块的逐条命令与参数，例：/bot help 点歌。"
     role = "管理员帮助" if is_admin else "公开帮助"
     # E01 二批：漂移相位 = 内容 digest 钉帧（同 payload 双渲一致、零 JS 随机源）。
-    phase = payload_phase({"sections": sections, "detail_title": detail_title})
+    # face="help" 盐（goal-7 二波）：与 debug 面同 payload 时构图不撞车。
+    phase = payload_phase({"sections": sections, "detail_title": detail_title}, face="help")
     avatar = (
         f'<img class="help-bot-avatar" src="{html.escape(bot_avatar_url)}" alt="" />'
         if bot_avatar_url else ""
@@ -3637,11 +3721,12 @@ def _help_mica_html(
         accent_dark=accent_dark,
         phase=phase,
         wash=wash,
+        face="help",
     )
     # 通水切换（v21r3 统一收尾波 C2/C3）：壳层+玻璃两档+色斑层由 mica_shell
     # 生成器单一产出拼入（宽度 940=CARD_SHELL_WIDTHS["help"]；DOM 同源），
     # 手抄副本退役；缺省输出与历史 CSS 逐字节等价（CORE 席实弹断言）。
-    shell_css = shell_base_css("help-shell", width_px=940)
+    shell_css = shell_base_css("help-shell", width_px=940, face="help")
     decor_css = mica_decor_css()
     blobs_html = drift_blobs_html()
     return f"""<!doctype html>
@@ -3658,19 +3743,19 @@ body {{ margin:0; padding:0; font-family:var(--font-family); background:transpar
 {shell_css}
 {decor_css}
 .help-head {{ display:flex; align-items:center; gap:14px; padding:22px 26px 18px; border-bottom:1px solid rgba(255,255,255,.78); }}
-.avatar-wrap {{ flex:0 0 auto; width:52px; height:52px; border-radius:16px; overflow:hidden; background:color-mix(in srgb, var(--accent) 14%, #fff); display:flex; align-items:center; justify-content:center; box-shadow:var(--mica-shadow-soft); }}
+.avatar-wrap {{ flex:0 0 auto; width:52px; height:52px; border-radius:var(--r-inner-xl); overflow:hidden; background:color-mix(in srgb, var(--accent) 14%, #fff); display:flex; align-items:center; justify-content:center; box-shadow:var(--mica-shadow-soft); }}
 .avatar-wrap img {{ width:100%; height:100%; object-fit:cover; }}
 .avatar-fallback {{ font-size:24px; font-weight:700; color:var(--accent-dark); }}
 .head-main {{ flex:1 1 auto; min-width:0; }}
 .help-kicker {{ color:var(--accent-dark); font-size:13px; font-weight:700; letter-spacing:.06em; }}
 .help-title {{ margin-top:6px; font-size:26px; font-weight:700; letter-spacing:.02em; }}
 .help-subtitle {{ margin-top:6px; color:var(--muted); font-size:13px; line-height:1.5; }}
-.help-chip {{ flex:0 0 auto; padding:7px 14px; border-radius:999px; color:var(--accent-dark); background:color-mix(in srgb, var(--accent) 8%, rgba(255,255,255,.80)); border:1px solid rgba(255,255,255,.90); font-size:13px; font-weight:650; }}
+.help-chip {{ flex:0 0 auto; padding:7px 14px; border-radius:var(--r-pill); color:var(--accent-dark); background:color-mix(in srgb, var(--accent) 8%, rgba(255,255,255,.80)); border:1px solid rgba(255,255,255,.90); font-size:13px; font-weight:600; }}
 .help-body {{ padding:14px; }}
 .help-grid.masonry {{ column-count:2; column-gap:14px; }}
 .help-grid.masonry .help-section {{ break-inside:avoid; margin-bottom:14px; }}
 .help-grid.masonry .help-section.wide {{ column-span:all; }}
-/* 目录页两栏（2026-09-25 澜汐：「太挤了，换成两栏」）——旧形态是**分区两栏 ×
+/* 目录页两栏（2026-09-25 用户反馈：「太挤了，换成两栏」）——旧形态是**分区两栏 ×
    区内再两栏 = 四栏正文**，每栏 ~200px，摘要两行就放不下，于是被 line-clamp
    钳成省略号：她看到的「详细介绍不详细」大半是被切了，不是文案短（现算：
    79 个 topic 里按结构判据真算「薄」的只有 8 个，而目录行超 34 字的有 38 个）。
@@ -3678,17 +3763,17 @@ body {{ margin:0; padding:0; font-family:var(--font-family); background:transpar
 .help-grid.masonry .command-list {{ display:grid; gap:6px; }}
 .help-grid.masonry .command-row {{ break-inside:avoid; padding:7px 10px; }}
 .help-grid.single {{ display:grid; grid-template-columns:1fr; gap:12px; }}
-.help-section {{ border-radius:16px; overflow:hidden; }}
+.help-section {{ border-radius:var(--r-inner-xl); overflow:hidden; }}
 .help-section h2 {{ display:flex; align-items:center; gap:8px; margin:0; padding:10px 14px; color:var(--accent-dark); background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, rgba(255,255,255,.62)), color-mix(in srgb, var(--accent) 12%, rgba(255,255,255,.48))); border-bottom:1px solid rgba(255,255,255,.85); font-size:15px; font-weight:700; letter-spacing:.02em; }}
-.help-section h2 .dot {{ flex:0 0 auto; width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:var(--mica-shadow-soft); }}
+.help-section h2 .dot {{ flex:0 0 auto; width:7px; height:7px; border-radius:var(--r-circle); background:var(--accent); box-shadow:var(--mica-shadow-soft); }}
 .command-list {{ padding:9px; display:grid; gap:6px; }}
-.command-row {{ display:flex; align-items:flex-start; gap:8px; padding:7px 10px; border-radius:12px; background:rgba(255,255,255,.62); font-size:13px; line-height:1.5; }}
-.command-row .pill {{ flex:0 0 auto; max-width:100%; padding:2px 10px; border-radius:999px; color:var(--accent-dark); background:color-mix(in srgb, var(--accent) 13%, rgba(255,255,255,.82)); font-weight:700; white-space:normal; overflow-wrap:anywhere; }}
+.command-row {{ display:flex; align-items:flex-start; gap:8px; padding:7px 10px; border-radius:var(--r-inner-lg); background:rgba(255,255,255,.62); font-size:13px; line-height:1.5; }}
+.command-row .pill {{ flex:0 0 auto; max-width:100%; padding:2px 10px; border-radius:var(--r-pill); color:var(--accent-dark); background:color-mix(in srgb, var(--accent) 13%, rgba(255,255,255,.82)); font-weight:700; white-space:normal; overflow-wrap:anywhere; }}
 .command-row .desc {{ color:var(--muted); min-width:0; overflow-wrap:anywhere; }}
 .help-foot {{ display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 16px; background:rgba(255,255,255,.46); border-top:1px solid rgba(255,255,255,.80); }}
 .help-foot .tip {{ color:var(--muted); font-size:13px; }}
-.help-bot-pill {{ display:flex; align-items:center; gap:8px; padding:5px 13px 5px 6px; border-radius:999px; color:var(--accent-dark); background:color-mix(in srgb, var(--accent) 6%, rgba(255,255,255,.72)); border:1px solid #fff; box-shadow:var(--mica-shadow-soft); font-size:13px; font-weight:600; }}
-.help-bot-avatar {{ width:27px; height:27px; object-fit:cover; border-radius:50%; }}
+.help-bot-pill {{ display:flex; align-items:center; gap:8px; padding:5px 13px 5px 6px; border-radius:var(--r-pill); color:var(--accent-dark); background:color-mix(in srgb, var(--accent) 6%, rgba(255,255,255,.72)); border:1px solid #fff; box-shadow:var(--mica-shadow-soft); font-size:13px; font-weight:600; }}
+.help-bot-avatar {{ width:27px; height:27px; object-fit:cover; border-radius:var(--r-circle); }}
 /* 窄卡（<560px）：目录两栏退回单栏，防挤压（.card 内媒体查询合规，无 viewport
    meta 铁律不受影响；置于样式块末尾保证覆盖基线规则）。 */
 @media (max-width:559px) {{ .help-grid.masonry {{ column-count:1; }}

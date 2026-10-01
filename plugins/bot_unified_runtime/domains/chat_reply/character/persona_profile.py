@@ -436,6 +436,62 @@ def main_persona_knowledge_files(
 # 自身名字的唯一事实源（禁 get_login_info）
 # ---------------------------------------------------------------------------
 
+
+def active_persona_id(
+    config: object | None = None,
+    *,
+    override_provider: Callable[[], object] | None = None,
+) -> str:
+    """""我是哪一格人格"的唯一读法——**只定 id，不产名字**（名字仍由
+    ``current_bot_nickname`` 单口出）。
+
+    为什么要有这一枚：``current_bot_nickname`` 要调用方自己交 ``persona_id``，而
+    "当前生效谁"＝「runtime 切换态 override → 配置主人格档」这条序。此前这条序
+    没有公共读法，各署名面（卡片页脚 / 管理命令回执 / 状态行）于是各自去抄
+    ``config.bot_persona_display_name``——切人格后配置没动 ⇒ 抄出来的还是旧名
+    （台账 P-G3「自称与页面名分家」的机制根因）。补这一枚**不是第二条取名腿**：
+    它一个名字都不产，只把 id 交回给唯一读法。
+
+    取法（每轮现读，不留构造期快照）：
+    ① 显式传入的 ``override_provider``（可调用，命令面手边已有 store 时用它）；
+    ② ``config.persona_override_provider``（装配层注入的同形态，与
+       ``providers`` 的 ``persona_registry`` 注入口同一约定）；
+    ③ runtime 人格切换态（``/bot runtime persona switch`` 的落点，经进程级缓存的
+       settings manager 现读，逐实例＝``effective_instance``）；
+    ④ ``config.bot_persona_profile_id``（主人格档）；都没有 ⇒ ``"default"``。
+
+    ③ 任何异常（非生产环境、未装配、读盘失败）一律吞成空串回落到 ④——署名面
+    不许因为取不到切换态而炸掉一张卡。**绝不读 ``get_login_info``**（台账 #60★）。
+    """
+    provider = override_provider
+    if provider is None:
+        provider = getattr(config, "persona_override_provider", None)
+    if callable(provider):
+        try:
+            override = str(provider() or "").strip()
+        except Exception:  # noqa: BLE001 - 注入的读法坏了不等于人格没了
+            override = ""
+        if override:
+            return override
+    if config is None:
+        return "default"
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+            build_runtime_settings_store,
+        )
+
+        override = str(
+            build_runtime_settings_store(config).get_persona_override() or ""
+        ).strip()
+    except Exception:  # noqa: BLE001 - 切换态读不到 ⇒ 回配置主人格档，绝不抛
+        override = ""
+    if override:
+        return override
+    return (
+        str(getattr(config, "bot_persona_profile_id", "") or "").strip() or "default"
+    )
+
+
 def current_bot_nickname(
     persona_id: str,
     *,

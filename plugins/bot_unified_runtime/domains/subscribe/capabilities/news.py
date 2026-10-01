@@ -200,9 +200,14 @@ def build_news_card_content(
         )
     sources = sorted({str(row.get("source") or "").strip() for row in card_items} - {""})
     sub = " · ".join([segment for segment in (date_text, "、".join(sources)) if segment])
-    bot_name = (
-        str(getattr(config, "bot_persona_display_name", "") or "").strip() or "守岸人"
+    # 署名唯一读法（P-G3 第二波）：人格册按当前生效人格现读 → 兼容显示名 → 空串交
+    # 品牌胶囊统一回落；不再自取配置名并手抄「守岸人」。禁 get_login_info（#60★）。
+    from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+        active_persona_id,
+        current_bot_nickname,
     )
+
+    bot_name = current_bot_nickname(active_persona_id(config), config=config)
     from plugins.bot_unified_runtime.domains.render.bot_avatar import bot_avatar_uri
 
     return {

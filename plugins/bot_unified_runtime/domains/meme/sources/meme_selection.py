@@ -227,6 +227,24 @@ def is_noisy_text(text: str) -> bool:
 # ------------------------------------------------------------------ 打分
 
 
+def is_pending_review_row(candidate: dict[str, Any]) -> bool:
+    """候选行是否停在**待审**队列位（S-MEME2-REVIEW，2026-09-29，需求 12）。
+
+    字面值只认 ``persona_review.PENDING`` 一枚真身，本件不抄字符串；行里没有
+    ``review_state`` 这一列（存量行 / 旧桩 / 别处拼的候选）＝空串＝**不是**待审，
+    行为与换代前逐字节一致——不许把已确认的收藏悄悄降档。
+
+    局部 import 是必需项而非风格：``persona_review`` 模块级反向依赖
+    ``shorekeeper_absorb``，把这条边提到模块级会让 sources 的导入图成环
+    （同包先例＝``sticker_pool.py``、``shorekeeper_absorb.apply_tagged_outcome``）。
+    """
+    if not str(candidate.get("review_state") or "").strip():
+        return False
+    from plugins.bot_unified_runtime.domains.meme.sources import persona_review
+
+    return str(candidate.get("review_state") or "").strip() == persona_review.PENDING
+
+
 def relevance_score(
     context: StickerContext,
     text: str,
@@ -269,6 +287,10 @@ def score_sticker_candidate(
       靠这条边界保住——否则「低落 × 中性档」= 0.175 会被地板吃掉，软偏置就成了硬开关。
 
     任一致命项（厌恶词、离题且不够熟、库权重≤0）两个分数都归零，排序也无从谈起。
+
+    本命加成另有一腿门（S-MEME2-REVIEW 2026-09-29）：``review_state == pending``
+    的候选**不吃** ``PERSONA_BONUS``、也不记 ``persona`` 归因——那条主张还没被第二条
+    独立证据或人审确认过。地板分照旧，所以这不是禁发，只是不顶到前排。
     """
     text = candidate_text(candidate)
     try:
@@ -301,8 +323,14 @@ def score_sticker_candidate(
             reason = f"{reason}+taste" if reason else "taste"
     lowered_persona = _terms(persona_terms)
     if lowered_persona and any(term in text for term in lowered_persona):
-        score *= PERSONA_BONUS
-        reason = f"{reason}+persona" if reason else "persona"
+        if is_pending_review_row(candidate):
+            # 待审＝「模型说这是她、但没有任何模型之外的线索跟上」——这条主张没被
+            # 确认过，不配顶到选图前排（需求 12 红线，persona_review 纪律 3）。
+            # 只停**加成**：``gate`` 已在上面定死，地板与 NSFW 闸照旧——「待审 ≠ 禁发」。
+            pass
+        else:
+            score *= PERSONA_BONUS
+            reason = f"{reason}+persona" if reason else "persona"
     return round(gate, 6), round(score, 6), reason
 
 
@@ -423,14 +451,27 @@ def build_context(
     mood_valence_fn: Callable[[], Any] | None = None,
     affinity_snapshot: dict[str, Any] | None = None,
     is_group_owner: bool = False,
+    extra_topic_terms: Iterable[str] = (),
+    extra_avoid_terms: Iterable[str] = (),
 ) -> StickerContext:
     """把四条真身缝成语境：本轮文本 / ``BotMoodStore.snapshot().valence`` /
     ``DynamicAffinityStore.snapshot(sender_id)`` / 群主身份。
 
     任何一条读不到都退化为「无信号」，绝不抛异常——表情包是增益腿，
     增益腿不许把主回复拖下水。
+
+    S-STICKER（2026-09-28）两条可选注入（都由大模型看过「用户消息 + bot 实际回复」
+    的情感判定产出，见 ``reactions/sentiment_selector``）：
+
+    * ``extra_topic_terms``：把该情感的**正向**表情词并入主题面，让对题贴纸（开心/
+      庆祝…）拿到 1.0 相关度、优先于中性档候选；
+    * ``extra_avoid_terms``：把该场合的**回避**表情词并入 ``disliked_terms``，复用既
+      有一票否决真身（``score_sticker_candidate`` 的 ``disliked`` 分支）——报喜场合的
+      哭脸由此被硬否决。这里不新建第二份选贴器，只把判定结果喂进原有否决面。
     """
     topic_terms = topic_terms_from_text(turn_text, vocabulary=vocabulary)
+    if extra_topic_terms:
+        topic_terms = _terms([*topic_terms, *extra_topic_terms])
     mood: float | None = None
     if mood_valence_fn is not None:
         try:
@@ -453,6 +494,9 @@ def build_context(
         liked, disliked = split_impression_tags(
             [str(item) for item in (affinity_snapshot.get("tags") or [])][:12]
         )
+    if extra_avoid_terms:
+        # 回避词并入一票否决面（与负向印象标签同一条真身判据，不另立否决器）。
+        disliked = _terms([*disliked, *extra_avoid_terms])
     if is_group_owner and tier is None:
         # 群主在本群的语气比陌生群友更放得开（既有人格层的常识），只抬一档口径，
         # 不改变「离题不发」的底线：给的仍是 DEFAULT_OFFTOPIC_MIN_TIER 的门槛档。

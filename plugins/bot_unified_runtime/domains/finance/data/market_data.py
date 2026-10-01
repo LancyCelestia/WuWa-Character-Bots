@@ -26,6 +26,7 @@ MOEX ISS 备选源（2026-09-12 实测本机直连可达，免 key，无需代�
 
 from __future__ import annotations
 
+import math
 import os
 import random
 import re
@@ -164,6 +165,89 @@ def _empty_degraded_text() -> str:
 _RETRY_BACKOFF_SECONDS = 0.6  # 0.5~1s 区间取 0.6s；monkeypatch 本常量可覆盖。
 
 
+# ==================== FIN-R1（2026-09-27 评审票）：每命令一条端到端网络预算 ====
+# 真身复用 chat_reply/runtime/deadline.DeadlineBudget（单调时钟，与聊天请求
+# 预算同款），本票不另造第二套计时框架；deadline 为惰性导入——其包初始化会
+# 拉起 pipeline，模块顶层反向 import 构成启动环，函数级导入绕开。
+# 预算在能力入口创建、沿数据层传递；未传入时取数入口自造兜底（per-call）。
+# 语义纪律不变：预算尽 ⇒ 弃剩余重试、不发起新网络调用，走既有「失败不缓存、
+# 静默缺席」诚实降级；绝不因预算抛穿到会话链路。
+_FINANCE_NETWORK_BUDGET_SECONDS = 30.0  # 新键候选 bot_market_command_budget_seconds（未自加）。
+
+
+def new_network_budget() -> Any:
+    """创建一条端到端网络预算（DeadlineBudget 复用，非第二套计时框架）。
+
+    导入异常（如启动期循环导入窗口）⇒ 返回 None＝不拦截，退回本票之前的
+    既有行为；数据层入口对 None 预算全部按「未配置」短路，绝不因预算件本身
+    把取数打挂（本仓纪律：数据层不向会话链路抛异常）。
+    """
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.runtime.deadline import (
+            DeadlineBudget,
+        )
+    except Exception:  # noqa: BLE001 - 取数层不因预算件失败而中断。
+        return None
+
+    return DeadlineBudget(_FINANCE_NETWORK_BUDGET_SECONDS)
+
+
+def _budget_or_new(budget: Any | None) -> Any:
+    return budget if budget is not None else new_network_budget()
+
+
+def budget_expired(budget: Any | None) -> bool:
+    """预算到期判定；未配置（None）视为不拦截（保持旧调用方行为）。"""
+    return bool(budget is not None and budget.expired())
+
+
+def budget_allows_retry(budget: Any | None) -> bool:
+    """剩余预算是否还放得下「一次退避睡眠」；未配置视为允许。
+
+    预算连 ``_RETRY_BACKOFF_SECONDS`` 都不剩时，起新一轮请求只会把
+    超支烧到调用线程（有界聊天 worker）头上——直接弃剩余重试。
+    """
+    if budget is None:
+        return True
+    return budget.remaining_seconds() > _RETRY_BACKOFF_SECONDS
+
+
+def gather_within_budget(
+    fetch, keys: Sequence[Any], *, budget: Any | None = None, max_workers: int = 6
+) -> dict:
+    """并行取数、预算内收结果、**线程池退出非阻塞**（FIN-R1②）。
+
+    与旧 ``with ThreadPoolExecutor`` + ``future.result`` 结构对比：
+    * ``wait(timeout=剩余预算)`` 后只收已完成项；
+    * 未完成/失败项如实记 None（由调用方换算成缺席展示），未开跑的
+      future 直接 cancel；
+    * ``shutdown(wait=False, cancel_futures=True)``：with 退出不再无条件
+      join 慢 future——慢源被放弃为「缺席」，有界聊天 worker 即刻归还，
+      不再出现「一条行情命令钉死 worker 分钟级」。
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import wait as futures_wait
+
+    budget = _budget_or_new(budget)
+    pool = ThreadPoolExecutor(max_workers=max(1, int(max_workers)))
+    try:
+        futures = {key: pool.submit(fetch, key) for key in keys}
+        futures_wait(list(futures.values()), timeout=max(0.0, budget.remaining_seconds()))
+        results: dict[Any, Any] = {}
+        for key, future in futures.items():
+            if future.done():
+                try:
+                    results[key] = future.result()
+                except Exception:  # noqa: BLE001 - 单项失败如实缺席，语义与旧结构一致。
+                    results[key] = None
+            else:
+                future.cancel()
+                results[key] = None
+        return results
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 # ==================== FIN-I1（2026-09-27 评审票）：远端自由文本清洗 ============
 # 远端字符串（个股 f14 / 北向领涨股名）进展示字段前在数据边界做一次
 # 「控制字符清洗 + 长度钳制（截断加省略号）」——纯格式卫生，不动任何信任
@@ -272,18 +356,25 @@ def _fetch_moex_quote(timeout_seconds: float) -> IndexQuote | None:
 
 
 def _as_float(value: Any) -> float | None:
-    """fltt=2 下正常值是小数/整数；停牌或缺数时可能是 "-" 或缺失。"""
+    """fltt=2 下正常值是小数/整数；停牌或缺数时可能是 "-" 或缺失。
+
+    FIN-N1（2026-09-27 评审票）：上游 JSON 可携带 ``NaN``/``Infinity`` 字面量
+    （``json.loads`` 默认接受），非有限值一律视为缺数（None）——走既有
+    「暂无数据」诚实通道，绝不让 "nan"/"inf" 字样进卡片数字槽。
+    """
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     text = str(value).strip()
     if not text:
         return None
     try:
-        return float(text)
+        number = float(text)
     except ValueError:
         return None
+    return number if math.isfinite(number) else None
 
 
 def _parse_quotes(payload: Any) -> list[IndexQuote]:
@@ -324,17 +415,21 @@ def _parse_quotes(payload: Any) -> list[IndexQuote]:
 def fetch_index_quotes(
     timeout_seconds: float = 6.0,
     cache_seconds: float = _CACHE_TTL_DEFAULT_SECONDS,
+    *,
+    budget: Any | None = None,
 ) -> list[IndexQuote]:
     """拉取全球股指快照；失败返回 []，绝不抛异常。
 
     成功结果带进程内 TTL 缓存（默认 60s），避免同群连发消息时打爆接口；
-    失败不缓存，下一次调用立即重试。
+    失败不缓存，下一次调用立即重试。FIN-R1：预算尽 ⇒ 弃剩余重试（含 MOEX
+    备选源不再发起），诚实降级路径不变。
     """
     global _CACHE
     now = time.monotonic()
     cached = _CACHE
     if cached is not None and now - cached[0] <= max(0.0, float(cache_seconds)):
         return list(cached[1])
+    budget = _budget_or_new(budget)
     fetched_at = time.time()  # 数据时间戳（墙钟），进缓存随快照保留。
     secids = ",".join(
         secid for secid, _name, _group in _INDEX_UNIVERSE if secid != _MOEX_SECID
@@ -344,6 +439,8 @@ def fetch_index_quotes(
     attempts = 2 if retry_on_empty_enabled() else 1
     quotes: list[IndexQuote] = []
     for attempt in range(attempts):
+        if budget_expired(budget):
+            break  # FIN-R1：预算尽不发起新网络调用（失败不缓存纪律不变）。
         try:
             payload = _fetch_payload(secids, max(1.0, float(timeout_seconds)))
             quotes = [
@@ -363,11 +460,11 @@ def fetch_index_quotes(
         except Exception:  # noqa: BLE001 - 行情失败静默降级，不阻塞会话链路。
             quotes = []
             break  # 真异常不重试。
-        if quotes or attempt + 1 >= attempts:
+        if quotes or attempt + 1 >= attempts or not budget_allows_retry(budget):
             break
         empty_backoff_sleep()
     # MOEX 走独立备选源：东财整体失败也允许只剩 MOEX 一条（有总比没有强）。
-    moex = _fetch_moex_quote(timeout_seconds)
+    moex = None if budget_expired(budget) else _fetch_moex_quote(timeout_seconds)
     if moex is not None:
         quotes.append(moex)
     if quotes:
@@ -466,7 +563,7 @@ def reset_market_trend_cache() -> None:
     _TREND_CACHE.clear()
 
 
-def _retry_transient(fetch, *, attempts: int = 3):
+def _retry_transient(fetch, *, attempts: int = 3, budget: Any | None = None):
     """push2his 瞬断退避重试（H-04，2026-09-14）。
 
     语义与 ``commodities_data._retry_transient`` / ``stock_data._network_retry``
@@ -475,6 +572,11 @@ def _retry_transient(fetch, *, attempts: int = 3):
     背景：2026-09-13 vis3 实测 push2his 会 RemoteDisconnected，且本席
     2026-09-14 真机探测时同样多次复现——指数走势此前是三大取数点中唯一
     未接瞬断重试的一个。
+
+    FIN-R1（2026-09-27 评审票）两条收紧：① 429 不跨层重试——链接层
+    （http_util）已在单调用内尊重 Retry-After（60s 封顶）并重试到位，
+    数据层再叠 3 次就是把 60s 睡眠按层相乘（worker 钉死的根因）；
+    ② 退避睡眠受网络预算门控——剩余预算放不下一次退避即弃剩余尝试。
     """
     last_exc: Exception | None = None
     for attempt in range(max(1, attempts)):
@@ -482,13 +584,17 @@ def _retry_transient(fetch, *, attempts: int = 3):
             return fetch()
         except (ParseHttpError, ConnectionError, TimeoutError) as exc:
             last_exc = exc
+            if getattr(exc, "status_code", None) == 429:
+                raise  # 429 已由链接层尊重 Retry-After，不再叠加层间等待
             if attempt + 1 >= attempts:
                 raise
+            if not budget_allows_retry(budget):
+                raise  # 预算尽弃剩余重试；失败不缓存、静默缺席语义不变
             empty_backoff_sleep()
     raise last_exc if last_exc is not None else RuntimeError("unreachable")  # pragma: no cover
 
 
-def _fetch_moex_trend(timeout_seconds: float) -> tuple[float, ...]:
+def _fetch_moex_trend(timeout_seconds: float, *, budget: Any | None = None) -> tuple[float, ...]:
     """MOEX 指数近 30 日收盘（ISS history 尾部窗口）；失败返回空元组。"""
 
     def _get(start: int) -> Any:
@@ -509,6 +615,8 @@ def _fetch_moex_trend(timeout_seconds: float) -> tuple[float, ...]:
                 total = int(rows[0][columns.index("TOTAL")])
         if total <= 0:
             return ()
+        if budget_expired(budget):
+            return ()  # FIN-R1：分页第二跳起前查预算，尽则如实缺席。
         payload = _get(max(0, total - _MOEX_TREND_POINTS))
         history = payload.get("history") if isinstance(payload, dict) else None
         columns = history.get("columns") if isinstance(history, dict) else None
@@ -516,11 +624,15 @@ def _fetch_moex_trend(timeout_seconds: float) -> tuple[float, ...]:
         if not isinstance(columns, list) or not isinstance(rows, list):
             return ()
         close_idx = columns.index("CLOSE")
-        closes = [
-            float(row[close_idx])
-            for row in rows
-            if len(row) > close_idx and row[close_idx] is not None
-        ]
+        # FIN-N1：CLOSE 列经 _as_float 收口（含 isfinite 闸），裸 float() 会把
+        # 上游 NaN/Infinity 字面量放行成 nan/inf 走势点。
+        closes: list[float] = []
+        for row in rows:
+            if not isinstance(row, list) or len(row) <= close_idx:
+                continue
+            value = _as_float(row[close_idx])
+            if value is not None:
+                closes.append(value)
         return tuple(closes[-_MOEX_TREND_POINTS:])
     except Exception:  # noqa: BLE001 - 单源失败静默缺席，不拖垮行情卡。
         return ()
@@ -531,20 +643,24 @@ def fetch_index_trend(
     *,
     timeout_seconds: float = 6.0,
     cache_seconds: float = _TREND_CACHE_TTL_SECONDS,
+    budget: Any | None = None,
 ) -> tuple[float, ...]:
     """单个指数近 30 日收盘序列（旧→新）；失败/无数据返回空元组，绝不抛。
 
     东财 kline 单指数一调；MOEX 走 ISS history 尾部窗口（两次分页请求）。
     10 分钟进程内缓存：18 指数逐个外呼较重，折线不需要实时；失败（空序列）
-    不缓存，下一次调用立即重试。
+    不缓存，下一次调用立即重试。FIN-R1：整条拉取受端到端网络预算门控，
+    预算尽弃剩余重试（仍走「失败不缓存、静默缺席」通道）。
     """
     cached = _TREND_CACHE.get(secid)
     now = time.monotonic()
     if cached is not None and now - cached[0] <= max(1.0, float(cache_seconds)):
         return cached[1]
+    budget = _budget_or_new(budget)
     closes: tuple[float, ...] = ()
     if secid == _MOEX_SECID:
-        closes = _fetch_moex_trend(timeout_seconds)
+        if not budget_expired(budget):
+            closes = _fetch_moex_trend(timeout_seconds, budget=budget)
         if closes:
             _TREND_CACHE[secid] = (now, closes)
         return closes
@@ -564,8 +680,10 @@ def fetch_index_trend(
     # 仍空照旧不缓存（「空结果不缓存」纪律不变）。
     attempts = 2 if retry_on_empty_enabled() else 1
     for attempt in range(attempts):
+        if budget_expired(budget):
+            break  # FIN-R1：预算尽不发起新网络调用。
         try:
-            payload = _retry_transient(_get)
+            payload = _retry_transient(_get, budget=budget)
             data = payload.get("data") if isinstance(payload, dict) else None
             klines = data.get("klines") if isinstance(data, dict) else None
             if isinstance(klines, list):
@@ -581,7 +699,7 @@ def fetch_index_trend(
         except Exception:  # noqa: BLE001 - 走势失败静默缺席，不拖垮行情卡。
             closes = ()
             break  # 真异常不重试。
-        if closes or attempt + 1 >= attempts:
+        if closes or attempt + 1 >= attempts or not budget_allows_retry(budget):
             break
         empty_backoff_sleep()
     if closes:
@@ -664,7 +782,8 @@ def _parse_northbound_flow(
         trade_date=trade_date,
         deal_amt_yi=deal_amt / 100.0 if deal_amt is not None else None,
         deal_num=int(deal_num) if deal_num is not None else None,
-        lead_stock=str(row.get("LEAD_STOCKS_NAME") or "").strip(),
+        # FIN-I1：远端领涨股名在数据边界做控制字符清洗+长度钳制（一次收紧）。
+        lead_stock=sanitize_remote_text(row.get("LEAD_STOCKS_NAME")),
         lead_stock_pct=_as_float(row.get("LS_CHANGE_RATE")),
         index_name=index_name,
         index_close=_as_float(row.get("INDEX_CLOSE_PRICE")),
@@ -696,22 +815,28 @@ def reset_northbound_cache() -> None:
 def fetch_northbound_flows(
     timeout_seconds: float = 6.0,
     cache_seconds: float = _NORTHBOUND_CACHE_TTL_SECONDS,
+    *,
+    budget: Any | None = None,
 ) -> list[NorthboundFlow]:
     """拉取沪股通/深股通当日成交快照；失败返回 []，绝不抛异常。
 
     两通道各自独立拉取、独立降级（单通道失败不拖垮另一通道）；每通道
     G2 纪律：空响应退避重试 1 次，真异常不重试；任一通道成功即进 TTL
     缓存（缓存成功子集，单通道缺席在卡面诚实标注；两通道全失败不缓存，
-    下轮查询重试。默认 5 分钟，数据按交易日更新）。
+    下轮查询重试。默认 5 分钟，数据按交易日更新）。FIN-R1：预算尽 ⇒
+    弃剩余通道与剩余重试，缺席通道卡面如实标注。
     """
     global _NORTHBOUND_CACHE
     now = time.monotonic()
     cached = _NORTHBOUND_CACHE
     if cached is not None and now - cached[0] <= max(0.0, float(cache_seconds)):
         return list(cached[1])
+    budget = _budget_or_new(budget)
     fetched_at = time.time()
     flows: list[NorthboundFlow] = []
     for mutual_type, name, index_name in _NORTHBOUND_TYPES:
+        if budget_expired(budget):
+            break  # FIN-R1：预算尽弃剩余通道（单通道缺席=既有诚实标注路径）。
         attempts = 2 if retry_on_empty_enabled() else 1
         flow: NorthboundFlow | None = None
         for attempt in range(attempts):
@@ -725,7 +850,7 @@ def fetch_northbound_flows(
             except Exception:  # noqa: BLE001 - 单通道失败静默缺席。
                 flow = None
                 break  # 真异常不重试。
-            if flow is not None or attempt + 1 >= attempts:
+            if flow is not None or attempt + 1 >= attempts or not budget_allows_retry(budget):
                 break
             empty_backoff_sleep()
         if flow is not None:

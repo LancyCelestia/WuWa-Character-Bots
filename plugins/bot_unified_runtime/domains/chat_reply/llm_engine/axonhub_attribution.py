@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -76,10 +77,16 @@ SELECT DISTINCT ON (r.external_id)
  ORDER BY r.external_id, r.id DESC
 """
 
-# 连续失败这么多发就静默一段时间：网关库不在（没装 / 没起 / 换机）时，
+# 滚动窗里攒这么多枚坏事件就静默一段时间：网关库不在（没装 / 没起 / 换机）时，
 # 每条账本行都去撞一次连接会把写线程拖慢，而这一点收益是零。
 _CIRCUIT_TRIP_AFTER = 3
 _CIRCUIT_COOLDOWN_SECONDS = 300.0
+# 坏事件的滚动窗长（≠ 静默时长）：窗外的旧故障自然过期，不许和新故障凑票。
+# 只数「连续」异常的那版旧熔断会被一次成功清零，于是「慢而成功」这种
+# 真正拖垮写吞吐的形态永不 trip（SEAT-ATK-BILLING F-3，2026-09-28）。
+_CIRCUIT_EVENT_WINDOW_SECONDS = 600.0
+# 一次反查用掉时长预算的这么多比例即算「慢」——进了窗但不算故障。
+_SLOW_SUCCESS_RATIO = 0.8
 # 单批最多反查多少条（写线程一批 ≤ flush_batch_size，这里是防御性上限）。
 _MAX_IDS_PER_LOOKUP = 200
 
@@ -166,6 +173,12 @@ def _micro(value: object) -> int | None:
         except ValueError:
             return None
     else:
+        return None
+    # inf / -inf / nan 都能被 float() 解析成功，却会在 round(number * 1e6) 抛
+    # OverflowError / ValueError——抛穿出去会被 lookup 记成一次「故障」，脏数据
+    # 因此自己攒够熔断票，把「钱读不准」升级成「归因整体静默」。非有限值一律
+    # 当「没有这个价」（parse_rows 的「永不抛」承诺由这一行走通）。
+    if not math.isfinite(number):
         return None
     return round(number * 1_000_000)
 
@@ -297,7 +310,8 @@ class AttributionResolver:
         self.last_error = ""
         self.matched_count = 0
         self.miss_count = 0
-        self._consecutive_failures = 0
+        # 坏事件时刻表（滚动窗内）：异常与「慢而成功」同账，快成功不进账。
+        self._circuit_events: list[float] = []
         self._circuit_open_until = 0.0
 
     # ---- 构造 ----
@@ -366,27 +380,50 @@ class AttributionResolver:
             self.last_error = "circuit_open"
             return {}
         wanted = wanted[:_MAX_IDS_PER_LOOKUP]
+        started = time.monotonic()
         try:
             rows = self._fetch(wanted) if self._fetch is not None else self._fetch_live(wanted)
             found = parse_rows(wanted, list(rows))
         except Exception as exc:  # noqa: BLE001 - 归因故障绝不连累账本与聊天
             self.last_error = f"{type(exc).__name__}: {exc}"[:200]
-            self._consecutive_failures += 1
-            if self._consecutive_failures >= _CIRCUIT_TRIP_AFTER:
-                self._circuit_open_until = time.monotonic() + _CIRCUIT_COOLDOWN_SECONDS
-                self._consecutive_failures = 0
-                logger.warning(
-                    "axonhub attribution unreachable %d times in a row; pausing lookups "
-                    "for %.0fs (%s)",
-                    _CIRCUIT_TRIP_AFTER,
-                    _CIRCUIT_COOLDOWN_SECONDS,
-                    self.last_error,
-                )
+            self._record_circuit_event(self.last_error)
             return {}
-        self._consecutive_failures = 0
+        # 慢而成功也进熔断窗：反查同步钉在账本写线程每批前，拖满预算的
+        # 成功与故障同样压吞吐。但它**绝不置 last_error**——make_batch_lookup
+        # 据 last_error 把整批判成 unavailable，而那一批是真查到了的，
+        # 写成故障就是假事实。
+        elapsed = time.monotonic() - started
+        if elapsed >= self.timeout_seconds * _SLOW_SUCCESS_RATIO:
+            self._record_circuit_event(f"slow {elapsed:.2f}s >= budget")
         self.matched_count += len(found)
         self.miss_count += max(0, len(wanted) - len(found))
         return found
+
+    def _record_circuit_event(self, reason: str) -> None:
+        """记一枚坏事件并按滚动窗判静默：窗外的旧故障先过期，不与新故障凑票。
+
+        「一次成功清零」的旧口径已被淘汰——快成功零记分也不冲抵在案故障，
+        否则 fail/success 交替就永不 trip，而反压链的正中间那一环就是这个洞。
+        """
+        now = time.monotonic()
+        self._circuit_events = [
+            stamp
+            for stamp in self._circuit_events
+            if now - stamp <= _CIRCUIT_EVENT_WINDOW_SECONDS
+        ]
+        self._circuit_events.append(now)
+        if len(self._circuit_events) < _CIRCUIT_TRIP_AFTER:
+            return
+        self._circuit_events.clear()
+        self._circuit_open_until = now + _CIRCUIT_COOLDOWN_SECONDS
+        logger.warning(
+            "axonhub attribution degraded: %d bad events within %.0fs; "
+            "pausing lookups for %.0fs (%s)",
+            _CIRCUIT_TRIP_AFTER,
+            _CIRCUIT_EVENT_WINDOW_SECONDS,
+            _CIRCUIT_COOLDOWN_SECONDS,
+            reason,
+        )
 
     # ---- 生产传输 ----
 

@@ -1063,6 +1063,188 @@ def infer_quiet_hours_blocked(audit_records: Iterable[AuditRecord]) -> bool:
     )
 
 
+# ---------------------------------------------------------------------------
+# 门禁「门因」回读（2026-09-29 主树还原后的复原件，席 S-FIX-GATE-REASON）。
+# 病形：群侧大量 `event=pipeline_result receipt_state=blocked transport=policy`
+# 读不出**为什么**被拦——`DeliveryReceipt` 不承载 reason，blocked 腿又没有
+# SendRequest，于是判定链上一路都在的 reason（policy/gate.py::_denied）只剩在
+# `AuditRecord(stage="policy")` 里，进不了日志行。本件把它读回观测面。
+# 三条不变量（各对应 tests/test_policy_gate_reason_observability.py 一枚锁）：
+#   ① 封闭枚举——字段取值只认下面三张表，自由文本（正文/路径/密钥形态）一律
+#      退回该层事件名，规则 3 由此结构性成立，不靠调用方自觉；
+#   ② 零判定——只读留痕，不产决策、不改 allowed/blocked、不新增发送；
+#   ③ 零配置——不读 config、无新键（发射点靠 receipt.transport 短路）。
+# 表＝门禁真身的字面量清单（policy/gate.py、policy/quiet_hours.py、
+# policy/rate_limit.py、runtime/pipeline.py、ops/features/feature_gate.py）。
+# 新增一层门禁必须在这里登记一行，否则它整个不进字段——宁可「看不见」也不
+# 「编一个名字」，与本页 LLM 归因「没有证据就说没有证据」同一条教义。
+# ---------------------------------------------------------------------------
+
+#: policy 层的留痕 stage（与 runtime/pipeline.py 的写入值同一字面量）。
+_POLICY_GATE_STAGE = "policy"
+
+#: 层名（「哪一层拦的」）：逐枚来自 runtime/pipeline.py 里 stage="policy" 的记录，
+#: 含 feature gate 那条 `event=access.reason` 的形态（ops/features/feature_gate.py）。
+_POLICY_GATE_EVENTS = frozenset(
+    {
+        "policy_denied",
+        "quiet_hours_blocked",
+        "rate_limited",
+        "runtime_disabled",
+        "runtime_paused",
+        "duplicate_event",
+        "feature_disabled",
+        "feature_unregistered",
+        "feature_state_unavailable",
+    }
+)
+
+#: 门因（「那一层里的哪道门」）：字面量枚，逐条对到门禁真身。
+_POLICY_DENIAL_REASONS = frozenset(
+    {
+        # policy/gate.py：角色/风险 + 群黑白名单 + 抽签与软点名
+        "sender_blocked",
+        "critical_input_risk",
+        "listen_only_account",
+        "group_black1",
+        "group_black2",
+        "group_white2_need_trigger",
+        "long_text_soft_mention",
+        "proactive_affinity_gate",
+        "passive_group_message",
+        # policy/quiet_hours.py
+        "quiet_hours",
+        # policy/rate_limit.py 的字面量枚（间隔族 + 群节奏族 + 主动搭话族）
+        "sender_min_interval",
+        "target_min_interval",
+        "proactive_cooldown",
+        "proactive_window_exceeded",
+        "group_pacing_min_interval",
+        "group_pacing_vision_min_interval",
+        "group_pacing_minute_exceeded",
+        "group_pacing_tokens_exhausted",
+        # runtime/pipeline.py 的暂停记录（RuntimeControlState.pause 的缺省 reason）
+        "manual_pause",
+    }
+)
+
+#: rate_limit 的桶名族：真身用 `f"{scope}_window_exceeded"` / `f"{scope}_exceeded"`
+#: 造 reason（scope 逐枚见该文件 scoped_buckets 与群节奏两处字面量）。两枚后缀
+#: 与五个 scope 做笛卡尔积，比今天真实发射的枚数略宽——多认几枚不存在的名字，
+#: 换「新桶名不必逐枚追表」，自由文本仍然进不来。
+_RATE_LIMIT_BUCKET_SCOPES = frozenset(
+    {"global", "session", "sender", "group_hour", "group_minute"}
+)
+_RATE_LIMIT_REASON_SUFFIXES = ("window_exceeded", "exceeded")
+
+#: 受控标签命名空间：留痕里 `audit_tags=…` 那一段，逐枚来自 quiet_hours/rate_limit
+#: 的构造点（"quiet_hours:blocked" / "rate_limit:blocked" 一类）。
+_POLICY_TAG_NAMESPACES = frozenset({"quiet_hours", "rate_limit"})
+_POLICY_TAG_MAX_ITEMS = 8
+#: 拼串长度上限：`RuntimeEventLog.emit` 会把任何值截到 300 字符，那一切是**按字符**切的
+#: ——留给它余量、自己按整枚标签收口，绝不让日志上出现半枚标签（半枚标签比缺标签更坏：
+#: 读的人会把 `quiet_hours:session:gr` 当成一个真实记号去查）。
+_POLICY_TAG_MAX_CHARS = 240
+#: 标签段字符集：ASCII 字母数字起头，段内允许 . _ + -（capability_id 形如 bot.chat，
+#: 所以点号必须在内；正文里的空格/斜杠/全角标点/反斜杠一律被这类字符集挡掉）。
+_CONTROLLED_TAG_SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+\-]{0,63}$")
+
+
+def _controlled_gate_event(value: str) -> str:
+    """层名只认证过的那几枚：不在表里＝不认证据，返回空串（宁缺不编）。"""
+    event = value.strip()
+    return event if event in _POLICY_GATE_EVENTS else ""
+
+
+def _controlled_gate_reason(value: str) -> str:
+    """门因过封闭枚举：先查字面量表，再查 rate_limit 的 scope×后缀组合族。
+
+    `_is_safe_reason` 是字符集那道兜底尺（先按形筛掉正文/路径/密钥形态），
+    表成员资格才是判据本体——两者都要过。
+    """
+    reason = value.strip()
+    if not reason or not _is_safe_reason(reason):
+        return ""
+    if reason in _POLICY_DENIAL_REASONS:
+        return reason
+    for suffix in _RATE_LIMIT_REASON_SUFFIXES:
+        marker = f"_{suffix}"
+        if reason.endswith(marker):
+            if reason[: -len(marker)] in _RATE_LIMIT_BUCKET_SCOPES:
+                return reason
+            break
+    return ""
+
+
+def _controlled_gate_tags(value: str) -> list[str]:
+    """标签腿各自过闸：只放行受控命名空间下的记号，混进来的正文逐枚丢弃。"""
+    tags: list[str] = []
+    for raw_tag in value.split(","):
+        if len(tags) >= _POLICY_TAG_MAX_ITEMS:
+            break
+        tag = raw_tag.strip()
+        if not tag or tag in tags:
+            continue
+        segments = tag.split(":")
+        if len(segments) > 4 or segments[0] not in _POLICY_TAG_NAMESPACES:
+            continue
+        if all(_CONTROLLED_TAG_SEGMENT_RE.match(segment) for segment in segments):
+            tags.append(tag)
+    return tags
+
+
+def _policy_gate_reason_and_tags(private_debug: str, *, fallback: str) -> tuple[str, list[str]]:
+    """留痕正文两种既有形态都吃得：裸 reason（gate.py）与 `reason=…; audit_tags=…`。
+
+    取不到 reason 键＝整段当裸值再试一次；仍不过闸就退回该层事件名（fallback），
+    这样「暂停/重复投递」这类不带 reason 的层也有个可归因的门因，不留空。
+    """
+    reason = ""
+    has_reason_key = False
+    tags: list[str] = []
+    for part in private_debug.split(";"):
+        key, separator, value = part.strip().partition("=")
+        if not separator:
+            continue
+        if key == "reason":
+            has_reason_key = True
+            reason = _controlled_gate_reason(value)
+        elif key == "audit_tags":
+            tags = _controlled_gate_tags(value)
+    if not has_reason_key:
+        reason = _controlled_gate_reason(private_debug)
+    return reason or fallback, tags
+
+
+def infer_policy_gate_fields(audit_records: Iterable[AuditRecord]) -> dict[str, object]:
+    """把本轮门禁留痕读成事件行的观测字段（纯读、零判定、取值只认封闭枚举）。
+
+    同一 request 上多条 policy 留痕时取**最后一条**：判定序是
+    feature → runtime → policy → quiet_hours → rate_limit → 幂等，越靠后越是本轮
+    消息实际断在哪一层，这里不自己重算判定、只读留痕写下的那一条。
+    """
+    latest: AuditRecord | None = None
+    for candidate in audit_records:
+        if candidate.stage == _POLICY_GATE_STAGE:
+            latest = candidate
+    if latest is None:
+        return {}
+    gate = _controlled_gate_event(latest.event)
+    if not gate:
+        return {}
+    reason, tags = _policy_gate_reason_and_tags(latest.private_debug, fallback=gate)
+    fields: dict[str, object] = {"policy_gate": gate, "policy_reason": reason}
+    kept: list[str] = []
+    for tag in tags:
+        joined = "|".join([*kept, tag])
+        if len(joined) > _POLICY_TAG_MAX_CHARS:
+            break  # 按整枚标签收口，不许把一枚标签切一半进日志
+        kept.append(tag)
+    if kept:
+        fields["policy_tags"] = "|".join(kept)
+    return fields
+
+
 def infer_review_block_reason(audit_records: Iterable[AuditRecord]) -> str:
     tags = set(_review_diagnostic_tags(audit_records))
     if "persona_drift" in tags:

@@ -26,6 +26,10 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.deadline import (
     apply_request_deadline,
 )
 from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
+from plugins.bot_unified_runtime.domains.transport.sender.failure_class import (
+    RETRY_SAFETY_UNCERTAIN,
+    classify_send_failure,
+)
 from plugins.bot_unified_runtime.domains.transport.sender.file_gateway import (
     FileSource,
     FileTransferError,
@@ -723,6 +727,9 @@ async def send_nonebot_message(
                 retryable=False,
                 safe_summary="result_unknown",
                 debug_id=debug_id,
+                # 连接期修复波打标：外层 wait_for 超时＝请求早已写出、结果未知
+                # ⇒ 不确定档（worker/告警重投臂据此**绝不**放行重投）。
+                retry_safety=RETRY_SAFETY_UNCERTAIN,
             ),
         )
     except _FinalSendError as exc:
@@ -786,6 +793,10 @@ async def send_nonebot_message(
                     retryable=False,
                     safe_summary=_send_failure_summary("result_unknown", exc),
                     debug_id=debug_id,
+                    # 已有部件送达 ⇒ 整体重试必重发已投递内容：无论异常长什么
+                    # 形状都按不确定收口（连接期修复波的打标在此只能收紧、
+                    # 绝不放宽——M-63 红线优先于分类）。
+                    retry_safety=RETRY_SAFETY_UNCERTAIN,
                 ),
             )
         return DeliveryReceipt(
@@ -801,6 +812,11 @@ async def send_nonebot_message(
                 retryable=True,
                 safe_summary=_send_failure_summary("send_exception", exc),
                 debug_id=debug_id,
+                # 连接期修复波（2026-09-28）：零字节出网的连接失败（代理拒连/
+                # DNS 解析失败）打 connect_phase，放行 worker mixed 重投臂与
+                # 告警文本腿的一次补发；其余形态按 uncertain 收口＝既有
+                # UNKNOWN/停放语义逐字节不变。异常消息原文仍只进上面的日志。
+                retry_safety=classify_send_failure(exc),
             ),
         )
 

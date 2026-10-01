@@ -236,6 +236,85 @@ def iter_kb_document_metadata(kb_dir: Path, topics: list[str]) -> Iterator[dict]
         }
 
 
+# ------------------------------------------------ 库侧在册主题 ↔ 本地域锚点
+#
+# 同源门（2026-09-28，测试件 tests/test_kb_list_domain_gate.py）：库里**实际收录**
+# 哪些语料域，和本 bot「哪些域走本地优先」的词表是两份各写各的东西时，会出现
+# 「资料明明躺着、却被推去联网」。本区只出库侧那一侧的真身（现算，源码里不登
+# 第二份名单——规则 10）；锚点侧一律引用 ``question_intent.DOMAIN_TERMS`` 本体，
+# 两侧相减的判据在 ``topics_without_local_domain_anchor``。
+#
+# 接线状态：本区今天全仓零消费方（门已立、接线待下一票），不要把它当成生效闸。
+
+
+def iter_corpus_topic_names(
+    kb_dir: Path, *, scan_limit: int | None = None
+) -> Iterator[str]:
+    """流式逐行读 documents.jsonl，按首次出现顺序透出库里实际收录的语料域。
+
+    - 主题口径与 ``iter_kb_updates`` 同源：行里的 ``topic`` 优先，旧导出没这个
+      字段时退回 ``_id_topic(id)``（doc_id 首段），**不许静默丢域**；
+    - 去重按首次出现（``dict`` 保序语义），所以读数即「库里有哪些域」；
+    - ``scan_limit`` 把**原始行读取量**钉在上限（与元数据探针同一纪律：诊断
+      路径不许退化成全表扫），None = 不设限。注意它限的是行数不是产出个数——
+      窗口里重复域多时透出的域名可以少于上限，那是真读数；
+    - 文件缺失/不可读 → 不透出任何域名：读不到就是**没有证据**，调用方不得据此
+      宣称「库里没有这一域」（台账 #51★「没检索禁写它没有」）。
+    """
+    path = kb_dir / "documents.jsonl"
+    if not path.is_file():
+        return
+    budget = None if scan_limit is None else max(1, int(scan_limit))
+    seen: set[str] = set()
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in islice(handle, budget):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                topic = str(row.get("topic") or "") or _id_topic(str(row.get("id") or ""))
+                if not topic or topic in seen:
+                    continue
+                seen.add(topic)
+                yield topic
+    except (OSError, UnicodeError):
+        # 读到一半坏了：把已经拿到的域名如实交出去（上面已 is_file，缺文件即空）。
+        return
+
+
+def local_domain_anchor_terms() -> tuple[str, ...]:
+    """本地域锚点名册＝``question_intent.DOMAIN_TERMS`` 本身（真身只有一处）。
+
+    惰性 import 是刻意的：本文件已跨域引 ``chat_reply.character.vector_knowledge``，
+    再往模块级挂第二层跨域边不值当。这里只透出真身的 tuple 视图，绝不复制内容。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.question_intent import (
+        DOMAIN_TERMS,
+    )
+
+    return tuple(DOMAIN_TERMS)
+
+
+def topics_without_local_domain_anchor(
+    topics: Iterable[str], *, domain_terms: Iterable[str] | None = None
+) -> list[str]:
+    """在册主题里「本地域词表缺锚点」的那几枚（缺口名单）。
+
+    - ``domain_terms`` 缺省取 ``local_domain_anchor_terms()``（同源）；调用方传入
+      时按传入的词表判（测试用它做「摘掉锚点必须报缺」的反证腿）；
+    - 返回保输入序、不去重；空列表＝两侧今天对齐，非空＝这些域的题既不判
+      LOCAL_KNOWLEDGE、也走不到「本地优先、低置信才补网」。
+    """
+    vocab = set(local_domain_anchor_terms() if domain_terms is None else domain_terms)
+    return [str(topic) for topic in topics if str(topic) not in vocab]
+
+
 # ---------------------------------------------------------------- 清单对账
 
 
@@ -670,16 +749,46 @@ class MergedKnowledgeRetriever:
 
     传入顺序即优先级（人格知识库在前、wiki 库在后），prompt 字符预算裁剪
     时排在前面的块更可能保留。
+
+    ``libraries`` 与 ``retrievers`` 等长时，按**路**给每条块标注来源库名
+    （``source_library``）。各路自己的 ``source_id`` 是页级标识（可超 64 字符、
+    且对不上「谁先答」阶梯），标注是阶梯判「本地命中」的唯一依据——只有这一处
+    知道某条块是从哪一路来的，所以标注发生在这里，不在下游猜前缀。
     """
 
     available = True
 
-    def __init__(self, retrievers: list) -> None:
-        self._retrievers = [
-            retriever
-            for retriever in retrievers
-            if getattr(retriever, "available", True)
-        ]
+    def __init__(self, retrievers: list, libraries: list[str] | None = None) -> None:
+        names = [str(name or "").strip() for name in libraries] if libraries else None
+        if names is not None and len(names) != len(retrievers):
+            # 长度不匹配＝调用方漏了一路；宁可整体不标注，也不按位置瞎配。
+            logger.warning(
+                "merged retriever library stamping skipped legs=%d names=%d",
+                len(retrievers),
+                len(names),
+            )
+            names = None
+        self._retrievers: list = []
+        self._libraries: list[str | None] = []
+        for index, retriever in enumerate(retrievers):
+            if not getattr(retriever, "available", True):
+                continue
+            self._retrievers.append(retriever)
+            self._libraries.append(names[index] if names else None)
+
+    @staticmethod
+    def _stamp(chunk: Any, library: str | None) -> Any:
+        if not library:
+            return chunk
+        copier = getattr(chunk, "model_copy", None)
+        if not callable(copier):  # 测试假块/旧契约代际：原样放行，不冒充标注。
+            return chunk
+        if str(getattr(chunk, "source_library", "") or "").strip():
+            return chunk  # 已标注过（嵌套合并）⇒ 不覆盖第一手的来源路。
+        try:
+            return copier(update={"source_library": library})
+        except Exception:  # noqa: BLE001 - 契约不含该字段时退回原块，绝不为标注炸掉检索。
+            return chunk
 
     def retrieve(self, query_text: str) -> list:
         streams: list[list] = []
@@ -701,10 +810,14 @@ class MergedKnowledgeRetriever:
         index = 0
         while len(merged) < total:
             progressed = False
-            for stream in streams:
+            for stream_index, stream in enumerate(streams):
                 if index >= len(stream):
                     continue
-                chunk = stream[index]
+                chunk = self._stamp(
+                    stream[index], self._libraries[stream_index]
+                    if stream_index < len(self._libraries)
+                    else None
+                )
                 if chunk.chunk_id in seen:
                     continue
                 seen.add(chunk.chunk_id)
@@ -1505,6 +1618,13 @@ def _run_kb_sync_task_locked(
                     ),
                 )
             except Exception as exc:  # noqa: BLE001
+                # 发现5 补留痕（同文件计数戳自愈告警同款口径）：只记异常类型与
+                # 异常原文，不记任何正文；reason 结构一字不动（常驻锁口径）。
+                logger.warning(
+                    "kb-sync ANN 重建失败（reason 只记类名，明细见本行）：%s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
                 ann = {"built": False, "reason": type(exc).__name__}
             result["ann_built"] = bool(ann.get("built"))
             result["ann_vectors"] = int(ann.get("vectors", 0) or 0)

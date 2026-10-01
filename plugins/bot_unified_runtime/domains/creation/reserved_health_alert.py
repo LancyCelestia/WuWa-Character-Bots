@@ -51,7 +51,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol
 
 from plugins.bot_unified_runtime.contracts import OperationalIssue, new_debug_id
 from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
@@ -86,6 +86,47 @@ _NOT_CONFIGURED_KIND = "creation_not_configured"
 _not_configured_pending: dict[str, OperationalIssue] = {}
 #: 本进程是否已就「未配置」**成功投出**过一次（一次性口；仅投递成功后置真）。
 _not_configured_fired: bool = False
+
+
+class _GapLedger(Protocol):
+    """跨进程露头账本的**结构**（本域不 import 中央层，同 sink/probe 手法由装配递进）。
+
+    补的洞：``_not_configured_fired`` 只活在进程内存 ⇒ 现网一天约 10 次重启就把同一件
+    缺位报约 7 波（每波 2 收件人 ×（文本＋卡）＝4 条）。真身＝
+    :class:`plugins.bot_unified_runtime.domains.ops.monitor.reserved_gap_ledger.ReservedGapLedger`，
+    放在运维层而不是本域：本域是纯协议壳（``test_reserved_modules_forbidden_imports``
+    禁 sqlite3/threading/open），且「抑制窗 + 台账 TTL」本就是该层职责。
+    未注入＝退回旧的「每进程一次」语义（零行为变化），注入后才跨进程收敛。
+    """
+
+    def already_reported(self, key: str) -> bool: ...
+    def mark_reported(self, key: str) -> None: ...
+
+
+_ledger: _GapLedger | None = None
+#: 当前武装在桶里那条缺位的账本键（成功投递后按它写账；无 pending 时为空串）。
+_not_configured_key: str = ""
+
+
+def gap_ledger_key(channels: tuple[str, ...]) -> str:
+    """账本键＝``stage/kind:通道集合``（与运维层 ``gap_key`` 同式、同字面量）。
+
+    通道集合参与键名 ⇒ 「绘画接上、语音仍空」算新的缺位、重新露头（陈旧不粘滞）。
+    两段字面量在这里是**硬编码**而不是 import 常量：本域不许沾 ops 层，
+    一致性由 ``tests/test_creation_reserved_health_alert.py`` 的派生锁盯着。
+    """
+    return "creation/creation_not_configured:" + ",".join(sorted(channels))
+
+
+def install_not_configured_ledger(ledger: _GapLedger | None) -> None:
+    """装配点注入/撤除跨进程露头账本（``None``＝未接＝旧的每进程一次性语义）。幂等。"""
+    global _ledger
+    _ledger = ledger
+
+
+def has_not_configured_ledger() -> bool:
+    """跨进程账本是否已接（供装配自检与状态行诚实标注，同 ``has_alert_sink`` 口径）。"""
+    return _ledger is not None
 
 
 def install_execution_presence_probe(probe: _PresenceProbe | None) -> None:
@@ -222,11 +263,18 @@ def not_configured_channels(config: Any) -> tuple[str, ...]:
 
 def _not_configured_issue(channels: tuple[str, ...]) -> OperationalIssue:
     """构造「缺位」一次性 issue：kind 走 ``creation_not_configured``、不可重试（这是常态
-    配置态、非瞬时故障），摘要必过 ``redact_local_secrets``（AGENTS 铁律 3）。"""
+    配置态、非瞬时故障），摘要必过 ``redact_local_secrets``（AGENTS 铁律 3）。
+
+    文案口径（2026-09-28 整改）：旧句「本进程仅报一次」被用户读成"一天只此一次"，
+    而当天 ~10 次重启让同一缺位报了 7 波——门语义没变（每进程实例投成一次），
+    错在文案把"进程实例"说漏了。现句明说**每个进程实例一次、bot 重启后会再报**，
+    并点明预留位未启用、不影响现有功能。别改回旧措辞。
+    """
     raw = (
         "creation 对接点 "
         + "、".join(channels)
-        + " 未配置 provider（声明中的预留位，尚不可用）：巡检面据 mandate 让缺位对运维可见，本进程仅报一次"
+        + " 未配置 provider（声明中的预留位，功能没开、不是故障，"
+        "不影响任何现有功能）：每个进程实例只报一次，bot 重启后会再报一次"
     )
     return OperationalIssue(
         stage="creation",
@@ -243,12 +291,15 @@ def has_fired_not_configured() -> bool:
 
 
 def check_and_arm_not_configured(config: Any) -> bool:
-    """若存在未配置通道且本进程尚未报过 ⇒ 武装一条一次性 NOT_CONFIGURED pending。
+    """若存在未配置通道且尚未报过 ⇒ 武装一条一次性 NOT_CONFIGURED pending。
 
     返回「本次是否新武装」。已报过、或全部通道已配置 ⇒ 不武装且清空桶（防恢复/改配后残留旧缺位）。
+    「已报过」有两条腿：进程内的 ``_not_configured_fired``（原有语义），以及装配注入的
+    跨进程账本（未注入时整条腿不存在，行为与改动前逐字相同）。账本读不动 ⇒ 当作没报过
+    （宁可多敲一次，也不让缺位永久隐身）。
     置 fired 的时机在 :func:`flush_not_configured_issue` 成功投递之后——装配晚到不能把缺位永久隐身。
     """
-    global _not_configured_pending
+    global _not_configured_pending, _not_configured_key
     if _not_configured_fired:
         _not_configured_pending = {}
         return False
@@ -256,6 +307,10 @@ def check_and_arm_not_configured(config: Any) -> bool:
     if not empty:
         _not_configured_pending = {}
         return False
+    if _ledger is not None and _ledger.already_reported(gap_ledger_key(empty)):
+        _not_configured_pending = {}
+        return False
+    _not_configured_key = gap_ledger_key(empty)
     _not_configured_pending = {"__not_configured__": _not_configured_issue(empty)}
     return True
 
@@ -265,6 +320,8 @@ def flush_not_configured_issue() -> int:
 
     sink 未注入 / 无 pending ⇒ 0 且**不置 fired**（留待下次巡检）；sink 抛错 ⇒ 0 且不置 fired
     （件仍在，下轮再投）。与 config_missing 腿「宁可晚到、不可静默丢件」同纪律。
+    投递成功后除置 ``_not_configured_fired``，另写跨进程账本（注入过才写）：
+    现网一天约 10 次重启 ⇒ 同一缺位约 7 波、约 28 条出站私聊，就是少这一笔才收不住。
     """
     global _not_configured_pending, _not_configured_fired
     sink = _sink
@@ -278,6 +335,8 @@ def flush_not_configured_issue() -> int:
         return 0
     _not_configured_pending = {}
     _not_configured_fired = True
+    if _ledger is not None and _not_configured_key:
+        _ledger.mark_reported(_not_configured_key)
     return 1
 
 
@@ -346,9 +405,11 @@ def creation_status_line(config: Any) -> str:
 
 
 def reset_state() -> None:
-    """测试隔离口：清空 pending（含一次性 not_configured 桶与 fired 标记；不动 sink——
-    装配面由测试自己注/撤）。"""
-    global _pending, _not_configured_pending, _not_configured_fired
+    """测试隔离口：清空 pending（含一次性 not_configured 桶与 fired 标记；不动 sink、
+    不动注入的账本——二者由装配面/测试自己注撤，账本本身是**跨进程持久态**，
+    清空它等于把「已露头过」抹掉，不是本口的职责）。"""
+    global _pending, _not_configured_pending, _not_configured_fired, _not_configured_key
     _pending = {}
     _not_configured_pending = {}
     _not_configured_fired = False
+    _not_configured_key = ""

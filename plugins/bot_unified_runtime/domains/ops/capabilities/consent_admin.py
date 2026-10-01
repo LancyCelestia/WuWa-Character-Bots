@@ -80,11 +80,13 @@ NO_GATE_LINE = (
     "安全执行引擎现在没装载（总闸关着，或门还没建起来）："
     "没有卡可批，也不会有参数被这一族命令改动。"
 )
-#: 批下来之后下一步做什么——卡面上写一遍、批复回显再写一遍，两处同一枚常量，
-#: 禁在此处之外再抄一份（措辞改了必须两处一起改，因为它们是同一个真身）。
-GRANT_NEXT_STEP_LINE = (
-    "下一步：请原来发起这件事的人用同一参数再说一次，我照卡上批的那件事落地——"
-    "凭证一次有效，批了不重试到点就作废，要改请重新申请。"
+#: 「核销即落地」的结果话术唯一住 `settings_gate`（`consume_apply_result`）——
+#: 批下那一刻门就直接按卡回灌，不再要求申请人重发第三遍。本件只负责把它取回来
+#: 并原文回显（禁在此处另抄一套落地话术，那是第二真身）。这条只是门没给出结果
+#: 时的兜底句（正常路径不会走到；保持与门同一口径，不承诺也没否认落地）。
+_APPLY_RESULT_FALLBACK = (
+    "这张卡按你批的记下了。落地结果以门回的那句为准——"
+    "没再听到别的话，就是已经按卡上批的落到位了。"
 )
 
 USAGE_LINE = (
@@ -229,6 +231,98 @@ def pending_lines(rows: list[Any]) -> list[str]:
     return lines
 
 
+def consent_card_payload(row: Any) -> dict[str, Any]:
+    """一张工单的**通用卡 payload**（零新模板：过 render_universal_card_html 出图）。
+
+    字段按席位简报：要改哪枚键 / 旧值→新值 / 风险档 / 工单号 / 短码 / 过期时刻 + 一句
+    「你要做什么」。值一律复用 `consent.display_value`（凭证类不落明文、只报指纹），
+    本件不新造第二套打码。stats 只放标量（通用卡模板对 dict/list 会丢弃）。
+    """
+    import hashlib
+
+    from plugins.bot_unified_runtime.domains.core.safety_exec import consent as _consent
+    from plugins.bot_unified_runtime.domains.core.safety_exec.settings_gate import (
+        short_code_of,
+    )
+
+    code = short_code_of(row)
+    tier = str(getattr(row, "tier", "") or config_risk.DEFAULT_TIER.value)
+    needs_writing = tier in config_risk.WRITTEN_CONSENT_TIERS
+    if getattr(row, "restore_default", False):
+        old = _consent.display_value(
+            str(row.target), row.before_value, row.before_fingerprint
+        )
+        action_line = f"撤掉覆盖、回到 .env 缺省（当前覆盖 {old}）"
+        change_line = f"{old} → 缺省"
+    elif getattr(row, "value_is_sensitive", False):
+        action_line = "改一枚凭证类参数（卡上不落明文，只留指纹对账）"
+        change_line = "（两边都不落明文，只留指纹）"
+    else:
+        old = _consent.display_value(
+            str(row.target), row.before_value, row.before_fingerprint
+        )
+        new = _consent.display_value(
+            str(row.target), row.after_value, row.after_fingerprint
+        )
+        action_line = f"把 {row.target} 从现值改成 {new}"
+        change_line = f"{old} → {new}"
+    stats: dict[str, str] = {
+        "你要做什么": action_line,
+        "哪枚参数": str(getattr(row, "target", "") or "?"),
+        "旧值 → 新值": change_line,
+        "风险档": f"{tier}｜{'超管私聊书面同意' if needs_writing else '会话内管理员确认'}",
+        "工单号": str(getattr(row, "consent_id", "") or ""),
+        "短码": code,
+        "过期时刻": str(getattr(row, "expires_at", "") or ""),
+        "申请人": str(getattr(row, "requester", "") or "（未记名）"),
+    }
+    stats = {k: v for k, v in stats.items() if str(v).strip()}
+    first_line = _safe(
+        "这条配置按规矩要有人点一张同意卡我才改，批完我直接按卡上那件事落地。"
+    )
+    digest = hashlib.sha1(
+        f"{stats.get('工单号', '')}|{stats.get('短码', '')}".encode("utf-8", "ignore")
+    ).hexdigest()[:12]
+    return {
+        "page_type": "universal",
+        "title": "同意卡 · 待批",
+        "badge": f"{tier} 危险参数",
+        "summary": first_line,
+        "stats": stats,
+        "_digest": digest,
+    }
+
+
+def render_consent_card_png(
+    row: Any, *, backend: Any = None, card_dir: str | None = None
+) -> str:
+    """工单出图：成功回 PNG 路径，任何一步不行回空串（调用方退回纯文本，零契约破坏）。
+
+    两段式非必需——本函数只在**能力线程**（非事件循环）被拦截回复那条腿调用，与
+    `host_card.render_payload_png` 同口径：文本先行、图尽力补、fail-open。
+    """
+    try:
+        payload = dict(consent_card_payload(row))
+        digest = str(payload.pop("_digest", "") or "ticket")
+        from plugins.bot_unified_runtime.domains.ops.monitor.error_report import (
+            render_html_card,
+        )
+        from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
+            render_universal_card_html,
+        )
+
+        return render_html_card(
+            render_universal_card_html(payload),
+            stem="consent",
+            digest=digest,
+            backend=backend,
+            card_dir=card_dir,
+            keep=60,
+        )
+    except Exception:  # noqa: BLE001 - 出图失败交回空串，由调用方走纯文本工单
+        return ""
+
+
 # ---------------------------------------------------------------------------
 # 3. 能力本体
 # ---------------------------------------------------------------------------
@@ -264,14 +358,16 @@ def _gate_result(request_id: str) -> CapabilityResult:
 
 
 def _verdict_result(
-    request_id: str, verdict: Any, *, verb: str
+    request_id: str, verdict: Any, *, verb: str, apply_note: str = ""
 ) -> CapabilityResult:
     """把阶梯交回的 ConsentGrant / Refusal 翻成人话（判据不在这里，只有措辞）。"""
     if isinstance(verdict, ConsentGrant):
         row = verdict.row
-        # 「批了」与「改了」是两件事，一句话都不替对方许诺：凭证要由**原发起人用同一
-        # 参数再说一次**才落地（咽喉的写腿只在调用栈上跑，批准发生在另一条会话腿）。
-        lines = ["这张卡按你批的记下了。", *ticket_lines(row), GRANT_NEXT_STEP_LINE]
+        # 核销即落地（用户裁定 2026-09-27）：批下那一刻门已按卡回灌执行，回显读门给的
+        # 那句结果话术（`consume_apply_result`），本件不自行判断「落没落」——落地判据与
+        # 审计都在门里，这里只是把它的结论转述出去（禁第二真身）。
+        headline = apply_note or _APPLY_RESULT_FALLBACK
+        lines = [headline, *ticket_lines(row)]
         return _result(request_id, "\n".join(lines), audit=[f"{verb}_granted"])
     if isinstance(verdict, Refusal):
         detail = getattr(verdict, "detail", "")
@@ -323,7 +419,15 @@ def build_consent_admin_result(
         verdict = gate.approve(
             parsed["consent_id"], code=parsed["code"], message=message
         )
-        return _verdict_result(rid, verdict, verb="approve")
+        apply_note = ""
+        if isinstance(verdict, ConsentGrant):
+            getter = getattr(gate, "consume_apply_result", None)
+            if callable(getter):
+                try:
+                    apply_note = str(getter(parsed["consent_id"]) or "")
+                except Exception:  # noqa: BLE001 - 读结果话术失败不影响批准账本体
+                    apply_note = ""
+        return _verdict_result(rid, verdict, verb="approve", apply_note=apply_note)
     verdict = gate.deny(parsed["consent_id"], code=parsed["code"], message=message)
     return _verdict_result(rid, verdict, verb="deny")
 
@@ -368,9 +472,11 @@ __all__ = [
     "USAGE_LINE",
     "build_consent_admin_capability",
     "build_consent_admin_result",
+    "consent_card_payload",
     "is_admin_actor",
     "is_consent_command",
     "parse_consent_command",
     "pending_lines",
+    "render_consent_card_png",
     "ticket_lines",
 ]

@@ -15,12 +15,32 @@ from plugins.bot_unified_runtime.domains.core.contracts.runtime import StrictBas
 
 
 class LLMProviderError(RuntimeError):
-    def __init__(self, message: str, *, error_kind: str = "provider_error") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_kind: str = "provider_error",
+        detail: str = "",
+    ) -> None:
         super().__init__(message)
         self.error_kind = error_kind
+        # W1-② 证据链：底层异常原文的缩略（httpx ConnectTimeout/ConnectError
+        # 等的判别细节）。message 面向分类保持稳定，原文走 detail 随逐跳
+        # 日志落盘——09-29 故障排查时「timeout 是连不上还是读不到」无法
+        # 区分，就是因为这一层被抽掉了。单行化 + 200 上限在**本咽喉统一
+        # 执法**（构造点再多也不许爆行/超长）。
+        self.detail = " / ".join(
+            part.strip() for part in str(detail or "").splitlines() if part.strip()
+        )[:200]
         # 本次故障转移的尝试轨迹（ModelRouter.generate 抛出前填充）；
         # 与具体请求绑定，审计消费点据此取数，避免跨请求共享状态串号。
         self.attempts: list[str] = []
+
+
+# 响应体 `id`（→ 账本 remote_request_id → 归因匹配键）的长度上限。真实
+# OpenAI 兼容 id 约 28–40 字符，128 是宽到不会截断任何合法 id 的天花板，
+# 只挡敌意/脏回包的行膨胀（F-7）。
+_REMOTE_REQUEST_ID_MAX_LEN = 128
 
 
 # 只有本地配置类错误（config_missing）假定对所有候选同样致命；其余——
@@ -172,15 +192,48 @@ _MAX_ERROR_BODY_BYTES = 8192
 _HTTP_CLIENT_LOCK = threading.Lock()
 _HTTP_CLIENTS: dict[str, httpx.Client] = {}
 
+# 连接阶段上限：网络/代理/网关不可达时快败，交回 fail-fast 逐跳判定。
+# 每请求覆盖超时时必须保住这一档——传标量会把四档一起改成同一个值。
+_CONNECT_TIMEOUT_SECONDS = 5.0
+# 空闲保活上限：本机出口对存量隧道的静默回收实测落在 5–20s，而 httpx 缺省
+# keepalive_expiry 恰是 5.0s（同档竞走）⇒ 半开连接被池子交出去复用，一发就
+# 挂到读超时。压到 2.0s 让客户端先关；回环那一跳的重连只是一次 TCP。
+_KEEPALIVE_EXPIRY_SECONDS = 2.0
 
-def _shared_http_client(proxy: str = "") -> httpx.Client:
+
+# 回环直连桶的缓存键：endpoint 指向本机网关（AxonHub）时专用。与空代理
+# 键分开——空代理键保持 httpx 默认 trust_env 语义（temporal 天气依赖其
+# 环境回落），回环桶必须无视环境/系统代理。
+_LOOPBACK_DIRECT_KEY = "loopback:direct"
+
+
+def _loopback_endpoint(endpoint_url: str) -> bool:
+    """endpoint 是否指向本机回环（AxonHub 一类本地网关）。
+
+    回环目标绕行代理毫无收益，反把 LLM 链拴在代理进程存活上——
+    2026-09-29 22:09 Clash 7890 拒连窗口，本机网关健在而 bot 全链
+    超时即实证。回环一律硬直连。
+    """
+    try:
+        host = (urlsplit(str(endpoint_url or "")).hostname or "").lower()
+    except ValueError:
+        return False
+    return host in {"127.0.0.1", "::1", "localhost"}
+
+
+def _shared_http_client(proxy: str = "", *, force_direct: bool = False) -> httpx.Client:
     """按代理维度缓存的进程级 httpx.Client（管线检视 #7）。
 
     LLM 主链路、视觉转译与 ASR 经同一 provider 类共用本客户端：连接池
     复用免去每次调用的 TCP+TLS 握手税。httpx 的代理是客户端级配置，故
     按代理值各持实例；Client 线程安全，调用方仅做每请求超时覆盖。
+
+    force_direct（回环目标）＝硬直连桶：proxy=None 且 trust_env=False，
+    环境变量与 Windows 系统代理都不参与——httpx 对 proxy=None 默认回落
+    env/注册表代理，不关 trust_env 则「直连」形同虚设（本机用户级
+    HTTP_PROXY 常驻 http://127.0.0.1:7890）。
     """
-    key = str(proxy or "").strip()
+    key = _LOOPBACK_DIRECT_KEY if force_direct else str(proxy or "").strip()
     cached = _HTTP_CLIENTS.get(key)
     if cached is not None and not cached.is_closed:
         return cached
@@ -189,14 +242,34 @@ def _shared_http_client(proxy: str = "") -> httpx.Client:
         if cached is not None and not cached.is_closed:
             return cached
         client = httpx.Client(
-            proxy=key or None,
+            proxy=None if force_direct else (key or None),
+            trust_env=not force_direct,
             # 生产实弹（2026-09-15 LLM 超时告警排查）：连接与读取拆分——
             # 网络断时 connect 5s 快败，不再 30s×5 渠道干等 150s 才反馈。
-            timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0),
-            limits=httpx.Limits(max_connections=32, max_keepalive_connections=8),
+            timeout=httpx.Timeout(
+                connect=_CONNECT_TIMEOUT_SECONDS,
+                read=30.0,
+                write=10.0,
+                pool=5.0,
+            ),
+            limits=httpx.Limits(
+                max_connections=32,
+                max_keepalive_connections=8,
+                keepalive_expiry=_KEEPALIVE_EXPIRY_SECONDS,
+            ),
         )
         _HTTP_CLIENTS[key] = client
         return client
+
+
+def _brief_exc(exc: BaseException) -> str:
+    """底层异常原文缩略（W1-② 证据链）：类型名 + 原文，交由
+    ``LLMProviderError.__init__`` 统一单行化并截 200。
+
+    只取我们自己抛点处的传输异常（httpx/urllib），不含响应体与鉴权头，
+    无密钥泄露面。
+    """
+    return f"{type(exc).__name__}: {exc}"
 
 
 def _read_stream_limited(
@@ -355,6 +428,16 @@ def _first_int(*values: object) -> int:
     return 0
 
 
+#: 回包 usage 的读侧硬顶（PROVIDERS-R2 票 ATKLLM-2，2026-09-28）。被控或替换过的中转站
+#: 可以对一次小额调用虚报 1e12 级 token，而成本按 token 线性放大 ⇒ 虚报直接变成天文账单，
+#: 且 F-2 信任边界的对照基线又由**同一份不可信 usage** 算出（自指放行）。取现仓可见的
+#: 真实上限（上下文 ≤2M + ``max_tokens`` 顶 65538）的数倍余量：合法回包咬不到，1e12 级虚报
+#: 被切断。**要改口径只改这一行**（两消费臂都从这一处吃数）。
+#: 刻意写成裸赋值、不加 ``Final`` 标注：注毒锁按 ``ast.Assign`` 认这枚常数，
+#: 带标注会退化成 ``ast.AnnAssign`` 而看不见 ⇒ 常数锁假绿。
+REPORTED_TOKEN_HARD_CAP = 10_000_000
+
+
 def _extract_usage(usage: object, finish_reason: object = None) -> dict[str, Any]:
     result: dict[str, Any] = {}
     if isinstance(usage, dict):
@@ -381,6 +464,24 @@ def _extract_usage(usage: object, finish_reason: object = None) -> dict[str, Any
         result["cache_read_tokens"] = cache_read
     if cache_write > 0:
         result["cache_write_tokens"] = cache_write
+    # PROVIDERS-R2 票 ATKLLM-2：回包 usage 的读侧硬顶（夹在这里＝唯一出点，
+    # 台账 channel_spec 臂与 chat 审计臂同吃这一份 dict，夹一次全链有界）。
+    # 只夹顶层 ``*_tokens`` 的**正整数**：负值/布尔原样交下游非负闸，本腿不重算语义；
+    # 夹过必须留痕（静默改数＝谎报，事后无从分辨网关真给了这个数）。
+    clamped_keys: list[str] = []
+    for _token_key, _token_value in list(result.items()):
+        if not _token_key.endswith("_tokens"):
+            continue
+        if isinstance(_token_value, bool) or not isinstance(_token_value, int):
+            continue
+        if _token_value > REPORTED_TOKEN_HARD_CAP:
+            result[_token_key] = REPORTED_TOKEN_HARD_CAP
+            clamped_keys.append(_token_key)
+    if clamped_keys:
+        result["usage_report_sanity"] = {
+            "cap": REPORTED_TOKEN_HARD_CAP,
+            "clamped_keys": clamped_keys,
+        }
     safe_finish_reason = safe_llm_finish_reason(finish_reason)
     if safe_finish_reason:
         result["finish_reason"] = safe_finish_reason
@@ -531,6 +632,10 @@ class OpenAICompatibleLLMProvider:
         if content_source == "reasoning_fallback":
             usage["content_source"] = "reasoning_fallback"
         remote_id = data.get("id")
+        # 响应体 id 是不完全可信面：截断到合理上限，杜绝上游/中转回一个超长
+        # id 把账本行、归因键撑爆（F-7 的行膨胀臂；「同 id 双计」的归因臂需动
+        # apply_attribution 去重语义，风险更高，移交处理）。
+        remote_id_str = remote_id if isinstance(remote_id, str) else ""
         return LLMReply(
             text=text,
             provider=self.provider_name,
@@ -538,7 +643,7 @@ class OpenAICompatibleLLMProvider:
             confidence=1.0,
             raw_usage=usage,
             tool_calls=tool_calls,
-            remote_request_id=remote_id if isinstance(remote_id, str) else "",
+            remote_request_id=remote_id_str[:_REMOTE_REQUEST_ID_MAX_LEN],
         )
 
     def _post_via_urllib(
@@ -579,15 +684,25 @@ class OpenAICompatibleLLMProvider:
         self, body: bytes, headers: dict[str, str], request_timeout: float
     ) -> str:
         """生产传输路径：进程级 httpx.Client 连接池复用 + 响应限长。"""
-        client = _shared_http_client(self.proxy)
+        # 回环网关（AxonHub 127.0.0.1）硬直连，不进代理桶。
+        client = _shared_http_client(
+            self.proxy, force_direct=_loopback_endpoint(self.endpoint_url)
+        )
         deadline = time.monotonic() + max(0.0, request_timeout)
+        # 每请求只覆盖读预算，connect 守住快败上限。传标量＝httpx 把四档一起
+        # 改成同一个值，客户端那份 connect 快败在生产路径从未生效（实弹
+        # 2026-09-29：40s×数跳挂满才认输，用户侧正是"收到消息一直不回"）。
+        stream_timeout = httpx.Timeout(
+            timeout=request_timeout,
+            connect=min(_CONNECT_TIMEOUT_SECONDS, request_timeout),
+        )
         try:
             with client.stream(
                 "POST",
                 self.endpoint_url,
                 content=body,
                 headers=headers,
-                timeout=request_timeout,
+                timeout=stream_timeout,
             ) as response:
                 if response.status_code >= 400:
                     error_body = _read_stream_limited(
@@ -615,17 +730,24 @@ class OpenAICompatibleLLMProvider:
                 raise LLMProviderError(
                     "LLM gateway/upstream unreachable (connect timeout)",
                     error_kind="network",
+                    detail=_brief_exc(exc),
                 ) from exc
-            raise LLMProviderError("LLM request timed out", error_kind="timeout") from exc
+            raise LLMProviderError(
+                "LLM request timed out", error_kind="timeout", detail=_brief_exc(exc)
+            ) from exc
         except httpx.HTTPError as exc:
             if isinstance(exc, httpx.ConnectError):
                 raise LLMProviderError(
                     "LLM gateway/upstream unreachable (connect failed)",
                     error_kind="network",
+                    detail=_brief_exc(exc),
                 ) from exc
-            raise LLMProviderError("LLM network error", error_kind="network") from exc
+            raise LLMProviderError(
+                "LLM network error", error_kind="network", detail=_brief_exc(exc)
+            ) from exc
         except Exception as exc:
             raise LLMProviderError(
                 "LLM provider transport error",
                 error_kind="provider_error",
+                detail=_brief_exc(exc),
             ) from exc

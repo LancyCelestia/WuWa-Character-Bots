@@ -46,7 +46,7 @@ _SUBFEATURE_ROWS: tuple[tuple[str, str, str, str, bool], ...] = (
     ("bot.ingress.audio_transcode", "bot.ingress", "语音段预转码", "_transcode_record_segments", True),
     ("bot.ingress.telegram_media", "bot.ingress", "Telegram 媒体文件富化", "_handle_chat", True),
     ("bot.ingress.reply_lookup", "bot.ingress", "引用链远程反查", "_handle_chat", True),
-    ("bot.plugin.chat.recent_image", "bot.plugin.chat", "群聊最近图片注入", "_handle_chat", True),
+    ("bot.plugin.chat.recent_image", "bot.plugin.chat", "最近图片注入（群聊/私聊）", "_handle_chat", True),
     ("bot.plugin.chat.forward_lookup", "bot.plugin.chat", "合并转发内容反查", "_handle_chat", True),
     ("bot.plugin.chat.video_preprocess", "bot.plugin.chat", "视频理解预处理", "_handle_chat", True),
     ("bot.plugin.chat.parrot", "bot.plugin.chat", "群聊复读自动回应", "_handle_chat", True),
@@ -54,8 +54,25 @@ _SUBFEATURE_ROWS: tuple[tuple[str, str, str, str, bool], ...] = (
     ("bot.plugin.chat.reactions.receive", "bot.plugin.chat.reactions", "接收表情回应上下文", "_handle_msg_emoji_like_notice", True),
     ("bot.plugin.chat.reactions.emotion", "bot.plugin.chat.reactions", "情绪触发表情回应", "_handle_chat", True),
     ("bot.plugin.chat.reactions.after_reply", "bot.plugin.chat.reactions", "回复后表情回应", "_handle_chat", True),
+    # 2026-09-28 用户实弹复现"没命令自己甩图"后落定：这条腿此前虽在册注释里
+    # 声明应 default=False（见 :37-41），实际却写成了 True，与纪律互相打脸。
+    # 现按纪律拨回 False；打开仍走超管控制面 / WebUI。
     ("bot.plugin.chat.reactions.meme", "bot.plugin.chat.reactions", "情绪时刻发送表情包", "_handle_chat", False),
     ("bot.plugin.meme_library.auto_absorb", "bot.plugin.meme_library", "群图自动收库", "_handle_meme_absorb", True),
+    # STICKER-POOL 波（2026-09-29）：bot **自有**贴纸库这一格此前完全不在册——三条想发
+    # 贴纸的腿（P3 情绪时刻 / 戳一戳 / 偷表情）没有一枚共同的开关可问，也没有一个节点
+    # 让超管在控制面看见「她放进登记目录的那包贴纸是一条独立能力」。读路径唯一真身 =
+    # ``domains/meme/sources/sticker_packs.py``；配置侧另有一枚 ``bot_sticker_enabled``，
+    # **两道门各管一侧**（那枚是「今天要不要发」的业务闸，本枚是「这条能力在不在产品里」
+    # 的控制面闸），任一关就不发。
+    # ⚠ 父节点写 ``bot`` 不写 ``bot.plugin``：本树的 ``bot.plugin`` **不是节点、只是名字前缀**
+    # （``bot.plugin.chat`` 的父是 ``bot``，见 ``default_feature_descriptors``；自动派生的
+    # ``bot.plugin.<capability>`` 也一律挂在 ``bot`` 下）。凭空登记一枚 ``bot.plugin`` 组
+    # 节点会造出一个只装着这一枚子功能、其余 ``bot.plugin.*`` 全不认它当爹的孤儿组。
+    # 实现引用指 ``_handle_chat``（与同族多枚行一样：本枚今天没有独立入口符号，消费腿
+    # 由别席接在摄取链上；``test_subfeatures_have_executable_references_and_parent_state``
+    # 要的是「文件+符号真存在」，不是「这枚行有自己的函数」）。
+    ("bot.plugin.sticker_packs", "bot", "守岸人表情私库", "_handle_chat", True),
 )
 SUBFEATURE_DESCRIPTORS = tuple(
     FeatureDescriptor(

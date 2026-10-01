@@ -27,8 +27,10 @@ from plugins.bot_unified_runtime.domains.finance.data.market_data import (
     fetch_index_quotes,
     fetch_index_trend,
     format_market_brief,
+    gather_within_budget,
     group_quotes,
     index_unavailable_entries,
+    new_network_budget,
 )
 from plugins.bot_unified_runtime.domains.render.bot_avatar import bot_avatar_uri
 
@@ -221,15 +223,22 @@ def is_northbound_command(text: str) -> bool:
 
 
 def _card_common_payload(config: Any | None, feature_label: str) -> dict[str, Any]:
-    """三张新卡共用的页脚字段（与 market/stocks 能力同源口径）。"""
+    """三张新卡共用的页脚字段（与 market/stocks 能力同源口径）。
+
+    署名走自称唯一读法（P-G3 第二波，2026-09-29）：先查人格册按**当前生效**人格
+    id 现读，再回落兼容显示名；都取不到⇒空串，由品牌胶囊统一回落，本层不留
+    「守岸人」字面量。绝不读 ``get_login_info``（台账 #60★）。
+    """
     import time as _time
+
+    from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+        active_persona_id,
+        current_bot_nickname,
+    )
 
     return {
         "updated_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
-        "bot_name": (
-            str(getattr(config, "bot_persona_display_name", "") or "").strip()
-            or "守岸人"
-        ),
+        "bot_name": current_bot_nickname(active_persona_id(config), config=config),
         "bot_avatar_url": str(bot_avatar_uri(config)),
         "feature_label": feature_label,
     }
@@ -318,11 +327,13 @@ def build_commodities_capability(
 
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
         timeout = float(getattr(config, "bot_market_timeout_seconds", 6.0) or 6.0)
+        budget = new_network_budget()
         quotes = fetch_commodity_quotes(
             timeout_seconds=timeout,
             cache_seconds=float(
                 getattr(config, "bot_market_cache_seconds", 60.0) or 60.0
             ),
+            budget=budget,
         )
         if not quotes:
             return CapabilityResult(
@@ -335,22 +346,20 @@ def build_commodities_capability(
                 ),
                 audit_tags=["capability:commodities", "commodities:fetch_failed"],
             )
-        # 走势折线（10min TTL 在数据侧）；并行拉取，失败静默缺席。
-        from concurrent.futures import ThreadPoolExecutor
-
-        trends: dict[str, tuple[float, ...]] = {}
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            futures = {
-                quote.code: pool.submit(
-                    fetch_commodity_trend, quote.code, timeout_seconds=timeout
-                )
-                for quote in quotes
-            }
-            for code, future in futures.items():
-                try:
-                    trends[code] = future.result(timeout=timeout + 2.0)
-                except Exception:  # noqa: BLE001 - 单商品折线失败静默缺席。
-                    trends[code] = ()
+        # 走势折线（10min TTL 在数据侧）；FIN-R1：经 gather_within_budget 在
+        # 共用预算内收束并行拉取、池退出非阻塞——慢源被放弃为缺席（空序列→卡面
+        # 「暂无历史走势数据」），不再沿用旧的无条件 join 线程池退出，钉不死
+        # 有界聊天 worker，也不在共用预算之外另造第二套计时。
+        codes = [quote.code for quote in quotes]
+        raw_trends = gather_within_budget(
+            lambda code: fetch_commodity_trend(code, timeout_seconds=timeout),
+            codes,
+            budget=budget,
+            max_workers=4,
+        )
+        trends: dict[str, tuple[float, ...]] = {
+            code: (raw_trends.get(code) or ()) for code in codes
+        }
         sections: list[dict[str, Any]] = []
         for group_name, rows in group_commodity_quotes(quotes).items():
             sections.append(
@@ -642,25 +651,25 @@ def build_market_capability(
 ) -> Any:
     """构建行情能力闭包；超时/缓存时长可由配置覆盖。"""
     import hashlib
-    from concurrent.futures import ThreadPoolExecutor
     from pathlib import Path
 
-    def _fetch_trends(quotes: list[IndexQuote], timeout: float) -> dict[str, tuple[float, ...]]:
-        """并行拉取各指数 30 日收盘（10min 缓存在 market_data 侧）；失败空序列。"""
-        trends: dict[str, tuple[float, ...]] = {}
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            futures = {
-                quote.code: pool.submit(
-                    fetch_index_trend, quote.code, timeout_seconds=timeout
-                )
-                for quote in quotes
-            }
-            for code, future in futures.items():
-                try:
-                    trends[code] = future.result(timeout=timeout + 2.0)
-                except Exception:  # noqa: BLE001 - 单指数折线失败静默缺席。
-                    trends[code] = ()
-        return trends
+    def _fetch_trends(
+        quotes: list[IndexQuote], timeout: float, budget: Any
+    ) -> dict[str, tuple[float, ...]]:
+        """并行拉取各指数 30 日收盘（10min 缓存在 market_data 侧）；失败空序列。
+
+        FIN-R1：经 ``gather_within_budget`` 在共用预算内收束——取已完成项、慢源
+        放弃为缺席、池退出非阻塞（不再沿用旧的无条件 join 线程池退出，钉不死
+        有界 worker）。缺席项换算成空序列，卡面走「暂无历史走势数据」诚实通道。
+        """
+        codes = [quote.code for quote in quotes]
+        raw = gather_within_budget(
+            lambda code: fetch_index_trend(code, timeout_seconds=timeout),
+            codes,
+            budget=budget,
+            max_workers=6,
+        )
+        return {code: (raw.get(code) or ()) for code in codes}
 
     def _render_card(
         quotes: list[IndexQuote],
@@ -673,6 +682,15 @@ def build_market_capability(
         if render_backend is None or not getattr(render_backend, "available", False):
             return ""
         import time as _time
+
+        # 署名唯一读法（P-G3 第二波）：人格册按当前生效人格现读→兼容显示名→空串
+        # 交胶囊回落品牌；不再自取配置名并手抄「守岸人」。禁 get_login_info（#60★）。
+        from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+            active_persona_id,
+            current_bot_nickname,
+        )
+
+        _bot_signature_name = current_bot_nickname(active_persona_id(config), config=config)
 
         try:
             from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
@@ -737,10 +755,7 @@ def build_market_capability(
                 # bridge 未知键忽略，finance_card 接线时直接可用）。
                 "status": "ok",
                 "as_of": max((quote.as_of or 0.0) for quote in quotes) if quotes else None,
-                "bot_name": str(
-                    getattr(config, "bot_persona_display_name", "") or ""
-                ).strip()
-                or "守岸人",
+                "bot_name": _bot_signature_name,
                 "bot_avatar_url": str(
                     bot_avatar_uri(config)
                 ),
@@ -777,11 +792,16 @@ def build_market_capability(
 
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
         timeout = float(getattr(config, "bot_market_timeout_seconds", 6.0) or 6.0)
+        # FIN-R1：一条行情命令共用一条端到端网络预算——现价、走势面板、
+        # 交叉核验都挂这同一对象；预算尽即弃剩余尝试走诚实降级，绝不跨层把
+        # 退避睡眠相乘钉死有界聊天 worker。
+        budget = new_network_budget()
         quotes: list[IndexQuote] = fetch_index_quotes(
             timeout_seconds=timeout,
             cache_seconds=float(
                 getattr(config, "bot_market_cache_seconds", 60.0) or 60.0
             ),
+            budget=budget,
         )
         if not quotes:
             return CapabilityResult(
@@ -797,15 +817,16 @@ def build_market_capability(
             # 过滤词没命中任何指数（如「A股大盘行情」里的生僻组合）→ 回退全部。
             shown = quotes
         subtitle = "红涨绿跌 · 折线为近 30 个交易日收盘"
-        trends = _fetch_trends(shown, timeout)
-        # 多源交叉查验（腾讯）：best-effort，通道不可用为空串=不声明。
+        trends = _fetch_trends(shown, timeout, budget)
+        # 多源交叉查验（腾讯）：best-effort，通道不可用为空串=不声明；
+        # 同挂本命令预算（FIN-R1），预算尽即核验保持沉默、不声明、不造差异文案。
         from plugins.bot_unified_runtime.domains.finance.data.market_crosscheck import (
             crosscheck_quotes,
             format_crosscheck_note,
         )
 
         cross_note = format_crosscheck_note(
-            crosscheck_quotes(shown, timeout_seconds=min(timeout, 4.0))
+            crosscheck_quotes(shown, timeout_seconds=min(timeout, 4.0), budget=budget)
         )
         card = _render_card(
             shown,

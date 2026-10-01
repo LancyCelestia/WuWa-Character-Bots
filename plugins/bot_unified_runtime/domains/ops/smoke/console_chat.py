@@ -248,6 +248,8 @@ def _build_runtime(
             runtime_settings=runtime_settings,
         ),
         llm_provider=_build_llm_provider(config),
+        # 默认讲法腿的口径来源：这条链不交 config ⇒ 控制台自检的偏好段整段静默关。
+        content_route_config=config,
         meme_search_provider=build_meme_search_provider(config),
         web_search_provider=build_web_search_provider(config),
         web_max_results=config.bot_web_search_max_results,

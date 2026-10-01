@@ -121,9 +121,11 @@ class EmergencyInfoSource:
     #: WP3 交付④：白名单里**不是真身 SOURCE_ID** 的取值（已忽略，不静默）。
     #: 只搬不吞——名单在这里看得见，`build_review_gate` 装配期点名告警就靠这一格。
     unknown_auto_approve_sources: tuple[str, ...] = ()
-    #: WP3 交付②：允许击穿 00:00–06:00 静默窗的等级（缺省 `P0,P1`＝与今天一致）。
-    #: 族级地板（`alert_taxonomy.AlertFamily.wake_levels`）在此之上**再收窄**，
-    #: 配成 `P0,P1,P2,P3` 等于关掉本域这层抑制、把窗判定整个交回中央闸。
+    #: WP3 交付②＋S-FIX-QUIET-T3 定版：源级「允许击穿 00:00–06:00 静默窗等级」表
+    #: （缺省 `P0,P1`＝与今天一致），装配侧经 `deliver_emergency(breach_levels=…)` 搬运，
+    #: 与族级地板（`alert_taxonomy.AlertFamily.wake_levels`）**取交**后才是可穿窗集合：
+    #: 本表只收窄、不放宽——配成 `P0,P1,P2,P3` 等于该腿全开、回到族级地板单独决定，
+    #: 架空不了地板（如 `global_disaster` 只认红档）；配窄则只能更安静。
     quiet_breach_levels: frozenset[str] = DEFAULT_QUIET_BREACH_LEVELS
 
 
@@ -725,6 +727,25 @@ def build_emergency_info_capability(
             item = store.get(wanted)
             if item is None:
                 return _answer(f"未找到条目 {wanted}（可能已过期清理，或编号有误）。", "detail_miss")
+            if item.status != EmergencyStatus.APPROVED:
+                # E-G1 根修（2026-09-27 攻击审计 SEAT-ATK-EMG）：未过审条目的详情读侧
+                # 收进审核名单——判据与待审队列读侧逐字同形（`allows_emergency_review`，
+                # 名单空＝整面关闭，连管理员也读不到，与 #46「无授权人⇒一律拒」同向）。
+                # 非审核人回**与「未找到」完全相同的话术形态**：不给「条目存在但没过审」
+                # 的 oracle（id 可枚举，见 collector 的 `{source}-{external_id}` 规则）。
+                # 已过审条目不动既有行为（全体可详读，正向锁 test_detail_query_... 在盘）。
+                review_source = build_emergency_info_source(config)
+                if not allows_emergency_review(
+                    review_source,
+                    str(getattr(message, "sender_id", "") or ""),
+                    getattr(message, "sender_roles", ()) or (),
+                ):
+                    # 正文逐字等于 detail_miss 形态；审计标签单列一枚，供内部观测
+                    # （audit_tags 不上用户可见面）——话术同形、账上可判别。
+                    return _answer(
+                        f"未找到条目 {wanted}（可能已过期清理，或编号有误）。",
+                        "detail_denied_as_miss",
+                    )
             return _answer(format_emergency_detail(item), "detail", item.item_id)
 
         rows = store.list_by_status(EmergencyStatus.APPROVED, limit=_MAX_LIST_ROWS)

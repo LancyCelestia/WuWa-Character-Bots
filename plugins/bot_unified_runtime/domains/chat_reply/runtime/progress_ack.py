@@ -20,6 +20,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
+    PLATFORM_QQ,
+    platform_domain_of,
+)
 from plugins.bot_unified_runtime.domains.core.contracts import (
     PrivacyLevel,
     RenderedOutput,
@@ -47,13 +51,26 @@ ACK_DEDUPE_NAMESPACE = "ack"
 # ---------------------------------------------------------------------------
 DEFAULT_ACK_DELAY_SECONDS = 15.0
 DEFAULT_ACK_COOLDOWN_SECONDS = 60.0
-# 自适应下限 15→30（2026-09-26 用户裁定 D2）：现网实测固定 15 秒地板下**每一轮都发**
-# （34 条里 19 条＝55.9%，其中 3 条 3.8–5.4 秒就答完了仍先发一句）——地板低于本轮
-# 耗时的常态，它就退化成「每条先开口」。30 秒实测仍盖住最慢的纯文本轮（28.2 秒），
-# 只砍掉真回执已经来得及的那一段。上限 90 不动（0 次命中＝它本就不是约束）。
-DEFAULT_ACK_DELAY_FLOOR_SECONDS = 30.0
-DEFAULT_ACK_DELAY_CAP_SECONDS = 90.0
-DEFAULT_ACK_LATENCY_MULTIPLIER = 2.0
+# 自适应下限 15→30→55→**50**、上限 90→**60**（2026-09-29 需求项 6 的最终口径：
+# 用户原话「阈值调到 45~60 秒」，**结果必须落在这个区间里**）：
+# 现网实测（ChatBot_Runtime/data/runtime_events.log*，只读，字段 duration_ms 实为毫秒；
+# 样本＝event=transport_receipt 且 receipt_state=sent 的 n=167 条成功轮）
+#   全部轮 p50=35.7s / p75=68.9s / p90=119.1s / 均值 53.9s；
+#   分桶 <30s=76、30-45s=24、45-60s=21、>60s=46。
+# 按这条分布算「开口率」（阈值之上的轮次即会先说一句）：
+#   30s（旧地板）＝91/167＝54.5%（与本席独立复算的 19/34＝55.9% 同量级，互证）
+#   45s＝40.1%、50s＝59/167＝35.3%、55s＝31.7%、60s＝27.5%。
+# 取地板 50：整段 30-45 秒的正常联网轮（检索+网页+一跳 LLM，配 BOT_CHAT_TIMEOUT_SECONDS=40）
+# 从此闭嘴，剩下的开口是真的慢；又不取 55/60 作地板——那会把区间上沿挤没，自适应腿在
+# 网关真抖时也抬不上去。上限 60 收口（旧 90 会把阈值推出用户口径区间）。
+# 倍率 3.0 不动：现网慢跳 EWMA≈13.7s ⇒ 派生 41s 落在地板；单跳 ≥16.7s 起阈值
+# 跟着实况走，≥20s 顶到上限 60。
+DEFAULT_ACK_DELAY_FLOOR_SECONDS = 50.0
+DEFAULT_ACK_DELAY_CAP_SECONDS = 60.0
+# 倍率 2.0→**3.0**（同一裁定）：2.0 下现网慢跳 13.7s 派生 27.4s 恒被地板压住，
+# 自适应腿形同虚设；3.0 让单跳 EWMA ≥16.7s 的真抖动起后阈值跟着实况走，
+# ≥20s 顶到上限 60（区间由上面那枚 45~60 口径钉死）。
+DEFAULT_ACK_LATENCY_MULTIPLIER = 3.0
 # 配置面的下限：阈值/冷却再小也留 1 秒，防止填 0 变成"每条消息都先发一句"。
 MIN_ACK_WINDOW_SECONDS = 1.0
 # 倍率下限：小于 1 意味着"比网关当下正常耗时还早开口"，那是把误触发写进配置。
@@ -241,23 +258,39 @@ def effective_ack_delay_seconds(
     正常回复也必然跨过 15 秒 ⇒ 每次慢都先发一句"我在想"。这里改判据而不是
     改阈值数字：**只有比当下这条路本来该有的耗时更慢，才算慢**。
 
-    缺测（健康库未启用、读失败、还没有样本 ⇒ None 或 0）一律退回既有固定值，
-    fail-open 到旧行为——观测面坏了不得把回执功能一起带走。
+    缺测（健康库未启用、读失败、还没有样本 ⇒ None 或 0）取 `max(静态值, 地板)`：
+    观测面坏了依旧不得把回执功能一起带走（照样有一个可开口的阈值），但它**不再
+    比地板更早开口**。2026-09-26 把地板从 15 抬到 30（用户裁定 D2）之后，旧口径
+    "缺测逐字节退回静态值"留下一个冷启动窗口：刚重启时没有样本 ⇒ 仍按 15 秒开口
+    ⇒ D2 在最短命的那段时间里等于没生效（挂账 D2a）。2026-09-28 用户裁定收掉这一半。
 
-    ⚠ 本函数**不**给 ``delay_seconds`` 兜下限（下限钳制在 ``from_config`` 装配时
-    已经做过一次）：在这里再夹一道 ``max(1.0, …)`` 会把配置值就地改写，
-    旧行为是"配多少判多少"，测试也按亚秒阈值跑。
+    静态值与地板的关系（2026-09-28 改，人话版）：**静态值只在"没有观测数据"时说话**，
+    它高于地板就按静态值（保守）；一旦有网关实况，开口时刻由「实况 EWMA × 倍率」决定，
+    下界＝地板、上界＝上限，**静态值不再插手**。旧写法是两条路都取 max，等于把
+    "没数据时的保守值"当成了永久下界 ⇒ 她钉 40 之后自适应名存实亡。
+
+    ⚠ 上面那句"不压配置"是这支判据唯一的钳制方向。本函数**仍然**不给
+    ``delay_seconds`` 兜 `MIN_ACK_WINDOW_SECONDS` 那枚配置面下限（钳制在
+    ``from_config`` 装配时做过一次），也**不给关死自适应的那条支路兜地板**：
+    ``adaptive_enabled=False`` 是人为选择"配多少判多少"，再拿地板去顶就是静默改配置
+    ——下游管线用例正是拿亚秒静态值当测试旋钮跑的（DEFECT-5 的坑）。
     """
     static = float(settings.delay_seconds)
-    if not settings.adaptive_enabled or gateway_ema_ms is None:
+    if not settings.adaptive_enabled:
         return static
+    if gateway_ema_ms is None:
+        return max(static, settings.delay_floor_seconds)
     try:
         ema_ms = float(gateway_ema_ms)
     except (TypeError, ValueError):
-        return static
+        return max(static, settings.delay_floor_seconds)
     if ema_ms <= 0:
-        return static
-    floor = max(static, settings.delay_floor_seconds)
+        return max(static, settings.delay_floor_seconds)
+    # 有观测数据 ⇒ 地板就是地板，**不与静态值取 max**（2026-09-28 用户指出旧写法笨：
+    # 她把静态值钉到 40 想让"慢才开口"，旧代码却让这枚 40 顺手把整条自适应的下界一起
+    # 顶到 40 ⇒ 网关明明很健康也只能等 40 秒才说一句，自适应名存实亡）。
+    # 现在的分工：静态值＝没数据时的保守下界；地板＝有数据时的下界；倍率＝按当下实况抬。
+    floor = settings.delay_floor_seconds
     ceiling = max(floor, settings.delay_cap_seconds)
     # 两条不变量（tests/test_progress_ack_thresholds.py 逐条现算）：
     # ① 结果永远夹在 [floor, ceiling] ⇒ 网关抖动不会把开口时刻推到无穷远；
@@ -295,17 +328,42 @@ def normalize_session_type(value: object) -> str:
     return "private" if text.endswith(("private", "dm")) else "group"
 
 
+def _ack_platform_allowed_on_group_side(platform: object) -> bool:
+    """群侧名单吃不吃这条平台腿（DEFECT-2 判据真身）。
+
+    认得出的非 QQ 域（telegram/tg）⇒ 拒；QQ 域与"没给/认不出"⇒ 放行。
+    后者是刻意的 fail-open 到**现状**，不是到"安全"：本腿先行落地时 pipeline 还没
+    传平台（禁写面待主代理接线），若把空串当拒，回执面会当场整面关死——那才是
+    没人授权的变更。接线一完成，非 QQ 平台就吃这道门（两态锁见
+    `tests/test_redrive_window_exhaustion.py`）。
+    """
+    return platform_domain_of(platform) in ("", PLATFORM_QQ)
+
+
 def progress_ack_allowed(
     settings: ProgressAckSettings,
     *,
     session_type: str,
     group_id: str = "",
     sender_id: str = "",
+    platform: str = "",
 ) -> bool:
-    """这轮该不该发回执（名单门）。黑名单永远赢，缺省关。"""
+    """这轮该不该发回执（名单门）。黑名单永远赢，缺省关。
+
+    `platform`＝DEFECT-2 的**接收腿**（2026-09-28 S-ACK 补，台账 §47.3）：群白名单是
+    QQ 群号那一本账，而 TG 频道消息也带 `group_id`＝chat.id（根 `__init__.py:1340-1341`），
+    同号即被一并放行 ⇒ 回执投到另一个平台。紧急域同类问题已立平台门
+    （`capabilities/emergency_info.py` 非 QQ 拒收，台账 #46），回执面缺的就是这一腿。
+    平台写法→平台域的归一**不在此另立一张表**，共读 `policy/roles.py::platform_domain_of`
+    （唯一声明位）。缺省空串＝调用方没给平台 ⇒ 保持现状放行，所以**光有本腿线上不变**：
+    生效还要 pipeline 把 `message.platform` 传进来（`pipeline.py:1443`，本席禁写面，
+    补丁描述见交卷 `_hub 补丁申请_`）。
+    """
     if not settings.enabled:
         return False
     if normalize_session_type(session_type) == "group":
+        if not _ack_platform_allowed_on_group_side(platform):
+            return False
         if group_id and group_id in settings.group_blacklist:
             return False
         return bool(group_id) and group_id in settings.group_whitelist

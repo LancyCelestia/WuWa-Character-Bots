@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import random
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 
@@ -27,11 +28,36 @@ class AltPersonaSpec:
     files: tuple[str, ...] = ()
     weight: float = 0.0
     emotions: tuple[str, ...] = ()
+    # 人格自带的**静态知识清单**（H-4甲：切人格只换这一份文本清单，向量库不碰）。
+    # 空元组＝该 persona 不表态，由 providers 回落 .env 基线清单（不制造第二真身）。
+    knowledge_files: tuple[str, ...] = ()
 
 
 class PersonaSelector:
-    def __init__(self, alt_personas: dict[str, AltPersonaSpec]) -> None:
-        self.alt_personas = dict(alt_personas)
+    """备用人格选择器。入参是**可调用视图**（单一形态，不收 dict 快照）。
+
+    为什么不收 dict：装配期一次性快照会把人格册冻结在构造瞬间——启动后入册/
+    改册的人格永远读不到（SEAT-ATK-PERSONA-APPEARANCE 探针 P1 实证的根病，
+    H-5乙热读的消费腿缺口）。唯一构造点在 providers 装配工厂处以
+    ``lambda: build_effective_alt_personas(...)`` 适配，每次 ``select()`` 现读，
+    与校验腿（runtime_admin 现算）同册同速。dict 形态**不接受**（禁双形态分支）。
+    """
+
+    def __init__(
+        self, alt_personas: Callable[[], Mapping[str, AltPersonaSpec]]
+    ) -> None:
+        # 单一形态硬闸：构造时即拒收非可调用对象（dict 快照当场 TypeError，
+        # 不是"两形态都收"的分支——唯一合法形态就是可调用视图，绝不静默冻结）。
+        if not callable(alt_personas):
+            raise TypeError(
+                "PersonaSelector 只收可调用视图 Callable[[], Mapping[str, AltPersonaSpec]]；"
+                "装配期 dict 快照正是被治的半切根病，禁止回潮"
+            )
+        self._alt_personas_view = alt_personas
+
+    def _current(self) -> dict[str, AltPersonaSpec]:
+        """每轮现读视图：一次 select() 内取一次快照，保证同轮判定一致。"""
+        return dict(self._alt_personas_view())
 
     def select(
         self,
@@ -41,21 +67,22 @@ class PersonaSelector:
         weights: dict[str, float] | None = None,
         rng: random.Random | None = None,
     ) -> AltPersonaSpec | None:
+        alt_personas = self._current()
         if override:
             if override == "default":
                 return None
-            spec = self.alt_personas.get(override.strip())
+            spec = alt_personas.get(override.strip())
             if spec is not None:
                 return spec
             # 管理员指定了不存在的人格 id：保守地回到主人格，不参与随机。
             return None
         emotion_labels = set(emotions or [])
-        for spec in self.alt_personas.values():
+        for spec in alt_personas.values():
             if emotion_labels & set(spec.emotions):
                 return spec
         candidates: list[tuple[AltPersonaSpec, float]] = []
         effective_weights = dict(weights or {})
-        for spec_id, spec in self.alt_personas.items():
+        for spec_id, spec in alt_personas.items():
             weight = effective_weights.get(spec_id, spec.weight)
             if weight is None or weight <= 0:
                 continue
@@ -103,6 +130,7 @@ def build_alt_personas(config: object) -> dict[str, AltPersonaSpec]:
         weight = item.get("weight", 0.0)
         if not isinstance(weight, (int, float)):
             weight = 0.0
+        knowledge_files = _coerce_tuple(item.get("knowledge_files"))
         specs[str(profile_id)] = AltPersonaSpec(
             profile_id=str(profile_id),
             display_name=str(item.get("display_name", profile_id)).strip()
@@ -110,5 +138,15 @@ def build_alt_personas(config: object) -> dict[str, AltPersonaSpec]:
             files=file_list,
             weight=max(0.0, min(1.0, float(weight))),
             emotions=emotion_list,
+            knowledge_files=knowledge_files,
         )
     return specs
+
+
+def _coerce_tuple(value: object) -> tuple[str, ...]:
+    """清单字段兼容 list / 分号串 / 缺失三态，统一成去空字符串元组。"""
+    if isinstance(value, list):
+        return tuple(str(item).strip() for item in value if str(item).strip())
+    if isinstance(value, str) and value.strip():
+        return tuple(part.strip() for part in value.split(";") if part.strip())
+    return ()

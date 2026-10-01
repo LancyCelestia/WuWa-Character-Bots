@@ -408,9 +408,7 @@ def fetch_nmc_alarms(
     `reason`，绝不返回空的 `OK`。
     """
     url = build_nmc_find_alarm_url(page_no, page_size)
-    doc = resolve_document(
-        url, fetch=fetch, timeout=timeout, proxy=proxy, verify_ssl=False, retry=retry
-    )
+    doc = resolve_document(url, fetch=fetch, timeout=timeout, proxy=proxy, retry=retry)
     if not doc.ok:
         return failed_outcome(SOURCE_ID, doc.failure, attempts=doc.attempts)
     outcome = parse_nmc_alarm_page(doc.payload)
@@ -431,9 +429,7 @@ def fetch_nmc_station_alarm(
         url = build_nmc_rest_weather_url(stationid, timestamp_ms=timestamp_ms)
     except UnsafeIdentifier as exc:
         return failed_outcome(SOURCE_ID, f"unsafe_stationid:{exc}")
-    doc = resolve_document(
-        url, fetch=fetch, timeout=timeout, proxy=proxy, verify_ssl=False, retry=retry
-    )
+    doc = resolve_document(url, fetch=fetch, timeout=timeout, proxy=proxy, verify_ssl=False, retry=retry)
     if not doc.ok:
         return failed_outcome(SOURCE_ID, doc.failure, attempts=doc.attempts)
     return parse_nmc_station_alarm(doc.payload, stationid=stationid)

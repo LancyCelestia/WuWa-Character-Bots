@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS emergency_subscriptions (
     latitude        REAL,
     longitude       REAL,
     radius_km       REAL NOT NULL DEFAULT 200,
+    radius_set      INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL,
     last_matched_at TEXT,
@@ -116,8 +117,12 @@ _ITEM_EXTRA_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 
 #: 订阅表 WP3 新增列：注册表派生的类别 id 集合（逗号拼，与 levels/kinds 同族形态）。
+#: `radius_set`（F-3，2026-09-27）：用户是否**显式写了** `radius=`——投递侧要靠这格
+#: 分「订全部」与「裸半径」，`radius_km` 的数值本身分不出缺省与意图。存量行缺省 0
+#: ＝旧语义（当时裸半径规则与订全部不可分），重新设立一次即带上真实意图。
 _SUBSCRIPTION_EXTRA_COLUMNS: tuple[tuple[str, str], ...] = (
     ("categories", "TEXT NOT NULL DEFAULT ''"),
+    ("radius_set", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 _SELECT_COLUMNS = (
@@ -218,6 +223,7 @@ def _row_to_rule(row: sqlite3.Row) -> SubscriptionRule | None:
             latitude=None if latitude is None else float(latitude),
             longitude=None if longitude is None else float(longitude),
             radius_km=float(payload.get("radius_km") or DEFAULT_RADIUS_KM),
+            radius_set=bool(int(payload.get("radius_set") or 0)),
             created_by=str(payload.get("created_by") or ""),
             last_matched_at=_parse_utc(payload.get("last_matched_at")),
             match_count=int(payload.get("match_count") or 0),
@@ -401,6 +407,7 @@ class EmergencyStore:
             rule.latitude,
             rule.longitude,
             float(rule.radius_km),
+            int(rule.radius_set),
             moment,
             moment,
         )
@@ -417,8 +424,8 @@ class EmergencyStore:
                 INSERT INTO emergency_subscriptions (
                     target_key, target_scope, target_id, created_by,
                     levels, kinds, categories, area_name, latitude, longitude,
-                    radius_km, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    radius_km, radius_set, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(target_key) DO UPDATE SET
                     levels = excluded.levels,
                     kinds = excluded.kinds,
@@ -427,6 +434,7 @@ class EmergencyStore:
                     latitude = excluded.latitude,
                     longitude = excluded.longitude,
                     radius_km = excluded.radius_km,
+                    radius_set = excluded.radius_set,
                     created_by = excluded.created_by,
                     updated_at = excluded.updated_at
                 """,
@@ -445,13 +453,28 @@ class EmergencyStore:
         return None if row is None else _row_to_rule(row)
 
     def list_subscriptions(self) -> list[SubscriptionRule]:
-        """全部生效规则（投递侧每轮现读 ⇒ 群里设完当轮即生效，不等重启）。"""
+        """全部生效规则（投递侧每轮现读 ⇒ 群里设完当轮即生效，不等重启）。
+
+        形状不合的存量行**点名后再丢**（SEAT-ATK-EMERGENCY-SUB 检查点4 注记）：
+        静默滤掉与家规「认不出就报错候选、绝不静默收下」有一齿缝——用户只会看到
+        「这条订阅至今一次都没命中」，查不到是行形被拒；一行 warning 把归因还给排障。
+        """
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM emergency_subscriptions ORDER BY updated_at DESC"
             ).fetchall()
-        rules = [_row_to_rule(row) for row in rows]
-        return [rule for rule in rules if rule is not None]
+        kept: list[SubscriptionRule] = []
+        for row in rows:
+            rule = _row_to_rule(row)
+            if rule is None:
+                logging.getLogger(__name__).warning(
+                    "emergency subscription row dropped as malformed (not delivered"
+                    " until re-set): target=%s",
+                    str(dict(row).get("target_key") or "")[:64],
+                )
+                continue
+            kept.append(rule)
+        return kept
 
     def delete_subscription(self, target_key: str) -> bool:
         """退订：删行（裁定 5.A「永久直到退订」的对偶——没有"暂停"这个态）。"""

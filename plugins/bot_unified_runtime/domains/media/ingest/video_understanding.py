@@ -32,6 +32,7 @@ from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
     _clip,
     _encode_image_bytes,
     _extract_video_frames,
+    _local_media_source_allowed,
     _local_path_from_value,
 )
 
@@ -49,6 +50,10 @@ _VIDEO_BRIEF_SYSTEM_PROMPT = (
 _MAX_TEXT_CONTEXT_CHARS = 1500
 # 超大音频上传徒增超时风险；与 transcribe 的预算一致。
 _MAX_AUDIO_BYTES = 20_000_000
+# 攻击者复查收口的**焊死开关**（2026-09-27 S-ATKFIX-SSRF2 立、同日裁定「先登记不堵」）：
+# 置 True 才会把 http 源交给中央 ``check_download_url`` 预检。今天整条预检腿焊死关闭，
+# 下面那段判据代码保持在场、一旦裁定放行只需把这个常量翻成 True（禁删这段）。
+_SSRF_PRECHECK_WELDED_OFF = False
 _VIDEO_SUFFIX_MIME = {
     ".mp4": "video/mp4",
     ".m4v": "video/x-m4v",
@@ -114,7 +119,33 @@ def _extract_audio_clip(
 
     参考 transcribe._prepare_audio 的转码写法，输入换成视频并加 -t 时长上限；
     是否发生截断通过同一次 ffmpeg 输出的 Duration 探测，写回 truncated_out。
+
+    攻击者复查残余收口（2026-09-27 席位 S-ATKFIX-SSRF2）：http 源由 ffmpeg
+    自带网络栈自取、绕开 Python 咽喉（与 yt-dlp F-5 同类）。在把源交给 ffmpeg
+    之前先过**中央唯一判据** ``check_download_url``——明确拒绝即按「无音轨」降级
+    返回 ``None``（与 ffmpeg 缺失同口径），绝不把内网地址下发给 ffmpeg；本机文件
+    路径不受影响。ffmpeg 自身跟随的重定向落点属连接级残余（同 F-5/F-8），登记不堵。
+
+    本地形态另过识图那条腿的**同一条带门判据**（INCIDENT-20260930 §5 P0：本函数
+    收到的 ``source`` 可能是媒体档案里早先写进 DB 的 ``local_path``，不经这一问
+    等于绕开现算判定）：非本地形态（http／其它 scheme）照旧交给上游咽喉，
+    本地形态过不了域门就按「无音轨」降级，命令行都不下发。
     """
+    src = str(source or "")
+    if not _local_media_source_allowed(src):
+        logger.info("video: audio clip source refused by local path gate")
+        return None
+    if _SSRF_PRECHECK_WELDED_OFF and src.startswith(("http://", "https://")):
+        from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+            RejectedUrlError,
+            check_download_url,
+        )
+
+        try:
+            check_download_url(src)
+        except RejectedUrlError:
+            logger.warning("video: audio clip source rejected by SSRF guard")
+            return None
     ffmpeg = _find_ffmpeg_locate()
     if not ffmpeg:
         logger.info("video audio clip skipped: ffmpeg not found")

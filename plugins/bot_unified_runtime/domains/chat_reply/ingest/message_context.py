@@ -38,7 +38,11 @@ def _flatten(items: Any, *, depth: int = 0) -> tuple[list[dict[str, Any]], list[
             value = str(data.get("text") or data.get("content") or "").strip()
             if value:
                 quotes.append(value)
-                texts.append(f"\n[引用内容]\n{_neutralize_markers(value)}\n[/引用内容]")
+                # P2-d：被引用正文是**他人可控**串，进 plain_text 前过同一把尺
+                # （`_display_safe_text` 内含 `_neutralize_markers` 的同一枚真身，
+                # 不再叠第二遍）。裸 text 段（用户自己键入那格）不在此动——
+                # 它由入站话术门 `check_prompt_injection` 逐条处置，两腿不互替。
+                texts.append(f"\n[引用内容]\n{_display_safe_text(value)}\n[/引用内容]")
             normalized.append({"type": "quote", "data": {**data, "text": value}})
         elif kind in {"forward", "chat_history", "messages"}:
             children = data.get("messages") or data.get("content") or data.get("nodes")
@@ -46,7 +50,10 @@ def _flatten(items: Any, *, depth: int = 0) -> tuple[list[dict[str, Any]], list[
             joined = "\n".join(child_texts).strip()
             if joined:
                 forwards.append(joined)
-                texts.append(f"\n[转发/聊天记录]\n{_neutralize_markers(joined)}\n[/转发/聊天记录]")
+                # P2-d：合并转发整块都是他人内容，同走文本咽喉（同上注释）。
+                texts.append(
+                    f"\n[转发/聊天记录]\n{_display_safe_text(joined)}\n[/转发/聊天记录]"
+                )
             normalized.append({"type": "forward", "data": {"messages": child_segments, **data}})
             normalized.extend(child_segments)
             quotes.extend(child_quotes); forwards.extend(child_forwards)
@@ -116,6 +123,15 @@ REPLY_CHAIN_TOTAL_CHARS = 2000
 # 链条在"真实需要时"才展开：层数上限虽为 5，但只有确实存在更深引用时才会去取，
 # 避免为了凑层数而做多余的反查请求或注入空层。
 _ELLIPSIS = "…"
+# 引用图媒体预算（席位 MM-VIS-1，2026-09-29，治审计缺陷 2「引用图只有 [图片] 三字」）：
+# 被引用那条消息里的图，此前在 `_segments_to_text` 被折成 `[图片]` 标签就完事了——
+# 模型知道"那里有过一张图"，但对图上写了什么一无所知。现在把图源指针一并带出来，
+# 交给聊天腿的识图咽喉（`chat.py` 图片识别那一段）当**额外图片**描述。
+# 上限两枚都刻意与主消息同一量级，不放宽：
+# - 张数＝2，与 `BOT_VISION_MAX_IMAGES` 缺省同值（多的图进不了模型，白排队）；
+# - 总字节＝8MB，兜住"两条各一张 4K 截图 data URL"这种把请求体撑爆的形状。
+REPLY_CHAIN_MAX_MEDIA_REFS = 2
+REPLY_CHAIN_MEDIA_TOTAL_BYTES = 8_000_000
 # 内部标记统一正则（审查 F-13 同族收口：全项目唯一一份）。
 # security/injection.py 与 capabilities/chat.py 的同用途正则一律从本模块导入，
 # 禁止再复制第二份——三处各自维护曾导致 chat 侧漏收引用族标记。
@@ -135,7 +151,20 @@ INTERNAL_MARKER_PATTERN = re.compile(
 
 @dataclass(frozen=True)
 class ReplyChainItem:
-    """引用链的一层（自近及远：layer=1 是直接回复的那条）。"""
+    """引用链的一层（自近及远：layer=1 是直接回复的那条）。
+
+    ``text`` 与 ``sender_name`` 由两个采集入口（``collect_reply_chain`` /
+    ``collect_reply_chain_async``）在**存入前**统一过 ``_neutralize_markers``；
+    绕过采集入口手工构造的实例没有这层保证，不要新增第二个构造点。
+
+    ``media_refs``＝被引用那条消息里**图片段**的源指针（本机路径 / http URL /
+    ``data:`` URL 三态都可能，顺序即段顺序，上限见
+    ``REPLY_CHAIN_MAX_MEDIA_REFS``）。它**不是**已经编码好的 data URL——
+    下载与编解码只在识图咽喉那一次发生（``vision_describe.prepare_vision_image_urls``），
+    摄取层不碰网络、也不做第二次编码（字段旧名 ``media_data_urls`` 会让人以为
+    这里已经编码过，实为误导，故按真形态命名）。
+    音频/视频段不进这里：视频另有 ``reply_video_path`` 那条已通的专用腿。
+    """
 
     layer: int
     message_id: str = ""
@@ -143,6 +172,7 @@ class ReplyChainItem:
     sender_name: str = ""
     text: str = ""
     media_labels: tuple[str, ...] = ()
+    media_refs: tuple[str, ...] = ()
 
 
 def _neutralize_markers(value: str) -> str:
@@ -159,6 +189,45 @@ def _neutralize_markers(value: str) -> str:
         lambda match: match.group(0).replace("[", "［").replace("]", "］"),
         value,
     )
+
+
+def _display_safe_name(value: str) -> str:
+    """名片**显示形态**的视觉伪装处置（ANTIATTACK P2-d · 需求 17）。
+
+    与 `_neutralize_markers` 各管一段、互不替代：那枚管「块边界能不能被伪造」，
+    本枚管「肉眼看到的形态与真实码点是否一致」——RLO（U+202E）会把名片后半段
+    翻成反向、零宽字符能把 `admin` 藏进一串看似无害的字符里，而这两类字符
+    **都不是**方括号，`INTERNAL_MARKER_PATTERN` 一个都不命中。群名片是攻击者
+    可控输入，伪装名进提示词块头 `[引用回复 层级N 名字]` 等于让它自己挑怎么被读。
+
+    判据零副本：真身住 `core/safety_exec/attack_surface`，处置口住
+    `chat_reply/security/injection::render_safe_display_name`。
+    **局部导入**——`security/injection.py` 顶层从本件取 `INTERNAL_MARKER_PATTERN`，
+    模块级反向导入会成环（局部导入先例：notes / vision_describe / sentiment_selector）。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
+        render_safe_display_name,
+    )
+
+    return render_safe_display_name(value, surface="reply_chain_sender_name")
+
+
+def _display_safe_text(value: str) -> str:
+    """被引用/转发**正文**的显示伪装处置（P2-d 文本腿，进 prompt 前）。
+
+    名片只骗眼睛，正文还能骗「这一块的边界在哪」——所以文本腿既要不腐化可见形态
+    （剥 Bidi/零宽、逐词折同形角色词、压空白填充），又要保住块边界（内部标记
+    全角化）。两半各归各位：伪装半借 `display_guard.neutralize_visual_spoof`
+    （判据仍住 attack_surface，本件一张表都不抄），边界半仍用本件自己的
+    `_neutralize_markers`——它在册口径是**保留尾巴**的全角形（`［/引用回复 层级1］`），
+    换成 injection 那形会把层级与发送者名抹掉，属另一条已登记漂移（另案）。
+    顺序固定：先伪装后边界（反了会把 `［］` 当正文的一部分喂给谓词）。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.security.display_guard import (
+        neutralize_visual_spoof,
+    )
+
+    return _neutralize_markers(neutralize_visual_spoof(value, surface="reply_chain_body"))
 
 
 def _clip(value: str, limit: int) -> str:
@@ -184,12 +253,76 @@ def _as_segment_dict(item: Any) -> dict[str, Any] | None:
     return {"type": str(seg_type), "data": data if isinstance(data, dict) else {}}
 
 
-def _segments_to_text(segments: Any) -> tuple[str, tuple[str, ...]]:
-    """段列表 → (文本, 媒体标签)。
+def _image_segment_types() -> set[str]:
+    """「可看的图」段类型集合——判据借 ``vision_describe.IMAGE_GROUPS``，此处不抄表。
+
+    为什么不能在这里自己写一份 ``{"image", "photo", ...}``：那套字面量的真身住在
+    视觉侧（按 photo/sticker/animation 三组分家，2026-09-23 用户多模态矩阵裁定），
+    引用腿再手写一份就是第二真身——两处早晚打架（QQ 的 ``face/mface/marketface``
+    在归一层已被改写成 ``emoji`` 段，只写 mface 的那份副本就漏过一整列，
+    视觉侧 09-23 就踩过这个坑）。局部导入＝避免与视觉侧的模块级循环，
+    先例见 ``_display_safe_name`` 的在册注释。
+    """
+    from plugins.bot_unified_runtime.domains.media.ingest import vision_describe
+
+    types: set[str] = set()
+    for group in vision_describe.DEFAULT_IMAGE_GROUPS:
+        types |= set(vision_describe.IMAGE_GROUPS.get(group, ()))
+    return types
+
+
+def _segments_media_refs(segments: Any) -> tuple[str, ...]:
+    """段列表 → 图片源指针（至多 ``REPLY_CHAIN_MAX_MEDIA_REFS`` 张、总字节封顶）。
+
+    只指针、不下载不编码（理由见 ``ReplyChainItem.media_refs`` 文档串）。
+
+    **取哪一个指针是有讲究的**：一个段可能同时挂 ``url``(http) 与 ``file``(本机)
+    两键，而调用侧的识图咽喉 ``vision_describe.extract_image_urls`` 的既有口径是
+    「本机优先、http 兜底」（``resolved = local_url or http_url``）。本函数刻意
+    抄不动、只用同一个偏好：两条腿对**同一张图**选出的必须是**同一个字符串**，
+    聊天腿那句"按编码结果去重"才成立。去重一旦失效，同一张图会进两次 VLM 请求——
+    缺陷 2 修完反而把账单翻倍，那是比读不到图更坏的"修出 regression"。
+    """
+    try:
+        wanted = _image_segment_types()
+    except Exception:  # noqa: BLE001 - 判据取不到就当"本轮没有引用图"，绝不让摄取崩。
+        return ()
+    refs: list[str] = []
+    total = 0
+    for item in segments or ():
+        seg = _as_segment_dict(item)
+        if seg is None:
+            continue
+        if str(seg.get("type", "")).strip().lower() not in wanted:
+            continue
+        data = seg.get("data")
+        data = data if isinstance(data, dict) else {}
+        candidates = [
+            str(data.get(key) or "").strip() for key in ("url", "file", "path")
+        ]
+        local_ref = next(
+            (part for part in candidates if part and not part.startswith("http")), ""
+        )
+        http_ref = next((part for part in candidates if part.startswith("http")), "")
+        ref = local_ref or http_ref
+        if not ref or ref in refs:
+            continue
+        if len(refs) >= REPLY_CHAIN_MAX_MEDIA_REFS:
+            break
+        if total + len(ref) > REPLY_CHAIN_MEDIA_TOTAL_BYTES:
+            break
+        refs.append(ref)
+        total += len(ref)
+    return tuple(refs)
+
+
+def _segments_to_text(segments: Any) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """段列表 → (文本, 媒体标签, 图片源指针)。
 
     OneBot 侧的 `Reply.message` 是完整段列表（实测含 image/record/video 段），
     媒体此前被 `extract_plain_text()` 整段丢弃；这里显式产出 `[图片]` 之类标签，
-    让模型至少知道"被引用的那条里有张图/有段语音"。
+    让模型至少知道"被引用的那条里有张图/有段语音"。第三个返回值把**图**的源
+    指针也带出来（MM-VIS-1 缺陷 2）——只给标签等于让模型猜图里写了什么。
     """
     items = [_as_segment_dict(item) for item in (segments or [])]
     _normalized, texts, _quotes, _forwards = _flatten(
@@ -203,7 +336,7 @@ def _segments_to_text(segments: Any) -> tuple[str, tuple[str, ...]]:
     joined = " ".join(part for part in texts if part and not part.startswith("[")).strip()
     if not joined:
         joined = " ".join(part for part in texts if part).strip()
-    return joined, media
+    return joined, media, _segments_media_refs(segments)
 
 
 def _plain_of(node: Any) -> str:
@@ -315,7 +448,7 @@ async def collect_reply_chain_async(
         fetched = await _maybe_await(lookup(nested_id))
         if not isinstance(fetched, dict):
             break
-        text, media = _segments_to_text(fetched.get("message"))
+        text, media, media_refs = _segments_to_text(fetched.get("message"))
         sender_raw = fetched.get("sender")
         sender = sender_raw if isinstance(sender_raw, dict) else {}
         chain.append(
@@ -323,9 +456,20 @@ async def collect_reply_chain_async(
                 layer=len(chain) + 1,
                 message_id=str(fetched.get("message_id") or nested_id),
                 sender_id=str(sender.get("user_id") or ""),
-                sender_name=str(sender.get("nickname") or sender.get("card") or ""),
-                text=_clip(_neutralize_markers(text), per_level_chars),
+                # INJ-G1：名字与正文同口径消毒——引用族标记刻意不在检测面，
+                # 未消毒的名格自己就是伪造器（群名片塞 `x] ［/引用回复…` 即裂块）。
+                # P2-d：先过显示伪装处置、再过块边界消毒（顺序不可倒：处置可能
+                # 整格换成屏蔽占位，占位里没有方括号，后过 `_neutralize_markers`
+                # 是恒等；反过来先全角化再判伪装，会把 `［］` 当成名字的一部分
+                # 喂给谓词）。反查腿与同步腿同权，存名点仍每腿一枚（禁第二处）。
+                sender_name=_neutralize_markers(
+                    _display_safe_name(
+                        str(sender.get("nickname") or sender.get("card") or "")
+                    )
+                ).strip(),
+                text=_clip(_display_safe_text(text), per_level_chars),
                 media_labels=media,
+                media_refs=media_refs,
             )
         )
         node = fetched
@@ -390,7 +534,11 @@ def collect_reply_chain(
             break
         if message_id:
             seen.add(message_id)
-        text, media = _segments_to_text(segments) if segments is not None else ("", ())
+        text, media, media_refs = (
+            _segments_to_text(segments)
+            if segments is not None
+            else ("", (), ())
+        )
         if not text:
             text = _plain_of(node)
         chain.append(
@@ -398,9 +546,17 @@ def collect_reply_chain(
                 layer=layer,
                 message_id=message_id,
                 sender_id=sender_id,
-                sender_name=sender_name,
-                text=_clip(_neutralize_markers(text), per_level_chars),
+                # INJ-G1：两条取数腿（dict 分支与 _sender_of）都汇到这一个
+                # 存名点，消毒放这里=单点两腿同权；format_reply_chain 不再
+                # 二次过（禁双过变三处）。对照先例=合并转发腿昵称由
+                # _neutralize_forward_body 在源头收口（root A-ING-1 波）。
+                # P2-d：存名点包一层显示伪装处置（顺序：处置→块消毒），
+                # 与反查腿同一把尺；正文走 `_display_safe_text`（内含同一枚
+                # 内部标记真身，不再叠第二遍 `_neutralize_markers`）。
+                sender_name=_neutralize_markers(_display_safe_name(sender_name)).strip(),
+                text=_clip(_display_safe_text(text), per_level_chars),
                 media_labels=media,
+                media_refs=media_refs,
             )
         )
         # 下一层：OneBot 走非标 reply.reply；Telegram 走递归的 reply_to_message。
@@ -438,10 +594,14 @@ def format_reply_chain(
     *,
     total_chars: int = REPLY_CHAIN_TOTAL_CHARS,
 ) -> str:
-    """把引用链渲染成逐层闭合的提示词块（已消毒、已预算）。
+    """把引用链渲染成逐层闭合的提示词块（预算在本函数，消毒在采集处）。
 
-    单层：``[引用回复 层级1] …[/引用回复 层级1]``；多层逐层输出，便于模型区分
-    "当前这话"与"被引用的旧话"，并在信息不足时显式给出层级达上限的提示。
+    准确口径（INJ-G1 修正，旧 docstring 写「已消毒」曾为半真）：正文与发送者
+    名都已在 ``collect_reply_chain`` / ``collect_reply_chain_async`` 存入
+    ``ReplyChainItem`` 前过 ``_neutralize_markers``，本函数才敢把名字原样拼进
+    块头 ``[引用回复 层级N 名字]``；本函数自身不做任何消毒，只做逐层闭合渲染
+    与整链总预算。多层逐层输出，便于模型区分"当前这话"与"被引用的旧话"，
+    并在信息不足时显式给出层级达上限的提示。
     """
     items = list(chain or [])
     if not items:
@@ -465,3 +625,85 @@ def format_reply_chain(
         joined = f"{joined}\n[引用层级已达上限]"
     return joined
 
+
+
+# ---------------------------------------------------------------------------
+# 发件人展示名读取（需求 4 · 2026-09-28 S-META）
+# ---------------------------------------------------------------------------
+# 病根：摄取层只读 OneBot V11 的 ``event.sender.card / .nickname``
+# （``__init__.py`` 的 ``_incoming_from_nonebot_event``），而 Telegram 的事件形态是
+# ``event.message.from_user``（User：first_name/last_name/username）、邮件是
+# ``event.mail_date_envelopes``/``message`` 上的 From 显示名——两通道在**这一段代码里
+# 根本没有对应的读取分支**，于是 ``IncomingMessage.sender_display_name`` 对 TG/Mail
+# 恒为 None，每轮提示词的身份面（``chat.py`` 的 ``sender_profile_note``）长期空转。
+# 本段是**读件**：只做「从事件里把该通道在册的字段取出来」这一件事，消毒与
+# 装配都不在这里（装配点在根摄取函数，属 hub 补丁；名字进提示词前仍走既有
+# ``_neutralize_markers``/出站打码，不在读件里另开一条）。
+#
+# 铁律：取不到就回 None，**绝不**用 sender_id（用户号）冒充名字——与
+# ``participant_memory`` 那条「绝不拿用户号顶上」的在册禁令同口径。
+
+
+def _clean(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def telegram_sender_display_name(event: Any) -> str | None:
+    """TG 发件人展示名：``<first_name> <last_name>``，两者皆空时退 ``@username``。
+
+    源＝``event.message.from_user``（适配器解析出的 User 对象）；私聊里事件顶层
+    也可能直接挂 ``from_user``，两处都试，取第一个非空。全空 ⇒ None（不猜）。
+    """
+    for holder in (
+        getattr(event, "message", None),
+        event,
+    ):
+        user = getattr(holder, "from_user", None) if holder is not None else None
+        if user is None:
+            continue
+        full = " ".join(
+            part
+            for part in (_clean(getattr(user, "first_name", "")), _clean(getattr(user, "last_name", "")))
+            if part
+        )
+        if full:
+            return full
+        username = _clean(getattr(user, "username", "")).lstrip("@")
+        if username:
+            return f"@{username}"
+    return None
+
+
+def mail_sender_display_name(event: Any) -> str | None:
+    """邮件发件人展示名：From 头的显示名（``李雷 <lee@example.com>`` 里的「李雷」）。
+
+    真身在适配器：``nonebot/adapters/mail/utils.py`` 的 ``parse_byte_mail`` 逐封解出
+    ``recipients_to/recipients_cc/reply_to``，From 显示名挂在 ``event.mail_from``
+    （Mail-Adapter 的 Address 对象：``name`` + ``email``）或 ``message.from_`` 上。
+    这里按「有 name 用 name；只有 email 就回 None」判定——地址本身已经在
+    ``sender_id`` 里了，拿它当昵称是冒充。
+    """
+    for holder in (getattr(event, "mail_from", None), getattr(event, "message", None), event):
+        if holder is None:
+            continue
+        for attr in ("name", "display_name"):
+            label = _clean(getattr(holder, attr, ""))
+            if label:
+                return label
+    return None
+
+
+def sender_display_name_for_event(event: Any, normalized_adapter: str) -> str | None:
+    """按通道取展示名；QQ 走既有 card/nickname 优先级，此处不插手（返回 None）。
+
+    ``normalized_adapter`` 用摄取层已归一好的小写适配器名（``telegram`` /
+    ``mail`` / 其余＝OneBot）。返回 None 的含义是「本读件对该通道没有补充」，
+    调用方保留自己算出的值——QQ 侧的 card/nickname 优先级是既有行为，
+    本函数刻意不复制一份第二判据（两处判据早晚打架）。
+    """
+    name = (normalized_adapter or "").strip().lower()
+    if name == "telegram":
+        return telegram_sender_display_name(event)
+    if name == "mail":
+        return mail_sender_display_name(event)
+    return None

@@ -64,12 +64,20 @@ def _calendar_day_line(snapshot: MomentSnapshot) -> str:
 
 
 def _system_zone_line(snapshot: MomentSnapshot) -> str:
-    """系统本地钟（台账 #6：它与 ``bot_timezone`` 是两把钟）；未注入就说未探测。"""
+    """系统本地钟（台账 #6：它与 ``bot_timezone`` 是两把钟）；未注入就说未探测。
+
+    标签只印一次：``system.name`` 的真身已经是「系统本地时区（…标准时间）」
+    （``moments.resolve_moments`` 造的这一面自带标签），前面再冠一枚「系统本地时区」
+    就出成「系统本地时区 系统本地时区（马来西亚半岛标准时间）：…」。
+    这一面的读数**永远是原始系统钟**——它的身份就是「机器自己的钟」，把它也接到
+    校时器上，这行标签当场变成谎话（锁在
+    ``tests/test_runtime_context_readout_partitions.py`` 第 ⑥ 族）。
+    """
     if snapshot.system is None:
         return "系统本地时区：未探测（装配层未注入 system_now）"
     system = snapshot.system
     return (
-        f"系统本地时区 {system.name}："
+        f"{system.name}："
         f"{system.instant.strftime('%Y-%m-%d %H:%M:%S')}"
         f"（{system.offset_label}）"
     )

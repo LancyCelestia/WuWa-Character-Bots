@@ -15,12 +15,10 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import logging
 import re
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -197,17 +195,37 @@ def fingerprint_image_bytes(data: bytes) -> str:
 
 
 def _image_to_data_url(ref: str) -> str:
-    """本地路径→data URL；http(s)/data: 原样透传（转换失败原样返回）。"""
+    """图片引用 → provider 侧图像形态：**只走识图腿在册判定口，禁第二取字节通路**。
+
+    病根（ATK-SCHED 票5 / S-FIX-ATK-SCHED2）：旧实现把本地路径自己
+    ``Path.read_bytes()`` → base64 ——任意本机可读文件（段字段 ``data.file`` 可指
+    ``.env`` 一类秘密）整块进外部 VLM 载荷，无大小上限、无格式白名单、不经任何
+    判定，正是 AGENTS「文件出站」行在册裁定「取字节前统一判定（禁第二通路）」点名的
+    第二通路。现收编到媒体域识图腿的既有咽喉（chat 视觉面同一构造，零新机制）：
+
+    - ``http(s)``：``prepare_vision_image_urls``——入口中央咽喉
+      ``domains/files/sources/downloader.check_download_url`` + 逐跳 SSRF 复查，
+      bot 侧限额下载再编码（QQ 签名 URL 对服务商不可达的同族老坑一并治掉）；
+      咽喉明确拒绝＝丢图不回透（F-2 口径），瞬时失败保留原 URL 兜底（原语义）。
+    - 本地路径/``file:``：``_image_file_to_data_url``——大小上限 + 格式白名单 +
+      像素预算（解压炸弹锁），读不实按无图降级返回空串，调用方丢该条。
+    - ``data:``：原样透传（字节由消息本身带来，不触本地读）。
+    - 空引用：返回空串。
+    """
     text = str(ref or "").strip()
-    if text.startswith(("http://", "https://", "data:")):
+    if not text:
+        return ""
+    from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
+        _image_file_to_data_url,
+        prepare_vision_image_urls,
+    )
+
+    if text.startswith("data:"):
         return text
-    path = Path(text)
-    if not path.is_file():
-        return text
-    suffix = path.suffix.lstrip(".").lower() or "png"
-    mime = "jpeg" if suffix in ("jpg", "jpeg") else suffix
-    raw = path.read_bytes()
-    return f"data:image/{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+    if text.startswith(("http://", "https://")):
+        prepared = prepare_vision_image_urls([text])
+        return prepared[0] if prepared else ""
+    return _image_file_to_data_url(text) or ""
 
 
 def _extract_json(raw: str) -> dict[str, Any]:
@@ -313,9 +331,19 @@ def recognize_timetable(
     refs = [images] if isinstance(images, str) else list(images or [])
     if provider is None or not refs:
         return TimetableDraft()
+    converted = [_image_to_data_url(ref) for ref in refs[:2]]
+    usable = [url for url in converted if url]
+    if not usable:
+        # 票5 收严后的诚实面：所有图都过不了在册判定口（本地非图/咽喉拒绝/读不实）
+        # =「这张图没读成」，**绝不空手敲 provider**——没有图像的纯文字请求只会让
+        # 模型凭提示词编课程（识别失败=空草稿+澄清，不猜）。
+        draft = TimetableDraft()
+        if image_bytes:
+            draft.image_fingerprint = fingerprint_image_bytes(image_bytes)
+        return draft
     content: list[dict[str, Any]] = [{"type": "text", "text": "帮我把这张课程表整理成清单。"}]
-    for ref in refs[:2]:
-        content.append({"type": "image_url", "image_url": {"url": _image_to_data_url(ref)}})
+    for url in usable:
+        content.append({"type": "image_url", "image_url": {"url": url}})
     messages = [
         {"role": "system", "content": _LLM_TIMETABLE_PROMPT},
         {"role": "user", "content": content},

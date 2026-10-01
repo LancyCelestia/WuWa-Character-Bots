@@ -45,6 +45,13 @@ from plugins.bot_unified_runtime.domains.core.credentials.credential_health impo
 # 探针线程结束时释放；进行中收到的新 probe 命令只回执提示，不再叠加探针。
 _MODEL_PROBE_LOCK = threading.Lock()
 
+# F-A 单一真身：persona 命令面**会改运行时状态**的动作形全集。super_admin 门与处理腿
+# 同读这一枚（禁第二本账）——门曾只枚举英文三形、腿实收 ``auto`` 与中文 ``概率``，
+# 普通 admin 因此能清切换态、改切换权重（取证见
+# .superpowers/sdd/2026-09-27-fullload/patches/S-RECON-PADMIN-20260929.md §③）。
+# ``list`` 是只读形，绝不混进来（那会把 admin 的查看权一并锁死）。
+_PERSONA_WRITE_ACTIONS: frozenset[str] = frozenset({"switch", "auto", "reset", "probability", "概率"})
+
 
 def _admin_only_result(request_id: str) -> CapabilityResult:
     return CapabilityResult(
@@ -435,6 +442,183 @@ def _usage_channel_stats(
         target["calls"] += int((bucket or {}).get("calls", 0) or 0)
         target["cost_milli"] += int((bucket or {}).get("cost_milli", 0) or 0)
     return stats or None
+
+
+# 口径注记文案（同一句话只有一个真身，回落两腿共用，别在分支里各写一遍）。
+_LEDGER_UNREADABLE_NOTE = (
+    "口径注记：账本这一轮没读到（库不可达或窗口参数不合），账单这一行仍按事件侧的毫厘记账。"
+)
+_LEDGER_EMPTY_WINDOW_NOTE = (
+    "口径注记：账本当日窗口里没有行，账单这一行仍按事件侧的毫厘记账。"
+)
+# 账本家族列 → 该列在表头对应的计数（补齐行时一起补，屏幕才加得平）。
+_LEDGER_FAMILY_COLUMNS: tuple[tuple[str, str | None], ...] = (
+    ("by_model", "total_tokens"),
+    ("by_model_prompt", "prompt_tokens"),
+    ("by_model_completion", "completion_tokens"),
+    ("by_model_cache_read", "cache_read_tokens"),
+    ("by_model_cache_write", "cache_write_tokens"),
+    ("by_model_calls", "calls"),
+    ("by_model_unpriced", "unpriced_calls"),
+)
+
+
+def _brief_names(names: list[str], *, limit: int = 4) -> str:
+    """名字列表短写（注记行要说清是哪几个家族，又不许把屏幕占满）。"""
+    ordered = sorted(names)
+    if len(ordered) <= limit:
+        return "、".join(ordered)
+    return "、".join(ordered[:limit]) + " 等"
+
+
+def _usage_money_from_ledger(
+    config: object,
+    target_date: date,
+    aggregate: dict[str, Any],
+) -> str:
+    """把账单的钱换成账本口径（与渠道子行同源），必要时给出「口径注记」行。
+
+    原地改写 ``aggregate``：主行 ``cost_milli`` 与 ``by_model_cost_milli`` 换源到
+    账本，账本独有的家族整列补齐；返回需要补的注记文案（不需注记＝空串）。
+
+    为什么必须换源（SEAT-ATK-BILLING F-1）：事件侧的 ``cost_milli`` 是**逐行**
+    整数毫厘，亚毫厘单价（实测一发 0.000219 元 = 0.219 毫厘）每行取整成 0，一天
+    加下来主账单塌向 0.00，而渠道子行走账本微元聚合、如实报 0.22——同一屏两套钱，
+    自己打自己脸。``aggregate_usage_totals`` 与 ``_usage_channel_stats`` 读同一张
+    ``llm_call_records``、同一窗口，取整只在聚合末端做一次
+    （台账 #54★「成本原语走微元、取整只在聚合」）。
+
+    自洽构造：主行金额一律取 ``sum(by_model_cost_milli.values())``，也就是屏幕上
+    按模型各行之和——账要能自己加得平（与 ``aggregate_usage_totals`` 自带的总计
+    独立取整最多差每家族 1 毫厘＝0.001 元，低于本屏的分精度，换不来「加不平」）。
+
+    与镜像面的分工（同一枚原语，两处消费腿）：定时报告面走
+    ``usage_monitor._apply_ledger_main_row``，账本有行时整段聚合（含 token 列）
+    都换成账本口径；命令面这里只换**钱**，token/次数仍取事件侧的完整记录，
+    并且事件侧本已计价、账本当日没有行的家族不被丢掉——它被点名。两屏都遵守
+    同一条铁律：回落与换源都不许静默。差异已写进报告，合并成一处真身归报告面。
+
+    诚实边界（绝不静默换源）：
+    - 账本关（缺省）⇒ 一个字节都不动，也绝不解析库路径。
+    - 账本开但读不到 / 窗口无行 ⇒ 沿用事件毫厘**并注记口径**（两种成因分开说）。
+    - 两侧覆盖的家族不重合 ⇒ 注记哪几行各按哪本的账，不做第二套算法。
+    - 账本有行却没有价格 ⇒ 笔数写进注记，账单上的 0 不许静默地 0（屏幕上那句
+      「N 次调用未计价」吃的是事件侧计数，账本侧的笔数由注记自己报）。
+    """
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.ledger import (
+            aggregate_usage_totals,
+            ledger_enabled,
+            resolve_default_db_path,
+        )
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.pricing import (
+            model_family_key,
+        )
+
+        if not ledger_enabled(config):
+            return ""
+        day = target_date.isoformat()
+        agg = aggregate_usage_totals(
+            resolve_default_db_path(), start_day=day, end_day=day
+        )
+
+        def _family(name: object) -> str:
+            text = str(name or "")
+            return model_family_key(text) or text
+    except Exception:  # noqa: BLE001 - 账本读不动只降级注记，绝不炸掉整张账单。
+        return _LEDGER_UNREADABLE_NOTE
+
+    if agg is None:
+        return _LEDGER_UNREADABLE_NOTE
+    ledger_cost = {
+        str(name): int(milli or 0)
+        for name, milli in dict(agg.get("by_model_cost_milli") or {}).items()
+    }
+    ledger_families = {_family(name) for name in ledger_cost}
+    if not ledger_families and not int(agg.get("calls", 0) or 0):
+        return _LEDGER_EMPTY_WINDOW_NOTE
+
+    by_cost = aggregate["by_model_cost_milli"]
+    # 账本覆盖到的家族：钱整段换成账本口径（同一家族只留账本那一笔，
+    # 绝不与事件侧的毫厘相加——那是把两套钱拧成第三套）。
+    for name in [key for key in by_cost if _family(key) in ledger_families]:
+        by_cost.pop(name, None)
+    key_by_family: dict[str, str] = {}
+    for name in aggregate["by_model"]:
+        key_by_family.setdefault(_family(name), str(name))
+    ledger_only: list[str] = []
+    for name, milli in ledger_cost.items():
+        family = _family(name)
+        key = key_by_family.get(family)
+        if key is None:
+            # 事件侧没有这一家、账本有行：整列取自账本，行与钱同进同出，
+            # 不许只把钱记上却不出现这一行（那样屏幕上就加不平了）。
+            key = str(name)
+            key_by_family[family] = key
+            ledger_only.append(key)
+            for column, header in _LEDGER_FAMILY_COLUMNS:
+                value = int(dict(agg.get(column) or {}).get(name, 0) or 0)
+                aggregate[column][key] = int(aggregate[column].get(key, 0) or 0) + value
+                if header is not None:
+                    aggregate[header] = int(aggregate.get(header, 0) or 0) + value
+        by_cost[key] = int(by_cost.get(key, 0) or 0) + milli
+    aggregate["cost_milli"] = sum(int(milli or 0) for milli in by_cost.values())
+
+    residual = [
+        str(name)
+        for name, milli in by_cost.items()
+        if int(milli or 0) > 0 and _family(name) not in ledger_families
+    ]
+    # 账本里有行、却没有价格的那些次：账单按 0 记是真的，但 0 不许静默——
+    # 落进注记里说明「有几笔没有价格」，免得屏幕上只剩一个像样的 0.00。
+    ledger_unpriced = int(agg.get("unpriced_calls", 0) or 0)
+    legs: list[str] = []
+    if residual:
+        legs.append(
+            f"{len(residual)} 个家族（{_brief_names(residual)}）的钱仍按事件侧毫厘记账"
+        )
+    if ledger_only:
+        legs.append(
+            f"{len(ledger_only)} 个家族（{_brief_names(ledger_only)}）只有账本有行，整行取自账本"
+        )
+    if ledger_unpriced:
+        legs.append(f"{ledger_unpriced} 次调用账本里没有价格，按 0 计入账单")
+    if legs:
+        return "口径注记：" + "；".join(legs) + "。"
+    return ""
+
+
+def _usage_ledger_health(config: object) -> str:
+    """账本健康尾行：丢行 / 写失败 / 归因故障 / 归因让路，任一非零才出声。
+
+    数据源 = ``peek_ledger_service()``（只读探测进程单例，绝不按需建库、绝不起
+    写线程——为看健康而造出副作用是把告警面变成事故源）。队列满丢掉的账行
+    以前只有一行不带身份的日志，管理员面上根本看不见（F-3）。计数全零 ⇒ 空串，
+    不给健康期加噪声。
+    """
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.ledger import (
+            ledger_enabled,
+            peek_ledger_service,
+        )
+
+        if not ledger_enabled(config):
+            return ""
+        service = peek_ledger_service()
+        if service is None:
+            return ""
+        dropped = int(getattr(service, "dropped_count", 0) or 0)
+        write_errors = int(getattr(service, "write_error_count", 0) or 0)
+        attribution_errors = int(getattr(service, "attribution_error_count", 0) or 0)
+        attribution_skipped = int(getattr(service, "attribution_skipped_count", 0) or 0)
+    except Exception:  # noqa: BLE001 - 健康行读不到只少一行说明，不阻塞账单。
+        return ""
+    if not (dropped or write_errors or attribution_errors or attribution_skipped):
+        return ""
+    return (
+        f"账本健康：丢行 {dropped}，写失败 {write_errors}，"
+        f"归因故障 {attribution_errors}，归因让路 {attribution_skipped}"
+    )
 
 
 def _handle_model_command(
@@ -977,21 +1161,7 @@ def _handle_model_command(
             format_milli_yuan,
         )
 
-        lines = [
-            f"{target_date.isoformat()} 模型用量账单",
-            (
-                f"输入 {totals['prompt_tokens']:,}，输出 {totals['completion_tokens']:,}，"
-                f"总计 {totals['total_tokens']:,} token，调用 {totals['calls']:,} 次"
-            ),
-            format_cache_summary(
-                totals["cache_read_tokens"],
-                totals["cache_write_tokens"],
-                totals["prompt_tokens"],
-            ),
-            f"账单：{format_milli_yuan(totals['cost_milli'])} 元",
-            "── 按模型 ──",
-        ]
-        aggregate = {
+        aggregate: dict[str, Any] = {
             **totals,
             "by_model": by_model,
             "by_model_prompt": by_prompt,
@@ -1003,6 +1173,24 @@ def _handle_model_command(
             "by_model_unpriced": by_unpriced,
             "unpriced_calls": unpriced_calls,
         }
+        # 钱换源到账本口径（与渠道子行同源，取整只在聚合末端）；回落或混口径时注记。
+        caliber_note = _usage_money_from_ledger(config, target_date, aggregate)
+        lines = [
+            f"{target_date.isoformat()} 模型用量账单",
+            (
+                f"输入 {aggregate['prompt_tokens']:,}，输出 {aggregate['completion_tokens']:,}，"
+                f"总计 {aggregate['total_tokens']:,} token，调用 {aggregate['calls']:,} 次"
+            ),
+            format_cache_summary(
+                aggregate["cache_read_tokens"],
+                aggregate["cache_write_tokens"],
+                aggregate["prompt_tokens"],
+            ),
+            f"账单：{format_milli_yuan(aggregate['cost_milli'])} 元",
+        ]
+        if caliber_note:
+            lines.append(caliber_note)
+        lines.append("── 按模型 ──")
         rows = build_model_rows(
             aggregate,
             prices=prices,
@@ -1015,10 +1203,14 @@ def _handle_model_command(
             # 渠道子行（账本开时）：与定时报告 build_report_text 同款缩进风格。
             for sub in row.get("channels") or []:
                 lines.append(format_channel_subrow(sub))
-        if unpriced_calls:
+        residual_unpriced = int(aggregate.get("unpriced_calls", 0) or 0)
+        if residual_unpriced:
             lines.append(
-                f"（{unpriced_calls} 次调用未计价：价格未配置，未计入账单；用 /bot model price 维护）"
+                f"（{residual_unpriced} 次调用未计价：价格未配置，未计入账单；用 /bot model price 维护）"
             )
+        health_note = _usage_ledger_health(config)
+        if health_note:
+            lines.append(health_note)
         return "\n".join(lines)
     if action in {"add", "update", "remove", "priority"}:
         return _handle_model_registry_command(
@@ -1658,19 +1850,33 @@ def _handle_persona_command(
     config: object,
     parts: list[str],
 ) -> str:
-    from plugins.bot_unified_runtime.domains.chat_reply.character.persona_set import (
-        build_alt_personas,
+    from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+        active_persona_id,
+        build_effective_alt_personas,
+        current_bot_nickname,
     )
 
-    alt_personas = build_alt_personas(config)
+    # 名册读法与装配层同一真身（`providers.py` 备用人格视图吃的就是这一枚）：先人格册、
+    # 未入册才回落 `.env` 兼容位。此前只读 `persona_set.build_alt_personas`（兼容位）
+    # ⇒ 在册人格在命令面「不存在的人格」，§49「切人格要带 QQ 外观一起跟切」在命令面断掉
+    # （取证 S-RECON-PADMIN-20260929.md §⑥）。
+    alt_personas = build_effective_alt_personas(config)
     if not parts:
         return "用法：/bot runtime persona list | switch <id|default> | probability <id> <0-1>"
     action = parts[0].lower()
     if action == "list":
+        # 主人格中文名走自称唯一读法（P-G3 第二波）：override 用本命令手边这枚
+        # store（＝切换态真身），册里没有才回落兼容显示名。此前直读
+        # ``config.bot_persona_display_name`` ⇒ 切完人格这行还报旧名，与「当前覆盖」
+        # 自相矛盾。绝不读 get_login_info（台账 #60★）。
+        main_persona_name = current_bot_nickname(
+            active_persona_id(config, override_provider=store.get_persona_override),
+            config=config,
+        )
         lines = [
             (
                 f"主人格(A)：{getattr(config, 'bot_persona_profile_id', 'default')}"
-                f"（{getattr(config, 'bot_persona_display_name', '')}）"
+                f"（{main_persona_name}）"
             )
         ]
         for spec_id, spec in alt_personas.items():
@@ -1690,32 +1896,41 @@ def _handle_persona_command(
                 + ",".join(f"{k}={v}" for k, v in sorted(weights.items()))
             )
         return "\n".join(lines)
+    # 门与实收同一本账（F-A 同型病的结构锁）：不在改状态名册里的形一律回用法、零写。
+    if action not in _PERSONA_WRITE_ACTIONS:
+        return "用法：/bot runtime persona list | switch <id|default> | probability <id> <0-1>"
     if action == "switch":
         if len(parts) < 2:
             return "用法：/bot runtime persona switch <id|default>"
         target = parts[1].strip()
         if target != "default" and target not in alt_personas:
             return f"不存在的人格：{target}。可用：default,{','.join(alt_personas)}"
-        store.set_persona_override("" if target == "default" else target)
-        return (
-            f"已强制切换人格：{target}（持续到下一次 switch default）。"
-            if target != "default"
-            else "已回到自动模式（情绪触发 → 概率 → 主人格）。"
-        )
-    if action in {"auto", "概率", "probability"}:
-        if action == "auto" or len(parts) < 3:
+        if target == "default":
             store.set_persona_override("")
-            return "已回到自动模式。"
-        spec_id = parts[1].strip()
-        if spec_id not in alt_personas:
-            return f"不存在的人格：{spec_id}。可用：{','.join(alt_personas)}"
-        try:
-            weight = float(parts[2])
-        except ValueError:
-            return "概率必须是 0-1 之间的数字。"
-        store.set_persona_weight(spec_id, weight)
-        return f"已设置 {spec_id} 的切换概率为 {max(0.0, min(1.0, weight))}。"
-    return "用法：/bot runtime persona list | switch <id|default> | probability <id> <0-1>"
+            return (
+                "已回到自动模式（情绪触发 → 概率 → 主人格），"
+                "外观是否恢复跟随，同样以逐项回执为准。"
+            )
+        store.set_persona_override(target)
+        # 受理≠宣告（ATK 票③-3）：外观/人格文本/知识清单是否跟随由逐项回执判，
+        # 本行只报「已受理」，绝不替它们宣告完成。
+        return (
+            f"人格切换指令已受理：{target}（持续到下一次 switch default）；"
+            "QQ 外观/人格文本/知识清单是否跟随，以逐项回执为准。"
+        )
+    # auto / reset 同义＝清强制切换回自动；probability/概率 缺参形沿用旧 auto 回执。
+    if action == "auto" or action == "reset" or len(parts) < 3:
+        store.set_persona_override("")
+        return "已回到自动模式。"
+    spec_id = parts[1].strip()
+    if spec_id not in alt_personas:
+        return f"不存在的人格：{spec_id}。可用：{','.join(alt_personas)}"
+    try:
+        weight = float(parts[2])
+    except ValueError:
+        return "概率必须是 0-1 之间的数字。"
+    store.set_persona_weight(spec_id, weight)
+    return f"已设置 {spec_id} 的切换概率为 {max(0.0, min(1.0, weight))}。"
 
 
 def _handle_nickname_command(store: RuntimeSettingsStore, parts: list[str]) -> str:
@@ -1946,10 +2161,24 @@ def build_runtime_admin_result(
     if not set(actor_roles) & {"admin", "super_admin"}:
         return _admin_only_result(request_id)
     command_parts = command_text.strip().lower().split()
-    command_action = command_parts[0] if command_parts else ""
-    core_persona_write = command_parts[:2] in (["persona", "switch"], ["persona", "probability"], ["persona", "reset"])
-    model_write = command_action == "model" and len(command_parts) > 1 and command_parts[1] not in {"list", "show", "status", "routes", "prices", "help", "health"}
-    nickname_write = command_parts[:2] in (["nickname", "add"], ["nickname", "remove"])
+    # 门判的必须是**处理腿真正执行的那条命令**。腿在 `_handle_runtime_command` 里先
+    # `_extract_instance(parts[1:])` 摘掉 `--instance <名称>` 才按位置取动作，门若按裸
+    # token 位置判，`persona --instance second switch <id>` 就靠插位躲开[:2]比较、照样落写
+    # （F-A 第二洞；nickname/model 同病——取证 S-RECON-PADMIN-20260929.md §③）。
+    # 归一化一次、门与腿同尺，就不存在「门看 A 串、腿执行 B 串」这种缝隙。
+    gate_parts, _gate_instance = _extract_instance(command_parts)
+    command_action = gate_parts[0] if gate_parts else ""
+    core_persona_write = (
+        command_action == "persona"
+        and len(gate_parts) > 1
+        and gate_parts[1] in _PERSONA_WRITE_ACTIONS
+    )
+    model_write = (
+        command_action == "model"
+        and len(gate_parts) > 1
+        and gate_parts[1] not in {"list", "show", "status", "routes", "prices", "help", "health"}
+    )
+    nickname_write = gate_parts[:2] in (["nickname", "add"], ["nickname", "remove"])
     if (command_action in {"set", "reset"} or core_persona_write or model_write or nickname_write) and "super_admin" not in actor_roles:
         return _error_result(request_id, "修改运行时参数需要 super_admin 权限。")
     try:

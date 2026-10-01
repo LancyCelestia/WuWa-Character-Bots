@@ -37,7 +37,6 @@ import time
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
 
 from plugins.bot_unified_runtime.domains.media.digest import (
     media_digest,
@@ -84,26 +83,6 @@ CREATE INDEX IF NOT EXISTS idx_vision_caption_created
 # ---------------------------------------------------------------------------
 
 
-def _local_path_from_value(value: str) -> Path | None:
-    """``file://`` / 绝对路径 / 相对路径 → 存在的本地文件；否则 None。
-
-    与 ``vision_describe._local_path_from_value`` 同一判据（不复制它的表），
-    只问一件事"这个指针对不对得上一个真文件"——对不上就没有内容身份可用。
-    """
-    raw = str(value or "").strip()
-    if not raw or raw.startswith((_DATA_URL_PREFIX, "http")):
-        return None
-    if raw.startswith("file:"):
-        raw = unquote(urlparse(raw).path)
-        if raw.startswith("/") and len(raw) > 3 and raw[2] == ":":
-            raw = raw[1:]
-    try:
-        path = Path(raw)
-    except (OSError, ValueError):
-        return None
-    return path if path.is_file() else None
-
-
 def image_ref_digest(ref: str) -> str:
     """单张图片指针 → 内容 sha256；取不到字节就返回空串（绝不拿 URL 冒充内容身份）。
 
@@ -114,6 +93,12 @@ def image_ref_digest(ref: str) -> str:
       地址；拿 URL 摘要当内容身份正是旧 ``_REMOTE_DATA_URL_CACHE`` 只省下载不省
       推理的根因。识图主链在调用 provider 前已把 http 转成 data URL
       （``prepare_vision_image_urls``），所以真图极少走到这一支。
+
+    本地形态**不自存判据**（台账 INCIDENT-20260930 §5：这里曾是第二份
+    ``_local_path_from_value``，只问 ``is_file()`` ⇒ 与识图腿同一个「任意本地文件
+    读」洞，还多一枚「任意文件内容→哈希」的观测面）：一律转调
+    ``vision_describe._local_path_from_value`` 那枚唯一带门判据（容器归属
+    ``path_gate`` + 禁触名册 ``check_sendable``），过不了门就没有内容身份。
     """
     raw = str(ref or "").strip()
     if not raw:
@@ -130,6 +115,12 @@ def image_ref_digest(ref: str) -> str:
         if not payload:
             return ""
         return media_digest(payload)
+    if raw.startswith("http"):
+        return ""
+    from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
+        _local_path_from_value,
+    )
+
     path = _local_path_from_value(raw)
     if path is None:
         return ""

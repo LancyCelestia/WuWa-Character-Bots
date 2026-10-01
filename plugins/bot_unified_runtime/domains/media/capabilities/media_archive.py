@@ -39,6 +39,7 @@ from plugins.bot_unified_runtime.domains.media.archive.media_archive import (
     CATEGORIES,
     FALLBACK_CATEGORY_BY_TYPE,
     UNKNOWN_IP,
+    ArchiveReservedNameError,
     MediaArchiveStore,
     sanitize_dirname,
 )
@@ -223,7 +224,7 @@ _OPENER = urllib.request.build_opener(_GuardedRedirectHandler())
 
 
 def _fetch_url_media(url: str, max_bytes: int) -> bytes | None:
-    """bot 侧下载媒体字节：SSRF 护栏（含重定向逐跳）+ 流式大小上限（超限即断）。"""
+    """bot 侧下载媒体字节：SSRF 护栏（含重定向逐跳）+ 大小上限（超限即拒）。"""
     try:
         check_download_url(url)
     except RejectedUrlError as exc:
@@ -238,7 +239,18 @@ def _fetch_url_media(url: str, max_bytes: int) -> bytes | None:
     request = urllib.request.Request(url, headers={"User-Agent": _UA})
     try:
         with _OPENER.open(request, timeout=20.0) as response:
-            return response.read(max_bytes + 1)[:max_bytes] if response.readable() else None
+            if not response.readable():
+                return None
+            # 攻击审计 A-4：截断不得谎报——读限额+1 字节探边，探满即超限，
+            # 回 None 走既有「没能取到内容（…超限…）」拒绝分支：不写文件、
+            # 不留截断件（截断件的 sha256/去重/回执也都失真）。旧形态
+            # ``read(max_bytes + 1)[:max_bytes]`` 把「超限即断」实现成了
+            # 「截断不拒」并照常回「✔ 已归档」。反向语义：恰好 max_bytes
+            # 的合法文件原样收，不收紧。
+            data = response.read(max_bytes + 1)
+            if len(data) >= max_bytes + 1:
+                return None
+            return data
     except (OSError, ValueError, http.client.HTTPException, RejectedUrlError):
         # 审查 F-06：重定向逐跳复查抛出的 RejectedUrlError 继承 Exception
         # 而非 OSError，不补进元组就会从 open() 逃逸本函数、炸掉调用方的
@@ -516,17 +528,19 @@ def build_media_archive_capability(
                 tags = []
                 nsfw = 0.0
                 analyzed = False
-            # 指令显式覆盖 VLM 判定（用户意图最优先）。
-            if args.get("category"):
-                category = sanitize_dirname(args["category"], fallback=category)
-            if args.get("ip"):
-                ip_source = sanitize_dirname(args["ip"], fallback=UNKNOWN_IP)
-            if args.get("character"):
-                character = args["character"]
-            subpath = ""
-            if args.get("subpath") and is_admin:
-                subpath = sanitize_dirname(args["subpath"], fallback="")
+            # 指令显式覆盖 VLM 判定（用户意图最优先）。消毒与落盘同护栏：
+            # 覆盖参数/VLM 产出/管理员子路径里的保留设备名都在此格收口
+            # （sanitize_dirname 抛错点全部在 try 内，不逃逸炸整批）。
             try:
+                if args.get("category"):
+                    category = sanitize_dirname(args["category"], fallback=category)
+                if args.get("ip"):
+                    ip_source = sanitize_dirname(args["ip"], fallback=UNKNOWN_IP)
+                if args.get("character"):
+                    character = args["character"]
+                subpath = ""
+                if args.get("subpath") and is_admin:
+                    subpath = sanitize_dirname(args["subpath"], fallback="")
                 record, _target, duplicated = archive_store.save(
                     data,
                     media_type=kind,
@@ -544,8 +558,16 @@ def build_media_archive_capability(
                         "sender_id": message.sender_id,
                     },
                 )
+            except ArchiveReservedNameError as exc:
+                # 攻击审计 A-1：目录段名撞 Win32 保留设备名——拒走失败面，
+                # 理由出自中央人话表（含「保留设备名」字样），不洗名近似、
+                # 不写文件；本分支必须排在通用 ValueError 之前（它是子类）。
+                lines.append(f"× 有一件媒体没能落盘（{exc}）跳过了。")
+                audit.append(f"skip_reserved_name_{kind}")
+                continue
             except (ValueError, OSError):
-                # ValueError=格式不识别；OSError=保留名/磁盘异常（评审 M-4）。
+                # ValueError=格式不识别（unsupported_media_type/保留名已由上方
+                # 专支点名）；OSError=磁盘异常（评审 M-4）。
                 lines.append("× 有一件媒体没能落盘（格式未识别或写入失败），跳过了。")
                 audit.append(f"skip_format_{kind}")
                 continue

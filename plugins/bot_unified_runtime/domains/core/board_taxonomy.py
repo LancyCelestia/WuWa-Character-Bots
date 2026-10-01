@@ -126,7 +126,16 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 route_kinds=("GROUP_INFO",),
                 capability_ids=("bot.group_info",),
                 help_topics=("接入", "合并转发", "群信息"),
-                impl_paths=("plugins/bot_unified_runtime/sender", "plugins/bot_unified_runtime/message_context.py"),
+                # 〔2026-09-29 S-FIX-PLACE3 粒度统账〕复原波把旧顶层 `sender` 的认领改锚到
+                # `domains/transport/sender` 整目录 ⇒ 目录根套住 ②D-5（2026-09-26 用户裁定）窄化出的
+                # B08.send-queue 8 枚逐文件根，新长出 8 枚包含对。本 fid 真正只拥有协议侧两枚发送腿
+                # （onebot.py＝OneBot V11 手卷腿；nonebot.py＝NoneBot 通用腿，与发行库 A1 成员同件），
+                # 队列侧文件归 B08.send-queue（含 failure_class.py，见彼处注）。
+                impl_paths=(
+                    "plugins/bot_unified_runtime/domains/transport/sender/onebot.py",
+                    "plugins/bot_unified_runtime/domains/transport/sender/nonebot.py",
+                    "plugins/bot_unified_runtime/message_context.py",
+                ),
                 config_prefixes=("bot_onebot_", "bot_snowluma_"),
                 extra_l3=(
                     ("forward-websocket", "WS 连接与重连"),
@@ -361,7 +370,14 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 help_topics=("亲密模式",),
                 impl_paths=(
                     "plugins/bot_unified_runtime/domains/chat_reply/runtime/content_route.py",
-                    "plugins/bot_unified_runtime/domains/chat_reply/security",
+                    # 〔2026-09-29 S-FIX-PLACE3 双认领拆账〕B10.security-guardrails 的旧顶层
+                    # `security` 垫片（S-SHIM-WAVE1R T6 已退役）被复原波改锚到
+                    # `domains/chat_reply/security` 整目录，与本 fid 的字面目录认领撞成
+                    # 同一枚路径＝字面双认领（无条件红）。按两板本意逐文件拆开：
+                    # 六硬线闸与记忆净化（extra_l3 hard-lines / memory-sanitize 两格）归本 fid；
+                    # 反注入咽喉与显示伪装消毒（injection/display_guard/spoof_audit/包门面）归 B10。
+                    "plugins/bot_unified_runtime/domains/chat_reply/security/content_safety.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/security/memory_sanitize.py",
                 ),
                 config_prefixes=("bot_content_route_", "bot_master_love_"),
                 extra_l3=(
@@ -523,7 +539,7 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 route_kinds=("SUBSCRIBE", "EPIC"),
                 capability_ids=("bot.subscribe", "bot.epic"),
                 help_topics=("订阅", "Epic"),
-                impl_paths=("plugins/bot_unified_runtime/domains/subscribe", "plugins/bot_unified_runtime/sources/subscriptions"),
+                impl_paths=("plugins/bot_unified_runtime/domains/subscribe", "plugins/bot_unified_runtime/domains/subscribe/adapters"),
                 config_prefixes=("bot_subscribe_",),
                 extra_l3=(
                     ("platform-subscription", "各平台订阅通道"),
@@ -635,7 +651,7 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 summary="表情生成、收库、NSFW 降权与随机图。",
                 route_kinds=("MEME", "MEME_LIBRARY", "RANDPIC"),
                 capability_ids=("bot.meme", "bot.meme_library", "bot.randpic"),
-                help_topics=("表情", "偷表情", "表情收库", "随机图"),
+                help_topics=("表情", "偷表情", "表情册", "表情收库", "随机图"),
                 impl_paths=("plugins/bot_unified_runtime/domains/meme",),
                 config_prefixes=("bot_meme_", "bot_randpic_"),
             ),
@@ -841,6 +857,10 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 help_topics=("回执",),
                 impl_paths=(
                     "plugins/bot_unified_runtime/domains/transport/sender/__init__.py",
+                    # 〔2026-09-29 S-FIX-PLACE3 归主〕failure_class.py 生于 ②D-5 八枚名册之后
+                    # （2026-09-28 TG 连接期重投波，台账 #65）：判据产出随失败回执上抛、被
+                    # worker 的 UNKNOWN/重投语义逐字消费 ⇒ 队列侧本尊，归本 fid 而非协议腿。
+                    "plugins/bot_unified_runtime/domains/transport/sender/failure_class.py",
                     "plugins/bot_unified_runtime/domains/transport/sender/file_gateway.py",
                     "plugins/bot_unified_runtime/domains/transport/sender/gateway.py",
                     "plugins/bot_unified_runtime/domains/transport/sender/outbound_gate.py",
@@ -911,7 +931,7 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 impl_paths=(
                     "plugins/bot_unified_runtime/config.py",
                     "plugins/bot_unified_runtime/domains/core/config",
-                    "plugins/bot_unified_runtime/runtime/settings.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/settings.py",
                     "docs/config-catalog-full.md",
                 ),
                 extra_l3=(
@@ -1053,7 +1073,15 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 slug="security-guardrails",
                 summary="SSRF 咽喉、凭据域名绑定、打码与最小暴露面。",
                 help_topics=("凭据",),
-                impl_paths=("plugins/bot_unified_runtime/domains/core/credentials", "plugins/bot_unified_runtime/security",
+                # 〔2026-09-29 S-FIX-PLACE3 双认领拆账〕`security` 垫片退役后本 fid 改锚真身目录，
+                # 与 B03.content-safety 撞成字面双认领——见彼处注：逐文件拆开，反注入咽喉、
+                # 显示伪装消毒与其取证台账（ATK-P2D 波，AGENTS 规则 11 的直接应用）与包门面
+                # （只再导出 injection 一族）归本 fid；六硬线闸与记忆净化归 B03.content-safety。
+                impl_paths=("plugins/bot_unified_runtime/domains/core/credentials",
+                    "plugins/bot_unified_runtime/domains/chat_reply/security/__init__.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/security/injection.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/security/display_guard.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/security/spoof_audit.py",
                     "plugins/bot_unified_runtime/domains/chat_reply/runtime/database_broker.py"),
                 config_prefixes=("bot_ssrf_",),
                 extra_l3=(

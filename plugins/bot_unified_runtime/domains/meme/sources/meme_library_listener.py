@@ -19,6 +19,9 @@ from plugins.bot_unified_runtime.domains.files.sources.downloader import (
 )
 from plugins.bot_unified_runtime.domains.media import image_guard
 from plugins.bot_unified_runtime.domains.meme.sources import shorekeeper_absorb
+from plugins.bot_unified_runtime.domains.meme.sources.meme_library import (
+    MemeMediaPathError,
+)
 from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 
 logger = logging.getLogger(__name__)
@@ -569,7 +572,16 @@ async def _backfill_one(store: Any, config: Any, row: Any) -> str:
     只有走通 ``apply_tagged_outcome`` 才算 ``ok``。
     """
     before = str(row.get("md5", ""))
-    path = store._resolve_media_path(row.get("path", ""))
+    try:
+        path = store._resolve_media_path(row.get("path", ""))
+    except MemeMediaPathError:
+        # 容器门（S-MEME-CONTAIN）越界行：与本腿「文件不在盘＝skip」同一口径的
+        # 诚实降级——留痕（只记 md5，不记路径）、不读盘、不打标、不算处理过。
+        logger.warning("meme backfill skip outside container md5=%s", before)
+        return "skip"
+    except OSError:
+        logger.warning("meme backfill skip unresolvable md5=%s", before)
+        return "skip"
     try:
         if not path.is_file():
             # L9 留痕：文件不在盘 = 用户导入的源图丢了，静默跳过会让这批图

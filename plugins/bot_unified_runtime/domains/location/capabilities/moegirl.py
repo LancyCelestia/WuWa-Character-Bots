@@ -162,10 +162,6 @@ def extract_moegirl_query(text: str) -> str:
 # ---------------------------------------------------------------- 编排
 
 
-def _norm_title(value: str) -> str:
-    return re.sub(r"[\s_]+", "", (value or "").strip()).casefold()
-
-
 def pick_main_hit(hits: list[MoegirlHit], entity: str) -> MoegirlHit | None:
     """可信主词条判定：标题精确匹配优先；唯一候选允许前缀匹配。
 
@@ -370,19 +366,27 @@ def _merged_grounding_retrieve(config: Any) -> Any | None:
         from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge import (
             build_vector_knowledge_provider,
         )
+        from plugins.bot_unified_runtime.domains.core.search import search_service
         from plugins.bot_unified_runtime.domains.location.knowledge.kb_wiki import (
             MergedKnowledgeRetriever,
             build_kb_wiki_retriever,
         )
 
+        # 库名与腿**在 append 的同一处配对**：两路可能同名类（都不可用时都是
+        # _Unavailable…），按类型名查表会把两路配成同一个库。
         legs: list[Any] = []
+        libraries: list[str] = []
         persona = build_vector_knowledge_provider(config)
         if getattr(persona, "available", False):
             legs.append(persona)
+            libraries.append(search_service.KB_SOURCE_PERSONA)
         wiki = build_kb_wiki_retriever(config)
         if getattr(wiki, "available", False):
             legs.append(wiki)
-        merged = MergedKnowledgeRetriever(legs)
+            libraries.append(search_service.KB_SOURCE_WIKI)
+        merged = MergedKnowledgeRetriever(
+            legs, libraries=libraries if legs else None
+        )
         if legs and getattr(merged, "available", False):
             fn = merged.retrieve
     except Exception:  # noqa: BLE001 - 本地检索链不可用时回退外查萌百旧链路。

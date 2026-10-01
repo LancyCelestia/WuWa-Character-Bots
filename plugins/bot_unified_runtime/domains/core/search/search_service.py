@@ -42,7 +42,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Protocol
+from typing import Protocol, TypeVar
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -110,6 +110,7 @@ __all__ = [
     "answer_source_rank",
     "authorize_sources",
     "check_fetch_landing",
+    "chunk_source_library",
     "deduplicate_hits",
     "existence_denial_hit",
     "fetch_reference",
@@ -117,6 +118,8 @@ __all__ = [
     "format_knowledge_hit_lines",
     "guard_user_url",
     "issue_cursor",
+    "iter_existence_denials",
+    "knowledge_chunks_by_source",
     "knowledge_context_block",
     "knowledge_hit_view",
     "list_sources",
@@ -124,10 +127,13 @@ __all__ = [
     "normalize_hit",
     "order_answer_sources",
     "order_retrievers",
+    "ordered_retriever_legs",
     "plan_search",
     "query_fingerprint",
     "rank_hits",
+    "reorder_knowledge_chunks",
     "resolve_answer_order",
+    "rewrite_existence_denials",
     "search_provider",
     "source_library_label",
     "validate_miss_declaration",
@@ -1511,6 +1517,21 @@ def source_library_label(source_id: str) -> str:
     return _SOURCE_LIBRARY_LABELS.get(sid, sid)
 
 
+def chunk_source_library(chunk: object) -> str:
+    """一条知识块**属于哪座库**的唯一读点（合并点在装配时按路标注）。
+
+    页级 ``source_id``（``明日方舟/prts_arknights/正文/…__94671``）不是库名：
+    它长度可超 ``KnowledgeHitView.library`` 的 64 字符上限（生产已因此炸过
+    ``ValidationError``），且永远对不上「谁先答」阶梯 ⇒ 拿它当库名判"本地命中"
+    会让阶梯**结构上恒假**、每轮无谓降级联网。
+
+    没标注（单路腿/假块/旧契约）一律交回空串，由调用方决定降级形态——
+    **这里不猜前缀、不兜底造一个库名**。
+    """
+    declared = str(getattr(chunk, "source_library", "") or "").strip()
+    return declared if declared in LOCAL_KB_SOURCE_IDS else ""
+
+
 def answer_source_rank(source_id: str, *, wants_latest: bool) -> int:
     """某个来源在「谁先答」阶梯上的位置；未登记的源一律排最后（同权）。
 
@@ -1542,6 +1563,22 @@ def order_answer_sources(
     return tuple(sorted(ordered, key=lambda sid: answer_source_rank(sid, wants_latest=wants_latest)))
 
 
+def ordered_retriever_legs(
+    retrievers: Sequence[tuple[str, object]], *, wants_latest: bool
+) -> list[tuple[str, object]]:
+    """把「(库名, 检索器)」按阶梯排成**成对**的腿（装配层用的那一形态）。
+
+    存在意义与 ``order_retrievers`` 同一条：装配层不再靠"手写传参的先后"表达
+    优先级。之所以要成对返回，是因为 ``MergedKnowledgeRetriever`` 的 ``libraries``
+    必须与 ``retrievers`` **逐位对齐**——只排检索器不排库名就会标错来源库，
+    而标错来源库等于把「谁先答」判错（``chunk_source_library`` 是本地命中的唯一依据）。
+    """
+    return sorted(
+        ((str(name or "").strip(), retriever) for name, retriever in retrievers),
+        key=lambda item: answer_source_rank(item[0], wants_latest=wants_latest),
+    )
+
+
 def order_retrievers(
     retrievers: Sequence[tuple[str, object]], *, wants_latest: bool
 ) -> list[object]:
@@ -1551,11 +1588,9 @@ def order_retrievers(
     ``MergedKnowledgeRetriever`` 的地方）不再靠"手写参数的先后"表达优先级
     ——先后由判据算出来，改阶梯即处处跟随，不会出现两处的顺序各说各话。
     """
-    pairs = sorted(
-        ((str(name or "").strip(), retriever) for name, retriever in retrievers),
-        key=lambda item: answer_source_rank(item[0], wants_latest=wants_latest),
-    )
-    return [item[1] for item in pairs]
+    return [retriever for _, retriever in ordered_retriever_legs(
+        retrievers, wants_latest=wants_latest
+    )]
 
 
 @dataclass(frozen=True)
@@ -1630,6 +1665,79 @@ def resolve_answer_order(
     return order
 
 
+def knowledge_chunks_by_source(chunks: Sequence[object]) -> dict[str, int]:
+    """命中条数按**库名**聚合（``resolve_answer_order`` 入参形态的唯一构造处）。
+
+    只认合并点标注的库名（``chunk_source_library``），没标注的一律不计——
+    计进去就会造出一个阶梯上不存在的假库名，把「本地是否命中」判成假。
+    """
+    counted: dict[str, int] = {}
+    for chunk in chunks or ():
+        library = chunk_source_library(chunk)
+        if not library:
+            continue
+        counted[library] = counted.get(library, 0) + 1
+    return counted
+
+
+_ChunkT = TypeVar("_ChunkT")
+
+
+def reorder_knowledge_chunks(
+    chunks: Sequence[_ChunkT], *, wants_latest: bool
+) -> list[_ChunkT]:
+    """每轮把已取回的知识块按「谁先答」阶梯**重排**（T3 的接线点）。
+
+    元素类型用 TypeVar 透传：本函数只改顺序、不造新块，所以调用方拿回的仍是它
+    交进来的那种块（`providers.py` 那边是 `KnowledgeChunk`，写成 ``object`` 会逼
+    调用方 cast 一次、并把真类型信息丢掉）。
+
+    为什么在取回之后重排、而不是在装配时排好就完事：装配时只知道有哪些库，
+    不知道**这一轮**哪座库真的命中了几条。阶梯的语义正是"按本轮命中情况决定谁先答"，
+    所以判据必须在有 ``hits_by_source`` 的地方跑一次——这就是 ``resolve_answer_order``。
+
+    块序 = 按 ``resolve_answer_order(...).ordered`` 给出的库序做**轮询交错**
+    （取完各家第一条再取第二条），而不是"整座库连排"：交错是合并检索器既有的
+    交付形态，它保证提示词被裁剪时两座库都还在；本函数只改**谁先被取**这一维，
+    不改"每座库各得若干条"这一维。没标注库名的块排在最后且保持原相对序
+    （全是未标注时＝原样返回，行为与改前逐字节一致）。
+
+    ``web_search_intended`` 在这里不参与：本函数只消费 ``.ordered``，
+    降级联网与否由 chat 层那条既有判据决定（同一次 ``resolve_answer_order``
+    的另一个字段），两块各读各的，不留第二套 if。
+    """
+    items = list(chunks or ())
+    if len(items) < 2:
+        return items
+    order = resolve_answer_order(
+        hits_by_source=knowledge_chunks_by_source(items),
+        wants_latest=bool(wants_latest),
+        web_search_intended=False,
+    )
+    groups: dict[str, list[_ChunkT]] = {}
+    for chunk in items:
+        groups.setdefault(chunk_source_library(chunk) or "", []).append(chunk)
+    keys = [library for library in order.ordered if groups.get(library)]
+    if "" in groups:
+        keys.append("")
+    if len(keys) < 2:
+        return items
+    reordered: list[_ChunkT] = []
+    index = 0
+    while len(reordered) < len(items):
+        progressed = False
+        for key in keys:
+            stream = groups[key]
+            if index >= len(stream):
+                continue
+            reordered.append(stream[index])
+            progressed = True
+        if not progressed:
+            break
+        index += 1
+    return reordered
+
+
 # ---------------------------------------------------------------------------
 # ① 命中身份：知识块 → 可核对的提示词行
 # ---------------------------------------------------------------------------
@@ -1653,12 +1761,37 @@ _WHITESPACE_RE = re.compile(r"\s+")
 #: 不是本 bot 自己的断言（未命中声明里"不要说「记录里没有这个人」"正属此类）。
 _QUOTED_SPAN_RE = re.compile(r"「[^」]{0,80}」|『[^』]{0,80}』|“[^”]{0,80}”")
 
-#: 「把没查到说成不存在」型存在性断言。检测口径与用户已批准的禁式同源
-#: （chat 层 ``_RUNTIME_CONTEXT_USAGE`` 与本模块的未命中声明执法同一族词），
-#: 本表只用于**判别**，不用于生成任何话术。
+#: 「把没查到说成不存在」型存在性断言：**唯一登记表**，元素是 ``(字面形态, 改写后的检索状态)``。
+#: 探测器正则由本表现算拼出来（不再手写第二份词表），判据与改写因此天然同源：
+#: 凡是判得出来的句子，必定有对应的改写项——加了形态却忘了配改写，这里当场失配，
+#: 而不是上线后悄悄走兜底（规则 10：一张名单抄两处必漂）。
+#: 检测口径与用户已批准的禁式同源（chat 层 ``_RUNTIME_CONTEXT_USAGE`` 与本模块的未命中
+#: 声明执法同一族词），本表只用于**判别与改写**，不用于生成任何话术。
+#: ⚠ 登记顺序＝正则的匹配优先级：长的必须排在它的前缀之前（"没有这个人物"先于"没有这个人"）。
+_EXISTENCE_DENIAL_FORMS: tuple[tuple[str, str], ...] = (
+    ("不存在", "我没能核实"),
+    ("并未存在", "我没能核实"),
+    ("查无此人", "我没能确认这个人"),
+    ("没有这个角色", "我这轮没查到这个角色"),
+    ("没有这个人物", "我这轮没查到这个人物"),
+    ("没有这个人", "我这轮没查到这个人"),
+    ("没有这个作品", "我这轮没查到这个作品"),
+    ("没有这个设定", "我这轮没查到这个设定"),
+    ("没有这个词条", "我这轮没查到这个词条"),
+    ("没有这个条目", "我这轮没查到这个条目"),
+    ("没有这个剧情", "我这轮没查到这段剧情"),
+    ("没有这段剧情", "我这轮没查到这段剧情"),
+    ("记录里没有", "记录里我没查到"),
+    ("资料里没有", "资料里我没查到"),
+    ("库里没有", "我这轮没查到相关条目"),
+    ("从未有过", "我没查到有过"),
+    ("官方从未公布", "官方有没有公布过这一点我没能核实"),
+    ("官方没有公布", "官方有没有公布过这一点我没能核实"),
+    ("官方没公布", "官方有没有公布过这一点我没能核实"),
+)
+
 _EXISTENCE_DENIAL_RE = re.compile(
-    r"(不存在|并未存在|查无此人|没有这个(?:角色|人物|人|作品|设定|词条|条目)"
-    r"|记录里没有|资料里没有|库里没有|从未有过|官方从未公布)"
+    "|".join(re.escape(form) for form, _hedge in _EXISTENCE_DENIAL_FORMS)
 )
 
 #: 否认/禁说标记与它的可视窗口：命中词左侧出现这些连接词时，那句话是
@@ -1684,6 +1817,48 @@ class KnowledgeMissDeclarationError(ValueError):
     """未命中声明缺半边（装配期程序错，不是运行时用户错）。"""
 
 
+def _denial_scan_geometry(text: str) -> tuple[str, list[int]]:
+    """``_QUOTED_SPAN_RE.sub(" ", …)`` 的同一次扫描，但保留**原文坐标**映射。
+
+    执法面（``existence_denial_hit``）与改写面（``rewrite_existence_denials``）
+    必须用同一份豁免几何：两处各算一次"这句话算不算被引述过"，迟早会判出
+    两种结果——那正是本模块要消灭的"两个函数各写一套 if"。
+    """
+    chars: list[str] = []
+    origin: list[int] = []
+    cursor = 0
+    for span in _QUOTED_SPAN_RE.finditer(text):
+        for index in range(cursor, span.start()):
+            chars.append(text[index])
+            origin.append(index)
+        chars.append(" ")
+        origin.append(span.start())
+        cursor = span.end()
+    for index in range(cursor, len(text)):
+        chars.append(text[index])
+        origin.append(index)
+    return "".join(chars), origin
+
+
+def iter_existence_denials(text: object) -> list[tuple[int, int, str]]:
+    """原文里每一处**真正的**存在性否定：``(起, 止, 命中文本)``。
+
+    两重豁免与 ``existence_denial_hit`` 逐字同源（引述跨度 + 左侧否认连接词），
+    所以"被禁的句子"与"只是禁止说某句"永远由同一把尺分开。
+    """
+    original = str(text or "")
+    if not original:
+        return []
+    stripped, origin = _denial_scan_geometry(original)
+    hits: list[tuple[int, int, str]] = []
+    for match in _EXISTENCE_DENIAL_RE.finditer(stripped):
+        left = stripped[max(0, match.start() - _DISCLAIM_WINDOW) : match.start()]
+        if any(cue in left for cue in _DISCLAIM_CUES):
+            continue
+        hits.append((origin[match.start()], origin[match.end() - 1] + 1, match.group(0)))
+    return hits
+
+
 def existence_denial_hit(text: object) -> str:
     """返回文本里第一处「存在性否定」断言（先剥掉被引述的跨度）。
 
@@ -1694,13 +1869,44 @@ def existence_denial_hit(text: object) -> str:
     - 被 「」『』"" 引述的内容（"不要说「记录里没有这个人」"是在**禁**这句）；
     - 命中词左侧一小段里带否认/禁止连接词的（"不代表你问的作品不存在"）。
     """
-    stripped = _QUOTED_SPAN_RE.sub(" ", str(text or ""))
-    for match in _EXISTENCE_DENIAL_RE.finditer(stripped):
-        left = stripped[max(0, match.start() - _DISCLAIM_WINDOW) : match.start()]
-        if any(cue in left for cue in _DISCLAIM_CUES):
+    hits = iter_existence_denials(text)
+    return hits[0][2] if hits else ""
+
+
+#: 出口执法的改写表（T4②，2026-09-28）：把"不存在"讲回"我这轮没查到"。
+#: 键从 ``_EXISTENCE_DENIAL_FORMS`` 现取（同源，不另立词表）；值一律是**第一人称的
+#: 检索状态**，绝不换成另一句存在性断言（那只是换个方向编）。
+#: ⚠ 这里刻意不出现"没接到"+"不代表"两句同现——那是未命中声明单真身锁的判定特征。
+_MISS_HEDGE_BY_DENIAL: dict[str, str] = dict(_EXISTENCE_DENIAL_FORMS)
+#: 词表万一被扩了却没配上改写，兜底只说一句最保守的检索状态，**不改写成另一句断言**。
+_MISS_HEDGE_FALLBACK = "我这轮没查到能证实这一点的资料"
+
+
+def rewrite_existence_denials(text: object) -> tuple[str, str]:
+    """出口执法：把"没查到"被讲成"不存在"的地方改成不确定表述。
+
+    返回 ``(改写后的文本, 第一处命中的原话)``；没有命中时**原样返回**且第二项为空串
+    ——调用方据此判"这轮到底动没动过"，护栏锁（正常回复一字不动）就锁在这里。
+
+    本函数**只管改写**：什么时候允许改（＝本轮确实零命中）是调用点的红线，
+    留在 chat 层的出站缝，因为"有没有资料"是那一层才知道的事实。
+    引述与否认豁免与执法面同源（``iter_existence_denials``），所以
+    "不要说「记录里没有这个人」"这类禁句不会被改坏。
+    """
+    original = str(text or "")
+    hits = iter_existence_denials(original)
+    if not hits:
+        return original, ""
+    pieces: list[str] = []
+    cursor = 0
+    for start, end, matched in hits:
+        if start < cursor:  # 理论不可达（正则不重叠），仍按最小安全动作跳过
             continue
-        return match.group(0)
-    return ""
+        pieces.append(original[cursor:start])
+        pieces.append(_MISS_HEDGE_BY_DENIAL.get(matched, _MISS_HEDGE_FALLBACK))
+        cursor = end
+    pieces.append(original[cursor:])
+    return "".join(pieces), hits[0][2]
 
 
 #: 未命中声明必须自带的两半：①"本轮没有资料接入"的事实陈述；

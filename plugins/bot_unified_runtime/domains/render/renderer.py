@@ -23,6 +23,52 @@ from plugins.bot_unified_runtime.domains.render.plain_text import (
 
 logger = logging.getLogger(__name__)
 
+
+# ============ 出站文本「内部标记 + 不可见格式控制」第二道闸（F-G7 / INJ-G4，SEAT-R3-MARKER）============
+# 上面那族只做**打码**（盘符 / BOT_XXX= / sk-），它不认两件事：
+#   1. 内部边界标记（`[引用回复 层级1 x]` / `[TRUSTED_SYSTEM]`）——渲染腿过去是个
+#      **未消毒出口**：`neutralize_internal_markers` 全树消费点里根本没有 `domains/render/*`
+#      （INJ-G4 取证）。出站的正文/部件文本里只要残留一枚活标记，卡片/合并转发人读层
+#      就能被伪造的块边界「看着是另一回事」。
+#   2. RTL 强控 / 零宽 / 格式控制符（U+202E RLO、U+200E LRM、U+200F RLM、U+FEFF BOM 一族）——
+#      出卡与出站文本里嵌一枚就把显示顺序倒转、把 `BOT_XXX=` 拆开躲过打码（F-G7）。
+# 处置**只用既有中央真身**，本件零新正则、零新码点表（禁第二真身）：
+#   - 边界半＝`chat_reply.security.injection.neutralize_internal_markers`
+#     （判据唯一住 `ingest/message_context.INTERNAL_MARKER_PATTERN`，单源锁见
+#     `tests/test_injection_marker_single_source.py`）；
+#   - 伪装半＝`core.safety_exec.attack_surface.strip_display_controls`
+#     （码点表唯一住 `_BIDI_CONTROLS`/`_INVISIBLE_CONTROLS`，表情 ZWJ 在册豁免）。
+# 顺序刻意：**先打码、后换形/剥除**——`redact_local_secrets` 的行为面一字不动（另一席在
+# 这族上有在飞改动，简报红线）；这两步只在打码产物上再做「可见字节对齐真实码点」。
+# **Fail-open**：任一中央件抛异常一律原样交回——卡渲染契约的铁律是「失败→纯文本兜底且
+# 契约零破坏」，消毒绝不许成为新的故障点或抛点。两枚函数对干净文本都是恒等/幂等，
+# 因此正常回复逐字节不变。
+def _neutralize_outbound_text(text: str) -> str:
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
+            neutralize_internal_markers,
+        )
+        from plugins.bot_unified_runtime.domains.core.safety_exec import (
+            attack_surface as _attack_surface,
+        )
+
+        guarded = _attack_surface.strip_display_controls(text or "")
+        return neutralize_internal_markers(guarded)
+    except Exception:
+        logger.warning("renderer outbound marker/display neutralize failed; fail-open", exc_info=True)
+        return text
+
+
+def _redact_outbound_text(text: str) -> str:
+    """出站文本咽喉：盘符路径 / `BOT_XXX=` / `sk-` / JWT / Bearer 统一打码，
+    再过内部标记全角化 + 不可见格式控制剥除（F-G7 / INJ-G4，fail-open）。
+
+    打码幂等由 `redact_local_secrets` 自身保证（替换产物不再被任一形态命中），
+    所以 bot.chat 那条已在能力层打过一次的链路重复过一遍零成本、零二次伤害；
+    消毒两步对干净文本恒等，经能力层已消毒的链路再过一次零副作用。
+    """
+    return _neutralize_outbound_text(redact_local_secrets(text or ""))
+
 # ==================== 出站文本统一打码咽喉（需求 17 / S-ANTATK，2026-09-27）====
 # 此前 `redact_local_secrets` 的**读点全散在能力层自己**：chat 回复在 chat.py 调、
 # 校园转发出站调、邮件附件的主题与正文调、creation/cookies 面板各自调——**凡是记得调
@@ -55,15 +101,6 @@ def _redact_outbound_value(value: Any) -> Any:
         if isinstance(item, str) and item:
             cleaned[key] = _redact_outbound_text(item)
     return cleaned
-
-
-def _redact_outbound_text(text: str) -> str:
-    """出站文本咽喉：盘符路径 / `BOT_XXX=` / `sk-` / JWT / Bearer 统一打码。
-
-    幂等由 `redact_local_secrets` 自身保证（替换产物不再被任一形态命中），
-    所以 bot.chat 那条已在能力层打过一次的链路重复过一遍零成本、零二次伤害。
-    """
-    return redact_local_secrets(text or "")
 
 
 def _redact_rendered_content_ref(content_ref: dict[str, Any]) -> dict[str, Any]:

@@ -156,9 +156,18 @@ def _reply_detail_converter(value: str) -> str:
         "详细": "detail", "科普": "detail", "详尽": "detail", "detail": "detail",
         "精简": "concise", "简洁": "concise", "brief": "concise", "concise": "concise",
         "默认": "auto", "自动": "auto", "auto": "auto",
+        # T8（2026-09-28 用户裁定）：策略型三档也是全局档的合法取值——她要把
+        # **默认**设成「适中」（别人没开口就一段话说完），而这三个名字本来就住在
+        # chat 的同一张分档表里，这里只是让热改口认得出它们，不新增任何档名。
+        "适中": "normal", "正常": "normal", "normal": "normal",
+        "讲全": "narrative", "展开": "narrative", "narrative": "narrative",
+        "掰碎": "verbose", "详尽展开": "verbose", "verbose": "verbose",
     }
     if normalized not in aliases:
-        raise ValueError("BOT_REPLY_DETAIL 必须是 详细/精简/默认")
+        raise ValueError(
+            "BOT_REPLY_DETAIL 必须是 详细|精简|适中|讲全|掰碎|默认"
+            "（或其英文档名 detail|concise|normal|narrative|verbose|auto）"
+        )
     return aliases[normalized]
 
 
@@ -347,6 +356,84 @@ def _role_list_converter(value: str) -> list[str]:
 # 传播——据此把 28 个「写成功但行为不变」的残项从 SETTABLE_KEYS 移入本清单。
 # 消费点接入合并层实时求值后，对应键即可回白名单（拒绝文案里已点名消费点）。
 RESTART_REQUIRED_KEYS: dict[str, str] = {
+    # ---- STICKER-POOL 波（2026-09-29）：bot 自有表情私库四枚键 ----
+    # 四枚的唯一读点在 domains/meme/sources/sticker_packs.py（configured_sticker_dir /
+    # sticker_send_enabled / sticker_is_recursive / sticker_window_seconds 四个薄口，
+    # 全用 getattr(config, "<字面量>") 现读**调用方交来的装配期快照**），且四枚都未进
+    # _RUNTIME_HOT_OVERRIDE_FIELDS（该表归根文件，本席禁写）⇒ 热 set 一次也不改变判据，
+    # 按 C-09「不许骗人」口径登记需重启，不做「看着能热改」的假承诺。
+    "BOT_STICKER_DIR": (
+        "登记根在装载期已过 PATH_REMAPPED_FIELDS 折进运行数据根，读点每次现读快照"
+        " config ⇒ 热 set 不换根，改 .env + 重启（换目录里的**图**不用重启，扫池 30s TTL）"
+    ),
+    "BOT_STICKER_ENABLED": "同 BOT_STICKER_DIR（发送侧总闸每次现读快照 config）",
+    "BOT_STICKER_RECURSIVE": "同 BOT_STICKER_DIR（扫池层数；值与目录一同进缓存键）",
+    "BOT_STICKER_NO_REPEAT_WINDOW_SECONDS": "同 BOT_STICKER_DIR（窗长每次取图现读快照）",
+    # ---- 人格分册/私藏档（2026-09-29）：S4 好感档联动两枚键 ----
+    # 读点在 domains/meme/capabilities/meme_library.py::_locked_sticker_subdirs，
+    # 每次选图现读调用方交来的快照 config，且未进 _RUNTIME_HOT_OVERRIDE_FIELDS
+    # ⇒ 热 set 不改判据，按 C-09「不许骗人」口径登记需重启。
+    "BOT_STICKER_PRIVATE_SUBDIR": "同 BOT_STICKER_DIR（私藏子目录名，每次选图现读快照）",
+    "BOT_STICKER_PRIVATE_MIN_TIER": "同 BOT_STICKER_DIR（解锁档位阈值，每次选图现读快照）",
+    # ---- 网络巡检（继承 WIP 收尾，2026-09-30）：三枚键读点在根装配注册函数 ----
+    # __init__.py:1935-1940 装配期一次性读快照 config（开关/间隔/域表），巡检调度
+    # 周期装配期冻结 ⇒ 热 set 不改运行面，按 C-09 口径登记需重启。
+    "BOT_NETWORK_PATROL_ENABLED": "同 BOT_STICKER_DIR（巡检总闸，装配期读快照）",
+    "BOT_NETWORK_PATROL_INTERVAL_MINUTES": "同 BOT_STICKER_DIR（巡检间隔，装配期冻结）",
+    "BOT_NETWORK_PATROL_DOMAINS": "同 BOT_STICKER_DIR（巡检域表，装配期冻结）",
+    # ---- P3 情绪发图开关（继承 WIP 收尾，2026-09-30）----
+    # 读点＝根装配 reaction-meme 腿 ProactiveActionKnobs 字面键名（快照 config），
+    # 未进 _RUNTIME_HOT_OVERRIDE_FIELDS ⇒ 热 set 不改判据，登记需重启。
+    "BOT_REACTIONS_MEME_ENABLED": "同 BOT_STICKER_DIR（P3 情绪发图总闸，现读快照）",
+    # ---- 表情册／贴纸联动波（2026-10-01，S2/S3 补登）----
+    # 三枚旋钮与总闸同形读点：根装配 P3/S2/S3 三条腿的 ProactiveActionKnobs 字面键名
+    # 现读快照 config（`__init__.py` reaction-meme / emoji-like / attach 三处），
+    # 未进 `_RUNTIME_HOT_OVERRIDE_FIELDS` ⇒ 热 set 不改判据，一律按需重启登记。
+    "BOT_REACTIONS_MEME_PROBABILITY": "同 BOT_REACTIONS_MEME_ENABLED（发图概率，现读快照）",
+    "BOT_REACTIONS_MEME_COOLDOWN_SECONDS": "同 BOT_REACTIONS_MEME_ENABLED（冷却秒，现读快照）",
+    "BOT_REACTIONS_MEME_DAILY_MAX": "同 BOT_REACTIONS_MEME_ENABLED（每日帽，现读快照）",
+    # 册基根甲案后这枚键升格为贴纸册容器根与越界守门尺（`media_container()`），
+    # 读点＝根装配装配期快照 + store 构造期冻结 ⇒ 改完必须重启才生效。
+    "BOT_MEME_LIBRARY_DIR": "同 BOT_STICKER_DIR（表情库/册容器根，装配期冻结）",
+    # ---- MM-VIS-1（2026-09-29）：图片描述缓存落点与 TTL ----
+    # 读点在 domains/media/registry/vision_caption_cache.py::build_vision_caption_cache，
+    # 它按 db 路径**进程内 memo 一份实例**（连接与线程锁都挂在那份实例上），
+    # 且装配期读的是调用方交来的快照 config ⇒ 热 set 既不会换库文件、也不会改 TTL，
+    # 按 C-09「不许骗人」口径登记需重启。
+    "BOT_VISION_CAPTION_CACHE_DB": (
+        "读点 domains/media/registry/vision_caption_cache.py::build_vision_caption_cache"
+        "（按路径 memo 连接实例）⇒ 改 .env + 重启才生效"
+    ),
+    "BOT_VISION_CAPTION_CACHE_TTL_SECONDS": (
+        "同上：TTL 在建实例时烘进 VisionCaptionCache.ttl_seconds，"
+        "进程内不再回读 ⇒ 改 .env + 重启才生效"
+    ),
+    # ---- 聊天超时改造 C1-a（2026-09-28）：管线能力硬超时 ----
+    "BOT_PIPELINE_CAPABILITY_HARD_TIMEOUT_SECONDS": (
+        "读点在 runtime/pipeline.py 的解析链（driver config → env → 默认 400），"
+        "首次解析后进程内缓存（与 BOT_PIPELINE_MAX_WORKERS 的池创建期同口径）⇒ "
+        "热 set 一次也不改变已缓存的时限，改 .env + 重启才生效"
+    ),
+    # ---- T8 续批（2026-09-28 夜用户裁「对没表过态的人也要有文采」）：默认讲法 ----
+    "BOT_REPLY_DEFAULT_DIRECTIVES": (
+        "读点在 character/reply_policy.py::reply_policy_section_for_turn，"
+        "getattr(config, …) 现读装配期快照 config（与 BOT_SCHEDULE_* 两枚同口径）；"
+        "合并层未登记该键 ⇒ 热 set 一次也不改变渲染出的偏好段，改 .env + 重启才生效"
+    ),
+    # ---- 复原波（2026-09-29 主树还原后补齐登记）：原生工具 + 会话画像 ----
+    # 两组读点都是 getattr(config, …) 现读**调用方交来的装配期快照**，且未进
+    # _RUNTIME_HOT_OVERRIDE_FIELDS（该表归根文件，本波禁写）⇒ 热 set 零生效，
+    # 按 C-09 口径登记需重启，不做「看着能热改」的假承诺。
+    "BOT_CHAT_NATIVE_TOOLS_ENABLED": (
+        "唯一读取口 domains/core/search/native_tools.py::native_tools_enabled"
+        "（只认严格 True，缺省关）；调用方交装配期快照 ⇒ 改 .env + 重启"
+    ),
+    "BOT_PERSON_PROFILE_ENABLED": (
+        "画像总门在 character/person_profile.py 的 build/compose 两处现读快照 config"
+        "（关⇒整链给空串）；热 set 不改变已懒建的进程级 store ⇒ 需重启"
+    ),
+    "BOT_PERSON_PROFILE_MAX_ITEMS": "同 BOT_PERSON_PROFILE_ENABLED（每次渲染现读快照，合并层未登记）",
+    "BOT_PERSON_PROFILE_MAX_CHARS": "同 BOT_PERSON_PROFILE_ENABLED（同上；越界由渲染侧夹形）",
     # ---- 第 20 项「日程记录与智能代答」波（2026-09-26 S-SCHEDULE-20）----
     # 两枚开关的读点全在能力/路由侧 getattr(config, ...) 现读装配期快照 config，
     # 未进运行时覆盖合并表 ⇒ 热 set 一次也不改变判据，登记需重启（C-09 口径）。
@@ -538,6 +625,38 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
         "PokeDispatcher 读合并层 config，但合并表未登记 bot_poke_* "
         "（capabilities/poke.py），覆盖不可达；接线后可回白名单"
     ),
+    # ==== 2026-09-28 §51 波：本波新增键一律装配期快照 ⇒ 重启档（写这里而不是
+    # SETTABLE_KEYS，否则 `/bot runtime set` 会"写成功但行为不变"＝审查 C-09 反的那类死开关）。
+    # 另替同树另一只手补一条表态：BOT_EMERGENCY_INFO_QUIET_BREACH_LEVELS 由装配侧现读
+    # （capabilities/emergency_info.py 的 getattr(config, …) + service/grading.py 自述
+    # "那枚键由装配侧经…"），非合并层实时读 ⇒ 记重启档；本席据现算补录，不改其语义。
+    "BOT_EMERGENCY_INFO_QUIET_BREACH_LEVELS": (
+        "能力构建期 getattr 现读 Config 快照（emergency_info 侧未接运行时覆盖合并表）"
+        "⇒ 热改当轮不生效；接合并层后可回白名单"
+    ),
+    "BOT_REACTIONS_SENTIMENT_ENABLED": (
+        "sentiment_selector 与 reactions/engine 在调用点直读 Config 快照，合并表不含 "
+        "bot_reactions_sentiment_*，覆盖册写进去也到不了判据"
+    ),
+    "BOT_REACTIONS_SENTIMENT_TIMEOUT_SECONDS": (
+        "同上：LLM 判定腿超时预算在构造期吃值，热改当轮不生效"
+    ),
+    "BOT_REACTIONS_SENTIMENT_CACHE_TTL_SECONDS": (
+        "同上：同轮共判缓存 TTL 在读件建缓存时确定，非每请求现读"
+    ),
+    "BOT_REPLY_POLICY_ENABLED": (
+        "永久回复策略唯一咽喉 character/reply_policy.py:shared_reply_policy_store "
+        "按 Config 现值决定给不给 store；合并表未登记该键 ⇒ 只能重启生效"
+    ),
+    "BOT_REPLY_POLICY_DB_PATH": (
+        "库路径在 store 懒建时解析并进程级缓存（同 bot_reactions_db_path 口径），"
+        "热改只会造出第二个 store 或什么都不改"
+    ),
+    "BOT_REPLY_POLICY_PERSON_ALIASES": (
+        "同一人多号并键表由 character/reply_policy.py:shared_reply_policy_store 在"
+        " store 懒建时吃值并编进缓存键；合并表未登记该键 ⇒ 热改到不了判据，只能重启。"
+        "（并号只并「偏好存到哪个键」，权限面不读它，见配置项注释与那枚渗锁）"
+    ),
     "BOT_POKE_PRIVATE_COOLDOWN_SECONDS": (
         "PokeDispatcher 读合并层 config，但合并表未登记 bot_poke_* "
         "（capabilities/poke.py），覆盖不可达；接线后可回白名单"
@@ -593,6 +712,16 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
     "BOT_RANDPIC_NO_REPEAT_WINDOW_SECONDS": (
         "同 randpic 族判据（窗内不重发秒数，0=关=旧行为）"
     ),
+    # ---- B1 池子/收库内容守卫波（2026-09-28）：randpic 两枚下限键 ----
+    # 读点在 domains/meme/capabilities/randpic.py 的 _min_bytes_for/_min_side_for
+    # （getattr 现读调用方交来的 config）；randpic 族同判据：合并表
+    # _RUNTIME_HOT_OVERRIDE_FIELDS 未登记 bot_randpic_* ⇒ set 写了不落到这一腿。
+    "BOT_RANDPIC_MIN_FILE_KB": (
+        "同 randpic 族判据（池子字节下限，KB；0=关=守卫不启用）"
+    ),
+    "BOT_RANDPIC_MIN_SIDE": (
+        "同 randpic 族判据（池子像素短边下限；0=关=守卫不启用）"
+    ),
     # ---- goal-12 波（2026-09-25 表情包子系统/贴纸）新增 5 键 ----
     # 判据比 poke/randpic 族更硬：那两族至少每次过合并层（只是合并表没登记本族
     # 键 ⇒ 覆盖不可达）；这五枚的调用点（根 __init__.py 的 absorb_event_images /
@@ -626,6 +755,17 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
     ),
     "BOT_MEME_LIBRARY_VLM_ENABLED": (
         "同族：listener 打标循环现读装配期 plugin Config 原件（未过合并层），覆盖不可达"
+    ),
+    # ---- B1 收库内容守卫两键（2026-09-28）----
+    # 读点在 listener.absorb_event_images 的 getattr（每次收库现读调用方交来的
+    # config），与 goal-12 族同判据：根调用点交的是装配期 plugin Config 原件
+    # （未过 _config_with_runtime_overrides）⇒ 覆盖不可达，登记需重启。
+    "BOT_MEME_LIBRARY_MIN_FILE_KB": (
+        "收库字节下限（KB；0=关）：absorb_event_images 现读装配期 plugin Config"
+        "（未过合并层）"
+    ),
+    "BOT_MEME_LIBRARY_MIN_SIDE": (
+        "收库像素短边下限（0=关）：同上同判据（PIL 解图头，解不开按坏件拒）"
     ),
     # ---- 亲密档 L1 自动腿两键（2026-09-24 用户裁定 R1 A，D 席登记）----
     # 消费点 `runtime/content_route.py::_knobs` 确实是**每次判定现读** config，看着像
@@ -760,9 +900,6 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
         " message_coalescing.build_coalescing_settings），未过"
         " _config_with_runtime_overrides ⇒ store 覆盖不可达，改 .env 需重启"
     ),
-    "BOT_CHAT_MESSAGE_COALESCING_QUIET_SECONDS": (
-        "同族：读 config 快照，覆盖不可达"
-    ),
     "BOT_CHAT_MESSAGE_COALESCING_MAX_HOLD_SECONDS": (
         "同族：读 config 快照，覆盖不可达"
     ),
@@ -821,6 +958,13 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
         "控制面监听总开关：随 Bot startup/shutdown 装配独立 uvicorn，进程级；"
         "且它门控的管理面正是已知旁路（K-1/G-2）所在——从门内热翻门控自身的闸"
         "属安全越权通道 ⇒ 永久重启键（不得进热改白名单）"
+    ),
+    # ---- F-1 根修（SEAT-FIX-ATK-CP，2026-09-28）：控制面文件读取根白名单 ----
+    # 唯一读点 control_plane/api/platform.py 的 /files/read 网关装配（getattr 字面直读），
+    # 值源＝装配期 Config 快照，合并表未登记该键 ⇒ 热 set 不可达（C-09 口径）。
+    "BOT_CONTROL_PLANE_FILES_ROOTS": (
+        "文件读取根白名单是装配期 Config 字段，/files/read 据快照构造网关；"
+        "合并层未登记该键 ⇒ 热改不生效——改 .env + 重启"
     ),
 }
 
@@ -932,6 +1076,7 @@ class RuntimeSettingsStore:
         *,
         instance: str = "default",
         backend: SQLiteConfigStateStore | None = None,
+        allow_no_gate: bool = False,
     ) -> None:
         self._config_backend: SQLiteConfigStateStore | None = None
         self.instance = instance
@@ -948,10 +1093,13 @@ class RuntimeSettingsStore:
         self._vision_registry: dict[str, dict[str, Any]] = {}
         self._mtime: float = 0.0
         # SAFE-EXEC 裁定第 18 项（2026-09-26）：书面同意执法门。
-        # ``_safety_gate_config`` 非 None ⇒ 本 store 走统一装配面（生产/manager 路）；
-        # 直接构造的 store（控制面读视图、单测夹具）没配过 ⇒ 咽喉保持既有行为，
-        # 执法与否的缺省真值只认 `config.py::bot_safetyexec_enabled`（装配期快照）。
+        # ``_safety_gate_config`` 非 None ⇒ 本 store 走统一装配面（生产/manager 路）。
+        # F-2（SEAT-ATKFIX-CFG12，2026-09-28）：「未装配」不再是无声放行——裸构造的
+        # store 写非 R0 档会被拒（同 `_refuse_without_gate` 口径）。唯一的豁免通道
+        # 是构造时显式声明 ``allow_no_gate=True``（测试/夹具的旧形态出口；生产面
+        # 出现这枚参数由 tests/test_atkfix_cfg12_throat_import_locks.py 的 AST 锁当场点名）。
         self._safety_gate_config: object | None = None
+        self._allow_no_gate = bool(allow_no_gate)
         self._safety_gate_clock: Any | None = None
         self._safety_gate: Any | None = None
         self._safety_gate_failed = False
@@ -1209,11 +1357,14 @@ class RuntimeSettingsStore:
         gate = self._ensure_safety_gate()
         return bool(gate is not None and gate.enabled)
 
-    def _refuse_without_gate(self, normalized_key: str) -> None:
-        """门装载失败（`safety_exec` 包体本身坏了）时的兜底：判不出档 ⇒ 一律拒。
+    def _refuse_without_gate(self, normalized_key: str | None) -> None:
+        """门装载失败（`safety_exec` 包体本身坏了）或「未装配且未显式豁免」时的兜底：
+        判不出档 ⇒ 一律拒。
 
         只有当场能证明该键属 R0（`UNATTENDED_CHANGE_TIERS`）才放行——连分级表都读不
         进来的树，「看起来没事」恰是最坏形态（本仓把存在性当活性的账一次都不该再记）。
+        `normalized_key=None` 是聚合目标连名字都取不到的极端形态：交给分级判据
+        自行拒绝（判不出＝不放行），没有「键都没有但先改」这种事。
         """
         try:
             from plugins.bot_unified_runtime.domains.core.safety_exec import (
@@ -1247,11 +1398,28 @@ class RuntimeSettingsStore:
         口径：`set_override` / `reset_override` 两个写面都只经这里过门；四档行为
         全部住 `domains/core/safety_exec/settings_gate.py`（本方法零判定、零话术）。
         `target=None` = 「一次撤掉全部覆盖」，没有单键可分级，走门侧聚合目标名。
-        失败：门装载失败 ⇒ `_refuse_without_gate`（判不出档一律拒，fail-closed）；
-        总闸关 ⇒ 整体旁路。三态中「未装配」（config 从未传入）与「关」都保持
-        接线前逐字节行为——既有 19 处生产写点在门关闭形态下与此前完全同形。
+        失败：门装载失败 或 「未装配且未显式豁免」⇒ 一律走 `_refuse_without_gate`
+        （判不出档一律拒，fail-closed）；总闸关 ⇒ 整体旁路。
+        F-2（SEAT-ATKFIX-CFG12，2026-09-28）：旧形态里「未装配」（config 从未传入）
+        与「关」都保持接线前逐字节放行；本票把「未装配」翻成 fail-closed，
+        与门装载失败同口径。要保留旧「无门直写」形态的唯一通道是构造时
+        `allow_no_gate=True`（测试/夹具出口；生产面出现即被 AST 锁点名）。
         配置：`bot_safetyexec_enabled`（装配期快照，见 configure_safety_gate）。
         """
+        if self._safety_gate_config is None and not self._allow_no_gate:
+            # 未装配且未显式豁免：按门装载失败同口径拒（R0 仍由 _refuse_without_gate 放行）。
+            refusal_target = target
+            if refusal_target is None:
+                try:
+                    from plugins.bot_unified_runtime.domains.core.safety_exec import (
+                        settings_gate as _gate_mod,
+                    )
+
+                    refusal_target = _gate_mod.ALL_OVERRIDES_TARGET
+                except Exception:  # noqa: BLE001 - 连分级/聚合目标都读不进来：交 None 让判据自拒
+                    refusal_target = None
+            self._refuse_without_gate(refusal_target)
+            return apply()
         if self._safety_gate_config is None:
             return apply()
         if target is None:
@@ -1535,7 +1703,8 @@ class InstanceSettingsManager:
         self._lock = threading.Lock()
         # SAFE-EXEC 第 18 项：manager 由装配口拿到 Config，惰性建出的每个实例
         # store 都在此处过一次 `configure_safety_gate`（唯一装载点；缺省 None＝
-        # 不装配，控制面读视图与单测直接构造的 store 保持既有无门形态）。
+        # 不装配）。F-2（SEAT-ATKFIX-CFG12）起，「不装配」不再等于无声放行：
+        # 裸构造 store 写非 R0 当场拒；旧形态只经 `allow_no_gate=True` 显式声明。
         self._safety_config = safety_config
 
     def _path_for(self, instance: str) -> Path:

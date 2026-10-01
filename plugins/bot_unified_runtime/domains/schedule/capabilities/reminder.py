@@ -2,6 +2,8 @@
 
 触发：
 - 自然语言：「12点提醒我写作业」「中午提醒我吃药」「半小时后叫我」
+  ——创建腿要**指向本 bot 的祈使形**（提醒我/叫我/设个提醒这一族）且**时间与
+  指向同句**；第三人称叙述与转发的训话不抢这条道（S30，2026-09-29 群实况事故波）
 - 管理查询：「提醒列表 / 我的提醒」「取消提醒 <id前缀>」
 - 自然语言勾选：「作业做完了」「搞定了报告」→ 模糊匹配未完成提醒与
   笔记待办，命中即勾（2026-09-13 六域批）；勾选消歧追问（审查 A-10/A-11，
@@ -27,6 +29,7 @@ from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     IncomingMessage,
     SendPolicy,
+    SessionType,
 )
 from plugins.bot_unified_runtime.domains.notes.capabilities.notes import (
     _NOTES_ADD_RE,
@@ -44,10 +47,12 @@ from plugins.bot_unified_runtime.domains.schedule.capabilities.schedule_board im
     is_schedule_surface,
 )
 from plugins.bot_unified_runtime.domains.schedule.store.reminders import (
+    MAX_PENDING_PER_SENDER,
     NEAR_MISS_FLOOR,
     build_reminder_store,
     match_todo_candidates,
     parse_reminder_intent,
+    parse_time_target,
     resolve_todo_match,
 )
 
@@ -65,6 +70,69 @@ _LIST_RE = re.compile(
 )
 _CANCEL_RE = re.compile(r"取消提醒\s*([0-9a-fA-F]{4,12})?")
 _SIGNAL_RE = re.compile(r"提醒|叫我|记得叫|記得叫")
+
+# ---------------------------------------------------------------------------
+# A2 隐私与配额面（修复席 2026-09-27 立，2026-09-29 主树还原事故后重落）：
+# 群会话的「提醒列表 / 取消提醒」两条腿都**按归属**判，配额也是两层。
+#   ① 会话总量闸（store 侧 ≤20）之外叠一层 per-sender 子闸
+#      （``MAX_PENDING_PER_SENDER``，常量住 store 顶部）——只给群会话传：
+#      私聊桶本就只有本人，霸占面不成立，多设一道闸只会误伤自己人；
+#   ② 群「提醒列表」只列本人（管理员亦无例外——要查全组走治理面，不在
+#      公屏复述他人原文）；
+#   ③ 群「取消提醒」默认按本人归属；代撤只开放给**既有**平台职衔面
+#      ``sender_platform_role``（OneBot ``sender.role``，判据先例对齐
+#      emergency_info 的群主腿，不新造权限判据），且代撤回执不回显他人原文。
+# 缺这一片时的症状（会错，非仅体验问题）：任何人打「提醒列表」→ 全群待办
+# 原文连可取消 id 前缀一起进公屏（吃药/复诊类即健康隐私外泄）；照抄前缀即
+# 可撤他人提醒并当场复述其私密正文；单成员逐条换词可独吞整组 20 条预算。
+# ---------------------------------------------------------------------------
+_PLATFORM_STAFF_ROLES = frozenset({"admin", "owner"})
+
+
+def _is_group_session(message: IncomingMessage) -> bool:
+    """共享会话桶判定：只有群面才需要 per-sender 子闸与归属过滤。"""
+    return message.session_type is SessionType.GROUP
+
+
+def _is_platform_staff(message: IncomingMessage) -> bool:
+    """既有平台职衔面（群主/管理员）；读法与 ``emergency_info`` 群主腿一致，
+    只作**代撤**这一条例外，不参与列表面，也不新造第二套权限判据。"""
+    role = str(getattr(message, "sender_platform_role", "") or "").strip().lower()
+    return role in _PLATFORM_STAFF_ROLES
+
+
+def _reminder_owner_scope(message: IncomingMessage, *, surface: str) -> str | None:
+    """列表/取消两条腿的归属过滤参数（``list_pending(sender_id=…)``）。
+
+    返回 None=整会话桶（私聊与旧行为逐字一致）。群面：列表面**人人只见自己**
+    （``surface="list"`` 不给任何例外）；取消面普通成员只见自己（他人 id 前缀
+    天然撤不动），平台职衔（``surface="cancel"`` 的唯一例外）可跨归属代撤。
+    """
+    if not _is_group_session(message):
+        return None
+    if surface == "cancel" and _is_platform_staff(message):
+        return None
+    return message.sender_id
+
+# 创建腿的**指向性**判据（S30，2026-09-29 群实况事故波）。
+# _SIGNAL_RE 是"这条道的话题词"（查询面/取消面照旧用它，一字未动）；但"提到
+# 提醒"不等于"在要求本 bot 提醒谁"：裸词形态下 没提醒/提醒大家/提醒你们 一律
+# 命中，配上全文任意一句里的时间就被整条抢下（事故读数见 is_reminder_command
+# 的创建腿注释）。指向性只认两族形态：
+#   ① 祈使形「(提醒|叫|通知)(一[下次])?<不超过4个非句读字><第一人称>」——
+#      受事只收 我/我们/咱/俺/本人/偶；你/他/大家/各位 是**第三人称叙述**，
+#      「别怪我没提醒你啊」不许算命中（这是本条唯一的红线，放宽即复发）；
+#      「记得叫我」这类既有形靠 (叫)…我 天然保住，不必另列。
+#   ② 显式装置短语「设/记/加/建/定 个提醒」「帮我提醒」。
+# 受事与信号词之间不许跨句读（gap 字符集已排除 。，,；;），所以跨小句的
+# 「提醒大家，我要走了」这类也不会被算成指向性命中。
+_ADDRESSIVE_RE = re.compile(
+    r"(?:提醒|叫|通知)(?:一[下次])?[^。，,；;]{0,4}(?:我|我们|咱|俺|本人|偶)"
+    r"|设个?提醒|记个?提醒|加个?提醒|建个?提醒|定个?提醒|帮我提醒"
+)
+# 同句核对的切句尺：只按**句末**标点切（逗号/顿号不切，「10点提醒我，然后…」
+# 本就是一句）。与粘贴体守卫的 _PASTE_SENTENCE_ENDERS_RE 同一族字面。
+_SENTENCE_BREAK_RE = re.compile(r"[。！？；!?;\n]")
 
 # 粘贴体守卫（2026-09-18 实弹：群友反复粘贴其他 AI 的缴费广告，消息里恰好
 # 含「提醒/12时」被 NL 解析整段入库，到点五条齐炸）。提醒是短意图，不是
@@ -327,9 +395,48 @@ def _match_ordinal(text: str) -> int | None:
     return value
 
 
+def _addressive_sentence_has_time(fragment: str) -> bool:
+    """一句之内既含指向性、又含可解析时间 → True。
+
+    时间判定走 ``parse_time_target``（与提醒解析共享的**同一把级联尺**，
+    日程板也用它的公开口）——本件不重造时间解析，只做同句核对。
+    """
+    if not fragment.strip():
+        return False
+    if not _ADDRESSIVE_RE.search(fragment):
+        return False
+    return parse_time_target(fragment) is not None
+
+
+def _reminder_creation_claim(text: str) -> bool:
+    """创建腿三件判据**同时**成立才抢这条道（缺一律不抢，消息落回人格对话）：
+
+    ① 指向性——见 :data:`_ADDRESSIVE_RE`（要求对本 bot 之外的人做提醒）；
+    ② 可解析时间——照旧 ``parse_reminder_intent()``，解析口径一字未改；
+    ③ 时间来自**含指向性短语的那一句**：按 ``_SENTENCE_BREAK_RE`` 切**原文**
+      （保留偏移、逐句取子串，不重拼不改写），任一句同时满足 ① 与时间即成立。
+
+    事故读数（09-29 16:22 群实况，进程内插桩）：那段冲榜训话
+    ``signal_hit=True`` 且 ``intent=at=次日 10:00 body='最后问一遍群里 9.30鸣潮3.7
+    你们钱都准备好没'``、``paste_reason=too_long``——「别怪我没提醒」那句没有时间、
+    「早上10点准时群里发累充截图作证」那句没有指向性，两条单立都不进，
+    **同现**才误抢 ⇒ 缺陷形状是"碰到词 ∧ 抠到时间，从不问这句话是不是在要求
+    本 bot 提醒谁"，故修在这一格（粘贴体守卫是对的兜底，只是被喂了不该进道的东西）。
+    """
+    if parse_reminder_intent(text) is None:
+        return False
+    start = 0
+    for break_match in _SENTENCE_BREAK_RE.finditer(text):
+        if _addressive_sentence_has_time(text[start : break_match.start()]):
+            return True
+        start = break_match.end()
+    return _addressive_sentence_has_time(text[start:])
+
+
 def is_reminder_command(text: str, *, config: Any | None = None) -> bool:
-    """路由判定：提醒信号 + （可解析出时间，或是列表/取消查询），
-    或笔记指令面，或自然语言勾选形态。"""
+    """路由判定：提醒**创建**（指向性+可解析时间+时间同句，见
+    :func:`_reminder_creation_claim`）、列表/取消查询、笔记指令面、
+    日程板面或自然语言勾选形态。"""
     stripped = (text or "").strip()
     if not stripped:
         return False
@@ -352,7 +459,14 @@ def is_reminder_command(text: str, *, config: Any | None = None) -> bool:
     # 谁来接，不许各判一份）；总闸关=恒 False，既有提醒/笔记行为逐字节不变。
     if is_schedule_surface(stripped, config=config):
         return True
-    if _SIGNAL_RE.search(stripped) and parse_reminder_intent(stripped) is not None:
+    # 创建腿（S30，2026-09-29 群实况事故波）：三件判据同时成立才抢——
+    # 指向性 + 可解析时间 + 时间同句（见 _reminder_creation_claim 的事故读数）。
+    # 旧判据「_SIGNAL_RE 命中 ∧ 全文抠到时间」把"提到提醒"当成"要求本 bot 提醒
+    # 谁"，一段冲榜训话因此被整条抢下并回执"这一大段像是原样转发的文字…"。
+    # _SIGNAL_RE 一字未动：它仍是 parse_reminder_intent 的前置信号门、仍是勾选面
+    # 的让路判据（capability 内 line 「query is not None and not _SIGNAL_RE.search」）；
+    # 不抢道时**绝不回**"我没看懂/这不是提醒"之类的元话——消息正常落回人格对话。
+    if _reminder_creation_claim(stripped):
         return True
     # 审查 A-10/A-11：消歧追问窗口内的光杆肯定词/序号要能路由进提醒
     # 能力，否则用户照提示回「是」「1」永远没人接。闸没有会话上下文，
@@ -625,7 +739,14 @@ def build_reminder_capability(config: Any | None = None) -> Any:
         cancel_match = _CANCEL_RE.search(text)
         if cancel_match:
             prefix = (cancel_match.group(1) or "").strip().lower()
-            pending = store.list_pending(session_key, limit=50)
+            # A2 归属面：群内先按本人归属取自己的待办，他人 id 前缀即便抄来也
+            # 不在这一份清单里（撤不动＝走进原有的歧义/空清单回执，绝不复述
+            # 他人原文）；平台职衔可跨归属代撤，见 _reminder_owner_scope。
+            pending = store.list_pending(
+                session_key,
+                limit=50,
+                sender_id=_reminder_owner_scope(message, surface="cancel"),
+            )
             if not pending:
                 return _result(message, "这个会话还没有待办的提醒。", tags=["cancel_empty"])
             if not prefix:
@@ -645,9 +766,16 @@ def build_reminder_capability(config: Any | None = None) -> Any:
                     tags=["cancel_ambiguous"],
                 )
             store.cancel(hits[0].reminder_id)
+            if hits[0].sender_id != message.sender_id:
+                # 代撤他人条目（职衔腿）：落库照做，回执只报"放下了"——
+                # 那是别人的私事，正文绝不进公屏。
+                return _result(message, "好，这条提醒已经放下了。", tags=["cancelled"])
             return _result(message, f"好，这条提醒已经放下了：{hits[0].text}", tags=["cancelled"])
         if _LIST_RE.search(text):
-            pending = store.list_pending(session_key)
+            # A2 隐私面：群内人人只见自己（管理员在列表面同样无例外）。
+            pending = store.list_pending(
+                session_key, sender_id=_reminder_owner_scope(message, surface="list")
+            )
             if not pending:
                 return _result(message, "目前没有待办的提醒。", tags=["list_empty"])
             lines = [
@@ -686,7 +814,7 @@ def build_reminder_capability(config: Any | None = None) -> Any:
                 "这条我刚才记过啦，就不重复记了。想看记了什么，说「提醒列表」就好。",
                 tags=["duplicate_recent"],
             )
-        reminder = store.add(
+        reminder, quota_reason = store.add_checked(
             session_key=session_key,
             sender_id=message.sender_id,
             target_scope=message.session_type.value,
@@ -695,8 +823,23 @@ def build_reminder_capability(config: Any | None = None) -> Any:
             bot_id=message.bot_id,
             remind_at=intent.remind_at,
             text=intent.text,
+            # A2 子闸：群会话按人计（私聊传 None＝桶里本就只有本人）。
+            max_pending_for_sender=(
+                MAX_PENDING_PER_SENDER if _is_group_session(message) else None
+            ),
         )
         if reminder is None:
+            if quota_reason == "sender_full":
+                # 满的是**他自己**那一格，不能谎报整组排满（谎报会让其他人
+                # 白等、也让当事人不知道该取消哪一条）。文案刻意避开
+                # 「排满」二字，与 reminder_full 的存量断言正交。
+                return _result(
+                    message,
+                    f"（轻轻翻了翻小本子）你自己这一格已经挂了 {MAX_PENDING_PER_SENDER} 条待办啦，"
+                    "再多就放不下了。\n"
+                    "先在「提醒列表」里挑一条放下来，腾出位置，我再帮你记新的，好吗？",
+                    tags=["reminder_sender_full"],
+                )
             # 审查 A-07：清单满不再挤掉最旧一条（用户以为都记着，其实被静默
             # 删了）——如实告诉用户先做取舍，再记新的。
             return _result(

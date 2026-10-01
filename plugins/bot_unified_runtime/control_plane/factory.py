@@ -76,11 +76,15 @@ def build_workspace_service(config: object | None = None):
 
     async def sandbox_generate(scope: dict[str, Any]) -> dict[str, Any]:
         from ..domains.chat_reply.character.documents import load_character_document
+
+        # 2026-09-29 席 S-FIX-SHIM-REFS：`..llm.model_router` 是旧布局垫片（`board_shim_ledger`
+        # 在册待退役枚 SHIM=`llm/model_router.py`，上限 9），同函数上一行已经在走 `..domains.chat_reply.llm_engine.providers`
+        # 真身 ⇒ 这一行属「同侧两条路」的错路边，改指真身（`_resolve_api_key` 真身 :652 在册）。
+        from ..domains.chat_reply.llm_engine.model_router import _resolve_api_key
         from ..domains.chat_reply.llm_engine.providers import (
             OpenAICompatibleLLMProvider,
             StaticLLMProvider,
         )
-        from ..llm.model_router import _resolve_api_key
         from .sandbox import SandboxConversationAdapter, SandboxModel
         from .services import ControlServiceError
         persona_files = tuple(Path(path).expanduser() for path in getattr(config, "bot_persona_files", ()))

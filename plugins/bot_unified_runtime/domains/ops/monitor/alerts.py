@@ -341,7 +341,10 @@ def _compress_llm_chain_detail(issue: OperationalIssue) -> str:
     告警只在整条链失败后触发，`chain=N跳全败` 语义诚实（N=N 跳全失败）；
     非 llm stage 或无 chain 记号原样返回。
     """
-    summary = str(issue.safe_summary).strip()
+    summary = redact_local_secrets(str(issue.safe_summary).strip())
+    # ATK-OUTB 票2（先洗后截）：洗在源头——本函数出口的 [:72] 钳长、下游
+    # 技术行 detail[:60] 与「具体情况」[:120] 两处切片，切的都已是洗过的
+    # 文本；旧写法三处截口全落在原文上，残密钥头（探针 2 实锤 `sk-P`）。
     if str(issue.stage).strip() != "llm":
         return summary
     match = _LLM_CHAIN_RE.search(summary)
@@ -399,12 +402,30 @@ _STAGE_PLAIN: dict[str, str] = {
     "generation": "我在生成内容",
     "history": "我在读历史消息",
     "campus": "我在处理校园转发",
+    # 紧急预警线（真身=collector.ISSUE_STAGE，采集侧与投递侧共用这一枚 stage 词，
+    # 禁第二套）。2026-09-30 登记：此前这条线的告警两头都不在册，读出来是整句兜底。
+    "emergency_info": "我在照看紧急预警这条线（从权威源头采集、再决定要不要主动推给你）",
 }
 
 _KIND_PLAIN: dict[str, str] = {
     "timeout": "等回话等超时了",
     "deadline_exceeded": "整条链路的时限用完了",
     "network": "连不上对方服务",
+    # 以下九档是 LLM 侧的在册代号（真身=chat 的 `_SAFE_LLM_ERROR_KINDS`，
+    # 凡不在那张表里的 kind 都会被归一成 provider_error，所以它就是完整分母）。
+    # 2026-09-27 04:12 实弹：本机代理 DNS 挂死 → AxonHub 逐渠道 EOF → 对 bot 回
+    # HTTP 502 → kind=server 而这里没登记 ⇒ 告警只剩"出了个我还没登记成人话的错
+    # （代号 server）"，谁也看不出该查出网那一头。覆盖由 `test_alert_plain_text.py`
+    # 按那张真身词表派生执法，加一档忘了填人话当场红。
+    "server": "对方服务自己回了错误（请求发出去了，是它那边没接住）",
+    "rate_limited": "对方限流了，这一会儿不能再多发",
+    "auth": "对方不认这把密钥（鉴权没过）",
+    "http": "对方回了一个我没预期的 HTTP 状态",
+    "model_not_found": "这个模型在对方那里不存在",
+    "unsupported_model": "对方说这个模型它不支持",
+    "unsupported_parameter": "对方不接受我请求里的某一项参数",
+    "invalid_request": "对方拒绝了这次请求的格式",
+    "bad_request": "对方以 4xx 拒绝了这次请求",
     "retcode_failure": "协议端拒收（它回了失败码）",
     "send_exception": "投递时抛了异常",
     "transport_exception": "传输层抛了异常",
@@ -439,6 +460,19 @@ _KIND_PLAIN: dict[str, str] = {
         "图片创作的接口是预留位、后端还没接上，功能没开不是故障；"
         "每个进程实例报一次，重启后会再报一次，暂时不用谁管"
     ),
+    # 以下两档是紧急预警域的在册代号（真身=emergency_info/service/collector.py 的
+    # `ISSUE_KIND` 与同域 service/push.py 的 `ISSUE_KIND_PUSH_EXPIRED`，stage 同一枚
+    # `emergency_info`）。2026-09-30 登记：投递侧的时效丢弃第一次把这两枚推到台前。
+    # 覆盖由 `tests/test_alert_plain_text.py` 从真身模块常量派生执法，加一档忘填人话当场红。
+    "collect_failed": (
+        "有个权威源头这一轮没采到数据（连不上、超时或它自己回了错东西）；"
+        "下一轮会自动再试，同一源三百秒内只报一条，不要紧，连着几轮都报才需要去看那个源"
+    ),
+    "push_expired": (
+        "这条预警已经出了时效窗（早已到期、发生时间落在未来、或比一天还老），"
+        "按设计它永远不该再出板，所以是被丢弃而不是被压住——投递腿没漏，丢弃本身就是正确结论；"
+        "只有成批出现才说明源头时间戳或时效窗配错了"
+    ),
 }
 
 #: 键由 ``SessionType`` 枚举派生，不手抄字符串——旧表写的是 `"mail"`，而枚举值
@@ -468,22 +502,57 @@ def _alert_when_label() -> str:
 
 
 # 代号字符集：stage/kind 是代码里给的标识符，进人话句前按白名单洗一遍。
-# 为什么不等 redact_local_secrets 兜——它按形态识别（`sk-` 独立成词之类），
-# 嵌在词里的密钥它不认；而这里恰恰是把外部字符串拼进句子。白名单外的字符
-# 一律不认，宁可让代号显示成被裁过的样子，也不给它带东西出去。
+# 白名单只管字符集，密钥**形态**摘除过去靠本模块私有的 _ALERT_SECRETISH_RE
+# ——那是全局尺的第二把真身，且罩不到技术行与 detail（两把尺不对称，
+# SEAT-ATK-OUTBOUND 报告会错级-2）。ATK-OUTB 票1/票3（2026-09-27）：嵌词、
+# 短密钥、长段与裸高熵形态已并入全局咽喉 `redact_local_secrets`，这里只留
+# 结构白名单（代号面的字符清洗），形态摘除统一走那把尺，私有尺删除退役。
 _ALERT_TOKEN_RE = re.compile(r"[^A-Za-z0-9_.:\-]")
-# 密钥形态（`sk-` / `ah-` 后跟一长串）：白名单允许这些字符，所以光靠白名单挡不住
-# "代号里混进密钥"。全仓脱敏 `redact_local_secrets` 按独立词形识别，嵌在词里的不认，
-# 这里就地把这类片段摘掉——只在告警代号面上生效，不去改全局尺（那会牵连聊天出站）。
-_ALERT_SECRETISH_RE = re.compile(r"[A-Za-z]{1,6}-[A-Za-z0-9]{20,}")
 
 
 def _alert_token(raw: str, *, limit: int = 48) -> str:
-    cleaned = _ALERT_TOKEN_RE.sub("", str(raw or "").strip())
-    cleaned = _ALERT_SECRETISH_RE.sub("‹已隐藏密钥形态›", cleaned)
+    cleaned = redact_local_secrets(_ALERT_TOKEN_RE.sub("", str(raw or "").strip()))
     if len(cleaned) > limit:
         cleaned = cleaned[:limit] + "…"
     return cleaned or "未记名"
+
+
+#: 「具体情况」行截断时用来报总数账的记号（queue 观测族 detail 形如 `… count=7 keys=…`）。
+_ALERT_DETAIL_COUNT_RE = re.compile(r"\bcount=(\d+)\b")
+
+
+def _detail_for_display(safe_detail: str, limit: int) -> str:
+    """「具体情况」行给人看的裁剪（2026-09-28 席位F：keys 清单别从中间咬断）。
+
+    queue 观测族的 safe_summary 形如 `send_queue_dormant_partial count=7 keys=k1|k2|…`，
+    旧写法 `[:120]` 硬切会把键名拦腰咬断，读者对着一截残缺键名不明所以。超预算时
+    改按 `|` 边界保留**完整**键、尾注 `…等 N 条`（N 优先取 count= 的总数账——真身
+    在 worker 侧已把清单钳到至多 5 枚，count 才是全量）。无 keys= 结构的 detail
+    与旧切片等价、只是显式留了省略号。切片仍落在已洗文本上（ATK-OUTB 票2 的
+    「先洗后截」次序不动）。技术行 `detail=` 的 [:60] 不在本改面——那是运维 grep
+    契约，动它=拆既有锁。
+    """
+    if len(safe_detail) <= limit:
+        return safe_detail
+    head, sep, tail = safe_detail.partition("keys=")
+    if sep:
+        keys = [key for key in tail.split("|") if key]
+        budget = limit - len(head) - len("keys=")
+        shown: list[str] = []
+        used = 0
+        for key in keys:
+            cost = len(key) + (1 if shown else 0)
+            if used + cost > budget:
+                break
+            shown.append(key)
+            used += cost
+        if shown and len(shown) < len(keys):
+            match = _ALERT_DETAIL_COUNT_RE.search(safe_detail)
+            total = max(int(match.group(1)), len(keys)) if match else len(keys)
+            return f"{head}keys={'|'.join(shown)}…等 {total} 条"
+        if shown:
+            return f"{head}keys={'|'.join(shown)}"
+    return safe_detail[:limit] + "…"
 
 
 #: 认不出代号时主句里必带的那半句（2026-09-28 用户裁定「兜底句别只报我没词」）。
@@ -550,8 +619,11 @@ def build_operational_alert_text(
         safe_detail=safe_detail,
         suppressed_count=suppressed_count,
     )
+    # ATK-OUTB 票3（两把尺并一把）：技术行的 stage/kind 值与主句代号走同一
+    # `_alert_token`（白名单 + 全局咽喉），键名 `stage=`/`kind=` 逐字保留——
+    # 运维 grep 契约吃的是键名与代号本身，值段摘除不碍 grep。
     technical = redact_local_secrets(
-        f"[运行时告警] stage={issue.stage} kind={issue.kind}{detail} "
+        f"[运行时告警] stage={_alert_token(issue.stage)} kind={_alert_token(issue.kind)}{detail} "
         f"retryable={str(issue.retryable).lower()} attempts={issue.attempts}{elapsed} "
         f"debug_id={issue.debug_id} source_adapter={str(source_adapter).strip()[:40]} "
         f"source_bot={str(source_bot).strip()[:80]} session_type={session_type.value} "
@@ -584,7 +656,7 @@ def _alert_plain_fields(
         ("会话", _SESSION_PLAIN.get(str(session_type.value), str(session_type.value))),
         ("发出账号", _alert_token(source_bot, limit=80)),
         ("代号", f"{_alert_token(issue.stage)}/{_alert_token(issue.kind)}"),
-        ("具体情况", safe_detail[:120] if safe_detail else "上游没给细节"),
+        ("具体情况", _detail_for_display(safe_detail, 120) if safe_detail else "上游没给细节"),
         (
             "要不要再试",
             "还能重试，你不用管" if issue.retryable else "重试也没用，得有人看一眼",

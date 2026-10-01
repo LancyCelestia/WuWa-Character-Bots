@@ -25,6 +25,17 @@
 **禁止**再拼一套 `emergency:`/`emg_push:` 形态——脏键与干净键在队列里各存一行，
 幂等失效＝**重发**（LOCK-AUDIT GAP-1）。
 
+时效腿（F-1，SEAT-ATK-EMERGENCY-SUB）：判据唯一真身在 `service/dedupe.py:is_within_validity`
+（三条按序、fail-closed），本文件只在 `deliver_emergency` 里调**一处**、且必须在触闸之前。
+理由不是风格：按日重投的幂等键**日期段每天换新**，`ON CONFLICT` 天生拦不住跨天，
+所以「已到期／发生在未来／超龄」的条目在保留期（缺省 90 天）内会**每天再推一次给同一个群**
+——台账 #46 裁定的反面。NMC 源根本不填 `expires_at`，超龄腿是唯一拦阻，它一旦没接，
+整条链就没有任何人挡陈旧预警。执法留在唯一出口、不交调用方（AST 活性锁
+`tests/test_emergency_info_push.py::test_validity_predicate_is_enforced_at_the_single_touchpoint`
+判「恰一处调用且行号先于触闸」）。丢弃不是静默丢：经**闸自己的** `note_issue`
+申报 `OperationalIssue`，走装配期已接好的中央告警口（折叠抑制 + 台账 TTL 同一条链），
+本文件不 import config、不新建 logger、不开第二条直发腿。
+
 按日重投族：本域对「同一条预警每天仍可再投一回」的语义走 `dedupe_family="daily"`
 ⇒ 键必须五段（带 `date_key`）。家族值写的是字面量 `"daily"` 而非闸侧常量
 `DEDUPE_FAMILY_DAILY`，因为 `tests/test_emergency_info_core.py`
@@ -37,12 +48,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from pydantic import field_validator, model_validator
 
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
+    OperationalIssue,
     PrivacyLevel,
     RenderedOutput,
     SendPolicy,
@@ -54,12 +66,20 @@ from plugins.bot_unified_runtime.domains.emergency_info.contracts import (
     EmergencyItem,
     to_risk_level,
 )
+
+# 告警 stage 词唯一真身在采集侧（`collector.ISSUE_STAGE`，注释原话「不新建第二套
+# stage 词」）；投递侧只引用同一枚，不在本文件再抄一遍字符串。collector 不 import
+# 本文件，无环。
+from plugins.bot_unified_runtime.domains.emergency_info.service.collector import (
+    ISSUE_STAGE,
+)
 from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
     build_emergency_dedupe_key,
     date_key_of,
+    is_within_validity,
 )
 from plugins.bot_unified_runtime.domains.emergency_info.service.grading import (
-    may_breach_quiet_window,
+    may_breach_quiet_window_intersects_floor,
 )
 
 # 闸侧唯一入口（施工图 §5-钉死③.1：真身签名
@@ -77,6 +97,19 @@ SKIP_UNGRADED = "skip_ungraded"
 #: 「判过了、但这一档不值得在 00:00–06:00 打断睡眠」——条目仍留在库里，
 #: 出窗后的下一轮照常投（按日幂等键此前没被占用），**不是丢弃**。
 SKIP_QUIET_HOURS = "skip_quiet_hours"
+
+#: 时效窗外的条目结论（F-1 的第四态）：已到期／发生在未来／超龄 ⇒ **不投**，与
+#: `skip_quiet_hours` 不同——那一态是「本轮先压住、出窗后照常投」，这一态是
+#: 「这条永远不该再出板」，条目留在库里只等保留期把它清掉，不承诺下一轮。
+SKIP_EXPIRED = "skip_expired"
+
+#: 投递侧的超龄窗：与「按日重投」同宽（幂等键按日换新 ⇒ 超过一天就是旧事重提）。
+#: 缺省值写成模块常量而不是 config 键：改根装配文件属另一工作包，想按环境改数请由
+#: 调用方传 `max_age=`（`None` 只摘超龄腿③，①未来②已到期保持无条件 fail-closed）。
+PUSH_MAX_AGE = timedelta(days=1)
+
+#: 时效丢弃的告警 kind（stage 用采集侧同一枚词；折叠键由中央抑制器按 stage+kind+目标算）。
+ISSUE_KIND_PUSH_EXPIRED = "push_expired"
 
 #: 本域 capability_id（路由面/闸审计面同源）。
 EMERGENCY_CAPABILITY_ID = "bot.emergency_info"
@@ -296,9 +329,10 @@ def should_hold_for_quiet_window(
 
     True＝本轮先压住（出窗后下一轮照常投）。成立条件三腿全真：
     ① 闸确实会为本条穿窗（等级在闸的 `settings.urgent_severities` 里）；
-    ② 按注册表族级规则**不够格**穿窗（`grading.may_breach_quiet_window` 判否——
-       族级地板如 `global_disaster` 只认红档，或用户把
-       `bot_emergency_info_quiet_breach_levels` 配窄了）；
+    ② 按「源级表 ∩ 族级地板」**不够格**穿窗（
+       `grading.may_breach_quiet_window_intersects_floor` 判否——族级地板如
+       `global_disaster` 只认红档，装配侧搬来的 `quiet_breach_levels` 只能收窄、
+       不能把地板抬宽）；
     ③ 此刻这个目标确实在静默窗内。
     任何一腿读不到都返回 False（保守交回闸判定，与 D-1「不猜」同向）。
     """
@@ -307,9 +341,41 @@ def should_hold_for_quiet_window(
         return False
     if str(level.value).upper() not in _gate_urgent_levels(gate):
         return False
-    if may_breach_quiet_window(item, level, allowed_levels=breach_levels):
+    if may_breach_quiet_window_intersects_floor(item, level, source_levels=breach_levels):
         return False
     return _quiet_window_active(gate, now, str(target_scope or "").strip() or "group")
+
+
+def _note_expired_drop(
+    gate: Any, item: EmergencyItem, target: EmergencyTarget, *, max_age: timedelta | None
+) -> None:
+    """把一次时效丢弃冒到运维面：**复用闸自己的告警口**，不另造 logger／直发腿。
+
+    `gate.note_issue` 在装配期接的是根侧唯一中央告警出口（`_push_probe_issue` ⇒
+    管理员告警 + 300s 折叠抑制 + 台账 TTL 那一条链，QG9① 的先例），本域只申报
+    自己的 stage/kind——「消息没了但没人知道」是这个缺陷的原形态，所以丢弃必须出声。
+
+    观测口任何形式的病都不带走投递结论（与闸侧 `note_issue` 的「观测不得炸投递链路」
+    同纪律）：闸替身／装配前的对象读不到 `note_issue` 就只放弃这一笔观测。
+    摘要里只放条目 id 与 channel（照闸侧 `_issue` 的先例：零正文、目标身份不进告警文本）。
+    """
+    note = getattr(gate, "note_issue", None)
+    if not callable(note):
+        return
+    try:
+        note(
+            OperationalIssue(
+                stage=ISSUE_STAGE,
+                kind=ISSUE_KIND_PUSH_EXPIRED,
+                retryable=False,
+                safe_summary=(
+                    f"reason=outside_validity_window item={item.item_id} "
+                    f"channel={target.channel} max_age={max_age}"
+                )[:200],
+            )
+        )
+    except Exception:  # noqa: BLE001 - 告警口生病只放弃观测，不改投递结论。
+        return
 
 
 def deliver_emergency(
@@ -320,8 +386,10 @@ def deliver_emergency(
     *,
     now: datetime,
     breach_levels: Sequence[str] | None = None,
+    max_age: timedelta | None = PUSH_MAX_AGE,
 ) -> str:
-    """域内唯一投递触点：过闸，返回闸的结论（`allow`/`defer`/`skip`）。
+    """域内唯一投递触点：过闸，返回闸的结论（`allow`/`defer`/`skip`），
+    或本域自己的三态前置结论（`skip_ungraded`/`skip_quiet_hours`/`skip_expired`）。
 
     返回的是 `outcome.verdict.action` 原文，**不是**队列回执状态；调用方据此区分
     「已投出/被顺延/被拒」。回执里的 `operational_issue`（degraded/storm）在
@@ -337,6 +405,11 @@ def deliver_emergency(
     缺省 None＝用族级规则单独决定（缺省族级＝红/橙＝与今天一致）。
     根装配目前按位置/关键字都不传这一参（改根文件属另一工作包），因此**主会话落键后
     须把 `breach_levels=source.quiet_breach_levels` 加进那一次调用**——见 WP3 交接段。
+
+    `max_age`（F-1 时效腿）＝超龄窗，缺省 `PUSH_MAX_AGE`（一天，与按日重投同窗）；
+    传 `None` **只**摘掉③超龄腿，①「发生在未来」与②「`expires_at` 已到期」保持无条件
+    fail-closed——这条分工是中央判据 `dedupe.is_within_validity` 现成的形状，调用方
+    一律不得在本地重做（本函数体内该判定的调用点恰一处，AST 锁执法）。
     """
     if item.level is None:
         return SKIP_UNGRADED
@@ -350,6 +423,13 @@ def deliver_emergency(
         breach_levels=breach_levels,
     ):
         return SKIP_QUIET_HOURS
+    if not is_within_validity(item, now=now, max_age=max_age):
+        # 判序：定级门 → 静默窗 → 时效。放在静默窗**之后**是刻意的：既让时效结论仍然
+        # 先于任何入队动作（安全面等价），又不改动 `skip_quiet_hours` 那一态今天的
+        # 出口形态（本席无权改它）；这类「窗内且已过时效」的条目出窗后的下一轮
+        # 照样会落到本判定被拦下，不存在漏放。
+        _note_expired_drop(gate, item, target, max_age=max_age)
+        return SKIP_EXPIRED
     dedupe_date_key = date_key_of(now)
     dedupe_key = build_emergency_dedupe_key(
         target.channel,
@@ -376,6 +456,9 @@ def deliver_emergency(
 
 __all__ = [
     "EMERGENCY_CAPABILITY_ID",
+    "ISSUE_KIND_PUSH_EXPIRED",
+    "PUSH_MAX_AGE",
+    "SKIP_EXPIRED",
     "SKIP_QUIET_HOURS",
     "SKIP_UNGRADED",
     "EmergencyTarget",

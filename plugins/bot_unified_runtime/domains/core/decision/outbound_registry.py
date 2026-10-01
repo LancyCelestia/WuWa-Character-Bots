@@ -26,7 +26,6 @@ from __future__ import annotations
 # media_archive、meme_library 九处第二通路收编的行数收缩；跟随方式为按被锚行
 # 原文内容重定位（脚本 seat-coord-follow.py + 7 枚同名冲突条目人工核对根行）。
 # campus_record_matcher 等 5423 以上坐标不受本批影响（所有收缩均在其后）。
-
 # 坐标复锚批注（2026-09-28 S-FIX-COORD-REANCHOR 批，主任务板 #33）：本批把登记册
 # 全部「file:line」坐标改为「file::symbol[:callee]」派生式——relpath 相对插件根
 # plugins/bot_unified_runtime/，symbol 为定义/赋值名，可选 callee 为调用腿（属性名

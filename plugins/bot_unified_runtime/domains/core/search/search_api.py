@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+import urllib.parse
 from collections.abc import Mapping
 from typing import Any
 
@@ -103,6 +104,62 @@ def _first_text(item: Mapping[str, Any], keys: tuple[str, ...]) -> str:
     return ""
 
 
+def _first_scalar(item: Mapping[str, Any], keys: tuple[str, ...]) -> str:
+    """`_first_text` 的标量版：额外接受数字/布尔形态的时间戳（各家写法不一）。"""
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return str(value)
+    return ""
+
+
+#: 结果条目里「来源域名」的候选键（各家叫法不一：Tavily ``display_status`` 无、
+#: Serp/Bing 形 ``displayLink``、You 形 ``channel``…）。**只登记真实回传字段**，
+#: 拿不到就由 URL 现推（``_domain_from_url``），绝不写死一个假域名冒充来源。
+_SOURCE_DOMAIN_KEYS = ("source_domain", "displayLink", "site_name", "siteName", "hostname", "host")
+
+#: 结果条目里「发布时间」的候选键。同为**只取源站回传值**：缺字段就留空串，
+#: 不许拿抓取时刻顶替（``search_service`` 对 ``published_at`` 同一条纪律，此处不另立口径）。
+_PUBLISHED_AT_KEYS = (
+    "published_at",
+    "publishedAt",
+    "published_date",
+    "publishedDate",
+    "page_age",
+    "time_last_updated",
+    "last_updated",
+    "first_published",
+    "timestamp",
+)
+
+
+def _domain_from_url(url: str) -> str:
+    """由 URL 现推裸域名（小写、去端口、去 userinfo、去单一 ``www.`` 前缀）。
+
+    为什么这一层必须由检索链自己做：``normalize_search_results`` 过去只造
+    ``WebSearchHit(title, snippet, url)``，``source_domain`` 恒为空串，于是
+    ``source_authority.authority_tier("")`` 一律 ``TIER_UNKNOWN``、``_is_junk``
+    的域名字典闸永不命中、按域来源优先级表与 prompt 的 ``-[域名]`` 前缀全部失明
+    ——「权威源优先」在生产 key 主链上等于没接（免 key 的 DDG/Bing 两家自己填了
+    域名，所以这条只在有 key 的链上塌）。留空 ``www.`` 剥离是刻意的窄口径：
+    只剥这一枚最常见前缀，不做任意子串处理，避免把 ``wwwharmful.example`` 这类
+    畸形域洗成看起来干净的形状。
+    """
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    try:
+        netloc = urllib.parse.urlsplit(raw).netloc
+    except ValueError:
+        return ""
+    if "@" in netloc:
+        netloc = netloc.rsplit("@", 1)[1]
+    netloc = netloc.split(":", 1)[0].strip(".").lower()
+    return netloc.removeprefix("www.")
+
+
 def normalize_search_results(payload: object, *, max_results: int) -> list[WebSearchHit]:
     hits: list[WebSearchHit] = []
     seen: set[str] = set()
@@ -115,14 +172,27 @@ def normalize_search_results(payload: object, *, max_results: int) -> list[WebSe
             item,
             ("content", "snippet", "description", "text", "summary", "raw_content"),
         )
+        # 域名两把尺：源站自己报的用源站的，报了就现推——两者都没有才留空串。
+        source_domain = _first_text(item, _SOURCE_DOMAIN_KEYS) or _domain_from_url(url)
+        # 发布时间只透传、不解析、不推断：空串＝源站没给，排序层据此判「无日期」。
+        published_at = _first_scalar(item, _PUBLISHED_AT_KEYS)
         key = url.rstrip("/").lower()
         if key in seen:
             continue
         seen.add(key)
-        hits.append(WebSearchHit(title=title, snippet=snippet, url=url))
+        hits.append(
+            WebSearchHit(
+                title=title,
+                snippet=snippet,
+                url=url,
+                source_domain=source_domain,
+                published_at=published_at,
+            )
+        )
         if len(hits) >= max(1, int(max_results)):
             break
     return hits
+
 
 
 def extract_page_text(payload: object) -> str:

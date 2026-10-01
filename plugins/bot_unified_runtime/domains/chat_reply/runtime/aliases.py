@@ -172,6 +172,10 @@ DEFAULT_VERB_MAP: dict[str, str] = {
     "隨機表情": "bot.meme_library",
     "表情库统计": "bot.meme_library",
     "表情统计": "bot.meme_library",
+    # S-ALBUM（2026-09-30）表情册面（管理员册账，简繁成对，同 隨機/随机 口径）：
+    # 缺这两键时「守岸人 表情册」会坠 help 兜底（F9 同因）。
+    "表情册": "bot.meme_library",
+    "表情相冊": "bot.meme_library",
     "logs": "bot.logs",
     # TRA 草稿（2026-09-13 繁體缺失补齐批）：昵称动词繁體对向补齐，
     # 防「守岸人幫助/守岸人暫停」类坠空（F15 同哲学）。

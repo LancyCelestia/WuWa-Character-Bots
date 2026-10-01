@@ -26,6 +26,8 @@ from typing import Any, Protocol
 
 from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
     guard_secondhand_text,
+    neutralize_internal_markers,
+    strip_injection_instruction_spans,
 )
 from plugins.bot_unified_runtime.domains.core import session_keys
 from plugins.bot_unified_runtime.domains.core.contracts.character import (
@@ -100,6 +102,26 @@ def _clock_gap_minutes(previous: str, current: str) -> int | None:
     if gap < -720:  # 跨天（如 23:59 -> 00:01）
         gap += 1440
     return gap
+
+
+def sanitize_digest_line(text: str) -> str:
+    """群成员原文行进摘要前的逐条处置：句级指令剥离 → 边界标记全角化。
+
+    两件真身均在 ``security/injection.py``（``strip_injection_instruction_spans``
+    与 ``neutralize_internal_markers``），零新机制。顺序**先剥离后全角**：
+    剥离判据认 ASCII 方括号形态（``[SYSTEM PROMPT]`` 一类），先全角化会把
+    伪造标记洗成判据不认的形态、反给指令句放行通道——同 chat 检索腿
+    ``_sanitize_untrusted_context_text(_strip_injection_instruction_spans(…))``
+    的既有口径。幂等：干净行逐字节不变，全角产物二次处置零变化。
+
+    **fail-closed**：处置本身抛异常时返回空串，由调用方按「空行进空出」丢弃该行，
+    绝不因为判据坏了就把裸文本发出去（群摘要会由 bot 自己的署名投递回全群，
+    裸发一条伪造「系统指令」不是降级而是二次传播载荷）。
+    """
+    try:
+        return neutralize_internal_markers(strip_injection_instruction_spans(text))
+    except Exception:  # noqa: BLE001 - 判不了＝不注入：整行按空出，不裸发。
+        return ""
 
 
 class SharedGroupContextProvider(Protocol):
@@ -234,7 +256,13 @@ class SQLiteGroupDigestProvider:
                         lines.append(separator)
                         chars_used += len(separator)
             previous_clock = clock
-            text = str(row["text"]).replace("\n", " ").strip()
+            text = sanitize_digest_line(str(row["text"]).replace("\n", " ").strip())
+            if not text:
+                # 整行皆为指令形态（或处置失败）⇒ 空进空出：整行不注入、
+                # 不写占位文本——谎报「读到了东西」比不读更坏（同
+                # guard_secondhand_text 口径），裸发更是不行（本腿会被 bot
+                # 署名逐字复述回全群）。
+                continue
             if len(text) > 80:
                 text = f"{text[:79]}…"
             line = (
@@ -244,6 +272,10 @@ class SQLiteGroupDigestProvider:
                 line = f"{line[: max(1, remaining - 1)]}…"
             lines.append(line)
             chars_used += len(line)
+        if not lines:
+            # 消毒后一条不剩＝如实「无内容」，走既有的 enabled=False 通道，
+            # 不端一顶只有标题、没有正文的摘要给下游（下游会把它当有内容）。
+            return SharedGroupContext(request_id=request_id, enabled=False)
         summary = (
             "最近群聊公共话题（确定性摘要，不含个人私聊内容；"
             "发言成员均为群友，不存在唯一主角，不要称任何成员为漂泊者）：\n"
@@ -318,7 +350,14 @@ class OpenAICompatibleGroupSummarizer:
         self._cache_lock = threading.Lock()
 
     def summarize(self, digest_text: str) -> str:
-        key = digest_text.strip()
+        # 逐行二次消毒（幂等，干净行逐字节不变）：summarize 也可能被直接喂
+        # 未过 SQLiteGroupDigestProvider 的文本（推送腿、测试夹具、将来新调用方）。
+        # LLM 失败回退 ``return key`` 腿与缓存键一并吃到消毒后形态 ⇒ 裸标记
+        # 不再有任何一条进模型/回会话的通路（回退文本会常驻 LRU 与 summary）。
+        # 空行进空出、不写占位文本；整段皆毒 ⇒ key 为空，走既有「无内容」早退腿。
+        key = "\n".join(
+            sanitize_digest_line(line) for line in digest_text.splitlines()
+        ).strip()
         if not key:
             return key
         with self._cache_lock:

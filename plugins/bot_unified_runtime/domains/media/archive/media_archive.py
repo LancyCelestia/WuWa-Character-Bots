@@ -47,10 +47,19 @@ UNKNOWN_IP = "未识别"
 # 目录名清洗：路径分隔符与 Windows 非法字符一律替换；控制字符同杀。
 _ILLEGAL_DIRNAME_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _MAX_DIRNAME_LEN = 40
-# Windows 保留设备名（评审 M-4）：CON/NUL 等做目录名会让 mkdir 抛 OSError。
-_WIN_RESERVED_NAMES = frozenset(
-    {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
-)
+# 保留设备名判定（攻击审计 A-1 收编）：本文件不再自持保留名集合——「点号前
+# 首段」判定的唯一真身在 domains/files/sender/restricted_runner.py，旧的全名
+# 比对（_WIN_RESERVED_NAMES）放行 nul.txt/con.md 形态，属并存的第二弱真身，
+# 已删除；sanitize_dirname 改为调用中央判据（只调用、不修改中央件）。
+
+
+class ArchiveReservedNameError(ValueError):
+    """目录段名撞 Win32 保留设备名：拒绝，理由出自中央人话表 DENY_PLAIN_TEXT。
+
+    旧行为是给保留名加 ``_`` 前缀（静默近似值）或放任 mkdir 抛误导性 OSError；
+    两者都改为走调用方的既有失败面（恒收紧，同 A-3 口径）。继承 ValueError
+    以便未点名本型的调用点按既有 ``except (ValueError, OSError)`` 兜底。
+    """
 
 _MAGIC_SIGNATURES: tuple[tuple[bytes, str], ...] = (
     (b"\x89PNG\r\n\x1a\n", "png"),
@@ -65,14 +74,48 @@ _MAGIC_SIGNATURES: tuple[tuple[bytes, str], ...] = (
 
 
 def sanitize_dirname(value: str, *, fallback: str = "未命名") -> str:
-    """目录名消毒：非法字符/路径穿越片段全部替换，空值回落，保留名加前缀。"""
+    """目录名消毒：非法字符/路径穿越片段全部替换，空值回落，保留设备名拒绝。
+
+    保留名判定经局部导入走中央真身（``restricted_runner._is_reserved_device_name``，
+    点号前首段 casefold 比对——公开别名待中央件席登记）：``nul`` 与 ``nul.txt``/
+    ``con.md`` 同一格拒绝，绝不在此复刻点号切分；命中即抛
+    :class:`ArchiveReservedNameError`（人话理由出自中央单表 DENY_PLAIN_TEXT），
+    不再洗名加前缀。
+    """
     text = _ILLEGAL_DIRNAME_RE.sub("_", str(value or "").strip())
     text = text.replace("..", "_").strip(" ._")
     if not text:
         return fallback
-    if text.upper() in _WIN_RESERVED_NAMES:
-        text = f"_{text}"
+    from plugins.bot_unified_runtime.domains.files.sender import restricted_runner
+
+    if restricted_runner._is_reserved_device_name(text):
+        raise ArchiveReservedNameError(
+            restricted_runner.plain_reason(restricted_runner.DenyCode.RESERVED_NAME)
+        )
     return text[:_MAX_DIRNAME_LEN]
+
+
+def display_label(value: object) -> str:
+    """归档**显示名**消毒（ANTIATTACK P2-d）：IP / 角色名 / 原始文件名的肉眼形态腿。
+
+    与 :func:`sanitize_dirname` 的分工写死，两枚不可互相替代：
+    - `sanitize_dirname` 管「盘上这一段能不能建」——路径穿越、非法字符、
+      Win32 保留设备名；它的字符表只覆盖控制区，**RLO / ZWSP / 同形异码一律
+      原样放行**，所以段名干净不等于显示干净；
+    - 本口管「人眼看到的形态与真实码点是否一致」——把带反向覆写的 IP 名洗成
+      可见部分、把全角/西里尔近似形冒充的英文名整格屏蔽。
+
+    判据零副本：真身住 `core/safety_exec/attack_surface`，处置口住
+    `chat_reply/security/injection::render_safe_display_name`。局部导入避开环
+    （本件是 media 域，不新增对 chat_reply 的模块级依赖）。
+    空进空出：调用方据此决定「这一格没有名字」，不虚构占位；合法名逐字节不变
+    （只改显示形态，不改可信级）。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
+        render_safe_display_name,
+    )
+
+    return render_safe_display_name(str(value or ""))
 
 
 def sniff_extension(data: bytes) -> str | None:
@@ -109,18 +152,25 @@ class ArchiveRecord:
     created_at: str = ""
 
     def to_json(self) -> str:
+        """旁车 JSON：人读可迁移的档案面。
+
+        P2-d：三个**名字字段**（IP / 角色 / 原始文件名）过 `display_label`——
+        旁车与回执是给人眼看的，显示伪装在这里骗的就是「谁在看这份档案」。
+        其余字段（`rel_path`/`category` 已走 `sanitize_dirname`，
+        `sha256`/时间戳是代码生成的定形串）不重复过，禁双过变三处。
+        """
         return json.dumps(
             {
                 "sha256": self.sha256,
                 "path": self.rel_path,
                 "category": self.category,
-                "ip_source": self.ip_source,
-                "character": self.character_name,
+                "ip_source": display_label(self.ip_source),
+                "character": display_label(self.character_name),
                 "description": self.description,
                 "tags": self.tags,
                 "nsfw_score": self.nsfw_score,
                 "media_type": self.media_type,
-                "original_name": self.original_name,
+                "original_name": display_label(self.original_name),
                 "platform": self.platform,
                 "session_id": self.session_id,
                 "sender_id": self.sender_id,

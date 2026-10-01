@@ -48,6 +48,7 @@ class TimelyDomain(str, Enum):
 
     FINANCE = "finance_economy"        # 金融/经济/行情/货币/财政
     CURRENT_AFFAIRS = "current_affairs"  # 时政/国际关系/政策/任免
+    SPORTS = "sports"                  # 赛事/赛果/赛程/转会/电竞（结果只在网上）
     TECH = "tech"                      # 科技/产品/公司/AI/芯片
     NEWS = "news"                      # 泛新闻（最宽，故排在最后判）
     ANIME_LORE = "anime_lore"          # 二游角色/剧情/事件/人事物（本地库优先）
@@ -89,7 +90,45 @@ _TECH_RE = re.compile(
     r"火箭|卫星|航天|空间站|探月|量子|核聚变|脑机|"
     r"苹果|谷歌|微软|英伟达|特斯拉|OpenAI|Anthropic|Meta|亚马逊|"
     r"华为|小米|OPPO|vivo|字节|腾讯|阿里|京东|美团|比亚迪|宁德时代|"
-    r"机器人|人形|无人机|低空|5G|6G|算力|数据中心|云服务|操作系统)"
+    r"机器人|人形|无人机|低空|5G|6G|算力|数据中心|云服务|操作系统|"
+    # E-5（WEBCFG-AUDIT）＋「版本更新/补丁」类目（2026-09-29 WEB 席）：
+    # 旧表只收中文名，于是 `iPhone 17 发布时间` 判 general（触发靠实体锚侥幸过了、
+    # **按域选源那一步整个塌掉**），`Windows 11 最新补丁` 干脆不触发。
+    # 拉丁形一律带环视边界，防 explain/said/pineapple 之类子串误命中（同
+    # `_EXTERNAL_ENTITY_RE` 的守卫口径）。
+    # ⚠ 刻意**不收**开发工具链名（Python/Docker/Kubernetes/浏览器内核一类）：
+    # 「python 怎么安装」这类操作题现在走 TOOL_ALLOWED（模型自行决定要不要搜），
+    # 收进来会把它们整片拖成 PRIMARY 预搜索——那是行为倒退，不是补类目。
+    # 这里只登记「发布即新闻」的消费级现货系列名与系统/固件形态。
+    r"(?<![A-Za-z])(?:iPhone|iPad|iPadOS|macOS|MacBook|AirPods|Vision Pro"
+    r"|Windows|DirectX|Surface|Galaxy|Pixel|Snapdragon|HyperOS|ColorOS"
+    r"|OriginOS|MagicOS|HarmonyOS|OpenHarmony|iOS|PlayStation|PS5|PS4|Xbox"
+    r"|Switch|Steam Deck|Waymo|Starlink|SpaceX|Optimus|Cybercab"
+    r"|CUDA|ROCm|NVLink|HBM|Lunar Lake|Arrow Lake|Zen\d|RTX\d{3,4}"
+    r"|Claude|Grok|Gemini|DeepSeek|Whisper)(?![A-Za-z])|"
+    r"补丁|固件|驱动更新|热更|强制更新|更新日志|版本说明|停服|公测|内测|正式上线)"
+)
+# 赛事/电竞（2026-09-29 用户第 3 项补类目）。判据是**结果只存在于网络上**这一族：
+# 比分、赛果、赛程、转会、夺冠归属都不在模型知识里，也不在本地二游库裡，
+# 过去六句裸话题句（`英超比分`/`NBA 总决赛`/`世界杯预选赛`/`英雄联盟 S15 冠军`/
+# `中国女排赛程`/`球员转会`）实测恒判 `never/no_strong_signal`——本枚正则即那笔欠账。
+# 只收成词的现实赛事名词，仍不收「最新/今天」这类纯时间词（那是 `_CURRENT_RE` 的活）。
+_SPORTS_RE = re.compile(
+    r"(英超|西甲|德甲|意甲|法甲|中超|中甲|欧冠|欧联|世界杯|世俱杯|亚洲杯|欧洲杯|美洲杯|"
+    r"奥运会|冬奥|冬残奥|亚运|全运|世锦赛|锦标赛|大师赛|公开赛|巡回赛|大奖赛|"
+    r"总决赛|半决赛|四分之一决赛|淘汰赛|预选赛|资格赛|联赛|杯赛|排位赛|赛季|休赛期|"
+    r"比分|赛果|战绩|胜负|净胜|积分排名|积分榜|排名榜|夺冠|冠军|亚军|季军|晋级|降级|出局|"
+    r"转会|签约|选秀|挂牌|自由球员|首发|替补|伤停|停赛|罚球|三分球|扣篮|发球|局分|"
+    r"足球|篮球|排球|网球|羽毛球|乒乓|棒球|冰球|橄榄球|高尔夫|游泳|田径|马拉松|拳击|"
+    r"电竞|电子竞技|职业联赛|俱乐部战队|战队|赛区|分组|Bo[357]|全球总决赛|"
+    r"赛程|赛制|直播比分|赛后|赛前|颁奖|奖牌|金牌|银牌|铜牌|"
+    r"(?<![A-Za-z])(?:NBA|CBA|NFL|NHL|MLB|UFC|F1|ATP|WTA|LPL|LCK|LEC|VCT|CS2|CSGO|TI\d)(?![A-Za-z])|"
+    # S 赛（英雄联盟全球总决赛）只认「S15 总决赛 / S14 赛季」这种成对形态：
+    # 裸 `S\d{1,2}` 会把 `Galaxy S26 发布会` 从科技域抢走（实测咬过一次，注毒锁
+    # tests/test_question_intent_categories_v4.py::test_latin_product_shapes_*）。
+    r"(?<![A-Za-z])S\d{1,2}(?![A-Za-z0-9])\s*(?:赛季|总决赛|全球总决赛)|"
+    r"皇马|巴萨|曼联|曼城|阿森纳|切尔西|利物浦|尤文|国米|米兰|拜仁|巴黎圣日耳曼)",
+    re.IGNORECASE,
 )
 _NEWS_RE = re.compile(
     r"(新闻|快讯|报道|消息称|据悉|刚刚|近日|今日|昨天|上周|本月|"
@@ -116,8 +155,9 @@ def classify_timely_domain(
     ① 本地已知的二游话题（`in_local_domain`，由调用方从 DOMAIN_TERMS 传进来）
        优先判 ANIME_LORE——「鸣潮新版本更新了什么」既含时间词又含游戏词，
        它该走本地库 + 萌百，不该被当成时政/科技题推到通用新闻源。
-    ② 金融先于时政先于科技：三者都可能含"公司/发布/价格"这类共用词，
-       越具体的域先判，否则被宽域抢走。
+    ② 金融先于时政先于赛事先于科技：四者都可能含"公司/发布/价格/决赛"这类
+       共用词，越具体的域先判，否则被宽域抢走。（赛事排在科技之前是刻意的：
+       「电竞总决赛」不该被"总决赛"里的"赛"字顺手归进科技。）
     ③ NEWS 最宽，放最后当兜底；都不命中才是 GENERAL。
     """
     stripped = str(text or "").strip()
@@ -133,6 +173,8 @@ def classify_timely_domain(
         return TimelyDomain.FINANCE.value
     if _AFFAIRS_RE.search(stripped):
         return TimelyDomain.CURRENT_AFFAIRS.value
+    if _SPORTS_RE.search(stripped):
+        return TimelyDomain.SPORTS.value
     if _TECH_RE.search(stripped):
         return TimelyDomain.TECH.value
     if _NEWS_RE.search(stripped) or _ANIME_LORE_HINT_RE.search(stripped):
@@ -149,6 +191,54 @@ def classify_timely_domain(
 def is_encyclopedic_domain(value: str) -> bool:
     """该域是否该用百科/社区型来源（萌百·维基·B站）而不是财经时政媒体。"""
     return value == TimelyDomain.ANIME_LORE.value
+
+
+# ---------------------------------------------------------------------------
+# 类目化请求级时效窗（WEBCFG-AUDIT E-3 的续腿，2026-09-29 WEB 席）
+#
+# E-3 只留了一枚全局旋钮（`bot_web_search_tavily_time_range`）：一旦打开，所有
+# 明示时效的查询同宽。可「美联储最新利率」和「大模型最新进展」根本不该同宽——
+# 前者隔天就是旧闻，后者一周内都还有效；而「鸣潮新版本卡池」被近 N 天窗一挡，
+# 反而把官方半年前发的预告页筛掉了。窗口是**类目属性**，不是全局属性。
+#
+# 纯函数、表驱动、零读钟：输出直接是引擎认得的档位字面量（Tavily
+# `time_range` ∈ day/week/month/year），空串＝不开窗。为什么不在这层判
+# 「这句要不要开窗」：`explicit_latest` 的真身是 `search_intent.detect_query_recency`
+# （裸年份的历史题不构成开窗证据，那条口径由 E-3 的注毒负例钉死），本件只接受
+# 调用方把那一枚布尔传进来，不重算、不新建第二份时效词表（规则 10）。
+# ---------------------------------------------------------------------------
+
+#: 时效窗档位字面量（与引擎取值同形，不在这里做二次翻译）。
+TIME_RANGE_DAY = "day"
+TIME_RANGE_WEEK = "week"
+TIME_RANGE_MONTH = "month"
+TIME_RANGE_YEAR = "year"
+
+#: 类目 → 请求级时效窗。表里没有的类目＝不开窗（保守方向：宁可不窄化，
+#: 也不把 lore／历史题锁进近档）。加一枚 `TimelyDomain` 必须同步补这张表，
+#: 由 `tests/test_question_intent_categories_v4.py` 的同源锁执法。
+_CATEGORY_TIME_RANGES: dict[str, str] = {
+    TimelyDomain.FINANCE.value: TIME_RANGE_DAY,   # 行情/汇率/公告：隔天即旧
+    TimelyDomain.NEWS.value: TIME_RANGE_DAY,      # 快讯类
+    TimelyDomain.SPORTS.value: TIME_RANGE_DAY,    # 比分/赛果按天刷新
+    TimelyDomain.CURRENT_AFFAIRS.value: TIME_RANGE_WEEK,  # 政策与任免按周仍有效
+    TimelyDomain.TECH.value: TIME_RANGE_WEEK,     # 发布与参数按周
+    TimelyDomain.ANIME_LORE.value: "",            # lore 与官方预告不按天窄化
+    TimelyDomain.GENERAL.value: "",
+}
+
+
+def request_time_window(timely_domain: str, *, explicit_latest: bool) -> str:
+    """该类目本次请求该开多大的时效窗；``explicit_latest`` 为假 ⇒ 恒不开窗。
+
+    返回引擎档位字面量或空串。调用方负责两件事：把本函数产物当**请求级**参数
+    注入（全局档由 `web_search.resolve_latest_time_range` 另行决定），以及在
+    provider 声明吃不下该参数时丢弃它——本件不判断引擎能力。
+    """
+    if not explicit_latest:
+        return ""
+    return _CATEGORY_TIME_RANGES.get(str(timely_domain or ""), "")
+
 
 
 class WebDecision(str, Enum):
@@ -420,6 +510,7 @@ def classify_question_intent(text: str) -> IntentDecision:
         in (
             TimelyDomain.FINANCE.value,
             TimelyDomain.CURRENT_AFFAIRS.value,
+            TimelyDomain.SPORTS.value,
             TimelyDomain.TECH.value,
             TimelyDomain.NEWS.value,
         )

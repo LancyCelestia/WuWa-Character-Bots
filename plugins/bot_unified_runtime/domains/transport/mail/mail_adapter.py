@@ -15,6 +15,14 @@ from nonebot.adapters.mail.utils import parse_byte_mail
 from nonebot.compat import model_dump
 from nonebot.utils import escape_tag
 
+from plugins.bot_unified_runtime.domains.transport.mail.mail_dns_policy import (
+    guard_mail_hosts,
+    mail_hosts_from_bot_infos,
+)
+from plugins.bot_unified_runtime.domains.transport.mail.mail_ingress_files import (
+    build_attachment_context,
+)
+
 _RETRY_DELAYS = (3.0, 6.0, 12.0, 24.0, 48.0, 60.0)
 # R2（2026-09-17 实弹）：``UNSEEN`` 搜索挂死（服务器/代理半开连接）不再无限
 # 等——单次硬超时 + 同连接短退避重试一次；重试仍超时则抛回外层
@@ -22,6 +30,12 @@ _RETRY_DELAYS = (3.0, 6.0, 12.0, 24.0, 48.0, 60.0)
 # 真发 SELECT，即 a3e78a3 的修复，保持生效）。连续超时的日志由外层既有
 # 稀疏化（1,2,4,8...）承载，不刷屏。
 _MAIL_SEARCH_TIMEOUT_SECONDS = 15.0
+# IMAP 连接/命令等待地板（S-MAIL-IMAP-TIMEOUT）：不传就吃 aioimaplib 库内 10s 硬顶。
+# 2026-09-28 订正归因：当时写的是"冷 DNS 首查 15–16s"，重测 DNS 只要 11ms，
+# 那 12–16s 是 **IPv6 黑洞**（qq.com 的 AAAA 排在前且不可达）把连接拖出来的。
+# 现在由 mail_dns_policy 把邮件主机限定成 IPv4，地板 30s 退成弱网余量、不再是成败判据。
+# 详见 ``ResilientMailAdapter._new_imap_client`` 与 ``mail_dns_policy`` 的模块注释。
+_MAIL_IMAP_TIMEOUT_SECONDS = 30.0
 _MAIL_SEARCH_RETRY_DELAYS = (2.0,)
 
 
@@ -155,6 +169,10 @@ class ResilientMailAdapter(MailAdapter):
         return task
 
     async def startup(self) -> None:
+        # 收/发两条腿都要在**建连接之前**拿到 IPv4 护栏：发信侧的 ``aiosmtplib.send()``
+        # 是上游适配器内部造的（nonebot/adapters/mail/bot.py:226），本仓没有建造点，
+        # 只在 ``_new_imap_client`` 补就漏掉发信那一腿。护栏按主机名生效，非邮件主机透传。
+        guard_mail_hosts(mail_hosts_from_bot_infos(self.mail_config.mail_bots))
         for bot_info in self.mail_config.mail_bots:
             self._track_task(self.run_bot(bot_info), label=str(bot_info.id))
 
@@ -171,14 +189,26 @@ class ResilientMailAdapter(MailAdapter):
             await asyncio.gather(*tasks, return_exceptions=True)
 
     def _new_imap_client(self, bot_info: BotInfo) -> Any:
+        # S-MAIL-IMAP-TIMEOUT（2026-09-28 二次现算，订正归因）：这两支此前不传 timeout
+        # ⇒ 吃 ``aioimaplib`` 库内 ``TIMEOUT_SECONDS = 10.0`` 硬顶，问候语等待直接
+        # ``TimeoutError``。当时的注释写成"冷 DNS 首查 15–16s"，那是**误判**：
+        # 本机重测 ``getaddrinfo("imap.qq.com")`` 首次 11ms、缓存后 0ms，DNS 不慢。
+        # 慢的是 IPv6 黑洞 —— ``imap.qq.com`` 有 AAAA 且排在前面，v6 连接要等满超时
+        # 才回退 v4（强制 v6 = TimeoutError 6.0s；强制 v4 = 150ms，TLS 全程 <0.5s）。
+        # 正解是把邮件主机限定成 IPv4（``mail_dns_policy``，收/发两腿在 startup 已装）；
+        # 这里再兜一次是幂等的，防的是"没走 startup 直接造客户端"的测试与降级路径。
+        # 地板留 30s 不再参与决定成败，只当弱网余量。
+        guard_mail_hosts({bot_info.imap.host, bot_info.smtp.host})
         if bot_info.imap.tls:
             return aioimaplib.IMAP4_SSL(
                 host=bot_info.imap.host,
                 port=bot_info.imap.port,
+                timeout=_MAIL_IMAP_TIMEOUT_SECONDS,
             )
         return aioimaplib.IMAP4(
             host=bot_info.imap.host,
             port=bot_info.imap.port,
+            timeout=_MAIL_IMAP_TIMEOUT_SECONDS,
         )
 
     async def _close_mailbox(self, bot: MailBot) -> None:
@@ -207,11 +237,18 @@ class ResilientMailAdapter(MailAdapter):
         bot_info = bot.bot_info
         attempt = 0
         connected = False
+        # S-MAIL-IMAP-TIMEOUT 后半段（2026-09-28）：光记 TimeoutError 答不出「卡在哪一段」。
+        # 上游实测健康（imap.qq.com:993 空闲时 0.17s 回 * OK），而本机冷 DNS 首查要 15–16s，
+        # 两者都会在同一个 except 里长成同一句「worker error: TimeoutError」。这里逐段记名，
+        # 下次再抖就能一眼分清是连接/问候、登录、选箱还是收信阶段——不用再来一轮猜。
         while True:
+            stage = "connect"  # 每轮重试都重新归位：否则第二轮的登录超时会挂着上一轮的 stage=fetch
             try:
                 bot.imap_client = self._new_imap_client(bot_info)
+                stage = "login"
                 if not await bot.login():
                     raise RuntimeError("IMAP authentication rejected")
+                stage = "select"
                 # 适配器 select_mailbox 带跨连接早退缓存（venv nonebot/adapters/mail/
                 # bot.py:363）：self.mailbox 与 readonly 均未变就直接返回 True、不发
                 # SELECT。mailbox 在 __init__ 置 None（bot.py:65），真选箱成功后才写
@@ -226,6 +263,7 @@ class ResilientMailAdapter(MailAdapter):
                 self.bot_connect(bot)
                 connected = True
                 attempt = 0
+                stage = "fetch"
                 while True:
                     await self._fetch_new_mail(bot)
                     await asyncio.sleep(3.0)
@@ -241,18 +279,18 @@ class ResilientMailAdapter(MailAdapter):
                 if attempt == 0:
                     mail_log(
                         "ERROR",
-                        f"Mail {bot.self_id} worker error: {detail}; retry_in={delay:g}s\n"
+                        f"Mail {bot.self_id} worker error: {detail}; retry_in={delay:g}s; stage={stage}\n"
                         + traceback.format_exc(),
                     )
                 elif attempt <= 1 or (attempt & (attempt - 1)) == 0:
                     mail_log(
                         "ERROR",
-                        f"Mail {bot.self_id} worker error: {detail}; retry_in={delay:g}s",
+                        f"Mail {bot.self_id} worker error: {detail}; retry_in={delay:g}s; stage={stage}",
                     )
                 else:
                     mail_log(
                         "DEBUG",
-                        f"Mail {bot.self_id} retry x{attempt + 1}: {detail}; retry_in={delay:g}s",
+                        f"Mail {bot.self_id} retry x{attempt + 1}: {detail}; retry_in={delay:g}s; stage={stage}",
                     )
                 attempt += 1
             finally:
@@ -289,7 +327,28 @@ class ResilientMailAdapter(MailAdapter):
                 if mail is None:
                     continue
                 await mark_mail_seen(bot.imap_client, uid)
-                event = QuietMailMessageEvent(**model_dump(mail))
+                payload = model_dump(mail)
+                # 需求 16②：附件字节在这一刻还在手上（model_dump 之后段还是段），
+                # 就在这颗咽喉取文 + 逐份 T2 打标，取到什么一律并成 text 段交下游，
+                # 根侧一行不必改。任何失败只让这一段变成一句人话，绝不打断收信。
+                try:
+                    blocks = await asyncio.to_thread(
+                        build_attachment_context,
+                        mail.message,
+                        request_id=str(getattr(mail, "id", "") or ""),
+                    )
+                except Exception as exc:  # noqa: BLE001 - 取文机制坏了也不丢邮件
+                    mail_log(
+                        "WARNING",
+                        f"Mail {bot.self_id} attachment leg skipped uid={uid}: "
+                        f"{describe_mail_error(exc)}",
+                    )
+                    blocks = []
+                if blocks and isinstance(payload.get("message"), list):
+                    payload["message"].append(
+                        {"type": "text", "data": {"text": "\n".join(blocks)}}
+                    )
+                event = QuietMailMessageEvent(**payload)
                 self._track_task(bot.handle_event(event), label=f"{bot.self_id} event")
             except asyncio.CancelledError:
                 raise

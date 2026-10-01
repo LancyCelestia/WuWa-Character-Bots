@@ -88,6 +88,11 @@ class SubscriptionRule:
     latitude: float | None = None
     longitude: float | None = None
     radius_km: float = DEFAULT_RADIUS_KM
+    #: 用户是否**显式写了** `radius=`。`radius_km` 永远有值（缺省 200），光看数值
+    #: 分不出"订全部"与"只写了半径"——攻击票 F-3 的旁路形态（`订阅 radius=50`
+    #: 零过滤放行＝静默全量订阅）就藏在这个歧义里。判「半径意图」只认这一格，
+    #: 不许拿 `radius_km != 缺省值` 之类的猜法造第二套规则。
+    radius_set: bool = False
     created_by: str = ""
     #: 坐标是否由地名解析得来（仅回显用）；半径匹配实际生效与否看 lat/lon 是否成对。
     coord_resolved: bool = False
@@ -107,6 +112,16 @@ class SubscriptionRule:
     def has_point(self) -> bool:
         """半径匹配真正可用的判据：规则侧必须**成对**坐标。"""
         return self.latitude is not None and self.longitude is not None
+
+    @property
+    def has_location_intent(self) -> bool:
+        """规则是否表达了地点条件：地名/坐标 ∨ **显式写了半径**（F-3）。
+
+        裸半径（`radius=50` 无 area/coord）也算意图——它不等于"没写地点条件"：
+        用户要的是过滤，只是锚点拿不到。投递侧因此走同一条「文字∨半径两腿皆拿不到
+        ⇒ 不放行」的判定（见 `matches_subscription`），不是零条件放行。
+        """
+        return self.has_area or self.radius_set
 
     @property
     def has_kind_filter(self) -> bool:
@@ -148,6 +163,9 @@ class SubscriptionRule:
                 where += "（按地名文字匹配）"
         elif self.has_point:
             where = f"坐标点（{int(self.radius_km)}km 内）"
+        elif self.radius_set:
+            # 裸半径今天一条都不会中——回显必须说实话，别留"地点=不限"的假象。
+            where = f"半径 {int(self.radius_km)}km（无可锚坐标，一律不放行——请配 area= 或 coord=）"
         else:
             where = "不限"
         parts.append(f"地点={where}")
@@ -463,6 +481,8 @@ def parse_subscription(
         latitude=latitude,
         longitude=longitude,
         radius_km=parse_radius(params.get("radius", ""), default=default_radius_km),
+        # 「显式写了 radius」要单独记一格：数值本身分不出缺省与意图（F-3 的歧义根）。
+        radius_set=bool(params.get("radius")),
         created_by=str(created_by or "").strip(),
         coord_resolved=coord_resolved,
     )
@@ -498,6 +518,11 @@ def matches_subscription(item: EmergencyItem, rule: SubscriptionRule) -> bool:
     地点走「文字命中 ∨ 半径命中」：文字命中对气象预警有效，半径命中对震情/GDACS 有效；
     两边都拿不到（条目无坐标 + 规则只有地名）时**不放行**——宁可漏投也不要把
     "湘潭"这种规则误投给全国地震，那是把用户信任花掉的最快方式。
+    同一条腿也接住**裸半径**（F-3）：规则只写了 `radius=` 而没有地名/坐标锚点时，
+    文字腿（没有地名可匹配）与半径腿（没有圆心可量距）双双拿不到 ⇒ 同样不放行。
+    这不是第二套规则——是"两边都拿不到就不放行"教义在规则侧缺锚点形态上的直用；
+    半径意图的载体是 `SubscriptionRule.radius_set`（显式写过 `radius=`），
+    不是"数值恰好不等于缺省"那种猜法。
 
     类型维度（WP3 重做）＝「注册表类别精确命中 ∨ 开放词表原文子串命中」：
     前者让「订阅 风暴潮」只中风暴潮，后者保住 WIRE-SUB 的开放词表策略不变。
@@ -507,7 +532,7 @@ def matches_subscription(item: EmergencyItem, rule: SubscriptionRule) -> bool:
         return False
     if not rule.levels and item.level is None:
         return False  # 未定级一律不投（D-1），与投递侧 skip_ungraded 同向
-    if not (rule.has_kind_filter or rule.has_area):
+    if not (rule.has_kind_filter or rule.has_location_intent):
         return True
     text = item_text(item)
     if rule.has_kind_filter:
@@ -521,7 +546,9 @@ def matches_subscription(item: EmergencyItem, rule: SubscriptionRule) -> bool:
         )
         if not (by_category or by_text):
             return False
-    if rule.has_area:
+    if rule.has_location_intent:
+        # 裸半径（radius_set、无 area/coord）从这条路进来：by_text 没有地名可配、
+        # by_radius 没有圆心可量 ⇒ 双双 False ⇒ 不放行（F-3，与"两边拿不到"同一判据）。
         by_text = bool(rule.area_name) and rule.area_name in text
         by_radius = False
         # 逐边显式判空（等价于 `rule.has_point and …`，但那样类型收窄不了）：

@@ -29,6 +29,8 @@ _EXTRACT_SYSTEM_PROMPT = (
     "规则：只输出事实条目，每行一条，每条不超过60字，最多3条；"
     "只记稳定信息，不记寒暄和一次性话题；"
     "不记对 AI 工具/机器人/模型的评价与使用偏好（那是对工具的吐槽，不是用户本人）；"
+    "不记对机器人回复形态与格式的要求（带不带某个字、开头结尾摆什么、长短）——"
+    "那类要求归「按人回复策略」专门管，记进事实会变成没人认领的第二份；"
     "不记临时情绪、玩笑、抽象观点、当下正在讨论的话题本身；"
     "没有值得记住的内容时只输出一个字：无"
 )
@@ -44,9 +46,58 @@ _TRIVIAL_FACT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# S12（2026-09-29「双喵」事故）：**回复形态自指闸**——凡「教机器人怎么说话」的句子
+# （某个字带不带、开头结尾摆什么、长短与格式）一律**不进事实记忆**。与 F16 同范式：
+# 提示词是软腿、确定性闸是硬腿，两条都要。这不是"又一条琐事过滤"，而是**归属边界**：
+#   ① 作用域对不上——记忆按相关性召回、且 scope_key 锁在 **session**（见
+#      :func:`store_extracted_memories` 里 ``upsert_fact`` 传的 session_id），
+#      形态要求却是**按人**的。同一句要求写进两套系统，就会一份在群里露出、一份在
+#      私聊露出，谁也不服谁；按人那一套已有唯一归属＝per-person reply policy
+#      （长度档 + 登记讲法码 + note 槽），记忆侧在此只让路、不代管。
+#   ② 副本会自乘——记忆行与历史消息里的用户原话**同轮双份渲染**：用户把同一句要求
+#      复述 N 次，场上就有 N+1 份活副本，模型就照做 N+1 次（09-28 18:32 实跑的
+#      「都会加一个喵喵」即此机制）。
+#   ③ 记忆行没有「照做一次即止」的上限，策略分区那段却自带边界行（只约束本轮形态）。
+# 判据＝**合取 + 邻近**（形态名词与命令/禁止词同句且相隔 ≤12 字），任一命中都不算：
+# 只拼词表会把传记与情感事实一起误吃（"用户每次吃饭都要点一份浓汤""他每句话都要说
+# 三遍""她说话带口音"都必须照记——逐条锁在 tests/test_persona_prompt_and_memory.py）。
+# 方向性取舍：宁可漏拦（＝维持现状，少拦一条不多丢一条），不可误拦。
+# 2026-09-29 只读实测（当时值，随库漂移）：全库 384 行里此闸只命中 2 行，且正是事故
+# 那两行（开头加喵 / 句尾加喵）；传记、情感、身份类零命中。
+_REPLY_FORM_SHAPE = (
+    r"(?:回复|回答|答复|输出|句子|句话|每(一)?句|(句|话)(尾|末)|末尾|结尾|开头|"
+    r"头一句|第一句)"
+)
+_REPLY_FORM_DEMAND = (
+    r"(?:必须|要求|务必|请加|请带|请别|加(个|上|一个|一遍)|带(上|个|一个|着)|"
+    r"别(再)?(加|带|用|写|说|讲|出现|提)|不要|不许|不准|不再|不加|不带|去掉|撤掉|"
+    r"取消|忘掉|改成|换成)"
+)
+_REPLY_FORM_WINDOW = ".{0,12}"
+# 两个方向都拼：「回复里别再带X」（形态在前）与「别再出现句尾的X」（命令在前）。
+# ⚠ 拼法用**字符串连接**而不是 f-string：f-string 会把 ``{0,12}`` 当替换字段吃掉、
+# 量词静默变成字面量，正则照样编译通过、实跑全绿——本席就是这么把 2 读成 0 的。
+_REPLY_FORM_RE = re.compile(
+    _REPLY_FORM_SHAPE + _REPLY_FORM_WINDOW + _REPLY_FORM_DEMAND
+    + "|"
+    + _REPLY_FORM_DEMAND + _REPLY_FORM_WINDOW + _REPLY_FORM_SHAPE,
+    re.IGNORECASE,
+)
+# 注：reply_policy 的 ``_REPLY_OBJECT_RE`` 一类形态词表是**私有**符号，它对外只导出
+# ``wants_policy_judgment``——语义是"这句话值不值得花一次 LLM 判定"＝**门票**，台账
+# #66★ 明写「门宽·落库严」，那侧放宽的代价只是多问一次。把一把刻意放宽的尺搬来当
+# "绝不入库"的硬闸＝拿别人的误差预算花自己的账，故词表留在本地；真要共享，得由
+# reply_policy 导出一个明确的**归属**谓词（跨席位改动，不在本席写面）。
+
+
+def _is_reply_form_instruction(line: str) -> bool:
+    """对机器人**输出形态**的要求（加/去掉某个字、开头结尾摆什么）→ True。"""
+    return bool(_REPLY_FORM_RE.search(line or ""))
+
 
 def _is_trivial_fact(line: str) -> bool:
-    return bool(_TRIVIAL_FACT_RE.search(line))
+    """写侧确定性排除的总闸：F16 工具谈资 ∪ S12 回复形态自指。"""
+    return bool(_TRIVIAL_FACT_RE.search(line) or _is_reply_form_instruction(line))
 
 
 def extract_memory_texts(
@@ -81,7 +132,7 @@ def extract_memory_texts(
         if key in seen:
             continue
         if _is_trivial_fact(line):
-            continue  # F16 工具谈资/琐事不入库
+            continue  # F16 工具谈资 / S12 回复形态自指：确定性闸拦下，不入库
         seen.add(key)
         facts.append(line)
         if len(facts) >= max_facts:
@@ -95,6 +146,9 @@ def store_extracted_memories(
     subject_user_id: str,
     session_id: str,
     texts: list[str],
+    profile: Any = None,
+    person_key: str = "",
+    original_user_text: str = "",
 ) -> int:
     """把抽取结果写入记忆库；单条失败只记录日志，不中断其余条目。
 
@@ -102,6 +156,13 @@ def store_extracted_memories(
     总线开着时 ``repository`` 自带总线（装配点传 ``bus=``，见 WP6 交接段），
     ``upsert_fact`` 因此落进总线并交由「确认/矛盾/直插」裁决——同一事实被反复
     抽出只会累加印证次数，不再像旧库那样靠 fact_id 静默覆盖。
+
+    后三枚形参是**画像腿**（需求 11 的按人档案面），缺省即旧行为逐字节不变：
+    ``profile`` 由装配层给（门没开⇒``None``⇒不建库、零副作用），``person_key``
+    必须由 ``person_profile.person_profile_key(sender_id, platform_domain)`` 现算
+    ——**调用点不许硬编码人格名、也不许自拼键形**（台账 #33★/66★：读写各拿一把
+    键就永不相交）。字段推演与言行落点全在 ``person_profile`` 一侧，本件只委托，
+    免得第二处判据。画像落失败绝不拖累记忆落（同一条 ``try`` 兜住、只记日志）。
     """
     stored = 0
     for text in texts:
@@ -130,6 +191,13 @@ def store_extracted_memories(
                 subject_user_id,
                 session_id,
             )
+    _settle_person_profile(
+        profile,
+        person_key=person_key,
+        session_id=session_id,
+        texts=texts,
+        original_user_text=original_user_text,
+    )
     if stored:
         logger.info(
             "memory facts stored count=%d subject=%s session=%s",
@@ -138,6 +206,49 @@ def store_extracted_memories(
             session_id,
         )
     return stored
+
+
+def _settle_person_profile(
+    profile: Any,
+    *,
+    person_key: str,
+    session_id: str,
+    texts: list[str],
+    original_user_text: str,
+) -> None:
+    """画像沉淀的唯一委托点：门没开／没键⇒整段跳过，任何失败只记日志。
+
+    延迟到调用时才 import ``person_profile``：那件自带 SQLite 建表与一批词表，
+    缺省关态（``profile=None``）连导入都不该发生，与「关态逐字节不变」同口径。
+    """
+    if profile is None or not str(person_key or "").strip():
+        return
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.character.person_profile import (
+            settle_extracted_facts,
+        )
+    except Exception as exc:  # noqa: BLE001 - 画像件不可用＝本轮没画像，记忆照落。
+        logger.warning(
+            "person profile settle unavailable type=%s subject=%s",
+            type(exc).__name__,
+            person_key,
+        )
+        return
+    try:
+        settle_extracted_facts(
+            profile,
+            person_key=person_key,
+            session_key=session_id,
+            facts=texts,
+            original_user_text=original_user_text,
+        )
+    except Exception as exc:  # noqa: BLE001 - 画像写失败不影响记忆，也不打印敏感堆栈。
+        logger.warning(
+            "person profile settle failed type=%s subject=%s session=%s",
+            type(exc).__name__,
+            person_key,
+            session_id,
+        )
 
 
 def _clip(value: str, max_chars: int) -> str:

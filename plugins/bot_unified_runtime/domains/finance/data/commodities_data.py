@@ -28,6 +28,7 @@ push2his 会瞬断）；全失败返回空元组，卡上展示「暂无历史�
 
 from __future__ import annotations
 
+import math
 import random
 import time
 import urllib.parse
@@ -39,6 +40,9 @@ from typing import Any
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.domains.finance.data.market_data import (
     _MAX_PAYLOAD_BYTES,
+    _budget_or_new,
+    budget_allows_retry,
+    budget_expired,
     empty_backoff_sleep,
     retry_on_empty_enabled,
 )
@@ -102,18 +106,24 @@ class CommodityQuote:
 
 
 def _as_float(value: Any) -> float | None:
-    """fltt=2 下正常值是小数/整数；缺数时可能是 "-" 或缺失。"""
+    """fltt=2 下正常值是小数/整数；缺数时可能是 "-" 或缺失。
+
+    FIN-N1（2026-09-27 评审票）：非有限值（上游 NaN/Infinity 字面量）一律
+    视为缺数 None——走既有「暂无数据」诚实通道，不入卡片数字槽。
+    """
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     text = str(value).strip()
     if not text:
         return None
     try:
-        return float(text)
+        number = float(text)
     except ValueError:
         return None
+    return number if math.isfinite(number) else None
 
 
 def _fetch_payload(secids: str, timeout_seconds: float) -> Any:
@@ -175,28 +185,34 @@ def reset_commodities_cache() -> None:
 def fetch_commodity_quotes(
     timeout_seconds: float = 6.0,
     cache_seconds: float = _CACHE_TTL_DEFAULT_SECONDS,
+    *,
+    budget: Any | None = None,
 ) -> list[CommodityQuote]:
     """拉取大宗商品快照；失败返回 []，绝不抛异常。
 
     G2 纪律与 market_data/fx_data/stock_data 同款：东财限流=HTTP 200 空响应
     → 退避后至多重试 1 次；真异常不重试；仍空照旧诚实降级且不缓存。
+    FIN-R1：整条命令共用端到端网络预算，预算尽弃剩余重试。
     """
     global _CACHE
     now = time.monotonic()
     cached = _CACHE
     if cached is not None and now - cached[0] <= max(0.0, float(cache_seconds)):
         return list(cached[1])
+    budget = _budget_or_new(budget)
     secids = ",".join(secid for secid, _n, _g, _u in _COMMODITY_UNIVERSE)
     attempts = 2 if retry_on_empty_enabled() else 1
     quotes: list[CommodityQuote] = []
     for attempt in range(attempts):
+        if budget_expired(budget):
+            break  # FIN-R1：预算尽不发起新网络调用。
         try:
             payload = _fetch_payload(secids, max(1.0, float(timeout_seconds)))
             quotes = _parse_quotes(payload)
         except Exception:  # noqa: BLE001 - 商品行情失败静默降级。
             quotes = []
             break  # 真异常不重试。
-        if quotes or attempt + 1 >= attempts:
+        if quotes or attempt + 1 >= attempts or not budget_allows_retry(budget):
             break
         empty_backoff_sleep()
     if quotes:
@@ -220,17 +236,25 @@ def reset_commodities_trend_cache() -> None:
     _TREND_CACHE.clear()
 
 
-def _retry_transient(fetch, *, attempts: int = 3):
+def _retry_transient(fetch, *, attempts: int = 3, budget: Any | None = None):
     """push2his 瞬断退避重试（语义与 ``stock_data._network_retry`` 一致：
-    ParseHttpError/ConnectionError/TimeoutError 退避重试，其他异常原样抛）。"""
+    ParseHttpError/ConnectionError/TimeoutError 退避重试，其他异常原样抛）。
+
+    FIN-R1（2026-09-27 评审票）：429 不跨层重试（链接层已在单调用内尊重
+    Retry-After 并重试到位，层间再叠即是 60s 睡眠相乘）；退避睡眠受
+    网络预算门控，预算尽弃剩余尝试。"""
     last_exc: Exception | None = None
     for attempt in range(max(1, attempts)):
         try:
             return fetch()
         except (ParseHttpError, ConnectionError, TimeoutError) as exc:
             last_exc = exc
+            if getattr(exc, "status_code", None) == 429:
+                raise  # 429 已由链接层尊重 Retry-After，不再叠加层间等待
             if attempt + 1 >= attempts:
                 raise
+            if not budget_allows_retry(budget):
+                raise  # 预算尽弃剩余重试；失败不缓存、静默缺席语义不变
             empty_backoff_sleep()
     raise last_exc if last_exc is not None else RuntimeError("unreachable")  # pragma: no cover
 
@@ -240,15 +264,18 @@ def fetch_commodity_trend(
     *,
     timeout_seconds: float = 6.0,
     cache_seconds: float = _TREND_CACHE_TTL_SECONDS,
+    budget: Any | None = None,
 ) -> tuple[float, ...]:
     """单个商品近 30 日收盘序列（旧→新）；失败/无数据返回空元组，绝不抛。
 
     10 分钟进程内缓存；失败（空序列）不缓存，下一次调用立即重试。
+    FIN-R1：整条拉取受端到端网络预算门控，预算尽弃剩余重试。
     """
     cached = _TREND_CACHE.get(secid)
     now = time.monotonic()
     if cached is not None and now - cached[0] <= max(1.0, float(cache_seconds)):
         return cached[1]
+    budget = _budget_or_new(budget)
 
     def _get() -> Any:
         return http_get_json(
@@ -264,8 +291,10 @@ def fetch_commodity_trend(
     # 走 _retry_transient（至多 3 次退避）；仍空照旧不缓存。
     attempts = 2 if retry_on_empty_enabled() else 1
     for attempt in range(attempts):
+        if budget_expired(budget):
+            break  # FIN-R1：预算尽不发起新网络调用。
         try:
-            payload = _retry_transient(_get)
+            payload = _retry_transient(_get, budget=budget)
             data = payload.get("data") if isinstance(payload, dict) else None
             klines = data.get("klines") if isinstance(data, dict) else None
             if isinstance(klines, list):
@@ -281,7 +310,7 @@ def fetch_commodity_trend(
         except Exception:  # noqa: BLE001 - 走势失败静默缺席，不拖垮卡片。
             closes = ()
             break  # 真异常不重试。
-        if closes or attempt + 1 >= attempts:
+        if closes or attempt + 1 >= attempts or not budget_allows_retry(budget):
             break
         empty_backoff_sleep()
     if closes:

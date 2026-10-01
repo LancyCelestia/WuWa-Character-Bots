@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 import sqlite3
 import threading
@@ -50,8 +51,18 @@ def interval_wait_seconds(interval_seconds: float, elapsed_seconds: float) -> in
     return max(1, math.ceil(float(interval_seconds) - float(elapsed_seconds)))
 
 
-def sender_interval_ledger_key(capability_id: str, sender_id: str) -> str:
-    """冷却桶键＝补回账本键的单一格式（两后端与 `redrive_wait_seconds` 共用）。"""
+def sender_interval_ledger_key(
+    capability_id: str, sender_id: str, group_id: str = ""
+) -> str:
+    """冷却桶键＝补回账本键的单一格式（两后端与 `redrive_wait_seconds` 共用）。
+
+    需求项 2（2026-09-29 用户裁定）：**同一发送者在同一群的连发**才算同一份配额——
+    旧键只有 sender ⇒ A 群的点名冷却会误伤 B 群的点名（跨群连坐，从来不是防刷屏
+    的本意）。键里编入 group_id；群号缺失的形态（非群会话根本走不到 R3，理论不
+    存在）回落旧格式，保证读写两侧永远同键。
+    """
+    if str(group_id or "").strip():
+        return f"{capability_id}:sender_interval:{str(group_id).strip()}:{sender_id}"
     return f"{capability_id}:sender_interval:{sender_id}"
 
 
@@ -108,6 +119,24 @@ class RateLimitSettings(StrictBaseModel):
     # 用户情绪低落时的豁免：安抚不该被句数帽挡住（"要紧的事不受限制"）。
     emotion_exempt_enabled: bool = True
     bypass_roles: list[str] = Field(default_factory=lambda: list(DEFAULT_BYPASS_ROLES))
+    # ---- 命令腿独立帽（E05 缺口二）----------------------------------------
+    # 缺陷底账：pipeline 把 `capability_id != "bot.chat"` 一律标 interactive=True，
+    # 而两把限流器都在 interactive 处直接放行（InMemory `_check_command_leg` 落点
+    # 之前那条腿），紧随其后还有第二条漏腿 non_chat_capability ⇒ 全部命令能力
+    # **零限流**：任意成员可在群里把 /bot 敲到算力见底。
+    # 修法：命令帽先于那两条早退腿执行，非 chat 能力一律先过这道帽；`bypass_roles`
+    # （缺省 ["admin"]，超管经 roles.py 叠 admin）仍享旧豁免语义，管理员自救通道不锁。
+    # 记账与 chat 句数帽**分册**（scope 前缀 command_*），能力失败退还才不会对错账。
+    command_enabled: bool = True
+    command_window_seconds: int = 60
+    # 0 = 该腿不生效（与群句数帽同口径，避免 min(n,0) 反向变成"不限"）。
+    command_sender_max_requests: int = 12
+    command_group_max_requests: int = 20
+    # 命令腿自己的旁路脸：缺省沿用 DEFAULT_BYPASS_ROLES 的脸，与 chat 侧旁路解耦
+    # （要把管理员也关进帽子里改这一枚，别顺手改 bypass_roles 动到聊天侧语义）。
+    command_bypass_roles: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_BYPASS_ROLES)
+    )
 
     @field_validator("window_seconds")
     @classmethod
@@ -172,11 +201,26 @@ class RateLimitSettings(StrictBaseModel):
             raise ValueError("group pacing burst capacity must be at least 1")
         return value
 
-    @field_validator("bypass_roles")
+    @field_validator("bypass_roles", "command_bypass_roles")
     @classmethod
     def normalize_bypass_roles(cls, values: list[str]) -> list[str]:
         normalized = [value.strip().lower() for value in values if value.strip()]
         return list(dict.fromkeys(normalized))
+
+    @field_validator("command_window_seconds")
+    @classmethod
+    def require_positive_command_window(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("command rate limit window must be at least 1 second")
+        return value
+
+    @field_validator("command_sender_max_requests", "command_group_max_requests")
+    @classmethod
+    def require_non_negative_command_caps(cls, value: int) -> int:
+        # 0 = 该腿不生效；负数是写错了（min(n, 负数) 会把帽反向变成"不限"）。
+        if value < 0:
+            raise ValueError("command request caps must not be negative")
+        return value
 
 
 class RateLimiter(Protocol):
@@ -208,6 +252,70 @@ _R3_RECORD_CARRYING_REASONS = frozenset({"interactive_bypass", "role_bypass"})
 # 「放行即全额记账」的 reason 集合：allowed 与 emotion_exempt（裁定 3 后
 # 豁免消息同样消耗句数额度并落全部账，rollback 必须对称退还）。
 _FULL_RECORD_REASONS = frozenset({"allowed", "emotion_exempt"})
+
+# 命令腿（E05 缺口二）放行时携带的记账 reason。刻意**不**并入
+# _FULL_RECORD_REASONS：命令账与 chat 句数账是两本账，混用会让能力失败时
+# 退错账（退到没写过的 chat 桶、却漏退真写过的 command 桶）。
+_COMMAND_RECORD_CARRYING_REASONS = frozenset({"command_allowed"})
+
+# 命令腿的两格桶名（InMemory 与 SQLite 共用同一组 scope，禁第二套命名）。
+COMMAND_SCOPE_SENDER = "command_sender"
+COMMAND_SCOPE_GROUP = "command_group"
+
+
+def rate_limit_bucket_key(capability_id: str, scope: str, value: str) -> str:
+    """桶键格式的单一真身：两把限流器的 `_bucket_key` 都只是它的一层皮。
+
+    命令腿的 check 侧与 rollback 侧要拿同一枚键退账（退错桶＝白占一格冷却位，
+    同 2026-09-29 需求项 2 治的那一刀），所以键形只准有一份。
+    """
+    return f"{capability_id}:{scope}:{value}"
+
+
+def command_leg_buckets(
+    settings: RateLimitSettings, capability_id: str, message: IncomingMessage
+) -> list[tuple[str, str, int]]:
+    """命令腿要读写哪几格桶：``[(scope, bucket_key, cap), ...]``。
+
+    check 侧与 rollback 侧**共读这一枚**（两把限流器也用同一份），因为：
+    - 群腿只在群聊会话建账——私聊不记群账，也不许被别人的群帽连坐；
+    - ``cap <= 0`` 的腿根本不写桶，rollback 若照单全退就会退到没写过的桶；
+    - 退账退错桶＝白占一格冷却位（2026-09-29 需求项 2 治的同一刀）。
+    """
+    legs: list[tuple[str, str, int]] = []
+    for scope, cap in (
+        (COMMAND_SCOPE_SENDER, settings.command_sender_max_requests),
+        (COMMAND_SCOPE_GROUP, settings.command_group_max_requests),
+    ):
+        if cap <= 0:
+            continue
+        if scope == COMMAND_SCOPE_GROUP and not is_group_session(message):
+            continue
+        value = (
+            message.sender_id
+            if scope == COMMAND_SCOPE_SENDER
+            else str(message.group_id or message.session_id)
+        )
+        legs.append((scope, rate_limit_bucket_key(capability_id, scope, value), int(cap)))
+    return legs
+
+
+def command_leg_applies(settings: RateLimitSettings, capability_id: str) -> bool:
+    """命令腿帽对这次调用是否生效（check/rollback 共用的生效集）。
+
+    只罩非 chat 能力（＝pipeline 判 interactive 的同一口径，不新造能力清单）；
+    整门 disabled 时命令腿也哑（与既有 `enabled=False` 一条总闸的语义一致）；
+    两格帽都 <=0 时整腿不建账（回退旧行为）。
+    """
+    return bool(
+        settings.enabled
+        and settings.command_enabled
+        and capability_id not in CHAT_CAPABILITY_IDS
+        and (
+            settings.command_sender_max_requests > 0
+            or settings.command_group_max_requests > 0
+        )
+    )
 
 
 def _sender_interval_record_applies(
@@ -505,6 +613,15 @@ class InMemoryRateLimiter:
             )
             if decision is not None:
                 return decision
+        # E05 缺口二 · 命令腿帽必须在两条早退腿（interactive_bypass /
+        # non_chat_capability）**之前**：只挡其中一条，将来 E06 一改
+        # `capability_id != "bot.chat"` 那句判据，命令就会从另一条腿漏出去。
+        # R3 点名最小间隔仍在最前（A-04 序不动）。
+        command_decision = self._check_command_leg(
+            message, capability_id, max(1, int(amount))
+        )
+        if command_decision is not None:
+            return command_decision
         if interactive:
             return RateLimitDecision(
                 allowed=True,
@@ -666,6 +783,14 @@ class InMemoryRateLimiter:
                 1,
             )
             return
+        if reason in _COMMAND_RECORD_CARRYING_REASONS:
+            # 命令腿只写过 command_* 两格（chat 桶一格没动），退还必须同键同格：
+            # 走 check 侧同一个 `command_leg_buckets`，禁第二份键形。
+            for _scope, key, _cap in command_leg_buckets(
+                self.settings, capability_id, message
+            ):
+                self._pop_recent(self._buckets.get(key), safe_amount)
+            return
         if reason != "proactive_allowed" and (
             reason not in _FULL_RECORD_REASONS
             and reason not in _R3_RECORD_CARRYING_REASONS
@@ -718,7 +843,9 @@ class InMemoryRateLimiter:
             bucket.pop()
 
     def _sender_interval_key(self, capability_id: str, message: IncomingMessage) -> str:
-        return sender_interval_ledger_key(capability_id, message.sender_id)
+        return sender_interval_ledger_key(
+            capability_id, message.sender_id, str(message.group_id or "")
+        )
 
     def _check_sender_min_interval(
         self, message: IncomingMessage, capability_id: str, now: datetime
@@ -741,7 +868,9 @@ class InMemoryRateLimiter:
                 # 与交出的 decision 同枚——读侧按它精确认领），后到的排队
                 # 位自动让开一个完整间隔。
                 redrive_ledger.reserve_slot(
-                    sender_interval_ledger_key(capability_id, message.sender_id),
+                    sender_interval_ledger_key(
+                        capability_id, message.sender_id, str(message.group_id or "")
+                    ),
                     debug_id=decision.debug_id,
                     now=now.timestamp(),
                     base_wait=float(retry_after),
@@ -764,12 +893,74 @@ class InMemoryRateLimiter:
         if int(getattr(message, "redrive_count", 0) or 0) < 1:
             return None
         slot = redrive_ledger.consume_earliest_matured(
-            sender_interval_ledger_key(capability_id, message.sender_id),
+            sender_interval_ledger_key(
+                capability_id, message.sender_id, str(message.group_id or "")
+            ),
             now=now.timestamp(),
         )
         if slot is None or slot <= now.timestamp():
             return None
         return now + timedelta(seconds=slot - now.timestamp())
+
+    def _check_command_leg(
+        self, message: IncomingMessage, capability_id: str, safe_amount: int
+    ) -> RateLimitDecision | None:
+        """命令腿分钟帽（InMemory 版），判定与落账同在一处、先判后记。
+
+        返回 None＝本腿不适用（chat 能力／整门哑／旁路脸／帽为 0），调用侧照旧走
+        既有早退腿；返回 decision＝本腿已判完并记完账 ⇒ 命令流量**不进** chat 句数
+        账（两本账，见 `_COMMAND_RECORD_CARRYING_REASONS` 与 rollback 的对称退还）。
+        """
+        settings = self.settings
+        if not command_leg_applies(settings, capability_id):
+            return None
+        if self._has_command_bypass_role(message):
+            return None
+        legs = command_leg_buckets(settings, capability_id, message)
+        if not legs:
+            return None
+        now = self.clock()
+        self._maybe_sweep(now)
+        window = max(1, settings.command_window_seconds)
+        for _scope, key, _cap in legs:
+            self._prune_window(self._buckets[key], now, window)
+        for _scope, key, cap in legs:
+            bucket = self._buckets[key]
+            if len(bucket) + safe_amount > cap:
+                return RateLimitDecision(
+                    allowed=False,
+                    reason="command_rate_limited",
+                    retry_after_seconds=self._window_retry_after(bucket, now, window),
+                    audit_tags=[
+                        "rate_limit:blocked",
+                        f"rate_limit:{_scope}_exceeded",
+                    ],
+                )
+        for _scope, key, _cap in legs:
+            bucket = self._buckets[key]
+            for _ in range(safe_amount):
+                bucket.append(now)
+        return RateLimitDecision(
+            allowed=True,
+            reason="command_allowed",
+            audit_tags=["rate_limit:command_allowed"],
+        )
+
+    def _has_command_bypass_role(self, message: IncomingMessage) -> bool:
+        """命令腿旁路脸（缺省 ["admin"]，超管经 roles.py 叠 admin）——管理员自救通道。"""
+        bypass_roles = set(self.settings.command_bypass_roles)
+        return any(role.strip().lower() in bypass_roles for role in message.sender_roles)
+
+    def _prune_window(self, bucket: deque[datetime], now: datetime, window: int) -> None:
+        """按指定窗口清扫（`_prune` 只会读 chat 的 window_seconds，命令帽另有窗）。"""
+        while bucket and (now - bucket[0]).total_seconds() >= window:
+            bucket.popleft()
+
+    def _window_retry_after(self, bucket: deque[datetime], now: datetime, window: int) -> int:
+        if not bucket:
+            return window
+        elapsed = int((now - bucket[0]).total_seconds())
+        return max(1, window - elapsed)
 
     def _check_proactive(self, message: IncomingMessage, capability_id: str) -> RateLimitDecision:
         if not self.settings.enabled:
@@ -1203,6 +1394,13 @@ class SQLiteRateLimiter:
             )
             if min_interval_decision is not None:
                 return min_interval_decision
+        # E05 缺口二 · 命令腿帽先于两条早退腿（与 InMemory 同序同语义；生产走
+        # SQLite，只补内存版＝第二基线假绿）。
+        command_decision = self._check_command_leg(
+            message, capability_id, max(1, int(amount))
+        )
+        if command_decision is not None:
+            return command_decision
         if interactive:
             return RateLimitDecision(
                 allowed=True,
@@ -1244,7 +1442,9 @@ class SQLiteRateLimiter:
             return None  # 仅点名回复防刷屏；主动接话/图片路径不受限
         self._ensure_schema()
         now_epoch = self.clock().timestamp()
-        key = sender_interval_ledger_key(capability_id, message.sender_id)
+        key = sender_interval_ledger_key(
+            capability_id, message.sender_id, str(message.group_id or "")
+        )
         with closing(self._connect()) as connection, connection:
             self._cleanup_expired(connection, now_epoch)
             latest = self._latest_created_at(connection, key)
@@ -1422,6 +1622,17 @@ class SQLiteRateLimiter:
         safe_amount = max(1, int(amount))
         deletes: list[tuple[str, int]] = []
         refund: tuple[str, int] | None = None
+        if reason in _COMMAND_RECORD_CARRYING_REASONS:
+            # 命令腿的对称退还（与 InMemory 版同判据、同键形）：只弹 command_* 两格，
+            # 每格 safe_amount；chat 桶在命令路径从未写过，故一律不碰。
+            deletes.extend(
+                (key, safe_amount)
+                for _scope, key, _cap in command_leg_buckets(
+                    self.settings, capability_id, message
+                )
+            )
+            self._apply_deletes(deletes)
+            return
         if reason == "proactive_allowed":
             deletes.append(
                 (
@@ -1439,8 +1650,12 @@ class SQLiteRateLimiter:
             if _sender_interval_record_applies(self.settings, message, capability_id):
                 deletes.append(
                     (
-                        self._bucket_key(
-                            capability_id, "sender_interval", message.sender_id
+                        # 与 check 侧同键形（含 group 腿，2026-09-29 需求项 2）：
+                        # 退账退错桶＝冷却钟白占一格，同人同群下一条被多拦一次。
+                        sender_interval_ledger_key(
+                            capability_id,
+                            message.sender_id,
+                            str(message.group_id or ""),
                         ),
                         1,
                     )
@@ -1559,6 +1774,63 @@ class SQLiteRateLimiter:
             """,
             (bucket_key, max(0, int(count))),
         )
+
+    def _check_command_leg(
+        self, message: IncomingMessage, capability_id: str, safe_amount: int
+    ) -> RateLimitDecision | None:
+        """命令腿分钟帽（SQLite 版，生产真身），与 InMemory 同序同语义同桶键。
+
+        先判后记：任一格超帽 ⇒ 一格都不写（同一事务内判定与插入，拒绝直接返回）。
+        返回 None＝本腿不适用，调用侧照旧走既有早退腿。
+        """
+        settings = self.settings
+        if not command_leg_applies(settings, capability_id):
+            return None
+        if self._has_command_bypass_role(message):
+            return None
+        legs = command_leg_buckets(settings, capability_id, message)
+        if not legs:
+            return None
+        window = max(1, settings.command_window_seconds)
+        with self._lock:
+            self._ensure_schema()
+            now_epoch = self.clock().timestamp()
+            cutoff_epoch = now_epoch - window
+            with closing(self._connect()) as connection, connection:
+                self._cleanup_expired(connection, now_epoch)
+                for _scope, key, _cap in legs:
+                    self._prune(connection, key, cutoff_epoch)
+                for _scope, key, cap in legs:
+                    if self._count(connection, key) + safe_amount > cap:
+                        return RateLimitDecision(
+                            allowed=False,
+                            reason="command_rate_limited",
+                            retry_after_seconds=self._window_retry_after_seconds(
+                                connection, key, now_epoch, window
+                            ),
+                            audit_tags=[
+                                "rate_limit:blocked",
+                                f"rate_limit:{_scope}_exceeded",
+                            ],
+                        )
+                for _scope, key, _cap in legs:
+                    connection.executemany(
+                        """
+                        INSERT INTO rate_limit_events (bucket_key, created_at)
+                        VALUES (?, ?)
+                        """,
+                        [(key, now_epoch) for _ in range(safe_amount)],
+                    )
+        return RateLimitDecision(
+            allowed=True,
+            reason="command_allowed",
+            audit_tags=["rate_limit:command_allowed"],
+        )
+
+    def _has_command_bypass_role(self, message: IncomingMessage) -> bool:
+        """命令腿旁路脸（与 InMemory 同款，缺省 ["admin"]＝管理员自救通道）。"""
+        bypass_roles = set(self.settings.command_bypass_roles)
+        return any(role.strip().lower() in bypass_roles for role in message.sender_roles)
 
     def _check_proactive(self, message: IncomingMessage, capability_id: str) -> RateLimitDecision:
         if not self.settings.enabled:
@@ -2071,6 +2343,23 @@ class SQLiteRateLimiter:
         return cls._bucket_key(capability_id, "target", target)
 
 
+# ---------------------------------------------------------------------------
+# 补回参数的**唯一数值真身**（2026-09-28 需求 2 残留收尾；同「阈值字面量收一处」的
+# ack 族口径：数字只在这里写一遍，dataclass 缺省与装配口兜底都指过来）。
+# ---------------------------------------------------------------------------
+# 窗口不写字面量、按点名间隔派生：补回排队账本给同人连发的第 N 条排的回位是
+# (N-1)×间隔，"整轮排得下"的算术就是 N×间隔。R3 间隔缺省住在 `RateLimitSettings`
+# 的字段缺省里（现值 45 秒），所以这里反射取它，不抄第二份 45——谁抬间隔，
+# 补回窗口跟着走，不再出现"180=4×45 的账被间隔改动悄悄写爆"那种静默丢。
+_DEFAULT_SENDER_INTERVAL_SECONDS = int(
+    RateLimitSettings.model_fields["chat_sender_min_interval_seconds"].default
+)
+# 6 格 = 连发 6 条整轮排得下（第 6 条回位 5×45＝225 秒 ＋ 一格余量）。
+DEFAULT_REDRIVE_MAX_WAIT_SECONDS = float(6 * _DEFAULT_SENDER_INTERVAL_SECONDS)
+# 有界重放的上限：3 次够"让位—再让位—收敛"，再大就是重放循环的风险面。
+DEFAULT_REDRIVE_MAX_ATTEMPTS = 3
+
+
 @dataclass(frozen=True)
 class RedriveSettings:
     """被限流挡下的消息「期后补回」的参数（2026-09-25 用户裁定第 2 项）。
@@ -2078,21 +2367,37 @@ class RedriveSettings:
     旧行为是一刀静默丢弃：同人 45 秒最小间隔拦掉的那几条既不重投、也不进会话
     历史，用户看到的是「喊三声只应一次，后两声凭空消失」。这里改成：等到解禁
     那一刻再补跑一次，补不起（还要等太久/已补过）才维持原样静默。
+
+    ⚠ 下面两枚缺省是**代码面真身**；`config.py` 的同名字段缺省已于 2026-09-29 抬到
+    同源（270.0 / 3）。生产生效值走 `build_redrive_settings` 从 Config 搬的那一条腿，
+    所以线上真身仍看 config.py——两侧不同源由
+    `tests/test_redrive_window_exhaustion.py::test_config_default_matches_the_code_truth`
+    当场判红（不许两份口径长期并存）。
     """
 
     enabled: bool = True
-    # 还要等这么久以内才补（秒）：超过就说明是小时级帽在拦，隔半小时突然冒一句
-    # 比不更糟。缺省 180 = 4×点名间隔缺省（45 秒）——连发 5 条 @bot 排队补回
-    # 恰好装得下整轮（2026-09-25 用户裁定第 2 项「可以延后，不可以丢弃」）。
-    # 与 config.py 的 bot_chat_rate_limit_redrive_max_wait_seconds 缺省同值。
-    max_wait_seconds: float = 180.0
-    # 一条消息最多补几次（防重放循环）。
-    max_attempts: int = 1
+    # 还要等这么久以内才补（秒）：超过就说明拦我的是"更晚才解禁的那一道"，
+    # 但**不再丢弃**——排到这一格（最近可用槽）再判一次，见 `redrive_wait_seconds`。
+    # 数值按"整轮连发排不下"反推：6×点名间隔缺省 ⇒ 连发 6 条的第 6 条（回位 5×45=225s）
+    # 落进窗口，还余一格吸收到达差与向上取整。上一档 180＝4×45 只到第 5 条，
+    # 第 6 条起仍被吞（2026-09-28 用户点名需求 2 的残留）。
+    max_wait_seconds: float = DEFAULT_REDRIVE_MAX_WAIT_SECONDS
+    # 一条消息最多补几次（防重放循环）。1 次不够用的原因：超窗改"排到最近可用槽"后，
+    # 补回到访那条可能仍被前一条拨走的冷却钟拦住（醒来早于真解禁点），一发额度
+    # 当场陪葬＝又回到静默丢。3 次给"让位—再让位—收敛"，仍是有界重放。
+    max_attempts: int = DEFAULT_REDRIVE_MAX_ATTEMPTS
 
 
 # 只对这些拒绝原因补回：都是「同一时刻太密」类，等一小会儿就该放行。
-# 刻意不含 proactive_*（那是 bot 自己找话，拦掉是本分）与 quiet_hours
-# （安静时间补回等于凌晨攒到早上集体轰炸）。
+# 刻意不含 quiet_hours（安静时间补回等于凌晨攒到早上集体轰炸）。
+# 也刻意不含 proactive_cooldown / proactive_window_exceeded（2026-09-29 需求项 2 之 3
+# 的边界，用户口径原文＝「不得放宽对 bot 主动搭话的防骚扰门」）：这两道正是
+# 「主动窗口 + 主动冷却」本身。把它们的拒绝排进补回队列＝给同一次主动接话多发几次
+# 机会，那就是拿防骚扰门当摆设——被它们拦下是**本分**，不是吞消息。
+# 需要澄清的口径差：门禁抽签已选中要接话那条腿被**太密类**（下表其余各因）拦下时
+# 仍然补回（那是白抽签），判据住在 `_is_directed_request(..., proactive_selected=True)`
+# 的显式标签腿，由 pipeline 当场把已算好的 `proactive_request` 递进来——
+# 补的是「已经欠下的那句」，不是「再抽一次签」。
 _REDRIVE_REASONS = frozenset(
     {
         "sender_min_interval",
@@ -2110,12 +2415,67 @@ _REDRIVE_REASONS = frozenset(
 )
 
 
-def _is_directed_request(message: IncomingMessage, capability_id: str) -> bool:
-    """这条是不是「用户明确找 bot 说话」——只有这种才欠他一个回复。
+def is_density_redrive_reason(reason: str) -> bool:
+    """该拒因是否属「太密类、值得补回」——pipeline 的可见说明判据共读这里，
+    不在调用侧抄第二份名册（规则 10：名单会漂）。"""
+    return reason in _REDRIVE_REASONS
 
-    群聊里没点名的闲聊本就该只观察不回（门禁已按 passive_group_message 拦过
-    一道），到这里再被限流拦下不该补回；私聊与点名/命令一律算明确请求。
+
+# ---------------------------------------------------------------------------
+# 补回封顶耗尽的**可见说明**（2026-09-29 需求项 2 之 1）：
+# 「用户在群里连发的每一条，最终都必须被回，不许静默吞」——补不回时至少说一句。
+# 口径：守岸人语气、承认没答上、请对方再说一次；**不编造原因**（不说"在忙"、
+# 不报队列数字、不提限流），不碰 ACK_TEXT_BANNED 那类客服腔。
+# ---------------------------------------------------------------------------
+RATE_LIMIT_EXHAUSTED_NOTICE_POOL: tuple[str, ...] = (
+    "这句我在队里排到尽头也没赶上——不是没看见，是没答上。再说一次好吗。",
+    "刚刚排在它前面的太多，它没能走进这一轮。你再说一次，我不让它在半路等没。",
+    "这一条我终究没接住，不编个理由搪塞你。重新说一次，这次我排在头一个答。",
+)
+
+_NOTICE_CURSOR_LOCK = threading.Lock()
+_NOTICE_CURSOR = 0
+
+
+def pick_rate_limit_exhausted_notice(session_id: str) -> str:
+    """轮换取句；同一会话相邻两次不重复（手法与回执池同源，不新开第二套状态）。"""
+    pool = RATE_LIMIT_EXHAUSTED_NOTICE_POOL
+    if not pool:
+        return ""
+    digest = int(
+        hashlib.blake2b(str(session_id or "").encode("utf-8"), digest_size=8).hexdigest(),
+        16,
+    )
+    global _NOTICE_CURSOR
+    with _NOTICE_CURSOR_LOCK:
+        index = _NOTICE_CURSOR
+        _NOTICE_CURSOR += 1
+    return pool[(index + digest) % len(pool)]
+
+
+def _is_directed_request(
+    message: IncomingMessage, capability_id: str, *, proactive_selected: bool = False
+) -> bool:
+    """这条被拦的消息是不是「欠一句回复」。
+
+    三条算欠账（需求项 2 之 2 的收口口径）：① 非聊天能力＝命令类（`/bot xxx`、点歌、
+    天气…），命令要落地就得回；② 私聊与一切非群会话＝用户开口找 bot；③ 群聊里点名了
+    bot。**外加调用方的显式标签** `proactive_selected`：门禁这一轮已经抽中要接话的那条腿
+    （含视觉回复腿）也欠一句——被「太密」吞掉就是白抽签。
+
+    为什么标签必须由调用方传、本件不自己猜：群聊里没点名又没被抽中的真·路过闲聊，
+    `evaluate_policy` 早就以 `passive_group_message` 拒了（policy/gate.py），正常根本到
+    不了限流面；真到了也不该补，补它＝把刷屏放大。09-25 那条「没 @ 的群闲聊不补回」
+    今天仍在场，由 `tests/test_throttle_redrive_and_adaptive_ack.py` 与
+    `tests/test_redrive_window_exhaustion.py` 两把锁钉住。
+
+    2026-09-29 中途曾把这枚判据改成「走到这里的一律欠账」（`return True`），实跑把
+    上述两把锁打成红：那等于同时放宽「主动接话」与「没 @ 闲聊」两道防骚扰门，与需求
+    项 2 之 3 正面冲突，已按裁定撤回。撤回后需求 2 的覆盖不受影响——用户连发要么点了名
+    （③）、要么被抽中（标签），两条路都进补回队列。
     """
+    if proactive_selected:
+        return True
     if capability_id not in CHAT_CAPABILITY_IDS:
         return True  # 非聊天能力都是命令类（/bot xxx、点歌、天气…）。
     if message.session_type.value != "group":
@@ -2128,6 +2488,8 @@ def redrive_wait_seconds(
     message: IncomingMessage,
     capability_id: str,
     decision: RateLimitDecision,
+    *,
+    proactive_selected: bool = False,
 ) -> float | None:
     """这条被拦的消息该不该补、要等几秒；不该补返回 None。
 
@@ -2135,12 +2497,15 @@ def redrive_wait_seconds(
     多条被拦消息由账本给出各自的排队回位（互差≥一个间隔），读的是限流器在
     拒绝当场登记的预留、按 ``decision.debug_id`` 精确认领——外来/陈旧的决定
     读不到账，一律按原判秒数走，行为逐字节等于旧口径。
+
+    `proactive_selected` 见 `_is_directed_request`：群自动回复腿是否算「欠一句回复」，
+    由调用方（pipeline 已算出 `proactive_request`）传入；缺省 False 保持现状。
     """
     if not settings.enabled or decision.allowed:
         return None
     if decision.reason not in _REDRIVE_REASONS:
         return None
-    if not _is_directed_request(message, capability_id):
+    if not _is_directed_request(message, capability_id, proactive_selected=proactive_selected):
         return None
     if int(getattr(message, "redrive_count", 0) or 0) >= max(0, settings.max_attempts):
         return None
@@ -2149,13 +2514,25 @@ def redrive_wait_seconds(
         return None
     if decision.reason == "sender_min_interval":
         reserved = redrive_ledger.reserved_wait_for(
-            sender_interval_ledger_key(capability_id, str(message.sender_id or "")),
+            sender_interval_ledger_key(
+                capability_id,
+                str(message.sender_id or ""),
+                str(getattr(message, "group_id", "") or ""),
+            ),
             debug_id=str(decision.debug_id or ""),
         )
         if reserved is not None:
             wait = reserved
-    if wait > max(1.0, settings.max_wait_seconds):
-        return None
+    cap = max(1.0, settings.max_wait_seconds)
+    # 超窗不再"弃"：钳制到窗口这一格（= 最近可用槽）再走一遍原链路。
+    # 旧写法在这里 return None，等于把"排队排到窗口外"的那几条读成"不必回"——
+    # 她需求 2 的残留（连发 6 条只回 5 条）就是这么来的：账本给第 6 条排到
+    # 225 秒、窗口 180 秒 ⇒ 当场判弃。改成钳制之后：
+    # ① 上限仍然是硬上界（绝不满一小时后突然冒一句——小时级帽那条老判据还在，
+    #    只是从"直接不回"变成"到点再看一眼，多半仍被拦，然后按额度收口"）；
+    # ② 重放有界：`max_attempts` 的额度门在上方，钳制过的醒来最多 3 次；
+    # ③ 醒来那一次走的是完整链路（门禁/限流/审核/出站闸再过一遍），不是旁路。
+    wait = min(wait, cap)
     return wait
 
 
@@ -2243,6 +2620,22 @@ def build_rate_limit_settings(config: object) -> RateLimitSettings:
         ),
         bypass_roles=list(
             getattr(config, "bot_rate_limit_bypass_roles", DEFAULT_BYPASS_ROLES)
+        ),
+        # 命令腿帽（E05 缺口二）读点。缺省全写在代码面：config 无该字段时取本处
+        # 缺省 ⇒ 帽默认生效且不炸构造（"三面同批"落地前也能生效，见
+        # patches/E05-CONFIG-REQUEST.md；真 Config 补上字段后由 .env 决定）。
+        command_enabled=bool(getattr(config, "bot_rate_limit_command_enabled", True)),
+        command_window_seconds=int(
+            getattr(config, "bot_rate_limit_command_window_seconds", 60)
+        ),
+        command_sender_max_requests=int(
+            getattr(config, "bot_rate_limit_command_sender_max_requests", 12)
+        ),
+        command_group_max_requests=int(
+            getattr(config, "bot_rate_limit_command_group_max_requests", 20)
+        ),
+        command_bypass_roles=list(
+            getattr(config, "bot_rate_limit_command_bypass_roles", DEFAULT_BYPASS_ROLES)
         ),
     )
 

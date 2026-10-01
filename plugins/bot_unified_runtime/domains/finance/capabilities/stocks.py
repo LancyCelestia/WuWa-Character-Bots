@@ -584,10 +584,17 @@ def build_stocks_capability(config: Any | None = None, *, render_backend: Any | 
                 {
                     "label": f"{quote.display_name} {quote.symbol}",
                     "value": f"{quote.close:.2f}" if quote.close else "暂无",
+                    # S-FIX-WXSSL L1：change_percent 缺失渲染为「无数据」，
+                    # 不再 `or 0.0` 伪造 0.00%（与单股卡 287 行 is-not-None
+                    # 口径一致；tests/test_finance_data.py 面板锁）。
                     "delta": (
-                        f"+{quote.change_percent:.2f}%"
-                        if (quote.change_percent or 0.0) > 0
-                        else f"{quote.change_percent or 0.0:.2f}%"
+                        "无数据"
+                        if quote.change_percent is None
+                        else (
+                            f"+{quote.change_percent:.2f}%"
+                            if quote.change_percent > 0
+                            else f"{quote.change_percent:.2f}%"
+                        )
                     ),
                     "cls": (
                         "up"

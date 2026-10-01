@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 import logging
 import threading
+import urllib.request
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.cookiejar import Cookie
@@ -363,11 +364,28 @@ def _ip_is_blocked(ip_text: str) -> bool:
 def check_download_url(url: str) -> None:
     """下载入口护栏：非法协议 / 内网 / 保留地址一律拒绝（抛 RejectedUrlError）。
 
+    判据本体＝``check_download_url_resolved``（本文件唯一一份 SSRF 判定），本函数
+    是它的薄封装、只丢回一个「过 / 不过」。覆盖度、已知残余与「解析失败=拒绝」
+    语义一律见 ``check_download_url_resolved`` 的说明；rebinding 面的收口见
+    ``build_pinning_handlers``。
+    """
+    check_download_url_resolved(url)
+
+
+def check_download_url_resolved(url: str) -> frozenset[str]:
+    """SSRF 咽喉本体：判定 + 把「判定过的那些 IP」原样交回去（解析钉定用）。
+
+    为什么要交回 IP（INCIDENT-20260930 第五节 · 缺口④）：判完即弃 ⇒ 真正的连接
+    由后面的 ``socket.create_connection`` **再解一次** DNS，两次解析之间域名可以
+    翻面（DNS rebinding：判定那次是公网、连接那次指进 127.0.0.1 / 元数据地址），
+    入口护栏的全部判据当场形同虚设。把这一次解析结果交给连接层
+    （见 ``build_pinning_handlers``），「判定」与「连接」共用同一次解析，窗口归零。
+
     覆盖度与已知残余：
     - 协议白名单只放 http/https（挡 file://、ftp://、gopher:// 等）。
     - 主机名先查黑名单（localhost/metadata.*），再对**所有** DNS 解析结果做
       内网判定（不只看第一个，避免多 A 记录轮询绕过）。
-    - 本文件内的调用点只有一处（``_url_rejection_reason``），``download()`` 与
+    - 本文件内的咽喉调用点只有一处（``_url_rejection_reason``），``download()`` 与
       ``probe()`` 共享同一闸门；跨模块消费方见 ``ssrf_guard``（解析链）、
       ``media_archive``/``notes``/``eat``/``file_gateway``（各自下载口）。
     - 已知残余：yt-dlp 自己会跟随播放列表/清单里的子 URL，且另有独立的重定向
@@ -388,7 +406,7 @@ def check_download_url(url: str) -> None:
         raise RejectedUrlError("地址缺少主机名")
     if host in _BLOCKED_HOSTNAMES or host.endswith(".localhost"):
         raise RejectedUrlError("该地址指向本机，已拒绝")
-    # 字面量 IP：直接判定，不做 DNS。
+    # 字面量 IP：直接判定，不做 DNS（交回同一枚字面量供连接层钉定）。
     import ipaddress
 
     try:
@@ -398,7 +416,7 @@ def check_download_url(url: str) -> None:
     else:
         if _ip_is_blocked(host):
             raise RejectedUrlError("该地址属于内网/保留网段，已拒绝")
-        return
+        return frozenset({host})
     # 域名：解析全部结果，任一落在内网即拒绝。
     import socket
 
@@ -412,6 +430,7 @@ def check_download_url(url: str) -> None:
     for address in resolved:
         if _ip_is_blocked(address):
             raise RejectedUrlError("该域名解析到内网/保留网段，已拒绝")
+    return frozenset(resolved)
 
 
 def _url_rejection_reason(url: str) -> str | None:
@@ -432,6 +451,141 @@ def _url_rejection_reason(url: str) -> str | None:
         logger.warning("media url rejected by SSRF guard: %s", exc)
         return str(exc)
     return None
+
+
+# ---------------------------------------------------------------------------
+# 解析钉定（连接层咽喉）：治 DNS rebinding 的「判后即弃」（缺口④）
+#
+# 形态＝http.client 留出的官方接缝：``HTTPConnection.__init__`` 里
+# ``self._create_connection = socket.create_connection``（stdlib 注释明确写着
+# 「stored as an instance variable to allow unit tests to replace it」）。
+# 我们只在实例层把它换成「拿判定过的 IP 去连」，**不动** self.host：
+# Host 头、TLS SNI（``server_hostname=self.host``）与证书主机名校验全部原样。
+#
+# 红线（台账 #71★）：代理在场时一律不钉。钉死目标 IP ＝绕过 Clash，
+# 那是刚修好的通路；且代理在场时本机根本不解析目标域，判定的语义也不成立。
+# 缺省 ``ProxyHandler``（读环境＝trust_env 回落，temporal 天气依赖它）同样
+# 由 ``build_pinning_handlers`` 保持不动——本件只装连接类，不装代理件。
+# ---------------------------------------------------------------------------
+
+
+def _pick_pinned_address(resolved: frozenset[str]) -> str:
+    """从判定过的地址册里选一枚钉住：IPv4 优先，其余按稳定字典序。
+
+    双栈机器上「解析到 IPv6 但本机无 v6 路由」是常态故障源，故先 IPv4；
+    排序保证同一册子每次选到同一枚（可复现，不把下载/取图变成掷硬币）。
+    """
+    v4 = sorted(address for address in resolved if ":" not in address)
+    if v4:
+        return v4[0]
+    return sorted(resolved)[0]
+
+
+def _connect_target_is_proxied(req: Any) -> bool:
+    """这次连接是不是「交给代理去建」（代理在场 ⇒ 不钉、不自己解析）。
+
+    urllib 的 ``ProxyHandler`` 在 ``http_open`` 之前就把 ``req.host`` 换成了代理
+    netloc（https over CONNECT 另记 ``req._tunnel_host``），而 ``req.full_url``
+    始终是原始目标——两者主机名不等即是代理通路。判不清（空主机名等畸形形态）
+    一律按「代理在场」处理：宁可不钉，交回 urllib 原路，行为与今天逐字节一致。
+    """
+    from urllib.parse import urlsplit
+
+    connect_host = ""
+    if getattr(req, "host", None):
+        try:
+            connect_host = (urlsplit(f"//{req.host}").hostname or "").lower()
+        except ValueError:
+            connect_host = ""
+    try:
+        origin_host = (urlsplit(req.full_url).hostname or "").lower()
+    except ValueError:
+        origin_host = ""
+    if getattr(req, "_tunnel_host", None):
+        return True
+    if not connect_host or not origin_host:
+        return True
+    return connect_host != origin_host
+
+
+def _pinned_connection_class(base: type, ip: str) -> type:
+    """造「只连判定过的那枚 IP」的连接类（闭包捕获 IP，域名不再进 socket）。"""
+    import socket
+
+    default_timeout = getattr(socket, "_GLOBAL_DEFAULT_TIMEOUT", None)
+
+    def _create_pinned(address, timeout=default_timeout, source_address=None):
+        port = address[1] if len(address) > 1 else 0
+        return socket.create_connection(
+            (ip, port), timeout=timeout, source_address=source_address
+        )
+
+    class _PinnedConnection(base):  # noqa: N801 - 动态基类，名字按形态起
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self._pinned_ip = ip
+            self._create_connection = _create_pinned
+
+    return _PinnedConnection
+
+
+def _pinned_connection_class_for(req: Any, base: type) -> type | None:
+    """连接时刻现判现钉：判定与连接共用这一次解析（rebinding 窗口归零）。
+
+    返回 ``None`` ＝「本请求不钉」（代理在场 / 形态判不清），调用方交回
+    urllib 原处理器，行为与今天一致。拒绝仍旧抛 ``RejectedUrlError``——
+    与入口咽喉同一个异常族，消费方既有的 ``except`` 即降级通路。
+    """
+    if _connect_target_is_proxied(req):
+        return None
+    resolved = check_download_url_resolved(req.full_url)
+    return _pinned_connection_class(base, _pick_pinned_address(resolved))
+
+
+class _PinningHTTPHandler(urllib.request.HTTPHandler):
+    """http 腿钉定件。"""
+
+    def http_open(self, req: urllib.request.Request):  # type: ignore[override]
+        import http.client
+
+        connection_class = _pinned_connection_class_for(req, http.client.HTTPConnection)
+        if connection_class is None:
+            return super().http_open(req)
+        return self.do_open(connection_class, req)
+
+
+class _PinningHTTPSHandler(urllib.request.HTTPSHandler):
+    """https 腿钉定件：ssl context 照旧透传（证书校验一点不松）。"""
+
+    def https_open(self, req: urllib.request.Request):  # type: ignore[override]
+        import http.client
+
+        connection_class = _pinned_connection_class_for(req, http.client.HTTPSConnection)
+        if connection_class is None:
+            return super().https_open(req)
+        return self.do_open(connection_class, req, context=self._context)
+
+
+def build_pinning_handlers() -> list[Any]:
+    """连接层钉定 handler 对（http / https）。
+
+    装配形态（唯一正确用法，护栏与钉定各管一件事、互不替代）::
+
+        opener = urllib.request.build_opener(
+            _GuardedShortLinkRedirectHandler(),  # 逐跳落点不许是内网
+            *build_pinning_handlers(),           # 判定与连接共用同一次解析
+        )
+
+    ``build_opener`` 按 ``isinstance`` 去重，本对件会顶掉缺省 ``HTTPHandler`` /
+    ``HTTPSHandler``（只此一条 http 链，不存在第二套通路）；缺省 ``ProxyHandler``
+    不在此列——代理语义（含环境回落）一律不动。
+    """
+    import http.client
+
+    handlers: list[Any] = [_PinningHTTPHandler()]
+    if hasattr(http.client, "HTTPSConnection"):
+        handlers.append(_PinningHTTPSHandler())
+    return handlers
 
 
 def _find_ffmpeg(explicit_path: str = "") -> str:

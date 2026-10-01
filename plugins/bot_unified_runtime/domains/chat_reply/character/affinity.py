@@ -477,6 +477,30 @@ _V8_Z_REPR_DOMAIN = math.atanh(_V8_DISPLAY_DOMAIN_BOUND)
 _V7_NOVELTY_FLOOR = 0.02
 # rhythm 活跃度 EMA 半衰（天）：设计 §2.2「近 28 天日均互动轮次」。
 _V7_RHYTHM_HALFLIFE_DAYS = 28.0
+
+# ---- v8 第二腿常量（S-FIX-AFF-ALGO 席，2026-09-27 任务 #28：边际递减 + 长尾的
+# 结构界形态；规格 docs/affinity-design.md §C.2/§C.4/§C.5.1/§C.7）----
+# 每轮一个凸组合冲量：|δ_z| ≤ κ 由构造给出（Σ|w|=1 归一化），不是事后 if-list；
+# 缺省灰度关死（enabled=False ⇒ v5/v6/v7 路径逐字节不变，与 v7 同一家规）。
+_V8_DEFAULT_IMPULSE_CAP_Z = 0.02       # κ：每轮最大位移（§C.2，展示最坏 2.0 分/轮）
+_V8_DEFAULT_DAILY_MOVE_CAP_Z = 0.04    # 日额度沿用 bot_affinity_daily_move_cap_z 键，v8 缺省 0.04（§C.7）
+_V8_DEFAULT_AMBIENT_HALFLIFE_DAYS = 28.0  # āmbient 质量基线 EMA 半衰（§C.2 之 φ_q 去基线）
+_V8_DEFAULT_BAND_MIN = 2.60            # 善意底保护带·新人端（≈全谱，fail-open 端；§C.4 散文语义）
+_V8_DEFAULT_BAND_MAX = 0.55            # 善意底保护带· saturation 端（一年以上关系最多回落到峰值减此带）
+_V8_DEFAULT_BAND_SATURATE_DAYS = 365.0 # 保护带随相处时长的饱和天数
+# 换形裁定（2026-09-28 S-FIX-AFF-ALGO 协调指令）：band 由线性折线改为
+# **凸递减半衰形态**——saturate_days 语义 =「离底线收敛到 1/2^FOLDS 跨度所需的
+# 天数」，带半衰 τ_band = saturate_days / FOLDS（缺省 365/3）。纯指数无折点，
+# 与 ambient/γ 同一长尾家族；FOLDS 是形状换算常数、非第 14 枚配置键。
+_V8_BAND_SATURATE_FOLDS = 3.0
+_V8_DEFAULT_TIER_BLEND_EDGE = 0.25     # 档内 λ 混合边缘（§C.5.1：λ∈[edge,1−edge] 单档原句）
+# 六信号权重缺省：φ_q/φ_t/φ_r/φ_x/φ_a/φ_c。Σ=1.00；φ_c 的额度从 φ_q 的 0.40 中出
+# （w1_eff=0.30、wc=0.10，§C.2 权重纪律「不新增第 7 个自由度」）。
+_V8_DEFAULT_IMPULSE_WEIGHTS: tuple[float, float, float, float, float, float] = (
+    0.30, 0.25, 0.15, 0.10, 0.10, 0.10,
+)
+# 事件质量分入 āmbient 的 EMA 步长（半衰之外的"每次见面各信一半"，确定性常数）。
+_V8_AMBIENT_EMA_ALPHA = 0.5
 # 中性消息的 q 缩放（§2.3 五子信号里 情绪词/尊重边界 两项对中性恒为 0，
 # 普通聊天只凭 主动度/延展度/回应性 缓慢回温——"陪伴有分量，但远低于真情实意"）。
 _V7_NEUTRAL_Q_SCALE = 0.2
@@ -935,12 +959,14 @@ def _v7_warn_once(
     *,
     problem: str = "非法",
     outcome: str = "按代码缺省执行",
+    family: str = "v7",
 ) -> None:
     """配置面点名口（进程内每键只报一次，避免每条消息刷日志）。
 
     `problem`/`outcome` 单独成参，是因为并非所有点名都以"取值非法 → 回退缺省"收场：
     需求项 13 的位移上限越界只点名、不改值（值本身合法，越界的是它带来的结构性
     性质）。两个参数都取旧措辞为缺省，既有五个调用点的输出逐字节不变。
+    `family` 同理：缺省 "v7" 保持既有日志逐字节不变，v8 点名族传 "v8"。
     """
     with _V7_WARNED_LOCK:
         first = key not in _V7_WARNED_KEYS
@@ -950,15 +976,16 @@ def _v7_warn_once(
         import logging
 
         logging.getLogger(__name__).warning(
-            "好感度 v7 配置键 %s %s（%s），%s", key, problem, detail, outcome
+            "好感度 %s 配置键 %s %s（%s），%s", family, key, problem, detail, outcome
         )
 
 
-def _v7_env_value(field_name: str, default: Any) -> Any:
+def _v7_env_value(field_name: str, default: Any, *, family: str = "v7") -> Any:
     """无 config 句柄时的逐调用 env 现读（生产 .env 经 nonebot 装载进环境）。
 
     字段名即 env 名大写（``bot_affinity_v7_enabled`` ⇄ ``BOT_AFFINITY_V7_ENABLED``，
-    与 translate_env_keys 的双向口径一致）。
+    与 translate_env_keys 的双向口径一致）。v8 复用本读口（同一 env 装载事实，
+    禁第二通路），`family` 只影响点名归属。
     """
     raw = os.environ.get(field_name.upper())
     if raw is None or not str(raw).strip():
@@ -969,7 +996,7 @@ def _v7_env_value(field_name: str, default: Any) -> Any:
         try:
             return type(default)(float(raw)) if not isinstance(default, int) else int(float(raw))
         except ValueError:
-            _v7_warn_once(field_name, f"数值解析失败：{raw!r}")
+            _v7_warn_once(field_name, f"数值解析失败：{raw!r}", family=family)
             return default
     return str(raw)
 
@@ -1078,7 +1105,395 @@ def v7_raw_delta_z(
     return delta
 
 
+# ============================================================================
+# ---- v8 第二腿：每轮凸组合冲量 + 善意底 + 带内混合（规格：docs/affinity-design.md
+# §C.2/§C.3/§C.4/§C.5.1/§C.7；S-FIX-AFF-ALGO 席 2026-09-27）----
+# 与第一腿（γ 边际递减 + 长尾表示域，commit b2a2267 已落 v7 路径）互补：本腿把
+# 「界」从"事后 if-list"迁到"数学构造"——Σ|w_i|=1 归一 ⇒ |u|≤1 ⇒ |δ_z|≤κ，
+# 删掉任何事后 clamp 都不破坏此界（设计 §F 每轮界判据的牙齿）。
+# 灰度：bot_affinity_v8_enabled 缺省 False ⇒ v5/v6/v7 路径逐字节不变、可一键回退。
+# 键登记缺口（如实登记，本席禁碰 config.py）：v8 增量键当前只走 env 现读口，
+# config.py 字段 + catalog + .env.example + RESTART_REQUIRED_KEYS 四处登记待专门
+# 席位补齐；补齐前生产拨闸形态 = 环境变量 + 重启（与 v7 共享工厂缺省同路）。
+# ============================================================================
+
+_V8_CONFIG_FIELDS: tuple[tuple[str, Any], ...] = (
+    ("bot_affinity_v8_enabled", False),
+    ("bot_affinity_v8_impulse_cap_z", _V8_DEFAULT_IMPULSE_CAP_Z),
+    ("bot_affinity_v8_impulse_weights", ""),
+    ("bot_affinity_v8_ambient_centering", True),
+    ("bot_affinity_v8_ambient_halflife_days", _V8_DEFAULT_AMBIENT_HALFLIFE_DAYS),
+    # 善意带三键 env 名按 2026-09-28 S-FIX-AFF-ALGO 裁定：BOT_AFFINITY_GOODWILL_BAND_*
+    # （不带 V8 段——她是按「好感度面」配置的，不是按算法代数配置的）。
+    ("bot_affinity_goodwill_band_min", _V8_DEFAULT_BAND_MIN),
+    ("bot_affinity_goodwill_band_max", _V8_DEFAULT_BAND_MAX),
+    ("bot_affinity_goodwill_band_saturate_days", _V8_DEFAULT_BAND_SATURATE_DAYS),
+    ("bot_affinity_v8_tier_blend_band", _V8_DEFAULT_TIER_BLEND_EDGE),
+    # 日额度沿用在册键（§C.7：枚数以四处登记后现算为准）；v8 缺省 0.04 与 v7 缺省
+    # 0.12 分路取值，env 显式给了就同吃一值——两路各自的缺省是"没配置时"的答案。
+    ("bot_affinity_daily_move_cap_z", _V8_DEFAULT_DAILY_MOVE_CAP_Z),
+)
+
+
+def v8_normalize_weights(raw: Any) -> tuple[float, ...] | None:
+    """§C.2 权重纪律：六信号权重解析 + `Σ|w_i| = 1` 构造归一（越界⇒整体归一化）。
+
+    接受 list/tuple（六位）或 dict（w1..w6）。非数/长度错/全零 ⇒ None（调用方
+    回退代码缺省并点名）；Σ|w|≠1 **不拒绝**——就地归一（归一是构造性界源，
+    拒绝反而丢掉"越界即整体归一化 + 点名"的在册语义）。
+    """
+    try:
+        data = json.loads(str(raw)) if isinstance(raw, str) else raw
+        if isinstance(data, dict):
+            seq = [float(data[f"w{i}"]) for i in range(1, 7)]
+        elif isinstance(data, (list, tuple)) and len(data) == 6:
+            seq = [float(x) for x in data]
+        else:
+            return None
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None
+    if any(not math.isfinite(x) for x in seq):
+        return None
+    total = sum(abs(x) for x in seq)
+    if total <= 0.0:
+        return None
+    if abs(total - 1.0) > 1e-9:
+        seq = [x / total for x in seq]
+    # 不四舍五入：round(x,6) 会把 Σ|w|=1 的构造界撬成 1±1e-6·6，|u|≤1 的
+    # 数学界（引理 1）要求逐元素全精度保留——展示层要干净数字另在 dump 处取整。
+    return tuple(seq)
+
+
+def v8_impulse(
+    phis: tuple[float, float, float, float, float, float],
+    weights: tuple[float, ...],
+) -> float:
+    """§C.2 凸组合冲量 u = Σ w_i·φ_i ∈ [−1, +1]（引理 1 的构造面）。
+
+    φ 顺序：q 互动质量 / t 情感温度 / r 尊重边界 / x 敌意伤害 / a 修复意图 /
+    c 在场连续性。判入先各钳 [−1,1]（φ 值域是规格的，钳它＝消毒不是新机制）；
+    权重再归一一次（幂等——resolve 已归一，此口防直调用带生权重）。
+    **界来自数学**：|u| ≤ Σ|w_i|·max|φ_i| ≤ 1，与命中多少信号、是否 repair 无关；
+    删掉归一化此行测试必红（tests/test_aff_algo_v8_core.py 注毒自证）。
+    """
+    try:
+        phi = [max(-1.0, min(1.0, _finite_float_or(x, 0.0))) for x in phis]
+    except TypeError:
+        return 0.0
+    weights = v8_normalize_weights(weights) or _V8_DEFAULT_IMPULSE_WEIGHTS
+    if len(weights) != 6:
+        weights = _V8_DEFAULT_IMPULSE_WEIGHTS
+    return sum(w * p for w, p in zip(weights, phi))
+
+
+def v8_ambient_update(
+    ambient: float,
+    ambient_at: float,
+    now: float,
+    q: float,
+    *,
+    halflife_days: float,
+    alpha: float = _V8_AMBIENT_EMA_ALPHA,
+) -> tuple[float, float]:
+    """āmbient（本人质量基线 EMA，§C.2 之 φ_q 去环境基线）的一步转移。
+
+    两段式，全为长尾形态服务：
+    1) 时间半衰：先按 `ambient · 0.5^(Δt/τ)` 向 0（无信号=印象回归中性）衰减——
+       长期无互动的读数形状即此：单调、指数、半衰期=τ、渐近不过冲、无折点；
+    2) 事件 EMA：再以固定步长 α 向本次 q 收拢 `a ← (1−α)·a + α·q`。
+    返回值钳 [−1,1]（q 值域 [−1,1]，凸组合保持）；脏入参经 _finite_float_or 归口。
+    """
+    a = _finite_float_or(ambient, 0.0)
+    at = _finite_float_or(ambient_at, 0.0)
+    t = _finite_float_or(now, 0.0)
+    tau = max(0.5, _finite_float_or(halflife_days, _V8_DEFAULT_AMBIENT_HALFLIFE_DAYS))
+    if t > at:
+        a *= 0.5 ** ((t - at) / (tau * _DAY_SECONDS))
+    step = max(0.0, min(1.0, _finite_float_or(alpha, _V8_AMBIENT_EMA_ALPHA)))
+    a = (1.0 - step) * a + step * _finite_float_or(q, 0.0)
+    return max(-1.0, min(1.0, a)), t
+
+
+def v8_quality_centered(q: float, ambient: float) -> float:
+    """φ_q = (q − āmbient) / (1 − |āmbient|)，钳 [−1,1]（§C.2 表第 1 行）。
+
+    去环境基线后，"一贯敷衍"与"一贯真诚"的期望冲量都归 0 附近——低质量闲聊
+    不再复利（设计 §C.2「为什么低质量闲聊不再复利」）。分母下限 1e-6：
+    |āmbient|→1 的贴边脏态不放大爆冲（分子同向趋零，比值仍有界）。
+    """
+    value = _finite_float_or(q, 0.0)
+    a = max(-1.0, min(1.0, _finite_float_or(ambient, 0.0)))
+    den = max(1e-6, 1.0 - abs(a))
+    return max(-1.0, min(1.0, (value - a) / den))
+
+
+def v8_continuity(
+    last_day_start: float | None,
+    streak_days: int,
+    now_day_start: float,
+) -> tuple[int, float]:
+    """φ_c 在场连续性（§C.2 表第 6 行）：**每天只计一次**、`min(1, 连续天数/7)`。
+
+    返回 `(新连续天数, φ_c)`。判据按本地日界（与 day_counters 同口径，由调用方
+    传入当日零点时间戳）：同日重复 ⇒ (原样, 0)（当天已计过）；隔一日 ⇒ +1；
+    断档更久或脏历史 ⇒ 重置为 1。到场有分量、刷条数没分量——唯一稳定为正的
+    分量按**天**计，这是「陪伴」的数值形状。
+    """
+    prev = last_day_start
+    if prev is None or not math.isfinite(_finite_float_or(prev, float("nan"))):
+        n = 1
+    else:
+        diff_days = int((now_day_start - float(prev)) // _DAY_SECONDS)
+        if diff_days == 0:
+            return max(1, coerce_int(streak_days, 1)), 0.0
+        n = coerce_int(streak_days, 0) + 1 if diff_days == 1 else 1
+    return n, min(1.0, n / 7.0)
+
+
+def v8_goodwill_band(
+    days: float | None,
+    *,
+    band_min: float = _V8_DEFAULT_BAND_MIN,
+    band_max: float = _V8_DEFAULT_BAND_MAX,
+    saturate_days: float = _V8_DEFAULT_BAND_SATURATE_DAYS,
+) -> float:
+    """§C.4 保护带 band(days)：BAND_MIN → BAND_MAX 的**凸递减半衰形态**。
+
+    ``band(days) = band_max + (band_min − band_max) · 2^(−days / τ_band)``,
+    ``τ_band = saturate_days / _V8_BAND_SATURATE_FOLDS``（缺省 365/3 ≈ 121.7 天）。
+    形态判据（本席数值锁 tests/test_affinity_v8_band.py）：
+    - 凸递减、无折点：纯指数曲线（非分段），二阶差分恒 >0、一阶差分单调趋零；
+      线性斜坡在饱和点有斜率断口，2026-09-28 协调裁定换为此形态——与
+      ambient 半衰（0.5^(Δt/28d)）、γ 边际递减同属一个长尾家族；
+    - band(0)=band_min=2.60：≈全谱，起点不是惩罚（新人可一路回到初识）；
+    - days→∞ 渐近 band_max=0.55 且**恒 > band_max**：老关系的底线只可逼近、
+      不可击穿，「处得越久，峰值越不可回吐」；band(saturate) 收敛到距底线
+      1/8 跨度内（fail-tight，无需钳位截断即单调）；
+    - `days` 取不到（created_at 解析失败）⇒ 回 band_min（fail-open 到旧行为）。
+    ⚠ 设计 §C.4 首行公式与自身散文正反两读、且给的是线性形；本函数取
+    散文义 + 2026-09-28 凸形裁定，勘误与换形已在交付日志登记
+    （契约标识符 BAND_MIN/BAND_MAX/BAND_SATURATE_DAYS 不改名）。
+    """
+    lo = max(0.0, _finite_float_or(band_min, _V8_DEFAULT_BAND_MIN))
+    hi = max(0.0, _finite_float_or(band_max, _V8_DEFAULT_BAND_MAX))
+    # 配置倒挂（底线高于起点）⇒ 按无保护处理，绝不产生负带宽度的反向曲线。
+    hi = min(hi, lo)
+    sat = max(1.0, _finite_float_or(saturate_days, _V8_DEFAULT_BAND_SATURATE_DAYS))
+    if days is None or not math.isfinite(_finite_float_or(days, float("nan"))):
+        return lo
+    d = max(0.0, float(days))
+    half_life = sat / _V8_BAND_SATURATE_FOLDS
+    return hi + (lo - hi) * 0.5 ** (d / half_life)
+
+
+def v8_goodwill_anchor(anchor_prev: float | None, z_new: float, band: float) -> float:
+    """§C.4 善意底：anchor ← max(anchor_prev, z_new − band)（单调不减），
+    落点 z = max(z_new, anchor)。只抬下界、绝不改写既有 z——「这段关系曾经到过
+    的地方」越久越不可被回吐（推论 4）。脏 anchor_prev ⇒ 视作无历史（现推）。
+    """
+    candidate = _finite_float_or(z_new, 0.0) - max(0.0, _finite_float_or(band, 0.0))
+    prev = coerce_optional_float(anchor_prev)
+    return candidate if prev is None else max(prev, candidate)
+
+
+@dataclass(frozen=True)
+class V8Settings:
+    """v8 生效参数的逐调用快照（冻结视图，缺省=代码单一事实源；§C.7）."""
+
+    enabled: bool = False
+    impulse_cap_z: float = _V8_DEFAULT_IMPULSE_CAP_Z
+    daily_move_cap_z: float = _V8_DEFAULT_DAILY_MOVE_CAP_Z
+    ambient_centering: bool = True
+    ambient_halflife_days: float = _V8_DEFAULT_AMBIENT_HALFLIFE_DAYS
+    goodwill_band_min: float = _V8_DEFAULT_BAND_MIN
+    goodwill_band_max: float = _V8_DEFAULT_BAND_MAX
+    goodwill_band_saturate_days: float = _V8_DEFAULT_BAND_SATURATE_DAYS
+    tier_blend_edge: float = _V8_DEFAULT_TIER_BLEND_EDGE
+    impulse_weights: tuple[float, float, float, float, float, float] = (
+        _V8_DEFAULT_IMPULSE_WEIGHTS  # type: ignore[assignment]
+    )
+
+    def band_for(self, days: float | None) -> float:
+        return v8_goodwill_band(
+            days,
+            band_min=self.goodwill_band_min,
+            band_max=self.goodwill_band_max,
+            saturate_days=self.goodwill_band_saturate_days,
+        )
+
+
+def resolve_v8_settings(config: Any) -> V8Settings:
+    """逐调用现读 v8 增量键（家规同 resolve_v7_settings：config 缺句柄 ⇒ env 现读）。
+
+    非法值 ⇒ 代码缺省 + 每键每进程点名一次；尺度类做域钳制。结构性护栏：
+    κ、日额度任一被调到"能一次跨档/一天跨档"的量级 ⇒ 点名（复用 v7 的逐档判据
+    v7_max_tier_step_for_z_cap，档宽真身同一把尺），不改值——配置面是唯一真身。
+    """
+    source = config() if callable(config) else config
+
+    def value_of(field_name: str, default: Any) -> Any:
+        if source is None:
+            return _v7_env_value(field_name, default, family="v8")
+        raw = getattr(source, field_name, None)
+        if raw is None:
+            return _v7_env_value(field_name, default, family="v8")
+        return raw
+
+    def positive_float(field_name: str, default: float) -> float:
+        try:
+            value = float(value_of(field_name, default))
+        except (TypeError, ValueError):
+            _v7_warn_once(field_name, "非数值", family="v8")
+            return default
+        if value <= 0.0 or not math.isfinite(value):
+            return default
+        return value
+
+    weights_raw = value_of("bot_affinity_v8_impulse_weights", "")
+    weights: tuple[float, ...] | None = None
+    if str(weights_raw or "").strip():
+        weights = v8_normalize_weights(weights_raw)
+        if weights is None:
+            _v7_warn_once("bot_affinity_v8_impulse_weights", f"JSON 非法：{weights_raw!r}", family="v8")
+    if isinstance(weights_raw, (list, tuple, dict)) and weights is not None:
+        # 非字符串输入给了 Σ|w|≠1 的生权重：已在构造函数归一——点名一次留痕。
+        _v7_warn_once(
+            "bot_affinity_v8_impulse_weights",
+            "Σ|w|≠1，已按构造整体归一",
+            problem="越界",
+            outcome="归一后执行（构造界不破坏）",
+            family="v8",
+        )
+
+    settings = V8Settings(
+        enabled=_v7_coerce_bool(value_of("bot_affinity_v8_enabled", False), False),
+        impulse_cap_z=min(0.25, positive_float(
+            "bot_affinity_v8_impulse_cap_z", _V8_DEFAULT_IMPULSE_CAP_Z)),
+        daily_move_cap_z=min(0.5, positive_float(
+            "bot_affinity_daily_move_cap_z", _V8_DEFAULT_DAILY_MOVE_CAP_Z)),
+        ambient_centering=_v7_coerce_bool(
+            value_of("bot_affinity_v8_ambient_centering", True), True),
+        ambient_halflife_days=max(0.5, positive_float(
+            "bot_affinity_v8_ambient_halflife_days", _V8_DEFAULT_AMBIENT_HALFLIFE_DAYS)),
+        goodwill_band_min=positive_float(
+            "bot_affinity_goodwill_band_min", _V8_DEFAULT_BAND_MIN),
+        goodwill_band_max=positive_float(
+            "bot_affinity_goodwill_band_max", _V8_DEFAULT_BAND_MAX),
+        goodwill_band_saturate_days=max(1.0, positive_float(
+            "bot_affinity_goodwill_band_saturate_days", _V8_DEFAULT_BAND_SATURATE_DAYS)),
+        tier_blend_edge=min(0.45, max(0.05, positive_float(
+            "bot_affinity_v8_tier_blend_band", _V8_DEFAULT_TIER_BLEND_EDGE))),
+        impulse_weights=(
+            tuple(weights) if weights is not None and len(weights) == 6  # type: ignore[arg-type]
+            else _V8_DEFAULT_IMPULSE_WEIGHTS
+        ),
+    )
+    # 逐档性体检（缺省 κ=0.02/D=0.04 远低于临界，现网与在册测试形态零触发）：
+    # 越界只点名、不改值——与 v7 的 T-AFF-1 同一哲学、同一判据函数。
+    caps = {
+        "impulse_cap_z": settings.impulse_cap_z,
+        "daily_move_cap_z": settings.daily_move_cap_z,
+    }
+    if any(v7_max_tier_step_for_z_cap(value) > 1 for value in caps.values()):
+        _v7_warn_once(
+            "v8_move_cap_beyond_one_tier",
+            f"位移上限越过单档临界值，档号可能一次跳档：{caps}"
+            f"（临界 cap<={_V7_ONE_TIER_Z_CEILING:.4f}）",
+            problem="取值过松（数值本身合法）",
+            outcome="仅点名、不静默改值——配置面是这把尺的唯一真身",
+            family="v8",
+        )
+    return settings
+
+
+def _v8_sentiment_phi(text: str) -> float:
+    """φ_t 情感温度：_POSITIVE_RE/_NEGATIVE_RE/_INSULT_RE 命中密度折符号（§C.2 表
+    第 2 行）。辱骂双权（与 sentiment 半衰口径同向）。值域 (−1,1)：分母恒比
+    分子绝对值大 1，结构上到不了 ±1——但接口仍按 φ∈[−1,1] 登记，无副作用。
+    词表全用既有真身正则，禁自建词表（§C.2 之 φ_r 纪律同源）。
+    """
+    value = text or ""
+    pos = len(_POSITIVE_RE.findall(value))
+    neg = len(_NEGATIVE_RE.findall(value))
+    inso = len(_INSULT_RE.findall(value))
+    return (pos - neg - 2 * inso) / (pos + neg + 2 * inso + 1)
+
+
+def _v8_respect_phi(text: str, behavior: str) -> float:
+    """φ_r 尊重边界（§C.2 表第 3 行）：礼貌词 +0.5；越界/敌意 −。
+    tease 的越界判定**只读上游归类**（classify_behavior 把 excessive_intimacy/
+    persona_breaking 归成 tease，本函数不建第二套 R-18 词表）。
+    """
+    if behavior == "insult":
+        return -1.0
+    if behavior in {"negative", "tease"}:
+        return -0.5
+    if _POLITE_RE.search(text or ""):
+        return 0.5
+    return 0.0
+
+
+def _v8_hostility_phi(behavior: str) -> float:
+    """φ_x 敌意伤害（§C.2 表第 4 行，值域 [−1,0]）：仅 insult 家族计负贡献。
+    reason_code 门控（quoted_abuse/product_criticism 等非关系证据⇒不该进这里）
+    的接线在生产被动感知入口（root __init__，非本席文件域，见交付日志「等他席」）；
+    门未接前，行为归类沿用既有 safety_category 准入，与今天同源。
+    """
+    return -1.0 if behavior == "insult" else 0.0
+
+
+def _v8_repair_phi(text: str, behavior: str) -> float:
+    """φ_a 修复意图（§C.2 表第 5 行）：道歉/和解⇒1，否则 0。
+    它不再放大步长（v7 的 repair_gain ×1.4 在 v8 退役为 u 的一个正分量），
+    修复的"快"体现在足额吃 κ、而不越任何界（推论 3 之三）。"""
+    return 1.0 if _v7_is_repair(text, behavior) else 0.0
+
+
+def _v8_load_state(raw: str | None) -> dict[str, Any]:
+    """解析 v8_state JSON（坏数据重置空态，绝不抛——家规同 _v7_load_state）。
+
+    形态：{"amb":[值, 时刻], "pres":[上次在场日零点, 连续天数], "recent":[指纹…]}。
+    在场历史另存 **updated_at 同款 UTC 串** 不必——用 epoch 秒即可（本地日界由
+    调用方按 localtime 折算后传入）。
+    """
+    try:
+        data = json.loads(str(raw or "{}"))
+    except (ValueError, TypeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    amb = [0.0, 0.0]
+    raw_amb = data.get("amb")
+    if isinstance(raw_amb, (list, tuple)) and len(raw_amb) == 2:
+        value = coerce_optional_float(raw_amb[0])
+        at = coerce_optional_float(raw_amb[1])
+        if value is not None and at is not None:
+            amb = [max(-1.0, min(1.0, value)), max(0.0, at)]
+    pres: list[Any] = [None, 0]
+    raw_pres = data.get("pres")
+    if isinstance(raw_pres, (list, tuple)) and len(raw_pres) == 2:
+        pres = [coerce_optional_float(raw_pres[0]), coerce_int(raw_pres[1], 0)]
+    recent = [str(x) for x in data.get("recent", []) if isinstance(x, str)][-_V8_RECENT_WINDOW:]
+    return {"amb": amb, "pres": pres, "recent": recent}
+
+
+def _v8_dump_state(state: dict[str, Any]) -> str:
+    amb = state["amb"]
+    pres = state["pres"]
+    return json.dumps(
+        {
+            "amb": [round(float(amb[0]), 6), float(amb[1])],
+            "pres": [pres[0], int(pres[1])],
+            "recent": state["recent"][-_V8_RECENT_WINDOW:],
+        },
+        ensure_ascii=False,
+    )
+
+
+
 _V7_RECENT_WINDOW = 8  # 延展度复读检测的近期文本指纹数（有界，防状态无限增长）
+# v8 复读指纹窗口沿用 v7 真身常量（禁第二尺；规则 10——引用不抄数）。
+_V8_RECENT_WINDOW = _V7_RECENT_WINDOW
 
 
 def _v7_load_state(raw: str | None) -> dict[str, Any]:
@@ -1285,13 +1700,21 @@ def v7_structural_guard_report(settings: V7Settings) -> dict[str, Any]:
 _LINEAR_TRANSITION_BAND_DISPLAY = 6.0  # 展示分距档界 ±6 分内视为线性过渡带
 
 
-def linear_transition_for_affinity(affinity: float) -> str:
+def linear_transition_for_affinity(
+    affinity: float, *, v8: V8Settings | None = None
+) -> str:
     """v4.1 线性态度（用户裁定：不得在档位门槛上生硬跳变）。
 
     距档位边界 ±6 展示分内时，返回一句"正处在向邻档自然过渡"的措辞，
     由 providers 拼进态度注入，使门槛两侧语气衔接为连续渐变；
     区间中部返回空串。极值档没有更外侧的邻档，返回空串。
+    v8 带内混合（§C.5.1）启用时本函数恒返空串——过渡措辞已并入
+    attitude_for_affinity 的混合真身，两套过渡机制不并存（禁第二真身）；
+    v8 缺省关 ⇒ 行为逐字节如旧。
     """
+    settings = v8 if v8 is not None else resolve_v8_settings(None)
+    if settings.enabled:
+        return ""
     display = max(_TIER_DISPLAY_FLOOR, min(_TIER_DISPLAY_CEILING, float(affinity) * 100.0))
     tier = tier_for_affinity(affinity)
     lo = _TIER_DISPLAY_FLOOR + _TIER_WIDTH_DISPLAY * (tier - _TIER_MIN_ID)
@@ -1306,18 +1729,66 @@ def linear_transition_for_affinity(affinity: float) -> str:
     return ""
 
 
+def tier_blend_instruction(
+    affinity: float, *, v8: V8Settings | None = None
+) -> tuple[str, str]:
+    """§C.5.1 带内混合：按带内位置 λ 决定「单档原句」或「相邻两档原句运行时拼接」。
+
+    返回 `(档名, 基调正文)`。λ ∈ [edge, 1−edge] ⇒ 本档原句（中段照旧）；
+    否则 ⇒ 「从「A」流向「B」」+ A 原句 + B 原句——只用 `_ATTITUDE_TIERS` 真身
+    原句运行时拼接，**不新造/不改写句子、源码里不出现第二份副本**（单源锁
+    tests/test_affinity_tier_single_source.py 的 AST/文本判据不受影响）。
+    极值档只缺一个方向的邻档，缺侧不混。本函数与 v8 关态的
+    attitude_for_affinity 输出零耦合（v8 关 ⇒ 不走这里）。
+    """
+    settings = v8 if v8 is not None else resolve_v8_settings(None)
+    display = max(_TIER_DISPLAY_FLOOR, min(_TIER_DISPLAY_CEILING, float(affinity) * 100.0))
+    tier = tier_for_affinity(display / 100.0)
+    name, instruction = _TIER_BY_ID[tier]
+    lo = _TIER_DISPLAY_FLOOR + _TIER_WIDTH_DISPLAY * (tier - _TIER_MIN_ID)
+    lam = (display - lo) / _TIER_WIDTH_DISPLAY
+    edge = settings.tier_blend_edge
+    other_id: int | None = None
+    if lam < edge:
+        other_id = tier - 1
+    elif lam > 1.0 - edge:
+        other_id = tier + 1
+    if other_id is None or not (_TIER_MIN_ID <= other_id <= _TIER_MAX_ID) or not settings.enabled:
+        return name, instruction
+    other_name, other_instruction = _TIER_BY_ID[other_id]
+    if other_id < tier:
+        a_name, a_text, b_name, b_text = other_name, other_instruction, name, instruction
+    else:
+        a_name, a_text, b_name, b_text = name, instruction, other_name, other_instruction
+    blended = (
+        f"此刻正处在从「{a_name}」流向「{b_name}」的自然过渡里——"
+        f"「{a_name}」的基调：{a_text}；「{b_name}」的基调：{b_text}，语气顺势而为即可"
+    )
+    return name, blended
+
+
 def tier_name_for_affinity(affinity: float) -> str:
     """§4 档位名称（初识/生疏/微凉/稍淡/友善/亲近/挚友/独一份），展示层共用。"""
     return _TIER_BY_ID[tier_for_affinity(affinity)][0]
 
 
-def attitude_for_affinity(affinity: float) -> str:
-    """§4 完整态度文本：档位基调 + 四条态度红线（每档共同遵守，注入 prompt 全文）。"""
-    name, instruction = _TIER_BY_ID[tier_for_affinity(affinity)]
+def attitude_for_affinity(affinity: float, *, v8: V8Settings | None = None) -> str:
+    """§4 完整态度文本：档位基调 + 四条态度红线（每档共同遵守，注入 prompt 全文）。
+
+    v8 带内混合（§C.5.1，缺省关）：启用时基调正文改走 tier_blend_instruction——
+    档内连续、边界两侧不再各拿一整份不同的指令全文；红线四条款原样、任何模式
+    都带（红线文本零触碰）。v8 关 ⇒ 输出与本函数历史形态逐字节相同。
+    """
+    settings = v8 if v8 is not None else resolve_v8_settings(None)
+    if settings.enabled:
+        name, body = tier_blend_instruction(affinity, v8=settings)
+    else:
+        _name, body = _TIER_BY_ID[tier_for_affinity(affinity)]
+        name = _name
     red_lines = "；".join(
         f"（{index}）{line}" for index, line in enumerate(_TIER_RED_LINES, start=1)
     )
-    return f"对当前用户的态度（档位「{name}」）：{instruction}。共同态度红线：{red_lines}。"
+    return f"对当前用户的态度（档位「{name}」）：{body}。共同态度红线：{red_lines}。"
 
 
 def classify_behavior(text: str, *, safety_category: str = "", safety_action: str = "allow") -> str:
@@ -1535,6 +2006,13 @@ class DynamicAffinityStore:
                 # （先例：first_signals/first_impression/created_at 三列），禁 DROP 禁重建。
                 ("z_latent", "REAL"),
                 ("v7_state", "TEXT NOT NULL DEFAULT '{}'"),
+                # v8 第二腿（规格 §C.4/§C.1）：goodwill_anchor 为长情锚点（历史
+                # 最高水位减保护带，只升不降，REAL 可空——NULL=尚未播种，首次
+                # v8 写入时按当前 z 现推，绝不重置存量）；v8_state 为环境均值/
+                # 出场连续性/近期指纹的 JSON 载体。家规 ALTER-if-missing 同上，
+                # 禁 DROP 禁重建；v8 关态两列零读写（懒建零漂移）。
+                ("goodwill_anchor", "REAL"),
+                ("v8_state", "TEXT NOT NULL DEFAULT '{}'"),
             ):
                 if column not in columns:
                     connection.execute(f"ALTER TABLE user_affinity ADD COLUMN {column} {ddl}")
@@ -1727,7 +2205,9 @@ class DynamicAffinityStore:
         for row in connection.execute(
             "SELECT applied_at, delta, source FROM affinity_delta_log"
             " WHERE sender_id = ? AND bot_id = ? AND applied_at >= ?"
-            " AND COALESCE(source, '') <> 'v7'",
+            # 单位纪律：v7/v8 行以 z 为单位记账，与本函数的分口径预算不可混用，
+            # 显式排除（先例：v7；v8 第二腿沿用同一隔离——锁 tests/test_aff_algo_v8_bounds.py）。
+            " AND COALESCE(source, '') NOT IN ('v7', 'v8')",
             (sender_id, bot_id, window_24h_start),
         ):
             applied = _finite_float_or(row["delta"], 0.0)
@@ -1986,6 +2466,173 @@ class DynamicAffinityStore:
         )
         return done(applied, new_z)
 
+    def _v8_delta(
+        self,
+        connection: sqlite3.Connection,
+        sender_id: str,
+        bot_id: str,
+        behavior: str,
+        z: float,
+        *,
+        v8: V8Settings,
+        state_json: str,
+        now: float,
+        text: str,
+        gap_seconds: float | None,
+        delta_override: float | None,
+        anchor_prev: float | None,
+        companion_days: float | None,
+        responded_to_question: bool | None,
+        gamma_half_z: float,
+        day_counters: dict[str, int],
+        source_event_id: str,
+    ) -> tuple[float, float, str, float]:
+        """v8 第二腿 §C.2/§C.4 更新体（同锁同事务内调用；缺省关，永不到达）。
+
+        返回 ``(applied_Δz, final_z, v8_state_json, new_anchor)``。界由数学给：
+        冲量 u = Σw_iφ_i 经 `Σ|w_i|=1` 构造归一 ⇒ |u|≤1 ⇒ |δ_z|≤κ——**不是 if
+        列表**，注毒删除归一化行测试必红（tests/test_aff_algo_v8_core.py）。
+
+        六分量 φ（§C.2 表）：q 去环境基线互动质量 / t 情感温度 / r 尊重边界 /
+        x 敌意伤害 / a 修复意图 / c 在场连续性（每天只计一次）。修复不再放大
+        步长（推论 3 之三：快=足额吃 κ，不越任何界）。γ 边际递减沿用第一腿
+        同一把尺（half=z_hard 在册键，禁第二尺），置于 κ 帽后、位移额度前。
+
+        护栏形制：交互冷却门（v5/v7 同语义）；滚动 24h 位移额度 D 现读日志、
+        z 口径同族（'v7' 行同为 z 单位——flag 切换当日合读更保守，只收紧不放宽；
+        v5 分口径行绝不计入）；**不设日熔断/兜底帽**——κ·24h 数学上 ≤ 0.04z/日，
+        与 25 次熔断同量级的"堆次数"路径已被额度封死（登记于交付日志）。
+        override：z 域直用、钳 ±κ（权威信号在 v8 下仍是单事件有界语义），
+        不喂任何状态面（amb/pres/recent 原样）。善意底 anchor 单调不减、
+        落点 z=max(new_z, anchor)——只抬下界，绝不改写既有高度（推论 4）；
+        额度只约束事件冲量，底座的回升不占额度（其值 ≤ 历史峰值，无新高度
+        可堆）。终值仍过 `_V8_Z_REPR_DOMAIN` 表示域护栏（长尾不触顶）。
+        """
+        state = _v8_load_state(state_json)
+
+        def done(applied: float, final_z: float, anchor: float) -> tuple[float, float, str, float]:
+            return applied, final_z, _v8_dump_state(state), anchor
+
+        band = v8.band_for(companion_days)
+        # anchor 播种（fail-safe：列 NULL ⇒ 以当前高度现推，绝不重置存量语义）。
+        anchor_base = v8_goodwill_anchor(anchor_prev, z, band)
+
+        # 冷却门（与 v5/v7 同语义：距上次实际计分 <60s 记 0，不阻塞回复）。
+        last_row = connection.execute(
+            "SELECT MAX(applied_at) FROM affinity_delta_log WHERE sender_id = ? AND bot_id = ?",
+            (sender_id, bot_id),
+        ).fetchone()
+        last_applied_at = last_row[0] if last_row is not None else None
+        if (
+            last_applied_at is not None
+            and now - _finite_float_or(last_applied_at, now) < _INTERACTION_COOLDOWN_SECONDS
+        ):
+            return done(0.0, z, anchor_base)
+
+        if delta_override is not None:
+            # 权威信号：消毒→钳 ±κ→不喂状态（v7 override 语义的 v8 对应物）。
+            raw = _finite_float_or(delta_override, 0.0)
+            raw = max(-v8.impulse_cap_z, min(v8.impulse_cap_z, raw))
+        else:
+            if behavior == "refusal":
+                # 拒答≠信号（V2.1 §2.2 零计分族同源）：不喂任何分量、不动状态。
+                return done(0.0, z, anchor_base)
+            digest = hashlib.sha1((text or "").strip().encode("utf-8")).hexdigest()[:12]
+            repeated = bool(digest) and digest in state["recent"]
+            q = v7_quality_score(
+                text,
+                behavior=behavior,
+                gap_seconds=gap_seconds,
+                repeated_recently=repeated,
+                responded_to_question=responded_to_question,
+            )
+            # 在场连续性先记账（"到场"本身即事实，与消息质量无关；每天只计一次）。
+            lt = time.localtime(now)
+            day_start = now - (lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec)
+            prev_day_start, streak = state["pres"]
+            streak, phi_c = v8_continuity(prev_day_start, streak, day_start)
+            if prev_day_start != day_start:
+                state["pres"] = [day_start, streak]
+            # āmbient：先按时间半衰到"现在"得基线 → φ_q 去基线 → 再以本次 q 收拢。
+            amb_value, amb_at = state["amb"]
+            decayed = amb_value * 0.5 ** (
+                max(0.0, now - amb_at) / (v8.ambient_halflife_days * _DAY_SECONDS)
+            )
+            phi_q = (
+                v8_quality_centered(q, decayed)
+                if v8.ambient_centering
+                else max(-1.0, min(1.0, q))
+            )
+            if q == 0.0:
+                # 零质量事件不喂 EMA（敷衍不该把基线猛拽向 0——那是每消息一步的
+                # 隐式大功率），只留复读指纹。v7 的 q==0 早退在 v8 同形。
+                if digest:
+                    state["recent"] = (state["recent"] + [digest])[-_V8_RECENT_WINDOW:]
+                return done(0.0, z, anchor_base)
+            state["amb"] = [
+                v8_ambient_update(amb_value, amb_at, now, q, halflife_days=v8.ambient_halflife_days)[0],
+                now,
+            ]
+            u = v8_impulse(
+                (
+                    phi_q,
+                    _v8_sentiment_phi(text),
+                    _v8_respect_phi(text, behavior),
+                    _v8_hostility_phi(behavior),
+                    _v8_repair_phi(text, behavior),
+                    phi_c,
+                ),
+                v8.impulse_weights,
+            )
+            raw = v8.impulse_cap_z * u
+            used = int(day_counters.get(behavior, 0))
+            day_counters[behavior] = used + 1  # 观测一致性（v7 同律；兜底帽本身不设，见 docstring）
+        # γ 边际递减（第一腿同一函数、同一半衰减参考点——两路汇流处只收紧不放宽）。
+        raw *= v8_marginal_gain(z, gamma_half_z)
+        if raw == 0.0:
+            return done(0.0, z, anchor_base)
+        # 滚动 24h 位移额度（z 口径；脏行按额度用满冻结，v7 同判据）。
+        moved_24h = 0.0
+        budget_dirty = False
+        for row in connection.execute(
+            "SELECT delta FROM affinity_delta_log"
+            " WHERE sender_id = ? AND bot_id = ? AND applied_at >= ?"
+            " AND source IN ('v7', 'v8')",
+            (sender_id, bot_id, now - _DAY_SECONDS),
+        ):
+            try:
+                magnitude = abs(float(row["delta"]))
+            except (TypeError, ValueError):
+                magnitude = float("inf")
+            if math.isfinite(magnitude):
+                moved_24h += magnitude
+            else:
+                budget_dirty = True
+        remaining = 0.0 if budget_dirty else max(0.0, v8.daily_move_cap_z - moved_24h)
+        if remaining <= 0.0:
+            return done(0.0, z, anchor_base)
+        applied = min(raw, remaining) if raw > 0.0 else -min(-raw, remaining)
+        new_z = max(-_V8_Z_REPR_DOMAIN, min(_V8_Z_REPR_DOMAIN, z + applied))
+        # 善意底（§C.4）：落点不低于 anchor（单调不减的历史水位），只抬不下压。
+        anchor = max(anchor_base, v8_goodwill_anchor(anchor_prev, new_z, band))
+        final_z = min(max(new_z, anchor), _V8_Z_REPR_DOMAIN)
+        applied = final_z - z
+        if applied == 0.0:
+            return done(0.0, z, anchor_base)
+        if delta_override is None and digest:
+            state["recent"] = (state["recent"] + [digest])[-_V8_RECENT_WINDOW:]
+        connection.execute(
+            "DELETE FROM affinity_delta_log WHERE applied_at < ?",
+            (now - _BUDGET_LOG_RETENTION_SECONDS,),
+        )
+        connection.execute(
+            "INSERT INTO affinity_delta_log"
+            " (sender_id, bot_id, applied_at, delta, source, source_event_id, z_after)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (sender_id, bot_id, now, applied, "v8", source_event_id, final_z),
+        )
+        return done(applied, final_z, anchor)
+
     def _observe(
         self,
         sender_id: str,
@@ -2035,12 +2682,15 @@ class DynamicAffinityStore:
                 " nickname, impression_tags, impression_tag_times, profile_notes,"
                 " counter_day_index, day_counters, updated_at,"
                 " last_positive_at, last_negative_at, last_insult_at,"
-                " first_signals, first_impression, created_at, z_latent, v7_state"
+                " first_signals, first_impression, created_at, z_latent, v7_state,"
+                " goodwill_anchor, v8_state"
                 " FROM user_affinity WHERE sender_id = ?",
                 (sender_id,),
             ).fetchone()
             z_keep: float | None = None
             v7_state_keep = "{}"
+            anchor_keep: float | None = None
+            v8_state_keep = "{}"
             if row is None:
                 affinity = _AFFINITY_BASE
                 counters = {"positive": 0, "negative": 0, "tease": 0, "insult": 0}
@@ -2097,6 +2747,9 @@ class DynamicAffinityStore:
                 # 绝不带着非有限值进入 `new_z - z`（那会算出 -inf 位移并写进增量日志）。
                 z_keep = coerce_optional_float(row["z_latent"])
                 v7_state_keep = str(row["v7_state"] or "{}")
+                # v8 列透传（v8-off 路径零读写漂移：值原样带回 INSERT，不丢态）。
+                anchor_keep = coerce_optional_float(row["goodwill_anchor"])
+                v8_state_keep = str(row["v8_state"] or "{}")
             # 惰性回归：闲置 ≥7 天起每天向基数 0.1（10 分）回归 0.01，不超过剩余距离。
             # V2.1 §2.3 passive_decay_enabled=false（缺席不默认扣分）：旧 v5 §3 回归体
             # 保留、由政策门开关，缺省关闭（policy_revision=v21.1，冲突值迁移不并存）。
@@ -2115,7 +2768,44 @@ class DynamicAffinityStore:
             # 边际递减（0.6^n 下限 0.2），叠加饱和响应（近 ±1 平滑收窄）。
             companion_days = max(0.0, now - (_parse_utc(created_at) or now)) / _DAY_SECONDS
             v7 = resolve_v7_settings(self._config_ref)
-            if v7.enabled:
+            v8 = resolve_v8_settings(self._config_ref)
+            if v8.enabled:
+                # ---- v8 第二腿路径（§C.2 冲量 + §C.4 善意底；优先序 v8>v7>v5/v6，
+                # v8 是 v7 表示面的超集：同一 z 域、同一 γ、多一套有界冲量执法体）----
+                # z 惰性派生与 v7 同律（列 NULL 现推、flag 切换期漂移以 affinity 重推），
+                # 唯一差别是派生钳位取 v8 长尾表示域（0.999999），不回吞历史高度。
+                z_now = (
+                    z_keep
+                    if z_keep is not None
+                    else v7_display_fraction_to_z(affinity, _V8_DISPLAY_DOMAIN_BOUND)
+                )
+                if z_keep is not None and abs(affinity - v7_z_to_display_fraction(z_keep)) > 1e-9:
+                    z_now = v7_display_fraction_to_z(affinity, _V8_DISPLAY_DOMAIN_BOUND)
+                prev_updated = _parse_utc(str(row["updated_at"])) if row is not None else None
+                gap_seconds = max(0.0, now - prev_updated) if prev_updated is not None else None
+                delta, z_now, v8_state_keep, anchor_keep = self._v8_delta(
+                    connection,
+                    sender_id,
+                    bot_id,
+                    behavior,
+                    z_now,
+                    v8=v8,
+                    state_json=v8_state_keep,
+                    now=now,
+                    text=text,
+                    gap_seconds=gap_seconds,
+                    delta_override=delta_override,
+                    anchor_prev=anchor_keep,
+                    companion_days=companion_days,
+                    responded_to_question=responded_to_question,
+                    gamma_half_z=v7.z_hard,
+                    day_counters=day_counters,
+                    source_event_id=source_event_id or "",
+                )
+                z_keep = z_now
+                affinity = v7_z_to_display_fraction(z_now)
+                delta = 0.0
+            elif v7.enabled:
                 # ---- v7 潜变量路径（规格 §二；v5/v6 分口径预算与饱和带不叠加）----
                 z_now = (
                     z_keep
@@ -2219,8 +2909,9 @@ class DynamicAffinityStore:
                      tease_count, insult_count, nickname, impression_tags, impression_tag_times,
                      profile_notes, counter_day_index, day_counters, updated_at,
                      last_positive_at, last_negative_at, last_insult_at,
-                     first_signals, first_impression, created_at, z_latent, v7_state)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     first_signals, first_impression, created_at, z_latent, v7_state,
+                     goodwill_anchor, v8_state)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sender_id,
@@ -2245,6 +2936,8 @@ class DynamicAffinityStore:
                     created_at,
                     z_keep,
                     v7_state_keep,
+                    anchor_keep,
+                    v8_state_keep,
                 ),
             )
             # 群镜像：带 group_id 时写该群；不带时同步该用户已镜像的全部群，
@@ -2363,7 +3056,12 @@ class DynamicAffinityStore:
         return eff_positive / denom
 
     def snapshot(self, sender_id: str) -> dict[str, Any]:
-        """读取好感度与印象；无记录返回中性默认。只读，不触发惰性回归。"""
+        """读取好感度与印象；无记录返回中性默认。只读，不触发惰性回归。
+
+        态度文本带 store 的 v8 快照（2026-09-28 收编补线）：config 面开 v8 时
+        注入面走带内混合，与写路径同一把尺；v8 关 ⇒ 输出逐字节如旧。
+        """
+        v8 = resolve_v8_settings(self._config_ref)
         if not sender_id:
             return {
                 "affinity": _AFFINITY_BASE,
@@ -2371,7 +3069,7 @@ class DynamicAffinityStore:
                 "nickname": "",
                 "profile_notes": [],
                 "tier": tier_for_affinity(_AFFINITY_BASE),
-                "attitude": attitude_for_affinity(_AFFINITY_BASE),
+                "attitude": attitude_for_affinity(_AFFINITY_BASE, v8=v8),
             }
         with self._lock, self._connect() as connection:
             row = connection.execute(
@@ -2386,7 +3084,7 @@ class DynamicAffinityStore:
                 "nickname": "",
                 "profile_notes": [],
                 "tier": tier_for_affinity(_AFFINITY_BASE),
-                "attitude": attitude_for_affinity(_AFFINITY_BASE),
+                "attitude": attitude_for_affinity(_AFFINITY_BASE, v8=v8),
             }
         affinity = coerce_affinity_fraction(row["affinity"])
         # G-11 注入判据（审查 G-11，2026-09-15）：超龄标签不再注入，库内保留可溯。
@@ -2404,7 +3102,7 @@ class DynamicAffinityStore:
             "tags": fresh_tags,
             "profile_notes": [str(n) for n in coerce_json_list(row["profile_notes"])],
             "tier": tier_for_affinity(affinity),
-            "attitude": attitude_for_affinity(affinity),
+            "attitude": attitude_for_affinity(affinity, v8=v8),
         }
 
     def factor_profile(self, sender_id: str) -> dict[str, Any]:
@@ -2430,9 +3128,30 @@ class DynamicAffinityStore:
         }
 
     def learn_profile(self, sender_id: str, text: str) -> list[str]:
-        """从自述提取画像事实并合并入 profile_notes（去重，上限 12 条）。"""
+        """从自述提取画像事实并合并入 profile_notes（去重，上限 12 条）。
+
+        写侧消毒（ATK-AFFINITY 票②·2026-09-28 收编）：每条 fact 落库前过
+        ``security/memory_sanitize.pre_write_sanitize``——与记忆腿
+        （``store_extracted_memories``）、反思事实腿（``save_facts``）同一道闸、
+        同一口径：硬红线命中 ⇒ 该条拒存；内部边界标记 ⇒ 全角化；干净文本
+        逐字节不变。返回值同为消毒后文本，杜绝原文经返回口旁路再入 prompt。
+        懒导入断环（memory_sanitize 顶层 import character 层组件，家规同
+        reflection._sanitize_fact_text）。
+        """
         facts = extract_profile_facts(text)
         if not facts or not sender_id:
+            return []
+        from plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize import (
+            pre_write_sanitize,
+        )
+
+        safe_facts: list[str] = []
+        for fact in facts:
+            body = pre_write_sanitize(str(fact))
+            if body is None or not body.strip():
+                continue
+            safe_facts.append(body)
+        if not safe_facts:
             return []
         now_text = _format_utc(float(self._clock()))
         merged: list[str] = []
@@ -2443,7 +3162,7 @@ class DynamicAffinityStore:
             ).fetchone()
             existing = coerce_json_list(row["profile_notes"]) if row else []
             merged = [str(f) for f in existing]
-            for fact in facts:
+            for fact in safe_facts:
                 if fact not in merged:
                     merged.append(fact)
             merged = merged[-12:]
@@ -2455,7 +3174,7 @@ class DynamicAffinityStore:
                 "UPDATE user_affinity SET profile_notes = ?, updated_at = ? WHERE sender_id = ?",
                 (json.dumps(merged, ensure_ascii=False), now_text, sender_id),
             )
-        return facts
+        return safe_facts
 
     def set_nickname(self, sender_id: str, nickname: str) -> None:
         """管理员/本人设置用户小名；写入后 prompt 可用小名称呼。"""

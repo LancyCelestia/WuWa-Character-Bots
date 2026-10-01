@@ -111,6 +111,19 @@ _MAX_NOTE_IMAGES = 4
 _MAX_IMAGE_BYTES = 20 * 1024 * 1024
 _IMAGE_UA = "Mozilla/5.0 (compatible; shorekeeper-notes/1.0)"
 
+# 会话聚合配额（SEAT-ATK-NOTES 票 T6-5，2026-09-27）：上面两枚都是**按条
+# 消息**的限额，历史笔记图全落在同一会话目录里，没有总量闸时最坏
+# 200 条笔记/会话 × 4 张 × 20MB ≈ 16GB 无界增长。数值取保守默认：
+# - 张数 64：日常带图笔记远用不到（约可铺满六七十条单图笔记），又远小于
+#   200×4 的最坏值；目录常驻 ≤64 个条目，列举与清理成本可忽略。
+# - 总字节 200MB：按单张上限 20MB 也容得下 10 张顶格图，或约 66 张 3MB
+#   常见手机照片；磁盘水位风险与笔记体量诉求之间取「先保守、要放开支会
+#   话再配置化」一侧（配置键提案见席位报告 §待主代理落盘，本席禁碰 config.py）。
+# 总量现算自会话图片目录本身（唯一真身=磁盘现状），不另立内存账本——
+# 重启不丢配额、删笔记清图后额度自然回落。
+_MAX_SESSION_IMAGE_FILES = 64
+_MAX_SESSION_IMAGE_BYTES = 200 * 1024 * 1024
+
 
 def _extract_undo_query(text: str) -> str | None:
     """「X 还没做」「取消勾选 X」→ 事项名；不是撤销形态返回 None。
@@ -199,6 +212,10 @@ def note_image_files(content_md: str, images_root: Path, chat_id: str) -> list[P
 
 # ---------------------------------------------------------------------------
 # 图片落盘：消息段（image/animation，url 或本地 file）→ notes_images 目录。
+# 红线（AGENTS 第四部分「笔记/备忘录」行）＝SSRF 入口 + 落点双查：
+# URL 腿走中央咽喉 + 逐跳护栏（_guarded_image_opener，建连前判定，F-G4），
+# 本地腿走路径域门（_read_local_image → safety_exec.paths.check_sendable），
+# 写侧落点只能是会话目录内的 uuid 名，读侧引用行只取 basename。
 # ---------------------------------------------------------------------------
 
 _IMAGE_SEGMENT_TYPES = frozenset({"image", "animation"})
@@ -223,10 +240,26 @@ def _images_root(config: Any | None) -> Path:
 
 
 def _read_local_image(raw: str, max_bytes: int) -> bytes | None:
+    from plugins.bot_unified_runtime.domains.core.safety_exec.paths import (
+        check_sendable,
+    )
+
     local = str(raw or "").strip()
     if local.startswith("file://"):
         local = local.removeprefix("file://")
     path = Path(unquote(local))
+    # 路径域门（SEAT-ATK-NOTES 票 T6-5，2026-09-27）：消息段的本地路径是
+    # 外部可控输入，读它=把这些字节收进笔记并可能日后原样补发出站——正是
+    # `safety_exec.paths.check_sendable` 在册管的「能不能读字节并发出去」
+    # 那一问（唯一真身判定，含禁触名册+允许根，跨目录复用不另立第二套）。
+    # fail-closed：只认 allowed，needs_review/denied/判定件抛异常一律拒读；
+    # 拒读只回 None（不落判定细节），出站泄露面另有 redact_local_secrets 中央口。
+    try:
+        decision = check_sendable(str(path))
+    except Exception:  # noqa: BLE001 - 判定件失灵按拒读收（fail-closed）。
+        return None
+    if not decision.allowed:
+        return None
     if not path.is_file():
         return None
     try:
@@ -240,21 +273,69 @@ def _read_local_image(raw: str, max_bytes: int) -> bytes | None:
     return data
 
 
-def _fetch_image_bytes(url: str, max_bytes: int) -> bytes | None:
-    """下载图片（SSRF 护栏：入口与最终 URL 双查；限长；魔数后验）。"""
+def _guarded_image_opener():  # -> urllib.request.OpenerDirector（局部导入，不在模块面）
+    """图片取字节的护栏 opener（F-G4 收口，席位 S-FIX-NOTES-SSRF，2026-09-30）。
+
+    为什么必须有它：消息里的图片 URL 是**任意成员可控**的输入，而默认 opener
+    会自动跟随 30x、逐跳落点零复查——公网入口一跳指进 127.0.0.1:3001
+    （SnowLuma 控制面）或 169.254.169.254（云元数据凭据面）时，内网连接
+    **已经建成**，事后复查 `response.geturl()` 只拦得住字节回显、拦不住已发出
+    的请求（SSRF + TOCTOU，两次解析之间还有 DNS rebind 窗口）。
+
+    正解＝复用链上**唯一**的逐跳护栏形态
+    ``link_parse.parsers.http_util._GuardedShortLinkRedirectHandler``：每一跳
+    落点在**建连之前**先过中央 ``ssrf_guard.check_fetch_landing``（判据仍是中央
+    ``downloader.check_download_url``，F-04「解析失败=拒绝」），命中内网/整型
+    IP/畸形落点即抛 ParseHttpError 中止。本模块不自写第二套 URL 判据，口径与
+    先趟过这条路的 ``vision_describe._guarded_image_opener``、
+    ``media_archive._fetch_url_media`` 完全同源；跨 host 剥凭证的语义随父类继承。
+    """
+    import urllib.request
+
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+        _GuardedShortLinkRedirectHandler,
+    )
+
+    return urllib.request.build_opener(_GuardedShortLinkRedirectHandler())
+
+
+def _fetch_image_bytes(
+    url: str, max_bytes: int, *, refusal: list[str] | None = None
+) -> bytes | None:
+    """下载图片（SSRF 护栏：入口判定 + 逐跳落点**建连前**复查；限长；魔数后验）。
+
+    - 入口先过中央咽喉 ``check_download_url``——拒绝发生在任何 socket 打开之前。
+    - 取字节只走 ``_guarded_image_opener``（30x 每一跳先复查落点）。护栏拒绝
+      （``RejectedUrlError`` / ``ParseHttpError``）与瞬时失败一样**都不出字节**，
+      且绝不退回裸 urlopen 找补——第二条通路就是本函数要禁掉的东西（F-G4）。
+    - ``refusal`` 是可选的出站登记册（调用方传空 list）：护栏拒下时按 "entry"
+      /"landing" 记一枚，让能力层能把「我过不去的地址」与「一时拿不到的图」
+      分开回话——前者要给人的出路，后者按既有语义静默跳过。登记细节不含 URL
+      （签名地址不进消息与日志）。
+    """
     import urllib.request
 
     from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+        RejectedUrlError,
         check_download_url,
+    )
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+        ParseHttpError,
     )
 
     try:
         check_download_url(url)
         request = urllib.request.Request(url, headers={"User-Agent": _IMAGE_UA})
-        with urllib.request.urlopen(request, timeout=10) as response:
-            final_url = str(response.geturl() or url)
-            check_download_url(final_url)
+        with _guarded_image_opener().open(request, timeout=10) as response:
             data = response.read(max_bytes + 1)
+    except RejectedUrlError:
+        if refusal is not None:
+            refusal.append("entry")
+        return None
+    except ParseHttpError:  # 某一跳落点被护栏拒：连接从未朝内网发出。
+        if refusal is not None:
+            refusal.append("landing")
+        return None
     except Exception:  # noqa: BLE001 - 单图失败不拖垮笔记本身。
         return None
     if not data or len(data) > max_bytes:
@@ -288,34 +369,88 @@ def _extract_image_segments(message: IncomingMessage) -> list[tuple[str, str]]:
     return items
 
 
+def _session_image_usage(chat_dir: Path) -> tuple[int, int]:
+    """现算会话图片目录总量（张数, 字节数）——配额唯一真身=磁盘现状。"""
+    count = 0
+    total = 0
+    try:
+        entries = list(chat_dir.iterdir())
+    except OSError:
+        return 0, 0
+    for entry in entries:
+        try:
+            if entry.is_file():
+                count += 1
+                total += entry.stat().st_size
+        except OSError:
+            continue  # 竞态删除/权限毛刺：不计数，也不炸整条链。
+    return count, total
+
+
 def _save_note_images(
     config: Any | None, message: IncomingMessage
-) -> tuple[list[str], list[Path]]:
-    """把消息里的图落盘；返回 (文件名列表, 绝对路径列表)。失败静默跳过。"""
+) -> tuple[list[str], list[Path], bool, int]:
+    """把消息里的图落盘；返回 (文件名列表, 绝对路径列表, 配额拒绝, 咽喉拒取的图数)。
+
+    单图失败（拿不到字节/魔数不认识/写盘出错）仍按既有语义静默跳过；
+    **护栏在建连之前拒下的地址不静默**（第四元，F-G4 收口 2026-09-30）：由能力层
+    回一句人话给出路——拒取是安全边界，不是丢给她一句「记下了」瞒过去。
+    会话聚合配额（T6-5）触顶是**诚实拒绝**：本次新写的图全部回滚删除、
+    一条不收，第三元回 True，由能力层回人话短句——不静默截断半篇。
+    """
     from hashlib import sha1
 
     root = _images_root(config)
     chat_dir = root / sha1(str(message.session_id).encode()).hexdigest()[:12]
     chat_dir.mkdir(parents=True, exist_ok=True)
+    # 聚合配额闸（每消息限额之上）：落盘前按会话总量现算，触顶即整单拒绝。
+    used_files, used_bytes = _session_image_usage(chat_dir)
     filenames: list[str] = []
     paths: list[Path] = []
+    quota_blocked = False
+    guard_refused = 0
     for url, local in _extract_image_segments(message):
         data = None
+        refusal: list[str] = []
         if url:
-            data = _fetch_image_bytes(url, _MAX_IMAGE_BYTES)
+            data = _fetch_image_bytes(url, _MAX_IMAGE_BYTES, refusal=refusal)
         if data is None and local:
             data = _read_local_image(local, _MAX_IMAGE_BYTES)
-        if data is None or _sniff_image_ext(data) == "":
-            continue  # 拿不到字节或魔数不认识：不当图片收。
+        if data is None:
+            if refusal:
+                guard_refused += 1  # 咽喉拒取 ≠ 一时拿不到：要给她一句交代。
+            continue
+        if _sniff_image_ext(data) == "":
+            continue  # 拿到了字节但魔数不认识：不当图片收。
+        if (
+            used_files >= _MAX_SESSION_IMAGE_FILES
+            or used_bytes + len(data) > _MAX_SESSION_IMAGE_BYTES
+        ):
+            quota_blocked = True
+            break
+        # 落点双查（写侧）：文件名只由 uuid + 魔数表里的扩展名拼成，
+        # 拼不出 ../ 也换不出会话目录——URL 路径与消息内容都影响不到它。
         filename = f"{uuid.uuid4().hex[:16]}{_sniff_image_ext(data)}"
-        target = chat_dir / filename
+        target = (chat_dir / filename).resolve()
+        if chat_dir.resolve() not in target.parents:
+            continue  # 兜底复核：万一拼出盘外落点，宁可不收也不写出去。
         try:
             target.write_bytes(data)
         except OSError:
             continue
+        used_files += 1
+        used_bytes += len(data)
         filenames.append(filename)
         paths.append(target)
-    return filenames, paths
+    if quota_blocked:
+        # 回滚本单新图：拒绝就要真拒绝，不留「记了一半」的残篇与孤儿文件。
+        for written in paths:
+            try:
+                written.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return [], [], True, 0
+    return filenames, paths, False, guard_refused
 
 
 def _cleanup_images(config: Any | None, chat_id: str, note: Note) -> None:
@@ -358,7 +493,11 @@ def build_notes_capability(config: Any | None = None) -> Any:
             kind="text",
             title="",
             body=body,
-            send_policy=SendPolicy.SILENT_AUDIT,
+            # T1 修复（S-FIX-ATK-NOTES2，2026-09-28）：笔记回执/列表/翻看正文与
+            # images 配图都是给用户看的——SILENT_AUDIT 在 pipeline._complete 里
+            # 等于不发（SKIPPED + 空正文，matcher 不收口还会落回聊天腿）。
+            # 同 randpic 先例改法，IMMEDIATE 后正文与 images 才真到呈现层。
+            send_policy=SendPolicy.IMMEDIATE,
             images=[{"file": str(item)} for item in (images or [])],
             audit_tags=["notes", *tags],
         )
@@ -596,16 +735,36 @@ def build_notes_capability(config: Any | None = None) -> Any:
                     "「删笔记 N」清掉不需要的，再记新的。",
                     tags=["limit_reached"],
                 )
-            image_names, _image_paths = _save_note_images(config, message)
+            image_names, _image_paths, quota_blocked, guard_refused = _save_note_images(
+                config, message
+            )
+            if quota_blocked:
+                # 聚合配额触顶（T6-5）：诚实拒绝整条带图笔记，不静默丢图谎称
+                # 记好；人话短句点名上限与出路，数字与常量同源不手抄。
+                return _result(
+                    message,
+                    f"这个会话的笔记图片存满了（上限 {_MAX_SESSION_IMAGE_FILES} 张 / "
+                    f"约 {_MAX_SESSION_IMAGE_BYTES // (1024 * 1024)}MB），这条先没记上。"
+                    "「删笔记 N」放下带旧图的，腾个地方再来记；或去掉图再记一次。",
+                    tags=["image_quota_blocked"],
+                )
             if image_names:
                 content_md += "\n" + "\n".join(
                     f"![图片{index}]({name})"
                     for index, name in enumerate(image_names, start=1)
                 )
+            from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
+                neutralize_internal_markers,
+            )
+
             note = store.add(
                 user_id=message.sender_id,
                 chat_id=chat_id,
-                content_md=content_md[:4000],
+                # T3 修复（S-FIX-ATK-NOTES2，2026-09-28）：入库即净——「笔记 看 N」
+                # 会把 content_md 全文以她的名义复读，内部边界标记原样入库=可执行
+                # 标记重放面。先消毒后截断：截断只会切短已全角化的安全形态，不可能
+                # 从截断残片里重新拼出半枚可执行标记。唯一真身正则，不开第二套。
+                content_md=neutralize_internal_markers(content_md)[:4000],
             )
             if note is None:  # 并发兜底（预检后仍可能满）。
                 return _result(
@@ -619,11 +778,24 @@ def build_notes_capability(config: Any | None = None) -> Any:
                 if image_names
                 else ""
             )
+            # 咽喉在建连前拒下的地址（F-G4）：笔记照记（文字是她自己的话），
+            # 但缺的那张图要如实说清并给出路——不拿「安稳收好」把拒绝瞒过去。
+            # 文案不指责任何人，也不复述地址（签名 URL 不进消息）。
+            refusal_line = (
+                f"\n只是这条里有 {guard_refused} 张图的地址我没去取——"
+                "我只能走公网的 http/https 链接，本机与内网那类地址一律不碰。"
+                "想把图一起留下：把图片直接发给我，再记一次就好。"
+                if guard_refused
+                else ""
+            )
+            tags = ["added", "with_images"] if image_names else ["added"]
+            if guard_refused:
+                tags.append("image_guard_refused")
             return _result(
                 message,
                 f"记下了，第 {note.note_id} 条，安稳收好{suffix}。"
-                f"要看的时候说「笔记 看 {note.note_id}」。",
-                tags=["added", "with_images"] if image_names else ["added"],
+                f"要看的时候说「笔记 看 {note.note_id}」。{refusal_line}",
+                tags=tags,
             )
 
         return _result(message, _USAGE_TEXT, tags=["usage"])

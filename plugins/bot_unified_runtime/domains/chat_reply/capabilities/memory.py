@@ -358,6 +358,14 @@ def _add_memory(
         source="manual_command",
         sensitivity=sensitivity,
     )
+    if not stored_id:
+        # 写前消毒闸拒收（硬红线内容不落库，判据单一来源见
+        # ``security/memory_sanitize.pre_write_sanitize``）：回显必须如实，
+        # 不能对着没落库的内容谎称「已记住」。干净文本路径逐字节不变。
+        return _memory_result(
+            body="该内容触碰红线，不予记忆。",
+            request_id=request_id,
+        )
     return _memory_result(
         body=f"已记住：{text}\nfact_id={stored_id}\nsensitivity={sensitivity}",
         request_id=request_id,

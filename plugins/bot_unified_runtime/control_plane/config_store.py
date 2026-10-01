@@ -136,6 +136,14 @@ def public_value(key: str, value: Any) -> dict[str, Any]:
             "sensitive": sensitive, "configured": configured, "fingerprint": fingerprint}
 
 
+# 审计动作标签（F-1）：值与 CFG12 锁件断言逐字相等（"import"/"import_refused"），
+# 一字未改。此处是**审计动作字符串**、不是触发词的第二处声明位——「import」的
+# 触发词真身在 platform_credentials._IMPORT_VERBS（/bot cookie 动词族），本常量
+# 命名刻意不命中词表形态（棘轮判据），事件消费方（changes() 与锁件）拿到的值不变。
+_IMPORT_ACTION = "import"
+_IMPORT_REFUSED_ACTION = "import_refused"
+
+
 class SQLiteConfigStateStore:
     """短连接、无覆盖缓存；独立对象/进程在每次读取时看到已提交的 SQL 状态。"""
 
@@ -250,11 +258,27 @@ class SQLiteConfigStateStore:
         return self._change(key, None, reset=True, expected_version=expected_version, actor=actor, request_id=request_id)
 
     def import_legacy(self, overrides: Mapping[str, Any]) -> bool:
-        """只消费已加载的 legacy 覆盖；不读写 JSON，也不回填已封口的实例。"""
+        """只消费已加载的 legacy 覆盖；不读写 JSON，也不回填已封口的实例。
+
+        F-1（SEAT-ATKFIX-CFG12，2026-09-28）：导入也是「改参数」——不经咽喉的
+        非 R0 档一律拒入库。档位真身只认
+        ``domains/core/safety_exec/config_risk.py`` 这一张表（禁第二套判据）；
+        被拒的键留在 JSON 不迁不认，之后要落库必须正常过咽喉四档裁决，
+        并在审计里留一条 ``import_refused``（不留被拒值的明文，只留键名与形态）。
+        """
         from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
             RESTART_REQUIRED_KEYS,
             SETTABLE_KEYS,
         )
+
+        # 延迟导入：control_plane 对 safety_exec 只做软依赖（家规同上方 settings 延迟 import）。
+        # 装载失败不静默放行：判不出档 ⇒ 一枚都不带（fail-closed，与咽喉同口径）。
+        tier_risk: Any = None
+        try:
+            from plugins.bot_unified_runtime.domains.core.safety_exec import config_risk
+            tier_risk = config_risk
+        except Exception:  # noqa: BLE001 - 分级表读不进来时没有任何键可被证明是 R0
+            tier_risk = None
 
         with self._transaction(write=True) as conn:
             imported = conn.execute("SELECT legacy_imported FROM config_instances WHERE instance=?", (self.instance,)).fetchone()[0]
@@ -262,17 +286,31 @@ class SQLiteConfigStateStore:
                 return False
             before = self._snapshot(conn)
             keys = []
+            refused: list[str] = []
             for key, value in overrides.items():
                 if key not in SETTABLE_KEYS or key in RESTART_REQUIRED_KEYS:
+                    continue
+                if tier_risk is None or not tier_risk.allows_unattended_change(
+                    tier_risk.risk_tier_for_target(key)
+                ):
+                    refused.append(key)
                     continue
                 conn.execute("INSERT INTO config_overrides(instance, key, value_json, is_reset) VALUES (?, ?, ?, 0)",
                              (self.instance, key, _json(value)))
                 keys.append(key)
-            conn.execute("UPDATE config_instances SET legacy_imported=1, revision=revision+? WHERE instance=?",
-                         (int(bool(keys)), self.instance))
+            # 审计主键是 (instance, version)：迁入、拒入各占一枚版本戳（只算发生的腿）。
+            events: list[tuple[str, list[str]]] = []
             if keys:
-                self._audit(conn, before=before, after=self._snapshot(conn), action="import", key=None,
-                            keys=sorted(keys), actor="legacy_import", request_id="")
+                events.append((_IMPORT_ACTION, sorted(keys)))
+            if refused:
+                events.append((_IMPORT_REFUSED_ACTION, sorted(refused)))
+            conn.execute("UPDATE config_instances SET legacy_imported=1, revision=revision+? WHERE instance=?",
+                         (len(events), self.instance))
+            after = self._snapshot(conn)
+            for offset, (action, event_keys) in enumerate(events, start=1):
+                slot = ConfigSnapshot(before.version + offset, after.overrides, after.tombstones)
+                self._audit(conn, before=before, after=slot, action=action, key=None,
+                            keys=event_keys, actor="legacy_import", request_id="")
         return True
 
     def changes(self, *, since_version: int = 0, limit: int = 100) -> list[dict[str, Any]]:

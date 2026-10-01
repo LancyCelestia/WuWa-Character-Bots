@@ -651,8 +651,18 @@ def build_music_capability(
         if render_backend is None or not getattr(render_backend, "available", False):
             return None
         try:
+            # 署名唯一读法（P-G3 第二波）：人格册按当前生效人格现读 → 兼容显示名 →
+            # 空串交品牌胶囊统一回落；不再自取配置名并手抄「守岸人」。禁 get_login_info（#60★）。
+            from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+                active_persona_id,
+                current_bot_nickname,
+            )
             from plugins.bot_unified_runtime.domains.render.templates import (
                 render_song_candidates_html,
+            )
+
+            _bot_signature_name = current_bot_nickname(
+                active_persona_id(config), config=config
             )
 
             payload = {
@@ -660,10 +670,7 @@ def build_music_capability(
                 "platform": parser_id,
                 "platform_name": platform_name,
                 "ttl_seconds": int(candidates_ttl),
-                "bot_name": str(
-                    getattr(config, "bot_persona_display_name", "") or ""
-                ).strip()
-                or "守岸人",
+                "bot_name": _bot_signature_name,
                 "bot_avatar_url": str(
                     bot_avatar_uri(config)
                 ),

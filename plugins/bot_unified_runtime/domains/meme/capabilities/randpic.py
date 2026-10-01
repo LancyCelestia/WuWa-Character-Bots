@@ -70,6 +70,7 @@ PIC 容器面（2026-09-29，需求 15 的隐私红线 + 容器逃逸根治）�
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import random
 import re
@@ -80,6 +81,8 @@ from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 from typing import Any
 
 from plugins.bot_unified_runtime.contracts import (
@@ -1292,6 +1295,60 @@ def gallery_root_denial(root: Path, config: Any) -> str:
     return ""
 
 
+#: 疑似个人目录的名字（对路径各段做 basename 级匹配，大小写不敏感）。
+_PERSONAL_DIR_NAMES: frozenset[str] = frozenset(
+    {
+        "pictures", "picture", "photos", "photo", "desktop", "documents", "downloads",
+        "图片", "照片", "相册", "桌面", "文档", "下载",
+    }
+)
+#: 已软提示过的登记根（进程内去重，每根最多告警一次）。
+_PERSONAL_ROOT_WARNED: set[str] = set()
+
+
+def _warn_if_personal_root(root: Path) -> None:
+    """登记根疑似个人目录 ⇒ 记一条 warning（**软提示，不拦**；B4 防呆，2026-09-29）。
+
+    实案：``BOT_RANDPIC_DIRS=["C:/Users/<她>/Picture"]`` 把整个个人图片库登记成
+    图库——机制全对、门全过，可每一张个人照片都成了可外发候选。这一格只把
+    「你登记的像是个人目录」这件事在日志里钉出来，处置权在管理员：拦就等于
+    替她决定「自己的图不许发」，越权了。
+    """
+    try:
+        home = Path(os.path.expanduser("~")).resolve()
+        target = root.expanduser().resolve()
+    except OSError:
+        return
+    suspicious = target == home
+    if not suspicious and target.is_relative_to(home):
+        suspicious = any(
+            part.lower() in _PERSONAL_DIR_NAMES
+            for part in target.relative_to(home).parts
+        )
+    if not suspicious:
+        try:
+            suspicious = target == Path.cwd().resolve()
+        except OSError:
+            suspicious = False
+    if not suspicious:
+        return
+    key = str(target).lower()
+    if key in _PERSONAL_ROOT_WARNED:
+        return
+    _PERSONAL_ROOT_WARNED.add(key)
+    logger.warning(
+        "randpic gallery root looks like a personal directory (home / pictures / "
+        "desktop / documents / process cwd): %s -- every image under it is a "
+        "sendable candidate; prefer a dedicated sticker folder",
+        str(target),
+    )
+
+
+def reset_gallery_warning_state() -> None:
+    """测试复位口：清个人目录告警去重账。生产代码不该调它。"""
+    _PERSONAL_ROOT_WARNED.clear()
+
+
 def registered_gallery_roots(config: Any) -> list[Path]:
     """登记且**允许读**的图库根（折算后的真身，junction 折平）。
 
@@ -1302,6 +1359,7 @@ def registered_gallery_roots(config: Any) -> list[Path]:
     for raw in configured_gallery_dirs(config):
         if gallery_root_denial(_gallery_root(raw), config):
             continue
+        _warn_if_personal_root(_gallery_root(raw))
         for item in path_gate.resolve_roots([_gallery_root(raw)]):
             if item not in roots:
                 roots.append(item)

@@ -33,6 +33,7 @@ import contextlib
 import json
 import logging
 import sqlite3
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -158,24 +159,33 @@ def _epoch_of(moment: datetime) -> float:
 
 
 def _resolve_db_path(value: str | Path) -> Path:
-    """data/... → 配置的 Runtime 数据根（复用 runtime_paths 规则）。"""
+    """data/... → 配置的 Runtime 数据根（复用 ``scripts/runtime_paths`` 规则）。
+
+    根锚/卫生修复（S-FIX-ATK-DIVRNG 票④）：仓库根（含 ``scripts/``）是本件的
+    ``parents[5]``，不是旧写法的 ``parents[3]``——后者指向 ``plugins/
+    bot_unified_runtime``，那里根本没有 ``scripts/``，于是 ``import`` 恒失败、
+    相对值被兜底分支拼进**插件源码树**（现网因票③幽灵键 store 恒 None 而未可达，
+    但键一旦启用即落错盘）。收口三点：
+      1) 根锚用真正的仓库根（能定位到 ``scripts/runtime_paths.py``）；
+      2) 需补 ``sys.path`` 时只在**末尾 append**，不再 ``insert(0)`` 污染顶层包名；
+      3) 兜底退回也拼到仓库根（与 ``runtime_path`` 自身 ``(PROJECT_ROOT / path)``
+         终分支同形），绝不拼进插件树。
+    """
     path = Path(value).expanduser()
     if path.is_absolute():
         return path
-    import sys
-
-    project_root = Path(__file__).resolve().parents[3]
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
+    repo_root = Path(__file__).resolve().parents[5]
+    if str(repo_root) not in sys.path:
+        sys.path.append(str(repo_root))
     try:
         from scripts.runtime_paths import runtime_path
 
         return runtime_path(str(value))
     except Exception:
         logger.warning(
-            "runtime_path 解析失败，退回源码树 data/（value=%s）", value, exc_info=True
+            "runtime_path 解析失败，退回仓库根相对路径（value=%s）", value, exc_info=True
         )
-        return project_root / path
+        return repo_root / path
 
 
 def _record_from_row(row: sqlite3.Row) -> DrawRecord:

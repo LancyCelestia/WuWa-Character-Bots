@@ -21,10 +21,15 @@
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
 
+from plugins.bot_unified_runtime.domains.finance.data.market_data import (
+    _budget_or_new,
+    budget_expired,
+)
 from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import http_get
 
 _CROSS_CODES: dict[str, tuple[str, str]] = {
@@ -105,6 +110,10 @@ def _fetch_tencent_snapshot(
                 change_pct = float(fields[32])
         except (IndexError, ValueError):
             continue
+        # FIN-N1：数据边界统一有限性闸——``float("NaN"/"Infinity")`` 会成功，
+        # 非有限值一旦进快照就会流入差异文案与卡片 DOM，故整行如实跳过。
+        if not (math.isfinite(price) and math.isfinite(change_pct)):
+            continue
         snapshot[code] = (price, change_pct)
     return snapshot
 
@@ -114,8 +123,13 @@ def crosscheck_quotes(
     *,
     timeout_seconds: float = 4.0,
     cache_seconds: float = _CACHE_TTL_SECONDS,
+    budget: Any | None = None,
 ) -> CrossCheckResult:
-    """对可映射指数做两源核验；通道不可用返回 checked=0，绝不抛异常。"""
+    """对可映射指数做两源核验；通道不可用返回 checked=0，绝不抛异常。
+
+    FIN-R1：不传 budget 时自造 per-call 端到端网络预算；预算耗尽即放弃外呼
+    （核验通道按设计「不可用则保持沉默」，语义零扩张、不伪造核验结论）。
+    """
     global _CACHE
     wanted = [
         (quote.code, quote.name, quote.price, quote.change_pct)
@@ -124,10 +138,13 @@ def crosscheck_quotes(
     ]
     if not wanted:
         return CrossCheckResult(0, 0, ())
+    budget = _budget_or_new(budget)
     now = time.monotonic()
     cached = _CACHE
     if cached is not None and now - cached[0] <= max(1.0, float(cache_seconds)):
         snapshot = cached[1]
+    elif budget_expired(budget):
+        snapshot = {}  # 旁路核验：预算已尽，保持沉默（失败/缺席都不缓存）。
     else:
         try:
             snapshot = _fetch_tencent_snapshot(

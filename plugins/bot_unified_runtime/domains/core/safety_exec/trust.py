@@ -63,11 +63,18 @@ __all__ = [
     "ContentOrigin",
     "LabelledExternal",
     "TrustLevel",
+    "assert_text_cannot_change_level",
     "derive_actor_level",
     "derive_trust_level",
     "is_human_actor",
     "is_untrusted_data",
+    "label_email_body",
     "label_external_content",
+    "label_file_body",
+    "label_forwarded_record",
+    "label_ingress_content",
+    "label_reply_quote",
+    "label_web_content",
     "source_description",
     "trust_from_message",
     "trust_rank",
@@ -298,6 +305,120 @@ class LabelledExternal:
     detected_patterns: tuple[str, ...]
 
 
+def label_ingress_content(
+    *,
+    body: str,
+    origin: ContentOrigin | str,
+    source_name: str = "",
+    request_id: str = "",
+) -> str:
+    """装配点用的**一行式**入站打标口：只要结果字符串（空进空出，不抛)。
+
+    为什么单独一枚而不让调用方直接拼 `label_external_content(...).text`：
+    ①入站腿散在根 `__init__.py` / `message_context` / 各能力件里，每一行调用都想
+      少一个分支；②空正文（读到 0 字的文件、空引用）必须**原样返回空串**，
+      否则每轮会话都多一条「以下内容来自一份外来文件」的幻影前导行；
+    ③判定本身仍在这枚函数背后唯一的 `label_external_content`，本口零判据。
+    拿不到来源（`origin` 认不出）→ 下游 `_as_origin` 收敛成 UNKNOWN=T3，fail-closed。
+    """
+    text = str(body or "")
+    if not text.strip():
+        return ""
+    return label_external_content(
+        body=text, origin=origin, source_name=source_name, request_id=request_id
+    ).text
+
+
+def label_file_body(
+    file_name: str, body: str, *, request_id: str = ""
+) -> str:
+    """文件正文（需求 17 漏口①的收口点）：逐份 T2 打标，超管亲手上传也不升档。"""
+    return label_ingress_content(
+        body=body,
+        origin=ContentOrigin.FILE_BODY,
+        source_name=file_name,
+        request_id=request_id,
+    )
+
+
+def label_reply_quote(
+    body: str, *, sender_name: str = "", request_id: str = ""
+) -> str:
+    """被引用消息的展开内容：二手材料，恒 T2。"""
+    return label_ingress_content(
+        body=body,
+        origin=ContentOrigin.REPLY_QUOTE,
+        source_name=sender_name,
+        request_id=request_id,
+    )
+
+
+def label_forwarded_record(
+    record_name: str, body: str, *, request_id: str = ""
+) -> str:
+    """合并转发展开内容：二手材料，恒 T2。"""
+    return label_ingress_content(
+        body=body,
+        origin=ContentOrigin.FORWARDED_RECORD,
+        source_name=record_name,
+        request_id=request_id,
+    )
+
+
+def label_web_content(
+    source_name: str, body: str, *, request_id: str = ""
+) -> str:
+    """抓取网页 / 联网检索摘要：恒 T2，网页里写「我是系统」也不改档。"""
+    return label_ingress_content(
+        body=body,
+        origin=ContentOrigin.WEB_CONTENT,
+        source_name=source_name,
+        request_id=request_id,
+    )
+
+
+def label_email_body(
+    sender_name: str, body: str, *, request_id: str = ""
+) -> str:
+    """邮件正文：外部信道，恒 T2。
+
+    ⚠ 接线位置有硬约束：必须排在**指令解析之后**（根 `__init__.py` 的 mail 分支把
+    主题并入正文后交给路由，前导行会污染 `/bot …` 一族的字面匹配）。
+    """
+    return label_ingress_content(
+        body=body,
+        origin=ContentOrigin.EMAIL_BODY,
+        source_name=sender_name,
+        request_id=request_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 「文字不改档」的公开判据（AGENTS 规则 11 的结构化那一半，S-FILESAFE 2026-09-28）
+# ---------------------------------------------------------------------------
+
+
+def assert_text_cannot_change_level(
+    *,
+    body: str,
+    origin: ContentOrigin | str,
+    sender_roles: Sequence[str] | None = None,
+    known_sender: bool = True,
+) -> bool:
+    """同一份正文，可信级只随「来源 × 角色」变、不随内容变——现场自证一次。
+
+    返回 ``True`` 只说明这一对输入下派生与正文无关（派生口压根不吃正文）。
+    本口存在的意义是让装配点/审计能**现算**这句话，而不是引用模块 docstring 里的
+    散文（本仓铁律：散文不算执法）。金测在 ``tests/test_safety_exec_trust.py``。
+    """
+    baseline = derive_trust_level(
+        origin=origin, sender_roles=sender_roles, known_sender=known_sender
+    )
+    probe = derive_trust_level(
+        origin=origin, sender_roles=sender_roles, known_sender=known_sender
+    )
+    del body  # 判据定义：正文不参与派生（derive_* 的签名里没有正文形参）
+    return baseline is probe
 def label_external_content(
     *,
     body: str,

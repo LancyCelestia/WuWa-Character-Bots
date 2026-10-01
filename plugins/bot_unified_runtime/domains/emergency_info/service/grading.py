@@ -38,7 +38,8 @@ grade(item, ...) = 取候选最高档；空集落 FALLBACK_LEVEL=P3（蓝，诚�
 5. **不读配置、不发网络**：族级地板与境内矩形都取自同域纯数据件 `alert_taxonomy`
    （规格 §九：本次只把它加进允许 import 前缀，两条纯度判据不变）；
    `bot_emergency_info_quiet_breach_levels` 那枚键由装配侧经
-   `may_breach_quiet_window(allowed_levels=...)` 注入，本模块不 import config。
+   `may_breach_quiet_window_intersects_floor(source_levels=…)` 注入（S-FIX-QUIET-T3
+   取交腿；键未落 config.py 前 root 不传值，`None`＝现状族级地板），本模块不 import config。
 6. **规则表可注入**：`rules` 参数让管理侧/评审席替换**关键词**表而不动代码；注入表
    只影响第 3 步的关键词腿（quake 族与颜色腿按源侧事实走，不受词表摆布）。
 """
@@ -322,8 +323,10 @@ def may_breach_quiet_window(
     ②接受显式 `allowed_levels` 覆盖（用户把穿窗等级配窄/配宽时用，语义=**只看这张表**，
     不再查族级地板；空表⇒一切都不许穿窗＝配窄了只能更安静）。
 
-    `allowed_levels=None` ⇒ 走族级地板（现网缺省，因为
-    `bot_emergency_info_quiet_breach_levels` 这枚配置键尚未落地）。
+    `allowed_levels=None` ⇒ 走族级地板（现网缺省）。装配侧的源级表**不走本函数的
+    显式腿**（那会架空族级地板），而是经
+    `may_breach_quiet_window_intersects_floor(source_levels=…)` 取交；本函数的
+    「只看这张表」语义保留给显式要求表意分离的调用侧与既有锁件。
     未定级一律 False（D-1：不猜）。
     """
     if level is None:
@@ -332,6 +335,38 @@ def may_breach_quiet_window(
         wanted = {str(raw).strip().upper() for raw in allowed_levels if str(raw).strip()}
         return level.value in wanted
     return _taxonomy.may_breach_quiet_window(_taxonomy.category_of_item(item), level)
+
+
+def may_breach_quiet_window_intersects_floor(
+    item: EmergencyItem,
+    level: EmergencyLevel | None,
+    *,
+    source_levels: Sequence[str] | None = None,
+) -> bool:
+    """「源级表 ∩ 族级地板」合成判据（S-FIX-QUIET-T3，主代理裁定语义）。
+
+    某族在静默窗内**可穿窗的等级集合** = 源级配置表 ∩ 该族族级地板
+    （`alert_taxonomy.wake_levels`）。与 `may_breach_quiet_window(allowed_levels=…)`
+    的「只看这张表」显式覆盖语义**不同**——那一直径会把族级地板架空
+    （如 `global_disaster` 只认红档的族被 P1 穿窗＝静默窗行为变更），故装配侧
+    的源级表一律走本合成分支：
+
+    - `source_levels=None` ⇒ 直接返回族级地板结论（**逐字节等于现状**，缺省族级＝红/橙）；
+    - 显式表（含空表）⇒ 先过族级地板、再要求在源级表内——源级表**只收窄、不放宽**；
+      空表⇒一切不穿窗（配窄了只能更安静，与 D-8「门一寸不松」同向）；
+    - 未定级一律 False（D-1：不猜）。
+
+    归一化口径与 `may_breach_quiet_window` 的显式腿逐字相同（strip+upper、丢空串），
+    不建第二份词表。
+    """
+    if level is None:
+        return False
+    if not _taxonomy.may_breach_quiet_window(_taxonomy.category_of_item(item), level):
+        return False
+    if source_levels is None:
+        return True
+    wanted = {str(raw).strip().upper() for raw in source_levels if str(raw).strip()}
+    return level.value in wanted
 
 
 __all__ = [
@@ -349,4 +384,6 @@ __all__ = [
     # 包装（非第二实现）：穿安静时间窗的判据真身在 `alert_taxonomy`，
     # 本模块是规则层的对外名（`push.py` 与测试都按 `grading.*` 取用）。
     "may_breach_quiet_window",
+    # 装配侧唯一合法入口（源级表只收窄、族级地板恒在场）。
+    "may_breach_quiet_window_intersects_floor",
 ]

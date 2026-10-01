@@ -16,7 +16,7 @@ import re
 import threading
 import time
 import urllib.parse
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -74,6 +74,10 @@ class WebSearchHit:
     snippet: str
     url: str
     source_domain: str = ""
+    #: 源站回传的发布时间（原样透传的字符串，形态各家不一：``2026-09-28``、
+    #: ``3 days ago``、epoch 都可能）。**空串＝源站没给**，绝不用抓取时刻顶替——
+    #: 顶替会让「无日期」在排序与出站标注两处都被读成「很新」。
+    published_at: str = ""
 
 
 class WebSearchProvider(Protocol):
@@ -397,6 +401,51 @@ _DDG_CHALLENGE_MARKERS = (
 _DDG_BLOCK_WARN_COOLDOWN_SECONDS = 600.0
 _ddg_block_last_warned = 0.0
 
+# ---------------------------------------------------------------------------
+# 链侧诊断账（WEBCFG-AUDIT E-4／在册 PX-21）：引擎「今天这家是死的」要进账
+#
+# 成因：DuckDuckGo 交回人机验证页时，本件过去只打一条 600s 抑制的 warning，
+# 既不进决策也不进任何账目面——链照旧空手回退下一家，运维与模型看到的都是
+# 「没查到」，而不是「链头这家今天被反爬拦死」。日志会滚走、且不带轮次关联键，
+# 归因等于隐身。这里加一枚**只记形态代号、不记原文**的进程内蓄水池：
+# * 与日志抑制窗**解耦**（同一轮第二次查询也要有账，否则「这一轮到底死在哪家」
+#   仍问不出来）；
+# * 消费方（chat.py 检索腿）用 `drain_chain_diagnostics()` **取走即清**，
+#   并把代号并进既有的 `web_error_kinds` 集合——不新建第二套归因通道，
+#   也不改变任何检索行为（空手仍回退下一家）。
+# 代号是内部 token（进 prompt 前还要过 chat.py 的形态闸），因此这里刻意
+# 不接受任何外部文本入池：只允许本模块登记的字面量。
+# ---------------------------------------------------------------------------
+
+#: DDG 交回反爬验证页的归因代号（形态与遥测 `provider:`/`page:`/`acg:` 同族）。
+DIAGNOSTIC_DDG_CHALLENGE = "engine:ddg_challenge"
+_CHAIN_DIAGNOSTICS_MAX = 16
+_chain_diagnostics: set[str] = set()
+_chain_diagnostics_lock = threading.Lock()
+
+
+def note_chain_diagnostic(kind: str) -> None:
+    """登记一枚链侧诊断代号（去重、有帽，绝不无限涨）。空代号忽略。"""
+    token = str(kind or "").strip()
+    if not token:
+        return
+    with _chain_diagnostics_lock:
+        _chain_diagnostics.add(token)
+        if len(_chain_diagnostics) > _CHAIN_DIAGNOSTICS_MAX:
+            # 帽到了丢最旧的一条：稳定排序靠消费方，这里只保证不涨内存。
+            oldest = min(_chain_diagnostics)
+            _chain_diagnostics.discard(oldest)
+
+
+def drain_chain_diagnostics() -> list[str]:
+    """取走本轮累计的诊断代号（排序稳定）并清空——取不走就当没发生。"""
+    with _chain_diagnostics_lock:
+        if not _chain_diagnostics:
+            return []
+        taken = sorted(_chain_diagnostics)
+        _chain_diagnostics.clear()
+        return taken
+
 
 def _query_tokens(query: str) -> list[str]:
     """按空白与中文标点切 token（只做切分，不做判断）。"""
@@ -488,11 +537,21 @@ def _domain_priority(hit: WebSearchHit, query: str = "") -> tuple[int, str]:
 
 
 def _hit_is_dated(hit: WebSearchHit) -> bool:
-    """这条命中带不带**可核对的发表日期**（标题/摘要/URL 任一处）。
+    """这条命中带不带**可核对的发表日期**（结构化字段 / 标题 / 摘要 / URL 任一处）。
 
     只判形态、不解析成时刻，因此不读时钟、无跨日漂移；「带日期」在这里的含义是
     「上层与用户能据此判断这条有多新」，不是「本席算出了它新」。
+
+    2026-09-29（WEB 席）先查 ``published_at``：那是引擎按自己的口径回填的结构化
+    值，比在标题里正则找日期字样可靠；文本形态那把尺保留，因为免 key 的两家
+    （DDG/Bing）至今不给结构化日期。
+
+    读法用 ``getattr`` 是刻意的：本仓有**两枚** ``WebSearchHit``（本件的 dataclass
+    与 ``contracts.character`` 的 pydantic 契约，后者至今只有四枚字段），ACG 竖源
+    融合后的列表两型混装，直接点属性会让契约型在这一函数上炸 AttributeError。
     """
+    if (getattr(hit, "published_at", "") or "").strip():
+        return True
     blob = f"{hit.url} {_hit_text(hit)}"
     return any(pattern.search(blob) for pattern in _DATE_STAMP_RES)
 
@@ -660,6 +719,9 @@ def _note_ddg_challenge(html_text: str) -> None:
     lowered = html_text[:20000].lower()
     if not any(marker in lowered for marker in _DDG_CHALLENGE_MARKERS):
         return
+    # 归因账**不**跟着日志抑制窗走：本轮每一次撞到验证页都要留名，否则第二次
+    # 查询落在抑制窗内就无账可查（E-4）。日志照旧 600s 一条，不刷屏。
+    note_chain_diagnostic(DIAGNOSTIC_DDG_CHALLENGE)
     now = time.monotonic()
     if now - _ddg_block_last_warned < _DDG_BLOCK_WARN_COOLDOWN_SECONDS:
         return
@@ -1047,6 +1109,7 @@ class ChainedWebSearchProvider:
         proxy: str = "",
         page_fetcher: object | None = None,
         latest_time_range: str = "",
+        window_resolver: Callable[[str], str] | None = None,
     ) -> None:
         self.providers = providers
         self.timeout_seconds = timeout_seconds
@@ -1057,6 +1120,12 @@ class ChainedWebSearchProvider:
         # 时效词、且 provider 声明 ``accepts_extra_body`` 时，才在该次请求
         # 追加 ``{"time_range": ...}``；缺省空＝整层不通电，链行为与改前逐字节一致。
         self._latest_time_range = str(latest_time_range or "").strip()
+        #: 类目化时效窗解析器（E-3 的续腿）：``query -> time_range``，空串＝不开窗。
+        #: 判据真身在 ``question_intent.request_time_window``（chat_reply 层），core 不
+        #: 反向 import（本文件头注与 `source_authority` 同一条纪律），故由装配侧注入。
+        #: 注入了就**盖过**全局档（金融/赛果按天、科技/时政按周是类目属性，不是全局属性）；
+        #: 没注入（None）＝逐字节维持 E-3 现状，缺省构造零行为改动。
+        self._window_resolver = window_resolver
         self._search_cache: dict[tuple[str, int], tuple[float, list[WebSearchHit]]] = {}
         self._search_cache_lock = threading.Lock()
 
@@ -1067,14 +1136,27 @@ class ChainedWebSearchProvider:
         逐闸钉死）：开关值非空；查询**明示**要最新（裸年份的历史题绝不在列——
         ``wants_latest`` 不等价于 ``explicit_latest``，把 2019 票房题锁进周窗是错的）；
         provider 自声明吃得下 ``extra_body``（免 key 引擎结构上无此参数）。
+
+        注入 ``window_resolver`` 时多一条腿：解析器判空串＝该类目不配开窗
+        （lore／泛史／未登记域一律不开），判非空＝按类目收窄，此时不再读全局档。
         """
-        if not self._latest_time_range:
-            return None
         if not getattr(provider, "accepts_extra_body", False):
             return None
-        if not detect_query_recency(query).explicit_latest:
+        recency = detect_query_recency(query)
+        if not recency.explicit_latest:
+            return None
+        if self._window_resolver is not None:
+            try:
+                window = str(self._window_resolver(query) or "").strip()
+            except Exception:  # noqa: BLE001 - 解析器坏了退回全局档，绝不因它中断检索。
+                window = ""
+            if window:
+                return {"time_range": window}
+            return None
+        if not self._latest_time_range:
             return None
         return {"time_range": self._latest_time_range}
+
 
     def _invoke_search(
         self,
@@ -1286,6 +1368,7 @@ def _build_chained_provider(
     timeout_seconds: float,
     proxy: str,
     config: object | None = None,
+    window_resolver: Callable[[str], str] | None = None,
 ) -> ChainedWebSearchProvider:
     """Build the configured API chain: Tavily, You.com, LangSearch, optional TinyFish.
 
@@ -1319,17 +1402,29 @@ def _build_chained_provider(
         proxy=proxy,
         page_fetcher=fetcher,
         latest_time_range=resolve_latest_time_range(config),
+        # 类目化时效窗由装配侧注入（判据真身在 chat_reply 层，core 不反向 import）；
+        # None＝维持 E-3 的全局档，逐字节现状。
+        window_resolver=window_resolver,
     )
 
 
-def build_web_search_provider(config: object | None = None) -> WebSearchProvider:
-    """Build the configured API provider chain; disabled or unconfigured means no search."""
+def build_web_search_provider(
+    config: object | None = None,
+    *,
+    window_resolver: Callable[[str], str] | None = None,
+) -> WebSearchProvider:
+    """Build the configured API provider chain; disabled or unconfigured means no search.
+
+    ``window_resolver``（``query -> time_range``，空串＝不开窗）是**可选**装配参数：
+    没传就跟改动前完全一致（全局档 + None 通道），因此所有既有调用点
+    （``__init__``／``backend_unit``／``console_chat``／MCP 直调）零改动即保真。
+    """
     enabled = bool(getattr(config, "bot_web_search_enabled", False)) if config else False
     if not enabled or config is None:
         return NullWebSearchProvider()
     timeout = float(getattr(config, "bot_web_search_timeout_seconds", 6.0) or 6.0)
     proxy = str(getattr(config, "bot_download_proxy", "") or "").strip()
-    return _build_chained_provider(timeout, proxy, config)
+    return _build_chained_provider(timeout, proxy, config, window_resolver)
 
 
 async def search_async(

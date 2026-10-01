@@ -80,7 +80,7 @@ class LLMControlService:
     # ---------- 注册表装配（只读复用 model_router 装配语义） ----------
 
     def _load_router(self) -> Any:
-        from ..llm.model_router import (
+        from ..domains.chat_reply.llm_engine.model_router import (
             ModelRouter,
             _main_fallback_spec,
             _preset_specs,
@@ -199,7 +199,7 @@ class LLMControlService:
         return tuple(sorted(grouped.values(), key=lambda item: item["provider_id"]))
 
     def channels(self) -> tuple[dict[str, Any], ...]:
-        from ..llm.model_router import model_family
+        from ..domains.chat_reply.llm_engine.model_router import model_family
 
         items = []
         for spec in sorted(self._specs().values(), key=lambda s: (s.priority, s.model_id)):
@@ -230,7 +230,7 @@ class LLMControlService:
         return tuple(items)
 
     def models(self) -> tuple[dict[str, Any], ...]:
-        from ..llm.model_router import (
+        from ..domains.chat_reply.llm_engine.model_router import (
             FAMILY_EFFORT_TIERS,
             baseline_effort,
             default_effort,
@@ -378,7 +378,7 @@ class LLMControlService:
         message_text: str = "",
         simulate_intimate: bool = False,
     ) -> dict[str, Any]:
-        from ..llm.model_router import (
+        from ..domains.chat_reply.llm_engine.model_router import (
             _demote_cooling_candidates,
             _health_filter_candidates,
             model_family,

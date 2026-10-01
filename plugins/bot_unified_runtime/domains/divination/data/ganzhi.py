@@ -17,7 +17,8 @@
   2024-02-04 戊戌、2026-09-10 丁亥 五个万年历锚点校验。
 - 时辰：23:00-01:00 为子时。晚子时（23:00-24:00）采用
   「归本日日柱、时干按次日日干五鼠遁」的约定（次日子时干）。
-- 不支持 1900 年以前 / 2100 年以后的输入（超出公式验证区间，抛 ValueError）。
+- 节气计算窗口为 1900-2100（公式验证区间）；但八字排盘（bazi_chart）因月柱
+  需前后各一年的节气，实际可算窗口收窄为 1901-2099。超出各自窗口抛 ValueError。
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ __all__ = [
     "BaziChart",
     "Pillar",
     "bazi_chart",
+    "bazi_supported_range_text",
     "format_bazi_text",
     "solar_term_beijing",
 ]
@@ -41,8 +43,17 @@ __all__ = [
 # 东八区（中国标准时间）：干支日以本地午夜切换，节气按北京时间交节。
 CST = timezone(timedelta(hours=8))
 
-_MIN_YEAR = 1900
-_MAX_YEAR = 2100
+# 节气计算窗口：Meeus 低阶公式验证区间（见模块 docstring），即
+# solar_term_beijing 直接支持的年份闭区间；越界抛 ValueError。
+_SOLAR_TERM_MIN_YEAR = 1900
+_SOLAR_TERM_MAX_YEAR = 2100
+
+# 八字输入窗口：月柱计算需要 dt.year ± 1 三年的节气交节时刻（见
+# _month_gz_index），故外层守闸须在节气窗口两端各收缩一年——否则
+# 边界年（1900/2100）过外层闸、死于内层闸且报错年份误导。
+# 与 multi_calendar 的 1901-2099 自守口径一致。
+_MIN_YEAR = _SOLAR_TERM_MIN_YEAR + 1
+_MAX_YEAR = _SOLAR_TERM_MAX_YEAR - 1
 
 STEMS: tuple[str, ...] = ("甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸")
 BRANCHES: tuple[str, ...] = (
@@ -185,8 +196,10 @@ def solar_term_beijing(year: int, term_index: int) -> datetime:
     ``term_index`` 0=立春、2=惊蛰、12=立秋、14=白露……（见 ``TERM_NAMES``）。
     牛顿迭代太阳视黄经到目标角度；精度娱乐级（±10 分钟内，见模块 docstring）。
     """
-    if not _MIN_YEAR <= year <= _MAX_YEAR:
-        raise ValueError(f"节气计算仅支持 {_MIN_YEAR}-{_MAX_YEAR} 年，收到 {year}")
+    if not _SOLAR_TERM_MIN_YEAR <= year <= _SOLAR_TERM_MAX_YEAR:
+        raise ValueError(
+            f"节气计算仅支持 {_SOLAR_TERM_MIN_YEAR}-{_SOLAR_TERM_MAX_YEAR} 年，收到 {year}"
+        )
     target = (315.0 + 15.0 * term_index) % 360.0
     jan1 = _gregorian_to_jd(year, 1, 1)
     jd = jan1 + ((target - 282.0) % 360.0) / 0.9856
@@ -338,6 +351,14 @@ class BaziChart:
             self.day_pillar.nayin,
             self.hour_pillar.nayin,
         )
+
+
+def bazi_supported_range_text() -> str:
+    """八字可算区间的展示文本（如 ``"1901-2099"``），由守闸常量单源派生。
+
+    面向用户的提示词必须与此同源，杜绝提示承诺区间与实际可算区间漂移。
+    """
+    return f"{_MIN_YEAR}-{_MAX_YEAR}"
 
 
 def bazi_chart(dt: datetime) -> BaziChart:

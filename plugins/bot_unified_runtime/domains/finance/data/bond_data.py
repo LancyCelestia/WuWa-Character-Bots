@@ -33,12 +33,16 @@ G2 空响应重试纪律与 market_data 同款：``result`` 为空/缺行 → �
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from plugins.bot_unified_runtime.domains.finance.data.market_data import (
     _MAX_PAYLOAD_BYTES,
+    _budget_or_new,
+    budget_allows_retry,
+    budget_expired,
     empty_backoff_sleep,
     retry_on_empty_enabled,
 )
@@ -107,17 +111,21 @@ class BondYieldSnapshot:
 
 
 def _as_float(value: Any) -> float | None:
+    # FIN-N1（2026-09-27 评审票）：非有限值（上游 NaN/Infinity 字面量）一律
+    # 视为缺数 None——走既有「暂无」诚实通道，不入卡片数字槽。
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     text = str(value).strip()
     if not text:
         return None
     try:
-        return float(text)
+        number = float(text)
     except ValueError:
         return None
+    return number if math.isfinite(number) else None
 
 
 def _fetch_payload(timeout_seconds: float) -> Any:
@@ -221,19 +229,30 @@ def reset_bond_cache() -> None:
 def fetch_bond_yields(
     timeout_seconds: float = 6.0,
     cache_seconds: float = _CACHE_TTL_DEFAULT_SECONDS,
+    *,
+    budget: Any | None = None,
 ) -> BondYieldSnapshot:
     """拉取中美国债收益率快照；失败走 unavailable 状态，绝不抛异常。
 
     G2：空响应（result 空/缺行）退避后至多重试 1 次；真异常不重试；
     仍空走 unavailable 且不缓存。数据源按交易日更新（非实时），
-    缓存默认 5 分钟即可。
+    缓存默认 5 分钟即可。FIN-R1：预算尽 ⇒ 弃剩余重试（首轮前到期则
+    整条不发起，走与拉取失败同款的 unavailable 诚实降级）。
     """
     global _CACHE
     now = time.monotonic()
     cached = _CACHE
     if cached is not None and now - cached[0] <= max(0.0, float(cache_seconds)):
         return cached[1]
+    budget = _budget_or_new(budget)
     fetched_at = time.time()
+    if budget_expired(budget):
+        # FIN-R1：预算尽，整条不发起；unavailable 不缓存 = 下轮命令自然重试。
+        return BondYieldSnapshot(
+            status="unavailable",
+            as_of=fetched_at,
+            note="收益率拉取已放弃（网络预算耗尽；失败不缓存，下轮自动重试）",
+        )
     attempts = 2 if retry_on_empty_enabled() else 1
     snapshot: BondYieldSnapshot | None = None
     for attempt in range(attempts):
@@ -246,7 +265,7 @@ def fetch_bond_yields(
                 as_of=fetched_at,
                 note=f"收益率拉取失败：{type(exc).__name__}",
             )
-        if snapshot.status == "ok" or attempt + 1 >= attempts:
+        if snapshot.status == "ok" or attempt + 1 >= attempts or not budget_allows_retry(budget):
             break
         empty_backoff_sleep()
     assert snapshot is not None  # pragma: no cover - 循环末次必有值

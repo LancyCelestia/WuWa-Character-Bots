@@ -43,9 +43,26 @@ get_group_notice / get_essence_msg_list）而全仓零调用。本能力补齐�
   （2026-09-25 二批：群相册 ``get_group_album_list``、群待办 ``get_group_todo_list``
   **已接**，各自独立意图与触发词；两者都按 ``_get_group_notice`` 的先例做「裸名 +
   下划线本名」两试，认不出的字段名退成「这条读不出」而不编造。）
-- **结构性拿不到**（对 189 枚动作逐名核过的结论，不是没找）：幸运符号（无对应动作，
-  最接近的 ``get_group_signed_list`` 是「今日打卡」）、他人电量（``battery_status``
-  只在 ``set_online_status`` 的**入参**里出现，没有读的口）、网络制式（WiFi/5G 无字段）；
+- **结构性拿不到**（对动作册逐名核过的结论，不是没找；逐格判据与理由已落成枚举锁
+  ``tests/test_group_profile_host_reads_s_meta.py``，防下次接手当「没做」返工）：
+  幸运符号（全册 ``lucky``/「幸运」零命中，最接近的 ``get_group_signed_list`` 是
+  「今日打卡」）、群幸运符号（同上，群侧亦无对应动作）、网络制式（WiFi/5G 无字段）。
+  ⚠ 旧版这里还列了「他人电量（``battery_status`` 只在 ``set_online_status`` 的入参里、
+  没有读的口）」——**该判与动作册不符，已于 2026-09-28 更正**：读口在册，是
+  ``get_stranger_info`` returnsSchema 的 ``batteryStatus``（写口才在
+  ``set_online_status.battery_status``）。本能力现在读它；但「值是否恒 0」属运行时
+  事实、离线不可判，所以 **0/空一律当「读不出有效值」**，绝不写成「电量 0%」。
+- **QQ 对端账号资料（昵称/个性签名/在线状态/等级/电量）已接**
+  （``read_qq_account_meta`` → ``get_stranger_info``，需求 4 · 2026-09-28 S-META）：
+  此前该动作在本仓只有一个调用点、且只取 bot 自己的头像字段，资料面整片是
+  「能拿没接」。私聊对端腿见 ``_qq_private_meta``；每轮提示词的注入点在 ``chat.py``
+  的 ``sender_profile_note``（本席不可写，已提 hub 补丁申请）。
+- **对端资料读件是三态、不是两态**（需求 4 · 2026-09-28 二批）：``ok`` /
+  ``failed``（真去打接口了却问不出来：超时、报错、形状读不出）/ ``unprobed``
+  （这轮**压根没去问**：桥未接线，或事件没带对象号）。第三态以前塌进 ``api_fail``，
+  等于谎报一次没发生过的请求——排查的人会去翻协议端日志，那里什么都没有。
+  投影口 ``qq_meta_probe_state``；未探测态下 ``在线状态`` 格连字典都不进，
+  所以**结构上写不出「离线」**（锁 ``test_unprobed_qq_meta_never_becomes_offline``）。
 - API 失败/未接线/无权限：如实口语降级，不编数据、不静默吞掉。
 
 缓存：群资料 600s/成员列表 900s/公告 600s/精华 600s/相册 600s/**待办 120s**/
@@ -165,6 +182,182 @@ _ROLE_LABELS = {"owner": "群主", "admin": "管理员", "member": "群成员"}
 # 句号收尾——温和但不拖尾音（同 meme_library 64efadf 口径）。
 _PRIVATE_HINT = "群信息要在群里问才行哦，去群里喊我一声，我帮你看本群的资料。"
 _UNAVAILABLE_LINE = "群资料接口这会儿没回应，这部分先不答啦——不瞎猜，过会儿再问一次试试？"
+
+# ---------------------------------------------------------------------------
+# QQ 对端账号资料读件（需求 4 · 2026-09-28 S-META）
+# ---------------------------------------------------------------------------
+#: 缓存数据类：QQ「陌生人/好友资料」这一份，与 TG 的 ``KIND_PEER_PROFILE`` 分键
+#: （同动作名不同载荷，混键会让两协议的读数互相冒充）。登记在 group_cache 的
+#: 缺省表之外，由本模块在共享实例上补（见 ``_SHARED_CACHE``）。
+KIND_QQ_ACCOUNT_META = "qq_account_meta"
+#: 唯一在册的 QQ 对端资料口（动作册 ``get_stranger_info`` returnsSchema：
+#: nickname / remark / long_nick「个性签名」/ level / status「在线状态码」/
+#: ext_status / batteryStatus「电量状态」）。本仓此前只在
+#: ``__init__.py`` 的 bot 头像查询里用过它，且只取 avatar 一个字段。
+QQ_ACCOUNT_META_ACTION = "get_stranger_info"
+#: 与群资料同档（600s）：签名与在线状态是低频变动的人为设置，但在线态比资料
+#: 更活，取到「一轮一次」的粒度已由调用侧的每轮注入承担，这里只防同 id 风暴。
+QQ_ACCOUNT_META_TTL_SECONDS = 600.0
+
+#: ``status`` 是**数字状态码**，册只给了字段名「在线状态码」而没给值表。
+#: 这张表因此只登记**能核到的**标签；认不出的值一律回「状态码 N（册未给中文名）」
+#: ——本仓常驻禁令「没检索禁写它没有」的同族：宁可少说，不可把没核过的数表当权威。
+_QQ_STATUS_LABELS: dict[str, str] = {
+    "1": "在线",
+    "2": "隐身",
+    "3": "忙碌",
+    "4": "离开",
+    "5": "隐藏在线状态",
+    "6": "静音",
+    "7": "忙碌中",
+    "0": "离线",
+}
+#: 字段 → 中文标签。**remark（好友备注）刻意不在册**：那是「我怎么叫这个人」，
+#: 属隐私且与本能力的「这人叫什么」判据打架（既有 card/nickname 优先级不动）。
+_QQ_META_LABELS: dict[str, str] = {
+    "nickname": "昵称",
+    "long_nick": "个性签名",
+    "level": "等级",
+    "status": "在线状态",
+    "batteryStatus": "电量",
+}
+
+
+def _meta_scalar(raw: Any) -> str:
+    """把接口回的值转成文本：**0 是值、不是空**。
+
+    ``str(raw or "")`` 这一族写法在这里会吃掉 ``status=0``（离线）与 ``level=0``
+    ——把「接口真回了 0」降级成「接口回了空」，等于替对方把在线状态判丢。
+    需求 4 的三态判据要求「字段缺席 / 值为 0 / 值为空」三件事分开，所以这里
+    只对 ``None``（缺席）给空串，其余一律照字面转文本。
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, bool):  # True/False 不是资料值，别写成 "True" 糊在中文标签后
+        return ""
+    return str(raw).strip()
+
+
+def _qq_status_label(raw: Any) -> str:
+    """状态码 → 人话；认不出就带着原码说话，不硬套一个标签。
+
+    ``0``（离线）是**真值**，必须能被说出来——「未探测时不许写离线」那条锁管的是
+    没去问的那一轮，不是把真读到的离线也一并抹掉（那会连「查到了但对方不在线」
+    这个正当答案一起丢掉，属过度矫正）。
+    """
+    key = _meta_scalar(raw)
+    if not key:
+        return ""
+    label = _QQ_STATUS_LABELS.get(key.split(".", 1)[0])
+    if label:
+        return f"{label}（状态码 {key}）"
+    return f"状态码 {key}（动作册没给中文名，不替你猜）"
+
+
+#: 需求 4 的**三态读数**：探测成功 / 真去问了但问不出来 / 这轮压根没去问。
+#: 第三态不许塌进前两态——把「桥未接线」说成「接口没回应」＝谎报一次没发生过的
+#: 请求（排查时会去翻协议端日志，而那里什么都没有）；说成「对方没设置」或任何
+#: 在线/离线判断＝直接替对方编出一个状态。三态由 ``qq_meta_probe_state`` 投影，
+#: 注入侧与展示侧都读它，不在别处再抄一份 if 链。
+QQ_META_PROBE_OK = "ok"
+QQ_META_PROBE_FAILED = "failed"
+QQ_META_PROBE_UNPROBED = "unprobed"
+
+#: 未探测态的答句：**不含任何在线/离线断言**，由
+#: ``tests/test_group_profile_host_reads_s_meta.py`` 逐字锁住「离线」二字不得出现。
+QQ_META_UNPROBED_ANSWER = (
+    "对端资料：这一轮没有可问的协议端（桥未接线），这几格是**没去探测**，"
+    "不是查不到，也不是对方没设置。"
+)
+
+
+def qq_meta_probe_state(audit: list[str] | tuple[str, ...]) -> str:
+    """审计串 → 三态之一（``ok`` / ``failed`` / ``unprobed``）。
+
+    判据只看 ``read_qq_account_meta`` 自己写进审计的那几个代号，不做字符串猜测：
+    ``not_probed``/``no_user_id`` 归未探测，``api_fail``/``api_shape`` 归失败，
+    其余（带 ``*_read``/``*_empty`` 的）说明真读到过东西，归 ok。
+    """
+    tags = {str(item) for item in audit}
+    if "not_probed" in tags or "no_user_id" in tags:
+        return QQ_META_PROBE_UNPROBED
+    if "api_fail" in tags or "api_shape" in tags:
+        return QQ_META_PROBE_FAILED
+    return QQ_META_PROBE_OK
+
+
+def read_qq_account_meta(
+    fetch: Callable[..., tuple[bool, Any]],
+    user_id: str,
+    *,
+    probed: bool = True,
+) -> tuple[dict[str, str], list[str]]:
+    """读 QQ 对端账号资料：**只回真读到的格**，读不到的格不出现在字典里。
+
+    ``fetch`` 是 ``group_info`` 内部的缓存穿透读口 ``(kind, key, action, **params)``
+    ——本函数不碰 bot、不碰事件循环，所以同一份既能在能力里用，也能被每轮提示词的
+    注入侧（hub 申请里那处）拿去用，**不留第二份取数逻辑**。
+
+    ``probed``：**这轮到底有没有可问的协议端**。装配点在桥未接线时（``api=None``）
+    必须传 False——那条路上 ``fetch`` 一次都没发生，写成 ``api_fail`` 就是谎报。
+    未探测态下 ``在线状态`` 格连字典都不进，所以展示层没有可用的渲染支路，
+    「未探测」在结构上就写不成「离线」（锁见 ``test_unprobed_qq_meta_never_becomes_offline``）。
+
+    返回 ``(字段字典, 审计)``。字典键用中文标签（``_QQ_META_LABELS``），值已成人话：
+    - 桥未接线 ⇒ 空字典 + ``not_probed``（调用方据此写「没去探测」）；
+    - 接口没答 ⇒ 空字典 + ``api_fail``（调用方据此写「没读到」，不写「没有」）；
+    - 答了但某格字段缺席 ⇒ 那一格不进字典（**字段缺席 ≠ 值为空**，两态分开）；
+    - 答了且值为空串 ⇒ 写成「（未设置）」以外的东西都算谎报，这里给空串并由
+      标签保留，交给展示层决定说「这会儿是空的」。
+    """
+    uid = str(user_id or "").strip()
+    if not uid:
+        # 连对象号都没有 ⇒ 这一轮没东西可探（不是「探测失败」，是没探测）。
+        return {}, ["qq_account_meta", "no_user_id"]
+    if not probed:
+        return {}, ["qq_account_meta", "not_probed"]
+    ok, payload = fetch(KIND_QQ_ACCOUNT_META, f"qq:{uid}", QQ_ACCOUNT_META_ACTION, user_id=int(uid) if uid.isdigit() else uid)
+    if not ok:
+        return {}, ["qq_account_meta", "api_fail"]
+    data = _as_mapping(payload)
+    if not data:
+        return {}, ["qq_account_meta", "api_shape"]
+    out: dict[str, str] = {}
+    audit = ["qq_account_meta"]
+    for key, label in _QQ_META_LABELS.items():
+        if key not in data:
+            continue  # 字段没回：这一格不进字典，展示层自然不渲染（宁缺毋滥）。
+        raw = data.get(key)
+        if key == "status":
+            value = _qq_status_label(raw)
+        elif key == "batteryStatus":
+            text = _meta_scalar(raw)
+            # 动作册把 batteryStatus 登记在返回里，但「值是否恒 0」属运行时事实，
+            # 离线不可判：0/空一律当「读不出有效值」，不写成「电量 0%」。
+            value = f"{text}%" if text and text != "0" else ""
+        else:
+            value = _meta_scalar(raw)
+        out[label] = value
+        audit.append(f"{key}_read" if value else f"{key}_empty")
+    return out, audit
+
+
+def format_qq_account_meta_note(meta: dict[str, str], *, exclude: tuple[str, ...] = ()) -> str:
+    """把读到的格拼成 ``键=值`` 分号串，形状对齐 ``chat.py`` 的 ``sender_profile_note``。
+
+    注入侧要的是一段能直接并进既有 ``"；".join(...)`` 的文本，不是第二个分区构造器；
+    所以这里只产 ``k=v``，**空值一律丢弃**（既有分区渲染的判据是 ``k=v`` 的 v 非空才留行）。
+    ``exclude`` 让调用方把「事件已经带了的格」摘掉——等级/昵称在群聊里事件就给了，
+    再拿 RPC 值重复一行就是两份口径打架。
+    """
+    skip = set(exclude)
+    parts = [
+        f"{label}={value}"
+        for label, value in meta.items()
+        if str(value or "").strip() and label not in skip
+    ]
+    return "；".join(parts)
+
 
 
 def is_group_info_command(text: str) -> bool:
@@ -608,6 +801,8 @@ _TG_NO_PRESENCE_LINE = (
 def _telegram_private_meta(
     fetch: Callable[..., tuple[bool, Any]],
     message: IncomingMessage,
+    *,
+    probed: bool = True,
 ) -> tuple[list[str], list[str]]:
     """TG 私聊对端读数：账号号 / 昵称 / 签名(bio) + 在线状态的诚实缺失。
 
@@ -615,15 +810,23 @@ def _telegram_private_meta(
     解析不出数字就明说拿不到，不拿 sender_id 之外的猜测值去打接口。
     bio 是官方 ChatFullInfo 给私聊对端的「个性签名」口（returned only in getChat）
     ——QQ 侧对位 get_stranger_info 的 long_nick。
+
+    ``probed=False`` 时昵称/签名两格走「没去探测」那条答句，与 QQ 侧同口径：
+    TG 的昵称/用户名事件本身就带着（``message_context.telegram_sender_display_name``），
+    所以这一腿降级时**不许**被读成「TG 没有对端资料」——那是另一格谎报。
     """
     parsed = parse_session_key(message.session_id)
     chat_id = parsed.user_id.strip()
     lines = [f"会话号（chat id）：{chat_id}" if chat_id.isdigit() else "会话号：这次没拿到，不猜。"]
     audit = ["telegram", "private_meta"]
     if not chat_id.isdigit():
-        lines.append("对端昵称与签名：没有会话号就没法查，先空着这几格。")
+        lines.append("对端昵称与签名：没有会话号就没法查，这一轮是没去探测，不是查不到。")
         lines.append(_TG_NO_PRESENCE_LINE)
-        return lines, [*audit, "no_chat_id"]
+        return lines, [*audit, "not_probed", "no_chat_id"]
+    if not probed:
+        lines.append(QQ_META_UNPROBED_ANSWER)
+        lines.append(_TG_NO_PRESENCE_LINE)
+        return lines, [*audit, "not_probed"]
     ok, raw_peer = fetch(KIND_PEER_PROFILE, chat_id, "get_chat", chat_id=int(chat_id))
     if not ok:
         lines.append("对端昵称与签名：Telegram 接口这次没答上，拿不到（不等于对方没设置）。")
@@ -659,6 +862,59 @@ def _telegram_private_meta(
                 lines.append("个性签名：这个字段这次没回，读不出，不写「没有」。")
     lines.append(_TG_NO_PRESENCE_LINE)
     return lines, audit
+
+
+_QQ_META_EMPTY_ANSWER = (
+    "对端资料：接口这次没答上，拿不到（不等于对方没设置，更不等于对方没这个格子）。"
+)
+
+
+def _qq_private_meta(
+    fetch: Callable[..., tuple[bool, Any]],
+    message: IncomingMessage,
+    *,
+    probed: bool = True,
+) -> tuple[list[str], list[str]]:
+    """QQ 私聊对端资料腿：昵称 / 个性签名 / 在线状态 / 等级（需求 4 补齐的对位件）。
+
+    与 ``_telegram_private_meta`` 同形同口径，只差动作名与载荷：TG 走 ``get_chat`` 的
+    ``bio``，QQ 走 ``get_stranger_info`` 的 ``long_nick``。旧注释把这一格判成
+    「bot 侧尚无宿主能力」——那是**没接**，不是协议没有；能力就在 ``get_stranger_info``
+    的 returnsSchema 里，本仓也一直在用这个动作（只是拿去取 bot 自己的头像）。
+
+    ``probed=False``（装配点 ``api=None``，桥未接线）时答句走
+    ``QQ_META_UNPROBED_ANSWER``：那一轮连请求都没发出去，说「接口没答上」是把
+    未发生的事写成一次故障；写任何在线/离线判断更是替对方编状态。
+
+    user_id 取 ``message.sender_id``（私聊里就是对面那一位），**不手拆会话键**：
+    私聊会话键就是裸用户号，事件已经把它放在 ``sender_id`` 上，再拆一次是第二判据。
+    """
+    uid = str(message.sender_id or "").strip()
+    lines = [f"对方账号（QQ 号）：{uid}" if uid.isdigit() else "对方账号：这次事件没带上，不猜。"]
+    if not uid:
+        # 没对象号＝没探测：答句必须是「没去问」那一条，不能假托「接口没答上」。
+        return [*lines, QQ_META_UNPROBED_ANSWER], ["qq", "private_meta", "not_probed", "no_user_id"]
+    meta, audit = read_qq_account_meta(fetch, uid, probed=probed)
+    if not meta:
+        answer = (
+            QQ_META_UNPROBED_ANSWER
+            if qq_meta_probe_state(audit) == QQ_META_PROBE_UNPROBED
+            else _QQ_META_EMPTY_ANSWER
+        )
+        return [*lines, answer], ["qq", "private_meta", *audit]
+    for label in ("昵称", "个性签名", "在线状态", "电量", "等级"):
+        if label not in meta:
+            continue
+        value = str(meta[label] or "").strip()
+        if label == "个性签名":
+            if len(value) > _NOTICE_SNIPPET_CHARS:
+                value = value[:_NOTICE_SNIPPET_CHARS] + "…"
+            lines.append(f"{label}：{value or '接口回了空——多半是没设置，也可能没回，不替你断言。'}")
+        elif label == "电量":
+            lines.append(f"{label}：{value}" if value else "电量：动作册有这个字段，这次没回出有效值——不写成 0%。")
+        else:
+            lines.append(f"{label}：{value or '接口回了空，不替你填。'}")
+    return lines, ["qq", "private_meta", *audit]
 
 
 def _mail_session_meta(message: IncomingMessage) -> tuple[list[str], list[str]]:
@@ -734,7 +990,13 @@ def _participant_lines(
 
 
 # 进程内共享缓存（同群反复被问不重复打协议；测试注入独立实例）。
-_SHARED_CACHE = GroupInfoCache()
+# ⚠ QQ 对端账号资料（KIND_QQ_ACCOUNT_META）不在 group_cache 的登记表里，
+# 未登记 kind 的缺省 TTL 是 0＝**永不缓存**，每轮提示词都打一次 RPC 是不可接受的，
+# 所以在这台共享实例上就地补登记（group_cache 的构造参数就是为这种扩展留的）。
+# 测试注入的独立 GroupInfoCache() 没这条 ⇒ 不缓存、每次现读，语义仍正确只是慢。
+_SHARED_CACHE = GroupInfoCache(
+    ttl_by_kind={KIND_QQ_ACCOUNT_META: QQ_ACCOUNT_META_TTL_SECONDS}
+)
 
 
 def build_group_info_capability(
@@ -852,14 +1114,27 @@ def build_group_info_capability(
         def _result(
             body: str, *, audit: list[str], title: str = "群信息"
         ) -> CapabilityResult:
+            # P2-d 咽喉腿：整张群信息回执的每一格都是他人可填串（群名/公告/相册名/
+            # 待办标题/成员标签），出口统一过一次显示伪装处置——剥反向覆写与零宽、
+            # 折同形角色词，折不动的整格收口。判据零副本（真身在 attack_surface、
+            # 处置口在 display_guard），局部导入避开环。干净回执逐字节不变（不误伤）；
+            # 信号只作观测入 audit，绝不据此改变定权。
+            from plugins.bot_unified_runtime.domains.chat_reply.security import (
+                display_guard,
+            )
+
+            guarded = display_guard.guard_text_signals(body, surface="group_info_receipt")
             return CapabilityResult(
                 request_id=message.request_id,
                 capability_id="bot.group_info",
                 kind="text",
                 title=title,
-                body=body,
+                body=guarded.text,
                 send_policy=SendPolicy.IMMEDIATE,
-                audit_tags=audit,
+                audit_tags=[
+                    *audit,
+                    *(f"group_info_spoof:{s}" for s in guarded.signals),
+                ],
             )
 
         if not is_group_info_command(text):
@@ -879,21 +1154,32 @@ def build_group_info_capability(
         # 所以不能一律拿「去群里问我」挡回去（那会把一条本来有答案的路堵死）。
         if message.session_type.value != "group":
             platform = str(message.platform or "").strip().lower()
+            is_private = message.session_type.value == "private"
             wants_session_meta = platform == "email" or (
-                platform == "telegram" and message.session_type.value == "private"
+                platform == "telegram" and is_private
             )
-            wants_meta = wants_participants or ("profile" in intents and wants_session_meta)
+            # QQ 私聊对端资料腿（需求 4 · 2026-09-28 S-META）：旧注释写「get_stranger_info
+            # 的签名/在线状态在协议册里有、bot 侧尚无宿主能力」——那半句已过期，能力
+            # 就在 read_qq_account_meta。这里放开这一格，**其余 QQ 非私聊会话**（控制台等）
+            # 仍回口语提示：群 API 无对象可查这件事没变，变的只是「对端资料能不能读」。
+            wants_qq_peer_meta = platform == "qq" and is_private
+            wants_meta = wants_participants or (
+                "profile" in intents and (wants_session_meta or wants_qq_peer_meta)
+            )
             if not wants_meta:
-                # QQ 私聊没有「对端资料」这条腿（get_stranger_info 的签名/在线状态
-                # 在协议册里有、bot 侧尚无宿主能力——见 2026-09-26 对等矩阵 §7），
-                # 其余格仍回守岸人口语提示，不做不假装。
                 return _result(_PRIVATE_HINT, audit=["group_info", "private_hint"])
             blocks: list[str] = []
             audits: list[str] = ["group_info", "conversation_participants"]
             meta_emitted_mail_line = False
-            if wants_session_meta and "profile" in intents:
+            if "profile" in intents and (wants_session_meta or wants_qq_peer_meta):
                 if platform == "telegram":
-                    meta_lines, meta_audit = _telegram_private_meta(_fetch, message)
+                    meta_lines, meta_audit = _telegram_private_meta(
+                        _fetch, message, probed=api is not None
+                    )
+                elif platform == "qq":
+                    meta_lines, meta_audit = _qq_private_meta(
+                        _fetch, message, probed=api is not None
+                    )
                 else:
                     meta_lines, meta_audit = _mail_session_meta(message)
                     meta_emitted_mail_line = True

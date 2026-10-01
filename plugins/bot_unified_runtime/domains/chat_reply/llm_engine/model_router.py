@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -605,12 +606,15 @@ def _apply_model_price_fallback(spec: ModelSpec, config: object | None = None) -
     for price_field in ("price_in", "price_out", "price_cache_read", "price_cache_creation", "price_per_call"):
         current = getattr(spec, price_field, None)
         if current is None or (isinstance(current, (int, float)) and current <= 0):
-            override = overrides.get(price_field)
-            fallback = prices.get(price_field)  # 提局部变量让 mypy 窄化：守卫后必非 None（字面量常量字典，无中途改写）
-            if override is not None:
-                updates[price_field] = float(override)
-            elif fallback is not None:
-                updates[price_field] = float(fallback)
+            # 覆盖与兜底同过唯一判据 ``_optional_price``（此处不再写第二份 >=0 / isfinite）：
+            # 脏覆盖（负价、±inf、nan、垃圾串）视同缺席并**继续下探**兜底价——旧写法
+            # ``float(override)`` 会把脏值直接写进 spec（垃圾串还当场 ValueError），
+            # 等于一次配置手滑污染整条计价链。两枚都拿不到合格价就不落 updates。
+            candidate = _optional_price(overrides.get(price_field))
+            if candidate is None:
+                candidate = _optional_price(prices.get(price_field))
+            if candidate is not None:
+                updates[price_field] = candidate
     if not updates:
         return spec
     return spec.__class__(**{**spec.__dict__, **updates})
@@ -927,11 +931,19 @@ def _health_ema_latencies(
 
 
 def _optional_price(value: Any) -> float | None:
+    """价格准入的**唯一判据**：只放行「有限且非负」的数，其余一律降为无价哨兵 ``None``。
+
+    为什么非有限值必须当「没有价」而不是原样放行：+inf 过 ``>= 0`` 会一路带进下游
+    ``round()``（账本计价、微元换算）当场 ``ValueError``，把整笔账单写坏——比缺价严重得多；
+    nan 只因 ``nan >= 0`` 为假才被旧写法挡住，属巧合不是设计，故与 ±inf 一起显式收口。
+    调用方**不得**再自带第二份谓词：需要拒脏价就调本函数，判据只此一处。
+    0 价保留（既有裁定）：axonhub 全 0 遗留由 :func:`_apply_model_price_fallback` 兜底。
+    """
     try:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    return number if number >= 0 else None
+    return number if math.isfinite(number) and number >= 0 else None
 
 
 @dataclass
@@ -2053,6 +2065,28 @@ class ModelRouter:
                 return model_id
         return ""
 
+    @staticmethod
+    def _sent_payload_chars(messages: list[dict[str, str]], tools: Any = None) -> int | None:
+        """发送侧体量（字符数）：这一发要交给 provider 的 messages（含 tools 模式串）。
+
+        只**测量**、不估算——chars→token 的换算与 payload 相对存疑判据唯一住在
+        llm/ledger.build_call_draft（TOKEN_CHARS_PER_TOKEN_EST / TOKEN_REPORT_*），
+        此处禁立第二把尺；本值也**不入账**，只作为 ledger 相对判据的证据入参
+        （台账 #54★：成本原语走微元、取整只在聚合，本改动一处算术都不加）。
+        量在 `_generate_impl` 上下文钳制之前（钳制只会删减）⇒ 体量偏大＝判据偏
+        保守，宁可少标存疑也不误标；拿不出证据（无 messages / 序列化失败）一律
+        返回 None，让相对分支整段跳过，绝不猜一个数。
+        """
+        if not messages:
+            return None
+        try:
+            parts: list[Any] = [messages]
+            if tools:
+                parts.append(tools)
+            return len(json.dumps(parts, ensure_ascii=False))
+        except (TypeError, ValueError):
+            return None
+
     def _emit_call_record(
         self,
         *,
@@ -2066,6 +2100,7 @@ class ModelRouter:
         error: LLMProviderError | None,
         global_effort: str,
         complex_task: bool,
+        sent_payload_chars: int | None = None,
     ) -> None:
         """出口记账：组装一条 LLMCallDraft 交给 sink；吞掉一切异常。
 
@@ -2074,6 +2109,9 @@ class ModelRouter:
         success；失败轨迹含 ``failover:deadline`` = deadline；其余 =
         provider_failed。M1 无 PricingService：cost 全 NULL、unpriced 按
         token 消耗标记（见 llm/ledger.build_call_draft）。
+        发送侧体量 ``sent_payload_chars`` 由 ``generate()`` 薄包装测量后原样透传
+        ——它是 ATKLLM-2 payload 相对存疑判据唯一的证据入口（None＝拿不出证据，
+        ledger 的相对分支整段跳过）；透传只标注存疑，不改动任何入账值。
         """
         try:
             from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.ledger import (
@@ -2141,6 +2179,8 @@ class ModelRouter:
                     spec.price_cache_creation if spec is not None else None
                 ),
                 price_per_call=spec.price_per_call if spec is not None else None,
+                # 发送侧证据：ledger 的 payload 相对存疑判据靠它（只标注、不改账）。
+                sent_payload_chars=sent_payload_chars,
             )
             emit_call_record(
                 sink=getattr(self, "_call_record_sink", None),
@@ -2207,6 +2247,9 @@ class ModelRouter:
             # 亲密会话不升档（2026-09-17 成本裁定）：RP 文本易误触发复杂判据，
             # INTIMATE 态维持基线/全局档，不顶到家族最高档。
             complex_task = False
+        # 发送侧证据（ATKLLM-2 payload 相对存疑判据的入参）：只测一次，成功与
+        # 两条失败分支同值透传——体量取钳制前的入参，宁可少标不误标。
+        sent_payload_chars = self._sent_payload_chars(messages, impl_kwargs.get("tools"))
         try:
             reply = self._generate_impl(
                 messages,
@@ -2229,6 +2272,7 @@ class ModelRouter:
                 started_mono=started_mono,
                 global_effort=global_effort,
                 complex_task=complex_task,
+                sent_payload_chars=sent_payload_chars,
             )
             raise
         except Exception as exc:
@@ -2248,6 +2292,7 @@ class ModelRouter:
                 started_mono=started_mono,
                 global_effort=global_effort,
                 complex_task=complex_task,
+                sent_payload_chars=sent_payload_chars,
             )
             raise
         self._emit_call_record(
@@ -2261,6 +2306,7 @@ class ModelRouter:
             started_mono=started_mono,
             global_effort=global_effort,
             complex_task=complex_task,
+            sent_payload_chars=sent_payload_chars,
         )
         return reply
 
@@ -2572,13 +2618,16 @@ class ModelRouter:
                     # 标记，20s 被掐（axonhub 上游挂起）时可 grep family=grok。
                     logger.warning(
                         "llm route hop failed model=%s family=%s kind=%s "
-                        "elapsed_ms=%d timeout=%s intimate=%s",
+                        "elapsed_ms=%d timeout=%s intimate=%s detail=%s",
                         model_id,
                         model_family(spec.model),
                         exc.error_kind,
                         int((time.monotonic() - attempt_started) * 1000),
                         attempt_options.get("timeout_seconds"),
                         content_intimate,
+                        # W1-② 证据链：底层异常原文缩略（连接类/读取类超时、
+                        # 代理拒连等判别细节），随本行落盘。
+                        getattr(exc, "detail", "") or "-",
                     )
                     # v21r5 链级 fail-fast：连续网络类失败计数（只计 network/
                     # timeout；4xx/auth/server/rate_limited/provider_error 等

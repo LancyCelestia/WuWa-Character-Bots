@@ -307,12 +307,46 @@ def _tavily_image_candidates(name: str, config: Any | None = None) -> list[str]:
         return []
 
 
+def _guarded_image_opener() -> Any:
+    """菜品封面取图的护栏 opener（缺口②，2026-09-30 复原波）。
+
+    为什么必须有它：候选 URL 来自 Bing 结果页 / Tavily 响应体（第三方响应内容，
+    非本 bot 固定域），而 ``urllib.request.urlopen`` 的默认 opener 自动跟随 30x、
+    逐跳落点零复查——公网候选一跳指进 127.0.0.1:3001（SnowLuma 控制面）或
+    169.254.169.254（云元数据）时，内网连接**已经建成**，事后 ``geturl()`` 复查
+    只拦得住字节落盘、拦不住发出去的请求（盲 SSRF + 端口探测面，两次解析之间
+    还有 DNS rebinding 窗口）。
+
+    正解＝复用链上唯一的两件形态，判据本体一律不复制：
+    - 逐跳护栏 ``http_util._GuardedShortLinkRedirectHandler``：每一跳落点在
+      建连**之前**过 ``ssrf_guard.check_fetch_landing``（F-04「解析失败=拒绝」），
+      与 ``vision_describe`` / ``notes`` 两条已验证的同源腿完全同口径；
+    - 连接层钉定件 ``downloader.build_pinning_handlers``：把「判定过的那枚 IP」
+      直接交给 socket，治 DNS rebinding 的判后即弃。代理在场（本机全链拴 Clash，
+      台账 #71★）时钉定件自动让位 urllib 原路，缺省 ``ProxyHandler``（含环境
+      回落 trust_env）与 TLS 证书校验一律不动。
+    """
+    import urllib.request
+
+    from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+        build_pinning_handlers,
+    )
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+        _GuardedShortLinkRedirectHandler,
+    )
+
+    return urllib.request.build_opener(
+        _GuardedShortLinkRedirectHandler(), *build_pinning_handlers()
+    )
+
+
 def _fetch_dish_image(root: Path, name: str, config: Any | None = None) -> str:
     """图搜按序抓第一张通过全部质检的菜品图并缓存；失败返回空串。
 
     候选通道两跳：Bing 图搜 HTML → Tavily 图搜 API（用户 2026-09-14 裁定：
     Bing 缺图时用已配的 Tavily key 兜底，不自造离线假图）。所有候选过同一
-    校验链：来源域黑名单 → SSRF 护栏 → 字节数(1KB~8MB) → magic bytes
+    校验链：来源域黑名单 → SSRF 护栏（入口判定 + 取字节只走 ``_guarded_image_opener``
+    ：逐跳落点建连前复查 + 连接层解析钉定）→ 字节数(1KB~8MB) → magic bytes
     → 像素质检（PIL，可跳过）；任一环不过即换下一个候选。落盘时同目录写
     <菜名>.source.txt（首行图片 URL，次行 ISO 时间戳）作来源记录。
     """
@@ -340,9 +374,13 @@ def _fetch_dish_image(root: Path, name: str, config: Any | None = None) -> str:
                 image_url,
                 headers={"User-Agent": _IMAGE_UA, "Referer": "https://cn.bing.com/"},
             )
-            with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:
+            # 取字节只走护栏 opener（缺口②）：30x 每一跳落点在**建连前**被中央
+            # 判据看过，连接层再拿判定过的那枚 IP 去连（rebinding 窗口归零）。
+            with _guarded_image_opener().open(req, timeout=_FETCH_TIMEOUT) as resp:
                 final_url = str(resp.geturl() or image_url)
-                check_download_url(final_url)  # 重定向落点复查（安全审计 I-1：公网候选 302→内网拒绝）
+                # 落点复查保留作纵深（安全审计 I-1）：护栏已在建连前查过一遍，
+                # 这里再查一次拦的是「传输件被替换/跳过逐跳 handler」的畸形通路。
+                check_download_url(final_url)
                 data = resp.read(_IMAGE_MAX_BYTES + 1)
         except Exception:  # noqa: BLE001 - 单个候选失败静默试下一个。
             return ""

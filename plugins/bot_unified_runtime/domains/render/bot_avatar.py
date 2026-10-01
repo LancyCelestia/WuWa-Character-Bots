@@ -437,8 +437,22 @@ def set_identity_resolver(
 
 
 def _persona_display_name(config: object | None) -> str:
-    """名字链第三级：人格配置中文名（config.py:150，实例可配面貌字段）。"""
-    return str(getattr(config, "bot_persona_display_name", "") or "").strip()
+    """名字链第三级：人格册的中文名（P-G3 第二波换腿，2026-09-29）。
+
+    此前这里直读 ``config.bot_persona_display_name``——那是**实例可配的面貌字段**，
+    切人格时它不动，于是切完卡面仍显旧名（台账 P-G3「自称与页面名分家」）。现改经
+    唯一读法 ``persona_profile.current_bot_nickname``：先查人格册（按**当前生效**人格
+    id＝``active_persona_id``，override 优先、每轮现读），册里没有才回落兼容显示名。
+    取不到 ⇒ 空串，交给胶囊 ``mica_shell.brand_capsule`` 统一回落品牌名——本层
+    **不再抄第二份回落字面量**（与 ``render/templates.py`` 同口径）。
+    绝不读 ``get_login_info``（台账 #60★：其自身身份缓存改后不刷新）。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+        active_persona_id,
+        current_bot_nickname,
+    )
+
+    return current_bot_nickname(active_persona_id(config), config=config)
 
 
 def _per_instance_avatar_uri(bot_id: str, config: object | None) -> str:

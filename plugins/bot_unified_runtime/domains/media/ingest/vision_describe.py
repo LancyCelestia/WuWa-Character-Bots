@@ -36,6 +36,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import 
     LLMReply,
     OpenAICompatibleLLMProvider,
 )
+from plugins.bot_unified_runtime.domains.media import path_gate
 from plugins.bot_unified_runtime.domains.media.ingest.image_pixel_budget import (
     ensure_pixel_budget,
 )
@@ -180,8 +181,115 @@ def requires_native_animation(url: object) -> bool:
 
 
 
+def _temp_media_read_root() -> Path:
+    """bot 自产暂存件的容器根（TG ``file_id`` 落临时件、ffmpeg 抽帧、ASR work_dir）。
+
+    真身＝``tempfile.gettempdir()`` 一处，单列成函数只为为**测试注入假暂存根**留一
+    枚缝（``tests/test_vision_local_path_domain_gate.py`` 用），不在别处再算第二遍。
+    """
+    return Path(tempfile.gettempdir())
+
+
+def _safety_paths_module() -> Any | None:
+    """路径域判定真身模块（懒引，缺席返回 None 由调用侧 fail-closed）。
+
+    懒引两重理由：① ``domains/core`` 与 ``domains/media`` 的包边界（模块级互引会把
+    一侧的 import 失败扩散成另一侧整包炸，见 ``safety_exec/__init__.py`` 零 import 规矩）；
+    ② 与 ``restricted_runner`` / ``persona_profile`` 同一枚 import 形态
+    （``from …safety_exec import paths``），不占「按模块名登记」那第二份消费名册。
+    """
+    try:
+        from plugins.bot_unified_runtime.domains.core.safety_exec import (
+            paths as safety_paths,
+        )
+
+        return safety_paths
+    except Exception:  # noqa: BLE001 - 真身取不到＝判定不可用，调用侧按拒收。
+        logger.debug("vision: path policy unavailable", exc_info=True)
+        return None
+
+
+def _registered_media_read_roots() -> list[Path]:
+    """读图/读音视频请求允许落在哪些容器里（**在册名册**，本件不自己编目录名）。
+
+    两枚来源真身：① ``domains/core/safety_exec/paths`` 的 ``readable_roots``
+    （工作区 + 运行数据域那份名册，含 ``downloads / media_archive / cards / memes /
+    notes`` 等子树）；② bot 自产暂存根。判定件失灵时只剩 ②——仍 fail-closed
+    （``contain_within`` 见空根即拒），绝不退成「取不到根就当放行」。
+    """
+    roots: list[Path] = []
+    safety_paths = _safety_paths_module()
+    if safety_paths is not None:
+        try:
+            roots.extend(
+                Path(root)
+                for _label, root in safety_paths.default_policy().readable_roots
+            )
+        except Exception:  # noqa: BLE001 - 名册读不出只剩暂存根，绝不放行全部。
+            logger.debug("vision: readable roots unreadable", exc_info=True)
+    roots.append(_temp_media_read_root())
+    return path_gate.resolve_roots(roots)
+
+
+#: 协议端（NTQQ/SnowLuma/NapCat）媒体落盘锚。入站段 ``data.file`` 的协议侧形态住在
+#: 这里，**既不在工作区也不在运行数据根内**（取证＝归档日志
+#: ``nonebot.out.log.bak-20260912`` 的 ``…\\nt_qq\\nt_data\\Ptt\\2026-09\\Ori\\…`` 行），
+#: 而 record 段入站契约只吃这一格（docs/snowluma-setup.md §6）、``BOT_ASR_ENABLED``
+#: 生产在岗 ⇒ 整块闸死等于静默打死语音转写。放行方式＝把锚点折算成**容器根**，
+#: 宽只宽到 ``nt_data`` 那一格：锚点之外、以及从锚点里用 ``..`` 折出去的，一律不算根内。
+_PROTOCOL_MEDIA_ANCHOR = "nt_data"
+
+
+def _protocol_media_root(resolved: Path) -> Path | None:
+    """折算后的落点若落在协议端媒体锚之内，返回**锚点本身**当容器根（否则 None）。"""
+    parts = resolved.parts
+    for index, part in enumerate(parts):
+        if index > 0 and part.casefold() == _PROTOCOL_MEDIA_ANCHOR:
+            return Path(*parts[: index + 1])
+    return None
+
+
+#: 禁触名册里那两枚判据（凭据/库/人格/日志类）——**任何位置**都拒，登记根内也拒。
+#: 刻意只取这两枚、不取 ``check_sendable`` 的形态类判据：本机 ``%TEMP%`` 实测就是
+#: ``LANCYC~1`` 短名形态，拿 ``short_name_form`` 判暂存面会整族误杀（S-T-FILE-2 在册
+#: 教训）；形态那一格由 ``path_gate`` 负责，两把尺各管一段，不重复也不留空档。
+#: 码名不在此重抄（字面量＝第二张名册，``SECOND_TRUTH_CODES`` 扫描执法），
+#: 判定处直接引 ``safety_exec.paths.DenyReason`` 真身常量。
+
+
+def _refused_by_forbidden_roster(resolved: Path) -> bool:
+    """禁触名册那一问（判定件失灵＝拒读，与 notes 本地图片腿同一 fail-closed 口径）。
+
+    原因码**只引真身常量**（``DenyReason`` 枚值），在这里重抄字面量就成了第二张名册，
+    由 ``tests/test_safety_exec_paths.py`` 的 ``SECOND_TRUTH_CODES`` 扫描执法。
+    """
+    safety_paths = _safety_paths_module()
+    if safety_paths is None:
+        return True
+    try:
+        decision = safety_paths.check_sendable(str(resolved))
+    except Exception:  # noqa: BLE001 - 判定挂了不许当没事发生。
+        logger.debug("vision: roster judgement failed", exc_info=True)
+        return True
+    return decision.denied and decision.reason_code in {
+        safety_paths.DenyReason.FORBIDDEN_ZONE,
+        safety_paths.DenyReason.FORBIDDEN_FILE_CLASS,
+    }
+
+
 def _local_path_from_value(value: str) -> Path | None:
-    """file:// 前缀或本机绝对路径 → 已存在的文件；其余（含裸文件名）返回 None。"""
+    """``file://`` / 绝对 / 相对写法 → **过域门后**存在的文件；其余（含裸文件名落空）None。
+
+    唯一带门判据（``transcribe`` / ``video_understanding`` / ``video_pipeline`` /
+    ``vision_caption_cache`` 一律转调本件，禁第二份）。四问按「越早越省」排：
+    形态 → 容器归属（``path_gate.contain_within``）→ 禁触名册（``check_sendable``）
+    → 在场。返回**折算后**的路径：判定与执行同一枚路径，``..``／8.3 短名／junction
+    换写法都不构成逃逸；拒绝只记代号不记路径（免得一次拒绝变成新的泄露面）。
+
+    洞的账（INCIDENT-20260930 §5 P0）：旧判据只问 ``is_file()``，而本模块的
+    ``_encode_image_bytes``／``_image_file_to_data_url`` 把字节 base64 后发给**外部
+    VLM** ⇒ 组合＝任意本地文件读 + 外传。
+    """
     text = str(value or "").strip()
     if not text:
         return None
@@ -198,12 +306,46 @@ def _local_path_from_value(value: str) -> Path | None:
         if "://" in text:
             return None
         candidate = Path(text)
+    roots = _registered_media_read_roots()
+    resolved_probe = path_gate.resolve_roots([candidate])
+    if resolved_probe:
+        anchor = _protocol_media_root(resolved_probe[0])
+        if anchor is not None and anchor not in roots:
+            roots.append(anchor)
     try:
-        if candidate.is_file():
-            return candidate
+        resolved = path_gate.contain_within(candidate, roots)
+    except path_gate.PathEscapeError as exc:
+        logger.debug("vision: local media path refused code=%s", exc.code)
+        return None
+    if _refused_by_forbidden_roster(resolved):
+        logger.debug("vision: local media path refused code=forbidden_roster")
+        return None
+    try:
+        if resolved.is_file():
+            return resolved
     except OSError:
         return None
     return None
+
+
+def _local_media_source_allowed(source: str) -> bool:
+    """ffmpeg 直喂腿的入口问一句：要么不是本地形态，要么本地形态过了域门。
+
+    http/https 与其它 scheme（rtmp/pipe 之类）不归路径门管——它们的咽喉是
+    ``check_download_url``（见 ``_extract_video_frames`` 里那段），本函数绝不把
+    远程腿一起闸死（``test_video_ingest_ssrf_entry`` 在册的正是那一侧口径）。
+    """
+    text = str(source or "").strip()
+    if not text:
+        return False
+    lowered = text.lower()
+    if lowered.startswith(("http://", "https://")):
+        return True
+    if lowered.startswith("file:"):
+        return _local_path_from_value(text) is not None
+    if "://" in text:
+        return True
+    return _local_path_from_value(text) is not None
 
 
 def _encode_image_bytes(data: bytes, mime: str) -> str:
@@ -650,8 +792,17 @@ def _extract_video_frames(
     ——明确拒绝即按「无帧」降级返回 ``[]``（与 ffmpeg 缺失同口径），绝不把内网
     地址下发给 ffmpeg；本机文件路径不受影响。ffmpeg 自身跟随的重定向落点属
     连接级残余（同 F-5/F-8），登记不堵（见席位报告）。
+
+    ⚠ 本地形态另加一问（INCIDENT-20260930 §5 P0「ffmpeg 直喂」那一支）：源字符串
+    若是本地路径且过不了 :func:`_local_path_from_value` 的域门，**命令行都不下发**——
+    档案库里的 ``local_path`` 是早先事件写进 DB 的旧值，不经这一问就等于绕开现算判定。
+    放行的那条腿仍按**原串**下发（在册锁 ``test_video_ingest_ssrf_entry`` 判的正是
+    原串可达 ffmpeg；换成折算串会把「判定走 A、执行走 B」引进另一侧，属另一票）。
     """
     source = str(video_source or "")
+    if not _local_media_source_allowed(source):
+        logger.info("vision: video source refused by local path gate")
+        return []
     if source.startswith(("http://", "https://")):
         from plugins.bot_unified_runtime.domains.files.sources.downloader import (
             RejectedUrlError,

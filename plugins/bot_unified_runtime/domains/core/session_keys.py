@@ -17,7 +17,8 @@
 
 本件是三件事的唯一入口：**键形态解析**（``parse_session_key``）、
 **是否群会话**（``is_group_session_key``）、**键构造**（``build_session_key`` /
-``private_session_key`` / ``group_session_prefix``）。构造侧的逐字形态与历史实现
+``private_session_key`` / ``group_session_prefix``；人物级跨会话归属另有
+``person_scope_key``——(平台域, 用户号) 身份键的唯一构造，S-FIX-ATK-SCHED2 票1）。构造侧的逐字形态与历史实现
 （``meme/reactions/engine.py:session_key_from_ids``、
 ``chat_reply/character/shared_group.py:_group_prefix``）**字节等价**，
 读侧与写侧因此不可能再各说各话。
@@ -250,3 +251,34 @@ def sanitize_key_segment(value: Any, *, forbidden: str) -> str:
     while forbidden in text:
         text = text.replace(forbidden, "")
     return text
+
+
+# 人物身份键的分隔符：沿用仓内既有的**冒号限定**形态（policy/roles.py
+# ENTRY_SEPARATOR、``email:<id>`` 会话键、出站 ``group:<gid>`` 同族），不新造记号。
+PERSON_SCOPE_SEP: Final[str] = ":"
+
+
+def person_scope_key(platform_domain: Any, user_id: Any) -> str:
+    """(平台域, 用户号) → 人物级跨会话归属的**唯一**身份键构造（S-FIX-ATK-SCHED2 票1，2026-09-28）。
+
+    病根（ATK-SCHED 票1/ATKAFF-1 同族）：把「这个人」的存储主键裸建成
+    ``str(sender_id)`` 时，**跨平台同号即同号接管**——QQ 号可自选、TG uid
+    对群成员公开可见，两侧任一同号者零角色即可读写他人按裸号建键的全部数据。
+    在册裁定「跨会话归属按 (平台域, sender_id)」（policy/roles.platform_domain_of
+    的 K1B 判据）第一次有了构造侧真身：本函数是该裁定落键的唯一入口，
+    读侧/写侧只准从这里取键形，禁在任何域内自拼 ``f"{domain}:{uid}"`` 第二形
+    （T-1 键形缺陷教训：判据与构造各自书写，必然再咬一次）。
+
+    - 键形 ``<域>:<用户号>``，与管理员名单的限定条目（``telegram:2002``）逐字
+      同构；裸号条目按名单原生域（QQ）归一后的键形同样由本件产出。
+    - 两段先过 ``sanitize_key_segment``（T-2）剔除分隔符 ⇒ 用户可控的
+      sender_id 塞 ``:`` 也伪不出嵌套/歧义键（拆不回去的键不配存在）。
+    - 平台域取不到（未知平台/合成消息）就是空域段 ``":<uid>"``——与 ``"qq:<uid>"``
+      天然不同桶，**fail-closed：不认识的平台不继承任何已知平台的归属数据**。
+    - 用户号为空返回 ``""``（调用方自行兜底，绝不造出 ``"qq:"`` 这种无主键）。
+    """
+    uid = sanitize_key_segment(user_id, forbidden=PERSON_SCOPE_SEP)
+    if not uid:
+        return ""
+    domain = sanitize_key_segment(platform_domain, forbidden=PERSON_SCOPE_SEP)
+    return f"{domain}{PERSON_SCOPE_SEP}{uid}"

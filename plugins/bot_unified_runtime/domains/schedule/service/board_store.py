@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -137,11 +136,10 @@ def build_board_store(config: Any | None = None) -> ScheduleBoardStore:
     时区口径绑定与提醒链路同源（``configure_reminder_timezone``），日程自然语言
     解析（reminders.parse_time_target）与展示换算共用这一把配置时区尺。
     """
-    from scripts.runtime_paths import runtime_path
-
     from plugins.bot_unified_runtime.domains.schedule.store.reminders import (
         configure_reminder_timezone,
     )
+    from scripts.runtime_paths import runtime_path
 
     configure_reminder_timezone(str(getattr(config, "bot_timezone", "") or ""))
     raw = str(getattr(config, "bot_schedule_db_path", "data/schedules_v21.sqlite3") or

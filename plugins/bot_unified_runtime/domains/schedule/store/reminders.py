@@ -65,6 +65,13 @@ _CLEAN_RE = re.compile(r"提醒我?|叫我|记得叫|記得叫|一下|吧|哦|�
 # 超过则视为"离线错过"，不再原样补投（见 ReminderStore.due）。
 LATE_DELIVERY_GRACE = timedelta(minutes=30)
 
+# A2 修复席（2026-09-27）：per-sender 待办子闸缺省——同一会话内单人挂账
+# 上限。会话总量闸（``ReminderStore._max_pending``，缺省 20）保留原样，
+# 本值由能力层显式以 ``max_pending_for_sender`` 传入 ``add``/``add_checked``
+# 生效；不传（直构 store 的抽取腿/测试夹具等调用面）维持既有行为。
+# 刻意**不新增 config 键**；要配置化走提案，不在此处改口径。
+MAX_PENDING_PER_SENDER = 5
+
 
 def _local_now() -> datetime:
     """统一本地时区口径的"现在"（aware、进程本地时区）。
@@ -481,7 +488,40 @@ class ReminderStore:
         bot_id: str,
         remind_at: datetime,
         text: str,
+        max_pending_for_sender: int | None = None,
     ) -> Reminder | None:
+        """带配额判定的新增（兼容口）：只回结果对象，配额理由见
+        ``add_checked``。行为与 A-07 一致：超限拒绝、绝不静默挤掉最旧一条。"""
+        reminder, _reason = self.add_checked(
+            session_key=session_key, sender_id=sender_id, target_scope=target_scope,
+            target_id=target_id, adapter=adapter, bot_id=bot_id,
+            remind_at=remind_at, text=text,
+            max_pending_for_sender=max_pending_for_sender,
+        )
+        return reminder
+
+    def add_checked(
+        self,
+        *,
+        session_key: str,
+        sender_id: str,
+        target_scope: str,
+        target_id: str,
+        adapter: str,
+        bot_id: str,
+        remind_at: datetime,
+        text: str,
+        max_pending_for_sender: int | None = None,
+    ) -> tuple[Reminder | None, str]:
+        """两层配额判定的新增，返回 ``(reminder, reason)``。
+
+        ``reason`` ∈ ``{"", "session_full", "sender_full"}``（""=成功）。
+        会话总量闸（``self._max_pending``）优先于 per-sender 子闸
+        （``max_pending_for_sender``，A2）：两层同时踩满时报 session_full——
+        此时取消本人一条也仍挤不进，先报更大的闸更可行动。子闸不传即不判
+        （直构调用面行为不变）。COUNT→INSERT 同在 ``self._lock`` 临界区，
+        两层判定都无进程内竞态。
+        """
         created = datetime.now(UTC).isoformat()
         # 落库统一本地时区口径（naive 视为本地），后续到点判定做时刻比较。
         stored_at = _as_local(remind_at)
@@ -496,7 +536,18 @@ class ReminderStore:
             if int(pending or 0) >= self._max_pending:
                 # 审查 A-07：超限不再静默删最旧的一条（用户以为都记着，其实
                 # 丢了）——改为拒绝新增并返回 None，由能力层提示用户先取消。
-                return None
+                return None, "session_full"
+            if max_pending_for_sender is not None:
+                # A2 子闸：群会话共享配额下，单成员连发不同正文可占满整组
+                # 预算（24h 正文去重键含正文，逐条换词即绕过）。per-sender
+                # 计数封住这条 DoS-by-design 面。
+                sender_pending = self._conn.execute(
+                    "SELECT COUNT(*) FROM reminders"
+                    " WHERE session_key = ? AND sender_id = ? AND status = 'pending'",
+                    (session_key, sender_id),
+                ).fetchone()[0]
+                if int(sender_pending or 0) >= max(1, int(max_pending_for_sender)):
+                    return None, "sender_full"
             self._conn.execute(
                 "INSERT INTO reminders (reminder_id, session_key, sender_id, target_scope,"
                 " target_id, adapter, bot_id, remind_at, text, status, created_at)"
@@ -509,7 +560,7 @@ class ReminderStore:
             target_scope=target_scope, target_id=target_id, adapter=adapter,
             bot_id=bot_id, remind_at=stored_at.isoformat(), text=text,
             status="pending", created_at=created,
-        )
+        ), ""
 
     def due(self, *, now: datetime | None = None, grace_hours: int = 24) -> list[Reminder]:
         """到点提醒 + 过期治理（2026-09-13 修复早/晚触发与无检查补投递）。
@@ -596,15 +647,28 @@ class ReminderStore:
                 (reminder_id,),
             )
 
-    def list_pending(self, session_key: str, *, limit: int = 10) -> list[Reminder]:
+    def list_pending(
+        self,
+        session_key: str,
+        *,
+        limit: int = 10,
+        sender_id: str | None = None,
+    ) -> list[Reminder]:
+        """会话待办清单。``sender_id`` 传入时只列该归属人（A2 隐私面：
+        群内列表/取消按本人归属查询）；None=整会话，私聊与管理面照旧。"""
+        sql = (
+            "SELECT reminder_id, session_key, sender_id, target_scope, target_id,"
+            " adapter, bot_id, remind_at, text, status, created_at"
+            " FROM reminders WHERE session_key = ? AND status = 'pending'"
+        )
+        params: list[object] = [session_key]
+        if sender_id is not None:
+            sql += " AND sender_id = ?"
+            params.append(sender_id)
+        sql += " ORDER BY remind_at ASC LIMIT ?"
+        params.append(limit)
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT reminder_id, session_key, sender_id, target_scope, target_id,"
-                " adapter, bot_id, remind_at, text, status, created_at"
-                " FROM reminders WHERE session_key = ? AND status = 'pending'"
-                " ORDER BY remind_at ASC LIMIT ?",
-                (session_key, limit),
-            ).fetchall()
+            rows = self._conn.execute(sql, tuple(params)).fetchall()
         return [
             Reminder(
                 reminder_id=str(row[0]), session_key=str(row[1]), sender_id=str(row[2]),

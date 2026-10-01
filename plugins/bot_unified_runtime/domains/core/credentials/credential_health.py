@@ -6,6 +6,8 @@
 - ``expires_at`` 解析：过期 / 临近过期（``warn_days`` 内）/ 正常 / 未知。
 - 在线探测（可选）：对配置的 ``probe_url`` 带上 cookie 发 GET，
   HTTP 200/302 视为可用，401/403 视为需要重新登录，其余为网络错误。
+  cookie 出站走 WP1 中央咽喉（http_util）：附凭证前过目标域归属校验，
+  跨 host 重定向自动剥凭证；不归属的目标降级为未登录探测（与解析器同语义）。
 - 输出只含状态和脱敏说明，绝不包含 cookie 值。
 
 配合 APScheduler 的定时任务在 NoneBot 入口注册（配置
@@ -22,6 +24,10 @@ from datetime import UTC, datetime, timedelta
 from plugins.bot_unified_runtime.domains.core.credentials.credentials import (
     CredentialStore,
     build_credential_store,
+)
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    _build_opener,
+    scrub_credentials_for_target,
 )
 
 STATE_OK = "ok"
@@ -118,6 +124,15 @@ class CredentialHealthChecker:
                 detail=f"{report.detail}；未配置 probe_url，未做在线探测",
                 needs_reauth=report.needs_reauth,
             )
+        # F-CRED-1（审计 SEAT-ATK-SSRF）：本腿曾以裸 urlopen 携带 Cookie 探测——
+        # urllib 跨 host 30x 重定向不剥 Cookie，探测目标域上一个开放重定向就能
+        # 把平台登录态整串送到落点域。修法＝并入 WP1 中央咽喉（link_parse/
+        # parsers/http_util），绝不在本件新建第二套剥除逻辑：
+        #   ① 附凭证前过 ``scrub_credentials_for_target``（目标域归属校验，
+        #      不归属→降级未登录探测，与解析器同一判据）；
+        #   ② 出站走 ``_build_opener()``（默认装 _CredentialScrubbingRedirect
+        #      Handler，跨 host 30x 即剥 Cookie/Authorization，同 host 不误剥）。
+        credential_value = scrub_credentials_for_target(credential_value, url)
         try:
             request = urllib.request.Request(
                 url,
@@ -126,10 +141,10 @@ class CredentialHealthChecker:
                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0"
                     ),
-                    "Cookie": credential_value,
+                    **({"Cookie": credential_value} if credential_value else {}),
                 },
             )
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+            with _build_opener().open(request, timeout=self.timeout_seconds) as response:
                 status = int(getattr(response, "status", 200) or 200)
         except urllib.error.HTTPError as exc:
             status = int(exc.code)

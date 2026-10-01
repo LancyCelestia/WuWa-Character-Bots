@@ -6,7 +6,7 @@ import inspect
 import json
 import logging
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol, cast
@@ -26,9 +26,15 @@ from plugins.bot_unified_runtime.contracts import (
     new_debug_id,
 )
 from plugins.bot_unified_runtime.domains.ops.monitor.alerts import AdminAlertSuppression
+from plugins.bot_unified_runtime.domains.transport.sender.failure_class import (
+    RETRY_SAFETY_CONNECT_PHASE,
+    classify_send_failure,
+    issue_retry_safety,
+)
 from plugins.bot_unified_runtime.domains.transport.sender.queue import (
     PartLedgerConflictError,
     PartProgress,
+    PartRecord,
     QueuedSendRequest,
 )
 from plugins.bot_unified_runtime.domains.transport.sender.receipts import (
@@ -54,6 +60,13 @@ _DORMANT_PARTIAL_KIND = "send_queue_dormant_partial"
 _DORMANT_PARTIAL_EVENT = "queue_worker_dormant_partial"
 _DORMANT_PARTIAL_ALERT_THRESHOLD = 1
 _DORMANT_ALERT_SUPPRESSION = AdminAlertSuppression(window_seconds=300.0)
+# 连接期失败可重投上限（TG 告警卡连接期修复波，2026-09-28）：mixed 原子整发
+# 遇 **connect_phase** 失败（代理拒连/DNS 解析失败＝请求零字节出网、必未送达）
+# 不再一票停放，改走「part 保持 PENDING + 请求级既有退避通路」重投。上限取
+# 模块常量而非 .env 键：这是安全护栏阈值，不是运维旋钮（同 queue.py 启动清扫
+# 常量口径）。退避节拍复用队列真身（retry_count → _backoff_seconds，默认
+# 30s×2ⁿ、封顶 retry_max_seconds），本席不另造第二套时钟。
+_CONNECT_PHASE_RETRY_MAX_ATTEMPTS = 3
 # §9.3 UNKNOWN 确认协议：确认器注入点（生产默认 None → 无法确认的 UNKNOWN
 # part 永不盲发，停在 PARTIAL 待人工/平台确认）。语义：
 #   True  = 平台确认已送达（如 get_msg 命中）→ part 标 SENT，跳过；
@@ -250,6 +263,9 @@ class SendQueueWorkerResult(BaseModel):
     # Q-G7 可观测：本次 pass 末仍处休眠 PARTIAL（state=partial 且
     # next_retry_at IS NULL）的行数；无该视图的队列（内存版/测试替身）记 0。
     dormant_partial_count: int = 0
+    # SEAT-EXP-E 可观测：本 pass 顶部「启动休眠清扫」真正终态化的存量休眠行数
+    # （每实例仅首轮非 0，其余 pass 恒 0；无该能力的队列记 0）。
+    startup_dormant_swept: int = 0
     operational_issues: tuple[OperationalIssue, ...] = ()
 
 
@@ -266,6 +282,13 @@ async def drain_send_queue_once(
 ) -> SendQueueWorkerResult:
     current_time = now or _utc_now()
     safe_limit = max(1, int(limit))
+    # SEAT-EXP-E：worker 启动休眠清扫（每队列实例仅首轮真正执行，余轮恒 0）。
+    # 必须在本 pass 末尾的休眠告警观测（_emit_dormant_partial_alert）之前把
+    # 存量休眠行收口——同一轮观测才能见 0、不再点名刷屏；无该视图的队列（内存
+    # 版/测试替身）鸭子类型探测后跳过。清扫是旁路，绝不因清扫问题阻断投递主链路。
+    startup_swept = _sweep_dormant_partials_on_startup_safely(
+        send_queue, now=current_time
+    )
     entries = _claim_or_list_due(send_queue, now=current_time, limit=safe_limit)
     counters = {
         "checked": len(entries),
@@ -280,6 +303,7 @@ async def drain_send_queue_once(
         "partials_resumed": 0,
         "inflight_saturated_alerts": 0,
         "dormant_partial_count": 0,
+        "startup_dormant_swept": startup_swept,
     }
     operational_issues: list[OperationalIssue] = []
 
@@ -617,6 +641,33 @@ def _list_dormant_partials_safely(
     return list(result) if isinstance(result, list) else []
 
 
+def _sweep_dormant_partials_on_startup_safely(
+    send_queue: DrainableSendQueue,
+    *,
+    now: datetime,
+) -> int:
+    """SEAT-EXP-E：worker 首轮 pass 顶部的启动休眠清扫旁路。
+
+    把「state=partial 且 next_retry_at IS NULL」且停放超宽限期的存量行走队列
+    自带的终态口收口（复用 TTL 同一套语义，只终态化、绝不重投），消除 TTL(7d)
+    自然出清之前的休眠告警刷屏。鸭子类型探测：无该能力的队列（内存版/测试替身）
+    直接跳过。清扫属观测/治理旁路，任何异常一律吞成 DEBUG 并按「未清扫」返回
+    0，绝不因清扫问题阻断投递主链路；「每实例仅首轮生效」的一次性幂等守卫由
+    队列方法自身承载，本旁路每 pass 无脑调用即可。
+    """
+    sweeper = getattr(send_queue, "sweep_dormant_partials_on_startup", None)
+    if not callable(sweeper):
+        return 0
+    try:
+        result = sweeper(now=now)
+    except Exception:  # 清扫属旁路，失败一律 fail-open、不阻断发送主链路。
+        logging.getLogger(__name__).debug(
+            "startup dormant partial sweep failed", exc_info=True
+        )
+        return 0
+    return int(result) if isinstance(result, int) else 0
+
+
 async def _emit_dormant_partial_alert(
     dormant_entries: list[QueuedSendRequest],
     *,
@@ -685,7 +736,7 @@ async def _call_transport_safely(
 ) -> DeliveryReceipt:
     try:
         return await transport(send_request)
-    except Exception:  # noqa: BLE001 - 传输异常统一转为可重试失败回执。
+    except Exception as exc:  # noqa: BLE001 - 传输异常统一转为可重试失败回执。
         debug_id = new_debug_id()
         return DeliveryReceipt(
             request_id=send_request.request_id,
@@ -699,6 +750,10 @@ async def _call_transport_safely(
                 retryable=True,
                 safe_summary="transport_exception",
                 debug_id=debug_id,
+                # 连接期修复波：异常在此直接过 transport 侧分类器（本层看得见
+                # 裸异常，无需等下游回执）。kind/safe_summary 逐字不动；只有
+                # 零字节出网的连接失败打 connect_phase，其余按 uncertain 收口。
+                retry_safety=classify_send_failure(exc),
             ),
         )
 
@@ -798,6 +853,34 @@ def _is_atomic_part_delivery(send_request: SendRequest) -> bool:
     return str(send_request.content.content_type).strip().lower() == "mixed"
 
 
+def _is_connect_phase_retryable(receipt: DeliveryReceipt) -> bool:
+    """mixed 整发回执是否「连接建立期失败」＝唯一可安全重投的失败档。
+
+    判据真身＝`failure_class.classify_send_failure`（transport 侧打标随回执
+    上抛）。缺标签/不确定一律 False ⇒ 走既有 UNKNOWN/停放语义，M-63 红线
+    （台账 #47「九发零账」）不因本函数放宽。
+    """
+    return (
+        receipt.state is ReceiptState.FAILED_RETRYABLE
+        and issue_retry_safety(receipt.operational_issue)
+        == RETRY_SAFETY_CONNECT_PHASE
+    )
+
+
+def _connect_phase_attempts_left(records: Iterable[PartRecord | None]) -> bool:
+    """本轮之后是否还在 connect_phase 重投上限内。
+
+    传入的是**发前**快照（``mark_part_attempt`` 已在 dispatch 前落笔，但快照
+    取于其前），故本轮尝试数＝``record.attempts + 1``。上限 3 ＝「首投 + 至多
+    3 次重投」共 4 发：第 1/2/3 次失败后照样重投，第 4 次仍失败即回到既有
+    UNKNOWN/停放语义（保守收口，不新增终态形态）。
+    """
+    used = max(
+        (record.attempts for record in records if record is not None), default=0
+    ) + 1
+    return used <= _CONNECT_PHASE_RETRY_MAX_ATTEMPTS
+
+
 def _payload_digest(chunk: str) -> str:
     """payload 摘要（规格 §9.3.2）：只存摘要，不存用户正文副本。"""
     return hashlib.sha256(chunk.encode("utf-8")).hexdigest()[:16]
@@ -857,13 +940,21 @@ def book_inline_unknown_parts(send_queue: Any, send_request: SendRequest, issue:
       retryable 语义；
     - 其余可重试失败（超时/断连/传输异常=结果未知）⇒ 全部 PENDING part 记
       UNKNOWN、行置 PARTIAL 断点（resumable=True，与 worker 有进展轮同语义：
-      UNKNOWN 确认协议照常，生产 confirmer=None 时停 PARTIAL 待人工）。
+      UNKNOWN 确认协议照常，生产 confirmer=None 时停 PARTIAL 待人工）；
+      例外＝``retry_safety=connect_phase``（连接建立期失败，零字节出网）⇒
+      返回 False 走请求级退避重投，判据与 `_deliver_atomic_mixed_parts` 同源。
     返回 True=已记账，调用方不再 mark_retryable_failure。非 mixed、无 part
     面队列（内存版/测试替身）或规划失败一律 False=既有行为逐字节不变。
     """
     if issue is None:
         return False
     if str(getattr(issue, "kind", "")) in {_DEFINITIVE_REJECTION_KIND, "bot_unavailable"}:
+        return False
+    if issue_retry_safety(issue) == RETRY_SAFETY_CONNECT_PHASE:
+        # 连接建立期失败（零字节出网＝必未送达）：inline 首投不记 UNKNOWN，
+        # 交调用方走既有请求级 mark_retryable_failure ⇒ 退避后 worker 整发重投。
+        # 与 mixed 原子整发分支同一判据（单一真身＝failure_class）；不确定/未
+        # 分类一律照旧记 UNKNOWN 停放（M-63 红线）。
         return False
     if not _is_atomic_part_delivery(send_request):
         return False
@@ -1344,6 +1435,10 @@ async def _deliver_atomic_mixed_parts(
       ≠未送达）→ 全部 PENDING part 记 UNKNOWN → 请求置 PARTIAL 断点，
       绝不自动重投（M-63「9 发零台账」的根修点；UNKNOWN 确认协议与
       chunks 同一套，生产 confirmer=None 时停 PARTIAL 待人工）；
+      **唯一例外**＝transport 侧打标 ``connect_phase`` 的失败（连接建立期
+      失败，请求零字节出网 ⇒ 必未送达）：part 保持 PENDING 交请求级既有
+      退避重投，上限 ``_CONNECT_PHASE_RETRY_MAX_ATTEMPTS``，超限回到本条
+      语义（2026-09-28 TG 告警卡瞬断永久丢弃的根修点）；
     - FAILED_FINAL（白名单退码/deadline）→ part 记 FAILED_FINAL，请求
       终态；issue 透传使主循环的 W1 文本降级（_is_definitive_media_
       rejection 判 retcode_failure）在第 1 轮即接住混排文字部件。
@@ -1395,6 +1490,20 @@ async def _deliver_atomic_mixed_parts(
             ):
                 # 明确拒绝（零投递，重发安全）/ 环境挂起：part 不动，
                 # 请求级语义由收敛段按 receipt 承载。
+                pass
+            elif _is_connect_phase_retryable(receipt) and _connect_phase_attempts_left(
+                pending_records
+            ):
+                # 连接建立期失败（transport 侧打标 connect_phase：代理拒连、
+                # DNS 解析失败等，请求零字节出网 ⇒ 必然未送达）：与「明确拒绝」
+                # 同一档安全。part 保持 PENDING、**不记 UNKNOWN**，请求级交收敛
+                # 段既有退避通路（mark_retryable_failure：retry_count+1 + 队列
+                # 指数退避 next_retry_at），下一轮照常整发重投。
+                # 治的就是「TG 通道瞬断一次 ⇒ 告警卡永久丢弃、零重试」：旧形态
+                # 下 mixed 任何非明确拒绝失败都记 UNKNOWN，而生产
+                # unknown_part_confirmer=None ⇒ UNKNOWN 永不重投 ⇒ 停放直至被
+                # 启动清扫终态化。判据超出上限（第 4 次仍失败）或分类缺失/不
+                # 确定 ⇒ 一律落回下方 UNKNOWN 分支，M-63 语义逐字节不变。
                 pass
             elif (
                 receipt.state is ReceiptState.FAILED_FINAL

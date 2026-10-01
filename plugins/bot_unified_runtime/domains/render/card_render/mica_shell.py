@@ -43,7 +43,11 @@ from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import 
     SEMANTIC_WARNING,
     SHADOW_PRIMARY,
     SHADOW_SECONDARY,
-    SHELL_WASH_GRADIENT,
+    # goal-7 二波（2026-09-28，需求 7「壳层釉瑚渐变按面不同」）：--mica-shell-wash
+    # 与外壳 CSS 的壳层渐变改按 face 派生，单一真身住 theme_tokens.shell_wash_for_face。
+    # SHELL_WASH_GRADIENT 不再在此直插（其仍是 face="" 时 shell_wash_for_face 回落的
+    # canon 值，由该函数内部引用，本模块不再直接消费）。
+    shell_wash_for_face,
 )
 
 # 公共 token 的固定声明顺序（全卡一致）。新增公共 token 只在此处加一行，
@@ -405,6 +409,7 @@ def render_root_tokens(
     wash_blob_mix: int = 18,
     include_phase: bool = True,
     include_wash: bool = True,
+    face: str = "",
 ) -> str:
     """产出统一的 ``:root`` 变量块（不含花括号，供调用方包进 ``:root { ... }``）。
 
@@ -483,7 +488,11 @@ def render_root_tokens(
         "--semantic-warning": SEMANTIC_WARNING,
         "--score-hot": SCORE_HOT,
         "--score-cold": SCORE_COLD,
-        "--mica-shell-wash": SHELL_WASH_GRADIENT,
+        # goal-7 二波：壳层釉瑚渐变按 face 派生。face="" 落回 canon
+        # SHELL_WASH_GRADIENT（旧缺省路径逐字节不变，兼容未入册面与样张基线）；
+        # 已登记面按 theme_tokens._WASH_FACE_ORDER 索引确定性派生（色板同族、
+        # 色标布局互异）。单一真身在 theme_tokens.shell_wash_for_face。
+        "--mica-shell-wash": shell_wash_for_face(face),
     }
     for token in _PUBLIC_TOKEN_ORDER:
         parts.append(f"{token}:{public_values[token]}")
@@ -497,6 +506,7 @@ def shell_base_css(
     *,
     width_px: int = _DEFAULT_SHELL_WIDTH_PX,
     glass: bool = True,
+    face: str = "",
 ) -> str:
     """视觉外壳的完整公共段（雾底打底 + wash 对角透色 + 1px 内高光描边 + 单枚阴影
     + 可选液态玻璃两档规则）。
@@ -510,12 +520,13 @@ def shell_base_css(
     """
     if not shell_class:
         return ""
-    # VIS1（2026-09-20）：145deg 壳渐变与 150deg 描边不再手写——分别内插
-    # theme_tokens.SHELL_WASH_GRADIENT / GLASS_EDGE 登记常量（GLASS_EDGE 自带
-    # border-box 后缀）；改背景只改值册一处，11 面同动。
+    # VIS1（2026-09-20）：145deg 壳渐变与 150deg 描边不再手写——分别内插壳渐变
+    # 与 GLASS_EDGE 登记常量（GLASS_EDGE 自带 border-box 后缀）；改背景只改值册一处，
+    # 11 面同动。goal-7 二波：壳渐变改按 face 派生（shell_wash_for_face：同族色板、
+    # 色标布局互异），face="" 落回 canon SHELL_WASH_GRADIENT，缺省路径逐字节不变。
     rules = f""".{shell_class} {{ position:relative; width:{int(width_px)}px; overflow:hidden;
   border-radius:var(--r-shell); border:1px solid transparent;
-  background:{SHELL_WASH_GRADIENT} padding-box,
+  background:{shell_wash_for_face(face)} padding-box,
     {GLASS_EDGE};
   box-shadow:var(--mica-shadow); }}
 .{shell_class} > :not(.drift-blobs) {{ position:relative; z-index:1; }}"""
@@ -535,6 +546,7 @@ def render_shell(
     shell_width_px: int = _DEFAULT_SHELL_WIDTH_PX,
     decor: bool = True,
     capsule_html: str = "",
+    face: str = "",
 ) -> str:
     """产出完整卡片文档：``<!doctype html>`` + 透明 body + 外层纯容器 + 可选视觉外壳。
 
@@ -555,7 +567,8 @@ def render_shell(
     classes = f"card {stage_class}".strip()
     # 玻璃规则随 decor 段携带（decor=False 时整卡无玻璃，铁律开关语义不变）；
     # shell_base_css 的 glass 段在此关闭，避免同一规则定义两次。
-    shell_css = shell_base_css(shell_class, width_px=shell_width_px, glass=False)
+    # goal-7 二波：face 透传给 shell_base_css，使外壳壳层渐变按面派生（face="" 逐字节不变）。
+    shell_css = shell_base_css(shell_class, width_px=shell_width_px, glass=False, face=face)
     decor_css = _MICA_DECOR_CSS + _GLASS_RULES_CSS if decor else ""
     if capsule_html:
         # 胶囊样式与装饰层同段携带（CAP1）：调用方零样式改动即得统一胶囊。
