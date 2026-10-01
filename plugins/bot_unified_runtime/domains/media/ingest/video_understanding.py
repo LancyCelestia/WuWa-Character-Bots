@@ -32,7 +32,7 @@ from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
     _clip,
     _encode_image_bytes,
     _extract_video_frames,
-    _local_media_source_allowed,
+    _local_media_execution_source,
     _local_path_from_value,
 )
 
@@ -129,20 +129,24 @@ def _extract_audio_clip(
     本地形态另过识图那条腿的**同一条带门判据**（INCIDENT-20260930 §5 P0：本函数
     收到的 ``source`` 可能是媒体档案里早先写进 DB 的 ``local_path``，不经这一问
     等于绕开现算判定）：非本地形态（http／其它 scheme）照旧交给上游咽喉，
-    本地形态过不了域门就按「无音轨」降级，命令行都不下发。
+    本地形态过不了域门就按「无音轨」降级，命令行都不下发。放行的本地腿下发
+    **判定折算后的真身**（``_local_media_execution_source``，W5 第 4 条），不再吃原串
+    ——「判 A 吃 B」那一侧的缝（短名／``..``／junction）在这里同样不存在。
     """
-    src = str(source or "")
-    if not _local_media_source_allowed(src):
+    execution_source = _local_media_execution_source(str(source or ""))
+    if execution_source is None:
         logger.info("video: audio clip source refused by local path gate")
         return None
-    if _SSRF_PRECHECK_WELDED_OFF and src.startswith(("http://", "https://")):
+    if _SSRF_PRECHECK_WELDED_OFF and execution_source.startswith(
+        ("http://", "https://")
+    ):
         from plugins.bot_unified_runtime.domains.files.sources.downloader import (
             RejectedUrlError,
             check_download_url,
         )
 
         try:
-            check_download_url(src)
+            check_download_url(execution_source)
         except RejectedUrlError:
             logger.warning("video: audio clip source rejected by SSRF guard")
             return None
@@ -159,7 +163,7 @@ def _extract_audio_clip(
                 "-nostdin",
                 "-y",
                 "-i",
-                source,
+                execution_source,
                 "-vn",
                 "-ac",
                 "1",

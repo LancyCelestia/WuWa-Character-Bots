@@ -75,19 +75,31 @@ def test_frames_allow_public_literal_ip(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_frames_local_path_not_blocked_by_guard(monkeypatch, tmp_path: Path) -> None:
-    """本机文件源不受入口咽喉影响（guard 只管 http）：ffmpeg 仍收到该路径。"""
+    """本机文件源不受入口咽喉影响（guard 只管 http）：ffmpeg 仍收到该路径。
+
+    ⚠ W5 第 4 条改的口径：收到的是**判定折算后的真身**，不是原串——本机 ``%TEMP%``
+    实测带 ``LANCYC~1`` 短名形态，原串与真身不是一枚串时，「判的和吃的是同一条」
+    必须由折算那一侧保证（锁见 ``test_frame_leg_feds_the_folded_path``）。
+    """
     commands = _stub_ffmpeg_boundary(monkeypatch, V)
     src = tmp_path / "clip.mp4"
     src.write_bytes(b"\x00\x01")
     V._extract_video_frames(str(src), 1, str(tmp_path))
-    assert any(str(src) in token for cmd in commands for token in cmd)
+    folded = str(Path(str(src)).resolve())
+    assert any(folded in token for cmd in commands for token in cmd)
 
 
 # ---- 音轨腿（video_understanding._extract_audio_clip）----
 
 
 def test_audio_clip_rejects_internal_url_before_ffmpeg(monkeypatch, tmp_path: Path) -> None:
-    """RED（修复前）：视频音轨腿同样把内网 http 源直送 ffmpeg。"""
+    """RED（修复前）：视频音轨腿同样把内网 http 源直送 ffmpeg。
+
+    🔴 **HEAD 基线在册红（本席不签「已修」）**：本波只动「判定 A 执行 B」那一侧，
+    这一格的判据要成立得先翻 ``video_understanding._SSRF_PRECHECK_WELDED_OFF``——
+    那枚常量是 2026-09-27 席位 S-ATKFIX-SSRF2 依用户裁定「先登记不堵」焊死关闭的，
+    翻它属**裁定面**、不属本席的收尾面，故本格保持红并在 ``patches/`` 记账。
+    """
     commands = _stub_ffmpeg_boundary(monkeypatch, VU)
     out = VU._extract_audio_clip(_INTERNAL, str(tmp_path), 30.0)
     assert out is None
@@ -101,8 +113,10 @@ def test_audio_clip_allows_public_literal_ip(monkeypatch, tmp_path: Path) -> Non
 
 
 def test_audio_clip_local_path_not_blocked(monkeypatch, tmp_path: Path) -> None:
+    """同抽帧腿口径：本地源放行，且下发的是折算真身（W5 第 4 条两腿同形）。"""
     commands = _stub_ffmpeg_boundary(monkeypatch, VU)
     src = tmp_path / "clip.mp4"
     src.write_bytes(b"\x00\x01")
     VU._extract_audio_clip(str(src), str(tmp_path), 30.0)
-    assert any(str(src) in token for cmd in commands for token in cmd)
+    folded = str(Path(str(src)).resolve())
+    assert any(folded in token for cmd in commands for token in cmd)

@@ -534,7 +534,7 @@ def transcribe_audio_with_status(
                 getattr(provider, "last_attempts", []),
             )
             return "", "failed"
-        except Exception:  # noqa: BLE001 - 转写失败不阻断聊天，但"失败了"要留下事实。
+        except Exception:  # 转写失败不阻断聊天，但"失败了"要留下事实。
             logger.exception("asr transcribe failed")
             return "", "failed"
         if not text:

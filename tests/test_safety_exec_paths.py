@@ -80,10 +80,13 @@ DRIVE_FORM_RE = re.compile(r"[A-Za-z]:[\\/]")
 #: 该调用合法在册 ⇒ 补登名册而非剥守卫）；消费判据即本文件 :844 的 AST 真消费扫描。
 #: 2026-09-30 E02 席（INCIDENT-20260930-TREEWIPE-RECOVERY §5 P0 行「本地路径无域门 →
 #: 任意文件读+外发」，主代理简报点名 check_sendable 为许可落点之一）第六枚：
-#: ``media/ingest/vision_describe`` 的带门判据只取**禁触名册那两枚判据**问一次
-#: （凭据/库/人格/日志类任何位置都拒），容器归属归 ``domains/media/path_gate``；
-#: 形态类判据刻意不取（本机 %TEMP% 即 8.3 短名形态，取 ``short_name_form`` 会整族误杀
-#: 暂存面＝S-T-FILE-2 在册教训），判定零副本；活性锁见
+#: 媒体本地腿的带门判据只取**禁触名册那两枚判据**问一次（凭据/库/人格/日志类任何
+#: 位置都拒）。⚠ 2026-10-01 W5 收尾把「问一次」连同**哪些目录算合法**那份名册一起
+#: 从 ``media/ingest/vision_describe`` 迁进容器门真身 ``media/path_gate``（两枚新根
+#: ``%TEMP%``/协议端锚点曾由消费侧就地追加 ⇒ 名册分家，见
+#: ``patches/W5-MEDIA-PATH-GATE-CLOSURE-20261001.md``）⇒ 登记对象随之换成真身那件，
+#: 消费侧不再有 import。形态类判据刻意不取（本机 %TEMP% 即 8.3 短名形态，取
+#: ``short_name_form`` 会整族误杀暂存面＝S-T-FILE-2 在册教训），判定零副本；活性锁见
 #: ``tests/test_vision_local_path_domain_gate.py``。
 ALLOWED_CONSUMERS = frozenset(
     {
@@ -93,7 +96,7 @@ ALLOWED_CONSUMERS = frozenset(
         "plugins/bot_unified_runtime/domains/assistant/daily/store/daily_assist.py",
         "plugins/bot_unified_runtime/domains/chat_reply/character/persona_profile.py",
         "plugins/bot_unified_runtime/domains/notes/capabilities/notes.py",
-        "plugins/bot_unified_runtime/domains/media/ingest/vision_describe.py",
+        "plugins/bot_unified_runtime/domains/media/path_gate.py",
     }
 )
 

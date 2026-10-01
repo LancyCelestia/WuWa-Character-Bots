@@ -53,12 +53,20 @@ def _provider_enabled(provider: Any) -> bool:
 
 
 def _local_file_usable(path: str) -> bool:
-    if not path:
-        return False
-    try:
-        return Path(path).is_file()
-    except OSError:
-        return False
+    """档案里的 ``local_path`` 还能不能用：**只问那枚带门判据**，不许自带第二把尺。
+
+    W5 第 3 条收的账：这里曾是裸 ``Path(path).is_file()``——只泄存在性布尔、不外传字节，
+    但它仍是媒体树里**第二把**「这条路径算不算在场」的判据：档案行是早先事件写进 DB 的
+    旧值，容器被搬走／换成 junction／落点已被治理删掉时，裸尺照样报「在」。判据真身＝
+    ``vision_describe._local_path_from_value``（折算 + 容器归属 + 禁触名册 + 在场四问），
+    本函数只是它的布尔投影 ⇒ 两说在此不存在（锁
+    ``tests/test_vision_local_path_domain_gate.py`` 的 AST 禁词格钉住 ``is_file(``）。
+    """
+    from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
+        _local_path_from_value,
+    )
+
+    return _local_path_from_value(str(path or "")) is not None
 
 
 async def _fetch_reply_video_file(bot: Any, message_id: str, config: Any) -> str:
