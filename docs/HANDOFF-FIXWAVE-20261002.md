@@ -212,3 +212,51 @@ grep -rn "MigrationStatus\." plugins/bot_unified_runtime | wc -l
 8. **重启时机**：改代码不重启不生效（#10★）。重启前必读开关：`BOT_GATE_COMMAND_REQUIRES_LISTED_GROUP`（缺省 True ⇒ **未在册群里 `/bot` 命令面静默**，不想要就置 false 再重启）。`grok-4.6` 作为对话组第 2 顺位曾观测到 1024 token 预算下 60s 超时，重启后先看这条腿。
 
 **两件必须记住的取证纪律**（都各值一整窗返工）：备份的判据不是"文件在"，是"**它包到哪一笔**"；门绿的判据要指名"**绿的是哪棵树**"。
+
+---
+
+## 十二、叫停后补账（单线程收尾，2026-10-02 03:3x）
+
+**波次已停**：不再派席、不再补位；在飞席随本窗结束自然终止。树的可交付性已复核：
+`pytest --collect-only tests` ＝ **21,602 项全部可收集、零 collection error**（叫停前最后一枚半成品
+`tests/test_db_backup.py` 停在 `class TestHonestyAndFail Loud:` 的语法错上，会让整棵测试树起不来，
+我已**改名移出**到 `.superpowers/sdd/2026-10-02-fixwave/half-done/`（不是删除，可原样改回））。
+
+**新锁终局读数**（11 件合跑）：`170 passed / 7 failed`，逐件归属——
+| 锁 | 读数 | 归属 |
+|---|---|---|
+| `test_command_admin_gate_registration.py` | 全绿 | 席 P3a（提案另成 305 行工单） |
+| `test_claims_subset_implementation_gate.py` | 全绿 | 席 G1（宣称⊆实装第一把尺；工单未写） |
+| `test_tts_cache_quota_shape_guard.py` + `test_download_artifact_container_gate.py` | 全绿 | 席 B1（配 `patches/B1-CONFIG-REQUEST.md` 待落四面） |
+| `test_timeout_umbrella_remaining_legs.py` | 全绿 | 席 V1 |
+| `test_seat_t1_persona_contract_20261002.py` | 全绿 | 席 T1 |
+| `test_intimate_group_switch_delivery.py` | 11/12（差档号那一格） | 席 D1 |
+| `test_store_write_trace_d2.py` | 18/20（差 `quirks` 记账两格） | 席 D2/D2b |
+| `test_prompt_template_layer_w1.py` | 3 红（"逐字节不变"三条） | 席 W1 |
+| `test_migration_status_assignment_gate.py` | 1 红（状态不得由控制面推导） | 席 G1c |
+| `test_db_backup.py` | 半成品，已移出 | 席 X1c |
+
+**本窗追加闭掉的一处悬空引用**：已入库的 `reply_policy.py:1352/:1372` 两枚注释分别指向
+`W-E05-GATE-GAPS-20260930.md §6.1 / §6.2`，而该件原先只有 §6 与编号 1./2.（无 .1/.2 子节）
+⇒ 按"引用不出落点即悬空"补写 §6.1/§6.2 落地账，并把**目标侧平台域残余**的裁定记在那儿。
+
+## 十三、主会话自主裁定（波次中途不停不问，逐条给代价）
+
+- **R1 事件循环下放的完成腿不下放**：`_complete` 留在循环上。理由＝`SendQueue.submit` 的认领台账按
+  `current_task()` 记账，搬进线程会静默吃掉登记（A-22 在册坑）。代价＝完成腿仍占循环时间，
+  极端慢的投递仍会拖一轮；若日后要下放，必须**同批**把台账键改成显式传入。
+- **R2 `{exc}` 异常名保留在管理员档**：对外裁剪已由受众分级门（`AUDIENCE_PUBLIC` 裁 exc 原文/栈/
+  配置键名）执法，在族壳里再删一次会让管理员丢归因。代价＝管理员私聊里仍能看到异常类型名。
+- **R3 选池 API 一律复用既有五套、零新增**：`errors.py` 有"只依赖标准库"契约、`user_copy.py` 有
+  "纯常量禁 import"契约，把键控游标请进来＝制造装配环。代价＝"四套并存"这笔债没减，
+  取句语义统一仍是**待用户裁定项**。
+- **R4 汇率/新闻宁可少说不编**：RUB/CHF/CAD/AUD 标 `pending` 而非接一个未核实源；
+  V2EX/少数派从名册除名并把断言反转成"回潮即红"。代价＝用户问这四个币种时拿到的是
+  "尚未接入已核实报价源"，不是数字。
+- **R5 超管目标名单的平台域收口不做**（详见 §6.2 落地账）。代价＝名单写成非 QQ 前缀时，
+  那个号会**静默失去**超管保护（不是多给权）。
+- **R6 别席在飞面一个不提交**（`AGENTS.md`/`docs/HANDBOOK.md`/`docs/auto-facts.md`/
+  `tests/test_config_key_registration_ledger.py` 等）。代价＝派生册 `auto-facts.md` 的计数
+  暂时与代码不同步（测试文件数、config 字段数已因本波变化），要等那两席收笔后一次性 `--write` 重录。
+- **R7 半成品测试件"改名移出"而非删除**，并把原文留在 `half-done/`。代价＝该席要重做一遍
+  接线与工单，但没人会在树里踩到一个语法错。
