@@ -185,7 +185,7 @@ def test_n4_bazi_capability_output_contains_hidden_stems_and_keeps_disclaimer_la
 
 
 # ---------------------------------------------------------------------------
-# 项4：Atom 真源（离线解析 + 源注册）。
+# 项4：Atom 真源（离线解析 + 源注册；注册腿 2026-10-02 席 F2 按用户裁定退役）。
 # ---------------------------------------------------------------------------
 
 _ATOM_FEED = """<?xml version="1.0" encoding="utf-8"?>
@@ -216,11 +216,24 @@ def test_n4_atom_feed_parses_via_generic_branch() -> None:
     assert items[1].published_at is None
 
 
-def test_n4_atom_source_registered_for_tech() -> None:
-    assert any(
-        "v2ex.com/index.xml" in url and source == "V2EX" and category == "tech"
-        for url, source, category in _FEEDS
-    )
+def test_n4_atom_source_registration_is_retired_by_user_ruling() -> None:
+    """项4 的「Atom 真源注册」腿——2026-10-02 由席 F2 按用户裁定**退役**。
+
+    原判据＝`_FEEDS` 里有一行 V2EX。V2EX 是论坛（用户发帖、无采编与更正机制），
+    用户 2026-10-02 裁定「新闻只准正规源，不许用自媒体」⇒ 它连同少数派一起从
+    `news_feeds.NEWS_SOURCES` 除名，本腿若原样保留就是把自媒体焊回名册。
+
+    退役而不是静默删（台账 #68★「退役要文件＋账本行＋牵动的锁同批」）：
+    - Atom 解析支路的覆盖**没丢**，在上一条 `test_n4_atom_feed_parses_via_generic_branch`
+      与 `tests/test_news.py::test_parse_v2ex_atom_real_probe_fixture`（夹具仍在）；
+    - 「除名不许回潮」改由 `tests/test_news_source_whitelist.py` 的门①/⑤b/⑧ 执法，
+      那是**注毒必红**的机械判据，比本腿的一行 `any(...)` 强；
+    - 本腿改名保留（原 `…_registered_for_tech`，全仓零外部引用，改名不牵动别的账），
+      断言反转为「不许回潮」，防止有人把除名当「测试没写」而重新塞回来。
+    """
+    assert not any(
+        "v2ex.com" in url or source == "V2EX" for url, source, _category in _FEEDS
+    ), "V2EX（论坛 UGC）回潮进抓取列表＝用户 2026-10-02 裁定被推翻"
 
 
 # ---------------------------------------------------------------------------

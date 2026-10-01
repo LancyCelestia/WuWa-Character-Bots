@@ -166,6 +166,16 @@ _LIVE_FIXTURES: dict[str, str] = {
     BBC_URL: BBC_RSS,
 }
 
+# 2026-10-02 席 F2（用户裁定「新闻只准正规源，不许用自媒体」）：少数派（社区投稿
+# 平台）与 V2EX（论坛）已从名册除名，`_FEEDS` 派生自 `news_feeds.NEWS_SOURCES`，
+# 抓取列表只剩 IT之家/华尔街见闻/BBC中文。上面两枚夹具**不删**——它们是「除名后
+# 不再被抓取」的反证样本（白名单门与运行期出站门的注毒料在
+# tests/test_news_source_whitelist.py，本件只锁抓取与解析行为）。
+_WIRED_FIXTURES: dict[str, str] = {
+    url: _LIVE_FIXTURES[url]
+    for url in (ITHOME_URL, WSCN_URL, BBC_URL)
+}
+
 
 class _Clock:
     """可控单调时钟：fetch TTL 测试用，避免依赖真实睡眠。"""
@@ -300,8 +310,9 @@ def test_fetch_category_mapping_uses_only_matching_feeds(
 
     calls.clear()
     tech = fetch_headlines("tech")
-    assert set(calls) == {ITHOME_URL, SSPAI_URL, V2EX_URL}
-    assert {item.source for item in tech} == {"IT之家", "少数派", "V2EX"}
+    # 席 F2 除名后 tech 只剩 IT之家：少数派/V2EX 即便夹具还在也不再被抓取。
+    assert calls == [ITHOME_URL]
+    assert {item.source for item in tech} == {"IT之家"}
 
 
 def test_fetch_unknown_category_falls_back_to_mix(
@@ -311,14 +322,14 @@ def test_fetch_unknown_category_falls_back_to_mix(
 
     def _fake(url: str, timeout_seconds: float) -> str:
         calls.append(url)
-        return _LIVE_FIXTURES[url]
+        return _WIRED_FIXTURES[url]
 
     monkeypatch.setattr(news_feeds, "_fetch_feed_text", _fake)
     items = fetch_headlines("不存在的类目")
-    assert set(calls) == set(_LIVE_FIXTURES)
+    assert set(calls) == set(_WIRED_FIXTURES)
     # mix 轮转合并：各源的条目都会出现，且单源条数被封顶（各取若干）。
     sources = [item.source for item in items]
-    assert set(sources) == {"IT之家", "少数派", "V2EX", "华尔街见闻", "BBC中文"}
+    assert set(sources) == {"IT之家", "华尔街见闻", "BBC中文"}
     assert sources.index("华尔街见闻") < sources.index("BBC中文") + len(sources)
 
 
@@ -328,11 +339,12 @@ def test_fetch_per_feed_failure_skipped_silently(
     def _fake(url: str, timeout_seconds: float) -> str:
         if url == ITHOME_URL:
             raise OSError("ithome down")
-        return _LIVE_FIXTURES[url]
+        return _WIRED_FIXTURES[url]
 
     monkeypatch.setattr(news_feeds, "_fetch_feed_text", _fake)
-    items = fetch_headlines("tech")
-    assert {item.source for item in items} == {"少数派", "V2EX"}
+    # 语义未动：一枚源挂掉不拖垮整批（除名后 mix 仍有三枚源可跳）。
+    items = fetch_headlines("mix")
+    assert {item.source for item in items} == {"华尔街见闻", "BBC中文"}
 
 
 def test_fetch_never_raises_when_all_feeds_fail(
@@ -390,14 +402,14 @@ def test_fetch_cache_stores_full_list_sliced_by_max_items(
 
     def _fake(url: str, timeout_seconds: float) -> str:
         calls.append(url)
-        return _LIVE_FIXTURES[url]
+        return _WIRED_FIXTURES[url]
 
     monkeypatch.setattr(news_feeds, "_fetch_feed_text", _fake)
     assert len(fetch_headlines("tech", max_items=1)) == 1
     # 同一 TTL 内换更大的 max_items：命中缓存全量快照，不再外呼。
     tech = fetch_headlines("tech", max_items=8)
-    assert len(calls) == 3
-    assert len(tech) == 6  # IT之家 2 条 + 少数派 2 条 + V2EX 2 条
+    assert len(calls) == 1  # tech 类目此刻只有 IT之家一枚源
+    assert len(tech) == 2  # 夹具里 IT之家 2 条
     assert len(fetch_headlines("tech", max_items=0)) == 1  # 非法值钳到 ≥1
 
 
