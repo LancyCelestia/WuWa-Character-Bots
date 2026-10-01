@@ -17,7 +17,7 @@ from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 from plugins.bot_unified_runtime.audit import AuditRepository, redact_private_debug
 from plugins.bot_unified_runtime.contracts import (
@@ -656,6 +656,90 @@ def offload_capability(capability: CapabilityCallable) -> AsyncCapabilityCallabl
         return result
 
     return wrapped
+
+
+# ==================== 下放决定的收口（X4，2026-10-01） ====================
+# 改动前的形状：根汇口按一张「可下放名单」（`__init__.OFFLOADED_CAPABILITY_IDS`）
+# 决定这一轮走 `handle_async`（正文下放线程池）还是走 `handle`（正文与完成腿都在
+# 事件循环线程上直呼）。名单外的一枚命令只要正文里有阻塞件（SQLite / 文件 /
+# subprocess / Playwright），冻住的就不是那一条命令，而是**整片会话**——低频管理
+# 命令拖死全站，事故级。现网按号可点的例子：`/bot recent`（三份 SQLite 反查）、
+# `/bot queue`（发信队列 SQLite 读）、`/bot logs`（运行日志读）、`/bot runtime`
+# 管理面（热改态文件 os.replace 落盘）、`/bot setup llm`（引导卡渲染）——
+# 这些都不在名单上，全都在 loop 线程上同步跑完。
+#
+# 本段把「要不要下放」从**名单决定**改成**能力正文自己决定**：只有本身就是协程的
+# callable 留在循环上（那是它唯一不占循环的形态），其余一律经 `offload_capability`
+# 进管线专用有界池。名单由此退役成观测面——它对执行路径不再有决定权（判据锁
+# `tests/test_pipeline_offload_always.py`，含合成注毒自证腿）。
+#
+# 刻意**不**下放完成腿 `_complete`：`SendQueue.submit` 的认领台账按 `current_task()`
+# 记账，把它搬进线程会静默吃掉登记（A-22 在册坑，`queue.py` 自述「线程提交不登记」）。
+# 下放面只有「能力正文」这一层，投递几何/幂等认领序/超时抛法一律不动。
+
+
+def is_native_async_callable(capability: object) -> bool:
+    """能力正文是否**本身就是协程**（协程函数 / async 偏函数 / async ``__call__``）。
+
+    判据用「是不是协程」而不是「在不在名单上」：协程正文是唯一不会占住循环的形态，
+    其余（`def capability(...)` 同步闭包）一律视为潜在阻塞件。
+    `inspect.iscoroutinefunction` 认函数与 `functools.partial`，但**不**认带
+    `async def __call__` 的可调用对象（3.14 起只认前者）⇒ 这里补一格 `__call__`，
+    免得把异步能力误判成同步正文而多包一层。
+    """
+    if inspect.iscoroutinefunction(capability):
+        return True
+    # B004 不适用：这里不是"测 x 能不能调"（那才该用 `callable(x)`），而是取**类型上的
+    # `__call__` 描述符本身**去看它是不是协程函数——`callable()` 只给布尔值，拿不到
+    # 描述符，换过去就判不了 `async def __call__` 那一形。
+    call = getattr(type(capability), "__call__", None)  # noqa: B004
+    return call is not None and call is not capability and inspect.iscoroutinefunction(call)
+
+
+def ensure_offloaded(
+    capability: Callable[..., Any],
+) -> AsyncCapabilityCallable:
+    """同步正文无条件下放线程池；已是协程的原样返回（逐字节现状）。
+
+    幂等且**绝不二次包装**：`offload_capability` 的产物是协程函数，第二次进来在
+    第一行短路 ⇒ 有界闸的许可只占一格（包两层会各占一格，把池容量悄悄砍半）。
+    这里只认唯一一具下放机器 `offload_capability`，不长第二份线程池通路。
+    """
+    if is_native_async_callable(capability):
+        return cast(AsyncCapabilityCallable, capability)
+    return offload_capability(cast(CapabilityCallable, capability))
+
+
+# 同步直呼腿的可见面（不哑兜底）：`handle` 在事件循环线程上被调用＝正文与完成腿
+# 都要占住循环，这正是 X4 要消灭的形状。生产不该再出现，但出现了必须留痕。
+_LOOP_THREAD_SYNC_REPORT_CAP = 128
+_loop_thread_sync_reported: set[str] = set()
+_loop_thread_sync_report_lock = threading.Lock()
+
+
+def _report_loop_thread_sync_call(capability_id: str) -> None:
+    """调用点落在事件循环线程上 ⇒ 按 capability_id 记一次 WARNING（有界、fail-open）。
+
+    非循环线程（console / smoke / 脚本 / 测试）第一行就返回 ⇒ 零额外动作、零噪声，
+    既有同步用法逐字节现状。记账只用于去重，容量满就不再新增（宁少报不涨内存）。
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    key = str(capability_id or "")
+    with _loop_thread_sync_report_lock:
+        if key in _loop_thread_sync_reported:
+            return
+        if len(_loop_thread_sync_reported) >= _LOOP_THREAD_SYNC_REPORT_CAP:
+            return
+        _loop_thread_sync_reported.add(key)
+    logger.warning(
+        "pipeline.handle ran a capability body on the event-loop thread "
+        "capability_id=%s（同步直呼会冻住整片会话；应改走 handle_async 的下放形态）",
+        key,
+    )
+
 
 RUNTIME_CONTROL_BYPASS_CAPABILITY_IDS = {
     "bot.status",
@@ -1704,6 +1788,15 @@ class RuntimePipeline:
         capability: CapabilityCallable,
         capability_id: str = "bot.status",
     ) -> DeliveryReceipt:
+        """同步入口：能力正文与完成腿都在**调用线程**上跑完。
+
+        它存在的理由是「调用方本来就在线程里/根本没有循环」（console、smoke、
+        脚本、离线测试）。事件循环线程不该再调它——那一形正是 X4 消灭的对象，
+        命中时由 `_report_loop_thread_sync_call` 按 capability_id 留一次 WARNING。
+        本方法的行为面（门禁序、幂等 claim 位置、异常→`_internal_error`、额度回滚）
+        一字未动。
+        """
+        _report_loop_thread_sync_call(capability_id)
         _observe_decision_shadow(message, capability_id)
         try:
             # 审查 A-18：幂等 claim 已并入 _prepare（全部门禁+限流判定之后），
@@ -1891,6 +1984,11 @@ class RuntimePipeline:
         capability: AsyncCapabilityCallable,
         capability_id: str = "bot.status",
     ) -> DeliveryReceipt:
+        # X4：下放面在这里收口——同步正文一律进线程池，协程正文原样留在循环上。
+        # 必须排在 `_prepare` 之前：`redrive_capability` 存的就是这个 callable，
+        # 限流补回腿（`_redrive_after` 复用 handle_async）也必须是下放形态；
+        # 排在门禁之后则claim/限流账不变（幂等 claim 仍在全部门禁之后，A-18/#49★）。
+        capability = ensure_offloaded(capability)
         _observe_decision_shadow(message, capability_id)
         try:
             prepared = self._prepare(

@@ -440,11 +440,12 @@ def _leg_a_violations(
                 f"{prefix}：交给层 2 的 capability_id={given_cid!r} 不是解析结果"
                 "（R-CHOKE C-1 型：写入口名 ⇒ 整条绕开权限/健康/限额/审计）"
             )
-        expect_offload = route.capability_id in _string_set_literal("OFFLOADED_CAPABILITY_IDS")
-        if kwargs.get("offload_sync_capability") is not expect_offload:
+        # 名单不许再决定命令入口的下放形态（X4 续批）：三条入口一律交 `handle_async`。
+        if "offload_sync_capability" in kwargs:
             violations.append(
-                f"{prefix}：offload_sync_capability={kwargs.get('offload_sync_capability')!r}"
-                f" 与生产名册现算值 {expect_offload} 不符"
+                f"{prefix}：命令入口又传了 offload_sync_capability="
+                f"{kwargs.get('offload_sync_capability')!r} ⇒ 下放决定权回到名单手上，"
+                "名单外同步命令的正文会重新跑在事件循环线程上（整片会话冻住那一形）"
             )
         capability = kwargs.get("capability")
         if not callable(capability):
@@ -510,7 +511,6 @@ def _run_pipeline_seam(
     *,
     segment: str | None = None,
     capability_id: str = "bot.weather",
-    offload: bool = False,
     pre_orchestrated: bool = False,
 ) -> dict[str, Any]:
     """exec 真 `_run_capability_through_pipeline`，返回观测（spy 调用、pipeline 收到的步、回执）。"""
@@ -594,7 +594,6 @@ def _run_pipeline_seam(
             capability=raw,
             capability_id=capability_id,
             record_diagnostic=False,
-            offload_sync_capability=offload,
             history_recorder=None,
         )
     )
@@ -613,7 +612,6 @@ def _noop_callback() -> Any:
 def _leg_b_violations(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> list[str]:
     observed = _run_pipeline_seam(monkeypatch, **kwargs)
     cid = str(kwargs.get("capability_id", "bot.weather"))
-    offload = bool(kwargs.get("offload", False))
     violations: list[str] = []
     wraps = observed["wrap_calls"]
     if kwargs.get("pre_orchestrated"):
@@ -628,19 +626,25 @@ def _leg_b_violations(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> list[st
         got_cid, got_cap, _cfg, governed = wraps[0]
         if got_cid != cid or got_cap is not observed["raw"]:
             violations.append(f"包缝参数不对：cid={got_cid!r} 能力同源={got_cap is observed['raw']}")
-        want_entry = "handle_async" if offload else "handle"
-        if len(observed["steps"]) != 1 or observed["steps"][0][0] != want_entry:
-            violations.append(f"pipeline 入口不对：{observed['steps']}（期望 {want_entry}）")
+        # 根汇口不再选路（X4 续批）：一律走 `handle_async`，下放由管线内部那一把尺
+        # （`ensure_offloaded` 判"正文是不是协程"）决定。期望值写死 ⇒ 谁把同步
+        # `handle` 那一形接回来、或让名单重新决定入口，这里当场红。
+        if len(observed["steps"]) != 1 or observed["steps"][0][0] != "handle_async":
+            violations.append(
+                f"pipeline 入口不对：{observed['steps']}（期望 handle_async）"
+                "＝根汇口恢复按名单二选一 ⇒ 名单外同步命令的正文回到事件循环线程"
+            )
             return violations
         step = observed["steps"][0][1]
         if step is not governed:
             violations.append(
                 "pipeline 收到的不是包缝后的执行体＝层 2 治理被绕过（走进了没治理的口子）"
             )
-        if observed["offload"] and observed["offload"][0] is not governed and offload:
-            violations.append("offload 包的不是治理后的执行体")
-        if not offload and observed["offload"]:
-            violations.append(f"未开 offload 却调了 offload_capability：{observed['offload']}")
+        if observed["offload"]:
+            violations.append(
+                f"根汇口又自己包了一遍 offload_capability：{observed['offload']} ⇒ "
+                "下放决定权回到根上，与管线内部 `ensure_offloaded` 成第二把尺"
+            )
     return violations
 
 
@@ -780,12 +784,14 @@ def test_pipeline_seam_wraps_capability_with_central_governance(
 def test_pipeline_seam_wraps_offloaded_capabilities(
     monkeypatch: pytest.MonkeyPatch, capability_id: str
 ) -> None:
-    """offload 分支（线程池下放）同样在包缝之后：别只证同步那条路。"""
+    """名单内与名单外的命令**同一入口**：下放收口在管线内部，不在根上按名单二选一。"""
     offloaded = _string_set_literal("OFFLOADED_CAPABILITY_IDS")
     violations = _leg_b_violations(
-        monkeypatch, capability_id=capability_id, offload=capability_id in offloaded
+        monkeypatch, capability_id=capability_id
     )
-    assert violations == [], f"{capability_id}（offload={capability_id in offloaded}）：{violations}"
+    assert violations == [], (
+        f"{capability_id}（在册={capability_id in offloaded}）：{violations}"
+    )
 
 
 def test_pipeline_seam_never_double_wraps(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -750,6 +750,13 @@ async def test_pipeline_helper_notifies_issue_before_successful_transport_replac
         def handle(self, *_args: object, **_kwargs: object) -> DeliveryReceipt:
             return pipeline_receipt
 
+        async def handle_async(
+            self, *_args: object, **_kwargs: object
+        ) -> DeliveryReceipt:
+            # 根汇口自 X4 续批起一律走这条（下放决定收进管线，不在根上按名单二选一）
+            # ⇒ 替身两形都得有，否则红是**崩**出来的、不是**判**出来的。
+            return pipeline_receipt
+
     pipeline_request = _send_request(issue).model_copy(
         update={"request_id": message.request_id}
     )

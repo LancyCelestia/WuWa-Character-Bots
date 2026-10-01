@@ -307,6 +307,14 @@ NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS = frozenset(
     }
 )
 
+#: 重 IO / 同步正文命令的**观测名册**（不是执行路径的选择器）。
+#: ⚠ X4 续批改口：过去根汇口按"在不在这张表里"二选一（在＝`handle_async` 下放，
+#: 不在＝`pipeline.handle` 同步跑在事件循环线程上）——名单外的一枚同步命令冻住的是
+#: **整片会话**而不只是那一条命令，且低频管理命令恰好全在名单外（`/bot recent`·
+#: `queue`·`logs`·`runtime`·`setup llm`）。现在根汇口一律走 `handle_async`，下放由
+#: 管线内部 `ensure_offloaded`（判"正文是不是协程"）这一把尺决定；本表只留两个用途：
+#: ① 性能面在册断言（`tests/test_perf_hotpath.py`、`test_finance_routing.py` 要求
+#: 重命令必须登记）；② 人读"哪些命令是重 IO"。下面逐条注释即当时登记的理由，保留为史实。
 OFFLOADED_CAPABILITY_IDS = frozenset(
     {
         "bot.context",
@@ -2840,7 +2848,6 @@ async def _run_capability_through_pipeline(
     message: Any | None = None,
     receipt_repository: ReceiptRepository | None = None,
     record_diagnostic: bool = True,
-    offload_sync_capability: bool = False,
     history_recorder: Any | None = None,
     history_kind: str = "command",
     operational_notifier: Any | None = None,
@@ -2861,16 +2868,17 @@ async def _run_capability_through_pipeline(
 
     if getattr(capability, "orchestrated_capability_id", None) is None:
         capability = _orchestrated(capability_id, capability, config)
-    if offload_sync_capability:
-        from .domains.chat_reply.runtime.pipeline import offload_capability
-
-        receipt = await pipeline.handle_async(
-            message,
-            offload_capability(capability),
-            capability_id=capability_id,
-        )
-    else:
-        receipt = pipeline.handle(message, capability, capability_id=capability_id)
+    # 下放决定不在根汇口做（X4 续批）：一律交 `handle_async`，由它内部的
+    # `ensure_offloaded` 按「正文是不是协程」这一把尺决定留循环还是进池。
+    # 过去的形状是按 `OFFLOADED_CAPABILITY_IDS` 二选一，名单外的一枚同步命令走
+    # `pipeline.handle` ⇒ 正文与完成腿都在事件循环线程上跑完，冻住的是整片会话
+    # 而不是那一条命令（`/bot recent`·`queue`·`logs`·`runtime`·`setup llm` 全在
+    # 名单外）。`pipeline.handle` 从此只服务「本来就在线程里/没有循环」的调用方
+    # （console、smoke、脚本、离线测试）。判据锁
+    # `tests/test_pipeline_offload_always.py`。
+    receipt = await pipeline.handle_async(
+        message, capability, capability_id=capability_id
+    )
     # Preserve and notify a capability/pipeline issue before any successful
     # transport receipt can replace it. The notifier is a side channel only.
     await _notify_operational_callback(operational_notifier, message, receipt)
@@ -7512,7 +7520,6 @@ def _register_nonebot_handlers() -> None:
             capability=capability,
             capability_id="bot.image_search",
             message=message,
-            offload_sync_capability=True,
             operational_notifier=_notify_operational_receipt,
         )
         if should_finish_nonebot_matcher(receipt):
@@ -8252,7 +8259,6 @@ def _register_nonebot_handlers() -> None:
             capability=capability,
             capability_id=capability_id,
             record_diagnostic=False,
-            offload_sync_capability=capability_id in OFFLOADED_CAPABILITY_IDS,
             history_recorder=history_recorder,
             history_kind="command",
             operational_notifier=_notify_operational_receipt,
@@ -8338,7 +8344,6 @@ def _register_nonebot_handlers() -> None:
             capability=capability,
             capability_id="bot.subscribe",
             record_diagnostic=False,
-            offload_sync_capability=True,
             history_recorder=history_recorder,
             history_kind="command",
             operational_notifier=_notify_operational_receipt,
@@ -9195,7 +9200,6 @@ def _register_nonebot_handlers() -> None:
             capability=capability,
             capability_id=capability_id,
             record_diagnostic=capability_id not in NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS,
-            offload_sync_capability=capability_id in OFFLOADED_CAPABILITY_IDS,
             history_recorder=history_recorder,
             history_kind="command",
             operational_notifier=_notify_operational_receipt,
@@ -10006,7 +10010,6 @@ def _register_nonebot_handlers() -> None:
             ),
             capability_id="bot.content",
             message=message,
-            offload_sync_capability=True,
             operational_notifier=_notify_operational_receipt,
         )
         if should_finish_nonebot_matcher(receipt):
@@ -10044,7 +10047,6 @@ def _register_nonebot_handlers() -> None:
             ),
             capability_id="bot.music",
             message=message,
-            offload_sync_capability=True,
             operational_notifier=_notify_operational_receipt,
         )
         if should_finish_nonebot_matcher(receipt):
@@ -10079,7 +10081,6 @@ def _register_nonebot_handlers() -> None:
             capability=cast(Any, capability),
             capability_id="bot.today_history",
             message=message,
-            offload_sync_capability=True,
             operational_notifier=_notify_operational_receipt,
         )
         if should_finish_nonebot_matcher(receipt):
@@ -10176,7 +10177,6 @@ def _register_nonebot_handlers() -> None:
             ),
             capability_id="bot.group_info",
             message=message,
-            offload_sync_capability=True,
             operational_notifier=_notify_operational_receipt,
         )
         if should_finish_nonebot_matcher(receipt):
@@ -10220,7 +10220,6 @@ def _register_nonebot_handlers() -> None:
             capability=build_host_state_capability(config),
             capability_id="bot.host_state",
             message=message,
-            offload_sync_capability=True,
             operational_notifier=_notify_operational_receipt,
         )
         if should_finish_nonebot_matcher(receipt):
@@ -10273,7 +10272,6 @@ def _register_nonebot_handlers() -> None:
             ),
             capability_id="bot.consent",
             message=message,
-            offload_sync_capability=True,
             operational_notifier=_notify_operational_receipt,
         )
         if should_finish_nonebot_matcher(receipt):
@@ -10415,7 +10413,6 @@ def _register_nonebot_handlers() -> None:
             ),
             capability_id="bot.media_archive",
             message=message,
-            offload_sync_capability=True,
             operational_notifier=_notify_operational_receipt,
         )
         if should_finish_nonebot_matcher(receipt):
@@ -10469,7 +10466,6 @@ def _register_nonebot_handlers() -> None:
             ),
             capability_id="bot.meme_library",
             message=message,
-            offload_sync_capability=True,
             operational_notifier=_notify_operational_receipt,
         )
         if should_finish_nonebot_matcher(receipt):
@@ -10624,7 +10620,6 @@ def _register_nonebot_handlers() -> None:
             capability=capability,
             capability_id=capability_id,
             record_diagnostic=False,
-            offload_sync_capability=capability_id in OFFLOADED_CAPABILITY_IDS,
             history_recorder=history_recorder,
             history_kind="command",
             operational_notifier=_notify_operational_receipt,
