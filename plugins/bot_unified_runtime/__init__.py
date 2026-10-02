@@ -6276,6 +6276,14 @@ def _register_nonebot_handlers() -> None:
         except Exception:  # noqa: BLE001, S110 - 撤回失败静默（多半无管理员权限）。
             pass
 
+    # S34（2026-10-04）：消息编辑/撤回能力接线 —— /msg_mutation recall|edit。
+    # 门缺省关（bot_message_mutation_enabled 没进 config 三面，本席不自行拨开）；
+    # 出站走统一副作用执行器，方法名仍由 TransportRegistry 固定映射给（非第二通路）。
+    from plugins.bot_unified_runtime.domains.transport import (
+        message_mutation as _message_mutation,
+    )
+
+    _message_mutation.install_message_mutation(config)
     # 校园自动转发：学校账号（SnowLuma 第二实例）所在群消息被动监听。
     # block=False 绝不阻断其他 matcher；来源门外零开销返回；命中才落库
     # 并私聊转发，绝不向学校群发送任何消息。

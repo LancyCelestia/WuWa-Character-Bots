@@ -356,6 +356,20 @@ def _role_list_converter(value: str) -> list[str]:
 # 传播——据此把 28 个「写成功但行为不变」的残项从 SETTABLE_KEYS 移入本清单。
 # 消费点接入合并层实时求值后，对应键即可回白名单（拒绝文案里已点名消费点）。
 RESTART_REQUIRED_KEYS: dict[str, str] = {
+    # ---- 消息编辑/撤回两面（2026-10-04 席 S34b 三面落键，#68★）----
+    # 读点 domains/transport/message_mutation.py::mutation_feature_enabled /
+    # mutation_window_seconds 属性式直读**装配期交下来的快照 config**
+    # （install_message_mutation 的 on_command 闭包捕获），且未进
+    # _RUNTIME_HOT_OVERRIDE_FIELDS（该表归根文件，本席禁写）⇒ 热 set 一次也不改判据，
+    # 按 C-09 登记需重启。缺省 enabled=False＝今日行为零变化。
+    "BOT_MESSAGE_MUTATION_ENABLED": (
+        "唯一读点在 message_mutation.authorize_mutation，经 on_command 闭包现读装配期"
+        "快照 config，合并层未登记 ⇒ 覆盖不可达；且总闸热开＝立刻允许真实出站编辑/撤回"
+        "（一键改行为），保守裁定需改 .env + 重启"
+    ),
+    "BOT_MESSAGE_MUTATION_WINDOW_SECONDS": (
+        "同族：mutation_window_seconds 直读快照 config，合并层未登记，热 set 不改时限"
+    ),
     # ---- STICKER-POOL 波（2026-09-29）：bot 自有表情私库四枚键 ----
     # 四枚的唯一读点在 domains/meme/sources/sticker_packs.py（configured_sticker_dir /
     # sticker_send_enabled / sticker_is_recursive / sticker_window_seconds 四个薄口，

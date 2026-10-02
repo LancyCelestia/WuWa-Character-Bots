@@ -439,6 +439,17 @@ class Config(BaseModel):
     # domains/transport/sender/onebot.py（B4b 席独占面），SnowLuma 侧未取证前生产不开；
     # 缺省 False=现状字节级不动。config.py 本波唯一登记人=B4a，故该键在此落账。
     bot_outbound_verify_enabled: bool = False
+    # 消息编辑/撤回通路（席 S34 建通路 2026-10-04、席 S34b 三面落键同日，用户已点头开面）：
+    # 唯一读点＝domains/transport/message_mutation.py::mutation_feature_enabled /
+    # mutation_window_seconds（属性式直读在册字段，不再 getattr 容缺省＝第二套口径）。
+    # 热改档位=需重启：config 经 install_message_mutation 的 on_command 闭包在装配期快照
+    # 透传，未进 _RUNTIME_HOT_OVERRIDE_FIELDS ⇒ 登记见 runtime/settings.py::
+    # RESTART_REQUIRED_KEYS（C-09「死开关不许骗人」口径）。
+    # 缺省 False＝门关＝能力整体不生效（authorize_mutation 首条即 feature_disabled、
+    # 零平台调用），开面必须改 .env + 重启 ⇒ 今日现网行为零变化。
+    # 窗口秒数＝编辑/撤回的「不许翻旧账」上界（平台侧时限更短、以平台为准）。
+    bot_message_mutation_enabled: bool = False
+    bot_message_mutation_window_seconds: int = 120
     # SAFE-EXEC 裁定第 18 项（2026-09-26）：书面同意执法门总闸（唯一读点
     # =domains/core/safety_exec/consent.py::ConsentPolicy.from_config 装配期快照，
     # 装载链 runtime/settings.py::configure_safety_gate）。缺省 True＝执法开——
