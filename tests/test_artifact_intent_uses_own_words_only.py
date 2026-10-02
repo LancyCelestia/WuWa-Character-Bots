@@ -101,3 +101,54 @@ def test_user_own_words_still_trigger_attachment(tmp_path) -> None:
     assert result.files, "用户自己点名要文件却被拒＝判据砍过头"
     body = Path(result.files[0]["file"]).read_text(encoding="utf-8")
     assert "不哭" in body
+
+
+# ---------------------------------------------------------------------------
+# 判据本体这半（10-03 事故第二半）：动词必须**管着**名词，且先剥 bot 的交付宣告。
+# 上一半（意图源只认原话）已由 `c860b15` 修好、由上面两枚锁住；本窗补下面三枚。
+# ---------------------------------------------------------------------------
+
+
+def _artifact_request(user_text: str):
+    from plugins.bot_unified_runtime.domains.files.sources.file_reader import (
+        artifact_request,
+    )
+
+    return artifact_request(user_text)
+
+
+#: 陈述句：名词、动词都在句里，但动词没管着名词（「保存了」不是「保存成」）。
+#: 旧形状「动词 anywhere ∩ 名词 anywhere」两枚全命中 ⇒ 回复被劫持成附件。
+_DECLARE_SENTENCES = (
+    "我保存了一份简历 txt",
+    "文件还没保存，帮我看看",
+)
+
+#: bot 自己的交付宣告（chat.py 出附件那句的原文形态）：自带「整理成 … 附件」
+#: 与文件名里的 code/txt ⇒ 引用它必再犯（自毒环）。
+_DELIVERY_DECLARATION = (
+    "我已经把内容整理成附件：generated_code_c9f229177f70.txt"
+    " 里那份文档……一段代码"
+)
+
+
+def test_declarative_sentences_are_not_artifact_requests() -> None:
+    for said in _DECLARE_SENTENCES:
+        assert _artifact_request(said) is None, f"陈述句被判成生成文件：{said}"
+
+
+def test_bot_delivery_declaration_does_not_rearm_the_judge() -> None:
+    for text in (
+        _DELIVERY_DECLARATION,
+        f"问题来了，为什么不能惩罚你\n[引用回复 层级1 守岸人] {_DELIVERY_DECLARATION} [/引用回复 层级1]",
+    ):
+        assert _artifact_request(text) is None, f"交付宣告复发附件意图：{text[:40]}"
+
+
+def test_governed_verb_still_reaches_the_noun() -> None:
+    """反证判据没被砍成哑门：动词管着名词的讲法照旧判成文件。"""
+    assert _artifact_request("生成一个txt文档，记录你的感受") == ("document", "txt")
+    assert _artifact_request("请生成一个 Python 文件") == ("code", "py")
+    assert _artifact_request("帮我生成 word 文档") == ("unsupported", "txt")
+    assert _artifact_request("把这段整理成附件发我") == ("document", "md")
+

@@ -23,9 +23,13 @@ PDF 扫描链**「没读」永远不许写成「没有」**——页数截断、
 from __future__ import annotations
 
 import ast
+import importlib.util
 import logging
 import re
+import shutil
+import subprocess
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -145,7 +149,8 @@ def parse_status_sentence(status: str) -> str:
 SCAN_EMPTY_SENTENCES: dict[str, str] = {
     "scanned_no_text": (
         "解析成功，但所读页里没有文字层、只有图像（图像型/扫描件）。"
-        "OCR 兜底今天不生效：全树没有 OCR 组件、没有配置开关、也没有装配点，"
+        "OCR 兜底今天不生效：本链路默认没把 OCR/VLM 腿接上（本机实缺哪样组件、"
+        "装配点接没接，看这一行末尾的 ocr通路 代号——那是现算的，不在这里写死），"
         "图像里的字我读不出来——这是「读不了」，不是「没有内容」"
     ),
     "blank_pages": "解析成功，但所读的每一页确实都没有文字（空白页）",
@@ -180,6 +185,262 @@ DECODE_ACCEPT_RATIO = 0.8
 #: PDF 扫描缺省页数上限：装配点（根入站）要按配置调时传 ``scan_max_pages`` 形参，
 #: 键位开通前不猜数（本席禁改 config.py，见 S-T-PDF-3 日志 §5）。
 PDF_SCAN_MAX_PAGES = 60
+
+# ---------------------------------------------------------------------------
+# 容器魔数嗅探 · 本机能力现算 · 扫描件 OCR 装配点（S35，2026-10-08）
+#
+# 为什么要有这一节：旧 OLE2 那两条腿从前**只看后缀**就把归因说了出去（写死
+# ``legacy .xls (OLE2)``）——把 ``.xlsx`` 改名成 ``.xls`` 的件会被说成「旧格式没适配器」，
+# 而它按 OOXML 腿本可整篇读出；反过来真·OLE2 也只留下一句「无可用解析器」，说不清
+# 「本机到底缺什么」。本节的四条规矩：
+# ①**魔数说话**——后缀只决定先试哪条腿，内容决定最终归因（不猜）；
+# ②「本机有没有通路」一律**现算**（HKCR COM 注册项 / PATH / 已装模块），绝不把探测
+#   结论写死进措辞（规则 10——这类句子每改一次环境就过期一次）；
+# ③探测结果只以**代号**进「技术事实（可核对）」行——那行有锁不许出现反斜杠与绝对
+#   路径（``test_pdf_scan_honesty``），所以本口对外只吐名字，不吐路径；
+# ④任一探测手段自己坏掉（PATH 含非法条目、``winreg`` 不可用、模块查规格抛错）一律
+#   吞成「没探到」，绝不打断读取链（模块不变量①）。
+#
+# 零装包、零外发、零副作用：本节不 pip、不开 socket、不写盘、不启动 Office。
+# ``pdftotext`` 那条腿只在「本机 PATH 里真有它」时才 spawn（argv 直传、无 shell、
+# 超时、输出上限、钉死 encoding——台账 #47 的「subprocess.run 未钉 encoding 必崩」）。
+# ---------------------------------------------------------------------------
+
+_OLE2_MAGIC = bytes.fromhex("D0CF11E0A1B11AE1")
+_OOXML_MAGIC = b"PK\x03\x04"
+_PDF_MAGIC = b"%PDF-"
+
+#: 文字层二次解码可用的外部工具（poppler；缺件机器上这枚恒为空 ⇒ 腿自动不接管）。
+TEXT_LAYER_TOOL = "pdftotext"
+#: 外部工具的等待上限（秒）与输出字符上限（超限当截断处理）。
+TEXT_TOOL_TIMEOUT_SECONDS = 20
+TEXT_TOOL_MAX_CHARS = 200000
+#: 旧格式/扫描件的本机通路探测清单（只读探测，全代码名，不含路径）。
+OFFICE_COM_APPIDS = ("Word.Application", "Excel.Application", "PowerPoint.Application")
+OFFICE_CONVERTER_TOOLS = ("soffice", "libreoffice")
+LEGACY_BINARY_TABLE_MODULES = ("xlrd", "olefile")
+OCR_ENGINE_MODULES = ("pytesseract", "rapidocr_onnxruntime", "paddleocr", "easyocr")
+PAGE_RASTERIZER_TOOLS = ("gswin64c", "gswin32c", "pdftoppm", "mutool")
+
+#: 扫描件交给装配点前最多取几张内嵌图、翻几页、单图字节上限（防病态图把内存吃掉）。
+OCR_MAX_IMAGES = 4
+OCR_MAX_PAGES = 3
+OCR_MAX_IMAGE_BYTES = 4 * 1024 * 1024
+
+#: 后缀 → 「按内容改走哪条现代腿」与旧格式人话短语。
+_LEGACY_OFFICE_EXTS: dict[str, tuple[str, str, str]] = {
+    ".xls": ("spreadsheet", ".xlsx", "旧版 Excel 二进制"),
+    ".ppt": ("presentation", ".pptx", "旧版 PowerPoint 二进制"),
+    ".doc": ("document", ".docx", "旧版 Word 二进制"),
+}
+
+
+def sniff_container(source: Path) -> str:
+    """只读文件头 8 字节判容器：``ole2`` / ``ooxml`` / ``pdf`` / ``unrecognized``。
+
+    打不开返回 ``unreadable``（**不**在这里归因成「文件损坏」，交调用方按既有态说话）。
+    """
+    try:
+        with source.open("rb") as stream:
+            head = stream.read(8)
+    except OSError:
+        return "unreadable"
+    if head.startswith(_OLE2_MAGIC):
+        return "ole2"
+    if head.startswith(_OOXML_MAGIC):
+        return "ooxml"
+    if head.startswith(_PDF_MAGIC):
+        return "pdf"
+    return "unrecognized"
+
+
+def _tools_present(names: tuple[str, ...]) -> list[str]:
+    found: list[str] = []
+    for name in names:
+        try:
+            if shutil.which(name):
+                found.append(name)
+        except (OSError, ValueError):
+            continue
+    return found
+
+
+def _modules_present(names: tuple[str, ...]) -> list[str]:
+    found: list[str] = []
+    for name in names:
+        try:
+            if importlib.util.find_spec(name) is not None:
+                found.append(name)
+        except (ImportError, ValueError, OSError):
+            continue
+    return found
+
+
+def _com_apps_present(names: tuple[str, ...]) -> list[str]:
+    """HKCR 只读探测本机到底注册了哪些 Office COM 组件（没装就是查不到）。"""
+    try:
+        import winreg
+    except ImportError:
+        return []
+    found: list[str] = []
+    for name in names:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, name):
+                found.append(name)
+        except OSError:
+            continue
+    return found
+
+
+def local_capability_report() -> dict[str, Any]:
+    """现算「旧格式 / 扫描件」在本机到底有没有通路（全只读、零装包、零外发）。
+
+    键全是**代码名**（``Word.Application`` 这种），值里没有路径。
+    """
+    report: dict[str, Any] = {
+        "office_com_apps": _com_apps_present(OFFICE_COM_APPIDS),
+        "office_converter_tools": _tools_present(OFFICE_CONVERTER_TOOLS),
+        "legacy_table_modules": _modules_present(LEGACY_BINARY_TABLE_MODULES),
+        "ocr_engines": _modules_present(OCR_ENGINE_MODULES),
+        "page_rasterizers": _tools_present(PAGE_RASTERIZER_TOOLS),
+        "text_layer_tools": _tools_present((TEXT_LAYER_TOOL,)),
+    }
+    report["legacy_office_path"] = bool(
+        report["office_com_apps"] or report["office_converter_tools"]
+    )
+    # 扫描件要有「引擎」还要有「把页变成图的东西」，缺一样都读不出字。
+    report["scan_ocr_path"] = bool(
+        report["ocr_engines"] and report["page_rasterizers"]
+    )
+    return report
+
+
+def _named_pair(items: list[str], label: str) -> str:
+    return f"{label}({'/'.join(items) if items else '无'})"
+
+
+def legacy_office_capability_code() -> str:
+    """旧 OLE2 件「本机为什么读不了」的一行代号（无路径、无冒号）。"""
+    report = local_capability_report()
+    parts = [
+        _named_pair([str(app).split(".")[0] for app in report["office_com_apps"]], "OfficeCOM"),
+        _named_pair(list(report["office_converter_tools"]), "LibreOffice"),
+        _named_pair(list(report["legacy_table_modules"]), "旧表读取器"),
+    ]
+    if report["legacy_office_path"]:
+        return "本机有转换通路但未接线（接线要授权）· " + "、".join(parts)
+    return "本机无转换通路 · " + "、".join(parts)
+
+
+def scan_ocr_capability_code() -> str:
+    """扫描件 OCR 这条腿的状态代号：缺什么组件、装配点接没接（装配点=本文件唯一钩子）。"""
+    report = local_capability_report()
+    parts = [
+        _named_pair(list(report["ocr_engines"]), "OCR引擎"),
+        _named_pair(list(report["page_rasterizers"]), "页面栅格器"),
+        "装配点(" + ("已接线" if _SCAN_OCR_HANDLER is not None else "空") + ")",
+    ]
+    return "、".join(parts)
+
+
+#: 扫描件 OCR 兜底的**装配点**（S35 治的正是「无装配点」这一格，不是「无组件」那一格）。
+#: 形态：收**页内嵌位图字节列表**（按页序）、回 OCR 文本；空串＝没读到。
+#: 缺省 ``None`` ⇒ 本腿不接管，交既有诚实四态说「读不了」。装配方（根入站或中央
+#: ``files.read.*`` handler）在本机确有 OCR/VLM 组件时把可调用体注进来；本文件因此
+#: **不** import OCR 包、**不**碰网络，VLM 开关与配额的真身仍归
+#: ``domains/media/ingest/vision_describe.py``（禁第二真身）。
+_SCAN_OCR_HANDLER: Callable[[list[bytes]], str] | None = None
+
+
+def set_scan_ocr_handler(handler: Callable[[list[bytes]], str] | None) -> None:
+    """装配/卸下扫描件 OCR 钩子（传 ``None`` 即回到今天的缺省行为）。"""
+    global _SCAN_OCR_HANDLER
+    _SCAN_OCR_HANDLER = handler
+
+
+def scan_ocr_handler() -> Callable[[list[bytes]], str] | None:
+    return _SCAN_OCR_HANDLER
+
+
+def _scan_page_image_blobs(reader: Any, pages_read: int) -> tuple[list[bytes], int]:
+    """从图像型页里取**内嵌位图原始字节**（pypdf 的 ``page.images``，本机已装）。
+
+    这是「把页变成图」那半步的本地通路——不需要栅格器就能拿到扫描件里那张整页图。
+    限额：最多翻 ``OCR_MAX_PAGES`` 页、最多取 ``OCR_MAX_IMAGES`` 张、单张超
+    ``OCR_MAX_IMAGE_BYTES`` 丢弃。取不到就交空列表（装配点自己按「没读到」处理）。
+    """
+    blobs: list[bytes] = []
+    pages_tried = 0
+    for index in range(min(pages_read, OCR_MAX_PAGES)):
+        pages_tried += 1
+        try:
+            images = reader.pages[index].images
+        except (
+            AttributeError,
+            IndexError,
+            KeyError,
+            NotImplementedError,
+            OSError,
+            TypeError,
+            ValueError,
+        ):
+            continue
+        for image in images:
+            if len(blobs) >= OCR_MAX_IMAGES:
+                return blobs, pages_tried
+            try:
+                data = bytes(image.data)
+            except (
+                AttributeError,
+                NotImplementedError,
+                OSError,
+                TypeError,
+                ValueError,
+            ):
+                continue
+            if 0 < len(data) <= OCR_MAX_IMAGE_BYTES:
+                blobs.append(data)
+    return blobs, pages_tried
+
+
+def locate_text_layer_tool() -> str:
+    """本机 poppler 命令行件的可执行体路径；缺件机器返回空串（腿自动不接管）。"""
+    try:
+        return shutil.which(TEXT_LAYER_TOOL) or ""
+    except (OSError, ValueError):
+        return ""
+
+
+def second_pass_pdf_text(source: Path, max_chars: int) -> str:
+    """用本机 ``pdftotext`` 把文字层再解一遍（离线、只读这个文件、不写盘）。
+
+    只在「第一遍解出乱码」时被调用。失败/缺件/超时/非零退出一律回空串——**空串
+    不等于这页没字**，交调用方继续按既有诚实态说话（不变量③）。
+    """
+    tool = locate_text_layer_tool()
+    if not tool:
+        return ""
+    budget = min(max(0, int(max_chars)), TEXT_TOOL_MAX_CHARS)
+    if not budget:
+        return ""
+    try:
+        completed = subprocess.run(  # 无 shell、argv 常量表、路径来自已判定文件、超时+输出上限
+            [tool, "-q", "-enc", "UTF-8", str(source), "-"],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=TEXT_TOOL_TIMEOUT_SECONDS,
+            encoding="utf-8",
+            errors="replace",
+            shell=False,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return ""
+    if int(getattr(completed, "returncode", 1)) != 0:
+        return ""
+    text = str(getattr(completed, "stdout", "") or "")
+    return text[:budget]
+
 
 # ---------------------------------------------------------------------------
 # 归档类（OOXML＝zip）解压前体检（需求 17 / AS-RESOURCE-ARCHIVE-BOMB，S-FILESAFE）
@@ -358,11 +619,13 @@ def file_read_failure_note(result: FileReadResult) -> str:
         sentence = SCAN_EMPTY_SENTENCES.get(reason, "")
         if not sentence:
             return ""
+        ocr_path = str(scan.get("ocr_path") or "")
         return (
             f"[文件无文字：{name}] 这个文件我读到了，但没有可提取的文字：{sentence}。"
             f"技术事实（可核对）：文件名={name}，empty_reason={reason}，"
             f"页数=读了{scan.get('pages_read', 0)}/共{scan.get('pages_total', 0)}，"
             f"含图页={scan.get('image_pages', 0)}"
+            + (f"，ocr通路={ocr_path}" if ocr_path else "")
         )
     # 第三格（S-16-READ-HONESTY，2026-09-26 S-FILES-LAND）：unsupported（kind=unknown）
     # 与消失（kind=missing）不再一字不说。只在「无 status、无 pdf_scan、正文空」三者
@@ -507,6 +770,89 @@ def read_file_for_context(
     return labelled_text(result, display_name=display_name, request_id=request_id)
 
 
+#: ``FileReadResult.kind`` 的人话标签（kind 字符串本文件自产，标签与它同住一处，
+#: 不建第二账）。表外 kind 原样上注记——翻译不出就出示原文，不编类型名。
+_FILE_KIND_LABELS: dict[str, str] = {
+    "text": "文本",
+    "code": "代码",
+    "document": "文档",
+    "pdf": "PDF 文档",
+    "spreadsheet": "表格",
+    "presentation": "演示文稿",
+}
+
+#: 上下文注记的缺省收录预算。注记进的是**对话上下文**（每轮都占窗），不是控制面
+#: 全文读取口——缺省远小于 ``read_supported_file`` 的 120000；调用方要放宽显式传。
+CONTEXT_NOTE_DEFAULT_MAX_CHARS = 1200
+
+
+def build_incoming_file_context_note(
+    path: str | Path,
+    *,
+    original_name: str = "",
+    max_chars: int = CONTEXT_NOTE_DEFAULT_MAX_CHARS,
+) -> str:
+    """入站文件 → T2 打标的上下文注记（文件名/类型/可读性/限长正文）。
+
+    文件链路波的供件：notice 腿把文件落盘到 ``incoming/`` 后，注入侧拿落盘路径
+    调本口，把返回文本注进对话上下文——判据零副本：
+
+    - 读取只走 ``read_supported_file``（不变量①：内容问题诚实降级、绝不抛）；
+    - T2 打标只走 ``labelled_text`` 咽喉（文件正文恒 T2，超管上传也不升档）；
+    - 读不动时的措辞只交 ``file_read_failure_note`` 唯一真身（S-PDF-2：不复制、
+      不并态）——「没读」绝不写成「没有」（不变量③）。
+
+    ``original_name`` 是**给人看的原始文件名**（落盘件名是 ``<时间戳>_原名`` 形态，
+    不该出现在注记里）；不传则退回解析出口的件名。空正文但读取成功（空文件/
+    非文字形态）由本口出一句可核对的事实，不猜内容。本函数整体 fail-honest：
+    任何意外折成一句「没读到」的程序侧说明并记 WARNING，绝不打断入站链路。
+    """
+    try:
+        result = read_supported_file(path, max_chars=max_chars)
+        name = (
+            str(original_name or "").strip()
+            or str(result.title or "").strip()
+            or Path(path).name
+            or "未命名文件"
+        )
+        body = labelled_text(result, display_name=name)
+        if not body.strip():
+            failure = file_read_failure_note(result)
+            if failure:
+                # 措辞真身逐字交出（S-PDF-2：不复制、不并态、不替换其中的名字）；
+                # ``file_read_failure_note`` 不收 display_name，落盘件名与用户可见名
+                # 不一致时只在外面补一行头，让注记对得上人手里的文件。
+                shown = str(result.title or result.path.name or "")
+                if name and name != shown:
+                    return f"[入站文件：{name}]\n{failure}"
+                return failure
+            return (
+                f"[入站文件：{name}] 文件在，但没有读出任何文字内容"
+                "（可能是空文件，或内容不是文字形态）。"
+            )
+        kind = str(result.kind or "")
+        kind_label = _FILE_KIND_LABELS.get(kind) or kind or "未知类型"
+        header = (
+            f"[入站文件：{name}｜类型：{kind_label}｜"
+            f"已读取正文（本注记最多收录约 {max(0, int(max_chars))} 字符）]"
+        )
+        return f"{header}\n{body}"
+    except Exception as exc:  # noqa: BLE001 - 供件自身绝不让异常逃出入站链路
+        try:
+            shown_name = Path(path).name
+        except (OSError, TypeError, ValueError):
+            shown_name = "?"
+        logger.warning(
+            "incoming file context note failed: file=%s error=%s",
+            shown_name,
+            type(exc).__name__,
+        )
+        return (
+            "这次没能生成入站文件的上下文注记（程序侧异常，不是文件损坏，"
+            "内容没有读）。"
+        )
+
+
 def read_supported_file(
     path: str | Path,
     *,
@@ -545,22 +891,98 @@ def read_supported_file(
         )
 
 
+def _read_legacy_office(
+    source: Path,
+    ext: str,
+    *,
+    max_chars: int,
+    scan_max_pages: int | None,
+) -> FileReadResult:
+    """旧格式族（``.xls`` / ``.ppt`` / ``.doc``）——魔数说话，能读真读，读不了说清为什么。
+
+    V2.1 风险 8 的归因纪律**一字未改**：真 OLE2 仍 ``parser_unavailable`` 诚实降级，
+    绝不塞给 OOXML 解析器抛包级异常撞穿入站链路（那三条锁 ``test_v21_risk_red_tz_and_files``
+    / ``test_v21_s10_protocols`` / ``test_file_reader_parse_safety`` 钉的就是这一格）。
+    S35 新增的只有两样：
+
+    ①**内容改道**——后缀写着旧格式、文件头却是 OOXML（zip）的件，从前一律被判
+      「旧格式无适配器」＝把能读的判成读不了（与【知识库】空分区那类「没查到就说不存在」
+      同型），现在按内容再走一次现代腿，真读出来；
+    ②**本机现算的缺件代号**——「无可用解析器」这句口号后面，补上本机到底有没有
+      Office COM / LibreOffice / 旧表读取器（全只读探测，无路径）。
+    """
+    kind, modern_ext, label = _LEGACY_OFFICE_EXTS[ext]
+    magic = sniff_container(source)
+    if magic == "ooxml":
+        attempt = _read_supported_file_body(
+            source,
+            max_chars=max_chars,
+            scan_max_pages=scan_max_pages,
+            forced_ext=modern_ext,
+        )
+        if attempt.text.strip() or not (attempt.metadata or {}).get("status"):
+            return attempt
+        # 改道没读出来（本机实测：``openpyxl`` 会按**后缀**拒收 ``.xls``，而
+        # python-docx / python-pptx 不看后缀，所以 ``.doc``/``.ppt`` 这类改名件能真读）。
+        # 这一格的归因必须说「内容实为 OOXML、按现代腿读过、没读出来」，
+        # 不许再沿用从前那句「旧格式（OLE2）无适配器」——那是把没读成写成没得读。
+        metadata = dict(attempt.metadata or {})
+        metadata["format"] = (
+            f"后缀是 {ext} 而内容实为 OOXML 容器（按 {modern_ext} 腿改道读过、"
+            f"没读出来）· 原归因={metadata.get('format') or '无'}"
+        )
+        return FileReadResult(source, attempt.kind, attempt.text, source.name, metadata)
+    if magic == "ole2":
+        return FileReadResult(
+            source,
+            kind,
+            "",
+            source.name,
+            {
+                "status": "parser_unavailable",
+                "format": f"{label}（OLE2 复合文档）· {legacy_office_capability_code()}",
+            },
+        )
+    # 既非 OLE2 也非 OOXML（含 0 字节件、文件打不开）：态与今天一致（不新增归因），
+    # 但把「魔数不匹配、我不猜里面写了什么」写进去——把没查到说成不存在是谎报，
+    # 把没认出的容器说成 OLE2 同样也是。
+    return FileReadResult(
+        source,
+        kind,
+        "",
+        source.name,
+        {
+            "status": "parser_unavailable",
+            "format": (
+                f"后缀是 {ext} 而文件头既非 OLE2 也非 OOXML（容器代号={magic}"
+                f"，不猜内容）· 本链路无该容器适配器"
+                f" · {legacy_office_capability_code()}"
+            ),
+        },
+    )
+
+
 def _read_supported_file_body(
     path: str | Path,
     *,
     max_chars: int = 120000,
     scan_max_pages: int | None = None,
+    forced_ext: str = "",
 ) -> FileReadResult:
     """读取一个受支持的文件；对内容问题一律诚实降级（模块不变量①）。
 
     ``scan_max_pages`` 只对 PDF 生效（缺省 ``PDF_SCAN_MAX_PAGES``）：到顶会在正文里
     明写「共 N 页只读了前 M 页」，绝不把没读当成没有（不变量③）。装配点将来接
     配置键时把值传进来即可，本函数缺省行为即现状。
+
+    ``forced_ext`` 只由旧格式腿的**魔数改道**使用（S35）：后缀写着 ``.xls`` 而内容实为
+    OOXML 容器时，按内容再走一次现代腿。递归深度恒为 1（改道的目标必是现代后缀分支），
+    缺省空串＝按盘上后缀走（既有行为一字未变）。
     """
     source = Path(path).expanduser()
     if not source.is_file():
         return FileReadResult(source, "missing", "")
-    ext = source.suffix.lower()
+    ext = forced_ext or source.suffix.lower()
     if ext in _TEXT_EXTS:
         body = _text(source, max_chars)
         note = _text_truncation_note(source, max_chars)
@@ -604,16 +1026,8 @@ def _read_supported_file_body(
     if ext == ".pdf":
         return _read_pdf(source, max_chars, scan_max_pages)
     if ext == ".xls":
-        # V2.1 风险 8（2026-09-17）：旧版 OLE2 二进制不是 OOXML。本链路无
-        # .xls 适配器（xlrd 未引入），塞给 openpyxl 只会抛 InvalidFileException
-        # /BadZipFile（不在捕获元组内）→ 读取链崩溃、/files/read 500。诚实
-        # 降级并标注 parser_unavailable（对齐 .pdf 分支先例），绝不伪装解析。
-        return FileReadResult(
-            source,
-            "spreadsheet",
-            "",
-            source.name,
-            {"status": "parser_unavailable", "format": "legacy .xls (OLE2)"},
+        return _read_legacy_office(
+            source, ext, max_chars=max_chars, scan_max_pages=scan_max_pages
         )
     if ext == ".xlsx":
         guarded = _archive_guard(source, "spreadsheet")
@@ -651,14 +1065,15 @@ def _read_supported_file_body(
                 source, "spreadsheet", "损坏或不是有效的 Excel 表格", status="parse_failed"
             )
     if ext == ".ppt":
-        # V2.1 风险 8：同 .xls——python-pptx 对 OLE2 抛 PackageNotFoundError
-        # 不在捕获元组内；旧格式无适配器，诚实降级不伪装。
-        return FileReadResult(
-            source,
-            "presentation",
-            "",
-            source.name,
-            {"status": "parser_unavailable", "format": "legacy .ppt (OLE2)"},
+        return _read_legacy_office(
+            source, ext, max_chars=max_chars, scan_max_pages=scan_max_pages
+        )
+    if ext == ".doc":
+        # Word 97-2003 与 .xls/.ppt 同族（OLE2）。从前它落到最末的 ``unknown`` 分支，
+        # 话是诚实的（「这个类型我没有读取通道」）但没说**为什么**、也没查过本机
+        # 到底有没有通路；本席把它并进同一把尺（S35）。
+        return _read_legacy_office(
+            source, ext, max_chars=max_chars, scan_max_pages=scan_max_pages
         )
     if ext == ".pptx":
         guarded = _archive_guard(source, "presentation")
@@ -794,14 +1209,48 @@ def _read_pdf(
     notes: list[str] = []
 
     ratio = cjk_decode_ratio(body)
+    first_pass_ratio = ratio
+    scan["text_source"] = "pypdf"
+    if ratio is not None and ratio < DECODE_ACCEPT_RATIO:
+        # 乱码（多为缺 ToUnicode 的 CID 字体）时，本机若真有第二家文字层解码器，
+        # 就换一家再解一遍（S35 真做腿：poppler ``pdftotext``，离线、只读这个件、
+        # 不写盘、零装包）。采用判据仍是**同一把量化尺**，不是「哪家看起来更强」：
+        # 只有第二遍到达标线才换，否则退回第一遍那份并如实说明换过、没换出结果。
+        alt = second_pass_pdf_text(source, max_chars)
+        alt_ratio = cjk_decode_ratio(alt)
+        scan["second_pass_ratio"] = None if alt_ratio is None else round(alt_ratio, 4)
+        if alt.strip() and alt_ratio is not None and alt_ratio >= DECODE_ACCEPT_RATIO:
+            body = alt
+            ratio = alt_ratio
+            scan["text_source"] = TEXT_LAYER_TOOL
+        elif alt.strip():
+            notes.append(
+                f"[换本机 {TEXT_LAYER_TOOL} 做第二遍文字层解码没有更好结果"
+                f"（第二遍中文占比={alt_ratio}，第一遍={round(first_pass_ratio, 4) if first_pass_ratio is not None else None}），"
+                f"仍按第一遍如实说明——两遍都是「没解码出来」，不是「原文里没有字」。]"
+            )
     if ratio is not None:
         scan["decode_ratio"] = round(ratio, 4)
-        if ratio < DECODE_ACCEPT_RATIO:
-            notes.append(
-                f"[中文解码质量警告：本文档文字层里已解码中文字形占 {ratio:.0%}"
-                f"（达标线 {DECODE_ACCEPT_RATIO:.0%}），其余疑似乱码——通常是 PDF 缺"
-                f" ToUnicode 映射表。乱码是「没解码出来」，不是「原文里没有字」。]"
-            )
+        if first_pass_ratio is not None and first_pass_ratio < DECODE_ACCEPT_RATIO:
+            if scan["text_source"] == TEXT_LAYER_TOOL:
+                notes.append(
+                    f"[中文解码质量警告：第一遍解码已解出中文字形占"
+                    f" {first_pass_ratio:.0%}（乱码疑似缺 ToUnicode），"
+                    f"换本机 {TEXT_LAYER_TOOL} 第二遍后为 {ratio:.0%}"
+                    f"（达标线 {DECODE_ACCEPT_RATIO:.0%}），本次采用后者。]"
+                )
+            else:
+                notes.append(
+                    f"[中文解码质量警告：本文档文字层里已解码中文字形占"
+                    f" {first_pass_ratio:.0%}（达标线 {DECODE_ACCEPT_RATIO:.0%}），"
+                    f"其余疑似乱码——通常是 PDF 缺 ToUnicode 映射表。"
+                    f"乱码是「没解码出来」，不是「原文里没有字」。]"
+                )
+                if not locate_text_layer_tool():
+                    notes.append(
+                        f"[本机没有第二家文字层解码器（{TEXT_LAYER_TOOL} 不在 PATH），"
+                        f"这条腿没有备用来源——「试不出」不等于「试不出来的东西不存在」。]"
+                    )
     if pages_failed:
         notes.append(
             f"[有 {pages_failed} 页因页对象内部错误没有读到（没读≠没有内容）。]"
@@ -828,28 +1277,123 @@ def _read_pdf(
             f"[已达 {max_chars} 字符读取上限，另有 {dropped} 字未读；"
             f"未读不等于没有内容。]"
         )
+
+    # 扫描件 OCR 兜底的**装配点**（S35 治的就是「无装配点」这一格，不是「无组件」）。
+    # 缺省钩子为 ``None`` ⇒ 本腿不接管、上面的 empty_reason 保持 scanned_no_text，
+    # 由 ``file_read_failure_note`` 把「读不了」说清（行为与接线前一字不差）。
+    # 钩子接上后才动手，而且**取图与调钩子都在受保护区内**：外部 OCR/VLM 腿出任何
+    # 错都不许打断入站（不变量①），也不许把「钩子没读出字」写成「图像里没有字」。
+    if scan.get("empty_reason") == "scanned_no_text":
+        scan["ocr_path"] = scan_ocr_capability_code()
+        handler = scan_ocr_handler()
+        if handler is not None:
+            blobs, pages_tried = _scan_page_image_blobs(reader, pages_read)
+            scan["ocr_pages_tried"] = pages_tried
+            scan["ocr_images"] = len(blobs)
+            ocr_text = ""
+            if blobs:
+                try:
+                    ocr_text = str(handler(blobs) or "")
+                except Exception as exc:  # noqa: BLE001 - 装配方的错不许撞穿入站链路
+                    logger.warning(
+                        "scan ocr handler raised: file=%s error=%s",
+                        source.name,
+                        type(exc).__name__,
+                    )
+                    scan["ocr_error"] = type(exc).__name__
+            if ocr_text.strip():
+                dropped = max(0, len(ocr_text) - max_chars)
+                body = ocr_text.strip()[:max_chars]
+                del scan["empty_reason"]
+                scan["ocr"] = "handler_text"
+                note = (
+                    f"[扫描件经装配点 OCR 读出 {len(body)} 字"
+                    f"（试了 {pages_tried} 页、取到 {len(blobs)} 张内嵌图）。"
+                )
+                note += (
+                    f"另有 {dropped} 字未读，未读不等于没有内容。]"
+                    if dropped
+                    else "]"
+                )
+                notes.append(note)
+            else:
+                scan["ocr"] = "no_images_taken" if not blobs else "handler_no_text"
+                notes.append(
+                    f"[装配点已接线但没把字读回来（取到 {len(blobs)} 张内嵌图、"
+                    f"试了 {pages_tried} 页，状态={scan['ocr']}）。"
+                    f"没读回来不等于图像里没有字。]"
+                )
     text = body
     if notes:
         text = (body + "\n" if body else "") + "\n".join(notes)
     return FileReadResult(source, "pdf", text, source.name, {"pdf_scan": scan})
 
 
+#: 语言名 → 扩展名：全仓唯一一张表（名词候选与 ext 取值都读它，禁第二张）。
+_ARTIFACT_LANGUAGES = {
+    "python": "py",
+    "c++": "cpp",
+    "c#": "cs",
+    "java": "java",
+    "javascript": "js",
+    "typescript": "ts",
+    "powershell": "ps1",
+    "bash": "sh",
+}
+
+#: 交付宣告＝自毒环：出附件时那句「我已经把内容整理成附件：<文件名>」字面自带
+#: 「整理成 … 附件」（且文件名里还有 code/txt），谁引用它谁再被判成要文件。
+#: 匹配前先剥**只这一形**（剥到句末或行末）。通用消毒口
+#: `security/injection.guard_secondhand_text` 是「不可信包裹」不是判据预处理，
+#: 口径不同 ⇒ 这里不复用它、也不起第二把尺。
+_ARTIFACT_DELIVERY_DECLARATION = re.compile(r"我已经把内容整理成附件[^。\n]*")
+
+#: 动词必须**管着**名词：同句、邻近（≤12 字，不许跨过句末标点）才算文件意图。
+#: 旧形状＝「动词 anywhere ∩ 名词 anywhere」⇒ 实算反例「我保存了一份简历 txt」
+#: 「文件还没保存，帮我看看」两枚陈述句都被判成"她要生成文件"（回复被劫持成附件）。
+#: 「保存/写入」裸形不在册：只有「保存成/保存为/存成/存为」这类**产出为文件**的讲法
+#: 才带生成语义；generate/write/save 译不成这套动词，故不再单列英文裸形。
+_ARTIFACT_VERBS = "生成|导出|保存成|保存为|存成|存为|创建|制作|整理成|写成|发我|给我"
+_ARTIFACT_GAP = r"[^。！？；\n]{0,12}?"
+#: 拉丁短词挂 `(?<![a-z])`：「一个txt文档」仍命中（前一字非 a-z），
+#: 而 copy / profile 一类不再误命中 py / file。
+_ARTIFACT_LATIN_NOUNS = (
+    "txt",
+    "md",
+    "markdown",
+    "py",
+    "java",
+    "json",
+    "csv",
+    "docx",
+    "xlsx",
+    "pptx",
+    "pdf",
+    "code",
+    "script",
+    "file",
+    "document",
+)
+
+
+def _artifact_nouns() -> str:
+    """名词候选：固定词形 + 语言表键（长键在前，`javascript` 不被 `java` 截走）。"""
+    parts = ["文件", "文档", "附件", "表格", "文本", "代码", "脚本", "提示词", "人设"]
+    parts += [f"(?<![a-z]){t}" for t in _ARTIFACT_LATIN_NOUNS]
+    parts += [
+        f"(?<![a-z]){re.escape(key)}"
+        for key in sorted(
+            (k for k in _ARTIFACT_LANGUAGES if k[:1].isalpha()), key=len, reverse=True
+        )
+    ]
+    return "|".join(parts)
+
+
 def artifact_request(user_text: str) -> tuple[str, str] | None:
-    text = (user_text or "").lower()
-    if not re.search(
-        r"生成|写入|保存|导出|创建|制作|generate|write|save|export|create", text
-    ):
+    text = _ARTIFACT_DELIVERY_DECLARATION.sub(" ", (user_text or "").lower())
+    if not re.search(rf"({_ARTIFACT_VERBS}){_ARTIFACT_GAP}({_artifact_nouns()})", text):
         return None
-    languages = {
-        "python": "py",
-        "c++": "cpp",
-        "c#": "cs",
-        "java": "java",
-        "javascript": "js",
-        "typescript": "ts",
-        "powershell": "ps1",
-        "bash": "sh",
-    }
+    languages = _ARTIFACT_LANGUAGES
     if re.search(r"代码|脚本|code|script", text) or any(k in text for k in languages):
         ext = next(
             (
@@ -860,7 +1404,7 @@ def artifact_request(user_text: str) -> tuple[str, str] | None:
             "txt",
         )
         return "code", ext
-    if re.search(r"文件|文档|txt|文本|document|file|提示词|人设", text):
+    if re.search(r"文件|文档|附件|表格|txt|文本|document|file|提示词|人设", text):
         ext = "txt" if "txt" in text or "文本" in text else "md"
         if re.search(r"\b(docx|xlsx|pptx|pdf)\b|word|excel|powerpoint", text):
             return "unsupported", "txt"
