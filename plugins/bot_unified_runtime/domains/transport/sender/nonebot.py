@@ -13,6 +13,7 @@ from email.utils import formataddr
 from html import escape as _html_escape
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from plugins.bot_unified_runtime.contracts import (
     DeliveryReceipt,
@@ -31,8 +32,10 @@ from plugins.bot_unified_runtime.domains.transport.sender.failure_class import (
     classify_send_failure,
 )
 from plugins.bot_unified_runtime.domains.transport.sender.file_gateway import (
+    TELEGRAM_MAX_DOCUMENT_BYTES,
     FileSource,
     FileTransferError,
+    FileTransferGateway,
     # FinalTransferError 不在此导入：它是 FileTransferError 的子类，本文件只按
     # ``exc.kind`` 归因，两型走同一条 except 分支（导入即 F401 未用）。
     MailEnvelope,
@@ -110,6 +113,138 @@ def _telegram_photo_reference(parts: list[dict[str, Any]]) -> str:
         except OSError:
             continue
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Telegram 视频 / 动图 / 贴纸三族出口（S33 波 · 此前这三族在 TG 腿上零 getattr）
+# ---------------------------------------------------------------------------
+
+#: 走 sendAnimation 的动图形态（Telegram 侧动画＝MPEG4/GIF；GIF 的正解是
+#: sendAnimation 而不是 sendVideo，动图当视频发会在客户端退化成静态缩略图）。
+_TG_ANIMATION_SUFFIXES = frozenset({".gif", ".mp4", ".m4v", ".webm", ".animate"})
+
+#: 部件 type → 本函数认得的富媒体段（其余 type 各有真身腿，此处一律不碰）。
+_TG_RICH_MEDIA_PART_TYPES = frozenset({"video", "animation", "gif", "sticker"})
+
+#: API 名 → Telegram 的字节参数名（适配器 send 前处理 input file 时按这个键取，
+#: 见 nonebot/adapters/telegram/adapter.py 里 api[4:].lower() 那一族）。
+_TG_RICH_MEDIA_KWARGS = {
+    "send_animation": "animation",
+    "send_video": "video",
+    "send_photo": "photo",
+}
+
+
+def plan_telegram_rich_media(part: dict[str, Any]) -> tuple[str, str, str]:
+    """纯判定：这一段富媒体该走哪个出口、拿什么引用、字节由谁取。
+
+    返回 ``(API 名, 引用, 来源形态)``，来源形态 ∈ {"", "local", "remote"}；
+    无可发引用时返回空三元组（调用方按「未送达」处理，**绝不静默当成已发**）。
+
+    为什么 sticker 不走 ``send_sticker``——这是 **Telegram 平台硬约束**，不是本仓偷懒：
+    ``sendSticker`` 只收「已经属于某个 sticker set」的贴纸（``sticker`` 参数是
+    file_id，须先经 ``createNewStickerSet`` / ``addStickerToSet`` 建册入册），
+    **任意一张图片/动图当贴纸直发必被服务端拒**，而本仓没有贴纸册管理面
+    （建册要机器人拥有该册）。故给**可用替代**：动图形态 → ``sendAnimation``，
+    静图形态 → ``sendPhoto``，内容与出处都到位，只是消息形态不是「贴纸」。
+
+    视频/动图的分流按 Telegram 自己的口径：``.gif`` 与明确声明动画的段走
+    ``sendAnimation``（mp4/gif 皆可），其余走 ``sendVideo``。
+    """
+    part_type = str(part.get("type") or "").strip().lower()
+    if part_type not in _TG_RICH_MEDIA_PART_TYPES:
+        return "", "", ""
+    raw = str(part.get("file") or part.get("url") or "").strip()
+    if not raw:
+        return "", "", ""
+    is_remote = raw.startswith(("http://", "https://"))
+    suffix = (
+        Path(urlparse(raw).path).suffix
+        if is_remote
+        else Path(raw.split("?", 1)[0]).suffix
+    ).lower()
+    declared_animation = part_type in {"animation", "gif"} or str(
+        part.get("kind") or ""
+    ).strip().lower() in {"animation", "gif"}
+
+    if part_type == "sticker":
+        # 替代路径：动图形态保留动画，静图形态降级为图片；两者都不许静默丢。
+        if suffix in _TG_ANIMATION_SUFFIXES or declared_animation:
+            return "send_animation", raw, "remote" if is_remote else "local"
+        return "send_photo", raw, "remote" if is_remote else "local"
+    if suffix == ".gif" or declared_animation:
+        return "send_animation", raw, "remote" if is_remote else "local"
+    if suffix in {".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".3gp"}:
+        return "send_video", raw, "remote" if is_remote else "local"
+    # 扩展名认不出（无后缀的直链、临时文件名）：视频段仍按视频发，
+    # 动图段（animation/gif 已在上面命中）之外不猜形态。
+    return "send_video", raw, "remote" if is_remote else "local"
+
+
+async def send_telegram_rich_media(
+    bot: Any,
+    part: dict[str, Any],
+    *,
+    request_id: str,
+    chat_id: str,
+    caption: str,
+    gateway: FileTransferGateway,
+) -> Any:
+    """发一段视频/动图/贴纸替代件，返回出口结果（失败一律抛出，不返回「假成功」）。
+
+    **判定门不许绕过**：本地件先过 ``FileTransferGateway.stage``——那一步是全通道
+    唯一的取字节前判定（``check_sendable``：路径域 + 禁触名册，密钥/库/日志/.env
+    一类当场拒），随后按 ``TELEGRAM_MAX_DOCUMENT_BYTES``（2MiB，与附件腿**同一枚
+    常量对象**）拒超限件，超限/不在场/域判定拒绝都收在 ``FileTransferError`` 里。
+    远程直链本机零读字节（由 Telegram 服务端取），沿用图片腿既有语义原样交出，
+    不经路径域判定（那条判定管的是「本机文件能不能读出去」，这里没有本机读取）。
+    """
+    api, reference, source_kind = plan_telegram_rich_media(part)
+    if not api:
+        raise _FinalSendError("telegram_rich_media_unsendable")
+    # 可执行/脚本形态永远不许出站。名册真身＝``restricted_runner.DENIED_EXTENSIONS``
+    # （落盘口那一份，:218 起）——本处只引用、不另抄第二张表（仓规「禁第二份名册」）；
+    # 局部导入防装配环，与 ``_download_voice_source`` 里 downloader 的同口径先例一致。
+    from plugins.bot_unified_runtime.domains.files.sender.restricted_runner import (
+        DENIED_EXTENSIONS,
+        DenyCode,
+    )
+
+    if Path(urlparse(reference).path).suffix.lower() in DENIED_EXTENSIONS:
+        raise _FinalSendError(DenyCode.EXECUTABLE_DENIED)
+    kwarg = _TG_RICH_MEDIA_KWARGS[api]
+    if source_kind == "local":
+        try:
+            ticket = gateway.stage(
+                FileSource(
+                    source_kind="path",
+                    path=reference,
+                    name=str(part.get("name") or ""),
+                ),
+                request_id=request_id,
+            )
+        except FileTransferError as exc:
+            raise _FinalSendError(str(exc.kind)) from exc
+        if ticket.local_path is None or not ticket.local_path.is_file():
+            raise _FinalSendError("missing_file")
+        if ticket.size > TELEGRAM_MAX_DOCUMENT_BYTES:
+            # 与附件腿同宽：超限在发送前即可判定 ⇒ 终态，绝不重投（重投也只烧预算）。
+            raise _FinalSendError("telegram_media_too_large")
+        # 件名取票据名（与 S-T-FILE-2 的三通道对齐修正同口径），不取盘上落盘名。
+        payload: str | tuple[str, bytes] = (
+            ticket.name or ticket.local_path.name,
+            ticket.local_path.read_bytes(),
+        )
+    elif source_kind == "remote":
+        payload = reference
+    else:  # pragma: no cover - plan 已挡空引用
+        raise _FinalSendError("telegram_rich_media_unsendable")
+
+    method = getattr(bot, api, None)
+    if not callable(method):
+        # 适配器没有这一枚出口 ⇒ 诚实点名，不假装发过（历史上这三族正是静默无通路）。
+        raise _FinalSendError(f"telegram_api_unavailable:{api}")
+    return await method(chat_id=chat_id, **{kwarg: payload}, caption=caption or None)
 
 
 def _voice_cache_path(key: str) -> Path:
@@ -436,6 +571,34 @@ def _build_mail_attachment_envelope(
     )
 
 
+class _MailRedriveEvent:
+    """认领重投腿（event=None）的邮件「事件事实替身」（F3，S-FIX-MAILINGRESS-R）。
+
+    队列请求已带齐投递所需的全部地址事实：``target_id``（管线回填的原发件人，
+    与内联腿 ``event.sender.id`` 同一信任面——都来自会话路由决策，绝不从正文扫）
+    与 ``origin_message_id``（来件 Message-ID，线程头唯一可用真身）。替身只做
+    「形状适配」：把请求侧事实重组为 ``_build_mail_reply_message`` /
+    ``_build_mail_attachment_envelope`` 既有的事件接口，让重投腿与内联腿复用
+    **同一个报文构造器**＝不写第二套装配（装配唯一性同 atkfix R3/M-4 口径）。
+
+    残余降级（如实登记）：原主题未持久化在 SendRequest ⇒ 重投主题回填 ``Re:``
+    （内联腿空主题同形）；origin 为空时线程头照旧缺省跳过（构造器自 semantics）。
+    """
+
+    __slots__ = ("id", "sender", "subject")
+
+    class _Sender:
+        __slots__ = ("id",)
+
+        def __init__(self, address: str) -> None:
+            self.id = address
+
+    def __init__(self, send_request: SendRequest) -> None:
+        self.id = str(send_request.origin_message_id or "")
+        self.subject = ""
+        self.sender = self._Sender(str(send_request.target_id or "").strip())
+
+
 async def send_nonebot_message(
     bot: Any,
     event: Any,
@@ -478,12 +641,24 @@ async def send_nonebot_message(
             ),
         )
 
+    # F3：mail 认领重投腿（root transport 闭包与连接期补发臂均传 event=None）不再
+    # 降级 send_to——先用请求侧事实立事件替身，下面文本腿走 send_mail（线程头＋
+    # 确定性 Message-ID 齐），附件腿名册=target_id（与内联同一地址事实，
+    # FileTransferGateway 比对不再恒空）。其余 adapter 的 event=None 兜底形制
+    # 逐字节不变。
+    if adapter_name == "mail" and event is None:
+        event = _MailRedriveEvent(send_request)
+
     text = str(send_request.content.text_fallback or "").strip()
     media_parts = _telegram_media_parts(send_request.content.content_ref)
     has_tg_media = adapter_name == "telegram" and any(
-        part.get("type") in {"image", "record", "voice", "file", "video"}
+        part.get("type") in {"image", "record", "voice", "file"}
+        or part.get("type") in _TG_RICH_MEDIA_PART_TYPES
         for part in media_parts
     )
+    # S33 波补的正是右半边：``video`` 旧册里虽有名字却零 getattr（发了个寂寞、
+    # 无正文时当场 ValueError），``sticker`` 更连名字都没有 ⇒ 只带贴纸的请求
+    # 直接落进 SKIPPED（静默丢，用户端表现为「她回了但什么都没到」）。
     # 无正文只带附件的邮件请求不得被当成空内容跳过（S-T-TGSEND · 需求 16(3)）：
     # 旧判据只认 Telegram 有媒体，于是「只发一个文件到邮箱」当场 SKIPPED、
     # 回执 SENT 语义皆无，附件无声消失。邮件侧只有**附件**这一条媒体腿
@@ -661,6 +836,36 @@ async def send_nonebot_message(
                             _provider_message_id(result) or delivered_message_id
                         )
                         _cleanup_voice_source(raw_voice_ref)
+            # 视频 / 动图 / 贴纸（S33 波）：这三族此前在 TG 腿上零 getattr ⇒
+            # 结构性无通路（无正文时下面那枚 ValueError 把请求打成可重试失败，
+            # 队列烧满预算才收口；贴纸段更连 has_tg_media 都不认，直接 SKIPPED
+            # 静默消失）。判定门与限额走附件腿同一条（见 send_telegram_rich_media）。
+            rich_media = [
+                part
+                for part in parts
+                if str(part.get("type") or "").strip().lower()
+                in _TG_RICH_MEDIA_PART_TYPES
+            ]
+            if rich_media:
+                media_gateway = get_default_file_gateway()
+                for part in rich_media:
+                    part_caption = remaining if len(remaining) <= 1024 else ""
+                    rich_result = await send_telegram_rich_media(
+                        bot,
+                        part,
+                        request_id=send_request.request_id,
+                        chat_id=send_request.target_id,
+                        caption=part_caption,
+                        gateway=media_gateway,
+                    )
+                    if rich_result is not None:
+                        result = rich_result
+                        delivered_parts += 1
+                        delivered_message_id = (
+                            _provider_message_id(rich_result) or delivered_message_id
+                        )
+                        if part_caption:
+                            remaining = ""
             if result is not None and not remaining:
                 return result
             if result is None and not remaining and parts:
