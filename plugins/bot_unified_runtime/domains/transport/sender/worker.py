@@ -793,9 +793,14 @@ def _chunk_part_plan(send_request: SendRequest) -> list[str] | None:
     发了」（report-T55 §4.4 原文）。投递形态由 _is_atomic_part_delivery
     钉死：mixed 恒为一次原子整发，绝不拆段调用。
 
-    mixed 门三条件（缺一走既有整发语义）：①目标为私聊/群聊（与 chunks
-    既有 scope 门对齐）；②parts 为非空列表；③不含 file 部件（file 走
-    FileTransferGateway 多调用路径，原子假设不成立，维持既有 M10 语义）。
+    mixed 门二条件（缺一走既有整发语义）：①目标为私聊/群聊（与 chunks
+    既有 scope 门对齐）；②parts 为非空列表。**含 file 部件同样进段级记账**：
+    旧第三条件「不含 file 部件」让 mixed+file 整条退出 part 系统（生产端
+    _send_file_parts 与 _mixed_part_indexes 早已就绪），后果＝send_request_parts
+    零行、parts_total 恒 NULL ⇒ UNKNOWN 确认/PARTIAL 断点续发/90s 补偿全哑。
+    file 腿的多调用形态由 onebot 侧 progress.count 守卫自持（部分已送达 ⇒
+    result_unknown 终态，绝不整体重投）；记账侧仍按 _is_atomic_part_delivery
+    判定的原子整发语义：一次投整条，part 行 SENT/UNKNOWN 与整条回执同进退。
     """
     content = send_request.content
     normalized_type = str(content.content_type).strip().lower()
@@ -816,14 +821,6 @@ def _chunk_part_plan(send_request: SendRequest) -> list[str] | None:
             return None
         raw_parts = content.content_ref.get("parts")
         if not isinstance(raw_parts, list) or not raw_parts:
-            return None
-        if any(
-            isinstance(part, dict)
-            and str(part.get("type")).strip().lower() == "file"
-            for part in raw_parts
-        ):
-            # file 混排走 _send_file_parts 多调用路径（M10 语义域），
-            # 不满足「一次原子调用」假设，退出段级记账。
             return None
         return [_mixed_part_identity(part) for part in raw_parts]
     return None
