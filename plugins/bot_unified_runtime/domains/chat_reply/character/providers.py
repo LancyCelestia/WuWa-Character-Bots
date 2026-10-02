@@ -100,15 +100,20 @@ from plugins.bot_unified_runtime.domains.core.contracts.character import (
 )
 from plugins.bot_unified_runtime.domains.core.search.entity_relations import (
     reality_relation_lines,
+    registered_entity_hit,
+    relation_query_admissible,
 )
 
 # V21-PERSONA-001：模块级 logger（版本库注入溯源/降级告警面；与 character 兄弟模块同惯例）。
 logger = logging.getLogger(__name__)
 
-#: 允许现算实体关系一跳的问句类别（席 S12，现实知识面波）：**复用** ``classify_question_intent``
-#: 的既有分类，不新造判据——"这句算不算现实题"的真身住在 ``runtime/question_intent.py``，
-#: 这里只登记"哪几类放行"。二游语境（``TimelyDomain.ANIME_LORE`` 那一族题）在这套分类里
-#: 落在 ``LOCAL_KNOWLEDGE``，故不再另立第二把尺。
+#: 实体命中查不到时**才**退回的问句类别（席 S19 改序，2026-10-03）：
+#: 放行判据的第一道是「册里有这个名字」（``registered_entity_hit``），分类器不再是唯一门票——
+#: 「明日方舟是谁开发的」这类无「哪个/什么公司」字样的问句，HEAD 轴 ``never`` 且不端关系块。
+#: 分类器的既有作用原样保留：① 它仍管联网与别的分区（本函数之外零扰动）；
+#: ② 册里查不到名字时，仍是它决定给不给查（第二道门一字未改）。
+#: 登记表本身＝``classify_question_intent`` 的既有分类，不新造判据（真身住
+#: ``runtime/question_intent.py``；二游语境落 ``LOCAL_KNOWLEDGE``，故不另立第二把尺）。
 _REALITY_LOOKUP_CATEGORIES: frozenset[str] = frozenset(
     {
         "EXTERNAL_ENTITY",
@@ -122,10 +127,15 @@ _REALITY_LOOKUP_CATEGORIES: frozenset[str] = frozenset(
 def reality_relation_note_for(query_text: str) -> str:
     """实体关系册 → 对话分区【现实关系】正文（把"在盘不在码"那格接上，台账 #72★同型）。
 
-    两道门都是别人的判据：放行与否＝``classify_question_intent`` 的分类，
+    顺序（席 S19）：**实体命中在前**——``registered_entity_hit`` 为真就直接查一跳，
+    不再先看分类器；查不到名字才退回分类器那道门（既有语义一字未改）。
+    两道门之后还共过一把撞名尺 ``relation_query_admissible``：短拉丁别名（CD/CP/CQ/BW）、
+    人格名（``kind == character``）、册里标未核的实体，单凭整词命中不放行，
+    要「整句即该实体」或「与域词共现」——这是把幻觉从另一侧挡在门外的判据，
+    拿「这个CD盘多少钱」「守岸人你喜欢什么」现算即落在门外。
     取名/取边/措辞＝``entity_relations.reality_relation_lines``（唯一真身）。
-    本函数零判据、零文案、**零联网零写盘**。
-    任一道门没命中 ⇒ 空串 ⇒ chat.py 侧整块不渲染（空分区不渲染）。
+    本函数零判据（除上面两把尺）、零文案、**零联网零写盘**。
+    两道门任一没命中 ⇒ 空串 ⇒ chat.py 侧整块不渲染（空分区不渲染）。
     任何异常 ⇒ 空串并留一行 warn：这条链路的红线是"不确定的别端出去"，
     少一块事实不叫事故，把待核说成已核才叫。
     """
@@ -133,7 +143,11 @@ def reality_relation_note_for(query_text: str) -> str:
     if not text:
         return ""
     try:
-        if classify_question_intent(text).category not in _REALITY_LOOKUP_CATEGORIES:
+        if not relation_query_admissible(text):
+            return ""
+        if not registered_entity_hit(text) and (
+            classify_question_intent(text).category not in _REALITY_LOOKUP_CATEGORIES
+        ):
             return ""
         return "\n".join(reality_relation_lines(text))
     except Exception:  # 现实关系块缺席即可，绝不带崩主链路（本仓未启用 BLE001，故不写 noqa）

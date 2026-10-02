@@ -480,6 +480,29 @@ RELATION_QUERY_TERMS: dict[str, tuple[str, ...]] = {
 #: 「cp 命令」「CPU」就是把用户的话接到展会身上。中文别名按子串命中。
 _ASCII_ALIAS_RE = re.compile(r"[A-Za-z0-9]+")
 
+#: 短拉丁别名的长度上限（席 S19 撞名纪律）。册里 ``CD``/``CP``/``CQ``/``BW``/``CICF``
+#: 全在这个形状里，日常句、命令行、英文缩写到处撞 ⇒ 光"整词命中"不够，要共现证据。
+SHORT_LATIN_ALIAS_MAX_CHARS = 4
+
+#: 同样需要共现证据的实体**类别**：``character`` 是人格自己的名字——
+#: 「守岸人你喜欢什么」里的守岸人是称呼，不是现实题点名（台账 #60★：认自身名别当证据）。
+#: 判据只按 ``kind`` 取，绝不在这里抄人格名（规则 10 / 意象名禁硬编码同族）。
+AMBIGUOUS_ENTITY_KINDS: frozenset[str] = frozenset({"character"})
+
+#: 共现证据词表（真身单源在此，与 ``RELATION_QUERY_TERMS`` 同一条"词表单源"规矩：
+#: 调用方不许各拼一份）。只收「问的就是这个实体本身」的说法——展会/主办/场地/开发商/
+#: 所在地/出自/「是什么·是谁·哪个」一类。日常寒暄、心情、代码、命令、买卖询价
+#: （「这个CD盘多少钱」）里一个都不出现。
+ENTITY_GATE_DOMAIN_TERMS: tuple[str, ...] = (
+    "展", "场馆", "门票", "开票", "举办", "主办", "开展", "参展", "逛展",
+    "开发商", "开发", "研发", "制作", "发行", "运营", "公司", "企业",
+    "在哪", "哪里", "所在地", "总部", "地址", "城市", "出自", "作品",
+    "游戏", "手游", "动画", "是什么", "是谁", "叫什么", "哪个", "哪部", "哪款",
+)
+
+#: 「整句即该实体」比对时剥掉的标点与空白（裸 ``CICF？`` 走这条，不必要求域词）。
+_GATE_PUNCT_RE = re.compile(r"[\s，。、；：！？!?~～_.·]+")
+
 #: 一跳行数的默认帽（对话分区只给"这一轮问到的那几条"；少给不叫编造，多给才叫）。
 DEFAULT_MAX_RELATION_LINES = 3
 
@@ -508,6 +531,23 @@ class RelationHit:
     note: str = ""
 
 
+def _matched_alias_keys(seed: EntitySeed, hay: str) -> list[str]:
+    """扫描真身（唯一一份）：长名优先、被长名包含的短别名让位、拉丁别名整词 + 大小写敏感。
+
+    ``match_entities_in``（取名）与 S19 的准入判定（取键）共用这一把尺；
+    两处各扫一遍就是第二真身，撞名纪律会在两条腿上给出不同答案。
+    """
+    index = seed.alias_index()
+    matched_keys: list[str] = []
+    for key in sorted(index, key=lambda item: (-len(item), item)):
+        if any(key in longer for longer in matched_keys):
+            continue
+        hit = key in hay if not _ASCII_ALIAS_RE.fullmatch(key) else _whole_word_hit(key, hay)
+        if hit:
+            matched_keys.append(key)
+    return matched_keys
+
+
 def match_entities_in(text: object, path_str: str | None = None) -> tuple[str, ...]:
     """从一句自然问句里挑出**在册**实体的正名（长名优先，被长名包含的短别名让位）。
 
@@ -520,18 +560,75 @@ def match_entities_in(text: object, path_str: str | None = None) -> tuple[str, .
     if not hay or not seed.entities:
         return ()
     index = seed.alias_index()
-    matched_keys: list[str] = []
     names: list[str] = []
-    for key in sorted(index, key=lambda item: (-len(item), item)):
-        if any(key in longer for longer in matched_keys):
-            continue
-        hit = key in hay if not _ASCII_ALIAS_RE.fullmatch(key) else _whole_word_hit(key, hay)
-        if hit:
-            matched_keys.append(key)
-            canonical = index[key]
-            if canonical not in names:
-                names.append(canonical)
+    for key in _matched_alias_keys(seed, hay):
+        canonical = index[key]
+        if canonical not in names:
+            names.append(canonical)
     return tuple(names)
+
+
+def match_alias_keys_in(text: object, path_str: str | None = None) -> tuple[str, ...]:
+    """命中到的**别名键原形**（``match_entities_in`` 只给正名；判短名要看键的形状）。"""
+    seed = load_seed(path_str)
+    hay = _normalize(text)
+    if not hay or not seed.entities:
+        return ()
+    return tuple(_matched_alias_keys(seed, hay))
+
+
+def _needs_cooccurrence_evidence(seed: EntitySeed, key: str) -> bool:
+    """这枚命中是不是"整词命中也未必够"：短拉丁别名 / 人格侧类别 / 实体自己标着未核。
+
+    判据全取自册内既有字段（别名形状、``kind``、``verified``），零新词表零新名单。
+    """
+    canonical = seed.alias_index().get(key, "")
+    record = seed.by_name().get(canonical)
+    if record is None:
+        return True
+    if _ASCII_ALIAS_RE.fullmatch(key) and len(key) <= SHORT_LATIN_ALIAS_MAX_CHARS:
+        return True
+    if record.kind in AMBIGUOUS_ENTITY_KINDS:
+        return True
+    return not record.verified
+
+
+def relation_query_admissible(text: object, path_str: str | None = None) -> bool:
+    """撞名纪律（唯一判据口）：这句能不能拿册里的内容当事实端出去。
+
+    - 无命中 ⇒ ``True``（本口不表态，渲染口自己给空）。
+    - 有**任一枚可靠命中**（非短拉丁别名、非人格类别、实体已核）⇒ ``True``。
+    - 命中**全部**是歧义键 ⇒ 需「整句即该实体」或「与 ``ENTITY_GATE_DOMAIN_TERMS`` 共现」，
+      两者皆无 ⇒ ``False``（「这个CD盘多少钱」「守岸人你喜欢什么」落在这里）。
+    """
+    seed = load_seed(path_str)
+    hay = _normalize(text)
+    if not hay or not seed.entities:
+        return True
+    keys = _matched_alias_keys(seed, hay)
+    if not keys:
+        return True
+    if any(not _needs_cooccurrence_evidence(seed, key) for key in keys):
+        return True
+    whole = _GATE_PUNCT_RE.sub("", hay)
+    if whole in {_GATE_PUNCT_RE.sub("", key) for key in keys}:
+        return True
+    return any(term in hay for term in ENTITY_GATE_DOMAIN_TERMS)
+
+
+def registered_entity_hit(text: object, path_str: str | None = None) -> bool:
+    """「册里有这个名字」本身构成放行理由（席 S19：不再先看分类器脸色）。
+
+    有命中 **且** 过 ``relation_query_admissible`` 的撞名纪律 ⇒ ``True``。
+    命中判据复用 ``_matched_alias_keys``（既有整词/边界逻辑），零新造扫描。
+    """
+    seed = load_seed(path_str)
+    hay = _normalize(text)
+    if not hay or not seed.entities:
+        return False
+    if not _matched_alias_keys(seed, hay):
+        return False
+    return relation_query_admissible(text, path_str=path_str)
 
 
 def _whole_word_hit(key: str, text: str) -> bool:

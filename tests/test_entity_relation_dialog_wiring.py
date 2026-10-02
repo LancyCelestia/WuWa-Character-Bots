@@ -105,13 +105,30 @@ def test_unverified_flag_is_a_field_not_a_comment() -> None:
     assert "深蓝互动" in hit.object
 
 
-def test_subject_entity_pending_demotes_a_signed_edge() -> None:
-    """口径不一致那枚（COMICUP located_in 广州 边已核、主语实体待核）：消费侧如实降级。"""
-    hits = er.lookup_one_hop(("COMICUP",), (er.RELATION_LOCATED_IN,))
+def test_subject_entity_pending_demotes_a_signed_edge(tmp_path: Path) -> None:
+    """降级锁（按形状造，不吃真册的具体行）：边已核 + 主语实体待核 ⇒ 消费侧端成待核。
+
+    真册今天不再有这枚不一致——席 S19 依用户裁定把 ``COMICUP located_in 广州`` 这条边
+    同批降级为未核（台账 #73 那格待裁口径已落）。所以降级逻辑本身改用 tmp 副本锁形状，
+    另附一条真册读数：那枚边现在自己就标未核（口径不再互相打脸）。
+    """
+    fake = tmp_path / "seed.json"
+    fake.write_text(
+        '{"entities": [{"name": "甲", "kind": "expo", "verified": false},'
+        ' {"name": "乙", "kind": "city", "verified": true}],'
+        ' "relations": [{"subject": "甲", "relation": "located_in", "object": "乙", "verified": true}]}',
+        encoding="utf-8",
+    )
+    hits = er.lookup_one_hop(("甲",), (er.RELATION_LOCATED_IN,), path_str=str(fake))
     assert len(hits) == 1, hits
     hit = hits[0]
     assert hit.edge_verified is True and hit.subject_verified is False
     assert hit.verified is False and hit.unverified is True, "边已核、主语待核 ⇒ 绝不端成已确认事实"
+    real = er.lookup_one_hop(("COMICUP",), (er.RELATION_LOCATED_IN,))
+    assert len(real) == 1 and real[0].edge_verified is False, "册里那枚边的口径降级没落地"
+    assert real[0].verified is False and er.unverified_prefix() in "\n".join(
+        er.reality_relation_lines("COMICUP在哪")
+    )
 
 
 def test_alias_lookup_is_exact_and_never_fuzzy() -> None:
@@ -304,15 +321,29 @@ def test_group_budget_still_fits_after_wiring() -> None:
         assert not diagnostics.clipped_to_context_budget, (query, len(messages[0]["content"]))
 
 
-def test_gate_reuses_the_existing_intent_ruling_not_a_new_one() -> None:
-    """放行判据只有别人那一张表：非现实题类别 ⇒ 即便句子里有在册实体也不端。"""
+def test_gate_is_entity_hit_first_then_the_intent_ruling() -> None:
+    """顺序锁（席 S19，用户 2026-10-03 裁定）：**册里有这个名字＝放行理由**，实体命中排在
+    分类器之前；分类器那道门只剩"查不到名字时"才走，语义一字未改（别的分区/联网判定零扰动）。
+
+    ⚠ 本件取代 S12 的 ``test_gate_reuses_the_existing_intent_ruling_not_a_new_one``：
+    那句「非现实题类别 ⇒ 即便句子里有在册实体也不端」正是被裁定改掉的行为
+    （「明日方舟是谁开发的」当时恒 ``never``、既不联网也不出关系块）。
+    """
     assert providers.reality_relation_note_for("今天心情不好") == ""
-    blocked = "别联网，随便聊聊鸣潮"
-    if question_intent.classify_question_intent(blocked).category not in (
+    assert providers.reality_relation_note_for("") == ""
+    # 改前判据（逐字照抄 HEAD 那道门）判 never 的无触发词问句 ⇒ 现由实体命中放行。
+    main_case = "明日方舟是谁开发的"
+    assert er.registered_entity_hit(main_case) is True
+    assert providers.reality_relation_note_for(main_case) != ""
+    # 实体命中即放行 ⇒ 分类器判"别联网"也不拦（端的是册内已核陈述，不是现编）。
+    assert providers.reality_relation_note_for("别联网，随便聊聊鸣潮") != ""
+    # 册里查不到名字时，分类器那道门照旧：非现实题类别 ⇒ 仍然不端。
+    unregistered = "别联网，随便聊聊量子隧穿"
+    assert er.registered_entity_hit(unregistered) is False
+    if question_intent.classify_question_intent(unregistered).category not in (
         providers._REALITY_LOOKUP_CATEGORIES
     ):
-        assert providers.reality_relation_note_for(blocked) == ""
-    assert providers.reality_relation_note_for("") == ""
+        assert providers.reality_relation_note_for(unregistered) == ""
 
 
 def test_gate_is_fail_open_when_the_ledger_module_raises(

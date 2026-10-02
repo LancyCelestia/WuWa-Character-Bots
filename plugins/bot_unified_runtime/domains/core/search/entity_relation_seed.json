@@ -51,7 +51,7 @@
     {"subject": "叠纸游戏", "relation": "located_in", "object": "上海", "verified": false, "note": "办公地待核（注册主体疑为苏州），故整条待核"},
     {"subject": "BilibiliWorld", "relation": "located_in", "object": "上海", "verified": true, "note": ""},
     {"subject": "BilibiliWorld", "relation": "developed_by", "object": "哔哩哔哩", "verified": true, "note": "平台自办展会（developed_by 在展会语境＝主办方）"},
-    {"subject": "COMICUP", "relation": "located_in", "object": "广州", "verified": true, "note": "历届举办地按公开资料"},
+    {"subject": "COMICUP", "relation": "located_in", "object": "广州", "verified": false, "note": "历届举办地按公开资料；主语实体 COMICUP 本身未核 ⇒ 依用户 2026-10-03 裁定按'整条陈述可当事实'的语义同批降级（席 S19）"},
     {"subject": "COMICUP", "relation": "developed_by", "object": "广州萤火虫动漫文化有限公司", "verified": false, "note": "主办主体名待核"},
     {"subject": "萤火虫动漫游戏嘉年华", "relation": "located_in", "object": "广州", "verified": false, "note": "城市按公开资料，届次与场馆未核实"},
     {"subject": "萤火虫动漫游戏嘉年华", "relation": "developed_by", "object": "广州萤火虫动漫文化有限公司", "verified": false, "note": "主办主体名待核"},
