@@ -6094,13 +6094,30 @@ def build_chat_capability(
                     return None
 
                 tops = web_hits[:2]
-                with ThreadPoolExecutor(
-                    max_workers=len(tops), thread_name_prefix="chat-web-page"
-                ) as executor:
-                    fetched = list(executor.map(_fetch_page, tops))
-                enriched = [item for item in fetched if item is not None]
-                if enriched:
-                    web_hits = [*enriched, *web_hits][:hard_total_cap + 2]
+                # S8 草案（联网腿延迟，不上生产）：这一跳是检索已拿到命中之后再等的
+                # 页面正文富化（每页 6s 上限、并行 2 页）。实测【联网检索】分区额度只有
+                # 私聊 3,842 / 群聊 2,531 字符，本轮 9 条命中实占 2,067——两整页正文挤进来
+                # 只会顶掉已有命中，买不到信息量却最多再花 6s。截止判据复用既有
+                # DeadlineBudget 与 web_page_timeout_seconds（都在本函数在册）：请求预算
+                # 剩得不够一跳就不再等，已拿到的命中原样进模型。预算缺席或未启用则行为
+                # 不变；留痕走既有 web_error_kinds（遥测 web_error_kind 列在册）。
+                # 零新配置键、零新通路、不动任何超时上限。
+                _page_leg_too_late = False
+                if request_budget is not None and request_budget.enabled:
+                    _page_leg_too_late = (
+                        request_budget.remaining_seconds()
+                        <= float(web_page_timeout_seconds)
+                    )
+                if _page_leg_too_late:
+                    web_error_kinds.add("page:deadline_skipped")
+                else:
+                    with ThreadPoolExecutor(
+                        max_workers=len(tops), thread_name_prefix="chat-web-page"
+                    ) as executor:
+                        fetched = list(executor.map(_fetch_page, tops))
+                    enriched = [item for item in fetched if item is not None]
+                    if enriched:
+                        web_hits = [*enriched, *web_hits][:hard_total_cap + 2]
             # v21r2 SEARCH 席：收 ACG 竖源结果，按意图时效档加权融合进 web_hits
             # （竖源条目自带「来源·日期」标注；最新档无日期者降权并标「日期未知」）。
             if acg_future is not None:
