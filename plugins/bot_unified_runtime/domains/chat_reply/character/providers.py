@@ -113,6 +113,9 @@ logger = logging.getLogger(__name__)
 #: 分类器的既有作用原样保留：① 它仍管联网与别的分区（本函数之外零扰动）；
 #: ② 册里查不到名字时，仍是它决定给不给查（第二道门一字未改）。
 #: 登记表本身＝``classify_question_intent`` 的既有分类，不新造判据（真身住
+#: ⚠ 席 P11（2026-10-04 用户裁定）补一道**否决**门排在放行之前：分类器判
+#: ``explicit_no_web``（用户明说别联网/不要搜索/不用查）⇒ 整块缺席，实体命中也不放行；
+#: 用的仍是同一枚 ``classify_question_intent`` 结论，没引第二把尺。
 #: ``runtime/question_intent.py``；二游语境落 ``LOCAL_KNOWLEDGE``，故不另立第二把尺）。
 _REALITY_LOOKUP_CATEGORIES: frozenset[str] = frozenset(
     {
@@ -127,26 +130,39 @@ _REALITY_LOOKUP_CATEGORIES: frozenset[str] = frozenset(
 def reality_relation_note_for(query_text: str) -> str:
     """实体关系册 → 对话分区【现实关系】正文（把"在盘不在码"那格接上，台账 #72★同型）。
 
-    顺序（席 S19）：**实体命中在前**——``registered_entity_hit`` 为真就直接查一跳，
-    不再先看分类器；查不到名字才退回分类器那道门（既有语义一字未改）。
-    两道门之后还共过一把撞名尺 ``relation_query_admissible``：短拉丁别名（CD/CP/CQ/BW）、
+    三道门（席 P11 加第一道）：**用户本轮意愿否决在前**——明说「别联网/不要搜索/不用查」
+    ⇒ 整块缺席（端的是本地册不假，但那句表达的是"这一轮别替我去查外部世界"，
+    继续塞现实事实＝违抗指令）；其后才是 ``registered_entity_hit``（册里有这个名字）
+    与分类器那道门（查不到名字才走，既有语义一字未改）。否决尺**复用中央那把**：
+    ``question_intent._NO_WEB_RE`` 命中即 ``reason == "explicit_no_web"``，
+    同一枚码在 ``search_intent._ACG_SEARCH_DENIED_REASONS`` 里也是 ACG 检索红线——
+    本模块不立第二份关键词表、零新配置键、零新表。
+    取数门之后还共过一把撞名尺 ``relation_query_admissible``：短拉丁别名（CD/CP/CQ/BW）、
     人格名（``kind == character``）、册里标未核的实体，单凭整词命中不放行，
     要「整句即该实体」或「与域词共现」——这是把幻觉从另一侧挡在门外的判据，
     拿「这个CD盘多少钱」「守岸人你喜欢什么」现算即落在门外。
     取名/取边/措辞＝``entity_relations.reality_relation_lines``（唯一真身）。
-    本函数零判据（除上面两把尺）、零文案、**零联网零写盘**。
-    两道门任一没命中 ⇒ 空串 ⇒ chat.py 侧整块不渲染（空分区不渲染）。
+    本函数零判据（除上面三把尺）、零文案、**零联网零写盘**。
+    三道门任一没命中 ⇒ 空串 ⇒ chat.py 侧整块不渲染（空分区不渲染）。
     任何异常 ⇒ 空串并留一行 warn：这条链路的红线是"不确定的别端出去"，
     少一块事实不叫事故，把待核说成已核才叫。
     """
     text = str(query_text or "").strip()
     if not text:
         return ""
+        ruling = classify_question_intent(text)
+        # 意愿否决（席 P11）：判据只有一个字面比较，尺住在中央
+        # （``question_intent._NO_WEB_RE`` ⇒ ``explicit_no_web``），此处不抄词表。
+        # 读 reason 用 getattr 而非点号：既有注毒件喂的是「只填被读到的那一个字段」
+        # 的假决策（``test_entity_gate_before_classification._NeverDecision``），
+        # 形状缺格该当"本轮没这格"，不该被下面的 except 吃成整块缺席。
+        if getattr(ruling, "reason", "") == "explicit_no_web":
+            return ""
     try:
         if not relation_query_admissible(text):
             return ""
         if not registered_entity_hit(text) and (
-            classify_question_intent(text).category not in _REALITY_LOOKUP_CATEGORIES
+            ruling.category not in _REALITY_LOOKUP_CATEGORIES
         ):
             return ""
         return "\n".join(reality_relation_lines(text))

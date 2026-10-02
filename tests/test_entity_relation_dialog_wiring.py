@@ -335,8 +335,10 @@ def test_gate_is_entity_hit_first_then_the_intent_ruling() -> None:
     main_case = "明日方舟是谁开发的"
     assert er.registered_entity_hit(main_case) is True
     assert providers.reality_relation_note_for(main_case) != ""
-    # 实体命中即放行 ⇒ 分类器判"别联网"也不拦（端的是册内已核陈述，不是现编）。
-    assert providers.reality_relation_note_for("别联网，随便聊聊鸣潮") != ""
+    # 用户本轮意愿否决**排在实体命中之前**（席 P11，用户 2026-10-04 令「P-11 需要去做」）：
+    # 明说「别联网」⇒ 整块缺席，端的是册内已核陈述也不端（S19 当时把这行判成 `!= ""`，
+    # 与新裁定相反，本行即那次翻转——否决权属于人，不属于命名表）。
+    assert providers.reality_relation_note_for("别联网，随便聊聊鸣潮") == ""
     # 册里查不到名字时，分类器那道门照旧：非现实题类别 ⇒ 仍然不端。
     unregistered = "别联网，随便聊聊量子隧穿"
     assert er.registered_entity_hit(unregistered) is False
