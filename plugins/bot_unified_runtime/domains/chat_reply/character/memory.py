@@ -14,6 +14,13 @@ logger = logging.getLogger(__name__)
 
 MEMORY_SENSITIVITIES = frozenset({"public", "group", "personal", "credentialed"})
 
+#: 召回侧唯一排除的 ``source`` 值（S21）：抽取器把 **bot 自己的角色扮演台词**当成
+#: 「关于用户的事实」写进 ``memory_facts`` 的那批行（S17 打的标）。它们挂在用户名下，
+#: 读出来却是在讲 bot——穗波事故（台账 #73）的入口。这里只排除这一个值：其他 source
+#: （``llm_extract`` / ``manual`` / ``sqlite`` / ``reflection``…）逐字节行为不变，
+#: 记忆系统本身不动，只是「她本人的记忆不再被 bot 自陈污染」。
+SOURCE_EXCLUDED_FROM_RECALL = "llm_extract_about_assistant"
+
 
 class MemoryProvider(Protocol):
     def retrieve(
@@ -279,7 +286,12 @@ class SQLiteMemoryRepository:
             return cursor.rowcount > 0
 
     def list_rows_for_subject(self, subject_user_id: str) -> list[dict[str, Any]]:
-        """总线影子读来源：旧库该主体的存活行（只读，不改写、不复活）。"""
+        """总线影子读来源：旧库该主体的存活行（只读，不改写、不复活）。
+
+        ``SOURCE_EXCLUDED_FROM_RECALL`` 那一条同样在这里排除：影子读是「他本人的事实」
+        的取数面，把「关于 bot 却挂在他名下」的陈述放进来，就等于让旧库在影子读里
+        重新污染总线（台账 #73 穗波事故）。除这两条 SELECT 之外没有第二张召回口。
+        """
         self._ensure_schema()
         with self._connect() as connection:
             rows = connection.execute(
@@ -288,10 +300,11 @@ class SQLiteMemoryRepository:
                        confidence, source, sensitivity, scope_key, created_at, updated_at
                 FROM memory_facts
                 WHERE subject_user_id = ?
+                  AND source <> ?
                 ORDER BY updated_at ASC, fact_id ASC
                 LIMIT 200
                 """,
-                (subject_user_id,),
+                (subject_user_id, SOURCE_EXCLUDED_FROM_RECALL),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -308,11 +321,12 @@ class SQLiteMemoryRepository:
                 SELECT fact_id, session_id, memory_kind, text, confidence, source, sensitivity, scope_key
                 FROM memory_facts
                 WHERE subject_user_id = ?
+                  AND source <> ?
                   AND session_id IN (?, '', '*', 'global')
                 ORDER BY updated_at DESC, fact_id DESC
                 LIMIT ?
                 """,
-                (subject_user_id, session_id, limit),
+                (subject_user_id, SOURCE_EXCLUDED_FROM_RECALL, session_id, limit),
             )
             return list(cursor.fetchall())
 
