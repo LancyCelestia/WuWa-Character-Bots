@@ -375,12 +375,13 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
     # ⇒ 热 set 不改判据，按 C-09「不许骗人」口径登记需重启。
     "BOT_STICKER_PRIVATE_SUBDIR": "同 BOT_STICKER_DIR（私藏子目录名，每次选图现读快照）",
     "BOT_STICKER_PRIVATE_MIN_TIER": "同 BOT_STICKER_DIR（解锁档位阈值，每次选图现读快照）",
-    # ---- 网络巡检（继承 WIP 收尾，2026-09-30）：三枚键读点在根装配注册函数 ----
-    # __init__.py:1935-1940 装配期一次性读快照 config（开关/间隔/域表），巡检调度
-    # 周期装配期冻结 ⇒ 热 set 不改运行面，按 C-09 口径登记需重启。
+    # ---- 网络巡检（继承 WIP 收尾，2026-09-30；2026-10-02 去抖阈值补第四键）：
+    # 键读点在根装配注册函数（巡检任务在装配期一次性读快照 config，调度周期与
+    # 去抖阈值冻结进闭包）⇒ 热 set 不改运行面，按 C-09 口径登记需重启。
     "BOT_NETWORK_PATROL_ENABLED": "同 BOT_STICKER_DIR（巡检总闸，装配期读快照）",
     "BOT_NETWORK_PATROL_INTERVAL_MINUTES": "同 BOT_STICKER_DIR（巡检间隔，装配期冻结）",
     "BOT_NETWORK_PATROL_DOMAINS": "同 BOT_STICKER_DIR（巡检域表，装配期冻结）",
+    "BOT_NETWORK_PATROL_DOWN_THRESHOLD": "同 BOT_NETWORK_PATROL_DOMAINS（连续失败去抖阈值，装配期冻结）",
     # ---- P3 情绪发图开关（继承 WIP 收尾，2026-09-30）----
     # 读点＝根装配 reaction-meme 腿 ProactiveActionKnobs 字面键名（快照 config），
     # 未进 _RUNTIME_HOT_OVERRIDE_FIELDS ⇒ 热 set 不改判据，登记需重启。

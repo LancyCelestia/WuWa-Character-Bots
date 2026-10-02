@@ -9,7 +9,8 @@ Clash 进程死亡或节点到某站不通 ⇒ bot 全链超时，且没有任�
   （哪个域哪条路通）——03:00 的故事不再是考古，而是看一行状态差分；
 - 状态差分告警：只在「变坏/恢复」的边界发，不重复刷屏；告警走
   ``send_admin_alert_requests``（TG/邮件带外，不经 LLM 链——告警系统
-  不和病人共用一条血管）。
+  不和病人共用一条血管）。变坏侧带**连续失败去抖**（``DownDebounce``，
+  2026-10-02 裁定：连续 5 次炸了才报 down，中途成功清零）。
 
 fail-open 约束：探针任何异常归为该腿 down，绝不拖累 bot 主链；巡检自身
 崩溃由调度层兜底记录。
@@ -149,7 +150,12 @@ def run_patrol(
 def state_delta(
     previous: dict[str, bool] | None, current: dict[str, bool]
 ) -> list[tuple[str, bool]]:
-    """差分：返回状态发生变化的 (键, 现值) 列表（变坏与恢复都报）。"""
+    """差分：返回状态发生变化的 (键, 现值) 列表（变坏与恢复都报）。
+
+    ⚠ 这是对**原始观测**的单轮差分（无去抖）；生产告警链路 2026-10-02 起
+    喂的是 ``DownDebounce.debounced_state`` 的稳态输出（澜汐裁定：连续失败
+    达阈值才报 down），本函数保留作差分原语与告警行生成前的最后一步。
+    """
     if previous is None:
         # 首轮不告警（没有基线，避免启动即风暴）；只建立基线。
         return []
@@ -158,14 +164,91 @@ def state_delta(
     ]
 
 
-def format_alert_lines(delta: list[tuple[str, bool]]) -> list[str]:
-    """差分 → 人话告警行（变坏=warning 语气，恢复=已恢复）。"""
+#: 连续失败去抖阈值缺省（2026-10-02 澜汐裁定「连续五次炸了才提醒」）。
+DEFAULT_DOWN_THRESHOLD = 5
+
+
+class DownDebounce:
+    """按目标（域名×腿）维护连续失败计数的告警去抖。
+
+    判据（2026-10-02 澜汐裁定原文：「网络巡检需要连续做 5 次，连续五次炸了
+    才提醒」）：
+
+    - 每个键（``f"{target}:{path}"``）各自计数：连续失败达到阈值才把该目标
+      翻成「报 down」（进入告警差分）；中途任何一次成功 ⇒ 计数清零；
+    - 恢复侧不延迟：曾报 down 的目标一旦观测成功即翻回 up（进恢复差分）；
+      从未报过 down 的目标（未达阈值的 blip）两侧都不出声——原始观测的
+      通/断抖动被这一层吸收，不会伪造出「掉线又秒恢复」的成对告警；
+    - 输出形状与 ``state_delta`` 的输入完全同构（dict[str, bool]），
+      首轮建基线不告警的语义由 ``state_delta(None, ...)`` 原样保留。
+
+    状态只在内存（调度闭包持有单实例，max_instances=1 无并发串号面）；
+    原始观测每轮照旧落 network_patrol.jsonl，事后复盘不受去抖影响。
+    """
+
+    def __init__(self, *, threshold: int = DEFAULT_DOWN_THRESHOLD) -> None:
+        self.threshold = max(1, int(threshold))
+        self._fails: dict[str, int] = {}
+
+    def debounced_state(self, observed: dict[str, bool]) -> dict[str, bool]:
+        """原始观测 → 告警稳态：未达阈值的失败仍记 up，达阈值记 down。"""
+        alert: dict[str, bool] = {}
+        for key, ok in observed.items():
+            if ok:
+                self._fails[key] = 0
+                alert[key] = True
+            else:
+                self._fails[key] = self._fails.get(key, 0) + 1
+                alert[key] = self._fails[key] < self.threshold
+        return alert
+
+
+def classify_leg_failure(key: str, detail: str) -> str:
+    """失败分型（2026-10-02 澜汐裁定 b）：把 down 归因成「本机代理不在家」
+    还是「节点/上游抖动」，她看一眼告警就知道该不该去动 Clash。
+
+    键形如 ``f"{target}:{path}"``（target 自身含冒号，如 ``127.0.0.1:7890``），
+    故按**最后一个冒号**切 path。归因轴＝10-02 排查波实测三族：
+    refused/proxyconnect＝Clash 端口没人监听；SSL/EOF/TLS 经代理＝节点侧抖动；
+    直连腿炸＝与本机代理无关的上游/线路问题。
+    """
+    lowered = detail.lower()
+    path = key.rpartition(":")[2]
+    if path == "clash":
+        return "Clash 进程不在（127.0.0.1:7890 TCP 未监听）"
+    if "clash port down" in lowered:
+        return "代理腿被跳过——Clash 进程不在家（本机问题，非上游）"
+    if path == "proxy":
+        if "refused" in lowered or "proxyconnect" in lowered or "unable to connect to proxy" in lowered:
+            return "代理腿拒连——Clash 进程不在家（本机问题，非上游）"
+        if any(token in lowered for token in ("ssl", "eof", "tls")):
+            return "代理节点 TLS 握手抖动（节点侧，非本机）"
+        if "timeout" in lowered or "timed out" in lowered:
+            return "经代理超时（节点或上游慢）"
+        return "代理腿失败（节点侧）"
+    if "timeout" in lowered or "timed out" in lowered:
+        return "直连超时（到上游的线路，与 Clash 无关）"
+    return "直连路径不通（上游本身不可达，与本机代理无关）"
+
+
+def format_alert_lines(
+    delta: list[tuple[str, bool]],
+    details: dict[str, str] | None = None,
+) -> list[str]:
+    """差分 → 人话告警行（变坏=warning 语气带分型，恢复=已恢复）。
+
+    ``details``（键→最近一次观测的探针细节，可缺省 None＝不附分型细节）
+    让变坏行自带归因：refused 族＝本机 Clash 不在家，EOF/SSL 族＝节点抖动。
+    """
     lines: list[str] = []
     for key, ok in delta:
         if ok:
             lines.append(f"网络巡检：{key} 已恢复 ✓")
         else:
-            lines.append(f"网络巡检：{key} 不可达 ✗（Clash 死了或该路径被断，查 7890 与节点）")
+            detail = str((details or {}).get(key, "") or "")
+            kind = classify_leg_failure(key, detail)
+            tail = f"，探针细节：{detail[:80]}" if detail else ""
+            lines.append(f"网络巡检：{key} 不可达 ✗——{kind}{tail}")
     return lines
 
 

@@ -1395,4 +1395,5 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 | `BOT_NETWORK_PATROL_ENABLED` | bool | `True` | true/false | 🟡需重启（巡检任务在装配期登记，热改当轮不生效） | 巡检总闸：关掉⇒整条巡检不排班，Clash 探活与上游双腿都不跑（差分带外告警随之静默）。与出站同意门无关，不经 `safety_exec` | `domains/ops/network_patrol.py`（执行体）；装配点 `__init__.py::_register_network_patrol_scheduler`（**唯一**排班处，禁第二处起巡） |
 | `BOT_NETWORK_PATROL_INTERVAL_MINUTES` | int | `15` | >0 分钟 | 🟡需重启 | 巡检周期。首轮只建基线**不告警**；此后只在「变坏边界」走带外告警（TG/邮件），恢复只记账不刷屏 | 同上；落盘 `<runtime>/data/network_patrol.jsonl`，体积上限见该件 `_PATROL_JSONL_MAX_BYTES`（超限滚 `.1`，防无界增长） |
 | `BOT_NETWORK_PATROL_DOMAINS` | str | `""` | 逗号分隔域名；空⇒用内置名册（真身 `network_patrol.PATROL_TARGETS_DEFAULT`，枚数以该件现值为准） | 🟡需重启 | 覆盖巡检目标集，用于临时增删观测域名而不改代码 | 同上 |
+| `BOT_NETWORK_PATROL_DOWN_THRESHOLD` | int | `5` | >0 | 🟡需重启 | 连续失败去抖阈值（2026-10-02 裁定「连续五次炸了才提醒」）：目标（域名×腿）连续失败达此数才报 down 进告警差分，中途任何一次成功清零；恢复翻转不延迟，且只对报过 down 的目标发恢复行 | 真身 `domains/ops/network_patrol.py::DownDebounce`；差分仍走 `state_delta`（喂去抖稳态）；推送文案 10-02 起自带失败分型（`classify_leg_failure`：refused 族＝本机 Clash 不在家、EOF/SSL 族＝节点抖动、直连腿＝上游不可达） |
 

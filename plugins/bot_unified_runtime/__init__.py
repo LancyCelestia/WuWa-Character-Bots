@@ -1931,6 +1931,9 @@ def _register_network_patrol_scheduler(
     存活 + 上游域「直连/经代理」双路低频探活。
 
     - 状态差分只在「变坏/恢复」边界发声（首轮只建基线，防启动即风暴）；
+      变坏侧带连续失败去抖（``DownDebounce``，2026-10-02 澜汐裁定
+      「连续五次炸了才提醒」）：同一目标连续失败达阈值才报 down，中途
+      成功清零；恢复只对**曾被报过 down** 的目标发，未达阈值的 blip 两侧不出声；
     - 变坏走**带外告警**（send_admin_alert_requests → TG/邮件，不经 LLM
       链——告警系统不和病人共用一条血管）；恢复只记审计账不刷屏；
     - 一轮结果追加 data/network_patrol.jsonl（滚动 .1），供事后画时间线；
@@ -1938,6 +1941,7 @@ def _register_network_patrol_scheduler(
     """
     from .domains.ops.network_patrol import (
         PATROL_TARGETS_DEFAULT,
+        DownDebounce,
         append_patrol_jsonl,
         format_alert_lines,
         run_patrol,
@@ -1948,6 +1952,11 @@ def _register_network_patrol_scheduler(
         return {"registered": False, "reason": "disabled"}
     interval_minutes = max(
         1, int(getattr(config, "bot_network_patrol_interval_minutes", 15))
+    )
+    # 连续失败去抖阈值（2026-10-02 澜汐裁定「连续五次炸了才提醒」）：装配期
+    # 读快照冻结进闭包，与本族其余三键同口径（RESTART_REQUIRED_KEYS 在册）。
+    down_threshold = max(
+        1, int(getattr(config, "bot_network_patrol_down_threshold", 5))
     )
     raw_domains = str(getattr(config, "bot_network_patrol_domains", "") or "").strip()
     targets = (
@@ -1963,7 +1972,9 @@ def _register_network_patrol_scheduler(
         Path(str(getattr(config, "bot_runtime_data_dir", "data") or "data"))
         / "network_patrol.jsonl"
     )
-    # 差分基线挂在闭包上（本任务单实例 max_instances=1，无并发串号面）。
+    # 差分基线挂在闭包上（本任务单实例 max_instances=1，无并发串号面）；
+    # 2026-10-02 去抖：基线比对的是 DownDebounce 的告警稳态，不是原始观测。
+    debounce = DownDebounce(threshold=down_threshold)
     state_holder: dict[str, object] = {"last": None}
 
     async def _patrol_job() -> None:
@@ -1989,11 +2000,17 @@ def _register_network_patrol_scheduler(
             return
         append_patrol_jsonl(jsonl_path, report)
         current = report.state()
-        delta = state_delta(state_holder.get("last"), current)  # type: ignore[arg-type]
-        state_holder["last"] = current
+        # 告警差分吃「去抖稳态」（连续失败达阈值才算 down）；审计账与 JSONL
+        # 照旧记原始观测，事后复盘不因去抖失真。
+        alerted = debounce.debounced_state(current)
+        delta = state_delta(state_holder.get("last"), alerted)  # type: ignore[arg-type]
+        state_holder["last"] = alerted
         if not delta:
             return
-        lines = format_alert_lines(delta)
+        # 分型细节（2026-10-02 裁定 b）：告警行按最近一次观测的探针异常归因
+        # （refused 族＝本机 Clash 不在家；EOF/SSL 族＝节点抖动；直连腿＝上游问题）。
+        leg_details = {f"{leg.target}:{leg.path}": leg.detail for leg in report.legs}
+        lines = format_alert_lines(delta, leg_details)
         got_worse = any(not ok for _, ok in delta)
         audit_logger.append(
             AuditRecord(
@@ -2058,6 +2075,7 @@ def _register_network_patrol_scheduler(
         "registered": True,
         "reason": "registered",
         "interval_minutes": interval_minutes,
+        "down_threshold": down_threshold,
         "targets": targets,
     }
 
