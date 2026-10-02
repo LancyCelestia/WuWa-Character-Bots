@@ -4318,7 +4318,14 @@ def build_chat_result(
         explicit_allowed=explicit_allowed,
         admin="admin" in (message.sender_roles or []),
     )
-    artifact = artifact_request(message.plain_text) if safety.action == "allow" else None
+    # 附件意图只认**用户自己写的字**（派生字段口径与上面亲密档命令面同一条，
+    # 契约在册回退 `command_text or plain_text`）。吃过一次实锤：`plain_text` 是
+    # 引用链拼接后的整串，被引用的 bot 回执/告警正文里「带有生成附件的消息」
+    # 「generated_code_x.txt」这类字样会把关键词喂进判据 ⇒ 她引用 bot 的话发火，
+    # 回复被整段写进 .md/.txt、聊天只剩一行"整理成附件"，而那一行本身又含
+    # generate/code/txt ⇒ 再引用必再犯（自毒环）。
+    artifact_source_text = message.command_text or message.plain_text
+    artifact = artifact_request(artifact_source_text) if safety.action == "allow" else None
     if safety.action != "allow":
         # The unsafe request must not become executable instructions. Keep persona,
         # but remove requested tool/image/file side effects and contaminated evidence.
@@ -4626,7 +4633,9 @@ def build_chat_result(
             audit_tags=["artifact_review_blocked"])
     if artifact:
         try:
-            generated = build_generated_file(message.plain_text, reply.text, generated_files_dir)
+            generated = build_generated_file(
+                artifact_source_text, reply.text, generated_files_dir
+            )
         except OSError:
             return CapabilityResult(request_id=message.request_id, capability_id="bot.chat", kind="text",
                 body="文件保存失败，本次没有发送附件。",
