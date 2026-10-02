@@ -383,6 +383,17 @@ class Config(BaseModel):
     bot_diagnostics_enabled: bool = False
     bot_diagnostics_db_path: str = ""
     bot_diagnostics_max_items: int = 100
+    # ---- DB 备份腿七键（2026-10-02 四面落键，台账 #68★：消费点 domains/ops/db_backup.py
+    # load_policy :201-224，此前五面零登记纯靠 getattr+缺省兜底）。缺省一律取代码缺省
+    # ＝现网哑面不变（enabled=False）。批注（诚实披露）：字段落定后 db_backup.py:203 的
+    # env 直读腿只在字段缺 None 时触发 ⇒ 恒短路，属预期语义收窄，非缺陷。
+    bot_db_backup_enabled: bool = False
+    bot_db_backup_dir: str = ""
+    bot_db_backup_keep_last: int = 7
+    bot_db_backup_size_ceiling_bytes: int = 64 * 1024 * 1024
+    bot_db_backup_max_footprint_bytes: int = 4 * 1024 * 1024 * 1024
+    bot_db_backup_min_free_bytes: int = 20 * 1024 * 1024 * 1024
+    bot_db_backup_stale_after_hours: int = 24
     bot_audit_enabled: bool = False
     bot_audit_db_path: str = ""
     bot_audit_max_items: int = 1000
@@ -656,6 +667,10 @@ class Config(BaseModel):
     bot_network_patrol_enabled: bool = True
     bot_network_patrol_interval_minutes: int = 15
     bot_network_patrol_domains: str = ""
+    # 连续失败去抖阈值（2026-10-02 澜汐裁定「连续五次炸了才提醒」）：同一目标
+    # （域名×腿）连续失败达此数才报 down，中途任何一次成功清零；装配期读快照
+    # 冻结进巡检闭包（与上三键同口径，热 set 不改运行面）。
+    bot_network_patrol_down_threshold: int = 5
     bot_glossary_files: list[str] = []
     bot_glossary_max_entries: int = 30
     bot_glossary_max_chars: int = 1500

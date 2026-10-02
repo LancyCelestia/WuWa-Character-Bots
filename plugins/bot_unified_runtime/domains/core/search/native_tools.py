@@ -11,8 +11,11 @@
   另有 AST 字面锁：本文件出现的任何 ``bot.*`` 字面量必须能在中央在册表反查到。
 - 「只读与否」= 白名单与显式拒绝清单（写/权限/出站/自指回路面）双查、交集必须为空；
   往白名单塞写类能力 ⇒ 装配锁红（注毒自证在测试件里）。
-- 缺省关：``bot_chat_native_tools_enabled`` 尚未进 ``config.py``（登记面见补丁提案），
-  读取口按 ``getattr`` 缺键 ⇒ ``False``，**绝不因键不存在而默认开**。
+- 缺省关：``bot_chat_native_tools_enabled`` **已四面同生**（2026-09-29 复原波补齐：``config.py``
+  字段缺省 ``False`` ＋ ``settings.py::RESTART_REQUIRED_KEYS`` 档 ＋ ``.env.example`` 激活行 ＋
+  ``docs/config-catalog-full.md`` 登记行）。逐面点名的静态锁＝
+  ``tests/test_native_tools_config_faces.py``（台账 #68★「只补一面必红另一面」的正面预防）。
+  读取口仍按 ``getattr`` 缺键 ⇒ ``False``，**绝不因键不存在而默认开**。
 
 返回文本纪律（ATKLLM-1 同源）：工具结果＝二手数据，回注 role=tool 前必须过
 ``guard_tool_result_text``（中央件 ``guard_secondhand_text``），禁手拼边界标签。
@@ -29,7 +32,7 @@ from typing import Any
 #: 工具名形态：``native_`` 前缀与 MCP 远端工具名天然隔离（回填派发靠它分腿）。
 _TOOL_NAME_PATTERN = re.compile(r"^native_[a-z0-9_]{1,48}$")
 
-#: 内置开关键名（唯一读取口 :func:`native_tools_enabled`；键尚未进 config.py，缺省关）。
+#: 内置开关键名（唯一读取口 :func:`native_tools_enabled`；四面同生，缺省关）。
 NATIVE_TOOLS_CONFIG_KEY = "bot_chat_native_tools_enabled"
 
 
@@ -196,7 +199,8 @@ def native_tools_enabled(config: object | None) -> bool:
     """内置工具总开关的唯一读取口：**缺省关**。
 
     只认严格 ``True``——pydantic 字段正常给 bool；若有人把键配成字符串（``"false"``
-    取真非假），按 fail-closed 判关。键不在 config 上（今天实况）同样判关。
+    取真非假），按 fail-closed 判关。键缺席（历史形态，2026-09-29 起已在册）同样判关：
+    **缺键永不默认开**。
     """
     return getattr(config, NATIVE_TOOLS_CONFIG_KEY, None) is True
 

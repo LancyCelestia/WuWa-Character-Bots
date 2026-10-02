@@ -18,6 +18,12 @@
 弱档通用词（日常/毕业/切片…）单独命中一律不判 ⇒ 这类问句里若真在问二次元，
 需要句内另有专名或模式线索才够得着竖源。这同样是**诚实降级**（少搜），
 不是把不该搜的搜出来；换来的是「高血压病人日常吃什么药」不再被萌百回答。
+
+2026-10-02 现实知识面波（S3 席）再补一条**同向**边界：词表新加 `expo`（漫展/cosplay）
+与 `hardware`（摄影器材/芯片/大模型）两个子域，把「圈子话题的现实延伸」收进档位体系。
+两子域刻意**不进 `game` 强档**（那会被 `question_intent.DOMAIN_TERMS` 读成「本地库已知」
+⇒ 反过来判 FALLBACK 不联网），且两字母专名（CP/CQ/CD/BW）与有日常义项的词
+（萤火虫/世界线/梦乡）一律落 weak：单独命中不判。枚数与名单以本表自身为准，本文不抄。
 """
 
 from __future__ import annotations
@@ -160,6 +166,54 @@ ACG_DOMAIN_TERMS: dict[str, dict[str, tuple[str, ...]]] = {
         ACG_TIER_MEDIUM: ("小电视",),
         ACG_TIER_WEAK: (),
     },
+    # ---- 2026-10-02 现实知识面波（S3 席）：二游圈子的**现实世界**延伸 ----
+    #
+    # 为什么单开子域而**绝不并进 `game` 强档**（这一条是本席最重要的落笔，动表前读它）：
+    # `domains/chat_reply/runtime/question_intent.py` 的 `_external_game_domain_terms()`
+    # 只读 `ACG_DOMAIN_TERMS["game"][strong]` 那一档，拼进 `DOMAIN_TERMS` 当
+    # 「本地知识库已知话题」。现实实体一旦进那一格，`classify_question_intent` 就会把
+    # 「CP 漫展是什么」判成 `FALLBACK / LOCAL_KNOWLEDGE`（知识库优先、置信度够就不联网）——
+    # 而库里现实世界条目为 0（wiki 语料全是二游），方向正好反了。新子域不在那条口径里：
+    # 它只喂**竖源开关 / 时效档 / 审计词 / 检索变体**这四条腿，不碰中央决策档。
+    #
+    # 选档实证（不是拍脑袋）：现算探针见席报告与 `tests/test_real_world_intent_terms.py`，
+    # 日常句对照组 7 句 + 历史 21 句误开名单改前后逐字不变。
+    # 展会域：漫展/cosplay 这一族既是圈内话题也是现实活动，答它要的是**现场信息**（时间地点门票）。
+    "expo": {
+        ACG_TIER_STRONG: (
+            # 成词且中文里基本没有别义的专名：命中即说明在问展会本身，反证词不得否决。
+            # 「漫展」是通名但**只在 ACG 语境里被这么说**（对照 2026-09-26 那批降档词：
+            # 日常/切片/毕业在别的语境更高频，漫展不是），且库里没有它的替代答案。
+            "漫展", "cosplay", "COMICUP", "CICF",
+        ),
+        ACG_TIER_MEDIUM: (
+            # 圈内域专名：离开漫展/同人语境没人这么说，但可与反证词共决。
+            "场照", "无料", "痛车",
+        ),
+        ACG_TIER_WEAK: (
+            # 🔴 两字母专名一律 weak（本仓 21 句误开的直接教训）：`CP`/`CD` 在中文圈是展会
+            # 简称，在别处是「cp 命令」「CD 盘」「cp 位」——单独命中就联网等于重犯旧案。
+            # 同理「萤火虫/世界线/梦乡」是**有日常义项**的词（昆虫、科幻设定、睡觉），
+            # 只有跟「漫展/展」共现时才够得着展会档；裸词只贡献审计线索。
+            # 全称（如「萤火虫动漫游戏嘉年华」）留在实体关系册（entity_relations），
+            # 不写进词表——那是数据，不是判据。
+            "CP", "CQ", "CD", "BW", "HKACG", "萤火虫", "世界线", "梦乡",
+        ),
+    },
+    # 器材/算力域：cosplay 摄影与玩家装机这一族（现实产品题，答它必须看最新评测）。
+    "hardware": {
+        ACG_TIER_STRONG: (),
+        ACG_TIER_MEDIUM: (
+            # 「摄影/器材/芯片/GPU/大模型」按简报定为中档：单独可判，但与「怎么做/教程/菜谱」
+            # 这类反证词共现时判否——正是中档该有的形状（「手机摄影怎么做」不该被拖去装机评测源）。
+            "摄影", "器材", "芯片", "GPU", "大模型",
+            # 厂商名：叠纸（字面＝折纸手工）与悠星在别的语境确有歧义 ⇒ 中档而非强档，
+            # 反证词压得住。库洛/米哈游/鹰角**已在 `game` 强档在册**，分区锁禁止跨格重复登记，
+            # 故本席不再抄一遍（要改档请连 `question_intent.DOMAIN_TERMS` 的后果一起看）。
+            "叠纸", "悠星",
+        ),
+        ACG_TIER_WEAK: ("装机", "显卡"),
+    },
 }
 
 # 旧坐标保留为**派生视图**（真身是上面那张表，这里不再抄一遍词条）：
@@ -228,7 +282,7 @@ class AcgIntent:
 
     Attributes:
         is_acg: 是否命中二次元检索意图。
-        tags: 命中的子域标签（anime/manga/game/meme/vtuber/bilibili）。
+        tags: 命中的子域标签（anime/manga/game/meme/vtuber/bilibili/expo/hardware）。
         timeliness: ``latest``（要最新动态，结果必须带日期）/ ``background``
             （要权威背景知识，权威度优先）。
         matched_terms: 命中的词表词（去重、保持词表序），供审计/遥测。
@@ -400,6 +454,14 @@ def acg_query_variants(text: str, intent: AcgIntent) -> list[str]:
         variants.append(f"{base} 漫画 连载 更新")
     if "vtuber" in intent.tags and len(variants) < 2:
         variants.append(f"{base} VTuber 切片")
+    # 2026-10-02 现实知识面波：展会与器材是**现实活动/现实产品**题，竖源吃不到，
+    # 变体只把「时间地点门票」「评测参数发布」这类现场词补进通用检索链的查询面。
+    if "expo" in intent.tags and len(variants) < 2:
+        variants.append(
+            f"{base} 时间 地点 门票" if intent.wants_latest else f"{base} 举办 城市 场馆"
+        )
+    if "hardware" in intent.tags and len(variants) < 2:
+        variants.append(f"{base} 评测 参数 发布")
     deduped: list[str] = []
     for variant in variants:
         if variant not in deduped:

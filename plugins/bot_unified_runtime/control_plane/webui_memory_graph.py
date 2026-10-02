@@ -15,7 +15,12 @@
   无人物归属事实 → 只给节点不硬造边；窗口按 created_at；
 - 已学昵称 ← ``user_affinity.nickname``（≠空）：rule 节点 + nickname 边
   （昵称是当前态，不做窗口过滤）；
-- ``affinity`` ← ``user_affinity.affinity``：人物节点 weight（当前态）。
+- ``affinity`` ← ``user_affinity.affinity``：人物节点 weight（当前态）；
+- ``entities``（**缺省关**，``include_entities=True`` 才挂）← 随包实体关系册
+  ``domains/core/search/entity_relations.py``：现实世界的 作品→研发→发行、
+  公司/展会→城市 三元组（``belongs_to_work``/``developed_by``/``published_by``/
+  ``located_in`` 四枚边）。窗口过滤不适用（册是当前态、不是流水），故**不**掺进
+  turns/facts 那套时间语义；待核边按 weight=1 如实降权并带 ``verified:false``。
 
 图谱语义：窗口 ∈ {24h,7d,30d,all}；节点按 (度数降序, id 升序) 确定性
 排序后按 max_nodes（≤200，默认 120）封顶，截断如实 truncated:true +
@@ -23,6 +28,11 @@ nodes_total（stats 恒为截断前总量，不因截断撒谎）。库缺失 = 
 missing、对应 stats 0；全部缺失 = source_unavailable/all_sources_missing，
 一律 200 信封内如实降级，不崩、不造数。标签按 affinity/board 先例直接
 显值（WebUI 管理面板，Bearer 后台，2026-09-15 用户裁定）。
+
+🔴 改边集＝同批补门票与消毒（台账 #67★ 给判定行加字段要同批补门票的同型教训）：
+边类型唯一门票＝``GRAPH_EDGE_KINDS``（``add_edge`` 拒收不在册的词），实体侧标签消毒＝
+``entity_relations.sanitize_label``（控制字符/零宽/尖括号/markdown 链接一律剥），
+两腿的牙口锁在 ``tests/test_entity_relations.py``；漏任一条＝图谱长出自由文本边类型。
 """
 
 from __future__ import annotations
@@ -41,10 +51,29 @@ from plugins.bot_unified_runtime.domains.chat_reply.capabilities.memory import (
     echo_safe_rows,
     memory_tables_with_columns,
 )
+from plugins.bot_unified_runtime.domains.core.search.entity_relations import (
+    RELATION_TYPES as _ENTITY_RELATION_TYPES,
+)
+from plugins.bot_unified_runtime.domains.core.search.entity_relations import (
+    graph_edges as _entity_graph_edges,
+)
+from plugins.bot_unified_runtime.domains.core.search.entity_relations import (
+    graph_nodes as _entity_graph_nodes,
+)
+from plugins.bot_unified_runtime.domains.core.search.entity_relations import (
+    sanitize_label as _entity_sanitize_label,
+)
+from plugins.bot_unified_runtime.domains.core.search.entity_relations import (
+    seed_problems as _entity_seed_problems,
+)
+from plugins.bot_unified_runtime.domains.core.search.entity_relations import (
+    unverified_records as _entity_unverified_records,
+)
 
 from .factory import _path
 
 __all__ = [
+    "GRAPH_EDGE_KINDS",
     "MemoryGraphService",
     "build_default_memory_graph_service",
 ]
@@ -55,6 +84,20 @@ _WINDOWS = {"24h": 86_400, "7d": 7 * 86_400, "30d": 30 * 86_400, "all": None}
 _DEFAULT_MAX_NODES = 120
 _MAX_NODES_CAP = 200
 _LABEL_MAX_CHARS = 80
+
+#: 边类型**门票**（唯一在册集合）：行为侧五枚 + 实体关系册四枚。
+#: ``add_edge`` 只认这张表——不在册的关系词一律拒收，绝不长出自由文本边类型。
+#: 扩这张表必须同批扩消毒面与牙口锁（文件头 🔴 条与台账 #67★ 同一口径）。
+_GRAPH_BEHAVIOUR_EDGE_KINDS = frozenset(
+    {"speaks_in", "hosts", "about", "learned_rule", "nickname"}
+)
+GRAPH_EDGE_KINDS: frozenset[str] = _GRAPH_BEHAVIOUR_EDGE_KINDS | _ENTITY_RELATION_TYPES
+
+
+def _entity_node_id(name: str) -> str:
+    """实体节点 id：先过消毒再折叠空格 ⇒ id 面单段、且与边端点同形（同一把尺）。"""
+    return "entity:" + _entity_sanitize_label(name).replace(" ", "_")
+
 
 _HISTORY_COLUMNS = frozenset({"session_id", "sender_id", "created_at"})
 _MEMORY_COLUMNS = frozenset(
@@ -149,11 +192,19 @@ class MemoryGraphService:
 
     # -- 对外 ---------------------------------------------------------------
 
-    def graph(self, window: str = "24h", max_nodes: int = _DEFAULT_MAX_NODES) -> dict[str, Any]:
+    def graph(
+        self,
+        window: str = "24h",
+        max_nodes: int = _DEFAULT_MAX_NODES,
+        include_entities: bool = False,
+    ) -> dict[str, Any]:
         if not isinstance(window, str) or window not in _WINDOWS:
             return _failure("invalid_request", "invalid_window", None)
         if type(max_nodes) is not int or not 1 <= max_nodes <= _MAX_NODES_CAP:
             return _failure("invalid_request", "invalid_max_nodes", None)
+        # 实体腿开关：**非严格 True 一律关**（fail-closed，与 native_tools 同一口径）。
+        # 刻意不新增 reason 码——WebUI 的失败码 ⊆ 前端在册白名单，凭空造一枚就是假降级。
+        entities_requested = include_entities is True
         deadline = time.monotonic() + _QUERY_TIMEOUT_SECONDS
         window_seconds = _WINDOWS[window]
         cutoff = (
@@ -167,6 +218,9 @@ class MemoryGraphService:
             "quirks": "missing",
             "affinity": "missing",
         }
+        if entities_requested:
+            # 只在开关打开时长出第 5 枚源格——缺省 payload 形状逐字节等于改前（既有断言零破坏）。
+            sources["entities"] = "missing"
         turns: list[tuple[str, str]] = []  # (session_id, sender_id) 窗口内
         facts: list[tuple[str, str, str]] = []  # (fact_id, subject, text)
         quirks: list[tuple[str, str, str, str]] = []  # (id, text, scope_kind, scope_key)
@@ -196,7 +250,8 @@ class MemoryGraphService:
                 self._empty_payload(window, max_nodes, sources),
             )
         return self._assemble(window=window, max_nodes=max_nodes, sources=sources,
-                              turns=turns, facts=facts, quirks=quirks, affinity=affinity)
+                              turns=turns, facts=facts, quirks=quirks, affinity=affinity,
+                              include_entities=entities_requested)
 
     # -- 各源只读 -----------------------------------------------------------
 
@@ -353,6 +408,7 @@ class MemoryGraphService:
         facts: list[tuple[str, str, str]],
         quirks: list[tuple[str, str, str, str]],
         affinity: dict[str, tuple[float | None, str]],
+        include_entities: bool = False,
     ) -> dict[str, Any]:
         persons: dict[str, dict[str, Any]] = {}
         conversations: dict[str, int] = {}
@@ -385,9 +441,25 @@ class MemoryGraphService:
 
         nodes: list[dict[str, Any]] = []
         edges: list[dict[str, Any]] = []
+        # 门票拒收留痕（不静默吞边）：只有真被拒过才有这格，缺省 payload 形状零变化。
+        refused_edge_kinds: list[str] = []
 
         def add_edge(source: str, target: str, kind: str, weight: int) -> None:
-            edges.append({"source": source, "target": target, "kind": kind, "weight": weight})
+            if kind not in GRAPH_EDGE_KINDS:
+                # 第二道门票：在册边集之外一律不落 payload（边类型不是自由文本）。
+                # 留痕只带**消毒过的关系词本身**，不带端点与路径（消毒纪律）。
+                refused_edge_kinds.append(_entity_sanitize_label(kind)[:_LABEL_MAX_CHARS])
+                return
+            # 端点同样过唯一消毒口：上游哪怕给了带标签/零宽的名字，也进不了 payload
+            # （注毒 5 实测过这一腿——只信上游＝消毒名存实亡）。
+            clean_source = _entity_sanitize_label(source)
+            clean_target = _entity_sanitize_label(target)
+            if not clean_source or not clean_target:
+                refused_edge_kinds.append("<空端点>")
+                return
+            edges.append(
+                {"source": clean_source, "target": clean_target, "kind": kind, "weight": weight}
+            )
 
         for sender in sorted(persons):
             person = persons[sender]
@@ -472,6 +544,26 @@ class MemoryGraphService:
             if affinity[sender][1].strip():
                 add_edge(f"person:{sender}", f"rule:nick:{sender}", "nickname", 1)
 
+        # ---- 现实实体关系腿（缺省关；开则挂 entity:* 节点与四枚在册边类型）----
+        # 窗口过滤**不适用**：册是当前态的静态种子，不是流水，按 turns 的时间语义筛它
+        # 等于给一份没有时间的数据编一个时间。缺席＝该源 missing，不造一行。
+        if include_entities:
+            entity_nodes = _entity_graph_nodes()
+            entity_edges = _entity_graph_edges()
+            pending = _entity_unverified_records()
+            for name, kind, label in entity_nodes:
+                nodes.append(
+                    {
+                        "id": _entity_node_id(name),
+                        "type": kind,
+                        "label": _entity_sanitize_label(label)[:_LABEL_MAX_CHARS],
+                        "weight": 2,
+                    }
+                )
+            for source, target, kind, weight in entity_edges:
+                add_edge(_entity_node_id(source), _entity_node_id(target), kind, weight)
+            sources["entities"] = "ok" if entity_nodes and entity_edges else "missing"
+
         degrees: dict[str, int] = {}
         for edge in edges:
             degrees[edge["source"]] = degrees.get(edge["source"], 0) + 1
@@ -508,6 +600,18 @@ class MemoryGraphService:
             "edges": edges,
             "sources": sources,
         }
+        if include_entities:
+            # 只在开关打开时长这格：册的面数/边数/待核数 + 门票拒收留痕。
+            # 待核不是脏数据 conceal 位——它按 weight=1 已经在边里降过权，这里再给读数，
+            # 让面板能回答「这条关系到底核过没有」（台账 #68★「讲成生效开关」的同型病预防）。
+            payload["entities"] = {
+                "nodes": len(entity_nodes),
+                "edges": len(entity_edges),
+                "unverified_entities": len(pending["entities"]),
+                "unverified_relations": len(pending["relations"]),
+                "seed_problems": len(_entity_seed_problems()),
+                "refused_edge_kinds": sorted(set(refused_edge_kinds)),
+            }
         if any_ok:
             return {"status": "ok", "source": "memory_graph", "data": payload}
         return _failure("source_unavailable", "all_sources_missing", payload)

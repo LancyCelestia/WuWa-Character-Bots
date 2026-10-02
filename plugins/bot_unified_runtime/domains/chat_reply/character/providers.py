@@ -83,6 +83,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge i
     build_vector_knowledge_provider,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.question_intent import (
+    classify_question_intent,
     knowledge_confidence_from_evidence,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
@@ -97,9 +98,47 @@ from plugins.bot_unified_runtime.domains.core.contracts.character import (
     RetrievalResult,
     ToneProfile,
 )
+from plugins.bot_unified_runtime.domains.core.search.entity_relations import (
+    reality_relation_lines,
+)
 
 # V21-PERSONA-001：模块级 logger（版本库注入溯源/降级告警面；与 character 兄弟模块同惯例）。
 logger = logging.getLogger(__name__)
+
+#: 允许现算实体关系一跳的问句类别（席 S12，现实知识面波）：**复用** ``classify_question_intent``
+#: 的既有分类，不新造判据——"这句算不算现实题"的真身住在 ``runtime/question_intent.py``，
+#: 这里只登记"哪几类放行"。二游语境（``TimelyDomain.ANIME_LORE`` 那一族题）在这套分类里
+#: 落在 ``LOCAL_KNOWLEDGE``，故不再另立第二把尺。
+_REALITY_LOOKUP_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "EXTERNAL_ENTITY",
+        "CURRENT_REAL_WORLD",
+        "LOCAL_KNOWLEDGE",
+        "GENERAL_STATIC_KNOWLEDGE",
+    }
+)
+
+
+def reality_relation_note_for(query_text: str) -> str:
+    """实体关系册 → 对话分区【现实关系】正文（把"在盘不在码"那格接上，台账 #72★同型）。
+
+    两道门都是别人的判据：放行与否＝``classify_question_intent`` 的分类，
+    取名/取边/措辞＝``entity_relations.reality_relation_lines``（唯一真身）。
+    本函数零判据、零文案、**零联网零写盘**。
+    任一道门没命中 ⇒ 空串 ⇒ chat.py 侧整块不渲染（空分区不渲染）。
+    任何异常 ⇒ 空串并留一行 warn：这条链路的红线是"不确定的别端出去"，
+    少一块事实不叫事故，把待核说成已核才叫。
+    """
+    text = str(query_text or "").strip()
+    if not text:
+        return ""
+    try:
+        if classify_question_intent(text).category not in _REALITY_LOOKUP_CATEGORIES:
+            return ""
+        return "\n".join(reality_relation_lines(text))
+    except Exception:  # 现实关系块缺席即可，绝不带崩主链路（本仓未启用 BLE001，故不写 noqa）
+        logger.warning("实体关系册现算失败，本轮【现实关系】分区缺席", exc_info=True)
+        return ""
 
 LLM_SAFE_MEMORY_SENSITIVITIES = frozenset({"public", "group", "personal"})
 
@@ -735,6 +774,7 @@ class FileCharacterContextProvider:
             glossary_context=glossary_context,
             relationship_context=relationship,
             shared_group_context=shared_group_context,
+            reality_relation_note=reality_relation_note_for(query_text),
             active_persona_id=persona_profile_id,
         )
 

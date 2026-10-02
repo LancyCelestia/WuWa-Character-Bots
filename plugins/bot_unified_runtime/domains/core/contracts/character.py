@@ -281,6 +281,11 @@ class ContextBundle(StrictBaseModel):
     # 媒体应对守则：消息附有视频/图片档案时追加的系统级行为指令（可信运营配置，
     # 不是用户输入）；空 = 本轮没有媒体档案，不出现该分区。
     media_directive: str = ""
+    # 实体关系册一跳事实（席 S12 现实知识面波）：由 ``build_context`` 按问句现算的
+    # 【现实关系】分区正文；空 = 本轮问句没命中在册实体 / 判类不放行 / 册缺席，
+    # 分区整块不出现。措辞真身在 ``domains/core/search/entity_relations.py``，
+    # 本字段只搬运不判定，未核实条目自带「待核」前缀出来。
+    reality_relation_note: str = ""
     active_persona_id: str = "default"
     context_budget: int = 2048
     reply_detail: str = "auto"  # auto / detail / concise
