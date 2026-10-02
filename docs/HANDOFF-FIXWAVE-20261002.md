@@ -473,3 +473,158 @@ grep -rn "MigrationStatus\." plugins/bot_unified_runtime | wc -l
 2. **上一窗六席阵亡于 150 次调用硬顶**（不是模型问题，是我把三件交付捆在一席的规划错误），
    代价＝半成品测试文件把整树 collection 打断 + 10 枚 write-trace 锁返工。
    ⇒ 本窗三席简报里各写死"≤80 次调用、~65 次立刻收尾、按节即时 append、批量校验一次脚本跑完"。
+
+---
+
+## 十八、深化席取证回收（探索成果 · 不含施工图）+ 三席阵亡账
+
+### 18.1 阵亡取证（**新的死法，与前两种都不同**）
+
+| 席 | 结果 | 调用数 | 子代理 token | 存活时长 |
+|---|---|---|---|---|
+| HB-A 架构篇 | 中途死，**产出已落盘** | 53 | 4.32 M | 101 分钟 |
+| HB-B 中央调度完成度 | 死，**零产出** | 54 | 4.11 M | 98 分钟 |
+| HB-C 归类/耦合/解耦 | 中途死，**产出已落盘** | 47 | 3.45 M | 94 分钟 |
+| （同轮早先两笔重派同名席） | 死，零产出 | 43 / 53 | 2.88 M / 5.85 M | — |
+
+- 死因文案＝`You've reached your daily usage limit for Chat`（＝**当日累计额度墙**，AGENTS 规则 7 说的 1302 那一族），
+  **不是** 150 次调用硬顶，**也不是**基础设施 `Sorry, something went wrong`。
+  ⇒ 教训：**"≤80 次调用"的预算拦不住额度墙**——墙按当日累计算，与单席调用数无关；
+  真正省额度的是"少派席、每席窄面"，不是"给每席设上限"。
+- 写入面复核（现算）：三席**零 git 写**、阵亡前未改任何源码/生成物面，只写了自己那份报告；
+  半成品扫描＝58 枚 py 面 `ast.parse` **零 SyntaxError**。
+
+### 18.2 产出为什么必须搬进出仓库
+
+原产出落在 `.superpowers/sdd/2026-10-02-fixwave/`，而 **`.superpowers/` 在 gitignore 里**
+⇒ 它不在任何一次 GitHub 备份里。本窗已经为这条付过一次学费（死机丢了上一轮三份 Temp 手册）。
+⇒ 已做**入库副本**（两份，本波一并 commit）：
+- `patches/HB-A-architecture-EVIDENCE-20261002.md`（41,744 B）
+- `patches/HB-C-taxonomy-EVIDENCE-20261002.md`（19,303 B）
+
+⚠ 读 HB-A 前必知：该席死前**把 §1 推倒重写过一次**，文件里存在两版"两棵树"
+（第 11 行 `## 1. 两棵树` 与第 208 行 `## 一、两棵树`）。**第二版更晚、更全**，
+但两版都留着没删——因为我无法证明后写的没丢掉前一版的取证命令。引用前按文中命令现算。
+
+### 18.3 探索成果（HB-A · 架构与主链路，条目级摘要，细节看入库副本）
+
+1. **`_prepare` 十步门序逐枚带行号钉死**（`pipeline.py:1059` 起）：
+   `feature_gate:1065`（状态读失败 **fail-closed** → `FeatureAccess(False,"feature_state_unavailable")`）
+   → `runtime_enabled:1082` → **角色解析 `:1103-1106` 在门禁内改写 message** → `runtime_control.allows:1107`
+   → `policy_evaluator:1128` → `quiet_hours:1151`（**静默**：`public_message=""`）
+   → `decide_reply_budget:1179` → `rate_limiter.check_and_record:1192`（**同样静默** + `_schedule_rate_limit_redrive:1212` 解禁补跑）
+   → 🔴 **`_claim_event` 幂等 claim 必须排最后 `:1250`** → `BotDecision:1258`。
+   **谁把 claim 提回门禁前面＝复发 A-18**（被拦事件白耗幂等键 ⇒ 用户重发永远被当 duplicate 吞掉）；
+   claim 失败还要**立刻回滚刚记的限流账**（`:1251-1256`）。幂等键段禁 `:` ⇒ `is_legal_segment`（台账 #46★）。
+2. **`_complete` 从 `pipeline.py:1287` 起、输出半程顺序同样冻结**（审核 → TTS 钩子 → 渲染 → 转发 → `send_queue.submit`）；
+   `submit` 台账按 `current_task()` 记账 ⇒ **`_complete` 必须留在事件循环线程上**（A-22）。
+3. **"AGENTS 路径的一半是旧道"**：`domains/core/board_shim_ledger.py:22 SHIM_ROWS` 是"叙述≠真身"最系统的一处，
+   已列出 10 组「顶层垫片 → 真身」对照（`capabilities/chat.py`→`domains/chat_reply/…`、
+   `output/renderer.py`→`domains/render/`、`llm/model_router.py`→`domains/chat_reply/llm_engine/` 等）；
+   PEP 562 活再导出 ⇒ **任一侧 monkeypatch 都一致，但读代码要读真身**。
+   同文件 `:75-81` 四枚**只准降**的棘轮基线（含 `OUTSIDE_BASELINE`）。
+4. **"关着的、但必须一开即通"清单**（用户纲领的那句"用不到会关掉，但你必须做好"）：现算 `config.py` 缺省 `False`
+   的功能开关 19 枚逐条带行号（`bot_control_plane_enabled:199` / `bot_event_idempotency_enabled:181` /
+   `bot_memory_enabled:332` / `bot_embedding_enabled:276` / `bot_kb_wiki_enabled:294` / `bot_worldbook_enabled:324` …）。
+   ⚠ 该席同时钉了一句**必须保留的判据**：**源码缺省 False ≠ 线上关着**（线上＝`.env` 现值 + Runtime `runtime_settings.json`，§1.4）。
+5. 另含：`runtime_paths.py:280-295` 的重映射实现、测试进程 Runtime 根隔离缝的两态语义、
+   源码树禁缓存的**两把**执法门（别只认一把）、覆盖册为何赢 `.env`、行数现算 295/2257/1829。
+
+### 18.4 探索成果（HB-C · 归类 / 耦合 / 解耦，含**三枚新现算出来的红与假绿**）
+
+**先记三件"没人报过的事实"**（这三条就是本席的价值）：
+
+1. 🔴 **`OUTSIDE_BASELINE` 硬锁此刻是红的**：现算 `75 / 基线 74 (RISE!)`（`scripts/shim_retirement_census.py --check`）。
+   唯一合规处置＝**同批把某一态真降 1 枚**（最省事的正当路径＝下面 §18.5 那枚 `auto_send` 复活件的四动作同批退役），
+   或**如实登记为既存红**。不许调基线、不许放宽容差。
+2. 🔴 **`AGENTS.md` 软顶 30,000 是门禁假绿面**：机器门只咬 **32,768**
+   （`tests/test_documentation_consistency.py:757 _ENTRY_SIZE_CEILING`、`:760 _ENTRY_SIZE_DOCS=("AGENTS.md",)`、`:791`），
+   **30,000 只活在 AGENTS 页首散文里**。现算工作树 **29,985 B＝距软顶只剩 15 字节而门仍绿**
+   （HEAD 版 29,993 B，差 8 B＝别席在飞改动）。⇒ 任何人再写一句都破软顶且不报警。
+   顺带：**`COMMANDS.md`（24,187 B）根本不在执法名单内**，尽管自证用例拿它当"达标放行"样本——它是夹具不是对象。
+   ⚠ **18.7 现算校正**：本席落完本节后再量＝**29,976 B**（别席在这半小时内又压了 9 B）⇒ 结论不变、数要跟着走。
+3. 🔴 **`.qoder/settings.local.json` 仍被 git 跟踪**，与 `.gitignore:79` 的**意图**矛盾
+   （判据实跑＝`git ls-files .qoder/` 有它 + `git check-ignore -v` RC=1 不忽略）。
+   **本席复跑确认仍成立**（`git ls-files .qoder/` 现算有它）。
+   ⇒ 处置需要用户裁一句话：`.superpowers/` 要不要加否定规则继续跟踪（决定 A 类是"迁走"还是"从仓库消失"）。**本席不代裁。**
+
+**归类现状（现算，命令在副本里）**：`docs/design/` 共 **242** 件，其中 `*-log.md` 过程日志 **126 枚 / 1,096,124 B**
+（交接档 §八 早先写"约 127 枚"＝当时值，**以本行现算为准**）；非日志件 116 枚属"该留"；`docs/` 顶层跟踪件 36。
+死账判定证据：126 枚 mtime 全落 2026-09-29→09-30，最后一次提交 `4e4a8645`（10-01 15:51 的 wip 快照）⇒ **09-30 之后无人再写**。
+⚠ **十板块规范本身没有机器门**（`test_doc_link_integrity.py` 只判链接指向存不存在，不判"该不该在 `docs/design/`"）
+⇒ **这就是它躺了十天的原因；要落地必须先立归属门**（副本 §6 动作 1）。
+
+**待搬迁 45 枚是虚胖**（重要，别按它规划工作量）：现算拆成
+`真可搬 0 ｜ 落点已存在·禁覆盖 5 ｜ 基础设施常驻原地 40` ⇒ 搬迁面实际只有 **5 枚**且都属"禁覆盖"。
+
+**垫片漏记 8 枚**（HB-C 当时读数：账上登记 15 行 vs 扫描面待退役 23）：`capabilities/auto_send/__init__.py`（🔴 **复活件**，
+就是台账 #68★"还原把已退役件连账本行写回"的实锤对象，且已知会让 `test_copy_redline_gate.py::test_gate_scope_sanity` 跨窗红）、
+`capabilities/market.py`、`runtime/settings.py`（热改态真身却躺在"待退役"桶＝**桶位待裁**）、
+`security/memory_sanitize.py`、`sender/__init__.py`、`sender/onebot.py`（AGENTS 流程图按名引用 ⇒ 退役要同批改 AGENTS）、
+`sources/fetchers/__init__.py`、`sources/subscriptions/__init__.py`。
+另有**读点盲区 3 枚**（`audit/` `contracts/` `llm/` 的 `__init__.py`：命中垫片记号但派生不出真身 ⇒ 只读附账、不改桶），
+`G-P2 豁免条数 28 / 上限 29`（只剩 1 条余量，别一次填满），`SHIM_ROWS` 15 行**全部还在盘**（幽灵行 0）。
+
+**退役一枚垫片的正确形状＝四动作同批**（#68★，缺一个必红另一个）：
+① 迁完调用方 → ② 删旧路径文件 → ③ `shim_retirement_census.py --write-ledger` 重录（摘行 + `refs` 上限**只降**）
+→ ④ 若旧名被 HANDBOOK/AGENTS/板块页按字面引用，同批改指针。
+`--write-ledger` 默认取 `min(既有, 现算)` ⇒ **抬不动上限**，唯一上调通道＝`scripts/shim_refs_approvals.json` 显式审批（带 `expiry`）。
+
+### 18.7 本席对 HB-C 三格读数的现算复核（**结论：一格已被别席闭掉，两格仍成立**）
+
+主代理写完 §18.4 后**没有直接采信**，而是复跑 `shim_retirement_census.py --check`（`BOT_AUTOSYNC=0`），现算：
+
+| HB-C 的读数 | 本席现算 | 判定 |
+|---|---|---|
+| 账上登记 **15** 行、漏记 **8** 枚 | 账上登记 **23 枚**，且「对账问题」五项（漏记 / 非垫片登记 / 已退役被回引 / 真身不存在 / 引用超上限）**全 0** | 🔴 **已被闭掉**——这半小时里有别的在飞席把 8 枚补录进册了（§18.4 那段名单因此**降级为历史取证**，不再是待办；`auto_send` 复活件是否连**文件**一起退役**仍未证**，要单独查盘上文件在不在） |
+| `OUTSIDE_BASELINE 75 / 基线 74 (RISE!)` | **一字不差复现**（末行原文＝`硬锁·三态之和(域外全量) 75/基线 74 (RISE!)`；单态参照 `待退役 23/23`、`待搬迁 45/45` 各自 OK） | ✅ **仍是一枚活红**，且补录之后 `75` 没降 ⇒ 说明它不是"漏记"造成的，是**某一态真的比基线多 1 枚** ⇒ 起手式第 0 条成立，但**解法要重找**（补录这条路已经被别人走完了） |
+| `AGENTS.md` 工作树 29,985 B | **29,976 B**（HEAD 版仍是 29,993） | ✅ 假绿结论不变，数字已按现算改（见 §18.4 第 2 条校正行） |
+| `.qoder/settings.local.json` 仍跟踪 | `git ls-files .qoder/` 现算命中 | ✅ 仍成立 |
+
+⚠ **这一节本身就是要留的账**：它同时是"HB-C 的取证是真的"与"我抄它当现状就已经过时了"两条证据。
+下一条规则由此得来——**引用 §18.4 任何一格数之前，先重跑那一条命令**（本项目 台账 #68★ 明写过：
+断言回显里的 `...` 省略不得当证据，结论要插桩实跑）。
+
+**再补两格现算（把上面留的两个"仍未证"闭掉）**：
+
+- `auto_send` 复活件的**文件侧**：`plugins/.../capabilities/auto_send/__init__.py` **仍在盘、仍被 git 跟踪**（435 B，mtime 09-30 15:48），
+  而真身 `plugins/.../domains/schedule/auto_send/__init__.py` **也在盘** ⇒ 现在不是"文件消失了但账还记着"的幽灵形态，
+  而是**垫片与真身并存**（补录席把行补进了 `SHIM_ROWS`，没做文件退役）。
+  ⇒ 那一枚 RISE 红与它无关；真要动它必须走 §18.4 的**四动作同批**，且要连带 `test_copy_redline_gate.py::test_gate_scope_sanity` 配对判据。
+- **在飞面数**：本档 §十七 写的是 **51**（34 改 + 17 未跟踪），现算已涨到 **74** ⇒
+  同一工作树里至少两席在并行写。**任何"逐面清点"落地前都要重跑
+  `git status --porcelain | awk '{print substr($0,1,2)}' | sort | uniq -c`，别用本档的数字当分母。**
+
+### 18.5 HB-B（统一调度完成度深化）**未产出**——欠账与补法
+
+额度墙打断，零文件。它欠的六件事按 §七 现有结论就够动手，但下面三格是**只有现算才知道**的：
+① `offload_registry` 六个判定族逐族计数 + `BYPASS_SUSPECT`/`PENDING_RULING` 逐枚点名（为什么可疑 + 消解要动哪一处 + 消解后哪把锁亮）；
+② 未入库两枚新锁 `tests/test_claims_subset_implementation_gate.py`、`tests/test_migration_status_assignment_gate.py`
+   当前判什么、绿还是红、判据原文（它们现在仍在 `??` 里，见 §十七）；
+③ 现状/目标两张流程图的逐边差异表。
+⇒ 额度重置后**单开一席窄面只做这三格**，别再捆"两张图 + 六档门槛"（本席简报捆了七节，这是它死在半路的直接原因）。
+
+### 18.6 对 §十一「下一窗起手式」的两处修正
+
+- 起手式第 1、2 条（ANN 两步）**保持不变**，但内存要价按 §十六 的更正重算（别再引用"还差 0.6 GiB"）。
+- **新增第 0 条**：`shim_retirement_census.py --check` 的 `75/74 RISE!` 是一枚**当下就存在**的门禁红，
+  且它是全树门禁里唯一"红得没人报过"的一枚 ⇒ 排在 lint 27 枚之前，因为它只需四动作同批就能真降 1 枚。
+
+## 十八、自主运行窗结案（2026-10-02 08:0x→09:2x，1 主会话＋6 席；用户已睡，令＝自主跑到彻底完成）
+> 本节是**结案段**：把 §十二–§十七 那些"半途"读数收到终态，并给下一窗（或她醒来那一句）一张能一句回完的清单。全账本体在 `docs/HANDBOOK.md` §60–§65，本节只记"收在哪、还差什么、谁去做"。
+
+- **表情册波（本目标 ①②③）＝已入库**。`_ALBUM_RE`／`handle_meme_album_command`／store 四法（`relink_path`·`missing_path_rows`·`admit_into_album`·`mark_persona_owned`）／帮助条目「表情册」／`tests/test_meme_album_commands.py` **全部 `git grep` 命中 HEAD**；S2 的 `audit_tags += sticker_same_message` 在 HEAD 与工作树**逐字同**（`chat.py` 单处）；S3 的 `_maybe_send_sticker_for_emoji_like` HEAD 与工作树同为 `2` 处。**主会话自曝一次量具错**：第一次我用 `git grep -c | wc -l` 比"HEAD vs 工作树"，那数的是**命中文件数不是行数**，于是把 ③ 读成"工作树多一枚"——按行重算后两侧一致，更正见 §64。
+- **④ 尾红＝终态清楚，但不归本波**：`tests/test_config_key_registration_ledger.py` 今日 **4 failed／35 passed**（`poison_11`/`14`/`15`/`16`）。一树一进程复算＝**HEAD `(784, 1606, 3, 684)` 与在册地板逐维等值**⇒ 地板在 HEAD 是对的；工作树 `(784, 1610, 3, 687)`，差数点名＝在飞未跟踪三件 `runtime/db_backup.py`·`domains/core/write_trace.py`·`domains/chat_reply/llm_engine/prompt_template.py`（直读 +4 全落在 `db_backup.py`）。**主会话没有代录地板**（按工作树复录＝把未入库件烙进册，那批若不入库就轮到 HEAD 红给所有人，正是这四枚腿要拦的事）；正解＝那批 owner 入库同批现算复录、容差 `(0,200,0,50)` 一字不动。
+- **⑤ 四道门终态读数**（全部本窗亲跑）：`runtime-layout` **PASS rc=`0`**；`typecheck` **`Success: no issues found in 609 source files` rc=`0`**；`lint` 全树 **`Found 30 errors` rc=`1`**（**本波族已清 0**：`test_doc_link_integrity.py` 那 `3` 枚 ISC004/F541 手工修净、该件 `ruff` rc=`0`；余下全属他窗在飞件，含未跟踪 `tests/`）；`test` 全量 run8 后台跑（读数落 `%TEMP%\cb-run8\run8.txt`）。另 `doc_sync --check`／`command_catalog --check`／`verify_hashes` 三把生成册尺见 §65（`--check` 从 rc=`1` 修到 rc=`0`，生成器幂等已证）。
+- **⑥ 文档面**：`HANDBOOK` 新增 §61–§65（触发词债执行账／四格补丁仓外真跑／类型门盲区／三席交付与两次自我更正／机器册陈旧 HEAD 可复现）＋就地更正 §60 两行（门族"71 枚无牙"降为待查清单、统一调度 `125` 的单位）。`AGENTS.md` 仍 `29,985` B（软上限 `30,000` 内，**没加 #73 新行**：加一行就得删别处，而 42 处代码按号引用台账编号——留给体积那格解完一起动）。本交接件即"结案"落点（按 D-22 乙案：就地更新、不新建带日期交接件）。
+- **本窗三席净交付**（细账 §64）：R2b 补 `SHIM_ROWS` `15→23`（走生成器 `--write-ledger`，HEAD 轴 `38 passed`）＋双向补牙＋报出 `--write-ledger` 出 CRLF 与 `_CANONICAL_PKG` 盲区；C-D-01 把只活在 `.superpowers/` 草稿里的中央调度闭合锁**转成实件** `tests/test_central_dispatch_closure_gate.py`（主会话亲跑 `25 passed`）；W-G-02 把余 `45` 件逐件读码＝`43` 已武装／`2` 真无牙，与 W-G-01 合读 `72` 件推翻"按名普查"（高估 3–4 倍）。
+- **本目标 ②③ 的验收判据（2026-10-02 逐条回查代码，不靠记忆）**：
+  - **②「绝不绕门、不起第二本账」＝成立**。回执构点只往 `audit_tags` 上盖 `sticker_same_message` 一枚标（`chat.py` 的 `_sticker_attach_parts` 之后、与 `attach_tags` 同批并入），判定与额度仍在原腿；日帽全树**只有一本** `_reaction_meme_daily`（根 `__init__.py` 单一定义、三对读写点分属回应腿/表情补发腿/同消息并图腿，同一 session_key 同一帽），且定义处就写着"额度账/冷却账不另立"。⇒ 没有第二本账，也没有绕开门的分支。
+  - **③「零新配置字段、复用门族、群聊 only」＝成立**。补发腿读 `getattr(meme_config, "bot_reactions_meme_enabled")`、以 `prefix="bot_reactions_meme_"` 走 `_REACTION_MEME_GATE`；那四枚键（`enabled/probability/cooldown_seconds/daily_max`）经 `git log -S` 定为**本波之前**的 TTS 波所引入（非本波新加）；群聊门是 `_is_group_session(session_key)`，注释把判据钉在台账 #35★（私聊绝不补发、**会话键才是判定口、带群号也不算**）。语义门槛另加两把 C1 面（悲伤表达不配笑脸、我自己那句是丧事场合也不配图），与 P3/钩子同判据。
+  - **本波域锁件复跑**：`tests/test_meme_album_commands.py` ＋ `tests/test_sticker_pools_consumers.py` 合跑 **`143 passed`**（当次读数，工作树含他席在飞件）。
+  - ✅ **①的"泄露面唯一代码级防线"补了一次变异自证（10-02，仓外 HEAD 副本内做，未碰她的树）**：把出处门那一行 `if str(row["review_state"]…).strip() != ADMIT: return "not_admitted"` 改成永不触发 ⇒ `2 failed, 50 passed`，且红的正是 `test_admit_into_album_refuses_unapproved_row` 与 `test_empty_state_row_is_approvable_by_command_face_then_admitted`（断言回显逐字 `- not_admitted / + moved`，回执 audit_tags 也跟着从拦截态变成 `moved`）；还原后 `restored_identical=True`、复跑 `52 passed rc=0`、备份件已删 ⇒ **这枚门是真牙，不是文案**，无需再补锁。⚠ 同一次实验里我自己差点读错一格：副本**没有 `.git`**，我在中间插的那步 `git grep not_admitted` 因此**返回空**——那是死量具（trap #236），不是"没有断言"；真判据来自下一步注毒后的真红。
+  - ⚠ 仍然**不可签**「已生效」：bot 未重启（规则 10），以上都是静态＋离线测试面证据。
+
+
+- **她醒来那一屏（待裁，全部未动）**：`D-19`–`D-26` 原样在案，另新增 `#43`–`#50` 八格——余 `8` 枚触发词债、布尔表十处手抄已分叉、触发词尺两洞、SSRF 假守卫、S-01 甲档缺矩阵、S-03 别名不对称、类型门三档、机器册巡检腿三档。**四格安全补丁一律未 apply、未提交、bot 未重启**（常令：提交/推送/重启归她）。
+
