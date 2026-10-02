@@ -20,9 +20,19 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# 人格附属资产（aliases.txt / imagery_families.txt / registry/*.json）的**唯一一根**：
+# 本件位于 .../domains/chat_reply/runtime/aliases.py，parents[5]＝仓库根——与
+# character/imagery_roster.py::_repo_root、character/persona_profile.py::_REPO_ROOT、
+# character/glossary.py 同式。**不许换成相对 cwd 的路径**：那会让"人格侧词表"在
+# cwd≠仓库根时读空、静默塌回主人格的策展兜底表（切人格只换外观的一条成因）。
+_REPO_ROOT = Path(__file__).resolve().parents[5]
 
 MODULE_ALIASES: dict[str, str] = {
     "model": "model",
@@ -257,40 +267,108 @@ def _load_persona_alias_file(config: object) -> list[str]:
 
     历史事故：该文件曾长期没有任何代码消费——昵称词表全靠 env，生产没配
     BOT_PERSONA_NICKNAMES 时「岸宝」根本不在称呼词表里，群里叫破喉咙也没人应。
-    这里把它真正接线；文件缺失/不可读时静默跳过（下方还有硬编码兜底）。
+    这里把它真正接线；文件缺失/不可读时**只申报缺席**（本模块不再无条件兜底：
+    兜底表是否入场由 :func:`_curated_fallback_applies` 判，非主人格不借）。
+
+    根＝**包内定位的仓库根**（`_REPO_ROOT`），不是当前工作目录：原先写的是
+    ``Path("personas") / …``，只有 cwd 恰为仓库根时才读得到。这份词表是**跟着人格走**
+    的文本腿资产——读不到时 ``DEFAULT_PERSONA_NICKNAMES``（出厂主人格的策展九名）会静默
+    顶上来，于是"切了人格、称呼还是原来那套"，而日志一切正常（台账 #66★ 同型：
+    盘上状态≠运行时状态）。意象名册 ``imagery_roster._repo_root()``、人格册
+    ``persona_profile._REPO_ROOT``、术语表 ``glossary`` 早就是同一根，本件并过去
+    （一根锁：tests/test_seat_t1_persona_contract_20261002.py）。
     """
-    profile = str(getattr(config, "bot_persona_profile_id", "") or "").strip()
+    from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+        resolve_persona_id,
+    )
+
+    profile = resolve_persona_id(config)
     if not profile:
         return []
-    candidate = Path("personas") / profile / "aliases.txt"
+    candidate = _REPO_ROOT / "personas" / profile / "aliases.txt"
     try:
         raw = candidate.read_text(encoding="utf-8")
-    except OSError:
+    except OSError as exc:
+        # 缺文件在「新建人格册还没配词表」时是正常态（与 imagery_roster 同口径），
+        # 只留 debug；每消息一 WARN 会把日志刷成噪音。
+        logger.debug(
+            "persona alias file unreadable profile=%s type=%s", profile, type(exc).__name__
+        )
         return []
-    return [item.strip() for item in raw.replace("\n", "|").split("|") if item.strip()]
+    terms = [item.strip() for item in raw.replace("\n", "|").split("|") if item.strip()]
+    if not terms:
+        # 文件在而读空＝文本腿要塌向兜底表（兜底表是**主人格**的策展名，切人格时最危险）：
+        # 留一行可 grep 的读数，别让人回头猜「改了 aliases.txt 怎么没生效」。
+        logger.warning("persona alias file parsed empty profile=%s", profile)
+    return terms
+
+
+def _curated_fallback_applies(config: object) -> bool:
+    """策展兜底表只对**主人格那一格**生效（S5 多人格隔离波 单元 1）。
+
+    旧行为＝无条件并上 ``DEFAULT_PERSONA_NICKNAMES``：那九名是**主人格**的策展称呼，
+    切到备用人格后它继续把"旧人格的名字"当"当前人格的名字"——昵称门、表情主体判定、
+    命令别名三条腿一起认错人，而盘上的 ``personas/<新人格>/aliases.txt`` 缺席这件事
+    被兜底表吃掉了（台账 #66★ 同型：盘上状态≠运行时状态）。
+    现在：非主人格缺词表＝**申报缺席**（只回 env 显式昵称 + 文件读数，可能为空），
+    由调用方按"这一格没备料"处理。主人格档沿用兜底（2026-09-11 昵称无响应根修不许回退）。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+        main_persona_id,
+        resolve_persona_id,
+    )
+
+    wanted = resolve_persona_id(config)
+    if not wanted:
+        return True  # 连"生效谁"都取不到＝没切过，保持出厂行为
+    if wanted == main_persona_id():
+        return True
+    # 🔴 缺席必须留痕（S5c：与 ``imagery_roster.load_imagery_families`` 同口径——
+    # 读不到只记一行可 grep 的读数，级别按"新建人格册还没配词表属正常态"取 debug，
+    # 不刷 WARN 噪音）。没这一行的后果＝非主人格拿到空名册却无人知道是"没备料"
+    # 还是"读错了根"，排查只能靠猜（台账 #66★ 同型：盘上状态≠运行时状态）。
+    logger.debug(
+        "persona alias curated fallback declined profile=%s reason=not_main_persona"
+        " (honest absence: this persona ships no aliases.txt of its own)",
+        wanted,
+    )
+    return False
 
 
 def persona_alias_terms(config: object) -> tuple[str, ...]:
-    """守岸人称呼全集（**唯一对外口径**）：人格别名文件 ∪ 官方策展兜底。
+    """当前生效人格的称呼全集（**唯一对外口径**）：人格别名文件 ∪ env ∪ 主人格策展兜底。
+
+    兜底那一支只在**主人格生效**时才入场（见 :func:`_curated_fallback_applies`）：
+    非主人格既没 env 昵称又没自己的 ``aliases.txt`` ⇒ 返回**空名册**＝申报缺席，
+    绝不借主人格的九名顶上（那等于"叫新人格却用旧人格的名字应"）。
 
     为什么要有这个公共口：``_load_persona_alias_file`` 与
     :data:`DEFAULT_PERSONA_NICKNAMES` 此前只被本模块的解析器内部消费，别的域
-    想用「哪些词算指代守岸人」就只能自己硬写人名——表情库的主体判定（收图时
+    想用「哪些词算指代当前人格」就只能自己硬写人名——表情库的主体判定（收图时
     「这张画的是不是她」）正是第二个消费者。收在这里 ⇒ 名单只有一份，
-    ``personas/shorekeeper/aliases.txt`` 一改处处跟随（AGENTS 铁律：禁第二真身）。
+    ``personas/<persona_id>/aliases.txt`` 一改处处跟随（AGENTS 铁律：禁第二真身）。
 
-    顺序稳定、去重、去空；文件不可读时只剩兜底表（与解析器同口径，不抛异常）。
+    顺序稳定、去重、去空；文件不可读时只剩兜底表（与解析器同口径，不抛异常）——
+    但兜底表是否入场由 :func:`_curated_fallback_applies` 判，非主人格不借。
     """
     collected: list[str] = []
     persona_nicknames = getattr(config, "bot_persona_nicknames", []) or []
-    for item in [*persona_nicknames, *_load_persona_alias_file(config), *DEFAULT_PERSONA_NICKNAMES]:
+    curated: tuple[str, ...] = DEFAULT_PERSONA_NICKNAMES if _curated_fallback_applies(
+        config
+    ) else ()
+    for item in [
+        *persona_nicknames,
+        *_load_persona_alias_file(config),
+        *curated,
+    ]:
         text = str(item or "").strip()
         if text and text not in collected:
             collected.append(text)
     return tuple(collected)
 
 
-# 官方策展昵称硬编码兜底：与 personas/shorekeeper/aliases.txt 保持一致。
+# 官方策展昵称兜底：**主人格**（``is_main`` 那一格）aliases.txt 的同内容副本，
+# 且只在主人格生效时并入（见 :func:`_curated_fallback_applies`）。
 # 用户实际使用中的子昵称全集（含「我的蒙娜丽莎」「第二实例」）——
 # env 未配置任何昵称时也必须能被叫应（2026-09-11 昵称无响应问题根因修复）。
 DEFAULT_PERSONA_NICKNAMES: tuple[str, ...] = (
@@ -334,6 +412,8 @@ def build_command_alias_resolver(
     instance_name = str(getattr(config, "bot_runtime_instance", "")).strip()
     if instance_name and instance_name.lower() != "default" and instance_name not in nicknames:
         nicknames.append(instance_name)
-    if not nicknames:
+    if not nicknames and _curated_fallback_applies(config):
+        # 非主人格走到这里＝这一格既没 env 昵称也没词表 ⇒ **申报缺席**（解析器
+        # 拿到空名册＝谁都叫不应），绝不借主人格的九名顶上（S5 单元 1）。
         nicknames.extend(DEFAULT_PERSONA_NICKNAMES)
     return CommandAliasResolver(nicknames=nicknames)

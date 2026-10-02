@@ -654,6 +654,39 @@ def _kb_db_path(config: object) -> str:
     return str(getattr(config, "bot_kb_wiki_db_path", "") or "data/kb_wiki_embeddings.sqlite3")
 
 
+_KB_SYNC_WRITING: dict[str, bool] = {"active": False}
+
+
+def _wiki_persona_scope(config: object) -> str:
+    """wiki 行级归属的**读侧作用口**（S7；N-1 裁定＝wiki 库走行级 persona 归属）。
+
+    复用共用 ``SqliteVectorKnowledgeStore._retain_active_persona`` 的过滤与
+    over-fetch，本函数只回答"这一轮按谁裁"，**不另立第二把尺**。
+
+    返回空串＝"不表态"，store 侧语义是**不裁剪 + 留 WARN**（逐字节现状），因此这里
+    有两个必须的空值出口：
+
+    1. ``_KB_SYNC_WRITING`` 置位＝kb-sync 正在写。共用 store 的入库归属戳取的是
+       ``_persona_stamp_for_write()``＝同一个 provider 读数；wiki 语料是**跨人格共享**
+       的百科（162,381 文档／16 个 topic），若夜间 23:40 那轮同步恰好切在备用人格上，
+       新增块就会被划给那格人格、主人格从此读不到（且读侧静默掉召回）。同步期一律留
+       ``''``＝无主＝共享，归属指派交给 ``migrate_persona_isolation.py --fill-unowned``。
+    2. 人格册读不出来＝不表态（与人格库构造点同口径），绝不猜一个人名。
+    """
+    if _KB_SYNC_WRITING.get("active"):
+        return ""
+    try:
+        # 函数级懒导（与 vector_knowledge.build_vector_knowledge_provider 同族做法）：
+        # 人格册件不许在 wiki 模块顶层反向依赖 character.*，否则形成环。
+        from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+            active_persona_id,
+        )
+
+        return str(active_persona_id(config) or "")
+    except Exception:  # noqa: BLE001 - 取不到生效人格＝不表态，保持现状不裁
+        return ""
+
+
 def _build_store(
     config: object,
     *,
@@ -673,6 +706,9 @@ def _build_store(
         ann_order_path=str(Path(db_path).with_name("kb_wiki_faiss.order.json")),
         # 检索进程发现 FTS 签名缺失不做分钟级内联重建，重建由 kb-sync 负责。
         fts_auto_rebuild=False,
+        # 与人格库构造点同一形态的注入缝（persona_provider），列未迁移时 store
+        # 自己走"不裁剪 + WARN"，所以"代码先上、迁移后跑"这段时间行为不变。
+        persona_provider=(lambda: _wiki_persona_scope(config)),
     )
 
 
@@ -1475,6 +1511,8 @@ def run_kb_sync_task(
         )
         return busy
     try:
+        # 同步期不许把共享语料划给"当时生效的那格人格"（见 _wiki_persona_scope）。
+        _KB_SYNC_WRITING["active"] = True
         return _run_kb_sync_task_locked(
             config,
             full=full,
@@ -1491,6 +1529,7 @@ def run_kb_sync_task(
         # 之前偶然出现的同名文件当成取消请求）。
         _SYNC_CANCEL_EVENT.clear()
         _set_kb_sync_cancel_flag_path(None)
+        _KB_SYNC_WRITING["active"] = False
         _SYNC_TASK_MUTEX.release()
 
 

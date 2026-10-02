@@ -71,6 +71,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -85,26 +86,89 @@ DEFAULT_COPY_FALLBACK = (
 
 ANCHOR_SCHEMA = 2
 
-PERSONA_SOURCE_ROOT = "personas/shorekeeper"
+# ── 人格参数化（S5c）─────────────────────────────────────────────────────────
+# 缺省人格格＝主人格：**不传 --persona 时，本门的根、覆盖集、判据、输出文案与
+# 参数化之前逐字一致**（现存门禁与 pre_restart_check.py 的调用面按这一格读）。
+DEFAULT_PERSONA_ID: str = "shorekeeper"
 
-# 受门覆盖的人格源文件（红绿判定项，不再是信息性附注）。
-# 生产读取路径备注：identity.md / knowledge/*.md 为 BOT_KNOWLEDGE_FILES 与
-# character/glossary.py 随包种子回退直读；aliases.txt 为别名源。
-# 新增人格源文件必须显式进这里（或进 SOURCE_EXCLUDED 并写明理由），
-# 否则 check() 会以 SOURCE_UNCOVERED_FILE 抓红——覆盖面自锁。
-SOURCE_SNAPSHOT_FILES: tuple[str, ...] = (
-    "personas/shorekeeper/aliases.txt",
-    "personas/shorekeeper/identity.md",
-    # 意象族名册（2026-09-28 夜用户裁定「意象跟着人格走」）：由
-    # domains/chat_reply/character/imagery_roster.py 随包直读源文件，与 aliases.txt
-    # 同一家规——人格侧一份附属表，代码只消费不复制，所以它必须进覆盖面而不是豁免。
-    "personas/shorekeeper/imagery_families.txt",
-    "personas/shorekeeper/knowledge/守岸人_核心知识.md",
-    "personas/shorekeeper/knowledge/守岸人_人格与表达规范.md",
-    "personas/shorekeeper/knowledge/worldview_glossary.md",
+#: 人格源根前缀。真身＝ ``personas/<id>``，与
+#: domains/chat_reply/character/persona_profile.persona_asset_dir 同一根规；脚本侧不
+#: import 插件（门要能在无 nonebot 依赖下跑），只共用「一条附属文件对应一格人格」家规。
+PERSONA_SOURCE_ROOT_PREFIX: str = "personas"
+
+#: **每格人格都该有**的人格侧附属文件（跟着人格走的文本腿，文件名里不含人名）。
+#: 读点：aliases.txt→runtime/aliases.py、identity.md→人格正文源、
+#: imagery_families.txt→character/imagery_roster.py。
+PERSONA_ATTACHED_FILES: tuple[str, ...] = (
+    "aliases.txt",
+    "identity.md",
+    "imagery_families.txt",
 )
 
-# 显式豁免表：personas/shorekeeper 下**不受门覆盖**的文件 → 非空理由。
+#: **主人格独有**的知识册文件名。人名写在文件名里 ⇒ 绝不摊给别的人格
+#: （摊出去＝新人格凭空缺三枚文件，永远撞 SOURCE_UNCOVERED_AT_ANCHOR／锚拒录）。
+MAIN_PERSONA_KNOWLEDGE_FILES: tuple[str, ...] = (
+    "knowledge/守岸人_核心知识.md",
+    "knowledge/守岸人_人格与表达规范.md",
+    "knowledge/worldview_glossary.md",
+)
+
+#: 人格 id 形状闸（与 character/imagery_roster._PROFILE_ID_RE 同一判据）：档名来自
+#: CLI，一旦被塞进 ``../..`` 或 NUL 就成了「拿别人的目录当人格根」的口子。
+_PROFILE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+def _normalize_persona_id(persona_id: str) -> str:
+    """CLI/调用方给的 id → 可信的 id；空＝缺省主人格，形状不可信＝抛（绝不猜根）。"""
+    raw = str(persona_id or "").strip()
+    if not raw:
+        return DEFAULT_PERSONA_ID
+    if not _PROFILE_ID_RE.fullmatch(raw):
+        raise ValueError(f"人格 id 形状不可信（只认字母数字与 -_.）：{persona_id!r}")
+    return raw
+
+
+def persona_source_root(persona_id: str = DEFAULT_PERSONA_ID) -> str:
+    """该人格源根的 POSIX 路径（仓库根相对，不含尾斜杠）。"""
+    return f"{PERSONA_SOURCE_ROOT_PREFIX}/{_normalize_persona_id(persona_id)}"
+
+
+#: 主人格源根（历史名；值与参数化之前逐字一致）。
+PERSONA_SOURCE_ROOT: str = persona_source_root()
+
+
+def source_snapshot_files(persona_id: str = DEFAULT_PERSONA_ID) -> tuple[str, ...]:
+    """该人格**受门覆盖**的源文件清单（次序稳定；主人格＝参数化之前那枚元组）。
+
+    别的人格＝附属三件 + 其 ``knowledge/`` 下实际存在的 ``*.md``。这样"新人格刚建档、
+    知识册还没起名字"不会无故撞红，而该人格根里冒出的**其它**文件（含 knowledge/
+    下的非 md、以及任何新目录）照样被 SOURCE_UNCOVERED_FILE 抓住——覆盖面自锁的牙
+    一格都没松。
+    """
+    pid = _normalize_persona_id(persona_id)
+    root = persona_source_root(pid)
+    items = [f"{root}/{name}" for name in PERSONA_ATTACHED_FILES]
+    if pid == DEFAULT_PERSONA_ID:
+        items.extend(f"{root}/{name}" for name in MAIN_PERSONA_KNOWLEDGE_FILES)
+        return tuple(items)
+    knowledge_dir = REPO_ROOT / root / "knowledge"
+    try:
+        items.extend(
+            sorted(
+                path.relative_to(REPO_ROOT).as_posix()
+                for path in knowledge_dir.glob("*.md")
+                if path.is_file()
+            )
+        )
+    except OSError:
+        pass
+    return tuple(items)
+
+
+#: 主人格覆盖集（历史名＝门缺省读的那把尺；值与参数化之前逐字一致）。
+SOURCE_SNAPSHOT_FILES: tuple[str, ...] = source_snapshot_files()
+
+# 显式豁免表：人格源根下**不受门覆盖**的文件 → 非空理由。
 # 豁免必须带理由且不得静默增长（tests/test_persona_source_sync.py 逐条校验）。
 SOURCE_EXCLUDED: dict[str, str] = {}
 
@@ -118,7 +182,8 @@ SOURCE_EXCLUDED_DIRS: dict[str, str] = {
 OK = "OK"
 DRIFT = "DRIFT"                                # 副本被单方面改动
 SOURCE_DRIFT = "SOURCE_DRIFT"                  # 源侧演进、副本未跟进（本次根治的主洞）
-SOURCE_UNCOVERED_FILE = "SOURCE_UNCOVERED_FILE"  # 人格源目录出现门覆盖不到的文件
+SOURCE_UNCOVERED_FILE = "SOURCE_UNCOVERED_FILE"  # 人格源根里出现门覆盖不到的文件
+PERSONA_NOT_ENROLLED = "PERSONA_NOT_ENROLLED"  # 该人格源根不存在＝没有可审阅的源（≠覆盖不到）
 SOURCE_UNCOVERED_AT_ANCHOR = "SOURCE_UNCOVERED_AT_ANCHOR"  # 锚定缺覆盖文件的源哈希（一次性补锚）
 COPY_MISSING_DECLARED = "COPY_MISSING_DECLARED"  # 声明过的生产副本不存在 → 红
 SKIP_COPY_MISSING = "SKIP_COPY_MISSING"          # 跳过：仅未声明（约定回退）路径缺失
@@ -130,6 +195,7 @@ RED_STATUSES: frozenset[str] = frozenset(
         DRIFT,
         SOURCE_DRIFT,
         SOURCE_UNCOVERED_FILE,
+        PERSONA_NOT_ENROLLED,
         SOURCE_UNCOVERED_AT_ANCHOR,
         COPY_MISSING_DECLARED,
         COPY_UNREADABLE,
@@ -139,6 +205,30 @@ RED_STATUSES: frozenset[str] = frozenset(
 
 _MISSING_SENTINEL = "<missing>"
 ADOPT_CMD = "python scripts/sync_persona_source.py --adopt --note \"…人工审阅说明…\""
+
+
+def adopt_cmd(persona_id: str = DEFAULT_PERSONA_ID) -> str:
+    """回执里那条「怎么重锚」的命令——必须指回**同一格人格**。
+
+    主人格＝参数化之前的原文逐字不变。别的人格带上 ``--persona/--copy``：只给
+    ``--adopt --note`` 会重锚**主人格**的凭证，等于「报着新人格的红、递一把改别人格的
+    钥匙」（台账 #66★「绝不端别人家的」同型）。
+    """
+    pid = _normalize_persona_id(persona_id)
+    if pid == DEFAULT_PERSONA_ID:
+        return ADOPT_CMD
+    return (
+        "python scripts/sync_persona_source.py --adopt"
+        f" --persona {pid} --copy <{pid} 的生产人格副本路径> --note \"…人工审阅说明…\""
+    )
+
+
+def default_anchor_path(persona_id: str = DEFAULT_PERSONA_ID) -> Path:
+    """锚定文件路径：一格一本，绝不共用同一份审阅凭证。"""
+    pid = _normalize_persona_id(persona_id)
+    if pid == DEFAULT_PERSONA_ID:
+        return ANCHOR_PATH
+    return ANCHOR_PATH.with_name(f"persona_sync_anchor_{pid}.json")
 
 
 @dataclass(frozen=True)
@@ -164,8 +254,19 @@ class CopyTarget:
     origin: str  # cli | env | dotenv | fallback
 
 
-def persona_source_dir() -> Path:
-    return REPO_ROOT / PERSONA_SOURCE_ROOT
+def persona_source_dir(persona_id: str = DEFAULT_PERSONA_ID) -> Path:
+    """该人格的源根目录（缺省＝主人格那一格，值与参数化之前逐字一致）。"""
+    return REPO_ROOT / persona_source_root(persona_id)
+
+
+def persona_is_enrolled(persona_id: str = DEFAULT_PERSONA_ID) -> bool:
+    """这一格到底有没有「可审阅的源」。
+
+    缺席与「覆盖不到」是两件事：前者＝根压根不存在（新人格还没建档，没有源可审），
+    后者＝根在而门看不见某个文件。把前者报成后者，会让人去加覆盖集/豁免表——
+    等于把别人的目录认领成自己这一格的源（台账 #66★「绝不端别人家的」同型）。
+    """
+    return persona_source_dir(persona_id).is_dir()
 
 
 def _parse_persona_files_value(raw: str) -> Path | None:
@@ -213,10 +314,10 @@ def sha256_path(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def current_source_snapshot() -> dict[str, str]:
+def current_source_snapshot(persona_id: str = DEFAULT_PERSONA_ID) -> dict[str, str]:
     """覆盖集内每个源文件的当前 sha256；读不到记 ``<missing>``（锚定阶段会拒绝）。"""
     snap: dict[str, str] = {}
-    for rel in SOURCE_SNAPSHOT_FILES:
+    for rel in source_snapshot_files(persona_id):
         try:
             snap[rel] = sha256_path(REPO_ROOT / rel)
         except OSError:
@@ -224,25 +325,28 @@ def current_source_snapshot() -> dict[str, str]:
     return snap
 
 
-def _covered_relative_paths() -> set[str]:
-    """SOURCE_SNAPSHOT_FILES 相对人格源根的路径集合（覆盖面自锁的比较基准）。"""
+def _covered_relative_paths(persona_id: str = DEFAULT_PERSONA_ID) -> set[str]:
+    """该人格覆盖集相对其源根的路径集合（覆盖面自锁的比较基准）。"""
+    root_posix = persona_source_root(persona_id)
     covered: set[str] = set()
-    for rel in SOURCE_SNAPSHOT_FILES:
+    for rel in source_snapshot_files(persona_id):
         full = PurePosixPath(rel)
-        root = PurePosixPath(PERSONA_SOURCE_ROOT)
+        root = PurePosixPath(root_posix)
         if full.parts[: len(root.parts)] != root.parts:
-            raise ValueError(f"覆盖集路径必须位于 {PERSONA_SOURCE_ROOT}/ 之下：{rel}")
+            raise ValueError(f"覆盖集路径必须位于 {root_posix}/ 之下：{rel}")
         covered.add(PurePosixPath(*full.parts[len(root.parts) :]).as_posix())
     return covered
 
 
-def source_coverage_errors() -> list[str]:
+def source_coverage_errors(persona_id: str = DEFAULT_PERSONA_ID) -> list[str]:
     """覆盖面自锁：人格源目录里出现既不受覆盖也不在显式豁免的文件。"""
     errors: list[str] = []
-    root = persona_source_dir()
+    pid = _normalize_persona_id(persona_id)
+    root_posix = persona_source_root(pid)
+    root = persona_source_dir(pid)
     if not root.is_dir():
         return [f"人格源目录不存在：{root}"]
-    covered = _covered_relative_paths()
+    covered = _covered_relative_paths(pid)
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
@@ -252,48 +356,57 @@ def source_coverage_errors() -> list[str]:
         if set(path.relative_to(root).parts[:-1]) & set(SOURCE_EXCLUDED_DIRS):
             continue
         errors.append(
-            f"personas/shorekeeper/{rel} 既不在 SOURCE_SNAPSHOT_FILES 也不在 SOURCE_EXCLUDED"
+            f"{root_posix}/{rel} 既不在 SOURCE_SNAPSHOT_FILES 也不在 SOURCE_EXCLUDED"
         )
     return errors
 
 
-def source_drift_since(anchor: dict[str, object]) -> list[str]:
+def source_drift_since(
+    anchor: dict[str, object], persona_id: str = DEFAULT_PERSONA_ID
+) -> list[str]:
     """锚定之后源侧演进的文件清单（v2 起为**判定项**，v1 里只是信息性附注）。"""
     old = anchor.get("source_snapshot")
     if not isinstance(old, dict):
         return []
     return [
         rel
-        for rel, now_hash in current_source_snapshot().items()
+        for rel, now_hash in current_source_snapshot(persona_id).items()
         if old.get(rel) != now_hash
     ]
 
 
-def missing_source_entries(anchor: dict[str, object]) -> list[str]:
+def missing_source_entries(
+    anchor: dict[str, object], persona_id: str = DEFAULT_PERSONA_ID
+) -> list[str]:
     """锚定的源快照里缺（或记为 <missing>）覆盖集文件 → 需要一次性补锚。"""
     old = anchor.get("source_snapshot")
     if not isinstance(old, dict):
-        return list(SOURCE_SNAPSHOT_FILES)
+        return list(source_snapshot_files(persona_id))
     return [
         rel
-        for rel in SOURCE_SNAPSHOT_FILES
+        for rel in source_snapshot_files(persona_id)
         if not isinstance(old.get(rel), str)
         or len(str(old[rel])) != 64
         or old[rel] == _MISSING_SENTINEL
     ]
 
 
-def build_anchor(copy_path: Path, note: str = "") -> dict[str, object]:
+def build_anchor(
+    copy_path: Path, note: str = "", persona_id: str = DEFAULT_PERSONA_ID
+) -> dict[str, object]:
+    pid = _normalize_persona_id(persona_id)
+    snapshot = current_source_snapshot(pid)
     return {
         "schema": ANCHOR_SCHEMA,
+        "persona_id": pid,
         "copy_path": str(copy_path),
         "copy_sha256": sha256_path(copy_path),
         "copy_size": copy_path.stat().st_size,
         "adopted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "note": note,
         # v2：source_snapshot 与 copy_sha256 同等地位，共同构成审阅凭证。
-        "source_snapshot": current_source_snapshot(),
-        "source_snapshot_files": list(SOURCE_SNAPSHOT_FILES),
+        "source_snapshot": snapshot,
+        "source_snapshot_files": list(snapshot),
     }
 
 
@@ -325,10 +438,29 @@ def check(
     declared_copy: bool = True,
     require_copy: bool = False,
     allow_missing_copy: bool = False,
+    persona_id: str = DEFAULT_PERSONA_ID,
 ) -> CheckResult:
     """门本体。缺省 **fail-closed**：未声明口径一律按「已声明」处理（副本缺失=红），
     只有显式 declared_copy=False 或 --allow-missing-copy 才允许跳过。
+
+    ``persona_id`` 缺省＝主人格那一格：**不传时本门的判据与输出文案与参数化之前
+    逐字一致**（现存门禁与 pre_restart_check.py 的调用面按这一格读）。
     """
+    pid = _normalize_persona_id(persona_id)
+    root_posix = persona_source_root(pid)
+    remedy = adopt_cmd(pid)
+
+    # --- 先判「这一格有没有源」：源根缺席时，报副本/覆盖面都是把人往别人的目录引 ---
+    if not persona_is_enrolled(pid):
+        return CheckResult(
+            PERSONA_NOT_ENROLLED,
+            f"[红] 人格源根不存在：{root_posix}/ ——这一格压根还没有可审阅的源"
+            "（≠「有源而门看不见」的覆盖面问题）。\n"
+            f"      处置：把 {', '.join(PERSONA_ATTACHED_FILES)} 备进 {root_posix}/"
+            "本身（**绝不指到别的人格目录**，主人格独有的知识册也不摊给这一格），"
+            f"再运行 {remedy} 建立这一格自己的审阅凭证。",
+        )
+
     # --- 覆盖面自锁与锚定完整性先于副本读取：即使副本不在，源侧的洞也要报出来 ---
     anchor = load_anchor(anchor_path)
 
@@ -350,7 +482,7 @@ def check(
                 f"[红] 生产人格副本不存在：{copy_path}\n"
                 f"      判定为红而非跳过的依据：{why}。\n"
                 f"      人格正文丢失=生产人格塌向兜底文案，请先从备份恢复副本"
-                f"（同目录 *.bak-* 或 ChatBot_Archive），人工核对后如需重锚跑 {ADOPT_CMD}；"
+                f"（同目录 *.bak-* 或 ChatBot_Archive），人工核对后如需重锚跑 {remedy}；"
                 f"{hint}",
             )
         return CheckResult(
@@ -372,81 +504,91 @@ def check(
         return CheckResult(
             ANCHOR_MISSING,
             f"[红] 锚定文件缺失或损坏：{anchor_path}。"
-            f"副本当前 sha256={actual[:16]}…；人工审阅源↔副本对齐后运行 {ADOPT_CMD}。",
+            f"副本当前 sha256={actual[:16]}…；人工审阅源↔副本对齐后运行 {remedy}。",
         )
 
-    coverage = source_coverage_errors()
+    coverage = source_coverage_errors(pid)
     if coverage:
         return CheckResult(
             SOURCE_UNCOVERED_FILE,
-            "[红] 人格源覆盖面自锁：以下文件在 personas/shorekeeper/ 里但门看不见它们——\n"
+            f"[红] 人格源覆盖面自锁：以下文件在 {root_posix}/ 里但门看不见它们——\n"
             + "\n".join(f"      - {line}" for line in coverage)
             + "\n      处置：判定它是否属于人格正文源。属于→加进 SOURCE_SNAPSHOT_FILES"
             "（随后需一次性 --adopt 补锚）；不属于→加进 SOURCE_EXCLUDED 并写明理由。"
             "不许为了放行而静默扩大盲区。",
         )
 
-    unanchored = missing_source_entries(anchor)
+    unanchored = missing_source_entries(anchor, pid)
     if unanchored:
         return CheckResult(
             SOURCE_UNCOVERED_AT_ANCHOR,
             "[红] 锚定的源快照比覆盖集旧（门升级或源侧新增文件），审阅凭证不完整：\n"
             + "\n".join(f"      - {rel}" for rel in unanchored)
-            + f"\n      人工核对这些源文件与生产副本已对齐后运行 {ADOPT_CMD} 补锚；"
+            + f"\n      人工核对这些源文件与生产副本已对齐后运行 {remedy} 补锚；"
             "不允许把它们当「没变化」放过。",
         )
 
-    drifted = source_drift_since(anchor)
+    drifted = source_drift_since(anchor, pid)
     adopted = str(anchor.get("adopted_at", "?"))
     expected = str(anchor.get("copy_sha256", ""))
 
     if drifted:
         return CheckResult(
             SOURCE_DRIFT,
-            "[红] 人格源 personas/shorekeeper 自锚定后已演进，而生产副本未经重新审阅——"
+            f"[红] 人格源 {root_posix} 自锚定后已演进，而生产副本未经重新审阅——"
             "这正是「改一处、其余静默陈旧」的形态，故判红：\n"
             + "\n".join(f"      - {rel}" for rel in drifted)
             + f"\n      审阅凭证锚定于 {adopted}（note={_anchor_note(anchor)!r}）。"
             f"\n      处置：把源侧改动人工蒸馏进生产副本 {copy_path}"
             f"（本门与 --adopt 都不代劳拷贝，见模块文档），"
-            f"确认二者已对齐后运行 {ADOPT_CMD} 重录凭证。",
+            f"确认二者已对齐后运行 {remedy} 重录凭证。",
         )
 
+    snapshot_files = source_snapshot_files(pid)
     if actual == expected:
         return CheckResult(
             OK,
             f"[绿] 审阅凭证成立：副本 sha256={actual[:16]}… 与锚定一致，"
-            f"且 {len(SOURCE_SNAPSHOT_FILES)} 个人格源文件自锚定后零演进"
+            f"且 {len(snapshot_files)} 个人格源文件自锚定后零演进"
             f"（锚定于 {adopted}，note={_anchor_note(anchor)!r}）",
         )
     return CheckResult(
         DRIFT,
         f"[红] 生产人格副本被单方面改动：现 sha256={actual[:16]}… ≠ 锚定 "
         f"{expected[:16]}…（锚定于 {adopted}，note={_anchor_note(anchor)!r}）。"
-        "人工审阅副本改动（或对照 personas/shorekeeper/ 源）后运行 "
-        f"{ADOPT_CMD}；若属误改请先从备份恢复副本。",
+        f"人工审阅副本改动（或对照 {root_posix}/ 源）后运行 {remedy}；"
+        "若属误改请先从备份恢复副本。",
     )
 
 
-def adopt(copy_path: Path, anchor_path: Path, note: str = "") -> dict[str, object]:
+def adopt(
+    copy_path: Path, anchor_path: Path, note: str = "", persona_id: str = DEFAULT_PERSONA_ID
+) -> dict[str, object]:
     """重录**人工审阅凭证**（只写锚定文件；绝不拷贝、绝不改源、绝不写 Runtime）。
 
     拒绝条件（都在写盘之前）：副本缺失/不可读、覆盖集内有源文件读不到、
     人格源目录存在门覆盖不到的文件、--note 为空。
     """
+    pid = _normalize_persona_id(persona_id)
     if not note.strip():
         raise SystemExit(
             "[abort] --adopt 必须带 --note 人工审阅说明（本命令只重录审阅凭证、"
             "不做任何拷贝；无说明的重锚等于「顺手抹红」，拒绝执行）。"
         )
+    if not persona_is_enrolled(pid):
+        raise SystemExit(
+            f"[abort] 人格源根不存在：{persona_source_root(pid)}/ ——没有可审阅的源就"
+            "没有可钉的凭证。先把这一格自己的附属文件备进它自己的目录"
+            "（绝不指到别的人格目录），再锚定。"
+        )
     if not copy_path.exists():
         raise SystemExit(f"[abort] 副本不存在，无法锚定：{copy_path}")
-    coverage = source_coverage_errors()
+    coverage = source_coverage_errors(pid)
     if coverage:
         raise SystemExit(
             "[abort] 人格源覆盖面自锁未通过，先处置再锚定：\n  - " + "\n  - ".join(coverage)
         )
-    snapshot = current_source_snapshot()
+    snapshot = current_source_snapshot(pid)
     absent = [rel for rel, digest in snapshot.items() if digest == _MISSING_SENTINEL]
     if absent:
         raise SystemExit(
@@ -454,7 +596,7 @@ def adopt(copy_path: Path, anchor_path: Path, note: str = "") -> dict[str, objec
             + "、".join(absent)
         )
     try:
-        anchor = build_anchor(copy_path, note=note)
+        anchor = build_anchor(copy_path, note=note, persona_id=pid)
     except OSError as exc:
         raise SystemExit(f"[abort] 副本不可读，无法锚定：{copy_path}（{exc}）") from exc
     write_anchor(anchor_path, anchor)
@@ -491,6 +633,14 @@ def main(argv: list[str] | None = None) -> int:
         help="覆盖锚定文件路径（默认 scripts/persona_sync_anchor.json）",
     )
     parser.add_argument(
+        "--persona",
+        default=None,
+        help=(
+            f"校验/重锚哪一格人格源（缺省＝主人格 {DEFAULT_PERSONA_ID}；"
+            "非主人格必须同批显式 --copy，绝不拿主人格声明的正文当这一格的副本判）"
+        ),
+    )
+    parser.add_argument(
         "--require-copy",
         action="store_true",
         help="部署机/CI 用：副本缺失一律判红，压掉约定回退路径的 skip 出口",
@@ -504,12 +654,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.require_copy and args.allow_missing_copy:
         parser.error("--require-copy 与 --allow-missing-copy 互斥（放行动作必须唯一确定）")
 
+    try:
+        pid = _normalize_persona_id(args.persona or DEFAULT_PERSONA_ID)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    if pid != DEFAULT_PERSONA_ID and not args.copy:
+        parser.error(
+            f"--persona {pid} 必须同批显式 --copy <{pid} 的生产人格副本路径>"
+            "（BOT_PERSONA_FILES/.env 声明的是主人格的正文，拿它判这一格＝端别人家的）"
+        )
+
     target = resolve_copy_path(args.copy)
-    anchor_path = Path(args.anchor) if args.anchor else ANCHOR_PATH
+    anchor_path = (
+        Path(args.anchor) if args.anchor else default_anchor_path(pid)
+    )
 
     if args.adopt:
-        anchor = adopt(target.path, anchor_path, note=args.note)
+        anchor = adopt(target.path, anchor_path, note=args.note, persona_id=pid)
         print(f"[adopt] 已重录审阅凭证：{anchor_path}")
+        if pid != DEFAULT_PERSONA_ID:
+            print(f"        人格={pid}（一格一本锚定，绝不与主人格共用审阅凭证）")
         print(f"        副本 sha256={anchor['copy_sha256']}（副本内容未被本命令改动）")
         snap = anchor["source_snapshot"]
         assert isinstance(snap, dict)
@@ -522,6 +687,7 @@ def main(argv: list[str] | None = None) -> int:
         declared_copy=target.declared,
         require_copy=args.require_copy,
         allow_missing_copy=args.allow_missing_copy,
+        persona_id=pid,
     )
     print(result.message)
     if result.is_skip:

@@ -20,7 +20,7 @@ except Exception:  # noqa: BLE001 - faiss 可选，缺失回退 numpy 暴力检�
 import sqlite3
 import threading
 from collections import OrderedDict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from math import isnan, sqrt
 from pathlib import Path
@@ -95,13 +95,55 @@ _MISS_COSINE_THRESHOLD = 0.30
 #     池外召回是候选生成问题，超出本配额职责）。
 _ON_THIS_DAY_SOURCE_RE = re.compile(r"^th-\d{1,2}$")
 _ON_THIS_DAY_FAMILY = "on-this-day"
-# 人格本体文件名 stem 前缀（守岸人_核心知识 / 守岸人_人格与表达规范）。
-_PERSONA_SOURCE_PREFIX = "守岸人"
+# 人格本体文件名 stem 前缀：**按当前生效人格派生**（S5 多人格隔离波 单元 1）。
+# 旧形态＝模块级常量 ``"守岸人"``，切人格后新人格的正文进不了 persona 族、
+# 主人格的 3.5 万块继续占住人格保留位（台账 #66★ 同型：代码写死主人格身份）。
+# 现在前缀是一组（同一人格可有 persona_id 拉丁 slug 与 display_name 两种 stem 起头，
+# 如 ``shorekeeper_*`` 与 ``守岸人_*`` 并存），且**集合里永远不出现硬编码人名**：
+# 它由人格册（``personas/registry/*.json`` 热读）现算，册子改了下一轮就跟。
 _PERSONA_FAMILY = "persona"
 # 溢出回填也不越 cap 的族：on-this-day（th-01…th-12 并族）。12 源同族是
 # 本域实测陷阱正主，软顶（拿满槽优先）对它反向——语料级锁
 # test_th_family_cap_holds_in_corpus。
 _QUOTA_HARD_CAP_FAMILIES = frozenset({_ON_THIS_DAY_FAMILY})
+
+
+def persona_source_prefixes(persona_id: str = "") -> frozenset[str]:
+    """生效人格的语料 stem 前缀集合（persona 族的唯一判据来源）。
+
+    ``persona_id`` 空 / ``"default"`` ⇒ 取在册 ``is_main`` 那格（当前＝主人格档），
+    与 ``persona_profile.active_persona_id`` 的回落口径一致；册里没有这一格时
+    只用 slug 自己当前缀，**绝不回落成"主人格的前缀"**——那等于把串味写回派生函数。
+    册子加载器自带 (mtime,size) 签名热读，故这里每次调用的代价是几发 stat，
+    不需要再加一层进程缓存（加了就变回半热，§49.4）。
+    """
+    wanted = str(persona_id or "").strip()
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+            PersonaProfileRegistry,
+            get_shared_registry,
+        )
+    except Exception:  # noqa: BLE001 - 人格册不可用 ⇒ 不表态，persona 族退化为按源各自成族
+        return frozenset()
+
+    registry: PersonaProfileRegistry = get_shared_registry()
+    record = None
+    if wanted and wanted.lower() != "default":
+        record = registry.get(wanted)
+    else:
+        record = next(
+            (item for item in registry.all().values() if item.is_main), None
+        )
+    collected: list[str] = []
+    if record is not None:
+        for candidate in (record.persona_id, record.display_name):
+            text = str(candidate or "").strip()
+            if text and text not in collected:
+                collected.append(text)
+    elif wanted and wanted.lower() != "default":
+        # 册外人格（compat 位 / 尚未入册）：只认它自己的 slug。
+        collected.append(wanted)
+    return frozenset(collected)
 
 
 def _quota_family_cap(limit: int) -> int:
@@ -114,10 +156,18 @@ def _quota_persona_reserved(limit: int) -> int:
     return min(2, max(1, int(limit) // 2))
 
 
-def _source_family(source_id: str) -> str:
-    """source_id → 族名：th-* 并族、守岸人* 归 persona、其余源各自一族。"""
+def _source_family(source_id: str, persona_prefixes: Iterable[str] = ()) -> str:
+    """source_id → 族名：th-* 并族、**生效人格的源**归 persona、其余各自一族。
+
+    ``persona_prefixes`` 省略＝按当前生效人格现派生（``persona_source_prefixes()``）；
+    传空集合是**有意义的调用**（不认任何 persona 族），故这里区分"没传"与"传空"。
+    纯函数单测（tests/test_knowledge_source_quota.py）靠显式传参保持确定性。
+    """
     sid = str(source_id or "")
-    if sid.startswith(_PERSONA_SOURCE_PREFIX):
+    prefixes = (
+        persona_source_prefixes() if persona_prefixes == () else frozenset(persona_prefixes)
+    )
+    if prefixes and sid.startswith(tuple(prefixes)):
         return _PERSONA_FAMILY
     if _ON_THIS_DAY_SOURCE_RE.match(sid):
         return _ON_THIS_DAY_FAMILY
@@ -1403,6 +1453,7 @@ class SqliteVectorKnowledgeStore:
         min_cosine_threshold: float = _MISS_COSINE_THRESHOLD,
         fts_auto_rebuild: bool = True,
         source_quota_enabled: bool = False,
+        persona_provider: Callable[[], str] | None = None,
     ) -> None:
         self.db_path = str(db_path)
         self.embed_provider = embed_provider
@@ -1467,6 +1518,17 @@ class SqliteVectorKnowledgeStore:
         # True；kb_wiki/smoke/KnowledgeService 等其余构造点保持 False=逐字节
         # 现状。动机与族粒度实测见上方「源族配额」参数块。
         self.source_quota_enabled = bool(source_quota_enabled)
+        # ---- S5 多人格隔离波 单元 2：检索侧 persona 行级过滤 ------------------
+        # ``persona_provider``＝"当前生效人格是谁"的**每轮现读**注入点（热生效，
+        # 不留构造期快照；与 persona_profile.active_persona_id 同一序：
+        # runtime 切换态 → 配置主人格档）。None＝不过滤＝**逐字节现状**，
+        # 只有人格 provider（build_vector_knowledge_provider）传；
+        # kb_wiki / smoke / KnowledgeService 的其它构造点保持不过滤。
+        self.persona_provider = persona_provider
+        # persona_id 列是否存在的探测缓存（None=尚未探过）。列缺席＝迁移未执行
+        # ⇒ **不猜、不自己 ALTER**（生产库 DDL 由 scripts/migrate_persona_isolation.py
+        # 显式执行，读路径绝不代跑写动作），只留一行 WARN 并保持不过滤。
+        self._persona_column: bool | None = None
         self._ensure_schema()
         # 库内既有向量维度（首次写入时落 knowledge_meta，重启后恢复）：
         # _save_vectors 用它拒绝混合维度语料入库。
@@ -1503,7 +1565,8 @@ class SqliteVectorKnowledgeStore:
                     content TEXT,
                     content_hash TEXT,
                     vector_json TEXT,
-                    vector_blob BLOB
+                    vector_blob BLOB,
+                    persona_id TEXT NOT NULL DEFAULT ''
                 )
                 """
             )
@@ -1515,6 +1578,20 @@ class SqliteVectorKnowledgeStore:
                 connection.execute(
                     "ALTER TABLE knowledge_chunks ADD COLUMN vector_blob BLOB"
                 )
+            # S5 多人格隔离波 单元 2：归属列的 ALTER-if-missing（与 vector_blob
+            # 同一套幂等做法，也是好感度 v5 列迁移的在册先例）。缺省 ''＝未归属，
+            # 读侧按「未归属仍可见」处理 ⇒ **加列这一步本身零行为变化**，
+            # 真正的隔离发生在 scripts/migrate_persona_isolation.py 回填之后。
+            if "persona_id" not in columns:
+                connection.execute(
+                    "ALTER TABLE knowledge_chunks ADD COLUMN persona_id TEXT "
+                    "NOT NULL DEFAULT ''"
+                )
+            # 大库（35k 行级起）按人格过滤没有索引就退化成每轮全表扫描。
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_persona "
+                "ON knowledge_chunks(persona_id)"
+            )
             # sync_documents / sync_chunks 的按源删除与源级统计走这个索引，
             # 大库（十万行级）没有它每次删源都退化为全表扫描。
             connection.execute(
@@ -1849,7 +1926,12 @@ class SqliteVectorKnowledgeStore:
                 }
                 # 本轮删除计划：台账里已消失的源 + 清单里路径已不存在的源。
                 # 计划先算完再判守卫，守卫必须早于任何 DELETE 落刀。
-                stale_sources = sorted(ledger - manifest_stems)
+                # S5 单元 2：切人格后清单只带新人格的件 ⇒ **别人格的源会整批
+                # 落进 stale**。守卫 C（多数闸）只是偶然拦住它，删库风险不能押
+                # 在偶然上 ⇒ 归属明确不等于生效人格的源一律不进删除计划。
+                stale_sources = sorted(
+                    ledger - manifest_stems - self._foreign_persona_sources(connection)
+                )
                 missing_sources = sorted(
                     {path.stem for path in paths if not path.exists()}
                 )
@@ -1959,11 +2041,21 @@ class SqliteVectorKnowledgeStore:
                                 """
                                 INSERT INTO knowledge_chunks (
                                     chunk_id, source_id, title, content,
-                                    content_hash, vector_json
+                                    content_hash, vector_json, persona_id
                                 )
-                                VALUES (?, ?, ?, ?, ?, ?)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
                                 """,
-                                (chunk_id, source_id, source_id, content, content_hash, None),
+                                (
+                                    chunk_id,
+                                    source_id,
+                                    source_id,
+                                    content,
+                                    content_hash,
+                                    None,
+                                    # 归属戳＝本轮生效人格（清单也按它现取，见
+                                    # _persona_stamp_for_write）；取不到＝''未归属。
+                                    self._persona_stamp_for_write(),
+                                ),
                             )
                             changed = True
                         elif str(existing["content_hash"]) != content_hash:
@@ -2043,12 +2135,14 @@ class SqliteVectorKnowledgeStore:
                     connection, where="source_id = ?", params=(doc_id,)
                 )
                 chunks = [str(chunk) for chunk in (doc.get("chunks") or []) if str(chunk).strip()]
+                doc_persona_stamp = self._persona_stamp_for_write()
                 connection.executemany(
                     """
                     INSERT INTO knowledge_chunks (
-                        chunk_id, source_id, title, content, content_hash, vector_json
+                        chunk_id, source_id, title, content, content_hash,
+                        vector_json, persona_id
                     )
-                    VALUES (?, ?, ?, ?, ?, NULL)
+                    VALUES (?, ?, ?, ?, ?, NULL, ?)
                     """,
                     [
                         (
@@ -2059,6 +2153,7 @@ class SqliteVectorKnowledgeStore:
                             str(doc.get("title") or doc_id),
                             content,
                             hashlib.sha1(content.encode("utf-8")).hexdigest(),
+                            doc_persona_stamp,
                         )
                         for index, content in enumerate(chunks, start=1)
                     ],
@@ -2306,7 +2401,9 @@ class SqliteVectorKnowledgeStore:
                 chunk_ids,
             ).fetchall()
         found = {
-            str(row["chunk_id"]): _source_family(str(row["source_id"] or ""))
+            str(row["chunk_id"]): _source_family(
+                str(row["source_id"] or ""), self._persona_prefixes()
+            )
             for row in rows
         }
         # 查无行（与并发删除竞态，极小概率）：各自成族——不误并族受 cap，
@@ -2315,6 +2412,114 @@ class SqliteVectorKnowledgeStore:
             chunk_id: found.get(chunk_id, f"unknown:{chunk_id}")
             for chunk_id in chunk_ids
         }
+
+    # ---- S5 多人格隔离波 单元 2：persona 行级归属的唯一读法 ------------------
+
+    def _active_persona(self) -> str:
+        """当前生效人格 id（每轮现读；provider 坏了＝不表态，回空串不过滤）。
+
+        空串一律当"不知道是谁"，绝不当"谁都放行"之外的语义：过滤腿在不知道是谁时
+        选择**不裁剪**（保持逐字节现状）并留 WARN，因为静默裁空会让整条知识通道
+        在人格册读不出来时消失——那是比串味更难排查的故障形态。
+        """
+        provider = self.persona_provider
+        if provider is None:
+            return ""
+        try:
+            return str(provider() or "").strip()
+        except Exception:  # noqa: BLE001 - 人格切换态读不到 ⇒ 不裁剪，绝不炸检索
+            logger.warning("persona_provider_unreadable type=%s", type(provider).__name__)
+            return ""
+
+    def _persona_prefixes(self) -> frozenset[str]:
+        return persona_source_prefixes(self._active_persona())
+
+    def _persona_column_present(self) -> bool:
+        """persona_id 列是否已在库裡（探测一次、进程内复用）。
+
+        读路径**只探测不改表**：生产库 DDL 归 scripts/migrate_persona_isolation.py
+        显式执行（本席禁对 Runtime 生产库写）。列缺席时不裁剪 + 一次 WARN。
+        """
+        if self._persona_column is not None:
+            return self._persona_column
+        present = False
+        try:
+            with self._connect() as connection:
+                present = any(
+                    str(row["name"]) == "persona_id"
+                    for row in connection.execute("PRAGMA table_info(knowledge_chunks)")
+                )
+        except sqlite3.Error:
+            present = False
+        if not present:
+            logger.warning(
+                "knowledge persona column absent: run scripts/migrate_persona_isolation.py "
+                "db=%s",
+                redact_local_secrets(Path(self.db_path).name),
+            )
+        self._persona_column = present
+        return present
+
+    def _retain_active_persona(self, chunk_ids: list[str]) -> list[str]:
+        """按生效人格裁剪候选 id（保序）。不过滤的三种情形：没注入 provider、
+        取不到 id、列未迁移——三种各自留痕，绝不静默。
+        """
+        if not chunk_ids or self.persona_provider is None:
+            return list(chunk_ids)
+        persona_id = self._active_persona()
+        if not persona_id or not self._persona_column_present():
+            return list(chunk_ids)
+        placeholders = ",".join("?" for _ in chunk_ids)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT chunk_id FROM knowledge_chunks "
+                f"WHERE chunk_id IN ({placeholders}) "
+                # 未归属（''＝迁移后新增但未定主）保留可见；**别的格**一律剔除。
+                f"AND (persona_id = ? OR persona_id = '' OR persona_id IS NULL)",
+                [*chunk_ids, persona_id],
+            ).fetchall()
+        allowed = {str(row["chunk_id"]) for row in rows}
+        return [chunk_id for chunk_id in chunk_ids if chunk_id in allowed]
+
+    def _scope_entry_hits(
+        self, hits: list[tuple[int, bool, str]]
+    ) -> list[tuple[int, bool, str]]:
+        """词条通道按生效人格裁剪（并保住「该通道坏了不炸别两通道」的原语义）。"""
+        if not hits:
+            return []
+        allowed = set(self._retain_active_persona([str(triple[2]) for triple in hits]))
+        return [triple for triple in hits if str(triple[2]) in allowed]
+
+    def _persona_stamp_for_write(self) -> str:
+        """入库行的归属戳：跟着**本轮生效人格**走。
+
+        成立前提＝知识文件清单本身按生效人格现取（providers._effective_knowledge_files
+        每轮读册），故"同步时生效谁"＝"这批语料属于谁"。取不到人格 ⇒ 留 ''（未归属），
+        由迁移脚本的 --reclassify 按源 stem 事后定主，绝不在这里猜一个人名。
+        """
+        return self._active_persona()
+
+    def _foreign_persona_sources(self, connection: sqlite3.Connection) -> set[str]:
+        """归属明确、但不是生效人格的源集合（删除侧的护城河）。
+
+        没注入 provider / 取不到人格 / 列未迁移 ⇒ 空集＝逐字节现状（与读侧同口径，
+        两侧不许一个裁一个不裁）。查询按 source_id 索引走，只在 sync 的删侧计划
+        里跑一次，不进消息热路径的读侧。
+        """
+        if self.persona_provider is None or not self._persona_column_present():
+            return set()
+        persona_id = self._active_persona()
+        if not persona_id:
+            return set()
+        try:
+            rows = connection.execute(
+                "SELECT DISTINCT source_id FROM knowledge_chunks "
+                "WHERE persona_id != '' AND persona_id != ?",
+                (persona_id,),
+            ).fetchall()
+        except sqlite3.Error:
+            return set()
+        return {str(row["source_id"] or "") for row in rows} - {""}
 
     def _fused_ids_for_limit(
         self,
@@ -2463,7 +2668,9 @@ class SqliteVectorKnowledgeStore:
         with self._lock:
             # 三通道候选：BM25/FTS 关键词 + 向量（HNSW/暴力）+ 词条名命中，
             # 再 RRF 融合（词条名通道双倍权重）。
-            keyword_ranked = self._keyword_candidates(str(query_text))
+            keyword_ranked = self._retain_active_persona(
+                self._keyword_candidates(str(query_text))
+            )
             # 开配额才收集逐块向量余弦（保留位提升的相关性证据门）。
             vector_scores: dict[str, float] | None = (
                 {} if self.source_quota_enabled else None
@@ -2471,8 +2678,11 @@ class SqliteVectorKnowledgeStore:
             vector_ranked, best_cosine = self._vector_candidates(
                 query_vector, vector_scores
             )
+            vector_ranked = self._retain_active_persona(list(vector_ranked))
             try:
-                entry_hits = self._entry_title_candidates(str(query_text))
+                entry_hits = self._scope_entry_hits(
+                    self._entry_title_candidates(str(query_text))
+                )
             except Exception:  # noqa: BLE001 - 词条通道失败不阻断其余两通道。
                 entry_hits = []
             entry_ranked = [chunk_id for _match_len, _exact, chunk_id in entry_hits]
@@ -2542,15 +2752,20 @@ class SqliteVectorKnowledgeStore:
             return []
         query_vector = query_vectors[0]
         with self._lock:
-            keyword_ranked = self._keyword_candidates(str(query_text))
+            keyword_ranked = self._retain_active_persona(
+                self._keyword_candidates(str(query_text))
+            )
             vector_scores: dict[str, float] | None = (
                 {} if self.source_quota_enabled else None
             )
             vector_ranked, best_cosine = self._vector_candidates(
                 query_vector, vector_scores
             )
+            vector_ranked = self._retain_active_persona(list(vector_ranked))
             try:
-                entry_hits = self._entry_title_candidates(str(query_text))
+                entry_hits = self._scope_entry_hits(
+                    self._entry_title_candidates(str(query_text))
+                )
             except Exception:  # noqa: BLE001 - 词条通道失败不阻断其余两通道。
                 entry_hits = []
             entry_ranked = [chunk_id for _match_len, _exact, chunk_id in entry_hits]
@@ -2734,6 +2949,12 @@ class SqliteVectorKnowledgeStore:
             return self._brute_candidates_python(query_vector, limit, scores_out)
 
     def _fetch_chunks(self, chunk_ids: list[str]) -> list[KnowledgeChunk]:
+        if not chunk_ids:
+            return []
+        # 出内容的**最后一道闸**：上面三条通道都已按人格裁过，这里再裁一次是
+        # 有意的双保险——本函数还挂着 sync_documents / 脚本 / 未来调用方，
+        # 任何一条腿忘了过滤都不许把别人格的正文端上桌。
+        chunk_ids = self._retain_active_persona(list(chunk_ids))
         if not chunk_ids:
             return []
         placeholders = ",".join("?" for _ in chunk_ids)
@@ -5083,6 +5304,12 @@ def build_vector_knowledge_provider(
     *,
     timeout_override: float | None = None,
 ) -> object:
+    # 函数级懒导（与 resolved_avatar / runtime_paths 同族做法）：人格册件不许
+    # 在模块顶层依赖 character.vector_knowledge，否则 providers 一侧形成环。
+    from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+        active_persona_id,
+    )
+
     enabled = bool(getattr(config, "bot_embedding_enabled", False))
     model = str(getattr(config, "bot_embedding_model", "") or "").strip()
     base_url = str(getattr(config, "bot_embedding_base_url", "") or "").strip()
@@ -5147,6 +5374,12 @@ def build_vector_knowledge_provider(
             # 人格库专属：选择层源族配额（族上限+人格保留位），防 30k 级
             # 百科源洗掉 373 块人格本体的每轮槽位。其余库构造点不传=现状。
             source_quota_enabled=True,
+            # 人格库专属（S5 单元 2）：检索侧 persona 行级过滤。每轮现读
+            # active_persona_id（runtime 切换态 → 配置主人格档），故**切人格即热生效**、
+            # 不需要重建库或重启。kb_wiki / smoke 构造点不传＝不过滤。
+            persona_provider=(
+                lambda: active_persona_id(config)
+            ),
         )
         files = [
             Path(path).expanduser()

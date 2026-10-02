@@ -13,7 +13,11 @@
     "settings": [],
     "knowledge": []
   },
-  "_files_note": "达妮娅设定/知识正文材料册外不存在（§49.9 只给了昵称/签名/头像与六展示格）。文本腿热读接线（S-FIX-PERSONA-TEXT ①）已就位：给达妮娅一份 personas/danya/ 内的设定正文并在册登记后，切换即带文本；在此之前切换回执人格文本腿如实报「未落」（H-1 点名，不默认成功）。",
+  "files_absent": [
+    "settings",
+    "knowledge"
+  ],
+  "_files_note": "达妮娅设定/知识正文材料册外不存在（§49.9 只给了昵称/签名/头像与六展示格）。S5 单元 5：空清单现在必须**显式申报**（files_absent 列出缺席的两格）——在册校验把「空且未申报」记成 register_defects，切换回执走 failed 点名，不再静默回落 .env 基线。文本腿热读接线（S-FIX-PERSONA-TEXT ①）已就位：给达妮娅一份 personas/danya/ 内的设定正文并在册登记后，切换即带文本；在此之前切换回执人格文本腿如实报「未落」（H-1 点名，不默认成功）。头像按实申报未落：在册 qq.avatar_path 指向 RT/data/avatar/persona_avatar_danya_1080.jpg，该文件盘上不存在（2026-10-02 现算）⇒ 下发腿点名跳过，回执 skipped 而非 ok。",
   "voice": {
     "tts_refs": [],
     "_status": "只声明未接线（H-3：本批不实现 TTS 下发腿）"

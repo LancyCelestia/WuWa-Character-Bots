@@ -217,6 +217,17 @@ location(9) → ops(11) → music(11) → divination(14) → finance(16) → mem
 > 本表只记"做到哪"。**"已接入中央调度层"的唯一判据仍是 §1 七维**，不因本表某行打勾而自动成立；
 > 剩余未接面总账见 `logs/SEAT-S-GAPMAP.md`。
 
+⚠ 补一条口径（2026-10-02 席 C-D-01）：本表与 §1 七维都回答不了「今天到底有多少枚真在层 2 手里」，
+而这句话恰恰是最常被念成"已完成"的一句。该问法今天有两把尺、读数差一整层，且都合法：
+**汇缝字面量尺**（`tests/test_descriptor_wiredness_ledger.py`，凡到缝即记 wired）与
+**执行形尺**（`_route_execution_adapters()` ∩ `_KNOWN_ADAPTERS`——`orchestrated_command` 只把后者交给 invoker，
+其余原样跑旧路，权限门/健康/限额/审计 sink 一次都不过）。两尺之差已由常驻门
+`tests/test_central_dispatch_closure_gate.py` 逐枚写成**只准缩的债账**，实管面另钉**只准抬的地板**
+（含逐枚名册，防"枚数不变、换了一批"）；同一把门还钉「入口形并非同权」的逐形归类与
+「`engine_only` 接管态＝0 上限」。分母口径请注意：本波叙述里那对分数，**分母是 `CAPABILITY_DESCRIPTOR`
+的在册 id 枚数，不是调用点数**——按调用点另有一把尺、读数不同；两处都写「callsite 125」那种句子，
+下一个 AI 拿去对账必然对不上（＝本仓「叙述≠真身」的老诞生方式）。
+
 ## 5 中央调度层 vs 执行门 vs feature gate：同一层还是两层？（结论）
 
 **实证边界（D4-5）**：执行门真实存在、fail-closed（`pipeline.py:532-548`，异常态也拒），
@@ -301,6 +312,53 @@ handler 不注册、invoke 恒 `unavailable`（`_probe_creation_reserved:1410`�
   ／B＝反向（Wave G 采 creation 值）——但 60s 系 Wave G 明文作废旧判据，选 B=复活废值。**推荐 A**。
 
 ---
+
+## 9 多人格可扩展波 · 新增第二人格施工图（S9 续写 · 2026-10-02 现算）
+
+> 用户诉求原话：「后面可能会加新的人格和新角色，要能切换多种角色和人格，每个人格都必须有自己的人格文件」。
+> 本节只写**资产账 + 步骤序**：判据一律指向真身函数（符号名为主、行号为辅），份数/清单长度一律**以机器册 `docs/auto-facts.md` 或库侧现算为准**（AGENTS 规则 10），本文不写死数字。
+> 生效面口径沿用台账 #60/#66：`active_persona_id` 读 `domains/chat_reply/runtime/settings.py`（切换态 override → 配置主人格档），文本腿/清单腿在 `domains/chat_reply/character/providers.py`（`_effective_persona_files` / `_effective_knowledge_files`）**每轮现取＝热**，外观腿每条消息派发。
+
+### 9.1 逐类资产 × 五列（新增人格必须逐格交料）
+
+| 资产类 | ①是否按人格分键（键名真身） | ②shorekeeper 备料状态 | ③缺料时报错还是静默降级（判据处） | ④生效方式 | ⑤落地动作（谁写哪） |
+|---|---|---|---|---|
+| identity 正文（设定文本） | 是：册 `files.settings`（`personas/registry/<persona_id>.json`），锚根 `personas/<persona_id>/`（`persona_profile._parse_profile_file` 的 `anchor_root`，越锚条目点名丢弃） | 已备 `personas/shorekeeper/identity.md`（盘上在册），但册内该格**申报缺席**、正文仍走 `.env` 基线 | 主人格：`providers._effective_persona_files` **静默回落** `.env` 装配视图；备用人格：册内清单空 ⇒ 切换回执 `persona_profile._persona_text_receipt` 出 **failed** 点名（非 ok）；`register_defects` 由必填段（`_parse_profile_file` 单元 5 段）在"空且未申报"时点名 | 热（每轮现读册） | 写 `personas/<id>/identity.md` → 册内 `files.settings` 登记锚内相对名 → 跑 `scripts/sync_persona_source.py` 审阅副本 |
+| knowledge 正文 | 是：册 `files.knowledge`，同锚根 | 同上（申报缺席；静态兜底腿仍读 `.env` 基线） | 消费腿 `providers._effective_knowledge_files`（H-4甲）＋`persona_profile.main_persona_knowledge_files`：在册项无清单 ⇒ **回落 `.env` 基线＝吃别人家语料**（回执侧 `_knowledge_list_receipt` 只出 skipped 并注明回落，**不报错**）；不在册 id ⇒ `main_persona_knowledge_files` 回空（不表态，锁在 `tests/test_persona_register_required_teeth.py`） | 热 | 给新格一份锚内知识件并登记 `files.knowledge`；未备料前**必须**把 `knowledge` 写进 `files_absent`（散文 `_files_note` 不算申报） |
+| 别名表 | 是：`personas/<persona_id>/aliases.txt`（读点 `domains/chat_reply/runtime/aliases.py`，经 `persona_asset_path` 拼根）；主人格现件＝`personas/shorekeeper/aliases.txt` | 已备（在册文件在场） | 缺文件＝**只申报缺席**（S5d 已落），绝不回落到别的人格根；`persona_asset_dir` 拿不到 id 时返回 None＝调用方按缺席处理（`persona_profile.persona_asset_dir`） | 热（文件直读；装配期快照面另按台账 #3★ 现算） | 新建 `personas/<id>/aliases.txt`，零配置改动 |
+| 意象族名册 | 是：`personas/<persona_id>/imagery_families.txt`（`domains/chat_reply/character/imagery_roster.py`） | 已备 `personas/shorekeeper/imagery_families.txt` | 按现役人格 `active_persona_id` 读；**在册人格无意象册＝诚实缺席**，绝不端别人家的意象（台账 #66★）；意象名词禁抄进代码（同条锁） | 热 | 新建 `personas/<id>/imagery_families.txt`（写法照主人格那枚的骨架，名族换掉） |
+| QQ 头像 | 是：册 `qq.avatar_path`（相对 Runtime 数据根解析） | 主人格该格刻意空＝不切头像项（§49.4-1）；danya 指向的 persona 头像件**盘上不存在**（现算 2026-10-02）＝按实申报未落 | 装载闸 `persona_profile._avatar_sendable`（URL 形态一律拒、`needs_review` 也拦＝fail-closed；是否另查存在性以 `paths.check_sendable` 现算为准）；下发前 TOCTOU 复核同一枚闸；卡片头像腿 `_default_card_avatar_hook` 对缺文件**抛 `FileNotFoundError` 点名**（`set_local_path` 本身对缺文件静默 no-op，这一层就是补牙） | 热（外观腿每条消息派发）＋**QQ 侧要真下发成功才算落**（retcode 非 0 ⇒ failed） | 把图放进 Runtime 数据根的头像允许根，册内 `qq.avatar_path` 填本地路径形态（不填 URL） |
+| TTS 参考音 | 否：册 `voice.tts_refs` **只声明未接线**（H-3），全局仍单一参考音配置面 | 声明空数组 | **没有消费腿 ⇒ 谈不上报错或降级**（写了也没人读＝最危险的静默面）；配的是全局键 `BOT_TTS_REF_AUDIOS` | 待接线（接线后＝重启，属装配期配置） | 专票：给 `voice.tts_refs` 加下发腿（复用既有 TTS 出口，禁第二真身），再把键改为按人格取 |
+| 表情册 | 否（全局单库）：登记根＝`BOT_MEME_LIBRARY_DIR`（`domains/meme/capabilities/meme_library.py` 的 `store.media_container()`）；行上 `persona_hint` 是**册名**、非 persona_id | 全局一池（在册格数与过审数以库侧现算为准） | 配不上登记根 ⇒ 点名"表情册找不到登记根、不去别处翻"（fail-open 到不派发），**不按人格报错** | 需重启（`BOT_MEME_LIBRARY_DIR` 是 `.env` 装配键） | 若要按人格分池：两案待裁（①`persona_hint` 升为 persona_id 并按人格过滤派发；②每人格一个容器目录）。**混用两键两片目录＝入册永远 escape**（台账 #72） |
+| 贴纸池 | 否（全局）：`BOT_STICKER_DIR`（`domains/meme/sources/sticker_pool.py`） | 全局一池（台账 #72★ 三格哑面之一：键未登记） | 缺目录＝池空、静默不发；不点名"这一人格没贴纸" | 需重启 | 同上：按人格分池需专票，且主动贴表情**只发群消息**（台账 #35★） |
+| 世界观术语表 | 是：`persona_asset_path(*_SEED_GLOSSARY_SUBDIR, SEED_GLOSSARY_FILENAME, persona_id=…)`（`domains/chat_reply/character/glossary.py`） | 主人格格按 S5 回落口径在册 | 按人格回落＋缺文件申报缺席（S5 已落回落腿）；不许回落成另一格术语 | 热（现读文件；装配快照面现算） | 新建 `personas/<id>/` 下术语件（子目录名以 `glossary.py` 的 `_SEED_GLOSSARY_SUBDIR` 真身为准，本文不抄） |
+| 好感度基线 | 否：`bot_affinity_*` 全局单套（`plugins/bot_unified_runtime/config.py` 的 affinity 段，键名以该文件自身为准）；DB 一根 `BOT_AFFINITY_DB_PATH` | 全局一套参数（per-user 数值在册，per-persona 无键） | 无人格维度 ⇒ 换人格后**沿用同一套基线与曲线**（不报错、不降级＝隐式语义，需裁定） | 需重启（`.env` 装配键） | 专票：要么明写"好感跨人格连续"为产品语义并落档，要么加 persona 维度键（含迁移，勿在本文造第二本账） |
+| 梗词表 | 否：`bot_trend_files`（config 键）＋`domains/chat_reply/character/trend.py` 读取 | 全局一套文件清单 | 缺文件＝静默少料，不点名是哪个人格该有而没有 | 需重启 | 若要按人格：把清单改成 persona 锚内相对名并走 `persona_asset_path` |
+| 卡片皮肤与署名 | 部分：`domains/render/card_render/theme_tokens.py` 按人格回落（S5 已落）；署名走 `active_persona_id`/`current_bot_nickname` 单口 | 主人格皮肤在册；其余格回落缺省 | 回落＝按人格取不到则用缺省档（静默但登记在册的兼容语义）；`bot_name` 空时署名回落壳层 brand capsule（台账 #49 面） | 热（id 侧）＋皮肤文件热读；新增 token 属代码改动＝重启 | 新格要么复用现有 theme 档，要么在 `theme_tokens.py` 加一枚登记族（契约门执法，禁裸色） |
+| 回复风格名册 | 名册按**现役人格** `active_persona_id` 读、config 只回落一层（台账 #66★）；偏好本身是 per-user 持久面 `domains/chat_reply/character/reply_policy.py` | 主人格名册在场 | 「在册人格无意象册＝诚实缺席」同型；凡走 `/bot reply` 命令面的测试必须 monkeypatch `shared_reply_policy_store`（台账 #66★，`.env` 的 Runtime 根指向生产） | 热（每轮现取）；名册文件本身换档＝热 | 新格补名册文件即可；**并号只并偏好键不并权限**（#66★），动名册前先读该条 |
+| 人格怪癖 | 现状未按 persona 分键（`domains/chat_reply/character/quirks.py` 审核制 propose→approve→渲染；是否带人格列以该文件与库 schema 现算为准） | 全局一池（过审条数库侧现算） | 待现算：若渲染面不过滤人格 ⇒ 换人格仍带主人格怪癖＝**隐式串味**，属本节缺口 | 热（池现读）／schema 变更加列＝需迁移 | 先做一次性判定（怪癖行上有没有人格归属），再决定加列或加过滤；本文不预设结论 |
+| KB 话题归属 | 检索侧**是**：`domains/chat_reply/character/vector_knowledge.py` 的 `persona_source_prefixes`（前缀按人格派生，同一人格可有 persona_id 拉丁 slug 与 display_name 两种 stem）＋`retrieve()` 内 `_retain_active_persona` 逐处过滤；话题配置侧**否**：`BOT_KB_WIKI_TOPICS` 全局 | 主人格前缀在库；新格前缀＝零语料（条数库侧现算） | 前缀取不到 ⇒ 按"不表态"处理（函数注释口径）；新格语料**从未入库** ⇒ 检索静默空手（不报错，只是查不到）；配的话题键是全局 ⇒ 两格共用话题表 | 需迁移（新格语料要嵌进入库、`knowledge_chunks.persona_id` 列要在位） | 跑既有 KB 入库链给新格建语料（入口以 KB 侧文档为准，本文不另造命令），并在 `BOT_KB_WIKI_TOPICS` 现算话题是否需按人格拆 |
+
+### 9.2 从零加第二人格的最小步骤序列（照着执行；每步标热/重启/迁移）
+
+1. **建正文根（不建也行，但第 2 步的锚就落空）**：`personas/<new_id>/identity.md` 写人格原文（守岸人语气纪律＝AGENTS 规则 8 只对主人格生效，新人格自带风格）。— 落盘即**热**（文本腿每轮现读）。
+2. **注册册**：新建 `personas/registry/<new_id>.json`（`schema`/`persona_id`/`display_name` 非空/`is_main: false`/`qq.*`/`files.settings`+`files.knowledge`/`files_absent`/`voice.tts_refs`）。必填判据＝`persona_profile._parse_profile_file` 的单元 5 段：**要么填锚内相对名，要么把那一格登记进 `files_absent`**；只写 `_files_note` 散文＝机器读不到＝算没申报 ⇒ `register_defects` ⇒ 切换回执 failed 点名。热（册加载器逐文件重算 `(mtime,size)` 签名）。
+3. **同步门注册（首腿必报 `PERSONA_NOT_ENROLLED`，这是预期）**：`python scripts/sync_persona_source.py --persona <new_id> --copy`（非缺省格**必须显式 `--copy`**，S5d 已落）→ 人工审阅产出副本 → 按该脚本自身文档化旗标重录锚定（`--adopt` 语义见 `scripts/pre_restart_check.py` 的 persona_sync 腿提示；该脚本还支持哪几枚旗标＝跑 `--help` 现算，别照抄本文）。⚠ **人格锚定册现判绿：不许对新格以外的格 `--adopt`**（会把生产正文换成本席草稿）。
+4. **外观腿跟切（台账 #60 mandate：切人格必须带 QQ 外观一起跟切）**：册内 `qq.nickname`/`signature`/`sex`（性别用户没给就留空，绝不从名字推断）+ `qq.avatar_path`（本地路径形态，图先放进 Runtime 数据根头像允许根）。下发收口＝`persona_profile.apply_persona_profile` 逐腿出回执，半切态绝不宣称"已切换"。— 每条消息派发＝**热**，但 **QQ 侧真落地要平台 retcode 为 0**（下发失败＝failed，不是 skipped）。
+5. **术语/意象/别名各补一枚**：`personas/<new_id>/imagery_families.txt`、`aliases.txt`、术语件（子目录与文件名以 `glossary.py`/`aliases.py` 真身为准）。缺则申报缺席、**不借别人家的料**（意象族名禁写进代码——`tests/test_persona_asset_paths_are_not_hardcoded.py` 与台账 #66★ 同源执法）。— **热**。
+6. **KB 语料入库（迁移腿）**：新人格若要答知识，需按 9.1 的 KB 行走一遍导出+嵌入；否则检索对该格静默空手。— **需迁移**（跑 KB 入库链，非重启可替）。
+7. **切换验证**：管理面切到 `<new_id>`（门＝super_admin 级，见台账 #60/#66），看回执**逐格读数**应为：`persona_text` ok（第 2 步填了 settings）／`knowledge_list` ok 或 skipped（申报缺席）／`qq_profile`·头像 ok 或 failed（点名）。锁面复跑：`tests/test_persona_hot_switch.py` + `tests/test_persona_register_required_teeth.py`。
+8. **重启才生效的那几格（逐条标注，别当热改）**：①`BOT_PERSONA_FILES`／`BOT_KNOWLEDGE_FILES`（`.env` 基线清单，装配期快照＝台账 #3★，改了就当轮不生效）；②`BOT_TTS_REF_AUDIOS`（TTS 参考音，且接线本身还没做，见 9.3-H3）；③`BOT_MEME_LIBRARY_DIR`／`BOT_STICKER_DIR`（表情册与贴纸池根）；④`bot_affinity_*`（好感度基线全套）；⑤`bot_trend_files`（梗词表）；⑥`BOT_KB_WIKI_TOPICS`（KB 话题表）。— 一律**需重启**；而 `active_persona_id`（切换态）、册内 `files.*`、`qq.*`、意象/别名/术语文件＝**热**。
+9. **提交面**：册与正文属人格资产（AGENTS 规则 8），改动前后各跑一次 `scripts/pre_restart_check.py` 的 persona_sync 腿；代码补丁按常令**待审不自动部署**。
+
+### 9.3 缺口（本节只登记，不在本票修；修法各需专票）
+
+- **H-9a 知识腿静默吃基线**：备用人格 `files.knowledge` 空（哪怕已诚实申报缺席）⇒ `_effective_knowledge_files` 回落 `.env` 基线＝该人格端着主人格的知识语料说话。回执侧 `_knowledge_list_receipt` 出 skipped 并写明回落，**代码级诚实、语义级串味**。现状已由 `tests/test_persona_register_required_teeth.py` 锁住（改判据必须同批改锁，不许静默漂）。
+- **H-9b `is_main` 免检面**：必填段对 `is_main` 那格**不产生 defects**（空且未申报也放行回落基线）。生产主人格靠 `files_absent` 手工申报维持诚实；免检面本身无第二道锁 ⇒ 新增锁的第④齿（在册体检比 `register_defects` 严一档）代偿。
+- **H-3 TTS 按人格**：`voice.tts_refs` 只声明无消费腿（写了不报错也不生效）。
+- **H-9c 好感度/梗词/表情/贴纸/怪癖无 persona 键**：换人格后全部沿用全局套（详见 9.1 对应行），属产品语义待裁而非纯技术缺口。
+- **H-9d 头像缺件在册体检缺席**：`pre_restart_check.py` 的 persona 腿只查 `BOT_PERSONA_FILES` 与锚定一致，**不查在册 `qq.avatar_path` 指向的文件是否存在**；danya 那枚缺件目前到下发时才红（卡片腿 `FileNotFoundError` / 平台 retcode）。建议：在该脚本的 persona_sync 腿旁加一枚"在册头像存在性点名"检查（落地件＝`scripts/pre_restart_check.py`，同批补它的 tests）。
+- **danya 现态读数（按实申报，未落）**：无 `personas/<danya 格>` 正文、册内两格已登记进 `files_absent` ⇒ 文本腿 failed 点名（诚实）、清单腿 skipped 点名回落、头像指向件盘上不存在 ⇒ 下发面点名；**册内没有一行"人格灵魂已就位"的假成功**。本席未动生产册（零 RT 写、零册改动）。
 
 ## 附录 A · 证据坐标索引（供实现席 30 秒复核）
 

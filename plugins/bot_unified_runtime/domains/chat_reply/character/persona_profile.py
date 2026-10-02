@@ -189,6 +189,16 @@ class PersonaProfileRecord:
     display_only: tuple[tuple[str, str], ...] = ()  # 六不可写字段（仅展示，§49.7）
     is_main: bool = False
     source_path: str = ""
+    # ---- S5 多人格隔离波 单元 5：册必填化的产物 ------------------------------
+    # 在册声明"这一格确实没备这份料"的清单名（``files_absent``）。空清单**只有**
+    # 登记在这里才算诚实缺席；没登记＝册子写漏了 ⇒ 进 ``register_defects``。
+    files_absent: tuple[str, ...] = ()
+    # 册装载期缺陷点名（非致命：仍能出外观回执），但切换回执不许把它读成成功。
+    register_defects: tuple[str, ...] = ()
+
+    @property
+    def register_ok(self) -> bool:
+        return not self.register_defects
 
     @property
     def resolved_avatar(self) -> str:
@@ -305,6 +315,28 @@ def _parse_profile_file(path: Path) -> PersonaProfileRecord | None:
         for key, value in display_only.items()
         if not str(key).startswith("_")
     )
+
+    # ---- 单元 5：册必填化（缺料必须走 failed 点名，不许静默回落 .env 基线）----
+    # 判据分成三种形态，绝不揉成"空＝都算没备料"：
+    #   ① 在册清单非空                 ⇒ 齐料，随切。
+    #   ② 空 + 已登记 files_absent      ⇒ **诚实缺席**（回执点名"这一格没正文"，
+    #      消费腿拿不到语料，但绝不借别人家的语料上桌）。
+    #   ③ 空 + 未登记（`files` 键缺位/没申报）⇒ **册子写漏**＝register_defects，
+    #      切换回执走 failed，不塌成"照旧吃 .env 基线"的假成功。
+    # ``_files_note`` 单独存在**不算申报**：它是散文，机器读不到哪一格缺席了什么
+    # （台账 #68★「残留 POISON 熄火行」同型：注释在场≠判据在场）。
+    declared_absent = _raw_str_list(payload, "files_absent")
+    defects: list[str] = []
+    if not isinstance(payload.get("files"), dict):
+        defects.append("files 段缺席或非对象（备料清单无处登记）")
+    for key in ("settings", "knowledge"):
+        if not isinstance(files, dict) or key not in files:
+            defects.append(f"files.{key} 未声明（要么填清单、要么登记进 files_absent）")
+        elif not _raw_str_list(files, key) and key not in declared_absent and not payload.get("is_main"):
+            defects.append(f"files.{key} 为空且未登记进 files_absent（=缺料未申报）")
+    if not str(payload.get("display_name") or "").strip():
+        defects.append("display_name 为空（署名面会塌成 persona_id）")
+
     return PersonaProfileRecord(
         persona_id=persona_id,
         display_name=str(payload.get("display_name") or persona_id).strip(),
@@ -319,6 +351,8 @@ def _parse_profile_file(path: Path) -> PersonaProfileRecord | None:
         display_only=display_meta,
         is_main=bool(payload.get("is_main", False)),
         source_path=str(path),
+        files_absent=declared_absent,
+        register_defects=tuple(defects),
     )
 
 
@@ -378,6 +412,61 @@ def reset_shared_registry_for_tests() -> None:
     global _SHARED_REGISTRY
     with _REGISTRY_LOCK:
         _SHARED_REGISTRY = None
+
+
+# ---------------------------------------------------------------------------
+# 人格资产根的唯一解析口（S5 多人格隔离波 单元 1）
+# ---------------------------------------------------------------------------
+
+
+def main_persona_id(registry: PersonaProfileRegistry | None = None) -> str:
+    """在册 ``is_main`` 那一格的 id（"主人格是谁"的唯一读法，代码里不许写它的名字）。
+
+    无册 / 无 is_main ⇒ 空串＝不表态。调用方拿到空串必须走"申报缺席"，
+    **绝不回落成某个具体人格的字面量**——那正是本函数要消灭的形态。
+    """
+    active_registry = registry if registry is not None else get_shared_registry()
+    for record in active_registry.all().values():
+        if record.is_main:
+            return record.persona_id
+    return ""
+
+
+def resolve_persona_id(config: object | None = None, persona_id: str = "") -> str:
+    """把"空 / default"归一成真正生效或主用的那格 id；其余原样返回。
+
+    序＝``active_persona_id``（切换态 → 配置主人格档）；拿不到仍为空串，
+    由调用方按缺席处理。
+    """
+    wanted = str(persona_id or "").strip()
+    if wanted and wanted.lower() != "default":
+        return wanted
+    from_config = active_persona_id(config) if config is not None else ""
+    if from_config and from_config.lower() != "default":
+        return from_config
+    return main_persona_id()
+
+
+def persona_asset_dir(persona_id: str = "", *, config: object | None = None) -> Path | None:
+    """``<repo>/personas/<persona_id>/``——人格文本资产根（别名/术语表/意象册同一根）。
+
+    返回 None＝**申报缺席**（persona_id 取不到，或带路径分隔/穿越而不可信）。
+    调用方必须把它当"这一格没备料"处理，绝不许拼出一个主人格目录顶上去。
+    """
+    wanted = resolve_persona_id(config, persona_id)
+    if not wanted or wanted != Path(wanted).name:
+        return None
+    return _REPO_ROOT / "personas" / wanted
+
+
+def persona_asset_path(
+    *parts: str, persona_id: str = "", config: object | None = None
+) -> Path | None:
+    """人格资产根 + 相对段的唯一拼法；根缺席时同样缺席（不回落主人格）。"""
+    root = persona_asset_dir(persona_id, config=config)
+    if root is None:
+        return None
+    return root.joinpath(*parts)
 
 
 # ---------------------------------------------------------------------------
@@ -662,6 +751,22 @@ def _persona_text_receipt(record: PersonaProfileRecord) -> ItemReceipt:
             "ok",
             f"在册设定清单 {settings_count} 份，文本腿每轮现读册随切",
         )
+    if record.source_path and record.register_defects:
+        # 单元 5 必填化：**从册文件装载**且册子写漏 ⇒ 点名是哪几格漏了。
+        # 册外手构对象（兼容位 / 测试夹具）不在执法面——那没有"册子"可必填。
+        return ItemReceipt(
+            "persona_text",
+            "failed",
+            "人格文本未落：在册 files.settings 为空**且未申报缺席** ⇒ "
+            + "；".join(record.register_defects),
+        )
+    if "settings" in record.files_absent:
+        return ItemReceipt(
+            "persona_text",
+            "failed",
+            "人格文本未落：在册已申报该格无设定正文（files_absent 含 settings）；"
+            "文本腿不借别格语料，补 personas/<persona_id>/ 内的设定正文并登记即随切",
+        )
     return ItemReceipt(
         "persona_text",
         "failed",
@@ -687,10 +792,25 @@ def _knowledge_list_receipt(record: PersonaProfileRecord) -> ItemReceipt:
             "ok",
             f"在册知识清单 {count} 份，静态兜底腿每轮现读册随切（向量库不碰，H-4甲）",
         )
+    if record.source_path and record.register_defects:
+        # 单元 5 必填化：册文件里 knowledge 既没填也没申报缺席＝**缺料未申报**，
+        # 回执走 failed 点名，绝不塌成"照旧吃 .env 基线"的静默回落。
+        return ItemReceipt(
+            "knowledge_list",
+            "failed",
+            "知识清单未表态**且未申报缺席**（册子写漏 ⇒ "
+            + "；".join(record.register_defects)
+            + "）：要么填 files.knowledge，要么把 knowledge 登记进 files_absent",
+        )
     return ItemReceipt(
         "knowledge_list",
         "skipped",
-        "册内未表态知识清单⇒静态兜底腿按基线清单继续（兼容位回落，非半切；该项未随人格改动）",
+        "册内未表态知识清单⇒静态兜底腿按基线清单继续（兼容位回落，非半切；该项未随人格改动）"
+        + (
+            "；在册已申报该格无知识件（files_absent 含 knowledge）"
+            if "knowledge" in record.files_absent
+            else ""
+        ),
     )
 
 

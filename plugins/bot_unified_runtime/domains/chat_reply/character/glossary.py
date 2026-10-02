@@ -47,16 +47,35 @@ _PLAIN_ENTRY = re.compile(r"^([^\s:：|][^:：|\n]{0,60})\s*[:：|]\s*(.+)$")
 
 DEFAULT_CATEGORIES: dict[str, str] = {}
 
-# 随包种子术语表（审查 O-02/O-03 激活数据）：仓库根 personas/ 下，与
-# 守岸人_核心知识.md 同目录。glossary.py 位于仓库根下第 5 层
-# （plugins/bot_unified_runtime/domains/chat_reply/character/），向上五级即仓库根；
-# 若插件被装到别处导致种子不存在，load 会优雅回退为空上下文。
-SEED_GLOSSARY_PATH = (
-    Path(__file__).resolve().parents[5]
-    / "personas"
-    / "shorekeeper"
-    / "knowledge"
-    / "worldview_glossary.md"
+# 随包种子术语表的**文件名**（S5 多人格隔离波 单元 1：路径不再带人格名）。
+# 旧形态＝模块级常量把 ``personas/shorekeeper/`` 写死在代码里 ⇒ 切到备用人格后
+# 装配层继续端**主人格**的世界观术语表（同一人格的语料跟着换、术语表不换，
+# 台账 #66★「切人格要跟着换意象」的同型残留）。现在根由人格册现算。
+SEED_GLOSSARY_FILENAME = "worldview_glossary.md"
+_SEED_GLOSSARY_SUBDIR = ("knowledge",)
+
+
+def seed_glossary_path(persona_id: str = "") -> Path | None:
+    """按人格解析随包种子术语表落点；**没备料就申报缺席**（返回 None）。
+
+    ``persona_id`` 空/``default`` ⇒ 归一到生效格（切换态 → 配置主人格档 →
+    在册 is_main）。人格根取不到（册缺席、id 带穿越）同样返回 None，
+    绝不拼出主人格的目录顶包。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+        persona_asset_path,
+    )
+
+    return persona_asset_path(*_SEED_GLOSSARY_SUBDIR, SEED_GLOSSARY_FILENAME, persona_id=persona_id)
+
+
+# 模块级缺省＝**主人格那格**的种子路径（派生值，非字面量路径）。
+# 保留这个名字是两条既有通道的承重面：``control_plane/webui_knowledge.py`` 的
+# 只读展示，以及 tests/test_glossary_seed.py 对"种子缺失优雅回退"的 monkeypatch
+# 位（改这个名字会让那条离线锁红）。装配层请按 persona 现取（见
+# :func:`build_glossary_provider`），本常量只当"没带人格信息时的缺省"。
+SEED_GLOSSARY_PATH = seed_glossary_path() or (
+    Path(__file__).resolve().parents[5] / "personas" / SEED_GLOSSARY_FILENAME
 )
 # 每轮注入条数硬上限（注入纪律：术语=背景知识，防 prompt 膨胀）。
 # 字符级预算另由 bot_glossary_max_chars 与提示词分区预算双层兜底。
@@ -267,10 +286,22 @@ def build_glossary_provider(config: object) -> GlossaryProvider:
     files = list(getattr(config, "bot_glossary_files", []) or [])
     if not files:
         # 审查 O-02/O-03：默认空配置回退随包种子，让默认部署不再空转；
-        # 种子缺失/不可读时 FileGlossaryProvider.load 逐文件静默跳过，
-        # 返回空 GlossaryContext，等价 NullGlossaryProvider（不抛异常）。
+        # S5 单元 1：种子按**生效人格**现取——备用人格没备术语表时申报缺席
+        # （空清单＝等价 NullGlossaryProvider），绝不端主人格的术语表给新人格。
+        from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+            main_persona_id,
+            resolve_persona_id,
+        )
+
+        persona_id = resolve_persona_id(config)
+        if not persona_id or persona_id == main_persona_id():
+            # 主人格档沿用模块缺省常量：那是 tests/test_glossary_seed.py
+            # 「种子缺失优雅回退」的 monkeypatch 承重位，不许被派生值绕开。
+            seed: Path | None = SEED_GLOSSARY_PATH
+        else:
+            seed = seed_glossary_path(persona_id)
         return FileGlossaryProvider(
-            glossary_files=[SEED_GLOSSARY_PATH],
+            glossary_files=[seed] if seed else [],
             max_entries=SEED_MAX_ENTRIES,
             max_chars=int(getattr(config, "bot_glossary_max_chars", 1500)),
         )

@@ -13,7 +13,11 @@
     "settings": [],
     "knowledge": []
   },
-  "_files_note": "两格均刻意留空（S-FIX-PERSONA-TEXT ④ 核验后点名「未落」，非漏填）。settings：在册 files.settings 非空即被主人格文本腿现读优先（providers.py _effective_persona_files：在册⇒压过 .env 基线）——现填 identity.md 会把生产正文从 .env BOT_PERSONA_FILES 蒸馏正身（sync_persona_source.py 审阅凭证把闸）换成册内原始全文，且实测劫持 tests/test_persona_injection_v21.py 七条离线锁（其 provider 走共享真册）。消费口径/资料换正是 §49.9 数据批决定，须另票点名，不静默改行为；接线本身已热（文本腿每轮现读册，见该文件）。knowledge 同口径：主人格静态兜底腿现读 .env 基线 4 件（含两份库街区百科），在册只覆盖册内 2 件——在册清单是遮蔽而非合并，填充会缩小兜底面，留待资料批点名（不静默改行为）。",
+  "files_absent": [
+    "settings",
+    "knowledge"
+  ],
+  "_files_note": "两格均刻意留空（S-FIX-PERSONA-TEXT ④ 核验后点名「未落」，非漏填）。S5 单元 5 起，「刻意留空」必须落成机器读得到的申报：见 files_absent 列出缺席的两格（散文注记不再算申报）。settings：在册 files.settings 非空即被主人格文本腿现读优先（providers.py _effective_persona_files：在册⇒压过 .env 基线）——现填 identity.md 会把生产正文从 .env BOT_PERSONA_FILES 蒸馏正身（sync_persona_source.py 审阅凭证把闸）换成册内原始全文，且实测劫持 tests/test_persona_injection_v21.py 七条离线锁（其 provider 走共享真册）。消费口径/资料换正是 §49.9 数据批决定，须另票点名，不静默改行为；接线本身已热（文本腿每轮现读册，见该文件）。knowledge 同口径：主人格静态兜底腿现读 .env 基线（件数与清单以该键真身为准，AGENTS 规则 10），在册只覆盖册内件——在册清单是遮蔽而非合并，填充会缩小兜底面，留待资料批点名（不静默改行为）。",
   "voice": {
     "tts_refs": [],
     "_status": "只声明未接线（H-3：本批不实现 TTS 下发腿）"

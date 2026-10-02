@@ -20,7 +20,7 @@ OHLCV），见 contracts/finance.py 的 docstring。
 from __future__ import annotations
 
 import colorsys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 # ==================== 品牌常量（守岸人本命） ====================
 # 色相锚点与 bridge mica-glass v2 完全一致：wash-1 淡蓝 210°、wash-2 星空紫
@@ -57,6 +57,50 @@ def brand_name_en_for(persona_id: str) -> str:
     if not skeleton.isascii() or not skeleton.isalnum():
         return BRAND_NAME_EN
     return slug.replace("_", " ").replace("-", " ").title()
+
+def brand_display_name_for(persona_id: str = "") -> str:
+    """按**当前生效人格**派生卡面中文署名（S5 多人格隔离波 单元 1）。
+
+    与 :func:`brand_name_en_for` 同一形态、同一条裁定（卡面身份跟人格外壳走），
+    中文腿此前没有人格源：``BRAND_THEME.display_name`` 是渲染契约钉住的品牌缺省
+    （改它的**值**会动三族契约门的哈希册），所以这里加的是"按格取值"的读法，
+    品牌缺省只在册里查不到这一格时兜底——绝不反过来让人格名写死在代码里。
+
+    取法＝人格册热读（``(mtime,size)`` 签名，改册即生效，不重启）；拿不到人格册
+    或该格无 display_name ⇒ 回落 ``BRAND_THEME.display_name``，**绝不渲染空署名**。
+    渲染层不在运行期解析人格**正文**（本模块裁定：耦合 IO 且措辞会变）——这里只读
+    注册表那一枚 JSON 的一个字段，与"解析语料"不同事，见 persona_profile 的裁定。
+    """
+    wanted = str(persona_id or "").strip()
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
+            get_shared_registry,
+            resolve_persona_id,
+        )
+
+        registry_persona = resolve_persona_id(None, wanted)
+        if registry_persona:
+            record = get_shared_registry().get(registry_persona)
+            name = str(getattr(record, "display_name", "") or "").strip()
+            if name:
+                return name
+    except Exception:  # noqa: S110, BLE001 - 册读不出来不等于卡不能画
+        pass
+    return BRAND_THEME.display_name
+
+
+def brand_theme_for(persona_id: str = "") -> ThemeTokens:
+    """品牌主题按人格换**署名**，配色一律不换（守岸人本命蓝是产品视觉基线）。
+
+    返回与 ``BRAND_THEME`` 同 token、仅 ``display_name`` 随格的副本；生效人格就是
+    主人格时**返回 BRAND_THEME 本体**（``is`` 同一枚），这样既有按对象身份比对的
+    渲染锁与哈希册逐字节不变。
+    """
+    name = brand_display_name_for(persona_id)
+    if name == BRAND_THEME.display_name:
+        return BRAND_THEME
+    return replace(BRAND_THEME, display_name=name)
+
 
 _WASH_HUE_SHIFT = 30 / 360      # 平台色相对本命相的最大推幅
 _WASH_HUE_PULL = 0.5            # 平台色相 → 推幅的比例（本命相权重 3:1）
@@ -743,7 +787,9 @@ __all__ = [
     "UNKNOWN_PLATFORM_COLOR",
     "UNKNOWN_THEME_KEYS",
     "ThemeTokens",
+    "brand_display_name_for",
     "brand_name_en_for",
+    "brand_theme_for",
     "derive_wash_tokens",
     "get_platform_theme",
     "platform_accent",
