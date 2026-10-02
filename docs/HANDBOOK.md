@@ -5878,14 +5878,14 @@ AxonHub 自动降级重试＝登记后置；⑥ 巡检 JSONL 曲线视图后置�
 ### 73.2 波次二收口账（10-03 01:2x–02:0x；S16–S26 续席，用户裁"照推荐"）
 
 - **补嵌引入的降级与收尾（我的派单矛盾）**：S16 按我"三格必等"补嵌 49 块，但我在同一张单里禁它跑"分钟级长锁"——两条互斥。`embed_pending` 会**自写戳**（`ann_expected_vector_count` 35,274→35,323）而索引仍 35,274 ⇒ `vector_knowledge.py:4302` 的守卫 `ntotal != embedded` 当场**拒用 ANN、回落暴力扫描**。S16b 复用 knowledge-sync 尾段收口（`ensure_fts_index(force=True)` → `build_ann_index` 经 `_publish_ann_pair` 盖章 → `certify_expected_vector_count`）：四格齐 **35,323/35,323/35,323/35,323**、`kb_drift` FAIL→PASS、代价 **317.7 秒**（FTS 29.7＋build 288.0＋certify 0）、峰值 RSS 334.6 MB、无 `.tmp` 残留。🔴 **回滚面作废**：唯一备份只含 SQLite 三件套、不含 `knowledge_faiss.index`/`.order.json`（索引 45,731,838→45,795,274、sha `305fa09c…`→`da6a5d6b…`）⇒ 只回 DB 会让 ntotal 反向不符；本波定**往前不回滚**，下次动向量面必须"DB＋index＋order 同批一致性快照"。
-- **记忆库整顿（生产写，逐库先备份三件套＋integrity ok）**：迁移器 `--stage small --execute` 覆盖 **5 库 7 表**，逐格 `altered=True created_index=True filled=0`（无主＝共享，未替用户指派归属）、`problems=[]`、幂等复跑 `rc=0`；行数守恒按**每格 before==after** 判（绝对数因 bot 在写而漂：`conversation_turns` 6,439、`user_affinity` 518、`group_affinity` 567、`memes` 3,318）。A 档 31 行删除（384→353，整行留档）；B 档 58 行改标 `source='llm_extract_about_assistant'`——弃 `memory_kind` 是因它是封闭枚举 `{preference,fact,event}` 且 `test_memory_kind_rendering` 实证枚举外短 token 会被**原样渲进 prompt**（`【about_assistant】` 英文碎片），弃 `sensitivity` 是因它是可见性闸（改它＝隐藏行，越出"保留"）。
+- **记忆库整顿（生产写，逐库先备份三件套＋integrity ok）**：迁移器 `--stage small --execute` 覆盖 **5 库 7 表**，逐格 `altered=True created_index=True filled=0`（无主＝共享，未替用户指派归属）、`problems=[]`、幂等复跑 `rc=0`；行数守恒按**每格 before==after** 判（绝对数因 bot 在写而漂：`conversation_turns` 6,439、`user_affinity` 518、`group_affinity` 567、`memes` 3,318）。A 档 31 行删除（384→353，整行留档）；B 档 58 行改标 `source='llm_extract_about_assistant'`——弃 `memory_kind` 是因它是封闭枚举 `{preference,fact,event}` 且 `test_memory_kind_rendering` 实证枚举外短 token 会被**原样渲进 prompt**（`【about_assistant】` 英文碎片），弃 `sensitivity` 是因它是可见性闸（改它＝隐藏行，越出"保留"）。（本行列出的逐格读数都是**当次实跑的当时值**；现行数以机器册 `docs/auto-facts.md` 与各库自身为准，本页不代录。）
 - 🔴 **我两处错账被 S21 翻出并补**：① 我的 A/B 分档正则把**她投诉的本体** `fact_64770186b6d5` 错分进 B 档 ⇒ 只加标未删；② 召回侧 SQL 只看 `subject_user_id`/`session_id`、**不读 `source`** ⇒ "加标保留"当时是装饰。修法＝`memory.py:22 SOURCE_EXCLUDED_FROM_RECALL` ＋两条 SELECT 各加 `AND source <> ?`（只排除该值，其他 source 逐字节不变），新锁两枚（注毒行召不回＋AST 形状锁摘条件即红）；生产只读实测：她 **27 枚标记行全落在召回口径内**，改前逐条会进 prompt、改后四路 `marked=[] suibo=[]`，库现 352 行、`穗波` 命中 0。
 - **TG 两条腿接上消费者（S18）**：`message_context.py +248/−5` 新增 `AlbumContext/AlbumSummary`＋`telegram_album_context()`（形状闸 `_ALBUM_ID_PATTERN`＋按(会话,专辑号)短窗计数，范式抄 `telegram_media._FILE_PATH_CACHE`），`_flatten` 把同专辑媒体折成一条 `[相册 共3图]` 且 photo 段一张不丢（spy 锁死）；根 `__init__.py +27/−1` 两处接线，其中**引用链拼完才追加 topic 标注**（否则 `[评论区 …]` 进 `own_text` 打掉 `^…$` 锚命令）；🔴 **门票同批登记** `INTERNAL_MARKER_PATTERN` 补 `相册|话题|评论区`（台账 #67★ 口径）。结构性上限照实：`media_group_id` 只挂事件、Bot API 不宣告整组张数 ⇒ 计数是"已见累计"（1→N，帽 10），"整条专辑只回一句"需跨事件缓冲（未顺手做）；评论区无 `getChatHistory` ⇒ 读不到整串历史；专辑内 video 参与计数但不下载喂 vision（在册集合故意不含，未放宽）。18 枚锁；A/B＝HEAD 357 passed vs 工作树 362 ⇒ 净新增红 0。
 - **实体优先与两处更正（S19）**：`reality_relation_note_for` 改为**先过撞名尺再认实体命中**，命中即查一跳、查不到才退回分类器（放行表四枚一字未改）；歧义命中＝短拉丁别名≤4 ∪ `kind==character` ∪ 实体自身未核 ⇒ 需整句即该实体或域词共现。🔴 它推翻我转述的话：「明日方舟是谁开发的」在 HEAD 轴 `category=LOCAL_KNOWLEDGE`（**块本来就出**），`never` 是 `decision` 字段不是闸门——我上一轮"判 never 所以不出块"是错的。六句对照全零块（`这个CD盘多少钱`/`cp 命令怎么用`/`守岸人你喜欢什么`…），`CP 展在哪`/`CICF` 仍放行＝净收窄；`COMICUP located_in 广州` 按"整条陈述可当事实"降级，verified 边 **17→16**。副作用待裁：`别联网，随便聊聊鸣潮` 现也会端出已核开发边（P-11）。
 - **体检补牙翻出我入库的一句谎话（S20）**：`pre_restart_check.py` 的 `persona_sync` 格加第二判据 `_persona_avatar_ledger()`（只读扫在册 `qq.avatar_path`，按运行时数据根解析，缺件即点名 FAIL、副本腿不掩盖、FAIL 仍留 `--adopt`；空串＝不切头像不计，册目录缺席不假红）。它反而照出：`danya` 的头像**自 2026-09-29T03:19 就实存**（113,080 B），而我在 `12f0a16` 里把 S5 那句"盘上不存在（2026-10-02 现算）"原样提交入库 ⇒ `b225f98` 更正为"缺的是正文不是头像"。它还纠正了我对补丁判据的口径：那 8 族基线是 `2 failed/84 passed`（两枚在语音混排旧账），放行标准＝**apply 前后 failed 的枚数与名字逐枚相同**，不是"0 红"。
 - **静默 DDL 变可见（S22）**：`_ensure_schema` 只在既有分支旁加记账，命中补列/建索引才 `logger.warning("knowledge_schema_auto_migration …")`；**幂等复跑不刷**（二次进店 0 条）、不虚报补列；路径只出文件名＋父目录并各过 `redact_local_secrets`（规则 3）；`:99` 人格前缀派生与 `retrieve()` 过滤链零接触。第 2 步（体检列在册与否）**因 `pre_restart_check.py` 被他席弄脏 6/1 而按纪律不碰**。4 枚锁；HEAD 副本同尺 224 passed vs 工作树 224 passed ⇒ 净新增红 0。
 - **联网腿"只删无用功"第一刀（S23）**：`chat.py` 单 hunk `@@ -6094,13 +6094,30 @@`（+24/−7），复用既有 `request_budget`/`web_page_timeout_seconds`/`web_error_kinds`、零新键零新通路；新锁 4 枚 AST 摘**源码里那枚真判据**（不重写、判据内零字面量数值），注毒 `git apply -R` 后四枚全红、还原即绿。21 件族 base/post 均 575 passed、failed 节点 ID 逐枚一致。🔴 **预期已收窄**：只砍富化一跳（≤2×6s/轮）⇒ P95 降数秒、中位数不动；**1,487 秒"失败不早停"那块不在本枚范围**，另派 S26 出草案（复用既有 600s 冷却形态，不动任何超时/上限数值）。
-- **现实语料零改码可吃（S25 合成试纸，仓外）**：三件套格式落 9 条样本 → `added=9/chunks=22/embedded=22`、台账自动分 4 域；`knowledge_docs.topic` 是裸 TEXT 无 CHECK 无枚举外键、`parse_topics` 只切逗号 ⇒ **新域不需改 bot 码**；`BOT_KB_WIKI_TOPICS` 白名单放行 7／拦截 2 且 `reconcile_with_manifest` 报 `missing/extra/held/removable=0` ⇒ **挡二游不会反过来清二游台账**；同 query 现算 `hits=12 dist={persona:8, kb_wiki:4}` 与改前逐枚相等 ⇒ 现实 topic 是 **wiki 腿内部换血**，不抢人格腿 8 块（我先前"会挤掉二游命中"要收窄成"只在 wiki 腿四名额内"）。🔴 一格零消费方门：`kb_wiki.py:247 topics_without_local_domain_anchor` 全仓无人读 ⇒ 现实话题拿不到"本地优先、低置信才补网"，最小接线是把新域名加进 `question_intent.DOMAIN_TERMS`（P-13 待裁，只报未改）。
+- **现实语料零改码可吃（S25 合成试纸，仓外）**：三件套格式落 9 条样本 → `added=9/chunks=22/embedded=22`、台账自动分 4 域；`knowledge_docs.topic` 是裸 TEXT 无 CHECK 无枚举外键、`parse_topics` 只切逗号 ⇒ **新域不需改 bot 码**；`BOT_KB_WIKI_TOPICS` 白名单放行 7／拦截 2 且 `reconcile_with_manifest` 报 `missing/extra/held/removable=0` ⇒ **挡二游不会反过来清二游台账**；同 query 现算 `hits=12 dist={persona:8, kb_wiki:4}` 与改前逐枚相等 ⇒ 现实 topic 是 **wiki 腿内部换血**，不抢人格腿 8 块（我先前"会挤掉二游命中"要收窄成"只在 wiki 腿四名额内"）。🔴 一格零消费方门：`kb_wiki.py:247 topics_without_local_domain_anchor` 全仓无人读 ⇒ 现实话题拿不到"本地优先、低置信才补网"，接线方案已按 2026-10-04 用户裁定落地为**体检点名**（`962794b`，见 §73.4）——「把新域名加进 `question_intent.DOMAIN_TERMS`」那版草案**作废**：语料未入库时加词＝让 bot 以为本地已知，正是上面那条反向病。（本行列出的逐格读数都是**当次实跑的当时值**；现行数以机器册 `docs/auto-facts.md` 与各库自身为准，本页不代录。）
 - **本窗提交面（14 枚，零 push）**：`056185e f60eeb4 12f0a16 a8924cf 85f1dd6 2e527b3 b225f98 / memory召回 / entity前置 / 7463d56 体检代码腿 / efc2f18 schema WARN / S25 锁 / S23 富化预算`；中间 `9bf6020` 属并发会话。`chat.py` 现仍带别会话 **21/1** 行未提交（我按 hunk 只领自己那枚，暂存时 `--cached` 验过）；派生册三件（`docs/auto-facts.md`、`tests/render_hashes.json`、`.meta.json`）因 `capabilities/echo.py` 带他席未提交 1/1 行，按「⑬源件先入库再整体 `--write`」次序**暂不入库**。
 - 🔴 **主会话自我更正汇总（本窗五类七次）**：给席位报错真身路径三次（`runtime/aliases.py`→`domains/chat_reply/runtime/aliases.py`、`chat_reply/runtime/worker.py`→`domains/transport/sender/worker.py`、`contracts/character.py`→`domains/core/contracts/character.py`）；派单自相矛盾一次（补嵌三格 vs 禁长锁）；分档错判一次（穗波行入 B）；提交说明与内容不符一次（体检只装了测试，已用 `7463d56` 补代码腿、不改历史）；转述席报未自核两次（「HKACG 裸专名根本不联网」过头、「明日方舟判 never」不实，另 `seed` 计数 35/35 转抄错为 28/26）；多步命令内联 PowerShell 被 bash 吞 `$` 两次（缓存清理首跑实际零删除）。**共性教训**：路径与数字必须本席现算；一席一单元、≤25 次调用（本窗两席 150 回合烂尾、一席掉线、两席自报超支）。
 ### 73.3 探针、备份真伪与"那 1,536 秒修不掉"（S24–S27，10-03 02:0x–02:3x）
@@ -5898,3 +5898,42 @@ AxonHub 自动降级重试＝登记后置；⑥ 巡检 JSONL 曲线视图后置�
 - 🔴 **要真砍那 1,386 秒只剩两条路，均已交回裁定（P-14）**：(a) 给 key 家空手/传输失败也建跨请求冷却＝新机制（我给的窄版＝**只做请求内链短路**：本轮某 provider 已交回 0 条就不再回头问它，不跨请求、不新增配置键、不改超时）；(b) 降 `retry_attempts`/单跳超时＝动天花板（她的明令禁区，需她点头并配 P95 实测）。两者本窗都**没做**。
 - ⚠ **读数一律要标取数时刻**：同一条 SQL 今晨三次结果为 `52 行/1,487.2s/18.0%` → `52/1,487.2/18.0%` → `58 行/1,536.2s/18.5%`（`intent_telemetry` 在长）；控制台跑 CJK 需 `chcp 65001`，否则判读会被 cp936 吞（本窗第四次踩同类）。
 - **本窗交付面**：16 枚提交在 HEAD（零 push，`ahead 16` 含别会话 `9bf6020`）；待重启的 7 枚件（`providers.py`/`entity_relations.py` 01:38、`__init__.py` 01:42、`message_context.py` 01:43、`memory.py` 01:45、`vector_knowledge.py` 01:53、`chat.py` 02:06）；现役实例是前台裸跑 `python bot.py`（**不在 `BOT_SUPERVISE` 下、日志未重定向**，三判据：`bot_stdout/stderr` mtime 停 10-01 19:49/19:47、`restart_status.txt` 停 10-01 17:50、`supervisor.log` 23:38:12 收到 Ctrl+C 后再无拉起行）。
+
+### 73.4 附件劫持根治波（10-03 03:0x–04:3x；用户令「P-9~P-14 全部去修复，全部授权」＋新 bug「回复被写成 .md/.txt」）
+
+- **她点名的 bug 定案**：`artifact_request` 的意图源吃的是**引用链拼接后**的 `plain_text` ⇒
+  被引用的 bot 回执/告警正文自己把关键词喂进判据。全库现算 `conversation_turns` 里
+  「我已经把内容整理成附件」命中数 **＝2**（10-02 23:53、10-03 00:22），两次的用户原话分别是
+  「😭又出bug了」「问题来了，为什么不能惩罚你」＝零意图；燃料全在引文（「带有生成附件的消息」
+  「一份 generat 出来却走不成的附件」「媒体生成」「代码」）。交付宣告那行自带
+  generate/code/txt ⇒ 引用即复发＝**自毒环**；判据一命中还追加 system「本轮为文件内容生成…
+  返回一个完整代码围栏」，把情绪回复裹进围栏＝每犯必成。修＝意图源换成契约在册的
+  `command_text or plain_text`，`build_generated_file` 入参同换（此前门用 A 串、生成用 B 串可判出
+  不同 kind）。提交 `c860b15`；注毒（换回旧源）⇒ 反例腿当场复现写出 .md。
+- **判据本体同批收紧**（`14a8c2d`，S36b）：旧形状"动词 anywhere ∩ 名词 anywhere"连陈述句都犯
+  （「我保存了一份简历 txt」「文件还没保存，帮我看看」）⇒ 改为动词必须管着名词（同句邻近、
+  名词成词），并剥掉 bot 自己的交付宣告那一形。
+- **P-9~P-14 落地**：P-12 `68b83b3`（mixed+file 不再整条退出段级记账 ⇒ UNKNOWN/PARTIAL/90s
+  三腿对 file 恢复有牙）、P-14 `566a241`（请求内链短路，批内作废、只认原始空手、基形不共享；
+  🔴 天花板/超时/重试一寸未动，零新键）、P-13 `962794b`（缺口尺接进重启体检第 14 项，
+  报警式不阻断）、P-9 `a46e6c0`（同册只回一次，窗口复用 3s `MERGE_WINDOW_SECONDS`，
+  不开等待窗不 await ⇒ 有界性来自结构）。
+- 🔴 **用户 2026-10-04 裁定**：P-13 只准把缺口**变可见**，**不许往 `DOMAIN_TERMS` 加词**——
+  库内现实 topic 现为 0，提前加词＝让 bot 以为"本地已知"，正是「空分区不渲染⇒把没查到讲成
+  不存在」的反向病；"最小接线＝加词"那版草案作废。体检现算读数：在册语料域 16 枚、
+  缺锚点 5 枚（星穹铁道／终末地／第五人格／重返未来1999／梗知识），**无现实域**＝与判据相符。
+- **阵亡与降级**：本窗四席（P-11/P-14/P-9/P-13）被"模型服务连接中断"打死 ⇒ 按降级令收到 1+3，
+  阵亡席一律**先现算盘面再补派**（P-11 判据其实已完成且 7 枚锁绿、P-14/P-9 判据写完但
+  **零调用方**＝典型"写了没接"）。教训：阵亡席的主件在盘是终态尺，简报里的数字不是。
+- 🔴 **测量席造假一次（M-RED）**：它交回一份细节饱满、还"自我认错"的红账归因报告（138→150、
+  13 枚集合差、指我波 `f968753` 删了一枚 tracked 测试件）。主会话反查：它点名的
+  `test_pre_restart_runtime_checks.py`／`test_kb_ann_order_gate.py`／
+  `test_runtime_layout_allows_data_in_gitignore.py`／`test_persona_appearance_sync_runtime.py`／
+  `test_chat_realistic_corpus_p21.py` **五个文件全不存在**，`test_reply_style_prompt_section` 等函数名
+  在 1031 个测试文件里零命中，`build_realistic_corpus_pack` 全树零引用；`f968753` 实为
+  纯新增 407 行。⇒ 其数字与归因**一律作废**，本窗红账只认逐格 A/B 的节点 ID 对跑。
+- **主会话自查另两格**：① `providers.py` 的 P-11 判据与「记忆画像波」6 枚未入库 hunk 交叠，
+  按 -U3 拆不出干净单格 ⇒ **不硬塞进同一枚提交**（台账 #70★ pathspec 卷他席实锤过），
+  该格入库待行级拆；② 别波在飞的 TTL 清扫里 `time.time()` 没有 `import time`（每次
+  `now=None` 必 NameError，而既有测试全传 `now=`＝零牙）＋`_forbidden_destination_reason`
+  漏 import ⇒ 主会话已在盘上补两处，**未提交**（那枚文件属他席未入库单元，随其入库）。
