@@ -73,6 +73,21 @@ T4 渠道能力标签保险 / T5 PX-1 MCP 模块保险 / S141 ANN 代际可用�
                    零写库、零全表扫描、零 faiss；库/键不存在=SKIP，拒用=FAIL
                    （后果与第 5 项 kb_drift 同一条：每条消息回落暴力扫描）。
                    人话口径：结论一句 + 每个事实单独一行中文标签。
+  14. kb_domain_anchor 库侧在册语料域 ↔ 本地域词表锚点（只点名不阻断）：两侧相减的
+                   尺 ``kb_wiki.topics_without_local_domain_anchor`` 此前全仓只有
+                   ``tests/test_kb_list_domain_gate.py`` 在读、运行期零消费方 ⇒ 新补
+                   一个 KB 语料域而没人往本地域词表加锚点时没有任何人点名，缺口静默
+                   存在（＝台账 #73「现实知识面」的复发机制）。本项把它接进中央出口，
+                   **不新建第二把尺**：库侧主题（``iter_corpus_topic_names``）、
+                   kb_dir（``kb_paths``）、相减、出格脱敏
+                   （``plain_text.redact_local_secrets``）全走真身，本文件零集合运算；
+                   尺按文件路径直载（插件根 ``__init__.py`` 是重件，第 11 项同一纪律），
+                   临时登记的 sys.modules 条目在 finally 逐枚摘除。状态口径照第 7 项
+                   napcat＝**报警不是阻断**（本项不产 FAIL、exit code 恒不变）：
+                   无缺口=PASS；有缺口=SKIP 并逐域点名；库根未配置／尺装不上／
+                   语料读不到主题=SKIP（读不到＝没有证据，绝不据此宣称没有缺口）。
+                   接线由 ``tests/test_kb_domain_anchor_central_wiring.py`` 拿 AST
+                   调用图锁住（含注毒自证：摘掉调用即红）。
 
 用法：
   venv python scripts/pre_restart_check.py            # 人读表格
@@ -1598,6 +1613,206 @@ def check_ann_generation_pair(env: dict[str, str], project_root: Path) -> CheckR
 
 
 # ---------------------------------------------------------------------------
+# 14. kb_domain_anchor：库侧在册语料域 ↔ 本地域词表锚点（只点名、绝不阻断）
+# ---------------------------------------------------------------------------
+# 病根（P13 接线，2026-10-02）：两侧相减的判据 `kb_wiki.topics_without_local_domain_anchor`
+# 今天**只有测试在读**（`tests/test_kb_list_domain_gate.py`），运行期零消费方 ⇒ 谁新补一个
+# KB 语料域、却没人往 `question_intent` 的本地域词表加锚点词，运行/发版前**不会有任何人
+# 点名**，缺口静默存在——正是本轮「现实知识面」（台账 #73）的复发机制。本项把这枚既有的尺
+# 接到中央出口，判据是**报警不是阻断**（照第 7 项 napcat 的 SKIP 形态，exit code 恒不变：
+# 缺口不拦重启，拦的是「没人知道」）。
+#
+# 「尺只有一把」是本项的硬口径：库侧主题名单、kb_dir、两侧相减、出格脱敏全部走真身函数，
+# 本文件里出现任何 `not in` 集合运算或 `DOMAIN_TERMS` 字样＝第二把尺，由
+# `tests/test_kb_domain_anchor_central_wiring.py` 的 AST 调用图锁（含注毒自证腿）钉住。
+#
+# 为什么不 import 插件根（沿第 11 项「插件根 __init__.py 是重件」同一纪律）：实测拉起
+# NoneBot 与整张能力图 ≈4.4s（2026-10-02 当时值），且没装 nonebot 的环境直接
+# ImportError ⇒ 体检不为几枚常量付这个代价。改走「按文件路径直载」：本项用到的四枚模块
+# （search_intent ← question_intent ← kb_wiki，外加 plain_text）传递依赖全是标准库，
+# 唯一的插件侧模块级边 kb_wiki → vector_knowledge（嵌入/faiss 重件，本项一个符号都不碰）
+# 在装载期临时垫一枚哑模块。凡本席往 sys.modules 登记过的名字**必须在 finally 逐枚摘掉**：
+# 残留哑模块会被之后的真 import 当正品领走（台账 #72★缺席哨兵同型事故）。
+#
+# 语料主题＝全量流式读（`scan_limit` 不设）：有界窗口会**少报缺口**——documents.jsonl 按域
+# 聚簇、新域多在尾部，现算 20 000 行窗口只透出 4/16 域、5 枚缺口只报得出 1 枚＝假绿；
+# 全量读实测 4.8s（2026-10-02 当时值，775MB），与本文件第 5 项读 faiss 同档 ⇒ 宁付秒级。
+
+_PLUGIN_PKG = "plugins.bot_unified_runtime"
+#: 直载名册 ``(透出名, 相对插件根的模块点路径)``——**顺序即依赖顺序**，重排会装不上。
+_RULER_MODULES: tuple[tuple[str, str], ...] = (
+    ("search_intent", "domains.core.search.search_intent"),
+    ("question_intent", "domains.chat_reply.runtime.question_intent"),
+    ("kb_wiki", "domains.location.knowledge.kb_wiki"),
+    ("plain_text", "domains.render.plain_text"),
+)
+#: kb_wiki 模块级唯一的插件侧依赖：本项不碰嵌入/faiss，装载期把它垫住即可。
+_RULER_STUB_MODULE = "domains.chat_reply.character.vector_knowledge"
+_RULER_STUB_ATTRS: tuple[str, ...] = (
+    "OpenAICompatibleEmbeddingProvider",
+    "SqliteVectorKnowledgeStore",
+    "_UnavailableVectorKnowledgeProvider",
+)
+#: kb_dir 相对段（``crawl_output/knowledge_base``）不在这里复制——由真身 kb_paths 现算。
+_RULER_KB_WIKI_REL = "domains.location.knowledge.kb_wiki"
+#: 点名上限：再多也只列这么多枚进一行读数，其余以计数带过（判据不因此变松）。
+_RULER_GAPS_SHOWN = 12
+KB_CORPUS_SCAN_LIMIT: int | None = None
+
+
+@dataclass(frozen=True)
+class KbDomainAnchorRuler:
+    """缺口尺的取用面（全只读）：``modules`` 为 None 时 ``unavailable`` 说明为什么。"""
+
+    modules: dict[str, Any] | None
+    unavailable: str
+
+
+def _plugin_module_by_path(rel_dotted: str, code_root: Path, registered: list[str]) -> Any:
+    """按**文件路径**直载插件侧模块，绕开插件根 ``__init__.py`` 的 NoneBot 重件.
+
+    已在 ``sys.modules`` 里（同进程真 import 过，如 pytest 全量跑）就复用那一枚——
+    尺只有一把，绝不在这里造第二份。本函数新登记的名字追加进 ``registered``，
+    由 ``kb_domain_anchor_ruler`` 在 finally 里摘除。
+    """
+    import importlib.util  # 延迟导入：与 _module_available 同一位置口径
+
+    dotted = f"{_PLUGIN_PKG}.{rel_dotted}"
+    cached = sys.modules.get(dotted)
+    if cached is not None:
+        return cached
+    source = code_root.joinpath(*_PLUGIN_PKG.split("."))
+    for part in rel_dotted.split("."):
+        source = source / part
+    spec = importlib.util.spec_from_file_location(dotted, source.with_suffix(".py"))
+    if spec is None or spec.loader is None:
+        # 只报相对点分名，不把绝对路径塞进读数（本项的失败分支手上没有脱敏件可用）
+        raise ImportError(f"无法为 {rel_dotted} 构造模块规格")
+    module = importlib.util.module_from_spec(spec)
+    # 先登记再 exec：模块内 dataclass／延迟注解在 exec 期按 cls.__module__ 反查模块，
+    # 不先登记会取到 None 而 AttributeError（S594 实测崩点，见
+    # pins/2026-09-24-central-dispatch/PINS-DENOMINATOR-BUILD-S612.md）。
+    sys.modules[dotted] = module
+    registered.append(dotted)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _pad_vector_knowledge(registered: list[str]) -> None:
+    """给 kb_wiki 的模块级 vector_knowledge 依赖垫一枚哑模块（本项一个符号都不消费）."""
+    dotted = f"{_PLUGIN_PKG}.{_RULER_STUB_MODULE}"
+    if dotted in sys.modules:
+        return  # 真身已在：绝不拿哑模块顶掉正品
+    stub = types.ModuleType(dotted)
+    for attr in _RULER_STUB_ATTRS:
+        setattr(stub, attr, type(attr, (), {}))
+    sys.modules[dotted] = stub
+    registered.append(dotted)
+
+
+@contextmanager
+def kb_domain_anchor_ruler(code_root: Path) -> Iterator[KbDomainAnchorRuler]:
+    """直载本项的四枚真身；装不上给 ``modules=None`` ＋原因（调用方 SKIP，本项永不 FAIL）.
+
+    退出时按「本席登记过的名字」逐枚摘除 sys.modules 条目。已交出去的模块对象仍被
+    调用方引用着（摘登记只是不让别的 import 路径事后拿到这一枚隔离孪生）。
+    """
+    registered: list[str] = []
+    ruler: dict[str, Any] | None = None
+    unavailable = ""
+    alias = _RULER_STUB_MODULE  # 装载还没开跑就出事时，指认到哑模块那一格
+    try:
+        if f"{_PLUGIN_PKG}.{_RULER_KB_WIKI_REL}" not in sys.modules:
+            _pad_vector_knowledge(registered)
+        modules: dict[str, Any] = {}
+        for alias, rel_dotted in _RULER_MODULES:
+            modules[alias] = _plugin_module_by_path(rel_dotted, code_root, registered)
+        ruler = modules
+    except (ImportError, OSError, ValueError, TypeError, AttributeError, RuntimeError) as exc:
+        # 只报异常类型与名册末段名：异常原文常带绝对路径，而这条分支手里没有脱敏件
+        unavailable = f"{type(exc).__name__}：{alias} 这一枚装不上"
+    try:
+        yield KbDomainAnchorRuler(ruler, unavailable)
+    finally:
+        for dotted in reversed(registered):
+            sys.modules.pop(dotted, None)
+
+
+def check_kb_domain_anchor(env: dict[str, str], project_root: Path) -> CheckResult:
+    """第 14 项：库里收着的语料域，本地域词表有没有对应锚点（只点名，不阻断）.
+
+    判据全在尺那一侧（本函数零集合运算）：
+      · 库侧在册主题＝真身 ``iter_corpus_topic_names(kb_dir)``，kb_dir 由真身
+        ``kb_paths`` 现算（本处不复制 ``crawl_output/knowledge_base`` 那段相对路径）；
+      · 缺口＝真身 ``topics_without_local_domain_anchor(topics)``，锚点侧默认取
+        ``question_intent.DOMAIN_TERMS`` 本体；
+      · 状态＝无缺口 PASS ／ 有缺口 SKIP 逐域点名 ／ 无从判定 SKIP（库根未配置、
+        尺装不上、语料一行主题都读不到——真身 docstring 口径「读不到＝没有证据」，
+        不许据此宣称没有缺口）。**本项不产 FAIL**（第 7 项「提示不阻断」形态）。
+    尺是**代码**不是部署数据：``--project-root`` 只换数据侧，源码根在假项目根里
+    找不到尺文件时回落到本脚本所在仓库根（与第 11 项 declaration_root 同一处置）。
+    读数出格前整句过真身 ``redact_local_secrets``，不漏盘符路径。
+    """
+    cid, name = "kb_domain_anchor", "库侧在册语料域 ↔ 本地域词表锚点（只点名不阻断）"
+    wiki_root = str(env.get("BOT_KB_WIKI_ROOT", "") or "").strip()
+    if not wiki_root:
+        return CheckResult(
+            cid, name, SKIP,
+            "BOT_KB_WIKI_ROOT 未配置——没有库可查，跳过（既不算缺口，也不算绿）",
+        )
+    code_root = project_root if (
+        project_root.joinpath(*_PLUGIN_PKG.split("."))
+        .joinpath(*_RULER_KB_WIKI_REL.split("."))
+        .with_suffix(".py")
+    ).is_file() else PROJECT_ROOT
+    with kb_domain_anchor_ruler(code_root) as access:
+        if access.modules is None:
+            return CheckResult(
+                cid, name, SKIP,
+                f"缺口尺装载不出来（{access.unavailable}）——本项无从判定，诚实跳过不假绿；"
+                "判据真身见 plugins/bot_unified_runtime/domains/location/knowledge/"
+                "kb_wiki.py::topics_without_local_domain_anchor",
+            )
+        kb_wiki = access.modules["kb_wiki"]
+        # 绑定名与真身函数同名：接线锁按调用节点的末段名认这条腿（别名会让它隐身）
+        redact_local_secrets = access.modules["plain_text"].redact_local_secrets
+        kb_dir = kb_wiki.kb_paths(types.SimpleNamespace(bot_kb_wiki_root=wiki_root))[1]
+        topics = list(kb_wiki.iter_corpus_topic_names(kb_dir, scan_limit=KB_CORPUS_SCAN_LIMIT))
+        gaps = list(kb_wiki.topics_without_local_domain_anchor(topics))
+        if not topics:
+            return CheckResult(
+                cid, name, SKIP,
+                redact_local_secrets(f"{kb_dir} 下读不到任何语料主题（documents.jsonl 缺失或不可读）——"
+                       "读不到＝没有证据，绝不据此宣称「库里没有这一域」"),
+                "确认 BOT_KB_WIKI_ROOT 指向爬虫导出根（第 1 项 env_paths 只管根存在，"
+                "本项要的是 crawl_output/knowledge_base/documents.jsonl 里有行）。",
+            )
+        if gaps:
+            shown = "、".join(gaps[:_RULER_GAPS_SHOWN])
+            if len(gaps) > _RULER_GAPS_SHOWN:
+                shown += f" …等共 {len(gaps)} 域"
+            return CheckResult(
+                cid, name, SKIP,
+                redact_local_secrets(f"库侧在册语料域 x{len(topics)}，其中 {len(gaps)} 域在本地域词表缺锚点："
+                       f"{shown}（查的是 {kb_dir}）——这些域的题既不判 LOCAL_KNOWLEDGE、"
+                       "也走不到「本地优先、低置信才补网」：资料明明躺着，模型却被推去联网。"
+                       "只点名不阻断，不拦本次重启。"),
+                "补锚点＝在 plugins/bot_unified_runtime/domains/chat_reply/runtime/"
+                "question_intent.py 的 _SHOREKEEPER_DOMAIN_TERMS（自有设定）或 "
+                "plugins/bot_unified_runtime/domains/core/search/search_intent.py 的 "
+                "ACG_DOMAIN_TERMS['game'][strong]（外部游戏域，DOMAIN_TERMS 由它现取，"
+                "不许在别处手抄名单）加词，改后重启生效；两侧相减的尺只有一把="
+                "plugins/bot_unified_runtime/domains/location/knowledge/kb_wiki.py"
+                "::topics_without_local_domain_anchor（本项只点名、不代改、不放宽）。",
+            )
+        return CheckResult(
+            cid, name, PASS,
+            redact_local_secrets(f"库侧在册语料域 x{len(topics)} 全部有本地域锚点"
+                   f"（缺口尺经中央出口第 14 项现算，不再是只有测试在读）"),
+        )
+
+
+# ---------------------------------------------------------------------------
 # 汇总与输出
 # ---------------------------------------------------------------------------
 
@@ -1617,6 +1832,7 @@ def run_all(project_root: Path) -> list[CheckResult]:
         check_channel_capability_tags(env, project_root),
         check_mcp_server_spec(env, project_root),
         check_ann_generation_pair(env, project_root),
+        check_kb_domain_anchor(env, project_root),
     ]
 
 
