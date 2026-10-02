@@ -9419,6 +9419,34 @@ def _register_nonebot_handlers() -> None:
             reply_chain=resolved_chain,
             feature_enabled=switches.enabled,
         )
+        # TG 拼格「同册只回一次」（席位 P9 判据 + P9b 接线，台账 #73）：拼格的 N 个成员是 N 个
+        # 独立事件，各走一遍摄取 ⇒ 各进一次管道 ⇒ 用户看到 N 条回复。判据按 (会话, 专辑号) 记一枚
+        # 开门登记，窗口真身＝message_merge.MERGE_WINDOW_SECONDS（用户 2026-09-27 裁定的 3s 折句窗，
+        # 与本件 120s 计数桶 TTL 分家）；不开等待窗、不 await、不占协程 ⇒ 末张图迟到或不到都卡不住
+        # 这一轮（有界性来自结构，最坏只多回一句）。
+        # merged=True ⇒ 本条已折进册主那一轮：就此返回，不进 RuntimePipeline、不触发第二次能力调用。
+        # 三道 fail-open 闸（非 telegram 适配器／无合法专辑号／本条带用户键入正文）与同轮重投闸
+        # （台账 #65）都在判据内部 ⇒ QQ 与邮件路径行为逐字节不变。判据纯读、不产任何新的文本面标记
+        # ⇒ INTERNAL_MARKER_PATTERN 无需新门票（台账 #67★ 的同批补门票义务在此为空腿，本席复核确认）。
+        # 位置口径：摄取之后、其余各腿（看图上下文注入／贴表情／被动好感观察／管道）之前——被折掉的
+        # 成员不该再各自长出一轮副作用；识图腿要的 N 张原图已在摄取时逐段登记（段面一张不丢）。
+        from .domains.chat_reply.ingest.message_context import (
+            telegram_album_turn_decision as _telegram_album_turn_decision,
+        )
+
+        album_turn = _telegram_album_turn_decision(message)
+        if album_turn.merged:
+            _log_runtime_event(
+                runtime_event_log,
+                "INFO",
+                "telegram_album_member_folded",
+                message=message,
+                media_group_id=album_turn.media_group_id,
+                album_arrival=album_turn.arrival,
+                owner_message_id=album_turn.owner_message_id,
+                reason=album_turn.reason,
+            )
+            return
         # 最近图片上下文（vis3 2026-09-13 · MM-VIS-1 缺陷 3 扩到私聊）：
         # 无自带图 + 看图意图 → 注入本会话 TTL 内最新一张；模型视角即"总结这张图"。
         # 判据里 `message.group_id` 换成 `message.session_id`——私聊没有群号，

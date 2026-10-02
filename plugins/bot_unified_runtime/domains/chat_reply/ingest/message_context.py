@@ -71,6 +71,10 @@ ALBUM_BUCKET_CAP = 256
 # Telegram 官方拼格上限 10 张；累计值钉在此，防畸形重复投递把计数吹大。
 ALBUM_MAX_MEMBERS = 10
 _ALBUM_BUCKETS: dict[str, tuple[float, int]] = {}
+# 同册开门登记（席位 P9）：``(会话, 专辑号)`` → (册主到达时刻, 已到达张数, 册主 message_id)。
+# 与计数桶**分家**：桶记"这串专辑号累计见过几张"（文本面计数），本表记"这一册已经有人
+# 回过了"（能力调用次数）。两个生命周期不同（120s vs 折句窗），并成一张表会让其一失真。
+_ALBUM_TURN_CLAIMS: dict[str, tuple[float, int, str]] = {}
 # 专辑号形状闸：真实 media_group_id 是平台生成的不透明短串（字母数字）。
 # 越形一律不当专辑处理——它会被拼进文本面标签，放进任意串等于让平台字段
 # 自己挑怎么被读（同「意象名词禁抄进代码」那类形状闸口径）。
@@ -102,8 +106,13 @@ class AlbumSummary:
 
 
 def reset_telegram_album_state() -> None:
-    """清空计数桶（测试隔离用；生产靠 TTL 与容量帽自然淘汰）。"""
+    """清空专辑状态（测试隔离用；生产靠 TTL／窗口过期与容量帽自然淘汰）。
+
+    两本账一起清：计数桶（文本面张数）与同册开门登记（能力调用次数，见
+    ``telegram_album_turn_decision``）——只清一本会让另一本跨用例串状态。
+    """
     _ALBUM_BUCKETS.clear()
+    _ALBUM_TURN_CLAIMS.clear()
 
 
 def _album_group_of(data: dict[str, Any]) -> str:
@@ -169,6 +178,178 @@ def telegram_album_context(
         data["album_position"] = base + offset
         data["album_member_count"] = total
     return AlbumContext(media_group_id=media_group_id, member_count=total)
+
+
+# ---------------------------------------------------------------------------
+# 同册只回一次（席位 P9，2026-10-02）：跨事件的**册级合并判据**。
+#
+# 上一段治的是"文本面别出现 N 句孤立 ``[图片]``"；这一段治"能力调用别跑 N 次"——
+# 拼格的 N 个成员事件各走一遍摄取 ⇒ 各进一次管道 ⇒ 用户看到 N 条回复。
+# 判据：按 ``(会话, 专辑号)`` 记一枚**开门登记**，窗口内第一条＝册主（照常回一句），
+# 后到的纯媒体成员＝已折进那一轮，调用方必须就此返回、不再触发第二次能力调用。
+#
+# 窗口用哪枚既有常量：``runtime/message_merge.MERGE_WINDOW_SECONDS``（用户 2026-09-27
+# 裁定的 3s 折句等待窗）。本席**不加第三个计时参数**，也不取本文件的
+# ``ALBUM_BUCKET_TTL_SECONDS``（120s）——那是"这串专辑号还算活跃"的计数桶过期，
+# 拿它当抑制窗等于让 60 秒后姗姗来迟的那张图永远没人回；3s 才是"同一批连发算一轮"
+# 的既有语义，而 TG 拼格的 N 个 update 本就同一批 getUpdates 里秒级到达。
+#
+# 有界性（"末张图不到不许卡死"）来自结构本身：本判据**不开等待窗、不 await、不占
+# 协程**——册主当场放行，后来者当场判定；登记只在窗口内算数，过期即视同新册主重新
+# 回一句。最坏情形是"多回一句"，绝不存在"整轮挂住"。
+#
+# 🔴 三道"绝不吞消息"的闸（任一命中＝ ``merged=False``，走既有链路照常回）：
+#   ① 非 telegram 适配器——读 ``IncomingMessage.adapter``／``platform`` 这两枚中央字段，
+#      不按文本内容猜（QQ 侧本无拼格语义，零扰动）；
+#   ② 本条段里没有合法形状的专辑号（未被上一段盖章＝不是拼格成员）；
+#   ③ 本条带**用户键入正文**（拼格成员自己的配文）——把它折掉等于吞了这句话，
+#      宁多回一句不误吞正文（与 ``message_merge`` 静默腿同一 fail-open 口径）。
+#   另加同轮重投闸：登记的册主 ``message_id`` 与本条相同 ⇒ 这是**同一轮**被重放
+#   （TG 连接期重投，台账 #65），不是册内第二张，不得静默吞。
+#
+# 本判据只读上一段的盖章结果与中央字段，**不产任何新的文本面标记** ⇒
+# ``INTERNAL_MARKER_PATTERN`` 无需新门票（台账 #67★ 的"同批补门票"义务在此为空腿）。
+# ---------------------------------------------------------------------------
+
+# 判定理由（可点名审计，与 message_coalescing 的 ``signals`` 同一口径：不黑箱）。
+ALBUM_TURN_OWNER = "owner"  # 册主：本条负责回一句
+ALBUM_TURN_MERGED = "merged"  # 已折进同册册主那一轮：调用方就此返回
+ALBUM_TURN_NOT_ALBUM = "not_album"  # 非 TG／无合法专辑号：既有行为逐字节不变
+ALBUM_TURN_CAPTION = "caption_member"  # 带用户正文：不折（绝不吞正文）
+ALBUM_TURN_SAME_TURN = "same_turn"  # 与册主同 message_id：同一轮被重放，不静默吞
+
+
+@dataclass(frozen=True)
+class AlbumTurnDecision:
+    """这一条拼格成员该不该自己触发一轮能力调用。
+
+    ``merged`` 为真 ⇒ 本条已被折进同册册主那一轮，调用方必须就此返回（禁第二次
+    能力调用）；为假 ⇒ 照常走既有链路，``reason`` 说明为什么没折（含 ``owner``
+    这一路，"没折"不等于"不是专辑"）。
+    """
+
+    merged: bool
+    media_group_id: str = ""
+    arrival: int = 0  # 本条是该桶第几次到达（1＝册主）
+    owner_message_id: str = ""  # 册主的 message_id（对账与"同一轮重放"判定用）
+    reason: str = ALBUM_TURN_NOT_ALBUM
+
+
+def _album_group_of_message(message: Any) -> str:
+    """从消息段读专辑号：只认上一段盖章的 ``data.media_group_id``（唯一真身）。
+
+    再过一次 ``_ALBUM_ID_PATTERN``：段上的章可能被别的来源写脏，形状闸不重复信任。
+    """
+    for segment in getattr(message, "raw_segments", None) or []:
+        if not isinstance(segment, dict):
+            continue
+        if str(segment.get("type", "")).strip().lower() not in ALBUM_MEMBER_SEGMENT_TYPES:
+            continue
+        group_id = _album_group_of(_data(segment))
+        if group_id and _ALBUM_ID_PATTERN.fullmatch(group_id):
+            return group_id
+    return ""
+
+
+def _message_carries_user_text(message: Any) -> bool:
+    """本条是否带用户键入的正文（拼格成员的配文）。
+
+    两腿任一命中即算带正文，只收紧不放宽（宁可多回一句）：
+    ① 段面有实值 ``text`` 段；② ``plain_text`` 过 ``INTERNAL_MARKER_PATTERN``
+    剥掉内部标记（``[相册 共N图]``／``[图片]`` 一类标签）之后仍非空。
+    """
+    for segment in getattr(message, "raw_segments", None) or []:
+        if not isinstance(segment, dict):
+            continue
+        if str(segment.get("type", "")).strip().lower() != "text":
+            continue
+        if str(_data(segment).get("text", "")).strip():
+            return True
+    stripped = INTERNAL_MARKER_PATTERN.sub(" ", str(getattr(message, "plain_text", "") or ""))
+    return bool(stripped.strip())
+
+
+def _telegram_adapter_of(message: Any) -> bool:
+    """平台判定：只读中央字段 ``adapter``／``platform``，不按消息文本猜。"""
+    for name in ("adapter", "platform"):
+        if str(getattr(message, name, "") or "").strip().lower() == "telegram":
+            return True
+    return False
+
+
+def album_turn_state() -> dict[str, tuple[float, int, str]]:
+    """同册开门登记的只读视图（观测与巡检用；写入点只有本件那两枚函数）。"""
+    return dict(_ALBUM_TURN_CLAIMS)
+
+
+def telegram_album_turn_decision(
+    message: Any,
+    *,
+    now: float | None = None,
+) -> AlbumTurnDecision:
+    """同一 ``media_group_id`` 只回一次——跨事件的册级合并判据（无等待、有上界）。
+
+    用法（唯一调用点＝根装配段，进管道之前）：返回 ``merged=True``  ⇒ 记账并
+    ``return``，本条不再触发能力调用；返回 ``merged=False`` ⇒ 拿着原消息继续走链路。
+    非 TG／非专辑一律 ``merged=False``，既有行为逐字节不变（三闸见上注释块）。
+    """
+    group_id = _album_group_of_message(message)
+    if not _telegram_adapter_of(message) or not group_id:
+        return AlbumTurnDecision(merged=False, media_group_id=group_id, reason=ALBUM_TURN_NOT_ALBUM)
+
+    # 窗口真身＝折句等待窗（用户裁定 3s），局部导入避开 runtime/__init__ 的 pipeline 依赖
+    # （同 message_coalescing.fold_inbound_turn 里 import message_merge 的先例）。
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.message_merge import (
+        MERGE_WINDOW_SECONDS,
+    )
+
+    stamp = time.monotonic() if now is None else float(now)
+    session_id = str(getattr(message, "session_id", "") or "")
+    key = f"{session_id}|{group_id}"
+    message_id = str(getattr(message, "message_id", "") or "").strip()
+    claim = _ALBUM_TURN_CLAIMS.get(key)
+
+    if claim is not None and stamp - claim[0] <= MERGE_WINDOW_SECONDS:
+        first_at, arrivals, owner_id = claim
+        if message_id and message_id == owner_id:
+            # 同一轮被重投/重放：既不该再回一次，也不该被当"册内第二张"静默吞掉——
+            # 交回调用方按既有链路走（幂等腿另有其账，本判据不越权替代）。
+            return AlbumTurnDecision(
+                merged=False,
+                media_group_id=group_id,
+                arrival=arrivals,
+                owner_message_id=owner_id,
+                reason=ALBUM_TURN_SAME_TURN,
+            )
+        if _message_carries_user_text(message):
+            return AlbumTurnDecision(
+                merged=False,
+                media_group_id=group_id,
+                arrival=arrivals,
+                owner_message_id=owner_id,
+                reason=ALBUM_TURN_CAPTION,
+            )
+        _ALBUM_TURN_CLAIMS[key] = (first_at, arrivals + 1, owner_id)
+        return AlbumTurnDecision(
+            merged=True,
+            media_group_id=group_id,
+            arrival=arrivals + 1,
+            owner_message_id=owner_id,
+            reason=ALBUM_TURN_MERGED,
+        )
+
+    # 无登记（本册第一条）或窗口已过期（末张图迟迟不来 / 迟到到窗口外）⇒ 本条当册主。
+    _ALBUM_TURN_CLAIMS.pop(key, None)
+    _ALBUM_TURN_CLAIMS[key] = (stamp, 1, message_id)
+    while len(_ALBUM_TURN_CLAIMS) > ALBUM_BUCKET_CAP:
+        _ALBUM_TURN_CLAIMS.pop(next(iter(_ALBUM_TURN_CLAIMS)), None)
+    return AlbumTurnDecision(
+        merged=False,
+        media_group_id=group_id,
+        arrival=1,
+        owner_message_id=message_id,
+        reason=ALBUM_TURN_OWNER,
+    )
 
 
 def telegram_topic_context_note(event: Any, normalized_adapter: str) -> str:
