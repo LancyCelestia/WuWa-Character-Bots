@@ -12,7 +12,11 @@ T4 渠道能力标签保险 / T5 PX-1 MCP 模块保险 / S141 ANN 代际可用�
   1. env_paths     .env 关键路径存在性：BOT_KB_WIKI_ROOT / BOT_PERSONA_FILES /
                    BOT_MEDIA_ARCHIVE_DB_PATH 父目录 / qx.json（内置资产铁律）
   2. persona_sync  人格副本与锚定一致（sync_persona_source.py --check，
-                   副本缺失=SKIP 不算红）
+                   副本缺失=SKIP 不算红）+ 在册头像存在性点名（H-9d，同一格
+                   第二判据）：只读扫 personas/registry/*.json 的非空
+                   qq.avatar_path，按运行时数据根解析后核文件实存，缺件即
+                   该格 FAIL 并点名确切路径（要落／按实申报未落两条出路）——
+                   此前缺件要到下发腿才红（卡片腿 FileNotFoundError）
   3. hash_ledger   交付物 SHA-256 台账（tests/verify_hashes.py --check）
   4. doc_sync      机器事实册（scripts/doc_sync.py --check）
   5. kb_drift      知识库三漂移只读复核：ANN 行数 == chunks 行数
@@ -325,24 +329,84 @@ def check_env_paths(env: dict[str, str], project_root: Path) -> CheckResult:
     return CheckResult(cid, name, PASS, "; ".join(notes))
 
 
+#: 人格册目录（在册格的唯一事实源；相对仓库根，与 persona_profile.DEFAULT_REGISTRY_DIR 同指）
+PERSONA_REGISTRY_REL = Path("personas") / "registry"
+
+
+def _persona_avatar_ledger(env: dict[str, str], project_root: Path) -> tuple[list[str], int, bool]:
+    """只读点名「在册人格指向的头像文件」是否真实存在（H-9d 补牙）.
+
+    返回 (问题行列表, 非空申报且已核的格数, 是否扫到册目录)。解析口径与下发腿同源：
+    相对路径经运行时数据根（BOT_RUNTIME_DATA_DIR）重映射——见 resolve_data_path 与
+    persona_profile 的头像解析函数，本函数不 import 插件根（本脚本既有纪律）。
+    空 avatar_path＝「不切头像项」（§49.4-1），不算缺件；册目录读不到＝不假红。
+    """
+    registry = project_root / PERSONA_REGISTRY_REL
+    if not registry.is_dir():
+        return [], 0, False
+    data_root = runtime_data_dir(env, project_root)
+    problems: list[str] = []
+    checked = 0
+    for path in sorted(registry.glob("*.json")):
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            problems.append(f"{path.name} 人格册不可读（{type(exc).__name__}）")
+            continue
+        if not isinstance(raw, dict):
+            problems.append(f"{path.name} 人格册顶层不是对象")
+            continue
+        persona_id = str(raw.get("persona_id") or path.stem).strip() or path.stem
+        qq = raw.get("qq")
+        avatar_raw = str((qq.get("avatar_path") if isinstance(qq, dict) else "") or "").strip()
+        if not avatar_raw:
+            continue
+        checked += 1
+        target = resolve_data_path(avatar_raw, project_root, data_root)
+        if not target.is_file():
+            problems.append(f"{persona_id} 在册头像缺件: 册里 {avatar_raw} -> 盘上应有 {target}")
+    return problems, checked, True
+
+
 def check_persona_sync(env: dict[str, str], project_root: Path) -> CheckResult:
     cid, name = "persona_sync", "人格副本与锚定一致"
     rc, out, err = run_cmd(
         [sys.executable, "scripts/sync_persona_source.py", "--check"], project_root
     )
-    if rc == 0 and "[SKIP]" in out:
-        return CheckResult(cid, name, SKIP, out.strip().splitlines()[-1] if out.strip() else "副本缺失，门跳过")
+    sync_line = (out.strip() or err.strip()).splitlines()[-1] if (out.strip() or err.strip()) else ""
+    avatar_problems, avatar_checked, registry_scanned = _persona_avatar_ledger(env, project_root)
+    if not registry_scanned:
+        avatar_note = "在册头像格未扫（人格册目录缺席，不假红）"
+    elif avatar_problems:
+        avatar_note = f"在册头像缺件 x{len(avatar_problems)}: " + " | ".join(avatar_problems)
+    else:
+        avatar_note = f"在册头像 x{avatar_checked} 实存（空 avatar_path＝不切头像项，不算缺件）"
+    adopt_hint = (
+        "人工审阅副本改动后 python scripts/sync_persona_source.py --adopt 重录锚定"
+        "（误改先从备份恢复）；机制见 .superpowers/sdd/2026-09-13-six-domain-batch/"
+        "persona-sync-report.md。"
+    )
+    avatar_hint = (
+        "在册头像缺件两条出路（择一，不许悬空）：① 要落＝把真图放进上面点名的确切路径"
+        "（相对路径按运行时数据根 BOT_RUNTIME_DATA_DIR 重映射，别只放源码树 data/）；"
+        "② 按实申报未落＝把该格 qq.avatar_path 改回空串并在 _files_note 写明缺席，"
+        "下发腿即跳过（不切头像、回执 skipped 而非 ok）。"
+    )
     if rc == 0:
-        return CheckResult(cid, name, PASS, out.strip().splitlines()[-1] if out.strip() else "副本与锚定一致")
-    detail = (out.strip() or err.strip()).splitlines()[-1] if (out.strip() or err.strip()) else f"exit {rc}"
+        skipped_copy = "[SKIP]" in out
+        status = SKIP if skipped_copy else PASS
+        detail = sync_line or ("副本缺失，门跳过" if skipped_copy else "副本与锚定一致")
+        if avatar_problems:
+            # 副本腿本身绿/跳过不掩盖头像缺件：这一格点名红
+            return CheckResult(cid, name, FAIL, f"{detail} || {avatar_note}", avatar_hint)
+        return CheckResult(cid, name, status, f"{detail}；{avatar_note}")
+    detail = sync_line or f"exit {rc}"
     return CheckResult(
         cid,
         name,
         FAIL,
-        detail,
-        "人工审阅副本改动后 python scripts/sync_persona_source.py --adopt 重录锚定"
-        "（误改先从备份恢复）；机制见 .superpowers/sdd/2026-09-13-six-domain-batch/"
-        "persona-sync-report.md。",
+        f"{detail} || {avatar_note}" if avatar_problems else detail,
+        f"{adopt_hint} {avatar_hint}" if avatar_problems else adopt_hint,
     )
 
 
