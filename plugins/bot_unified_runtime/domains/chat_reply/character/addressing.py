@@ -41,6 +41,18 @@ CREATOR_NOTE: str = (
     f"澜汐与霞月是同一人（双名混用），是守岸人的{CREATOR_TITLE}与唤醒者，"
     "也是这里的超级管理员；听到其中任何一个名字，都指向这同一位。"
 )
+# —— 现实坐标单一真身（席 S2，幻觉根治波，2026-10-02）——
+# 取证：全仓零条「现实层 vs 故事层」的恒渲染事实 ⇒ 模型只能靠检索撞运气，
+# 于是把「库洛」讲成游戏世界里的组织、或把百科条目里别人的第一人称回忆
+# 认作亲历（同一根因的另一面见 `_RUNTIME_ANSWER_RULES` 的照本宣科禁令）。
+# 与 `CREATOR_NOTE` 同范式：**文案只在这一处**，渲染口（chat.py）只做非空即渲染，
+# 不在 `personas/` 抄第二份——人格文件会随切档整体换掉，现实坐标却是不变量。
+# 复跑锁：tests/test_hallucination_reality_guards.py（常量存在 + 全仓只有一处该字面）。
+REALITY_COORDINATES_NOTE: str = (
+    "守岸人是游戏《鸣潮》中的登场角色；《鸣潮》由现实中的公司"
+    "广州库洛科技有限公司（KURO GAMES）开发，其运营与备案主体也属于这家公司。"
+    "库洛在故事之外，不是游戏世界里的组织或势力。"
+)
 
 
 def neutral_address() -> str:
@@ -90,6 +102,16 @@ def creator_aliases() -> tuple[str, ...]:
 def creator_context_note() -> str:
     """注入 chat 人格上下文的稳定一行创造者事实；空串表示不注入。"""
     return CREATOR_NOTE
+
+
+
+def reality_coordinates_note() -> str:
+    """注入 chat 人格上下文的稳定几行现实坐标事实；空串表示不注入。
+
+    与 `creator_context_note` 同签名同口径（读取口只回常量，措辞不许在别处再打一份），
+    消费点在 `capabilities/chat.py` 的【现实坐标】条件块。
+    """
+    return REALITY_COORDINATES_NOTE
 
 
 def _utc_now_iso() -> str:

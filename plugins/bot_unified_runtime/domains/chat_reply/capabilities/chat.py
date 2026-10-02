@@ -38,6 +38,7 @@ from plugins.bot_unified_runtime.domains.assistant.daily.store.daily_assist impo
 from plugins.bot_unified_runtime.domains.chat_reply.character.addressing import (
     creator_aliases,
     creator_context_note,
+    reality_coordinates_note,
 )
 
 # 审查 O-06：术语/时梗分区按关键词召回的裁剪原语与兜底门。
@@ -122,6 +123,7 @@ from plugins.bot_unified_runtime.domains.core.search.search_intent import (
     extract_acg_query,
 )
 from plugins.bot_unified_runtime.domains.core.search.search_service import (
+    KB_SOURCE_PERSONA,
     chunk_source_library,
     knowledge_context_block,
     resolve_answer_order,
@@ -1297,6 +1299,71 @@ def _chunk_hit_library(chunk: object) -> str:
     return declared or _UNSTAMPED_LIBRARY_LABEL
 
 
+# ==================== 席 S2「他人经历引文」标注（幻觉根治波，2026-10-02）====================
+# 要治的是什么：检索命中的百科条目常以第一人称写**传主**的经历（「我小时候在……长大」），
+# 模型把它读进来就以第一人称复述出来——于是bot"记得"了自己没被写过的童年。
+# 全仓此前零条这类约束（取证见 HANDOFF-FIXWAVE-20261002），`_RUNTIME_ANSWER_RULES`
+# 那句恒渲染禁令管的是总口径，本腿负责**逐行落到具体哪一条**：标出来的那行就是
+# 「别人说的话」，模型不需要再自己判这句该不该认。
+# ⚠ schema 依赖刻意留白：`knowledge_chunks.subject_kind` 是 S5 席在飞的列，今天不存在。
+# 判定顺序＝①人格家族豁免 → ②有列就认列 → ③没列按内容形态判 ⇒ **缺列照常工作**，
+# 列落地后自动升级，不留第二次改造。包裹层复用现成 `_wrap_untrusted_context_block`
+# （本函数出口本来就整套走它），禁在此新建第二套不可信标记。
+_OTHERS_RECITAL_TAG = "〔他人经历引文·非你的亲历〕"
+#: 人格家族的块可以是"她自己的"经历；其余来源的第一人称回忆只能是别人的。
+#: 库名词表真身在 search_service（`KB_SOURCE_PERSONA`），此处不另立一套。
+_SELF_EXPERIENCE_LIBRARIES: frozenset[str] = frozenset({KB_SOURCE_PERSONA})
+#: 第一人称亲历句式：「我」与成长/居住/亲历类线索词**同句相邻**（两个方向都认）。
+#: 只认这种强形态——窄守门要宁可漏标，宽了会把"我们的玩家"这类正常句也标上。
+_FIRST_PERSON_RECITAL_RE = re.compile(
+    r"我[^。！？\n]{0,12}"
+    r"(?:小时候|童年|幼年|成长|长大|生于|出生|住在|居住|定居|亲历|亲眼|经历过|记忆里)"
+    r"|(?:小时候|童年|幼年|成长|长大|生于|出生|住在|居住|定居|亲历|亲眼|经历过|记忆里)"
+    r"[^。！？\n]{0,12}我"
+)
+
+
+def _chunk_subject_kind(chunk: object) -> str:
+    """一条块的「写的人是谁」标注；**列不存在＝空串**（S5 落地前本腿按形态判）。"""
+    return str(getattr(chunk, "subject_kind", "") or "").strip().lower()
+
+
+def _line_is_first_person_recital(text: str) -> bool:
+    return bool(_FIRST_PERSON_RECITAL_RE.search(text))
+
+
+def _mark_others_experience_lines(
+    lines: list[str], chunks: list[object], library: str
+) -> list[str]:
+    """给检索命中行尾追加「他人经历引文」标注（**不动行首身份格式**，行形锁零扰动）。
+
+    三级判定，任一命中即标：
+      ① 来源是人格家族 ⇒ 整批不标（那些经历可以是她自己的）；
+      ② 块自带 `subject_kind` ⇒ 认列：`self`/`persona` 不标，其余标；
+      ③ 列读不到（今天的实况）⇒ 退回内容形态判定，**不因缺列整腿失效**。
+    行与块只在**数目相等**时按位对齐（组装口现为一块一行）；不等 ⇒ 只按内容判，
+    不猜对齐（宁可少用一条身份依据，也不把 A 块的 subject_kind 派给 B 行）。
+    任何异常 ⇒ 原样交回（fail-open，标注是加强项，绝不能把【知识库】整块带走）。
+    """
+    try:
+        if library in _SELF_EXPERIENCE_LIBRARIES:
+            return lines
+        aligned = len(lines) == len(chunks)
+        marked: list[str] = []
+        for index, line in enumerate(lines):
+            kind = _chunk_subject_kind(chunks[index]) if aligned else ""
+            if kind in {"self", "persona"}:
+                marked.append(line)
+                continue
+            if kind == "other" or _line_is_first_person_recital(line):
+                marked.append(f"{line}{_OTHERS_RECITAL_TAG}")
+                continue
+            marked.append(line)
+        return marked
+    except Exception:  # noqa: BLE001 - 标注腿炸了只丢标注，正文照旧进 prompt
+        return lines
+
+
 def _knowledge_lines(context: ContextBundle, max_chars: int | None = None) -> str:
     """【知识库】区正文：命中行走单一组装口，零命中走唯一未命中声明。
 
@@ -1332,7 +1399,9 @@ def _knowledge_lines(context: ContextBundle, max_chars: int | None = None) -> st
             miss_declaration=_KB_UNAVAILABLE_LINE,
             sanitizer=_sanitize_untrusted_context_text,
         )
-        lines.extend(item for item in block.splitlines() if item.strip())
+        block_lines = [item for item in block.splitlines() if item.strip()]
+        # 席 S2：非人格家族的第一人称回忆 → 行尾标「他人经历引文」（缺列按形态判）。
+        lines.extend(_mark_others_experience_lines(block_lines, grouped[library], library))
 
     if max_chars is None:
         return _wrap_untrusted_context_block("\n".join(lines))
@@ -1427,6 +1496,77 @@ def _soften_existence_denials_on_miss(reply_text: str, *, enabled: bool) -> tupl
     if not enabled:
         return reply_text, ""
     return rewrite_existence_denials(reply_text)
+
+
+# ==================== 席 S2 出口窄守门（幻觉根治波，2026-10-02）====================
+# 治的是最后一米：禁令进了恒渲染区、检索行也标了「他人经历引文」，模型仍可能把
+# 别人的生平用第一人称端出来（全仓此前**零处**出口后处理守门，取证见波次简报）。
+# 与 `_soften_existence_denials_on_miss` 同范式：判据只在文本形态、返回 ``(文本, 命中原句)``、
+# 命中留痕进 audit_tags、任何异常即原样放行（fail-open）。刻意**比那条更窄**，三条同时成立才动：
+#   ①第一人称 + 成长/居住/亲历动词；②动词前带一枚**带地名后缀**的专名；
+#   ③该专名在本轮人格原文/身份/显示名里**查不到**（查得到就可能是她自己的设定，一字不动）。
+# 只做**删句**不做**改写**：改写要生成新句子＝长出第二套文案工厂，而删掉一句
+# 不会凭空造出没人说过的话。段落重排交回下游既有的 `normalize_paragraph_breaks`。
+_OUTBOUND_RECITAL_RE = re.compile(
+    r"我(?:曾|曾经|以前|小时候)?[^。！？\n]{0,10}?"
+    r"(?:在|于|回到|住在|搬进|搬去|离开)?"
+    r"([\u4e00-\u9fff]{2,8}?(?:市|区|县|省|国|港|镇|乡|村|岛|城|街|塔|学院|中学|小学|大学|公司|家族|部落))"
+    r"[^。！？\n]{0,14}?"
+    r"(?:长大|成长|出生|生于|生活|住过|住过几年|度过|待过|亲历|亲眼|上学|念书|工作|生活过)"
+)
+_PERSONA_WHITELIST_FIELDS: tuple[str, ...] = ("raw_text", "identity", "display_name")
+
+
+def _persona_recital_whitelist_text(persona: object) -> str:
+    """人格白名单＝**已有的人格字段拼起来**（不新建名册、不读 `get_login_info`，台账 #60★）。
+
+    只用于「这个专名可能是她自己的设定吗」这一问；字段缺失就是空串，判据自然收紧。
+    """
+    return "\n".join(
+        str(getattr(persona, field, "") or "")
+        for field in _PERSONA_WHITELIST_FIELDS
+        if str(getattr(persona, field, "") or "")
+    )
+
+
+def _borrowed_recital_spans(text: str, whitelist_text: str) -> list[tuple[int, int]]:
+    """命中句的整句区间（含句末标点）；重叠命中只保留先出现的那枚。"""
+    spans: list[tuple[int, int]] = []
+    for match in _OUTBOUND_RECITAL_RE.finditer(text):
+        token = match.group(1)
+        if not token or token in whitelist_text:
+            continue
+        start, end = match.start(), match.end()
+        while start > 0 and text[start - 1] not in "。！？\n":
+            start -= 1
+        while end < len(text) and text[end] not in "。！？\n":
+            end += 1
+        if end < len(text) and text[end] in "。！？":
+            end += 1
+        if any(existing_start < end and start < existing_end for existing_start, existing_end in spans):
+            continue
+        spans.append((start, end))
+    return spans
+
+
+def _strip_borrowed_recital_sentences(reply_text: str, whitelist_text: str) -> tuple[str, str]:
+    """出站窄守门：摘掉「人格白名单之外」的第一人称亲历句；返回 ``(文本, 被摘的原句)``。
+
+    ``被摘的原句`` 为空串＝本轮一字未动（与 `_soften_existence_denials_on_miss` 同口径，
+    审计与护栏锁都读这一处）。异常 ⇒ 原样交回，绝不把回复带走。
+    """
+    try:
+        if not reply_text:
+            return reply_text, ""
+        spans = _borrowed_recital_spans(reply_text, whitelist_text)
+        if not spans:
+            return reply_text, ""
+        stripped = reply_text
+        for start, end in sorted(spans, reverse=True):
+            stripped = stripped[:start] + stripped[end:]
+        return stripped, "".join(reply_text[start:end] for start, end in spans)
+    except Exception:  # noqa: BLE001 - 守门腿自己炸了只当没命中，出站文本不许被带走
+        return reply_text, ""
 
 
 def _kb_hits_by_source(chunks: Sequence[Any]) -> dict[str, int]:
@@ -1864,6 +2004,7 @@ _RUNTIME_ANSWER_RULES = (
     "知识、人物、组织和关系问题先给明确结论，再完整说明相关身份、"
     "关系、关键经历、事件脉络和资料边界；不以无关信息凑长度，"
     "只删除与问题无关的枝节，不复述检索原文，不编造未被资料支持的内容；资料不足时明确指出缺口。"
+    "资料里出现的第一人称回忆属于资料所写之人、不属于你，你没被写过的经历不得说成亲历。"
 )
 
 # ==================== 需求 18 第 9 项「回复长度分档」：档位与选档的唯一真身 ====================
@@ -3155,6 +3296,27 @@ def build_chat_prompt_with_diagnostics(
     creator_note = creator_context_note().strip()
     if creator_note:
         dynamic_parts += ["", "【创造者】", creator_note]
+    # 席 S2（幻觉根治波，2026-10-02）：现实坐标恒渲染——「谁做了这个游戏、库洛在
+    # 故事里还是故事外」此前只能靠检索撞运气，零命中时模型就把公司讲成游戏世界内的
+    # 组织。照上一条【创造者】的范式：**文案唯一来源=addressing.REALITY_COORDINATES_NOTE**，
+    # 本行只做「非空即渲染」，不在此抄措辞、不在 personas/ 留第二份（人格换档会连带换掉
+    # 一份会变的东西，而现实坐标是不变量）。刻意**不加分区预算键**、**不裁剪**：
+    # 三行全是事实，裁掉任一句就可能把「它在故事之外」那半句吃掉，比整块缺席更坏；
+    # 长度由该常量自己守住（≤3 句），权重靠**装配位置**排在创造者之后、群聊之前。
+    reality_note = reality_coordinates_note().strip()
+    if reality_note:
+        dynamic_parts += ["", "【现实坐标】", reality_note]
+    # 席 S12（现实知识面波，2026-10-03）：实体关系册的一跳事实——册已在盘而对话侧
+    # 零消费者（台账 #72★「三格哑面在盘不在码」同型）。本行只做「非空即渲染」：
+    # 判类与取数都在 providers 侧（``reality_relation_note``），**措辞唯一真身＝
+    # entity_relations.reality_relation_lines**，与上一条【现实坐标】同一单源口径，
+    # personas/ 零副本。未核实条目自带「待核｜」前缀出来（真身＝unverified_prefix），
+    # 绝不当已确认事实；本轮没查到 ⇒ 空串 ⇒ 整块不出现，不端别人家的条目顶上。
+    # 位次紧跟【现实坐标】：现实事实连着给，模型不必两处拼。刻意**不加预算键、不裁剪**
+    # ——≤3 行全是事实，裁掉半句就可能把「已核」那半截吃掉（同上一条的理由）。
+    reality_relation_note = context.reality_relation_note.strip()
+    if reality_relation_note:
+        dynamic_parts += ["", "【现实关系】", reality_relation_note]
     # 审查 B-03：group_id 已传入 build_context 却从未渲染成文本——bot 不知道
     # 自己在哪个群。群聊会话注入客观一行【当前群聊】群号；私聊整块不出现。
     # 富信息（群名称等）等 B-01 群上下文能力接线后再扩，此处不做 API 调用；
@@ -4048,7 +4210,13 @@ def build_chat_result(
                 kind="text",
                 body=_manual_command_ack_text(manual_mode, manual_tier),
                 risk_level=RiskLevel.LOW,
-                privacy_level=PrivacyLevel.PERSONAL,
+                # D1 缺口（2026-10-02 现网取证）：这一支曾把隐私档**硬写成 PERSONAL**，
+                # 而同函数其余出口一律交 `context.privacy_level`（群聊腿在能力入口被
+                # 夹成 GROUP）。审核门对「群作用域 + PERSONAL 正文」不放行
+                # （`domains/render/reviewer.py`，reason=personal output cannot be sent
+                #  to group，事件名 move_private）⇒ 钉其实上了，回执却被换成兜底文案，
+                # 群内看着就是"开关不可用"。隐私档只认会话本身，不在这里另判一次。
+                privacy_level=context.privacy_level,
                 audit_tags=[
                     "content_route",
                     f"manual:{manual_mode}",
@@ -4500,6 +4668,13 @@ def build_chat_result(
         reply_text,
         enabled=_no_lookup_evidence_this_turn(context),
     )
+    # 席 S2 出口窄守门（幻觉根治波，2026-10-02）：把「别人的一生」用第一人称端出来
+    # 的那一句摘掉（判据三条同时成立才动，见 _strip_borrowed_recital_sentences）。
+    # 放在 existence-denial 之后、段落归一之前——归一后句子边界会被重排，那时再删句
+    # 就要动排版器的产物；异常即原样放行，命中原句只进审计不回话。
+    reply_text, borrowed_recital_hit = _strip_borrowed_recital_sentences(
+        reply_text, _persona_recital_whitelist_text(context.persona)
+    )
     # 段落分隔统一化（2026-09-17 用户反馈：换行 1/2 个随机）：所有 chat 出站
     # 文本段间一律单个换行（括号拆段/无动作纯文本/模型自写空行三路同构）。
     reply_text = normalize_paragraph_breaks(reply_text)
@@ -4527,6 +4702,10 @@ def build_chat_result(
     # 出口执法留痕：没有这一条，"她说的不存在其实只是没查到"就永远只能靠猜。
     if miss_denial_hit:
         audit_tags.append("kb_miss_existence_denial_softened")
+    # 席 S2 出口守门留痕（同上一条的理由）：没有这一条，"她说的亲历其实是从别人
+    # 生平里搬来的"就永远只能靠猜，被摘掉的那句也无处回查。
+    if borrowed_recital_hit:
+        audit_tags.append("llm_borrowed_recital_stripped")
     # B-9（管线检视 #12）：删除死标签 llm_split_parts / llm_split_mode——
     # text_parts 在本函数恒为 None（transport 分段不由 chat 层声明），两个
     # 标签从不触发，只产生零信号审计噪声。
