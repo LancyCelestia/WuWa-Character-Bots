@@ -1570,6 +1570,7 @@ class SqliteVectorKnowledgeStore:
                 )
                 """
             )
+            added_columns: list[str] = []
             columns = {
                 str(row[1])
                 for row in connection.execute("PRAGMA table_info(knowledge_chunks)")
@@ -1578,6 +1579,7 @@ class SqliteVectorKnowledgeStore:
                 connection.execute(
                     "ALTER TABLE knowledge_chunks ADD COLUMN vector_blob BLOB"
                 )
+                added_columns.append("vector_blob")
             # S5 多人格隔离波 单元 2：归属列的 ALTER-if-missing（与 vector_blob
             # 同一套幂等做法，也是好感度 v5 列迁移的在册先例）。缺省 ''＝未归属，
             # 读侧按「未归属仍可见」处理 ⇒ **加列这一步本身零行为变化**，
@@ -1587,17 +1589,46 @@ class SqliteVectorKnowledgeStore:
                     "ALTER TABLE knowledge_chunks ADD COLUMN persona_id TEXT "
                     "NOT NULL DEFAULT ''"
                 )
+                added_columns.append("persona_id")
+            # 索引名在册与否要在建之前探（CREATE INDEX IF NOT EXISTS 不回报"我建了"），
+            # 否则幂等复跑会每次都自称建了一次索引。
+            existing_indexes = {
+                str(row[1])
+                for row in connection.execute("PRAGMA index_list(knowledge_chunks)")
+            }
+            added_indexes: list[str] = []
             # 大库（35k 行级起）按人格过滤没有索引就退化成每轮全表扫描。
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_persona "
                 "ON knowledge_chunks(persona_id)"
             )
+            if "idx_knowledge_chunks_persona" not in existing_indexes:
+                added_indexes.append("idx_knowledge_chunks_persona")
             # sync_documents / sync_chunks 的按源删除与源级统计走这个索引，
             # 大库（十万行级）没有它每次删源都退化为全表扫描。
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_source "
                 "ON knowledge_chunks(source_id)"
             )
+            if "idx_knowledge_chunks_source" not in existing_indexes:
+                added_indexes.append("idx_knowledge_chunks_source")
+            # 🔴 启动期改生产库 schema 必须**可见**（P-1 用户裁定：幂等补列本身
+            # 保留，只是不再无声；2026-10-02 23:38 两枚库被自动加列/建索引而日志
+            # 零行、事前零备份）。判据不变 ⇒ 本行只在"这一次真的动了 schema"时出现，
+            # 已建好的库复跑 `_ensure_schema` 不再打（幂等复跑不许刷日志）。
+            # 寻址口径：只出库文件名 + 父目录名、各过 `redact_local_secrets`
+            # （:2458 同款，规则 3），绝不写绝对路径 ⇒ 日志里出不了盘符形态。
+            if added_columns or added_indexes:
+                logger.warning(
+                    "knowledge_schema_auto_migration db_file=%s db_dir=%s "
+                    "table=knowledge_chunks added_columns=%s added_indexes=%s "
+                    "(ADD COLUMN/CREATE INDEX 幂等补建，缺省 ''＝未归属、"
+                    "读侧行为不变；本行只在真正改动 schema 的那一次出现)",
+                    redact_local_secrets(Path(self.db_path).name),
+                    redact_local_secrets(Path(self.db_path).parent.name),
+                    ",".join(added_columns) or "-",
+                    ",".join(added_indexes) or "-",
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS knowledge_meta (
