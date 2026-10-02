@@ -1447,7 +1447,19 @@ def _incoming_from_nonebot_event(
     )
     if not raw_segments:
         raw_segments = [{"type": "text", "data": {"text": text}}]
-    normalized_message = normalize_message_segments(raw_segments)
+    # 频道拼格专辑（席位 S18）：``media_group_id`` 只挂在 TG **事件**上、段里读不到，
+    # 故在归一**之前**按事件盖章到媒体段并累计张数，让文本面出一条带计数的专辑摘要
+    # 而不是 N 句孤立 ``[图片]``；段一张不丢，富化/识图腿照旧逐张消费。
+    # 局部导入先例＝本函数内的 file_reader / injection（避开模块级成环）。
+    # 非 TG 事件 / 无专辑号 / 形状不合法 ⇒ 返回 None，既有行为逐字节不变。
+    from .domains.chat_reply.ingest.message_context import (
+        telegram_album_context as _telegram_album_context,
+    )
+
+    album_context = _telegram_album_context(
+        event, raw_segments, normalized_adapter, session_id=str(session_id or "")
+    )
+    normalized_message = normalize_message_segments(raw_segments, album=album_context)
     if normalized_message.plain_text.strip():
         text = normalized_message.plain_text
     file_context: list[str] = []
@@ -1506,6 +1518,20 @@ def _incoming_from_nonebot_event(
     text_at_mention = _detect_text_at_mention(own_text)
     if reply_text:
         text = f"{text}\n{format_reply_chain(reply_chain)}".strip()
+    # 评论区/群话题上下文（席位 S18）：``message_thread_id`` 与 ``is_topic_message``
+    # 平台会送而我方全树零消费者（thread_id 只被读进契约字段、无人再读），这里给它
+    # 一个真消费者——**复用 ``.thread_id`` 那一枚字段**，不新建第二套。
+    # 🔴 必须在 ``own_text`` 捕获与引用链拼接**之后**追加：它是 ``^...$`` 锚的
+    # 命令判据与点名判据的输入，追加在前会把内部标记喂进 command_text 并打掉
+    # 行尾锚（file_context 同段那处即此坑的在册先例）。
+    # 结构性上限：Bot API 读不到任意评论历史，本腿只带"这条出自哪里"。
+    from .domains.chat_reply.ingest.message_context import (
+        telegram_topic_context_note as _telegram_topic_context_note,
+    )
+
+    topic_note = _telegram_topic_context_note(event, normalized_adapter)
+    if topic_note:
+        text = f"{text}\n{topic_note}".strip()
     is_tome = getattr(event, "is_tome", None)
     adapter_mentions_bot = bool(is_tome()) if callable(is_tome) else False
     # 点名判定：

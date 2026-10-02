@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -12,18 +13,217 @@ class NormalizedMessage:
     segments: list[dict[str, Any]] = field(default_factory=list)
     quoted_text: str = ""
     forwarded_text: str = ""
+    # 频道拼格专辑（席位 S18）：本条消息所属专辑的聚合形态；非专辑＝None。
+    # 一等字段而**不是**新增一种段 ``type``——理由见 ALBUM_MEMBER_SEGMENT_TYPES 注释。
+    album: AlbumSummary | None = None
 
 def _data(segment: dict[str, Any]) -> dict[str, Any]:
     value = segment.get("data")
     return value if isinstance(value, dict) else {}
 
-def _flatten(items: Any, *, depth: int = 0) -> tuple[list[dict[str, Any]], list[str], list[str], list[str]]:
+# ---------------------------------------------------------------------------
+# 频道拼格专辑（Telegram ``media_group_id``）——席位 S18，2026-10-02
+#
+# 平台事实（离线读适配器源码所得，非推测）：``nonebot-adapter-telegram`` 0.1.0b20
+# 把 ``media_group_id`` 挂在**事件**上（``telegram/event.py`` MessageEvent:140 /
+# ChannelPostEvent:289 一带），**段里没有**；一条 N 图拼格是 N 个独立 update、
+# N 个独立事件，每个事件只带 1 个媒体段。于是缺口是两层叠加：
+# ① 我方全包对 ``media_group_id`` 零命中（连读都没读）→ 每张图各自折成一句
+#    孤立的 ``[图片]``，文本面看不出"这三句其实是同一张专辑"；
+# ② Bot API 不宣告专辑总张数 → 单个事件永远数不出"这一共几张"。
+# 解法因此分两半：本件维护一枚按 ``(会话, 专辑号)`` 累计的**短窗计数桶**（治②，
+# 与 ``telegram_media._FILE_PATH_CACHE`` 同一枚范式——模块级 dict + TTL + 容量帽，
+# 不引第三方；摄取跑在线程池上，桶的读改写下到 dict 单步即够用，与先例同取舍），
+# 并让 ``_flatten`` 把**同一专辑的媒体标签折成一条**带计数的摘要（治①）。
+# 🔴 段面一张都不丢：每条媒体段照常留在 ``segments`` 里（就地盖章 ``data.
+# media_group_id`` / ``album_position`` / ``album_member_count``），所以富化腿
+# ``enrich_telegram_file_segments``、识图腿 ``vision_describe.extract_image_urls``
+# 与 ``_remember_session_images`` 吃到的仍是 N 张原图——**折叠只发生在文本面**。
+# 刻意不造 ``type="album"`` 这种新段形态：段类型的既有消费者（渲染、视觉、门禁
+# ``contains_visual_message_segments``）各按在册集合判定，凭空加一种形态等于让
+# N 处判据各表一次态，与"禁第二真身"同口径冲突；聚合结构改由
+# ``NormalizedMessage.album`` 承载，消费者要么读文本标签、要么读这个字段。
+# 措辞沿用既有标签族（``[图片]``/``[转发/聊天记录]``）的行首方括号形态，不破既有
+# 形态锁；新标记一律同批登记进 ``INTERNAL_MARKER_PATTERN``（台账 #67★"给判定行
+# 加字段必须同批补门票与消毒"），令引用/转发正文无法伪造专辑计数。
+# ---------------------------------------------------------------------------
+
+# 可作拼格成员的段类型。TG 的专辑只装 photo/video/document/audio 四类；
+# ``image`` 一并纳入是防适配器再归一（OneBot 形态），``animation`` 是 TG 动图。
+# ``document`` 与 ``file`` 两形都列：富化腿成功会把 document 段改成根入站认得的
+# ``file`` 段（``telegram_media._DOCUMENT_TARGET_SEGMENT_TYPE``），若只认 document
+# 就会在"富化在前、归一在后"的时序下漏聚合最后一张。
+ALBUM_MEMBER_SEGMENT_TYPES = frozenset(
+    {"photo", "image", "video", "animation", "document", "file"}
+)
+ALBUM_MEMBER_KIND_LABELS = {
+    "photo": "图",
+    "image": "图",
+    "video": "视频",
+    "animation": "动图",
+    "document": "文件",
+    "file": "文件",
+}
+# 计数桶 TTL：Telegram 拼格的 N 个 update 在同一批 getUpdates 里秒级到达，
+# 120s 是宽松上限；过期即当"这串专辑号不再活跃"，不留永久状态。
+ALBUM_BUCKET_TTL_SECONDS = 120.0
+ALBUM_BUCKET_CAP = 256
+# Telegram 官方拼格上限 10 张；累计值钉在此，防畸形重复投递把计数吹大。
+ALBUM_MAX_MEMBERS = 10
+_ALBUM_BUCKETS: dict[str, tuple[float, int]] = {}
+# 专辑号形状闸：真实 media_group_id 是平台生成的不透明短串（字母数字）。
+# 越形一律不当专辑处理——它会被拼进文本面标签，放进任意串等于让平台字段
+# 自己挑怎么被读（同「意象名词禁抄进代码」那类形状闸口径）。
+_ALBUM_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}")
+# 话题/评论区 id 形状闸：平台侧恒为正整数（adapter model.py message_thread_id）。
+# 非纯数字直接不带上，杜绝"thread id 里塞 ] 提前闭合标记"这条路。
+_TOPIC_ID_PATTERN = re.compile(r"\d{1,20}")
+
+
+@dataclass(frozen=True)
+class AlbumContext:
+    """本条消息所属拼格专辑的归一上下文（``None``＝本条不属于任何专辑）。
+
+    ``member_count``＝该 ``(会话, 专辑号)`` 桶**累计已见**张数（含本条），
+    不是平台宣告的总数（平台不宣告，见上）。
+    """
+
+    media_group_id: str
+    member_count: int
+
+
+@dataclass(frozen=True)
+class AlbumSummary:
+    """专辑聚合形态（随 ``NormalizedMessage.album`` 交给下游与 prompt）。"""
+
+    media_group_id: str
+    member_count: int
+    member_types: tuple[str, ...]
+
+
+def reset_telegram_album_state() -> None:
+    """清空计数桶（测试隔离用；生产靠 TTL 与容量帽自然淘汰）。"""
+    _ALBUM_BUCKETS.clear()
+
+
+def _album_group_of(data: dict[str, Any]) -> str:
+    return str(data.get("media_group_id") or "").strip()
+
+
+def _record_album_members(session_id: str, media_group_id: str, seen_here: int, now: float) -> int:
+    """累计本专辑已见张数并回写桶；返回累计值（含本条）。"""
+    key = f"{session_id}|{media_group_id}"
+    previous = _ALBUM_BUCKETS.get(key)
+    base = 0
+    if previous is not None and now - previous[0] <= ALBUM_BUCKET_TTL_SECONDS:
+        base = previous[1]
+    total = min(base + max(1, int(seen_here)), ALBUM_MAX_MEMBERS)
+    # 先 pop 再 set：让该键落到 dict 末尾，尾部＝最近 touched，
+    # 于是容量帽淘汰的是 dict 序意义上的最久未用键。
+    _ALBUM_BUCKETS.pop(key, None)
+    _ALBUM_BUCKETS[key] = (now, total)
+    while len(_ALBUM_BUCKETS) > ALBUM_BUCKET_CAP:
+        _ALBUM_BUCKETS.pop(next(iter(_ALBUM_BUCKETS)), None)
+    return total
+
+
+def telegram_album_context(
+    event: Any,
+    segments: list[dict[str, Any]] | None,
+    normalized_adapter: str,
+    *,
+    session_id: str = "",
+    now: float | None = None,
+) -> AlbumContext | None:
+    """TG 拼格专辑盖章 + 计数：读事件的 ``media_group_id``，就地标进媒体段。
+
+    三道结构性收窄（任一不过＝返回 None＝既有"逐张 ``[图片]``"行为逐字节不变）：
+    ① 仅 ``normalized_adapter == "telegram"``（QQ 路径零扰动的判据来源）；
+    ② 事件真带合法形状的 ``media_group_id``（Bot API 只在拼格成员上给这个字段）；
+    ③ 本条段列表里真有可作拼格成员的媒体段。
+    """
+    if (normalized_adapter or "").strip().lower() != "telegram":
+        return None
+    media_group_id = str(getattr(event, "media_group_id", "") or "").strip()
+    if not media_group_id or not _ALBUM_ID_PATTERN.fullmatch(media_group_id):
+        return None
+    members: list[dict[str, Any]] = []
+    for segment in segments or []:
+        if not isinstance(segment, dict):
+            continue
+        if str(segment.get("type", "")).strip().lower() not in ALBUM_MEMBER_SEGMENT_TYPES:
+            continue
+        data = segment.get("data")
+        if not isinstance(data, dict):
+            continue
+        members.append(data)
+    if not members:
+        return None
+    stamp = time.monotonic() if now is None else float(now)
+    total = _record_album_members(session_id, media_group_id, len(members), stamp)
+    # 累计值里本条之前已有多少，据此编位序（专辑内第几张），让下游能把
+    # "跨事件到达的 N 条" 串回同一张专辑。
+    base = max(0, total - len(members))
+    for offset, data in enumerate(members, start=1):
+        data["media_group_id"] = media_group_id
+        data["album_position"] = base + offset
+        data["album_member_count"] = total
+    return AlbumContext(media_group_id=media_group_id, member_count=total)
+
+
+def telegram_topic_context_note(event: Any, normalized_adapter: str) -> str:
+    """评论区/群话题上下文（``message_thread_id`` + ``is_topic_message`` 的消费者）。
+
+    现状定性（实测与源码核对）：这两个字段平台**会送**，而我方全树零消费者——
+    ``message_thread_id`` 只在摄取处读进 ``IncomingMessage.thread_id``
+    （``contracts/runtime.py`` 的 ``thread_id``），那个字段本身也没人读。
+    本函数给它一个真消费者：**复用 ``.thread_id`` 这一枚字段**（不新建第二套），
+    把"这条消息出自评论区/话题 #id"做成一条结构化说明文本，供下游与 prompt 用。
+
+    🔴 结构性上限（照实说明，不假称能读）：Telegram Bot API **不提供**任意
+    评论历史读取——``getChatHistory`` 一类方法对 Bot 不可用，评论区消息只能
+    作为独立 update 逐条到达。所以本腿是"知道自己在哪"，不是"读完整串评论"；
+    真要读整串评论，需要 bot 本身是该讨论组的成员且评论逐条流经摄取链，
+    属平台侧限制，改配置解决不了。
+    """
+    if (normalized_adapter or "").strip().lower() != "telegram":
+        return ""
+    thread_id = str(getattr(event, "message_thread_id", "") or "").strip()
+    if not _TOPIC_ID_PATTERN.fullmatch(thread_id):
+        return ""
+    if getattr(event, "is_topic_message", None) is True:
+        return f"[话题 群话题 #{thread_id}]（本条来自群话题，非整串评论历史）"
+    return f"[评论区 话题 #{thread_id}]（本条来自频道文章的评论区，非整串评论历史）"
+
+
+def _album_label_text(member_kinds: list[str], total: int) -> str:
+    """专辑文本面摘要：**一条**带成员计数的标签（同族多图时按类型分项）。"""
+    counts: dict[str, int] = {}
+    for kind in member_kinds:
+        name = ALBUM_MEMBER_KIND_LABELS.get(kind, "媒体")
+        counts[name] = counts.get(name, 0) + 1
+    if list(counts) == ["图"]:
+        return f"[相册 共{total}图]"
+    detail = "·".join(f"{count}{name}" for name, count in counts.items())
+    return f"[相册 共{total}项（{detail}）]"
+
+
+def _flatten(
+    items: Any,
+    *,
+    depth: int = 0,
+    album: AlbumContext | None = None,
+) -> tuple[list[dict[str, Any]], list[str], list[str], list[str]]:
     if depth > 5 or not isinstance(items, list):
         return [], [], [], []
     normalized: list[dict[str, Any]] = []
     texts: list[str] = []
     quotes: list[str] = []
     forwards: list[str] = []
+    # 专辑标签折叠游标：首张成员"本该放标签"的位置与已见成员类型。
+    # 计数不下钻进转发子层（转发记录里的那串图是另一码事，不混同一张专辑）。
+    album_text_index: int | None = None
+    album_member_kinds: list[str] = []
     for raw in items:
         if not isinstance(raw, dict):
             continue
@@ -76,6 +276,18 @@ def _flatten(items: Any, *, depth: int = 0) -> tuple[list[dict[str, Any]], list[
             # 跨适配器归一：OneBot 的 image/record/video vs Telegram 的
             # photo/sticker/animation/video_note/voice/audio 都要有可读标签，
             # 否则纯媒体消息在提示词里连"有张图/有段语音"都体现不出来。
+            if (
+                album is not None
+                and kind in ALBUM_MEMBER_SEGMENT_TYPES
+                and _album_group_of(data) == album.media_group_id
+            ):
+                # 拼格成员：段**照旧留下**（富化/识图腿一张都不能少），
+                # 只是不再逐张发标签——改在循环末尾发一条带计数的专辑摘要。
+                if album_text_index is None:
+                    album_text_index = len(texts)
+                album_member_kinds.append(kind)
+                normalized.append({"type": kind, "data": data})
+                continue
             label = {
                 "image": "图片",
                 "photo": "图片",
@@ -92,11 +304,39 @@ def _flatten(items: Any, *, depth: int = 0) -> tuple[list[dict[str, Any]], list[
             normalized.append({"type": kind, "data": data})
         elif kind:
             normalized.append({"type": kind, "data": data})
+    if album_member_kinds and album_text_index is not None and album is not None:
+        total = max(album.member_count, len(album_member_kinds))
+        texts.insert(album_text_index, _album_label_text(album_member_kinds, total))
     return normalized, texts, quotes, forwards
 
-def normalize_message_segments(raw_segments: list[dict[str, Any]] | None) -> NormalizedMessage:
-    segments, texts, quotes, forwards = _flatten(raw_segments or [])
-    return NormalizedMessage(" ".join(part for part in texts if part).strip(), segments, "\n".join(quotes), "\n".join(forwards))
+def _album_summary(
+    segments: list[dict[str, Any]], album: AlbumContext | None
+) -> AlbumSummary | None:
+    """段面 → 聚合形态（与文本面标签同一枚来源，不另起一套判据）。"""
+    if album is None:
+        return None
+    member_types = tuple(
+        str(segment.get("type", "")).strip().lower()
+        for segment in segments
+        if str(segment.get("type", "")).strip().lower() in ALBUM_MEMBER_SEGMENT_TYPES
+        and _album_group_of(_data(segment)) == album.media_group_id
+    )
+    if not member_types:
+        return None
+    return AlbumSummary(
+        media_group_id=album.media_group_id,
+        member_count=max(album.member_count, len(member_types)),
+        member_types=member_types,
+    )
+
+
+def normalize_message_segments(
+    raw_segments: list[dict[str, Any]] | None,
+    *,
+    album: AlbumContext | None = None,
+) -> NormalizedMessage:
+    segments, texts, quotes, forwards = _flatten(raw_segments or [], album=album)
+    return NormalizedMessage(" ".join(part for part in texts if part).strip(), segments, "\n".join(quotes), "\n".join(forwards), _album_summary(segments, album))
 
 
 # --------------------------------------------------------------------------
@@ -138,13 +378,16 @@ REPLY_CHAIN_MEDIA_TOTAL_BYTES = 8_000_000
 # 覆盖运行时真实产出/易被伪造的全部包裹标记：
 #   [引用回复 层级N(+发送者名)] / [引用内容] / [转发/聊天记录]
 #   [UNTRUSTED_USER_TEXT] / [TRUSTED_SYSTEM]
+#   [相册 共N图/项] / [话题 群话题 #id] / [评论区 话题 #id]（S18 新增，同批登记）
 # 及同族变体（引用消息/转发消息/转发的消息）。标记名到闭括号之间的任意尾巴
 # （如 `` 层级1 澜汐``）一并命中：format_reply_chain 产出的开标记就带发送者名，
 # 旧正则 ``(?: 层级\d+)?\]`` 漏掉该形态，被引用正文可伪造真实开标记提前闭合。
 # 刻意不收录裸「引用」「转发」（无后缀复合词）：正常文本含「引用」二字不误剥。
+# 🔴 台账 #67★ 在册令：给判定行/文本面加新标记必须**同批**把门票补进这里——
+# 专辑标签带计数，不登记就等于让引用/转发正文能自己写"[相册 共9图]"冒充拼图规模。
 INTERNAL_MARKER_PATTERN = re.compile(
     r"\[(/?)(引用回复|引用内容|引用消息|转发消息|转发的消息|转发/聊天记录"
-    r"|UNTRUSTED_USER_TEXT|TRUSTED_SYSTEM)[^\]]*\]",
+    r"|UNTRUSTED_USER_TEXT|TRUSTED_SYSTEM|相册|话题|评论区)[^\]]*\]",
     re.IGNORECASE,
 )
 
