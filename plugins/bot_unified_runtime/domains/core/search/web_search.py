@@ -1090,6 +1090,64 @@ def gate_chain_hits(hits: list[WebSearchHit], query: str) -> list[WebSearchHit]:
     return _filter_relevant(filter_search_hits(hits), query)
 
 
+# ---------------------------------------------------------------------------
+# 本轮短路（P14，in-request chain short-circuit）
+#
+# 成因：检索腿把**同一枚问题**铺成至多 7 条装饰变体、并发（4 worker）发给**同一枚**
+# 链实例（`chat.py:_search_queries_concurrently`，链在装配期建好、跨请求复用），
+# 而链每收到一条查询都从头走一遍 provider 表——没有任何早停。实测遥测里空手而归
+# 约 1,386 秒、其中 90% 是 `empty_results`（引擎今天就是死的：DDG 反爬页 / key 家
+# 配额耗尽 / 网络故障 ⇒ 原始返回 0 条），这种一家问满 7 次纯属无用功。既有的
+# 600s 冷却（`_note_ddg_challenge`）只压 `logger.warning` 不压重试；600s TTL
+# （`_CACHE_TTL_SECONDS`）只缓存**非空**结果，空手从不进账。
+#
+# 判据只有一条：**同一次在飞检索批**内、**同一枚问题基形**下，某家供应商已经
+# 空过手（原始 0 条，含抛异常）⇒ 本轮不再问它。三条自律：
+#   ① **只在批内**：批的边界＝链上在飞遍历数归零，归零即整本作废（`_round_end`），
+#      因此结构上长不出第二份跨请求冷却/熔断账——那本账的判据仍在原处，本格一字未动；
+#   ② 只认**原始空手**：`gate_chain_hits` 把我方查询判成无关的那一批**不记空**——
+#      空的是这条查询不是这家，下一轮仍要问它（反证锁＝腿 2）；
+#   ③ 基形不同不共享账：并发跑着两个不同问题时各记各的，绝不互相污染（腿 3）。
+# 本格只砍无用功：天花板/超时/重试次数/预算常量一寸未动，未新增配置键。
+# ---------------------------------------------------------------------------
+
+#: 一枚批里最多记几枚问题基形；满了**不再记新账**（fail-open＝照旧问，绝不因记账把内存撑爆）。
+_ROUND_MAX_KEYS = 8
+
+
+class _RequestRound:
+    """一次在飞检索批的空手账：`问题基形 -> 本轮已空过手的供应商下标`。"""
+
+    def __init__(self) -> None:
+        self.empty_by_key: dict[str, set[int]] = {}
+
+
+@dataclass(frozen=True)
+class _RoundScope:
+    """一条链遍历握着的批内句柄（批收兵后由 `_round_end` 释放，不当长期引用用）。"""
+
+    bucket: _RequestRound
+    base_key: str
+
+
+def _question_base_key(query: str) -> str:
+    """本轮的「问题基形」：查询串剥掉检索装饰后剩下的实体 token（顺序敏感）。
+
+    装饰的真身＝检索腿追加的那批词与年份纯数字 token，与本文件相关性闸门用的
+    是**同一张表**（`_QUERY_STOP_TOKENS` 里逐枚在册：最新/消息/官方/发布/公告/
+    来源/数据/维基百科/萌娘百科/百科/更新/内容/进展/公布/参数/…），这里不新建
+    第二套词表。同一枚问题的 5-7 条变体因此塌缩到同一枚 key——短路靠它认「同一轮」。
+    剥完为空（整句都是装饰）⇒ 返回空串＝这一遍历**不记账也不短路**（fail-open）。
+    """
+    parts: list[str] = []
+    for token in _query_tokens(query):
+        folded = token.casefold()
+        if folded.isdigit() or folded in _QUERY_STOP_TOKENS:
+            continue
+        parts.append(folded)
+    return "|".join(parts)
+
+
 class ChainedWebSearchProvider:
     """按顺序尝试多个提供器，任一命中即返回；记录命中的提供器名。
 
@@ -1128,6 +1186,14 @@ class ChainedWebSearchProvider:
         self._window_resolver = window_resolver
         self._search_cache: dict[tuple[str, int], tuple[float, list[WebSearchHit]]] = {}
         self._search_cache_lock = threading.Lock()
+        # P14b 接线：本轮空手账的**唯一**宿主（判据见上方「本轮短路」段）。锁沿用本文件
+        # 既有形态＝per-instance `threading.Lock` 护 per-instance dict（与上面
+        # `_search_cache_lock` 同把同款，不自造第三套）——检索腿把同一问题铺成多变体、
+        # **4 worker 并发打这一枚链实例**（`chat.py:_search_queries_concurrently`），
+        # 所以「取桶 / 记空 / 查空 / 在飞计数」全在同一把锁里做，桶对象不外漏。
+        self._round_bucket: _RequestRound = _RequestRound()
+        self._round_inflight = 0
+        self._round_lock = threading.Lock()
 
     def _extra_body_for(self, provider: object, query: str) -> dict[str, str] | None:
         """本次请求要不要带时效窗、带多少——三重闸，任一不满足即 None（现状）。
@@ -1205,24 +1271,92 @@ class ChainedWebSearchProvider:
             timeout_seconds=self.timeout_seconds,
             max_chars=max_chars,
         )
+    # --- 本轮短路：批内空手账的三个动作（判据①②③的执法点）-----------------------
+
+    def _round_begin(self, base_key: str) -> _RoundScope:
+        """进遍历取本轮句柄：在飞数从 0 起跳＝新一批，账本当场换新（旧本就此作废）。"""
+        with self._round_lock:
+            if self._round_inflight <= 0:
+                self._round_bucket = _RequestRound()
+            self._round_inflight += 1
+            return _RoundScope(bucket=self._round_bucket, base_key=base_key)
+
+    def _round_end(self, scope: _RoundScope) -> None:
+        """出遍历：在飞数归零＝这批收兵，整本作废。
+
+        这就是本格的天花板——账只活在「链上有遍历在飞」这段时间，链空闲时盘上不留
+        任何跨请求状态，结构上长不出第二份 600s 冷却/熔断（那本账的判据在原处，
+        `_note_ddg_challenge` 与 `_CACHE_TTL_SECONDS` 一字未动）。
+        """
+        del scope
+        with self._round_lock:
+            self._round_inflight = max(0, self._round_inflight - 1)
+            if self._round_inflight == 0:
+                self._round_bucket = _RequestRound()
+
+    def _round_is_empty(self, scope: _RoundScope, index: int) -> bool:
+        """这家在**同基形**下本轮已经空过手了吗。
+
+        两条 fail-open：基形为空（整句都是检索装饰）⇒ 不短路；句柄握的桶已不是当前
+        桶（批已收兵、新批开张）⇒ 不短路。provider 表顺序、超时、重试一寸不改，
+        这里只决定「这一家这一轮问不问」。
+        """
+        if not scope.base_key:
+            return False
+        with self._round_lock:
+            if scope.bucket is not self._round_bucket:
+                return False
+            return index in scope.bucket.empty_by_key.get(scope.base_key, ())
+
+    def _round_note_empty(self, scope: _RoundScope, index: int) -> None:
+        """记「这家这一轮空过手」。**只准在原始返回 0 条 / 抛异常两处调用**（判据②）：
+
+        被 `gate_chain_hits` 判无关而丢掉的那批**不记空**——空的是这条查询不是这家，
+        下一轮照问（反证锁＝`tests/test_web_search_round_short_circuit_p14b.py` 腿 2）。
+        账本记满 `_ROUND_MAX_KEYS` 枚基形后**不再记新账**（fail-open＝照旧问）。
+        """
+        if not scope.base_key:
+            return
+        with self._round_lock:
+            if scope.bucket is not self._round_bucket:
+                return
+            ledger = scope.bucket.empty_by_key
+            if scope.base_key not in ledger and len(ledger) >= _ROUND_MAX_KEYS:
+                return
+            ledger.setdefault(scope.base_key, set()).add(index)
+
     def search(self, query: str, *, max_results: int = 3) -> list[WebSearchHit]:
         cache_key = (query, max_results)
         cached = self._cache_get(cache_key)
         if cached is not None:
             return cached
-        for provider in self.providers:
-            extra_body = self._extra_body_for(provider, query)
-            try:
-                hits = self._invoke_search(provider, query, max_results, extra_body)
-            except Exception:  # noqa: BLE001 - 单提供器失败回退下一提供器。
-                hits = []
-            filtered = gate_chain_hits(hits, query) if hits else []
-            if filtered:
-                # 只有"过闸后仍非空"才算这家命中：全被相关性闸门判无关时继续回退下一家，
-                # 而不是把空结果当成功返回（旧写法 if hits 会在无关结果上就地收兵）。
-                self.last_provider_name = str(getattr(provider, "name", "unknown"))
-                self._cache_put(cache_key, filtered)
-                return filtered
+        # P14b 接线点①：按问题基形取本轮句柄（同一枚问题的 5-7 条变体塌缩到同一本账）。
+        scope = self._round_begin(_question_base_key(query))
+        try:
+            for index, provider in enumerate(self.providers):
+                # 接线点②：试之前——同基形下这家本轮已空过手就跳过。
+                if self._round_is_empty(scope, index):
+                    continue
+                extra_body = self._extra_body_for(provider, query)
+                try:
+                    hits = self._invoke_search(provider, query, max_results, extra_body)
+                except Exception:  # noqa: BLE001 - 单提供器失败回退下一提供器。
+                    # 接线点③（异常形态＝空手）：抛异常记账。
+                    self._round_note_empty(scope, index)
+                    hits = []
+                else:
+                    # 接线点③（原始 0 条形态＝空手）：下面被闸门丢掉的那批**不记空**。
+                    if not hits:
+                        self._round_note_empty(scope, index)
+                filtered = gate_chain_hits(hits, query) if hits else []
+                if filtered:
+                    # 只有"过闸后仍非空"才算这家命中：全被相关性闸门判无关时继续回退下一家，
+                    # 而不是把空结果当成功返回（旧写法 if hits 会在无关结果上就地收兵）。
+                    self.last_provider_name = str(getattr(provider, "name", "unknown"))
+                    self._cache_put(cache_key, filtered)
+                    return filtered
+        finally:
+            self._round_end(scope)
         return []
 
     async def search_async(
