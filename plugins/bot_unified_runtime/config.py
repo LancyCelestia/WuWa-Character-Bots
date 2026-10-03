@@ -367,7 +367,9 @@ class Config(BaseModel):
     # 总位移上限（窗形=滚动 24h，旧「本地自然日」窗作废）、熔断事件数
     # （护栏，不可被设定架空）。
     bot_affinity_negative_event_cap_z: float = 0.10
-    bot_affinity_daily_move_cap_z: float = 0.12
+    # 日额度缺省 2026-10-03 起 0.12→0.04（用户裁定消除双源：v8 时代值原走 .env
+    # 显式覆盖，现缺省对齐——生产 .env 亦显式 0.04，行为零变化；.env.example 同值）。
+    bot_affinity_daily_move_cap_z: float = 0.04
     bot_affinity_fuse_daily_events: int = 25
     bot_affinity_repair_gain: float = 1.4
     # tanh 饱和域硬边界（score 永不触 ±100）。
@@ -375,6 +377,23 @@ class Config(BaseModel):
     # 质量分五子权重与衰减时间常数：JSON 文本，空/非法=按代码缺省并点名一次。
     bot_affinity_quality_weights: str = ""
     bot_affinity_decay_tau_days: str = ""
+    # ---- 好感度 v8（§C-§G，2026-10-02 全量修复批登记；此前 resolve_v8_settings
+    # 纯 getattr+env 现读、九键零登记＝线上死键风险）。优先序 v8>v7>v5/v6；
+    # 日额度共享键 bot_affinity_daily_move_cap_z 的 v8 时代值 0.04 走 .env（§C.7）。----
+    bot_affinity_v8_enabled: bool = False
+    # κ：单轮冲量位移上限（展示最坏 2.0 分/轮，§C.2）。
+    bot_affinity_v8_impulse_cap_z: float = 0.02
+    # ambient 质量基线去心与 EMA 半衰（§C.2 之 φ_q）。
+    bot_affinity_v8_ambient_centering: bool = True
+    bot_affinity_v8_ambient_halflife_days: float = 28.0
+    # 善意底保护带（§C.4）：新人端近全谱、老关系最多回落峰值减带；饱和天数。
+    bot_affinity_goodwill_band_min: float = 2.60
+    bot_affinity_goodwill_band_max: float = 0.55
+    bot_affinity_goodwill_band_saturate_days: float = 365.0
+    # 档内 λ 混合边缘（§C.5.1：λ∈[edge,1−edge] 单档原句）。
+    bot_affinity_v8_tier_blend_band: float = 0.25
+    # 六子冲量权重 JSON 文本，空串=按代码缺省（Σ|w|≠1 会点名并整体归一）。
+    bot_affinity_v8_impulse_weights: str = ""
     bot_history_enabled: bool = False
     bot_history_db_path: str = ""
     bot_history_max_turns: int = 6
@@ -1624,6 +1643,10 @@ class Config(BaseModel):
     bot_files_write_daily_create: int = 60
     bot_files_write_daily_replace: int = 120
     bot_files_read_confined_max_bytes: int = 8 * 1024 * 1024
+    # 落盘点寿命清扫（incoming/ 与生成目录）：TTL 天数；≤0＝清扫关闭（席6 全量
+    # 修复批 2026-10-02）。重启形键，不进热改面（C-09 形态，与上方六键同伍）；
+    # 消费点唯一＝restricted_runner.sweep_ttl_days_from_config。
+    bot_files_incoming_ttl_days: float = 7.0
     bot_reply_default_context_budget: int = 2048
     bot_reply_support_context_budget: int = 2560
     bot_reply_deep_help_context_budget: int = 3072
