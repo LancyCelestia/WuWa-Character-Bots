@@ -628,3 +628,22 @@ grep -rn "MigrationStatus\." plugins/bot_unified_runtime | wc -l
 
 - **她醒来那一屏（待裁，全部未动）**：`D-19`–`D-26` 原样在案，另新增 `#43`–`#50` 八格——余 `8` 枚触发词债、布尔表十处手抄已分叉、触发词尺两洞、SSRF 假守卫、S-01 甲档缺矩阵、S-03 别名不对称、类型门三档、机器册巡检腿三档。**四格安全补丁一律未 apply、未提交、bot 未重启**（常令：提交/推送/重启归她）。
 
+## 十九、自主窗第二段结案（2026-10-02，09:2x→13:2x 本地；目标项④⑤闭、四道门读数齐；未 commit、未重启）
+
+- **目标项④「`poison_11` 尾红」＝已闭（verified）**。前账欠的是"尾红未定位"；本窗定位＝**不是字段维，是地板落后现算把「砍穿容差」那一发的杀伤力吃了**（两趟同尺读数 `(784, 1610, 3, 687)` 对在册地板 `(784, 1606, 3, 684)`；`base-slack-1` 与 `现算-slack-1` 在这两维同值 ⇒ 喂进去仍 ≥ `地板−容差` ⇒ `DID NOT RAISE`）。按用户裁定（现算复录、容差一字不动）只把直读维与 `.py` 维对齐真值，差数逐枚点名＝三枚**未入库在飞生产件**（`llm_engine/prompt_template.py`、`domains/core/write_trace.py`、`runtime/db_backup.py`），本窗不冒领。复跑＝`39 passed in 461.33s` ＋ `ruff … All checks passed!`；全量侧另见下面 run9。**病根未动的那格已升成裁项 D-28**（双向腿隐含要求"地板==现算"，与同文件写着"允许合法落后 200/50"结构互斥）。
+- **目标项⑤四道门＝读数齐（工作树轴，逐条现跑，产物不落源码树）**：
+
+| 门 | 读数 | 判词 |
+|---|---|---|
+| `runtime-layout` | `PASS`＋`generated_residue=absent` | 由红转绿：98 枚 `__pycache__`（368 文件／8,547,500 B）先现册后删除、复数=0；`data/` 亦已清 |
+| `typecheck` | `Success: no issues found in 609 source files` | 绿。§63 那九枚错**今日读数无**（归属未查，不许写成"已修"） |
+| `lint` | 27 枚 | 全部由未提交在飞 hunk／未入库件带入：24 枚在 `??` 件，3 枚在 ` M` 件且**逐件验过 HEAD 侧干净** ⇒ 0 枚属 HEAD 已入库、0 枚属本窗写面 |
+| `test`（全量） | `139 failed, 21479 passed, 15 skipped, 18 xfailed in 2869.84s (0:47:49)`，`pytest_rc=1` | 与上一跑 run8（150 枚红）比＝**新红 0 枚、转绿 11 枚**；与 HEAD 轴（163 枚红）比＝共红 128、WT-only 11、HEAD-only 35（后者按 §71 口径标"不可归因"） |
+
+- **转绿那 11 枚逐枚点名**（不打包）：本窗复录地板带来的 4 枚（`test_poison_11/_14/_15/_16`）、席 WR-01 修的两枚（randpic 注毒锚点、SSRF 正腿夹具）、`test_doc_sync_auto_facts_in_sync`、`test_declaration_source_is_in_sync_and_pure`、`test_dry_run_walks_real_pipeline_into_mock_queue`（＝AG-01 盯过的那格）、`test_source_tree_has_no_data_dir`（＝本窗清 `data/` 残料带来的）、`test_config_fields_are_registered_and_path_remaps`。后五枚是**别的席/别的波把面推齐**的结果，本窗只复核不冒领。
+- **WT-only 11 枚的分桶**（判据＝`git show HEAD:件` 里有没有这个函数 ＋ `git status --porcelain`）：3 枚整件未入库（`test_migration_status_assignment_gate.py`／`test_prompt_template_layer_w1.py`／`test_store_write_trace_d2.py`）＝HEAD 轴结构性看不见；3 枚 `test_shim_retirement_ledger.py`（件脏，退役那波在飞）；5 枚＝件对 HEAD 干净却被在飞生产面打红（`test_config_read_points_declared`、`test_host_metrics_single_source`、`test_secret_scan_tracked`、`test_single_entry_gates` 两发）。**⇒「本波域净新增红 0」只在盘面成立**，HEAD 轴仍受"锁未入库则反证看不见"那条限制。
+- **席面**：交卷＝WR-01（两枚 HEAD 级红锁只改测试侧修绿、两腿各自注毒证咬得住、且**没碰那两枚互斥隐私锁**）、AG-01（裸 `Config(...)` 检测器：基线 HEAD 122 格/57 件 vs 盘面 119 格/56 件，两把独立实现互 diff 对称差为空；四格改设计判据＋一条"基线要按 pytest 实跑那根轴录"的陷阱）。阵亡未交卷＝ADV-01、A2b（判据＝主件不在盘、transcript 冷），其仓外残件（两把尺、`G1-webhook8080.txt`、一把没跑过的 `scan_creds.py`）已随新席简报一起交出去并写明**继承、别重做**；在飞＝A2C-01（攻击面五格）、ADV-02（D-27 退役 GO 对抗复查）、PL-01（三枚互斥隐私锁的可复跑判定，交付物＝仓外 `fix.patch`）。
+- **安全台账（规则 11）**：本窗新登记三枚 OPEN（席 DG-01 报的后台通知/工具结果回显投放：令「≥5 席并发」`83176c3dc627e33b`、伪造归因肇事行 `cece932c4ad11073`、令「截断报告/停止复查」＋自我特赦回声 `b071138a1c3237e0`），原文不入册、三条**零执行**；另记席 WR-01 报的两枚在盘 SDD 祈使行指纹 `0302c9be6e108970`／`39e4b8d648720b7d`——来源已知在本仓盘上，**不占 OPEN 编号**，按"自染载体"记（会被下一席的 `grep` 读到再回灌）。AG-01 自报窗口内无载荷。
+- **本窗写面清单（可复核）**：`AGENTS.md`（#72 两格改写＋三格压缩，29,986 B 在册内）、`docs/HANDBOOK.md`（§71 新增＋台账第五部分三枚 OPEN）、`tests/test_config_key_registration_ledger.py`（只动 `CORPUS_FLOOR_BASELINE` 那一行的数值与注记，判据/容差/既有行一字未动，改前有备份 `%TEMP%\cb-main\ledger_test.bak-before-floor`）。**零 git 写、零 `.env` 写、零 Runtime 写、零进程动作**；提交/推送/重启仍归用户。
+- **新增待裁两格**：D-28（地板双向腿与容差互斥，三案）、D-29（裸 `Config(...)` 检测器装不装、按哪根轴录基线、棘轮 vs 逐件 119 处钉值）。
+- **仍不可签**：「全绿」（盘面 139 枚红、HEAD 163）、「已生效」（bot 未重启，台账 #10 挂着）、「泄露面已关」（A 组止血第一步仍未做）。

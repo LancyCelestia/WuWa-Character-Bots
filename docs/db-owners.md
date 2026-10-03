@@ -39,7 +39,7 @@
 | `data/persona_quirks.sqlite3` | `BOT_QUIRKS_DB_PATH` | `domains/chat_reply/character/quirks.py` | `CREATE TABLE persona_quirks` | 怪癖属学习数据，禁随意删 |
 | `data/reflection.sqlite3` | `BOT_REFLECTION_DB_PATH` | `domains/chat_reply/character/reflection.py` | `CREATE TABLE reflection_facts / reflection_digests`（含列迁移） | 反思库属学习数据，禁随意删 |
 | `data/session_identity.sqlite3` | `BOT_SESSION_IDENTITY_DB_PATH` | `domains/chat_reply/character/session_identity.py` | `CREATE TABLE session_identity`（含列迁移） | 会话身份可再生 |
-| `data/addressing_preferences.sqlite3` | `BOT_ADDRESSING_PREFERENCES_DB_PATH` | `domains/chat_reply/character/addressing.py`（`AddressingPreferenceStore`） | `CREATE TABLE addressing_preferences`（主键 `session_type+session_id+sender_id`；WAL） | 用户显式设置的称谓/性别偏好；清理=按行删（清行后回退推断），不整库删 |
+| `data/addressing_preferences.sqlite3` | `BOT_ADDRESSING_PREFERENCES_DB_PATH` | `domains/chat_reply/character/addressing.py`（`AddressingPreferenceStore`） | `CREATE TABLE addressing_preferences`（主键 `session_type+session_id+sender_id`；WAL；2026-10-03 §76 `ALTER`-if-missing 增两列 `intimate_pin_tier`／`intimate_explicit_at`＝"本人显式开过亲密档"的标记与墙钟时刻，**判据不住本库**（住 `runtime/content_route.py`），本库只当带时间戳的格子；群侧钉不入库） | 用户显式设置的称谓/性别偏好＋本人显式开档标记；清理=按行删（清行后回退推断与"没显式开过"），不整库删 |
 | `data/reminders.sqlite3` | `BOT_REMINDER_DB_PATH` | `character/reminders.py` | `CREATE TABLE reminders` | 用户取消提醒即删对应行；不整库删 |
 | `data/user_affinity.sqlite3` | `BOT_AFFINITY_DB_PATH` | `character/affinity.py` | `CREATE TABLE user_affinity / group_affinity`（含 `ALTER TABLE` 增列迁移；G-11 批新增 `impression_tag_times` JSON 列：标签→最近打标时间，印象标签淡出判据） | 管理员可按 config 注释直接改值；禁整库删 |
 | `data/reply_policy.sqlite3` | `BOT_REPLY_POLICY_DB_PATH` | `domains/chat_reply/character/reply_policy.py` | `CREATE TABLE IF NOT EXISTS user_reply_policy`（`reply_policy.py:_SCHEMA_STATEMENTS`；per-sender 永久性回复策略：长度档 + 内容指令 + 来源/证据/时间戳。同库另有 `person_imagery_usage`＝按人意象族用量账，详见本清单 §二 同路径行） | 用户本人一句明示即覆盖旧值（含反悔回长文）；清空即回到全局档，**不做批量删除**（策略是用户的长期偏好，非缓存） |
@@ -55,6 +55,12 @@
 | `data/outbound_gate.sqlite3` | `BOT_OUTBOUND_GATE_DB_PATH` | `domains/transport/sender/outbound_gate.py` | `CREATE TABLE IF NOT EXISTS outbound_gate_sends`（工作区动作发送幂等回执 / `request_digest`） | 出站动作幂等门，**运行中禁碰**；停机后可清（丢短窗去重回执，重放由上游 request_id 幂等兜底） |
 | `data/schedules_v21.sqlite3` | `BOT_SCHEDULE_DB_PATH` | `domains/schedule/service/schedule_store.py`（消费方 `schedule_service.py`，经 `bot_schedule_db_path`+`runtime_path` 解析） | `CREATE TABLE IF NOT EXISTS schedule_plans / schedule_occurrences / schedule_send_log / schedule_quiet_exceptions`（`schedule_store.py`，ensure_schema 幂等） | 日程/定时任务台账；plan/occurrence 按业务生命周期更新、send_log 审计留痕；活动调度数据禁整库删 |
 | `data/reply_policy.sqlite3`（生产已生成，2026-09-28 起在册） | `BOT_REPLY_POLICY_DB_PATH` | `domains/chat_reply/character/reply_policy.py`（`ReplyPolicyStore`；装配口 `shared_reply_policy_store(config)`，总开关 `BOT_REPLY_POLICY_ENABLED`） | `CREATE TABLE IF NOT EXISTS user_reply_policy` + `person_imagery_usage`（前者：主键 `person_key`＝「人」而非会话，键一律经 `domains/core/session_keys` 构造；`length_mode / content_directives / note / source / evidence / updated_at`，后三列走 ALTER-if-missing 迁移。后者＝意象族用量账，`PRIMARY KEY (person_key, family)`、只存最近一次用时，供「换意象」按人轮换避重；同库同连接同锁，**不新增库路径键**。均单连接 + 锁 + WAL） | 用户明示即覆盖同一行（反悔走同一条写腿），撤销＝按行删，且**同键的意象用量行一起清**（留旧账＝下次设上接着轮换，撤得不干净）；`evidence` 是不可信文本，入库前已过 `security/injection.py::neutralize_internal_markers` 与 `render/plain_text.py::redact_local_secrets` 两道咽喉（禁第二份消毒器）；永久性用户策略属活动数据，禁手工删整库，清理先停进程（WAL 伴生 `-wal/-shm`）；意象名册不住本库（住 `personas/<人格档>/imagery_families.txt`，跟人格走） |
+| `data/control_plane_config.sqlite3`（X2 波补登：控制面配置态库，`_db` 族） | `BOT_CONTROL_PLANE_CONFIG_DB` | `control_plane/config_store.py`（`SQLiteConfigStateStore`） | `CREATE TABLE config_instances / config_overrides / config_audit`（config_store.py） | 控制面平台管理库（受 `bot_control_plane_enabled` 门，缺省关，与生产插件启停无关，见 AGENTS 控制面行）；盘上活跃即平台曾开；随平台生命周期治理 |
+| `data/control_plane_features.sqlite3`（X2 波补登） | `BOT_CONTROL_PLANE_FEATURES_DB` | `control_plane/sqlite_features.py`（`SQLiteFeatureStateStore`） | `CREATE TABLE feature_meta / feature_states / feature_audit`（sqlite_features.py） | 同上；特性开关状态库。**enabled 值变化 ≠ 生产插件已停用**，勿据本库存在性反推生产态 |
+| `data/control_plane_actions.sqlite3`（X2 波补登） | `BOT_CONTROL_PLANE_ACTIONS_DB` | `control_plane/actions.py`（`ControlActionService`；消费口 `control_plane/_app.py`） | `CREATE TABLE cp_action_runs / cp_action_confirmations / cp_action_audit`（actions.py） | 工作区动作执行审计链，归档优于删除；清理先停进程（伴生文件） |
+| `data/control_plane_platform.sqlite3`（X2 波补登：特性关时盘上无文件） | `BOT_CONTROL_PLANE_PLATFORM_DB` | `control_plane/platform.py`（`PlatformStore`） | `CREATE TABLE resources / resource_versions / traces / usage / model_calls / jobs / logs`（platform.py） | 平台资源与用量台账；`check_same_thread=False` 长连接，未激活不落盘 |
+| `data/control_plane_events.sqlite3`（X2 波补登：特性关时盘上无文件） | `BOT_CONTROL_PLANE_EVENTS_DB` | `control_plane/events.py`（`RuntimeEventService`，表 `runtime_log_events`） | `CREATE TABLE runtime_log_events / runtime_event_watermark`（events.py，WAL 先于 DDL） | 运行事件日志，与「事件」语义另两库并存属已知分裂（见 `docs/design/audit-20260920-unify-U13-db.md` D1-归属分裂-2），收口归控制面席 |
+
 
 ## 二、代码内默认路径的库（无独立配置键）
 
@@ -76,7 +82,34 @@
 | `data/worldbook_versions.sqlite3`（V2.1 S7 v21r2-V1 席，待生成：零生产接线，装配属后续席位；`domains/chat_reply/character/worldbook_service.py` `build_worldbook_service` 经 `runtime_path` 解析，暂无独立配置键） | （无；装配席位登记） | `domains/chat_reply/character/worldbook_service.py`（`WorldbookService`，复用 persona_service `PersonaService` 内核 prefix=worldbook；发布权限 admin+，发布前校验悬空/循环引用+Token 预算） | 同上四表（worldbook_versions/worldbook_drafts/worldbook_state/worldbook_quarantine，worldbook_service.py 经共享 `VersionedResourceStore.ensure_schema` 幂等建表；WAL+busy_timeout 以建表真身现算为准） | 同 persona_*：正式版本与 quarantine 证据禁删；drafts 可清 |
 | `data/control_plane_workspaces.sqlite3`（V2.1 S9 席补登：控制面 Workspace 服务库，路径=config `bot_control_plane_workspaces_db` + `runtime_path` 重映射；表由 `control_plane/workspaces.py` `WorkspaceService.__init__` 幂等建） | `BOT_CONTROL_PLANE_WORKSPACES_DB` | `control_plane/workspaces.py`（`WorkspaceService`；消费方 `control_plane/api/workspaces.py` + `_app.py` lifespan prune） | `CREATE TABLE IF NOT EXISTS cp_workspaces`（id 主键/owner/version/expires_at/data JSON）+ `cp_workspace_audit`（自增 sequence，request_id+operation+version 审计链）+ `cp_workspace_sends`（(workspace_id,idem) 主键幂等回执+request_digest）（workspaces.py:111，executescript 幂等） | 短期隔离工作区（TTL 默认 24h）由 lifespan 每分钟自动 prune，过期即清（含 sends）；工作区内容为临时试验数据可随 TTL 丢弃；audit 链如需长期取证先归档再清 |
 
-## 三、统一清理纪律
+## 三、代码硬编码路径 / 外部框架 / 孤儿库（X2-DB-OWNERS-COVERAGE 波普查补登）
+
+> 本节库**无 config `_db`/`_db_path` 字段**（尺①②的"声明点"看不见），靠本波盘上只读普查逐个认主。
+> 覆盖门对"新增硬编码库"不设自动腿的原因见 `tests/test_db_owners_coverage.py` 模块 docstring 残余盲区段。
+
+| 库文件 | 路径来源 | Owner 模块 | 建表位置 | 清理策略 / 判定 |
+| --- | --- | --- | --- | --- |
+| `data/llm_billing.sqlite3`（盘上活跃；总开关 `BOT_LLM_BILLING_ENABLED` 为 bool，**非路径键**） | `runtime_path("data/llm_billing.sqlite3")`（ledger.py:121 / audit.py:71 各硬解析） | **双 co-owner（共库不同表）**：`domains/chat_reply/llm_engine/ledger.py`（`LedgerService`）+ `control_plane/audit.py`（`ControlPlaneAuditStore`） | ledger：`llm_call_records / llm_usage_daily / balance_snapshots`；audit：`control_plane_audit`。WAL 先行、进程内单连接+锁（台账 #54：成本走微元、取整只在聚合） | 计费/审计属留痕数据，归档优于删除；两模块同库不同表，收口单一 owner 见设计审计 §6 建议（加 config 键＝越界，进 patch 提案） |
+| `data/meme_send_history.sqlite3`（无独立键：随表情库目录派生 `<BOT_MEME_LIBRARY_DB_PATH 目录>/meme_send_history.sqlite3`） | `meme_library.py:267/916`、`meme_library_listener.py:361` 用 `db_path.parent / "meme_send_history.sqlite3"` | `domains/meme/sources/send_history.py`（`MemeSendHistoryStore` + `MemeQuarantineLedger`；由 `meme_library.py` 惰性构造） | `CREATE TABLE meme_sends / meme_quarantine`（send_history.py:74/83） | 表情发送史与隔离台账；随表情库目录一并治理（AGENTS #72：册基与贴纸池两键两片目录，勿混用）；盘上活跃 |
+| `data/control_plane_events_v21.sqlite3`（无键：`ops/monitor/event_service.py:644` 硬编码 `runtime_path`；本轮不接线，盘上无文件） | `runtime_path("data/control_plane_events_v21.sqlite3")`（event_service.py:644） | `domains/ops/monitor/event_store.py`（表 `runtime_events_v21` + 旧 `runtime_events_v1`），消费方 `EventService` | `CREATE TABLE runtime_events_v21`（+ 多索引，event_store.py:415）；WAL+busy_timeout 由装配口 | 运行事件 v21；与 `control_plane_events`（BH5）概念重叠属已知分裂（设计审计 D1-归属分裂-2）；加 config 键＝越界，进 patch 提案 |
+| `data/modality_preprocess.sqlite3`（无键：源件注释明写"不碰 config.py"，自建自管；盘上暂无文件） | `domains/vision/capabilities/modality_preprocessing.py:555` `sqlite3.connect(db_path)`（`db_path` 由调用方注入，缺省落 Runtime data 根） | `domains/vision/capabilities/modality_preprocessing.py`（`ModalityPreprocessJobStore`） | `CREATE TABLE IF NOT EXISTS modality_preprocess_jobs`（+ `idx ... (session_key, updated_at)`） | 多模态预处理作业队列表；可再生作业台账；本波普查认主，未自动门覆盖 |
+
+### 外部框架库（第三方插件自建，bot 代码零 writer）
+
+| 库文件 | Owner | 判定 |
+| --- | --- | --- |
+| `data/nonebot_orm.sqlite3`、`data/nonebot_plugin_orm/db.sqlite3` | 第三方依赖 `nonebot-plugin-orm`（见 `pyproject.toml` 依赖声明，**非 bot 数据层**） | `.env` 的 `SQLALCHEMY_DATABASE_URL` 指向 Postgres，但插件 bootstrap 仍落本地 sqlite 兜底文件。登记为止血"盘上无主没人认"；清理按 NoneBot 插件规程，bot 侧无 owner 可指 |
+
+### 孤儿 / 僵尸空库（无任何代码 writer）
+
+| 库文件 | 判定 |
+| --- | --- |
+| `data/_diag_debug.sqlite3`（20480B，mtime 停 2026-08-24） | 全树零引用（AST 字符串常量扫描亦无命中），无 writer、无 config 键、无 owner；历史调试落盘残留 |
+| `data/audit.sqlite3`、`data/diagnostics.sqlite3`、`data/receipts.sqlite3`（均 0 字节，mtime 停 09-08/08-24） | 对应 config 键（`BOT_AUDIT_DB_PATH` 等）**在册**，但现行生产数据已落 `wuwa_audit` / `wuwa_diagnostics` / `wuwa_receipts`（活跃）；这三个 default-named 空库系历史 `.env` 旧命名残留，非双写、零写入 |
+
+> **孤儿处置**：以上"无 writer"库按 §五.3 可再生/停机清理，删 `.sqlite3` 必连带同目录 `-wal`/`-shm`；**是否清理归用户**，本清单只认主与记账，不代删（AGENTS 铁律 2）。
+
+
 
 1. **默认不动**：SQLite、FAISS/向量索引、聊天记忆、NoneBot data、Cookie、
    订阅状态、媒体缓存、日志、卡片 SVG、Runtime 虚拟环境均为活动数据

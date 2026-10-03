@@ -22,7 +22,7 @@
 | [生成物与机器事实册](generated-artifacts/README.md) | doc_sync / command_catalog / verify_hashes 三件与 auto-facts 投影。 | [会漂移计数的唯一落点](generated-artifacts/machine-ledger.md)、[交付物哈希与重录时机](generated-artifacts/hash-bookkeeping.md) |
 | [测试与机器门体系](test-gates/README.md) | 离线 mock 全量树、契约门、棘轮门与交叉验证。 | [渲染与出站契约门](test-gates/contract-gates.md)、[棘轮与地板门](test-gates/ratchet-gates.md)、[变异注毒自证](test-gates/mutation-testing.md) |
 | [命名与结构规范](naming-conventions/README.md) | 模块/函数/参数/配置键命名与一功能一目录的结构规范。 | [标识符与参数命名规则](naming-conventions/identifier-naming.md)、[模块与目录归属规则](naming-conventions/module-layout.md)、[函数说明文档骨架](naming-conventions/docstring-spec.md) |
-| [安全与凭据护栏](security-guardrails/README.md) | SSRF 咽喉、凭据域名绑定、打码与最小暴露面。 | [下载入口与落点双查](security-guardrails/ssrf-throat.md)、[跨域凭证剥离](security-guardrails/credential-scrub.md)、[敏感信息不回传](security-guardrails/exposure-floor.md) |
+| [安全与凭据护栏](security-guardrails/README.md) | SSRF 咽喉、凭据域名绑定、打码与最小暴露面。 | [下载入口与落点双查](security-guardrails/ssrf-throat.md)、[跨域凭证剥离](security-guardrails/credential-scrub.md)、[敏感信息不回传](security-guardrails/exposure-floor.md)、[出站危险命令审查](security-guardrails/outbound-command-screen.md) |
 | [路径重映射与树卫生](workspace-hygiene/README.md) | 运行数据根重映射、零缓存铁律与归档规程。 | [相对路径到 Runtime 的映射](workspace-hygiene/runtime-paths.md)、[压缩→验证→移出](workspace-hygiene/archive-procedure.md) |
 | [文档体系与板块树](documentation/README.md) | 十板块文档树、统一骨架、单一事实源与自动化同步契约。 | [一/二/三级板块树本体](documentation/board-tree.md)、[板块树与代码的自动同步](documentation/doc-taxonomy-sync.md)、[旧汇总文档的归属与退役](documentation/legacy-doc-migration.md) |
 <!-- BOARD-AUTO:END -->

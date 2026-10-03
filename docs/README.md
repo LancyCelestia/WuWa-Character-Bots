@@ -118,7 +118,6 @@
 | [design/tts-contract-layer.md](design/tts-contract-layer.md) | TTS 统一性契约层设计规格（Wave G·G-1/T54）：触发边界与触发词/打码/内容闸/产物体检/失败码/概率门六面的现行锚点+目标契约；**规格件零施工**，落地宣称以施工席实跑为准 |
 | [design/safety-execution-engine-spec.md](design/safety-execution-engine-spec.md) | 统一安全与执行引擎规格（SAFE-EXEC，第 16/17/18 项）：一个裁决点 + 一条执行道 + 一本同意账；动作册、落点域白名单、参数风险 R0-R3、书面同意往返、Job Object 配额、反注入可信级 T0-T3、攻击面 23 条映射与判据 G-1..G-20、分期 Wave 1-4、待裁 P-1..P-6；**规格件零施工** |
 | [design/media-digest-layer.md](design/media-digest-layer.md) | 中央媒体摘要层蓝图（Wave H 预研·T107）：音频产物字节零摘要、出站键 M-64 未闭半的六流经点现状图+中央 digest 件方案；**方案件零施工** |
-| [design/meme-auto-absorb-plan-20260925.md](design/meme-auto-absorb-plan-20260925.md) | 表情包自动吸收与情绪化发送方案：生成/收库/打标/主动发四态核实（含一条因功能门 id 未登记而整条黑掉的支路）＋「她本地抓取 → bot 现读入库」的清单文件接口＋确定性合分与反骚扰门＋配置键清单；**方案件零施工** |
 
 ### 控制面续接入口
 

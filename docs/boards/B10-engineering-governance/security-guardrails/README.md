@@ -8,7 +8,7 @@
 > SSRF 咽喉、凭据域名绑定、打码与最小暴露面。
 
 - 归属板块：[B10](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/core/credentials`、`plugins/bot_unified_runtime/domains/chat_reply/security/__init__.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/injection.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/display_guard.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/spoof_audit.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/database_broker.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/core/credentials`、`plugins/bot_unified_runtime/domains/chat_reply/security/__init__.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/dangerous_command.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/injection.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/display_guard.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/spoof_audit.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/database_broker.py`
 - 帮助主题：凭据
 - 配置键前缀：`bot_ssrf_`（逐键以目录册为准）
 
@@ -19,6 +19,7 @@
 | [下载入口与落点双查](ssrf-throat.md) | — | — | — | — |
 | [跨域凭证剥离](credential-scrub.md) | — | — | — | — |
 | [敏感信息不回传](exposure-floor.md) | — | — | — | — |
+| [出站危险命令审查](outbound-command-screen.md) | — | — | — | — |
 <!-- BOARD-AUTO:END -->
 
 ## 这个功能解决什么

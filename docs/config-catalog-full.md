@@ -885,6 +885,9 @@
 | `_person_profile_enabled` | **`false`** | **2026-09-29 复原波补登（会话画像整链总门，需求 11 线）**：两处读取口同一判据 `getattr(config, …, False)`——`domains/chat_reply/character/person_profile.py::build_person_profile_store`（建库）与同件 `compose_person_profile_context`（渲染）。关＝返回 `None` 且**连库文件都不碰**（写侧 `domains/chat_reply/character/memory_extract.py::_settle_person_profile` 见 `profile is None` 连画像件都不 import ⇒ 缺省关态逐字节不变）。开＝还要 `bot_memory_db_path` 非空、建出的 store `available` 才真生效，抽取到的事实按 `person_profile_key(sender_id, platform_domain)` 现算键落进**记忆库同库**（不另起 db 文件）的画像表族（facet / 言行事件 / 审计 / 墓碑）。**⚠ 现网只写不读**：渲染出口 `compose_person_profile_context` 生产侧零调用方（只在本件 `__all__` 与 `tests/test_person_profile_memory.py` 出现）⇒ 开本门只把画像写进库，不会进提示词。🟡需重启（`RESTART_REQUIRED_KEYS` 在列；热 set 改不动已按 db_path 懒建的进程级 store 缓存） |
 | `_person_profile_max_items` | `6` | **2026-09-29 复原波补登（画像取数条数上限）**：唯一读点在 `domains/chat_reply/character/person_profile.py::compose_person_profile_context`，往下交给同件 `render_profile` ⇒ 一次夹住渲染的两段：`facets(key)[: max(1, n)]`（「关于你」条目）与 `search_events(…, limit=n)`（「你交代过、我留着的话」言行）。缺省 `6` 逐字等于模块常量 `_DEFAULT_MAX_ITEMS`，读式 `int(入参 or 本键 or 该常量)` ⇒ **⚠ 配 `0` 回落 6，不是「一条都不给」**；要收窄最低写 `1`（渲染侧 `max(1, …)` 夹形，永不为 0）。与 `_person_profile_enabled` 同病：只作用在渲染腿，该腿今天无生产调用方。🟡需重启（每次渲染现读快照，合并层未登记） |
 | `_person_profile_max_chars` | `520` | **2026-09-29 复原波补登（画像注入文本字符预算）**：与 `_person_profile_max_items` 同口读入（缺省 `520` 逐字等于模块常量 `_DEFAULT_MAX_CHARS`），交给 `domains/chat_reply/character/person_profile.py` 内的预算裁剪 `_budget`：预算取 `max(40, int(n))`——总长在预算内＝整段原样拼接；超限＝**从尾部逐行丢**（先丢结尾免责行，再丢言行段，最后才轮到画像条目），并如实追加「（另有 N 条没列出）」，**绝不静默截断**（静默截断＝谎报）。**⚠ 两个边界**：配 `0` 经 `or` 链回落 520（不是「无限制」）；配 1~39 一律被夹成 40（最小可读段）。🟡需重启（同上） |
+| `_affinity_v8_enabled` / `_affinity_v8_impulse_cap_z` / `_affinity_v8_ambient_centering` / `_affinity_v8_ambient_halflife_days` / `_affinity_goodwill_band_min` / `_affinity_goodwill_band_max` / `_affinity_goodwill_band_saturate_days` / `_affinity_v8_tier_blend_band` / `_affinity_v8_impulse_weights` | `false` / `0.02` / `true` / `28.0` / `2.60` / `0.55` / `365.0` / `0.25` / 空串（末键 .env 缺） | **好感度 v8 九键（2026-10-02 全量修复批登记；此前 `resolve_v8_settings` 纯 getattr+env 现读、九键零登记＝线上死键风险）**：优先序 v8>v7>v5/v6。总开关 / κ 单轮冲量位移上限（展示最坏 2.0 分/轮，affinity-design §C.2）/ ambient 质量基线去心开关 / ambient EMA 半衰（天）/ 善意底保护带三键（§C.4：新人端近全谱、老关系最多回落峰值减带、带饱和天数）/ 档内 λ 混合边缘（§C.5.1：λ∈[edge,1−edge] 单档原句）/ 六子冲量权重 JSON 文本（空串=按代码缺省；Σ\|w\|≠1 点名告警并整体归一）。日额度共享键 `_affinity_daily_move_cap_z` 的 v8 时代值 0.04 走 .env（§C.7）。九键均不在 `SETTABLE_KEYS`/`RESTART_REQUIRED_KEYS` ⇒ ❌无热改面（改 .env + 重启）。数值规范唯一权威＝`docs/affinity-design.md` |
+| `_message_mutation_enabled` / `_message_mutation_window_seconds` | `false` / `120` | **消息编辑/撤回开面（S34b，2026-10-03 用户点头）**：总开关与「不许翻旧账」窗口秒数（平台侧时限更短、以平台为准）。缺省 False＝门关＝能力整体不生效（`authorize_mutation` 首条即 feature_disabled、零平台调用）⇒ 今日现网行为零变化；开面必须改 .env + 重启。两键均不在 `SETTABLE_KEYS`/`RESTART_REQUIRED_KEYS` ⇒ ❌无热改面（C-09「死开关不许骗人」口径） |
+| `_files_incoming_ttl_days` | `7.0`（.env 缺） | **文件网关落盘点寿命清扫（incoming/ 与生成目录）TTL 天数**；≤0＝清扫关闭（席6 全量修复批 2026-10-02）。重启形键不进热改面（C-09 形态）；消费点唯一＝`restricted_runner.sweep_ttl_days_from_config` |
 
 ### 控制面 v1 已登记 Config 字段（后端第一切片）
 
@@ -1397,3 +1400,17 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 | `BOT_NETWORK_PATROL_DOMAINS` | str | `""` | 逗号分隔域名；空⇒用内置名册（真身 `network_patrol.PATROL_TARGETS_DEFAULT`，枚数以该件现值为准） | 🟡需重启 | 覆盖巡检目标集，用于临时增删观测域名而不改代码 | 同上 |
 | `BOT_NETWORK_PATROL_DOWN_THRESHOLD` | int | `5` | >0 | 🟡需重启 | 连续失败去抖阈值（2026-10-02 裁定「连续五次炸了才提醒」）：目标（域名×腿）连续失败达此数才报 down 进告警差分，中途任何一次成功清零；恢复翻转不延迟，且只对报过 down 的目标发恢复行 | 真身 `domains/ops/network_patrol.py::DownDebounce`；差分仍走 `state_delta`（喂去抖稳态）；推送文案 10-02 起自带失败分型（`classify_leg_failure`：refused 族＝本机 Clash 不在家、EOF/SSL 族＝节点抖动、直连腿＝上游不可达） |
 
+
+## DB 备份腿（db_backup，四面落键 2026-10-02，#68★）
+
+真身 `domains/ops/db_backup.py::load_policy`（消费点 :201-224，每轮现读装配期快照 config）；七枚全进 `RESTART_REQUIRED_KEYS`（热 set 不改判据）。缺省＝现网哑面不变（`ENABLED=false`）。开启后把 Runtime 数据根每枚 `*.sqlite3` 用 sqlite3 在线备份 API 打一致快照、落仓库外备份区（缺省＝运行数据根同级 `backups/sqlite/`），覆盖绝不自动、删旧必须点名（工单 `patches/DBK-DBBACKUP-ENVKEYS-20261002.md`）。批注：字段落定后 db_backup.py:203 的 env 直读腿恒短路＝预期语义收窄，非缺陷。
+
+| 键 | 类型 | 缺省 | 形态 | 热更列 | 语义 | 备注 |
+|---|---|---|---|---|---|---|
+| `BOT_DB_BACKUP_ENABLED` | bool | `False` | 0/1 | 🟡需重启 | 备份总闸：关＝哑面（现网态） | 每库 `*.sqlite3` 一致快照＋旁车 manifest |
+| `BOT_DB_BACKUP_DIR` | str | `""` | 绝对路径；空⇒缺省 `backups/sqlite/` | 🟡需重启 | 备份区根；**必须在仓库外**，仓库内落点当场抛 | 登记根经 PATH_REMAPPED_FIELDS 折进运行数据根 |
+| `BOT_DB_BACKUP_KEEP_LAST` | int | `7` | 1-64 | 🟡需重启 | 每库保留副本数 | 删旧必须按保留清单逐枚点名，禁递归 |
+| `BOT_DB_BACKUP_SIZE_CEILING_BYTES` | int | `67108864` | 1 KiB-2 GiB | 🟡需重启 | 单库尺寸上界：超界库整片排除（防把巨型向量库拷爆） | 缺省 64 MiB 落在真空档（实测 5.7 MB 与 908 MB 之间） |
+| `BOT_DB_BACKUP_MAX_FOOTPRINT_BYTES` | int | `4294967296` | 1 MiB-512 GiB | 🟡需重启 | 备份区总量上界 | 超界按保留序淘汰 |
+| `BOT_DB_BACKUP_MIN_FREE_BYTES` | int | `21474836480` | 0-1 TiB | 🟡需重启 | 开跑前同卷剩余空间下限：不足不开火 | 缺省 20 GiB（基线普查同卷剩 111 GB） |
+| `BOT_DB_BACKUP_STALE_AFTER_HOURS` | int | `24` | 1-720 | 🟡需重启 | 副本过期时限（小时） | 超龄在体检报告点名，不自动删 |

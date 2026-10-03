@@ -1,0 +1,158 @@
+# Git ignore rules reduce tracked/generated files; they do not control Codex AI scan scope. Keep the AI workspace opened at ChatBot only.
+
+# Python caches and build output
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Runtime state
+data/
+# 例外：包内资产目录（NMC 天气 2527 区县码表，nmc_weather.py 随包引用）——
+# 清理波不得误删（2026-09-13 曾被误清致 NMC 路径整体塌向 open-meteo，wx7 报告）。
+!plugins/bot_unified_runtime/sources/data/
+!plugins/bot_unified_runtime/sources/data/qx.json
+*.sqlite
+*.sqlite3
+*.db
+*.log
+logs/
+
+# Local planning / agent scratch
+.planning/
+.superpowers/
+.worktrees/
+
+# Local generated artifacts, backups, and abandoned experiments
+tmp/
+backups/
+_crawlwiki_patch2/
+
+# Downloaded or extracted third-party research sources.
+# Keep the curated Markdown reports and lightweight index files tracked.
+research/nonebot_plugin_sources/_downloads/
+research/nonebot_plugin_sources/_downloads_second_batch/
+research/nonebot_plugin_sources/extracted/
+research/nonebot_plugin_sources/extracted_second_batch/
+research/gscore_sources/*/
+research/meme_plugins/
+research/store_searches/
+# 参考源码与调研材料（只提交分析报告，不提交第三方源码树）
+research/astrbot_plugin_parser/
+research/plugin_sources/
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+
+# 离线参考：bilibili-api-python sdist（GPL-3.0，仅挖掘端点用，不入库）
+research/bilibili_api_sdists/
+
+# pytest sandbox basetemp
+.pytest_tmp*/
+
+# third-party NoneBot localstore config (actual runtime location is ChatBot_Runtime\\config)
+config/
+
+# Local agent tool configs (workspace-local, never commit)
+.claude/
+.codex/
+.grok/
+third_party/
+
+webui/node_modules/
+webui/dist/
+
+# ---- Wave G / G-0 基线入库补丁（T52 席，2026-09-19，配方=report-T31.md 表 F）----
+
+# 席间测试垃圾（注意用 /* 而非 /，否则 git 不 descend、否定失效；证据件例外）
+.tmp-test/*
+!.tmp-test/full-suite.log
+
+# 席位脚本与工具记忆（.claude/.codex/.grok 的同族补齐，消除规则不对称）
+/%TEMP%/
+.zcode/
+.workbuddy-ai/
+
+# 根散料（会话规划件与截图）
+/findings.md
+/progress.md
+/task_plan.md
+/COORDINATION.md
+/.cp-test-output.txt
+/*-page.png
+
+# N1：v21r2 域重组后 data/ 与 config/ 成了【源码子包名】，与运行时状态规则撞车
+# （否定组放行目录本身，git 才会 descend；先例=本文件 sources/data/qx.json 否定组。
+#  目录内 *.sqlite3/*.log 等仍被上方各自规则忽略，不受此处影响。）
+!plugins/bot_unified_runtime/domains/core/config/
+!plugins/bot_unified_runtime/domains/*/data/
+
+# qx.json 新家显式解挡（NMC 2527 区县码表随包资产，铁律 6；当前无规则命中，
+# 此两行为防未来 assets//json 规则误伤的保险，勿删）
+!plugins/bot_unified_runtime/domains/weather/assets/
+!plugins/bot_unified_runtime/domains/weather/assets/qx.json
+
+# 会话产物隔离（R1 批① C1，2026-09-27 fullload 波；搬运归档另由该面 owner 执行）
+probes/
+SEAT-S*.md
+# 窄豁免：上面这条**无锚**规则在大小写不敏感的 Windows 上顺手吞掉了两枚在册交付件
+# （`seat-s84`／`seat-s85`＝嵌入吞吐与 ANN 重建成本的实测账，批⑮ 点名件）。
+# 不能把 `SEAT-S*.md` 锚定到 `/`：现算 833 枚 SDD 工作件正靠它挡着，锚定＝一次性
+# 放成未跟踪＝给批⑯-续与"被引用却未跟踪"双查门制造新债。故只放回这两枚。
+!.sdd-reports/seat-s84-embed-throughput.md
+!.sdd-reports/seat-s85-ann-rebuild-cost.md
+.qoder/scheduled_tasks.json
+# 仓库内 pytest basetemp 残留与调试 dump（规则 6；09-30 体检发现 cb-w9chk 未被罩住）
+/cb-w9chk/
+/run.txt
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+node_modules/
+bower_components/
+jspm_packages/
+site-packages/
+coverage/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+playwright-report/
+test-results/
+allure-results/
+allure-report/
+cdk.out/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）
