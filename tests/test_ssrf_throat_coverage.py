@@ -43,6 +43,7 @@ from plugins.bot_unified_runtime.domains.files.sources.downloader import (
     MediaDownloader,
     RejectedUrlError,
 )
+from plugins.bot_unified_runtime.domains.media import image_guard
 from plugins.bot_unified_runtime.domains.meme.sources import (
     meme_library_listener as listener,
 )
@@ -56,6 +57,16 @@ METADATA = "http://169.254.169.254/latest/meta-data/iam.png"
 PRIVATE_LAN = "http://192.168.1.7/x.png"
 
 MAX_BYTES = 1 << 20
+
+# 夹具载荷必须是**真图片文件头**：B1 收库守卫波（``56e09946``，2026-09-30）之后
+# ``meme_library_listener`` 在返回字节前过 ``image_guard.header_is_image``（魔数验真
+# 唯一真身，登记签名清单以该文件自身为准），content-type 说 image/png 而字节头对不上
+# 签名的假图按「这张不收」弃掉。旧夹具喂字面量 ``b"image-bytes"`` ⇒ 正向腿被**自家守卫**
+# 拦死（``assert None == (b'image-bytes', 'image/png')``）。修夹具、不动守卫。
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+REAL_PNG_BODY = PNG_MAGIC + b"image-bytes"
+#: 反例载荷：content-type 假装 image/png、字节头是 HTML（守卫必拦）。
+FAKE_PNG_BODY = b"<!DOCTYPE html><html>not a png</html>"
 
 # 咽喉必拦样本（协议白名单 + 主机黑名单 + 私网/保留段，全部零 DNS）。
 BLOCKED_URLS = [
@@ -291,14 +302,40 @@ def test_meme_listener_allows_public_redirect_chain(monkeypatch) -> None:
         PUBLIC_ENTRY: {"status": 302, "location": PUBLIC_LANDING},
         PUBLIC_LANDING: {
             "status": 200,
-            "body": b"image-bytes",
+            "body": REAL_PNG_BODY,
             "headers": {"content-type": "image/png"},
         },
     }
     requested, _ = _install_fake_httpx(monkeypatch, script)
 
-    assert _download(PUBLIC_ENTRY) == (b"image-bytes", "image/png")
+    assert _download(PUBLIC_ENTRY) == (REAL_PNG_BODY, "image/png")
     assert requested == [PUBLIC_ENTRY, PUBLIC_LANDING]
+
+
+def test_meme_listener_still_rejects_non_image_payload(monkeypatch) -> None:
+    """正向腿的对照组：同一副脚本**只**把落点字节换成 HTML ⇒ 守卫必拦（返回 None）。
+
+    夹具从字面量 ``b"image-bytes"`` 换成真 PNG 魔数之后，本文件的正向腿就没有反例钉着
+    「魔数闸没被顺手关掉」——本腿补上这把反例，证明正向腿过不是因为守卫失效。
+    拒绝发生在**取完字节之后**（``requested`` 仍含落点那一跳），咽喉/逐跳语义不受牵连。
+    守卫真身＝``image_guard.header_is_image``；专项覆盖在
+    ``tests/test_meme_absorb_guards.py::test_download_once_drops_non_image_body_despite_image_content_type``，
+    本腿只证「本文件正向腿非恒真」，不另立第二判据。
+    """
+    script = {
+        PUBLIC_ENTRY: {"status": 302, "location": PUBLIC_LANDING},
+        PUBLIC_LANDING: {
+            "status": 200,
+            "body": FAKE_PNG_BODY,
+            "headers": {"content-type": "image/png"},
+        },
+    }
+    requested, _ = _install_fake_httpx(monkeypatch, script)
+
+    assert _download(PUBLIC_ENTRY) is None, "假图字节被收下 ⇒ 魔数闸被关掉或夹具走偏"
+    assert requested == [PUBLIC_ENTRY, PUBLIC_LANDING]
+    assert image_guard.header_is_image(FAKE_PNG_BODY[:12]) is False, "反例载荷本身必须对不上签名"
+    assert image_guard.header_is_image(REAL_PNG_BODY[:12]) is True, "正向载荷必须对得上签名"
 
 
 def test_meme_listener_logs_rejection_reason(monkeypatch, caplog) -> None:

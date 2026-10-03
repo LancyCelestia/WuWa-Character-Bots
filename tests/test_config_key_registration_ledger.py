@@ -192,7 +192,21 @@ TEMPLATE_COVERED_BASELINE = 17
 # 2026-09-26 席 S-CONSENT-WIRE 现算复录 39 → 40：新增一枚＝`bot_safetyexec_enabled`
 #   （第 18 项咽喉波登记真字段，键名字面住在 consent.py::ConsentPolicy.from_config
 #   与 settings_gate.py 生产件里；归属本波，逐枚点名见 AST_DEAD 注释与本桶证据用例）。
-LITERAL_COVERED_BASELINE = 43
+LITERAL_COVERED_BASELINE = 57
+# 2026-10-03 施工席20 现算复录 48 → 57：+9 全进字面桶＝affinity v8 波九枚新键
+#   （bot_affinity_v8_{enabled,impulse_weights,impulse_cap_z,ambient_centering,ambient_halflife_days,
+#   tier_blend_band} ＋ bot_affinity_goodwill_band_{min,max,saturate_days}），键名字面在场于
+#   `domains/chat_reply/character/affinity.py`（AST 直读尺看不见 ⇒ 不落直读健康面）；
+#   `bot_files_incoming_ttl_days` 走真直读（domains/files/sender/restricted_runner.py）不进本桶。
+#   硬死/中央/绕中央三桶与待修总账逐桶未动（39/1/1，总账 40 与指纹 7d16b0a81871fd65
+#   一字未动）⇒ 不给任何一枚发健康证；五桶之和随之 106 → 115（AST_DEAD 同批复录）。
+# 2026-10-02 傍窗主会话（db_backup 七键四面落键批）现算复录 43 → 48：新增五枚＝
+#   `bot_db_backup_{keep_last,size_ceiling_bytes,max_footprint_bytes,min_free_bytes,stale_after_hours}`
+#   ——五枚的取值经 `db_backup.py::_read_int` 形态（getattr 键名字面在场、config 形参转手），
+#   AST 直读尺结构上看不见 ⇒ 落字面桶；另两枚（enabled/dir 走 getattr(config, "<字面量>") 真直读）
+#   落直读健康面不进本桶 ⇒ 字段 +7 而本桶 +5，逐枚可点、归属本批。
+#   五桶之和随之 101 → 106（AST_DEAD_BASELINE 同批复录）；待修总账 40 与指纹 7d16b0a81871fd65
+#   一字未动（字面桶不是债桶），判据零改动。
 # 2026-09-27 席 S-SWITCH-REG-IMPL（批⑦b 提交前复算）现算复录 40 → 43：新增三枚＝
 #   `bot_schedule_enabled` / `bot_schedule_natural_capture_enabled` /
 #   `bot_schedule_status_reply_enabled`——批⑦ 第 20 项日程板入库后**名字面在场**于
@@ -217,7 +231,13 @@ DEBT_ROSTER_SET_SHA = "7d16b0a81871fd65"
 #   形参转手 ⇒ AST 直读尺结构上看不见，与 sync_drift 七枚同形），键名字面在场于
 #   consent.py/settings_gate.py 生产件 ⇒ 落**字面桶**、不落硬死（待修总账 41 与
 #   各指纹逐字未动，下方逐桶恒等式现场复算兜底）。
-AST_DEAD_BASELINE = 101  # = 17 + 43 + 1 + 1 + 39（恒等式由 test_bucket_arithmetic_holds 现场核）
+AST_DEAD_BASELINE = 115  # = 17 + 57 + 1 + 1 + 39（恒等式由 test_bucket_arithmetic_holds 现场核）
+# 2026-10-03 施工席20 现算复录 106 → 115：affinity v8 九枚新键落字面桶（逐枚点名见
+#   LITERAL_COVERED_BASELINE 注），模板/中央/绕中央/硬死四桶逐桶未动（17/1/1/39），
+#   待修总账 40 与指纹一字未改 ⇒ 不给任何一枚键发健康证。
+# 2026-10-02 傍窗主会话现算复录 101 → 106：db_backup 七键四面落键批的字面桶 +5
+#   （逐枚点名见 LITERAL_COVERED_BASELINE 注），模板/中央/绕中央/硬死四桶逐桶未动
+#   （17/1/1/39），待修总账 40 与指纹一字未改 ⇒ 不给任何一枚键发健康证。
 # 2026-09-29 席 FLOW 现算复录 102 → 101：上面模板桶那一格降到实况后，五桶之和随之
 #   为 101；HEAD 快照与工作树两把尺都现算 101（取证见 TEMPLATE_COVERED_BASELINE 注），
 #   硬死/字面/中央/绕中央四桶逐桶未动（39/43/1/1），待修总账 40 与指纹 7d16b0a81871fd65
@@ -286,7 +306,17 @@ GHOST_BY_NAME_SET_SHA = "01daed191cb06480"
 #   UNACCOUNTED_BASELINE 554→553、指纹 cf3f5dac64820b65→df029f79b20e229d：本批登记六枚
 #     （上列五枚＋`bot_reactions_meme_enabled`，最后一枚读点＝根装配 reaction-meme 腿
 #     ProactiveActionKnobs 字面键名，同批补接线）⇒ 未表态集合只降不升，合法降向。
-CORPUS_FLOOR_BASELINE = (784, 1606, 3, 684)  # 2026-10-01 席 W2（门禁配置三面补齐）现算复录（字段维 776→784＝**本席八枚**，逐枚可点：`bot_gate_command_requires_listed_group`（读点 domains/chat_reply/policy/gate.py `_command_listed_gate_from_config`）、`bot_quiet_hours_direct_bypass_{mentions,commands}`（读点 policy/quiet_hours.py::build_quiet_hours_settings——W1 在飞把早前那枚单键 `..._requires_both` 拆成两腿各一枚，本席按**落盘读点**定名）、`bot_rate_limit_command_{enabled,window_seconds,sender_max_requests,group_max_requests,bypass_roles}`（读点 policy/rate_limit.py::build_rate_limit_settings）；直读维 1604→1606＝本席 gate.py 新增一处字面 getattr 读点 ＋ W1 在飞把安静时间那枚读点拆成两腿（各一枚），其余读点本来就在树上（正是它们被 `test_config_read_points_declared` 判成幽灵的那几条），差数不逐枚冒领；`.py` 维 684 未动（本席零新生产件，只新建 patches 册）。八枚全进 `RESTART_REQUIRED_KEYS` ⇒ 未表态集合与指纹（9fb2a62679b67652）逐枚不变、`UNACCOUNTED_BASELINE` 仍 549。上一值 (776, 1604, 3, 684)：2026-09-30 席 树回铺后现算复录（直读 1586→1598、.py 676→684；差数＝回铺树把 W9a 的 `_album_container`/`row_hint` 两处新读点与事故前那批未回铺件一起算进来了，逐枚归属未做，按门自身口径「棘轮不等于真值就重录」整维对齐；判据与容差 (0,200,0,50) 一字未动）。上一值 (776,1586,3,676) 为 09-30 席「人格分册收尾」在替身树上的复录；再上行为前账：2026-09-29 席 FLOW（需求项 D2）现算复录 1554→1567 / 657→659：
+# 2026-10-03 施工席20 现算复录（本行现值＝**804 / 1618 / 3 / 696**；尺身份＝本件
+#   read_point_leg()＋census.py_files(list(DEFAULT_SCOPES))，单趟探针现算，产物不落源码树）：
+#   字段维 792→804＝+12：HEAD 侧 792→794（已入库两枚，不逐枚冒领）＋在飞十枚——照实拆账：
+#   在飞十枚＝affinity v8 九枚＋bot_files_incoming_ttl_days（主代理 files-incoming 波），
+#   逐枚点名见 LITERAL_COVERED_BASELINE 注；直读维 1613→1618＝+5（restricted_runner 的
+#   files-ttl 直读与新在飞件读点，差数不逐枚冒领）；模板维 3 未动；.py 维 688→696＝
+#   HEAD 侧 +1（已入库）＋在飞未跟踪生产件 7 枚（prompt_template/dangerous_command/
+#   write_trace/db_backup/host_snapshot/ab_red_bucket/rebuild_ann_index）。
+#   容差 CORPUS_FLOOR_SLACK=(0,200,0,50) 一字未动；地板升＝尺更利，不是放宽。
+CORPUS_FLOOR_BASELINE = (804, 1623, 3, 697)  # 2026-10-03 主会话终窗现算复录：直读维 1618→1623（差 5＝席25 媒体面 gate/chat.py 修改意图/席35 mail 地址恢复在飞读点，未逐枚冒领）、.py 维 696→697（＝tests 新件归 DEFAULT_SCOPES）；字段/模板维未动；容差 (0,200,0,50) 一字未动；地板升＝尺更利。毒发 11 上一窗 SILENT 即本维落后所致（账内有先例）。
+# 上一值 (792, 1613, 3, 688)＝2026-10-02 席 S1（网络巡检连续失败去抖波）现算复录：字段维 791→792＝一枚 `bot_network_patrol_down_threshold`（读点＝根装配 `_register_network_patrol_scheduler` 的 getattr 字面键名），直读维 1612→1613＝同席这一处读点，模板维/.py 维逐枚未动（3/688）；巡检族四枚键全进 RESTART_REQUIRED_KEYS ⇒ 未表态 549 与指纹 9fb2a62679b67652 逐枚不变；判据与容差 (0,200,0,50) 一字未动。上一值 (791, 1612, 3, 688) ＝ 2026-10-02 傍窗主会话（db_backup 七键四面落键批）现算复录：只动字段维 784→791（差数逐枚＝`bot_db_backup_{enabled,dir,keep_last,size_ceiling_bytes,max_footprint_bytes,min_free_bytes,stale_after_hours}` 七枚新字段，消费点 domains/ops/db_backup.py:201-224；直读/模板/.py 三维一字未动——两枚真直读晨窗已计入直读维、五枚走 _read_int 形态不进直读尺）；容差 `CORPUS_FLOOR_SLACK = (0, 200, 0, 50)` 一字未动；地板升＝尺更利（更容易红），不是放宽。上一值 (784, 1612, 3, 688)＝2026-10-02 傍窗（修复波续做；CHK 席普查抓到漂→主会话现算复录）现算复录：poison 四腿实跑定位 dim1 cur=1612 base=1610、dim3 cur=688 base=687（喂 现算−容差−1 全 SILENT＝地板落后吃掉「砍穿容差」腿检测力，与下行前账同形）。**只动两维**＝直读维 1610→1612（差数逐枚点名＝席 INT 亲密人腿在 content_route.py 群分支新增两枚字面 getattr 读点 `bot_content_route_private_{whitelist,blacklist}`）、`.py` 维 687→688（＝席 DBT 新建 tests/test_db_backup.py，tests/ 在 DEFAULT_SCOPES 内）；字段维与模板维一字未动；容差 `CORPUS_FLOOR_SLACK = (0, 200, 0, 50)` 一字未动；地板升＝尺更利（更容易红），不是放宽。上一值 (784, 1610, 3, 687)＝2026-10-02 主会话（自主窗·目标项④尾红定位）现算复录：两趟同尺读数逐维等值 (784,1610,3,687) ⇒ 非瞬态（尺身份＝本件 `read_point_leg()`＋`census.py_files(list(DEFAULT_SCOPES))`，复算产物不落源码树）。**只动两维**＝直读维 1606→1610、`.py` 维 684→687；字段维与模板维一字未动；容差 `CORPUS_FLOOR_SLACK = (0, 200, 0, 50)` 一字未动；地板升＝尺更利（更容易红），不是放宽。差数逐枚点名（本席不冒领归属，三枚都是**未入库的在飞生产件**，各波 owner 自己认领）：`plugins/bot_unified_runtime/domains/chat_reply/llm_engine/prompt_template.py`、`plugins/bot_unified_runtime/domains/core/write_trace.py`、`plugins/bot_unified_runtime/runtime/db_backup.py`＝`.py` 维 +3（对照组＝HEAD 侧同尺 684 枚，`git -c core.quotePath=false ls-files` 与工作树路径两侧归一后差集为空反向）。**根因照实写（这一条是本窗才复现出来的）**：地板低于现算时，`test_poison_11`/`_14`/`_15`/`_16` 那几发「一次性砍穿容差才该红」的腿全部 SILENT（DID NOT RAISE）——喂进去的 现算−容差−1 仍 ≥ 地板−容差，检测力被地板自己那 4 枚/3 枚的落后吃掉了；本窗把这条从历史账升级成当场复现（复算读数 dim1 cur=1610 base=1606 ⇒ SILENT、dim3 cur=687 base=684 ⇒ SILENT，另两维 slack=0 恒 BITES）。上一值 (784, 1606, 3, 684)＝2026-10-01 席 W2（门禁配置三面补齐）现算复录（字段维 776→784＝**本席八枚**，逐枚可点：`bot_gate_command_requires_listed_group`（读点 domains/chat_reply/policy/gate.py `_command_listed_gate_from_config`）、`bot_quiet_hours_direct_bypass_{mentions,commands}`（读点 policy/quiet_hours.py::build_quiet_hours_settings——W1 在飞把早前那枚单键 `..._requires_both` 拆成两腿各一枚，本席按**落盘读点**定名）、`bot_rate_limit_command_{enabled,window_seconds,sender_max_requests,group_max_requests,bypass_roles}`（读点 policy/rate_limit.py::build_rate_limit_settings）；直读维 1604→1606＝本席 gate.py 新增一处字面 getattr 读点 ＋ W1 在飞把安静时间那枚读点拆成两腿（各一枚），其余读点本来就在树上（正是它们被 `test_config_read_points_declared` 判成幽灵的那几条），差数不逐枚冒领；`.py` 维 684 未动（本席零新生产件，只新建 patches 册）。八枚全进 `RESTART_REQUIRED_KEYS` ⇒ 未表态集合与指纹（9fb2a62679b67652）逐枚不变、`UNACCOUNTED_BASELINE` 仍 549。上一值 (776, 1604, 3, 684)：2026-09-30 席 树回铺后现算复录（直读 1586→1598、.py 676→684；差数＝回铺树把 W9a 的 `_album_container`/`row_hint` 两处新读点与事故前那批未回铺件一起算进来了，逐枚归属未做，按门自身口径「棘轮不等于真值就重录」整维对齐；判据与容差 (0,200,0,50) 一字未动）。上一值 (776,1586,3,676) 为 09-30 席「人格分册收尾」在替身树上的复录；再上行为前账：2026-09-29 席 FLOW（需求项 D2）现算复录 1554→1567 / 657→659：
 #   根因照实写：上一席只把**字段维**对齐真值，直读维与 .py 维留在容差 (0,200,0,50) 内
 #   没动 ⇒ `test_poison_11_new_field_floor_tracks_the_field_set` 的「一次性砍穿直读维才红」
 #   那一发打不红（DID NOT RAISE）——地板不等于真值时，容差就把杀伤力吃掉了。本席按
@@ -1648,3 +1678,135 @@ def test_real_files_untouched_after_whole_suite() -> None:
     before = {CONFIG_UNDER_TEST: _sha_now(CONFIG_UNDER_TEST), SETTINGS_UNDER_TEST: _sha_now(SETTINGS_UNDER_TEST)}
     time.sleep(0.01)
     _assert_untouched(before)
+
+
+# ---------------------------------------------------------------------------
+# 席 Z1（2026-10-01）：带容差两维的「双向边界」腿 —— 补盲区，**不是放宽**
+#
+# 缺口（开工前复算：四维现算 == 基线 == CORPUS_FLOOR_BASELINE 逐维等值，容差
+# CORPUS_FLOOR_SLACK 一字未动；复算产物不落源码树）：
+#   `assert_corpus_not_blind` 对每一维只有一句 `got >= base - slack`（外加一句"容差本身合法"）。
+#   零容差的两维（字段维、模板维）由 `test_poison_11_new_field_floor_tracks_the_field_set`
+#   的**等值腿**补齐 ⇒ 单向下界够用。带容差的两维则没人从上面看：
+#     ① **直读维**：把地板**抬高**一格（收紧）不咬——base 升、现算不动，`got >= base - slack`
+#        照样成立 ⇒ 盲区＝ base ∈ [现算, 现算 + 容差] 整段无人看。本件历史账两回记过同型病
+#        （"地板落后真值时，一次性砍穿容差那一发变成 DID NOT RAISE＝检测力被自己的保守吃掉"）。
+#     ② **生产 .py 维**：连**放宽**一格都不咬，且此前**一发探针都没有**（前席在仓外副本实测
+#        4 passed＝这一维掉一枚基线全树无感）。
+#   对照已合格的样本（本批一字不动）：`UNACCOUNTED_BASELINE` ±1 双向都咬（毒发 12）、
+#   `UNACCOUNTED_SET_SHA` 改一位由身份单独咬。**新锁形状照它们来：每一维都要有人从两边看。**
+# 补法（最小、只加不减；常令「门只准变严」）：见 `assert_floor_two_sided` 的说明。
+# ⚠ 本件是并发在飞件（他席刚复录过地板），本批严格只在**文件末尾追加**：常量、容差、
+#   既有行、既有判据**一个字节没改**；代价是 `test_real_files_untouched_after_whole_suite`
+#   不再是全件最后一枚用例——按纪律不改写其名与位置，特此留痕。
+# ---------------------------------------------------------------------------
+def _corpus_sizes() -> tuple[int, int, int, int]:
+    """现算四维（与 `test_poison_11` 同尺同口：本件 `read_point_leg()` + `census.py_files`）。"""
+    leg = read_point_leg()
+    files = sum(1 for _ in census.py_files(list(census.DEFAULT_SCOPES)))
+    return (leg["fields"], leg["direct_reads"], len(leg["templates"]), files)
+
+
+def _sizes_replacing_dim(
+    sizes: tuple[int, int, int, int], index: int, value: int
+) -> tuple[int, int, int, int]:
+    """只把第 index 维换成 value、其余三维保持现算 ⇒ 红只能来自这一维，别维不替它背。"""
+    fields, direct_reads, templates, production_files = sizes
+    if index == 0:
+        fields = value
+    elif index == 1:
+        direct_reads = value
+    elif index == 2:
+        templates = value
+    else:
+        production_files = value
+    return (fields, direct_reads, templates, production_files)
+
+
+def assert_floor_two_sided(index: int, sizes: tuple[int, int, int, int]) -> None:
+    """第 index 维地板的**双向**牙口自证（补盲区，不是放宽：只加判据，既有腿一条没删）。
+
+    形状口径（本批钉死）：``slack == 0`` 的维走**等值腿**（与 `test_poison_11` 对字段维／
+    模板维那两把同形）；``slack > 0`` 的维走**双向边界**——两枚探针都从执法函数
+    `assert_corpus_not_blind` 自己的判据里试，不另抄比较式：
+      **绿腿** 喂 ``现算 − 容差`` 必须**过**：base 被抬到现算之上（收紧一格）时地板
+        ``base − slack`` 跟着上移，这一发立刻变红 ⇒ 抓到"高一格不咬"那格盲区。
+      **红腿** 喂 ``现算 − 容差 − 1`` 必须**红**：base 被压低（放宽一格）时地板跟着降，
+        这一发会退回界内不红 ⇒ 本函数当场抛 ⇒ 抓到"降一格不咬"那格盲区。
+    两腿合起来 ⟺ ``base == 现算``，但它证明的是**地板咬在哪一格**与**容差没被偷偷改宽**，
+    比账面等值比较多一件事：尺自己变钝（判据被反写、探针被摘）也在这里现形。
+    """
+    computed = sizes[index]
+    base = CORPUS_FLOOR_BASELINE[index]
+    slack = CORPUS_FLOOR_SLACK[index]
+    if slack == 0:
+        assert computed == base, (
+            f"第 {index} 维容差为 0，地板 {base} 却 ≠ 现算 {computed} ⇒ 棘轮不等于真值，重录它"
+        )
+    # 绿腿：边界那一格必须仍在地板之上（slack 维里这一发就是"收紧一格"的探测器）。
+    assert_corpus_not_blind(_sizes_replacing_dim(sizes, index, computed - slack))
+    # 红腿：低一格必须被判变瞎。写不成 try/except/else 的"期待抛"会变pytest 的 Failed
+    # （非 AssertionError 子类），届时上面的外层 pytest.raises(AssertionError) 抓不住＝误报。
+    try:
+        assert_corpus_not_blind(_sizes_replacing_dim(sizes, index, computed - slack - 1))
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError(
+            f"第 {index} 维红腿不红：喂 现算−容差−1＝{computed - slack - 1} 竟被判「没变瞎」 ⇒ "
+            f"地板 {base} 已低于现算 {computed}（放宽一格／容差被改宽）＝盲区回来了"
+        )
+
+
+def test_poison_14_direct_read_floor_biteth_both_ways() -> None:
+    """毒发 14（直读维·带容差）：双向边界腿落地，"收紧一格不咬"那格盲区当场有主。
+
+    与 `test_poison_11` 的分工照实写：那一发看的是"一次性砍穿容差"（下界），本发看的是
+    "地板必须正好咬在 现算−容差 那一格"——上下都咬，缺一格就是盲区。
+    """
+    assert CORPUS_FLOOR_SLACK[1] > 0, (
+        "直读维容差已归零 ⇒ 本腿退化成等值腿，该由 slack==0 那一支接管；口径要改就别让它空跑"
+    )
+    sizes = _corpus_sizes()
+    assert_floor_two_sided(1, sizes)
+
+
+def test_poison_15_py_file_floor_biteth_both_ways() -> None:
+    """毒发 15（生产 .py 维·带容差）：这一维此前**零探针**，掉一枚基线全树无感（实测 4 passed）。"""
+    assert CORPUS_FLOOR_SLACK[3] > 0, (
+        "生产 .py 维容差已归零 ⇒ 本腿退化成等值腿，理由同上（不许名存实亡）"
+    )
+    sizes = _corpus_sizes()
+    assert_floor_two_sided(3, sizes)
+
+
+def test_poison_16_floor_boundary_shape_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """毒发 16（形状锁）：把"slack==0 走等值、slack>0 走双向边界"这条形状**当场试牙**。
+
+    手法＝只在**本模块内存里**把某一维基线挪动一格（±1），两个方向都必须被
+    `assert_floor_two_sided` 咬住，还原后立刻复绿。🔴 不改文件、不动真值：本批不许"调地板
+    换绿"，这里改的是 monkeypatch 的临时副本（teardown 自动还原），盘上字节由
+    `test_real_files_untouched_after_whole_suite` 的 sha 自证面兜住。
+    为什么必须有这一发：毒发 14/15 只在"地板已经不等于现算"时红；今天四维等值成立，它们绿
+    得**无法自证有牙**。这一发把两格盲区各主动踩一次——摘掉任一枚探针、把判据写反、或让
+    某一维再次无人看，都会在这里现形（不是靠读源码数调用次数，是靠真跑）。
+    """
+    module = sys.modules[__name__]
+    sizes = _corpus_sizes()
+    real_baseline = module.CORPUS_FLOOR_BASELINE
+    watched = 0
+    for index, slack in enumerate(CORPUS_FLOOR_SLACK):
+        for direction, offset in (("+1 收紧", 1), ("−1 放宽", -1)):
+            moved = _sizes_replacing_dim(real_baseline, index, real_baseline[index] + offset)
+            assert moved != real_baseline or offset == 0, "合成基线没动 ⇒ 本发在空跑"
+            monkeypatch.setattr(module, "CORPUS_FLOOR_BASELINE", moved)
+            with pytest.raises(AssertionError):
+                assert_floor_two_sided(index, sizes)
+            watched += 1
+        monkeypatch.undo()
+        assert_floor_two_sided(index, sizes)  # 还原即复绿：红必须来自判据，不来自阈值噪声
+    assert watched == len(CORPUS_FLOOR_SLACK) * 2, (
+        f"四维 × 双向应试 {len(CORPUS_FLOOR_SLACK) * 2} 格，实试 {watched} 格 ⇒ 有维没被走过"
+    )
+    assert module.CORPUS_FLOOR_BASELINE == real_baseline, "monkeypatch 未还原 ⇒ 别的事件会读到假地板"
+    assert_corpus_not_blind(sizes)

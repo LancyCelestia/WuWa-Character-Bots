@@ -88,24 +88,63 @@ def test_ledger_counts_match_live_root():
         )
 
 
-def test_removed_bypass_requires_central_registration():
-    """可达性前置：只有当呼叫数低于挂账计数（=有人撤了旁路）时，才要求中央在册
-    铁证——而现在四枚全保留，本锁同时验证「在册」判据本身可用（描述符行存在
-    ∧ orchestration authored），防止账与真身双双失真后锁成恒真。"""
-    counts = _root_call_counts()
+def _removal_problems(counts: dict[str, int], descriptor) -> list[str]:
+    """纯判据：给定「根呼叫现算数」与「中央在册表」，返回撤旁路违约清单（空＝合格）。
+
+    抽成函数的原因：现网四枚旁路全保留 ⇒ 原测试里 `removed` 恒 False，那条「撤了旁路
+    却没中央在册铁证」的红路**从未被走过**——正是简报点名的 green-but-toothless：把
+    判据写坏也不会红。注毒用例喂合成的 counts/descriptor 才能证明这条红路真的会红。
+    """
+    problems: list[str] = []
     for symbol, row in BYPASS_RETENTION_LEDGER.items():
         cid = str(row["capability_id"])
         removed = counts.get(symbol, 0) < int(row["count"])
-        if removed:
-            descriptor_row = CAPABILITY_DESCRIPTOR.get(cid)
-            assert descriptor_row is not None, f"{cid} 未入中央册 ⇒ 不许撤旁路"
-            assert "orchestration_descriptor" in descriptor_row.authored_by, (
-                f"{cid} 中央执行面未 author ⇒ 撤旁路=入口消失，红"
-            )
-        # 保留态下也抽查判据非恒真：这些 id 今天确实在册（判据可用性自证）
-        assert cid in CAPABILITY_DESCRIPTOR or removed, (
-            f"{cid} 不在册且旁路仍在——挂账本身失真"
-        )
+        registered = cid in descriptor
+        if removed and not registered:
+            problems.append(f"{cid} 未入中央册 ⇒ 不许撤旁路")
+        elif removed and "orchestration_descriptor" not in descriptor[cid].authored_by:
+            problems.append(f"{cid} 中央执行面未 author ⇒ 撤旁路=入口消失，红")
+        if not registered and not removed:
+            problems.append(f"{cid} 不在册且旁路仍在——挂账本身失真")
+    return problems
+
+
+def test_removed_bypass_requires_central_registration():
+    """可达性前置：呼叫数低于挂账计数（=有人撤了旁路）时，才要求中央在册铁证；
+    保留态下也抽查判据非恒真（在册判据本身可用），防账与真身双双失真后锁成恒真。"""
+    counts = _root_call_counts()
+    problems = _removal_problems(counts, CAPABILITY_DESCRIPTOR)
+    assert not problems, "撤旁路前置违约：" + "；".join(problems)
+
+
+def test_removal_predicate_catches_unbacked_or_unauthored_removal() -> None:
+    """注毒自证（原缺的那条腿）：合成 counts/descriptor 走一遍从没被现网触发的红路。"""
+    from types import SimpleNamespace
+
+    all_counts = {s: int(r["count"]) for s, r in BYPASS_RETENTION_LEDGER.items()}
+    all_reg = {
+        str(r["capability_id"]): SimpleNamespace(authored_by={"orchestration_descriptor"})
+        for r in BYPASS_RETENTION_LEDGER.values()
+    }
+    # 合格基线：全保留 + 全在册已 author ⇒ 尺不许恒红。
+    assert _removal_problems(all_counts, all_reg) == [], "合格态被判违约＝尺恒红"
+
+    victim = min(BYPASS_RETENTION_LEDGER)
+    vcid = str(BYPASS_RETENTION_LEDGER[victim]["capability_id"])
+    low = dict(all_counts)
+    low[victim] -= 1  # 模拟有人把该旁路从根上撤走一枚呼叫
+    # 撤了但中央在册且已 author ⇒ 合法，不报。
+    assert _removal_problems(low, all_reg) == [], "合法撤除被误报"
+    # 撤了却没入中央册 ⇒ 必须红。
+    assert any("未入中央册" in p for p in _removal_problems(low, {})), (
+        "注毒未被抓住：撤旁路无在册证明仍绿=前置锁空跑"
+    )
+    # 撤了、在册但执行面未 author ⇒ 必须红（撤旁路=入口消失）。
+    unauthored = dict(all_reg)
+    unauthored[vcid] = SimpleNamespace(authored_by=set())
+    assert any("author" in p for p in _removal_problems(low, unauthored)), (
+        "注毒未被抓住：撤旁路但执行面未 author 仍绿"
+    )
 
 
 def test_no_central_natural_language_claim_without_evidence():

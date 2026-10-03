@@ -11,6 +11,10 @@
 - **上限是手写字面量**：与被检清单同一表达式的上限＝结构性假绿，故另有一把 AST 自锁。
 - **扫描面不许塌陷**：只数边不数"扫了多少文件"，改 glob 就能悄悄把账做没。
 - **杀伤力自证不碰源码树**：注毒走"同一取数函数吃一段内存源码"，不往 `plugins/**` 写东西。
+- **门本体也要自证**（2026-10-02 席 R2b 补）：既有注毒全在证**尺**数得到，没一发证**上限门**会红
+  （把取数口桩成恒 `{}`，门照旧 0<=上限 常绿）。现由
+  `test_ratchet_gate_goes_red_when_a_legacy_import_is_injected`（生产侧/测试侧各一发）接上，
+  且同发自带 A/B 反证（同一钳位不注入必绿），证红来自注入而非钳位。
 """
 
 from __future__ import annotations
@@ -361,3 +365,97 @@ def test_new_legacy_import_is_caught() -> None:
     ), "无关相对形被误计入账＝扫描判据被放宽"
     # 反例：真身路径不计入（否则本门会把迁移动力也判成违规）
     assert edges_in_source(f"from plugins.bot_unified_runtime.domains.{leaf} import anything\n") == 0
+
+
+# --------------------------------------------------------------------------
+# 注毒自证「方向 a」（2026-10-02 席 R2b · 简报 arm-the-ratchet）：本文件的既有注毒全在证**尺**
+# （`test_new_legacy_import_is_caught` 证 `edges_in_source` 数得到多出的旧写法、
+#  `test_zero_edges_is_trusted_only_via_positive_control` 证正控有牙），**没有一发证上限门本体会红**：
+# 把 `collect_legacy_shim_edges` 换成恒 {} 的桩，`test_legacy_shim_edges_within_ceiling` 会永远绿
+# （0 <= 上限），而那条正控腿照旧绿——门与尺就此脱钩。本段把「多出恰好一枚旧写法 ⇒ 门当场红」接上，
+# 并在同一发里跑 **A/B 反证**（同一钳位、不注入 ⇒ 必须仍绿），否则红可能是钳位造成的、不是注入造成的。
+# 判据宽度一分不放宽：钳位只作用于**本注毒发的内存副本**（monkeypatch 自动回滚），
+# 文件顶的 `SHIM_EDGE_CEILING` / `TESTS_SHIM_EDGE_CEILING` 字面量与 `AUDIT_HISTORY` 一字未动。
+# 全内存注毒、零写盘；腿尾复核本文件自身字节未变（本仓「restore 后 cmp 逐字节相同才许销账」的纪律，
+# 这里压根不写，复核仍在，防日后有人把这改成落盘注毒）。
+# --------------------------------------------------------------------------
+def _ratchet_anchor_names(names: tuple[str, ...]) -> None:
+    """注毒前先点名锚位是否真在——缺锚位＝毒打在空气上，甚至可能把生产件留在毒态（本仓实锤过）。"""
+    mod = sys.modules[__name__]
+    missing = [n for n in names if not hasattr(mod, n)]
+    assert not missing, f"注毒锚位缺失 {missing}＝先修锚位，不许带缺锚注毒"
+
+
+def _injected_legacy_edge_count() -> int:
+    """注入的「一枚旧写法」由**本尺现算**（不手填常数）：合成源码 → `edges_in_source` → 边数必 == 1。"""
+    leaves = live_shim_leaves()
+    assert leaves, "在册垫片叶为空＝注毒形态无所依附，方向 a 无从自证"
+    leaf = min(leaves)
+    src = f"from {LEGACY_PKG}.{leaf} import anything\n"
+    got = edges_in_source(src, "<memory-poison-legacy-import>", source_pkg="scripts")
+    assert got == 1, f"注入形态没被本尺数到（{got}）＝毒打偏，方向 a 会退化成假自证"
+    return got
+
+
+def test_ratchet_gate_goes_red_when_a_legacy_import_is_injected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """方向 a（生产侧）：恰好多出一枚旧写法 ⇒ `test_legacy_shim_edges_within_ceiling` 必红；不注入必绿。"""
+    _ratchet_anchor_names(
+        (
+            "collect_legacy_shim_edges",
+            "edges_in_source",
+            "live_shim_leaves",
+            "LEGACY_PKG",
+            "SHIM_EDGE_CEILING",
+            "test_legacy_shim_edges_within_ceiling",
+        )
+    )
+    before = Path(__file__).read_bytes()
+    base = collect_legacy_shim_edges()
+    base_total = sum(base.values())
+    assert base_total <= SHIM_EDGE_CEILING, (
+        f"注毒基线本身已越线（{base_total} > {SHIM_EDGE_CEILING}）＝存量红未还，先还账再注毒"
+    )
+    poison_edges = _injected_legacy_edge_count()
+    # 钳到现算基线：于是「恰好多 1 枚」就越线。钳位只在本发内存里，落盘的 upper bound 一字不动。
+    monkeypatch.setattr(sys.modules[__name__], "SHIM_EDGE_CEILING", base_total)
+    # A 腿（反证）：不注入 ⇒ 同一钳位下必须仍绿——否则红来自钳位而不是注入。
+    test_legacy_shim_edges_within_ceiling()
+    # B 腿（注毒）：注入 1 枚真旧写法 ⇒ 门当场红，且报错里的数正是 base+1。
+    injected = dict(base)
+    injected["<injected>scripts/_poison_legacy_import_edge.py"] = poison_edges
+    monkeypatch.setattr(sys.modules[__name__], "collect_legacy_shim_edges", lambda: injected)
+    with pytest.raises(AssertionError, match="旧垫片 import 边数") as excinfo:
+        test_legacy_shim_edges_within_ceiling()
+    assert f"{base_total + poison_edges} > 上限 {base_total}" in str(excinfo.value), (
+        f"门红了但数的不是注入后的总量＝归因丢失: {excinfo.value}"
+    )
+    assert Path(__file__).read_bytes() == before, "注毒把本门文件写坏了＝方向 a 必须是纯内存注毒"
+
+
+def test_tests_side_ratchet_gate_goes_red_when_a_legacy_import_is_injected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """方向 a（测试侧第二本账）：同一形态各证一发——两本账各自独立单调，毒不许只注一本。"""
+    _ratchet_anchor_names(
+        (
+            "collect_tests_legacy_shim_edges",
+            "TESTS_SHIM_EDGE_CEILING",
+            "test_tests_side_edges_within_ceiling",
+        )
+    )
+    base = collect_tests_legacy_shim_edges()
+    base_total = sum(base.values())
+    assert base_total <= TESTS_SHIM_EDGE_CEILING, (
+        f"测试侧注毒基线已越线（{base_total} > {TESTS_SHIM_EDGE_CEILING}）＝先还账再注毒"
+    )
+    poison_edges = _injected_legacy_edge_count()
+    monkeypatch.setattr(sys.modules[__name__], "TESTS_SHIM_EDGE_CEILING", base_total)
+    test_tests_side_edges_within_ceiling()  # A 腿：不注入必绿（红只能来自注入，不来自钳位）
+    injected = dict(base)
+    injected["<injected>tests/_poison_legacy_import_edge.py"] = poison_edges
+    monkeypatch.setattr(sys.modules[__name__], "collect_tests_legacy_shim_edges", lambda: injected)
+    with pytest.raises(AssertionError, match="测试侧旧垫片 import 边数") as excinfo:
+        test_tests_side_edges_within_ceiling()  # B 腿：注入必红
+    assert f"{base_total + poison_edges} > 上限 {base_total}" in str(excinfo.value), (
+        f"测试侧门红了但数的不是注入后的总量＝归因丢失: {excinfo.value}"
+    )

@@ -146,6 +146,25 @@ def _parse(rel: str) -> ast.Module:
     return ast.parse(text, filename=rel)
 
 
+def _silent_skips_in_tree(tree: ast.AST, rel: str) -> list[SilentSkip]:
+    """纯判据：在一棵已解析的 AST 上收「宽 except ＋体内 pytest.skip」的静默消音点。
+
+    `scan_silent_skips` 与注毒自证共用这一把尺——抽出来是为了能拿合成 AST 直接喂进去，
+    证明 `_carries_str_exc` 真的会把「只类名不带 str(exc)」那格判成不合格；否则 J-3 可能
+    退化成「`_carries_str_exc` 恒 True」的摆设，全树照绿而消音面重新长回来（本门的立项病因）。
+    """
+    found: list[SilentSkip] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ExceptHandler) and _broad_except(node):
+            skips = _skip_calls_in_handler(node.body)
+            if not skips:
+                continue
+            bound = node.name
+            carries = all(_carries_str_exc(c, bound) for c in skips)
+            found.append(SilentSkip(rel, node.lineno, bound, skips, carries))
+    return found
+
+
 @lru_cache(maxsize=1)
 def scan_silent_skips() -> tuple[int, tuple[SilentSkip, ...]]:
     """返回 (扫到的 py 文件数, 静默消音 handler 清单)。一次全树扫、多测共用（树在跑测期不变）。
@@ -160,15 +179,57 @@ def scan_silent_skips() -> tuple[int, tuple[SilentSkip, ...]]:
             rel = p.relative_to(REPO).as_posix()
             tree = _parse(rel)
             files += 1
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ExceptHandler) and _broad_except(node):
-                    skips = _skip_calls_in_handler(node.body)
-                    if not skips:
-                        continue
-                    bound = node.name
-                    carries = all(_carries_str_exc(c, bound) for c in skips)
-                    found.append(SilentSkip(rel, node.lineno, bound, skips, carries))
+            found.extend(_silent_skips_in_tree(tree, rel))
     return files, tuple(found)
+
+
+# ------------------------------------------------------------------ 注毒自证：尺真的会咬人
+_SYNTH_BAD_AND_GOOD = '''
+import pytest
+
+
+def bad_class_name_only():
+    try:
+        launch()
+    except Exception as exc:
+        pytest.skip(f"Chromium 启动失败（{type(exc).__name__}）")  # 只类名，不合格
+
+
+def good_carries_exc():
+    try:
+        launch()
+    except Exception as exc:
+        pytest.skip(f"Chromium 起不来: {exc}")  # 带 str(exc) 形态，合格
+
+
+def bad_bare_except():
+    try:
+        launch()
+    except:
+        pytest.skip("环境不支持")  # 裸 except，无 bound ⇒ 不合格
+'''
+
+
+def test_scan_predicate_catches_silent_skip_without_exc_text() -> None:
+    """注毒自证（原缺的那条腿）：合成 AST 逐格喂 `_silent_skips_in_tree`，
+    必须收齐三枚消音点，且只类名/裸 except 判不合格、带 {exc} 判合格。
+
+    若判据被改瞎（不收 except→skip）＝0 枚；若 `_carries_str_exc` 恒真＝合格判据失效。
+    两种退化都会让本条红——这把尺本身因此被钉死，而不只是「今天全树恰好没人写坏」。
+    """
+    synth = ast.parse(_SYNTH_BAD_AND_GOOD, filename="synth.py")
+    found = _silent_skips_in_tree(synth, "synth.py")
+    assert len(found) == 3, f"应收到 3 枚静默消音点，实得 {len(found)}＝取数口被改瞎"
+    by_line = {s.lineno: s for s in found}
+    # 恰好一枚合格（带 str(exc)），另两枚不合格（只类名 / 裸 except）。
+    carrying = [s for s in found if s.carries]
+    assert len(carrying) == 1, [s.lineno for s in carrying]
+    assert carrying[0].bound == "exc"
+    not_carrying = [s for s in found if not s.carries]
+    assert len(not_carrying) == 2, [s.lineno for s in not_carrying]
+    # 裸 except 那格 bound 必为 None（证明 `_broad_except` 认得裸 except，不止 Exception）
+    assert any(s.bound is None for s in not_carrying), not_carrying
+    assert by_line  # 三枚都能按行号取到
 
 
 # ------------------------------------------------------------------ J-2 棘轮自锁

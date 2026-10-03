@@ -611,6 +611,47 @@ _MACHINE_LEDGER_REL = "docs/auto-facts.md"
 _FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 _INLINE_CODE_SPAN_RE = re.compile(r"``[^`\n]+``|`[^`\n]+`")
 
+# ---- 板块页人写区（P1 席 2026-10-02 补面，只加严、不改旧叙述面的尺） ----
+# 事故＝`docs/boards/**` 根本不在 `_NARRATIVE_DOCS` 里（`_meta/doc-classification-20260921.md`
+# 第 15 行自己把这格记成「本表最大的结构性风险」），且旧尺 `_VOLATILE_COUNT_RE` 只认
+# 「数字+量词+名词」紧贴的形态：板块页常写的「共 1234 个**配置**字段」中间夹了修饰词 ⇒ 不认。
+# 两重无牙叠在一起，往板块页人写区种任意多手写绝对计数都 PASS（本席实测：现门体 findings=0）。
+# 板块门口径必须沿用（`test_board_taxonomy_gate.py`）：**生成段不比、人写区才判**——
+# `<!-- BOARD-AUTO:BEGIN -->…END` 之间由 `scripts/board_doc_sync.py` 产出，把生成物里的
+# 派生数字判成人写裸计数＝假红。`_meta/**` 是机器台账，同样不进面。
+_BOARDS_DOC_GLOB = "docs/boards/**/*.md"
+_BOARD_AUTO_RE = re.compile(
+    r"<!-- BOARD-AUTO:BEGIN -->.*?<!-- BOARD-AUTO:END -->", re.DOTALL
+)
+
+#: 板块页人写区的「手写绝对计数」尺：量词与名词之间允许一段中文修饰语（配置/帮助/热改…）。
+#: 与 `test_board_taxonomy_gate.py::_VOLATILE_COUNT` 同一支前置排除（§9 / v21r2 / 1.4.3
+#: 这类章节号与版本号粘连不算计数），名词尾集比叙述面宽一档（多 入口/能力/用例/文件/模块），
+#: 因为板块页正是按「一个入口一张卡」在数这些东西。
+#: ⚠ 尾集**按类补全、不按单枚事故补**（Q2 席 2026-10-02 复核）：原集缺 `表`，实测同一支尺
+#:   对「共 42 个配置字段」红、对「共 42 张表」不红＝同类计数两副面孔。SQLite 表 / 渲染卡片 /
+#:   白名单群 / 配置键 / 消息·命令·渠道·适配器·订阅… 在本仓都有随代码漂移的绝对总数（真身＝
+#:   `docs/db-owners.md`、机器册、`docs/boards/**` 生成段），一律进尺；放行只走 R4 三条结构判据，
+#:   不开第二套豁免。只准变严：尾集只增不减。
+_BOARDS_ABSOLUTE_COUNT_RE = re.compile(
+    r"(?<![\w./§-])(\d{1,5})\s*(?:个|条|枚|张|项)\s*[\u4e00-\u9fff]{0,6}?"
+    r"(?:字段|topics?|主题|别名|模板|路由席位|路由|交付物|库|入口|能力|板块|用例|文件|模块"
+    r"|表|卡片|群|键|消息|命令|平台|渠道|适配器|会话|记录|条目|提醒|笔记|订阅)(?!\w)"
+)
+
+#: 叙述面用的尺（一条）。
+_NARRATIVE_PATTERNS: tuple[re.Pattern[str], ...] = (_VOLATILE_COUNT_RE,)
+#: 板块人写区用的尺（两条并判：旧尺继续管，新尺补「带修饰词」形态）。
+_BOARDS_PATTERNS: tuple[re.Pattern[str], ...] = (
+    _VOLATILE_COUNT_RE,
+    _BOARDS_ABSOLUTE_COUNT_RE,
+)
+
+
+def _mask_generated_segments(text: str) -> str:
+    """把 BOARD-AUTO 生成段整段抹空（**行数不变**，行号仍可用来报位置）。"""
+    return _BOARD_AUTO_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+
 
 def _machine_ledger_text(root: Path) -> str:
     """真身机器册文本（判据②的核对面）；不存在则空串（此时任何数都算「已不在真身」）。"""
@@ -629,7 +670,11 @@ def _points_to_true_source(line: str, root: Path) -> bool:
     return False
 
 
-def _as_history_absent_from_ledger(line: str, ledger: str) -> bool:
+def _as_history_absent_from_ledger(
+    line: str,
+    ledger: str,
+    patterns: tuple[re.Pattern[str], ...] = _NARRATIVE_PATTERNS,
+) -> bool:
     """结构判据②：写了「当时值」且每个被记的数在真身机器册里都已不存在。
 
     只认「当时值」这一显式历史标记 + 真身反查，不再认「历史/实测/曾核/当时」等泛词——
@@ -637,11 +682,16 @@ def _as_history_absent_from_ledger(line: str, ledger: str) -> bool:
     """
     if "当时值" not in line:
         return False
-    nums = _VOLATILE_COUNT_RE.findall(line)
+    nums = [n for pat in patterns for n in pat.findall(line)]
     return bool(nums) and all(n not in ledger for n in nums)
 
 
-def _inside_code(lines: list[str], index: int, line: str) -> bool:
+def _inside_code(
+    lines: list[str],
+    index: int,
+    line: str,
+    patterns: tuple[re.Pattern[str], ...] = _NARRATIVE_PATTERNS,
+) -> bool:
     """结构判据③：整行在围栏代码块内，或该行的每个裸计数都落在行内码内。"""
     in_fence = False
     for i, ln in enumerate(lines):
@@ -652,7 +702,7 @@ def _inside_code(lines: list[str], index: int, line: str) -> bool:
             continue
         if in_fence and i == index:
             return True
-    matches = list(_VOLATILE_COUNT_RE.finditer(line))
+    matches = [m for pat in patterns for m in pat.finditer(line)]
     if not matches:
         return False
     spans = [c.span() for c in _INLINE_CODE_SPAN_RE.finditer(line)]
@@ -661,44 +711,221 @@ def _inside_code(lines: list[str], index: int, line: str) -> bool:
     )
 
 
-def _volatile_release(line: str, lines: list[str], index: int, root: Path, ledger: str) -> bool:
-    """R4 三条结构判据的合取放行口（满足其一即放行）。"""
+def _volatile_release(
+    line: str,
+    lines: list[str],
+    index: int,
+    root: Path,
+    ledger: str,
+    patterns: tuple[re.Pattern[str], ...] = _NARRATIVE_PATTERNS,
+) -> bool:
+    """R4 三条结构判据的合取放行口（满足其一即放行）。两面尺共用，不开第二套豁免。"""
     return (
         _points_to_true_source(line, root)
-        or _as_history_absent_from_ledger(line, ledger)
-        or _inside_code(lines, index, line)
+        or _as_history_absent_from_ledger(line, ledger, patterns)
+        or _inside_code(lines, index, line, patterns)
     )
 
 
-def _volatile_count_findings(
-    root: Path, files: tuple[str, ...] = _NARRATIVE_DOCS
+def _volatile_findings_in_text(
+    rel: str,
+    text: str,
+    root: Path,
+    ledger: str,
+    patterns: tuple[re.Pattern[str], ...],
 ) -> list[str]:
-    """叙述文档里「手写可过期计数且不满足 R4 三条结构放行」的行，逐条 `文件:行号 片段`。"""
+    """单文件判据（两面共用）：命中尺子又不满足 R4 结构放行的行。"""
+    findings: list[str] = []
+    lines = text.splitlines()
+    for number, line in enumerate(lines, 1):
+        if not any(pat.search(line) for pat in patterns):
+            continue
+        if _volatile_release(line, lines, number - 1, root, ledger, patterns):
+            continue
+        findings.append(f"{rel}:{number} -> {line.strip()[:90]}")
+    return findings
+
+
+def _board_human_pages(root: Path, boards_glob: str) -> list[str]:
+    """板块页人写区清单：`_meta/**`（机器台账）不进面。"""
+    return [
+        p.relative_to(root).as_posix()
+        for p in sorted(root.glob(boards_glob))
+        if p.is_file() and "_meta" not in p.parts
+    ]
+
+
+def _volatile_count_findings(
+    root: Path,
+    files: tuple[str, ...] = _NARRATIVE_DOCS,
+    boards_glob: str | None = _BOARDS_DOC_GLOB,
+) -> list[str]:
+    """叙述文档 + 板块页人写区里「手写可过期计数且不满足 R4 三条结构放行」的行。
+
+    板块页的生成段（BOARD-AUTO 标记之间）先整段抹空再判 ⇒ 只比人写区，与
+    `test_board_taxonomy_gate.py` 同口径；叙述面逐字保持旧行为（尺、放行、文件集都不动）。
+    """
     findings: list[str] = []
     ledger = _machine_ledger_text(root)
     for rel in files:
         path = root / rel
         if not path.exists():
             continue
-        lines = path.read_text(encoding="utf-8").splitlines()
-        for number, line in enumerate(lines, 1):
-            if not _VOLATILE_COUNT_RE.search(line):
-                continue
-            if _volatile_release(line, lines, number - 1, root, ledger):
-                continue
-            findings.append(f"{rel}:{number} -> {line.strip()[:90]}")
+        findings += _volatile_findings_in_text(
+            rel, path.read_text(encoding="utf-8"), root, ledger, _NARRATIVE_PATTERNS
+        )
+    if boards_glob:
+        for rel in _board_human_pages(root, boards_glob):
+            raw = (root / rel).read_text(encoding="utf-8", errors="replace")
+            findings += _volatile_findings_in_text(
+                rel, _mask_generated_segments(raw), root, ledger, _BOARDS_PATTERNS
+            )
     return findings
 
 
 def test_narrative_docs_defer_volatile_counts_to_machine_ledger() -> None:
-    """叙述文档不许手写会随代码漂移的总数；要放行只认三条结构判据（R4：不认词）。"""
+    """叙述文档与板块页人写区不许手写会随代码漂移的总数；放行只认三条结构判据（R4：不认词）。"""
     findings = _volatile_count_findings(ROOT)
     assert not findings, (
-        "以下叙述文档写了会过期的手写计数，且不满足 R4 的三条结构放行"
+        "以下文档写了会过期的手写计数，且不满足 R4 的三条结构放行"
         "（①指向真身路径/机器册 docs/auto-facts.md ②「当时值」且该数已不在真身 "
-        "③位于代码块/行内码；改法：改写为指向真身或机器册，或确为历史值则标「当时值」）：\n"
+        "③位于代码块/行内码；改法：改写为指向真身或机器册，或确为历史值则标「当时值」）"
+        "；板块页只判 BOARD-AUTO 标记外的人写区：\n"
         + "\n".join(findings)
     )
+
+
+def test_boards_human_writes_abs_count_gate_teeth(tmp_path: Path) -> None:
+    """注毒自证（P1 席 2026-10-02）：规则 10 必须真的管到 `docs/boards/**` 人写区。
+
+    事故形状＝往板块页人写区种「本仓共 1234 个配置字段」仍 PASS，两重无牙：
+    扫描面不含板块页（旧清单只有 9 个定点文件）＋旧尺只认紧贴形态（修饰词一挡就漏）。
+    五齿缺一即本测试红：
+      ① 人写区注毒必红；
+      ② 同一枚计数躺在 `<!-- BOARD-AUTO -->` 生成段内 ⇒ 不比（比了＝拿生成物判人写区＝假红）；
+      ③ 计数行带机器册指针 ⇒ 放行（与叙述面共用 R4，不另开豁免）；
+      ④ 章节号/版本号粘连（§9 字段 / 1.4.3 字段 / v21r2 主题）不得误判——与
+         `test_board_taxonomy_gate.py::test_volatile_count_gate_detects_planted_line` 同控制；
+      ⑤ `_meta/**` 机器台账不进面；且**不注毒的树必绿**（门不是永假条件）。
+    取数口＝真函数 `_volatile_count_findings` 喂假树，不抄第二支扫描器。
+    """
+    boards = tmp_path / "docs" / "boards"
+    feat = boards / "B01-x" / "feat"
+    feat.mkdir(parents=True)
+    (boards / "_meta").mkdir(parents=True)
+    (tmp_path / "docs").joinpath("auto-facts.md").write_text(
+        "config.py bot_* 字段数：689\n", encoding="utf-8"
+    )
+    (feat / "poison.md").write_text(
+        "# 页\n\n本仓共 1234 个配置字段，另有 77 个帮助主题。\n", encoding="utf-8"
+    )
+    (feat / "in-auto.md").write_text(
+        "# 页\n\n<!-- BOARD-AUTO:BEGIN -->\n生成段：本仓共 1234 个配置字段。\n"
+        "<!-- BOARD-AUTO:END -->\n\n人写区干净。\n",
+        encoding="utf-8",
+    )
+    (feat / "pointer.md").write_text(
+        "# 页\n\n字段数以机器册 `docs/auto-facts.md` 为准，此处不手写。\n"
+        "旧口径当时值为 700 个配置字段（真身已无此数）。\n"
+        "写法示例：`12 个别名`。\n",
+        encoding="utf-8",
+    )
+    (feat / "not-a-count.md").write_text(
+        "# 页\n\n见 §9 字段级契约；zhconv 1.4.3 字段；v21r2 主题；端口 3001 个连接？"
+        "不，写作 `3001`。\n",
+        encoding="utf-8",
+    )
+    (boards / "_meta" / "ledger.md").write_text(
+        "机器台账：本仓共 1234 个配置字段。\n", encoding="utf-8"
+    )
+    (feat / "clean.md").write_text("# 页\n\n这一页什么都不数。\n", encoding="utf-8")
+
+    findings = _volatile_count_findings(tmp_path)
+    hit_files = sorted({f.split(":", 1)[0] for f in findings})
+    assert hit_files == ["docs/boards/B01-x/feat/poison.md"], (
+        f"板块人写区注毒面的命中集不对（应只有 poison.md）：{findings}"
+    )
+    assert len(findings) == 1, f"注毒页应报一行（逐行报，不按命中数重复计），实得：{findings}"
+    assert findings[0].startswith("docs/boards/B01-x/feat/poison.md:3"), findings
+    assert "1234 个配置字段" in findings[0], findings
+
+    # ⑤ 控制腿：干净树必绿（把注毒页抽掉后同一棵树不再报）
+    (feat / "poison.md").unlink()
+    assert _volatile_count_findings(tmp_path) == [], (
+        "干净板块树被判红＝把生成段/指针句/版本号也判进来了（假红会淹掉真账）"
+    )
+    # 面本身不许为空：板块 glob 失配时上面一腿会退化成「永绿」
+    assert _board_human_pages(tmp_path, _BOARDS_DOC_GLOB), "板块面采集为空＝门在空转"
+
+
+def test_boards_abs_count_noun_tails_are_complete(tmp_path: Path) -> None:
+    """名词尾集补全自证（Q2 席 2026-10-02，复核席实测的量具缺口）。
+
+    缺口形状＝尾集缺 `表`：往板块人写区种「本仓共 42 张表」**不红**，而种「本仓共 42 个
+    配置字段」红 ⇒ 同一支尺对同一类「手写绝对计数」两副面孔，漏掉的恰好是板块页最爱写的
+    库表 / 卡片 / 群 / 键。补全按**类**补（本仓有真身总数、会随代码漂移的名词全进尺），
+    不按单枚事故补。四齿：
+      ① 尾集每一枚（表/卡片/群/键/消息/命令/平台/渠道/适配器/会话/记录/条目/提醒/笔记/
+         订阅）人写区种下去必红，且**带修饰词**那一形态（「42 张数据表」）也要红；
+      ② 同一枚「共 42 张表」躺在 `<!-- BOARD-AUTO:BEGIN -->…END` 生成段内 ⇒ 必**不**红
+         （生成段由 `scripts/board_doc_sync.py` 产出，把派生数判成人写裸计数＝造假红）；
+      ③ 旧牙不掉：「1234 个配置字段」「77 个帮助主题」仍红；
+      ④ 章节号/版本号粘连控制不误判（§9 表 / 1.4.3 卡片 / v21r2 键 / 3001 个连接）。
+    取数口＝真函数 `_volatile_count_findings`，不抄第二支扫描器。
+    """
+    feat = tmp_path / "docs" / "boards" / "B99-tail" / "feat"
+    feat.mkdir(parents=True)
+    (tmp_path / "docs" / "auto-facts.md").write_text("本页无下列数字\n", encoding="utf-8")
+
+    tails = (
+        "表", "卡片", "群", "键", "消息", "命令", "平台", "渠道", "适配器",
+        "会话", "记录", "条目", "提醒", "笔记", "订阅",
+    )
+    planted = [f"本仓共 42 个{t}。" for t in tails]
+    planted += [
+        "本仓共 42 张数据表。",            # ① 修饰词间隔形态（旧尺只认紧贴那一枚）
+        "本仓共 1234 个配置字段。",         # ③ 旧牙（P1 席事故原文）
+        "另有 77 个帮助主题。",             # ③ 旧牙（带修饰词）
+    ]
+    (feat / "tails.md").write_text("# 页\n\n" + "\n".join(planted) + "\n", encoding="utf-8")
+    (feat / "in-auto.md").write_text(
+        "# 页\n\n<!-- BOARD-AUTO:BEGIN -->\n生成段：本仓共 42 张表、42 个键、77 个帮助主题。\n"
+        "<!-- BOARD-AUTO:END -->\n\n人写区干净。\n",
+        encoding="utf-8",
+    )
+    (feat / "not-a-count.md").write_text(
+        "# 页\n\n见 §9 表级契约；zhconv 1.4.3 卡片；v21r2 键；端口 3001 个连接？"
+        "不，写作 `3001`。\n",
+        encoding="utf-8",
+    )
+
+    findings = _volatile_count_findings(tmp_path)
+    hit_files = sorted({f.split(":", 1)[0] for f in findings})
+    assert hit_files == ["docs/boards/B99-tail/feat/tails.md"], (
+        f"命中集不对：生成段（in-auto.md）或章节号行（not-a-count.md）被判成人写区＝假红，"
+        f"或人写区漏判：{findings}"
+    )
+    blob = "\n".join(findings)
+    for t in tails:
+        assert f"个{t}" in blob, f"尾集补全没生效：「共 42 个{t}」未被判红——{findings}"
+    assert "42 张数据表" in blob, f"修饰词间隔形态仍漏：{findings}"
+    assert "1234 个配置字段" in blob and "77 个帮助主题" in blob, (
+        f"旧牙掉了：{findings}"
+    )
+    assert len(findings) == len(planted), (
+        f"应逐行报 {len(planted)} 行（注毒行＋旧牙行各一行），实得：{findings}"
+    )
+    assert "42 张表" not in "\n".join(
+        f for f in findings if "in-auto" in f
+    ), "生成段被算进人写区＝造假红"
+
+
+def test_boards_face_is_actually_in_the_gate() -> None:
+    """扫描面自证：真树的板块面必须非空（板块目录改名 ⇒ 上面那腿会静默退化）。"""
+    pages = _board_human_pages(ROOT, _BOARDS_DOC_GLOB)
+    assert len(pages) > 100, f"板块面只采到 {len(pages)} 页 ⇒ glob 或排除条件配错了"
+    assert not any("_meta/" in p for p in pages), "机器台账混进了人写区面"
+
 
 
 def test_volatile_count_gate_detects_planted_line(tmp_path: Path) -> None:

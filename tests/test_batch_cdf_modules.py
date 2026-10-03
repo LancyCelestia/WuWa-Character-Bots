@@ -35,12 +35,16 @@ def test_knowledge_block_carries_anti_recital_rule() -> None:
     assert "不许贴链接" in chat._KB_RECITAL_RULE_LINE
 
 
-def test_coalescing_window_is_off_in_production_env() -> None:
-    """2026-09-27 裁定：合并窗暂关 ⇒ .env 必须显式 false（缺省 True 会照旧合并）。"""
+def test_coalescing_window_is_on_in_production_env() -> None:
+    """窗开形态锁（2026-10-03 用户裁定：折句窗开，.env/.env.example 已同批改 true）。
+
+    旧姿态（2026-09-27「合并窗暂关 ⇒ 显式 false」）随裁定失效：本锁改为钉「两处申报面
+    都显式 true」——防缺省漂移回关（漏申报＝形态退化），也防有人不声不响再关窗。
+    """
     from dotenv import dotenv_values
 
-    values = dotenv_values(".env")
-    assert str(values.get("BOT_CHAT_MESSAGE_COALESCING_ENABLED")).lower() == "false"
+    assert str(dotenv_values(".env").get("BOT_CHAT_MESSAGE_COALESCING_ENABLED")).lower() == "true"
+    assert str(dotenv_values(".env.example").get("BOT_CHAT_MESSAGE_COALESCING_ENABLED")).lower() == "true"
 
 
 def test_category_mapping() -> None:

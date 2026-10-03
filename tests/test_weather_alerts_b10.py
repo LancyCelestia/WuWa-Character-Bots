@@ -139,9 +139,11 @@ def test_format_city_alerts_renders_entry_lines(monkeypatch) -> None:
 
 def test_capability_appends_alerts_on_nmc_hit_only(monkeypatch) -> None:
     _patch_alarm_http(monkeypatch, _FIND_ALARM_FIXTURE)
+    # 桩签名须带 timeout：weather.py 已透传 nmc_weather_query(query, proxy=,
+    # timeout=)（S-FIX-WX-T6 超时透传），滞后签名会 TypeError。
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.weather.capabilities.weather.nmc_weather_query",
-        lambda query, proxy="": "【测试天气】晴 25℃",
+        lambda query, proxy="", timeout=None: "【测试天气】晴 25℃",
     )
     capability = build_weather_capability(config=None, render_backend=None)
     result = capability(_private_message("天气 黑龙江-呼玛"), None)
@@ -152,11 +154,12 @@ def test_capability_appends_alerts_on_nmc_hit_only(monkeypatch) -> None:
     # 海外源（open-meteo）：NMC 预警语义不适用，不附带预警段。
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.weather.capabilities.weather.nmc_weather_query",
-        lambda query, proxy="": None,
+        lambda query, proxy="", timeout=None: None,
     )
+    # open_meteo_query 同样已透传 timeout（weather.py 海外兜底腿）。
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.weather.capabilities.weather.open_meteo_query",
-        lambda query, proxy="": {"latitude": 35.0, "current": {}},
+        lambda query, proxy="", timeout=None: {"latitude": 35.0, "current": {}},
     )
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.weather.capabilities.weather.format_open_meteo",

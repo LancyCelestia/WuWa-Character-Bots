@@ -14,6 +14,9 @@
 - **扫描面地板**：低于 `MIN_SCANNED_DOCS` 即红——改 glob 把账做没，判的是塌陷不是清零。
 - **命中非空**：未归属清单为空要么全线归位（那就显式删本门并留说明），要么取数口坏了。
 - **注毒自证走 tmp_path/内存**：往假 repo 造表造文件，零污染源码树。
+- **存在性锁段感知（席 OW-01 修）**：`DOC_OWNERSHIP_ARCHIVE` 按定义＝「表内引用过、路径已不存在」，
+  不分段地要求每条 `is_file()` 会让本判据**恒红**（恒红＝不执法）。现只免「住在归档段 ∩ 现算归档面 ∩
+  确实不在盘」三件同时成立的条目，缺一即红；现役死链与谎报归档都照样红，豁免面不许自己放大。
 - **终局要求是降**：本基线 158 是起点不是达标线；后续批次每归位一批，ceiling 与 AUDIT_HISTORY 同步降。
 """
 
@@ -122,6 +125,72 @@ def test_audit_history_never_rises() -> None:
     )
 
 
+#: 归档段的字面量名与段标签（真身＝`scripts/doc_ownership_sync.py` 的 `_SOURCE_SECTIONS`，此处只引用不复制值）。
+_ARCHIVE_SECTION_VAR = "DOC_OWNERSHIP_ARCHIVE"
+_ARCHIVE_SECTION_LABEL = dos._SOURCE_SECTIONS[_ARCHIVE_SECTION_VAR]
+
+
+def _declared_paths_must_resolve(root: Path, text: str, ledger: dos.Ledger) -> tuple[str, ...]:
+    """声明源逐条路径可解析锁（**段感知**版；席 OW-01 修的是这条判据的结构性不可满足）。
+
+    原形状用不分段的 `ast.walk` 对**所有** `DocOwner(...)` 构造要求 `is_file()`，而
+    `DOC_OWNERSHIP_ARCHIVE` 的定义恰恰是「分类表引用过、路径已不存在」——`load_entries`
+    只在候选全部落空时才写归档行 ⇒ 该段按契约**必然**不在盘。于是两条腿互相咬死：
+    `_in_sync` 的逐字节比对只放过 `render_source(ledger)` 这一种内容，而 ledger 有归档行时
+    那份内容必然含不在盘的路径 ⇒ 判据恒红＝不执法（红不是抓到东西，是根本做不绿）。
+    仓库外 HEAD 轴副本三态实测（`.superpowers/` 已铺进副本，否则扫描面假红）：
+      ① as-generated（归档面非空）→ 本函数红；② 手删归档行 → 逐字节比对红；
+      ③ 归档行搬进 `DOC_OWNERSHIP` → 两红。唯一绿态＝归档面为空（那四份根件回到盘上）。
+
+    豁免窄到三件事同时成立才免，缺一即红：
+      A1 条目住在 `_ARCHIVE_SECTION_VAR` **段**里（按段判定，不拿 path 猜）；
+      A2 该 path 确在**现算**归档面 `ledger.archive`（分类表须真有一行路径不可解析；凭空造的归档行不豁免）；
+      A3 该 path **确实不在盘**（在盘就还是现役件，谎报归档＝拿豁免藏死链/多余链，当场红）。
+    反向也钉：现算归档面每条都必须登记在该段——**归档信息不许丢**。
+    解析有崩坏（`parse_declaration` 报漂移）时豁免面整体归零＝退回原判据，宁红不哑。
+    返回实际走豁免的路径，供调用方留「豁免真承重」的凭据。既有断言（板块码合法、同路径不双认领、
+    目录级 `is_dir()`、现役件 `is_file()`）一字未改，只是搬进本函数并加了段判据。
+    """
+    tree = ast.parse(text)
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "DocOwner"]
+    assert calls, "声明源里一个 DocOwner 构造都没有＝投影器写空了"
+    records, parse_drifts = dos.parse_declaration(text)
+    archived: set[str] = (
+        set() if parse_drifts
+        else {p for p, rec in records.items() if rec.get("section") == _ARCHIVE_SECTION_LABEL}
+    )
+    live_archive = {e.path for e in ledger.archive}
+    exempted: list[str] = []
+    seen: set[str] = set()
+    for call in calls:
+        kw = {k.arg: ast.literal_eval(k.value) for k in call.keywords if k.arg}
+        path, board = kw["path"], kw["board"]
+        assert board == "" or (len(board) == 3 and board.startswith("B")), f"板块码非法：{board!r}（{path}）"
+        assert path not in seen, f"同一路径两条目：{path}（双认领=归属含糊，投影器须先去重）"
+        seen.add(path)
+        probe = root / Path(*path.rstrip("/").split("/"))
+        if path in archived:
+            assert not (probe.is_file() or probe.is_dir()), (
+                f"归档行却在盘：{path}＝归档面虚报（现役件伪装成归档历史行躲可解析锁）"
+            )
+            assert path in live_archive, (
+                f"凭空归档：{path} 登记在 {_ARCHIVE_SECTION_VAR} 段，但分类表现算的归档面没有它"
+                "（须真有一行路径不可解析才许进 ARCHIVE）"
+            )
+            exempted.append(path)
+            continue
+        if path.endswith("/"):
+            assert probe.is_dir(), f"目录级条目不在盘：{path}"
+        else:
+            assert probe.is_file(), f"在册条目路径不可解析：{path}（应在 ARCHIVE）"
+    unregistered = live_archive - set(exempted)
+    assert not unregistered, (
+        f"现算归档面有 {len(unregistered)} 条没登记进 {_ARCHIVE_SECTION_VAR} 段：{sorted(unregistered)[:3]}"
+        "——归档信息不许丢（豁免面只准等于现算归档面，不许自己放大）"
+    )
+    return tuple(exempted)
+
+
 def test_declaration_source_is_in_sync_and_pure() -> None:
     """声明源逐字节 == 分类表投影（手改即红）；且守住"只声明数据"哲学。"""
     ledger = dos.compute_ownership()
@@ -136,19 +205,7 @@ def test_declaration_source_is_in_sync_and_pure() -> None:
             assert node.module in {"__future__", "dataclasses"}, f"声明源越界 import：{node.module}"
         elif isinstance(node, ast.Import):
             assert all(a.name == "dataclasses" for a in node.names), "声明源只准 dataclasses/__future__"
-    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "DocOwner"]
-    assert calls, "声明源里一个 DocOwner 构造都没有＝投影器写空了"
-    seen: set[str] = set()
-    for call in calls:
-        kw = {k.arg: ast.literal_eval(k.value) for k in call.keywords if k.arg}
-        path, board = kw["path"], kw["board"]
-        assert board == "" or (len(board) == 3 and board.startswith("B")), f"板块码非法：{board!r}（{path}）"
-        assert path not in seen, f"同一路径两条目：{path}（双认领=归属含糊，投影器须先去重）"
-        seen.add(path)
-        if path.endswith("/"):
-            assert (ROOT / Path(*path.rstrip('/').split('/'))).is_dir(), f"目录级条目不在盘：{path}"
-        else:
-            assert (ROOT / Path(*path.split('/'))).is_file(), f"在册条目路径不可解析：{path}（应在 ARCHIVE）"
+    _declared_paths_must_resolve(ROOT, target.read_text(encoding="utf-8"), ledger)
 
 
 _FAKE_TABLE = """# fake
@@ -667,3 +724,127 @@ def test_s88_real_tree_is_clean_at_entry_level_too(tmp_path: Path, capsys: pytes
     assert rc == 0 and lines == ["CLEAN"], f"真树 --check 现算不绿：{lines[:3]}"
     assert dos.main(["--check"], repo=ROOT) == 0
     capsys.readouterr()
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 席 OW-01 ARCHIVE-EXEMPTION-TEETH —— 给「归档豁免」装三枚牙（2026-10-02）
+#
+# `_declared_paths_must_resolve` 里那条 `if path in archived: continue` 是新开的口子，
+# 按本仓纪律（规则 11 注毒自证 / S88「门必须有牙」）必须当场证它只在**该免的地方**免：
+#   牙 1 现役行指向不在盘的路径 ⇒ 仍红（豁免不是死链收容所）；
+#   牙 2 归档行指向不在盘的路径 ⇒ 绿，且负对照证**不分段的旧走法在这儿必红**（豁免真承重，不是空转）；
+#   牙 3 在盘的条目谎报归档 / 凭空造归档行 / 现算归档行漏登记 ⇒ 三形全红（豁免面恰好等于现算归档面）。
+# 注毒全打在 `tmp_path` 假 repo 的**生成物与盘上文件**上，真树一个字都不写。
+# 断言只吃 `_declared_paths_must_resolve` 这**一个**落点——门与注毒共一条码路，禁第二条码路。
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def _ow01_repo(tmp_path: Path, name: str = "ow01") -> Path:
+    """假 repo ＋ 自洽声明源（内含**一枚真归档行** `ghost-doc.md`，正是豁免的对象）。"""
+    repo = tmp_path / name
+    repo.mkdir(parents=True, exist_ok=True)
+    _build_fake_repo(repo)
+    assert dos.main(["--generate"], repo=repo) == 0, "注毒现场搭不起来"
+    return repo
+
+
+def _ow01_resolve(repo: Path) -> tuple[str, ...]:
+    """在同一条落点上跑一次（text 与 ledger 都现读现算，与常驻门吃的是同一对量）。"""
+    return _declared_paths_must_resolve(repo, _read_decl(repo), dos.compute_ownership(repo))
+
+
+def test_ow01_archived_row_missing_on_disk_is_green_and_exemption_bears_load(tmp_path: Path) -> None:
+    """牙 2：归档行按定义不在盘 ⇒ 绿；且不分段的旧走法在同一条上必红（豁免非空转）。"""
+    repo = _ow01_repo(tmp_path)
+    ghost = repo / "ghost-doc.md"
+    assert not ghost.exists(), "假 repo 的归档样本必须在盘外，否则这条腿空跑"
+    ledger = dos.compute_ownership(repo)
+    assert {e.path for e in ledger.archive} == {"ghost-doc.md"}, f"归档样本没落到 ARCHIVE 面：{ledger.archive}"
+    assert _ow01_resolve(repo) == ("ghost-doc.md",), "豁免面≠现算归档面（多免或少免都算走偏）"
+    # 负对照：旧形状（不分段、逢条目就 is_file）在同一份声明源上必须红——
+    # 这就是「结构性不可满足」的机器证：不是本席说它做不绿，是它自己在这儿报死。
+    tree = ast.parse(_read_decl(repo))
+    with pytest.raises(AssertionError) as excinfo:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "DocOwner":
+                kw = {k.arg: ast.literal_eval(k.value) for k in node.keywords if k.arg}
+                if not kw["path"].endswith("/"):
+                    assert (repo / Path(*kw["path"].split("/"))).is_file(), f"旧形状在此红：{kw['path']}"
+    assert "ghost-doc.md" in str(excinfo.value), f"负对照没咬到归档样本：{excinfo.value}"
+
+
+def test_ow01_live_row_at_missing_path_is_still_red(tmp_path: Path) -> None:
+    """牙 1：现役段（`DOC_OWNERSHIP` / `_DIRS`）条目不可解析 ⇒ 判据照红，两形各验一次。"""
+    repo = _ow01_repo(tmp_path)
+    # 形 a：手加一条现役行指向不存在的文件（拿豁免当洞藏死链的最短路径）
+    lines = _read_decl(repo).split("\n")
+    idx = _locate(lines, "path='docs/full-path.md'")
+    lines.insert(idx + 1, "    DocOwner(path='docs/dead-link.md', board='B06', fid='', "
+                          "currency='现行', basis='伪造死链', completed=False),")
+    _write_decl(repo, "\n".join(lines))
+    with pytest.raises(AssertionError) as excinfo:
+        _ow01_resolve(repo)
+    message = str(excinfo.value)
+    assert "docs/dead-link.md" in message and "应在 ARCHIVE" in message, f"该点名死链并指回 ARCHIVE：{message}"
+    # 形 b：分类表没动、盘上文件没了 ⇒ 同一条红（归档段里没有它，豁免碰不到它）
+    repo2 = _ow01_repo(tmp_path, "ow01b")
+    (repo2 / "docs" / "full-path.md").unlink()
+    with pytest.raises(AssertionError) as excinfo2:
+        _ow01_resolve(repo2)
+    assert "docs/full-path.md" in str(excinfo2.value), f"现役件消失必须点名：{excinfo2.value}"
+    # 形 c：目录级谎报（现役段里挂一条不在盘的目录）⇒ 走 is_dir 那支，同样红
+    repo3 = _ow01_repo(tmp_path, "ow01c")
+    lines3 = _read_decl(repo3).split("\n")
+    idx3 = _locate(lines3, "DOC_OWNERSHIP_DIRS: tuple[DocOwner, ...] = (")
+    lines3.insert(idx3 + 1, "    DocOwner(path='docs/no-such-dir/', board='B02', fid='', "
+                            "currency='过程件', basis='伪造目录', completed=False),")
+    _write_decl(repo3, "\n".join(lines3))
+    with pytest.raises(AssertionError) as excinfo3:
+        _ow01_resolve(repo3)
+    assert "docs/no-such-dir/" in str(excinfo3.value), f"目录级谎报该走 is_dir 腿：{excinfo3.value}"
+
+
+def test_ow01_archive_cannot_hide_live_extra_or_lost_rows(tmp_path: Path) -> None:
+    """牙 3：归档面三形谎报全红——在盘谎报、凭空造、现算有而盘上漏登记（豁免面不许自放大也不许自缩）。"""
+    # 形 a：文件复活了，登记仍留在 ARCHIVE 段 ⇒「归档行却在盘」
+    repo = _ow01_repo(tmp_path)
+    (repo / "ghost-doc.md").write_text("复活了", encoding="utf-8")
+    assert (repo / "ghost-doc.md").is_file(), "注毒没把文件落盘＝空跑"
+    with pytest.raises(AssertionError) as excinfo:
+        _ow01_resolve(repo)
+    assert "归档行却在盘" in str(excinfo.value), f"在盘条目不许被归档段豁免：{excinfo.value}"
+    # 形 b：凭空造一条归档行（分类表无此行、盘上也没有）⇒「凭空归档」
+    repo2 = _ow01_repo(tmp_path, "ow01b")
+    lines = _read_decl(repo2).split("\n")
+    idx = _locate(lines, f"{_ARCHIVE_SECTION_VAR}: tuple[DocOwner, ...] = (")
+    lines.insert(idx + 1, "    DocOwner(path='docs/never-in-table.md', board='', fid='', "
+                          "currency='伪造', basis='凭空归档', completed=False),")
+    _write_decl(repo2, "\n".join(lines))
+    with pytest.raises(AssertionError) as excinfo2:
+        _ow01_resolve(repo2)
+    assert "凭空归档" in str(excinfo2.value), f"归档成员资格要现算复核，不许自说自话：{excinfo2.value}"
+    # 形 c：把唯一的归档行从段里删掉（信息丢手）⇒ 现算归档面非空、盘上零登记 ⇒「没登记进」
+    repo3 = _ow01_repo(tmp_path, "ow01c")
+    lines3 = _read_decl(repo3).split("\n")
+    del lines3[_locate(lines3, "path='ghost-doc.md'")]
+    _write_decl(repo3, "\n".join(lines3))
+    assert "ghost-doc.md" not in _read_decl(repo3), "删除没生效＝这条腿空跑"
+    assert {e.path for e in dos.compute_ownership(repo3).archive} == {"ghost-doc.md"}, "现算仍该归档它"
+    with pytest.raises(AssertionError) as excinfo3:
+        _ow01_resolve(repo3)
+    assert "ghost-doc.md" in str(excinfo3.value), f"漏登记的归档行该被点回：{excinfo3.value}"
+
+
+def test_ow01_real_tree_exemption_equals_projection_archive_face() -> None:
+    """真树凭据：豁免面**恰好**等于现算归档面（不靠假 repo 单证），且每一条都真不在盘。
+
+    归档面为空时也成立（两边都是空集）——那时豁免自然一枚都不发，本断言不逼真树必须有归档行。
+    """
+    ledger = dos.compute_ownership()
+    exempted = _declared_paths_must_resolve(ROOT, (ROOT / dos.OWNERSHIP_REL).read_text(encoding="utf-8"), ledger)
+    live_archive = {e.path for e in ledger.archive}
+    assert set(exempted) == live_archive, f"豁免面与现算归档面不同源：{sorted(set(exempted) ^ live_archive)[:5]}"
+    assert len(exempted) == len(set(exempted)), "同一路径两次豁免＝豁免面被注水"
+    for path in exempted:
+        probe = ROOT / Path(*path.rstrip("/").split("/"))
+        assert not (probe.is_file() or probe.is_dir()), f"豁免给的 {path} 其实在盘——豁免与判据互相打脸"

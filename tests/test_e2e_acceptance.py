@@ -41,10 +41,24 @@ EXPECTED_KEYS = {
 }
 
 
-def _runtime_stub(**config_kwargs) -> e2e.E2eRuntime:
+def _runtime_stub(tmp_path, **config_kwargs) -> e2e.E2eRuntime:
+    """离线替身运行面；``tmp_path`` **必需**——它当运行数据根用（AGENTS 规则 2/6）。
+
+    为什么直呼 ``Config(...)`` 会往源码树落盘（2026-10-02 runtime-layout 门红实案）：
+    ``Config`` 是普通 ``BaseModel``、**不读环境变量**，缺省 ``bot_runtime_data_dir="data"``
+    经 ``config.Config._resolve_runtime_data_paths`` 折成「仓库根/data」＝源码树；
+    ``PATH_REMAPPED_FIELDS`` 名单在这里是**生效**的，只是把 ``data/control_plane_config.sqlite3``
+    折进源码树而不是 Runtime——**在册 ≠ 落点在 Runtime**。conftest 的 L1 隔离缝只挪
+    ``BOT_RUNTIME_DATA_DIR`` 环境变量（罩 ``scripts/runtime_paths.py`` 的读者），管不到本构造点。
+    后果链：``e2e.build_pipeline`` → ``e2e_acceptance._bot_self_name`` →
+    ``persona_profile.active_persona_id`` → ``settings.build_runtime_settings_store`` →
+    ``InstanceSettingsManager.get`` → ``config_store.SQLiteConfigStateStore.__init__``
+    在源码树 ``data/`` mkdir + ``sqlite3.connect`` 建库（生产库另住 ``ChatBot_Runtime/data/``）。
+    """
     city = str(config_kwargs.pop("city", "北京"))
     # bot_affinity_enabled=False：离线测试不得打开 Runtime 真实好感度库；
     # 能力层对 store=None 会走降级文案，构造路径依旧完整可测。
+    config_kwargs.setdefault("bot_runtime_data_dir", str(tmp_path / "runtime-data"))
     config = Config(
         bot_quiet_hours_enabled=False,
         bot_affinity_enabled=False,
@@ -69,8 +83,8 @@ def _runtime_stub(**config_kwargs) -> e2e.E2eRuntime:
     )
 
 
-def test_matrix_covers_acceptance_matrix() -> None:
-    matrix = e2e.build_matrix(_runtime_stub())
+def test_matrix_covers_acceptance_matrix(tmp_path) -> None:
+    matrix = e2e.build_matrix(_runtime_stub(tmp_path))
     keys = {item.key for item in matrix}
     missing = EXPECTED_KEYS - keys
     assert not missing, f"验收矩阵缺项: {missing}"
@@ -79,19 +93,19 @@ def test_matrix_covers_acceptance_matrix() -> None:
     assert len(all_keys) == len(set(all_keys))
     for item in matrix:
         assert item.capability_id, item.key
-        assert item.trigger_text(_runtime_stub()).strip(), item.key
+        assert item.trigger_text(_runtime_stub(tmp_path)).strip(), item.key
 
 
-def test_matrix_capabilities_build_offline() -> None:
+def test_matrix_capabilities_build_offline(tmp_path) -> None:
     """全部能力构造函数在离线 Config 下可构建（构造期不联网）。"""
-    runtime = _runtime_stub()
+    runtime = _runtime_stub(tmp_path)
     for item in e2e.build_matrix(runtime):
         capability = item.build(runtime)
         assert callable(capability), item.key
 
 
-def test_weather_trigger_uses_city_argument() -> None:
-    runtime = _runtime_stub(city="上海")
+def test_weather_trigger_uses_city_argument(tmp_path) -> None:
+    runtime = _runtime_stub(tmp_path, city="上海")
     item = next(
         entry for entry in e2e.build_matrix(runtime) if entry.key == "weather-alert"
     )
@@ -145,13 +159,13 @@ def _run_matrix_keys(runtime: e2e.E2eRuntime, keys: list[str], group_id: str = "
     return queue, outcomes
 
 
-def test_dry_run_walks_real_pipeline_into_mock_queue() -> None:
+def test_dry_run_walks_real_pipeline_into_mock_queue(tmp_path) -> None:
     """DRY-RUN：真实管道产出 SendRequest 入 InMemory mock 队列，绝不外发。
 
     InMemorySendQueue.submit 即记 SENT（transport=memory，仅进程内登记）——
     这正是 DRY-RUN「不接 transport、零真实发送路径」的队列语义。
     """
-    runtime = _runtime_stub()
+    runtime = _runtime_stub(tmp_path)
     queue, outcomes = _run_matrix_keys(
         runtime, ["text-short", "text-parts", "text-long"]
     )
@@ -169,8 +183,8 @@ def test_dry_run_walks_real_pipeline_into_mock_queue() -> None:
         assert request.bot_id == "unknown"  # stub bot_id 为空 → 合成消息回退 unknown
 
 
-def test_dry_run_preview_describes_content_types() -> None:
-    runtime = _runtime_stub()
+def test_dry_run_preview_describes_content_types(tmp_path) -> None:
+    runtime = _runtime_stub(tmp_path)
     _queue, outcomes = _run_matrix_keys(runtime, ["text-short", "text-parts"])
     by_key = {outcome.item.key: outcome for outcome in outcomes}
     short = e2e.format_preview(by_key["text-short"].send_request)
@@ -181,16 +195,16 @@ def test_dry_run_preview_describes_content_types() -> None:
     assert "⏎" in parts  # 多段文本被摊平成单行预览
 
 
-def test_dry_run_find_request_returns_rendered_text() -> None:
-    runtime = _runtime_stub()
+def test_dry_run_find_request_returns_rendered_text(tmp_path) -> None:
+    runtime = _runtime_stub(tmp_path)
     _queue, outcomes = _run_matrix_keys(runtime, ["text-short"])
     request = outcomes[0].send_request
     assert request is not None
     assert "E2E 验收" in request.content.text_fallback
 
 
-def test_execute_item_reports_build_error_without_raising() -> None:
-    runtime = _runtime_stub()
+def test_execute_item_reports_build_error_without_raising(tmp_path) -> None:
+    runtime = _runtime_stub(tmp_path)
 
     def _boom(_rt: e2e.E2eRuntime):
         raise RuntimeError("boom")
@@ -216,16 +230,18 @@ def test_execute_item_reports_build_error_without_raising() -> None:
     assert outcome.receipt is None
 
 
-def test_execute_requires_persistent_sqlite_queue() -> None:
-    runtime = _runtime_stub()
+def test_execute_requires_persistent_sqlite_queue(tmp_path) -> None:
+    runtime = _runtime_stub(tmp_path)
     runtime.execute = True
     with pytest.raises(e2e.E2eSafetyError):
         e2e.choose_send_queue(runtime, audit_logger=InMemoryAuditLogger())
 
 
-def test_dry_run_always_uses_in_memory_queue() -> None:
+def test_dry_run_always_uses_in_memory_queue(tmp_path) -> None:
     runtime = _runtime_stub(
-        bot_send_queue_enabled=True, bot_send_queue_db_path="whatever.sqlite3"
+        tmp_path,
+        bot_send_queue_enabled=True,
+        bot_send_queue_db_path="whatever.sqlite3",
     )
     queue, desc = e2e.choose_send_queue(runtime, audit_logger=InMemoryAuditLogger())
     assert isinstance(queue, InMemorySendQueue)
@@ -233,7 +249,7 @@ def test_dry_run_always_uses_in_memory_queue() -> None:
 
 
 def test_group_whitelist_gate_blocks_non_white1(tmp_path) -> None:
-    runtime = _runtime_stub(bot_runtime_data_dir=str(tmp_path), bot_group_white1=["111"])
+    runtime = _runtime_stub(tmp_path, bot_group_white1=["111"])
     allowed, reason = e2e.check_group_allowed(runtime, "111")
     assert allowed and "WHITE1" in reason
     allowed, reason = e2e.check_group_allowed(runtime, "999")
@@ -242,8 +258,8 @@ def test_group_whitelist_gate_blocks_non_white1(tmp_path) -> None:
 
 def test_group_whitelist_gate_rejects_blacklists(tmp_path) -> None:
     runtime = _runtime_stub(
+        tmp_path,
         bot_group_white1=["111"],
-        bot_runtime_data_dir=str(tmp_path),
         bot_group_black1=["222"],
         bot_group_black2=["333"],
     )

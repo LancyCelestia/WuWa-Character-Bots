@@ -108,8 +108,12 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import types
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -279,7 +283,7 @@ def probe_tcp(host: str, port: int, timeout: float = 2.0) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 7 项检查
+# 逐项检查（项数不在这里写死：在册清单＝本模块 docstring 的编号列表，见 declared_item_ids）
 # ---------------------------------------------------------------------------
 
 def check_env_paths(env: dict[str, str], project_root: Path) -> CheckResult:
@@ -543,7 +547,12 @@ def _count_kb_rows(copy_path: Path) -> tuple[int, int]:
 
 def check_ruff(project_root: Path) -> CheckResult:
     cid, name = "ruff", "静态门 ruff check ."
-    rc, out, err = run_cmd([sys.executable, "-m", "ruff", "check", "."], project_root, timeout=600)
+    # --no-cache（2026-10-02）：裸 ruff 每跑必往源码树根落 .ruff_cache/，把
+    # runtime-layout 的 tool-cache 扫面打成 FAIL（当日两次假红实录）。门禁读数
+    # 不需要缓存，直接禁掉。
+    rc, out, err = run_cmd(
+        [sys.executable, "-m", "ruff", "check", ".", "--no-cache"], project_root, timeout=600
+    )
     if rc == 0:
         return CheckResult(cid, name, PASS, "All checks passed")
     detail = (out.strip() or err.strip()).splitlines()[-1] if (out.strip() or err.strip()) else f"exit {rc}"

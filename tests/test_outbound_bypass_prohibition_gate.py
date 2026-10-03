@@ -1129,19 +1129,22 @@ def scan_submit_bypasses(package_root: pathlib.Path) -> dict[str, list[int]]:
 
 #: 现存 A 类裸 submit 旁路逐条挂名（2026-09-22 实测+S-FIXB 扩词表收编：原 10 处 / 5 文件；
 #: Wave 4.2/4.3 逐批改道 ⇒ root 四条主动投递已全部接中央出口、整行删净；
-#: 同日 S-BYPASS 把**别名裸调**收编进判据 ⇒ 现役 **8 处 / 4 文件**，比旧清点多出 error_report 两条
-#: ——那两条一直都在，是门瞎，不是代码变坏。计数上升一次是"补视力量"，不是新欠债）。
+#: 同日 S-BYPASS 把**别名裸调**收编进判据 ⇒ 现役 8 处 / 4 文件，比旧清点多出 error_report 两条
+#: ——那两条一直都在，是门瞎，不是代码变坏。计数上升一次是"补视力量"，不是新欠债。
+#: 2026-10-02 聊天体验波 +1（pipeline 限流补回耗尽说明，与群失败 ack 同形）⇒ 9 处 / 4 文件）。
 #: 前 4 处登记为「待改道 submit_active_push」——改道当笔删行，幽灵豁免会当场红；
 #: smoke 两条为「自测器演练 submit API 本体」（临时库+fake transport 永不外发），无改道义务，
 #: 但实例数一变本行照样红，逼着重估——不许借「自测」名义给门留暗门。
 SUBMIT_BYPASS_EXEMPTIONS: tuple[SubmitBypassExemption, ...] = (
     SubmitBypassExemption(
         path="domains/chat_reply/runtime/pipeline.py",
-        count=2,
-        retire_to="主输出步:896=层1正当出口常驻在册；ack:945 若挂入站事件改走 _send_text_through_unified_pipeline",
+        count=3,
+        retire_to="主输出步:896=层1正当出口常驻在册；群失败 ack:945 与限流耗尽说明同形（自带节流的池内短句），若挂入站事件改走 _send_text_through_unified_pipeline",
         reason=(
             ":896 中央 pipeline 主输出提交步(非旁路，上游已过 gate/review/render，登记以免误判新增)；"
-            ":945 群失败 ack 自带滑窗节流但绕 outbound_gate(A 类)"
+            ":945 群失败 ack 自带滑窗节流但绕 outbound_gate(A 类)；"
+            "限流补回耗尽说明 _maybe_submit_rate_limit_exhausted_notice（2026-10-02 聊天体验波）："
+            "判据/文案真身住 rate_limit、自带每收件面节流、固定文案池不过 review，与群失败 ack 同形(A 类)"
         ),
     ),
     SubmitBypassExemption(
@@ -1202,16 +1205,18 @@ def _unexempted_submit(
 
 
 def test_live_submit_bypass_total_matches_ledger() -> None:
-    """清点账自检：现存裸 submit **恰 8 处**。
+    """清点账自检：现存裸 submit **恰 9 处**。
 
     轨迹与口径（2026-09-22 更正本 docstring——它一直写着"6 处"而断言是 8，
     典型的注释比代码先腐烂）：原 10 处 → Wave 4.2/4.3 把 root 四条改走中央出口 = 6 处 →
-    别名入口收编时把扫描面按作用域修正，**又照出两条一直都在的**（门瞎，不是码坏）= 8 处。
+    别名入口收编时把扫描面按作用域修正，**又照出两条一直都在的**（门瞎，不是码坏）= 8 处 →
+    2026-10-02 聊天体验波在 pipeline 加限流补回耗尽说明一条（与群失败 ack 同形、
+    在册 A 类，见豁免表该行 reason）= 9 处。
     "只准降"由**逐文件豁免表**执法（多一处红、少一处也红＝幽灵豁免锁），
     本条总数断言只作自检：改站点数必须同时改表，逼人来核。
     """
     found = scan_submit_bypasses(PKG_ROOT)
-    assert sum(len(v) for v in found.values()) == 8, found
+    assert sum(len(v) for v in found.values()) == 9, found
 
 
 def test_no_unexempted_submit_bypass() -> None:

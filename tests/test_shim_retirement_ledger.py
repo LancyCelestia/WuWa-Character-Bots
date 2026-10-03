@@ -15,7 +15,9 @@ S34 首版把「待退役」「待搬迁」**各自**只准降 ⇒ S33 给域外
 只降账**没有变成可升账**：两枚和锁单调下降、四枚基线经 `clamped_baselines` 连 `--write-ledger` 都抬不动。
 
 反向自测逐把注毒证明它真的会红，全在内存/合成数据里跑，绝不往源码树写：
-- ①漏记一枚现算垫片⇒红 ②非垫片登记成垫片⇒红 ③账上真身不存在⇒红 ④引用方数超上限⇒红
+- ①漏记一枚现算垫片⇒红（受害枚＝**在册∩现算**，账落后于盘时不许把注毒打在空气上，席 R2b 补锚位）
+- ①b 删掉一枚「在册且盘上有真身垫片」的行⇒**常驻门本体**当场红（旧面只证纯函数点名、从不证门喊红）
+- ②非垫片登记成垫片⇒红 ③账上真身不存在⇒红 ④引用方数超上限⇒红
 - ⑤只升一态·另一态不降⇒红 ⑥一态升·另一态等额降⇒绿且和不变 ⑦和上升⇒红（两态和与三态和各一发）
 - ⑧手抄一个「也存在但不对」的真身指针⇒红（S34 的 ③ 查存在性，洗不掉这一形）
 - ⑨`--write-ledger` 想把基线抬回去⇒钳不下来⇒红（生成器不是后门）
@@ -242,11 +244,47 @@ def test_poison_1_missing_registration_is_caught() -> None:
     """①：从账里删掉一枚真垫片 ⇒ 现算检测到它却未登记 ⇒ 必红。"""
     rows, detected = _live_rows_and_detected()
     assert detected, "现算没检测到任何垫片＝自测无意义（取数口坏了）"
-    victim = min(detected)
+    # 受害枚必须**既在册又在其上盘有真垫片**——旧写法取 `min(detected)`，一旦账落后于盘
+    # （2026-10-02 席 R2b 收的正是「账 15 / 盘 23」这一形），alphabet 最小者根本不在账里，
+    # 删了个空 ⇒ `assert len(mutated) < len(rows)` 当场红，把「注毒打在空气上」暴露成门红。
+    # 这里把锚位挑明（只加严、不放宽：受害面为空照样红）。
+    in_both = [r["path"] for r in rows if r["path"] in detected]
+    assert in_both, "在册行无一被现算认定为垫片＝①腿失去受害面（账与盘已整体脱节，先对账再谈门）"
+    victim = min(in_both)
     mutated = [r for r in copy.deepcopy(rows) if r["path"] != victim]
     assert len(mutated) < len(rows), "注毒没删掉任何行（victim 不在账里）＝假自测"
     probs = s34.cross_check(mutated, detected, refs_fn=lambda _p: 0)
     assert victim in probs["missing_registration"], f"漏记 {victim} 没被判出＝①腿空转"
+
+
+def test_poison_1b_dropping_a_registered_row_turns_the_resident_gate_red(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """①b（席 R2b · 简报「arm the ratchet」方向 b）：删掉一枚**盘上真有垫片**的在册行 ⇒
+    **常驻门本体** `test_ledger_matches_live_detection` 必须当场红，且红在 ①`missing_registration` 上。
+
+    与 ① 的分工不是重复：① 证的是纯函数 `cross_check` 会点名，本条证的是**这道常驻门真会喊红**
+    ——旧面从来没有一发把「删行」接到门的红上（`test_legacy_shim_import_ratchet` 侧同理只证尺不证门，
+    那半边由 `tests/test_legacy_shim_import_ratchet.py::test_ratchet_gate_goes_red_when_a_legacy_import_is_injected` 补）。
+    注毒口＝`s34.load_ledger_rows`（门唯一的取账口，`detect_shims` 不碰），**全内存零写盘**；
+    腿尾以字节等值复核声明源没被注毒写坏——本仓「restore 后 cmp 逐字节相同才许销账」的纪律在这里
+    更强：压根不写，也就无需 restore（复核仍在，防日后有人把这发改成落盘注毒）。
+    """
+    ledger_bytes_before = s34.LEDGER_PY.read_bytes()
+    rows, detected = _live_rows_and_detected()
+    assert rows and detected, "账或现算为空＝①b 没有受害面，注毒打在空气上"
+    in_both = [r["path"] for r in rows if r["path"] in detected]
+    assert in_both, "在册行无一在盘上是合格垫片＝①b 无从注毒"
+    victim = min(in_both)
+    monkeypatch.setattr(
+        s34, "load_ledger_rows", lambda *_a, **_k: [r for r in rows if r["path"] != victim]
+    )
+    with pytest.raises(AssertionError, match="missing_registration") as excinfo:
+        test_ledger_matches_live_detection()
+    assert victim in str(excinfo.value), f"门红了却没点名被删的那枚＝归因丢失: {victim}"
+    assert s34.LEDGER_PY.read_bytes() == ledger_bytes_before, (
+        "①b 必须是纯内存注毒：声明源字节变了＝毒落了盘"
+    )
 
 
 def test_poison_2_nonshim_registered_is_caught() -> None:
