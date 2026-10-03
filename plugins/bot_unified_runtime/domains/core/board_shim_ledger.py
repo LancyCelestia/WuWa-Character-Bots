@@ -20,22 +20,24 @@ from __future__ import annotations
 
 #: 每条 = (垫片 path, 真身 path, 引用方数上限)。字段顺序即契约，勿加派生表达式。
 SHIM_ROWS: tuple[tuple[str, str, int], ...] = (
-    # 〔2026-09-28 S-SHIM-WAVE1 T5 退役〕capabilities/auto_send/__init__.py 唯一垫片摘除、
-    # 空目录随删（真身 domains/schedule/auto_send/__init__.py）。06:30:29 那次主树还原把
-    # HEAD 的这枚垫片写回来了 ⇒ 本行同批复原为「已退役、不再在册」，配对判据见
-    # tests/test_copy_redline_gate.py::test_gate_scope_sanity 的退役断言。
+    ("plugins/bot_unified_runtime/capabilities/auto_send/__init__.py",
+     "plugins/bot_unified_runtime/domains/schedule/auto_send/__init__.py",
+     0),
     ("plugins/bot_unified_runtime/capabilities/chat.py",
      "plugins/bot_unified_runtime/domains/chat_reply/capabilities/chat.py",
      0),
     ("plugins/bot_unified_runtime/capabilities/content_parser.py",
      "plugins/bot_unified_runtime/domains/link_parse/capabilities/content_parser.py",
      1),
-        ("plugins/bot_unified_runtime/character/providers.py",
+    ("plugins/bot_unified_runtime/capabilities/market.py",
+     "plugins/bot_unified_runtime/domains/finance/capabilities/market.py",
+     0),
+    ("plugins/bot_unified_runtime/character/providers.py",
      "plugins/bot_unified_runtime/domains/chat_reply/character/providers.py",
      4),
     ("plugins/bot_unified_runtime/llm/model_router.py",
      "plugins/bot_unified_runtime/domains/chat_reply/llm_engine/model_router.py",
-     9),
+     5),
     ("plugins/bot_unified_runtime/message_context.py",
      "plugins/bot_unified_runtime/domains/chat_reply/ingest/message_context.py",
      6),
@@ -63,13 +65,31 @@ SHIM_ROWS: tuple[tuple[str, str, int], ...] = (
     ("plugins/bot_unified_runtime/runtime/pricing.py",
      "plugins/bot_unified_runtime/domains/chat_reply/llm_engine/pricing.py",
      2),
-                        ("plugins/bot_unified_runtime/sources/parsers/__init__.py",
+    ("plugins/bot_unified_runtime/runtime/settings.py",
+     "plugins/bot_unified_runtime/domains/chat_reply/runtime/settings.py",
+     0),
+    ("plugins/bot_unified_runtime/security/memory_sanitize.py",
+     "plugins/bot_unified_runtime/domains/chat_reply/security/memory_sanitize.py",
+     0),
+    ("plugins/bot_unified_runtime/sender/__init__.py",
+     "plugins/bot_unified_runtime/domains/transport/sender/__init__.py",
+     0),
+    ("plugins/bot_unified_runtime/sender/onebot.py",
+     "plugins/bot_unified_runtime/domains/transport/sender/onebot.py",
+     0),
+    ("plugins/bot_unified_runtime/sources/fetchers/__init__.py",
+     "plugins/bot_unified_runtime/domains/link_parse/fetchers/__init__.py",
+     0),
+    ("plugins/bot_unified_runtime/sources/parsers/__init__.py",
      "plugins/bot_unified_runtime/domains/link_parse/parsers/__init__.py",
      1),
     ("plugins/bot_unified_runtime/sources/registry.py",
      "plugins/bot_unified_runtime/domains/link_parse/support/registry.py",
      4),
-    )
+    ("plugins/bot_unified_runtime/sources/subscriptions/__init__.py",
+     "plugins/bot_unified_runtime/domains/subscribe/adapters/__init__.py",
+     0),
+)
 
 #: 待退役(垫片) 现算快照参照点（手写字面量 · 只准降；上升仅在待搬迁等额或更多下降时可放行）。
 SHIM_RETIRE_BASELINE = 23

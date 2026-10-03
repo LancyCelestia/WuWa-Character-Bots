@@ -77,6 +77,12 @@ READERS_ALLOWLIST: Final[dict[str, str]] = {
     # 本门拦的是「谁自己拼机器读数」，而版本这一路全仓只有它在拼，
     # host_metrics 与适配器都是调它、不是重抄它。
     "bot_unified_runtime/domains/ops/monitor/error_report.py": "版本与构建段的中央采集口本体（其它件只准调它）",
+    # 2026-10-03 施工席20 点名补登（本门自己给出的两路处置之一＝白名单写明资格）：
+    # file_reader 的 winreg 只读 HKCR 探测本机注册了哪些 Office COM 组件
+    # （`_com_apps_present`，"在不在"的布尔探测，零性能/状态读数），服务
+    # 「旧格式/扫描件在本机有没有通路」的文档能力面——不是需求 5 宿主机状态链
+    # （同 control_plane 先例：非遥测语义不并入 ops 真身，并入反而让 files 依赖 ops）。
+    "bot_unified_runtime/domains/files/sources/file_reader.py": "HKCR COM 组件在册布尔探测（文档能力面，非宿主机遥测链）",
 }
 
 # 真身的两个公共入口只准被这些件叫（腿 D）。适配器在列：它就是那条唯一缝。

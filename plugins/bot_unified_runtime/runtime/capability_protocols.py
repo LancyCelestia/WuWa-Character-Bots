@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 import concurrent.futures
+import contextvars
 import inspect
 import logging
 import re
@@ -500,6 +501,94 @@ def _attempt_budget(descriptor: CapabilityDescriptor) -> float:
     return max(0.05, min(float(descriptor.timeout_seconds), _MAX_TIMEOUT_SECONDS))
 
 
+# ==================== 计时伞「剩余口径」（席 V1 · P5.7 / P5.12，2026-10-02） ====================
+# 上面那份 `_attempt_budget` 只管**单次尝试**，于是主链 + 降级链 + 逐块合成串起来
+# 各拿一份满预算（实测叠加 ≈580s：能力硬超时 400s 之外还挂着一整段 180s 配音）。
+# 本节在其上罩一把**请求级伞**：调用方经 ``request.context[DEADLINE_CONTEXT_KEY]``
+# 交出单调时钟 deadline（唯一家＝``Config.bot_request_budget_seconds`` 装配的那枚
+# ``deadline_monotonic``，与发送层 ``apply_request_deadline`` 同一数值源），此后
+# 每一腿只准花「伞里剩多少 ÷ 还要跑的腿数」。
+#
+# 三条不可回退的边界：
+# ① **没伞＝逐字节现状**（``leg_budget_seconds`` 语义 1）：SEAT-F-BAKE 那把锁
+#    （``tests/test_central_fallback_budget.py``）钉的正是"无伞时降级腿预算与主链
+#    耗时无关"，本节的除法只在伞在场时发生，两者不打架。
+# ② 伞只**削**不**加**：``min(单次上限, 剩余/腿数)`` ⇒ 任何一腿都拿不到比声明值
+#    更多的时间，``_MAX_TIMEOUT_SECONDS`` 硬顶一寸未松。
+# ③ 伞耗尽 ⇒ **停腿**并交回在册那一族 ``CapabilityTimeout``（走既有 TIMEOUT 终态
+#    + ``INVOKER_ERROR_DATA_KEY`` ⇒ 层 1 出诊断卡）。禁第二族异常、禁塞 1 秒地板
+#    假装还能跑（那正是 F-BAKE 点名要杀的形态）。
+#: 当前线程（cap-proto worker）正在跑的那枚能力的伞。**contextvar 不跨线程自动传播**
+#: ⇒ 必须在 ``_execute_handler`` 提交进池时显式绑一次；嵌套 invoke（自动配音逐块产出步
+#: 就跑在同一枚 worker 上）因此自动继承同一把伞，无需调用方逐层转交。
+_UMBRELLA: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "capability_deadline_monotonic", default=None
+)
+
+
+def _deadline_ruler() -> Any:
+    """取计时伞的尺（``domains/chat_reply/runtime/deadline.py``，禁第二把尺）。
+
+    刻意**不在模块顶部建这条导入边**：``runtime.capability_protocols`` ←
+    ``domains.ops.features.feature_catalog`` ← ``feature_gate`` ←
+    ``domains.chat_reply.runtime.pipeline`` ← ``domains.chat_reply.runtime/__init__``
+    是一条真环（本文件 :60 的 ``TYPE_CHECKING`` 注释自证同族理由），顶部导入即成环。
+    函数内惰性导入由 ``sys.modules`` 兜住，热路径成本＝一次字典查找。
+    """
+    # 函数内惰性导入（有意为之，非遗漏）：顶部导入会成真环（理由见上方 docstring），
+    # sys.modules 兜住热路径成本＝一次字典查找。
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+        deadline as _deadline,
+    )
+
+    return _deadline
+
+
+def _resolve_umbrella(request: CapabilityRequest) -> float | None:
+    """本轮生效的伞＝请求显式带的 deadline；缺省**继承当前线程外层的伞**（嵌套同伞）。
+
+    消毒在 ``normalize_deadline`` 里：畸形值（非数字/负/0/inf/nan）一律当"没有伞"，
+    绝不掐成 0 把每条回复变成超时。
+    """
+    ruler = _deadline_ruler()
+    explicit = ruler.normalize_deadline(request.context.get(ruler.DEADLINE_CONTEXT_KEY))
+    if explicit is not None:
+        return explicit
+    return _UMBRELLA.get()
+
+
+def _leg_budget_seconds(
+    umbrella: float | None, attempt_seconds: float, legs_left: int
+) -> float:
+    """单次尝试上限按剩余口径削成本腿该花的秒数（算式唯一家＝``leg_budget_seconds``）。
+
+    ``time.monotonic()`` 一律从**本模块名字空间**取：``test_central_fallback_budget``
+    的假钟就是替在这里，换掉它判据再也量不到（台账 #50★「局部名要并 co_cellvars」同族
+    的"量具要接在被测模块上"教训）。
+    """
+    return _deadline_ruler().leg_budget_seconds(
+        umbrella,
+        now=time.monotonic(),
+        attempt_seconds=attempt_seconds,
+        legs_left=legs_left,
+    )
+
+
+def _bind_umbrella(
+    task: Callable[[], InvocationResult], umbrella: float | None
+) -> Callable[[], InvocationResult]:
+    """把伞带进工作线程（异常路径也必复原，防线程复用时把上一轮的伞粘给下一轮）。"""
+
+    def _run() -> InvocationResult:
+        token = _UMBRELLA.set(umbrella)
+        try:
+            return task()
+        finally:
+            _UMBRELLA.reset(token)
+
+    return _run
+
+
 def _run_payload_limit_violation(
     descriptor: CapabilityDescriptor, payload: Mapping[str, Any]
 ) -> str:
@@ -564,7 +653,9 @@ def _mark_capability_worker(
 
 
 def _execute_handler(
-    task: Callable[[], InvocationResult], budget: float
+    task: Callable[[], InvocationResult],
+    budget: float,
+    umbrella: float | None = None,
 ) -> InvocationResult:
     """在预算内跑一次执行体；超时抛 :class:`concurrent.futures.TimeoutError`。
 
@@ -578,10 +669,17 @@ def _execute_handler(
 
     两档都**照常**过层 2 的门（登记/feature/角色/载荷限额）、照常出审计行、照常走降级链
     ——内联只省「再占一枚 worker」这一件事，不省任何执法，故不是绕中央件的第二通路。
+
+    计时伞（席 V1）：``budget`` 交进来时**已经**按伞削过（``_leg_budget_seconds``）；
+    提交进池那一档另把伞本身绑进 worker 线程（``_bind_umbrella``），使该执行体内
+    的嵌套 ``invoke`` 自动同伞——这是「TTS 逐块合成进同一把伞」的唯一落点，
+    不需要、也不允许在真身里再拼一份倒计时。
     """
     if _in_capability_worker():
         return task()
-    future = _get_capability_executor().submit(_mark_capability_worker(task))
+    future = _get_capability_executor().submit(
+        _mark_capability_worker(_bind_umbrella(task, umbrella))
+    )
     try:
         return future.result(timeout=budget)
     except concurrent.futures.TimeoutError:
@@ -627,6 +725,9 @@ class CapabilityInvoker:
     预算语义：``descriptor.timeout_seconds``＝**单次尝试上限**（主链与降级链每条
     腿各得一份，逐腿再受 ``_MAX_TIMEOUT_SECONDS`` 钳制），不是整次调用的总 deadline；
     单一出处 :func:`_attempt_budget`，两处读法不许各写一份算式。
+    请求带计时伞（``request.context[DEADLINE_CONTEXT_KEY]``＝单调时钟绝对值）时**翻成
+    剩余口径**：每腿只拿「伞里剩多少 ÷ 还要跑的腿数」，嵌套 ``invoke`` 自动继承同一把伞
+    （逐块合成的后续腿因此不再各拿一份满预算）；伞耗尽即停腿并交回 ``CapabilityTimeout``。
     """
 
     def __init__(
@@ -750,13 +851,39 @@ class CapabilityInvoker:
                 via="invoker",
             )
 
-        budget = _attempt_budget(descriptor)
+        # 计时伞（席 V1 · P5.7/P5.12）：本轮真正生效的 deadline＝请求显式值，缺省继承
+        # 外层（嵌套腿自动同伞）。注册降级腿要先数出来——主链那份预算要给它**预留**，
+        # 否则"修成每腿各拿一份满预算"的反面"主链吃光伞再让降级链抢 0 秒"同样不可达。
+        umbrella = _resolve_umbrella(request)
+        runnable_fallbacks = self._runnable_fallbacks(request, descriptor)
+
+        budget = _leg_budget_seconds(
+            umbrella, _attempt_budget(descriptor), 1 + len(runnable_fallbacks)
+        )
         attempts = 1
+        if budget <= 0.0:
+            # 伞已耗尽＝连一次诚实尝试都放不下：停腿、交回**在册那一族**（禁第二族
+            # 异常，禁塞地板假装还能跑）。终态仍是 TIMEOUT，与"跑到点"同一形状，
+            # 层 1 的读法（INVOKER_ERROR_DATA_KEY ⇒ raise ⇒ _internal_error ⇒ 出卡）
+            # 一字不改——差别只在"没白等"。
+            return _finish(
+                InvocationStatus.TIMEOUT,
+                detail=(
+                    f"计时伞剩余 0s，未发起尝试（声明单次上限 "
+                    f"{float(descriptor.timeout_seconds):g}s）"
+                ),
+                via="invoker",
+                data={
+                    INVOKER_ERROR_DATA_KEY: CapabilityTimeout(
+                        f"{request.capability_id} 计时伞剩余 0s（未发起尝试）"
+                    )
+                },
+            )
         task = _handler_callable(handler, request)
         try:
             try:
                 # 顶层=提交共享池（占 1 枚）；嵌套=同线程内联（不再要第二枚）。S135。
-                result = _execute_handler(task, budget)
+                result = _execute_handler(task, budget, umbrella)
             except concurrent.futures.TimeoutError:
                 # 中央调度收编波 P3：超时不再只是"一个安静的终态"。
                 # 旧形态下 pipeline 的 `_internal_error` 旁路只看异常 ⇒ 能力挂死满预算时
@@ -776,7 +903,14 @@ class CapabilityInvoker:
                 )
         except Exception as exc:  # noqa: BLE001 - 主链异常走降级链。
             return self._run_fallbacks(
-                request, descriptor, _finish, exc, started=started, attempts=attempts
+                request,
+                descriptor,
+                _finish,
+                exc,
+                started=started,
+                attempts=attempts,
+                umbrella=umbrella,
+                runnable_fallbacks=runnable_fallbacks,
             )
 
         if not isinstance(result, InvocationResult):
@@ -787,6 +921,8 @@ class CapabilityInvoker:
                 TypeError(f"handler 返回类型非法: {type(result).__name__}"),
                 started=started,
                 attempts=attempts,
+                umbrella=umbrella,
+                runnable_fallbacks=runnable_fallbacks,
             )
         elapsed_ms = int((time.monotonic() - started) * 1000)
         result = result.model_copy(update={"elapsed_ms": elapsed_ms, "attempts": attempts})
@@ -805,6 +941,22 @@ class CapabilityInvoker:
         )
         return result
 
+    def _runnable_fallbacks(
+        self, request: CapabilityRequest, descriptor: CapabilityDescriptor
+    ) -> tuple[str, ...]:
+        """链上**真会跑**的降级腿（按链序）——计时伞预留的唯一算法家。
+
+        ``honest_degrade:`` 终态不调实现（零耗时），未注册的名字在
+        :meth:`_run_fallbacks` 里 ``continue`` 掉也不跑：两者都不该从预算里预留一份。
+        主链的 ``legs_left`` 与逐腿的 ``legs_left`` 都从这里算，禁在两处各写一份算式。
+        """
+        return tuple(
+            name
+            for name in descriptor.fallback_chain
+            if not name.startswith(HONEST_DEGRADE_PREFIX)
+            and self.fallbacks.get(request.capability_id, name) is not None
+        )
+
     def _run_fallbacks(
         self,
         request: CapabilityRequest,
@@ -814,6 +966,8 @@ class CapabilityInvoker:
         *,
         started: float,
         attempts: int,
+        umbrella: float | None = None,
+        runnable_fallbacks: tuple[str, ...] = (),
     ) -> InvocationResult:
         """主链异常 → 按链执行降级；正常终态 honest_degrade=degraded；降级失败/链尽=failed。
 
@@ -821,14 +975,19 @@ class CapabilityInvoker:
         降级失败**时给 degraded（设计内的诚实无结果）；若有降级项崩了，终态
         一律 failed（detail 携带最后失败与降级原因），运维可告警。
 
-        预算语义（F-BAKE 2026-09-22 根修）：每条注册降级腿各得一份完整的
-        :func:`_attempt_budget`，**不减主链已经烧掉的时间**。旧写法减完再地板到
-        1.0s，等于「主链越慢、降级越必然来不及」，慢失败场景下降级形同不存在；
-        活性判据与逐腿取证见 ``tests/test_central_fallback_budget.py``。
+        预算语义（F-BAKE 2026-09-22 根修 + 席 V1 2026-10-02 计时伞）：**无伞**时每条
+        注册降级腿各得一份完整的 :func:`_attempt_budget`，**不减主链已经烧掉的时间**——
+        旧写法减完再地板到 1.0s，等于「主链越慢、降级越必然来不及」，慢失败场景下
+        降级形同不存在；活性判据与逐腿取证见 ``tests/test_central_fallback_budget.py``。
+        **有伞**时改为「剩余 ÷ 还要跑的腿数」（:func:`_leg_budget_seconds`）：预留而不是
+        渣底，链上每一腿都拿到同一把尺算出来的那一份，串起来总时长恒 ≤ 伞——
+        这正是「每腿各拿一份满预算」要修掉的那一半。
         ``started`` 只用于终态 ``elapsed_ms`` 记账，不参与任何尝试的预算推导。
         """
         last_detail = f"{type(primary_error).__name__}: {primary_error}"[:300]
         fallback_failures = 0
+        # 还没跑的注册降级腿（首枚＝本腿）；主链已按 1+len(...) 预留过，这里逐枚消耗。
+        pending = list(runnable_fallbacks)
         for index, name in enumerate(descriptor.fallback_chain):
             if name.startswith(HONEST_DEGRADE_PREFIX):
                 reason = name[len(HONEST_DEGRADE_PREFIX):].strip() or "能力降级"
@@ -853,13 +1012,25 @@ class CapabilityInvoker:
             fallback = self.fallbacks.get(request.capability_id, name)
             if fallback is None:
                 continue
-            # 每次尝试各得一份完整预算（同一个 _attempt_budget 出处）——降级腿的
-            # 预算与主 attempt 跑了多久**无关**，否则慢失败=注定没有降级。
-            remaining = _attempt_budget(descriptor)
+            # 本腿那份＝「剩余 ÷ 还没跑的注册腿数」（含本腿），与主链同一把尺。
+            # 无伞时 ``_leg_budget_seconds`` 原样返回声明值 ⇒ 下面那句"降级腿预算与
+            # 主 attempt 跑了多久无关"的 F-BAKE 判据逐字节保住。
+            legs_left = max(1, len(pending))
+            if pending:
+                pending.pop(0)
+            remaining = _leg_budget_seconds(
+                umbrella, _attempt_budget(descriptor), legs_left
+            )
+            if remaining <= 0.0:
+                # 伞里放不下这一腿：跳过并计入链失败数（终态仍由既有分支裁决，
+                # 不起第二族异常、不塞地板假装还能跑）。
+                last_detail = f"降级 {name} 跳过：计时伞剩余 0s"
+                fallback_failures += 1
+                continue
             try:
                 # 降级腿与主链同一占位规则（嵌套不再要第二枚，S135）。
                 result = _execute_handler(
-                    _handler_callable(fallback, request), remaining
+                    _handler_callable(fallback, request), remaining, umbrella
                 )
             except concurrent.futures.TimeoutError:
                 last_detail = f"降级 {name} 超时"

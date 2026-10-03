@@ -17,6 +17,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from plugins.bot_unified_runtime.domains.core.write_trace import (
+    OUTCOME_FAILED,
+    OUTCOME_NOOP,
+    OUTCOME_OK,
+    OUTCOME_REFUSED,
+    WriteTrace,
+)
+
 
 class ConfigVersionConflict(ValueError):
     """调用方必须重新读取当前实例版本，不自动重放过期的写操作。"""
@@ -145,7 +153,17 @@ _IMPORT_REFUSED_ACTION = "import_refused"
 
 
 class SQLiteConfigStateStore:
-    """短连接、无覆盖缓存；独立对象/进程在每次读取时看到已提交的 SQL 状态。"""
+    """短连接、无覆盖缓存；独立对象/进程在每次读取时看到已提交的 SQL 状态。
+
+    写侧留痕（2026-10-02 席 D2）：本库的 ``config_audit`` 本来就是「谁拨了哪一格」的
+    正身账，但**没有落账的那两类调用**同样得看得见——① 被拒的写（未登记键 / 冻结键 /
+    CAS 版本冲突 / 存储炸了），② 什么都没改的封口写。生产上 ``control_plane_config.sqlite3``
+    主文件停在 10-01 01:38:51 而 ``config_audit`` 最后一行是 09-27 的 v14，正是「动盘而
+    无审计行」那一形：``import_legacy`` 无可导入键时会 UPDATE 封口位（动盘、零审计行），
+    而同库还住着同意账 ``safetyexec_*``（``domains/core/safety_exec/consent.py`` 在这枚
+    文件上建表并更新状态）。⇒ 单看 mtime 既证不出「拨过」也证不出「没拨过」，
+    本留痕给的就是「这一笔到底试过没有、成没成」的第二只眼；语义与异常一字不改。
+    """
 
     def __init__(self, path: str | Path, instance: str = "default") -> None:
         if not str(path).strip() or str(path) == ":memory:":
@@ -154,6 +172,7 @@ class SQLiteConfigStateStore:
             raise ValueError("实例名不能为空")
         self.path = Path(path).expanduser().resolve()
         self.instance = instance
+        self._trace = WriteTrace(f"control_plane_config:{self.path.name}")
         self._listeners: list[Callable[[], None]] = []
         self._listener_lock = threading.Lock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -194,6 +213,15 @@ class SQLiteConfigStateStore:
         return ConfigSnapshot(version, {row["key"]: json.loads(row["value_json"]) for row in rows if not row["is_reset"]},
                               frozenset(row["key"] for row in rows if row["is_reset"]))
 
+    # ---- 写侧留痕读数（席 D2；只读不改任何写面语义）------------------------
+
+    def write_trace(self) -> dict[str, Any]:
+        """本 backend 写面的现算读数（同库多对象各记各的账＝进程内环形，禁跨对象串账）。"""
+        return self._trace.snapshot()
+
+    def write_counts(self) -> dict[str, int]:
+        return self._trace.counts()
+
     def snapshot(self) -> ConfigSnapshot:
         with self._transaction() as conn:
             return self._snapshot(conn)
@@ -225,27 +253,43 @@ class SQLiteConfigStateStore:
 
     def _change(self, key: str | None, value: Any, *, reset: bool, expected_version: int,
                 actor: str, request_id: str) -> ConfigSnapshot:
-        validate_version(expected_version)
-        if not isinstance(actor, str) or not actor.strip() or not isinstance(request_id, str):
-            raise ValueError("actor 必须非空且 request_id 必须为字符串")
-        if key is not None:
-            key = normalize_key(key, writable=True)
+        op = "reset" if reset else "set"
+        try:
+            validate_version(expected_version)
+            if not isinstance(actor, str) or not actor.strip() or not isinstance(request_id, str):
+                raise ValueError("actor 必须非空且 request_id 必须为字符串")
+            if key is not None:
+                key = normalize_key(key, writable=True)
+        except (KeyError, ValueError) as exc:
+            # 「拒了」和「没试过」在盘上长得一样——这一格就是给下一次查账的人留的。
+            self._trace.record(op, OUTCOME_REFUSED, type(exc).__name__)
+            raise
         encoded = None if reset else _json(value)
-        with self._transaction(write=True) as conn:
-            before = self._snapshot(conn)
-            if before.version != expected_version:
-                raise ConfigVersionConflict(expected_version, before.version)
-            keys = sorted(before.overrides) if key is None else [key]
-            for name in keys:
-                normalize_key(name, writable=True)
-                conn.execute("""INSERT INTO config_overrides(instance, key, value_json, is_reset)
-                    VALUES (?, ?, ?, ?) ON CONFLICT(instance, key) DO UPDATE SET
-                    value_json=excluded.value_json, is_reset=excluded.is_reset""",
-                    (self.instance, name, encoded, int(reset)))
-            conn.execute("UPDATE config_instances SET revision=revision+1, legacy_imported=1 WHERE instance=?", (self.instance,))
-            after = self._snapshot(conn)
-            self._audit(conn, before=before, after=after, action="reset" if reset else "set",
-                        key=key, keys=keys, actor=actor, request_id=request_id)
+        try:
+            with self._transaction(write=True) as conn:
+                before = self._snapshot(conn)
+                if before.version != expected_version:
+                    raise ConfigVersionConflict(expected_version, before.version)
+                keys = sorted(before.overrides) if key is None else [key]
+                for name in keys:
+                    normalize_key(name, writable=True)
+                    conn.execute("""INSERT INTO config_overrides(instance, key, value_json, is_reset)
+                        VALUES (?, ?, ?, ?) ON CONFLICT(instance, key) DO UPDATE SET
+                        value_json=excluded.value_json, is_reset=excluded.is_reset""",
+                        (self.instance, name, encoded, int(reset)))
+                conn.execute("UPDATE config_instances SET revision=revision+1, legacy_imported=1 WHERE instance=?", (self.instance,))
+                after = self._snapshot(conn)
+                self._audit(conn, before=before, after=after, action="reset" if reset else "set",
+                            key=key, keys=keys, actor=actor, request_id=request_id)
+        except BaseException as exc:
+            # 版本冲突与存储炸了分两档记：前者是「有人动过、你过期了」，后者才是真坏了。
+            self._trace.record(
+                op,
+                OUTCOME_REFUSED if isinstance(exc, ConfigVersionConflict) else OUTCOME_FAILED,
+                type(exc).__name__,
+            )
+            raise
+        self._trace.record(op, OUTCOME_OK, f"keys={len(keys)} version={after.version}")
         self._notify()  # COMMIT 已成功且连接已关闭，监听可通过独立连接验证审计。
         return after
 
@@ -283,6 +327,8 @@ class SQLiteConfigStateStore:
         with self._transaction(write=True) as conn:
             imported = conn.execute("SELECT legacy_imported FROM config_instances WHERE instance=?", (self.instance,)).fetchone()[0]
             if imported:
+                # 已封口＝这一腿永远不会再动库（生产每次 attach 都会走这里然后原路返回）。
+                self._trace.record("import_legacy", OUTCOME_NOOP, "already_sealed")
                 return False
             before = self._snapshot(conn)
             keys = []
@@ -311,6 +357,14 @@ class SQLiteConfigStateStore:
                 slot = ConfigSnapshot(before.version + offset, after.overrides, after.tombstones)
                 self._audit(conn, before=before, after=slot, action=action, key=None,
                             keys=event_keys, actor="legacy_import", request_id="")
+        # ⚠「动盘而无审计行」那一形就住在这里：``events`` 为空时上面那枚 UPDATE 照样把
+        # 封口位写了一遍（主文件 mtime 因此推新），``config_audit`` 却一格都不加。留痕必须
+        # 把它和「真迁入了东西」分开记，否则下次还是「mtime 说有人拨过、审计说没人拨过」。
+        self._trace.record(
+            "import_legacy",
+            OUTCOME_OK if keys else OUTCOME_NOOP,
+            f"imported={len(keys)} refused={len(refused)} sealed=1",
+        )
         return True
 
     def changes(self, *, since_version: int = 0, limit: int = 100) -> list[dict[str, Any]]:

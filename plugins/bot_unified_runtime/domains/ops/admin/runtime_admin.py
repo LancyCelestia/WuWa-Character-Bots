@@ -52,6 +52,12 @@ _MODEL_PROBE_LOCK = threading.Lock()
 # ``list`` 是只读形，绝不混进来（那会把 admin 的查看权一并锁死）。
 _PERSONA_WRITE_ACTIONS: frozenset[str] = frozenset({"switch", "auto", "reset", "probability", "概率"})
 
+# 席 X1b（P4.1 备份腿）：backup 命令面**会动盘**的动作形全集——起备份、按名删旧副本、
+# 把副本暂存出去。读面（status/list/verify/prune-plan/restore-plan）留在 admin，
+# 因为「有没有备份」这件事必须让普通管理员一句话就能问出来。
+# 与门同读这一枚（禁第二本账，同 _PERSONA_WRITE_ACTIONS 的教训）。
+_BACKUP_WRITE_ACTIONS: frozenset[str] = frozenset({"run", "prune", "restore-stage"})
+
 
 def _admin_only_result(request_id: str) -> CapabilityResult:
     return CapabilityResult(
@@ -202,10 +208,88 @@ def _handle_runtime_command(
         return f"{instance_label}{_handle_persona_command(store, config, remaining)}"
     if action == "model":
         return f"{instance_label}{_handle_model_command(store, config, remaining, diagnostics_store=diagnostics_store, usage_store=usage_store, actor_id=actor_id, session_key=session_key)}"
+    # 席 X1b 接线点（P4.1 备份腿的**唯一现役调用面**）：``/bot runtime backup …``。
+    # 为什么接在这里而不是新建一条调度：本席禁改 ``__init__.py``（调度注册真身），
+    # 而这枚 handler 已被 ``build_runtime_admin_result`` 之上的 ``/bot runtime`` 分支
+    # 逐字调用（装配侧 ``plugins/bot_unified_runtime/__init__.py`` 的 runtime 分支），
+    # 孤儿件按未完成记账（SEAT-RULES），所以只接真实存在的入口。
+    if action == "backup":
+        return _handle_backup_command(config, remaining)
     return (
         "用法：/bot runtime set <KEY> <VALUE> | get <KEY> | list | "
         "reset [KEY] | nickname add/remove/list <昵称> | persona list|switch|probability "
-        "| model list|set|reset | instance list（均可加 --instance <名称> 定位实例）"
+        "| model list|set|reset | backup status|list|verify|run|prune-plan|prune|restore-plan "
+        "| instance list（均可加 --instance <名称> 定位实例）"
+    )
+
+
+def _handle_backup_command(config: object, parts: list[str]) -> str:
+    """``/bot runtime backup …``：SQLite 在线备份腿的运维命令面（席 X1b）。
+
+    动词表（读面 admin 可用，写面 ``run``/``prune``/``restore-stage`` 由
+    ``_BACKUP_WRITE_ACTIONS`` 抬到 super_admin）：
+
+    * ``status``：现算体检（库里名册、在册副本、过期/超上界/孤儿各一本账）。
+    * ``list [库名]``：在册副本清单。
+    * ``verify [库名|副本文件名]``：旁车 ↔ 副本对账（sha256/integrity/表数/行数）。
+    * ``run [库名…]``：起一轮在线备份（无参数＝全量，点名＝只备这几枚）。
+    * ``prune-plan``：只出保留清单，**不删**。
+    * ``prune <副本名> …``：按名点名删（名字必须逐字命中清单，严禁递归删）。
+    * ``restore-plan <旁车名>``：校验 + 给出人工还原步骤。
+    * ``restore-stage <旁车名> [子目录名]``：把校验通过的副本暂存到落点外的 staging。
+
+    覆盖生产库这条腿**故意不存在**（``db_backup._reject_production_target``），
+    移回原位由人执行；命令面任何一次调用都不会改动 ``ChatBot_Runtime/data`` 里的库。
+    """
+    from plugins.bot_unified_runtime.domains.ops import db_backup
+
+    action = parts[0].lower() if parts else ""
+    args = parts[1:]
+    try:
+        if action == "status":
+            return db_backup.format_reply(db_backup.status_report(config), title="数据库备份体检")
+        if action == "list":
+            return db_backup.format_reply(
+                db_backup.list_backups(config, db=args[0] if args else ""), title="在册副本"
+            )
+        if action == "verify":
+            keyword = args[0] if args else ""
+            verdicts = db_backup.verify_backups(
+                config, copy=keyword if keyword.endswith(".sqlite3") else "", db=keyword
+            )
+            return db_backup.format_reply(verdicts, title="副本校验")
+        if action == "run":
+            report = db_backup.backup_all(config, only=list(args) or None)
+            return db_backup.format_reply(report.to_dict(), title="备份轮次")
+        if action == "prune-plan":
+            return db_backup.format_reply(db_backup.plan_retention(config), title="保留清单（未删）")
+        if action == "prune":
+            if not args:
+                return "prune 需要逐枚点名副本名（先跑 prune-plan 拿清单），本次零删除。"
+            return db_backup.format_reply(
+                db_backup.apply_retention(config, list(args)), title="按名删旧副本"
+            )
+        if action == "restore-plan":
+            if not args:
+                return "用法：/bot runtime backup restore-plan <旁车名.manifest.json>"
+            manifest = db_backup.manifest_in_root(config, args[0])
+            return db_backup.format_reply(db_backup.plan_restore(manifest, config), title="还原前置校验")
+        if action == "restore-stage":
+            if not args:
+                return "用法：/bot runtime backup restore-stage <旁车名> [暂存子目录名]"
+            manifest = db_backup.manifest_in_root(config, args[0])
+            staging = db_backup.staging_dir(config, args[1] if len(args) > 1 else "")
+            return db_backup.format_reply(
+                db_backup.restore_stage(manifest, config, staging), title="副本已暂存（未覆盖生产）"
+            )
+    except db_backup.BackupError as exc:
+        return f"备份操作未完成：{exc}"
+    except OSError as exc:
+        # 只报异常族名，不把栈帧与盘上路径直发聊天（错误卡受众分级门同口径）。
+        return f"备份操作未完成：{type(exc).__name__}"
+    return (
+        "用法：/bot runtime backup status | list [库名] | verify [库名|副本名] | run [库名…] "
+        "| prune-plan | prune <副本名>… | restore-plan <旁车名> | restore-stage <旁车名> [子目录]"
     )
 
 
@@ -2179,7 +2263,15 @@ def build_runtime_admin_result(
         and gate_parts[1] not in {"list", "show", "status", "routes", "prices", "help", "health"}
     )
     nickname_write = gate_parts[:2] in (["nickname", "add"], ["nickname", "remove"])
-    if (command_action in {"set", "reset"} or core_persona_write or model_write or nickname_write) and "super_admin" not in actor_roles:
+    # 备份腿的写面（起备份 / 按名删旧副本 / 把副本暂存出去）与上面同尺判：门与腿都读
+    # ``_BACKUP_WRITE_ACTIONS``，禁第二本账。读面（status/list/verify/prune-plan/
+    # restore-plan）留在 admin——「到底有没有备份」必须一句话问得出来。
+    backup_write = (
+        command_action == "backup"
+        and len(gate_parts) > 1
+        and gate_parts[1] in _BACKUP_WRITE_ACTIONS
+    )
+    if (command_action in {"set", "reset"} or core_persona_write or model_write or nickname_write or backup_write) and "super_admin" not in actor_roles:
         return _error_result(request_id, "修改运行时参数需要 super_admin 权限。")
     try:
         body = _handle_runtime_command(

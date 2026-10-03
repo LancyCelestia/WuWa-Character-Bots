@@ -761,6 +761,7 @@ def _llm_setup_mica_html(payload: dict[str, Any]) -> str:
     )
     from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
         BRAND_WASH_TOKENS,
+        CARD_SHELL_WIDTHS,
         SEMANTIC_DANGER,
         SEMANTIC_SUCCESS,
     )
@@ -783,8 +784,11 @@ def _llm_setup_mica_html(payload: dict[str, Any]) -> str:
     )
     # E01 二批：漂移相位 = 内容 digest 钉帧；config 是运行时对象（非卡面语义，
     # repr 含内存地址不稳定），排除在 digest 之外，只取卡面展示字段。
+    # 渲染统一波（2026-10-03）：face 盐补齐——相位与壳层洗色都按「debug」面
+    # 派生（此前缺盐=回落 canon，与其它面布局雷同）。
     phase = payload_phase(
-        {key: value for key, value in payload.items() if key != "config"}
+        {key: value for key, value in payload.items() if key != "config"},
+        face="debug",
     )
     # :root 单一产出（v21r3 渲染统一步 3）：本卡语义状态色（红绿）经 extras 追加，
     # 值消费 theme_tokens.SEMANTIC_SUCCESS/SEMANTIC_DANGER（G9 门禁：旧 #1a9e6c/
@@ -794,12 +798,15 @@ def _llm_setup_mica_html(payload: dict[str, Any]) -> str:
         accent_dark=accent_dark,
         phase=phase,
         wash=wash,
+        face="debug",
         extras={"--good": SEMANTIC_SUCCESS, "--bad": SEMANTIC_DANGER},
     )
     # 通水切换（v21r3 统一收尾波 C2/C3）：壳层+玻璃两档+色斑层由 mica_shell
-    # 生成器单一产出拼入（宽度 880=CARD_SHELL_WIDTHS["debug"]；DOM 同源），
+    # 生成器单一产出拼入（宽度查 CARD_SHELL_WIDTHS["debug"] 宽度册；DOM 同源），
     # 手抄副本退役；缺省输出与历史 CSS 逐字节等价（CORE 席实弹断言）。
-    shell_css = shell_base_css("setup-shell", width_px=880)
+    shell_css = shell_base_css(
+        "setup-shell", width_px=CARD_SHELL_WIDTHS["debug"], face="debug"
+    )
     decor_css = mica_decor_css()
     blobs_html = drift_blobs_html()
     return f"""<!doctype html>

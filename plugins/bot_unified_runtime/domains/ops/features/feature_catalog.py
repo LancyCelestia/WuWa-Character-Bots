@@ -55,9 +55,12 @@ _SUBFEATURE_ROWS: tuple[tuple[str, str, str, str, bool], ...] = (
     ("bot.plugin.chat.reactions.emotion", "bot.plugin.chat.reactions", "情绪触发表情回应", "_handle_chat", True),
     ("bot.plugin.chat.reactions.after_reply", "bot.plugin.chat.reactions", "回复后表情回应", "_handle_chat", True),
     # 2026-09-28 用户实弹复现"没命令自己甩图"后落定：这条腿此前虽在册注释里
-    # 声明应 default=False（见 :37-41），实际却写成了 True，与纪律互相打脸。
-    # 现按纪律拨回 False；打开仍走超管控制面 / WebUI。
-    ("bot.plugin.chat.reactions.meme", "bot.plugin.chat.reactions", "情绪时刻发送表情包", "_handle_chat", False),
+    # 声明应 default=False（见 :37-41），实际却写成了 True，与纪律互相打脸，
+    # 当日按纪律拨回 False。2026-10-02 超管在全量修复批**书面授权**把缺省拨回
+    # True（.env 四组授权之一，`BOT_REACTIONS_MEME_ENABLED=true` 已在 .env 同批
+    # 设定；运行侧第二道门真身=config 的 bot_reactions_meme_enabled），控制面 /
+    # WebUI 仍可随时拨回 False 即时停发。
+    ("bot.plugin.chat.reactions.meme", "bot.plugin.chat.reactions", "情绪时刻发送表情包", "_handle_chat", True),
     ("bot.plugin.meme_library.auto_absorb", "bot.plugin.meme_library", "群图自动收库", "_handle_meme_absorb", True),
     # STICKER-POOL 波（2026-09-29）：bot **自有**贴纸库这一格此前完全不在册——三条想发
     # 贴纸的腿（P3 情绪时刻 / 戳一戳 / 偷表情）没有一枚共同的开关可问，也没有一个节点

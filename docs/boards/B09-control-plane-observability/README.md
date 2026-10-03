@@ -21,7 +21,7 @@
 | [控制面 API 与工作区](control-plane-api/README.md) | loopback + Bearer 的 /api/v1 端点群、工作区沙箱与动作执行。 | [统一响应与错误码](control-plane-api/api-envelope.md)、[鉴权与角色边界](control-plane-api/auth-and-rbac.md)、[工作区沙箱与真实会话](control-plane-api/workspaces.md)、[白名单远程动作](control-plane-api/remote-actions.md) |
 | [配置与运行时设置](config-and-settings/README.md) | Config 单一入口、SETTABLE_KEYS/RESTART_REQUIRED_KEYS 与读取端点，以及危险参数改动的书面同意命令面（咽喉的四档裁决住 safety_exec）。 | [书面同意](config-and-settings/consent.md)、[字段声明与校验器](config-and-settings/config-declaration.md)、[热更、drain 与回滚](config-and-settings/hot-reload-model.md)、[示例与目录三处同源](config-and-settings/env-example-catalog.md) |
 | [功能开关树](feature-switches/README.md) | 组/插件/子功能/指令四级开关与依赖阻断显示。 | [父子继承与 blocked_by](feature-switches/feature-gate.md) |
-| [日志·指标·Trace·审计](observability/README.md) | 统一事件总线、来源枚举、指标结构化与轨迹阶段表。 | [宿主机状态](observability/host-state.md)、[统一事件与 SSE](observability/event-bus.md)、[指标结构化来源](observability/metrics-sources.md)、[轨迹阶段与脱敏](observability/trace-stages.md)、[运维告警与抑制](observability/ops-alerts.md) |
+| [日志·指标·Trace·审计](observability/README.md) | 统一事件总线、来源枚举、指标结构化与轨迹阶段表。 | [宿主机状态](observability/host-state.md)、[统一事件与 SSE](observability/event-bus.md)、[指标结构化来源](observability/metrics-sources.md)、[轨迹阶段与脱敏](observability/trace-stages.md)、[运维告警与抑制](observability/ops-alerts.md)、[宿主快照分区注记口](observability/host-snapshot-section.md) |
 | [模型路由与账本](model-control/README.md) | provider/channel/model 三级、failover、上下文钳制与计费账本。 | [优先级组与失败转移](model-control/model-router.md)、[链级快速中止与冷却](model-control/fail-fast.md)、[上下文与输出钳制](model-control/context-caps.md)、[调用记录与计价](model-control/billing-ledger.md) |
 | [管理命令面](admin-commands/README.md) | 管理员与超管专属命令、诊断与恢复动作。 | [诊断与快照](admin-commands/diagnostics.md)、[自愈与回滚](admin-commands/recovery.md) |
 <!-- BOARD-AUTO:END -->

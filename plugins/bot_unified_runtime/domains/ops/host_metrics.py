@@ -584,6 +584,20 @@ def _stdlib_disk_usage_rows() -> list[tuple[str, str]]:
     return rows
 
 
+def free_bytes_for(path: Any) -> int:
+    """按任意路径取所在卷剩余字节（守卫类探针的**唯一喉口**）。
+
+    2026-10-02：备份腿（``domains/ops/db_backup.py`` 的开跑前剩余空间下限判据）
+    此前自带一处 ``shutil.disk_usage`` 直调，被 single-entry 门
+    （``tests/test_single_entry_gates.py`` 的 gate2）判成 disk 事实第三读者——
+    本仓口径＝取数只准走已登记真身，故开这枚薄口给守卫类需求共用；
+    读点仍留在本文件内（已在 ``HOST_METRIC_READ_LEDGER`` 账上）。
+    语义与 ``shutil.disk_usage(path).free`` 逐字节等值，不做缓存
+    （守卫判据要当场现值，缓存会骗门）。
+    """
+    return shutil.disk_usage(path).free
+
+
 def _protocol_endpoint_rows() -> list[tuple[str, str]]:
     """协议端在线与端口，``(标签, 值)`` 行——端点事实**只问 nonebot 在册公共口**。
 
