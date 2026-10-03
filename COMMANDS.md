@@ -195,7 +195,7 @@
 
 ## 开发命令速查
 
-统一入口 `scripts/dev.ps1`（优先使用工作区外 `ChatBot_Runtime\venv`）。常用：
+统一入口 `scripts/dev.ps1`（优先使用工作区外 `ChatBot_Runtime\venv`；总检命令 `scripts/dev.ps1 verify`，PowerShell 下亦写作 `scripts\dev.ps1 verify`）。常用：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 help        # 任务帮助
