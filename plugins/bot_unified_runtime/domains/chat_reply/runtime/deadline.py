@@ -418,3 +418,82 @@ def apply_request_deadline(
     if remaining <= 0.0:
         return float(timeout_seconds)
     return min(float(timeout_seconds), remaining)
+
+
+# ============================================================================
+# 计时伞「剩余口径」（席 V1 · P5.7 / P5.12，2026-10-02）
+# ============================================================================
+# 缺口（2026-10-01 中央调度波实测）：单次尝试预算 ``descriptor.timeout_seconds`` 与
+# 管线硬超时、TTS 合成段**各拿一份满预算**，串起来总时长可以远超用户等待上限；
+# 叠加上限 ≈580s（能力硬超时 400s + 配音段 180s）而配音段整个跑在硬超时之外。
+# 本段只做一件事：给出**唯一一把算法尺**——一条腿上还能花多少秒＝
+# 「伞里剩多少 ÷ 还要跑的腿数」，再与它自己声明的单次上限取小。
+#
+# 与 :func:`apply_request_deadline` 的分工（不是第二把尺，是两根不同的里程）：
+# * ``apply_request_deadline``＝**发送层**（只剩一段里程，且预算耗尽**不许**丢已生成的回复）；
+# * ``leg_budget_seconds``＝**执行层**（多腿串行：主链 + 降级链 + 嵌套逐块合成，
+#   必须按腿预留，否则前面那腿把伞吃光、后面的腿就只剩渣——见下）。
+# 两者都只认同一枚 ``deadline_monotonic``（请求级单调时钟绝对值，
+# ``Config.bot_request_budget_seconds`` 装配），数值不许在这里也不在调用方各写一份。
+
+#: 计时伞的**载体键**：``CapabilityRequest.context[DEADLINE_CONTEXT_KEY]``＝float。
+#: 键名的唯一家＝本模块；中央 invoker 与出站配音 hook 都从这里引，
+#: 禁第二把尺、禁第二处字面量（否则「伞在谁手里」又要靠 grep 猜）。
+DEADLINE_CONTEXT_KEY = "deadline_monotonic"
+
+
+def normalize_deadline(value: object) -> float | None:
+    """把「交来的 deadline」收成可用形态：**只认数值**，其余一律 ``None``＝本轮无伞。
+
+    消毒优先于记账（与 ``_safe_phase_name`` 同口径）。三条都不许回退：
+
+    * ``bool`` 排除在外——``True`` 是 ``int`` 的子类，收下就等于把"1 秒的绝对时刻"
+      当成伞，而单调时钟上那个数早就过去了 ⇒ 每一条回复当场判超时；
+    * **不做字符串转换**（``"12"`` 也归"没有伞"）：伞的载体是单调时钟绝对值，
+      能从字符串里"猜"出一个数，正是把畸形输入执法成最坏那一面的写法
+      （台账 #67★「门票正则里一个续行 ``|`` 拼出空分支＝恒真」同族）；
+    * 非有限 / ≤0 一律 None——绝不拿畸形值把预算掐成 0，那属新增故障。
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number <= 0.0:
+        return None
+    return number
+
+
+def leg_budget_seconds(
+    deadline_monotonic: object,
+    *,
+    now: float,
+    attempt_seconds: float,
+    legs_left: int = 1,
+) -> float:
+    """剩余口径下「这一腿还能花多少秒」——纯函数、**不读钟**（``now`` 由调用方交来）。
+
+    三条语义，逐条都是判据：
+
+    1. **无伞 ⇒ 原样返回** ``attempt_seconds``：伞不存在时不假装在管，
+       49 枚描述符今天的逐字节现状由这条保住（也保住 SEAT-F-BAKE 那条
+       「降级腿预算与主链耗时无关」的锁——那把锁的前提正是没有伞）。
+    2. **有伞 ⇒ ``min(单次上限, 剩余 ÷ 还要跑的腿数)``**。除以腿数是**预留**，
+       不是把地板抬高：主链不许先吃掉整把伞、再向降级链与后续逐块合成"要时间"，
+       那正是 2026-10-02 简报点名的「每腿各拿一份满预算，串起来远超上限」。
+       腿与腿按同一把尺分 ⇒ **串起来的总时长恒 ≤ 伞**。
+    3. **剩余 ≤ 0 ⇒ 返回 ``0.0``**，由调用方**停腿并抛在册那一族**（中央＝
+       ``CapabilityTimeout``）。这里刻意不塞 1 秒/0.05 秒之类的地板去假装还能跑：
+       "地板"就是 F-BAKE 点名要杀的那个写法——它让"在册"与"可达"两件事再次脱钩。
+
+    ``legs_left`` 只作下限保护（≥1）；传 0/负数不改变判据方向（按一腿独享算）。
+    """
+    attempt = float(attempt_seconds)
+    deadline = normalize_deadline(deadline_monotonic)
+    if deadline is None:
+        return attempt
+    remaining = deadline - float(now)
+    if remaining <= 0.0:
+        return 0.0
+    legs = max(1, int(legs_left))
+    return max(0.0, min(attempt, remaining / float(legs)))

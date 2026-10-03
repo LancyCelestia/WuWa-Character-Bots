@@ -340,10 +340,13 @@ FACETS: MappingProxyType[str, CapabilityFacets] = MappingProxyType(
                                    "/pipeline.py#RuntimePipeline.handle_async",
                 implementation_line=535,  # 现算 AST：pipeline.py 里 `class RuntimePipeline`
                 # 现算 2026-09-24T06:35:06Z，尺＝门件 project_direct_callsites × central_seam_census
+                # 2026-10-03 施工席20 对账：根装配在飞波（消息编辑/撤回开面 S34b、files-incoming）
+                # 让 handle_async 增至 x4、_send_parts_through_unified_pipeline 增至 x2 ⇒ 申报随普查
+                # 同批改数（普查 x 数为唯一真值，门腿⑧双向等值）。
                 direct_callsites=(
-                    "generic:plugins/bot_unified_runtime/__init__.py#handle_async#x3",
+                    "generic:plugins/bot_unified_runtime/__init__.py#handle_async#x4",
                     ("seam:plugins/bot_unified_runtime/__init__.py"
-                     "#_send_parts_through_unified_pipeline#x1"),
+                     "#_send_parts_through_unified_pipeline#x2"),
                 ),
                 config_keys=("bot_chat_enabled",),
                 # 三形都经中央调度（command/alias/natural 各有入口活性件走过）；臂缝＝形级规范值，
@@ -364,6 +367,12 @@ FACETS: MappingProxyType[str, CapabilityFacets] = MappingProxyType(
                 implementation_line=1070,  # 现算 AST：tts.py 里 `def build_tts_capability`
                 direct_callsites=(
                     "seam:plugins/bot_unified_runtime/__init__.py#_run_simple_capability#x1",
+                    # 2026-10-03 施工席20 对账补登：根装配在飞波两处新直呼（普查 x1 各一）——
+                    # orchestrated_command 汇缝一处、_poke_voice_pair 内 build_tts_capability
+                    # offseam 一处 ⇒ 申报随普查补（漏申报方向红）。
+                    "seam:plugins/bot_unified_runtime/__init__.py#orchestrated_command#x1",
+                    ("offseam:plugins/bot_unified_runtime/__init__.py"
+                     "#_poke_voice_pair->build_tts_capability#x1"),
                 ),
                 config_keys=("bot_tts_hard_max_chars", "bot_tts_max_audio_bytes"),
                 arms=_arms("bot.tts", _EK.COMMAND, _EK.ALIAS),
@@ -586,9 +595,9 @@ FACETS: MappingProxyType[str, CapabilityFacets] = MappingProxyType(
                 implementation_line=381,  # 现算 AST：moegirl.py 里 `def build_moegirl_capability`
                 # `#x2` ＝同一个汇缝宿主里有两处把本枚交上去（MOEGIRL 与 MOEGIRL_QUESTION 两条
                 # RouteKind 的判定分支），不是"两条通路"；第二条路的判据仍是腿③（offseam 必须零）。
+                # 2026-10-03 施工席20 对账：根装配在飞重构后普查（central_seam_census 现算）
+                # 已无 `_run_capability_through_pipeline` 站点 ⇒ 申报随普查摘除（多申报方向红）。
                 direct_callsites=(
-                    ("seam:plugins/bot_unified_runtime/__init__.py"
-                     "#_run_capability_through_pipeline#x2"),
                     "seam:plugins/bot_unified_runtime/__init__.py#_run_simple_capability#x1",
                 ),
                 config_keys=("bot_moegirl_timeout_seconds",),
@@ -613,6 +622,10 @@ FACETS: MappingProxyType[str, CapabilityFacets] = MappingProxyType(
                 implementation_line=130,  # 现算 AST：randpic.py 里 `def build_randpic_capability`
                 direct_callsites=(
                     "seam:plugins/bot_unified_runtime/__init__.py#_run_simple_capability#x1",
+                    # 2026-10-03 施工席20 对账补登：根装配在飞波新增经 _send_parts_through_unified_pipeline
+                    # 的直呼一处（普查 x1）⇒ 申报随普查补（漏申报方向红）。
+                    ("seam:plugins/bot_unified_runtime/__init__.py"
+                     "#_send_parts_through_unified_pipeline#x1"),
                 ),
                 config_keys=("bot_randpic_dirs", "bot_randpic_max_file_mb"),
                 arms=_arms("bot.randpic", _EK.COMMAND, _EK.ALIAS, _EK.NATURAL_LANGUAGE),
@@ -722,7 +735,18 @@ EVIDENCE: MappingProxyType[tuple[str, CapabilityTag], TagEvidence] = MappingProx
 #   尺身份三元组同首届（registered_capability_ids ∖ declared_ids）；复跑＝
 #   `../ChatBot_Runtime/venv/Scripts/python.exe -m pytest tests/test_capability_manifest_gate.py
 #    tests/test_capability_manifest_ratchet_direction.py -q`（腿⑦现算 101≤101、腿③b unwired 仍 8）。
-UNCOVERED_CEILING: Final[int] = 101
+# S-MANIFEST-RATCHET 同批 101→105（2026-09-29 台账 #63/#64 四枚：bot.consent／capability.consent／
+#   bot.host_state／capability.host_state——同意卡门换代与休眠清扫两波各两枚进中央在册表而未进
+#   本真身册 ⇒ 未申报 +4；REGISTERED_FLOOR 121→125 已由那批落进本册上方，本格是同一笔账的
+#   另一半，当时只落了注没落数 ⇒ 2026-10-03 施工席20 补落；在册 125－已申报 20＝现算 105）。
+# 施工席33 同批续落 105→107（2026-10-03）：+2 逐枚点名＝**bot.network_patrol／bot.outbound_gate**
+#   ——同日 C5「能力注册接线波」按 F3「使用即登记」先例补登 CONTROLLED_INTERNAL_CAPABILITIES
+#   （capability_registry.py，受门在册 ⇒ 在册 127－已申报 20＝现算 107）；该 hunk 未提交＝他席
+#   在飞件，**照实计入真值不摘**（先例＝本格上方 S-MANIFEST-RATCHET 段与 ROSTER_SCAN_FLOOR 注）。
+#   ⚠ 断代更正：A6 简报把本枚 +2 归给 files.artifact.generate 系误判——该枚 HEAD 已注册、早已
+#   在 105 旧账未申报清单内，非本次增量；真身＝`git archive HEAD` 抽仓库外同尺复跑逐枚作差
+#   （在册 125/未申报 105→127/107，增量仅上述两枚）。与腿⑤ EXECUTION_SURFACE 64→66 同根同批。
+UNCOVERED_CEILING: Final[int] = 107
 
 
 def declared_ids() -> frozenset[str]:

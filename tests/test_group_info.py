@@ -1437,8 +1437,9 @@ def test_mail_participants_declare_structural_gap(tmp_path: Path) -> None:
     )
     body = _who_cap(reader)(message, None).body
     assert _MAIL_PARTIAL_LINE in body
-    # 三态分立（2026-09-26 S-META-PARITY 改口径）：To/Cc＝适配器有、摄取链没接
-    # （「是我没接上」）；Bcc＝投递语义上真没有。两句都在，不许混称「协议不支持」。
+    # 三态分立（2026-09-26 S-META-PARITY 改口径；2026-10-03 更新）：To/Cc 的
+    # 信头行已随信文进会话，「是我没接上」只指**结构化契约位**；
+    # Bcc＝投递语义上真没有。两句都在，不许混称「协议不支持」。
     assert "今天答不全是我没接上" in body
     assert "那一格是真没有" in body
     assert "记到说过话的 1 位" in body

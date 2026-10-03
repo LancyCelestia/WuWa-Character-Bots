@@ -43,6 +43,16 @@
 ``poke.ProactiveActionKnobs``）；不写好感度（唯一入账口在根装配面，锁
 ``test_affinity_open_state_locks_s_memaff.py`` 要求全根对入账口的调用只有一枚）；
 不用 ``random``（确定性＝SHA-256 摘要，同种子同判定，测试与真机都能复现）。
+
+**决策件与活路径双轨，等价性由测试锁**（2026-10-03 互动面波注记）：本件建成但
+**零生产接线**——生产 poke 链路今天跑的是根装配文件既有活路径（``PokeDispatcher``
+选臂 / ``proactive_action_allowed`` 五层门 / M-17 中央名单门）。两轨的等价性由
+``tests/test_decision_pieces_dualtrack_lock.py`` 现算锁住：同输入下选臂、回落链、
+门判（开关/场合/名单表态/安静窗/blocked）逐格一致。已知口径差（锁里写明，接线时
+以本件为准并同步翻活路径）：① mix 轮换两件各持确定性哈希，等价口径=同池同退路同
+门判，**非逐臂同值**；② 群表态门的名单来源两件各异（本件按 ``policy/gate`` 四档
+入参建模，活路径吃 ``content_route`` 的 M-17 中央名单），等价的是门槛语义
+（黑名单赢/未表态拦/命中放行），不是名单字面源。
 """
 from __future__ import annotations
 

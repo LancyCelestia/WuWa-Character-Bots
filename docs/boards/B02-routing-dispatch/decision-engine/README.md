@@ -53,3 +53,12 @@ flowchart LR
 ## 现行缺陷
 
 接管（迁移阶段 1+）未实施：`engine_only` 未启用、决策结果不改变任何回执。规格与开放问题见 `docs/design/` 的中央决策引擎规格（B2），其未裁决开放问题登记在 AGENTS 台账「已知问题」表。旧路径包 `plugins/bot_unified_runtime/decision/` 是再导出垫片，真身在 `domains/core/decision/`。
+
+⚠ 上面那句还只说了半件事，另外半句今天同样为真（2026-10-02 席 C-D-01 现算，常驻门
+`tests/test_central_dispatch_closure_gate.py` 把这两件事各钉成一格账）：**`engine_only` 不是"可用档"，
+是保留值**——它躺在 `RESERVED_FUTURE_MODES` 里，`normalize_decision_mode` 一律把它回落成 `legacy_only`，
+所以「切到 engine_only 就能接管」这句话在代码面上不成立；该门把「接管态枚数」与「生产面/`.env`/`.env.example`
+里把决策模式赋成保留值的落点数」都锁成 0 上限，长出来就红。**连影子今天也没在跑**——生产配置里
+根本没有那个键（`.env` 与 `.env.example` 对该键零命中），缺省即 `legacy_only`，所以 `decision_trace`
+一行都不写；要说"影子已观测"必须有人先把该键置成 `shadow` 并重启（开闸权在用户，见 AGENTS 常令）。
+所以本功能的真实进度是**接管 0 格、影子 0 实跑**，不是"影子在跑、只差接管"。

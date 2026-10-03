@@ -36,8 +36,10 @@ get_group_notice / get_essence_msg_list）而全仓零调用。本能力补齐�
 - **群文件已接（本地账本口径）**：``profile`` 全量档里追加「群文件概览」，数据来自
   协议端 ``group_upload`` notice 喂的 ``GroupFileStore``（见
   domains/files/capabilities/group_files.py）——报的是**我见过的上传**，不是群盘全量。
-  未注入账本时这一段整段不出现（缺数=缺行）；协议端另有 ``get_group_root_files``
-  可读全量群盘，动作名留待在线核验后再接，不拿未核的名字去猜然后谎报「接口没回应」；
+  未注入账本时这一段整段不出现（缺数=缺行）。**协议全量口 ``get_group_root_files``
+  已补接（2026-10-03 检索与知识波）**：账本缺行时由画像层（``conversation_profile``）
+  探一次，**只报数量/容量级，绝不列文件名与内容**（隐私红线同成员名单）；
+  载荷形态离线不可核，候选字段读不出就如实说读不出，不编数；
 - **协议端有登记、本能力尚未接**（不是「协议无 API」，别照旧注释再判一次死）：
   群链接 ``get_share_link``——接它要同步动帮助词表（触发词双向门），排在本能力下一批。
   （2026-09-25 二批：群相册 ``get_group_album_list``、群待办 ``get_group_todo_list``
@@ -52,6 +54,9 @@ get_group_notice / get_essence_msg_list）而全仓零调用。本能力补齐�
   ``get_stranger_info`` returnsSchema 的 ``batteryStatus``（写口才在
   ``set_online_status.battery_status``）。本能力现在读它；但「值是否恒 0」属运行时
   事实、离线不可判，所以 **0/空一律当「读不出有效值」**，绝不写成「电量 0%」。
+  账号状态的**专口** ``nc_get_user_status`` 同为在册读口（2026-10-03 补接进画像层）：
+  ``get_stranger_info.status`` 之外的第二条腿，独立缓存 kind，载荷候选字段见
+  ``qq_user_status_from_payload``。
 - **QQ 对端账号资料（昵称/个性签名/在线状态/等级/电量）已接**
   （``read_qq_account_meta`` → ``get_stranger_info``，需求 4 · 2026-09-28 S-META）：
   此前该动作在本仓只有一个调用点、且只取 bot 自己的头像字段，资料面整片是
@@ -199,6 +204,23 @@ QQ_ACCOUNT_META_ACTION = "get_stranger_info"
 #: 更活，取到「一轮一次」的粒度已由调用侧的每轮注入承担，这里只防同 id 风暴。
 QQ_ACCOUNT_META_TTL_SECONDS = 600.0
 
+# ---------------------------------------------------------------------------
+# 两条补接的在册探测（2026-10-03 检索与知识波·施工席2）
+# ---------------------------------------------------------------------------
+
+#: 账号状态**专口**（动作册 ``nc_get_user_status`` 在册）。此前状态只吃
+#: ``get_stranger_info.status`` 单腿；本口是第二条腿，画像层单独成格。
+#: 独立缓存 kind：在线态比资料活，5 分钟档（比资料档 600s 活一档），只防同 id 风暴。
+KIND_QQ_USER_STATUS = "qq_user_status"
+QQ_USER_STATUS_ACTION = "nc_get_user_status"
+QQ_USER_STATUS_TTL_SECONDS = 300.0
+#: 群文件**全量口**（动作册 ``get_group_root_files`` 在册）。消费侧只准报
+#: 数量/容量级，绝不列文件名与内容（隐私红线同成员名单，执法在画像层）。
+#: 独立缓存 kind，5 分钟档。
+KIND_GROUP_ROOT_FILES = "group_root_files"
+GROUP_ROOT_FILES_ACTION = "get_group_root_files"
+GROUP_ROOT_FILES_TTL_SECONDS = 300.0
+
 #: ``status`` 是**数字状态码**，册只给了字段名「在线状态码」而没给值表。
 #: 这张表因此只登记**能核到的**标签；认不出的值一律回「状态码 N（册未给中文名）」
 #: ——本仓常驻禁令「没检索禁写它没有」的同族：宁可少说，不可把没核过的数表当权威。
@@ -340,6 +362,43 @@ def read_qq_account_meta(
         out[label] = value
         audit.append(f"{key}_read" if value else f"{key}_empty")
     return out, audit
+
+
+#: ``nc_get_user_status`` 载荷的候选字段名：离线不可核 returnsSchema，只登记
+#: 候选名——认不出就带原值/如实说读不出，绝不编一个形态出来（相册候选表同哲学）。
+_QQ_USER_STATUS_KEYS: tuple[str, ...] = ("status", "online_status", "ext_status")
+
+
+def qq_user_status_from_payload(payload: Any) -> str:
+    """``nc_get_user_status`` 载荷 → 人话状态串；读不出回空串（调用方按缺数说话）。
+
+    载荷形态离线不可核：扁平码（``{"status": 10}``）、嵌套对象
+    （``{"status": {"status": 10, "key": "online"}}``）都容忍。数字码复用
+    ``_qq_status_label`` 的**同一张表**（不抄第二份值表）；非码形态带原值 +
+    「册未给中文名」前缀——宁可少说，不可把没核过的形态当权威。
+    """
+    data = _as_mapping(payload)
+    if not data:
+        return ""
+    for key in _QQ_USER_STATUS_KEYS:
+        if key not in data:
+            continue
+        raw = data.get(key)
+        if isinstance(raw, dict):
+            body = _as_mapping(raw)
+            raw = next(
+                (body.get(nested) for nested in ("status", "key") if nested in body),
+                None,
+            )
+        text = _meta_scalar(raw)
+        if not text:
+            continue
+        head = text.split(".", 1)[0]
+        if head in _QQ_STATUS_LABELS or head.isdigit():
+            # 渲染（含「未知码带原码说话」）走 ``_qq_status_label`` 唯一真身。
+            return _qq_status_label(text)
+        return f"状态 {text}（动作册没给这一形态的中文名，不替你猜）"
+    return ""
 
 
 def format_qq_account_meta_note(meta: dict[str, str], *, exclude: tuple[str, ...] = ()) -> str:
@@ -773,17 +832,19 @@ _PARTICIPANT_UNREADABLE_LINE = (
     "参与者这份记录这会儿读不出来（记忆没开，或账本一时打不开）——"
     "读不出不等于没人说话，我不拿它当「没有」。"
 )
-#: 邮件侧的**当前接线态**缺口声明。旧句把「读不到 To/Cc」说成协议性质——不成立：
-#: 实装适配器 `nonebot/adapters/mail/utils.py:108-113`（parse_byte_mail）逐封解出
-#: `recipients_to/recipients_cc/reply_to`，只是摄取链没把这三枚带进
-#: ``IncomingMessage``（见 2026-09-26 S-META-PARITY 票 T-META-INGEST-1）。
-#: 唯一的真·结构缺口是 Bcc：按 RFC 5321/5322 的投递语义，Bcc 名单在送出时被剥
-#: 离，收信人这一侧的信里本来就没有它——那一格才是「邮件协议里没有」。
+#: 邮件侧的**当前接线态**声明（2026-10-03 检索与知识波更新）：旧句把「读不到
+#: To/Cc」说成协议性质——不成立：实装适配器 `nonebot/adapters/mail/utils.py:108-113`
+#: （parse_byte_mail）逐封解出 `recipients_to/recipients_cc/reply_to`。摄取咽喉
+#: （``mail_adapter._fetch_new_mail``）现已按**信头文本块**随信把 From 显示名/To/Cc
+#: 带进会话；仍缺的是**结构化契约位**（``IncomingMessage`` 字段，票
+#: T-META-INGEST-1 留档）。唯一的真·结构缺口是 Bcc：按 RFC 5321/5322 的投递语义，
+#: Bcc 名单在送出时被剥离，收信人这一侧的信里本来就没有它——那一格才是「邮件协议里没有」。
 _MAIL_PARTIAL_LINE = (
-    "邮件这边今天我只看得见发件人这一位：一封还发给了谁、抄送了谁，"
-    "适配器其实解得出 To/Cc，是这条链还没接到会话记录里——今天答不全是我没接上，"
-    "不是邮件协议没有（密送 Bcc 除外：按投递语义它本来就不会出现在你收到的信里，"
-    "那一格是真没有）。"
+    "邮件这边，收发件名单的结构化格子我只接上发件人这一位：一封还发给了谁、"
+    "抄送了谁，信头收发件行已随信文一起进会话（摄取咽喉逐封带上），但结构化的 "
+    "To/Cc 格仍是适配器解得出、契约位没带（票 T-META-INGEST-1）——今天答不全"
+    "是我没接上，不是邮件协议没有（密送 Bcc 除外：按投递语义它本来就不会出现在"
+    "你收到的信里，那一格是真没有）。"
 )
 #: 邮件的「群」格子整体不适用：不是漏接，是协议里没有这个对象。
 _MAIL_NO_GROUP_LINE = (
@@ -995,7 +1056,11 @@ def _participant_lines(
 # 所以在这台共享实例上就地补登记（group_cache 的构造参数就是为这种扩展留的）。
 # 测试注入的独立 GroupInfoCache() 没这条 ⇒ 不缓存、每次现读，语义仍正确只是慢。
 _SHARED_CACHE = GroupInfoCache(
-    ttl_by_kind={KIND_QQ_ACCOUNT_META: QQ_ACCOUNT_META_TTL_SECONDS}
+    ttl_by_kind={
+        KIND_QQ_ACCOUNT_META: QQ_ACCOUNT_META_TTL_SECONDS,
+        KIND_QQ_USER_STATUS: QQ_USER_STATUS_TTL_SECONDS,
+        KIND_GROUP_ROOT_FILES: GROUP_ROOT_FILES_TTL_SECONDS,
+    }
 )
 
 

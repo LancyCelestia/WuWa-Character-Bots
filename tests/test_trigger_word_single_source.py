@@ -593,6 +593,42 @@ INTENTIONAL_UNITS: Final[tuple[DeclaredUnit, ...]] = (
     #    引用真身形态 ⇒ 本条虚设转红，由件 owner 按四把牙复登记/摘牌，不自动续期。
     DeclaredUnit("待审", "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#t1:dict:triggers_nl", "bot.meme_library",
                  "表情册审批面的帮助册镜像位（双向门方向 1 的落点），真身是 meme_library 审批正则；紧急信息侧 aliases 与 alias:triggers_nl 两处属另一能力词表，不作同源抵销"),
+    # ── 第五批（S-ALBUM 表情册波，2026-10-02；凭据＝docs/HANDBOOK.md §58.9–58.16 与本件同族的
+    #    表情册四动作锁）：本波新增的声明位逐枚点名，只登记本波这一格，别家能力的账分毫不动。
+    #    真改引用在本波不可行——帮助册的字面投影由帮助闭合门与双向触发门两头同时要求，
+    #    跨域 import 他域词表违插件强隔离常令。
+    #    ⚠ 失效约定同前四批：摘掉本波任一处的词面、或把真身收敛成引用形态 ⇒ 本条虚设转红，
+    #    由件 owner 按四把牙复登记/摘牌，不自动续期。
+    DeclaredUnit("approve", "plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py#t1:_REVIEW_APPROVE_WORDS", "bot.meme_library",
+                 "表情册审批面的「批」动词表：与同意门 core/safety_exec/consent.py 判定表部分重合，本表另收 通过/准入/收/收下/admit 五枚册面口语形；批的是图不是授权，两判据互不消费，只登记本表这一枚声明位"),
+    DeclaredUnit("同意", "plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py#t1:_REVIEW_APPROVE_WORDS", "bot.meme_library",
+                 "同上审批动词表的中文枚：判定真身为 consent.py（首册已点名核心表与命令面表两格），本枚是表情册审核面的第三声明位，摘掉本条即恢复记账"),
+    DeclaredUnit("批准", "plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py#t1:_REVIEW_APPROVE_WORDS", "bot.meme_library",
+                 "同上审批动词表第二中文枚：管理员在待审队列里敲的词，消费点为 set_review_state(ADMIT)，与同意门的批准动词无共享判据，逐词点名不多吃一格"),
+    DeclaredUnit("admit", "inline:plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py", "bot.meme_library",
+                 "入册回执的审计标签字面 audit=[\"meme_library\", \"album\", \"admit\", status]：结构串撞自家动词词面，与同文件审批表是两种形态，本枚只抵内联标签这一格（真身留表侧）"),
+    DeclaredUnit("deny", "plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py#t1:_REVIEW_REJECT_WORDS", "bot.meme_library",
+                 "表情册审批面的「拒」动词表：与同意门 _DENY_VERBS 部分重合（同型双写系分层设计），本表另收 不收/reject 两形，删行删文件走 reject_review 而非同意门否决通路"),
+    DeclaredUnit("拒绝", "plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py#t1:_REVIEW_REJECT_WORDS", "bot.meme_library",
+                 "同上拒动词表中文枚：审核面的人话动词，消费点在本件 reject_review；consent 与 consent_admin 两位各照旧记自己的账，本册不替它们抵销"),
+    DeclaredUnit("驳回", "plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py#t1:_REVIEW_REJECT_WORDS", "bot.meme_library",
+                 "同上拒动词表第二中文枚：与同意门驳回同字不同事（此处落内容级墓碑、同图重发不复活，口径同 NSFW 删除），词面重合属审批语汇自然共用"),
+    DeclaredUnit("reject", "plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py#t1:_REVIEW_REJECT_WORDS", "bot.meme_library",
+                 "本词面此前只在 ops/capabilities/consent_admin.py 命令面一格、不成债；表情册拒表在场后达两格入账，登记表侧这一枚、命令面格照旧留账"),
+    DeclaredUnit("review", "inline:plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py", "bot.meme_library",
+                 "审批子命令的分支返回值与审计串里的 review 字面（return \"review\", ...）：路由判据是 _REVIEW_RE 正则而非这枚字面，真身留 emergency_info 待审词表那一格"),
+    DeclaredUnit("list", "inline:plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py", "bot.meme_library",
+                 "待审队列回执审计标签里的 list 字面（跨能力通用子命令动词，emergency/meme/consent 三家在先）：本枚只抵 meme_library 内联这一格，其余三家各自的账分毫不动"),
+    DeclaredUnit("表情册", "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#t1:dict:aliases", "bot.meme_library",
+                 "「表情册」帮助条目 aliases 列镜像位：别名→能力的路由真身为 runtime/aliases.py 的 DEFAULT_VERB_MAP（S-ALBUM 同批补的两键，缺则「守岸人 表情册」坠 help 兜底），帮助闭合门要求帮助册同面在场，故登记帮助侧"),
+    DeclaredUnit("表情相冊", "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#t1:dict:aliases", "bot.meme_library",
+                 "同条目繁体形的帮助侧镜像位：简繁成对口径同 隨機/随机 判例，消费点在别名册而非帮助册，本批逐词点名第二枚，摘掉即恢复记账"),
+    # ── 席 S6（2026-10-08 `/bot intimate` 命令面接线波）第五批：**只登记本席新增的这一枚**。
+    #    现算读数＝raw 551→552、抵销 74→75、计账 477 一字不动；同波另有人登记的 10 枚超载
+    #    （477 与上限 467 的差额）系他席在飞件，与本席无涉，本条既不承担也不顺抵。
+    #    ⚠ 上限 467 与 AUDIT_HISTORY 一字未动（调大换绿是本门明令禁止的修法）。
+    DeclaredUnit("intimate", "inline:plugins/bot_unified_runtime/__init__.py", "bot.chat",
+                 "根分派链 _handle_status 新增 elif 的手打分支字面量（== 与 startswith/removeprefix 三处同文件折成一格）：档位值真身住 content_route.MODE_INTIMATE、子命令词表真身住 _INTIMATE_SUBCOMMAND_TABLE，帮助册 echo 的「亲密模式」aliases 持该词面做主题检索；分派位按既有 38 支同形写法只能字面打，本枚只抵根链这一格"),
 )
 
 

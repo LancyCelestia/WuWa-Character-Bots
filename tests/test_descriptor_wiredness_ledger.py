@@ -262,7 +262,13 @@ NOT_WIRED: frozenset[str] = frozenset(
         "bot.cookie_expiry_notice", "bot.cookie_login", "bot.credential_check", "bot.dialogue",
         "bot.download", "bot.emergency_info_push", "bot.file", "bot.group_digest_push", "bot.group_policy",
         "bot.group_welcome", "bot.help", "bot.history", "bot.identity", "bot.llm", "bot.logs",
-        "bot.mail.notify", "bot.memory", "bot.parse", "bot.persona", "bot.poke",
+        "bot.mail.notify", "bot.memory",
+        # 席34（2026-10-03 终版三红收口）：C5 能力注册接线波补登两枚（capability_registry.py
+        # CONTROLLED_INTERNAL_CAPABILITIES「使用即登记」）——根 __init__.py 的使用形态仅审计/
+        # 告警归因（网络巡检调度器 AuditRecord capability_id、出站闸 issue_sink
+        # source_bot="outbound-gate"），非 invoke/泛型执行器 ⇒ 真树判据归零调用点，如实挂本桶
+        # （后台 job/管理链，无会话侧能力入口）；GAP_CEILING 同批 85→87 故意上调留痕。
+        "bot.network_patrol", "bot.outbound_gate", "bot.parse", "bot.persona", "bot.poke",
         "bot.queue", "bot.quirk", "bot.readiness", "bot.receipt", "bot.recent", "bot.reply", "bot.roles",
         "bot.route", "bot.routes", "bot.runtime", "bot.search", "bot.send_queue_worker", "bot.setup.llm",
         "bot.why",
@@ -327,7 +333,11 @@ NOT_WIRED: frozenset[str] = frozenset(
 #:   另 GENERIC→WIRED 两枚 subscribe/today_history（命令腿入缝，wired 优先既有规则）⇒
 #:   GENERIC 12→2、NOT_WIRED 85→83，现算缺口 2+83=85，97→85（−12，全部对应上方 WIRED 迁移注记；
 #:   零放宽：判定表达式一字未动，动的是清单与常量本身=故意留痕）。
-GAP_CEILING: int = 85
+#:   席34（2026-10-03 终版三红收口）：**新增欠债方向的故意上调留痕**（非迁移，S-R2-LEDGER 先例
+#:   同型）——C5 能力注册接线波补登 bot.network_patrol / bot.outbound_gate 两枚入 NOT_WIRED
+#:   （controlled_no_callsite：根内仅审计/告警归因、无 invoke 点）+2 ⇒ 现算缺口
+#:   len(GENERIC)(2)+len(NOT_WIRED)(85)=87，85→87。
+GAP_CEILING: int = 87
 
 
 # ===========================================================================

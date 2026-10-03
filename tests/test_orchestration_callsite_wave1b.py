@@ -154,5 +154,7 @@ def test_files_domain_has_zero_execution_direct_sites() -> None:
     direct, _invoker = v1gate.scan(v1gate._load_real_index())
     in_files_domain = {m for m in direct["files.read"] if m.startswith("domains/files/")}
     assert in_files_domain == set(), f"files 域内出现新执行直呼点（清点表 A 失效，重跑 §一）：{in_files_domain}"
-    # ledger 现行 files.read 直呼面只有 root 与控制面两端点，均非本席可翻面。
+    # ledger 现行 files.read 直呼面＝root、控制面两端点 + 邮件附件取字
+    # （mail_ingress_files.py `_read_one`，2026-10-03 S31 评审登记：与 QQ/TG 同一颗
+    # file_reader 咽喉的有意直读），三处均非本席可翻面。
     assert direct["files.read"] == v1gate.KNOWN_DIRECT_ALLOWLIST["files.read"]

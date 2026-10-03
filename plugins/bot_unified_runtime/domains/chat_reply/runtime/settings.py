@@ -370,6 +370,20 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
     "BOT_MESSAGE_MUTATION_WINDOW_SECONDS": (
         "同族：mutation_window_seconds 直读快照 config，合并层未登记，热 set 不改时限"
     ),
+    # ---- DB 备份腿七键（2026-10-02 四面落键，#68★；读点 domains/ops/db_backup.py
+    # load_policy :201-224 每次现读**调用方交来的装配期快照** config，且未进
+    # _RUNTIME_HOT_OVERRIDE_FIELDS ⇒ 热 set 一次也不改判据，按 C-09「不许骗人」
+    # 口径登记需重启；缺省＝现网哑面不变（enabled=False）。----
+    "BOT_DB_BACKUP_ENABLED": "同 BOT_DB_BACKUP_DIR（备份总闸每次现读快照 config）",
+    "BOT_DB_BACKUP_DIR": (
+        "登记根在装载期已过 PATH_REMAPPED_FIELDS 折进运行数据根，读点每次现读快照"
+        " config ⇒ 热 set 不换根，改 .env + 重启"
+    ),
+    "BOT_DB_BACKUP_KEEP_LAST": "同 BOT_DB_BACKUP_DIR（保留枚数每次取策略现读快照）",
+    "BOT_DB_BACKUP_SIZE_CEILING_BYTES": "同 BOT_DB_BACKUP_DIR（单库尺寸上界现读快照）",
+    "BOT_DB_BACKUP_MAX_FOOTPRINT_BYTES": "同 BOT_DB_BACKUP_DIR（备份区总量上界现读快照）",
+    "BOT_DB_BACKUP_MIN_FREE_BYTES": "同 BOT_DB_BACKUP_DIR（开跑前剩余下限现读快照）",
+    "BOT_DB_BACKUP_STALE_AFTER_HOURS": "同 BOT_DB_BACKUP_DIR（副本过期时限现读快照）",
     # ---- STICKER-POOL 波（2026-09-29）：bot 自有表情私库四枚键 ----
     # 四枚的唯一读点在 domains/meme/sources/sticker_packs.py（configured_sticker_dir /
     # sticker_send_enabled / sticker_is_recursive / sticker_window_seconds 四个薄口，
@@ -1019,6 +1033,43 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
     "BOT_QUIET_HOURS_DIRECT_BYPASS_COMMANDS": (
         "安静时段直连豁免的 commands 腿：同上（合并层未登记本枚 ⇒ 覆盖不可达）。"
         "True＝命令类能力夜间直通（缺省＝既有语义）；False＝把命令关进安静时间这道门"
+    ),
+    # ---- 好感度 v8 九键 + files TTL（2026-10-03 全量修复批，席20 交回 A 项）----
+    # 九键读点 character/affinity.py resolve_v8_settings::value_of：getattr(config)
+    # 缺句柄才落 env——而十键均未进 _RUNTIME_HOT_OVERRIDE_FIELDS（归根文件）⇒
+    # 运行时覆盖不可达，改 .env + 重启；files TTL 读点 restricted_runner.
+    # sweep_ttl_days_from_config（装配期现算口，config.py:1633 注记同裁定）。
+    "BOT_AFFINITY_V8_ENABLED": (
+        "好感度 v8 总闸：resolve_v8_settings 现读装配期 config，合并层未登记 ⇒ 热 set "
+        "不可达，改 .env + 重启"
+    ),
+    "BOT_AFFINITY_V8_IMPULSE_CAP_Z": (
+        "v8 每轮冲量帽 κ：同族，合并层未登记 ⇒ 需重启"
+    ),
+    "BOT_AFFINITY_V8_IMPULSE_WEIGHTS": (
+        "v8 六信号凸组合权重（JSON，Σ|w|=1 构造归一）：同族，需重启"
+    ),
+    "BOT_AFFINITY_V8_AMBIENT_CENTERING": (
+        "v8 ambient 质量基线去中心开关：同族，需重启"
+    ),
+    "BOT_AFFINITY_V8_AMBIENT_HALFLIFE_DAYS": (
+        "v8 ambient EMA 半衰天数：同族，需重启"
+    ),
+    "BOT_AFFINITY_V8_TIER_BLEND_BAND": (
+        "v8 档位混合带：同族，需重启"
+    ),
+    "BOT_AFFINITY_GOODWILL_BAND_MIN": (
+        "善意底保护带·新人端（2026-09-28 S-FIX-AFF-ALGO：按好感度面配置）：同族，需重启"
+    ),
+    "BOT_AFFINITY_GOODWILL_BAND_MAX": (
+        "善意底保护带·saturation 端：同族，需重启"
+    ),
+    "BOT_AFFINITY_GOODWILL_BAND_SATURATE_DAYS": (
+        "保护带饱和天数：同族，需重启"
+    ),
+    "BOT_FILES_INCOMING_TTL_DAYS": (
+        "落盘点寿命清扫 TTL：sweep_ttl_days_from_config 装配期现算口（消费点唯一），"
+        "合并层未登记 ⇒ 需重启；≤0＝清扫关闭"
     ),
 }
 

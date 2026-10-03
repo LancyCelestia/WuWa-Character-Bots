@@ -313,8 +313,10 @@ def test_mail_bcc_is_the_only_structurally_absent_recipient_cell() -> None:
 
 
 def test_mail_partials_line_appears_once_for_profile_and_who() -> None:
+    # 2026-10-03：信头收发件行已随信文进会话，声明句改为「结构化格子只接上发件人」
+    # ——只声明结构化面，不再把整条摄取链说成没接。
     result = _cap(_Api(responses={}))(_mail_message(plain_text="群信息 跟谁聊过"), None)
-    assert result.body.count("我只看得见发件人这一位") == 1
+    assert result.body.count("结构化格子我只接上发件人这一位") == 1
 
 
 def test_mail_qq_style_intents_do_not_fabricate_group_rows() -> None:

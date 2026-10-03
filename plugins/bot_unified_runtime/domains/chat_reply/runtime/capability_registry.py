@@ -1066,6 +1066,11 @@ HELP_TOPIC_DECLARATIONS: tuple[HelpTopicDecl, ...] = (
 # 与 bot.group_digest_push 同族（入站/通知链显式使用、无 RouteKind 主表项）；
 # U17-CAMPUS-WIRE 收编走中央管线后 feature_gate 依赖此登记（未登记即整链
 # fail-closed，见 docs/design/audit-20260920-unify-U17-campus-wire.md §0.5）。
+# C5（2026-10-03 能力注册接线波）：补登 bot.network_patrol / bot.outbound_gate——
+# 两 id 在根 __init__.py 真实使用（网络巡检调度器 _register_network_patrol_scheduler
+# 的审计/状态事件、出站闸问题上报 source_bot="outbound-gate"）；「使用即登记」
+# 不变量由 test_v21_f3_outbound_capability_registration 执法，门对未登记 id
+# fail-closed（同上 F3 先例）。
 # 指针（Wave 2）：本表=唯一在册表 gate 侧输入源；gate 绑定改由
 # capability_protocols.gate_feature_bindings() 派生，勿在本表之外为同 id 另立登记。
 CONTROLLED_INTERNAL_CAPABILITIES: tuple[str, ...] = (
@@ -1077,7 +1082,9 @@ CONTROLLED_INTERNAL_CAPABILITIES: tuple[str, ...] = (
     "bot.group_digest_push", "bot.group_policy", "bot.group_welcome",
     "bot.help", "bot.history",
     "bot.identity", "bot.image_search", "bot.llm", "bot.logs", "bot.mail.control",
-    "bot.mail.notify", "bot.memory", "bot.parse", "bot.persona", "bot.poke", "bot.queue",
+    "bot.mail.notify", "bot.memory",
+    "bot.network_patrol", "bot.outbound_gate",
+    "bot.parse", "bot.persona", "bot.poke", "bot.queue",
     "bot.quirk", "bot.readiness", "bot.receipt", "bot.recent", "bot.reply",
     "bot.roles", "bot.route", "bot.routes", "bot.runtime", "bot.search",
     "bot.send_queue_worker", "bot.setup.llm", "bot.why",

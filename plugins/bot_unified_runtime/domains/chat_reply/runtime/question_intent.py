@@ -15,8 +15,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 # 本地域词表的外部游戏段由此派生（同源，不手抄名单）：``search_intent`` 只依赖
 # 标准库，没有回灌 chat_reply，因此模块级导入无环；``ACG_DOMAIN_TERMS`` 是
@@ -105,8 +107,19 @@ _TECH_RE = re.compile(
     r"|OriginOS|MagicOS|HarmonyOS|OpenHarmony|iOS|PlayStation|PS5|PS4|Xbox"
     r"|Switch|Steam Deck|Waymo|Starlink|SpaceX|Optimus|Cybercab"
     r"|CUDA|ROCm|NVLink|HBM|Lunar Lake|Arrow Lake|Zen\d|RTX\d{3,4}"
-    r"|Claude|Grok|Gemini|DeepSeek|Whisper)(?![A-Za-z])|"
-    r"补丁|固件|驱动更新|热更|强制更新|更新日志|版本说明|停服|公测|内测|正式上线)"
+    r"|Claude|Grok|Gemini|DeepSeek|Whisper"
+    # 「科技话题闭嘴」波（2026-10-03，台账 #75）：案发原话是小写 `ai`/`llm`
+    # （「为什么 ai 都喜欢前台派子代理」「llm ai 大模型…」），而段一首列的
+    # `AI`/`LLM` 是大写裸形（无边界），大小写敏感下接不住小写。这里**只**在既有的
+    # `(?<![A-Za-z])…(?![A-Za-z])` 环视族内加忽略大小写子式，绝不对整表 `re.IGNORECASE`：
+    # 表里有裸 `AI`，全局忽略会把 email/said/chain/explain 里的 `ai` 一并命中，
+    # 把整片英文闲聊拖成 PRIMARY（`test_boundary_ai_token_not_matched_inside_english_word` 咬这条）。
+    r"|(?i:ai|llm|npu|gpu|agent|token|prompt|subagent))(?![A-Za-z])|"
+    # 科技缺口词（台账 #75）：案发原话里的中文说法先补上。**`前台`/`后台` 有意不收**——
+    # 它们是「医院前台/前台接待」那类通名，收进来的代价是把无关闲聊送上网；
+    # P1436/P1437 靠 `ai`+`子代理`+`为啥` 已能过开搜门，不需要这两个歧义词。
+    r"补丁|固件|驱动更新|热更|强制更新|更新日志|版本说明|停服|公测|内测|正式上线"
+    r"|子代理|子智能体|提示词|上下文窗口|网关|推理引擎|部署模型)"
 )
 # 赛事/电竞（2026-09-29 用户第 3 项补类目）。判据是**结果只存在于网络上**这一族：
 # 比分、赛果、赛程、转会、夺冠归属都不在模型知识里，也不在本地二游库裡，
@@ -144,10 +157,55 @@ _ANIME_LORE_HINT_RE = re.compile(
 )
 
 
+# ---------------------------------------------------------------------------
+# GENERAL 廉价二判兜底（2026-10-03 检索与知识波）：可注入 `domain_hint` 钩子。
+#
+# 闭集正则只收「成词的现实名词」：漏一个词（医保缴费基数、最低工资上调一类）
+# 整句就落 GENERAL ⇒ 上游判 NEVER 不搜。这里给判定链加一枚**可注入**的二判钩子：
+# 生产形态＝`llm_timely_domain_hint`（本文件尾，惰性取 LLM 机件）。
+# 三条红线：
+# ① 缺省 ``domain_hint=None`` 时本件行为**逐字节不变**（全部既有测试零改动保持绿）；
+# ② 钩子只在确定性判定**已经落到 GENERAL** 时才被征询——它不能把 SPORTS 抢成
+#    FINANCE、更不能把本地域从 ANIME_LORE 抢走（判序红线不动），只能把
+#    「没认出来」升级成「认出来了」，方向是单向的；
+# ③ 钩子抛异常/回认不出的值一律当「不表态」，判定链照旧回 GENERAL——二判是
+#    增强，绝不许变成新的故障面。
+# ---------------------------------------------------------------------------
+
+#: 二判钩子形状：输入问题原文，回 `TimelyDomain`（或其值/名字串）或 None（不表态）。
+DomainHint = Callable[[str], "TimelyDomain | str | None"]
+
+
+def _normalize_domain_hint(value: object) -> str:
+    """钩子返回值 → ``TimelyDomain`` 值串；不表态/GENERAL/认不出一律空串。"""
+    if isinstance(value, TimelyDomain):
+        return "" if value is TimelyDomain.GENERAL else value.value
+    if isinstance(value, str):
+        candidate = value.strip().strip("`\"'").lower()
+        if not candidate or candidate in {"general", TimelyDomain.GENERAL.value}:
+            return ""
+        try:
+            return TimelyDomain(candidate).value
+        except ValueError:
+            return ""
+    return ""
+
+
+def _safe_domain_hint(domain_hint: DomainHint | None, text: str) -> str:
+    """征询钩子并归一；钩子缺席/抛异常/不表态一律空串（fail-open 到原行为）。"""
+    if domain_hint is None:
+        return ""
+    try:
+        return _normalize_domain_hint(domain_hint(text))
+    except Exception:  # noqa: BLE001 - 二判故障绝不拖垮主判定。
+        return ""
+
+
 def classify_timely_domain(
     text: str,
     *,
     in_local_domain: bool = False,
+    domain_hint: DomainHint | None = None,
 ) -> str:
     """这条问题属于哪个垂直域；返回 `TimelyDomain` 的值。
 
@@ -158,7 +216,8 @@ def classify_timely_domain(
     ② 金融先于时政先于赛事先于科技：四者都可能含"公司/发布/价格/决赛"这类
        共用词，越具体的域先判，否则被宽域抢走。（赛事排在科技之前是刻意的：
        「电竞总决赛」不该被"总决赛"里的"赛"字顺手归进科技。）
-    ③ NEWS 最宽，放最后当兜底；都不命中才是 GENERAL。
+    ③ NEWS 最宽，放最后当兜底；都不命中才是 GENERAL——此时若调用方注入了
+       ``domain_hint`` 二判钩子，才征询一次（见上方红线；缺省 None 行为不变）。
     """
     stripped = str(text or "").strip()
     # 本地锚点在本函数内自己查 DOMAIN_TERMS（唯一真身），不要求调用方记得传旗标——
@@ -185,6 +244,9 @@ def classify_timely_domain(
             if _ANIME_LORE_HINT_RE.search(stripped)
             else TimelyDomain.NEWS.value
         )
+    hinted = _safe_domain_hint(domain_hint, stripped)
+    if hinted:
+        return hinted
     return TimelyDomain.GENERAL.value
 
 
@@ -422,7 +484,7 @@ _QUESTION_LIKE_RE = re.compile(
 # In-sentence question words cover forms such as “updated what” and “when rerun”.
 _QUESTION_WORD_RE = re.compile(
     r"(什么时候|何时|几点|多少|哪里|哪儿|什么|谁|是否|怎么回事|怎么样"
-    r"|好不好|好用|怎么看|了解|知道吗)"
+    r"|好不好|好用|怎么看|了解|知道吗|为啥|为何)"
 )
 
 _ENTITY_SUBJECT_RE = re.compile(
@@ -436,6 +498,61 @@ def _strip(text: str) -> str:
 
 def _is_question_like(text: str) -> bool:
     return bool(_QUESTION_LIKE_RE.search(text) or _QUESTION_WORD_RE.search(text))
+
+
+# ---------------------------------------------------------------------------
+# 现实题「开搜」信号（2026-10-03 科技话题闭嘴波，台账 #75）
+#
+# 病根：闸口 2（情感腿）排在闸口 5（开搜腿）之前、先命中先返回，而 `_SELF_CHAT_RE`
+# 含裸词「喜欢」，于是「为什么 ai 都喜欢前台派子代理」整句被 `personal_emotional`
+# 一票否决成 NEVER，本该走的现实域信号根本没机会说话。让位判据**必须**是单一真身：
+# 尺（tests/test_emotion_gate_flip_census.py）与闸口 2 同调下面两枚纯函数，
+# 开搜域集合也只在这里登记一次——禁两处各写一套正则/集合（Self-Review 结构债收口）。
+# ---------------------------------------------------------------------------
+
+#: 「该往哪儿搜」四张现实域表里，值得联网的现实域（本地二游/泛闲聊不在其内）。
+#: 这是唯一真身；classify 与尺都从这里取值，`REALITY_TIMELY_DOMAINS` 缺席即判据无处可依。
+REALITY_TIMELY_DOMAINS: frozenset[str] = frozenset(
+    {
+        TimelyDomain.FINANCE.value,
+        TimelyDomain.CURRENT_AFFAIRS.value,
+        TimelyDomain.SPORTS.value,
+        TimelyDomain.TECH.value,
+        TimelyDomain.NEWS.value,
+    }
+)
+
+
+def is_timely_reality(
+    *, timely: str, static_knowledge: bool, opinion_eval: bool
+) -> bool:
+    """命中现实域、又不是稳定常识或纯评价问法 ⇒ 构成时效现实信号（单一真身）。"""
+    return (
+        timely in REALITY_TIMELY_DOMAINS
+        and not static_knowledge
+        and not opinion_eval
+    )
+
+
+def reality_pull(
+    *,
+    question_like: bool,
+    timely_reality: bool,
+    explicit_search: bool,
+    external_entity_anchor: bool,
+    current: bool,
+    current_request: bool,
+) -> bool:
+    """情感腿让位判据：现实题要么「时效域 + 问句/明示」，要么「域外实体 + 问句/时效」。
+
+    问句形状是**必要**条件之一：单纯 `timely_reality or external_entity_anchor`
+    会把「我喜欢苹果」「他训练得很累」这类通名/情感句推上网（探针实测三枚误开），
+    故要求叠加问句/明示/时效证据。`reality_pull` 只返回布尔、不读正则、无副作用，
+    尺与闸口 2 共用它即等价，不开第二真身。
+    """
+    return (timely_reality and (question_like or explicit_search)) or (
+        external_entity_anchor and (question_like or current or current_request)
+    )
 
 
 def _domain_subject_present(text: str) -> bool:
@@ -473,8 +590,17 @@ def _finish(
     )
 
 
-def classify_question_intent(text: str) -> IntentDecision:
-    """提取信号、计算分数并按安全优先级生成可解释决策。"""
+def classify_question_intent(
+    text: str,
+    *,
+    domain_hint: DomainHint | None = None,
+) -> IntentDecision:
+    """提取信号、计算分数并按安全优先级生成可解释决策。
+
+    ``domain_hint``：GENERAL 兜底处的廉价二判钩子（生产形态
+    ``llm_timely_domain_hint``）；缺省 None＝行为逐字节不变。钩子命中的现实域
+    与闭集正则命中的走同一条 ``timely_reality`` PRIMARY 判据，不开第二通路。
+    """
     stripped = _strip(text)
     if not stripped:
         return _finish(
@@ -503,19 +629,10 @@ def classify_question_intent(text: str) -> IntentDecision:
     # 不再新建第二份词表（规则 10）。命中时政/金融/科技/新闻任一现实域、且本地域未抢先、
     # 又不是纯意见问法或稳定常识，就构成确定性主搜索——这正是审计席 22 句实测恒判 never
     # 的根因：那四张表过去只参与检索后的来源排序，从没接进 PRIMARY。
-    _timely = classify_timely_domain(stripped, in_local_domain=has_domain)
+    _timely = classify_timely_domain(stripped, in_local_domain=has_domain, domain_hint=domain_hint)
     opinion_eval = bool(_OPINION_EVAL_RE.search(stripped))
-    timely_reality = (
-        _timely
-        in (
-            TimelyDomain.FINANCE.value,
-            TimelyDomain.CURRENT_AFFAIRS.value,
-            TimelyDomain.SPORTS.value,
-            TimelyDomain.TECH.value,
-            TimelyDomain.NEWS.value,
-        )
-        and not static_knowledge
-        and not opinion_eval
+    timely_reality = is_timely_reality(
+        timely=_timely, static_knowledge=static_knowledge, opinion_eval=opinion_eval
     )
     technical_howto = bool(_TECHNICAL_HOWTO_RE.search(stripped))
     user_content = bool(_USER_CONTENT_RE.search(stripped))
@@ -564,8 +681,20 @@ def classify_question_intent(text: str) -> IntentDecision:
             allow_web_fallback=False,
         )
 
-    # 个人对话永远不能因为“今天/最近”等词触发网页搜索。
-    if short_smalltalk or asks_user_identity or self_chat or you_state:
+    # 个人对话永远不能因为“今天/最近”等词触发网页搜索——但**也不能反过来把现实题吃掉**。
+    # 病根（2026-10-03 遥测 event 1436/1437 实锤）：`_SELF_CHAT_RE` 含裸词「喜欢」，于是
+    # 「为什么 ai 都喜欢前台派子代理」整句被 `personal_emotional` 一票否决成 NEVER，
+    # 而它本该走的现实域信号早已成立。让位判据走 `reality_pull`（尺与闸口逐字同源，禁两套）：
+    # 只有既非「问句形状 + 时效现实域/明示搜索」、也非「域外实体 + 问句/时效」时，情感腿才否决。
+    reality_pull_value = reality_pull(
+        question_like=question_like,
+        timely_reality=timely_reality,
+        explicit_search=explicit_search,
+        external_entity_anchor=external_entity_anchor,
+        current=current,
+        current_request=current_request,
+    )
+    if (short_smalltalk or asks_user_identity or self_chat or you_state) and not reality_pull_value:
         reason = (
             "short_smalltalk"
             if short_smalltalk
@@ -889,3 +1018,107 @@ def decide_web_search(
             return True
         return (not answerable) or (score < threshold) or (chunk_count <= 0)
     return bool(allow_web_fallback and score < floor)
+
+
+# ---------------------------------------------------------------------------
+# 廉价二判的 LLM 适配（``domain_hint`` 的生产形态；判定链本体零 LLM 依赖）
+#
+# 本件在模块级**不导入**任何 LLM 机件：``providers.py``（character 层）反向导入
+# 本件，模块级互引即环。适配函数内部惰性取用（``group_info`` 的 display_guard
+# 同一先例），且任何失败一律回 ``None``＝不表态，调用方按「没有钩子」走——
+# 二判是增强，绝不许变成新的故障面（与 ``_safe_domain_hint`` 同一口径）。
+# 调用形态对齐 ``chat.py`` 的 ``_ask_policy_llm_once``：model_router 优先、
+# llm_provider 兜底，复用既有路由口，不新建 provider/HTTP 腿。
+# ---------------------------------------------------------------------------
+
+_DOMAIN_HINT_SYSTEM_PROMPT = (
+    "你是搜索域分类器。判断用户的问题属于哪个垂直域，只回一行、只回标签本身，"
+    "不要解释、不要标点。标签与判据：\n"
+    "finance_economy＝金融/经济/行情/利率/汇率/物价/工资/社保/医保缴费\n"
+    "current_affairs＝时政/政策/外交/选举/任免/灾难/国际关系\n"
+    "sports＝赛事/赛果/赛程/转会/电竞\n"
+    "tech＝科技/数码产品/AI/芯片/软件\n"
+    "news＝泛新闻/快讯/近期具体事件\n"
+    "anime_lore＝游戏/动漫/角色/剧情设定\n"
+    "general＝闲聊/情感/创作/操作指南/稳定常识/拿不准"
+)
+
+#: 问题文本进 prompt 前的截断帽：二判只需「问的什么域」，整篇长文是浪费。
+_DOMAIN_HINT_TEXT_CHARS = 200
+
+#: 回答 → 域值的别名表（值与枚举名都认；长名优先防子串误咬）。
+_DOMAIN_HINT_ALIASES: tuple[tuple[str, str], ...] = tuple(
+    sorted(
+        (
+            [(item.value, item.value) for item in TimelyDomain]
+            + [(item.name.lower(), item.value) for item in TimelyDomain]
+        ),
+        key=lambda pair: len(pair[0]),
+        reverse=True,
+    )
+)
+
+
+def _parse_domain_hint_reply(reply_text: object) -> str | None:
+    """模型回答 → ``TimelyDomain`` 值；general/认不出/空一律 ``None``（不表态）。"""
+    normalized = str(reply_text or "").strip().strip("`\"'").lower()
+    if not normalized:
+        return None
+    for alias, value in _DOMAIN_HINT_ALIASES:
+        if alias in normalized:
+            return None if value == TimelyDomain.GENERAL.value else value
+    return None
+
+
+def llm_timely_domain_hint(
+    text: str,
+    *,
+    llm_provider: Any | None = None,
+    model_router: Any | None = None,
+    timeout_seconds: float = 4.0,
+    max_tokens: int = 12,
+) -> str | None:
+    """问题文本 → ``TimelyDomain`` 值（或 ``None``＝不表态）。
+
+    专用形态：GENERAL 兜底处的**廉价**二判（小 max_tokens、短超时、单轮问答）。
+    任何异常/缺 provider/认不出的回答一律回 ``None``——调用方据此按「没有二判」
+    处理，fail-open 到既有行为。同步函数：``generate`` 本就是同步口，调用方
+    （chat 层装配点）自行决定跑在管线线程还是守护线程。
+
+    接线（主代理整合进 chat.py 决策点时的一行形）::
+
+        domain_hint=lambda q: llm_timely_domain_hint(
+            q, model_router=model_router, llm_provider=llm_provider
+        )
+    """
+    stripped = str(text or "").strip()
+    if not stripped:
+        return None
+    messages = [
+        {"role": "system", "content": _DOMAIN_HINT_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": stripped[:_DOMAIN_HINT_TEXT_CHARS],
+        },
+    ]
+    try:
+        if model_router is not None:
+            reply = model_router.generate(
+                list(messages),
+                message_text="",
+                override="",
+                session_id="",
+                timeout_seconds=timeout_seconds,
+                max_tokens=max_tokens,
+            )
+        elif llm_provider is not None:
+            reply = llm_provider.generate(
+                list(messages),
+                timeout_seconds=timeout_seconds,
+                max_tokens=max_tokens,
+            )
+        else:
+            return None
+    except Exception:  # noqa: BLE001 - 二判腿故障不得影响主判定链。
+        return None
+    return _parse_domain_hint_reply(getattr(reply, "text", ""))

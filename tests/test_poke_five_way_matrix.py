@@ -223,17 +223,18 @@ def test_poke_arm_never_silently_empty_hands(group: bool) -> None:
 def test_sticker_reaction_leg_is_structurally_absent_in_both_scenarios(
     group: bool,
 ) -> None:
-    """被戳贴表情：两场景都选不到（排除方式是「不在池里且不可点名」，不是抛异常）。
+    """选臂永远轮不到贴纸（排除方式是「不在池里且不可点名」，不是抛异常）。
 
-    私聊那条硬约束的真身在 ``domains/meme/reactions/engine.py::_is_group_session``
-    （QQ 侧无私聊表情回应通道，协议端对非群消息直接抛 ``not supported on private
-    messages``）——本锁保证 poke 侧连"跑到那一步"都不会发生。
+    2026-10-03 互动面波接线后 ``sticker_reaction`` 通道已活（被戳且回复送达后经
+    引擎贴表情，接线点=根装配 poke handler），但仍在池外、仍不可点名 ⇒ mix 轮换
+    永远产生不了它。私聊那条硬约束的真身不变：
+    ``domains/meme/reactions/engine.py::_is_group_session``（QQ 侧无私聊表情回应
+    通道）＋接线侧只在 ``reaction.group`` 才调——选臂层与私聊无关，两场景同样选不到。
     """
     cell = poke_reaction_cell("sticker_reaction")
     assert cell is not None
     assert cell.mix_pools == () and not cell.explicit_nameable
-    assert not cell.wired_in_poke_path and cell.not_wired_reason.strip()
-    assert "private" in cell.not_wired_reason  # 理由里点名了私聊硬约束
+    assert cell.wired_in_poke_path and not cell.not_wired_reason.strip()
     # 拿它当臂名去点名：既不会被认下，也进不了任何池 ⇒ 判否后按 mix 轮换（不是崩）。
     assert not poke_mode_is_recognized("sticker_reaction")
     for pool in ("legacy", "extended"):

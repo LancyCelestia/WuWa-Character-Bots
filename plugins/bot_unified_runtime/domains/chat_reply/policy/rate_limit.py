@@ -2503,6 +2503,29 @@ def _is_directed_request(
     return bool(message.mentions_bot)
 
 
+def rate_limit_exhausted_notice_due(
+    message: IncomingMessage,
+    capability_id: str,
+    decision: RateLimitDecision,
+    settings: RedriveSettings,
+) -> bool:
+    """补回终局是否欠一句「没答上」的说明（2026-09-29 需求项 2 之 1 的接线判据）。
+
+    三道门与 ``redrive_wait_seconds`` 同源共读——密度类拒因（``_REDRIVE_REASONS``）、
+    补回次数已用尽（重放到 ``max_attempts`` 仍被拦＝「补到尽头仍没回上」）、
+    ``_is_directed_request``（只对欠回复的请求说明：说明本身也是出站面，对没 @
+    的群闲聊开口＝放大刷屏）。pipeline 的可见说明面共读这里，不在调用侧抄第二份
+    名册（规则 10：名单会漂）。
+    """
+    if decision.allowed:
+        return False
+    if decision.reason not in _REDRIVE_REASONS:
+        return False
+    if int(getattr(message, "redrive_count", 0) or 0) < max(0, settings.max_attempts):
+        return False
+    return _is_directed_request(message, capability_id)
+
+
 def redrive_wait_seconds(
     settings: RedriveSettings,
     message: IncomingMessage,

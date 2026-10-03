@@ -47,6 +47,16 @@ class FeatureNode:
     help_topics: tuple[str, ...] = ()
     impl_paths: tuple[str, ...] = ()
     config_prefixes: tuple[str, ...] = ()
+    passive_matchers: tuple[tuple[str, str, int], ...] = ()
+    """第三类认领（席7 2026-10-03）：不走 RouteKind 的**被动** matcher。
+
+    ``(matcher 变量名, 注册面, priority)``，真身＝``plugins/bot_unified_runtime/__init__.py``
+    里 ``name = on_message(...)/on_notice(...)`` 的字面注册。判据＝规则函数体内**不含**
+    ``_cached_route_decision``（含它＝走 base_router，该由 ``route_kinds`` 认领，两条腿
+    互斥——``tests/test_taxonomy_passive_matchers.py`` AST 锁双向执法：漏登记红、
+    顶替 RouteKind 也红、注册面/优先级与字面漂移同红）。``on_command`` 命令面 matcher
+    不属「被动」，不在本类管辖。
+    """
     extra_l3: tuple[tuple[str, str], ...] = ()
     """代码里没有对应登记面的三级功能（``(slug, label)``），如「渲染契约」「归档规程」。"""
 
@@ -165,6 +175,7 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 help_topics=("邮件",),
                 impl_paths=("plugins/bot_unified_runtime/domains/transport/mail/mail_adapter.py", "plugins/bot_unified_runtime/domains/transport/mail/mail_bridge.py"),
                 config_prefixes=("bot_mail_",),
+                passive_matchers=(("mail_notice", "on_message", 9),),
                 extra_l3=(
                     ("mail-inbound", "来信解析入链"),
                     ("console-driver", "控制台一次性驱动"),
@@ -286,6 +297,7 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                     "plugins/bot_unified_runtime/domains/chat_reply/capabilities/poke.py",
                 ),
                 config_prefixes=("bot_chat_", "bot_poke_"),
+                passive_matchers=(("poke_notice", "on_notice", 7),),
                 extra_l3=(
                     ("prompt-assembly", "人格提示词拼装"),
                     ("failure-copy-pools", "失败与降级话术池"),
@@ -325,6 +337,7 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                     "plugins/bot_unified_runtime/domains/chat_reply/character/worldbook_service.py",
                     "personas/shorekeeper",
                 ),
+                passive_matchers=(("nickname_set", "on_message", 8),),
                 extra_l3=(
                     ("context-sections", "上下文分区渲染"),
                     ("addressing", "称谓与主角边界"),
@@ -380,6 +393,9 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                     "plugins/bot_unified_runtime/domains/chat_reply/security/memory_sanitize.py",
                 ),
                 config_prefixes=("bot_content_route_", "bot_master_love_"),
+                # dirty_guard_matcher（脏话守卫撤回）：真身住在 files/capabilities/group_files.py
+                # 的 DirtyGuard，但行为语义是内容审核，归本 fid；impl 认领不动（防目录双认领）。
+                passive_matchers=(("dirty_guard_matcher", "on_message", 3),),
                 extra_l3=(
                     ("hard-lines", "六条硬线与不可架空"),
                     ("intimate-mode", "亲密档位与双开关"),
@@ -438,11 +454,16 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 impl_paths=(
                     "plugins/bot_unified_runtime/domains/core/search",
                     "plugins/bot_unified_runtime/domains/chat_reply/character/teaching_service.py",
+                    # 检索与知识波（席19 2026-10-03 登记）：联网判定与 GENERAL 域 LLM
+                    # 二判钩子真身（原生工具审批账在 domains/core/search 目录认领内）。
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/question_intent.py",
                 ),
                 config_prefixes=("bot_knowledge_", "bot_search_"),
                 extra_l3=(
                     ("kb-indexing", "分块与索引状态"),
                     ("kb-quota", "来源配额与检索预算"),
+                    ("web-search-intent", "联网判定与 GENERAL 二判钩子"),
+                    ("tool-admission", "工具注册审批账"),
                 ),
             ),
             FeatureNode(
@@ -638,6 +659,8 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 help_topics=("搜图", "视频理解"),
                 impl_paths=("plugins/bot_unified_runtime/domains/media",),
                 config_prefixes=("bot_vision_", "bot_image_search_"),
+                # image_search：旁路 matcher 有意不入 base_router 审计（__init__ 原注），被动类在案。
+                passive_matchers=(("image_search", "on_message", 46),),
                 extra_l3=(
                     ("image-describe", "识图与场景归属"),
                     ("image-search", "以图搜图与来源"),
@@ -654,6 +677,8 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 help_topics=("表情", "偷表情", "表情册", "表情收库", "随机图"),
                 impl_paths=("plugins/bot_unified_runtime/domains/meme",),
                 config_prefixes=("bot_meme_", "bot_randpic_"),
+                # meme_absorb（无 rule 的吸收面 matcher）：收库被动入口，归本 fid。
+                passive_matchers=(("meme_absorb", "on_message", 10),),
             ),
             FeatureNode(
                 fid="B06.music",
@@ -762,6 +787,9 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                     ("today-history-scheduler", "历史上的今天推送"),
                     ("credential-check-scheduler", "凭据到期巡检"),
                     ("kb-wiki-sync-scheduler", "知识库同步"),
+                    # 文件链路波（席19 2026-10-03 登记）：每日 04:50 落盘点 TTL 清扫
+                    # （job id bot_file_sweep_tick，清扫真身归 B08.file-gateway）。
+                    ("file-sweep-scheduler", "落盘点 TTL 清扫调度"),
                 ),
             ),
             FeatureNode(
@@ -782,6 +810,7 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 summary="三重来源门 + 幂等去重的纯监听旁路，绝不向源群发言。",
                 impl_paths=("plugins/bot_unified_runtime/domains/assistant/campus",),
                 config_prefixes=("bot_campus_",),
+                passive_matchers=(("campus_record_matcher", "on_message", 8),),
             ),
             FeatureNode(
                 fid="B07.auto-send",
@@ -792,6 +821,12 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 capability_ids=("bot.auto_send",),
                 help_topics=("队列",),
                 config_prefixes=("bot_auto_send_", "bot_reactions_"),
+                # emoji_like_notice＝贴纸回应的群聊 only 派发面；group_increase_notice＝入群欢迎
+                # （R-4 走统一管线）。两者都不走 RouteKind，被动类在案。
+                passive_matchers=(
+                    ("emoji_like_notice", "on_notice", 7),
+                    ("group_increase_notice", "on_notice", 6),
+                ),
                 extra_l3=(("sticker-reactions", "表情回应的五层防刷屏门"),),
             ),
             FeatureNode(
@@ -883,6 +918,21 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 help_topics=("下载", "文件", "群文件"),
                 impl_paths=("plugins/bot_unified_runtime/domains/files",),
                 config_prefixes=("bot_file_gateway_", "bot_download_"),
+                # 四枚被动面：群文件上传记录 / 管理员私聊文件接收 / 管理员文件导出 / 群文件统计。
+                passive_matchers=(
+                    ("group_upload_notice", "on_notice", 6),
+                    ("file_notice", "on_notice", 8),
+                    ("file_export", "on_message", 8),
+                    ("group_file_stats", "on_message", 8),
+                ),
+                # 文件链路波（席19 2026-10-03 登记）两枚机制卡：入站文件上下文回填注记
+                # （真身 file_reader.build_incoming_file_context_note，notice 腿接线在
+                # 根 __init__ 的 file_notice 处理器）与落盘点 TTL 清扫（真身
+                # restricted_runner.sweep_expired_files；每日调度注册面归 B07.scheduled-jobs）。
+                extra_l3=(
+                    ("incoming-file-context", "入站文件上下文回填注记"),
+                    ("file-landing-sweep", "落盘点 TTL 清扫"),
+                ),
             ),
             FeatureNode(
                 fid="B08.error-reporting",
@@ -972,13 +1022,22 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                     "plugins/bot_unified_runtime/domains/ops/monitor/result_unknown.py",
                     "plugins/bot_unified_runtime/domains/ops/monitor/runtime_event_log.py",
                     "plugins/bot_unified_runtime/domains/ops/monitor/usage_monitor.py",
+                    # 文件链路波（席19 2026-10-03 登记）：宿主快照分区注记口
+                    # （采样只复用 host_metrics 在册采集器，注入面在 B03.persona-context）。
+                    "plugins/bot_unified_runtime/domains/ops/host_snapshot.py",
                 ),
                 config_prefixes=("bot_alerts_", "bot_metrics_"),
+                # 退群/管理员变动只记事件不发言（公开点名是减分项）——纯可观测面，归本 fid。
+                passive_matchers=(
+                    ("group_decrease_notice", "on_notice", 6),
+                    ("group_admin_notice", "on_notice", 6),
+                ),
                 extra_l3=(
                     ("event-bus", "统一事件与 SSE"),
                     ("metrics-sources", "指标结构化来源"),
                     ("trace-stages", "轨迹阶段与脱敏"),
                     ("ops-alerts", "运维告警与抑制"),
+                    ("host-snapshot-section", "宿主快照分区注记口"),
                 ),
             ),
             FeatureNode(
@@ -1079,15 +1138,21 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 # （只再导出 injection 一族）归本 fid；六硬线闸与记忆净化归 B03.content-safety。
                 impl_paths=("plugins/bot_unified_runtime/domains/core/credentials",
                     "plugins/bot_unified_runtime/domains/chat_reply/security/__init__.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/security/dangerous_command.py",
                     "plugins/bot_unified_runtime/domains/chat_reply/security/injection.py",
                     "plugins/bot_unified_runtime/domains/chat_reply/security/display_guard.py",
                     "plugins/bot_unified_runtime/domains/chat_reply/security/spoof_audit.py",
                     "plugins/bot_unified_runtime/domains/chat_reply/runtime/database_broker.py"),
                 config_prefixes=("bot_ssrf_",),
+                # cookie_admin（管理员 cookie 状态/导入命令面）：真身 domains/core/credentials，归本 fid。
+                passive_matchers=(("cookie_admin", "on_message", 8),),
                 extra_l3=(
                     ("ssrf-throat", "下载入口与落点双查"),
                     ("credential-scrub", "跨域凭证剥离"),
                     ("exposure-floor", "敏感信息不回传"),
+                    # 安全与文档波出站面（席19 2026-10-03 登记）：破坏性命令输出审查，
+                    # 与 B08.outbound-copy 的渲染层打码（redact_destructive_commands）构成双层。
+                    ("outbound-command-screen", "出站危险命令审查"),
                 ),
             ),
             FeatureNode(

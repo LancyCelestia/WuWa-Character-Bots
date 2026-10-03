@@ -229,12 +229,13 @@ def test_table_and_constants_agree_both_directions() -> None:
         assert declared == set(poke_mix_pool_arms(pool)), f"池 {pool} 有孤儿行"
     in_any_pool = {arm for pool in MIX_POOL_IDS for arm in poke_mix_pool_arms(pool)}
     outside = {cell.arm_id for cell in poke_reaction_cells()} - in_any_pool
-    # 池外行只许是「贴纸回应」与「静默」两枚，且 wired 值不同（一枚真未接线、
-    # 一枚可达但不经池）——这条把「表被悄悄加行而没人对账」挡在门外。
+    # 池外行只许是「贴纸回应」与「静默」两枚，且都可达但不经池（前者 2026-10-03
+    # 已接线：被戳且回复送达后经引擎贴表情；后者由门产生）——这条把「表被悄悄
+    # 加行而没人对账」挡在门外。
     assert outside == {"sticker_reaction", "silent"}
     # 取行一律走 ``POKE_REACTION_MATRIX[...]``（缺键即 KeyError 当场炸），不用
     # 回 Optional 的 ``poke_reaction_cell``——后者留给「可能没有这行」的生产侧调用。
-    assert POKE_REACTION_MATRIX["sticker_reaction"].wired_in_poke_path is False
+    assert POKE_REACTION_MATRIX["sticker_reaction"].wired_in_poke_path is True
     assert POKE_REACTION_MATRIX["silent"].wired_in_poke_path is True
 
 
@@ -487,17 +488,22 @@ def test_group_session_does_dispatch_it_exactly_once() -> None:
     assert bot.calls[0][1]["message_id"] == 8801
 
 
-def test_sticker_reaction_cell_records_the_unwired_truth() -> None:
-    """表上那行未接线的 ``sticker_reaction`` 必须与生产实况**同真同假**。
+def test_sticker_reaction_cell_is_wired_and_shares_the_chat_gates() -> None:
+    """表上那行 ``sticker_reaction`` 必须与生产实况**同真同假**。
 
-    今天 poke 的 notice handler 从不调 reactions 引擎 ⇒ ``wired_in_poke_path=False``。
-    哪天主代理把它接上（根装配文件），本用例当场红，逼他在同一笔里把表改对——
-    「一处变更处处跟随」，而不是让表长期挂着一条没人核对的注释。
+    2026-10-03 互动面波接线后本锁从「未接线」翻成「已接线且受同款防刷门」，
+    双向执法不变：AST 现算 poke handler 体内是否真调引擎入口——接了线没改表，
+    或改了表没接线，两边都红。「同款防刷门」锁两件：调用交的是 chat 链路同一枚
+    共享五层门（``_REACTION_PROACTIVE_GATE``）与 ``after_reply`` 触发点；外围守卫
+    只认群（``reaction.group``）且回复真送达（``provider_message_id``）——私聊
+    根本不进调用，QQ 无私聊表情通道（台账 #35★），行为层私聊拒发另有第三组 +
+    ``tests/test_reactions.py`` 双重锁。
     """
     cell = POKE_REACTION_MATRIX["sticker_reaction"]
     assert cell.channel == "emoji_reaction_api"
     assert cell.mix_pools == () and cell.explicit_nameable is False
-    assert cell.not_wired_reason.strip(), "未接线必须写明理由与接线坐标"
+    assert cell.wired_in_poke_path is True
+    assert not cell.not_wired_reason.strip(), "已接线不许再挂未接线理由"
 
     handler_names = _poke_handler_names()
     engine_entries = {"maybe_react_on_message", "_maybe_react_on_message", "react_to_message"}
@@ -506,6 +512,42 @@ def test_sticker_reaction_cell_records_the_unwired_truth() -> None:
         f"handler 侧 wired={actually_wired} 而表上={cell.wired_in_poke_path} ⇒ "
         "接了线没改表，或改了表没接线，两者必须同笔"
     )
+    facts = _poke_handler_wiring_facts()
+    assert facts["gates"] == ["_REACTION_PROACTIVE_GATE"], (
+        f"贴纸腿必须走 chat 链路同款五层门，实测 {facts['gates']}"
+    )
+    assert facts["triggers"] == ["after_reply"], facts["triggers"]
+    assert facts["guards"] and any(
+        "reaction.group" in guard and "provider_message_id" in guard
+        for guard in facts["guards"]
+    ), f"群守卫/送达守卫缺席：{facts['guards']}"
+
+
+def _poke_handler_wiring_facts() -> dict[str, list[str]]:
+    """AST 现算 poke handler 里引擎调用的门、触发点与外围守卫（不执行）。"""
+    tree = ast.parse(ROOT_INIT.read_text(encoding="utf-8-sig"))
+    facts: dict[str, list[str]] = {"gates": [], "triggers": [], "guards": []}
+    found = False
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in {
+            "_handle_poke_notice",
+            "_maybe_follow_poke",
+        }:
+            found = True
+            for sub in ast.walk(node):
+                if (
+                    isinstance(sub, ast.Call)
+                    and getattr(sub.func, "id", "") == "_maybe_react_on_message"
+                ):
+                    for kw in sub.keywords:
+                        if kw.arg == "gate" and isinstance(kw.value, ast.Name):
+                            facts["gates"].append(kw.value.id)
+                        if kw.arg == "trigger" and isinstance(kw.value, ast.Constant):
+                            facts["triggers"].append(str(kw.value.value))
+                if isinstance(sub, ast.If) and "_maybe_react_on_message" in ast.unparse(sub):
+                    facts["guards"].append(ast.unparse(sub.test))
+    assert found, "根装配文件里找不到 poke handler ⇒ 本用例判据已失效"
+    return facts
 
 
 def _poke_handler_names() -> set[str]:
@@ -885,16 +927,16 @@ def test_poke_randpic_seed_has_no_message_dimension_characterization(tmp_path: P
 def test_matrix_channels_cover_the_five_outcomes_the_user_named() -> None:
     """简报点名的「五选一」逐条对到表上的行，一条都不许凭空。
 
-    固定话术 / LLM 话术 / 表情包 = 池内三臂；贴纸回应 = 池外未接线；
-    静默 = 池外经门可达。臂数比五枚多是 P14 一批扩的语音/随机图/只回戳，
-    不是本席自造——这张对账单就是给评审看的。
+    固定话术 / LLM 话术 / 表情包 = 池内三臂；贴纸回应 = 池外已接线（2026-10-03，
+    触发点=被戳且回复送达，仍不经 mix 轮换池）；静默 = 池外经门可达。臂数比五枚
+    多是 P14 一批扩的语音/随机图/只回戳，不是本席自造——这张对账单就是给评审看的。
     """
     by_label = {cell.label_zh: cell for cell in poke_reaction_cells()}
     assert set(by_label) >= {"固定话术", "LLM 话术", "表情包", "贴纸回应", "静默"}
     assert by_label["固定话术"].mix_pools == ("legacy", "extended")
     assert by_label["LLM 话术"].resource_key == "llm_text"
     assert by_label["表情包"].resource_key == "meme_path"
-    assert by_label["贴纸回应"].wired_in_poke_path is False
+    assert by_label["贴纸回应"].wired_in_poke_path is True
     assert by_label["静默"].channel == "none"
     assert {cell.arm_id for cell in poke_reaction_cells() if cell.wired_in_poke_path} >= set(
         _POKE_MODES

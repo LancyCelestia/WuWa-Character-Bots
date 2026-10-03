@@ -42,6 +42,13 @@ v21r5 双开关扩展（2026-09-19 用户裁定）：
    在 ``explicit_allowed_for_session`` 内实现（白名单空=放开、非空=仅名单内、
    黑名单最高优先——Master Love 压不过黑名单）。
    合成单一事实源=``resolve_intimate_context``（注入缝与路由双门同源）。
+8. 显式开档跨重启（2026-10-03 用户裁定 D-1「要」）：本人在**私聊**里显式「亲密模式
+   开/深开」这件事，连同档位与开启时刻（墙钟），记进已有的 per-person 存储
+   ``addressing_preferences`` 的两列（不新建库、不加配置键）；重启后自动腿来重钉时
+   凭它沿用 ``manual_command`` 源与该档，而不是降级成无叙述权的 ``master_love``。
+   群侧两支（管理员钉、群内成员个人钉）都不入库；``intimate_ttl_minutes`` 语义不变
+   （回填起算点⇒重启也不续期，到点仍清）。判据与边界全在 ``_EXPLICIT_PIN_REPIN_SOURCES``
+   上方那一节，改之前先读它。
 
 会话准入门在 capabilities/chat.py（持有 session_type 与群黑白名单配置）：
 仅私聊/控制台/已获准群聊参与评分与手动开关。
@@ -49,8 +56,12 @@ v21r5 双开关扩展（2026-09-19 用户裁定）：
 ``consume_reply`` 保留为防御性标记剥离（历史残留 ``<intimacy:...>`` 出站前
 清掉），不再有注入侧。
 
-本模块不导入 NoneBot/LLM 栈，可离线单测；所有公开方法 fail-open——
-内部异常一律返回安全缺省（NORMAL/原文本），绝不影响主链路。
+本模块不导入 NoneBot/LLM 栈，可离线单测（唯一例外＝上面第 8 条的持久化腿：它懒
+import ``character/providers``，且只在配置真点名了 ``bot_addressing_preferences_db_path``
+时才走那一脚——纯离线引擎单测的配置面没这一枚，于是照旧零重依赖、零 SQLite）。
+第 7 条的并号腿同款懒 import ``character/reply_policy``（只为取那一枚归并真身，
+**不建 store、不打库**），且只在配置真给了别名表时才走。
+所有公开方法 fail-open——内部异常一律返回安全缺省（NORMAL/原文本），绝不影响主链路。
 """
 from __future__ import annotations
 
@@ -59,6 +70,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -66,7 +78,10 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.relationships impo
     relation_instruction,
 )
 from plugins.bot_unified_runtime.domains.core.session_keys import (
+    KIND_PRIVATE,
+    UNKNOWN_SENDER,
     group_scope_key,
+    parse_session_key,
     sanitize_key_segment,
 )
 
@@ -186,6 +201,54 @@ def match_manual_command(text: str) -> str | None:
     return matched[0] if matched is not None else None
 
 
+# ---------------------------------------------------------------- L4 子命令参数口
+#
+# `/bot intimate <子命令>` 这一族的**参数串**解析口（2026-10-08 波）。与上面的整句口
+# `match_intimate_command` 是**同形不同路**：那一口吃「亲密模式 开/深开/关」这类中文整句
+# （三条 `_MANUAL_*_RE`），本口吃命令面剥掉前缀后剩下的 `on/deep/off` 这类参数。两套词面
+# 各写各的、互不引用是有意为之——命令面走英文子命令、人格口语面走中文整句，两侧本就该独立
+# 演进；共用一张词表只会让一次改词静默改掉另一条路。**档位只此两值、深浅只此两码**：
+# 返回值一律引 `MODE_*` / `INTIMATE_TIER_*`，本文件之上那两行声明是唯一字面量落点，
+# 这里再抄一遍 `"intimate"`/`"l1"` 就会被词面级独立声明账
+# （`tests/test_trigger_word_single_source.py`，零余量棘轮只准降）当场记红。
+# 键侧（on/open/deep/…）是**用户输入形态**而非档位值，只能以字面量出现在此处。
+_INTIMATE_SUBCOMMAND_TABLE: dict[str, tuple[str, str]] = {
+    # 浅档：关系语气 + 既有放行，**默认模型不变**。
+    "on": (MODE_INTIMATE, INTIMATE_TIER_L1),
+    "open": (MODE_INTIMATE, INTIMATE_TIER_L1),
+    "l1": (MODE_INTIMATE, INTIMATE_TIER_L1),
+    # 深档：同上 + grok 优先（R-18 在册通道）。
+    "deep": (MODE_INTIMATE, INTIMATE_TIER_L2),
+    "deeper": (MODE_INTIMATE, INTIMATE_TIER_L2),
+    "l2": (MODE_INTIMATE, INTIMATE_TIER_L2),
+    # 解除：深浅两档一起放下。
+    "off": (MODE_NORMAL, INTIMATE_TIER_NONE),
+    "close": (MODE_NORMAL, INTIMATE_TIER_NONE),
+    "unset": (MODE_NORMAL, INTIMATE_TIER_NONE),
+}
+
+
+def match_intimate_subcommand(arg: str) -> tuple[str, str] | None:
+    """`/bot intimate` 的子命令参数串 → ``(mode, tier)``；认不出返回 None。
+
+    输入＝调用方**已剥掉 `/bot intimate` 前缀**后剩下的参数串（本口不管前缀，前缀归命令面）。
+    三态语义与整句口 `match_intimate_command` 逐字同：``(MODE_INTIMATE, INTIMATE_TIER_L1)``
+    浅档、``(MODE_INTIMATE, INTIMATE_TIER_L2)`` 深档、``(MODE_NORMAL, INTIMATE_TIER_NONE)``
+    解除。大小写不敏感、首尾空白容忍；**认不出的一律 None**——不猜档、不把"没认出来"
+    悄悄回落成"开"（那等于凭一个错字把会话推进亲密档）。
+
+    ⚠ ``show`` 有意**不在表里**、由本口返回 None：它是只读查询，既不上钉也不解钉，
+    给它任何 ``(mode, tier)`` 都等于「看一眼当前档位，顺手把档位改了」。调用方该这样分诊：
+    先取本口，返回非 None 就走开关腿；返回 None 后再自己认一次
+    ``str(arg or "").strip().lower() == "show"`` 走查询腿；两条都不中才回"不认得"。
+    本口返回形状只有 ``(mode, tier)`` 与 ``None`` 两种，**不设第三种**。
+    """
+    key = str(arg or "").strip().lower()
+    if not key:
+        return None
+    return _INTIMATE_SUBCOMMAND_TABLE.get(key)
+
+
 # 确认话术（守岸人语气：温和、定性、不提协议细节——两档的回话都得让人看得出"档不同"，
 # 但都不许出现模型名/路由/阈值这类字眼）。
 MANUAL_ON_REPLY = "好，这一段对话我会换一种更贴近你的方式来聊。"
@@ -302,10 +365,217 @@ _MAX_TTL_EXEMPT_SOURCES: frozenset[str] = frozenset(
     {INTIMATE_SOURCE_MANUAL, INTIMATE_SOURCE_ADMIN_PIN}
 )
 
+# 五维展开叙述（语言/动作/神态/心理/外貌）的授予面（2026-10-04 用户裁定）。
+# 她原话：「superadmin 的默认 master love 模式仍然为只描述说话内容，不描述动作等，
+# 要求输入显式指令打开亲密模式 L1、L2 才变成这样」。
+# 所以"进了亲密档"与"有权展开叙述"是两件事：`master_love`（名单派生）与
+# `affinity_tier`（好感度达档自动）这两支**只给档、给语气、给放行，不给描写**；
+# 要描写得由人亲手推动——下指令、管理员代全群钉，或内容信号自己跨了阈。
+# ⚠ 成员与 `_MODEL_SWITCH_SOURCES` 今天恰好同形，纯属巧合，**不得复用那一枚**：
+# 一枚答"要不要换真实首跳"，一枚答"要不要展开叙述"。两轴日后可能各自放宽（给 ML 免
+# TTL 也好、给浅档换模型也好），复用会让一条裁定静默改写另一条例子——正是本波要防的
+# 「换了个档，结果文风全部都变了」（她 2026-09-28 原话，见 `NORMAL_NO_ACTION_INSTRUCTION`
+# 上方注释与 §53）。
+# ⚠ 取**白名单**形而不是"排除 ML/affinity"的黑名单形：未知来源（含 `INTIMATE_SOURCE_NONE`）
+# 一律不授予，与全仓 fail-closed 的口径一致。
+_INTIMATE_NARRATION_SOURCES: frozenset[str] = frozenset(
+    {INTIMATE_SOURCE_MANUAL, INTIMATE_SOURCE_ADMIN_PIN, INTIMATE_SOURCE_CONTENT_SIGNAL}
+)
+
+
+def grants_intimate_narration(source: str) -> bool:
+    """本轮是否有权展开五维叙述——**判据只此一份**，调用方只准调它，不许再抄成员表。
+
+    本函数**只答叙述**。档位（`INTIMATE_TIER_*` / `_tier_for_source`）、换真实首跳
+    （`_head_if_switchable` + `_MODEL_SWITCH_SOURCES`）、TTL 封顶
+    （`_MAX_TTL_EXEMPT_SOURCES`）三件事各住各处，这里一个都不读。
+    """
+    return str(source or "").strip() in _INTIMATE_NARRATION_SOURCES
+
 
 def _tier_for_source(source: str) -> str:
     """未记档位时的缺省档（唯一派生处，`apply_manual`/`route_verdict` 共用）。"""
     return INTIMATE_TIER_L1 if source in _SHALLOW_DEFAULT_SOURCES else INTIMATE_TIER_L2
+
+
+# ------------------------------------------------- 显式开档的跨重启标记（D-1，2026-10-03）
+
+# 她 2026-10-03 裁「要（显式开档跨重启持久化）」治的这一格：档态住在**进程内** LRU
+# （``_SESSION_CAP`` + 模块级单例 ``SHARED_CONTENT_ROUTE_ENGINE``）⇒ 重启即空；而
+# ``capabilities/chat.py`` 那两支自动腿的守卫是 ``pinned_mode(...) is None``，重启后
+# 以 ``master_love`` / ``affinity_tier`` 重钉 —— 这两个来源都不在
+# ``_INTIMATE_NARRATION_SOURCES`` 里（2026-10-04 裁定：叙述授予只给"人亲手推动"的来源）
+# ⇒ 她亲手开过的会话拿不回五维。
+#
+# **存哪、存什么、怎么判**（三问三答，都在这一节里）：
+# - 存哪：写进**已有**的 per-person 存储 ``addressing_preferences``（owner
+#   ``character/addressing.py``，库键 ``bot_addressing_preferences_db_path`` 在
+#   ``config.py`` + ``docs/db-owners.md`` 双册在册），两列 ALTER-if-missing，与
+#   ``relationship`` 同一先例同一行。**不新建库**（新建＝多 6~8 处同批账，且
+#   ``test_db_owners_coverage.py`` ↔ ``config.py`` 双锁会当场拦）、**不新增 ``BOT_*``
+#   键**、**不加第三张来源集合表**：语义上"他自己把亲密档开到了哪一档"就是"这个人
+#   显式声明的相处偏好"这一族，和称谓／性别自述／关系档同表不同列。
+# - 存什么：只有 ``tier``（开到哪一档）与 ``explicit_at``（**墙钟** epoch 秒，什么时候
+#   开的）。它是"**重启后该以什么来源重钉**"的凭据，**不是**"档永远开着"的凭据。
+# - 重钉判据：自动腿来上钉时，若 ``0 < now_wall - explicit_at <= intimate_ttl_minutes``
+#   ⇒ 沿用 ``manual_command`` 源与该档，并把 ``activated_at`` **回填**到首次显式开启
+#   那一刻（``now - elapsed``）；超出 TTL ⇒ 交回调用方原本交来的来源（＝今日行为）。
+#   回填这一笔是关键：于是 ①会话活跃不续期（S40-D2 既有裁定）②**重启也不续期**
+#   （本波新立的对称面）③到 ``explicit_at + TTL`` 仍清成普通档，清完再不复活——
+#   ``intimate_ttl_minutes`` 的语义一字没动，只是"起算点"不再被重启洗掉。
+#
+# 边界（都是有意为之，动之前先读）：
+# 1. **群侧两支都不入库**。``admin_pin`` 是管理员**当场替整群**拨的授权，活过重启＝
+#    一句"开"变成永久"开"，那不是那句话说过的事；群内成员的个人钉（成员派生键
+#    ``X||u:Y``）同样不入库——本波裁定面写的是"私聊里显式说过"。判据取**键的作用域**
+#    （``_explicit_pin_person_key`` 只认私聊键），不取来源标签，所以管理员在私聊里
+#    给自己开（那本来就是本人显式腿）与在群里替全群开，天然分家。
+# 2. **标记只在自动腿本来就要上钉的那一刻被读到**（``_EXPLICIT_PIN_REPIN_SOURCES``）。
+#    本件不新增任何"凭空进档"的路：ML 名单外、好感度也未达档的人重启后照旧普通档
+#    ——要她先说话把自动腿叫醒，才有"沿用"这回事。
+# 3. **读写全 fail-open，且各自独立包 ``except``**：库坏掉时钉照旧上、回执照旧发。
+#    ``apply_manual`` 返回 False 会让 ``apply_intimate_switch`` 的短路失效、把开关
+#    指令当成普通聊天去回答——"记不住"绝不能升级成"这一轮炸掉"。
+# 4. **配置没点名这本库 ⇒ 整条持久化腿不存在**（逐字节回到今天）：真 ``Config`` 恒有
+#    该字段故生产恒开；纯离线引擎单测的 SimpleNamespace 没这一枚，于是不 import
+#    providers、不碰 sqlite，``本模块不导入 NoneBot/LLM 栈`` 的模块承诺照旧成立。
+# 5. **线程口径**：本模块全部公开方法由 ``pipeline.offload_capability`` 送进有界线程池
+#    （``run_in_executor``）执行，不在事件循环上；且每次触碰都是按主键的单行 SELECT /
+#    UPSERT，读只在"自动腿要上钉"那一刻发生（同一人每小时至多一次），写只在开关命令
+#    上发生 ⇒ 不构成事件循环线程上的重 IO，也不为此另起 executor。
+# 6. **同一进程内不沿用**（``_MARKS_WRITTEN_BY_THIS_PROCESS``）：本进程亲手写过的标记
+#    不再被"沿用"第二遍。这条不是省事——它把这条腿的权威范围钉死在**跨进程**＝用户
+#    裁定的原话"活过重启"上：同一进程里内存那枚钉才是权威，凭库里的旧格子在同一进程内
+#    二次放行，等于把"到点自动退出"改成"进程内永生"，也会让任何新建引擎实例的场合
+#    （测试、将来的第二具路由器）读到别人在飞的标记。锁 ``tests/test_intimate_pin_persistence.py``
+#    的 ``test_same_process_never_re_honors_a_mark_it_wrote``。
+# 7. **并号已接（E-1，2026-10-03 裁定「要」）**：她 `.env` 里那枚在册别名表
+#    （``BOT_REPLY_POLICY_PERSON_ALIASES``，左号**并入**右号）接到标记这一侧 ⇒ 同一个人
+#    换个号说话不必重开一次档。🔴 **归并算法不抄第二份**：判据仍只住本件，但真正跑的那段
+#    是 ``character/reply_policy.py`` 里唯一的真身 ``ReplyPolicyStore.canonical_person_key``
+#    （非绑定调用 + ``object.__new__`` 出来的**无连接**替身）⇒ 零 ``reply_policy.sqlite3``
+#    连接、零 ``bot_reply_policy_enabled`` 总闸依赖、不新建库、不新增配置键。
+#    方向性照既有语义：A→B 把 A 并进 B，B 是定点 ⇒ 「A 开、B 恢复」与「B 开、A 恢复」
+#    两侧同键；链式 A→B→C、自吞与环保护全由真身一处给（⇒ 规范化幂等，不造第三种键形）。
+#    认不出别名／表写坏／任何异常 ⇒ **原样用**（fail-open 回今日行为）。读写两侧都只经
+#    ``_explicit_pin_person_key`` 这一口取键 ⇒ 不会"写在 A 键、读在 B 键"（台账 #33★／T-1
+#    那族"两形永不相交"老坑）。脏归并目标（空／``unknown``）当"没并"处理：宁可不并，
+#    也绝不把两个陌生人抬进同一只桶。🔴 **权限面一律不读本表**（并号只并"标记存到哪一行"，
+#    不并权限主体；口径锁 ``test_person_aliases_never_leak_into_privilege``）。
+
+# 哪些来源在**重钉**那一刻要查一次持久化标记：只有两支自动腿。显式腿自己就是标记的
+# 生产者（不查、只写），``admin_pin`` 的键是群作用域键（被上面第 1 条的键门挡掉）。
+# 这是第四张来源集合，与 `_MODEL_SWITCH_SOURCES` / `_MAX_TTL_EXEMPT_SOURCES` /
+# `_INTIMATE_NARRATION_SOURCES` 同族不同轴——**不许互相复用**（复用＝一条裁定静默
+# 改写另一条，09-28 她立过的那条「换了个档结果文风全变了」）。
+_EXPLICIT_PIN_REPIN_SOURCES: frozenset[str] = frozenset(
+    {INTIMATE_SOURCE_MASTER_LOVE, INTIMATE_SOURCE_AFFINITY}
+)
+
+# 标记行的作用域三元组里那两个固定段：只持久化私聊，故 session_type 恒为 ``private``、
+# session_id 恒为空串——与 ``/bot identity`` 私聊写入侧的键位逐字相同（那里也是
+# 「群=群号、私聊=空」），所以同一个人的显式声明落在同一行上。
+_EXPLICIT_PIN_SESSION_TYPE: str = "private"
+_EXPLICIT_PIN_SESSION_ID: str = ""
+
+# **本进程**写过哪些人的标记（模块级＝跨引擎实例共享；上限沿用 ``_SESSION_CAP`` 的
+# 同款防泄漏纪律）。它回答的是"这枚标记是不是上一个进程留下的"：
+# 标记的唯一权威是**跨重启**——同一进程内她亲手写过一次，内存里那枚钉就是权威，
+# 不该再拿库里的凭据去"沿用"第二遍（那会把"到点自动退出"变成进程内永生，也会让
+# 任何新建引擎实例的场合读到别人的在飞标记）。所以写记一笔、读先问一句。
+_MARKS_WRITTEN_BY_THIS_PROCESS: OrderedDict[str, None] = OrderedDict()
+_MARKS_WRITTEN_LOCK = threading.Lock()
+
+
+def _note_mark_written(person_key: str) -> None:
+    with _MARKS_WRITTEN_LOCK:
+        _MARKS_WRITTEN_BY_THIS_PROCESS[person_key] = None
+        _MARKS_WRITTEN_BY_THIS_PROCESS.move_to_end(person_key)
+        while len(_MARKS_WRITTEN_BY_THIS_PROCESS) > _SESSION_CAP:
+            _MARKS_WRITTEN_BY_THIS_PROCESS.popitem(last=False)
+
+
+def _mark_written_by_this_process(person_key: str) -> bool:
+    with _MARKS_WRITTEN_LOCK:
+        return person_key in _MARKS_WRITTEN_BY_THIS_PROCESS
+
+
+def _canonical_person_key(person_key: str, config: Any) -> str:
+    """把一个人的多个号并成同一把键（**归并算法零第二份真身**，见本节边界第 7 条）。
+
+    这里只做两件事：把 Config 那枚**已在册**的别名字段交出去、把归并结果收回来。
+    链式／自吞／环保护一律由 ``ReplyPolicyStore.canonical_person_key``（全仓唯一真身）判：
+
+    - 非绑定调用 + ``object.__new__`` 出来的替身 ⇒ 跳过 ``__post_init__``，于是
+      **不打 ``reply_policy.sqlite3``、不吃 ``bot_reply_policy_enabled`` 总闸**
+      （为了取一枚纯字符串函数去开另一本库的连接，是本案付不起的代价）；
+    - 懒 import：``character/reply_policy`` 牵进策略栈，只在配置真给了别名表时才要它
+      （文件头那句模块承诺照旧成立）；
+    - 认不出／表写坏／任何异常 ⇒ 原样返回＝逐字节回到并号之前的行为（fail-open）。
+    """
+    raw = str(person_key or "")
+    if not raw.strip():
+        return raw
+    try:
+        aliases = getattr(config, "bot_reply_policy_person_aliases", None) or {}
+        if not isinstance(aliases, Mapping):
+            return raw  # 表不是映射（配置写坏）＝不并号。
+        table = {str(k).strip(): v for k, v in aliases.items() if str(k or "").strip()}
+        if not table:
+            return raw
+        from plugins.bot_unified_runtime.domains.chat_reply.character.reply_policy import (
+            ReplyPolicyStore,
+        )
+
+        view: Any = object.__new__(ReplyPolicyStore)
+        view.person_aliases = table
+        resolved = str(ReplyPolicyStore.canonical_person_key(view, raw) or "")
+    except Exception:  # noqa: BLE001 - fail-open：并不上号就用回原键，绝不影响本轮钉。
+        return raw
+    if resolved == raw:
+        return raw
+    # 中央件把"空／脏标识符"兜底成 ``unknown``：那种目标当没并（否则两个都配上脏别名的人
+    # 会被抬进同一只桶＝串档，比不并号严重得多）。
+    if not resolved or resolved == UNKNOWN_SENDER:
+        return raw
+    return resolved
+
+
+def _explicit_pin_person_key(session_key: str, config: Any = None) -> str:
+    """会话键 → 可持久化标记的本人键；不属本波面（群键/成员键/空键）一律回空串。
+
+    ⚠ 交出的是**会话键本身**（``parse_session_key`` 的归一形，QQ 私聊即裸 uid），
+    不重拼、不反解出 ``user_id`` 段再走一遍 ``private_session_key``：内存里的钉就住
+    这把桶，重启后要回到同一只桶才叫"沿用"。反解会把 TG 的 ``private_<chat.id>`` 与
+    QQ 的裸 ``<uid>`` 折成同一段（跨平台同号互串），那既不是中央件的口径也不是本波要
+    修的事。群作用域键（``group:<gid>``）与成员派生键（含 ``||u:``）在 ``KIND_PRIVATE``
+    这一门外侧就被挡掉，判据只住中央件 ``parse_session_key`` 一处。
+
+    末了一道**并号**（``config`` 缺席＝不并，逐字节回到旧行为）：同一个人的多个号收成
+    同一把键，读写都从这里出 ⇒ 标记只可能有一行。
+    """
+    parsed = parse_session_key(session_key)
+    if parsed.kind != KIND_PRIVATE or not parsed.user_id:
+        return ""
+    if _MEMBER_SCOPE_SEP in parsed.normalized:
+        return ""
+    return _canonical_person_key(parsed.normalized, config)
+
+
+def _explicit_pin_store(config: Any) -> Any:
+    """标记所在的 per-person store（**复用进程级共享实例**，零第二连接、零第二把锁）。
+
+    懒 import：``providers`` 会牵进 NoneBot/LLM 栈，只在配置真点名了这本库时才要它
+    （见上面边界第 4 条）。任何失败回 None＝这条腿本轮不存在。
+    """
+    raw_path = str(getattr(config, "bot_addressing_preferences_db_path", "") or "").strip()
+    if not raw_path:
+        return None
+    from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
+        build_addressing_preference_store,
+    )
+
+    return build_addressing_preference_store(config)
 
 
 # ---------------------------------------------------------------- 引擎
@@ -379,8 +649,12 @@ class ContentRouteEngine:
     亲密路由」，比崩溃更难发现 ⇒ 公开方法整段上同一把可重入锁。
     """
 
-    def __init__(self, clock: Any = None) -> None:
+    def __init__(self, clock: Any = None, *, wall_clock: Any = None) -> None:
         self.clock = clock or time.monotonic
+        # 跨重启标记专用的**墙钟**缝（epoch 秒）。不能复用 ``self.clock``：
+        # ``time.monotonic`` 跨进程不可比，而那正是这块格子的唯一用途。
+        # 测试从这里注入"距首次显式开启多久"，不靠 sleep。
+        self.wall_clock = wall_clock or time.time
         self._lock = threading.RLock()
         self._sessions: OrderedDict[str, _SessionState] = OrderedDict()
         # v21r5 MINOR-SWEEP（终审 B-Minor-3）：擦边词槽位退役后缓存收为一元。
@@ -840,6 +1114,87 @@ class ContentRouteEngine:
         except Exception:  # noqa: BLE001 - fail-open。
             return None
 
+    # ---- 显式开档标记的三条腿（读写判据只住本件，store 只当格子）----
+
+    def _honored_explicit_pin(
+        self,
+        *,
+        person_key: str,
+        config: Any,
+        knobs: dict[str, Any],
+        now: float,
+    ) -> tuple[str, str, float] | None:
+        """自动腿重钉前查一次标记：该沿用则交出 ``(source, tier, activated_at)``。
+
+        交出 ``None``＝今日行为照旧（没配置这本库 / 读不到 / 没标记 / 标记已过 TTL /
+        这枚标记就是**本进程**刚写下的——那说明内存态才是权威，跨不了进程谈不上"沿用"）。
+        回传的 ``activated_at`` 是**回填**值：新进程里的这枚钉只剩"首次显式开启起算的
+        剩余窗口"，重启不再白送一整段 TTL（详见本节头边界段）。
+        """
+        if _mark_written_by_this_process(person_key):
+            return None
+        try:
+            store = _explicit_pin_store(config)
+            if store is None:
+                return None
+            stored_tier, explicit_at = store.get_intimate_pin(
+                session_type=_EXPLICIT_PIN_SESSION_TYPE,
+                session_id=_EXPLICIT_PIN_SESSION_ID,
+                sender_id=person_key,
+            )
+        except Exception:  # noqa: BLE001 - fail-open：读不到＝没标记。
+            return None
+        if stored_tier not in {INTIMATE_TIER_L1, INTIMATE_TIER_L2}:
+            return None  # 词表外的格子（脏值/旧版本写的）一律当没有，不猜档。
+        if explicit_at <= 0.0:
+            return None
+        # 墙钟被往回调过（NTP/手工）⇒ 差值为负：按"刚开的"处理，不因此判死。
+        elapsed = max(0.0, float(self.wall_clock()) - float(explicit_at))
+        ttl_sec = max(1.0, float(knobs["intimate_ttl_minutes"]) * 60.0)
+        if elapsed > ttl_sec:
+            return None  # TTL 到了仍要清：标记不复活档，只回答"该以什么来源重钉"。
+        # ⚠ 下限 1e-6 不是装饰：`_state` 的惰性过期那道门写的是
+        # `if state.pin == MODE_INTIMATE and state.activated_at:`（0.0＝"没记激活时刻"），
+        # 回填恰好落到 0.0 时整条 TTL 判据会被这个假值跳过 ⇒ 钉永不过期。
+        return INTIMATE_SOURCE_MANUAL, stored_tier, max(now - elapsed, 1e-6)
+
+    def _record_explicit_pin(self, *, person_key: str, config: Any, tier: str) -> None:
+        """记下"本人亲手把亲密档开到 ``tier``"（覆盖旧值；时刻取墙钟）。"""
+        try:
+            store = _explicit_pin_store(config)
+            if store is None:
+                return
+            store.set_intimate_pin(
+                session_type=_EXPLICIT_PIN_SESSION_TYPE,
+                session_id=_EXPLICIT_PIN_SESSION_ID,
+                sender_id=person_key,
+                tier=tier,
+                explicit_at=float(self.wall_clock()),
+            )
+            # 落盘成功才记"本进程写过"：写失败时不该顺手把跨重启沿用也关掉。
+            _note_mark_written(person_key)
+        except Exception:  # noqa: BLE001 - fail-open：记不住也不影响本轮已生效的钉。
+            return
+
+    def _retract_explicit_pin(self, *, person_key: str, config: Any) -> None:
+        """收回标记（本人显式「亲密模式 关」）。
+
+        这一腿与记账腿**同批**才闭合：只清内存不清库的话，重启后自动腿会凭旧标记
+        把她刚关掉的档再"沿用"回来——那等于把她的"关"字吃了。清的是那两格，
+        **不删整行**（称谓／性别自述／关系档不是这条指令说过的东西）。
+        """
+        try:
+            store = _explicit_pin_store(config)
+            if store is None:
+                return
+            store.clear_intimate_pin(
+                session_type=_EXPLICIT_PIN_SESSION_TYPE,
+                session_id=_EXPLICIT_PIN_SESSION_ID,
+                sender_id=person_key,
+            )
+        except Exception:  # noqa: BLE001 - fail-open。
+            return
+
     @_synchronized
     def apply_manual(
         self,
@@ -860,6 +1215,13 @@ class ContentRouteEngine:
         让既有调用面（含"本人显式开"改道之前的语义）逐字节不变：档位没交时
         按来源派生（`_tier_for_source`），ML/好感度自动钉=浅档，其余=深档。
         normal 钉与解除都不留来源与档位（没有档就没有"为什么亲密、多亲密"）。
+
+        2026-10-03 裁定 D-1（跨重启）在本方法里加了三件事，都只在**本人私聊键**上发生
+        （键门＝`_explicit_pin_person_key`，群作用域键与成员派生键一律不进这条腿）：
+        ①本人显式开档 ⇒ 落标记（档位取**生效档**，没交档位的老调用面按来源派生后落）；
+        ②本人显式解除 ⇒ 收回标记；
+        ③自动腿（ML／好感度）来重钉 ⇒ 先查标记，没过 TTL 就把来源与档位换成"她亲手
+        开的那一次"并回填 TTL 起算点。三条全 fail-open，**不改变本方法的返回值语义**。
         """
         try:
             if mode not in {MODE_INTIMATE, MODE_NORMAL} or not str(session_key or "").strip():
@@ -874,17 +1236,37 @@ class ContentRouteEngine:
                 intimate_ttl_minutes=knobs["intimate_ttl_minutes"],
                 now=now,
             )
+            requested_source = str(source or "").strip()
+            pin_source = requested_source if mode == MODE_INTIMATE else INTIMATE_SOURCE_NONE
+            pin_tier = str(tier or "").strip() if mode == MODE_INTIMATE else INTIMATE_TIER_NONE
+            activated_at = now if mode == MODE_INTIMATE else 0.0
+            person_key = _explicit_pin_person_key(session_key, config)
+            if (
+                person_key
+                and mode == MODE_INTIMATE
+                and pin_source in _EXPLICIT_PIN_REPIN_SOURCES
+            ):
+                honored = self._honored_explicit_pin(
+                    person_key=person_key, config=config, knobs=knobs, now=now
+                )
+                if honored is not None:
+                    pin_source, pin_tier, activated_at = honored
             state.pin = mode
             state.last_mode = mode
             state.score = 100.0 if mode == MODE_INTIMATE else 0.0
             state.updated = now
-            state.activated_at = now if mode == MODE_INTIMATE else 0.0
-            state.pin_source = (
-                str(source or "").strip() if mode == MODE_INTIMATE else INTIMATE_SOURCE_NONE
-            )
-            state.pin_tier = (
-                str(tier or "").strip() if mode == MODE_INTIMATE else INTIMATE_TIER_NONE
-            )
+            state.activated_at = activated_at
+            state.pin_source = pin_source
+            state.pin_tier = pin_tier
+            # 写库放在状态改完之后：钉已上、判定已定，库那边坏不坏都不回头改本轮结果。
+            if person_key and mode == MODE_NORMAL:
+                self._retract_explicit_pin(person_key=person_key, config=config)
+            elif person_key and requested_source == INTIMATE_SOURCE_MANUAL:
+                self._record_explicit_pin(
+                    person_key=person_key,
+                    config=config,
+                    tier=pin_tier or _tier_for_source(INTIMATE_SOURCE_MANUAL),
+                )
             return True
         except Exception:  # noqa: BLE001 - fail-open。
             return False
@@ -896,7 +1278,10 @@ def explicit_allowed_for_session(
     """露骨内容放行判定（chat 主链与被动好感感知共用的单一事实源）。
 
     v21r5 四名单（2026-09-19 用户裁定）：
-    - 群聊=白名单命中且不在黑名单（黑名单优先，白名单空=整体关闭），不变；
+    - 群聊=白名单命中且不在黑名单（黑名单优先，白名单空=整体关闭）；2026-10-02
+      用户裁定增补人腿：``sender_id`` 命中私聊白名单且不在私聊黑名单 ⇒ 任何群
+      放行（私聊白名单空=人腿整体关闭，私聊"空=默认放开"语义不带入群侧；
+      群黑名单压过人腿；空 ``sender_id`` 缺省调用面行为与旧版逐字节一致）；
     - 私聊=黑名单最高优先；白名单空=默认放开（沿用既有私聊放开裁定）、
       非空=仅名单内 QQ。``sender_id`` 缺省（被动好感感知旧调用面）不启用
       私聊名单门，行为与旧版逐字节一致；console 为运营者本地面，不参与
@@ -926,17 +1311,43 @@ def explicit_allowed_for_session(
                     return False
             return True
         if st == "group":
-            wl = {
-                str(item).strip()
-                for item in getattr(config, "bot_content_route_group_whitelist", []) or []
-                if str(item).strip()
-            }
+            # 判定顺序即裁定（2026-10-02 用户裁定「人在白名单 ⇒ 任何群都能开」）：
+            # ① 群黑名单永远赢 → ② 群白名单命中即放行（既有行为一字不动）
+            # → ③ 人腿 → ④ 其余不放行。
             bl = {
                 str(item).strip()
                 for item in getattr(config, "bot_content_route_group_blacklist", []) or []
                 if str(item).strip()
             }
-            return str(group_id or "").strip() in (wl - bl)
+            gid = str(group_id or "").strip()
+            if gid in bl:
+                return False
+            wl = {
+                str(item).strip()
+                for item in getattr(config, "bot_content_route_group_whitelist", []) or []
+                if str(item).strip()
+            }
+            if gid in wl:
+                return True
+            # ③ 人腿：人在私聊白名单 ⇒ 任何群都能开。三条硬边界：
+            # 私聊白名单空=人腿整体关闭（私聊"空=默认放开"绝不带入群侧）；
+            # 私聊黑名单只关人腿、不撤销②的既有放行（顺序已保证）；
+            # 空 sender_id（缺省调用面）不匹配任何名单、行为与旧版逐字节一致。
+            sid = str(sender_id or "").strip()
+            if sid:
+                pbl = {
+                    str(item).strip()
+                    for item in getattr(config, "bot_content_route_private_blacklist", []) or []
+                    if str(item).strip()
+                }
+                pwl = {
+                    str(item).strip()
+                    for item in getattr(config, "bot_content_route_private_whitelist", []) or []
+                    if str(item).strip()
+                }
+                if pwl and sid in pwl and sid not in pbl:
+                    return True
+            return False
         return False
     except Exception:  # noqa: BLE001 - fail-open：判不了按不放行。
         return False

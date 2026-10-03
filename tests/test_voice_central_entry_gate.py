@@ -177,6 +177,8 @@ _COMPOSITION_DELEGATION_CALLEES: frozenset[str] = frozenset({"dub_via_central"})
 # 判据=该 audio 的来路是**上游源媒体/出站转换**，不是 TTS 合成产物，
 # 因此 A3（取文口先行）/A4（audio 出站绑定产出步）对其无意义；豁免是
 # **显式登记**（含理由），出现新构造点而未进本表 ⇒ 门红，不许静默放过。
+# （同族第三形态：上游**在册语音路径**产出的 CapabilityResult.audio 透传——
+# 合成真身已在 tts.py 受 A1-A4 管辖，构造点本层零合成，A3/A4 同样无意义。）
 _NON_TTS_AUDIO_CONSTRUCTION_SITES: dict[str, str] = {
     "domains/link_parse/capabilities/content_parser.py": (
         "链接解析产物：audio 段来自平台侧已有音轨（点歌/视频音轨），非合成"
@@ -187,6 +189,13 @@ _NON_TTS_AUDIO_CONSTRUCTION_SITES: dict[str, str] = {
     "domains/transport/sender/nonebot.py": (
         "出站 sender：把 CapabilityResult.audio 转成 OneBot 段的传输层构造，"
         "产物身份由上游中央管线决定，本层不得再合成"
+    ),
+    "__init__.py": (
+        "根 __init__ 戳一戳语音臂出站（_send_parts_through_unified_pipeline."
+        "_capability 与 _handle_poke_notice 两构造点）：audio 段=语音臂 "
+        "_poke_voice_pair 交层2主缝（orchestrated_command(\"bot.tts\")）产出的 "
+        "CapabilityResult.audio 透传，本层零合成；合成真身在在册语音路径 tts.py"
+        "（A1-A4 管辖），本构造仅把结果挂上统一管线出站面（与 transport sender 同族）"
     ),
 }
 

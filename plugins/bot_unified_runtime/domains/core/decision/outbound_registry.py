@@ -675,13 +675,16 @@ def build_default_takeover_registry() -> TakeoverRegistry:
                 "调用起始行，改判结构性 label-type mismatch（坐标真身、锚名不可推）。",
             ),
             sched(
-                "reminder_delivery", "__init__.py::_register_reminder_scheduler", ("__init__.py::_register_reminder_scheduler:add_job",),
+                "reminder_delivery", "__init__.py::_register_reminder_scheduler", ("__init__.py::_register_reminder_scheduler:add_job", "__init__.py::_register_reminder_scheduler:add_job"),
                 "S181 2026-09-24 register 校正到 _register_reminder_scheduler 定义行（真身）；"
                 "家族标签 reminder_delivery 全根 0 命中、亦非该函数名 token ⇒ label-type"
                 " mismatch（结构上无法按符号自证，交 owner 定夺家族正名，本席不臆造）。"
                 "2026-09-27 SCHED-DRIFT 收编波（席位 S-REANCHOR-SCHED）按符号名复锚：def 行"
                 " 3183→3186、add_job 3214→3217（锚文本＝def _register_reminder_scheduler 与"
-                " scheduler.add_job( 调用起始行，各漂 3 行）；label-type 残余待 owner 裁决。",
+                " scheduler.add_job( 调用起始行，各漂 3 行）；label-type 残余待 owner 裁决。"
+                "2026-10-03 施工席20 坐标账补登：主代理 files-incoming 波把 bot_file_sweep_tick"
+                " 的 scheduler.add_job（id=\"bot_file_sweep_tick\"）落进本族 register 子树"
+                "（真身第二处调用）⇒ jobs 锚同批 +1（同族多枚允许逐字重复），family 仍 12 族。",
             ),
             sched(
                 "digest_push", "__init__.py::_register_digest_push_scheduler", ("__init__.py::_register_digest_push_scheduler:add_job",),

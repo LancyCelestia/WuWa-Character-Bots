@@ -15,8 +15,8 @@
 ③ 随机发图的反重复窗语义：窗缺省 0＝**整条不重复逻辑不参与**（纯随机、可重发）。
    本文件把「只开派发、不开窗」这个组合的**真实后果**量出来：同一会话
    连续两发可以是同一张图。她要的是「禁止重复发送同一表情包」⇒ 二者必须同开。
-④ 开态下贴纸臂仍不得冒头（`sticker_reaction` 是池外行、未接线），
-   别把「五臂全开」读成「六臂都出来了」。
+④ 开态下贴纸臂仍不得冒头（`sticker_reaction` 是池外行——2026-10-03 已接线、
+   但不在 mix 轮换池里），别把「五臂全开」读成「六臂都出来了」。
 
 全部离线：手造图库到 tmp_path、假时钟、SimpleNamespace 配置，零网络零真实目录。
 """
@@ -149,7 +149,7 @@ def test_the_five_arms_she_named_are_all_reachable_when_keys_are_open() -> None:
         for i in range(1200)
     }
     assert set(FIVE_ARMS_FOR_HER_REQUEST) <= seen, sorted(set(FIVE_ARMS_FOR_HER_REQUEST) - seen)
-    # 贴纸臂是池外行（未接线）⇒ 五臂全开也不许冒头（④）。
+    # 贴纸臂是池外行（已接线但不经池轮换）⇒ 五臂全开也不许冒头（④）。
     assert "sticker_reaction" not in seen
 
 

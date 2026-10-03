@@ -23,8 +23,9 @@
 **矩阵成表（P14 二批，2026-09-25 ITEM 14/15）**：上述臂/池/退路的唯一行表是
 :data:`_POKE_REACTION_CELLS`，``_POKE_MODES`` 与两枚 mix 池都**由它派生**；
 逐行不变量由 :func:`validate_poke_reaction_matrix` 现算。表里另有
-``sticker_reaction`` / ``silent`` 两枚**池外行**，分别如实记着「被戳贴表情这条路
-今天没接线」与「静默由门产生、权重不在池里」——详见该段注释。
+``sticker_reaction`` / ``silent`` 两枚**池外行**：前者 2026-10-03 互动面波已接线
+（被戳且回复送达后经 reactions 引擎「回复后」触发点贴表情，见根装配文件 poke
+notice handler），后者如实记着「静默由门产生、权重不在池里」——详见该段注释。
 
 本件同时是「社交主动接触」那一类动作（跟戳 / 回复后戳人 / 主动发言后戳人 /
 回复后随机发图）的**唯一门身**：安静时间与 blocked 名单判定都收在这里，
@@ -144,12 +145,14 @@ class PokeReaction:
 # 行表覆盖八行：六臂（真在池里/可点名）+ ``sticker_reaction`` + ``silent``。后两行
 # 是**如实登记的洞**，不是愿望清单：
 #
-# - ``sticker_reaction``（贴纸回应）今天**不是** poke 的一条臂——全仓
-#   ``maybe_react_on_message`` 只有两个调用点（根 ``__init__.py:8356`` / ``:8717``），
-#   都在 chat 链路（情绪信号 / 回复后），poke 的 notice handler 一次都没调它；
-#   它也不是 ``BOT_POKE_REPLY_MODE`` 的合法值。要接它得改根装配文件（禁直改面），
-#   故此处以 ``wired_in_poke_path=False`` + 非空理由挂账，并由测试锁住
-#   「未接线 ⇒ 永不被选臂取到」，不许有人把表改绿而行为没变。
+# - ``sticker_reaction``（贴纸回应）2026-10-03 互动面波**已接线**：根装配文件的
+#   poke notice handler 在「被戳且回复真送达（SENT/REDIRECTED）」后把那条已送达
+#   回复交 ``maybe_react_on_message`` 的 after_reply 触发点（此前全仓只有 chat 链路
+#   两个调用点，被戳这一触发点不存在——接线当日补上）。它仍在池外、仍不可点名：
+#   选不选、贴不贴由引擎自己的五层门与选脸逻辑现算，本表只登记「这条通道在 poke
+#   路径活着」。贴的对象＝bot 自己那条回复（poke notice 不带用户消息 id）；群判定
+#   吃引擎的 ``_is_group_session``（QQ 无私聊表情通道，台账 #35★）。接线与翻表
+#   同笔，由 ``tests/test_poke_reaction_matrix.py`` 的 AST 锁双向执法。
 # - ``silent``（静默）今天**可达但不是臂**：它由门产生（总闸 / 冷却 / 概率，见
 #   ``PokeLimiter.accept``），不在任何轮换池里 ⇒ 概率表里它是 0，「静默」这件事
 #   的权重归配置（``bot_poke_probability``）而不归矩阵。这条口径必须显式写着，
@@ -290,15 +293,12 @@ _POKE_REACTION_CELLS: tuple[PokeReactionCell, ...] = (
         resource_key="",
         fallback_arm="",
         degrade_site="none",
-        wired_in_poke_path=False,
-        not_wired_reason=(
-            "poke 的 notice handler 从不调 maybe_react_on_message（全仓两个调用点"
-            "都在 chat 链路：根 __init__.py:8356/:8717）⇒ 通道本体活着、被戳这一"
-            "触发点不存在。接线点在根装配文件（禁直改面），且必须只认群消息——"
-            "QQ 侧无私聊表情回应通道，SnowLuma 对非群消息直接抛 not supported "
-            "on private messages（实测 36 次），守卫真身 "
-            "domains/meme/reactions/engine.py 的 _is_group_session。"
-        ),
+        # 2026-10-03 互动面波接线：被戳且回复送达后经引擎 maybe_react_on_message
+        # 贴表情（接线点=根装配文件 poke notice handler，锁
+        # tests/test_poke_reaction_matrix.py 的 AST 用例双向执法「接线与翻表同笔」）。
+        # 池外且不可点名不变：选不选归引擎自己的门与选脸逻辑，BOT_POKE_REPLY_MODE
+        # 点不到它。群判定真身=engine._is_group_session（QQ 私聊无表情通道，#35★）。
+        wired_in_poke_path=True,
     ),
     PokeReactionCell(
         arm_id="silent",

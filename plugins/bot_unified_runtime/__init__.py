@@ -1413,6 +1413,11 @@ def _incoming_from_nonebot_event(
     if normalized_adapter == "mail":
         platform = "email"
         adapter = "mail"
+        # Mail-1 收口（2026-10-03 席35 授权施工）：无 @ 的 sender_id＝未经适配器
+        # 地址恢复的不可信形态（裸名族 mailparser 会把编码字整串塞进 id）——显式
+        # 打 unverified 前缀，堵冒名 trusted 判定；真实地址（含 @）不受影响。
+        if sender_id and "@" not in sender_id:
+            sender_id = f"unverified-mail:{sender_id}"
         session_type = SessionType.EMAIL
         session_id = f"email:{sender_id}"
         group_id = None
@@ -3565,6 +3570,54 @@ def _register_reminder_scheduler(
         max_instances=1,
         coalesce=True,
     )
+
+    async def _file_sweep_job() -> None:
+        """落盘点寿命清扫（需求16 收口）：只扫 incoming/ 登记根，TTL 走装配现算口。
+
+        bot_files_incoming_ttl_days ≤0＝关闭（sweep 内对非正 TTL 一件不删）；
+        失败只告警不影响主链路（fail-open）；同步删放下线程池。
+        """
+        try:
+            from nonebot.log import logger
+
+            from .domains.files.sender.restricted_runner import (
+                sweep_expired_files,
+                sweep_ttl_days_from_config,
+            )
+
+            incoming_root = (
+                Path(
+                    str(
+                        getattr(config, "bot_download_dir", "data/downloads")
+                        or "data/downloads"
+                    )
+                )
+                / "incoming"
+            )
+            outcomes = await asyncio.to_thread(
+                sweep_expired_files,
+                [incoming_root],
+                ttl_days=sweep_ttl_days_from_config(config),
+            )
+            deleted = sum(item.deleted for item in outcomes)
+            forbidden = sum(item.skipped_forbidden for item in outcomes)
+            logger.info(
+                "file sweep done: deleted={} forbidden_skipped={}", deleted, forbidden
+            )
+        except Exception as exc:  # noqa: BLE001 - 清扫失败不影响主链路。
+            logger.warning("file sweep failed: {}", type(exc).__name__)
+
+    scheduler.add_job(
+        _file_sweep_job,
+        "cron",
+        id="bot_file_sweep_tick",
+        replace_existing=True,
+        hour=4,
+        minute=50,
+        misfire_grace_time=600,
+        max_instances=1,
+        coalesce=True,
+    )
     return {"interval": "1m"}
 
 
@@ -4495,7 +4548,10 @@ def _register_nonebot_handlers() -> None:
     # N4 主动搭话亲和门：群聊抽签主动接话只对好感档 ≥ 亲近（close）的用户。
     # 冷却/频控由 rate_limit 层 proactive 分桶承担（bot_group_proactive_*）。
     if bool(getattr(config, "bot_proactive_affinity_gate_enabled", True)):
-        from .domains.chat_reply.character.affinity import tier_for_affinity
+        from .domains.chat_reply.character.affinity import (
+            attitude_tiers,
+            tier_for_affinity,
+        )
         from .domains.chat_reply.policy.gate import configure_proactive_affinity_gate
 
         def _proactive_affinity_check(sender_id: str) -> bool:
@@ -4505,7 +4561,17 @@ def _register_nonebot_handlers() -> None:
             affinity = float(
                 store.snapshot(str(sender_id)).get("affinity", 0.0) or 0.0
             )
-            return tier_for_affinity(affinity) == "close"
+            # N4 死门修复（互动面波 2026-10-03）：``tier_for_affinity`` v4 起回
+            # **整数档 id**（-4..+3），旧写法 ``== "close"`` 拿 int 比字符串恒
+            # False ⇒ 这道门自装配以来从未放行过一次（档案在 SDD7 N4）。
+            # 判法=档 id ≥ 亲近档 id；亲近档 id 从八档表现算（档名唯一真身
+            # ``affinity.attitude_tiers``），不手抄整数——档表改名/换序自动跟随。
+            close_tier_id = next(
+                tier_id
+                for tier_id, tier_name, _instruction in attitude_tiers()
+                if str(tier_name).startswith("亲近")
+            )
+            return tier_for_affinity(affinity) >= close_tier_id
 
         configure_proactive_affinity_gate(_proactive_affinity_check)
     else:
@@ -5381,6 +5447,28 @@ def _register_nonebot_handlers() -> None:
     _reaction_meme_merged: dict[str, str] = {}
     _REACTION_MEME_MERGED_MAX = 512
 
+    # 同轮三腿互斥（互动面波 2026-10-03）：回复后链 P3 情绪贴纸 → poke after-reply
+    # → randpic dispatch，任一腿**实际发出**（贴纸图 / 真戳到了 / 随机图）即占坑，
+    # 调用点查到占坑就短路后两腿；三腿都未中互不影响。键形 ``turn-attach:<message_key>``
+    # ——**刻意避开既有命名空间**（``meme:``/``emoji:``＝双发防护两腿的门键、
+    # ``randpic:``＝五层门键形；「emoji 腿不占 P3 的 meme: 命名空间」同一条纪律），
+    # 互斥账单独一本，不与任何门账混读混写。进程内有界、不落盘（照
+    # ``_reaction_meme_merged`` 形态）；空 message_key 不占坑——空键占坑会把
+    # 「本轮互斥」放大成「全会话互斥」。
+    _turn_attachment_claims: dict[str, str] = {}
+    _TURN_ATTACHMENT_CLAIMS_MAX = 256
+
+    def _turn_attachment_claimed(message_key: str) -> bool:
+        return f"turn-attach:{message_key}" in _turn_attachment_claims
+
+    def _turn_attachment_mark(message_key: str, leg: str) -> None:
+        key = str(message_key or "").strip()
+        if not key:
+            return
+        _turn_attachment_claims[f"turn-attach:{key}"] = str(leg)
+        while len(_turn_attachment_claims) > _TURN_ATTACHMENT_CLAIMS_MAX:
+            _turn_attachment_claims.pop(next(iter(_turn_attachment_claims)), None)
+
     async def _maybe_send_reaction_meme(
         bot: Bot,
         event: Event,
@@ -5390,12 +5478,17 @@ def _register_nonebot_handlers() -> None:
         meme_config: Any,
         reply_text: str = "",
         feature_enabled: Any = None,
+        claim_key: str = "",
     ) -> None:
         """情绪时刻发一张贴纸：**只**从管理员登记的贴纸池拿。
 
         ``feature_enabled``：本轮特性开关快照的 ``enabled`` 查询口（由调用点注入，
         与 ``_poke_voice_pair`` 同一约定）。**没给＝按不通过算**——本腿是主动外发，
         宁可什么都不发，也不许「忘了传快照」变成无条件放行。
+
+        ``claim_key``：同轮三腿互斥的占坑键（调用点传本轮 message_key）。真发出
+        （SENT/REDIRECTED）才落占坑（``_turn_attachment_claims``），让同轮后两腿
+        （poke after-reply / randpic dispatch）让位；空键＝不参与互斥。
 
         挑不出贴纸＝静默返回（不发、不报错、不回退吸收池）；审计轨
         ``sticker_send_routing.last_pool_for(session_key)`` 留 ``none`` 可查。
@@ -5495,7 +5588,7 @@ def _register_nonebot_handlers() -> None:
         if not meme_path:
             return  # 静默跳过：贴纸池空/挑不出＝不发，绝不退化成发吸收池那张。
         _reaction_meme_daily[session_key] = (day, used + 1)
-        await _send_parts_through_unified_pipeline(
+        meme_receipt = await _send_parts_through_unified_pipeline(
             bot, event, text="", image=meme_path,
             audit_tags=[
                 "sticker_pack",
@@ -5504,6 +5597,9 @@ def _register_nonebot_handlers() -> None:
                 *[tag for tag in sticker_tags if str(tag).startswith("sticker_pool:")],
             ],
             capability_id="bot.chat")
+        if getattr(meme_receipt, "state", None) in {ReceiptState.SENT, ReceiptState.REDIRECTED}:
+            # 真发出才占坑：同轮 poke / randpic 两腿据此让位（见 _turn_attachment_mark）。
+            _turn_attachment_mark(claim_key, "reaction_meme")
 
     async def _reaction_target_message_text(bot: Bot, message_id: str) -> str:
         """反查「被贴表情那条消息」的正文，**只在它确实是我自己发的**时交回文本。
@@ -6891,6 +6987,18 @@ def _register_nonebot_handlers() -> None:
         )
         if not candidates:
             return
+        # M-17 中央名单门（互动面波 2026-10-03）：群没在 content-route 名单里表过态
+        # （黑名单永远赢；白名单空=整体关；戳 bot 的对象在私聊白名单⇒人腿放行）
+        # ⇒ 不跟戳。名单是无副作用读，必须仍排在五层门（commit 语义）之前——
+        # 「先名单后骰」；被动被戳路径不经本腿、行为零变化。
+        from .domains.chat_reply.runtime.content_route import (
+            explicit_allowed_for_session,
+        )
+
+        if not explicit_allowed_for_session(
+            "group", target.group_id, merged_config, sender_id=candidates[0]
+        ):
+            return
         if not proactive_action_allowed(
             merged_config,
             prefix="bot_poke_follow_",
@@ -6956,6 +7064,18 @@ def _register_nonebot_handlers() -> None:
         )
 
         group = bool(str(group_id or "").strip())
+        # M-17 中央名单门（互动面波 2026-10-03，判据同跟戳腿）：群表态不过=不戳；
+        # 先名单后骰（名单无副作用读，五层门是 commit 语义）。``if group and …``：
+        # 私聊场合名单门不参与——那一路本就被 require_group 拦下，行为逐字节不变。
+        if group:
+            from .domains.chat_reply.runtime.content_route import (
+                explicit_allowed_for_session,
+            )
+
+            if not explicit_allowed_for_session(
+                "group", group_id, merged_config, sender_id=user_id
+            ):
+                return
         if not proactive_action_allowed(
             merged_config,
             prefix="bot_poke_after_reply_",
@@ -6992,7 +7112,7 @@ def _register_nonebot_handlers() -> None:
             require_group=True,
         ):
             return
-        await _dispatch_poke_at(
+        spoke_poke_delivered = await _dispatch_poke_at(
             bot,
             group=group,
             group_id=group_id if group else 0,
@@ -7000,6 +7120,10 @@ def _register_nonebot_handlers() -> None:
             bot_id=str(getattr(bot, "self_id", "") or ""),
             purpose=f"spoke-{purpose}",
         )
+        if spoke_poke_delivered:
+            # 同轮三腿互斥：真戳到了才占坑，randpic 腿据此让位（P3 贴纸先发出时
+            # 本腿已被调用点的占坑查询短路，到不了这里）。
+            _turn_attachment_mark(message_key, "poke_after_reply")
 
     async def _poke_voice_pair(
         bot: Bot, event: Event, *, text: str, merged_config: Any, switches: Any = None
@@ -7103,7 +7227,7 @@ def _register_nonebot_handlers() -> None:
         )
         if picked is None:
             return
-        await _send_parts_through_unified_pipeline(
+        randpic_receipt = await _send_parts_through_unified_pipeline(
             bot,
             event,
             text="",
@@ -7111,6 +7235,10 @@ def _register_nonebot_handlers() -> None:
             audit_tags=["randpic", "dispatch", "trigger:after_reply"],
             capability_id="bot.randpic",
         )
+        if getattr(randpic_receipt, "state", None) in {ReceiptState.SENT, ReceiptState.REDIRECTED}:
+            # 本腿是三腿链最后一环：占坑只为账面完整（同轮再无后腿可让位），
+            # 也防未来有人在链尾追加第四腿时漏接互斥。
+            _turn_attachment_mark(message_key, "randpic_dispatch")
 
     poke_notice = on_notice(rule=_is_poke_event, priority=7, block=False)
 
@@ -7220,7 +7348,7 @@ def _register_nonebot_handlers() -> None:
             if reaction.group and poker_id
             else []
         )
-        await _send_parts_through_unified_pipeline(
+        poke_receipt = await _send_parts_through_unified_pipeline(
             bot, event,
             text=reply_text,
             image=image,
@@ -7229,6 +7357,33 @@ def _register_nonebot_handlers() -> None:
             audit_tags=list(reaction.audit_tags),
             capability_id="bot.poke",
         )
+        # STICKER-REACTION 接线（互动面波 2026-10-03）：矩阵行 ``sticker_reaction``
+        # 的 ``wired_in_poke_path`` 据此翻 True——被戳（群内）且回复真送达后，把这条
+        # 已送达回复交 reactions 引擎「回复后」触发点。选脸/五层防刷门/私聊拒发全是
+        # 引擎现成件（``maybe_react_on_message``，不重写第二份选择逻辑）：群判定吃
+        # ``_is_group_session``（QQ 无私聊表情通道，台账 #35★，私聊在引擎层即拒），
+        # 五层门同用 chat 链路那一枚 ``_REACTION_PROACTIVE_GATE``。
+        # poke notice 本身无可贴的用户消息（OneBot notice 不带 message_id），贴纸
+        # 目标＝bot 自己这条已送达的回复（provider_message_id）；平台对自有消息贴
+        # 表情的实装与否离线不可证，整块 try 住、失败静默——已发出的回复绝不受牵连。
+        # 开关沿用 after_reply 那枚（同族「回复后表情回应」，零新增开关）。
+        if (
+            reaction.group
+            and switches.enabled("bot.plugin.chat.reactions.after_reply")
+            and str(getattr(poke_receipt, "provider_message_id", "") or "").strip()
+        ):
+            try:
+                await _maybe_react_on_message(
+                    bot,
+                    session_key=f"group_{poker_group}_{poker_id}",
+                    user_message_id=str(poke_receipt.provider_message_id),
+                    text="",
+                    config=merged_poke_config,
+                    trigger="after_reply",
+                    gate=_REACTION_PROACTIVE_GATE,
+                )
+            except Exception:  # noqa: BLE001, S110 - 贴表情失败绝不影响已送达的回复。
+                pass
 
     # 表情贴纸回应识别（bot.reactions）：SnowLuma 贴纸回应 notice 先做归一与会话
     # 缓冲登记（供 chat 注入【表情回应】分区），识别段本身不回话、不贴表情——主动
@@ -7434,7 +7589,26 @@ def _register_nonebot_handlers() -> None:
             return
         # run_code_debug 内部是同步 subprocess（timeout=15s），必须下放线程池。
         report = await asyncio.to_thread(run_code_debug, saved_path)
-        await _send_text_through_unified_pipeline(bot, event, f"[文件调试] {file_name}\n{report}")
+        # 需求16（2026-10-02 全量修复批）：落盘文件回填内容理解——T2 打标注记
+        # （走 labelled_text 咽喉）与语法调试报告并列随统一管线回给用户；读不动
+        # =诚实句绝不假装读过；同步读放下线程池；失败只丢注记不拦调试回报。
+        context_note = ""
+        try:
+            from .domains.files.sources.file_reader import (
+                build_incoming_file_context_note,
+            )
+
+            context_note = await asyncio.to_thread(
+                build_incoming_file_context_note,
+                saved_path,
+                original_name=file_name,
+            )
+        except Exception:  # noqa: BLE001 - 内容理解失败不影响调试回报主路径。
+            context_note = ""
+        combined = f"[文件调试] {file_name}\n{report}"
+        if context_note:
+            combined = f"{combined}\n{context_note}"
+        await _send_text_through_unified_pipeline(bot, event, combined)
 
     async def _is_admin_file_export(event: Event) -> bool:
         return is_file_export_command(event.get_plaintext()) and await _is_admin_origin(
@@ -8716,6 +8890,39 @@ def _register_nonebot_handlers() -> None:
                     group_id=str(message.group_id or ""),
                 )
 
+        elif command_text == "intimate" or command_text.startswith("intimate "):
+            # /bot intimate on|deep|off|show：亲密档的命令面入口（席 S6，2026-10-08 波）。
+            # 能力 id **复用 bot.chat**——整句「亲密模式 开/深开/关」今天就挂在 bot.chat 上，
+            # 铸 bot.intimate 要同改 capability_protocols 唯一在册表 +
+            # CONTROLLED_INTERNAL_CAPABILITIES + test_capability_manifest_gate 那本
+            # "只准降缺口"的账，不划算；可分辨性全部交给 audit_tags 的 slash_intimate:*。
+            # ⚠ 本分支插在 identity 与 route 之间 ⇒ 裸 `/bot intimate` 不再落到链尾的
+            # `bot.help` 兜底（旧行为靠 `_HELP_ALIAS_MAP["intimate"]` 出帮助页）——
+            # 那份「用法 + 当前档 + /bot help 亲密模式」的指路改由 intimate_control
+            # 自己交，判据锁在 tests/test_intimate_slash_command.py。
+            from .domains.chat_reply.runtime.intimate_control import (
+                build_intimate_control_result,
+            )
+
+            capability_id = "bot.chat"
+            intimate_command = command_text.removeprefix("intimate").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_intimate_control_result(
+                    config=config,
+                    request_id=message.request_id,
+                    subcommand=intimate_command,
+                    session_type=str(getattr(message.session_type, "value", "") or ""),
+                    session_key=str(message.session_id or ""),
+                    sender_id=str(message.sender_id or ""),
+                    group_id=str(message.group_id or ""),
+                    sender_roles=list(_decision.actor_roles),
+                    # 隐私档只转述会话本身（中央件 default_privacy_by_session 已夹好）：
+                    # 硬写成 PERSONAL 就是 D1 那一格——群回执会被审核判 move_private。
+                    privacy_level=message.privacy_level,
+                    runtime_settings=runtime_settings,
+                )
+
         elif command_text == "route" or command_text.startswith("route "):
             capability_id = "bot.route"
             route_query = command_text.removeprefix("route").strip() or ""
@@ -9724,11 +9931,16 @@ def _register_nonebot_handlers() -> None:
                 "video understanding preprocess skipped type=%s",
                 type(exc).__name__,
             )
-        # 折句窗口（2026-09-29 用户裁定需求 1：**实现暂缓、只把接缝留干净**）。
-        # 生产 `.env: BOT_CHAT_MESSAGE_COALESCING_ENABLED=false` ⇒ 今天逐字节等于
-        # 不折句（一条气泡一次回复）；调用细节全收进唯一入口
-        # `message_coalescing.fold_inbound_turn`（本文件不再散写第二处＝禁第二通路），
-        # 「将来启用只动哪三处 + 两条已知判据短板」写在该入口上方的注释块里。
+        # 折句窗口（2026-09-29 用户裁定需求 1：接缝留在这里；链已接活，折不折由开关决定）。
+        # 开关真值＝`.env` 的 `BOT_CHAT_MESSAGE_COALESCING_ENABLED`（本文件不抄读数，规则 10；
+        # 判当前值走 `config.bot_chat_message_coalescing_enabled` 装载链，**禁读注释**——
+        # 此处曾写死一个 `false` 把下一个排查者骗去把本链判成死口，2026-10-03 现算为真）。
+        # 开着时：同一会话同人 ≤quiet 秒内的连发会被焊成一句（`join_utterance` 补中文逗号），
+        # 非开门者那几条**不回**（`owned=False` 一路直接 return）——所以"一条回复答了三个
+        # 问题"是本链的形状，不是模型出错。等待窗真身＝`effective_quiet_seconds`
+        #（按收尾强度缩放，Config 的 `_quiet_seconds` 键 2026-09-27 乙案已退役）。
+        # 调用细节全收进唯一入口 `message_coalescing.fold_inbound_turn`（本文件不再散写第二处＝
+        # 禁第二通路），「启用只动哪三处 + 两条已知判据短板」写在该入口上方的注释块里。
         # 位置刻意在「合并转发已展开」「视频预处理已完成」之后、进管道之前：
         # 再早就会丢掉后补上的正文。import 放函数体内，不在文件顶部插行，
         # 免得把 campus_record_matcher 的登记坐标顶漂（同 5a 的先例）。
@@ -9959,6 +10171,10 @@ def _register_nonebot_handlers() -> None:
                             # 快照查询口照传（与 _poke_voice_pair 同一约定）：漏传
                             # 本腿按「未开」算＝不发，主动外发腿不许有隐式放行档。
                             feature_enabled=switches.enabled,
+                            # 同轮三腿互斥：真发出即占坑，后两腿（戳/随机图）让位。
+                            claim_key=str(
+                                getattr(event, "message_id", "") or message.request_id
+                            ),
                         )
                     except Exception:  # noqa: BLE001, S110 - 表情包层失败绝不影响投递结果。
                         pass
@@ -9970,32 +10186,36 @@ def _register_nonebot_handlers() -> None:
                     spoke_message_key = str(
                         getattr(event, "message_id", "") or message.request_id
                     )
-                    try:
-                        await _maybe_poke_after_bot_spoke(
-                            bot,
-                            merged_config=reaction_meme_config,
-                            poke_back_on=switches.enabled(
-                                "bot.plugin.poke.poke_back"
-                            ),
-                            group_id=str(getattr(message, "group_id", "") or ""),
-                            user_id=str(getattr(message, "sender_id", "") or ""),
-                            message_key=spoke_message_key,
-                            purpose="reply",
-                        )
-                    except Exception:  # noqa: S110, BLE001 - 主动戳人失败不影响投递结果。
-                        pass
-                    try:
-                        await _maybe_dispatch_randpic(
-                            bot,
-                            event,
-                            merged_config=reaction_meme_config,
-                            session_key=message.session_id,
-                            message_key=spoke_message_key,
-                            group_id=str(getattr(message, "group_id", "") or ""),
-                            user_id=str(getattr(message, "sender_id", "") or ""),
-                        )
-                    except Exception:  # noqa: S110, BLE001 - 主动发图失败不影响投递结果。
-                        pass
+                    # 同轮三腿互斥（互动面波 2026-10-03）：占坑键形 turn-attach:，
+                    # P3 贴纸或戳真发出后这里各查一次、短路后腿；三腿都未中互不影响。
+                    if not _turn_attachment_claimed(spoke_message_key):
+                        try:
+                            await _maybe_poke_after_bot_spoke(
+                                bot,
+                                merged_config=reaction_meme_config,
+                                poke_back_on=switches.enabled(
+                                    "bot.plugin.poke.poke_back"
+                                ),
+                                group_id=str(getattr(message, "group_id", "") or ""),
+                                user_id=str(getattr(message, "sender_id", "") or ""),
+                                message_key=spoke_message_key,
+                                purpose="reply",
+                            )
+                        except Exception:  # noqa: S110, BLE001 - 主动戳人失败不影响投递结果。
+                            pass
+                    if not _turn_attachment_claimed(spoke_message_key):
+                        try:
+                            await _maybe_dispatch_randpic(
+                                bot,
+                                event,
+                                merged_config=reaction_meme_config,
+                                session_key=message.session_id,
+                                message_key=spoke_message_key,
+                                group_id=str(getattr(message, "group_id", "") or ""),
+                                user_id=str(getattr(message, "sender_id", "") or ""),
+                            )
+                        except Exception:  # noqa: S110, BLE001 - 主动发图失败不影响投递结果。
+                            pass
                 if history_should_record:
                     _record_chat_history_turn(
                         history_recorder,

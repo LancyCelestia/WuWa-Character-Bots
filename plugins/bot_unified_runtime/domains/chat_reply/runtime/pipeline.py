@@ -56,6 +56,13 @@ from plugins.bot_unified_runtime.domains.chat_reply.policy import (
     evaluate_policy,
     redrive_wait_seconds,
 )
+
+# 耗尽说明面的判据与文案真身都住 rate_limit（补回名册 + 文案池），从模块直读，
+# 不经 policy 包转手——不在调用侧抄第二份名册（规则 10）。
+from plugins.bot_unified_runtime.domains.chat_reply.policy.rate_limit import (
+    pick_rate_limit_exhausted_notice,
+    rate_limit_exhausted_notice_due,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.event_idempotency import (
     EventIdempotencyTable,
     SqliteEventIdempotencyTable,
@@ -141,6 +148,12 @@ _hard_timeout_override: float | None = None
 _GROUP_FAILURE_NOTICE_WINDOW_SECONDS = 300.0
 # 节流表容量上限：写满时先清过期项，仍满则整表重置——会话数有界防内存缓涨。
 _GROUP_FAILURE_NOTICE_TRACK_CAP = 512
+
+# ==================== 限流补回终局的耗尽说明（2026-09-29 需求项 2 之 1） ====================
+# 补回把被拦的那句重放到尽头仍没回上时，对「欠一句回复」的请求补一句说明，
+# 不再纯静默（「每一条最终都必须被回，不许静默吞」的收口）。文案池与判据真身
+# 都住 policy/rate_limit；这里只定每会话冷却：连撞耗尽也只说一句，防刷屏。
+_RATE_LIMIT_EXHAUSTED_NOTICE_COOLDOWN_SECONDS = 60.0
 
 # 需求项 6（2026-09-29）：本轮「回执已出口」账本的存活窗与容量上限。
 # TTL 取单轮最坏耗时量级（真回复/失败都在此窗内落回 `_complete`）；超时即清，
@@ -975,6 +988,11 @@ class RuntimePipeline:
                 getattr(progress_ack_settings, "cooldown_seconds", 60.0) or 60.0
             )
         )
+        # 耗尽说明的每会话节流（形态照回执节流器：查占同锁、投递失败 release 退还，
+        # 不让一次瞬时失败吃掉同会话下一句说明的坑）。
+        self._rate_limit_notice_throttle = ProgressAckThrottle(
+            cooldown_seconds=_RATE_LIMIT_EXHAUSTED_NOTICE_COOLDOWN_SECONDS
+        )
         self.send_queue = send_queue
         self.audit_logger = audit_logger
         self.receipt_repository = receipt_repository or InMemoryReceiptRepository()
@@ -1704,6 +1722,12 @@ class RuntimePipeline:
             return None
         wait_seconds = redrive_wait_seconds(settings, message, capability_id, decision)
         if wait_seconds is None:
+            # 补回排不出去 ⇒ 可能已是「补到尽头仍没回上」的终局：判据与文案真身
+            # 都住 rate_limit（``rate_limit_exhausted_notice_due`` 三道门共读补回
+            # 名册），这里只接线——对欠回复的请求补一句说明，不再纯静默。
+            self._maybe_submit_rate_limit_exhausted_notice(
+                message, capability_id, decision, settings
+            )
             return None
         try:
             redrafted = message.model_copy(
@@ -1750,6 +1774,118 @@ class RuntimePipeline:
                 capability_id,
                 type(exc).__name__,
             )
+
+    def _maybe_submit_rate_limit_exhausted_notice(
+        self,
+        message: IncomingMessage,
+        capability_id: str,
+        decision: Any,
+        settings: Any,
+    ) -> None:
+        """补回终局的「耗尽说明」（2026-09-29 需求项 2 之 1 的最后一根接线）。
+
+        补回把被拦的那句重放到 ``max_attempts`` 用尽仍被拦时，对「欠一句回复」的
+        directed request 补一句说明。文案池与判据真身都住 policy/rate_limit
+        （``RATE_LIMIT_EXHAUSTED_NOTICE_POOL`` × ``rate_limit_exhausted_notice_due``
+        的三道门：密度拒因 × 次数用尽 × directed），这里零自造判据、零新文案。
+        出站走既有统一路径（send_queue.submit，形态照群失败降级通知）。
+        节流照回执节流器同款形态（查占同锁、投递失败 release 退还），键＝
+        **收件面**（群号 or 私聊本人）：说明落在哪个会话就按哪个会话防刷，
+        同群两个不同人先后撞耗尽也只说一句。fail-open：判据/节流/提交任何一处
+        异常都不影响本轮既有的 BLOCKED 回执路径。
+        """
+        try:
+            if not rate_limit_exhausted_notice_due(
+                message, capability_id, decision, settings
+            ):
+                return
+            throttle_key = str(
+                getattr(message, "group_id", "")
+                or getattr(message, "sender_id", "")
+                or ""
+            ).strip()
+            if not throttle_key:
+                # 收件面都算不出 ⇒ 这句说明必然投不出去，不开口（fail-closed，
+                # 与回执面"有身份可判才开口"同一家规）。
+                return
+            claimed_at = self._rate_limit_notice_throttle.try_claim(throttle_key)
+            if claimed_at is None:
+                return
+        except Exception:
+            logger.debug("rate limit notice gate failed", exc_info=True)
+            return
+        phrase = pick_rate_limit_exhausted_notice(
+            str(getattr(message, "session_id", "") or "")
+        )
+        request_id = message.request_id
+        is_group = getattr(message, "session_type", None) is SessionType.GROUP
+        try:
+            self.send_queue.submit(
+                SendRequest(
+                    request_id=request_id,
+                    session_id=message.session_id,
+                    target_scope=message.session_type,
+                    target_id=message.group_id or message.sender_id,
+                    origin_message_id=message.message_id,
+                    capability_id="bot.rate_limit_notice",
+                    content=RenderedOutput(
+                        request_id=request_id,
+                        content_type="text",
+                        content_ref={"text": phrase},
+                        text_fallback=phrase,
+                        risk_level=RiskLevel.LOW,
+                        privacy_level=(
+                            PrivacyLevel.GROUP
+                            if is_group
+                            else PrivacyLevel.PERSONAL
+                        ),
+                    ),
+                    send_policy=SendPolicy.IMMEDIATE,
+                    priority="normal",
+                    max_messages=1,
+                    dedupe_key=f"rate_limit_notice:{request_id}",
+                    cooldown_key=f"rate_limit_notice:{message.session_id}",
+                    expires_at=None,
+                    privacy_level=(
+                        PrivacyLevel.GROUP if is_group else PrivacyLevel.PERSONAL
+                    ),
+                    allow_split=False,
+                    allow_forward=False,
+                    persona_profile_id="default",
+                    adapter=message.adapter,
+                    bot_id=message.bot_id,
+                    audit_tags=[
+                        "rate_limit_exhausted_notice:v1",
+                        f"redrive_reason:{getattr(decision, 'reason', '')}",
+                    ],
+                )
+            )
+        except Exception:
+            logger.debug("rate limit exhausted notice submit failed", exc_info=True)
+            self._rate_limit_notice_throttle.release(throttle_key, claimed_at)
+            return
+        logger.info(
+            "rate limit exhausted notice emitted session=%s target=%s reason=%s",
+            message.session_id,
+            throttle_key,
+            getattr(decision, "reason", ""),
+        )
+        self._append_audit_safely(
+            AuditRecord(
+                request_id=message.request_id,
+                session_id=message.session_id,
+                capability_id=capability_id,
+                stage="policy",
+                event="rate_limit_exhausted_notice",
+                severity=RiskLevel.LOW,
+                public_message=phrase,
+                private_debug=(
+                    f"reason={getattr(decision, 'reason', '')}; "
+                    f"redrive_count={int(getattr(message, 'redrive_count', 0) or 0)}; "
+                    f"max_attempts={int(getattr(settings, 'max_attempts', 0) or 0)}"
+                ),
+            )
+        )
 
     def _rollback_rate_limit_record(
         self,

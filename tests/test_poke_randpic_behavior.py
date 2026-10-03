@@ -1072,11 +1072,12 @@ def _direct_call_names(function: ast.AST) -> dict[str, int]:
     return out
 
 
-def test_poke_path_still_does_not_call_the_reaction_engine() -> None:
-    """被戳那一发今天不贴表情：根装配里 poke 相关函数一次都没调引擎。
+def test_poke_path_calls_the_reaction_engine_once_and_the_table_agrees() -> None:
+    """被戳那一发现在会贴表情（2026-10-03 互动面波接线）：根装配里引擎调用点
+    = chat 链路两处 + poke handler 一处，矩阵行同步翻 True——两边必须同笔。
 
-    与矩阵 ``sticker_reaction.wired_in_poke_path=False`` 同真同假——接上线却不改表，
-    或改了表却没接线，两边都会红在这里。
+    （原锁方向相反：接线前钉「poke 链路零调用」。翻向时把期望与矩阵行一起翻，
+    不许有人接了线不改表、或改了表没接线。）
     """
     tree = ast.parse(ROOT_INIT.read_text(encoding="utf-8"))
     react_calls = sum(
@@ -1084,8 +1085,8 @@ def test_poke_path_still_does_not_call_the_reaction_engine() -> None:
         for node in ast.walk(tree)
         if isinstance(node, ast.Call) and _react_call_name(node) == "maybe_react_on_message"
     )
-    assert react_calls == 2, (
-        f"maybe_react_on_message 调用点现算 {react_calls}（口径=chat 链路两处）"
+    assert react_calls == 3, (
+        f"maybe_react_on_message 调用点现算 {react_calls}（口径=chat 两处 + poke 一处）"
         " ⇒ 有人动了表情派发面，请同步改这条与矩阵行"
     )
     poke_markers = {"build_poke_reaction", "_dispatch_poke_at", "_dispatch_poke_back"}
@@ -1103,13 +1104,13 @@ def test_poke_path_still_does_not_call_the_reaction_engine() -> None:
     assert {"_handle_poke_notice", "_maybe_follow_poke", "_dispatch_poke_back"} <= names, (
         f"poke 链路只认出 {sorted(names)} ⇒ 装配形态变了，先核对再改锁"
     )
-    offenders = [
+    wired_handlers = [
         f"{name}:{lineno}"
         for name, direct in poke_handler_bodies
         if (lineno := direct.get("_maybe_react_on_message")) is not None
     ]
-    assert not offenders, f"被戳链路已经会贴表情了却仍标未接线：{offenders}"
-    assert POKE_REACTION_MATRIX["sticker_reaction"].wired_in_poke_path is False
+    assert wired_handlers, "被戳链路已接线却一个调用点都没认出 ⇒ 锁与实况脱钩"
+    assert POKE_REACTION_MATRIX["sticker_reaction"].wired_in_poke_path is True
 
 
 # ============================================================================

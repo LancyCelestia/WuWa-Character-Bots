@@ -18,8 +18,21 @@ import scripts.e2e_acceptance as e2e
 from plugins.bot_unified_runtime.config import Config
 
 
-def _offline_config() -> Config:
-    return Config(bot_quiet_hours_enabled=False, bot_affinity_enabled=False)
+def _offline_config(tmp_path=None) -> Config:
+    """离线替身 Config；给了 ``tmp_path`` 就把运行数据根挪出源码树（AGENTS 规则 2/6）。
+
+    ``Config`` 不读环境变量，缺省 ``bot_runtime_data_dir="data"`` 会被
+    ``config.Config._resolve_runtime_data_paths`` 折成「仓库根/data」＝源码树；本件的
+    ``e2e.build_pipeline`` 腿经 ``_bot_self_name`` → ``active_persona_id`` →
+    ``build_runtime_settings_store`` 在那枚目录里 mkdir + ``sqlite3.connect`` 建出
+    ``data/control_plane_config.sqlite3``（2026-10-02 runtime-layout 门红的那一枚）。
+    """
+    data_root = {} if tmp_path is None else {"bot_runtime_data_dir": str(tmp_path)}
+    return Config(
+        bot_quiet_hours_enabled=False,
+        bot_affinity_enabled=False,
+        **data_root,
+    )
 
 
 def _specs():
@@ -136,8 +149,8 @@ def test_command_payload_group_and_private_shapes() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_route_classification_offline_no_crash_and_admin_route() -> None:
-    config = _offline_config()
+def test_route_classification_offline_no_crash_and_admin_route(tmp_path) -> None:
+    config = _offline_config(tmp_path)
     for spec in _specs():
         kind, capability, _reason = e2e.classify_spec_route(spec, config)
         assert kind != "error" or "UnboundLocalError" in _reason, spec.topic
@@ -349,11 +362,11 @@ def test_help_matrix_target_enforced_at_dispatch() -> None:
     assert args.subset == "天气"
 
 
-def test_legacy_matrix_untouched_by_new_mode() -> None:
+def test_legacy_matrix_untouched_by_new_mode(tmp_path) -> None:
     """存量验收矩阵不被新批次改动（参数只往后加的兼容锁）。"""
     from types import SimpleNamespace
 
-    config = Config(bot_quiet_hours_enabled=False, bot_affinity_enabled=False)
+    config = _offline_config(tmp_path)
     runtime = e2e.E2eRuntime(
         config=config,
         runtime_settings=SimpleNamespace(
@@ -382,7 +395,7 @@ def test_legacy_matrix_untouched_by_new_mode() -> None:
         assert legacy_key in keys, legacy_key
 
 
-def test_execute_item_still_works_alongside_new_engine() -> None:
+def test_execute_item_still_works_alongside_new_engine(tmp_path) -> None:
     """新引擎并列不破坏存量执行内核（text-short 经真实管线入 InMemory 队列）。
     注意：wait_for_delivery 的状态契约面向 SQLite 队列的 QueuedSendRequest
     （--execute 唯一路径），InMemory 队列的 find_request 返回 SendRequest，
@@ -393,7 +406,7 @@ def test_execute_item_still_works_alongside_new_engine() -> None:
     from plugins.bot_unified_runtime.contracts import ReceiptState
     from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
 
-    config = Config(bot_quiet_hours_enabled=False, bot_affinity_enabled=False)
+    config = _offline_config(tmp_path)
     runtime = e2e.E2eRuntime(
         config=config,
         runtime_settings=SimpleNamespace(

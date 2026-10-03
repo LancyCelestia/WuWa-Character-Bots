@@ -153,12 +153,12 @@ def test_shipped_predicate_with_fake_clock() -> None:
         total = seconds + 40.0
         return DeadlineBudget(total, started_at=time.monotonic() - (total - seconds))
 
-    tight = eval(  # noqa: S307 - 编译源＝本仓自有 AST 的一枚 Compare，无外部输入
+    tight = eval(
         expr, {}, {"request_budget": budget_with_remaining(1.5), "web_page_timeout_seconds": timeout}
     )
     assert tight is True, "剩 1.5s < 一跳 2.0s 必须判为「不再等富化」"
 
-    enough = eval(  # noqa: S307 - 同上
+    enough = eval(
         expr, {}, {"request_budget": budget_with_remaining(5.0), "web_page_timeout_seconds": timeout}
     )
     assert enough is False, "剩 5.0s > 一跳 2.0s 必须照旧等（行为不变）"

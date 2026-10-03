@@ -41,6 +41,13 @@ _TRACKED: dict[str, str] = {
     "transcribe_audio": "media.asr",
     "build_video_brief": "media.video_brief",
     "_extract_video_frames": "media.frames",
+    # 2026-10-03 S28 补登记（账跟实现新形态，判据零放松）：vision/asr 的**执行体**已迁
+    # `*_with_status` 变体（provider.generate 真跑在那边；裸符号退化为文本投影 shim、
+    # 内部委托 with_status），chat.py 识图/转写生产点已吃新形（:5727/:5915）⇒ 旧表对
+    # 该两执行体结构性失明（S-PROV 同类洞：符号不在表里 ⇒ 两把门都看不见）。裸符号
+    # 保留追踪：control_plane / modality_preprocessing 仍经它执行。
+    "describe_images_with_status": "media.vision",
+    "transcribe_audio_with_status": "media.asr",
     # files 族产物构造真身（2026-09-21 S-PROV 实证：chat.py:2406 生产直呼，
     # 旧追踪表没有这个符号 ⇒ 该旁路两把门都看不见，属门的覆盖面漏登记而非新违规）。
     "build_generated_file": "files.artifact",
@@ -54,6 +61,8 @@ _DEF_FILES: dict[str, set[str]] = {
     "describe_images": {"domains/media/ingest/vision_describe.py"},
     "search_saucenao_ex": {"domains/media/search/sauce_search.py"},
     "transcribe_audio": {"domains/media/ingest/transcribe.py"},
+    "transcribe_audio_with_status": {"domains/media/ingest/transcribe.py"},
+    "describe_images_with_status": {"domains/media/ingest/vision_describe.py"},
     "build_video_brief": {"domains/media/ingest/video_understanding.py"},
     "_extract_video_frames": {"domains/media/ingest/vision_describe.py"},
     "build_generated_file": {"domains/files/sources/file_reader.py"},
@@ -289,7 +298,17 @@ def _load_real_index() -> dict[str, str]:
 # U2 独占面（domains/files/**、domains/core/search/**）内**无**直呼点可翻；
 # 全部生产直呼点落在 root(U4)/control_plane/chat_reply/ops（见 SEAT-U2.md §0/§6）。
 KNOWN_DIRECT_ALLOWLIST: dict[str, set[str]] = {
-    "files.read": {"__init__.py", "control_plane/api/platform.py"},
+    # 2026-10-03 S31 跟随账（9469445 有意直读，非旁路）：邮件附件取字
+    # mail_ingress_files.py 的 `_read_one` 直呼 `read_supported_file`——该件模块头
+    # 自声明「禁第二通路」＝与 QQ 文件段、TG document 段共用 file_reader 同一颗咽喉
+    # （降级措辞/解压体检/口令保护/扫描件四族在那里逐字生效，本件不复述文案）；
+    # 且消费面是真身原生产物（result.text / file_read_failure_note / labelled_text），
+    # 中央壳信封无对位契约 ⇒ 现阶段无等值翻点，登记＝待翻面（同 chat.py 格）。
+    "files.read": {
+        "__init__.py",
+        "control_plane/api/platform.py",
+        "domains/transport/mail/mail_ingress_files.py",
+    },
     # 2026-09-21 S-PROV 实证补登记（本符号此前**根本不在追踪表里** ⇒ 两把门都看不见这条旁路）：
     # 聊天侧生成文件在 chat.py:2406 直呼 `build_generated_file`；中央 `files.artifact.generate`
     # 有 descriptor+handler 却生产零调用点 ⇒ 登记为待翻面，归 files/Wave4.1 席。
@@ -313,6 +332,8 @@ KNOWN_DIRECT_ALLOWLIST: dict[str, set[str]] = {
     # 现算**不在** descriptor 册（49 枚之外：creation.audio.transcribe / creation.video.understand /
     # creation.image.upscale 未转录），通电坐标=该文件自声明 WIRING_COORDINATES，注册面归其 owner，
     # 届时直呼应改 invoker ⇒ 与 chat.py/control_plane 两线同格＝待翻面，不是豁免。
+    # 2026-10-03 S28 跟随账：chat.py 识图/转写执行面已迁 `*_with_status` 变体（见 _TRACKED 注），
+    # **直呼集合不变**——chat.py 仍是这三族的执行直呼点（经新形），登记面零改动，只补符号账。
     "media.vision": {
         "domains/chat_reply/capabilities/chat.py",
         "control_plane/api/platform.py",

@@ -40,7 +40,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts import pre_restart_check as prc  # noqa: E402
+from scripts import pre_restart_check as prc
 
 PRC_FILE = PROJECT_ROOT / "scripts" / "pre_restart_check.py"
 CHECK_ID = "kb_domain_anchor"

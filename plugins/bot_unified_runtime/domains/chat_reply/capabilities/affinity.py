@@ -409,7 +409,18 @@ def build_affinity_capability(
         snapshot = affinity_store.snapshot(me_id) if me_id else {}
         # 初始值口径（docs §1）：无记录默认基准 0.1，展示 10 分。
         bot_score = round(float(snapshot.get("affinity", 0.1)) * 100.0, 1)
-        user_score = round(float(affinity_store.sentiment_for(me_id)) * 100.0, 1)
+        # 「你对守岸人」展示有界化（2026-10-03）：裸比值一条辱骂可挪数十展示分，
+        # 展示值过 24h 滚动单向下行限幅（真身＝DynamicAffinityStore.
+        # bound_sentiment_display，内部真值与档位不动）；store 为测试桩/旧形态
+        # 没有该方法时回裸值（getattr 容缺省＝旧行为逐字节不变）。
+        user_score_raw = float(affinity_store.sentiment_for(me_id)) * 100.0
+        _bound_display = getattr(affinity_store, "bound_sentiment_display", None)
+        user_score_value = (
+            float(_bound_display(me_id, user_score_raw))
+            if callable(_bound_display)
+            else user_score_raw
+        )
+        user_score = round(user_score_value, 1)
 
         show_group_board = bool(message.group_id) and arg not in {"我", "自己", "me"}
         if show_group_board:

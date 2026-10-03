@@ -129,7 +129,15 @@ from plugins.bot_unified_runtime.runtime.capability_protocols import (
 #: 两波各留一枚执行面欠账。⚠ **这不是把门放宽**：上限只跟随现算（零余量锁 `test_ratchet_baselines_
 #: equal_live_measurement` 逼基线==现算），涨的两格要由 #63/#64 owner 席补执行体后**降回来**；
 #: HEAD 副本（`git archive HEAD`→同一把尺实跑）复算亦 64 ⇒ 属已入库件，非他席在飞件。
-EXECUTION_SURFACE_BASELINE = 64
+#: 施工席33 合法增长（现算 2026-10-03，尺不变）：64→**66**，+2 逐枚点名＝**`bot.network_patrol`、
+#: `bot.outbound_gate`**——同日 C5「能力注册接线波」按 F3「使用即登记」先例补登
+#: `capability_registry.CONTROLLED_INTERNAL_CAPABILITIES`（受门在册③桶无 handler_ref ⇒ 进本账；
+#: 该 hunk 未提交＝他席在飞件，**照实计入真值不摘**，先例＝下方 ROSTER_SCAN_FLOOR 注），
+#: 落账后由 C5 owner 补执行体降回。⚠ 断代更正：A6 简报把本枚 +2 归给 capability.consent/host_state
+#: 系误判——两枚 09-29 已在 64 内（本次 HEAD 副本同尺复跑在册125/空exec64，且两枚在 HEAD 空 exec
+#: 清单内逐枚查实）；真身＝两清单逐枚作差（64→66 增量仅上述两枚），与 UNCOVERED_CEILING 105→107
+#: 同根同批（在册 127＝floor 同批顶高的另一格）。
+EXECUTION_SURFACE_BASELINE = 66
 
 #: 已申报、普查看得见、现算 state≠wired 的枚数。**上限，只准降（接真一枚降一枚）。**
 #: 三次核账（同一把尺 `measure_declared_unwired`，并发窗内名册被 S67 在途批推着动过两回）：
@@ -196,7 +204,11 @@ PLACEHOLDER_BASELINE = 0
 #: `buckets`（WIRED28∪GENERIC10∪NOT_WIRED83＝121 枚并集）与现算 125 枚逐枚作差：**多这四枚、
 #: 零缺席**；HEAD 副本（`git archive HEAD`）复算亦 125 ⇒ 已入库件，非他席在飞件。
 #: 地板只准升，涨由名册合法增长驱动（同批 UNCOVERED_CEILING 101→105 由这四枚未进真身册驱动）。
-REGISTERED_FLOOR = 125
+#: 施工席33 合法增长（现算 2026-10-03，尺＝`registered_capability_ids()` 现算）：125→**127**，
+#: +2 逐枚点名＝`bot.network_patrol`／`bot.outbound_gate`（C5 能力注册接线波「使用即登记」补登
+#: CONTROLLED_INTERNAL_CAPABILITIES，capability_registry.py；HEAD 副本复算亦 125 ⇒ 他席在飞件，
+#: **照实计入真值不摘**）。零余量锁逼地板==现算，同批跟随；同根账见上方 EXECUTION_SURFACE 注。
+REGISTERED_FLOOR = 127
 
 #: 腿③b「已申报」侧的扫描面分母（＝本册申报枚数，由循环体自己数）。**地板，只准升。**
 #: 现算 13（2026-09-24T00:19:08Z 首届）。防"把待扫集合缩成手挑子集 ⇒ 未接真数看着变少"这一手。
@@ -224,7 +236,11 @@ DECLARED_SCAN_FLOOR = 20
 #: 落款点 ⇒ HEAD 103→现算 104。**照实计入真值不摘**（先例＝`test_config_key_registration_ledger.py`
 #: 的 `CORPUS_FLOOR_BASELINE` 上方注：在飞件把地板推着走时按现算跟随并点名来源，不等他们入库）。
 #: 本席实跑读数＝universe 104 / declared 54 / states wired45·generic1·offseam0·none58。
-ROSTER_SCAN_FLOOR = 104
+#: 施工席20 合法增长（现算 2026-10-03）：104→**106**＝在飞 file-gateway/files-incoming 波
+#: 在根 `__init__.py` 的 `capability_id="bot.file"` 落款点（:6168/:6249/:7661 一带）等被普查
+#: 看见的新行（三趟同尺现算 roster=106 等值 ⇒ 非瞬态；CLI universe 同刻 106；门内 roster 尺
+#: 与 CLI universe 分母差在先账 104 时已存在，本地板跟门内尺）。**照实计入真值不摘**，逐枚冒领不做。
+ROSTER_SCAN_FLOOR = 106
 
 #: 七维「值完整性」的**未点名空位总数**（S242R 立，防第二种空挂＝有腿、值全空）。**上限，只准降。**
 #: 现算 0（2026-09-25S242R：本册 20 枚对每一枚被执法内容维都是"要么有值、要么显式点名缺位"）。

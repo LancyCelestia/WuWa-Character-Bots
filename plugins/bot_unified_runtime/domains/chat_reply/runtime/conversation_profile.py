@@ -30,6 +30,17 @@ TG 群主与管理员腿、邮件的诚实缺失句。但那些读出来的是**
 缓存 kind 沿用 ``group_cache`` 的同一张登记表，所以同一次问话里画像层与命令腿
 **命中同一条缓存项**，不会各打一遍协议。
 
+## 会话桥（2026-10-03 席15）：协议格怎么真流动
+
+装配点（``character/providers.py::conversation_profile_note_for``）经
+``profile_session_api(platform, bot_id)`` 拿同步桥：三源句柄通路（``on_bot_connect``
+公共钩子钉 ``(bot, loop)`` ＋ ``nonebot.get_bots()`` 补扫已连接 bot ＋ ops 看门狗
+任务借 loop 句柄），桥本体复用一期 ``group_info.build_onebot_api_bridge``——
+**零第二桥实现、零第二取数通路**。三源任一缺席 ⇒ ``None`` ⇒ ``api_available=False``
+三态诚实降级（unprobed、零调用），绝不谎报。每轮采集套 ``BoundedSessionFetch``
+独立轻预算：穷＝停发，余格按 ``unprobed`` 说话；单发超时 2s（比命令腿 8s 紧，
+画像不许挤占主回复）。只读契约：读口唯一消费点＝本文件的格子计划。
+
 两个投影面：
 
 - ``answer_lines``：显式命令的回答（守岸人口吻，逐格分态说话）；
@@ -61,16 +72,20 @@ TG 群主与管理员腿、邮件的诚实缺失句。但那些读出来的是**
   ``get_group_signed_list`` 是「今日打卡」）。对端资料走 ``get_stranger_info``
   （``nickname``/``long_nick``/``level``/``status``/``batteryStatus``）。**电量字段在册、
   但值是否恒 0 属运行时事实 ⇒ 0/空一律 ``missing``**，绝不写成「电量 0%」（一期同口径）。
-  群文件协议全量口（``get_group_root_files`` 等）在册未接 ⇒ 本层 ``files`` 只吃本地账本，
-  没账本就 ``missing``，不拿未核的动作名去猜。
+  **两条在册口已补接（2026-10-03 检索与知识波）**：账号状态专口 ``nc_get_user_status``
+  （独立成格 ``nc_user_status``，``VIS_SELF`` 门同判据、独立缓存 kind）；群文件全量口
+  ``get_group_root_files``（本地账本缺行时探一次，**只报数量/容量级，绝不列文件名与
+  内容**——隐私红线同成员名单；载荷候选字段读不出就 ``missing``，不编形态）。
 - **Telegram**（Bot API + 本仓实装适配器双源）：``get_chat``/``get_chat_member_count``/
   ``get_chat_member``/``get_chat_administrators`` 在册 ⇒ 群名/介绍/置顶/人数/群主与管理员/
   本人身份与头衔可得；**在线状态、精华、相册、待办、群文件、成员全量名单**没有对应方法 ⇒
   ``absent``（理由一律写「Bot API」，与「我没去查」分家）。``bio``（签名）只在私聊
   ``getChat`` 回，群内取不到 ⇒ 群档这一格 ``absent``。
 - **Mail**：SMTP/IMAP 不经营群务 ⇒ 群族整体 ``absent``；``From`` 显示名 / ``To`` / ``Cc`` /
-  主题是「适配器解得出、摄取链未带」⇒ ``missing`` 并留票号 **T-META-INGEST-1**（能拿没接
-  ≠ 协议没有）；``Bcc`` 按投递语义在收信侧本就不存在 ⇒ 唯一的真 ``absent``。
+  主题的**结构化契约位**仍未带 ⇒ ``missing``（票 **T-META-INGEST-1** 留档）。摄取侧
+  已于 2026-10-03 在 ``mail_adapter`` 咽喉以**信头文本块**随信补进会话（模型看信即见），
+  但那是信文通道，不是结构化格子——两件事分开记，能拿没接 ≠ 协议没有的判据不变；
+  ``Bcc`` 按投递语义在收信侧本就不存在 ⇒ 唯一的真 ``absent``。
 - **自身信息**：台账 #60★ 硬红线「禁读 ``get_login_info`` 认自身名」——本层**不碰**该动作，
   bot 自身的名字走人格册与配置真身（别席在办），这里只采集**对端与会话**的事实。
 
@@ -83,6 +98,8 @@ TG 群主与管理员腿、邮件的诚实缺失句。但那些读出来的是**
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -136,6 +153,15 @@ QQ_META_PROBE_OK = _gi.QQ_META_PROBE_OK
 QQ_META_PROBE_FAILED = _gi.QQ_META_PROBE_FAILED
 QQ_META_PROBE_UNPROBED = _gi.QQ_META_PROBE_UNPROBED
 QQ_META_UNPROBED_ANSWER = _gi.QQ_META_UNPROBED_ANSWER
+# 两条补接的在册探测（2026-10-03 检索与知识波）：常量真身仍在 group_info，
+# 本层只再导出（同上「不写第二份」纪律）。
+KIND_QQ_USER_STATUS = _gi.KIND_QQ_USER_STATUS
+QQ_USER_STATUS_ACTION = _gi.QQ_USER_STATUS_ACTION
+QQ_USER_STATUS_TTL_SECONDS = _gi.QQ_USER_STATUS_TTL_SECONDS
+qq_user_status_from_payload = _gi.qq_user_status_from_payload
+KIND_GROUP_ROOT_FILES = _gi.KIND_GROUP_ROOT_FILES
+GROUP_ROOT_FILES_ACTION = _gi.GROUP_ROOT_FILES_ACTION
+GROUP_ROOT_FILES_TTL_SECONDS = _gi.GROUP_ROOT_FILES_TTL_SECONDS
 
 __all__ = [
     "FIELD_ABSENT",
@@ -145,17 +171,28 @@ __all__ = [
     "FIELD_MISSING",
     "FIELD_OK",
     "FIELD_UNPROBED",
+    "GROUP_ROOT_FILES_ACTION",
+    "KIND_GROUP_ROOT_FILES",
+    "KIND_QQ_USER_STATUS",
     "NOTE_KEYS",
+    "PROFILE_RPC_BUDGET_SECONDS",
+    "PROFILE_RPC_TIMEOUT_SECONDS",
+    "QQ_USER_STATUS_ACTION",
+    "BoundedSessionFetch",
     "ConversationProfile",
     "ProfileField",
     "answer_lines",
     "as_mapping",
     "build_profile",
+    "ensure_profile_bridge_registered",
     "fetch_through_cache",
     "format_qq_account_meta_note",
+    "make_profile_fetch",
     "make_shared_cache",
     "note_text",
+    "profile_session_api",
     "qq_meta_probe_state",
+    "qq_user_status_from_payload",
     "read_qq_account_meta",
     "role_at_least",
 ]
@@ -201,12 +238,16 @@ VIS_ADMINS = "admins"
 
 #: 注入白名单：**只有这些格进每轮提示词**。参与者/名单/相册/待办/群文件刻意不在内——
 #: 长期把别人的话事记录与群务清单铺给模型是另一条隐私线（一期只在显式命令里答）。
+#: ``group_memo``（群介绍，2026-10-03 检索与知识波补格）：群内公开面的一句话简介，
+#: 与群名同档（``VIS_SESSION``），帮模型分清「这是哪个群、这个群是干嘛的」；
+#: 它是群主设置的公共文案，不是任何成员的私人痕迹，进注入串不破隐私线。
 NOTE_KEYS: frozenset[str] = frozenset(
     {
         "account_id",
         "nickname",
         "group_id",
         "group_name",
+        "group_memo",
         "group_card",
         "group_title",
         "group_role",
@@ -298,11 +339,15 @@ def make_shared_cache(
     """带 QQ 对端资料 kind 登记的缓存实例。
 
     一期在 ``group_info._SHARED_CACHE`` 上就地补过同一条登记（``group_cache`` 的缺省表里
-    没有这个 kind，未登记＝TTL 0＝永不缓存＝每轮一次 RPC）。本层给同一个补登记做成
-    可复用的工厂，别让下一个接手再踩一次这个坑。
+    没有 QQ 对端资料这个 kind，未登记＝TTL 0＝永不缓存＝每轮一次 RPC）。本层给同
+    一批补登记做成可复用的工厂，别让下一个接手再踩一次这个坑。
     """
     return GroupInfoCache(
-        ttl_by_kind={KIND_QQ_ACCOUNT_META: QQ_ACCOUNT_META_TTL_SECONDS},
+        ttl_by_kind={
+            KIND_QQ_ACCOUNT_META: QQ_ACCOUNT_META_TTL_SECONDS,
+            KIND_QQ_USER_STATUS: QQ_USER_STATUS_TTL_SECONDS,
+            KIND_GROUP_ROOT_FILES: GROUP_ROOT_FILES_TTL_SECONDS,
+        },
         clock=clock,
         max_entries=max_entries,
     )
@@ -343,6 +388,246 @@ def fetch_through_cache(
 
 
 # ---------------------------------------------------------------------------
+# 会话桥（2026-10-03 席15）：把协议端的 ``bot.call_api`` 桥进画像采集
+#
+# 三源句柄通路（全程 NoneBot/在册公共口，**不硬造第二通路**）：
+# ① ``driver.on_bot_connect``（NoneBot 公共钩子）：连接/重连那一刻把 ``(bot, loop)``
+#    一起钉进桥座——钩子在事件循环线程上跑，``get_running_loop`` 拿得到主循环；
+# ② ``nonebot.get_bots()``（host_metrics 已判定的「有哪些端点、谁在线」唯一公共
+#    答案）：懒注册晚于连接的补偿腿，扫已连接 bot；
+# ③ loop 句柄兜底：ops 看门狗任务跑在主循环上（``start_loop_watchdog`` 在
+#    on_startup 起任务），任务对象自带 loop。
+# 桥本体＝复用一期 ``group_info.build_onebot_api_bridge``（run_coroutine_threadsafe，
+# RPC 天然下放线程池语义：调用点在管线 offload 线程，协程投递回主循环限时等），
+# **不写第二份桥实现**。三处任一缺席 ⇒ 解析口回 None ⇒ ``api_available=False``
+# 三态诚实降级（协议格 unprobed、一次 RPC 都不打），绝不谎报。
+# ---------------------------------------------------------------------------
+
+#: 画像桥单发 RPC 超时：比命令腿（``build_onebot_api_bridge`` 缺省 8s）紧——
+#: 画像是每轮注入的锦上添花段，不许吃掉主回复的份额。
+PROFILE_RPC_TIMEOUT_SECONDS = 2.0
+#: 单轮采集的独立轻预算（秒）。请求级预算（``_retrieval_affordance`` 族）今天到不了
+#: 本构造点，故取独立轻上限：烧完即停发，余下格子按 ``unprobed`` 说话
+#: （这一轮没去问 ≠ 问不到——三态口径）。
+PROFILE_RPC_BUDGET_SECONDS = 2.5
+
+_BRIDGE_LOCK = threading.Lock()
+#: 桥座：(adapter 名 casefold, bot.self_id) -> (bot, loop)。同适配器多实例
+#（如校园监听号）按 self_id 分键，解析口严格对号，防把 RPC 发给错的号。
+_BRIDGE_ENTRIES: dict[tuple[str, str], tuple[Any, Any]] = {}
+_BRIDGE_HOOKED = False
+
+#: 平台 → adapter 名片段（casefold 后子串比对）。邮件/控制台没有协议端可问。
+_BRIDGE_ADAPTER_BY_PLATFORM: dict[str, str] = {
+    "qq": "onebot",
+    "onebot": "onebot",
+    "telegram": "telegram",
+}
+
+#: 画像层共享缓存：``make_shared_cache`` 出厂形态（QQ 账号面三 kind TTL 在册；
+#: 其余 kind 走 group_cache 缺省表）。模块级单例＝同进程各轮命中同一份热值。
+_PROFILE_CACHE: GroupInfoCache = make_shared_cache()
+
+
+def _bridge_adapter_keys(bot: Any) -> tuple[str, ...]:
+    """bot 实例的 adapter 名候选（casefold）：适配器公开名 / ``bot.type``。"""
+    keys: list[str] = []
+    adapter = getattr(bot, "adapter", None)
+    candidates = (
+        type(adapter).get_name() if adapter is not None else "",
+        str(getattr(bot, "type", "") or ""),
+    )
+    for candidate in candidates:
+        name = str(candidate or "").strip().casefold()
+        if name and name not in keys:
+            keys.append(name)
+    return tuple(keys)
+
+
+def _capture_bridge(bot: Any, loop: Any) -> None:
+    for key in _bridge_adapter_keys(bot):
+        with _BRIDGE_LOCK:
+            _BRIDGE_ENTRIES[(key, str(getattr(bot, "self_id", "") or ""))] = (bot, loop)
+
+
+def _bridge_on_bot_connect(bot: Any) -> None:
+    """``on_bot_connect`` 钩子体：此刻在事件循环线程上，顺手把 loop 一起钉住。"""
+    try:
+        _capture_bridge(bot, asyncio.get_running_loop())
+    except Exception:  # noqa: BLE001, S110 - 钩子任何失败只降级为「这轮没得问」。
+        pass
+
+
+def ensure_profile_bridge_registered() -> bool:
+    """幂等注册 ``on_bot_connect`` 钩子；成功 True，nonebot 不可用 False。
+
+    nonebot 未初始化（离线测试/脚本）⇒ False 且**不留永久负缓存**——晚于
+    ``nonebot.init`` 的装配形态下一轮还能再试。注册成功后 bot 每次连接（含
+    断线重连，SnowLuma 前向 WS 的重连由驱动自动做）都会刷新桥座条目。
+    """
+    global _BRIDGE_HOOKED
+    if _BRIDGE_HOOKED:
+        return True
+    try:
+        import nonebot
+
+        nonebot.get_driver().on_bot_connect(_bridge_on_bot_connect)
+    except Exception:  # noqa: BLE001 - 未初始化/形状变化：保持未接线，下轮再试。
+        return False
+    with _BRIDGE_LOCK:
+        _BRIDGE_HOOKED = True
+    return True
+
+
+def _bridge_loop_candidate() -> Any:
+    """补扫用 loop 句柄：桥座既有条目优先，退 ops 看门狗任务（都在主循环上）。"""
+    with _BRIDGE_LOCK:
+        for _bot, loop in _BRIDGE_ENTRIES.values():
+            if loop is not None:
+                return loop
+    try:  # 只读借句柄：看门狗任务对象自带 loop（R3 停摆批的既有在册件）。
+        from plugins.bot_unified_runtime.domains.ops.monitor import loop_watchdog
+
+        task = getattr(loop_watchdog._SHARED_WATCHDOG, "_task", None)
+        if task is not None:
+            return task.get_loop()
+    except Exception:  # noqa: BLE001, S110 - 观测件缺席/未启动：只影响本轮补扫，不外抛。
+        pass
+    return None
+
+
+def _sweep_connected_bots() -> None:
+    """把已连接 bot 钉进桥座（懒注册晚于连接的补偿腿，只读、fail-open）。
+
+    loop 句柄拿不到 ⇒ 本轮不登记（诚实三态），等连接事件或下一轮补扫。
+    """
+    try:
+        import nonebot
+
+        bots = dict(nonebot.get_bots())
+    except Exception:  # noqa: BLE001 - 未初始化：这条腿今天不存在，照旧未接线。
+        return
+    loop = _bridge_loop_candidate()
+    if loop is None:
+        return
+    for bot in bots.values():
+        _capture_bridge(bot, loop)
+
+
+def profile_session_api(
+    platform: str,
+    bot_id: str = "",
+    *,
+    timeout: float = PROFILE_RPC_TIMEOUT_SECONDS,
+) -> ApiLike | None:
+    """画像会话桥解析口：本轮可用的同步 ``api(action, **params)``；没有 ⇒ None。
+
+    ``None`` ＝ ``build_profile(api_available=False)`` 的三态语义：协议格一律
+    ``unprobed`` 且一次 RPC 都不打。对端选择：``bot_id`` 给得出实名就严格对号
+    （防同适配器第二实例——如校园监听号——替主号接客）；对不上或 bot_id 缺席
+    且该适配器不恰有一个 bot ⇒ None。构造失败一律吞成 None，绝不外抛。
+    """
+    adapter_wanted = _BRIDGE_ADAPTER_BY_PLATFORM.get(str(platform or "").strip().casefold())
+    if adapter_wanted is None:
+        return None  # 邮件/控制台等没有协议端可问的通道。
+    ensure_profile_bridge_registered()
+    if not _BRIDGE_ENTRIES:
+        _sweep_connected_bots()
+    wanted_bot = str(bot_id or "").strip()
+    if wanted_bot.casefold() == "unknown":  # 装配缺省占位＝没带实名，按缺席处理。
+        wanted_bot = ""
+    with _BRIDGE_LOCK:
+        candidates = [
+            (bot, loop)
+            for (adapter, _self_id), (bot, loop) in _BRIDGE_ENTRIES.items()
+            if adapter_wanted in adapter and loop is not None
+        ]
+        if wanted_bot:
+            exact = [
+                (bot, loop)
+                for bot, loop in candidates
+                if str(getattr(bot, "self_id", "") or "") == wanted_bot
+            ]
+        else:
+            exact = candidates if len(candidates) == 1 else []
+    if not exact:
+        return None
+    bot, loop = exact[0]
+    try:
+        return _gi.build_onebot_api_bridge(bot, loop, timeout=timeout)
+    except Exception:  # noqa: BLE001 - 桥构造失败按「没得问」降级。
+        return None
+
+
+def make_profile_fetch(
+    api: ApiLike,
+    *,
+    cache: GroupInfoCache | None = None,
+) -> Fetch:
+    """把 ``api(action, **params)`` 桥接成画像读口 ``(kind, key, action, **params)``。
+
+    缓存缺省＝本层共享实例（QQ 账号面三 kind 的 TTL 在册；未登记 kind TTL=0＝
+    每轮 RPC 的坑不踩）。只缓存成功载荷，失败可重试。**只读契约**：本读口的
+    唯一消费点＝本文件的画像格子计划，发送/写类动作没有第二入口。
+    """
+    store = _PROFILE_CACHE if cache is None else cache
+
+    def fetch(kind: str, key: str, action: str, **params: Any) -> tuple[bool, Any]:
+        return fetch_through_cache(store, api, kind, key, action, **params)
+
+    return fetch
+
+
+class BoundedSessionFetch:
+    """带独立轻预算的会话读口（``Fetch`` 同签名）。
+
+    预算烧完 ⇒ ``askable()`` 翻 False 且停发：``_Ctx.api_available`` 走活门读它，
+    余下格子按 ``unprobed`` 说话（这一轮没去问），**绝不**谎报成「接口没答上」。
+    线程约定：调用点在管线 offload 线程（``_Ctx`` 既有约定），单轮画像只在那
+    一个线程上读，本类不加锁。
+    """
+
+    def __init__(
+        self,
+        fetch: Fetch,
+        *,
+        budget_seconds: float = PROFILE_RPC_BUDGET_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._fetch = fetch
+        self._budget = max(0.0, float(budget_seconds))
+        self._clock = clock
+        self._start = float(clock())
+        self._exhausted = self._budget <= 0.0
+
+    @property
+    def elapsed(self) -> float:
+        return float(self._clock()) - self._start
+
+    def askable(self) -> bool:
+        """活门：预算烧完即 False（``build_profile(api_available=...)`` 的活形态）。"""
+        return not self._exhausted
+
+    def _spend_check(self) -> bool:
+        if self._exhausted:
+            return False
+        if self._budget and self.elapsed >= self._budget:
+            self._exhausted = True
+            return False
+        return True
+
+    def __call__(self, kind: str, key: str, action: str, **params: Any) -> tuple[bool, Any]:
+        if not self._spend_check():
+            return False, None
+        try:
+            ok, payload = self._fetch(kind, key, action, **params)
+        except Exception:  # noqa: BLE001 - 协议异常按「问不出来」，与 _Ctx.payload 同口径。
+            ok, payload = False, None
+        self._spend_check()  # 烧完即翻门，余下格子走 unprobed。
+        return ok, payload
+
+
+# ---------------------------------------------------------------------------
 # 采集
 # ---------------------------------------------------------------------------
 
@@ -364,7 +649,15 @@ class _Ctx:
     ) -> None:
         self.message = message
         self.fetch = fetch
-        self.api_available = api_available
+        # api_available 收静态 bool 或**活门 callable**（预算闸穷＝翻 False）。
+        # 每个格子构造时现读活门：烧完之后才开始构造的格子按 unprobed 说话
+        # （这一轮没去问），已问到的格子保留真态——两头都不谎报。
+        if callable(api_available):
+            self._api_available_flag = None
+            self._api_available_gate = api_available
+        else:
+            self._api_available_flag = bool(api_available)
+            self._api_available_gate = None
         self.now = float(clock())
         sender = str(message.sender_id or "").strip()
         self.subject = str(subject_user_id or "").strip() or sender
@@ -384,6 +677,15 @@ class _Ctx:
         self._meta_cache: tuple[dict[str, str], list[str], tuple[bool, Any]] | None = None
 
     # -- 门 ------------------------------------------------------------------
+    @property
+    def api_available(self) -> bool:
+        if self._api_available_gate is not None:
+            try:
+                return bool(self._api_available_gate())
+            except Exception:  # noqa: BLE001 - 活门读坏了当「这轮没得问」，绝不反着谎报。
+                return False
+        return bool(self._api_available_flag)
+
     def allowed(self, visibility: str) -> bool:
         if visibility == VIS_SELF:
             return self.is_self
@@ -650,6 +952,55 @@ def _qq_account_cells(ctx: _Ctx) -> list[ProfileField]:
     return out
 
 
+def _nc_user_status_cell(ctx: _Ctx) -> ProfileField:
+    """账号状态**专口**（``nc_get_user_status``，2026-10-03 补接）。
+
+    对端账号面 ⇒ ``VIS_SELF`` 门与 ``_qq_account_cells`` 同一判据（结构性的，
+    不靠调用方记得）；与 ``get_stranger_info.status`` 那格**分格分口**：两者是
+    两条独立读腿，谁答上算谁，不互相冒充（缓存 kind 也分键）。
+    六态分立：forbidden / unprobed / failed / missing（读不出状态格）/ empty / ok。
+    """
+    key, label = "nc_user_status", "账号状态（专口）"
+    if not ctx.allowed(VIS_SELF):
+        return _forbidden(ctx, key, label)
+    if not ctx.subject:
+        return _field(
+            ctx, key, label, state=FIELD_UNPROBED, source=SOURCE_PROTOCOL, visibility=VIS_SELF,
+            reason="没有可问的对象号，这一轮是没去探测。",
+        )
+    if not ctx.api_available:
+        return _field(
+            ctx, key, label, state=FIELD_UNPROBED, source=SOURCE_PROTOCOL, visibility=VIS_SELF,
+            reason=NOTE_UNPROBED_LINE,
+        )
+    ok, payload = ctx.payload(
+        KIND_QQ_USER_STATUS,
+        f"qq:{ctx.subject}",
+        QQ_USER_STATUS_ACTION,
+        user_id=int(ctx.subject) if ctx.subject.isdigit() else ctx.subject,
+    )
+    if not ok:
+        return _field(
+            ctx, key, label, state=FIELD_FAILED, source=SOURCE_PROTOCOL, visibility=VIS_SELF,
+            reason="专口这次没答上，拿不到（不等于对方不在线，更不替对方编状态）。",
+        )
+    value = qq_user_status_from_payload(payload)
+    if value:
+        return _field(ctx, key, label, state=FIELD_OK, source=SOURCE_PROTOCOL, visibility=VIS_SELF, value=value)
+    data = as_mapping(payload)
+    state = (
+        FIELD_EMPTY
+        if any(name in data for name in ("status", "online_status", "ext_status"))
+        else FIELD_MISSING
+    )
+    reason = (
+        "专口回了空的状态值（不替你断言原因，也不写离线）。"
+        if state == FIELD_EMPTY
+        else "专口回了载荷但没带可认的状态格（候选字段没对上），读不出——不写「没有」也不写离线。"
+    )
+    return _field(ctx, key, label, state=state, source=SOURCE_PROTOCOL, visibility=VIS_SELF, reason=reason)
+
+
 # ---------------------------------------------------------------------------
 # 平台 × 作用域 的格子计划
 # ---------------------------------------------------------------------------
@@ -721,21 +1072,94 @@ def _participants_field(ctx: _Ctx) -> ProfileField:
     )
 
 
+#: ``get_group_root_files`` 载荷的候选字段（离线不可核 returnsSchema，只登记候选名；
+#: 认不出就如实说读不出，绝不编形态——相册/待办候选表同哲学）。
+_ROOT_FILE_LIST_KEYS: tuple[str, ...] = ("file_list", "files", "items", "folders")
+_ROOT_TOTAL_KEYS: tuple[str, ...] = ("total_space", "total_size", "capacity", "total_capacity")
+_ROOT_USED_KEYS: tuple[str, ...] = ("used_space", "used_size", "used")
+
+
+def _humanize_bytes(value: int) -> str:
+    """字节数 → 人话容量；只做单位换算，不圆整到「看起来好听」的数。"""
+    size = float(value)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.0f}{unit}" if unit == "B" else f"{size:.1f}{unit}"
+        size /= 1024
+    return f"{size:.1f}TB"
+
+
+def _root_files_readout(payload: Any) -> tuple[str, str]:
+    """群文件全量口载荷 → (摘要, 细分态)；细分态 ∈ ok/empty/missing。
+
+    **只报数量与容量级**：条目只数个数，名字/内容一个字都不出（隐私红线，
+    与成员名单「只给统计」同一判据）。两样都读不出 ⇒ missing（诚实缺数）。
+    """
+    rows: Any = None
+    data: dict[str, Any] = {}
+    if isinstance(payload, list):
+        rows = payload
+    else:
+        data = as_mapping(payload)
+        for key in _ROOT_FILE_LIST_KEYS:
+            value = data.get(key)
+            if isinstance(value, list):
+                rows = value
+                break
+    if rows is None and not data:
+        return "", "missing"
+    parts: list[str] = []
+    if rows is not None:
+        if not rows:
+            return "", "empty"
+        parts.append(f"根目录约 {len(rows)} 项")
+    used = first_int(data, _ROOT_USED_KEYS)
+    total = first_int(data, _ROOT_TOTAL_KEYS)
+    if used is not None and used >= 0:
+        text = f"已用 {_humanize_bytes(used)}"
+        if total is not None and total > 0:
+            text += f"（总 {_humanize_bytes(total)}）"
+        parts.append(text)
+    if not parts:
+        return "", "missing"
+    return "，".join(parts) + "（只报数量与容量级，不列文件名）", "ok"
+
+
 def _files_field(ctx: _Ctx, *, reason_no_group: str = "") -> ProfileField:
     if ctx.group_refused:
         return _forbidden(ctx, "files", "群文件", "跨会话拒绝：问的不是本事件所在的群。")
     if reason_no_group:
         return _absent(ctx, "files", "群文件", reason_no_group)
     summary = str(ctx.group_file_summary or "").strip()
-    if not summary:
+    if summary:
+        return _field(ctx, "files", "群文件", state=FIELD_OK, source=SOURCE_LEDGER, visibility=VIS_SESSION, value=summary)
+    # 本地账本缺行 ⇒ 探协议全量口（``get_group_root_files``，2026-10-03 补接；
+    # 动作册在册性由 group_info 模块头登记）。只报数量/容量级，绝不列内容。
+    if not ctx.api_available:
         return _field(
-            ctx, "files", "群文件", state=FIELD_MISSING, source=SOURCE_LEDGER, visibility=VIS_SESSION,
-            reason=(
-                "本地账本这一程没给概览（缺数＝缺行）；协议端的 ``get_group_root_files`` 全量口"
-                "在册但未接，我不拿未核过的动作名谎报「接口没回应」。"
-            ),
+            ctx, "files", "群文件", state=FIELD_UNPROBED, source=SOURCE_PROTOCOL, visibility=VIS_SESSION,
+            reason=NOTE_UNPROBED_LINE,
         )
-    return _field(ctx, "files", "群文件", state=FIELD_OK, source=SOURCE_LEDGER, visibility=VIS_SESSION, value=summary)
+    ok, payload = ctx.payload(
+        KIND_GROUP_ROOT_FILES, ctx.group_id, GROUP_ROOT_FILES_ACTION, group_id=ctx._gid()
+    )
+    if not ok:
+        return _field(
+            ctx, "files", "群文件", state=FIELD_FAILED, source=SOURCE_PROTOCOL, visibility=VIS_SESSION,
+            reason="本地账本缺行，协议全量口这次也没答上——拿不到（不等于群里没有文件）。",
+        )
+    summary, sub_state = _root_files_readout(payload)
+    if sub_state == "ok":
+        return _field(ctx, "files", "群文件", state=FIELD_OK, source=SOURCE_PROTOCOL, visibility=VIS_SESSION, value=summary)
+    if sub_state == "empty":
+        return _field(
+            ctx, "files", "群文件", state=FIELD_EMPTY, source=SOURCE_PROTOCOL, visibility=VIS_SESSION,
+            reason="协议端回了空列表——这一程群盘根目录没有文件。",
+        )
+    return _field(
+        ctx, "files", "群文件", state=FIELD_MISSING, source=SOURCE_PROTOCOL, visibility=VIS_SESSION,
+        reason="协议口回了载荷但读不出数量/容量格（候选字段没对上），不列内容也不编数。",
+    )
 
 
 def _common_absent_cells(ctx: _Ctx) -> list[ProfileField]:
@@ -941,6 +1365,7 @@ def _qq_group_cells(ctx: _Ctx) -> list[ProfileField]:
             )
         )
     out.extend(_qq_account_cells(ctx))
+    out.append(_nc_user_status_cell(ctx))
     if ctx.group_refused:
         out.append(_forbidden(ctx, "group_id", "群号", "跨会话拒绝：我只报当前所在群的号。"))
     else:
@@ -1010,6 +1435,7 @@ def _qq_group_stats(ctx: _Ctx) -> list[ProfileField]:
 def _qq_private_cells(ctx: _Ctx) -> list[ProfileField]:
     out = [_from_event(ctx, "account_id", "对方账号（QQ 号）", "sender_id", visibility=VIS_SELF)]
     out.extend(_qq_account_cells(ctx))
+    out.append(_nc_user_status_cell(ctx))
     for key, label in (
         ("group_id", "群号"),
         ("group_name", "群名"),
@@ -1243,13 +1669,17 @@ def _mail_cells(ctx: _Ctx) -> list[ProfileField]:
         _from_event(ctx, "display_name", "发件人昵称（From 显示名）", "sender_display_name"),
         _field(
             ctx, "mail_subject", "邮件主题", state=FIELD_MISSING, source=SOURCE_EVENT, visibility=VIS_SESSION,
-            reason="主题在适配器解得出，但契约位今天没带进会话记录——属摄取未接，不猜一个。",
+            reason=(
+                "主题已随信文进会话（摄取层以「主题：」行置顶），但结构化契约位仍未带"
+                "（票 T-META-INGEST-1 留档）——这一格只记结构化面，不猜一个。"
+            ),
         ),
         _field(
             ctx, "mail_recipients", "收件人（To/Cc）", state=FIELD_MISSING, source=SOURCE_EVENT, visibility=VIS_SESSION,
             reason=(
-                "适配器逐封解出 recipients_to/recipients_cc，是这条链还没接到会话记录里"
-                "（票 T-META-INGEST-1）——今天答不全是我没接上，不是邮件协议没有。"
+                "适配器逐封解出 recipients_to/recipients_cc，摄取咽喉已按信头文本块随信带进会话"
+                "（2026-10-03 补），但结构化契约位仍未带（票 T-META-INGEST-1 留档）——"
+                "这一格只记结构化面：没接上是我没接上，不是邮件协议没有。"
             ),
         ),
         _absent(ctx, "mail_bcc", "密送（Bcc）", "按投递语义，Bcc 名单在送出时被剥离，收信人这一侧的信里本来就没有它——这一格是真没有。"),
@@ -1307,7 +1737,7 @@ def build_profile(
     message: IncomingMessage,
     fetch: Fetch,
     *,
-    api_available: bool = True,
+    api_available: bool | Callable[[], bool] = True,
     clock: Callable[[], float] = time.time,
     subject_user_id: str = "",
     target_group_id: str = "",
@@ -1317,7 +1747,8 @@ def build_profile(
     """平台 + 会话 + 主体 → 结构化画像（含状态、来源、时间戳、可信度、缺失原因）。
 
     ``fetch`` 是一期同签名的读口 ``(kind, key, action, **params) -> (ok, payload)``；
-    ``api_available=False``＝桥未接线 ⇒ 协议格一律 ``unprobed`` 且**一次都不打**。
+    ``api_available`` 传 bool 或**活门 callable**（每格构造时现读）：False ＝桥未接线
+    ⇒ 协议格一律 ``unprobed`` 且**一次都不打**（预算闸穷＝活门翻 False，余格同口径）。
     ``subject_user_id`` 缺省＝问话人本人；给出别人的号 ⇒ ``VIS_SELF`` 格 ``forbidden``。
     ``target_group_id`` 给出且不是本事件所在群 ⇒ 群域整片 ``forbidden`` 且零调用。
     ``participant_memory`` / ``group_file_summary`` 由调用方取好再传（本层不开库、不写盘）。

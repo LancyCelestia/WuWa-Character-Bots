@@ -316,7 +316,15 @@ async def test_queue_worker_routes_telegram_request_to_matching_bot_and_send_to(
 
 
 @pytest.mark.asyncio
-async def test_queue_worker_routes_mail_request_to_matching_bot_and_send_to() -> None:
+async def test_queue_worker_routes_mail_request_to_matching_bot_and_send_mail() -> None:
+    """席 N1 2026-10-02（P3.12，叠 MAILINGRESS-F3 格 A/B）翻转：
+
+    旧名 `..._and_send_to`，钉的是「worker 认领重投腿 event=None ⇒ mail 降级走
+    ``bot.send_to``」那枚病态形——降级会丢 In-Reply-To/References/确定性 Message-ID，
+    收件端线程断裂且对端去重失效。修后重投腿与内联腿复用同一个报文构造器：
+    走 ``send_mail``、线程头由请求侧事实回填、``send_to`` 零调用。
+    其余 adapter 的 ``event=None → send_to`` 兜底形制逐字节不变（下面 telegram 那格仍绿）。
+    """
     send_request = _send_request(adapter="mail", bot_id="qq@example.com")
     queue = FakeQueue(send_request)
     scheduler = FakeScheduler()
@@ -343,7 +351,13 @@ async def test_queue_worker_routes_mail_request_to_matching_bot_and_send_to() ->
     await scheduler.job()
 
     assert queue.sent == ["req-1"]
-    assert mail_bot.send_to_calls == [("user-1", "你好")]
+    assert mail_bot.send_to_calls == [], "mail 重投腿不得再降级 send_to"
+    assert len(mail_bot.send_mail_calls) == 1, mail_bot.send_mail_calls
+    message = mail_bot.send_mail_calls[0]
+    assert message["To"] == "user-1"
+    # 线程头真身＝请求侧 origin_message_id（SendRequest 已带，替身只做形状适配）。
+    assert message["In-Reply-To"] == "message-1"
+    assert message["References"] == "message-1"
     assert mail_bot.send_calls == []
     assert telegram_bot.send_to_calls == []
 

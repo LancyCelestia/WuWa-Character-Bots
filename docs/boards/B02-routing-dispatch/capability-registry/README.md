@@ -56,3 +56,9 @@ flowchart LR
 ## 现行缺陷
 
 中央调度层的分波收编（Wave 1–4）未全部完成——哪些能力已经经 invoker 执行、哪些仍走直连，以 `tests/test_descriptor_wiredness_ledger.py` 的活体缺口账为唯一准绳，本文不抄一份会漂移的清单。挂账全貌见根目录 `HANDOFF-FIXWAVE-20260921.md` 与 `docs/design/capability-orchestration-adoption-spec.md`。
+
+⚠ 「唯一准绳」只管一件事，别把它读成两件（2026-10-02 席 C-D-01 补记）：缺口账判的是「有无汇缝字面量/直呼点」，
+而「这枚能力真被层 2 治理了吗」是另一把尺——`orchestrated_command` 只把**执行形在册**者交给 invoker，
+其余原样跑旧路。后者由常驻门 `tests/test_central_dispatch_closure_gate.py` 钉（实管面地板只准抬、
+到缝未实管那批的债账只准缩、逐枚名册只准增），它同时反查本行这句话：**该门红过就说明有两本账在互相冒充**。
+声明行的 `execution` 列不填＝只在册未接入，这条判据本身不变。

@@ -57,6 +57,19 @@ Wave 2 已落（本席亲跑 `tests/test_capability_single_registration.py` 全�
 因此**不得拿本表当"已接入"的凭据，也不得拿它当"一律没接入"的凭据**：中央缝是否真被生产
 调用、还剩多少没走，唯一准绳是 `tests/test_descriptor_wiredness_ledger.py` 的活体缺口账
 （另配入口侧的 `tests/test_five_entry_seam_lock.py`），本页不抄第二份会漂移的清单。
+
+⚠ **缺口账与「真交层 2」是两把尺，读两件不同的事**（2026-10-02 席 C-D-01 现算补记，已由常驻门
+`tests/test_central_dispatch_closure_gate.py` 钉成只准缩的账）：缺口账的 wired 判据含「根汇缝字面量
+站点」，凡到缝即记 wired；而 `orchestrated_command` 只在**执行形在册**
+（`_route_execution_adapters()` ∩ `_KNOWN_ADAPTERS`）时才真把能力交给层 2，否则原样跑旧路——权限门、
+健康、限额、审计 sink 一次都不过。两尺之差今天逐枚点名在同门的债账里（到缝却未实管那批），
+**缺口账绿不等于这批能力受层 2 治理**。总覆盖面一律写成分数并注明分母口径
+（`tests/test_central_dispatch_closure_gate.py` 现算：实管/在册 id 一枚一格；把分母说成"调用点数"
+就对不上账——按调用点另有一把尺、读数不同），本页不抄会漂移的数。
+同一把门还钉另两条常被念歪的账：**入口形不是同权**——`EntryKind` 里有中央汇缝的那几形
+与没有的那几形由该门逐形点名（无缝者要写理由，新增形不归类当场红）；**`engine_only` 不是可用档**——
+它躺在 `RESERVED_FUTURE_MODES`、`normalize_decision_mode` 一律回落 `legacy_only`，
+该门把「接管态枚数」与「生产/env 里把模式赋成保留值的落点数」都钉成 0 上限。
 `runtime/capability_protocols.py` 「生产路径零 import」是 2026-09-21 审计 V1-1 的**当时值**，
 此后不再成立——配音腿与 creation 两面对接点的执行体都经中央 `default_invoker()` 走信封，
 `/bot status` 的健康行也现读该件。反过来，多数在册能力仍在根 `__init__.py` 的内联闭包里
