@@ -8,7 +8,7 @@
 > 知识源、分块、索引与配额；来源可信度约束。
 
 - 归属板块：[B04](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/core/search`、`plugins/bot_unified_runtime/domains/chat_reply/character/teaching_service.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/core/search`、`plugins/bot_unified_runtime/domains/chat_reply/character/teaching_service.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/question_intent.py`
 - 帮助主题：搜索
 - 配置键前缀：`bot_knowledge_`, `bot_search_`（逐键以目录册为准）
 
@@ -18,6 +18,8 @@
 |---|---|---|---|---|
 | [分块与索引状态](kb-indexing.md) | — | — | — | — |
 | [来源配额与检索预算](kb-quota.md) | — | — | — | — |
+| [联网判定与 GENERAL 二判钩子](web-search-intent.md) | — | — | — | — |
+| [工具注册审批账](tool-admission.md) | — | — | — | — |
 <!-- BOARD-AUTO:END -->
 
 ## 这个功能解决什么

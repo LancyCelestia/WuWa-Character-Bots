@@ -20,7 +20,7 @@
 |---|---|---|
 | [会话历史与上下文](history/README.md) | 线性对话历史的读写窗口与注入裁剪。 | — |
 | [长期记忆与反思](long-term-memory/README.md) | 抽取、反思回路、记忆总线 v2 召回打分与生命周期。 | [抽取与提示词硬化](long-term-memory/memory-extract.md)、[夜间反思回路](long-term-memory/reflection-loop.md)、[召回打分与冗余惩罚](long-term-memory/memory-recall.md)、[遗忘、墓碑与恢复](long-term-memory/memory-forget.md) |
-| [知识库与检索](knowledge/README.md) | 知识源、分块、索引与配额；来源可信度约束。 | [分块与索引状态](knowledge/kb-indexing.md)、[来源配额与检索预算](knowledge/kb-quota.md) |
+| [知识库与检索](knowledge/README.md) | 知识源、分块、索引与配额；来源可信度约束。 | [分块与索引状态](knowledge/kb-indexing.md)、[来源配额与检索预算](knowledge/kb-quota.md)、[联网判定与 GENERAL 二判钩子](knowledge/web-search-intent.md)、[工具注册审批账](knowledge/tool-admission.md) |
 | [笔记与授时](notes/README.md) | Markdown 笔记 CRUD、自然语言勾选、NTP 授时时序。 | [记/看/放下/列表](notes/notes-crud.md)、[自然语言完成勾选](notes/mark-done.md)、[NTP 授时与钟差钳制](notes/time-sync.md) |
 <!-- BOARD-AUTO:END -->
 

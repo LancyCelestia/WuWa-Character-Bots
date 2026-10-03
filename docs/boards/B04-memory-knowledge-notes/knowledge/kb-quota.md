@@ -6,7 +6,7 @@
 ## B04.knowledge · 来源配额与检索预算
 
 - 层级：一级 B04 → 二级 knowledge → 三级 `kb-quota`
-- 实现落点：`plugins/bot_unified_runtime/domains/core/search`、`plugins/bot_unified_runtime/domains/chat_reply/character/teaching_service.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/core/search`、`plugins/bot_unified_runtime/domains/chat_reply/character/teaching_service.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/question_intent.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

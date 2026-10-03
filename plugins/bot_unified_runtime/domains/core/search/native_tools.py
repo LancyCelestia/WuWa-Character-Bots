@@ -19,13 +19,27 @@
 
 返回文本纪律（ATKLLM-1 同源）：工具结果＝二手数据，回注 role=tool 前必须过
 ``guard_tool_result_text``（中央件 ``guard_secondhand_text``），禁手拼边界标签。
+
+工具注册审批账（2026-10-02/03 安全与文档波补）：此前 MCP 腿是「schema 在册即白名单」
+——``nonebot_plugin_mcpclient`` 交来什么工具名，模型可选面与执行面就照单全收，
+服务端漂移/供应链污染能让**新工具名**静默进入执行面。:class:`ToolAdmissionLedger`
+补 fail-closed 审批账：内置九枚以源内显式名册为账（存量兼容、零落盘放行）；
+外来工具名首见 ⇒ 落 pending 审计行并拒执行，管理员经 :meth:`ToolAdmissionLedger.approve`
+/:meth:`~ToolAdmissionLedger.deny` 显式登记后才放行/拉黑。账本＝JSONL append-only
+（``consent.JsonSafetyLedger`` 同族、选轻），落点由装配期构造时给定；本模块自身
+零接线 ⇒ 零行为变化，接线说明见波次交付报告。
 """
 
 from __future__ import annotations
 
+import json
+import os
 import re
-from collections.abc import Iterable, Mapping
+import threading
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
@@ -278,12 +292,289 @@ def guard_tool_result_text(text: str, *, tool_name: str) -> str:
     return guard_secondhand_text(text, source_label=f"内置工具 {tool_name} 结果")
 
 
+# ---------------------------------------------------------------------------
+# 工具注册审批账（席7 安全与文档波，2026-10-03）：现状「schema 在册即白名单」——
+# 任何新工具名只要进了 schema 就可执行，缺管理员审批环节。本账补上：
+# 新工具名**首次出现** → 落 pending 审计行 + fail-closed 拒执行，直到管理员批准；
+# ``NATIVE_TOOL_ROSTER`` 在册九枚默认视为已批准（存量兼容：零落盘、零行为变化）。
+# 命令面（/bot 工具批准|拒绝 <工具名>）归 admin 域（不实现命令本体），
+# 话术常量 ``TOOL_ADMIT_COMMAND_HINT`` + ``pending_names()`` 就是接线面。
+# 账本形态照 ``consent.JsonSafetyLedger``：JSONL append-only、同工具名后写覆盖前写、
+# 带锁；「谁批的、批的什么」不许被后来的重写抹掉。
+# ---------------------------------------------------------------------------
+TOOL_ADMIT_STATUS_PENDING = "pending"
+TOOL_ADMIT_STATUS_APPROVED = "approved"
+TOOL_ADMIT_STATUS_DENIED = "denied"
+
+#: 管理员命令建议（接线方在 pending 回执里附这句；命令本体归 admin 域）。
+TOOL_ADMIT_COMMAND_HINT = (
+    "新工具要先有管理员点头我才用：批准「/bot 工具批准 <工具名>」、"
+    "拒绝「/bot 工具拒绝 <工具名>」。没批之前我只记账、不执行。"
+)
+
+#: 审计标签常量（接线方落到 audit_tags；「不在账的工具被拒了」的唯一代号）。
+TOOL_ADMIT_AUDIT_TAG = "tool_not_in_admit_ledger"
+
+
+class ToolAdmitWriteError(RuntimeError):
+    """审批账写不进去（目录建不了/盘写失败）——批准面必须原样抛（批准必须落得住账）。"""
+
+
+@dataclass(frozen=True)
+class ToolAdmissionRow:
+    """一枚审批审计行（append-only 账上的一格；同工具名后写覆盖前写）。"""
+
+    tool_name: str
+    status: str  # pending / approved / denied
+    source: str
+    at: str  # ISO 时刻（带时区）
+    actor: str = ""  # 批准/拒绝人（pending 行为空）
+    note: str = ""
+
+
+def _default_admit_clock() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class ToolAdmissionLedger:
+    """JSONL append-only 工具审批账（``consent.JsonSafetyLedger`` 同族形态）。
+
+    - ``admit``：派发腿的唯一准入口。在册工具（``grandfathered``，缺省＝
+      ``NATIVE_TOOL_ROSTER`` 全部工具名）直接放行且**零落盘**；其余查账：
+      approved 放行、denied 拒、无账/pending ⇒ 先落 pending 审计行再拒
+      （同工具已有 pending 行不重复落账，防调度循环刷爆账本）。
+    - fail-closed：账本读不了/写不了 ⇒ admit 一律 pending 拒执行并带 note，
+      绝不因账本缺席放行；``approve``/``deny`` 写失败原样抛
+      :class:`ToolAdmitWriteError`（批准必须落得住账）。
+    - 畸形工具名（空/超长）⇒ denied（不落账——没有可审计的「工具」）。
+    """
+
+    backend_name = "json"
+
+    def __init__(
+        self,
+        directory: str | Path,
+        *,
+        basename: str = "tool_admit",
+        grandfathered: frozenset[str] | None = None,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        text = str(directory or "").strip()
+        if not text:
+            raise ValueError("工具审批账需要显式目录")
+        self.directory = Path(text).expanduser()
+        self.ledger_path = self.directory / f"{basename}_ledger.jsonl"
+        self._grandfathered = (
+            frozenset(spec.tool_name for spec in NATIVE_TOOL_ROSTER.values())
+            if grandfathered is None
+            else frozenset(grandfathered)
+        )
+        self._clock = clock or _default_admit_clock
+        self._lock = threading.Lock()
+
+    # ---- 账体 ----
+
+    def _append(self, row: ToolAdmissionRow) -> None:
+        line = json.dumps(
+            {
+                "tool_name": row.tool_name,
+                "status": row.status,
+                "source": row.source,
+                "at": row.at,
+                "actor": row.actor,
+                "note": row.note,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ) + "\n"
+        try:
+            with self._lock:
+                self.directory.mkdir(parents=True, exist_ok=True)
+                with open(self.ledger_path, "a", encoding="utf-8") as handle:
+                    handle.write(line)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+        except OSError as exc:
+            raise ToolAdmitWriteError(f"写 {self.ledger_path.name} 失败：{type(exc).__name__}: {exc}") from exc
+
+    def _effective_status(self, tool_name: str) -> ToolAdmissionRow | None:
+        """读账：同工具名最后一行说了算（append-only 的投影口）。读挂了返回 None。"""
+        try:
+            with self._lock, open(self.ledger_path, "r", encoding="utf-8") as handle:
+                lines = handle.readlines()
+        except OSError:
+            return None
+        row: ToolAdmissionRow | None = None
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except ValueError:
+                continue  # 烂行跳过（append-only 账不因半行报废）
+            if not isinstance(payload, dict) or payload.get("tool_name") != tool_name:
+                continue
+            row = ToolAdmissionRow(
+                tool_name=tool_name,
+                status=str(payload.get("status") or TOOL_ADMIT_STATUS_PENDING),
+                source=str(payload.get("source") or ""),
+                at=str(payload.get("at") or ""),
+                actor=str(payload.get("actor") or ""),
+                note=str(payload.get("note") or ""),
+            )
+        return row
+
+    # ---- 准入面 ----
+
+    def admit(self, tool_name: str, *, source: str = "mcp") -> ToolAdmissionRow:
+        """派发前的唯一准入口：approved 放行，其余一律先记账再拒（fail-closed）。"""
+        name = str(tool_name or "").strip()
+        if not name or len(name) > 128:
+            return ToolAdmissionRow(
+                tool_name=name[:128],
+                status=TOOL_ADMIT_STATUS_DENIED,
+                source=source,
+                at=self._clock().isoformat(),
+                note="畸形工具名（空或超长），不落账、不放行",
+            )
+        if name in self._grandfathered:
+            return ToolAdmissionRow(
+                tool_name=name,
+                status=TOOL_ADMIT_STATUS_APPROVED,
+                source=source,
+                at=self._clock().isoformat(),
+                note="内置在册工具（存量兼容，默认已批准）",
+            )
+        current = self._effective_status(name)
+        if current is not None and current.status == TOOL_ADMIT_STATUS_APPROVED:
+            return current
+        if current is not None and current.status == TOOL_ADMIT_STATUS_DENIED:
+            return current  # 已被拒绝：后写覆盖前写，拒绝是终态
+        if current is not None and current.status == TOOL_ADMIT_STATUS_PENDING:
+            return current  # 已在待批，不重复落账（调度循环防刷屏）
+        row = ToolAdmissionRow(
+            tool_name=name,
+            status=TOOL_ADMIT_STATUS_PENDING,
+            source=source,
+            at=self._clock().isoformat(),
+            note="新工具首次出现，待管理员批准；批之前拒执行",
+        )
+        try:
+            self._append(row)
+        except ToolAdmitWriteError as exc:
+            return ToolAdmissionRow(
+                tool_name=name,
+                status=TOOL_ADMIT_STATUS_PENDING,
+                source=source,
+                at=self._clock().isoformat(),
+                note=f"审计账写不下去，fail-closed 拒执行：{exc}",
+            )
+        return row
+
+    def approve(self, tool_name: str, *, actor: str, note: str = "") -> ToolAdmissionRow:
+        """管理员批准（命令面唯一入口；写失败原样抛——批准必须落得住账）。"""
+        return self._record(
+            tool_name, TOOL_ADMIT_STATUS_APPROVED, actor=actor, note=note
+        )
+
+    def deny(self, tool_name: str, *, actor: str, note: str = "") -> ToolAdmissionRow:
+        """管理员拒绝；拒绝后 ``admit`` 恒 denied（后写覆盖前写）。"""
+        return self._record(tool_name, TOOL_ADMIT_STATUS_DENIED, actor=actor, note=note)
+
+    def _record(self, tool_name: str, status: str, *, actor: str, note: str) -> ToolAdmissionRow:
+        name = str(tool_name or "").strip()
+        row = ToolAdmissionRow(
+            tool_name=name,
+            status=status,
+            source="admin",
+            at=self._clock().isoformat(),
+            actor=str(actor or "").strip(),
+            note=note,
+        )
+        self._append(row)
+        return row
+
+    def pending_names(self) -> tuple[str, ...]:
+        """当前 pending 的工具名（admin 命令面「待批清单」取数口；读挂了给空表）。"""
+        try:
+            with self._lock, open(self.ledger_path, "r", encoding="utf-8") as handle:
+                lines = handle.readlines()
+        except OSError:
+            return ()
+        latest: dict[str, str] = {}
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(payload, dict) and payload.get("tool_name"):
+                latest[str(payload["tool_name"])] = str(payload.get("status") or "")
+        return tuple(sorted(n for n, s in latest.items() if s == TOOL_ADMIT_STATUS_PENDING))
+
+    def status_of(self, tool_name: str) -> ToolAdmissionRow | None:
+        """查一枚工具的现行审批态（只读；无账返回 None）。"""
+        name = str(tool_name or "").strip()
+        if name in self._grandfathered:
+            return ToolAdmissionRow(
+                tool_name=name,
+                status=TOOL_ADMIT_STATUS_APPROVED,
+                source="roster",
+                at="",
+                note="内置在册工具（存量兼容，默认已批准）",
+            )
+        return self._effective_status(name)
+
+
+def filter_mcp_tools_schema(
+    tools: Iterable[object],
+    ledger: ToolAdmissionLedger,
+) -> tuple[list[dict[str, Any]], tuple[str, ...], tuple[str, ...]]:
+    """MCP schema 面的统一过滤口（``chat.py::_mcp_tools_schema`` 的接线挂点）。
+
+    逐枚过 :meth:`ToolAdmissionLedger.admit`：approved 才进模型可选面；
+    pending/denied/畸形条目一律拒之门外并回审计标签。返回
+    ``(放行 schema 列表, 被拒工具名元组, 审计标签元组)``——调用方拿第一列
+    替换原 schema、第三列落 audit_tags（禁在调用点自判，第二真身）。
+    """
+    admitted: list[dict[str, Any]] = []
+    refused_names: list[str] = []
+    tags: list[str] = []
+    for item in tools or ():
+        if not isinstance(item, Mapping):
+            refused_names.append("?")
+            tags.append(TOOL_ADMIT_AUDIT_TAG)
+            continue
+        fn = item.get("function")
+        fn = fn if isinstance(fn, Mapping) else item
+        name = str(fn.get("name") or "").strip()
+        row = ledger.admit(name)
+        if row.status == TOOL_ADMIT_STATUS_APPROVED:
+            admitted.append(dict(item))
+        else:
+            refused_names.append(name or "?")
+            tags.append(TOOL_ADMIT_AUDIT_TAG)
+    return admitted, tuple(refused_names), tuple(tags)
+
+
 __all__ = [
     "NATIVE_TOOLS_CONFIG_KEY",
     "NATIVE_TOOL_ROSTER",
+    "TOOL_ADMIT_AUDIT_TAG",
+    "TOOL_ADMIT_COMMAND_HINT",
+    "TOOL_ADMIT_STATUS_APPROVED",
+    "TOOL_ADMIT_STATUS_DENIED",
+    "TOOL_ADMIT_STATUS_PENDING",
     "WRITE_OR_PRIVILEGED_DENYLIST",
     "NativeToolSpec",
+    "ToolAdmissionLedger",
+    "ToolAdmissionRow",
+    "ToolAdmitWriteError",
     "build_native_tool_schemas",
+    "filter_mcp_tools_schema",
     "guard_tool_result_text",
     "native_tool_for_name",
     "native_tools_enabled",

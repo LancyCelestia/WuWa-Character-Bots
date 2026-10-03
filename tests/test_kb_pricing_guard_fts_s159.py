@@ -752,7 +752,10 @@ def test_fts_rebuild_failure_logs_the_exception_type(tmp_path, caplog, monkeypat
 
     reasons = [r.getMessage() for r in caplog.records if "fts" in r.getMessage().lower()]
     assert reasons, "FTS 重建失败必须留痕（本波就是靠这里没留痕猜了五轮）"
-    assert "OperationalError" in reasons[0], f"留痕必须点名异常类型：{reasons[0]}"
+    # 2026-10-03 归因：schema 幂等迁移日志（vector_knowledge 迁移腿）会先落一行 WARNING，
+    # 其 db_dir＝本用例 tmp 目录名含「fts」⇒ 旧断言 `reasons[0]` 点名的是迁移行而非失败行。
+    # 改为「至少一行点名异常类型」：吞异常不落痕时 reasons 里只剩迁移行 ⇒ 仍然红，锁牙不变。
+    assert any("OperationalError" in r for r in reasons), f"留痕必须点名异常类型：{reasons}"
 
 
 def test_ensure_fts_index_logs_the_outer_exception(tmp_path, caplog, monkeypatch):
