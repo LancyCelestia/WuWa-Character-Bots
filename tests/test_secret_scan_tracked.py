@@ -29,8 +29,9 @@
 ------------------------------------
 ``FIXTURE_FAKE_EXEMPTIONS``：测试夹具里**由该测试自己合成的假凭据**（形态落 F1、任何服务面上
 都不存在、把它摘掉等于摘掉那条回归锁本身）一律**不进** ``F1_DEBT_ROSTER``。理由照实写：名册记的
-是「tracked 源里硬编码真凭据」这笔**欠账**，欠账总出现次数被 ``ROSTER_CEILING``（32＝建账现值）
-钉死只准降；把合成值塞进名册＝拿假债顶穿上限，唯一出路是抬上限，而抬上限＝放宽判据，本门明令禁。
+是「tracked 源里硬编码真凭据」这笔**欠账**，欠账总出现次数被 ``ROSTER_CEILING``（33＝2026-10-04
+登记后现值；建账原值 32，见常量处注）钉死只准降；把合成值塞进名册＝拿假债顶穿上限，唯一出路是抬
+上限，而抬上限＝放宽判据，本门明令禁——例外只有一条：用户裁决点名登记（同处注记授权来源）。
 夹具不是债，就按夹具处理：**逐枚 (件, 指纹) 豁免 + 写明它是哪条断言的料**。豁免同样**绝不扩成
 「整件免检」**——同件里另一枚形态相同但值不同的凭据、或同一枚被多印，都照旧落回潮腿（两条牙见
 ``test_fixture_exemption_teeth_*``）；豁免条目在今天的树上扫不到也照红（不许留幽灵预豁免未来凭据，
@@ -80,6 +81,11 @@ from scripts.secret_scan_tracked import (
 #   可被判据反查——白名单机制该容纳此形态，但绝不扩成「整件免检」。
 F1_DEBT_ROSTER: dict[tuple[str, str], tuple[int, tuple[int, ...]]] = {
     # (相对路径, sha256[:16])                            : (期望次数, 导航行号[非判据])
+    # 2026-10-04 登记（用户简报点名、审计席逐条核过原文＝零真凭据）：scripts 件的
+    # RUNTIME_WRITE_TOKEN 是 ``--authorize`` 闸的全大写连字确认短语（掩码 I-A**TE、len=23），
+    # 名字含 token 才落 F1 赋值腿。该件不在 tests/ ⇒ 夹具豁免表形态门拒收，名册是唯一合规落点
+    # （上限随之 32→33，见 ROSTER_CEILING 处注）。
+    ("scripts/migrate_persona_isolation.py", "5750c01c28a72247"): (1, (79,)),
     ("tests/test_auditfix_parsers.py", "382f2b92346e5945"): (1, (120,)),
     ("tests/test_auditfix_parsers.py", "86939b09d8c07c28"): (2, (614, 622)),
     ("tests/test_auditfix_parsers.py", "c6ce0b1cf21984fa"): (1, (358,)),
@@ -116,11 +122,106 @@ FIXTURE_FAKE_EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
             "「tracked 源里硬编码真凭据」那笔债 ⇒ 不进 F1_DEBT_ROSTER、不动 ROSTER_CEILING。"
         ),
     ),
+    ("tests/test_atk_llm3_channel_health.py", "439209996799d6ac"): (
+        2,
+        (
+            "2026-10-04 审计确认夹具假值：`test_record_failure_redacts_various_secret_shapes` 的"
+            "打码回归料——合成 ``sk-`` 形 bearer 假值（掩码 ``sk-a**89``）喂进 ``record_failure``"
+            "（:42），:44 反断言原文不得进存储。两处同值＝同一条锁的喂料加反断言。合成串、任何服务面"
+            "不存在；摘掉＝拆掉该打码锁本身（换形态就验不到同一件事）。"
+        ),
+    ),
+    ("tests/test_atkfix_tgmail_failure_reasons.py", "3a10fc1822801ce9"): (
+        1,
+        (
+            "2026-10-04 审计确认夹具假值：模块常量 ``_STRADDLE``（44 个 x 后接 ``sk-`` 词根，令密钥"
+            "连段骑跨截断窗口）是 `test_final_error_truncated_secret_fragment_never_reaches_issue`"
+            " 的边界回归料，断言残段形态不得进 kind/safe_summary。合成串、服务面不存在；摘掉＝该"
+            "「先截后洗」边界锁验不到同一件事。"
+        ),
+    ),
+    ("tests/test_connect_phase_retry.py", "7152ffc9d2ee83fc"): (
+        1,
+        (
+            "2026-10-04 审计确认夹具假值：`test_nonebot_exception_message_text_never_enters_receipt_json`"
+            " 在异常文本里硬写 ``BOT_TOKEN`` 前缀的 ``sk-`` 形假值（掩码 ``sk-l**en``），断言异常原文"
+            "不得进回执 JSON。合成串、服务面不存在；摘掉＝该防泄锁失去料。"
+        ),
+    ),
+    ("tests/test_credential_health_probe_throat.py", "b3384e859d047291"): (
+        1,
+        (
+            "2026-10-04 审计确认夹具假值：模块常量 ``COOKIE_SENTINEL``（SESSDATA 前缀的泄漏金丝雀，"
+            "掩码 ``SE**64``）是 `test_cross_host_redirect_strips_cookie_from_probe` 与"
+            " `test_same_host_redirect_keeps_cookie_from_probe` 的公共料——断言 cookie 值跨宿主剥离、"
+            "同宿主保留。金丝雀合成值；摘掉＝两条重定向 cookie 锁同时失明。"
+        ),
+    ),
+    ("tests/test_dangerous_command_outbound_wiring.py", "10065436e1c1bc8a"): (
+        1,
+        (
+            "2026-10-04 审计确认夹具假值：`test_blocked_path_still_audits_dangerous_families` 在"
+            " answer 文本里硬写 ``api_key`` 赋值形假 ``sk-`` 串（掩码 ``sk-a**56``）当危险家族审计"
+            "样本。合成串、服务面不存在；摘掉＝该审计腿验不到同一件事。"
+        ),
+    ),
+    ("tests/test_file_send_receive_parity.py", "210fd51512083fab"): (
+        1,
+        (
+            "2026-10-04 审计确认夹具假值：`test_inbound_telegram_document_segment_is_produced_and_fetched`"
+            " 给假 bot 配置的 token 槽喂 ``123456:secret`` 形字面量（六位数字冒号短词，不成真 token"
+            " 形）。合成串、服务面不存在；摘掉＝该入站文档收发对锁失去夹具。"
+        ),
+    ),
+    ("tests/test_meme_vlm_observability.py", "b788e22f3b91cc5e"): (
+        1,
+        (
+            "2026-10-04 审计确认夹具假值：模块常量 ``SECRET_KEY``（``sk-`` 前缀「勿泄漏」金丝雀，掩码"
+            " ``sk-S**e7``）是 `test_l4_http_status_leaves_one_attributable_trace` 至"
+            " `test_l7_json_parse_error_traces_type_and_len` 四把归因锁与 backfill 各用例的公共假 key"
+            " 料。合成串、服务面不存在；摘掉＝整组归因锁同时失料。"
+        ),
+    ),
+    ("tests/test_person_profile_memory.py", "1584ab5c55a42564"): (
+        1,
+        (
+            "2026-10-04 审计确认夹具假值：`test_instrumented_local_secrets_are_redacted` 在引用文本里"
+            "硬写 ``sk-`` 形假 key（掩码 ``sk-a**90``）加盘符路径，断言打码腿把两者一起盖住。合成串、"
+            "服务面不存在；摘掉＝该打码锁失料。"
+        ),
+    ),
+    ("tests/test_policy_gate_reason_observability.py", "3e71794c5b09eb9f"): (
+        1,
+        (
+            "2026-10-04 审计确认夹具假值：`test_free_text_never_becomes_a_gate_reason` 在自由文本里"
+            "硬写 ``token`` 赋值形假 ``sk-`` 串（掩码 ``sk-a**67``），断言自由文本不得当门禁理由透传。"
+            "合成串、服务面不存在；摘掉＝该锁验不到同一件事。"
+        ),
+    ),
+    ("tests/test_seat_fix_persona_r2.py", "1584ab5c55a42564"): (
+        3,
+        (
+            "2026-10-04 审计确认夹具假值：`test_receipt_details_redacted_for_exception_with_paths` 的"
+            " ``sk-`` 形合成假 key（掩码 ``sk-a**90``；:481 喂料、:488/:492 反断言原文不进"
+            " summary/detail）。三处同值＝同一条回执脱敏锁的喂料加两处反断言；摘掉＝该锁失明。"
+        ),
+    ),
+    ("tests/test_telegram_document_ingress.py", "210fd51512083fab"): (
+        1,
+        (
+            "2026-10-04 审计确认夹具假值：``_FakeBot`` 给 bot 配置 token 槽喂 ``123456:secret`` 形"
+            "字面量，是本件文档入站各用例（`test_document_is_now_in_the_file_id_types` 等）的公共"
+            "夹具。合成串、不成真 token 形、服务面不存在；摘掉＝整件文档入站锁失去假 bot。"
+        ),
+    ),
 }
 
-# 棘轮上限 = 建账现值「总出现次数」（去脆化前 len(三元组)=32 的原语义，此处沿用计数和=32）。
+# 棘轮上限 = 建账现值「总出现次数」（去脆化前 len(三元组)=32 的原语义，沿用计数和）。
 # 还债后想降：删条目或降次数即可（本锁只拦升）。
-ROSTER_CEILING = 32
+# 32→33（2026-10-04，用户简报点名授权）：新增 scripts/migrate_persona_isolation.py 的
+# RUNTIME_WRITE_TOKEN 确认短语占位符一枚（:79，掩码 I-A**TE，审计席核过原文＝非凭据）；
+# 该件不在 tests/ ⇒ 豁免表形态门拒收，名册是唯一合规落点 ⇒ 上限随账 +1。记账性抬升，非为真债开口子。
+ROSTER_CEILING = 33
 
 # 反缩面地板（2026-09-24 现算 git ls-files 口径可扫文本件=1893，留 ≈5% 余量）。
 SCANNED_FLOOR = 1800
