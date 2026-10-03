@@ -635,12 +635,16 @@ class BoundedSessionFetch:
 class _Ctx:
     """一次采集的上下文：读口记忆化（同一载荷只打一次），门在取数之前。"""
 
+    # 活门 callable 与静态 bool 二选一在册：选了活门则 flag 为 None，反之 gate 为 None。
+    _api_available_flag: bool | None
+    _api_available_gate: Callable[[], bool] | None
+
     def __init__(
         self,
         message: IncomingMessage,
         fetch: Fetch,
         *,
-        api_available: bool,
+        api_available: bool | Callable[[], bool],
         clock: Callable[[], float],
         subject_user_id: str,
         target_group_id: str,

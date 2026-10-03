@@ -5470,7 +5470,10 @@ def _file_modify_entry(
     )
     if not isinstance(decision, fx.safety_policy.Permit):
         if isinstance(decision, fx.safety_policy.ConsentRequired):
-            blocked = fx._adjudication_block(decision)
+            # Permit 已在上方排除，而 _adjudication_block 仅对 Permit 返回 None ⇒ 此处必非空。
+            blocked = cast(
+                fx.DocumentOpResult, fx._adjudication_block(decision)
+            )
             return _FileModifyRefusal(blocked.reply_text, "consent_required")
         # 权限不足：话术走 Q-02 既有轮换池（与各命令面同源），不回显裁决黑话。
         return _FileModifyRefusal(
@@ -6633,20 +6636,22 @@ def build_chat_capability(
         # 表里 knowledge_qa/timely_retrieval 在 auto 与 detail 两列都是详尽档。
         #
         # 详略「模式」在这里定（优先级链，T7 起共四层，从高到低）：
-        # ① 当轮明示＝运行时覆盖（/bot reply 精简 一类，运维与管理员的热改）
-        #    以及本轮刚判定的那句新偏好（反悔即覆盖，写在同一条腿上）；
+        # ① 本轮明示＝这一句刚写进库的说法（谓词轨/反悔轨，反悔即覆盖，写在同一条腿上）；
         # ② 该人的永久策略（reply_policy 库，跨群/私聊按人共享）；
-        # ③ 装配期全局档 BOT_REPLY_DETAIL（现网钉 detail）；
+        # ③ 全局档 BOT_REPLY_DETAIL——**覆盖册里那枚常驻值也属于这一层**；
         # ④ 缺省 auto（按题型选档）。
+        # 2026-10-04 根修：这里原先把「覆盖册里有 BOT_REPLY_DETAIL」当第①层，于是
+        # 某次 `/bot runtime set` 留下的**跨重启常驻值**永久压住每一个人的策略
+        # （她钉过「每次回复要600字以上」，实测收到 60 / 135 / 151 / 189 字）。
+        # 她 2026-09-28 的裁定原文是「当轮明示 > 永久策略 > 全局 BOT_REPLY_DETAIL > 缺省」
+        # ⇒ 常驻热改就是全局档，不是「本轮明示」；本轮真说过什么由 ①② 那条写腿负责。
         detail_mode = normalize_reply_detail_mode(reply_detail)
-        explicit_override_this_turn = False
         if runtime_settings is not None:
             get_or = getattr(runtime_settings, "get_or", None)
             if callable(get_or):
                 detail_mode = normalize_reply_detail_mode(
                     get_or("BOT_REPLY_DETAIL", reply_detail)
                 )
-                explicit_override_this_turn = get_or("BOT_REPLY_DETAIL", None) is not None
         turn_policy = resolve_turn_reply_policy(
             store=effective_reply_policy_store,
             message=message,
@@ -6654,11 +6659,7 @@ def build_chat_capability(
             llm_provider=llm_provider,
             judgment_starter=reply_policy_judgment_starter,
         )
-        if (
-            turn_policy is not None
-            and not explicit_override_this_turn
-            and turn_policy.length_mode != LENGTH_MODE_AUTO
-        ):
+        if turn_policy is not None and turn_policy.length_mode != LENGTH_MODE_AUTO:
             detail_mode = normalize_reply_detail_mode(turn_policy.length_mode)
         reply_policy_section = reply_policy_section_for_turn(
             turn_policy,
