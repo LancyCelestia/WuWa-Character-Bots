@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import traceback
 from collections.abc import Callable
+from email.header import decode_header, make_header
+from email.utils import getaddresses
 from typing import Any
 
 import aioimaplib
@@ -73,6 +76,64 @@ async def mark_mail_seen(imap_client: Any, uid: str) -> None:
         raise RuntimeError("IMAP UID STORE Seen failed")
 
 
+def decode_rfc2047_display_name(raw: str) -> str:
+    """RFC2047 编码字显示名 → 人话；无编码字/解不动 ⇒ 原值原样回（席9R）。
+
+    库侧 ``parse_byte_mail``（mailparser）对 B/Q/折叠/贴地址等**规范编码字**实测
+    能解，但对畸形编码字会留原串、对裸非 ASCII 显示名则 name 落空串（整串被塞进
+    ``sender.id``）。摄取链在此统一兜一道：``decode_header``+``make_header`` 是
+    幂等 pass——已解名逐字节不变；未知字符集（LookupError）/畸形串抛错 ⇒ 按档
+    回退原值。只动显示名；本函数自身对地址（``sender.id``）一字不改（裸名族
+    地址侧恢复另见 ``restore_mail_sender_address``，席35）；内部吞异常，绝不打断收信。
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return text
+    try:
+        return str(make_header(decode_header(text)))
+    except Exception:  # noqa: BLE001 - 解码失败按档回退原值，不区分异常族。
+        return text
+
+
+#: 单枚完整编码字（含可选折叠空白）：裸名族垃圾 id 的形态签名。
+_MAIL_ENCODED_WORD_ONLY_RE = re.compile(
+    r"^=\?[^?\s]{2,}\?[bBqQ]\?[\w+/=\-\s]*\?=$", re.ASCII
+)
+
+
+def restore_mail_sender_address(sender_name: str, sender_id: str) -> tuple[str, str]:
+    """裸名族地址侧恢复（席35，2026-10-03 用户授权）：mailparser 塞错的 id 拆回「名+址」。
+
+    实测（``parse_byte_mail``，2026-10-03）：``From: 阿澜 <lan@example.com>``
+    （显示名未按 RFC2047 编码，国内客户端常见）⇒ ``sender.name=''``、
+    ``sender.id``＝**整条 From 值重打的 base64 编码字垃圾**
+    （``'=?utf-8?b?…?='``）。会话身份/防冒名面（roles/affinity/memory 裸键）
+    吃的就是这段垃圾。这里只恢复**地址判定依据**：
+
+    - 介入签名＝name 为空且 id 是单枚完整编码字（正常解析一律不进本腿）；
+    - 编码字解出「显示名 <地址>」且地址带 ``@`` ⇒ ``(显示名, 真实地址)``；
+    - 任何一步解不动／无地址形（含纯名无址、裸 token 无 @）⇒ 原值原样回，
+      保持现行为，绝不炸摄取链；
+    - 正常 ``name <addr>``／裸地址／多址解析一字不动（多址取首个带 @ 的作者，
+      RFC 5322 首作者语义；``parseaddr`` 拒吃逗号列表 ⇒ 用 ``getaddresses``）。
+    """
+    name = str(sender_name or "").strip()
+    raw_id = str(sender_id or "").strip()
+    if name or not raw_id or not _MAIL_ENCODED_WORD_ONLY_RE.match(raw_id):
+        return name, raw_id
+    try:
+        decoded = str(make_header(decode_header(raw_id)))
+    except Exception:  # noqa: BLE001 - 解不动保持现行为（与显示名腿同口径）。
+        return name, raw_id
+    if decoded == raw_id or "<" not in decoded or ">" not in decoded:
+        return name, raw_id
+    for display, address in getaddresses([decoded]):
+        address = address.strip()
+        if address and "@" in address:
+            return display.strip(), address
+    return name, raw_id
+
+
 async def fetch_mail_by_uid(imap_client: Any, uid: str) -> Any | None:
     """Fetch one mail strictly by UID (``UID FETCH``).
 
@@ -88,7 +149,27 @@ async def fetch_mail_by_uid(imap_client: Any, uid: str) -> Any | None:
     lines = getattr(response, "lines", None) or []
     if len(lines) < 2:
         return None
-    return parse_byte_mail(lines[1])
+    mail = parse_byte_mail(lines[1])
+    # 席9R（2026-10-03）：库侧只解部分形制的 RFC2047（畸形编码字留原串）⇒ 摄取点
+    # 统一兜底解显示名。席35（同日用户授权）补地址侧：裸非 ASCII 显示名的整串
+    # 编码字垃圾 id 拆回「名+址」。两腿解不动都回原值、绝不打断收信（与头块腿
+    # 同口径）；先算后赋，任何半途异常都不会把 sender 留在半改状态。
+    try:
+        sender = getattr(mail, "sender", None)
+        if sender is not None:
+            raw_name = str(getattr(sender, "name", "") or "")
+            raw_id = str(getattr(sender, "id", "") or "")
+            split_name, split_id = restore_mail_sender_address(raw_name, raw_id)
+            restored_name = decode_rfc2047_display_name(split_name)
+            if restored_name != raw_name or split_id != raw_id:
+                sender.name = restored_name
+                sender.id = split_id
+    except Exception as exc:  # noqa: BLE001 - 咽喉处只记录、绝不丢信。
+        mail_log(
+            "DEBUG",
+            f"Mail sender identity decode skipped uid={uid}: {describe_mail_error(exc)}",
+        )
+    return mail
 
 
 async def search_unseen_with_backoff(
@@ -140,6 +221,63 @@ class QuietMailMessageEvent(NewMailMessageEvent):
 
 
 QuietMailMessageEvent.__module__ = NewMailMessageEvent.__module__
+
+
+#: 信头文本块的长度帽：显示名/地址表再长也只带这么多进会话（有界注入）。
+_MAIL_HEADER_BLOCK_CHARS = 400
+
+
+def _mail_header_address(user: Any) -> str:
+    """适配器 User（对象或 model_dump 后的 dict）→ 裸地址；读不出给空串。
+
+    To/Cc 刻意**只报地址、不带名字**：名字是第三方自填串（可伪装面），而这一块
+    的用途是「这封信还发给了谁」——地址已足够，暴露面收窄一格。
+    """
+    if isinstance(user, dict):
+        return str(user.get("id") or "").strip()
+    return str(getattr(user, "id", "") or "").strip()
+
+
+def build_mail_header_block(mail: Any) -> str:
+    """一封邮件 → 信头元数据文本块（From 显示名 / To / Cc）；无内容回空串。
+
+    票 **T-META-INGEST-1**（2026-10-03 检索与知识波）的摄取侧落点：这些字段
+    适配器逐封解得出，但 ``IncomingMessage`` 的契约位没带（契约面本席禁写），
+    所以以**随信文本块**进会话——根侧一行不改，模型看信即见。
+    消毒口径：From 显示名是**对方自填串**（RTL/零宽/同形可伪装），进块前过
+    ``sanitize_display_name``（消毒唯一真身；惰性导入避开环，group_info 的
+    display_guard 同一先例）；To/Cc 只带 RFC 解析产物地址。
+    本块是信件自身的头部元数据，**不是文件正文**，不走 T2 ``label_file_body``
+    ——T2 打标口径不变。任何单字段读不出就跳过该字段，绝不抛出。
+    """
+    parts: list[str] = []
+    raw_name = str(getattr(getattr(mail, "sender", None), "name", "") or "").strip()
+    if raw_name:
+        from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
+            sanitize_display_name,
+        )
+
+        display = sanitize_display_name(raw_name, surface="mail_header_block")
+        if display:
+            parts.append(f"发件人显示名：{display}")
+    for attr, label in (("recipients_to", "收件人（To）"), ("recipients_cc", "抄送（Cc）")):
+        rows = getattr(mail, attr, None)
+        addresses = [
+            item
+            for item in (
+                _mail_header_address(row)
+                for row in (rows if isinstance(rows, (list, tuple)) else ())
+            )
+            if item
+        ]
+        if addresses:
+            parts.append(f"{label}：{'、'.join(addresses)}")
+    if not parts:
+        return ""
+    block = "[邮件信头] " + "；".join(parts)
+    if len(block) > _MAIL_HEADER_BLOCK_CHARS:
+        block = block[:_MAIL_HEADER_BLOCK_CHARS] + "…"
+    return block
 
 
 def _task_done(task: asyncio.Task[Any], *, label: str) -> None:
@@ -340,6 +478,24 @@ class ResilientMailAdapter(MailAdapter):
                 if mail is None:
                     continue
                 payload = model_dump(mail)
+                # T-META-INGEST-1（2026-10-03 检索与知识波）：From 显示名/To/Cc 以
+                # 信头文本块随信进会话（契约位不变、根侧零改动）。T2 打标口径不变：
+                # 这一块是信件自身的头部元数据、不是文件正文，不进 label_file_body；
+                # 显示名在 build_mail_header_block 内过 sanitize_display_name。
+                # 任何失败只丢这一块，绝不打断收信（与附件腿同一口径）。
+                try:
+                    header_block = build_mail_header_block(mail)
+                except Exception as exc:  # noqa: BLE001 - 头块坏了也不丢邮件
+                    mail_log(
+                        "WARNING",
+                        f"Mail {bot.self_id} header block skipped uid={uid}: "
+                        f"{describe_mail_error(exc)}",
+                    )
+                    header_block = ""
+                if header_block and isinstance(payload.get("message"), list):
+                    payload["message"].insert(
+                        0, {"type": "text", "data": {"text": header_block}}
+                    )
                 # 需求 16②：附件字节在这一刻还在手上（model_dump 之后段还是段），
                 # 就在这颗咽喉取文 + 逐份 T2 打标，取到什么一律并成 text 段交下游，
                 # 根侧一行不必改。任何失败只让这一段变成一句人话，绝不打断收信。
