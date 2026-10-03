@@ -23,6 +23,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     _ATTITUDE_TIERS,
     _TIER_RED_LINES,
     _V7_CONFIG_FIELDS,
+    _V7_DEFAULT_DAILY_MOVE_CAP_Z,
     _V7_NOVELTY_FLOOR,
     DynamicAffinityStore,
     attitude_for_affinity,
@@ -66,7 +67,8 @@ def _v7_config(**overrides: object) -> types.SimpleNamespace:
         "bot_affinity_novelty_halo_days": 21,
         "bot_affinity_rhythm_reference_turns": 8,
         "bot_affinity_negative_event_cap_z": 0.10,
-        "bot_affinity_daily_move_cap_z": 0.12,
+        # 日额度随登记常量现取（2026-10-03 用户裁定消除双源，.env/.env.example 同值）
+        "bot_affinity_daily_move_cap_z": _V7_DEFAULT_DAILY_MOVE_CAP_Z,
         "bot_affinity_fuse_daily_events": 25,
         "bot_affinity_repair_gain": 1.4,
         "bot_affinity_z_hard_bound": 0.985,
@@ -293,8 +295,9 @@ def test_v7_monotone_nondecreasing_under_pure_positive(tmp_path) -> None:
 
 
 def test_daily_move_cap_z(tmp_path) -> None:
-    """熔断·位移额度：任何事件组合下 |ΣΔz| ≤ 0.12/人/滚动24h（读 z_latent 差值；
-    A-1 裁定起窗形=24h 现读 delta_log，本用例 60 发×90s 全在同一日窗内，两窗形同解）。"""
+    """熔断·位移额度：任何事件组合下 |ΣΔz| ≤ 缺省日额度/人/滚动24h（界随
+    _V7_DEFAULT_DAILY_MOVE_CAP_Z 现算；读 z_latent 差值；A-1 裁定起窗形=24h 现读
+    delta_log，本用例 60 发×90s 全在同一日窗内，两窗形同解）。"""
     clock = _Clock()
     db = tmp_path / "cap.sqlite3"
     store = _v7_store(tmp_path, clock, "cap.sqlite3")
@@ -308,14 +311,20 @@ def test_daily_move_cap_z(tmp_path) -> None:
                 "SELECT z_latent FROM user_affinity WHERE sender_id='u1'"
             ).fetchone()[0]
         )
-    assert end_z - start_z == pytest.approx(0.12, abs=1e-6)
+    assert end_z - start_z == pytest.approx(_V7_DEFAULT_DAILY_MOVE_CAP_Z, abs=1e-6)
 
 
 def test_negative_event_cap(tmp_path) -> None:
     """单次负向事件 |Δz| ≤ negative_event_cap_z（override 同门）。"""
     clock = _Clock()
     db = tmp_path / "negcap.sqlite3"
-    store = _v7_store(tmp_path, clock, "negcap.sqlite3", bot_affinity_negative_event_cap_z=0.05)
+    store = _v7_store(
+        tmp_path, clock, "negcap.sqlite3",
+        bot_affinity_negative_event_cap_z=0.05,
+        # 场景隔离（test_daily_effective_caps_fallback_gates_positive 先例）：抬走日额度
+        # 护栏——本锁只判单事件负向帽，日额度缺省比 0.05 窄时会抢先咬合改判对象。
+        bot_affinity_daily_move_cap_z=99.0,
+    )
     before = store.snapshot("u1")["affinity"]
     store.observe("u1", "neutral", delta_override=-0.9)
     with sqlite3.connect(str(db)) as connection:
@@ -335,7 +344,9 @@ def test_negative_event_cap(tmp_path) -> None:
 def test_fuse_daily_events_zero_further_scoring(tmp_path) -> None:
     """注毒靶②：熔断（同类信号每日计分上限）——40 条实质中性消息只计 25 条。"""
     clock = _Clock()
-    store = _v7_store(tmp_path, clock, "fuse.sqlite3")
+    # 场景隔离（同 test_daily_effective_caps_fallback_gates_positive 先例）：抬走日额度
+    # 护栏——本锁只判熔断 25 枚精确接管，日额度不得成为影子收口者。
+    store = _v7_store(tmp_path, clock, "fuse.sqlite3", bot_affinity_daily_move_cap_z=99.0)
     scored = 0
     previous = store.snapshot("u1")["affinity"]
     for index in range(40):
@@ -401,7 +412,7 @@ def test_delta_log_marks_v7_rows_and_legacy_budget_ignores_them(tmp_path) -> Non
             "SELECT source, delta, z_after FROM affinity_delta_log WHERE sender_id='u1'"
         ).fetchall()
     assert rows and all(str(r[0]) == "v7" for r in rows)
-    assert all(r[1] <= 0.12 + 1e-9 for r in rows)  # z 域，不是百分口径
+    assert all(r[1] <= _V7_DEFAULT_DAILY_MOVE_CAP_Z + 1e-9 for r in rows)  # z 域，不是百分口径
     assert all(r[2] is not None for r in rows)
     legacy = _legacy_store(tmp_path, clock, "logmix.sqlite3")
     clock.advance(3600)
@@ -628,7 +639,9 @@ def test_neutral_scale_applied_to_presence_only() -> None:
 def test_settings_read_per_call(tmp_path) -> None:
     """热改口径的证据件：同一 store，下一调用即读到改后的 config 值。"""
     clock = _Clock()
-    config = _v7_config()
+    # 场景隔离：抬走日额度护栏（同 test_daily_effective_caps_fallback_gates_positive
+    # 先例）——本锁只判 base_step 逐调用现读，日额度不得挤压第二发的位移。
+    config = _v7_config(bot_affinity_daily_move_cap_z=99.0)
     store = DynamicAffinityStore(tmp_path / "percall.sqlite3", clock=clock, config=config)
     slow = store.observe("u1", "positive", text="谢谢你陪我聊天")
     config.bot_affinity_base_step = 0.30  # 三倍步长
@@ -675,7 +688,11 @@ def test_twelve_v7_keys_registered_on_config_class() -> None:
 
 def test_quality_weights_env_json_parsed(tmp_path) -> None:
     clock = _Clock()
-    config = _v7_config(bot_affinity_quality_weights='{"w1":0,"w2":0,"w3":1,"w4":0,"w5":0}')
+    config = _v7_config(
+        bot_affinity_quality_weights='{"w1":0,"w2":0,"w3":1,"w4":0,"w5":0}',
+        # 场景隔离：抬走日额度护栏——本锁只判单事件负向帽×γ 的精确值。
+        bot_affinity_daily_move_cap_z=99.0,
+    )
     store = DynamicAffinityStore(tmp_path / "weights.sqlite3", clock=clock, config=config)
     settings = resolve_v7_settings(config)
     assert settings.quality_weights == pytest.approx((0.0, 0.0, 1.0, 0.0, 0.0))

@@ -165,7 +165,7 @@ def test_preset_command_words_map_to_new_codes(store: rp.ReplyPolicyStore) -> No
         _Config(),
         request_id="req-imagery-set",
         sender_id=MAIN,
-        actor_roles=["user", "admin", "super"],
+        actor_roles=["user", "admin", "super_admin"],
         command_text=f"set {STRANGER} 详尽 文学化 讲具体 铺意象 换意象",
     )
     assert result.kind == "text", result.body

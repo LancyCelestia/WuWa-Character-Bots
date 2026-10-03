@@ -167,6 +167,22 @@ def test_poison_second_copy_would_be_caught(tmp_path: Path) -> None:
     ], "多一处副本而判据没抓住＝那枚 ==1 是空判"
 
 
+def test_reality_coordinates_declare_tech_layer_is_knowable() -> None:
+    """现实坐标要登记「故事外的技术层她可知」——否则科技名词又只能靠撞检索。"""
+    note = addressing.reality_coordinates_note()
+    assert "芯片" in note and "模型" in note, "现实坐标没登记技术层 ⇒ 科技名词又只能靠撞检索"
+    assert "不描述她是谁" in note or "不描述自己" in note, "缺自指让位条款 ⇒ 概念层又会被读成禁令"
+
+
+def test_reality_coordinates_not_duplicated_into_personas() -> None:
+    """新增那句也不许被抄进 personas/（复用本件既有采集器 _literal_hits，不另起一把尺）。"""
+    if not PERSONAS_DIR.is_dir():
+        pytest.skip("人格源目录不在场＝这台机没有 personas/，判据不适用")
+    persona_files = [p for p in PERSONAS_DIR.rglob("*") if p.is_file()]
+    for needle in ("芯片、模型", "那一层世界里"):
+        assert _literal_hits(persona_files, needle) == [], f"personas/ 抄了第二份现实坐标：{needle}"
+
+
 # ---------------------------------------------------------------------------
 # ②/接线：恒渲染 + 无第二真身
 # ---------------------------------------------------------------------------

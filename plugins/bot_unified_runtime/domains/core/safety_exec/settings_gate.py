@@ -12,23 +12,45 @@ R0 不问就改、R1/R2 先建工单后落地、R3 永不自动改——本仓�
 - **R0**（``UNATTENDED_CHANGE_TIERS``）：无条件放行，但每次落库照记一行
   ``safetyexec_change_audit``（source=unattended + 旧值指纹 + 回退号）。
 - **R1**（``CONSENT_REQUIRED_TIERS`` 非书面半）：首次请求**不落库**，签一张
-  管理员在本会话可批的工单；批准凭证被**下一次同值重试**消费后才写。
+  管理员在本会话可批的工单；门侧现行实现仍是「批准凭证被**下一次同值重试**
+  消费后才写」（见下节与 §52.2 差异注）。
 - **R2**（``WRITTEN_CONSENT_TIERS``，含未登记键的缺省档）：书面同意——工单绑死
   ``(key, 新值, actor)``（绑定指纹由 ``consent.binding_fingerprint`` 现算），
   只有超管从**私聊**亲批（``consent.redeem_from_message`` 的既有阶梯），换值/换键/
   重放一律不作数。
 - **R3**（``NEVER_AUTO_TIERS``）：连批准都不给，只回「请主人手动改 .env 并重启」。
 
-凭证的落地形态（为什么是「重试才生效」而不是「批完当场写」）
+凭证的落地形态（现行实现与目标口径的差异，2026-10-03 席7 如实注记）
 ----
-咽喉同步在调用栈上，拿不到入站消息；批准发生在另一条会话腿（``bot.consent`` 命令面，
-见 ``domains/ops/capabilities/consent_admin.py``，说法是「同意卡 批 <工单号> <短码>」）。
-所以批准把工单置为已消费（``claim_consent``，一次性判定仍全在 ``consent.py``），
-本件把凭证按绑定指纹暂存在进程内 ``_grants``；发起方**用同一 (key, 新值, actor) 重试**
-时命中凭证才真落库。凭证随工单 ``expires_at`` 一起过期——批完不重试、过了 TTL，
-就得重新申请新工单。回退号已随每行审计落账，但**回退执行面本波不接**：
-``consent.ConsentLedger._execute`` 的写腿走 ``RuntimeConfigBackend.set_override``，
-接进来等于在咽喉上开第二道「自信任」写门，与本门的存在意义正面冲突（挂账见波日志）。
+**门侧现行实现**仍是「重试才生效」：咽喉同步在调用栈上，拿不到入站消息；批准发生在
+另一条会话腿（``bot.consent`` 命令面，见 ``domains/ops/capabilities/consent_admin.py``，
+说法是「同意卡 批 <工单号> <短码>」）。所以批准把工单置为已消费（``claim_consent``，
+一次性判定仍全在 ``consent.py``），本件把凭证按绑定指纹暂存在进程内 ``_grants``；
+发起方**用同一 (key, 新值, actor) 重试**时命中凭证才真落库。凭证随工单 ``expires_at``
+一起过期——批完不重试、过了 TTL，就得重新申请新工单。
+
+**与 HANDBOOK §52.2「核销即落地＋漂移作废」目标口径的差异**（席7 发现并登记，
+docstring 只记实况、逻辑零触碰）：
+
+- 账本体（``consent.ConsentLedger``）**已有**一步式原语：``apply_with_consent`` /
+  ``apply_approved``（落地前绑定复核＝漂移作废），判据齐；
+- 消费面（``consent_admin._verdict_result``）也**已在册**：批下后按
+  ``getattr(gate, "consume_apply_result", None)`` 读门的结果话术；
+- **缺席的是本门**：``consume_apply_result`` 与「批下即按卡回灌执行」的腿在本件
+  没有实现——``getattr`` 恒 None ⇒ 回显永远走 ``_APPLY_RESULT_FALLBACK``
+  （"没再听到别的话，就是已经按卡上批的落到位了"），而实际**什么都没落**。
+  即：现行生产回显是**谎称已落地**，这是在册的诚实缺陷（补实现时本节必须同批改写）。
+- §52.2 的另一半「超管本人 R1 免卡直改」同样不在 HEAD 盘面：点名测试
+  ``test_super_admin_r1_write_lands_without_a_ticket`` 缺席、本件无 roles 派生导入，
+  根 ``__init__.py`` 群策略注释却仍引用该门——两半都疑似台账 #68 还原事故吃掉的
+  未入库 WIP，补线时同批对账。
+- 现行两段式有测试锁：
+  ``test_consent_command_surface.py::test_state_2_super_admin_approves_then_retry_lands``
+  ——补线属行为翻转，必须同批改锁，不许只改实现。
+
+回退号已随每行审计落账，但**回退执行面不接**：``consent.ConsentLedger._execute`` 的
+写腿走 ``RuntimeConfigBackend.set_override``，接进来等于在咽喉上开第二道「自信任」
+写门，与本门的存在意义正面冲突（挂账见波日志）。
 
 失败面（全部 fail-closed，照 ``consent.py`` 的审计哲学）
 ----

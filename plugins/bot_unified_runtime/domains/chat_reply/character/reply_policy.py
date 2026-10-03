@@ -48,8 +48,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, ClassVar, Final
 
+from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
+    ROLE_ADMIN,
+    ROLE_SUPER_ADMIN,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
     normalize_for_matching,
 )
@@ -62,6 +66,12 @@ from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
 from plugins.bot_unified_runtime.domains.core.session_keys import (
     parse_session_key,
     private_session_key,
+)
+from plugins.bot_unified_runtime.domains.core.write_trace import (
+    OUTCOME_FAILED,
+    OUTCOME_NOOP,
+    OUTCOME_OK,
+    WriteTrace,
 )
 from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 
@@ -1338,8 +1348,15 @@ def build_reply_policy_preset_result(
         return _preset_result(
             request_id, f"未知的子命令：{action}。\n{PRESET_USAGE_TEXT}", tags=("bad_action",)
         )
-    roles = {str(role).lower() for role in (actor_roles or ())}
-    if "admin" not in roles and "super" not in roles:
+    roles = {str(role).strip().lower() for role in (actor_roles or ()) if str(role).strip()}
+    # P3.11 死判据根修（席 N1，2026-10-02；账见 patches/W-E05-GATE-GAPS-20260930.md §6.1）：
+    # `"super"` **不是任何真身角色名**——六级角色真身是 `policy/roles.py` 的
+    # user/trusted/enterprise/admin/super_admin/blocked。旧腿 `"super" not in roles` 恒真、
+    # 从未成立过，唯一没出事的原因＝超管自动叠 admin（roles.py `resolve_roles`）。
+    # 那是一条「死判据 + 隐式依赖」：谁哪天把叠加拆掉，超管当场掉出本门且无人出声。
+    # 现在两枚中央常量都写（叠加在不在都不放错人），判定仍只吃 `resolve_roles` 的产物，
+    # 不在本处新建第二套角色判据。
+    if ROLE_ADMIN not in roles and ROLE_SUPER_ADMIN not in roles:
         return _preset_result(
             request_id, "只有管理员才能替别人设定回复策略。", tags=("denied",)
         )
@@ -1352,8 +1369,28 @@ def build_reply_policy_preset_result(
             request_id, f"认不出这个 QQ 号：{target}。\n{PRESET_USAGE_TEXT}", tags=("bad_target",)
         )
 
-    super_ids = {str(item).strip() for item in (getattr(config, "bot_super_admin_user_ids", []) or [])}
-    actor_is_super = "super" in roles or str(sender_id).strip() in super_ids
+    # 超管身份**只**认中央角色面（P3.11 第二刀，同账 §6.2）。旧写法
+    # `actor_is_super = "super" in roles or str(sender_id).strip() in super_ids` 两半腿都坏：
+    # ① `"super" in roles` 永不成立（同上）；② 那半腿拿裸 `sender_id` 直接比 QQ 名单，
+    # **绕过平台域这一腿**——`roles.py` 的 `_roster_hit(entries, domain, sender_id)` 要求
+    # 「裸号只在 QQ 域命中、带前缀条目只在同域命中、取不到平台事实一律不放行」，而这里
+    # Telegram 侧一个数字 user_id 撞上 QQ 超管号就白拿超管脸（跨平台冒名提权面，正是
+    # F-A 治的那一刀），email/console 域本该落空串不放行，旧写法照样放行。
+    # `actor_roles` 的生产来源＝`__init__.py:8849` → `_decision.actor_roles` →
+    # `gate.py: actor_roles = message.sender_roles` → `pipeline.py:1101`
+    # `role_settings.resolve_roles(message)`（装配点 `__init__.py:4353`），即平台域已在场。
+    # 反向不误伤：若中央角色压根没解析（`role_settings=None`），第一道管理门就已把所有人
+    # 拒在外面，本腿不可能把人从"能改超管"降级成"什么都改不了"之外的任何新形态。
+    actor_is_super = ROLE_SUPER_ADMIN in roles
+    # 目标侧仍读同一枚 config 名单（不新建第二本账）：`target` 是管理员在命令里**敲进来
+    # 的 QQ 号**，天然属 QQ 域，不是"当前事件的身份"，所以这里吃的是被保护者的名单而非
+    # 判定者的平台域。残余登记在工单：名单若被写成 `telegram:2002`，则 QQ 目标 2002
+    # 不再算超管保护对象——方向是"少一层保护"而非"多给权"，等主会话裁是否收到中央洗段口。
+    super_ids = {
+        str(item).strip()
+        for item in (getattr(config, "bot_super_admin_user_ids", []) or [])
+        if str(item).strip()
+    }
     if target in super_ids and not actor_is_super:
         return _preset_result(
             request_id,
@@ -1520,9 +1557,12 @@ class ReplyPolicyStore:
     person_aliases: Mapping[str, str] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _conn: sqlite3.Connection | None = field(default=None, repr=False)
+    _trace: WriteTrace | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         self.path = Path(self.path)
+        # 留痕先于建库：建库那步自己也会记账（形状迁移是本次要抓的病灶）。
+        self._trace = WriteTrace(f"reply_policy:{self.path.name}")
         normalized: dict[str, str] = {}
         try:
             for raw_key, raw_target in dict(self.person_aliases or {}).items():
@@ -1544,6 +1584,23 @@ class ReplyPolicyStore:
         except Exception as exc:  # noqa: BLE001 - 建库失败只降级，不抛给聊天主链路。
             logger.warning("reply policy store unavailable path=%s type=%s", self.path, type(exc).__name__)
             self._conn = None
+            self._record("open", OUTCOME_FAILED, type(exc).__name__)
+
+    # ---- 写路径留痕（席 D2：调用过没有、成没成，必须是现算读得出的一格）------
+
+    def _record(self, op: str, outcome: str, detail: object = "") -> None:
+        trace = self._trace
+        if trace is not None:
+            trace.record(op, outcome, detail)
+
+    def write_trace(self) -> dict[str, Any]:
+        """本 store 写路径的现算读数（进程内环形账；键名短、无正文无路径）。"""
+        trace = self._trace
+        return trace.snapshot() if trace is not None else {"store": "", "counts": {}, "by_op": {}, "recent": []}
+
+    def write_counts(self) -> dict[str, int]:
+        trace = self._trace
+        return trace.counts() if trace is not None else {}
 
     # ---- 并号：别名→主键，只在这一处发生 ----------------------------------
 
@@ -1601,6 +1658,98 @@ class ReplyPolicyStore:
             ):
                 if column not in existing:
                     self._conn.execute(ddl)
+        # 意象账的形状搬家**单开一腿、单开一把 try**：搬不动也只关那一本账，
+        # 绝不让 user_reply_policy（她点名的永久策略主表）跟着整店打烊。
+        try:
+            self._reconcile_imagery_table()
+        except Exception as exc:  # noqa: BLE001 - 迁移失败＝意象账诚实不生效，策略主腿照跑。
+            logger.warning("imagery schema migrate skipped type=%s", type(exc).__name__)
+            self._record("imagery_schema", OUTCOME_FAILED, type(exc).__name__)
+
+    #: 现行形状的两枚必需列（缺任一＝这张表还是旧形状，必须搬家）。
+    _IMAGERY_REQUIRED_COLUMNS: ClassVar[tuple[str, ...]] = ("families", "updated_at")
+
+    def _reconcile_imagery_table(self) -> str:
+        """旧形状的意象用量账 → 现行形状（noop / migrated / moved_empty 三态记账）。
+
+        病灶（席 D2 2026-10-02 现算，生产库为证）：这张表经历过一次形状改动
+        （旧 ``(person_key, family, used_at)`` 每族一行 ⇒ 新 ``(person_key, families,
+        updated_at)`` 每人一行带窗口），而 ``CREATE TABLE IF NOT EXISTS`` 对**已存在**的
+        表一枚列都不动 ⇒ 生产库永远停在旧形状，``record_imagery_use`` 与
+        ``recent_imagery_families`` 两条腿每次 ``OperationalError``、被 ``except`` 吞成
+        「本轮没用过意象」。盘上 0 行、日志零痕 ⇒「该写没写」和「没东西可写」长得一模一样。
+
+        家规三条：① 旧表**改名保留**不删（运行数据不可删＝规则 2，改名后新表同名重建，
+        旧数据随时可回查）；② 只有旧列形状可辨认（``family`` + ``used_at``）才折算搬运，
+        认不出来就搬一本空账并把旧表留在盘上，**绝不猜**；③ 结果一律进留痕。
+        """
+        if self._conn is None:
+            return "noop"
+        with self._lock, self._conn:
+            columns = {
+                str(row[1])
+                for row in self._conn.execute("PRAGMA table_info(person_imagery_usage)")
+            }
+            if not columns:
+                return "noop"  # 表不存在（上面刚建过，这里只兜连接异常的极端形）
+            if set(self._IMAGERY_REQUIRED_COLUMNS) <= columns:
+                self._record("imagery_schema", OUTCOME_NOOP, "shape=current")
+                return "noop"
+            movable = "person_key" in columns and "family" in columns and "used_at" in columns
+            aggregated: dict[str, list[str]] = {}
+            newest: dict[str, str] = {}
+            if movable:
+                for key, family, used in self._conn.execute(
+                    "SELECT person_key, family, used_at FROM person_imagery_usage"
+                    " ORDER BY used_at DESC, rowid DESC"
+                ):
+                    person = str(key or "").strip()
+                    name = str(family or "").strip()
+                    if not person or not name:
+                        continue
+                    bucket = aggregated.setdefault(person, [])
+                    if name not in bucket and len(bucket) < _IMAGERY_USAGE_WINDOW:
+                        bucket.append(name)
+                    newest.setdefault(person, str(used or ""))
+            archived = self._legacy_table_name()
+            self._conn.execute(f"ALTER TABLE person_imagery_usage RENAME TO {archived}")
+            self._conn.execute(_SCHEMA_STATEMENTS[1])
+            moved = 0
+            for person, names in aggregated.items():
+                self._conn.execute(
+                    "INSERT INTO person_imagery_usage (person_key, families, updated_at)"
+                    " VALUES (?, ?, ?)",
+                    (
+                        person,
+                        json.dumps(names, ensure_ascii=False),
+                        newest.get(person, ""),
+                    ),
+                )
+                moved += 1
+            outcome = "migrated" if movable else "moved_empty"
+            logger.warning(
+                "imagery usage table reshaped archived=%s rows_moved=%d (old shape kept, not deleted)",
+                archived,
+                moved,
+            )
+            self._record("imagery_schema", OUTCOME_OK, f"{outcome} archived={archived} rows={moved}")
+            return outcome
+
+    def _legacy_table_name(self) -> str:
+        """归档表名：``person_imagery_usage_legacy``，已被占用就顺延编号（不覆盖旧账）。"""
+        taken = {
+            str(row[0])
+            for row in self._conn.execute(  # type: ignore[union-attr]
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        base = "person_imagery_usage_legacy"
+        candidate = base
+        index = 2
+        while candidate in taken:
+            candidate = f"{base}_{index}"
+            index += 1
+        return candidate
 
     def _read_row(self, key: str, status: dict[str, bool] | None = None) -> ReplyPolicy | None:
         if self._conn is None or not key:
@@ -1681,6 +1830,9 @@ class ReplyPolicyStore:
         """
         key = self.canonical_person_key(policy.person_key)
         if not key or self._conn is None:
+            # 「没写成」分两种且都必须留痕：键构造不出来（调用方给的是空号）与
+            # 整条腿没建库（store_off）——后者正是"盘上永远零行却查不出为什么"的那一格。
+            self._record("put", OUTCOME_NOOP, "no_key" if key else "store_off")
             return False
         payload = (
             key,
@@ -1708,9 +1860,11 @@ class ReplyPolicyStore:
                     "  updated_at = excluded.updated_at",
                     payload,
                 )
+            self._record("put", OUTCOME_OK, f"codes={len(policy.content_directives)}")
             return True
         except Exception as exc:  # noqa: BLE001 - 写失败只留痕，绝不让聊天炸。
             logger.warning("reply policy write failed type=%s", type(exc).__name__)
+            self._record("put", OUTCOME_FAILED, type(exc).__name__)
             return False
 
     def _delete_key(self, key: str) -> bool:
@@ -1738,10 +1892,14 @@ class ReplyPolicyStore:
         """
         key = self.canonical_person_key(person_key)
         if not key or self._conn is None:
+            self._record("clear", OUTCOME_NOOP, "no_key" if key else "store_off")
             return False
+        legacy_keys = self._legacy_keys_of(key)
         cleared = self._delete_key(key)
-        for legacy in self._legacy_keys_of(key):
+        for legacy in legacy_keys:
             self._delete_key(legacy)
+        # 撤销会改盘、回执却写着「已撤销」——必须留痕（席 D2）。
+        self._record("clear", OUTCOME_OK if cleared else OUTCOME_NOOP, f"legacy={len(legacy_keys)}")
         return cleared
 
     # ---- 意象轮换账（同库新表；名册在人格侧，这里只记「用过哪些」）----------
@@ -1772,11 +1930,18 @@ class ReplyPolicyStore:
         return [str(item or "").strip() for item in items if str(item or "").strip()][:limit]
 
     def record_imagery_use(self, person_key: Any, families: Any) -> bool:
-        """把这一轮用掉的族记进账里（新→旧，窗口外自然淘汰）。返回是否真的写成。"""
+        """把这一轮用掉的族记进账里（新→旧，窗口外自然淘汰）。返回是否真的写成。
+
+        ⚠ 这一腿历史上**从来没有成功过一次**（生产表停在旧形状，异常被吞＝席 D2 抓到的
+        「该写没写」）。形状搬家住在 :meth:`_reconcile_imagery_table`，成败都进留痕；
+        本腿只报自己这一笔的结局，好让「0 行」分不清的两种口径从此分得清。
+        """
         key = self.canonical_person_key(person_key)
         names = [str(item or "").strip() for item in (families or ())]
         names = [name for name in names if name]
         if not key or self._conn is None or not names:
+            reason = "no_key" if not key else ("store_off" if self._conn is None else "no_names")
+            self._record("imagery_use", OUTCOME_NOOP, reason)
             return False
         window = list(dict.fromkeys([*names, *self.recent_imagery_families(key)]))
         payload = (
@@ -1794,20 +1959,52 @@ class ReplyPolicyStore:
                     "  updated_at = excluded.updated_at",
                     payload,
                 )
+            self._record("imagery_use", OUTCOME_OK, f"kept={len(window[:_IMAGERY_USAGE_WINDOW])}")
             return True
         except Exception as exc:  # noqa: BLE001 - 记不上账只等于下轮可能重复，绝不让一轮炸。
             logger.warning("imagery usage write failed type=%s", type(exc).__name__)
+            self._record("imagery_use", OUTCOME_FAILED, type(exc).__name__)
             return False
+
+    def _families_of_raw(self, key: str) -> list[str]:
+        """**不做并号归一**地读某人那本意象账（只给搬家那一腿用）。
+
+        为什么单开一口：``recent_imagery_families`` 会先把传进来的号 canonical 化，
+        而搬家时旧号本身就躺在 alias 表的**左边**——归一后拿到的键是新号，旧行永远读不到
+        ⇒「先合旧账」这一句静默合到零，紧接着的 ``_delete_key(旧号)`` 把旧行删干净。
+        席 D2 现算复现（策略行搬得走、意象账整本丢）：``merged.recent_imagery_families``
+        回空表、留痕写着 ``families=0``。搬家要吃的是**字面上的那一行**，不是归一后的号。
+        """
+        if self._conn is None or not key:
+            return []
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT families FROM person_imagery_usage WHERE person_key = ?",
+                    (key,),
+                ).fetchone()
+        except Exception as exc:  # noqa: BLE001 - 读不出＝当没用过，绝不让一轮聊天炸。
+            logger.warning("imagery usage raw read failed type=%s", type(exc).__name__)
+            return []
+        if not row:
+            return []
+        try:
+            decoded = json.loads(str(row[0] or "[]"))
+        except (ValueError, TypeError):
+            return []
+        items = decoded if isinstance(decoded, list) else []
+        return [str(item or "").strip() for item in items if str(item or "").strip()]
 
     def _move_imagery_usage(self, legacy_key: str, canonical_key: str) -> bool:
         """并号搬家：旧号那本账**并到主键账上**（新→旧拼接、窗口截断），旧行删掉。"""
         if self._conn is None or not legacy_key or not canonical_key:
+            self._record("imagery_move", OUTCOME_NOOP, "off" if self._conn is None else "no_key")
             return False
         merged = list(
             dict.fromkeys(
                 [
-                    *self.recent_imagery_families(canonical_key),
-                    *self.recent_imagery_families(legacy_key),
+                    *self._families_of_raw(canonical_key),
+                    *self._families_of_raw(legacy_key),
                 ]
             )
         )[:_IMAGERY_USAGE_WINDOW]
@@ -1827,10 +2024,26 @@ class ReplyPolicyStore:
                             datetime.now(timezone.utc).isoformat(timespec="seconds"),
                         ),
                     )
+            # 「并号只并偏好键不并权限」那本账的**写入**半边：搬了几族要看得见（台账 #66★）。
+            self._record("imagery_move", OUTCOME_OK, f"families={len(merged)}")
             return True
         except Exception as exc:  # noqa: BLE001
             logger.warning("imagery usage merge failed type=%s", type(exc).__name__)
+            self._record("imagery_move", OUTCOME_FAILED, type(exc).__name__)
             return False
+
+    def close(self) -> None:
+        """关连接（幂等）；仅测试与停机用——生产持长连接，重启自然回收。
+
+        刻意**不做 checkpoint、不动 journal_mode**：那属运行数据面的写操作（本次波次
+        对 ``ChatBot_Runtime`` 只读＝席规硬约束），这里只把手上的连接还回去。
+        """
+        with self._lock:
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                finally:
+                    self._conn = None
 
 
 _STORES: dict[str, ReplyPolicyStore] = {}

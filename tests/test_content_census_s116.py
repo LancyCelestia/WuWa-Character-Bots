@@ -189,7 +189,12 @@ def test_takeoff_keys_are_complete_and_ast_readers_stay_silent() -> None:
 
 
 def test_real_tree_code_ledger_has_first_time_numbers() -> None:
-    """真树现算：五族三数第一次成账，且**代码面在册件 > 0**（旧册对 fstring/copy-pool 报 0 件＝空账）。"""
+    """真树现算：五族三数第一次成账，且**代码面在册件 > 0**（旧册对 fstring/copy-pool 报 0 件＝空账）。
+
+    〔销账 2026-10-03，主代理裁定〕「已驱动恒 0」是 S116 时代快照，被席 S127 的形态(b) 通道
+    合法击穿（help-topic 全族 83 枚走 (b)）；本锁按现树现算改钉**结构不变量**——逐行三数闭合、
+    驱动只出自 (b) 腿、无通道类仍全额未驱动——不写死任何会漂移的现算数。
+    """
     import spec_gates_census as sgc
 
     per_cat = {
@@ -200,15 +205,21 @@ def test_real_tree_code_ledger_has_first_time_numbers() -> None:
     assert by_cid["fstring-card"].registered > 0, "fstring 名册取数口又哑了（literal_eval 抛 ValueError 的旧形态）"
     assert by_cid["incode-copy-pool"].registered > 0, "copy-pool 取数口回退成「现役取数口缺」空账"
     code_rows = [r for r in rows if r.surface == "code"]
-    assert sum(r.registered for r in code_rows) > 0 and sum(r.driven for r in code_rows) == 0
-    assert all(r.undriven == r.registered for r in code_rows), "代码面未驱动数≠在册数 ⇒ 驱动通道凭空出现，须复核"
+    assert sum(r.registered for r in code_rows) > 0
+    for r in code_rows:
+        assert r.registered == r.driven + r.undriven, r.cid
+        assert r.driven == r.driven_a + r.driven_b, r.cid
+        assert r.driven_a == 0, f"{r.cid} 代码面 (a) 腿凭空非零 ⇒ walk_content_pages 口径变了，须复核"
+        if r.cid not in cc.CODE_B_BY_CID:
+            assert r.undriven == r.registered, f"{r.cid} 无生成通道却有已驱动 ⇒ 驱动来源不明，须复核"
 
 
 # ===========================================================================
 # 席 S127（2026-09-22）新增用例 —— §4③ **形态(b)**「生成脚本可复现字节」接入代码面。
-# 全部为**新增**，未回改上方任何既有用例与断言（含 `test_real_tree_code_ledger_has_first_time_numbers`
-# 那条「已驱动恒 0」快照——它是 S116 时代的真值，本席建通道后被合法击穿，
-# 改不改由该锁的 owner/主代理裁定，见 SEAT-S127.md §冲突账）。
+# 全部为**新增**，未回改上方任何既有用例与断言。
+# 〔冲突账销账 2026-10-03，主代理裁定〕原账：上方 `test_real_tree_code_ledger_has_first_time_numbers`
+# 的「已驱动恒 0」快照被本席 (b) 通道合法击穿、改不改待 owner 裁定——已裁定按现树现算更新该锁，
+# 本席用例未动；原账全文见 SEAT-S127.md §冲突账。
 # 跑：PYTHONDONTWRITEBYTECODE=1 BOT_AUTOSYNC=0 PYTHONIOENCODING=utf-8
 #     ../ChatBot_Runtime/venv/Scripts/python.exe -m pytest tests/test_content_census_s116.py -q \
 #     -p no:cacheprovider --basetemp="$TEMP/S127-2"

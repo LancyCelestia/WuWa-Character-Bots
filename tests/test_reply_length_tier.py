@@ -78,26 +78,43 @@ def _question_type_of(text: str) -> str:
 
 
 def test_every_tier_carries_numeric_bounds_and_is_a_strict_ladder() -> None:
+    # 档位清单**随登记表派生**（按档位秩排序）：表里长出一档，本件自动量到它，
+    # 不必再来改一次"数到第三档"。期望的档名仍逐枚点名——登记表长大 ≠ 放松判据。
     tiers = [
-        chat.REPLY_TIER_CONCISE,
-        chat.REPLY_TIER_STANDARD,
-        chat.REPLY_TIER_DETAIL,
+        chat.REPLY_LENGTH_TIERS[tier_id]
+        for tier_id in sorted(
+            chat.REPLY_LENGTH_TIERS, key=lambda tid: chat._REPLY_TIER_RANK[tid]
+        )
     ]
-    assert [tier.tier_id for tier in tiers] == ["concise", "standard", "detail"]
+    assert [tier.tier_id for tier in tiers] == [
+        chat.REPLY_TIER_CONCISE_ID,
+        chat.REPLY_TIER_STANDARD_ID,
+        chat.REPLY_TIER_DETAIL_ID,
+        chat.REPLY_TIER_SCENE_ID,  # 2026-10-04：拿到叙述授予那一轮的封顶档「铺写」
+    ]
     for tier in tiers:
         assert tier.min_chars > 0, f"{tier.tier_id} 档没有下限 ⇒ 「太短」不可判"
         assert tier.max_chars == 0 or tier.max_chars > tier.min_chars
         assert tier.coverage.strip(), f"{tier.tier_id} 档只给了字数没给交付面"
         assert tier.label_cn.strip()
-    # 严格阶梯：上限一档高过一档，否则「分档」只是三句不同的散文。
-    assert (
-        chat.REPLY_TIER_CONCISE.min_chars
-        < chat.REPLY_TIER_STANDARD.min_chars
-        < chat.REPLY_TIER_DETAIL.min_chars
-    )
+    # 严格阶梯：**下限随档位秩严格递增**（整表判，档数长了也不许回头）。
+    # 旧写法是硬编码三档的 a<b<c，登记表一长就量不到新档；换成整表判是**加严**。
+    mins = [tier.min_chars for tier in tiers]
+    assert mins == sorted(set(mins)), f"档位秩与下限次序不一致（{mins}）⇒ 升格与封顶读成两把尺"
+    # 相邻两档不许互相吞：下一档的下限必须高过上一档的上限（无上限的档不参与）。
+    for index in range(len(tiers) - 1):
+        lower, upper = tiers[index], tiers[index + 1]
+        if lower.max_chars:
+            assert upper.min_chars > lower.max_chars, (
+                f"{lower.tier_id} 的上限 {lower.max_chars} 吞掉了 {upper.tier_id} "
+                f"的下限 {upper.min_chars} ⇒ 两档实际同一档"
+            )
     assert chat.REPLY_TIER_STANDARD.max_chars and (
         chat.REPLY_TIER_STANDARD.max_chars < chat.REPLY_TIER_DETAIL.min_chars * 3
     ), "适中档上限高到吞掉详尽档 ⇒ 两档实际同一档"
+    # 封顶档必须**有**上限（旧表最上一档是"上不封顶"）：越过合并转发卡片线就变成卡片，
+    # 她要在一个普通气泡里读到。数值只住登记表，这里只判"有没有天花板"。
+    assert tiers[-1].max_chars > tiers[-1].min_chars, "封顶档没有上限 ⇒ 铺写会飘成合并转发卡片"
 
 
 def test_guidance_numbers_are_derived_from_the_registry_not_hand_written() -> None:
@@ -901,3 +918,101 @@ def test_floor_leg_poison_flips_the_gate() -> None:
         reply_detail="normal", question=KNOWLEDGE_TEXT, texts=list(script)
     )
     assert restored[2] == 1, "还原失败 ⇒ 后续用例不再可信"
+
+
+# ============ S17（2026-10-04）：拿到叙述授予那一轮的封顶档「铺写」 ============
+#
+# 她 2026-10-04 的原话：「在亲密模式下，一旦是那种比较紧密的肢体描述、肢体接触、
+# 动作描写…就尽量做到 600 到 800 字以上，1000 字为佳。」现网实测她收到的亲密回复
+# 只有 261 / 201 字——机理＝那一行长度指令最远只给到「详尽：不少于 300 字」，
+# 且详尽档的 coverage 是**知识题**口径（先给结论、讲来龙去脉），系统从未要求过六百。
+# 已定边界：只对**拿到叙述授予的那一轮**生效（判据＝`grants_intimate_narration`），
+# 科普/知识题的全局长度一字不动（那会影响所有用户，未经她确认）。
+
+
+def test_scene_tier_is_registered_with_the_ruled_numbers() -> None:
+    from plugins.bot_unified_runtime.config import Config
+
+    scene = chat.REPLY_LENGTH_TIERS.get(chat.REPLY_TIER_SCENE_ID)
+    assert scene is not None, "登记表里没有铺写档 ⇒ 授予轮的六百到一千字仍无处落地"
+    assert scene.min_chars == 600, scene.min_chars
+    assert scene.max_chars == 1200, scene.max_chars
+    assert scene.label_cn == "铺写", scene.label_cn
+    # 上限的**存在理由**＝压在合并转发卡片线之内（越过就变成卡片，她要普通气泡）。
+    # 那条线从 config 派生，不在这里抄第二次。
+    card_line = Config.model_fields["bot_render_forward_min_chars"].default
+    assert scene.max_chars < card_line, f"铺写上限 {scene.max_chars} 越过卡片线 {card_line}"
+    # 交付面必须是**场景铺写**口径，不是知识题口径（不许复读详尽档那句结论式散文）。
+    assert scene.coverage != chat.REPLY_TIER_DETAIL.coverage
+    assert "先给明确结论" not in scene.coverage
+
+
+def test_granted_turn_resolves_to_the_scene_tier_for_every_mode() -> None:
+    """授予轮的生效档＝封顶档：**任何**详略模式都到得了那一下限，不再只到 300。
+
+    旧判据「按秩升一格、封顶详尽」⇒ 钉过「短一点」的人开亲密只到适中，
+    现网钉 detail 的人只到详尽（＝她实测 261/201 字的根）。
+    """
+    for mode in sorted(chat.REPLY_DETAIL_MODES):
+        for text in (KNOWLEDGE_TEXT, SMALLTALK_TEXT, TIMELY_TEXT, ERROR_ACK_TEXT):
+            got = chat.intimate_reply_length_tier(mode, text)
+            assert got == chat.REPLY_TIER_SCENE_ID, (
+                f"{mode}×{text!r} ⇒ {got}（授予轮没升到封顶档）"
+            )
+    # 幂等：已经在顶格仍是顶格（不许长出「升无可升 ⇒ 回退一格」的第三态）。
+    assert chat.intimate_reply_length_tier("detail", KNOWLEDGE_TEXT) == (
+        chat.REPLY_TIER_SCENE_ID
+    )
+
+
+def test_scene_tier_line_renders_the_registry_numbers() -> None:
+    scene = chat.REPLY_LENGTH_TIERS[chat.REPLY_TIER_SCENE_ID]
+    line = chat.reply_length_guidance_text(chat.REPLY_TIER_SCENE_ID)
+    assert f"当前档＝{scene.label_cn}" in line
+    assert f"不少于 {scene.min_chars} 字" in line
+    assert f"不超过 {scene.max_chars} 字" in line
+    assert scene.coverage in line
+    # 铺写档**不带**「一段话不分段」的形式约束：同详尽档，那是长内容的形。
+    assert "不分段" not in line
+
+
+def test_scene_tier_is_only_reachable_through_the_narration_grant() -> None:
+    """防过修：新档只有授予腿走得到——全局长度（科普/知识题）一字未动。"""
+    for qtype in chat.REPLY_QUESTION_TYPES:
+        for mode in sorted(chat.REPLY_DETAIL_MODES):
+            assert chat.select_reply_length_tier(
+                detail_mode=mode, question_type=qtype
+            ) != chat.REPLY_TIER_SCENE_ID, (
+                f"{qtype}×{mode} 被抬进铺写档 ⇒ 未经确认改了全局长度"
+            )
+    for text in (
+        KNOWLEDGE_TEXT, SMALLTALK_TEXT, TIMELY_TEXT, ERROR_ACK_TEXT, "你吃饭了吗"
+    ):
+        for mode in sorted(chat.REPLY_DETAIL_MODES):
+            assert chat.resolve_reply_length_tier(mode, text) != (
+                chat.REPLY_TIER_SCENE_ID
+            ), f"{mode}×{text!r} 未授予却升到了铺写档"
+    # 拿不到本轮文本的兜底映射面（预览/夹具）也不许自己升档。
+    for mode in sorted(chat.REPLY_DETAIL_MODES):
+        assert chat.resolve_reply_length_tier(mode, "") != chat.REPLY_TIER_SCENE_ID
+
+
+def test_floor_leg_and_prompt_line_share_the_scene_tier() -> None:
+    """出口地板腿与那一行长度指令读**同一个升格**（不许在别处再写一份数值）。"""
+    scene = chat.REPLY_LENGTH_TIERS[chat.REPLY_TIER_SCENE_ID]
+    bumped = chat.intimate_reply_length_tier("detail", KNOWLEDGE_TEXT)
+    assert chat.REPLY_LENGTH_TIERS[bumped].min_chars == scene.min_chars
+    messages = [
+        {
+            "role": "system",
+            "content": "人设\n" + chat.reply_length_guidance_text("detail"),
+        }
+    ]
+    applied = chat.apply_intimate_length_floor(
+        messages, detail_mode="detail", message_text=KNOWLEDGE_TEXT
+    )
+    assert applied == chat.REPLY_TIER_SCENE_ID, applied
+    joined = "\n".join(str(item.get("content") or "") for item in messages)
+    lines = [ln for ln in joined.splitlines() if chat.TIER_LINE_PREFIX in ln]
+    assert len(lines) == 1, f"长度指令必须恰好一条，实得 {len(lines)} 条"
+    assert f"当前档＝{scene.label_cn}" in lines[0]

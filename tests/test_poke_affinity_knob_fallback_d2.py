@@ -10,6 +10,11 @@
 为什么不直接扩那件的读点表：`_knob_fallbacks` 只认 `PokeDispatcher._knobs` 里
 `getattr(config, k, 兜底)` 单形，根这两枚多一个 `or 兜底` 二段形、且在另一个文件，
 硬塞会改到别人在册的锁。本件同形另立，注毒自证照抄。
+
+2026-10-03 续做（S12R 锁失明修复）：实现侧已把两枚兜底对齐真身（0.1/0.5，本锁
+当初盯的债已清）且函数嵌进 `_register_nonebot_handlers`——顶层 `tree.body` 扫描
+失明。锁改 `ast.walk` 全树下探找同名函数、注毒正则改收任意接收者名（`poke_config`
+改名不再脱靶），判据（兜底字面＝真身缺省＋注毒必须被看见）一字不动。
 """
 
 from __future__ import annotations
@@ -45,19 +50,23 @@ def _config_defaults(source: str) -> dict[str, object]:
 
 
 def _root_fallbacks(source: str) -> dict[str, object]:
-    """现读根 `_record_poke_affinity` 里的 ``getattr(cfg, "<键>", 兜底) [or 兜底]``。"""
+    """现读根 `_record_poke_affinity` 里的 ``getattr(cfg, "<键>", 兜底) [or 兜底]``。
+
+    2026-10-03 起该函数嵌套在 `_register_nonebot_handlers` 内（不再是模块级顶层
+    def）——顶层 `tree.body` 扫描失明，改 `ast.walk` 全树下探找同名函数；必须恰
+    一枚（0＝失明、多枚＝歧义，都按坐标已漂判红）。
+    """
     tree = ast.parse(source)
-    fn = next(
-        (
-            n
-            for n in tree.body
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == FUNC
-        ),
-        None,
+    fns = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == FUNC
+    ]
+    assert len(fns) == 1, (
+        f"根文件里 {FUNC} 现算 {len(fns)} 枚（0＝失明、>1＝歧义）＝坐标已漂"
     )
-    assert fn is not None, f"根文件里找不到 {FUNC}＝坐标已漂，本锁失明"
     out: dict[str, object] = {}
-    for node in ast.walk(fn):
+    for node in ast.walk(fns[0]):
         if not (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
@@ -84,11 +93,15 @@ def test_root_poke_affinity_fallbacks_match_config_defaults() -> None:
 
 
 def test_root_poke_affinity_lock_bites_on_poisoned_copy(tmp_path: Path) -> None:
-    """注毒打在内存副本：把 delta 兜底改回旧错值，锁必须点名它。"""
+    """注毒打在内存副本：把 delta 兜底改回旧错值，锁必须点名它。
+
+    2026-10-03：接收者已从 ``config`` 改名 ``poke_config``——正则改收任意接收者名，
+    只钉键名与兜底字面（delta 兜底 +1.0 后锁必须看到错值），判据不变。
+    """
     src = ROOT_INIT.read_text(encoding="utf-8-sig")
     assert '"bot_poke_affinity_delta"' in src, "锚点不在＝注毒会空跑"
     poisoned = re.sub(
-        r'(getattr\(config, "bot_poke_affinity_delta", )([0-9.]+)',
+        r'(getattr\(\w+, "bot_poke_affinity_delta", )([0-9.]+)',
         lambda m: f"{m.group(1)}{float(m.group(2)) + 1.0}",
         src,
         count=1,

@@ -35,6 +35,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+
+from plugins.bot_unified_runtime.domains.core.write_trace import (
+    OUTCOME_FAILED,
+    OUTCOME_NOOP,
+    OUTCOME_OK,
+    OUTCOME_REFUSED,
+    WriteTrace,
+)
 
 STATUS_PENDING = "pending_review"
 STATUS_ACTIVE = "active"
@@ -152,11 +161,37 @@ class QuirkStore:
         self._max_pending = int(max_pending)
         self._clock: Callable[[], datetime] = clock if clock is not None else _utc_now
         self._lock = threading.Lock()
+        # 写路径留痕（2026-10-02 席 D2）：本件的写腿历史上会把「投进去几条、转正几条、
+        # 拒了几条」全留在**内存返回值**里——盘上只有 persona_quirks 的行本身，而
+        # 「一条都没落」与「落了一堆 pending」在 mtime 上长得一样（本案普查就是被这一格
+        # 绊住的：主文件停在 10-01 01:18，实际最后一笔提交是 10-02 00:43 的 -wal）。
+        # 留痕只记账、不改任何返回语义与异常语义（fail-open 一格不许翻成阻断聊天）。
+        self._trace = WriteTrace(f"persona_quirks:{self.db_path.name}")
         # 进程内复用单一连接（同 affinity.py）：全部操作已在 self._lock 下
         # 串行，check_same_thread=False 允许事件循环与 offload 线程池跨线程
         # 共用同一连接。
         self._connection: sqlite3.Connection | None = None
         self._ensure_schema()
+
+    # ---- 写路径留痕读数 ----------------------------------------------------
+
+    def _record(self, op: str, outcome: str, detail: object = "") -> None:
+        trace = getattr(self, "_trace", None)
+        if isinstance(trace, WriteTrace):
+            trace.record(op, outcome, detail)
+
+    def write_trace(self) -> dict[str, Any]:
+        """本 store 写路径的现算读数（短标签，无正文／无路径／无密钥）。"""
+        trace = getattr(self, "_trace", None)
+        if isinstance(trace, WriteTrace):
+            return trace.snapshot()
+        return {"store": "", "counts": {}, "by_op": {}, "recent": []}
+
+    def write_counts(self) -> dict[str, int]:
+        trace = getattr(self, "_trace", None)
+        if isinstance(trace, WriteTrace):
+            return trace.counts()
+        return {}
 
     def _connect(self) -> sqlite3.Connection:
         if self._connection is None:
@@ -241,34 +276,79 @@ class QuirkStore:
         """
         safe_text = _sanitize_proposal_text(text or "")
         if safe_text is None:
+            # 消毒闸拒入＝一笔都没进 pending，这一格必须看得见（提案侧的「该写没写」）。
+            self._record("propose", OUTCOME_REFUSED, "hard_line")
             raise ValueError("quirk 提案命中硬红线，拒入 pending（与事实腿拒存同口径）")
         normalized = normalize_quirk_text(safe_text)
         if not normalized:
+            self._record("propose", OUTCOME_REFUSED, "empty")
             raise ValueError("quirk text 不能为空")
         kind = (scope_kind or SCOPE_GLOBAL).strip()
         if kind not in _SCOPE_KINDS:
+            self._record("propose", OUTCOME_REFUSED, "unknown_scope")
             raise ValueError(f"未知 scope_kind：{scope_kind}")
         key = " ".join((scope_key or "").split())
         display_text = " ".join(safe_text.split())
         quirk_id = _quirk_id_for(normalized)
         now_text = self._now_text()
-        with self._lock, self._connect() as connection:
-            existing = connection.execute(
-                f"SELECT {_SELECT_COLUMNS} FROM persona_quirks WHERE quirk_id = ?",
-                (quirk_id,),
-            ).fetchone()
-            if existing is not None:
-                if str(existing["status"]) in {STATUS_ACTIVE, STATUS_PENDING}:
-                    return _row_to_quirk(existing)
-                connection.execute(
-                    "UPDATE persona_quirks SET status = 'pending_review', source = ?,"
-                    " created_at = ?, reviewed_at = NULL, scope_kind = ?, scope_key = ?"
-                    " WHERE quirk_id = ?",
-                    (source, now_text, kind, key, quirk_id),
+        try:
+            with self._lock, self._connect() as connection:
+                existing = connection.execute(
+                    f"SELECT {_SELECT_COLUMNS} FROM persona_quirks WHERE quirk_id = ?",
+                    (quirk_id,),
+                ).fetchone()
+                if existing is not None:
+                    if str(existing["status"]) in {STATUS_ACTIVE, STATUS_PENDING}:
+                        self._record("propose", OUTCOME_NOOP, "dedupe")
+                        return _row_to_quirk(existing)
+                    connection.execute(
+                        "UPDATE persona_quirks SET status = 'pending_review', source = ?,"
+                        " created_at = ?, reviewed_at = NULL, scope_kind = ?, scope_key = ?"
+                        " WHERE quirk_id = ?",
+                        (source, now_text, kind, key, quirk_id),
+                    )
+                    self._record("propose", OUTCOME_OK, "revived")
+                    return Quirk(
+                        quirk_id=quirk_id,
+                        quirk_text=str(existing["quirk_text"]),
+                        status=STATUS_PENDING,
+                        source=source,
+                        created_at=now_text,
+                        reviewed_at=None,
+                        scope_kind=kind,
+                        scope_key=key,
+                    )
+                pending_count = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM persona_quirks WHERE status = 'pending_review'"
+                    ).fetchone()[0]
                 )
+                # 队列封顶：满时先逐出最旧 pending（腾出空位再插入，总数恒 ≤ max_pending）。
+                overflow = max(0, pending_count - self._max_pending + 1)
+                if overflow > 0:
+                    stale = connection.execute(
+                        "SELECT quirk_id FROM persona_quirks WHERE status = 'pending_review'"
+                        " ORDER BY created_at ASC, rowid ASC LIMIT ?",
+                        (overflow,),
+                    ).fetchall()
+                    for row in stale:
+                        connection.execute(
+                            "DELETE FROM persona_quirks WHERE quirk_id = ?",
+                            (str(row["quirk_id"]),),
+                        )
+                connection.execute(
+                    "INSERT INTO persona_quirks"
+                    " (quirk_id, quirk_text, status, source, created_at, reviewed_at,"
+                    "  scope_kind, scope_key)"
+                    " VALUES (?, ?, 'pending_review', ?, ?, NULL, ?, ?)",
+                    (quirk_id, display_text, source, now_text, kind, key),
+                )
+                # 逐出数进 detail：生产 max_pending=20 且 pending 常满 ⇒ 旧候选在被审前
+                # 就被顶掉，这一格是那本「学不进去」的账唯一能看见的地方。
+                self._record("propose", OUTCOME_OK, f"inserted evicted={overflow}")
                 return Quirk(
                     quirk_id=quirk_id,
-                    quirk_text=str(existing["quirk_text"]),
+                    quirk_text=display_text,
                     status=STATUS_PENDING,
                     source=source,
                     created_at=now_text,
@@ -276,61 +356,41 @@ class QuirkStore:
                     scope_kind=kind,
                     scope_key=key,
                 )
-            pending_count = int(
-                connection.execute(
-                    "SELECT COUNT(*) FROM persona_quirks WHERE status = 'pending_review'"
-                ).fetchone()[0]
-            )
-            # 队列封顶：满时先逐出最旧 pending（腾出空位再插入，总数恒 ≤ max_pending）。
-            overflow = max(0, pending_count - self._max_pending + 1)
-            if overflow > 0:
-                stale = connection.execute(
-                    "SELECT quirk_id FROM persona_quirks WHERE status = 'pending_review'"
-                    " ORDER BY created_at ASC, rowid ASC LIMIT ?",
-                    (overflow,),
-                ).fetchall()
-                for row in stale:
-                    connection.execute(
-                        "DELETE FROM persona_quirks WHERE quirk_id = ?",
-                        (str(row["quirk_id"]),),
-                    )
-            connection.execute(
-                "INSERT INTO persona_quirks"
-                " (quirk_id, quirk_text, status, source, created_at, reviewed_at,"
-                "  scope_kind, scope_key)"
-                " VALUES (?, ?, 'pending_review', ?, ?, NULL, ?, ?)",
-                (quirk_id, display_text, source, now_text, kind, key),
-            )
-            return Quirk(
-                quirk_id=quirk_id,
-                quirk_text=display_text,
-                status=STATUS_PENDING,
-                source=source,
-                created_at=now_text,
-                reviewed_at=None,
-                scope_kind=kind,
-                scope_key=key,
-            )
+        except Exception as exc:
+            self._record("propose", OUTCOME_FAILED, type(exc).__name__)
+            raise
 
     def approve(self, quirk_id: str) -> bool:
         """pending → active；非 pending 或不存在返回 False。"""
-        with self._lock, self._connect() as connection:
-            cursor = connection.execute(
-                "UPDATE persona_quirks SET status = 'active', reviewed_at = ?"
-                " WHERE quirk_id = ? AND status = 'pending_review'",
-                (self._now_text(), str(quirk_id).strip()),
-            )
-        return cursor.rowcount > 0
+        try:
+            with self._lock, self._connect() as connection:
+                cursor = connection.execute(
+                    "UPDATE persona_quirks SET status = 'active', reviewed_at = ?"
+                    " WHERE quirk_id = ? AND status = 'pending_review'",
+                    (self._now_text(), str(quirk_id).strip()),
+                )
+        except Exception as exc:
+            self._record("approve", OUTCOME_FAILED, type(exc).__name__)
+            raise
+        changed = cursor.rowcount > 0
+        self._record("approve", OUTCOME_OK if changed else OUTCOME_NOOP)
+        return changed
 
     def retire(self, quirk_id: str) -> bool:
         """active/pending → retired（保留历史行，退出渲染）；否则 False。"""
-        with self._lock, self._connect() as connection:
-            cursor = connection.execute(
-                "UPDATE persona_quirks SET status = 'retired', reviewed_at = ?"
-                " WHERE quirk_id = ? AND status IN ('active', 'pending_review')",
-                (self._now_text(), str(quirk_id).strip()),
-            )
-        return cursor.rowcount > 0
+        try:
+            with self._lock, self._connect() as connection:
+                cursor = connection.execute(
+                    "UPDATE persona_quirks SET status = 'retired', reviewed_at = ?"
+                    " WHERE quirk_id = ? AND status IN ('active', 'pending_review')",
+                    (self._now_text(), str(quirk_id).strip()),
+                )
+        except Exception as exc:
+            self._record("retire", OUTCOME_FAILED, type(exc).__name__)
+            raise
+        changed = cursor.rowcount > 0
+        self._record("retire", OUTCOME_OK if changed else OUTCOME_NOOP)
+        return changed
 
     def add_direct(self, text: str, source: str = "admin") -> Quirk:
         """管理员手动录入：跳过评审直接 active，新录入 scope 固定 global。
@@ -344,64 +404,76 @@ class QuirkStore:
         """
         normalized = normalize_quirk_text(text)
         if not normalized:
+            self._record("add_direct", OUTCOME_REFUSED, "empty")
             raise ValueError("quirk text 不能为空")
         display_text = " ".join((text or "").split())
         quirk_id = _quirk_id_for(normalized)
         now_text = self._now_text()
-        with self._lock, self._connect() as connection:
-            existing = connection.execute(
-                f"SELECT {_SELECT_COLUMNS} FROM persona_quirks WHERE quirk_id = ?",
-                (quirk_id,),
-            ).fetchone()
-            if existing is not None:
-                if str(existing["status"]) == STATUS_ACTIVE:
-                    return _row_to_quirk(existing)
-                hit_pending = str(existing["status"]) == STATUS_PENDING
-                if hit_pending:
-                    # pending 转正保持原 scope（approve 语义，审查 G-07）。
-                    connection.execute(
-                        "UPDATE persona_quirks SET status = 'active', reviewed_at = ?"
-                        " WHERE quirk_id = ?",
-                        (now_text, quirk_id),
+        try:
+            with self._lock, self._connect() as connection:
+                existing = connection.execute(
+                    f"SELECT {_SELECT_COLUMNS} FROM persona_quirks WHERE quirk_id = ?",
+                    (quirk_id,),
+                ).fetchone()
+                if existing is not None:
+                    if str(existing["status"]) == STATUS_ACTIVE:
+                        self._record("add_direct", OUTCOME_NOOP, "already_active")
+                        return _row_to_quirk(existing)
+                    hit_pending = str(existing["status"]) == STATUS_PENDING
+                    if hit_pending:
+                        # pending 转正保持原 scope（approve 语义，审查 G-07）。
+                        connection.execute(
+                            "UPDATE persona_quirks SET status = 'active', reviewed_at = ?"
+                            " WHERE quirk_id = ?",
+                            (now_text, quirk_id),
+                        )
+                        scope_kind = str(existing["scope_kind"])
+                        scope_key = str(existing["scope_key"])
+                    else:
+                        # retired 复活按管理员直添意图落 global（审查 G-07）。
+                        connection.execute(
+                            "UPDATE persona_quirks SET status = 'active', reviewed_at = ?,"
+                            " scope_kind = 'global', scope_key = '' WHERE quirk_id = ?",
+                            (now_text, quirk_id),
+                        )
+                        scope_kind = SCOPE_GLOBAL
+                        scope_key = ""
+                    self._record(
+                        "add_direct",
+                        OUTCOME_OK,
+                        "promoted_pending" if hit_pending else "revived_retired",
                     )
-                    scope_kind = str(existing["scope_kind"])
-                    scope_key = str(existing["scope_key"])
-                else:
-                    # retired 复活按管理员直添意图落 global（审查 G-07）。
-                    connection.execute(
-                        "UPDATE persona_quirks SET status = 'active', reviewed_at = ?,"
-                        " scope_kind = 'global', scope_key = '' WHERE quirk_id = ?",
-                        (now_text, quirk_id),
+                    return Quirk(
+                        quirk_id=quirk_id,
+                        quirk_text=str(existing["quirk_text"]),
+                        status=STATUS_ACTIVE,
+                        source=str(existing["source"]),
+                        created_at=str(existing["created_at"]),
+                        reviewed_at=now_text,
+                        scope_kind=scope_kind,
+                        scope_key=scope_key,
                     )
-                    scope_kind = SCOPE_GLOBAL
-                    scope_key = ""
+                connection.execute(
+                    "INSERT INTO persona_quirks"
+                    " (quirk_id, quirk_text, status, source, created_at, reviewed_at,"
+                    "  scope_kind, scope_key)"
+                    " VALUES (?, ?, 'active', ?, ?, ?, 'global', '')",
+                    (quirk_id, display_text, source, now_text, now_text),
+                )
+                self._record("add_direct", OUTCOME_OK, "inserted_active")
                 return Quirk(
                     quirk_id=quirk_id,
-                    quirk_text=str(existing["quirk_text"]),
+                    quirk_text=display_text,
                     status=STATUS_ACTIVE,
-                    source=str(existing["source"]),
-                    created_at=str(existing["created_at"]),
+                    source=source,
+                    created_at=now_text,
                     reviewed_at=now_text,
-                    scope_kind=scope_kind,
-                    scope_key=scope_key,
+                    scope_kind=SCOPE_GLOBAL,
+                    scope_key="",
                 )
-            connection.execute(
-                "INSERT INTO persona_quirks"
-                " (quirk_id, quirk_text, status, source, created_at, reviewed_at,"
-                "  scope_kind, scope_key)"
-                " VALUES (?, ?, 'active', ?, ?, ?, 'global', '')",
-                (quirk_id, display_text, source, now_text, now_text),
-            )
-            return Quirk(
-                quirk_id=quirk_id,
-                quirk_text=display_text,
-                status=STATUS_ACTIVE,
-                source=source,
-                created_at=now_text,
-                reviewed_at=now_text,
-                scope_kind=SCOPE_GLOBAL,
-                scope_key="",
-            )
+        except Exception as exc:
+            self._record("add_direct", OUTCOME_FAILED, type(exc).__name__)
+            raise
 
     def list(self, status: str | None = None, limit: int = 50) -> builtins.list[Quirk]:
         """列出小习惯（默认全状态、最新 created_at 在前）。"""

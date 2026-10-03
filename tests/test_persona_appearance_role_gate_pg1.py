@@ -57,20 +57,95 @@ def _call_lines(node: ast.AST, func_name: str) -> list[int]:
     ]
 
 
-def test_helper_takes_actor_roles_and_gates_before_dispatch() -> None:
-    helper = _helper_def()
-    params = {a.arg for a in helper.args.args} | {a.arg for a in helper.args.kwonlyargs}
-    assert "actor_roles" in params, "helper 未收 actor_roles 形参"
+def _helper_contract_problems(fn: ast.AST) -> list[str]:
+    """纯判据：给定一个 helper 的 AST 节点，返回它违背外观角色门契约的问题清单（空＝合格）。
+
+    抽成纯函数，是为了让「门真的会咬人」这件事能被注毒自证——原来三条断言散在测试体里，
+    只能证明**今天那一份真件**合格，证不了「谁把角色门摘掉/挪到下发之后，本锁一定红」。
+    """
+    problems: list[str] = []
+    params = {a.arg for a in fn.args.args} | {a.arg for a in fn.args.kwonlyargs}
+    if "actor_roles" not in params:
+        problems.append("helper 未收 actor_roles 形参")
     guard_lines = [
         node.lineno
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Compare)
-        and {"admin", "super_admin"} & _literal_names(node)
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Compare) and {"admin", "super_admin"} & _literal_names(node)
     ]
-    assert guard_lines, "helper 体内没有角色判据"
-    dispatch_lines = _call_lines(helper, "apply_persona_profile")
-    assert dispatch_lines, "helper 未调 apply_persona_profile（结构变了，请同步本锁）"
-    assert min(guard_lines) < min(dispatch_lines), "角色门排在下发之后＝永假承诺"
+    dispatch_lines = _call_lines(fn, "apply_persona_profile")
+    if not guard_lines:
+        problems.append("helper 体内没有角色判据")
+    if not dispatch_lines:
+        problems.append("helper 未调 apply_persona_profile（结构变了，请同步本锁）")
+    if guard_lines and dispatch_lines and not min(guard_lines) < min(dispatch_lines):
+        problems.append("角色门排在下发之后＝永假承诺")
+    return problems
+
+
+def _parse_single_fn(source: str) -> ast.FunctionDef:
+    """把一段源码里的唯一顶层函数取出来（注毒用例喂合成 AST，绝不动生产件）。"""
+    tree = ast.parse(source)
+    fns = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    assert len(fns) == 1, "注毒夹具必须恰含一枚顶层函数"
+    return fns[0]
+
+
+def test_helper_takes_actor_roles_and_gates_before_dispatch() -> None:
+    problems = _helper_contract_problems(_helper_def())
+    assert not problems, "外观角色门 helper 违约：" + "；".join(problems)
+
+
+def test_role_gate_lock_catches_missing_late_or_absent_guard() -> None:
+    """注毒自证（原缺的那条腿）：合成 AST 里逐格破坏角色门，本锁必须逐格报红。
+
+    没有这条腿，`_helper_contract_problems` 可能被悄悄写成 `return []`（永真摆设），
+    现件照样绿——正是简报点名的「green-but-toothless」。合格件先自证尺不是恒红。
+    """
+    compliant = (
+        "def _dispatch_persona_appearance_if_switched(message, actor_roles):\n"
+        "    if 'admin' not in actor_roles:\n"
+        "        return\n"
+        "    apply_persona_profile(message)\n"
+    )
+    assert _helper_contract_problems(_parse_single_fn(compliant)) == [], "合格件被误判＝尺恒红"
+
+    no_guard = (
+        "def _dispatch_persona_appearance_if_switched(message, actor_roles):\n"
+        "    apply_persona_profile(message)\n"
+    )
+    assert any("角色判据" in p for p in _helper_contract_problems(_parse_single_fn(no_guard))), (
+        "注毒未被抓住：删掉角色门仍绿=锁是空跑"
+    )
+
+    late_guard = (
+        "def _dispatch_persona_appearance_if_switched(message, actor_roles):\n"
+        "    apply_persona_profile(message)\n"
+        "    if 'admin' not in actor_roles:\n"
+        "        return\n"
+    )
+    assert any("永假承诺" in p for p in _helper_contract_problems(_parse_single_fn(late_guard))), (
+        "注毒未被抓住：角色门挪到下发之后仍绿"
+    )
+
+    no_param = (
+        "def _dispatch_persona_appearance_if_switched(message, roles):\n"
+        "    if 'admin' not in roles:\n"
+        "        return\n"
+        "    apply_persona_profile(message)\n"
+    )
+    assert any("actor_roles 形参" in p for p in _helper_contract_problems(_parse_single_fn(no_param))), (
+        "注毒未被抓住：没收 actor_roles 形参仍绿"
+    )
+
+    no_dispatch = (
+        "def _dispatch_persona_appearance_if_switched(message, actor_roles):\n"
+        "    if 'admin' not in actor_roles:\n"
+        "        return\n"
+        "    log_only(message)\n"
+    )
+    assert any("apply_persona_profile" in p for p in _helper_contract_problems(_parse_single_fn(no_dispatch))), (
+        "注毒未被抓住：不再下发外观仍绿"
+    )
 
 
 def test_hook_call_site_passes_actor_roles() -> None:

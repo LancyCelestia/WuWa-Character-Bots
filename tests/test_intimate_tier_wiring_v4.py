@@ -723,9 +723,12 @@ def test_shallow_pinned_voice_still_goes_native(tmp_path) -> None:
     uid = "960000403"
     cfg = _config()
     journal: list = []
+    _opener_journal: list = []
     asr = _RecordingAsrProvider("这句话不该被转写")
 
-    _run_media_turn(cfg, uid, "亲密模式 开", [], journal)
+    # 席25 注：opener 指令轮按二判功能设计（GENERAL 兜底）会发一帧搜索域分类
+    # 预调用——分账到 scratch，不占本格媒体轮的 hop 序断言账；本格只锁媒体轮。
+    _run_media_turn(cfg, uid, "亲密模式 开", [], _opener_journal)
     _run_media_turn(
         cfg,
         uid,

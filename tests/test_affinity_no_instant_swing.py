@@ -20,11 +20,12 @@
 3. **活性判据（防假绿）**：不走任何门面，直接调内部写入口
    ``DynamicAffinityStore._v7_delta`` / ``_observe``，并对外部直改的 ``z_latent`` /
    ``affinity`` / ``v7_state`` 脏行做读回断言——护栏在执法体内，不在门面；
-   另加一条 AST 扫描：全仓 ``plugins/``+``scripts/`` 里除真身与两台在册演练器外，
+   另加一条 AST 扫描：全仓 ``plugins/``+``scripts/`` 里除真身与在册演练器族外，
    **不存在第二处会写 ``user_affinity`` 分数列的代码路径**。
 4. **牙齿自证（差分证据，A-1 后改判为三层）**：只放宽日额度（5.0z）⇒ 单发仍被
-   **正向单事件帽**钉在 0.10z（两帽各自独立承重）；两帽同放 ⇒ 位移立刻越过 0.12z
-   （并撞硬界、跨多档）⇒ 证明缺省断言非同义反复。"滚动窗形"与"日桶"的差分证据
+   **正向单事件帽**钉在 0.10z（两帽各自独立承重）；两帽同放 ⇒ 位移立刻越过
+   缺省日额度一个量级（>10×_DAILY_CAP，并贴长尾表示域、跨多档）⇒ 证明缺省
+   断言非同义反复。"滚动窗形"与"日桶"的差分证据
    在午夜改判用例：把 v7 聚合换回 day["s"] 自然日桶，该用例当场红。
 
 红线零回归：本件只**复跑**不放宽——末段再扫一遍注入文本（任何档位不攻击/不强硬、
@@ -75,13 +76,19 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _V7_ENV_KEYS = [name.upper() for name, _default in _V7_CONFIG_FIELDS]
 _CAP_TOL = 1e-6
-_DAILY_CAP = _V7_DEFAULT_DAILY_MOVE_CAP_Z       # 0.12z（缺省最坏 11.94 展示分 < 一档宽 25）
+_DAILY_CAP = _V7_DEFAULT_DAILY_MOVE_CAP_Z       # 缺省日额度；最坏展示位移 = v7_display_move_for_z_cap(_DAILY_CAP)（随常量现算，当前 ≈4.0 分 < 一档宽 25）
 _NEG_CAP = _V7_DEFAULT_NEGATIVE_EVENT_CAP_Z     # 0.10z（单事件负向上限）
 # v8（2026-09-27「边际递减 + 长尾」）前提重建用的公共量：γ 半衰减参考点（缺省
 # z_hard）与其处系数；帽后缩放 ⇒ 基数档处实发 _CAP_AT_BASE、半参考点处半额。
 _V8_HALF_DEFAULT = math.atanh(_V7_DEFAULT_Z_HARD_BOUND)
 _GAMMA_BASE = v8_marginal_gain(v7_display_fraction_to_z(_AFFINITY_BASE), _V8_HALF_DEFAULT)
 _CAP_AT_BASE = _NEG_CAP * _GAMMA_BASE
+# 场景帽（派生自登记常量，非生产缺省）：需要「日额度宽于单事件帽实发、窄于两发
+# 实发之和」的用例统一用这把尺 ⇒ 「单事件帽先咬」与「余额由第二发吃满」两形态
+# 都可达；常量变则随动（当前 ≈0.12z，恰在单档临界 atanh(0.25)≈0.2554 之下）。
+# 2026-10-03 消除双源后缺省日额度 0.04z 窄于单事件帽实发，这些用例必须显式抬帽，
+# 否则日额度抢先咬合、判据改判对象。
+_SCENARIO_DAILY_CAP = _CAP_AT_BASE * 1.25
 # 顶格存量读回锁的新域界（v8）：惰性映射仍钳 ±0.985，其后单发 ≤帽×γ(半参考点)
 # =0.05z ⇒ 展示上界 tanh(atanh(0.985)+0.05)≈0.9891，判据放宽到 0.995（含余量、
 # 仍远收在 0.999999 表示域之内）。
@@ -516,7 +523,6 @@ def test_worst_case_insult_bombardment_across_days(tmp_path) -> None:
     clock = _Clock()
     store = _v7_store(tmp_path, "pound.sqlite3", clock)
     tiers: list[int] = []
-    fractions: list[float] = []
     day_sums: dict[int, float] = {}
     _, z_prev = _peek_state(store, "u1")
     tier_prev = tier_for_affinity(_AFFINITY_BASE)
@@ -531,13 +537,18 @@ def test_worst_case_insult_bombardment_across_days(tmp_path) -> None:
         tier_now = tier_for_affinity(fraction)
         _no_tier_skip(f"pound#{index}", tier_prev, tier_now)
         z_prev, tier_prev = z, tier_now
-        fractions.append(fraction)
         tiers.append(tier_now)
         assert abs(fraction) < 0.995, "连打 3 天也不许贴到谷值"
         clock.advance(61)
     assert tiers[0] >= tiers[-1]
     assert tiers[0] - tiers[-1] <= 3, "3 天最多挪 3 档（每天至多一档）"
-    assert fractions[0] - fractions[-1] > 0.02, "全零位移 ⇒ 空跑"
+    # 活性判据随常量现算：183 连发的总位移（z 域，day_sums 逐发累加）必须吃动
+    # 日额度假的一半以上——日额度 0.12z 时代旧式「首发后展示位移 >0.02」的
+    # 写法随缺省收窄而失真，现按 _DAILY_CAP 派生、帽该吃满还是吃满。
+    total_moved = sum(day_sums.values())
+    assert total_moved > _DAILY_CAP * 0.5, (
+        f"183 连发总位移 {total_moved:.4f}z 不足日额度一半 ⇒ 空跑（护栏在但额度没吃动）"
+    )
 
 
 def test_worst_case_fuse_25_takes_over_independently_of_daily_cap(tmp_path) -> None:
@@ -557,7 +568,9 @@ def test_worst_case_fuse_25_takes_over_independently_of_daily_cap(tmp_path) -> N
         "超限事件不得再喂新鲜度计数（计数跨 61s 有 seasonal τ=21d 的微量衰减，取带容差）"
     )
     total = abs(z_end - z_start)
-    assert 0.0 < total < _DAILY_CAP - 0.05, (
+    # 上界随常量派生（留 10% 帽距）：额度若真被吃满，total 必贴着 _DAILY_CAP
+    # （浮点噪声 ~1e-15 量级），帽距保证「未耗尽」判据不被浮点假绿。
+    assert 0.0 < total < _DAILY_CAP * 0.9, (
         f"日累计位移 {total}：本用例要求日额度**未**耗尽而熔断独立收口"
     )
 
@@ -734,9 +747,13 @@ def test_move_budget_rolls_over_24h_not_local_midnight(tmp_path) -> None:
     ① **翻页不再续额**——旧形态下"23:59 吃满 + 00:01 再吃满"的两发排程路
       （120s 内两个全额、可跨档）现给出零位移；
     ② **额度只随 24h 窗滚出恢复**——把首发顶出窗后，同一发才重新能动。
-    另钉正向 override 单事件帽：一发 0.12z 只走 0.10z×γ（v8 边际递减，帽后
-      按当前高度缩放），剩下的余额由第二发吃掉
+    另钉正向 override 单事件帽：一发超帽 override（0.12z）只走 0.10z×γ（v8 边际
+      递减，帽后按当前高度缩放），剩下的余额由第二发吃掉
     ——「一发吃满全日额度」从此不再是可达形态。
+
+    场景帽：本用例的鉴别形态要求日额度**宽于**单事件帽实发（_CAP_AT_BASE）而
+    **窄于**两发实发之和，缺省 0.04z（2026-10-03 消除双源后）窄于前者 ⇒ 显式抬到
+    _SCENARIO_DAILY_CAP（= _CAP_AT_BASE×1.25，随常量派生）；判据零放松。
     """
     midnight = _next_local_midnight(1_800_040_000.0)
     assert _day_index(midnight - 30.0) != _day_index(midnight + 90.0), (
@@ -744,7 +761,10 @@ def test_move_budget_rolls_over_24h_not_local_midnight(tmp_path) -> None:
     )
     first_at = midnight - 7_200.0  # 本地 22:00 吃满额度（旧形态的"午夜前"侧）
     clock = _Clock(first_at)
-    store = _v7_store(tmp_path, "rolling.sqlite3", clock)
+    store = _v7_store(
+        tmp_path, "rolling.sqlite3", clock,
+        bot_affinity_daily_move_cap_z=_SCENARIO_DAILY_CAP,
+    )
     z_base = v7_display_fraction_to_z(_AFFINITY_BASE)
 
     _obs(store, "u1", "neutral", text="顶格正向第一发（0.12 的授权）", delta_override=0.12)
@@ -758,7 +778,7 @@ def test_move_budget_rolls_over_24h_not_local_midnight(tmp_path) -> None:
     clock.now = first_at + 90.0
     _obs(store, "u1", "neutral", text="吃掉剩余余额的第二发", delta_override=0.12)
     _, z_full = _peek_state(store, "u1")
-    assert z_full - z_capped == pytest.approx(_DAILY_CAP - _CAP_AT_BASE, abs=1e-9)
+    assert z_full - z_capped == pytest.approx(_SCENARIO_DAILY_CAP - _CAP_AT_BASE, abs=1e-9)
 
     # —— 鉴别位：午夜两侧各一发（间隔 120s，旧日桶=两个全额）——
     clock.now = midnight - 30.0
@@ -771,7 +791,7 @@ def test_move_budget_rolls_over_24h_not_local_midnight(tmp_path) -> None:
     assert z_new == z_still, (
         "自然日翻页就续额 ⇒ 滚动 24h 窗退化回 day['s'] 日桶（本用例改判前的旧行为）"
     )
-    assert z_new - z_base == pytest.approx(_DAILY_CAP, abs=1e-9), "两发合计应恰为全窗额度"
+    assert z_new - z_base == pytest.approx(_SCENARIO_DAILY_CAP, abs=1e-9), "两发合计应恰为全窗额度"
 
     # —— 恢复面：首发顶出 24h 窗后，额度才回来 ——
     clock.now = first_at + 86_400.0 + 120.0
@@ -785,12 +805,19 @@ def test_move_budget_rolls_over_24h_not_local_midnight(tmp_path) -> None:
 def test_positive_single_event_cap_bites_on_both_faces(tmp_path) -> None:
     """A-1 正向单事件帽，两面各一发：
     ① override 面（门面 observe 带巨大正 override）⇒ Δz 恰 0.10z×γ(z基数)（v8
-      帽后缩放）——旧形态正向"直穿到当日剩余额度"（一发最多吃满 0.12z≈11.98
-      展示分）自此不可能；
+      帽后缩放）——旧形态正向"直穿到当日剩余额度"（一发最多吃满日额度，展示
+      位移 = v7_display_move_for_z_cap(日额度)，随常量现算）自此不可能；
     ② 普通计分面（更新式真身 `v7_raw_delta_z`，所有计分发都经它）——满因子
-      乘积再乘修复 ×1.4 的 raw 积 ≈0.2013z ⇒ 被同一枚帽钳回 0.10z。"""
+      乘积再乘修复 ×1.4 的 raw 积 ≈0.2013z ⇒ 被同一枚帽钳回 0.10z。
+
+    场景帽：①面要求日额度宽于单事件帽实发，否则日额度抢先咬合改判对象 ⇒
+    显式抬到 _SCENARIO_DAILY_CAP（随常量派生）；②面是纯函数、与日额度无关。
+    """
     clock = _Clock()
-    store = _v7_store(tmp_path, "poscap.sqlite3", clock)
+    store = _v7_store(
+        tmp_path, "poscap.sqlite3", clock,
+        bot_affinity_daily_move_cap_z=_SCENARIO_DAILY_CAP,
+    )
     _, z_base = _peek_state(store, "u1")
     _obs(store, "u1", "neutral", text="一句普通的话", delta_override=1e6)
     _, z_after = _peek_state(store, "u1")
@@ -807,7 +834,7 @@ def test_positive_single_event_cap_bites_on_both_faces(tmp_path) -> None:
     mild = v7_raw_delta_z(
         0.4, novelty=1.0, rhythm=1.0, mood=1.0, impression=1.0, repair=False, settings=settings,
     )
-    assert mild == pytest.approx(0.04, abs=1e-12), "帽只钳越界值，合法步长逐字节不变"
+    assert mild == pytest.approx(settings.base_step * 0.4, abs=1e-12), "帽只钳越界值，合法步长逐字节不变"
 
 
 # ---------------------------------------------------------------------------
@@ -818,25 +845,33 @@ def test_positive_single_event_cap_bites_on_both_faces(tmp_path) -> None:
 def test_display_move_bound_is_sound_on_zero_spanning_interval() -> None:
     """差分锁（本席 fuzz 抓到并根修的真红）：跨原点对称区间的单事件展示位移
     = 200·tanh(cap/2)，**大于**旧口径 100·tanh(cap) ⇒ 判据函数若取旧式即低报
-    上界（机器锁自身有洞）。修正前实况：fuzz 实测单事件 11.958 分 > 旧上界
-    11.943 分当场打红；修正后该界由真确界供给，本用例双向钉死。"""
-    span_true = (v7_z_to_display_fraction(0.06) - v7_z_to_display_fraction(-0.06)) * 100.0
+    上界（机器锁自身有洞）。修正前实况（cap=0.12 时代当时值）：fuzz 实测单事件
+    11.958 分 > 旧上界 11.943 分当场打红；修正后该界由真确界供给，区间半宽与
+    两把尺全部随 _DAILY_CAP 现算，本用例双向钉死。"""
+    span_true = (
+        v7_z_to_display_fraction(_DAILY_CAP / 2)
+        - v7_z_to_display_fraction(-_DAILY_CAP / 2)
+    ) * 100.0
     old_formula_worst = 100.0 * math.tanh(_DAILY_CAP)
     assert span_true > old_formula_worst, (
         "对称区间不再越过旧公式 ⇒ 旧口径又成正确上界了？与本席修正对账"
     )
     assert span_true <= v7_display_move_for_z_cap(_DAILY_CAP) + 1e-9, "修正后的界函数仍低报上界"
-    # 逐档性结论在修正后仍成立（真确界 11.979 ≪ 一档 25）——本件主张不因修正翻转。
+    # 逐档性结论在修正后仍成立（真确界 = v7_display_move_for_z_cap(_DAILY_CAP)，
+    # 随常量现算、当前 ≈4.0 分 ≪ 一档 25）——本件主张不因修正翻转。
     assert v7_display_move_for_z_cap(_DAILY_CAP) < _TIER_WIDTH_DISPLAY - 12.0
 
 
-def _call_v7_delta(store, sender, *, z=0.0, state="{}", override=None, text="一句普通的话"):
-    """不经 observe / observe_points / _observe，直调 v7 更新体。"""
+def _call_v7_delta(store, sender, *, z=0.0, state="{}", override=None, text="一句普通的话", v7=None):
+    """不经 observe / observe_points / _observe，直调 v7 更新体。
+
+    ``v7`` 缺省按缺省 config 现算；场景帽用例显式传入——settings 是额度判据的
+    唯一供数面（直调路径不读 store 的 config）。"""
     clock_now = float(store._clock())
     with store._lock, store._connect() as connection:
         return store._v7_delta(
             connection, sender, "", "neutral", z,
-            v7=resolve_v7_settings(_v7_config()),
+            v7=v7 or resolve_v7_settings(_v7_config()),
             state_json=state,
             now=clock_now,
             day_index=_day_index(clock_now),
@@ -858,12 +893,25 @@ def test_liveness_internal_v7_delta_enforces_caps_without_any_facade(tmp_path) -
     彻底离开判据面、坏 JSON、半衰减参考点处减速不冻结（v8 长尾）——位移护栏住在
     执法体内，门面拿不掉它。"""
     clock = _Clock()
-    store = _v7_store(tmp_path, "internal_delta.sqlite3", clock)
+    store = _v7_store(
+        tmp_path, "internal_delta.sqlite3", clock,
+        bot_affinity_daily_move_cap_z=_SCENARIO_DAILY_CAP,  # 与场景 settings 同帽（一致性）
+    )
     settings = resolve_v7_settings(_v7_config())
+    # 场景 settings：日额度抬到 _SCENARIO_DAILY_CAP（宽于单事件帽实发）——sA/sG/sH
+    # 组要单事件帽先咬、sB/sE 组要「将尽未尽」的余额形态，缺省 0.04z 两头都不达。
+    scenario_settings = resolve_v7_settings(
+        _v7_config(bot_affinity_daily_move_cap_z=_SCENARIO_DAILY_CAP)
+    )
+
+    def _delta(sender, **kwargs):
+        return _call_v7_delta(store, sender, v7=scenario_settings, **kwargs)
+
     today = _day_index(clock.now)
 
-    # sA：全新窗口 + 顶格正向 override ⇒ 咬住它的是 0.10 单事件帽，不是 0.12 日额度。
-    applied, new_z, dumped = _call_v7_delta(store, "sA", override=9.9)
+    # sA：全新窗口 + 顶格正向 override ⇒ 咬住它的是 0.10 单事件帽，不是日额度
+    #     （场景帽已抬离单事件帽量级，两帽各自承重的鉴别位才成立）。
+    applied, new_z, dumped = _delta("sA", override=9.9)
     assert applied == pytest.approx(_NEG_CAP, abs=_CAP_TOL), (
         f"fresh-window 正向 override 位移 {applied} ≠ 0.10 ⇒ 正向单事件帽摘岗"
     )
@@ -872,51 +920,55 @@ def test_liveness_internal_v7_delta_enforces_caps_without_any_facade(tmp_path) -
         "state 回写再现位移额度日桶字段 ⇒ 载体退役不彻底"
     )
 
-    # sB：额度将尽——0.115 由**日志行**供给（新载体），只剩 0.005。
-    _seed_log_row(store, "sB", 0.115)
-    applied_b, _, _ = _call_v7_delta(store, "sB", override=9.9)
-    assert 0.0 < applied_b <= 0.005 + 1e-6, f"额度只剩 0.005 时位移 {applied_b}"
+    # sB：额度将尽——0.95×场景帽 由**日志行**供给（新载体），只剩 5% 帽值。
+    _seed_log_row(store, "sB", _SCENARIO_DAILY_CAP * 0.95)
+    applied_b, _, _ = _delta("sB", override=9.9)
+    assert 0.0 < applied_b <= _SCENARIO_DAILY_CAP * 0.05 + 1e-6, (
+        f"额度只剩 {_SCENARIO_DAILY_CAP * 0.05:.4f} 时位移 {applied_b}"
+    )
 
     # sC：负向帽（既有语义）逐字节不变。
-    applied_c, new_z_c, _ = _call_v7_delta(store, "sC", override=-9.9)
+    applied_c, new_z_c, _ = _delta("sC", override=-9.9)
     assert applied_c == pytest.approx(-_NEG_CAP, abs=1e-9), f"负向未被单事件帽咬住：{applied_c}"
     assert new_z_c == pytest.approx(-_NEG_CAP, abs=1e-9)
 
     # sD：额度耗尽（一行大额日志）⇒ 零位移。
     _seed_log_row(store, "sD", 0.5)
-    applied_d, new_z_d, _ = _call_v7_delta(store, "sD", override=9.9)
+    applied_d, new_z_d, _ = _delta("sD", override=9.9)
     assert applied_d == 0.0 and new_z_d == 0.0, "滚动额度耗尽仍位移 ⇒ 日上限不在执法体内"
 
     # sE：旧载体离场自证——state 塞大 s/坏日界都不再伸缩额度，剩余只认日志。
     #     （若聚合被换回 day["s"] 日桶：sE2 的坏日界会"翻篇重置"成满额放行 0.10，
-    #      本组 0.005 的期望当场红——冷却窗外播行（-90s）保证鉴别位不被冷却门抢先。）
-    _seed_log_row(store, "sE", 0.115)
+    #      本组 5% 帽值的期望当场红——冷却窗外播行（-90s）保证鉴别位不被冷却门抢先。）
+    _seed_log_row(store, "sE", _SCENARIO_DAILY_CAP * 0.95)
     stale_state = json.dumps({"day": {"i": today, "s": 99.0, "c": {}}, "types": {},
                               "ema": [0.0, clock.now], "recent": []})
-    applied_e, _, _ = _call_v7_delta(store, "sE", state=stale_state, override=9.9)
-    assert 0.0 < applied_e <= 0.005 + 1e-6, 'state day["s"] 仍在判据面 ⇒ 载体切换不彻底'
-    _seed_log_row(store, "sE2", 0.115)
+    applied_e, _, _ = _delta("sE", state=stale_state, override=9.9)
+    assert 0.0 < applied_e <= _SCENARIO_DAILY_CAP * 0.05 + 1e-6, (
+        'state day["s"] 仍在判据面 ⇒ 载体切换不彻底'
+    )
+    _seed_log_row(store, "sE2", _SCENARIO_DAILY_CAP * 0.95)
     mismatched = json.dumps({"day": {"i": -99999, "s": -1e9, "c": {}}, "types": {},
                              "ema": [0.0, clock.now], "recent": []})
-    applied_e2, _, _ = _call_v7_delta(store, "sE2", state=mismatched, override=9.9)
-    assert 0.0 < applied_e2 <= 0.005 + 1e-6, (
+    applied_e2, _, _ = _delta("sE2", state=mismatched, override=9.9)
+    assert 0.0 < applied_e2 <= _SCENARIO_DAILY_CAP * 0.05 + 1e-6, (
         "坏日索引把额度刷回满格 ⇒ 聚合被换回 day[\"s\"] 日桶"
     )
 
     # sF：窗内**非有限脏行** ⇒ 按额度用满保守冻结（绝不"跳过脏行⇒少算⇒放行"）。
     #     REAL 亲和列对 'nan' 按 SQLite 动态类型以 TEXT 落库——外部直写/事故的真实形态。
     _seed_log_row(store, "sF", "nan")
-    applied_f, _, _ = _call_v7_delta(store, "sF", override=0.05)
+    applied_f, _, _ = _delta("sF", override=0.05)
     assert applied_f == 0.0, "脏额度行被当 0 跳过 ⇒ 保守判据反转"
 
     # sG：坏 JSON 状态 + 无日志行 ⇒ 窗全新，帽仍咬合。
-    applied_g, _, _ = _call_v7_delta(store, "sG", state="]]]坏 JSON 也进不来", override=9.9)
+    applied_g, _, _ = _delta("sG", state="]]]坏 JSON 也进不来", override=9.9)
     assert applied_g == pytest.approx(_NEG_CAP, abs=_CAP_TOL)
 
     # sH：v8 改判——±z_hard 不再是冻结界，而是 γ 的半衰减参考点：该高度顶格
     # override 仍被帽×γ(=0.5) 咬到半帽 0.05z，且 new_z 必须越过旧界（长尾实证：
     # 减速而不冻结），最终由表示域护栏兜住。旧断言"硬界处不得再抬"随前提改判。
-    applied_h, new_z_h, _ = _call_v7_delta(store, "sH", z=settings.z_hard, override=9.9)
+    applied_h, new_z_h, _ = _delta("sH", z=settings.z_hard, override=9.9)
     assert applied_h == pytest.approx(_NEG_CAP * 0.5, abs=1e-9), "半参考点处必须恰走半帽"
     assert new_z_h > settings.z_hard, "贴旧界冻结 ⇒ v7 硬界形态回潮（长尾改判失守）"
     assert abs(new_z_h) <= _V8_Z_REPR_DOMAIN, "表示域护栏最终必须兜住"
@@ -927,9 +979,9 @@ def test_teeth_loosening_the_caps_immediately_breaks_the_property(tmp_path) -> N
     ① 只放宽日额度（daily_move 5.0z）⇒ 单发正向 override 仍被钉在 0.10z——
       单事件帽与滚动额度**各自独立承重**，放掉一层不会造出"一发瞬间巨变"；
     ② 两帽同放（daily 5.0z + negative_event 5.0z，后者键名历史=只钳负向、
-      A-1 起双向同帽）⇒ 同一发内部调用立刻位移 ≫0.12z 并贴向长尾顶端
-      （v8 改判：兜底者从硬界换为表示域护栏）、跨多档——
-      缺省 ≤0.10/≤0.12 的锁因此不是同义反复；
+      A-1 起双向同帽）⇒ 同一发内部调用立刻位移 ≫缺省日额度（_DAILY_CAP）并贴向
+      长尾顶端（v8 改判：兜底者从硬界换为表示域护栏）、跨多档——
+      缺省 ≤单事件帽/≤日额度（两值皆登记常量）的锁因此不是同义反复；
     ③ "滚动 24h 窗 vs 日桶"的**窗形**差分在
       ``test_move_budget_rolls_over_24h_not_local_midnight``（把 v7 聚合换回
       day["s"] 自然日桶，该用例与上一条的 sE2 组当场红）。"""
@@ -958,7 +1010,7 @@ def test_teeth_loosening_the_caps_immediately_breaks_the_property(tmp_path) -> N
     loose_both = resolve_v7_settings(_v7_config(
         bot_affinity_daily_move_cap_z=5.0, bot_affinity_negative_event_cap_z=5.0))
     applied_both = _single_shot(store, "t2", loose_both)
-    assert applied_both > _DAILY_CAP * 10, "两帽同放后位移仍 ≤0.12 ⇒ 本件的差分证据是假的"
+    assert applied_both > _DAILY_CAP * 10, "两帽同放后位移仍 ≤日额度 ⇒ 本件的差分证据是假的"
     assert abs(applied_both) <= _V8_Z_REPR_DOMAIN + 1e-9, "两帽同放后表示域护栏必须仍兜住"
     assert abs(
         tier_for_affinity(v7_z_to_display_fraction(applied_both)) - tier_for_affinity(_AFFINITY_BASE)
@@ -1047,6 +1099,7 @@ def test_liveness_external_row_tampering_is_read_back_bounded(tmp_path) -> None:
 _ALLOWED_STORE_WRITERS = frozenset({
     "affinity.py",                        # 唯一真身（_observe 的 INSERT OR REPLACE）
     "migrate_affinity_v7_rehearsal.py",   # 在册演练器：只补写派生列 z_latent
+    "migrate_affinity_v8.py",             # 在册演练/恒等迁移器（§E，commit 52e2625）：--execute 只补派生列 goodwill_anchor，affinity/z_latent 永不改动、只写副本
     "probe_affinity_migration.py",        # 本席合成演练器：根本不带 SQL
 })
 _USER_AFFINITY_WRITE_RE = re.compile(

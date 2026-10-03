@@ -52,6 +52,8 @@ REALITY_COORDINATES_NOTE: str = (
     "守岸人是游戏《鸣潮》中的登场角色；《鸣潮》由现实中的公司"
     "广州库洛科技有限公司（KURO GAMES）开发，其运营与备案主体也属于这家公司。"
     "库洛在故事之外，不是游戏世界里的组织或势力。"
+    "游戏之外的那一层世界里也有它自己的技术与产品——芯片、模型、程序、公司都属这一层；"
+    "她知道这些是什么，也能按对方的需要讲清楚，只是它们不描述她是谁。"
 )
 
 
@@ -235,11 +237,12 @@ def build_addressing_context(
 
 
 class AddressingPreferenceStore:
-    """用户主动设置的称谓与性别偏好（显式声明，优先于一切推断）。
+    """用户主动设置的称谓／性别／关系档，外加「本人亲手把亲密档开到哪一档」的标记。
 
     SQLite 单连接 + ``threading.Lock`` + WAL 先于 DDL（与会话身份 store 同款）。
     主键 (session_type, session_id, sender_id)：私聊按人、群聊按群+人。
-    只存用户显式设置/纠正的值；本 store 不做任何推断。
+    只存用户显式设置/纠正的值；本 store 不做任何推断，也不含任何 TTL 判据
+    （亲密档标记的"还能不能用"由 `runtime/content_route.py` 判，见下面三张口）。
     """
 
     def __init__(self, path: str | Path) -> None:
@@ -268,15 +271,42 @@ class AddressingPreferenceStore:
             )
             # 关系档（2026-09-24 用户裁定 R2 A）：旧库自动补列，不要求人工迁移
             # （家规先例=affinity 的 first_signals/first_impression/created_at 三列）。
+            # 关系档（2026-09-24 用户裁定 R2 A）：旧库自动补列，不要求人工迁移
+            # （家规先例=affinity 的 first_signals/first_impression/created_at 三列）。
+            # 亲密档显式标记（2026-10-03 用户裁定 D-1「要：显式开档跨重启持久化」）
+            # 同族走 ALTER-if-missing：**不新建库、不加配置键、不长第二本账**——
+            # 这一行本来就住「这个人显式声明过的相处偏好」这张表里（称谓／性别自述／
+            # 关系档／现在再加「他自己把亲密档开到哪一档、什么时候开的」），
+            # 判据与 TTL 全在 `runtime/content_route.py`，这里只当一只带时间戳的格子。
             existing = {
                 row[1]
                 for row in self._conn.execute("PRAGMA table_info(addressing_preferences)")
             }
-            if "relationship" not in existing:
-                self._conn.execute(
-                    "ALTER TABLE addressing_preferences"
-                    " ADD COLUMN relationship TEXT NOT NULL DEFAULT ''"
-                )
+            for column, ddl in (
+                (
+                    "relationship",
+                    (
+                        "ALTER TABLE addressing_preferences"
+                        " ADD COLUMN relationship TEXT NOT NULL DEFAULT ''"
+                    ),
+                ),
+                (
+                    "intimate_pin_tier",
+                    (
+                        "ALTER TABLE addressing_preferences"
+                        " ADD COLUMN intimate_pin_tier TEXT NOT NULL DEFAULT ''"
+                    ),
+                ),
+                (
+                    "intimate_explicit_at",
+                    (
+                        "ALTER TABLE addressing_preferences"
+                        " ADD COLUMN intimate_explicit_at REAL NOT NULL DEFAULT 0"
+                    ),
+                ),
+            ):
+                if column not in existing:
+                    self._conn.execute(ddl)
 
     @staticmethod
     def _normalize_gender(raw: str | None) -> str:
@@ -366,6 +396,98 @@ class AddressingPreferenceStore:
                 ),
             )
         return canon
+
+    # ---- 亲密档显式标记（2026-10-03 用户裁定 D-1：本人显式开的档要活过重启）------
+    #
+    # 这三张口**只存事实、不含判据**：档位字符串原样存（合法性由引擎侧的
+    # `INTIMATE_TIER_*` 常量表在**读出来之后**再认一次，认不出＝当没有），
+    # 时刻由调用方交出（epoch 秒，**必须是墙钟**——本格子的全部意义就是跨进程
+    # 可比，进程内单调钟跨重启没有意义）。要不要沿用、沿用多久，全住
+    # `runtime/content_route.py`（那里才有 `intimate_ttl_minutes` 这枚旋钮），
+    # 存储层不判 TTL ⇒ 判据不长第二处。
+    # 键位与 `get_relationship`/`set_relationship` 完全同一把 PK 三元组，
+    # 因此「这个人」的显式声明在同一行里并存；`clear()`（/bot identity
+    # unset-name 的整行删除语义）连这两格一并抹掉＝与关系档同族的既有口径。
+
+    def get_intimate_pin(
+        self,
+        *,
+        session_type: str,
+        session_id: str = "",
+        sender_id: str,
+    ) -> tuple[str, float]:
+        """显式开档标记 → ``(tier, explicit_at)``；无记录/读失败回 ``("", 0.0)``。"""
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT intimate_pin_tier, intimate_explicit_at"
+                    " FROM addressing_preferences"
+                    " WHERE session_type=? AND session_id=? AND sender_id=?",
+                    (str(session_type), str(session_id), str(sender_id)),
+                ).fetchone()
+        except sqlite3.Error:
+            return "", 0.0
+        if row is None:
+            return "", 0.0
+        try:
+            stamp = float(row[1] or 0.0)
+        except (TypeError, ValueError):
+            stamp = 0.0
+        return str(row[0] or "").strip(), stamp
+
+    def set_intimate_pin(
+        self,
+        *,
+        session_type: str,
+        session_id: str = "",
+        sender_id: str,
+        tier: str,
+        explicit_at: float,
+    ) -> None:
+        """钉下「此人于 ``explicit_at`` 亲手把亲密档开到 ``tier``」（覆盖旧值）。
+
+        只 UPSERT 自己那两格 ⇒ 同一行的称谓／性别自述／关系档一个字节都不动。
+        """
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO addressing_preferences (
+                    session_type, session_id, sender_id,
+                    intimate_pin_tier, intimate_explicit_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_type, session_id, sender_id) DO UPDATE SET
+                    intimate_pin_tier=excluded.intimate_pin_tier,
+                    intimate_explicit_at=excluded.intimate_explicit_at,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    str(session_type),
+                    str(session_id),
+                    str(sender_id),
+                    str(tier or "").strip()[:8],
+                    float(explicit_at),
+                    _utc_now_iso(),
+                ),
+            )
+
+    def clear_intimate_pin(
+        self,
+        *,
+        session_type: str,
+        session_id: str = "",
+        sender_id: str,
+    ) -> None:
+        """收回标记（本人显式「亲密模式 关」）：只清那两格，**不删整行**。
+
+        删行会连人家的称谓偏好一起抹掉，那不是这条指令说过的话。
+        """
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE addressing_preferences"
+                " SET intimate_pin_tier='', intimate_explicit_at=0"
+                " WHERE session_type=? AND session_id=? AND sender_id=?",
+                (str(session_type), str(session_id), str(sender_id)),
+            )
 
     def set(
         self,

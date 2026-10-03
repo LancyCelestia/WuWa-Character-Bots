@@ -400,8 +400,15 @@ def _tmp_registry(tmp_path: Path, *, avatar_bytes: bool = True) -> PersonaProfil
             "display_name": "守岸人",
             "is_main": True,
             "qq": {"nickname": "守岸人", "signature": "因你而有的意义", "avatar_path": ""},
+            # 2026-10-03 施工席20 存量红修复（与 danya 夹具同因）：roundtrip 切回主档也要过
+            # H-1 五格项集门 ⇒ 主档同样带上 files 清单与 files_absent 申报。
+            "files": {"settings": ["core.md"], "knowledge": []},
+            "files_absent": ["knowledge"],
         },
     )
+    shorekeeper_dir = tmp_path / "shorekeeper"  # F-D 锚根＝registry 父目录/persona_id
+    shorekeeper_dir.mkdir(parents=True, exist_ok=True)
+    (shorekeeper_dir / "core.md").write_text("守岸人设定正文（测试在册件）。", encoding="utf-8")
     danya_avatar = ""
     if avatar_bytes:
         avatar = tmp_path / "avatar" / "danya.jpg"
@@ -418,7 +425,11 @@ def _tmp_registry(tmp_path: Path, *, avatar_bytes: bool = True) -> PersonaProfil
             "qq": {"nickname": "达妮娅", "signature": "贪恋一小簇微光", "avatar_path": danya_avatar},
             # ②文本腿收编后端到端判据：在册带设定清单 ⇒ 文本腿 ok，"已切换"才成立；
             # 空清单人格的"已切换"谎面由 test_persona_hot_switch 3b 组锁反向钉死。
+            # 2026-10-03 施工席20 存量红修复：H-1 五格项集口径（persona_profile
+            # files_absent 规则）下「空清单且未申报缺席＝缺料未申报」判缺陷 ⇒ 本夹具
+            # 的 danya 需对 knowledge 诚实申报缺席，"已切换"回执才成立。
             "files": {"settings": ["core.md"], "knowledge": []},
+            "files_absent": ["knowledge"],
         },
     )
     danya_dir = tmp_path / "danya"  # F-D 锚根＝registry 父目录/persona_id

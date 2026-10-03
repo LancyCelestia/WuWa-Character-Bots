@@ -42,6 +42,12 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.memory_bus_v2 impo
     fact_signature,
     settings_from_config,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.prompt_template import (
+    PromptGuard,
+    PromptSlot,
+    PromptTemplate,
+    register_prompt_template,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,14 +78,31 @@ _SELF_STATEMENT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"我(?:是|住在|来自)(?:[^，。！!？?；;～~\s]{2,12})"), "identity"),
 )
 
-_REFLECT_SYSTEM_PROMPT = (
-    "你是聊天反思器。从一天的会话记录里提炼关于用户本人的高层事实："
-    "身份、偏好、约定、重要经历、近况、稳定的情感倾向。\n"
-    "规则：只输出事实条目，每行一条，每条不超过60字，最多3条；"
-    "转写里 user 发言带「说话人N」编号时，每条事实行首要标明来源发言人，"
-    "格式如「说话人1: 内容」，无法确定来源时不要加编号；"
-    "只记稳定信息，不记寒暄和一次性话题；"
-    "没有值得记住的内容时只输出一个字：无"
+# W1（2026-10-02）：反思腿此前自拼 messages 直呼 client ⇒ 反注入包裹对它不存在。
+# 转写整块按**二手材料**处置（`guard_secondhand_text`）：块里任何 `[TRUSTED_SYSTEM]`
+# 一类伪标记会被中央件全角化，行内任何祈使句被声明成数据。逐行包裹会把代码自产的
+# 「user(说话人N): 」标签一起关进块里，所以整块包一次——骨架与旧拼法逐字节相同
+# （证明见 tests/test_prompt_template_layer_w1.py：raw 渲染 == HEAD 现跑 golden）。
+_REFLECT_TEMPLATE = register_prompt_template(
+    PromptTemplate(
+        key="reflection.facts",
+        system=(
+            "你是聊天反思器。从一天的会话记录里提炼关于用户本人的高层事实："
+            "身份、偏好、约定、重要经历、近况、稳定的情感倾向。\n"
+            "规则：只输出事实条目，每行一条，每条不超过60字，最多3条；"
+            "转写里 user 发言带「说话人N」编号时，每条事实行首要标明来源发言人，"
+            "格式如「说话人1: 内容」，无法确定来源时不要加编号；"
+            "只记稳定信息，不记寒暄和一次性话题；"
+            "没有值得记住的内容时只输出一个字：无"
+        ),
+        slots=(
+            PromptSlot(
+                "transcript",
+                guard=PromptGuard.WRAP,
+                source_label="会话转写摘录",
+            ),
+        ),
+    )
 )
 
 _SCOPE_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -719,10 +742,7 @@ class LLMSummarizer:
                 if index is not None:
                     label = f"user(说话人{index})"
             transcript_lines.append(f"{label}: {_clip(turn.text, 200)}")
-        messages = [
-            {"role": "system", "content": _REFLECT_SYSTEM_PROMPT},
-            {"role": "user", "content": "\n".join(transcript_lines)},
-        ]
+        messages = _REFLECT_TEMPLATE.render_messages({"transcript": "\n".join(transcript_lines)})
         options: dict[str, Any] = {"max_tokens": 200, "temperature": 0.1}
         reply = self._client.generate(messages, **options)
         text = str(getattr(reply, "text", "") or "")

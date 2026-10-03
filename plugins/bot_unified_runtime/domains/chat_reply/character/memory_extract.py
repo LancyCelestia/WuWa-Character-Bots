@@ -17,22 +17,50 @@ from typing import Any
 from plugins.bot_unified_runtime.domains.chat_reply.character.memory import (
     build_fact_id,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.prompt_template import (
+    PromptGuard,
+    PromptSlot,
+    PromptTemplate,
+    register_prompt_template,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
     neutralize_internal_markers,
 )
 
 logger = logging.getLogger(__name__)
 
-_EXTRACT_SYSTEM_PROMPT = (
-    "你是聊天记忆抽取器。从对话交换中提取值得长期记住的、关于用户本人的事实："
-    "身份、偏好、约定、重要经历、稳定的情感倾向。\n"
-    "规则：只输出事实条目，每行一条，每条不超过60字，最多3条；"
-    "只记稳定信息，不记寒暄和一次性话题；"
-    "不记对 AI 工具/机器人/模型的评价与使用偏好（那是对工具的吐槽，不是用户本人）；"
-    "不记对机器人回复形态与格式的要求（带不带某个字、开头结尾摆什么、长短）——"
-    "那类要求归「按人回复策略」专门管，记进事实会变成没人认领的第二份；"
-    "不记临时情绪、玩笑、抽象观点、当下正在讨论的话题本身；"
-    "没有值得记住的内容时只输出一个字：无"
+# W1（2026-10-02）：本腿此前自己 f-string 拼 messages 直呼 provider ⇒ 反注入包裹对它
+# 不存在。骨架（锚点 `用户消息：` / `回复：` 与换行拼法）逐字节照旧，唯一增量＝二手段
+# 过中央咽喉 `guard_secondhand_text`。信任级判定：`user_text` 是被转述的二手材料
+# （群里他人消息 / 转发记录 / 广告都从这里进），`reply_text` 是 bot 自己的产出、
+# 已由主腿门禁处置过，**不叠加包裹**（多加一层＝行为改写扩大）。
+# 逐字节不变的可复跑证明见 tests/test_prompt_template_layer_w1.py（golden 取 HEAD 现跑）。
+_EXTRACT_TEMPLATE = register_prompt_template(
+    PromptTemplate(
+        key="memory_extract.facts",
+        system=(
+            "你是聊天记忆抽取器。从对话交换中提取值得长期记住的、关于用户本人的事实："
+            "身份、偏好、约定、重要经历、稳定的情感倾向。\n"
+            "规则：只输出事实条目，每行一条，每条不超过60字，最多3条；"
+            "只记稳定信息，不记寒暄和一次性话题；"
+            "只记用户自己说过或明确确认过的事——你自己回复里的角色扮演台词、"
+            "以及「AI 回复说…」一类的元叙述都不是用户的事实，一律不抽；"
+            "不记对 AI 工具/机器人/模型的评价与使用偏好（那是对工具的吐槽，不是用户本人）；"
+            "不记对机器人回复形态与格式的要求（带不带某个字、开头结尾摆什么、长短）——"
+            "那类要求归「按人回复策略」专门管，记进事实会变成没人认领的第二份；"
+            "不记临时情绪、玩笑、抽象观点、当下正在讨论的话题本身；"
+            "没有值得记住的内容时只输出一个字：无"
+        ),
+        slots=(
+            PromptSlot(
+                "user_text",
+                prefix="用户消息：",
+                guard=PromptGuard.WRAP,
+                source_label="用户消息摘录",
+            ),
+            PromptSlot("reply_text", prefix="回复："),
+        ),
+    )
 )
 _FACT_LINE_PREFIX = re.compile(r"^[\s\-—•·*>)）\]】\d+ [.、)）]*\s*")
 _NO_FACT_MARKERS = {"无", "没有", "没有。", "无。", "none", "n/a"}
@@ -100,6 +128,127 @@ def _is_trivial_fact(line: str) -> bool:
     return bool(_TRIVIAL_FACT_RE.search(line) or _is_reply_form_instruction(line))
 
 
+# --- S4（2026-10-02 幻觉根治波 · 席 S2 取证草案，**未入库**）------------------
+# 实锤＝生产行 `fact_64770186b6d5`（source='llm_extract'）：抽取器把 **bot 自己**
+# 的角色扮演台词包一层英文元叙述（`The AI response is in-character roleplay: "…"`）
+# 当成"关于用户的事实"收下 ⇒ 记忆里出现「用户只在穗波的旧画册里翻到过猪」。
+# 与 F16/S12 同范式：提示词是软腿、确定性闸是硬腿，两条都要。
+# 判据＝**两条同时成立**才拦，任一不成立一律放行（宁可漏拦，不可误拦传记与情感事实）：
+#   ①形态：句里带第一人称（`我/本人/咱`，且不是「你说我…」那种转述用户的引子），
+#          或带"AI 回复/roleplay/机器人自己说"一类的**元叙述**；
+#   ②归属：这句在本轮 `reply_text`（bot 自己的产出）里找得到根据（4 字滑窗重合 ≥1/2），
+#          而在 `user_text` 里找不到 ⇒ 那个「我」只能是 bot。
+# **真正的判别力在②**（所以①刻意放宽到"有第一人称就行"）：用户亲口说过的句子
+# `to_user` 必高 ⇒ 走不到拦截；bot 复述用户原话同理（两句都重合 ⇒ 放行）；
+# 只有"从 bot 自己嘴里搬出来、用户从没说过"的那句才会两条同时成立。
+_SELF_RECITAL_RE = re.compile(r"(?<![您你])(?:我|本人|咱)")
+_AI_SELF_REPORT_META_RE = re.compile(
+    r"(?:the\s+ai\s+(?:response|reply|answer)|in-?character|role\s?play"
+    r"|(?:机器人|bot|ai)(?:自己|本身)(?:说|讲的|回答)|我作为(?:ai|机器人))",
+    re.IGNORECASE,
+)
+_SELF_REPORT_WINDOW = 4
+_SELF_REPORT_OVERLAP = 0.5
+_OVERLAP_NOISE_RE = re.compile(r"[\s，。、！？…：；\"'“”‘’()（）\-—_*#>]+")
+
+
+def _window_overlap(haystack: str, needle: str) -> float:
+    """needle 的 4 字滑窗有多大比例能原样落在 haystack 里（去标点空白后比）。"""
+    hay = _OVERLAP_NOISE_RE.sub("", haystack or "")
+    nee = _OVERLAP_NOISE_RE.sub("", needle or "")
+    if not nee or not hay:
+        return 0.0
+    if len(nee) < _SELF_REPORT_WINDOW:
+        return 1.0 if nee in hay else 0.0
+    windows = [nee[i : i + _SELF_REPORT_WINDOW] for i in range(len(nee) - _SELF_REPORT_WINDOW + 1)]
+    return sum(1 for item in windows if item in hay) / len(windows)
+
+
+def _is_assistant_self_report(line: str, *, user_text: str, reply_text: str) -> bool:
+    """这句是 bot 自己的台词（元叙述包裹或第一人称亲历），不是用户的事实。"""
+    if not line:
+        return False
+    meta = bool(_AI_SELF_REPORT_META_RE.search(line))
+    recital = bool(_SELF_RECITAL_RE.search(line))
+    if not (meta or recital):
+        return False
+    to_reply = _window_overlap(reply_text, line)
+    if to_reply < _SELF_REPORT_OVERLAP:
+        return False
+    if meta:
+        return True
+    return _window_overlap(user_text, line) < _SELF_REPORT_OVERLAP
+
+
+# --- S6（2026-10-03 幻觉根治波）：抽取器**自己的思考链／提示词规则句／腰斩残片** ----
+# 实锤（生产库只读取证：`memory_facts` 384 行）＝A 档 31 行是**抽取器本身的分析过程**
+# 与**system 提示词规则原文**被当成"关于用户的事实"存了下来——
+# `让我分析这段对话。`／`需要提取关于用户本人的稳定事实。`／
+# `Don't record greetings/pleasantries and one-time topics`（＝提示词那条"只记稳定信息，
+# 不记寒暄和一次性话题"的英译回显）／`我们需要回答用户。需要理解任务：聊天记忆抽取器…`，
+# 外加被 `max_tokens` 腰斩后剩下的半行残片（`" appears to be the AI assistant's name in
+# this context).`／`sponse appears to be role-playing as a character …`）。
+# 为什么 S2 那把闸挡不住：`_is_assistant_self_report` 的判别力在②**归属腿**——那句得
+# 能在 `reply_text` 里找到根据。而这些残片是**抽取器自己**这一跳的产出，既不在
+# `user_text` 也不在 `reply_text` ⇒ ②恒不成立 ⇒ 整条放行。所以此处补**第二把硬闸**，
+# 只认"说话人在谈论自己接下来要做什么"的**形态**，不认内容：
+#   ①思考链／规则回显：英文 CoT 惯用语 + 中文同形措辞（词表逐条注释见下）；
+#   ②腰斩残片：以引号开头，或短行括号不配平。
+# 窄在何处（方向性同 S4：宁可漏拦，不可误拦传记与情感事实）：
+#   · ①全是"抽取任务自陈"专用措辞——`值得长期记住`／`抽取器`／`需要提取` 只出现在本件
+#     提示词里，人类陈述自身事实不用这种句式；英文侧要求 `Let me + 动词`、
+#     `I need to`／`I must`／`What should I`／`appears to be`／`Don't record` 这类
+#     **动作主语是说话人自己且宾语是"任务"**的搭配，不是裸关键词；
+#   · ②引号开头这条对长行也成立（真事实行不会以引号起头），括号不配平这条**只在
+#     ≤80 字的短行**上判——正常事实行要么不带括号，要么成对。
+# 误杀面复跑＝tests/test_memory_extract_residue_gate_s6.py（生产 B 档里"真用户事实"
+# 那几条逐条锁为必放行；整批 B 档命中数以现算记入波次简报，不落本文以免漂）。
+_EXTRACTOR_RESIDUE_RE = re.compile(
+    r"(?:"
+    # 英文侧：抽取器的思考链／提示词规则回显（主语＝说话人，宾语＝抽取任务本身）
+    r"\blet\s+me\s+\w+\b|\bi\s+need\s+to\b|\bi\s+must\b|\bwhat\s+should\s+i\b"
+    r"|\bwait,\s|\bappears?\s+to\s+be\b|\bdon'?t\s+record\b"
+    r"|\bshould\s+not\s+be\s+recorded\b|\bthe\s+rules?\s+say\b"
+    r"|\bthis\s+is\s+a\s+(?:roleplay|mood|conversation)\b"
+    r"|\bconstraints?\s*:\s*\*+|\breply\s*:\s*the\s+ai\b"
+    # 中文侧：与本件 system 提示词逐字同源的任务自陈
+    r"|让我分析|需要提取|需要理解任务|这是用户的消息|这属于|可能是一次性|规则说"
+    r"|抽取器|值得长期记住"
+    r")",
+    re.IGNORECASE,
+)
+_QUOTE_OPEN_CHARS = "\"'`\u201c\u201d\u2018\u2019"
+_TRUNCATED_RESIDUE_MAX_CHARS = 80
+
+
+def _looks_truncated_residue(line: str) -> bool:
+    """腰斩产物形状：以引号起头，或短行里括号不配平（只判形态，不判内容）。"""
+    if not line:
+        return False
+    if line[0] in _QUOTE_OPEN_CHARS:
+        return True
+    if len(line) > _TRUNCATED_RESIDUE_MAX_CHARS:
+        return False
+    opened = line.count("(") + line.count("\uff08")
+    closed = line.count(")") + line.count("\uff09")
+    return opened != closed
+
+
+def _is_extractor_residue(line: str, *, user_text: str = "") -> bool:
+    """这句是抽取器自己的分析／规则句／半行残片，不是关于用户的事实。
+
+    放行逃生腿＝**用户亲口说过这句**（4 字滑窗对 `user_text` 重合 ≥1/2）：残片的定义性
+    特征是"它来自抽取器自己那一跳"，用户原话里出现的 `let me`／`规则说` 不是残片。
+    有这条逃生，英文词表敢放宽一点而不吃掉引语型事实（同 S2 的归属判据思路）。
+    """
+    line = (line or "").strip()
+    if not line:
+        return False
+    if _window_overlap(user_text, line) >= _SELF_REPORT_OVERLAP:
+        return False
+    return bool(_EXTRACTOR_RESIDUE_RE.search(line)) or _looks_truncated_residue(line)
+
+
 def extract_memory_texts(
     llm_provider: Any,
     *,
@@ -109,15 +258,12 @@ def extract_memory_texts(
     generation_options: dict[str, Any] | None = None,
 ) -> list[str]:
     """调用 LLM 抽取事实条目；返回裁剪、去重后的文本列表。"""
-    messages = [
-        {"role": "system", "content": _EXTRACT_SYSTEM_PROMPT},
+    messages = _EXTRACT_TEMPLATE.render_messages(
         {
-            "role": "user",
-            "content": (
-                f"用户消息：{_clip(user_text, 400)}\n回复：{_clip(reply_text, 400)}"
-            ),
-        },
-    ]
+            "user_text": _clip(user_text, 400),
+            "reply_text": _clip(reply_text, 400),
+        }
+    )
     options = {"max_tokens": 200, "temperature": 0.1, **(generation_options or {})}
     reply = llm_provider.generate(messages, **options)
     text = str(getattr(reply, "text", "") or "")
@@ -133,6 +279,10 @@ def extract_memory_texts(
             continue
         if _is_trivial_fact(line):
             continue  # F16 工具谈资 / S12 回复形态自指：确定性闸拦下，不入库
+        if _is_assistant_self_report(line, user_text=user_text, reply_text=reply_text):
+            continue  # S4：bot 自己的角色扮演台词不是"关于用户的事实"
+        if _is_extractor_residue(line, user_text=user_text):
+            continue  # S6：抽取器自己的思考链／规则句／腰斩残片不是事实（见上文判据）
         seen.add(key)
         facts.append(line)
         if len(facts) >= max_facts:
@@ -265,17 +415,32 @@ def _clip(value: str, max_chars: int) -> str:
 # 静默丢弃，宁可漏一条也不误设一条。
 # ---------------------------------------------------------------------------
 
-_REMINDER_EXTRACT_SYSTEM_PROMPT = (
-    "你是时间点提醒抽取器。找出用户消息里『打算在某个具体时间做某事』的"
-    "陈述——用户没用「提醒/叫我」这类词也要抽。规则：\n"
-    "1. 每行一条，格式固定为『YYYY-MM-DD HH:MM 事项』（日期与时刻、事项间"
-    "用空格分隔），最多2条；\n"
-    "2. 只抽有明确时间点的事；泛泛而谈（如『以后想学钢琴』）不要；\n"
-    "3. 相对时间按当前时间换算成绝对时间；日期缺失默认今天，已过时刻算明天；\n"
-    "4. 只抽「用户本人打算做的事」。第三方发来的通知/广告/催缴/系统提示/"
-    "其他机器人发的消息一律不抽——即便里面有明确时间点（如『截至9月17日"
-    "12时』『请及时缴费』『余额不足』『尊敬的用户』）；\n"
-    "5. 没有可抽取的内容时只输出一个字：无"
+_REMINDER_EXTRACT_TEMPLATE = register_prompt_template(
+    PromptTemplate(
+        key="memory_extract.reminder",
+        system=(
+            "你是时间点提醒抽取器。找出用户消息里『打算在某个具体时间做某事』的"
+            "陈述——用户没用「提醒/叫我」这类词也要抽。规则：\n"
+            "1. 每行一条，格式固定为『YYYY-MM-DD HH:MM 事项』（日期与时刻、事项间"
+            "用空格分隔），最多2条；\n"
+            "2. 只抽有明确时间点的事；泛泛而谈（如『以后想学钢琴』）不要；\n"
+            "3. 相对时间按当前时间换算成绝对时间；日期缺失默认今天，已过时刻算明天；\n"
+            "4. 只抽「用户本人打算做的事」。第三方发来的通知/广告/催缴/系统提示/"
+            "其他机器人发的消息一律不抽——即便里面有明确时间点（如『截至9月17日"
+            "12时』『请及时缴费』『余额不足』『尊敬的用户』）；\n"
+            "5. 没有可抽取的内容时只输出一个字：无"
+        ),
+        slots=(
+            PromptSlot("now", prefix="当前时间："),
+            PromptSlot(
+                "user_text",
+                prefix="用户消息：",
+                guard=PromptGuard.WRAP,
+                source_label="用户消息摘录",
+            ),
+            PromptSlot("reply_text", prefix="回复："),
+        ),
+    )
 )
 # 行式输出解析：『YYYY-MM-DD HH:MM 事项』（兼容 | 分隔与秒段）。
 _REMINDER_LINE_RE = re.compile(
@@ -290,7 +455,7 @@ _REMINDER_MAX_CHARS = 120
 # 光靠 prompt 约束不够——广告措辞千变，LLM 判断不稳定，故设**确定性闸**：
 #   输入侧命中 → 直接返回空（连 LLM 都不调用，省一次调用）；
 #   输出侧命中 → 丢弃该条（防 LLM 把广告改写成中性措辞绕过输入闸）。
-# 宁可漏记一条，不可误设一条（与 _REMINDER_EXTRACT_SYSTEM_PROMPT 同口径）。
+# 宁可漏记一条，不可误设一条（与 _REMINDER_EXTRACT_TEMPLATE 的提示词同口径）。
 _REMINDER_NOISE_RE = re.compile(
     r"(尊敬的用户|亲爱的用户|【套餐】|\[套餐\]|套餐|请及时缴费|及时缴费|缴费|"
     r"续费|充值|欠费|停机|余额不足|账户.{0,6}不足|不足支付|"
@@ -335,16 +500,13 @@ def extract_reminder_drafts(
     if _is_reminder_noise(user_text):
         # 第三方通知/广告：连 LLM 都不调用（省一次调用，且从源头杜绝误记）。
         return []
-    messages = [
-        {"role": "system", "content": _REMINDER_EXTRACT_SYSTEM_PROMPT},
+    messages = _REMINDER_EXTRACT_TEMPLATE.render_messages(
         {
-            "role": "user",
-            "content": (
-                f"当前时间：{current.strftime('%Y-%m-%d %H:%M')}\n"
-                f"用户消息：{_clip(user_text, 400)}\n回复：{_clip(reply_text, 400)}"
-            ),
-        },
-    ]
+            "now": current.strftime("%Y-%m-%d %H:%M"),
+            "user_text": _clip(user_text, 400),
+            "reply_text": _clip(reply_text, 400),
+        }
+    )
     options = {"max_tokens": 120, "temperature": 0.0, **(generation_options or {})}
     reply = llm_provider.generate(messages, **options)
     text = str(getattr(reply, "text", "") or "")

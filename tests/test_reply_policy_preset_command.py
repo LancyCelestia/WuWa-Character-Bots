@@ -35,7 +35,16 @@ def store(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> ReplyPolicyStore:
     return real
 
 
-def _run(text: str, *, sender: str = MAIN, roles: tuple[str, ...] = ("user", "admin")):
+def _run(
+    text: str,
+    *,
+    sender: str = MAIN,
+    roles: tuple[str, ...] = ("user", "admin", "super_admin"),
+):
+    """席 N1 2026-10-02（P3.11）默认档翻转：`MAIN` 在 `_Config` 里就是超管，而超管身份
+    **只**从中央角色面拿（`roles.resolve_roles` 在 QQ 域给 `super_admin` 并叠 `admin`）。
+    旧默认 `("user","admin")` 也改得动超管，靠的是 builder 里那条「裸 sender_id 比 QQ
+    名单」的平台盲腿——跨平台同号冒名面，已摘。要演「普通管理员」的用例自己显式给 roles。"""
     builder = getattr(rp, "build_reply_policy_preset_result", None)
     assert builder is not None, "按人预设口不存在 ⇒ 本件整条命令还没落地"
     return builder(

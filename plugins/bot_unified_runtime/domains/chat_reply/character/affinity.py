@@ -230,6 +230,16 @@ _TAG_EXPIRY_DAYS: dict[str, float] = {
 _DEFAULT_TAG_EXPIRY_DAYS = _SENTIMENT_HALF_LIFE_DAYS["negative"] * _TAG_EXPIRY_HALF_LIVES
 # 榜卡展示折算：闲置分数向基数衰减的半衰期（天），只影响展示，不落库。
 _LEADERBOARD_DECAY_HALF_LIFE_DAYS = 30.0
+# 展示面有界化（「你对守岸人」读数，2026-10-03 席面）：sentiment_for 是衰减计数
+# 比值，一条辱骂就能把裸比值砸下几十展示分——照裸值出卡等于给单条消息刷屏攻击
+# 开直通车。修法只动**展示值**：滚动 24h 窗内相对窗口峰值的下行幅度 ≤ 本常量
+# （展示分）；上行不限（回暖即时可见），内部真值与好感档位零触碰。量级对齐
+# 好感展示面的既有日额度纪律（v8 日额度 0.04z ≈ 每日数展示分，同一把「一天挪
+# 不了几分」的尺）。数值规范零触碰（docs/affinity-design.md 为唯一权威）：
+# 本段只新增「展示读数判据」，不改任何好感度数值/步长/回归/半衰常量。
+_SENTIMENT_DISPLAY_DAILY_DROP_CAP = 4.0
+#: 展示落账表名（同库寄生，家规＝CREATE IF NOT EXISTS、禁 DROP；>48h 行写入时 prune）。
+SENTIMENT_DISPLAY_LOG_TABLE = "sentiment_display_log"
 
 # ---- V2.1 滚动预算与因子钳制（规格：docs/design/backend-v2-product-extensions.md §2.3）----
 # 预算常量一律以展示「分」定义；内部值 = 分 ÷ 100（§2.2：服务公开单位统一 points
@@ -454,7 +464,7 @@ _V7_DEFAULT_NOVELTY_RATIO = 0.90        # ρ：同类显著信号新鲜度比率
 _V7_DEFAULT_NOVELTY_HALO_DAYS = 21      # 新鲜度计数回升半衰（天）
 _V7_DEFAULT_RHYTHM_REFERENCE_TURNS = 8  # r_ref：日均互动轮次参考水位
 _V7_DEFAULT_NEGATIVE_EVENT_CAP_Z = 0.10  # 单事件 |Δz| 上限（A-1 裁定后正负同额，键名历史见 V7Settings）
-_V7_DEFAULT_DAILY_MOVE_CAP_Z = 0.12     # 滚动 24h 总位移上限 |ΣΔz|（A-1 裁定：旧「本地自然日」窗形作废）
+_V7_DEFAULT_DAILY_MOVE_CAP_Z = 0.04     # 滚动 24h 总位移上限 |ΣΔz|（2026-10-03 用户裁定消除双源：v7/v8 共键同值，与 config.py/.env 对齐；A-1 裁定：旧「本地自然日」窗形作废）
 _V7_DEFAULT_FUSE_DAILY_EVENTS = 25      # 同类信号每日熔断事件数（超出不再计分）
 _V7_DEFAULT_REPAIR_GAIN = 1.4           # 修复通道（道歉/和解）步长加成
 _V7_DEFAULT_Z_HARD_BOUND = 0.985        # v8 起语义变迁：由「tanh 饱和域硬边界（展示 ±98.5）」
@@ -1068,7 +1078,8 @@ def resolve_v7_settings(config: Any) -> V7Settings:
     )
     # T-AFF-1（需求项 13）：位移护栏一旦被调到"一次就能跨两档"的量级，本模块的
     # 逐档性就不再成立——**点名一次，但不静默改值**（配置面是该尺的唯一真身，
-    # 代码偷偷夹回来等于造第二真身）。缺省 0.10/0.12 远低于临界 atanh(0.25)≈0.2554，
+    # 代码偷偷夹回来等于造第二真身）。缺省 0.10/0.04（登记常量现值）远低于临界
+    # atanh(0.25)≈0.2554，
     # 故此分支在现网与全部在册测试形态下都不触发；判据见 v7_structural_guard_report。
     if not (report := v7_structural_guard_report(settings))["ok"]:
         _v7_warn_once(
@@ -1112,9 +1123,11 @@ def v7_raw_delta_z(
 # 「界」从"事后 if-list"迁到"数学构造"——Σ|w_i|=1 归一 ⇒ |u|≤1 ⇒ |δ_z|≤κ，
 # 删掉任何事后 clamp 都不破坏此界（设计 §F 每轮界判据的牙齿）。
 # 灰度：bot_affinity_v8_enabled 缺省 False ⇒ v5/v6/v7 路径逐字节不变、可一键回退。
-# 键登记缺口（如实登记，本席禁碰 config.py）：v8 增量键当前只走 env 现读口，
-# config.py 字段 + catalog + .env.example + RESTART_REQUIRED_KEYS 四处登记待专门
-# 席位补齐；补齐前生产拨闸形态 = 环境变量 + 重启（与 v7 共享工厂缺省同路）。
+# 键登记现状（2026-10-03 本席复核后更新，原「四处待补」注释已过期）：config.py
+# 字段已全部登记（config.py:381-394，含善意带三键 + 日额度），.env.example 亦已
+# 登记（:1146 起）；RESTART_REQUIRED_KEYS / 命令 catalog 尚未收录 v8 键——v8 面
+# 走逐调用现读口，本就不设热改面，未收录即「不可热改」，语义安全；拨闸形态 =
+# 环境变量 + 重启（与 v7 同路）。
 # ============================================================================
 
 _V8_CONFIG_FIELDS: tuple[tuple[str, Any], ...] = (
@@ -1129,8 +1142,9 @@ _V8_CONFIG_FIELDS: tuple[tuple[str, Any], ...] = (
     ("bot_affinity_goodwill_band_max", _V8_DEFAULT_BAND_MAX),
     ("bot_affinity_goodwill_band_saturate_days", _V8_DEFAULT_BAND_SATURATE_DAYS),
     ("bot_affinity_v8_tier_blend_band", _V8_DEFAULT_TIER_BLEND_EDGE),
-    # 日额度沿用在册键（§C.7：枚数以四处登记后现算为准）；v8 缺省 0.04 与 v7 缺省
-    # 0.12 分路取值，env 显式给了就同吃一值——两路各自的缺省是"没配置时"的答案。
+    # 日额度沿用在册键（§C.7：枚数以四处登记后现算为准）；2026-10-03 用户裁定消除
+    # 双源：v8 缺省与 v7 缺省同为 0.04（_V8/_V7_DEFAULT_DAILY_MOVE_CAP_Z 两常量同值），
+    # env 显式给了就同吃一值——两路各自的缺省是"没配置时"的答案。
     ("bot_affinity_daily_move_cap_z", _V8_DEFAULT_DAILY_MOVE_CAP_Z),
 )
 
@@ -2081,6 +2095,23 @@ class DynamicAffinityStore:
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_affinity_delta_log_event_id"
                 " ON affinity_delta_log (sender_id, bot_id, source_event_id)"
                 " WHERE source_event_id <> ''"
+            )
+            # 展示面有界化落账表（「你对守岸人」读数的滚动 24h 单向下行限幅）。
+            # 与算法真值/增量预算（affinity_delta_log）零共享——单位是展示分不是 z，
+            # 混进增量日志会污染滚动位移预算的口径。时间戳用 epoch REAL（与
+            # affinity_delta_log.applied_at 同形），窗口查询走数值比较。
+            connection.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {SENTIMENT_DISPLAY_LOG_TABLE} (
+                    sender_id TEXT NOT NULL,
+                    shown_at REAL NOT NULL,
+                    display_value REAL NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_sentiment_display_log_sender_time"
+                f" ON {SENTIMENT_DISPLAY_LOG_TABLE} (sender_id, shown_at)"
             )
 
     def _connect(self) -> sqlite3.Connection:
@@ -3054,6 +3085,74 @@ class DynamicAffinityStore:
         if denom < 0.1:
             return 0.1  # 历史信号全部淡出：回到默认
         return eff_positive / denom
+
+    def bound_sentiment_display(
+        self,
+        sender_id: str,
+        raw_display: float,
+        *,
+        cap_per_day: float = _SENTIMENT_DISPLAY_DAILY_DROP_CAP,
+    ) -> float:
+        """「你对守岸人」展示读数的**单向限幅**（展示面纪律；真值/档位零触碰）。
+
+        ``raw_display``＝``sentiment_for(sender_id) × 100`` 的展示分（0~100）。
+        裸比值是衰减计数比，一条辱骂就能砸下几十分——展示面照裸值出卡，等于给
+        「一条消息挪动数十展示分」的刷屏攻击开直通车。本方法只约束**展示值**：
+
+        - 滚动 24h 窗（epoch REAL 数值比较，同 ``affinity_delta_log`` 形态）内，
+          展示值相对「窗口峰值」（含此前已展示过的值）的下行幅度 ≤ ``cap_per_day``
+          展示分；**上行不限**——好感回暖即时可见，单向尺只拦砸盘不拦回温。
+        - ``sentiment_for`` 内部真值、好感档位、注入面 attitude 全部零改动；
+          ``ALGORITHM_TEXT`` 的定性纪律不破（限幅量不外显、不展示固定加减数值）。
+        - 落账表 ``sentiment_display_log`` 与增量预算表零共享（单位是展示分不是
+          z，混账会污染滚动位移预算）；>48h 行写入时 prune；同值不重复落行。
+        - 任何形状/存储故障 **fail-open 回裸值**：展示限幅是礼仪不是必需品，
+          绝不许它把查询命令搞挂。
+        """
+        raw = _finite_float_or(raw_display, float("nan"))
+        if not math.isfinite(raw):
+            return raw_display
+        cap = _finite_float_or(cap_per_day, float("nan"))
+        key = str(sender_id or "").strip()
+        if not key or not math.isfinite(cap) or cap <= 0:
+            return raw_display
+        now = float(self._clock())
+        try:
+            with self._lock, self._connect() as connection:
+                window_rows = connection.execute(
+                    f"SELECT display_value FROM {SENTIMENT_DISPLAY_LOG_TABLE}"
+                    " WHERE sender_id = ? AND shown_at > ?",
+                    (key, now - _DAY_SECONDS),
+                ).fetchall()
+                peak = raw
+                for row in window_rows:
+                    value = _finite_float_or(row["display_value"], float("nan"))
+                    if math.isfinite(value):
+                        peak = max(peak, value)
+                shown = max(raw, peak - cap)
+                connection.execute(
+                    f"DELETE FROM {SENTIMENT_DISPLAY_LOG_TABLE} WHERE shown_at < ?",
+                    (now - 2 * _DAY_SECONDS,),
+                )
+                latest = connection.execute(
+                    f"SELECT display_value FROM {SENTIMENT_DISPLAY_LOG_TABLE}"
+                    " WHERE sender_id = ? ORDER BY shown_at DESC LIMIT 1",
+                    (key,),
+                ).fetchone()
+                latest_value = (
+                    _finite_float_or(latest["display_value"], float("nan"))
+                    if latest is not None
+                    else float("nan")
+                )
+                if not math.isfinite(latest_value) or abs(latest_value - shown) > 1e-9:
+                    connection.execute(
+                        f"INSERT INTO {SENTIMENT_DISPLAY_LOG_TABLE}"
+                        " (sender_id, shown_at, display_value) VALUES (?, ?, ?)",
+                        (key, now, shown),
+                    )
+        except Exception:  # noqa: BLE001 - 展示面故障不外抛：回裸值，查询照常。
+            return raw_display
+        return shown
 
     def snapshot(self, sender_id: str) -> dict[str, Any]:
         """读取好感度与印象；无记录返回中性默认。只读，不触发惰性回归。

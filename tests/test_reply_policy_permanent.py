@@ -77,14 +77,25 @@ PROBE_QUESTION = "守岸人与黑海岸是什么关系"
 
 
 class ScriptedProvider:
-    """录制型 provider：按脚本逐次作答，并记下**每次收到的 messages**。
+    """录制型 provider：按**请求形状**分流两条脚本队列，并记下每次收到的 messages。
 
-    策略判定腿与正常回答腿共用同一个 provider（生产就是这么走的），所以
-    ``calls`` 的顺序就是生产调用顺序——本件用它证明「谓词判不定时只问一次」。
+    为什么不再靠一条队列的次序（2026-10-04 现算改的）：装配段在判定腿**之前**还会
+    打一次「时效域提示」预调用（未入库段，属台账 #74），单队列按次序取词就会让那条
+    预调用把判定答案吃掉 ⇒ 判定腿实收默认文案：「答 NONE 所以不写」那一格会因为
+    **压根没答**而通过（假绿），另两格则直接红。
+    登记处＝ `.superpowers/sdd/2026-10-02-fullrepair-batch/interim-reds-0537.txt`
+    第 135/136 行；A/B 现算＝把那条腿桩成空串 ⇒ 两枚当场转绿。
     """
 
-    def __init__(self, scripted_text: list[str], *, default: str = "好的，我记住了。") -> None:
+    def __init__(
+        self,
+        scripted_text: list[str],
+        *,
+        default: str = "好的，我记住了。",
+        judgment_text: list[str] | None = None,
+    ) -> None:
         self._scripted = list(scripted_text)
+        self._judgment = list(judgment_text or [])
         self._default = default
         self.calls: list[list[dict[str, str]]] = []
 
@@ -94,7 +105,8 @@ class ScriptedProvider:
         )
 
         self.calls.append([dict(item) for item in messages])
-        text = self._scripted.pop(0) if self._scripted else self._default
+        queue = self._judgment if _is_judgment_call(messages) else self._scripted
+        text = queue.pop(0) if queue else self._default
         return LLMReply(text=text, provider="scripted", model="scripted", confidence=0.0)
 
     @property
@@ -103,6 +115,17 @@ class ScriptedProvider:
         if not self.calls:
             return ""
         return "\n".join(str(item.get("content") or "") for item in self.calls[-1])
+
+
+def _is_judgment_call(messages) -> bool:
+    """这条调用是不是「策略判定腿」（按第一条 system 的原文判，不看次序）。"""
+    from plugins.bot_unified_runtime.domains.chat_reply.character.reply_policy import (
+        LLM_JUDGMENT_SYSTEM_PROMPT,
+    )
+
+    return bool(messages) and str(messages[0].get("content") or "") == (
+        LLM_JUDGMENT_SYSTEM_PROMPT
+    )
 
 
 def _message(text: str, *, sender: str = "u-1", group: bool = False) -> IncomingMessage:
@@ -344,16 +367,8 @@ def test_priority_chain_explicit_override_beats_permanent_policy(tmp_path: Path)
 
 
 def _judgment_calls(provider: ScriptedProvider) -> list[list[dict[str, str]]]:
-    """只挑出「策略判定腿」发出去的那几次调用（按判定提示词的第一条 system 识别）。"""
-    from plugins.bot_unified_runtime.domains.chat_reply.character.reply_policy import (
-        LLM_JUDGMENT_SYSTEM_PROMPT,
-    )
-
-    return [
-        call
-        for call in provider.calls
-        if call and str(call[0].get("content") or "") == LLM_JUDGMENT_SYSTEM_PROMPT
-    ]
+    """只挑出「策略判定腿」发出去的那几次调用（与 provider 分流用的是同一个谓词）。"""
+    return [call for call in provider.calls if _is_judgment_call(call)]
 
 
 def test_ambiguous_sentence_is_asked_once_and_only_written_when_confirmed(tmp_path: Path) -> None:
@@ -363,18 +378,18 @@ def test_ambiguous_sentence_is_asked_once_and_only_written_when_confirmed(tmp_pa
     )
     store = ReplyPolicyStore(tmp_path / "reply_policy.sqlite3")
 
-    refused = ScriptedProvider(["NONE"])
+    refused = ScriptedProvider([], judgment_text=["NONE"])
     _run_turn(store=store, provider=refused, text="别写这么长，详细点讲讲")
     assert len(_judgment_calls(refused)) == 1, "谓词判不定时只准问一次（问多次＝成本与漂移）"
     assert store.get(person_reply_policy_key(sender_id="u-1")) is None, (
         "只有 LLM 确认才落库；含糊/否定的回答铸成永久策略＝误判生效"
     )
 
-    gibberish = ScriptedProvider(["我也觉得有点难说呢"])
+    gibberish = ScriptedProvider([], judgment_text=["我也觉得有点难说呢"])
     _run_turn(store=store, provider=gibberish, text="别写这么长，详细点讲讲")
     assert store.get(person_reply_policy_key(sender_id="u-1")) is None, "认不出的回答不落库"
 
-    confirmed = ScriptedProvider(["CONCISE"])
+    confirmed = ScriptedProvider([], judgment_text=["CONCISE"])
     _run_turn(store=store, provider=confirmed, text="别写这么长，详细点讲讲")
     row = store.get(person_reply_policy_key(sender_id="u-1"))
     assert row is not None and row.length_mode == LENGTH_MODE_CONCISE
@@ -606,7 +621,7 @@ def test_her_own_words_land_both_dimensions_through_the_judgment_leg(tmp_path: P
     解析」，而是**她发的那句话，下一轮还让她拿到长回复**。
     """
     store = ReplyPolicyStore(tmp_path / "reply_policy.sqlite3")
-    provider = ScriptedProvider(["LENGTH=VERBOSE; STYLE=LITERARY"])
+    provider = ScriptedProvider([], judgment_text=["LENGTH=VERBOSE; STYLE=LITERARY"])
     turn = _run_turn(
         store=store, provider=provider, text="以后回复我的时候详细一点，带点画面感"
     )
@@ -632,7 +647,7 @@ def test_judgment_leg_refuses_to_persist_without_an_explicit_verdict(tmp_path: P
         # 于是这枚断言在部分进程里假通过（09-28 凌晨现算抓到）。改 sha256 后逐枚互斥。
         digest = hashlib.sha256(answer.encode("utf-8")).hexdigest()[:16]
         store = ReplyPolicyStore(tmp_path / f"rp-{digest}.sqlite3")
-        provider = ScriptedProvider([answer])
+        provider = ScriptedProvider([], judgment_text=[answer])
         # 句子刻意挑**只开门、不命中确定性轨**的那种：「再详细」「带点画面感」都在
         # 自证表里，当场就落库了，那样测的就不是判定腿而是谓词本身。
         _run_turn(
@@ -641,6 +656,9 @@ def test_judgment_leg_refuses_to_persist_without_an_explicit_verdict(tmp_path: P
             text="以后回复我的时候稍微细一点",
             sender="u-1",
         )
+        # 「没落库」必须是**答都答了**之后的结论：判定腿一次都没收到答案时，
+        # 下面那句 None 断言会因为压根没问而通过（＝空跑，2026-10-04 实测踩过）。
+        assert len(_judgment_calls(provider)) == 1, f"「{answer}」没被送到判定腿 ⇒ 本格空跑"
         assert store.get(key) is None, f"「{answer}」不是明确裁决，却铸成了永久策略"
 
 
@@ -656,43 +674,62 @@ def test_unrelated_turn_spends_no_judgment_call(tmp_path: Path) -> None:
 # ============ ⑪ 亲密档地板与「档位风格统一」（2026-09-28 用户裁定 1、2） ============
 
 
-def test_intimate_route_bumps_the_tier_one_notch_up() -> None:
-    """她裁的「亲密档字数要比普通档多」：开亲密 ⇒ 生效档**按秩升一格**、封顶详尽。
+def test_intimate_grant_raises_the_tier_to_the_registered_ceiling() -> None:
+    """她 2026-10-04 改口：拿到**叙述授予**的那一轮直接置顶，不再"按秩升一格"。
 
-    刻意不做第二套长度判据：升格只在既有档位秩（简洁0/适中1/详尽2）上做加法，
-    数值真身仍只有 ``REPLY_LENGTH_TIERS`` 一处。
+    旧判据（2026-09-28「亲密档字数要比普通档多」）只能升一格、封顶详尽，于是
+    钉过「短一点」的人升到适中、现网钉 detail 的人停在详尽——两种都够不到她要的
+    场景铺写，她实测只收到 261 / 201 字。现改为一枚授予：只要这一轮被授权，
+    生效档＝登记表最后一档（今天＝「铺写」）。
+    数值真身仍只有 ``REPLY_LENGTH_TIERS`` 一处，本格只断言**到顶**这一条。
     """
     bump = getattr(chat, "intimate_reply_length_tier", None)
     assert bump is not None, "亲密档没有独立下限 ⇒ 钉了「短一点」的人开亲密会被压到 ≤60 字"
-    assert bump("concise", PROBE_QUESTION) == "standard", bump("concise", PROBE_QUESTION)
-    assert bump("normal", PROBE_QUESTION) == "detail", bump("normal", PROBE_QUESTION)
-    assert bump("detail", PROBE_QUESTION) == "detail", "详尽已是顶格，不许再发明一档"
-    assert bump("auto", "今天行情怎么样") == chat.resolve_reply_length_tier(
-        "auto", "今天行情怎么样"
-    ) or chat.REPLY_LENGTH_TIERS[
-        chat.resolve_reply_length_tier("auto", "今天行情怎么样")
-    ].tier_id == "detail", "顶格题不该被升格逻辑改动"
+    top = chat.REPLY_TIER_SCENE_ID
+    ranks = getattr(chat, "_REPLY_TIER_RANK", None)
+    assert ranks is not None and ranks[top] == max(ranks.values()), (
+        "「铺写」不是登记表顶格 ⇒ 升格腿会停在别处，本格的判据就作废了"
+    )
+    for mode in ("concise", "normal", "detail", "verbose", "auto"):
+        assert bump(mode, PROBE_QUESTION) == top, f"{mode} 没被抬到顶格"
+    # 没有题型可判的一轮（裸「在吗」）也一样到顶：兜底映射只决定**基线**，不决定天花板
+    assert bump("auto", "在吗") == top
+    # 顶格之外不许有第二套判据：授予腿自己不写任何字数（数值只在登记表里）
+    line = chat.reply_length_guidance_text(bump("concise", PROBE_QUESTION))
+    assert str(chat.REPLY_LENGTH_TIERS[top].min_chars) in line, line
 
 
 def test_intimate_floor_rewrites_the_single_tier_line_in_place() -> None:
     """升格只能**改写那一行**：长度指令必须始终恰好一条（两行＝模型读到两句拆台话）。"""
     apply_floor = getattr(chat, "apply_intimate_length_floor", None)
     assert apply_floor is not None, "亲密档没有落到提示词的那条腿"
+    top = chat.REPLY_TIER_SCENE_ID
+    top_label = chat.REPLY_LENGTH_TIERS[top].label_cn
     base_prompt = chat.reply_length_guidance_text("concise")
-    messages = [{"role": "system", "content": f"人设原文\n{base_prompt}\n别的段落"}, {"role": "user", "content": "在吗"}]
+
+    def _tier_lines(payload: list[dict[str, str]]) -> list[str]:
+        joined = "\n".join(str(item.get("content") or "") for item in payload)
+        return [l for l in joined.splitlines() if l.startswith(chat.TIER_LINE_PREFIX)]
+
+    messages = [
+        {"role": "system", "content": f"人设原文\n{base_prompt}\n别的段落"},
+        {"role": "user", "content": "在吗"},
+    ]
     tier = apply_floor(messages, detail_mode="concise", message_text=PROBE_QUESTION)
-    joined = "\n".join(str(item.get("content") or "") for item in messages)
-    lines = [l for l in joined.splitlines() if l.startswith("回复长度分档（当前档＝")]
-    assert tier == "standard", tier
+    lines = _tier_lines(messages)
+    assert tier == top, tier
     assert len(lines) == 1, f"长度指令行数：{len(lines)}（必须恰好一条）"
-    assert "当前档＝适中" in lines[0] and "当前档＝简洁" not in lines[0]
-    # 顶格与未知档都不该动它
-    untouched = [{"role": "system", "content": base_prompt}]
-    before = untouched[0]["content"]
-    assert chat.apply_intimate_length_floor(
-        untouched, detail_mode="detail", message_text=PROBE_QUESTION
-    ) in ("detail", "standard", "")
-    assert "当前档＝简洁" not in untouched[0]["content"] or before == untouched[0]["content"]
+    assert f"当前档＝{top_label}" in lines[0] and "当前档＝简洁" not in lines[0], lines[0]
+    # 幂等：同一轮再改一次不许长出第二行，也不许把已经改对的那行改掉
+    before = messages[0]["content"]
+    assert apply_floor(messages, detail_mode="concise", message_text=PROBE_QUESTION) == top
+    assert _tier_lines(messages) == lines and messages[0]["content"] == before, (
+        "改写口不幂等 ⇒ 同一轮被调两次就飘"
+    )
+    # 那一行压根不在场 ⇒ 如实回空串。虚报档名会让审计标签骗人（返回档名≠改成功了）
+    no_line = [{"role": "system", "content": "人设原文，本轮没有长度行"}]
+    assert apply_floor(no_line, detail_mode="detail", message_text=PROBE_QUESTION) == ""
+    assert no_line[0]["content"] == "人设原文，本轮没有长度行", "没那一行却动了正文＝凭空造指令"
 
 
 #: 篇幅类措辞黑名单：长度只准由档位行表达（一处真身），两段场景文风只管**描写维度**。
@@ -721,8 +758,13 @@ def test_route_style_instructions_carry_no_length_truth() -> None:
     assert any(phrase in poisoned for phrase in _ROUTE_LENGTH_PHRASES), "注毒没打红＝门是空跑的"
 
 
-#: 两段成对判据用的描写维度（她 2026-09-28 点名的三样）。
-_SCENE_DIMENSIONS = ("动作", "神态", "心理")
+#: 两段成对判据用的描写维度（她 2026-09-28 点名的三样 + 2026-10-04 五维裁定补的「外貌」）。
+#: 「语言」**刻意不在这张表里**：日常段的立身句就是「只用说话来回应」，把语言列进成对
+#: 锁＝要求日常段禁掉它自己的正文，模型同一轮读到两句拆台的话。上一次「心理」漏网是
+#: "禁少了一格"，语言进来是"禁错了一格"，两种都坏（她 2026-10-04 点名的五维里的「语言」
+#: 因此只在亲密段许诺、不在日常段禁止）。呼吸/触感归动作、周遭归环境，不单列，
+#: 免得这张表长成八维清单。
+_SCENE_DIMENSIONS = ("动作", "神态", "心理", "外貌")
 
 
 def test_normal_route_bans_every_dimension_intimate_route_opens() -> None:
@@ -737,10 +779,15 @@ def test_normal_route_bans_every_dimension_intimate_route_opens() -> None:
     for dimension in _SCENE_DIMENSIONS:
         assert dimension in chat.INTIMATE_RP_STYLE_INSTRUCTION, f"亲密段应准写{dimension}"
         assert dimension in ban_clause, f"日常段禁令应明确禁写{dimension}"
-    # 注毒自证：把禁令那一格退回旧文案（三样只剩两样），本门必须当场失效
-    reverted = ban_clause.replace("动作、神态、心理与环境描写", "动作、神态与环境描写")
-    assert any(dimension not in reverted for dimension in _SCENE_DIMENSIONS), (
-        "退回旧文案却没让判据失效＝本门是空跑的"
+    # 注毒自证：从禁令那一格里抹掉**末位**维度名，本门必须当场失效。
+    # 刻意派生化（旧写法手抄整串散文 `"动作、神态、心理与环境描写"`）：文案一改，
+    # 那个源串就不在文本里了 ⇒ `replace` 变成空操作 ⇒ 毒没打上、尾断言反而报"本门是
+    # 空跑的"——一枚语义正确却归因说谎的红。派生之后这张表加长，毒腿自动跟着走。
+    last_dimension = _SCENE_DIMENSIONS[-1]
+    poisoned = ban_clause.replace(last_dimension, "", 1)
+    assert last_dimension not in poisoned, "毒腿本身没打上＝自证腿空跑"
+    assert any(dimension not in poisoned for dimension in _SCENE_DIMENSIONS), (
+        "抹掉一格维度却没让判据失效＝本门是空跑的"
     )
 
 
@@ -854,11 +901,23 @@ def test_non_detail_tiers_render_single_paragraph_form() -> None:
 
 
 def test_intimate_upgrade_carries_the_form_rule_along() -> None:
-    """升格与形式必须同一个出口算完，否则会出现「抬了档却没换形式」的半态。"""
-    bumped = chat.intimate_reply_length_tier("concise", PROBE_QUESTION)
-    line = chat.reply_length_guidance_text(bumped)
-    assert line.startswith(chat.TIER_LINE_PREFIX)
-    assert ("一段话" in line) == (bumped != "detail"), (bumped, line)
+    """升格与形式必须同一个出口算完，否则会出现「抬了档却没换形式」的半态。
+
+    形式句跟的是**这一档装得下多少字**，不是档名清单（2026-10-04 长出第四档后，
+    任何按档名枚举的形式判据都会当场漏掉新档）。判据在这里用登记表的数值**独立**
+    重述一遍：只有上限低于详尽档下限的档才被逼成一段话。
+    """
+    detail_floor = chat.REPLY_TIER_DETAIL.min_chars
+    for base_mode in ("concise", "normal", "detail"):
+        bumped = chat.intimate_reply_length_tier(base_mode, PROBE_QUESTION)
+        line = chat.reply_length_guidance_text(bumped)
+        assert line.startswith(chat.TIER_LINE_PREFIX)
+        tier = chat.REPLY_LENGTH_TIERS[bumped]
+        must_be_one_paragraph = bool(tier.max_chars) and tier.max_chars < detail_floor
+        assert ("一段话" in line) is must_be_one_paragraph, (bumped, line)
+    # 升格轮的形必须是"可以分段"的那一侧：她要么被压成一句、要么铺成场景，没有中间态
+    scene = chat.REPLY_LENGTH_TIERS[chat.REPLY_TIER_SCENE_ID]
+    assert "一段话" not in chat.reply_length_guidance_text(scene.tier_id), scene
 
 
 def test_form_clause_is_not_double_injected(tmp_path: Path) -> None:
@@ -873,10 +932,6 @@ def test_production_default_does_not_wait_for_the_judgment(tmp_path: Path) -> No
     """生产默认**不等**判定腿（她裁「本轮不等待、下轮生效」）：判定睡 1 秒也不该拖本轮。"""
     import time as _time
 
-    from plugins.bot_unified_runtime.domains.chat_reply.character.reply_policy import (
-        LLM_JUDGMENT_SYSTEM_PROMPT,
-    )
-
     class SlowProvider(ScriptedProvider):
         """按**请求形状**分流，不靠队列次序：判定线与回复线并发，脚本队列会竞态。"""
 
@@ -886,7 +941,7 @@ def test_production_default_does_not_wait_for_the_judgment(tmp_path: Path) -> No
             )
 
             self.calls.append([dict(item) for item in messages])
-            if str(messages[0].get("content") or "") == LLM_JUDGMENT_SYSTEM_PROMPT:
+            if _is_judgment_call(messages):
                 _time.sleep(1.0)
                 return LLMReply(
                     text="LENGTH=VERBOSE", provider="slow", model="slow", confidence=0.0
@@ -963,7 +1018,7 @@ def test_deferred_judgment_runs_on_the_provider_and_never_the_router(
     否则补记线程会与本轮主回复并发争用路由的 EWMA/台账/失败池（共享状态）。
     """
     store = ReplyPolicyStore(tmp_path / "reply_policy.sqlite3")
-    provider = ScriptedProvider(["LENGTH=VERBOSE"])
+    provider = ScriptedProvider([], judgment_text=["LENGTH=VERBOSE"])
     chat.resolve_turn_reply_policy(
         store=store,
         message=_message("以后回复我的时候稍微细一点"),
@@ -1097,6 +1152,12 @@ def test_person_aliases_never_leak_into_privilege() -> None:
     allowed = {
         "plugins/bot_unified_runtime/config.py",
         "plugins/bot_unified_runtime/domains/chat_reply/character/reply_policy.py",
+        # D-1（2026-10-03 裁定）把同一个号读侧号的**显式开档标记**也并到主号键上，
+        # 于是路由件读了这枚在册字段。它读到的只是"标记写进哪一行"，权限面零读点：
+        # 全件不含 is_admin_message／super_admin／consent／roles 任何符号，且并号不抬
+        # 任何闸由正向锁 ``test_intimate_pin_persistence.py::test_merging_numbers_grants_no_privilege``
+        # 逐格钉死（侧号放进管理员名单也不放行）。本格继续防的是**第三处**读点。
+        "plugins/bot_unified_runtime/domains/chat_reply/runtime/content_route.py",
     }
     found: set[str] = set()
     for path in (_REPO_ROOT / "plugins").rglob("*.py"):
@@ -1757,7 +1818,7 @@ def test_show_surfaces_the_pinned_note(
         _PresetConfig(),
         request_id="req-show",
         sender_id=MAIN_QQ,
-        actor_roles=["user", "admin", "super"],
+        actor_roles=["user", "admin", "super_admin"],
         command_text=f"show {MAIN_QQ}",
     )
     assert result.kind == "text", result.body
@@ -1786,7 +1847,7 @@ def test_unreadable_row_never_wipes_a_pinned_note(
         _PresetConfig(),
         request_id="req-unreadable",
         sender_id=MAIN_QQ,
-        actor_roles=["user", "admin", "super"],
+        actor_roles=["user", "admin", "super_admin"],
         command_text=f"set {MAIN_QQ} 详尽",
     )
     assert result.kind == "error", f"读不出来却照报成功：{result.body}"
@@ -1800,7 +1861,7 @@ def test_unreadable_row_never_wipes_a_pinned_note(
         _PresetConfig(),
         request_id="req-unreadable-show",
         sender_id=MAIN_QQ,
-        actor_roles=["super"],
+        actor_roles=["super_admin"],
         command_text=f"show {MAIN_QQ}",
     )
     assert shown.kind == "error" and "不下结论" in shown.body, shown.body

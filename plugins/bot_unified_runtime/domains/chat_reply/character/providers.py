@@ -113,10 +113,10 @@ logger = logging.getLogger(__name__)
 #: 分类器的既有作用原样保留：① 它仍管联网与别的分区（本函数之外零扰动）；
 #: ② 册里查不到名字时，仍是它决定给不给查（第二道门一字未改）。
 #: 登记表本身＝``classify_question_intent`` 的既有分类，不新造判据（真身住
+#: ``runtime/question_intent.py``；二游语境落 ``LOCAL_KNOWLEDGE``，故不另立第二把尺）。
 #: ⚠ 席 P11（2026-10-04 用户裁定）补一道**否决**门排在放行之前：分类器判
 #: ``explicit_no_web``（用户明说别联网/不要搜索/不用查）⇒ 整块缺席，实体命中也不放行；
 #: 用的仍是同一枚 ``classify_question_intent`` 结论，没引第二把尺。
-#: ``runtime/question_intent.py``；二游语境落 ``LOCAL_KNOWLEDGE``，故不另立第二把尺）。
 _REALITY_LOOKUP_CATEGORIES: frozenset[str] = frozenset(
     {
         "EXTERNAL_ENTITY",
@@ -125,6 +125,117 @@ _REALITY_LOOKUP_CATEGORIES: frozenset[str] = frozenset(
         "GENERAL_STATIC_KNOWLEDGE",
     }
 )
+
+# 用户画像挂载预算（2026-10-03 记忆画像波）：person_profile 分区挂进【用户画像】
+# 的 attitude 载体，该分区有 0.10 权重的预算尺（min 80）——整段 520 字默认预算
+# 会把基础态度一起挤进 TRUNCATION_NOTICE，故挂载侧自带更紧的一段预算（画像自身
+# 还有「另有 N 条没列出」的诚实截断行兜底）。
+_PERSON_PROFILE_MOUNT_MAX_CHARS = 360
+
+#: 会话画像注入串里**刻意排除**的键＝chat.py ``sender_profile_note`` 平台事实段
+#: 已带的格（平台角色/群名片/群昵称/等级/群名称/群头衔）——同一事实两行两份口径
+#: 会打架（``format_qq_account_meta_note`` 的既有警告同款）。排除后现下能流动的
+#: 是事件自带且平台段没有的格（账号号/群号/会话号/显示名）；对端账号面三格
+#: （签名/在线状态/电量）等桥接线（hub 补丁）落地后自动开始流动，本侧零改动。
+_CONVERSATION_PROFILE_NOTE_EXCLUDE: frozenset[str] = frozenset(
+    {"group_card", "group_title", "group_role", "level", "nickname", "group_name"}
+)
+
+#: 会话画像桥的独立轻预算（秒；真身与缺省语义在 conversation_profile 同名常量）。
+#: 画像是每轮注入的锦上添花段：烧完即停发、余格按 unprobed 说话，绝不挤占主回复
+#:（请求级预算 ``_retrieval_affordance`` 到不了本构造点，故取独立轻上限同族口径）。
+PROFILE_RPC_BUDGET_SECONDS = 2.5
+
+
+def conversation_profile_note_for(
+    *,
+    platform: str,
+    adapter: str,
+    bot_id: str,
+    session_id: str,
+    group_id: str,
+    sender_id: str,
+    sender_display_name: str | None,
+    session_api: Callable[..., Any] | None = None,
+    profile_cache: Any | None = None,
+    rpc_budget_seconds: float | None = None,
+) -> str:
+    """会话画像（席2 ``runtime/conversation_profile.py``）→ 注入串（空 ⇒ 空串）。
+
+    消费者接线纪律：
+    - **桥解析（2026-10-03 席15）**：``session_api`` 缺省时经画像层
+      ``profile_session_api(platform, bot_id)`` 现解析——三源句柄通路
+      （``on_bot_connect`` 钩子 / ``nonebot.get_bots()`` 补扫 / 看门狗 loop 句柄），
+      桥本体复用一期 ``group_info.build_onebot_api_bridge``，RPC 走
+      run_coroutine_threadsafe（调用点在管线 offload 线程，协程投递回主循环限时等，
+      事件循环零阻塞）。解析不出 ⇒ ``api_available=False`` 三态诚实降级
+      （协议格 unprobed 且**一次接口都不打**）；``session_api`` 显式传入（测试/
+      显式接线）则跳过自动解析。
+    - **独立轻预算**：单轮画像 RPC 烧完 ``rpc_budget_seconds``（缺省
+      ``PROFILE_RPC_BUDGET_SECONDS``）即停发，余格按 unprobed 说话——画像不许
+      挤占主回复（``_retrieval_affordance`` 同族口径，请求级预算到不了本构造点）。
+    - **键=值 形状对齐** ``sender_profile_note``（席2 note_text 的设计形状），
+      直接并进既有平台事实段，不造第二分区构造器。
+    - 本模块未落盘/形状变了/构造失败 ⇒ 空串（空分区不渲染），绝不炸对话主链路。
+    """
+    try:
+        from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+        from plugins.bot_unified_runtime.domains.chat_reply.runtime.conversation_profile import (
+            BoundedSessionFetch,
+            build_profile,
+            make_profile_fetch,
+            note_text,
+            profile_session_api,
+        )
+
+        message = IncomingMessage(
+            platform=str(platform or "unknown"),
+            adapter=str(adapter or "unknown"),
+            bot_id=str(bot_id or "unknown"),
+            session_id=str(session_id or ""),
+            session_type=(
+                SessionType.GROUP if str(group_id or "").strip() else SessionType.PRIVATE
+            ),
+            sender_id=str(sender_id or ""),
+            sender_display_name=(
+                str(sender_display_name).strip() if sender_display_name else None
+            ),
+            group_id=str(group_id or "").strip() or None,
+        )
+        budget = (
+            float(rpc_budget_seconds)
+            if rpc_budget_seconds is not None
+            else PROFILE_RPC_BUDGET_SECONDS
+        )
+        api = session_api
+        if api is None:  # 自动解析：nonebot 不可用/无对端 ⇒ None ⇒ 三态诚实。
+            api = profile_session_api(platform, bot_id)
+        if api is not None:
+            bounded = BoundedSessionFetch(
+                make_profile_fetch(api, cache=profile_cache),
+                budget_seconds=budget,
+            )
+            profile = build_profile(
+                message,
+                bounded,
+                api_available=bounded.askable,
+                subject_user_id=str(sender_id or ""),
+            )
+        else:
+            profile = build_profile(
+                message,
+                lambda *args, **kwargs: (False, None),  # 无桥：取数腿永不触发
+                api_available=False,
+                subject_user_id=str(sender_id or ""),
+            )
+        return note_text(
+            profile,
+            is_self=True,
+            privileged=False,
+            exclude=sorted(_CONVERSATION_PROFILE_NOTE_EXCLUDE),
+        )
+    except Exception:  # noqa: BLE001 - 并行期模块缺席/形状变化＝本轮没有这一段。
+        return ""
 
 
 def reality_relation_note_for(query_text: str) -> str:
@@ -150,6 +261,7 @@ def reality_relation_note_for(query_text: str) -> str:
     text = str(query_text or "").strip()
     if not text:
         return ""
+    try:
         ruling = classify_question_intent(text)
         # 意愿否决（席 P11）：判据只有一个字面比较，尺住在中央
         # （``question_intent._NO_WEB_RE`` ⇒ ``explicit_no_web``），此处不抄词表。
@@ -158,7 +270,6 @@ def reality_relation_note_for(query_text: str) -> str:
         # 形状缺格该当"本轮没这格"，不该被下面的 except 吃成整块缺席。
         if getattr(ruling, "reason", "") == "explicit_no_web":
             return ""
-    try:
         if not relation_query_admissible(text):
             return ""
         if not registered_entity_hit(text) and (
@@ -319,6 +430,7 @@ class FileCharacterContextProvider:
         quirks_describe: Callable[..., str] | None = None,
         identity_describe: Callable[[str], str] | None = None,
         reactions_describe: Callable[[str], str] | None = None,
+        person_profile_describe: Callable[..., str] | None = None,
         shared_group_provider: SharedGroupContextProvider | None = None,
         action_brackets: bool = True,
         action_brackets_provider: object | None = None,
@@ -329,6 +441,8 @@ class FileCharacterContextProvider:
         persona_versioned_injection: bool = False,
         persona_version_service: Any | None = None,
         persona_registry: PersonaProfileRegistry | None = None,
+        conversation_profile_session_api: Callable[..., Any] | None = None,
+        conversation_profile_rpc_budget_seconds: float | None = None,
     ) -> None:
         self.persona_profile_id = persona_profile_id
         self.persona_display_name = persona_display_name
@@ -365,6 +479,10 @@ class FileCharacterContextProvider:
         self.quirks_describe = quirks_describe
         self.identity_describe = identity_describe
         self.reactions_describe = reactions_describe
+        #: 用户画像分区闭包（(sender_id, session_id, query_text, platform) -> str）：
+        #: 判据全在 ``compose_person_profile_context``（门/归属门/敏感面拒收），
+        #: 本类只搬运文本；None＝未接线（旧构造形态逐字节不变）。
+        self.person_profile_describe = person_profile_describe
         self.shared_group_provider = (
             shared_group_provider or NullSharedGroupContextProvider()
         )
@@ -379,6 +497,10 @@ class FileCharacterContextProvider:
         self.persona_version_service = persona_version_service
         self._versioned_provenance: tuple[str, int, str] | None = None
         self.persona_rng = persona_rng
+        #: 会话画像桥（席15）：None＝走画像层自动解析（三源句柄通路）；显式传入
+        #: （测试/显式装配）则跳过自动解析。预算 None＝模块缺省 PROFILE_RPC_BUDGET_SECONDS。
+        self.conversation_profile_session_api = conversation_profile_session_api
+        self.conversation_profile_rpc_budget_seconds = conversation_profile_rpc_budget_seconds
 
     def _persona_override(self) -> str:
         if callable(self.persona_override_provider):
@@ -592,6 +714,52 @@ class FileCharacterContextProvider:
                 reactions_section = str(self.reactions_describe(session_id) or "")
             except Exception:  # noqa: BLE001 - 表情回应层失败不影响主链路。
                 reactions_section = ""
+        # 宿主快照分区（席6 并行件 domains/ops/host_snapshot.py）：仅 admin/
+        # super_admin 注入；模块未落盘（并行期 ImportError）或读数不可用（契约
+        # 返回空串）一律分区整块缺席。载体注记：ContextBundle 是 extra=forbid
+        # 契约（本席不可加字段），借 quirks_section 这个「裸渲染自题分区」槽
+        # （chat.py 对该字段整段原样输出、不加盖头），自题头保证模型可分辨。
+        if {"admin", "super_admin"} & {
+            str(role).strip().casefold() for role in (sender_roles or [])
+        }:
+            try:
+                from plugins.bot_unified_runtime.domains.ops.host_snapshot import (
+                    host_snapshot_section_text,
+                )
+
+                host_snapshot_section = str(
+                    host_snapshot_section_text(max_age_seconds=30) or ""
+                ).strip()
+            except ImportError:
+                host_snapshot_section = ""  # 并行期预期缺席：静默，分区不出。
+            except Exception as exc:  # noqa: BLE001 - fail-open：快照挂了不炸对话。
+                logger.warning("host snapshot section failed type=%s", type(exc).__name__)
+                host_snapshot_section = ""
+            if host_snapshot_section:
+                quirks_section = (
+                    f"{quirks_section}\n\n{host_snapshot_section}"
+                    if quirks_section.strip()
+                    else host_snapshot_section
+                )
+        # 会话画像注入串（席2 conversation_profile.note_text）：形状对齐
+        # sender_profile_note 的「键=值；…」平台事实段，直接并进同一段
+        # （【当前群成员身份事实】分区）；空 ⇒ 逐字节不追加（空分区不渲染）。
+        conversation_note = conversation_profile_note_for(
+            platform=platform,
+            adapter=adapter,
+            bot_id=bot_id,
+            session_id=session_id,
+            group_id=group_id,
+            sender_id=sender_id,
+            sender_display_name=sender_display_name,
+            session_api=self.conversation_profile_session_api,
+            rpc_budget_seconds=self.conversation_profile_rpc_budget_seconds,
+        )
+        if conversation_note:
+            base_note = str(sender_profile_note or "").strip()
+            sender_profile_note = (
+                f"{base_note}；{conversation_note}" if base_note else conversation_note
+            )
         active_persona = self.persona_selector.select(
             emotions=[signal.emotion_label for signal in emotion_signals],
             override=self._persona_override(),
@@ -685,6 +853,32 @@ class FileCharacterContextProvider:
                         "affinity": float(dynamic["affinity"]),
                         "attitude": attitude,
                         "familiarity": familiarity,
+                    }
+                )
+        # 用户画像分区（需求 11 记忆画像面，2026-10-03 记忆画像波）：person_profile
+        # 库的结构化画像 + 言行账挂进【用户画像】分区的 attitude 载体——该分区本就
+        # 由本函数拼装「关于这个用户知道什么」（已知画像/对方的小名同族）。门
+        # （bot_person_profile_enabled）、归属门（requester==subject）、敏感面拒收
+        # 与来源置信分档全部住在 ``compose_person_profile_context``（唯一真身，
+        # 本层零复制判据）；空画像 ⇒ 逐字节不追加（空分区不渲染）。
+        if callable(self.person_profile_describe):
+            try:
+                profile_section = str(
+                    self.person_profile_describe(
+                        sender_id, session_id, query_text, platform
+                    )
+                    or ""
+                )
+            except Exception:  # noqa: BLE001 - 画像缺席不阻断对话主链路。
+                profile_section = ""
+            if profile_section:
+                base_attitude = str(relationship.attitude or "")
+                relationship = relationship.model_copy(
+                    update={
+                        "attitude": (
+                            (base_attitude + "；" if base_attitude else "")
+                            + f"（记忆画像：\n{profile_section}\n）"
+                        )
                     }
                 )
         tone_warmth, tone_directness = apply_relationship_to_tone(
@@ -1173,6 +1367,8 @@ def build_character_context_provider(
     quirks_describe: Callable[..., str] | None = None,
     identity_describe: Callable[[str], str] | None = None,
     reactions_describe: Callable[[str], str] | None = None,
+    conversation_profile_session_api: Callable[..., Any] | None = None,
+    conversation_profile_rpc_budget_seconds: float | None = None,
 ) -> CharacterContextProvider:
     action_brackets_provider: object | None = None
     interaction_counts_provider: Callable[[], dict[str, int]] | None = None
@@ -1311,6 +1507,36 @@ def build_character_context_provider(
             logger.exception("备用人格视图现读失败——本轮人格选择回主人格")
             return {}
 
+    def _person_profile_describe(
+        sender_id: str, session_id: str, query_text: str, platform: str
+    ) -> str:
+        """用户画像分区的装配闭包（判据全在 ``compose_person_profile_context``）。
+
+        键形纪律（台账 #33★）：平台域经 ``policy.roles.platform_domain_of`` 归一——
+        与写侧（``__init__._build_memory_writer`` 的 ``platform_domain`` 形参）同源
+        同尺，读侧漏传域或自拼第二形 ⇒ 两形永不相交。域取不到 ⇒ 空域段＝fail-closed
+        独立桶。任何失败 ⇒ 空串（本轮没画像），不炸上下文构建。
+        """
+        try:
+            from plugins.bot_unified_runtime.domains.chat_reply.character.person_profile import (
+                compose_person_profile_context,
+            )
+            from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
+                platform_domain_of,
+            )
+
+            return compose_person_profile_context(
+                config,
+                requester_id=str(sender_id or ""),
+                subject_user_id=str(sender_id or ""),
+                session_id=str(session_id or ""),
+                query_text=str(query_text or ""),
+                platform_domain=platform_domain_of(platform),
+                max_chars=_PERSON_PROFILE_MOUNT_MAX_CHARS,
+            )
+        except Exception:  # noqa: BLE001 - 画像件不可用＝本轮没画像，不炸对话。
+            return ""
+
     return FileCharacterContextProvider(
         persona_profile_id=str(getattr(config, "bot_persona_profile_id", "default")),
         persona_display_name=str(getattr(config, "bot_persona_display_name", "报存")),
@@ -1356,6 +1582,7 @@ def build_character_context_provider(
         quirks_describe=quirks_describe,
         identity_describe=identity_describe,
         reactions_describe=reactions_describe,
+        person_profile_describe=_person_profile_describe,
         action_brackets=bool(getattr(config, "bot_persona_action_brackets", True)),
         action_brackets_provider=action_brackets_provider,
         persona_selector=PersonaSelector(_alt_personas_view),
@@ -1367,6 +1594,10 @@ def build_character_context_provider(
         persona_versioned_injection=bool(
             getattr(config, "bot_persona_versioned_injection", False)
         ),
+        # 会话画像桥（席15）：缺省 None＝画像层自动解析（三源句柄通路）；
+        # 显式装配点（root __init__ 若要显式注入桥）经同名关键字传入即可。
+        conversation_profile_session_api=conversation_profile_session_api,
+        conversation_profile_rpc_budget_seconds=conversation_profile_rpc_budget_seconds,
     )
 
 
