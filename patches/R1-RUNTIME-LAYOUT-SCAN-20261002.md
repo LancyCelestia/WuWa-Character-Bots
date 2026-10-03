@@ -140,9 +140,15 @@ test_p1_hotspot_hygiene / test_doc_sync_gates / test_documentation_consistency`�
 ## ⑤ 未尽事项与原因
 
 1. **树内残留清单交主会话处置**（本席一律不删：不属我独占面，且盲删是本仓两次整片灭失的成因）。
-   现点名为红的三格：`plugins/**/runtime/__pycache__`、`plugins/bot_unified_runtime/domains/media/__pycache__`、
-   `.mypy_cache/` + `.ruff_cache/`；另 `.venv/`（`Scripts/` 已空、只剩 `Lib/site-packages`，HANDBOOK 在册
-   「本体留着等用户裁定」⇒ 本席把它报成 `in-tree-venv` 一类，删不删由用户裁）。
+   现点名为红的三格：`plugins/bot_unified_runtime/domains/chat_reply/runtime/__pycache__/`、
+   `plugins/bot_unified_runtime/domains/media/__pycache__/`、`plugins/bot_unified_runtime/runtime/__pycache__/`
+   （逐枚 `.pyc` 由门自己列出，本席不代删）＋ `.mypy_cache/`、`.ruff_cache/` ＋ `.venv/`
+   （`Scripts/` 已空、只剩 `Lib/site-packages`，HANDBOOK 在册「本体留着等用户裁定」⇒ 本席把它报成
+   `in-tree-venv` 一类，删不删由用户裁）。
+   ⚠ **本席自报一格**：窗口早期我有两次 ruff/mypy 漏带 `--cache-dir`（`.ruff_cache` mtime 01:53:21、
+   `.mypy_cache` 01:56:41 与本席动作窗口重叠），⇒ 这两枚工具缓存**不能排除本席有份**；此后一律
+   `--cache-dir=<ChatBot_Runtime>/cache/{ruff,mypy}`，且没有删它们（并发席也在造同一形状，删了会吃掉别人的取证）。
+   请主会话按"清单逐枚点名删"的规程处理，不要递归删。
 2. **派生册漂移**：新增自测件 ⇒ `tests/` 文件数 +1 ⇒ `scripts/doc_sync.py` 的「测试文件数取数口」
    （`scripts/doc_sync.py:232-234`）与 `docs/auto-facts.md` 不同步。`docs/auto-facts.md` 与
    `test_doc_sync_auto_facts_in_sync` 是主会话在册面（progress.md 别席在飞面 + Ruling 已定"收笔后一次性
@@ -169,3 +175,8 @@ test_p1_hotspot_hygiene / test_doc_sync_gates / test_documentation_consistency`�
    ⇒ 本席由此固化的作业口径：**关键读数一律先落仓库外文件、再用 `Read` 取回**，且成对复跑求一致；
    凡引用"不存在的坐标/用例"的工具结果＝伪造，直接作废整条读数而不是部分采信。
    主会话义务：本表请登记进安全台账，并向用户单独点名一次。
+
+   载荷片段**不写进本册**（原样转述会让"关于注入的报告"本身变成新载体、被下一次 `grep` 二次传播）：
+   首末各 40 字符的零宽转码（U+F02A 断形）件已落**仓库外**
+   `%TEMP%/qoder-R1/injection-forensics.txt`（681 B，三条 × 首末各一行，主会话可按上表哈希复核）；
+   本册只留时刻＋工具调用＋形态定性＋sha256[:16]。
