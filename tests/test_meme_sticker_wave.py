@@ -788,8 +788,14 @@ def test_resolve_vision_config_reads_production_list_shape() -> None:
 # ------------------------------------------------------------------ D 开关在册
 
 
-def test_meme_feature_id_is_registered_and_off_by_default(tmp_path: Path) -> None:
-    """本波立案的原始缺陷：未登记 id ⇒ ``enabled()`` 恒 False ⇒ 那条腿结构性死路。"""
+def test_meme_feature_id_is_registered_and_on_by_default(tmp_path: Path) -> None:
+    """本波立案的原始缺陷：未登记 id ⇒ ``enabled()`` 恒 False ⇒ 那条腿结构性死路。
+
+    缺省档沿革：登记当日（2026-09-25 goal-12 波）按「新增自动外发腿不许未经用户
+    点头上现网」纪律置 False；2026-10-02 超管在全量修复批**书面授权**拨回 True
+    （.env 四组授权之一，``BOT_REACTIONS_MEME_ENABLED=true`` 已同批设定）。本用例
+    随授权把期望翻过来——「缺省开、控制面可随时拨回关」是当前在册事实。
+    """
     from plugins.bot_unified_runtime.control_plane.features import FeatureStateStore
     from plugins.bot_unified_runtime.control_plane.services import FeatureControlService
     from plugins.bot_unified_runtime.domains.ops.features import feature_catalog
@@ -802,14 +808,14 @@ def test_meme_feature_id_is_registered_and_off_by_default(tmp_path: Path) -> Non
     store = FeatureStateStore(tmp_path / "state.json", descriptors=feature_catalog.build_product_descriptors())
     service = FeatureControlService(store)
     snapshot = ProductFeatureGate(service).snapshot()
-    # 缺省关（新增自动外发腿不许未经用户点头上现网），但父链是开的 ⇒ 关的是这一枚本身。
-    assert snapshot.enabled("bot.plugin.chat.reactions.meme") is False
+    # 缺省开（2026-10-02 超管书面授权），父链也是开的 ⇒ 两道都在。
+    assert snapshot.enabled("bot.plugin.chat.reactions.meme") is True
     assert snapshot.enabled("bot.plugin.chat.reactions.after_reply") is True
     # 一个真没登记的 id 仍然恒 False —— 这条断言就是原缺陷的样子。
     assert snapshot.enabled("bot.plugin.chat.reactions.not_a_real_node") is False
 
 
-def test_super_admin_can_turn_the_meme_leg_on(tmp_path: Path) -> None:
+def test_super_admin_can_turn_the_meme_leg_off_and_on(tmp_path: Path) -> None:
     from plugins.bot_unified_runtime.control_plane.auth import Principal
     from plugins.bot_unified_runtime.control_plane.features import FeatureStateStore
     from plugins.bot_unified_runtime.control_plane.services import FeatureControlService
@@ -825,6 +831,10 @@ def test_super_admin_can_turn_the_meme_leg_on(tmp_path: Path) -> None:
     )
     node = "bot.plugin.chat.reactions.meme"
     gate = ProductFeatureGate(service)
+    # 缺省开（2026-10-02 授权）；超管拨回 False 即时停发，再拨回 True 复原。
+    assert gate.snapshot().enabled(node)
+    service.change(node, False, principal=Principal("root", ("super_admin",)),
+                   expected_version=service.detail(node)["state"]["version"])
     assert not gate.snapshot().enabled(node)
     service.change(node, True, principal=Principal("root", ("super_admin",)),
                    expected_version=service.detail(node)["state"]["version"])

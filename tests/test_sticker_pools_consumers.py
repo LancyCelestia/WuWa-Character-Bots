@@ -44,6 +44,7 @@ from plugins.bot_unified_runtime.contracts import (
     MemoryRetrievalResult,
     PersonaProfile,
     PrivacyLevel,
+    ReceiptState,
     RetrievalResult,
     RiskLevel,
     SendPolicy,
@@ -458,6 +459,13 @@ def _p3_globals(
         "_reaction_meme_daily": book["daily"],
         "_reaction_meme_merged": book["merged"],
         "_REACTION_MEME_MERGED_MAX": 8,
+        # 同轮三腿互斥（2026-10-03）：腿真发出（SENT/REDIRECTED）后落占坑。抠出来的
+        # 闭包拿不到外层真身，注入记录型替身——占坑账进 book["claims"]，既有断言
+        # 不受影响（不传 claim_key 的旧调用路径不会触达它）。
+        "_turn_attachment_mark": lambda key, leg: book.setdefault("claims", []).append(
+            (key, leg)
+        ),
+        "ReceiptState": ReceiptState,
         "_send_parts_through_unified_pipeline": send,
         "meme_library_store": store,
         "logger": logging.getLogger("test.sticker_pools"),

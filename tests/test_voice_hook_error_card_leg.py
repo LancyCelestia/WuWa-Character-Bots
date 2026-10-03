@@ -59,7 +59,13 @@ from plugins.bot_unified_runtime.runtime import capability_protocols as cp
 # S270 归位第三次刷新（手写授权、非注毒）：产出步 ``dub`` 闭包改调单一组合口
 # result_transform.dub_via_central、``_envelope_failure_reason`` 降为薄委派——本消费点判据
 # 方向逐字不变（6 行为锁仍全绿），仅文件字节变 ⇒ 干净基线随之刷到新值。判据本体未放宽。
-_CLEAN_SHA16 = "5a85ca9e367ef5cc"
+# 席 V1（2026-10-02 · P5.12）第四次刷新（手写授权、非注毒）：hook 派发中央第三形时把
+# ``result.deadline_monotonic`` 经 ``DEADLINE_CONTEXT_KEY`` 交给计时伞（P5.7 剩余口径的接线腿）。
+# 行为面只多一枚 context 键、无伞时逐字节现状（接线锁
+# ``tests/test_timeout_umbrella_remaining_legs.py::test_voice_enricher_hands_the_request_deadline_*``
+# 双向钉死）；本消费点（``_envelope_failure_reason`` / ``INVOKER_ERROR_DATA_KEY``）一字未动，
+# 下面 6 行为锁复跑仍全绿 ⇒ 按现算复录干净基线，容差与判据方向未放宽。
+_CLEAN_SHA16 = "6f813c4cf628149f"
 
 
 # ---------------------------------------------------------------------------

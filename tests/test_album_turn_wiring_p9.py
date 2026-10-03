@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import ast
-import subprocess
 from pathlib import Path
 
 REL = "plugins/bot_unified_runtime/__init__.py"
@@ -46,9 +45,13 @@ def _wiring_hits(tree: ast.Module) -> dict[str, bool]:
             if folded_var and node.func.id in PIPELINE_CALLS:
                 guards_pipeline = False
         # 赋值句柄：album_turn = <判据>(...)
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
-            if isinstance(node.value.func, ast.Name) and node.value.func.id in names:
-                for tgt in node.targets:
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id in names
+        ):
+            for tgt in node.targets:
                     if isinstance(tgt, ast.Name):
                         folded_var = tgt.id
         # ② `if <handle>.merged:` 且体内当场 return

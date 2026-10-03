@@ -21,6 +21,13 @@ S91 收编整段变换为中央第三形 media.tts.autodub_transform）。
   消息**不派中央、零合成**（``should_voice_reply`` 是纯谓词、真身再判一次幂等 ⇒ 无分歧）。
   ⇒ 与退役前差异：门链通过后的"取文/政策/超顶"如今也过一发中央第三形 invoke（多一条
   中央审计行，policy 判定本身转为可审计），门链判否仍是零中央调用；
+- **合成段在计时伞内**（席 V1 · P5.7/P5.12，2026-10-02）：派发第三形时把契约上现成的
+  ``result.deadline_monotonic``（请求级单调时钟，与发送层 ``apply_request_deadline`` 同一
+  数值源）经 ``deadline.DEADLINE_CONTEXT_KEY`` 交给中央 ⇒ 整段配音（外层 180s 顶 + 逐块
+  产出步）只准花「伞里剩多少 ÷ 还要跑的腿数」，不再各拿一份满预算（旧形态实测叠加
+  ≈580s＝能力硬超时 400s 之外还挂着整段 180s，而配音段完全跑在硬超时之外）。
+  无伞（请求预算未启用）⇒ **不加那一枚键**，派发形状逐字节现状；伞耗尽由中央停腿并
+  交回 ``CapabilityTimeout``（禁第二族），本 hook 的 fail-open 语义不变＝正文照发。
 - **失败可见**（M-13 自动半）：中央返回非成功终态 ⇒ hook 按 status 映射既有
   ``OperationalIssue``（kind 复用 c723904 ``_FAILURE_KINDS`` 码族，禁新造），随 SendRequest
   进中央告警链（300s 抑制）；S64 起 ``INVOKER_ERROR_DATA_KEY`` 消费点前移到 ``dub`` seam
@@ -154,6 +161,16 @@ def build_voice_enricher(
         message: IncomingMessage,
         result: CapabilityResult,
     ) -> CapabilityResult:
+        # 计时伞（席 V1 · P5.12）：把「这一轮在请求级预算里已经花掉的时间」交给中央——
+        # 载体是契约上现成的 ``result.deadline_monotonic``（发送层 ``apply_request_deadline``
+        # 用的同一数值源，禁在这里再写一个数）。中央因此把整段配音削成「剩余 ÷ 还要跑的
+        # 腿数」，逐块合成的后续腿经 worker 线程的 contextvar 自动继承同一把伞。
+        # 刻意不在模块顶部建这条导入边：``domains.chat_reply.runtime/__init__`` 会拉起
+        # pipeline，媒体侧顶部导入它＝给自己造一条真环；函数内惰性导入由 sys.modules 兜住。
+        from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+            deadline as request_deadline,
+        )
+
         # 变换走中央第三形（media.tts.autodub_transform，S91 通电 S36 落件）：取文（打码→清洗→
         # 词典→内容门）→文字硬顶→逐块产出步→合并→挂回，整段搬进真身
         # ``result_transform.transform_presentation``。本 hook 不再持第二份变换（退役内联＝删
@@ -175,6 +192,14 @@ def build_voice_enricher(
                 session_key=str(getattr(message, "session_key", "") or ""),
             )
 
+        context: dict[str, Any] = {"config": config, "dub": _dub}
+        # 无伞（请求预算未启用／旧调用方没带 deadline）⇒ **不加这一枚键**：派发形状与
+        # 中央读法逐字节保持现状。畸形值由 ``normalize_deadline`` 收成"没有伞"。
+        umbrella = request_deadline.normalize_deadline(
+            getattr(result, "deadline_monotonic", None)
+        )
+        if umbrella is not None:
+            context[request_deadline.DEADLINE_CONTEXT_KEY] = umbrella
         invocation = default_invoker().invoke(
             CapabilityRequest(
                 capability_id="media.tts.autodub_transform",
@@ -183,7 +208,7 @@ def build_voice_enricher(
                 roles=("user",),
                 request_id=str(getattr(message, "request_id", "") or ""),
                 session_key=str(getattr(message, "session_key", "") or ""),
-                context={"config": config, "dub": _dub},
+                context=context,
             )
         )
         presented = invocation.data.get(PRESENTATION_DATA_KEY)

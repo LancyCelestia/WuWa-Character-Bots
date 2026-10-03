@@ -28,6 +28,11 @@ report-T46.md §3.5）落成 8 例 xfail(strict) 棘轮 + 1 例正锁（R5）：
   ∧ `record_files == [_RECORD]`；正样本升级为段级键粒度精确断言
   （T78 C6 留白收口）。
 - 至此本文件 9 例全绿正锁、零 xfail（棘轮闭合）。
+- 2026-10-03（施工席30）：R1/R2 行终态断言 partial → failed_final——对齐
+  Q-G7 休眠 PARTIAL 终态化现语义（queue.py `_finalize_dormant_partial_in`：
+  UNKNOWN 零进展续轮宁终态不盲重发、part 账原样保留，探针实测
+  round1=partial → round2=failed_final）；UNKNOWN 记账与「续轮零再投」
+  锁不动。上文「9 例全绿」＝T85 当时值。
 
 pytest 无全局 xfail_strict（pyproject.toml [tool.pytest.ini_options] 实查），
 strict 必须逐标记显式声明。
@@ -96,6 +101,14 @@ async def test_r1_disconnect_no_redispatch_after_parts_booked(
     本例断言 A 案（G2-R1 已裁）转绿形态：首轮失败即记账 UNKNOWN + 行置
     PARTIAL 断点，续轮零再投（杜绝「语音真投 9 遍、账本零 SENT」）。
 
+    对齐记账（2026-10-03，对齐 T55/T65/T85 判据链现语义）：行终态断言
+    partial → failed_final。Q-G7 休眠 PARTIAL 收口（queue.py
+    `_finalize_dormant_partial_in`，S-FIX-QPARK）现语义：首轮 UNKNOWN
+    记账 + PARTIAL 断点（90s 补偿退避，探针实测 round1=partial），续轮
+    补偿扫描零进展（UNKNOWN 无确认者、无 PENDING 可推进）⇒ 休眠终态化
+    failed_final（宁漏不盲重发；part 明细账原样保留）。终态化后「续轮
+    零再投」不变量更强（终态行不再认领）。
+
     flipped 条件：H 波落地 `_chunk_part_plan` mixed 分支 + sender 补
     count/UNKNOWN 回报（T55 §4.4.1/§4.4.2）→ 摘 xfail 标记 → 应绿。
     烘焙耦合点：C1（freeze patch 真身模块 domains.transport.sender.onebot）、
@@ -115,11 +128,14 @@ async def test_r1_disconnect_no_redispatch_after_parts_booked(
 
     await run_queue_rounds(queue, transport, rounds=2, base_now=_BASE)
 
-    assert unknown_part_indexes(queue, "r1") != []  # 现状 []：mixed 永不进 part 系统
+    assert unknown_part_indexes(queue, "r1") != []  # A 案：mixed 进 part 系统（UNKNOWN 记账）
     assert part_states(queue, "r1") != {}
-    assert queue_row(queue, "r1")["state"] == "partial"  # 现状 failed_retryable
-    assert partial_rows(queue) != []
-    # 现状实测 6 != 3（每有效轮 +3 内联；T55 §一.2 三有效轮上限=9）。
+    # 2026-10-03 对齐现语义：PARTIAL 断点后续轮零进展 ⇒ Q-G7 休眠终态化
+    # failed_final（探针实测 round2 起，last_public_message='dormant_final
+    # delivered=0/2'）；旧实现断连形态=failed_retryable 盲烧。
+    assert queue_row(queue, "r1")["state"] == "failed_final"
+    assert partial_rows(queue) == []  # 终态行离开 PARTIAL 断点面（不再可续发）
+    # 旧实现 6 != 3（每有效轮 +3 内联；T55 §一.2 三有效轮上限=9）。
     assert dispatch_count(bot) == after_round1
 
 
@@ -135,6 +151,10 @@ async def test_r2_pure_timeout_single_dispatch_then_partial(tmp_path, monkeypatc
     连烧 3 轮（issue=timeout_zero_part_delivered，onebot.py:901），每轮整发
     重投。本例断言转绿形态：首轮 1 发后 part 记 UNKNOWN、行置 PARTIAL，
     续轮零再投（SnowLuma 转码+波形+上传慢过预算的最现实路径，T46 §四 M-63）。
+
+    对齐记账（2026-10-03，对齐 T55/T65/T85 判据链现语义）：行终态断言
+    partial → failed_final（Q-G7 休眠 PARTIAL 终态化现语义，同 R1——
+    UNKNOWN 零进展续轮宁终态不盲重发；UNKNOWN 记账与零再投锁不动）。
 
     flipped 条件：同 R1（A 案 worker 计划门 + sender UNKNOWN 回报）→ 摘标记。
     烘焙耦合点：C1、C4、C6（同 R1）。timeout 形态不涉内联连发歧义，
@@ -155,9 +175,11 @@ async def test_r2_pure_timeout_single_dispatch_then_partial(tmp_path, monkeypatc
 
     await run_queue_rounds(queue, transport, rounds=2, base_now=_BASE)
 
-    assert dispatch_count(bot) == 1  # 现状实测 2：每个有效认领轮再整发 1 次
-    assert unknown_part_indexes(queue, "r2") != []  # 现状 []
-    assert queue_row(queue, "r2")["state"] == "partial"  # 现状 failed_retryable
+    assert dispatch_count(bot) == 1  # 首轮后零再投（旧实现每有效认领轮再整发 1 次）
+    assert unknown_part_indexes(queue, "r2") != []  # A 案：UNKNOWN 记账
+    # 2026-10-03 对齐现语义：PARTIAL 断点后续轮零进展 ⇒ Q-G7 休眠终态化
+    # failed_final（同 R1）；旧实现=failed_retryable 盲烧。
+    assert queue_row(queue, "r2")["state"] == "failed_final"
 
 
 # ==================== R3/R4/R6/R9 共用骨架 ====================

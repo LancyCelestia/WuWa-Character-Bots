@@ -213,8 +213,16 @@ CASES: list[tuple[str, str, str, Callable[[types.ModuleType, Path], None], str]]
         "窗账里的路径提示没被摘要复核就照着发",
     ),
     (
+        # 重锚依据（S-J9-REANCHOR，2026-10-02，旧牙判死非本席拔的）：``eb602363``
+        # 「randpic 守卫族入库」把 verdict 分派拆成 ``GalleryFacts.verdict``（按优先级
+        # 逐级 return）与具名集 ``_GALLERY_EMPTY_OK_VERDICTS``，旧锚点那行字面量元组
+        # ``("empty", "no_image_extension", "over_limit", "stat_failed")`` 在真身里已
+        # 不存在 ⇒ 锚点同步到**同一判据的新真身** ``gallery_audit_tags`` 里那行成员测试。
+        # 毒形 ``if True:`` 与判据 ``_assert_empty_tag_discipline`` 一字未动（方向仍是
+        # 「gallery_empty 乱贴」）；``missing`` 档不在 ``_GALLERY_EMPTY_OK_VERDICTS`` 集内
+        # （注释里写明「路径不存在/读不动那两档永远不进此集」），故注毒必咬。
         "J9 gallery_empty 乱贴",
-        '    if verdict in ("empty", "no_image_extension", "over_limit", "stat_failed"):',
+        '    if verdict in _GALLERY_EMPTY_OK_VERDICTS:  # 打开过、确实没货：与旧标签口径兼容',
         "    if True:",
         lambda module, tmp: _assert_empty_tag_discipline(module, tmp),
         "路径不存在也被贴上「图库是空的」这个断言",

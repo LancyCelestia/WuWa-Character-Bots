@@ -34,7 +34,6 @@ from typing import Any
 import pytest
 
 from plugins.bot_unified_runtime import _incoming_from_nonebot_event
-from plugins.bot_unified_runtime.domains.chat_reply.runtime import message_merge
 from plugins.bot_unified_runtime.domains.chat_reply.ingest import message_context
 from plugins.bot_unified_runtime.domains.chat_reply.ingest.message_context import (
     ALBUM_TURN_CAPTION,
@@ -47,6 +46,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.ingest.message_context impor
     telegram_album_context,
     telegram_album_turn_decision,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime import message_merge
 
 _GROUP_A = "MG-aaaa11"
 _GROUP_B = "MG-bbbb22"

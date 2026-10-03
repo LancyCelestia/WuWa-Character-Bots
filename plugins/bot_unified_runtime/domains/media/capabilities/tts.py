@@ -809,6 +809,25 @@ def _is_near_silent(data: bytes, frames: int) -> bool:
     return True
 
 
+def _quota_bound(value: object) -> int:
+    """配额入参的**形态**闸：只认非负整数，其余（含布尔）一律当「未设」＝0。
+
+    为什么必须有这一道（席 B1，2026-10-02；与 ``music.py::_music_cache_quota_bytes``
+    的 W7 账同族、判据不同维）：``enforce_quota`` 的语义是「**收进** ``max_bytes``
+    以内」，而 ``int(True) == 1`` ⇒ 一枚从 dotenv/JSON 宽容装载里混进来的布尔值会把
+    「字节上限」变成「把整个产物目录清空」——最旧先删一路删到**刚写下的那一枚**，
+    调用方拿到的 ``target`` 当场成死引用（发送侧 M-38 摘段、整段语音消失）。
+    负数同形处理（``enforce_quota`` 自己把 ``<=0`` 判成不限制，两处口径一致）。
+
+    本函数**不新增任何缺省值**：上限数字的真身仍只住 ``config.py`` 一处（规则 10），
+    这里只判「交进来的还是不是一枚字节/天数上限」。把「读不出键即回落 Config 缺省」
+    一并收掉要动 6 枚字面 getattr 读点（直读维台账），本席不碰 ⇒ 见工单 §5。
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return int(value)
+
+
 def synthesize(
     *,
     api_url: str,
@@ -833,7 +852,9 @@ def synthesize(
     - ``seed``：None=按缓存键派生（M-72/U-25 确定性）；
     - ``max_audio_bytes``：产物字节硬顶（0=禁配无界，取内置 8 MiB；G2-R3）；
     - ``quota_max_bytes``/``quota_max_age_days``：落盘后顺接中央配额
-      （U-04；0/0=不限制，缺省字节级不变）。
+      （U-04；0/0=不限制，缺省字节级不变）。非负整数之外的形态（布尔/负数/非整数）
+      经 ``_quota_bound`` 一律判成「未设」——``int(True)==1`` 会让配额变成
+      「把整个产物目录清空」，这一格不许靠调用侧自觉（席 B1）。
     """
     resolved_engine = engine_params if engine_params is not None else dict(
         PRESET_REGISTRY[DEFAULT_PRESET_ID].params
@@ -897,11 +918,13 @@ def synthesize(
     _clear_failure()
     if cache_enabled:
         _store_cache(key, target)
-    if quota_max_bytes > 0 or quota_max_age_days > 0:
+    quota_bytes = _quota_bound(quota_max_bytes)
+    quota_age_days = _quota_bound(quota_max_age_days)
+    if quota_bytes > 0 or quota_age_days > 0:
         # U-04：data/tts_output=缓存语义，接中央「最旧先删」配额；缺省关。
         try:
             enforce_quota(
-                output_dir, max_bytes=int(quota_max_bytes), max_age_days=int(quota_max_age_days)
+                output_dir, max_bytes=quota_bytes, max_age_days=quota_age_days
             )
         except Exception:  # noqa: BLE001 - 配额清理失败不影响主链路。
             logger.info("tts quota enforcement failed: output_dir=%s", output_dir)
@@ -1526,9 +1549,16 @@ def should_voice_reply(
         return False
     if not auto_reply_scope_allows(config, message):
         return False
-    # M-17 安全维度：群面接入中央四名单（黑名单永远赢；白名单空=群面关闭）。
+    # M-17 安全维度：群面接入中央四名单（黑名单永远赢；群白名单空时私聊白名单
+    # 人腿仍可放行——2026-10-02 用户裁定，判定真身在 content_route.explicit_allowed_for_session）。
+    # sender 必须带上：缺了它，人腿对这条消费者永远关闭。
     group_id = str(getattr(message, "group_id", "") or "").strip()
-    if group_id and not explicit_allowed_for_session("group", group_id, config):
+    if group_id and not explicit_allowed_for_session(
+        "group",
+        group_id,
+        config,
+        sender_id=str(getattr(message, "sender_id", "") or ""),
+    ):
         return False
     if bool(getattr(config, "bot_tts_auto_reply_always", False)):
         return True

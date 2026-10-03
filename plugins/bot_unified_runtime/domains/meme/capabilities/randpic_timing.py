@@ -20,6 +20,16 @@
 顺序即语义（与 ``proactive_action_allowed`` 同判据）：开关 → 有目标 → 名单 →
 安静窗 → 五层门。名单与安静窗必须在门之前——门 ``allow`` 返回真即登记冷却，
 把「被安静窗拦下」记进冷却等于让拦不住的门反咬后续动作。
+
+**决策件与活路径双轨，等价性由测试锁**（2026-10-03 互动面波注记）：本件建成但
+**零生产接线**——生产随机发图今天跑的是根装配活路径（``proactive_action_allowed``
++ ``pick_gallery_image``，三触发各自的历史字面 seed）。等价性由
+``tests/test_decision_pieces_dualtrack_lock.py`` 现算锁住：同输入下门链顺序
+（disabled/blocked/quiet/门判）、``allow_exhausted`` 三时机档、桶账键
+（``canonical_bucket_key`` 即活路径窗账的真实记账键）逐格一致。已知口径差
+（锁里写明，接线时以本件为准并同步翻活路径）：**seed 两件不同形**——活路径被戳
+seed ``poke-randpic:{poker}:{group}`` 缺消息维（既有现状刻画锁在案），本件
+``dispatch_seed`` 是补上消息维的设计接任者；指令路 seed 两件逐字节同形。
 """
 
 from __future__ import annotations

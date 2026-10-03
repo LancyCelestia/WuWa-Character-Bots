@@ -30,6 +30,13 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SendPolicy,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.prompt_template import (
+    PromptGuard,
+    PromptPartsTemplate,
+    PromptSlot,
+    PromptTemplate,
+    register_prompt_template,
+)
 from plugins.bot_unified_runtime.domains.core.text_boundary import is_trigger
 from plugins.bot_unified_runtime.domains.files.sources.downloader import (
     RejectedUrlError,
@@ -71,18 +78,41 @@ _MEDIA_SEGMENT_TYPES = frozenset({"image", "photo", "sticker", "mface", "animati
 _GIF_SEGMENT_TYPES = frozenset({"animation"})
 _VIDEO_SEGMENT_TYPES = frozenset({"video", "video_note"})
 
-_ARCHIVE_PROMPT = (
-    "你是媒体归档助手。分析用户发来的媒体（图片/动图/视频关键帧），"
-    "只返回一个 JSON 对象，不要任何多余文字：\n"
-    '{"category": "cosplay|二次元插图|表情包|截图|照片|风景|人物|动图 之一",\n'
-    ' "ip_source": "作品来源（游戏/动画/漫画名或画师名；判不出写 未识别）",\n'
-    ' "character": "角色名，判不出写空字符串",\n'
-    ' "description": "不超过20字的画面描述",\n'
-    ' "tags": ["标签1", "标签2"],\n'
-    ' "nsfw_score": 0.0}\n'
-    "规则：真人角色扮演照归 cosplay 并在 ip_source 写角色所属作品；二次元插画/"
-    "漫画彩页归 二次元插图；游戏或应用画面归 截图；真人随手拍归 照片；"
-    "表情包/梗图归 表情包。ip_source 优先写具体作品名（如 原神/鸣潮/碧蓝航线）。"
+# W1（2026-10-02）收编进模板层。VLM 归档腿的 user 侧是**多模态 parts**：图像字节不是
+# 文本，反注入包裹对它无意义 ⇒ 这条腿收编前后零字节差（骨架与 lead 文本逐字照旧）。
+# 聊天记录摘要腿则实打实吃包裹：`text` 是被转存的他人会话（二手材料），旧写法裸发。
+_ARCHIVE_TEMPLATE = register_prompt_template(
+    PromptPartsTemplate(
+        key="media_archive.vlm",
+        system=(
+            "你是媒体归档助手。分析用户发来的媒体（图片/动图/视频关键帧），"
+            "只返回一个 JSON 对象，不要任何多余文字：\n"
+            '{"category": "cosplay|二次元插图|表情包|截图|照片|风景|人物|动图 之一",\n'
+            ' "ip_source": "作品来源（游戏/动画/漫画名或画师名；判不出写 未识别）",\n'
+            ' "character": "角色名，判不出写空字符串",\n'
+            ' "description": "不超过20字的画面描述",\n'
+            ' "tags": ["标签1", "标签2"],\n'
+            ' "nsfw_score": 0.0}\n'
+            "规则：真人角色扮演照归 cosplay 并在 ip_source 写角色所属作品；二次元插画/"
+            "漫画彩页归 二次元插图；游戏或应用画面归 截图；真人随手拍归 照片；"
+            "表情包/梗图归 表情包。ip_source 优先写具体作品名（如 原神/鸣潮/碧蓝航线）。"
+        ),
+        lead=PromptSlot("lead"),
+    )
+)
+
+_RECORD_SUMMARY_TEMPLATE = register_prompt_template(
+    PromptTemplate(
+        key="media_archive.summary",
+        system="把聊天记录概括成一句话（不超过30字），直接输出，不要前言。",
+        slots=(
+            PromptSlot(
+                "record_text",
+                guard=PromptGuard.WRAP,
+                source_label="聊天记录摘录",
+            ),
+        ),
+    )
 )
 
 _ARG_RE = re.compile(
@@ -293,7 +323,9 @@ def _analyze_media(
     """VLM 分类分析：图片直发 / 视频抽帧；任何失败返回 None（调用方降级）。"""
     if provider is None:
         return None
-    content: list[dict[str, Any]] = [{"type": "text", "text": "归档这张媒体。"}]
+    # 静态引导句归模板（lead 槽），本处只备图像 parts——装配收口到模板层，
+    # 收编前后 parts 顺序与字节完全一致。
+    parts: list[dict[str, Any]] = []
     if kind == "video":
         # 局部导入：复用 vision_describe 的 ffmpeg 抽帧与编码器（同包内部件）。
         import tempfile
@@ -324,7 +356,7 @@ def _analyze_media(
             return None
         for frame in frame_paths[: max(1, int(video_frames))]:
             try:
-                content.append(
+                parts.append(
                     {
                         "type": "image_url",
                         "image_url": {"url": _encode_image_bytes(frame.read_bytes(), "image/jpeg")},
@@ -340,11 +372,10 @@ def _analyze_media(
         data_url = _image_bytes_to_data_url(data)
         if not data_url:
             return None
-        content.append({"type": "image_url", "image_url": {"url": data_url}})
-    messages = [
-        {"role": "system", "content": _ARCHIVE_PROMPT},
-        {"role": "user", "content": content},
-    ]
+        parts.append({"type": "image_url", "image_url": {"url": data_url}})
+    messages = _ARCHIVE_TEMPLATE.render_messages(
+        {"lead": "归档这张媒体。", "parts": parts}
+    )
     try:
         reply = provider.generate(messages, temperature=0.1, max_tokens=300)
     except Exception:  # noqa: BLE001 - VLM 失败一律降级，不阻断归档。
@@ -356,13 +387,7 @@ def _summarize_text(provider: Any, text: str) -> str:
     """聊天记录归档的一句话摘要；失败返回空串（纯文本归档不受影响）。"""
     if provider is None or not text.strip():
         return ""
-    messages = [
-        {
-            "role": "system",
-            "content": "把聊天记录概括成一句话（不超过30字），直接输出，不要前言。",
-        },
-        {"role": "user", "content": text[:3000]},
-    ]
+    messages = _RECORD_SUMMARY_TEMPLATE.render_messages({"record_text": text[:3000]})
     try:
         reply = provider.generate(messages, temperature=0.2, max_tokens=80)
     except Exception:  # noqa: BLE001 - 摘要失败静默。

@@ -1005,6 +1005,10 @@ def test_intimate_voice_is_transcribed_not_mounted_on_the_swapped_head(
     capability(opener, _group_decision(opener))
     # 前提：这一档确实是真入口自己钉上去的（不是夹具手写）。
     assert SHARED_CONTENT_ROUTE_ENGINE.pinned_mode(member_key, cfg) == "intimate"
+    # 席25 注：opener 指令轮按二判功能设计（GENERAL 兜底）会发一帧搜索域分类
+    # 预调用，落进与本格媒体轮共用的 journal；本格只锁媒体轮 hop 序，指令轮
+    # 的帧清出账面（指令轮断言只有 pinned_mode，不受影响）。
+    journal.clear()
 
     clip = tmp_path / "voice.mp3"
     clip.write_bytes(b"ID3\x04" + b"\x00" * 128)
@@ -1342,8 +1346,11 @@ def test_undeclared_media_is_mounted_for_the_chain_when_translation_is_unavailab
     key = _private_ingest_key(uid)
     cfg = _content_route_config()
     journal: list = []
-    # 第一轮：本人显式深开（指令轮不产生 LLM 请求，因此不需要转译口）。
-    _run_private_turn(cfg, journal, uid, "亲密模式 深开", [])
+    _opener_journal: list = []
+    # 第一轮：本人显式深开（不带媒体故不需要转译口）。席25 注：指令轮按二判
+    # 功能设计（GENERAL 兜底）会发一帧搜索域分类预调用——分账到 scratch，
+    # 不占本格媒体轮的 hop 序断言账；本格只锁媒体轮。
+    _run_private_turn(cfg, _opener_journal, uid, "亲密模式 深开", [])
     assert SHARED_CONTENT_ROUTE_ENGINE.route_verdict(key, cfg)["mode"] == "intimate"
 
     # 第二轮：同一个人发一段媒体，且转译口全程缺席（asr/vision/视频理解都没装配）。

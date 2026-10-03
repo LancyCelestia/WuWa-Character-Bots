@@ -374,7 +374,13 @@ def test_voice_wiring_lock_is_live_not_vacuous(tmp_path: Path) -> None:
     source = real.read_text(encoding="utf-8")
 
     voice_call = "        check_tts_voice_identity(env, project_root),\n"
-    tail_call = "        check_ann_generation_pair(env, project_root),\n"
+    # 2026-10-03 施工席20：队尾锚原钉死 ann_pair 一行；在飞真身把 kb_domain_anchor
+    # 注册在其后 ⇒ 队尾漂移。改**现算队尾**（取注册面最后一行 check_* 调用，规则 10
+    # 同哲学），真身再长项本毒不再错位；count==1 自证留在下方循环里。
+    tail_call = next(
+        ln for ln in reversed(source.splitlines(keepends=True))
+        if ln.startswith("        check_") and ln.endswith(",\n")
+    )
     doc_anchor = "\n用法：\n"
     for label, needle in (("voice_call", voice_call), ("tail_call", tail_call), ("doc_anchor", doc_anchor)):
         assert source.count(needle) == 1, f"注毒锚点失配（{label}）：体检注册面已变形，请同步更新本锁"
@@ -397,9 +403,13 @@ def test_voice_wiring_lock_is_live_not_vacuous(tmp_path: Path) -> None:
     with pytest.raises(AssertionError):
         _assert_voice_wiring(wired(scrambled), root)
 
-    # ③ 一致扩展（docstring 编号清单 + run_all 同步长出第 14 项）→ 必须绿
+    # ③ 一致扩展（docstring 编号清单 + run_all 同步长出下一项）→ 必须绿
+    # 2026-10-03 施工席20 归因：原毒硬编码「第 14 项」，与在飞落库的真第 14 项
+    # （kb_domain_anchor）撞号 ⇒ 编号清单变 [1..14, 14] 而红。按本锁自身口径
+    # （项数现算自声明侧，规则 10）改为**派生下一号**：真身再长项本毒不再撞号。
+    next_num = len(prc.declared_item_ids()) + 1
     extended_src = (
-        source.replace(doc_anchor, "  14. dummy_probe  注毒用例附加项（S146 一致性扩展自证，非真检查）\n" + doc_anchor)
+        source.replace(doc_anchor, f"  {next_num}. dummy_probe  注毒用例附加项（S146 一致性扩展自证，非真检查）\n" + doc_anchor)
         .replace(tail_call, tail_call + "        check_dummy_probe(env, project_root),\n")
         .replace(
             "def run_all(",

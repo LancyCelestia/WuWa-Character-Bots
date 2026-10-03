@@ -7,8 +7,7 @@
   ③ 相对路径按进程 CWD 解析（既有口径），不落到 ``~``；
 - 「不得把用户私人相册/下载目录/桌面纳入可发范围」⇒ 源码级零出现这些目录名与
   ``Path.home()``/``$env:`` 展开（注毒自证：往源码里塞一枚 ``Path.home()`` 的副本，
-  同一把尺必须当场判红）；
-- 「随机发图绝不得把别人发的图转发给第三者（跨会话泄露）」⇒ ④ 取图口只认登记目录的
+  同一把尺必须当场判红）；- 「随机发图绝不得把别人发的图转发给第三者（跨会话泄露）」⇒ ④ 取图口只认登记目录的
   清单，**消息附件/引用图/别的会话媒体一条都不进候选**（运行时以替身清单证明唯一
   来源），⑤ 本能力**从不自己指定收件会话**（源码里零 ``SendRequest``/出站/推送调用），
   发谁永远由中央出站链按当轮请求决定。
@@ -16,10 +15,19 @@
 去重与可复现（同批需求）已由 ``tests/test_randpic_no_repeat_ledger.py``、
 ``tests/test_randpic_bucket_key_ledger.py``、``tests/test_poke_randpic_behavior.py`` A/C 组
 执法，本件不重复造尺，只补上面这五格。全离线：图库在 ``tmp_path`` 现造。
+
+2026-10-03 裁定（S12R 锁失明修复·续做）：体检波给 randpic 落了 ``expanduser``，
+与本条字面扫相抵。判定＝**合法**：``_gallery_root`` 对**管理员在册目录**做 ``~``
+展开（实参链＝config 键读取链；不展开则 ``~/...`` 会安静变成 ``<CWD>/~/...``，
+池子假空），``_warn_if_personal_root`` 算 home 只为「登记根疑似个人目录」软提示
+（产出不进图源）。锁随之换代：``os.path.expanduser`` 从字面 token 挪进**形态锁**
+（落点×实参双限定；方法形 ``.expanduser()`` 一并纳入——旧字面尺本来就不认方法形，
+覆盖面只紧不松），其余 token 判据一字不动。
 """
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,7 +42,10 @@ RANDPIC_PY = (
 #: 私人区目录名/家目录取数面：随机图**一律不许**碰（用户明令的红线清单）。
 FORBIDDEN_SOURCE_TOKENS = (
     "Path.home()",
-    "os.path.expanduser",
+    # "os.path.expanduser" 不再进字面扫（2026-10-03 裁定）：合法落点＝在册目录 ~
+    # 展开（_gallery_root）＋个人目录守卫的家目录探针（_warn_if_personal_root），
+    # 由 test_expanduser_only_on_registered_chain_or_guard 形态锁执法（落点×实参
+    # 双限定，方法形 .expanduser() 一并入锁，覆盖面比字面扫只紧不松）。
     "expandvars",
     "getlogin",
     "Desktop",
@@ -130,6 +141,68 @@ def _hits(tokens: tuple[str, ...], code: str) -> list[str]:
     return [token for token in tokens if token.replace(" ", "") in code]
 
 
+# ------------------------------------- ②' expanduser 形态锁（2026-10-03 裁定换代）
+
+#: 函数形 ``os.path.expanduser(...)``（含 ``from os.path import expanduser`` 后的裸名
+#: 形）唯一合法落点：个人目录守卫，实参必须是常量 ``"~"``——它算 home 只为
+#: 「登记根疑似个人目录」软提示，产出不进图源。
+_EXPANDUSER_HOME_PROBE_OWNER = "_warn_if_personal_root"
+
+#: 方法形 ``<path>.expanduser()`` 合法落点：登记项唯一解析口 + 对登记根本身做
+#: 同款展开再比对的守卫。两者的实参链都是 config 键读取链（``bot_randpic_dirs``
+#: 经 ``configured_gallery_dirs``、禁登记键经 ``gallery_root_denial``）。
+_EXPANDUSER_METHOD_OWNERS = ("_gallery_root", "_warn_if_personal_root")
+
+
+def _expanduser_violations(source: str) -> list[str]:
+    """expanduser 越界清单：任何形任何位置，落点/实参不合上表即入列（模块级＝None）。"""
+    tree = ast.parse(source)
+    owner_of: dict[int, str | None] = {}
+
+    def _visit(node: ast.AST, owner: str | None) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                _visit(child, child.name)
+            else:
+                owner_of[id(child)] = owner
+                _visit(child, owner)
+
+    _visit(tree, None)
+
+    bad: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "expanduser":
+            value = func.value
+            is_home_probe = (
+                isinstance(value, ast.Attribute)
+                and value.attr == "path"
+                and isinstance(value.value, ast.Name)
+                and value.value.id == "os"
+            )
+        elif isinstance(func, ast.Name) and func.id == "expanduser":
+            is_home_probe = True  # 裸名形＝``from os.path import expanduser`` 同形替身
+        else:
+            continue
+        owner = owner_of.get(id(node))
+        if is_home_probe:
+            arg_ok = (
+                len(node.args) == 1
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "~"
+            )
+            if owner != _EXPANDUSER_HOME_PROBE_OWNER or not arg_ok:
+                bad.append(
+                    "os.path.expanduser 函数形越界：实参须为常量 '~' 且只在"
+                    f"{_EXPANDUSER_HOME_PROBE_OWNER} 内（现 owner={owner}）"
+                )
+        elif owner not in _EXPANDUSER_METHOD_OWNERS:
+            bad.append(f".expanduser() 方法形越界：落点不在登记项解析/守卫面（owner={owner}）")
+    return bad
+
+
 def test_no_implicit_private_directory_sources_in_code() -> None:
     hits = _hits(FORBIDDEN_SOURCE_TOKENS, _code_text(RANDPIC_PY.read_text(encoding="utf-8")))
     assert not hits, f"随机图出现了登记目录之外的来源面：{hits}"
@@ -145,6 +218,29 @@ def test_private_source_lock_has_teeth_on_poisoned_copy() -> None:
     assert "Path.home()" in _hits(FORBIDDEN_SOURCE_TOKENS, code), (
         "注毒没进判定面 ⇒ 这条隐私锁是空跑"
     )
+
+
+def test_expanduser_only_on_registered_chain_or_guard() -> None:
+    """expanduser 形态锁：只认「在册目录 ~ 展开 + 个人目录守卫」两处落点。
+
+    判据真身＝``_gallery_root``（登记项 → 目录唯一解析口，实参链＝config 键读取链）
+    与 ``_warn_if_personal_root``（算 home 只为软提示，产出不进图源）。这两处之外
+    任何形任何位置（含模块级、裸名形、非常量实参）都判红。
+    """
+    assert _expanduser_violations(RANDPIC_PY.read_text(encoding="utf-8")) == []
+
+
+def test_expanduser_shape_lock_has_teeth_on_poisoned_copy() -> None:
+    """注毒自证：三形越界 expanduser（函数形非守卫/方法形越界/裸名形），锁必须逐一报告。"""
+    poisoned = (
+        RANDPIC_PY.read_text(encoding="utf-8")
+        + "\n\n"
+        + "def _poison_fnform(raw):\n    return os.path.expanduser(raw)\n\n"
+        + "def _poison_method(raw):\n    return Path(raw).expanduser()\n\n"
+        + "def _poison_barename(raw):\n    return expanduser(raw)\n"
+    )
+    bad = _expanduser_violations(poisoned)
+    assert len(bad) >= 3, f"越界 expanduser 没被逐一点名 ⇒ 形态锁空跑：{bad}"
 
 
 def test_no_outbound_or_second_throat_in_capability() -> None:
