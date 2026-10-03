@@ -366,7 +366,9 @@ def test_register_scheduler_installs_async_job_with_receipt_repo(
     )
 
     assert result == {"interval": "1m"}
-    assert len(scheduler.jobs) == 1
+    # 2026-10-03 全量修复批：注册子树同批挂了落盘点清扫作业（bot_file_sweep_tick，
+    # 每 04:50 扫 incoming/）⇒ 本注册器共两作业；账随现势走，不写死枚数散文。
+    assert len(scheduler.jobs) == 2
     job, kwargs = scheduler.jobs[0]
     assert inspect.iscoroutinefunction(job)
     assert kwargs["id"] == "bot_reminder_tick" and kwargs["minute"] == "*"

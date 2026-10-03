@@ -136,7 +136,10 @@ def test_model_command_add_update_remove_roundtrip() -> None:
 
 
 def test_model_command_set_accepts_runtime_ids() -> None:
-    store = RuntimeSettingsStore(_temp_dir() / "settings.json")
+    # §52 同意门波后咽喉缺省 fail-closed（R2 键无门即拒）；本件测的是 model set
+    # 命令语义而非档位执法（执法另有专件 test_atkfix_cfg12_*／test_safety_exec_*），
+    # 故走在册测试夹具出口 allow_no_gate=True（生产面出现即被 AST 锁点名）。
+    store = RuntimeSettingsStore(_temp_dir() / "settings.json", allow_no_gate=True)
     config = _fake_config()
     _handle_model_command(
         store,
@@ -149,7 +152,9 @@ def test_model_command_set_accepts_runtime_ids() -> None:
 
 
 def test_model_commands_control_reasoning_effort_and_web_search() -> None:
-    store = RuntimeSettingsStore(_temp_dir() / "settings.json")
+    # 同上：测 think/search 命令语义，非档位执法；走 allow_no_gate=True 夹具出口
+    # （超管 R1 免单语义由 test_safety_exec_*／test_consent_command_surface 专件守）。
+    store = RuntimeSettingsStore(_temp_dir() / "settings.json", allow_no_gate=True)
     config = _fake_config()
 
     assert "reasoning" in _handle_model_command(store, config, ["think", "high"]).lower()

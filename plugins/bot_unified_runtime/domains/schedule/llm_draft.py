@@ -28,6 +28,12 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.prompt_template import (
+    PromptGuard,
+    PromptSlot,
+    PromptTemplate,
+    register_prompt_template,
+)
 from plugins.bot_unified_runtime.domains.schedule.service.schedule_dag import (
     DEFAULT_MAX_EDGES,
     DEFAULT_MAX_TASKS,
@@ -193,14 +199,29 @@ class ScheduleDraft(_Strict):
 
 # ---------------------------------------------------------------- 提示词（守岸人口径）
 # 自检锚：不含 route/model/registry/system/prompt/工具 等内部词；只要求 JSON。
-_DRAFT_SYSTEM_TEXT = (
-    "你帮用户把一句话安排整理成结构化清单。只输出 JSON，不要解释。"
-    "字段：template（timetable/workday/errand/trip/ticket/shopping/meal/custom 之一）、"
-    "title、timezone、actions（step_id/title/local_time HH:MM/date YYYY-MM-DD/"
-    "duration_minutes/after_step/weekdays 0=周一…6=周日/week_parity odd|even/tags）、"
-    "semester_start、period_table（节次数字→[开始 HH:MM, 结束 HH:MM]）、notes、"
-    "confidence（0 到 1，是你真的看懂了的把握）。"
-    "用户没说清的时间、地点、日期就留空，绝不编造；一件事都没说清就给空 actions。"
+# W1（2026-10-02）收编进模板层：骨架文本逐字节照旧（`prompt_texts()` 读模板 system），
+# 增量只在**用户原话按二手材料包裹**——本腿是把那句话「转述」给抽取器，模型这轮并不在
+# 和用户对话，那句原话里任何祈使句都只该是被分析的数据。
+_DRAFT_TEMPLATE = register_prompt_template(
+    PromptTemplate(
+        key="llm_draft.schedule",
+        system=(
+            "你帮用户把一句话安排整理成结构化清单。只输出 JSON，不要解释。"
+            "字段：template（timetable/workday/errand/trip/ticket/shopping/meal/custom 之一）、"
+            "title、timezone、actions（step_id/title/local_time HH:MM/date YYYY-MM-DD/"
+            "duration_minutes/after_step/weekdays 0=周一…6=周日/week_parity odd|even/tags）、"
+            "semester_start、period_table（节次数字→[开始 HH:MM, 结束 HH:MM]）、notes、"
+            "confidence（0 到 1，是你真的看懂了的把握）。"
+            "用户没说清的时间、地点、日期就留空，绝不编造；一件事都没说清就给空 actions。"
+        ),
+        slots=(
+            PromptSlot(
+                "plan_text",
+                guard=PromptGuard.WRAP,
+                source_label="用户原话摘录",
+            ),
+        ),
+    )
 )
 
 # 泄露词自检表（出站提示词不得出现；测试逐词扫描锁定）。
@@ -217,7 +238,7 @@ _LEAK_MARKERS = (
 
 def prompt_texts() -> tuple[str, str]:
     """返回 (system, 说明) 文本；供接线席与泄露词自检使用。"""
-    return _DRAFT_SYSTEM_TEXT, "把这段话整理成清单 JSON"
+    return _DRAFT_TEMPLATE.system, "把这段话整理成清单 JSON"
 
 
 def classify_template(text: str) -> str:
@@ -289,14 +310,10 @@ def parse_schedule_draft(
     消费 ``reply.text``，任何异常向上抛由调用方决定降级（本模块不做网络重试）。
     """
     _ = now_utc  # 保留参数：接线席可传统一时钟；本模块不做相对日期推断
-    reply = generate(
-        [
-            {"role": "system", "content": _DRAFT_SYSTEM_TEXT},
-            {"role": "user", "content": str(text or "").strip()},
-        ],
-        temperature=0.1,
-        max_tokens=800,
+    messages = _DRAFT_TEMPLATE.render_messages(
+        {"plan_text": str(text or "").strip()}
     )
+    reply = generate(messages, temperature=0.1, max_tokens=800)
     raw = str(getattr(reply, "text", "") or "")
     payload = _extract_json(raw)
 

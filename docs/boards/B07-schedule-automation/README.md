@@ -20,7 +20,7 @@
 |---|---|---|
 | [提醒督促](reminders/README.md) | 自然语言时间点→会话待办→到点投递，含迟到与过期治理。 | [提醒](reminders/reminder.md)、[时间点解析词表](reminders/natural-time-parsing.md)、[投递、顺延与作废](reminders/delivery-and-lateness.md) |
 | [日程板与智能代答](schedule-board/README.md) | 自然语言/命令/课表导入建日程板（复用 V2.1 引擎），别人问「她在干嘛」按可见性分级代答（隐私判定在出站前）。 | [可见性分级投影（代答腿）](schedule-board/visibility-projection.md)、[课表文本/图片导入](schedule-board/timetable-import.md) |
-| [调度器族与定时推送](scheduled-jobs/README.md) | 根装配期注册的全部定时任务清单、时区口径与去重。 | [发送队列驱动](scheduled-jobs/send-queue-scheduler.md)、[夜间反思窗口](scheduled-jobs/reflection-scheduler.md)、[每日通讯摘要推送](scheduled-jobs/digest-push.md)、[历史上的今天推送](scheduled-jobs/today-history-scheduler.md)、[凭据到期巡检](scheduled-jobs/credential-check-scheduler.md)、[知识库同步](scheduled-jobs/kb-wiki-sync-scheduler.md) |
+| [调度器族与定时推送](scheduled-jobs/README.md) | 根装配期注册的全部定时任务清单、时区口径与去重。 | [发送队列驱动](scheduled-jobs/send-queue-scheduler.md)、[夜间反思窗口](scheduled-jobs/reflection-scheduler.md)、[每日通讯摘要推送](scheduled-jobs/digest-push.md)、[历史上的今天推送](scheduled-jobs/today-history-scheduler.md)、[凭据到期巡检](scheduled-jobs/credential-check-scheduler.md)、[知识库同步](scheduled-jobs/kb-wiki-sync-scheduler.md)、[落盘点 TTL 清扫调度](scheduled-jobs/file-sweep-scheduler.md) |
 | [日常助理与收件箱](daily-assist/README.md) | 收件箱速记、饭点建议、早晚对账推送。 | [收件箱速记](daily-assist/daily-assist.md) |
 | [校园自动转发](campus-forward/README.md) | 三重来源门 + 幂等去重的纯监听旁路，绝不向源群发言。 | — |
 | [自动发送与主动搭话](auto-send/README.md) | 主动性行为的门、概率与冷却，以及失败静默口径。 | [自动发送](auto-send/auto-send.md)、[表情回应的五层防刷屏门](auto-send/sticker-reactions.md) |

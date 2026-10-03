@@ -23,6 +23,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.prompt_template import (
+    PromptPartsTemplate,
+    PromptSlot,
+    register_prompt_template,
+)
+
 _logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -47,23 +53,32 @@ _LEAK_MARKERS = (
     "function call",
 )
 
-_LLM_TIMETABLE_PROMPT = (
-    "你帮用户把课程表截图整理成清单。只输出 JSON，不要解释。字段："
-    "semester_start（学期第一天 YYYY-MM-DD，图里没有就 null）、"
-    "period_table（节次数字→[开始 HH:MM, 结束 HH:MM]，图里没有就 null）、"
-    "courses（每门课：course_name、weekday 0=周一…6=周日、periods 节次数组、"
-    "start_time/end_time HH:MM（图里直接标了时间才填，否则 null）、"
-    "week_parity odd|even|both（单双周，没标就是 both）、"
-    "week_start/week_end（第几周到第几周，没有 null）、location、teacher、"
-    "confidence 0 到 1、source_row/source_col（在截图里的行列位置，看不出 null）、"
-    "merged（是否跨行跨列合并单元格 true/false））。"
-    "看不清的字段一律 null，绝不猜；整页都不是课程表就给空 courses。"
+# W1（2026-10-02）收编进模板层：课表识别的 user 侧是「静态引导 + 图像 parts」，
+# 图像不是文本 ⇒ 反注入包裹无对象，本腿收编前后零字节差（骨架由模板持有、`prompt_text()`
+# 读模板的 system，泄露词自检面不变）。
+_TIMETABLE_TEMPLATE = register_prompt_template(
+    PromptPartsTemplate(
+        key="timetable.vlm",
+        system=(
+            "你帮用户把课程表截图整理成清单。只输出 JSON，不要解释。字段："
+            "semester_start（学期第一天 YYYY-MM-DD，图里没有就 null）、"
+            "period_table（节次数字→[开始 HH:MM, 结束 HH:MM]，图里没有就 null）、"
+            "courses（每门课：course_name、weekday 0=周一…6=周日、periods 节次数组、"
+            "start_time/end_time HH:MM（图里直接标了时间才填，否则 null）、"
+            "week_parity odd|even|both（单双周，没标就是 both）、"
+            "week_start/week_end（第几周到第几周，没有 null）、location、teacher、"
+            "confidence 0 到 1、source_row/source_col（在截图里的行列位置，看不出 null）、"
+            "merged（是否跨行跨列合并单元格 true/false））。"
+            "看不清的字段一律 null，绝不猜；整页都不是课程表就给空 courses。"
+        ),
+        lead=PromptSlot("lead"),
+    )
 )
 
 
 def prompt_text() -> str:
     """出站提示词文本（供接线席复用与泄露词自检）。"""
-    return _LLM_TIMETABLE_PROMPT
+    return _TIMETABLE_TEMPLATE.system
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -341,13 +356,12 @@ def recognize_timetable(
         if image_bytes:
             draft.image_fingerprint = fingerprint_image_bytes(image_bytes)
         return draft
-    content: list[dict[str, Any]] = [{"type": "text", "text": "帮我把这张课程表整理成清单。"}]
+    parts: list[dict[str, Any]] = []
     for url in usable:
-        content.append({"type": "image_url", "image_url": {"url": url}})
-    messages = [
-        {"role": "system", "content": _LLM_TIMETABLE_PROMPT},
-        {"role": "user", "content": content},
-    ]
+        parts.append({"type": "image_url", "image_url": {"url": url}})
+    messages = _TIMETABLE_TEMPLATE.render_messages(
+        {"lead": "帮我把这张课程表整理成清单。", "parts": parts}
+    )
     try:
         reply = provider.generate(messages, temperature=0.1, max_tokens=2000)
         payload = _extract_json(str(getattr(reply, "text", "") or ""))

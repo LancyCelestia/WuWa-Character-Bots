@@ -22,6 +22,7 @@
 | [历史上的今天推送](today-history-scheduler.md) | — | — | — | — |
 | [凭据到期巡检](credential-check-scheduler.md) | — | — | — | — |
 | [知识库同步](kb-wiki-sync-scheduler.md) | — | — | — | — |
+| [落盘点 TTL 清扫调度](file-sweep-scheduler.md) | — | — | — | — |
 <!-- BOARD-AUTO:END -->
 
 ## 这个功能解决什么
