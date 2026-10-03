@@ -1371,7 +1371,9 @@ def run_transport_smoke(config: Config) -> dict[str, Any]:
     )
     fake_bot.next_private_response = {
         "status": "failed",
-        "retcode": 100,
+        # retcode=500：可重试代表码（T46-N1 后 100 已入 SnowLuma final 白名单，
+        # 同场迁移先例＝tests/test_part_idempotent_resume.py 的 100→500）。
+        "retcode": 500,
         "message": "network timeout token=transport-smoke-secret",
     }
     retryable_receipt = asyncio.run(
