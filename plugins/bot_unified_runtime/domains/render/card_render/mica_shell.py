@@ -43,6 +43,7 @@ from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import 
     SEMANTIC_WARNING,
     SHADOW_PRIMARY,
     SHADOW_SECONDARY,
+    TEXT_SECONDARY,
     # goal-7 二波（2026-09-28，需求 7「壳层釉瑚渐变按面不同」）：--mica-shell-wash
     # 与外壳 CSS 的壳层渐变改按 face 派生，单一真身住 theme_tokens.shell_wash_for_face。
     # SHELL_WASH_GRADIENT 不再在此直插（其仍是 face="" 时 shell_wash_for_face 回落的
@@ -92,6 +93,11 @@ _PUBLIC_TOKEN_ORDER: tuple[str, ...] = (
     # 公共段既有声明顺序逐字节不变（test_public_token_subset_and_order_unified
     # 从本表动态取序，天然一致）。
     "--mica-shell-wash",
+    # D-4 单源接线（渲染统一波 2026-10-03）：统一次级灰 --text-secondary 入公共段
+    # （值=theme_tokens.TEXT_SECONDARY 单一登记）。追加在表尾，公共段既有声明
+    # 顺序逐字节不变；模板侧手抄字面量按面逐步撤除（error_card 首撤，残余等值
+    # 手抄由 test_secondary_gray_single_source 等值锁看着）。
+    "--text-secondary",
 )
 
 # 卡片默认外壳宽度：与 theme_tokens.CARD_SHELL_WIDTHS 同源，未登记时用兜底值。
@@ -488,6 +494,10 @@ def render_root_tokens(
         "--semantic-warning": SEMANTIC_WARNING,
         "--score-hot": SCORE_HOT,
         "--score-cold": SCORE_COLD,
+        # D-4（渲染统一波 2026-10-03）：统一次级灰进公共段（与 --text-sub 同语义
+        # 双 token 并轨仍待裁值，见 docs/rendering-contract.md §八 D-4——本行只
+        # 补注入路径，不改任何值）。
+        "--text-secondary": TEXT_SECONDARY,
         # goal-7 二波：壳层釉瑚渐变按 face 派生。face="" 落回 canon
         # SHELL_WASH_GRADIENT（旧缺省路径逐字节不变，兼容未入册面与样张基线）；
         # 已登记面按 theme_tokens._WASH_FACE_ORDER 索引确定性派生（色板同族、

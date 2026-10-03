@@ -64,6 +64,13 @@ _QQ_GROUP_PAYLOAD: dict[str, Any] = {
         "status": 1,
         "batteryStatus": 0,
     },
+    # 2026-10-03 补接的两条在册探测（常量真身在 group_info）：
+    "nc_get_user_status": {"status": {"status": 1, "key": "online"}},
+    "get_group_root_files": {
+        "file_list": [{"name": f"doc{i}.pdf"} for i in range(3)],
+        "used_space": 1024**3,
+        "total_space": 10 * 1024**3,
+    },
 }
 
 
@@ -368,7 +375,13 @@ def test_participants_cell_maps_the_three_memory_states() -> None:
     assert build(None).state == cp.FIELD_FAILED, "读不出既不是没人说话也不是没探测"
 
 
-def test_group_files_cell_comes_from_the_local_ledger_only() -> None:
+def test_group_files_cell_prefers_local_ledger_then_probes_the_protocol_port() -> None:
+    """账本优先；账本缺行才探协议全量口（2026-10-03 补接 ``get_group_root_files``）。
+
+    旧名 ``..._comes_from_the_local_ledger_only`` 的「只吃账本」已由本波裁定升级：
+    账本缺行不再 ``missing``，而是探在册全量口——但**只报数量/容量级，绝不列文件
+    名**（隐私红线不变，出值自带声明句）。
+    """
     profile = cp.build_profile(
         _qq_group_message(),
         _FakeFetch(_QQ_GROUP_PAYLOAD),
@@ -378,8 +391,88 @@ def test_group_files_cell_comes_from_the_local_ledger_only() -> None:
     field = profile.get("files")
     assert (field.state, field.source) == (cp.FIELD_OK, cp.SOURCE_LEDGER)
     assert field.value == "群文件：我见过 3 个上传"
-    empty = cp.build_profile(_qq_group_message(), _FakeFetch(_QQ_GROUP_PAYLOAD), clock=_clock)
-    assert empty.get("files").state == cp.FIELD_MISSING, "没账本＝这一段缺行，不编数"
+
+    probed = cp.build_profile(_qq_group_message(), _FakeFetch(_QQ_GROUP_PAYLOAD), clock=_clock)
+    files = probed.get("files")
+    assert (files.state, files.source) == (cp.FIELD_OK, cp.SOURCE_PROTOCOL)
+    assert "根目录约 3 项" in files.value
+    assert "只报数量与容量级" in files.value and "不列文件名" in files.value
+    assert "doc0.pdf" not in files.value, "文件名一个字都不许出（红线）"
+
+    failed = cp.build_profile(
+        _qq_group_message(),
+        _FakeFetch(_QQ_GROUP_PAYLOAD, fail={"get_group_root_files"}),
+        clock=_clock,
+    )
+    assert failed.get("files").state == cp.FIELD_FAILED
+    assert "不等于群里没有文件" in failed.get("files").reason
+
+    empties = dict(_QQ_GROUP_PAYLOAD)
+    empties["get_group_root_files"] = {"file_list": []}
+    empty = cp.build_profile(_qq_group_message(), _FakeFetch(empties), clock=_clock)
+    assert empty.get("files").state == cp.FIELD_EMPTY
+
+    shapes = dict(_QQ_GROUP_PAYLOAD)
+    shapes["get_group_root_files"] = {"weird": True}
+    unreadable = cp.build_profile(_qq_group_message(), _FakeFetch(shapes), clock=_clock)
+    assert unreadable.get("files").state == cp.FIELD_MISSING
+    assert "不编数" in unreadable.get("files").reason
+
+
+def test_note_injects_group_memo_but_still_never_rosters() -> None:
+    """``group_memo``（群介绍）进注入白名单（2026-10-03 补格）；隐私裁定项照旧排除。"""
+    fetch = _FakeFetch(_QQ_GROUP_PAYLOAD)
+    profile = cp.build_profile(_qq_group_message(), fetch, clock=_clock)
+    note = cp.note_text(profile, is_self=True, privileged=False)
+    assert "群介绍=只做观测，不催更。" in note
+    for banned in ("参与者", "成员全量名单", "群文件", "相册", "待办"):
+        assert banned not in note, banned
+
+
+def test_nc_user_status_probe_is_self_only_and_state_discrete() -> None:
+    """账号状态专口：``VIS_SELF`` 门结构性生效、六态分立、与资料口分格分口。"""
+    profile = cp.build_profile(_qq_group_message(), _FakeFetch(_QQ_GROUP_PAYLOAD), clock=_clock)
+    cell = profile.get("nc_user_status")
+    assert (cell.state, cell.visibility, cell.source) == (
+        cp.FIELD_OK,
+        cp.VIS_SELF,
+        cp.SOURCE_PROTOCOL,
+    )
+    assert "在线" in cell.value and "状态码 1" in cell.value
+    # 专口是独立读腿，不与 get_stranger_info 那格互相冒充。
+    assert profile.get("online_status").key == "online_status"
+
+    def spy_fetch(kind: str, key: str, action: str, **params: Any) -> tuple[bool, Any]:
+        if action == gi.QQ_USER_STATUS_ACTION:
+            raise AssertionError("问别人时账号状态专口一次都不许打")
+        if action in _QQ_GROUP_PAYLOAD:
+            return True, _QQ_GROUP_PAYLOAD[action]
+        return False, None
+
+    other = cp.build_profile(
+        _qq_group_message(sender_roles=["user"]),
+        spy_fetch,
+        subject_user_id="102",
+        clock=_clock,
+    )
+    assert other.get("nc_user_status").state == cp.FIELD_FORBIDDEN
+    assert other.get("nc_user_status").value == ""
+
+    unprobed = cp.build_profile(
+        _qq_group_message(), _never_fetch, api_available=False, clock=_clock
+    )
+    assert unprobed.get("nc_user_status").state == cp.FIELD_UNPROBED
+
+    empties = dict(_QQ_GROUP_PAYLOAD)
+    empties["nc_get_user_status"] = {"status": ""}
+    empty = cp.build_profile(_qq_group_message(), _FakeFetch(empties), clock=_clock)
+    assert empty.get("nc_user_status").state == cp.FIELD_EMPTY
+
+    shapes = dict(_QQ_GROUP_PAYLOAD)
+    shapes["nc_get_user_status"] = {"weird": True}
+    missing = cp.build_profile(_qq_group_message(), _FakeFetch(shapes), clock=_clock)
+    assert missing.get("nc_user_status").state == cp.FIELD_MISSING
+    assert "不写离线" in missing.get("nc_user_status").reason
 
 
 # ---------------------------------------------------------------------------

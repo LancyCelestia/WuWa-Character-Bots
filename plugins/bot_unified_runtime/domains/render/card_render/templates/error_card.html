@@ -56,8 +56,9 @@
     --surface-a: {{ surface_a }};
     --surface-b: {{ surface_b }};
     --surface-neutral: {{ surface_neutral }};
-    /* vis5 次级灰单源（theme_tokens.TEXT_SECONDARY）。 */
-    --text-secondary: #4e5866;
+    {# vis5 次级灰单源（D-4，渲染统一波 2026-10-03）：--text-secondary 已入
+       render_root_tokens 公共段（上方 root_tokens 注入，值=theme_tokens.TEXT_SECONDARY），
+       本文件手抄字面量退役——var() 消费点不动，值改值册一处全卡生效。 #}
     /* 等宽字体（栈摘录/IDs 专用）：v21r3 C9 改消费 root tokens 单源
        （theme_tokens.MONO_FONT_STACK 经 render_root_tokens 注入 --font-mono）。 */
     --mono-family: var(--font-mono);
@@ -120,16 +121,18 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
 .row {
     display: flex; align-items: baseline; gap: 12px; padding: 6px 12px;
     border-radius: var(--r-tile);
+    {# D-9（渲染统一波 2026-10-03）：白玻璃描边手抄退役，var() 消费值册单源
+       （GLASS_EDGE 等值）；填充仍 --surface-* zebra token + 字面 padding-box。 #}
     background:
         var(--surface-a) padding-box,
-        linear-gradient(150deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.35) 55%, rgba(255, 255, 255, 0.72) 100%) border-box;
+        var(--mica-glass-edge);
     border: 1px solid transparent;
     box-shadow: var(--mica-shadow-panel);
 }
 .row.alt {
     background:
         var(--surface-b) padding-box,
-        linear-gradient(150deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.35) 55%, rgba(255, 255, 255, 0.72) 100%) border-box;
+        var(--mica-glass-edge);
 }
 /* 标签轨：全卡**同一个**宽度，值才落在同一条竖直线上。旧写法在双列下把轨收到
    92px，两套轨并排＝"属性名和值不对齐"的根因。轨宽按最长属性名定
@@ -175,7 +178,9 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
                 <div class="subtitle">{{ card_text.static_err_31 }} · {{ card_text.static_err_18 }}</div>
             </div>
         </div>
-        <div class="head-badge">{{ exc_type | default('EXCEPTION', true) }}</div>
+        {# 渲染统一波（2026-10-03）人话化：徽章改人话标签（bridge 按异常类名
+           映射 _CARD_TEXT 取值）；原类名保留在下方栈摘录次要行（.stack-head）。 #}
+        <div class="head-badge">{{ exc_type_label }}</div>
     </div>
     {% if human_text %}<div class="human">{{ human_text }}</div>{% endif %}
     {% if trigger_echo %}

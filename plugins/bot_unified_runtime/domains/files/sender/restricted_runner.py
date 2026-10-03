@@ -55,16 +55,18 @@ QQ / Telegram / 邮件三条腿的同源投递，其唯一真身在 ``domains/tr
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import tempfile
 import threading
+import time
 import uuid
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from plugins.bot_unified_runtime.domains.core.safety_exec import paths
 from plugins.bot_unified_runtime.domains.media.digest import media_digest
@@ -74,6 +76,8 @@ from plugins.bot_unified_runtime.domains.transport.sender.file_gateway import (
 
 #: 本件的口径版本（进审计行；改判据语义要升版）。
 RUNNER_ID: Final[str] = "files.restricted-runner/1"
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # 动词与拒绝代号（稳定标识，进审计与回执；改名要同步测试）
@@ -1070,6 +1074,169 @@ def sendable_verdict(candidate: str) -> str:
         return ""
     reason = str(getattr(decision, "reason_code", "") or "")
     return f"sendable_denied:{reason}" if reason else "sendable_denied"
+
+
+# ---------------------------------------------------------------------------
+# 落盘点寿命清扫（TTL sweep，2026-10-03 文件链路波席6 供件）
+#
+# 为什么这一件长在运行器而不是 file_exchange：域锁
+# ``tests/test_restricted_runner_confinement.py::test_files_domain_writes_only_through_the_runner``
+# 把 ``unlink`` 一族列为「运行器之外的登记写原语」，登记账只准降不准升——删除与
+# 创建/修改同属「对目录说话的动词」，文件域唯一合法落点就是本件（本件被该锁显式
+# 豁免）。判据四条，全部 fail-closed：
+# ① 只删**登记根**内、``resolve()`` 后 containment 复核过的普通文件；**不递归**
+#    子目录（incoming/ 与 export/ 都是平铺目录，递归面今天没有需求，不加直面）；
+# ② TTL <= 0 一律视为「清扫关闭」，绝不把 0/负数解释成「全删」；
+# ③ 单次清扫删除数带上限保险丝，到顶即停并如实上报（``cap_reached``）；
+# ④ **删前先计数**、审计日志只记根名/文件名与条数，不记盘符路径明文（与
+#    ``DENY_PLAIN_TEXT`` 同一纪律）。逐件 unlink 的 OSError 只脏那一件，绝不外抛；
+# ⑤ **禁触名册先问后删**（Parity 腿，自 exchange 版出账件移植 2026-10-03）：候选
+#    逐件过 ``_forbidden_destination_reason``（唯一真身 ``paths.py``），命中跳过并
+#    计数（``SweepOutcome.skipped_forbidden``）——清扫不许变成禁触名册的绕道。
+# ---------------------------------------------------------------------------
+
+#: 缺省寿命（天）。建议配置键 ``bot_files_incoming_ttl_days``（登记归主代理；
+#: 本件不读 config——值由装配层经 ``sweep_ttl_days_from_config`` 现算后传入）。
+DEFAULT_SWEEP_TTL_DAYS: Final[float] = 7.0
+#: 单次清扫的删除上限（保险丝：误配超大 TTL 或目录被塞爆时，损失有界）。
+DEFAULT_SWEEP_MAX_DELETIONS: Final[int] = 200
+_SECONDS_PER_DAY: Final[float] = 86400.0
+
+
+@dataclass(frozen=True)
+class SweepOutcome:
+    """一个登记根的清扫结论（审计与装配层回报用；``root`` 只含根名字符串）。"""
+
+    root: str
+    scanned: int = 0
+    candidates: int = 0
+    deleted: int = 0
+    failed: int = 0
+    skipped: int = 0
+    skipped_forbidden: int = 0
+    cap_reached: bool = False
+
+
+def sweep_ttl_days_from_config(config: Any) -> float:
+    """建议键 ``bot_files_incoming_ttl_days`` → 天数（**装配层现算口**）。
+
+    键未登记（getattr 缺省）或值不可解析 → 回落 ``DEFAULT_SWEEP_TTL_DAYS``；
+    显式 ``<= 0`` 原样交回＝清扫关闭（``sweep_expired_files`` 对非正 TTL 不删
+    任何件）。本件依旧不读 config：传进来的 ``config`` 只被 getattr 这一眼，
+    判定语义在调用方（装配期快照坑由「每次调用现取」回避）。
+    """
+    raw = getattr(config, "bot_files_incoming_ttl_days", DEFAULT_SWEEP_TTL_DAYS)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_SWEEP_TTL_DAYS
+
+
+def sweep_expired_files(
+    roots: Iterable[str | os.PathLike[str]],
+    *,
+    ttl_days: float = DEFAULT_SWEEP_TTL_DAYS,
+    now: float | None = None,
+    max_deletions: int = DEFAULT_SWEEP_MAX_DELETIONS,
+    audit_log: logging.Logger | None = None,
+) -> list[SweepOutcome]:
+    """登记目录（``incoming/`` 与生成文件目录）的寿命清扫；返回逐根结论。
+
+    只删「登记根内、普通文件、非禁触名册、mtime 早于 ``now - ttl_days`` 天」
+    四条件齐备的件；目录、不可解析路径、禁触在册件（计 ``skipped_forbidden``）、
+    日期读不出的件一律跳过（删不动的不硬删）。**绝不抛异常**：单根失败折成该根
+    的空结论，单件失败计入 ``failed`` 继续走。
+    """
+    active_log = audit_log or logger
+    try:
+        ttl = float(ttl_days)
+    except (TypeError, ValueError):
+        return []
+    if ttl <= 0:
+        # 关闭语义：0/负数绝不解释成「立即全删」——清扫口的错配方向必须是「不删」。
+        return []
+    reference = float(now) if now is not None else time.time()
+    budget = max(0, int(max_deletions))
+    outcomes: list[SweepOutcome] = []
+    for raw_root in roots:
+        root_text = str(raw_root or "").strip()
+        if not root_text:
+            continue
+        resolved_root = _resolve(Path(root_text))
+        if resolved_root is None or not resolved_root.is_dir():
+            outcomes.append(SweepOutcome(root=root_text))
+            continue
+        scanned = 0
+        skipped = 0
+        skipped_forbidden = 0
+        failed = 0
+        candidates: list[tuple[Path, float]] = []
+        try:
+            entries = sorted(resolved_root.iterdir())
+        except OSError:
+            outcomes.append(SweepOutcome(root=root_text))
+            continue
+        # 删前先计数：候选全集先盘出来、留审计行，再在预算内逐件删。
+        for entry in entries:
+            scanned += 1
+            try:
+                if not entry.is_file():
+                    skipped += 1
+                    continue
+                resolved_entry = _resolve(entry)
+                if resolved_entry is None or not _is_within(resolved_entry, resolved_root):
+                    skipped += 1
+                    continue
+                # ⑤ 禁触名册先问后删：命中即跳过（判定件抛错＝fail-closed 拦下）。
+                if _forbidden_destination_reason(resolved_entry):
+                    skipped_forbidden += 1
+                    continue
+                mtime = entry.stat().st_mtime
+            except OSError:
+                failed += 1
+                continue
+            age_days = (reference - float(mtime)) / _SECONDS_PER_DAY
+            if age_days < ttl:
+                continue
+            candidates.append((entry, age_days))
+        active_log.info(
+            "files sweep: root=%s ttl=%.1f天 扫描=%d 候选=%d 禁触跳过=%d（删前计数）",
+            resolved_root.name or root_text,
+            ttl,
+            scanned,
+            len(candidates),
+            skipped_forbidden,
+        )
+        deleted = 0
+        cap_reached = False
+        for entry, age_days in candidates:
+            if deleted >= budget:
+                cap_reached = True
+                break
+            try:
+                entry.unlink()
+            except OSError:
+                failed += 1
+                continue
+            deleted += 1
+            active_log.info(
+                "files sweep: 已删 %s（已 %.1f 天）", entry.name, age_days
+            )
+        if candidates and deleted >= budget and len(candidates) > deleted:
+            cap_reached = True
+        outcomes.append(
+            SweepOutcome(
+                root=root_text,
+                scanned=scanned,
+                candidates=len(candidates),
+                deleted=deleted,
+                failed=failed,
+                skipped=skipped,
+                skipped_forbidden=skipped_forbidden,
+                cap_reached=cap_reached,
+            )
+        )
+    return outcomes
 
 
 # ---------------------------------------------------------------------------

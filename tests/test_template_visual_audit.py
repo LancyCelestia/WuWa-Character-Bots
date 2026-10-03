@@ -33,11 +33,15 @@ from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import 
 
 _TEMPLATES_DIR = Path(bridge.__file__).resolve().parent / "templates"
 
-# 液态玻璃瓦片表面要素：半透明白 padding-box + 1px 内高光渐变 border-box
-# + 透明边框 + L2 面板阴影 token（值契约由 test_rendering_contract 锁定）。
-_GLASS_MARKERS = (
-    "padding-box",
-    "border-box",
+# 液态玻璃瓦片表面要素。D-9 迁移后取相（渲染统一波 2026-10-03）：
+# 「字面或 var() 等值皆合法」——面侧可继续写登记字面量（padding-box+border-box
+# 双 attach 形态），也可消费 var(--mica-glass-main)/var(--mica-glass-edge)
+# （值册 GLASS_* 单源、公共段注入，值逐字节等值）。玻璃描边 token 消费形态下，
+# 填充允许玻璃主档 token 或 --surface-* 染色面 + 字面 padding-box（error .row 形态）。
+# 透明边框 + L2 面板阴影 token 两要素与形态无关，恒查。
+_GLASS_VAR_MAIN = "var(--mica-glass-main)"
+_GLASS_VAR_EDGE = "var(--mica-glass-edge)"
+_GLASS_STRUCTURAL_MARKERS = (
     "border: 1px solid transparent",
     "box-shadow: var(--mica-shadow-panel)",
 )
@@ -81,7 +85,7 @@ def _css_rules(name: str) -> dict[str, str]:
 
 @pytest.mark.parametrize("name", sorted(_SURFACE_RULES))
 def test_list_tiles_keep_glass_surface(name: str) -> None:
-    """瓦片化审计：列表行瓦片必须带液态玻璃表面（vis2 2026-09-12 固化）。"""
+    """瓦片化审计：列表行瓦片必须带液态玻璃表面（vis2 固化；D-9 后字面/var() 皆合法）。"""
     rules = _css_rules(name)
     for selector in _SURFACE_RULES[name]:
         # 允许组合选择器（如 .glass 复用于多个规则），匹配含该类名的规则。
@@ -95,8 +99,23 @@ def test_list_tiles_keep_glass_surface(name: str) -> None:
             (body for body in bodies if "padding-box" in body and "border-box" in body),
             None,
         )
-        assert base is not None, f"{name} {selector} 缺玻璃双背景（padding/border-box）"
-        for marker in _GLASS_MARKERS:
+        if base is None:
+            # var() 等值形态：描边 token 必消费；填充＝玻璃主档 token，
+            # 或 --surface-* 染色面 + 字面 padding-box（error .row 形态）。
+            base = next(
+                (
+                    body
+                    for body in bodies
+                    if _GLASS_VAR_EDGE in body
+                    and (_GLASS_VAR_MAIN in body or "padding-box" in body)
+                ),
+                None,
+            )
+        assert base is not None, (
+            f"{name} {selector} 缺玻璃表面（字面 padding/border-box 双 attach"
+            f" 或 {_GLASS_VAR_EDGE} 消费）"
+        )
+        for marker in _GLASS_STRUCTURAL_MARKERS:
             assert marker in base, f"{name} {selector} 缺玻璃表面要素: {marker}"
 
 
@@ -235,15 +254,41 @@ def test_text_tokens_readable_on_surfaces() -> None:
         )
 
 
+def _public_segment_text() -> str:
+    """render_root_tokens 公共段现算样张（D-4 单源注入的取数真身，不手抄值）。"""
+    from plugins.bot_unified_runtime.domains.render.card_render.mica_shell import (
+        render_root_tokens,
+    )
+
+    return render_root_tokens(
+        accent=_tt.BRAND_ACCENT,
+        accent_dark="#2771b5",
+        wash=_tt.DEFAULT_WASH_TOKENS,
+    )
+
+
 @pytest.mark.parametrize("name", _EDITABLE_TEMPLATES)
 def test_secondary_gray_single_source(name: str) -> None:
-    """可编辑模板 --text-secondary 与 theme_tokens.TEXT_SECONDARY 一致，旧散灰清零。"""
+    """次级灰单源锁（D-4 后取相：等值手抄或公共段单源消费皆合法）。
+
+    - 面内仍手写 ``--text-secondary: #hex`` 的，值必须与 TEXT_SECONDARY 等值
+      （等值手抄合法，改值册不同步的病由等值锁看着）；
+    - 已撤手抄的面（现势 error_card）必须消费 var(--text-secondary)，且公共段
+      注入值恒等于值册——两条路都只有一种合法值，旧散灰照旧清零。
+    """
     text = _strip_comments(_tpl(name))
     match = re.search(r"--text-secondary:\s*(#[0-9a-fA-F]{6})", text)
-    assert match, f"{name} 缺 --text-secondary token"
-    assert match.group(1).lower() == TEXT_SECONDARY.lower(), (
-        f"{name} --text-secondary={match.group(1)} 与 TEXT_SECONDARY={TEXT_SECONDARY} 不一致"
-    )
+    if match is None:
+        assert "var(--text-secondary)" in text, (
+            f"{name} 既无 --text-secondary 等值声明也不消费 var(--text-secondary)"
+        )
+        assert f"--text-secondary:{TEXT_SECONDARY}" in _public_segment_text(), (
+            "render_root_tokens 公共段未注入 TEXT_SECONDARY 单源值"
+        )
+    else:
+        assert match.group(1).lower() == TEXT_SECONDARY.lower(), (
+            f"{name} --text-secondary={match.group(1)} 与 TEXT_SECONDARY={TEXT_SECONDARY} 不一致"
+        )
     lowered = text.lower()
     leftovers = [gray for gray in _LEGACY_SECONDARY_GRAYS if gray in lowered]
     assert not leftovers, f"{name} 残留旧次级灰散值: {leftovers}"
@@ -473,6 +518,44 @@ def test_face_registry_covers_every_bridged_jinja_face() -> None:
     assert sorted(set(found)) == sorted(_FACE_REGISTRY[:8]), (
         f"Jinja 面 face 盐集合与登记表不符：{sorted(set(found))}"
     )
+
+
+# ==================== 渲染统一波（2026-10-03）：壳层洗色按面布局门 ====================
+# theme_tokens「壳层渐变·按面派生」段注释声称的机器门在本文件，此前缺位＝纯承诺，
+# 本批补票落地。判据全部现算自值册（_WASH_FACE_ORDER / shell_wash_for_face），
+# 不手抄任何布局表。
+_WASH_GRADIENT_PREFIX = "linear-gradient(145deg, var(--wash-mist) 0%"
+
+
+def test_shell_wash_layout_pairwise_distinct() -> None:
+    """壳层釉瑚渐变按面派生：全部登记面两两布局互异 + 雾底 0% 打底前缀恒在。
+
+    goal-7「背景釉瑚渐变漂移彩色中颜色的布局不得完全一样」的执法腿；同时锁
+    「首色标恒 `linear-gradient(145deg, var(--wash-mist) 0%` 形态」（雾底打底锁
+    test_pc_never_paints_brand_base 的按面形态，任何面不得改写）。
+    """
+    faces = list(_tt._WASH_FACE_ORDER)
+    washes = {face: _tt.shell_wash_for_face(face) for face in faces}
+    for face, value in washes.items():
+        assert value.startswith(_WASH_GRADIENT_PREFIX), f"{face} 壳层洗缺雾底打底前缀"
+        assert value != _tt.SHELL_WASH_GRADIENT, f"{face} 布局回落 canon＝未按面派生"
+    assert len(set(washes.values())) == len(washes), (
+        f"登记面壳层洗布局撞车：{washes}"
+    )
+
+
+def test_direct_concat_faces_registered_for_shell_wash() -> None:
+    """help/debug/media/usage 四个直拼面已入壳层洗面序册与宽度册（登记门）。
+
+    直拼卡不像 Jinja 卡走派生清单，面身份只能显式登记——四键任一脱册，
+    按面布局与宽度查表对这两个面静默失效，本门即防脱册腿。
+    """
+    for face in ("help", "debug", "media", "usage"):
+        assert face in _tt._WASH_FACE_ORDER, f"{face} 未入 _WASH_FACE_ORDER"
+        assert face in _tt.CARD_SHELL_WIDTHS, f"{face} 未入 CARD_SHELL_WIDTHS"
+        assert _tt.shell_wash_for_face(face).startswith(_WASH_GRADIENT_PREFIX), (
+            f"{face} 壳层洗缺雾底打底前缀"
+        )
 
 
 def test_phase_face_salt_render_level_evidence_and_mutations() -> None:

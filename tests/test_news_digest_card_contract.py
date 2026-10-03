@@ -38,8 +38,6 @@ from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import 
     FONT_WEIGHT_MAX,
     FONT_WEIGHT_STEPS,
     GAP_SCALE_PX,
-    GLASS_EDGE,
-    GLASS_MAIN,
     RADIUS_INNER_CSS_VARS,
     RADIUS_INNER_PX,
     RADIUS_PILL,
@@ -325,10 +323,18 @@ def _css_of(path: Path) -> str:
 
 
 def test_glass_surface_equals_registered_main_plus_edge() -> None:
-    """.glass 双背景必须恰是 GLASS_MAIN + GLASS_EDGE 登记值（零私调 alpha）。"""
+    """.glass 双背景必须恰是 GLASS_MAIN + GLASS_EDGE 登记值（零私调 alpha）。
+
+    D-9（渲染统一波 2026-10-03）后面侧取 var() 消费形态：值册 GLASS_* 单源、
+    公共段注入、值逐字节等值（「字面或 var() 等值皆合法」裁定见
+    test_template_visual_audit.py 的 _GLASS_VAR_* 注）。本面已退役手抄字面
+    ⇒ 锁 var() 双 token 恰形，防私调 alpha 回潮。
+    """
     body = _rules(_css()).get(".glass", "")
-    assert GLASS_MAIN in body, f".glass 填充层脱离 GLASS_MAIN: {body!r}"
-    assert GLASS_EDGE in body, f".glass 描边层脱离 GLASS_EDGE: {body!r}"
+    assert "background: var(--mica-glass-main), var(--mica-glass-edge)" in body, (
+        f".glass 填充/描边层脱离 GLASS_MAIN/GLASS_EDGE 的登记 var 形态: {body!r}"
+    )
+    assert "border: 1px solid transparent" in body, ".glass 缺透明边框（双 attach 前提）"
     assert "box-shadow: var(--mica-shadow-panel)" in body, ".glass 缺 L2 面板阴影档"
 
 

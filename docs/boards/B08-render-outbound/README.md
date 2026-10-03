@@ -22,7 +22,7 @@
 | [出站文案与纯文本兜底](outbound-copy/README.md) | 说人话、分段换行统一、密钥与路径打码。 | [渲染失败降级纯文本](outbound-copy/plain-text-fallback.md)、[段间换行统一](outbound-copy/paragraph-breaks.md)、[本地密钥与路径打码](outbound-copy/secret-redaction.md) |
 | [出站审核](review-gate/README.md) | 发送前的统一审核面与 BLOCK 观测。 | — |
 | [发送队列与回执](send-queue/README.md) | part 级幂等、UNKNOWN 确认、PARTIAL 断点续发与投递回执。 | [SQLite 队列与恢复](send-queue/queue-persistence.md)、[回执与对账](send-queue/delivery-receipt.md) |
-| [文件网关与受控下载](file-gateway/README.md) | FileSource→Ticket→通道交付，SSRF 护栏与路径白名单。 | — |
+| [文件网关与受控下载](file-gateway/README.md) | FileSource→Ticket→通道交付，SSRF 护栏与路径白名单。 | [入站文件上下文回填注记](file-gateway/incoming-file-context.md)、[落盘点 TTL 清扫](file-gateway/file-landing-sweep.md) |
 | [统一错误报告](error-reporting/README.md) | 内部异常→诊断卡两段式异步，冷却与纯文本兜底。 | — |
 <!-- BOARD-AUTO:END -->
 

@@ -81,12 +81,9 @@ body {
 .star-mote.sm-l { background: radial-gradient(circle, var(--accent-light) 50%, transparent 100%); }
 /* ===== 液态玻璃面板：半透明白 + 1px 内高光渐变描边（无 backdrop-filter）===== */
 .glass {
-    background:
-        linear-gradient(150deg, rgba(255, 255, 255, 0.66) 0%, rgba(255, 255, 255, 0.44) 100%) padding-box,
-        linear-gradient(150deg,
-            rgba(255, 255, 255, 0.95) 0%,
-            rgba(255, 255, 255, 0.35) 55%,
-            rgba(255, 255, 255, 0.72) 100%) border-box;
+    {# D-9（渲染统一波 2026-10-03）：白玻璃两档手抄退役，改 var() 消费 :root
+       公共段（GLASS_MAIN/GLASS_EDGE 值册单源，值逐字节等值、视觉零变化）。 #}
+    background: var(--mica-glass-main), var(--mica-glass-edge);
     border: 1px solid transparent;
     box-shadow: var(--mica-shadow-panel);
 }

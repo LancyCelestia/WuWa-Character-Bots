@@ -184,6 +184,38 @@ def _css_rules(css: str) -> list[tuple[str, str]]:
     ]
 
 
+def _shadow_violations(css: str) -> list[str]:
+    """纯判据：box-shadow 只允许 none / var(--mica-shadow) / var(--mica-shadow-soft)。
+
+    抽成函数以便注毒自证——原 `test_box_shadow_only_tokens` 只在**恰好有 shadow 声明**
+    时才咬得住；一旦某 builder 的写法漂出正则（少个分号/换行），循环空转＝静默放行。
+    本函数返回违规清单，注毒用例喂一段非 token 阴影必须非空。
+    """
+    out: list[str] = []
+    for selector, body in _css_rules(css):
+        for value in re.findall(r"box-shadow\s*:\s*([^;]+);", body):
+            normalized = _norm_css(value)
+            if normalized not in _ALLOWED_SHADOW_VALUES:
+                out.append(f"{selector!r} 出现非 token 阴影: {normalized!r}")
+    return out
+
+
+def _glow_violations(css: str) -> list[str]:
+    """纯判据：rgba 光晕 alpha ≥ 0.05、color-mix 光晕 ≥ 5%（UI 铁律）。"""
+    out: list[str] = []
+    for value in re.findall(
+        r"rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*(0?\.\d+|\d+)\s*\)", css
+    ):
+        if float(value) < 0.05:
+            out.append(f"rgba 光晕 alpha {value} < 0.05")
+    for value in re.findall(
+        r"color-mix\([^)]*?(\d+(?:\.\d+)?)%\s*,\s*transparent", css
+    ):
+        if float(value) < 5.0:
+            out.append(f"color-mix 光晕 {value}% < 5%")
+    return out
+
+
 # ==================== 1. viewport 禁令 ====================
 def test_no_meta_viewport(mica_html: str) -> None:
     assert not re.search(r"<meta[^>]*viewport", mica_html), (
@@ -220,12 +252,35 @@ def test_font_weight_at_most_700(mica_html: str) -> None:
 
 # ==================== 5. box-shadow 只允许两枚 token / none ====================
 def test_box_shadow_only_tokens(mica_html: str) -> None:
-    for selector, body in _css_rules(_css_of(mica_html)):
-        for value in re.findall(r"box-shadow\s*:\s*([^;]+);", body):
-            normalized = _norm_css(value)
-            assert normalized in _ALLOWED_SHADOW_VALUES, (
-                f"{selector!r} 出现非 token 阴影: {normalized!r}"
-            )
+    assert not _shadow_violations(_css_of(mica_html))
+
+
+def test_mica_contract_predicates_catch_synthetic_violations() -> None:
+    """注毒自证（原缺的那条腿）：把非 token 阴影与低 alpha 光晕合成进一段 CSS，
+    `_shadow_violations` / `_glow_violations` 必须点名——证明这两把尺真的会咬，
+    而不是只在真 builder 恰好带某形态时才碰巧生效。合格样本必须不报（防尺恒红）。
+
+    若判据被退化成恒真/恒绿（简报点名的 green-but-toothless），本条红。
+    """
+    poison_css = (
+        ".card{box-shadow: 0 0 12px rgba(0,0,0,0.02);}\n"
+        ".blob{background: radial-gradient(circle, rgba(255,255,255,0.01), transparent);}\n"
+        ".wash{background: color-mix(in srgb, #ffffff 2%, transparent);}\n"
+    )
+    shadow_hits = _shadow_violations(poison_css)
+    assert shadow_hits, "非 token 阴影未被抓住=box-shadow 锁空跑"
+    glow_hits = _glow_violations(poison_css)
+    assert glow_hits, "低 alpha 光晕未被抓住=光晕锁空跑"
+    assert any("rgba" in h for h in glow_hits) and any("color-mix" in h for h in glow_hits), glow_hits
+
+    ok_css = (
+        ".card{box-shadow: var(--mica-shadow);}\n"
+        ".card-soft{box-shadow: none;}\n"
+        ".x{color: rgba(10,20,30,0.6);}\n"
+        ".wash{background: color-mix(in srgb, #ffffff 12%, transparent);}\n"
+    )
+    assert _shadow_violations(ok_css) == [], _shadow_violations(ok_css)
+    assert _glow_violations(ok_css) == [], _glow_violations(ok_css)
 
 
 def test_exactly_two_shadow_token_definitions(mica_html: str) -> None:
@@ -296,15 +351,7 @@ def test_text_tokens_from_theme(mica_html: str) -> None:
 
 # ==================== 8. 光晕 alpha ≥ 0.05 ====================
 def test_glow_alpha_floor(mica_html: str) -> None:
-    css = _css_of(mica_html)
-    for value in re.findall(
-        r"rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*(0?\.\d+|\d+)\s*\)", css
-    ):
-        assert float(value) >= 0.05, f"rgba 光晕 alpha {value} < 0.05"
-    for value in re.findall(
-        r"color-mix\([^)]*?(\d+(?:\.\d+)?)%\s*,\s*transparent", css
-    ):
-        assert float(value) >= 5.0, f"color-mix 光晕 {value}% < 5%"
+    assert not _glow_violations(_css_of(mica_html))
 
 
 # ==================== 9. vis5 收官补充（2026-09-13） ====================

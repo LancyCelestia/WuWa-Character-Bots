@@ -39,6 +39,12 @@ from pathlib import Path
 from typing import Any
 
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.prompt_template import (
+    PromptGuard,
+    PromptSlot,
+    PromptTemplate,
+    register_prompt_template,
+)
 from plugins.bot_unified_runtime.domains.core.safety_exec import policy as safety_policy
 from plugins.bot_unified_runtime.domains.core.safety_exec.action_catalog import ActionId
 from plugins.bot_unified_runtime.domains.files.sender.restricted_runner import (
@@ -67,11 +73,42 @@ _FILE_EXPORT_RE = re.compile(
     r"^(?:/bot\s+)?文件\s+(?P<fmt>md|markdown|docx|pptx|xlsx|pdf)\s+(?P<topic>\S.*)$",
     re.IGNORECASE,
 )
-_DOCUMENT_PROMPT = (
-    "你是文档撰写助手。围绕用户给出的主题撰写一份结构清晰的中文 Markdown 文档："
-    "用 #/## 分级标题组织，适量使用 - 列表和 | 表格 |，正文 600-1200 字，"
-    "不要输出代码块围栏以外的内容，直接输出 Markdown 本身。"
+# W1（2026-10-02）：文档生成的**骨架真身**收进模板层（`_DOCUMENT_PROMPT` 保留原名＝
+# 模板的 system 文本，`__init__.py` 与 `tests/test_files_domain_audit.py` 的引用面不动）。
+# ⚠ **本腿未完全收编**：messages 的装配点在 `plugins/bot_unified_runtime/__init__.py:7405-7413`
+# （`asyncio.to_thread(provider.generate, [{...system...}, {...topic...}], ...)`），
+# 而 `__init__.py` 是本席禁写面 ⇒ 主题（二手载荷）的包裹接不上。下方
+# `build_document_messages()` 是备好的接缝：主会话把那 8 行换成
+# `build_document_messages(topic)` 即完成收编，且 raw 渲染与旧字面量逐字节相等
+# （锁在 tests/test_prompt_template_layer_w1.py）。在此之前，AST 门把那个调用点
+# 记进基线棘轮（patches/W1-PROMPT-TEMPLATE-LAYER-20261002.md 第②段）。
+_DOCUMENT_TEMPLATE = register_prompt_template(
+    PromptTemplate(
+        key="file_exchange.document",
+        system=(
+            "你是文档撰写助手。围绕用户给出的主题撰写一份结构清晰的中文 Markdown 文档："
+            "用 #/## 分级标题组织，适量使用 - 列表和 | 表格 |，正文 600-1200 字，"
+            "不要输出代码块围栏以外的内容，直接输出 Markdown 本身。"
+        ),
+        slots=(
+            PromptSlot(
+                "topic",
+                guard=PromptGuard.WRAP,
+                source_label="文档主题摘录",
+            ),
+        ),
+    )
 )
+_DOCUMENT_PROMPT = _DOCUMENT_TEMPLATE.system
+
+
+def build_document_messages(topic: str, *, raw: bool = False) -> list[dict[str, Any]]:
+    """文档生成腿的 provider-bound messages（接缝已备好，装配点见上方禁写说明）。
+
+    `raw=True` 只供逐字节回归锁使用（还原收编前的旧拼法），生产面出现即红。
+    """
+    return _DOCUMENT_TEMPLATE.render_messages({"topic": str(topic or "").strip()}, raw=raw)
+
 
 
 def is_file_export_command(text: str) -> bool:

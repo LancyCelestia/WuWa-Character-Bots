@@ -271,12 +271,14 @@ body {{ margin:0; font-family:var(--font-family); background:transparent; color:
 .head {{ padding:20px 26px 16px; border-bottom:var(--divider-line); }}
 .kicker {{ color:var(--accent-dark); font-size:12px; font-weight:700; letter-spacing:.06em; }}
 .title {{ margin-top:8px; font-size:26px; font-weight:700; }}
-/* 语义状态色（红绿黄）置于玻璃层之上，不随釉瑚洗派生。 */
+/* 语义状态色（红绿黄）置于玻璃层之上，不随釉瑚洗派生。
+   渲染统一波（2026-10-03，D-3 了结）：直写登记 hex 退役，改 var() 消费
+   :root 公共段语义 token（--semantic-*，值册 theme_tokens.SEMANTIC_* 单源）。 */
 .status {{ display:inline-flex; align-items:center; gap:8px; margin-top:12px; padding:6px 14px; border-radius:999px;
   font-size:14px; font-weight:700; border:1px solid #fff; }}
-.status.ok {{ color:#2e9e6b; background:color-mix(in srgb, #2e9e6b 8%, #fff); }}
-.status.warn {{ color:#b07d1a; background:color-mix(in srgb, #b07d1a 10%, #fff); }}
-.status.bad {{ color:#d54941; background:color-mix(in srgb, #d54941 8%, #fff); }}
+.status.ok {{ color:var(--semantic-success); background:color-mix(in srgb, var(--semantic-success) 8%, #fff); }}
+.status.warn {{ color:var(--semantic-warning); background:color-mix(in srgb, var(--semantic-warning) 10%, #fff); }}
+.status.bad {{ color:var(--semantic-danger); background:color-mix(in srgb, var(--semantic-danger) 8%, #fff); }}
 .window {{ margin-top:10px; color:var(--muted); font-size:13px; }}
 .totals {{ display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; padding:14px 14px 4px; }}
 .tile {{ border-radius:var(--r-panel); padding:10px 14px; }}

@@ -70,13 +70,18 @@ body {
 # 逐字节等价（CORE 席实弹断言）。尾部段（.cover-wrap 起）保持卡特有规则。
 _CARD_CSS = (
     _CARD_CSS_HEAD
-    + shell_base_css("panel", width_px=640)
+    # 渲染统一波（2026-10-03）：face="media" 接线——.panel 壳层洗色与 :root 的
+    # --mica-shell-wash 同按 media 面派生（此前缺盐=回落 canon，与其它面布局雷同）。
+    + shell_base_css("panel", width_px=640, face="media")
     + "\n"
     + mica_decor_css()
     + "\n"
     + """\
+/* 渲染统一波（2026-10-03）：封面区底色迁壳 wash 单源——消费 :root 公共段
+   --mica-shell-wash（media 面派生），自有 accent 135deg 手抄渐变退役；
+   img 正常时整层被封面盖住，仅缺图回退（onerror 隐藏 img）时可见。 */
 .cover-wrap { position: relative; width: 100%; height: 240px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, #ffffff) 0%, color-mix(in srgb, var(--accent) 18%, #ffffff) 100%); }
+  background: var(--mica-shell-wash); }
 .cover-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .cover-fallback { position: absolute; inset: 0; display: flex;
   align-items: center; justify-content: center; font-size: 46px; color: var(--accent); }
@@ -145,6 +150,9 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
         accent_dark=pc_dark,
         phase=_payload_phase(payload, face="media"),
         wash=wash,
+        # 渲染统一波（2026-10-03）：face 盐补齐——:root 的 --mica-shell-wash 按
+        # media 面派生（.panel 壳层与 .cover-wrap 底色同一来源，见 _CARD_CSS 注）。
+        face="media",
         extras={
             # 2026-09-18 命名统一：--accent-dark 已入固定段，此处不再重复声明
             # （原先 extras 里有一份同值副本，改名后会与固定段撞名）。

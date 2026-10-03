@@ -108,6 +108,14 @@ _CARD_TEXT: dict[str, str] = {
     #（模板侧只留参数引用，见 error_card.html 头注）。
     "static_err_31": '运行诊断',
     "static_err_32": '标识与时间',
+    # 渲染统一波（2026-10-03）error 卡人话化：head 徽章异常类名 → 人话标签。
+    # 映射「类名 → 键」住 _EXC_TYPE_LABEL_KEYS，未登记类名回落 static_err_37；
+    # 原类名保留在栈摘录次要行（.stack-head），机器证据不丢。
+    "static_err_33": '等待超时',
+    "static_err_34": '能力执行超时',
+    "static_err_35": '模型服务异常',
+    "static_err_36": '网络连接异常',
+    "static_err_37": '程序异常',
     "static_fin_28": '数据时间',
     "static_mkt_29": '全球股指速览',
     "static_song_30": '找到',
@@ -2105,6 +2113,19 @@ def _error_kv_rows(raw: Any) -> list[dict[str, str]]:
     return rows
 
 
+# 渲染统一波（2026-10-03，error 卡人话化）：head 徽章此前直出裸异常类名
+# （TimeoutError 一类机读英文）。人话标签文案住 _CARD_TEXT（S79/S95 单源），
+# 本表只做「类名 → 键」映射；未登记类名回落默认键。原类名保留在栈摘录
+# 次要行（error_card.html .stack-head），机器证据不丢。
+_EXC_TYPE_LABEL_KEYS: dict[str, str] = {
+    "TimeoutError": "static_err_33",
+    "CapabilityTimeout": "static_err_34",
+    "LLMProviderError": "static_err_35",
+    "ConnectionError": "static_err_36",
+}
+_EXC_TYPE_LABEL_DEFAULT_KEY = "static_err_37"
+
+
 def render_error_card_html(payload_dict: dict[str, Any] | None = None) -> str:
     """渲染运行异常诊断卡 HTML（mica 契约，runtime.error_report 供载荷）。
 
@@ -2122,11 +2143,17 @@ def render_error_card_html(payload_dict: dict[str, Any] | None = None) -> str:
     # 英文署名同口径：调用侧按生效人格派生后传入，空则回落品牌常量（mica_shell 内）。
     bot_name_en = _as_str(data.get("bot_name_en"))
     bot_avatar_url = _as_str(data.get("bot_avatar_url"))
+    exc_type_raw = _as_str(data.get("exc_type")) or "EXCEPTION"
     return _ERROR_CARD_TEMPLATE.render(
         platform_color=ERROR_THEME.accent,
         platform_color_dark=_rgb_to_hex(_darken(rgb)),
         card_title=_as_str(data.get("card_title")) or "运行异常",
-        exc_type=_as_str(data.get("exc_type")) or "EXCEPTION",
+        exc_type=exc_type_raw,
+        # 人话徽章（渲染统一波 2026-10-03）：类名 → 人话标签（文案唯一落点
+        # _CARD_TEXT，映射见 _EXC_TYPE_LABEL_KEYS）；原类名仍在栈摘录次要行。
+        exc_type_label=_CARD_TEXT[
+            _EXC_TYPE_LABEL_KEYS.get(exc_type_raw, _EXC_TYPE_LABEL_DEFAULT_KEY)
+        ],
         exc_message=_as_str(data.get("exc_message")),
         human_text=_as_str(data.get("human_text")),
         trigger_echo=_as_str(data.get("trigger_echo")),

@@ -696,3 +696,112 @@ def redact_local_secrets(text: str) -> str:
     value = _PRIVATE_IP_RE.sub(_mask_private_ip, value)
     value = _EMAIL_RE.sub(_mask_email, value)
     return value
+
+
+# --- 破坏性命令出站打码（席7 安全与文档波，2026-10-03）------------------------
+# 模型被诱导复述「可复制即执行」的破坏性命令行（rm -rf / mkfs / dd 写设备 /
+# fork 炸弹 / Remove-Item -Recurse / del /s /q / format 盘 / reg delete /
+# shutdown / vssadmin 清卷影）时，出站前把命中的命令**整段**换成人话占位。
+# 与上面密钥打码同一层、同一纪律：
+# - 形态名册**封闭**（扩一个＝扩一次误伤面；新形态要有实据再进册）；
+# - 每条腿带防误伤边界（反向锁 tests/test_destructive_command_redaction.py）；
+# - 幂等：占位话术不进任何腿的形态，两种链式次序终态一致。
+# - 教学语境豁免只认**围栏代码块**（``` 与 ~~~）——围栏内一字不动；行内反引号
+#   不豁免（单反引号包一层就把 payload 洗白＝旁路通道，有意不做）。
+# 已知缺口（在册）：PowerShell 的 rm/rd/ri 别名形（``rd -Recurse``）不在册——
+# cmd 形 ``rd /s`` 与 PS 形 ``Remove-Item -Recurse`` 已覆盖主流写法，别名形
+# 等有实据再收；SQL DROP/TRUNCATE 不属 shell 命令行，不在本腿。
+_DESTRUCTIVE_COMMAND_PLACEHOLDER = "（这类命令我不能原样提供）"
+#: 完整话术（守岸人语气、人格中性——不写死任何人格意象名词，切人格不跟着换）。
+#: 调用方（chat.py 回复链）命中后可把这句附在回执尾；本函数只做行内整段替换。
+DESTRUCTIVE_COMMAND_NOTICE = (
+    "这类命令会直接抹掉数据，我不能原样提供。"
+    "你想做成的是什么？告诉我，我们一起找个稳妥的办法。"
+)
+# 快路径哨兵（宁可多扫不能漏；小写后扫描）：与下面各腿的词根一一对应，
+# 纯汉字/普通英文句一条都不含 ⇒ 快路径零腿。
+_DESTRUCTIVE_SENTINELS = (
+    "rm", "mkfs", "dd", ":(", "remove-item", "/s", "format",
+    "reg delete", "shutdown", "vssadmin",
+)
+_RM_RECURSIVE_RE = re.compile(
+    r"\brm\s+"                                    # rm 本尊（\b 挡 confirm/firm）
+    r"(?:-[A-Za-z]*r[A-Za-z]*\s+|--recursive\s+)" # 必须有递归旗标（-rf/-fr/-r/--recursive）
+    r"(?:-[A-Za-z]+\s+)*\S+"                      # 其余旗标 + 目标 token（整段吃满）
+)
+_MKFS_RE = re.compile(r"\bmkfs(?:\.[A-Za-z0-9]+)?\b")
+_DD_TO_DEVICE_RE = re.compile(r"\bdd\s+(?:if=\S+\s+)?of=/dev/")
+_FORK_BOMB_RE = re.compile(r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:")
+# 旗标必须**紧邻**命令词（中间只许别的旗标）——「Remove-Item 单个文件、不带
+# -Recurse」这类否定句行文不得被咬（反向锁在册）。
+_REMOVE_ITEM_RECURSE_RE = re.compile(
+    r"\bRemove-Item\s+(?:-[A-Za-z0-9]+\s+){0,4}-Recurse\b", re.IGNORECASE
+)
+_CMD_TREE_DELETE_RE = re.compile(r"\b(?:rd|rmdir|del|erase)\s+/s\b", re.IGNORECASE)
+_FORMAT_DRIVE_RE = re.compile(r"\bformat\s+[A-Za-z]:", re.IGNORECASE)
+_FORMAT_VOLUME_RE = re.compile(r"\bFormat-Volume\b", re.IGNORECASE)
+_REG_DELETE_RE = re.compile(r"\breg\s+delete\b", re.IGNORECASE)
+_SHUTDOWN_RE = re.compile(
+    r"\bshutdown\s+(?:-[hrp]\s*now\b|-[hrp]\b|/[srg]\b|now\b)", re.IGNORECASE
+)
+_VSSADMIN_WIPE_RE = re.compile(r"\bvssadmin\s+delete\s+shadows\b", re.IGNORECASE)
+_DESTRUCTIVE_LEGS: tuple[re.Pattern[str], ...] = (
+    _RM_RECURSIVE_RE, _MKFS_RE, _DD_TO_DEVICE_RE, _FORK_BOMB_RE,
+    _REMOVE_ITEM_RECURSE_RE, _CMD_TREE_DELETE_RE, _FORMAT_DRIVE_RE,
+    _FORMAT_VOLUME_RE, _REG_DELETE_RE, _SHUTDOWN_RE, _VSSADMIN_WIPE_RE,
+)
+_FENCE_MARKS = ("```", "~~~")
+
+
+def _split_fenced(text: str) -> list[tuple[str, bool]]:
+    """按围栏代码块切段：返回 ``(段文本, 是否在围栏内)`` 有序表。
+
+    围栏判定按行首（至多 3 个空白后跟 ```/~~~）翻转围栏态——与
+    ``naturalize_chat_text`` 对围栏的行级认知一致；未闭合围栏按「此后全在围栏内」
+    处理（尾部内容豁免，宁可少打不误伤教学块）。
+    """
+    segments: list[tuple[str, bool]] = []
+    in_fence = False
+    buffer: list[str] = []
+    for line in text.split("\n"):
+        stripped = line.lstrip(" \t")
+        if any(stripped.startswith(m) for m in _FENCE_MARKS):
+            if buffer:
+                segments.append(("\n".join(buffer), in_fence))
+                buffer = []
+            buffer.append(line)
+            in_fence = not in_fence
+            continue
+        buffer.append(line)
+    if buffer:
+        segments.append(("\n".join(buffer), in_fence))
+    return segments
+
+
+def redact_destructive_commands(text: str) -> str:
+    """打码回复文本中的破坏性命令行；围栏代码块（教学语境）豁免。
+
+    分层分工（需求17，2026-10-03）：chat 回复的危险命令**主裁决**在 chat 层
+    （``chat_reply/security/dangerous_command.py``：全文替换＋审计标签，与
+    artifact_review_blocked 并列不互斥）；本件是**渲染层出站咽喉的行内兜底**
+    （唯一接线点＝``renderer._redact_outbound_text``，罩其余能力出站与 chat
+    漏网面）。两层腿册差异＝分层分工，不是第二真身。
+
+    口径与 ``redact_local_secrets`` 同族：只做行内整段替换（不吞句、不动前后文），
+    幂等，占位符 ``（这类命令我不能原样提供）`` 不进任何腿的形态。命中后的
+    人话补充句在 :data:`DESTRUCTIVE_COMMAND_NOTICE`，由调用方决定是否附在回执尾。
+    快路径：哨兵名册全部落空时原样返回（纯汉字短句零腿）。
+    """
+    value = text or ""
+    lowered = value.lower()
+    if not any(mark in lowered for mark in _DESTRUCTIVE_SENTINELS):
+        return value
+    out_parts: list[str] = []
+    for segment, fenced in _split_fenced(value):
+        if fenced:
+            out_parts.append(segment)
+            continue
+        for leg in _DESTRUCTIVE_LEGS:
+            segment = leg.sub(_DESTRUCTIVE_COMMAND_PLACEHOLDER, segment)
+        out_parts.append(segment)
+    return "\n".join(out_parts)

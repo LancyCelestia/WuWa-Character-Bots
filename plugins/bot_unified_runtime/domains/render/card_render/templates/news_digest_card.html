@@ -99,12 +99,8 @@ body {
 
 /* ===== 液态玻璃面板通用层（与 song/market 同一配方，零私调） ===== */
 .glass {
-    background:
-        linear-gradient(150deg, rgba(255, 255, 255, 0.66) 0%, rgba(255, 255, 255, 0.44) 100%) padding-box,
-        linear-gradient(150deg,
-            rgba(255, 255, 255, 0.95) 0%,
-            rgba(255, 255, 255, 0.35) 55%,
-            rgba(255, 255, 255, 0.72) 100%) border-box;
+    {# D-9（渲染统一波 2026-10-03）：白玻璃两档手抄退役，var() 消费值册单源（等值）。 #}
+    background: var(--mica-glass-main), var(--mica-glass-edge);
     border: 1px solid transparent;
     box-shadow: var(--mica-shadow-panel);
 }

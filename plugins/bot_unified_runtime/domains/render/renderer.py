@@ -18,6 +18,7 @@ from plugins.bot_unified_runtime.contracts import (
 )
 from plugins.bot_unified_runtime.domains.render.plain_text import (
     naturalize_chat_text,
+    redact_destructive_commands,
     redact_local_secrets,
 )
 
@@ -60,14 +61,25 @@ def _neutralize_outbound_text(text: str) -> str:
 
 
 def _redact_outbound_text(text: str) -> str:
-    """出站文本咽喉：盘符路径 / `BOT_XXX=` / `sk-` / JWT / Bearer 统一打码，
+    """出站文本咽喉：破坏性命令行内整段打码（需求17 渲染层兜底，围栏豁免），
+    再盘符路径 / `BOT_XXX=` / `sk-` / JWT / Bearer 统一打码，
     再过内部标记全角化 + 不可见格式控制剥除（F-G7 / INJ-G4，fail-open）。
+
+    分层分工（需求17，2026-10-03）：chat 回复的危险命令**主裁决**在 chat 层
+    （`chat_reply/security/dangerous_command.py`：全文替换＋审计标签）；本咽喉这
+    条 `redact_destructive_commands` 是**渲染层兜底**——罩其余能力出站与 chat
+    漏网面，行内打码不动全文、围栏代码块豁免。破坏性命令腿必须排在
+    `redact_local_secrets` **之前**：密钥打码的路径腿会先吃掉 `of=/dev/...`
+    一类目标形态，反序会让命令骨架漏网（两层链式幂等，锁在
+    `tests/test_destructive_command_redaction.py` 与 `tests/test_dangerous_command_outbound_wiring.py`）。
 
     打码幂等由 `redact_local_secrets` 自身保证（替换产物不再被任一形态命中），
     所以 bot.chat 那条已在能力层打过一次的链路重复过一遍零成本、零二次伤害；
     消毒两步对干净文本恒等，经能力层已消毒的链路再过一次零副作用。
     """
-    return _neutralize_outbound_text(redact_local_secrets(text or ""))
+    return _neutralize_outbound_text(
+        redact_local_secrets(redact_destructive_commands(text or ""))
+    )
 
 # ==================== 出站文本统一打码咽喉（需求 17 / S-ANTATK，2026-09-27）====
 # 此前 `redact_local_secrets` 的**读点全散在能力层自己**：chat 回复在 chat.py 调、
