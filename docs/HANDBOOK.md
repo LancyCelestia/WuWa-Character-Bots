@@ -6019,7 +6019,7 @@ AxonHub 自动降级重试＝登记后置；⑥ 巡检 JSONL 曲线视图后置�
 **复跑配方**：意图面 `pytest tests/test_emotion_gate_flip_census.py tests/test_question_intent_categories_v4.py tests/test_question_intent.py tests/test_reality_relation_no_web_veto.py tests/test_entity_gate_before_classification.py`（盘面 151 绿）；现实坐标与声明面 `pytest tests/test_hallucination_reality_guards.py tests/test_kb_availability_declaration.py tests/test_kb_hit_certification.py tests/test_coalescing_wiring_lock.py`（逐件单跑全绿；**同批并跑曾出 MemoryError/瞬时 14 红**——他席正在跑门＋`question_intent.py` 在飞，分侧单跑定性为争用非本波面，见台账 #68★「判红归属正道」）。真机验收三判据：LLM 问不再出现那句台词／「喜欢派子代理」那问 `web_search_attempted=1`／「今天心情不好陪我聊聊」仍**不**联网。
 
 
-## 76. 亲密档五维改造＋叙述授予面＋两处生产阻断根修（2026-10-03，1 主 + 12 子席并发；未 commit，重启由用户执行）
+## 76. 亲密档五维改造＋叙述授予面＋两处生产阻断根修（2026-10-03，1 主 + 12 子席并发；本波主体入于 `e26c3709`（授予门／第四档／解析面／intimate_control）＋`9bdcfc7`（人格面），收尾在飞半件被 `ffbd8c9` 吞入，哈希账由 `20c10a3` 闭合；**未 push**，重启由用户执行；10-04 增补见 §76.7）
 
 **用户三条要求**：①亲密模式 L1/L2 必须含**语言／动作／神态／心理／外貌**五维描写，不限说话内容，且尽量详细、越长越好；②superadmin 默认 master love **仍只描述说话内容**，须**显式指令**开档才变；③指令形态向本仓主流（`/bot` 子命令族）统一。追加四裁：五维只授予"人亲手推动"的来源；日常硬剥动作不放宽；群聊叙述暂保持现状（不擅自收窄）；档态要跨重启持久化、TTL 拉到 120 分钟、人格侧同批收口。
 
@@ -6032,7 +6032,7 @@ AxonHub 自动降级重试＝登记后置；⑥ 巡检 JSONL 曲线视图后置�
 1. **出站不分档位删动作**：`.env` 的 `BOT_PERSONA_ACTION_BRACKETS=false` ⇒ `chat.py` 出站走 `strip_action_brackets`，含汉字括号动作**整段删除**，亲密轮照删。线上铁证＝开档回执 `sent` 之后两条私聊出站正文（457／365 字）全角括号动作段**计数为 0**。修法只让**已获叙述授予**那一轮走 `format_roleplay_paragraphs`，全局开关语义与日常硬剥一字未改（反向锁同批建）。真 `.env` 端到端四场景：ML 未开档 False／她显式开 True／普通号开 True／开后关 False。
 2. **档态是进程内 LRU**：`SHARED_CONTENT_ROUTE_ENGINE._sessions`（`_SESSION_CAP`）重启即空 ⇒ 自动腿守卫 `pinned_mode is None` 会以**无叙述权**的 `master_love`/`affinity_tier` 重钉；且显式开档自 `activated_at` 起 TTL 分钟数、**活跃不续期**（缺省 60，实测 t+60 活、t+61 清）。⇒ 用户裁 D-1 持久化、D-2 拉到 120 分钟。**已排除**：私聊会话键两形不相交（钉与读同键同桶，字节级实证）。
 
-### 76.3 已落面（未 commit，基线 `ca2889d`）
+### 76.3 已落面（起于基线 `ca2889d`，现入库至 `ffbd8c9`；余 5 枚脏件待提交）
 - **授予面单一真身**：`runtime/content_route.py` 新增 `_INTIMATE_NARRATION_SOURCES`＋谓词 `grants_intimate_narration(source)`；成员 `{manual_command, admin_pin, content_signal}`。**刻意不复用**成员恰好相同的 `_MODEL_SWITCH_SOURCES`／`_MAX_TTL_EXEMPT_SOURCES`（三轴各立一集，复用＝一条裁定静默改写另一条；仓内既有三张交叉集从没被复用）。取**白名单形** ⇒ 未知来源 fail-closed。`content_signal` 给不给五维是**有意保留**的裁量点（字面只说"显式指令"，但那支是 R-18 在册通道，摘掉＝用户没要求的收窄）。
 - **五维文案**：亲密段补外貌与语言；日常段禁令那一格同批点名关外貌（成对锁 `_SCENE_DIMENSIONS` 升四维）；**「语言」刻意不进成对锁**——日常段立身句就是"只用说话回应"，禁它＝要求它禁自己正文（旧病"禁少一格"，这是"禁错一格"）。注毒腿由手抄整串改为**从元组派生**（否则改文案后 `replace` 变空操作 ⇒ 报"本门空跑"的谎归因红）。
 - **命令面**：`match_intimate_subcommand`（`on/open/l1`→浅、`deep/deeper/l2`→深、`off/close/unset`→解、**`show` 有意返回 None** 交调用方另认）；生效腿抽成 `apply_intimate_switch`（整句与斜杠共用，防两面分叉；两把裁判锁逐节点 diff 为空）。
@@ -6053,4 +6053,63 @@ AxonHub 自动降级重试＝登记后置；⑥ 巡检 JSONL 曲线视图后置�
 
 ### 76.6 生效与挂账
 **生效两轴**：代码面需重启（含帮助册文本、命令接线、出站根修、人格知识直读件除外）；人格**运行副本**每轮现取即时生效；`BOT_CONTENT_ROUTE_INTIMATE_TTL_MINUTES` 不在热改名单 ⇒ 等同一次重启。
-**挂账（登记≠修好）**：①`/bot intimate` 帮助行与 META/COMMANDS 投影未随斜杠面收口；②`auto-facts` 测试件计数待全波入库后一次性重录；③registry 两枚计数红（83≠82／44≠43）属"盘上多出一枚主题未登记"，须由补登记那一席同批改，**禁按现算调大上限**；④群聊叙述尺度（甲／乙／丙）待人裁；⑤出口拆多条（含 SnowLuma 单条上限实弹测、段数闸、段间节流、TG 腿只读 `text_fallback` 会退化）单列一批；⑥`reply_policy` 测试污染生产库需一条中央隔离缝（旧 P0 未闭）；⑦本波未 commit，提交顺序建议"先 #74、再本波"。
+**挂账（登记≠修好）**：①`/bot intimate` 帮助行与 META/COMMANDS 投影未随斜杠面收口；②`auto-facts` 测试件计数待全波入库后一次性重录；③registry 两枚计数红（83≠82／44≠43）属"盘上多出一枚主题未登记"，须由补登记那一席同批改，**禁按现算调大上限**；④群聊叙述尺度（甲／乙／丙）待人裁；⑤出口拆多条（含 SnowLuma 单条上限实弹测、段数闸、段间节流、TG 腿只读 `text_fallback` 会退化）单列一批；⑥`reply_policy` 测试污染生产库需一条中央隔离缝（旧 P0 未闭）；⑦**入库事实改判**：本波主体入于 `e26c3709`（18:22:29，授予门／第四档／解析面／`intimate_control.py`）＋`9bdcfc7`（18:23:26，人格面），10-04 01:08:53 的 `ffbd8c9`（消息写 mypy 注解）把主会话**在飞**的 `chat.py` 优先级链半件一并吞走＝先例「她手打的存档提交会吞在飞改动」再现；哈希账由用户 `20c10a3` 闭合。**未 push**；工作树余 5 枚脏件（本会话的 `intimate_control.py`＋两枚测试件＋AGENTS/HANDBOOK）待她按"先 #74、再本波"顺序提交。
+
+### 76.7 10-04 增补（篇幅第四档／优先级链根修／四路取证）
+
+- **篇幅第四档「铺写」＝授予轮的封顶档**：新增 `REPLY_TIER_SCENE_ID`/`REPLY_TIER_SCENE` 进 `_REPLY_TIERS_IN_ORDER` 末位，`intimate_reply_length_tier` 由「按秩升一格封顶详尽」改为**直取派生顶格档** `_REPLY_TIER_TOP_ID`（顶格名派生自登记表，日后加档自动跟）。`REPLY_TIER_MATRIX` 无任何一格指向它 ⇒ 全局长度一字未动（锁 `test_scene_tier_is_only_reachable_through_the_narration_grant`）；上限刻意留：`bot_render_forward_min_chars` 生效值 **1500** > 铺写上限，不会被折成合并转发卡。三条档位锁按新判据重铸并**注毒三向自证**（旧"升一格"／升格不改写那一行／形式句按档名判——各咬红对应那一把），另形式句判据改为**按登记表数值独立重述**，不再按档名枚举。
+- 🔴 **根修④（她"只回一句话"的最后一块）**：`chat.py` 装配段与 `intimate_control.py` 的 `show` 面都把「覆盖册里有没有 `BOT_REPLY_DETAIL`」当**第①层本轮明示**，而那枚值是某次 `/bot runtime set` 留下的**跨重启常驻值** ⇒ **每一个人的永久策略被一枚常驻值静音**（她库里 `verbose`＋note「每次回复要600字以上」`source=explicit` 可查，实测送达 60／135／151／189 字）。修法＝常驻热改降回**第③层全局档**，"本轮明示"由写库那条腿（`resolve_turn_reply_policy`）承担。RED→GREEN 各一枚实证（改前判据读数是 `当前档＝适中`，不是解析失败）；两把按旧序写的锁按裁定原文重述——`test_priority_chain_…` 拆成「本轮改口压过上一句」＋「常驻全局档不得压过策略」两条真腿，`…_runtime_override_beats_person_policy` 更名 `…_falls_to_global_when_person_said_nothing`（读数不变、证明力改准）。配置审计席**独立同判**：`.env` 里 `BOT_REPLY_DETAIL=auto` 是死值，两条 `get_or` 都被覆盖册钉成 detail。
+- **261／227 之谜闭合（三件同时成立，非单一 bug）**：①15:53／15:55 两轮带 `length_intimate_floor:detail` 却只送达 237／227＝**重启前进程走 `strip_action_brackets` 支**（该支实测删 **45.7%**，234→127）；②15:59:16 重启把进程内 LRU 档态清零＝D-1 尚未上线；③地板腿量的是归一化**之前**的 `reply.text`——授予轮纯散文支只削 **中位 −3%／p95 −0.3%**（读数可信），全量 format 分支 **p95 22.7%** 才是待裁的那道缝（§76.8-F5）。唯一在地板之后截断的是 `_apply_output_message_budget`，现网 no-op。
+- **假账与红账两条更正**：①波次台账曾记 adopt「自报副本未改，sha256 前缀 `7f3742ff`」——人格审计席**证伪**（该前缀与盘上任何一件都不匹配；锚册 `scripts/persona_sync_anchor.json` **单槽**，09:06:08Z 重锚抹掉了中间态）；替代证据＝锚相对漂移两轴皆零、副本 13,522 B ＝ 锚 C、副本首行无顶层禁令、`--check` 绿。⚠ 结构性事实：该工具**从不逐字节比较源与副本**（行重合度实测 0%），只校验凭证对 (S,C) ⇒ "改副本忘源"归形态门管，不归它。②**哈希门在 HEAD 轴红了连续好几枚**：`831b02b5`／`4d069645`／`94694459`／`e26c3709`／`ffbd8c9` 各点上 `echo.py` 实算字节与台账记值全部 MISMATCH（记值长期停在 `20c23877…`→`37f0ff82…`，字节却是 `2d9677…`→`958f07…`→`835d12ac…`）⇒ 不是"这一波没重录"，是**这条门被连续越过多枚提交**；本会话只读看清单确认漂移仅 `echo.py` 一枚后 `--write`，由用户入于 `20c10a3`（现算 HEAD 处 MATCH）。
+- **盘面读数（10-04 01:1x 当时值）**：runtime-layout **PASS**、ruff **All checks passed**、mypy **Success（614 files）**；两枚已知红＝`test_word_site_debt_within_ceiling`（计账 477 > 上限 467，＋10 枚未登记抄位，**逐提交归因中**，台账 28 枚落点无一涉亲密词面）与 `test_copy_redline_gate::test_gate_scope_sanity`（**HEAD 起就红**：退役件 `capabilities/auto_send/__init__.py` 在 HEAD 在册、工作树零改动）。
+
+### 76.8 待裁清单（编号＝问题本体，席不代裁）
+
+| # | 问题本体 | 可选 / 建议 |
+|---|---|---|
+| F-1 | 覆盖册那枚常驻 `BOT_REPLY_DETAIL` 该不该压住永久策略 | 乙＝判据已落码（§76.7）；**甲仍建议顺手做**＝`/bot runtime reset BOT_REPLY_DETAIL`（热生效、不需重启），否则她普通轮仍由全局档说话 |
+| F-2 | 群聊授予轮「整条 BLOCK、什么都收不到」的敞口 | 甲＝只留防自陈护栏句／乙＝群支降级不整拦／丙＝群内不发叙述授予——实测数在席 D 报告里 |
+| F-3 | 「其他用户普通轮＝一句话」要不要让**题型自己**判进简洁档 | 与 09-28「只有显式钉过才走简洁」正面冲突；现矩阵 auto/detail×寒暄＝适中(100–260) |
+| F-4 | 科普／知识题要不要也拓到 600–1200 | 现＝详尽(≥300，上不封顶)；上铺写要为知识题**另写一套交付面**（铺写那句是场景口径） |
+| F-5 | 地板腿改量**送达**字数 | 席 C 建议乙（≤1 次额外调用／轮），须同批防「追完又被剥」的回环 |
+| F-8 | `/bot identity unset-name` 删整行会连她的亲密钉一起收回，回执不披露 | 甲＝按列清（保 `intimate_pin_*`）／乙＝保留整删但必须披露；⚠ 与 `docs/db-owners.md`「清理＝按行删」的成文语义相关 |
+| F-9 | 四枚键既不在 SETTABLE 也不在 RESTART（三面齐缺一面） | 席 F2 深查"拒收"是护栏还是死角后再裁 |
+| F-10 | `addressing.py` 的 `set()` lost-update 窗／`providers.py:1238` 把跨进程 ALTER 竞争咽成 store-off／`runtime_paths.py:282-284` 绝对路径支不过测试守卫 | 先记，逐条立小锁 |
+
+## 77. push 前体检+切笔+修红+主仓推送（2026-10-04；主仓已上 GitHub `143098d..20c10a3`）
+
+### 77.1 背景与授权
+
+- 四段：体检 → WIP 切笔 → 修红 → 主仓推送；前置＝工作树积压多波 WIP（含 §76 收尾半件），体检先行。授权链：push 属不可逆外发（规则 4），用户明示授权执行，属主迁移随波确认；计数＝10-04 当时值，以 `git log` 现算为准。
+
+### 77.2 三关读数
+
+- **三关全过**：①主题——42 笔待推面逐笔一致无夹带；②敏感——密钥/盘符路径/BOT_XXX 零命中；③卫生——零二进制零临时件。
+- **e2e 三期望（stocks-nvda/fx-panel/fx-convert）非回归**：行情/汇率上游本机拉不到（ParseHttpError），远端同环境同败。
+
+### 77.3 切笔清单：12+1 笔 `e8a02a8…9bdcfc7`
+
+文件域互斥切分；「+1」＝§76 收尾半件随 `ffbd8c9` 吞入（§76.7「待提交」清偿）；哈希册随切重录（77.4-⑥）。
+
+### 77.4 修红清单：6 笔
+
+| # | 提交/面 | 内容 |
+|---|---|---|
+| ① | `da8e1a2` | env 六键转活行——★增量红根因＝加键时账册没跟（needle/名册/哈希册同批同步） |
+| ② | `7e0b883` | COMMANDS 正斜杠 needle（分隔符失配） |
+| ③ | `ffbd8c9` | mypy 三错清偿（并吞 §76 收尾半件） |
+| ④ | F1 名册 | 名册＋1/豁免＋11；16/16 绿；`ROSTER_CEILING` 32→33 带授权注记 |
+| ⑤ | smoke | 可重试代表码 100→500（对齐 T46-N1）；**transport-smoke 仍红**＝重试腿撞「部分投递 retcode 失败」无条件 FAILED_FINAL 分支（`onebot.py` ~:1213 会漂移；非白名单问题，挂账 77.5-2） |
+| ⑥ | `20c10a3` | 哈希册重录（echo.py 切笔字节入册，偿 §76.7 轴红） |
+
+- **主仓推送成功**：`143098d..20c10a3` 45 笔（当时值）上 GitHub，v0.0.1-alpha.3 完整 refspec。
+- ★ **git 不读 Windows 系统代理**：schannel 直连被掐 ⇒ 单次 `-c http.proxy=http://127.0.0.1:7890` 挂本地代理成功；push 失败先查代理通路。
+- 远端属主已迁移 **LancyCelestia/WuWa-Character-Bots**（老名重定向不断链）。
+
+### 77.5 挂账
+
+1. **15 库零远端**：gh 2.102.0 已装；auth 与建仓用户亲自做，属主 LancyCelestia。
+2. **transport 部分投递分支**（77.4-⑤）：FAILED_FINAL 无条件分支待根修。
+3. **queue Windows 清理锁**：待查。
+4. **`.superpowers` 档案约 26.9 万行待归档**。
+5. **AGENTS 瘦身第二批**（约 1,985B，六行 #73/#68/#75/#76/#66/#69，方案在案）；第一批（#70/#71/#72）已落盘。
