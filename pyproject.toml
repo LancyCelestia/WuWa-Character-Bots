@@ -15,14 +15,17 @@ dependencies = [
     "nonebot-plugin-localstore>=0.7.4",
     "nonebot-plugin-alconna>=0.62.0",
     "nonebot-plugin-filehost>=1.1.1",
-    "nonebot-plugin-orm[postgresql]>=0.8.3",
     "asyncpg>=0.30",
 "numpy>=1.26",
 "faiss-cpu>=1.8",
     "nonebot-plugin-htmlkit>=0.1.0rc5",
     "jinja2>=3.1",
-    "qrcode[pil]>=8.0",
-    "nonebot_plugin_memes_api>=0.5.1",
+    # 7 个模块直接 `from PIL`（二维码出图/媒体处理链）：此前只靠 qrcode[pil] 传递依赖，
+    # 显式声明避免上游 extras 收缩时静默断供。
+    "pillow>=12.3.0",
+    # bot.py 按 bot_memes_plugin_enabled 条件加载的 meme 生成插件（真身）；
+    # 此前的 nonebot_plugin_memes_api 是装错的 API 客户端发行版（全仓零引用），已移除。
+    "nonebot-plugin-memes>=0.8.1",
     "nonebot-plugin-mcpclient>=0.1.2",
     "mcp>=1.0.0,<2.0.0",
     # 视频下载/媒体分析（sources.downloader）实际依赖 yt-dlp；显式声明避免漏装。
@@ -79,9 +82,11 @@ nonebot-plugin-apscheduler = ["nonebot_plugin_apscheduler"]
 nonebot-plugin-localstore = ["nonebot_plugin_localstore"]
 nonebot-plugin-alconna = ["nonebot_plugin_alconna"]
 nonebot-plugin-filehost = ["nonebot_plugin_filehost"]
-# ORM is kept as an optional dependency but is not auto-loaded; no project plugin uses its models.
+# ORM dependency removed (P2 减量波): no project plugin uses its models; nothing imports or auto-loads it.
 nonebot-plugin-htmlkit = ["nonebot_plugin_htmlkit"]
-# meme generation is owned by bot_unified_runtime; do not auto-load the external API plugin.
+# meme generation is owned by bot_unified_runtime; nonebot-plugin-memes (declared in
+# [project].dependencies) is loaded conditionally by bot.py (bot_memes_plugin_enabled gate),
+# never auto-started here.
 # MCP remains an optional dependency; do not auto-start stdio servers during NoneBot boot.
 
 [tool.ruff]
