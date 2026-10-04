@@ -30,7 +30,6 @@ import re
 import threading
 import time
 from collections.abc import Callable, Iterable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any
@@ -46,6 +45,7 @@ from plugins.bot_unified_runtime.domains.core.search.search_intent import (
 from plugins.bot_unified_runtime.domains.core.search.search_service import (
     BACKGROUND_AUTHORITY_WEIGHTS,
 )
+from plugins.bot_unified_runtime.domains.core.shared_pool import get_shared_pool
 from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
     http_get_json,
     http_post_json,
@@ -519,24 +519,26 @@ def search_acg_verticals(
         with lock:
             results[source] = found
 
-    executor = ThreadPoolExecutor(
-        max_workers=len(jobs), thread_name_prefix="chat-acg-search"
-    )
+    # P2 减量波：逐次新建池 → 共享有界池。jobs≤3（bangumi/moegirl/bilibili）
+    # ＜池上限 8，独跑时并发度不变；高并发时段并发可能被兄弟站点摊薄，
+    # 属共享池预期降级（正确性不受影响）。原 ``shutdown(wait=False,
+    # cancel_futures=True)`` 在共享池上没有对应物，改为循环末对全部
+    # future 显式 cancel——未启动的撤掉，运行中的与旧语义一致（不等它）。
+    executor = get_shared_pool()
     start = time.monotonic()
-    try:
-        futures = [executor.submit(_run, source) for source in jobs]
-        deadline_hit = False
-        for future in futures:
-            remaining = max_total_seconds - (time.monotonic() - start)
-            try:
-                future.result(timeout=max(0.1, remaining))
-            except Exception:  # noqa: BLE001 - 超时/异常源放弃，保留已完成源。
-                deadline_hit = True
-        if deadline_hit:
-            with lock:
-                error_kinds.append("acg:timeout")
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+    futures = [executor.submit(_run, source) for source in jobs]
+    deadline_hit = False
+    for future in futures:
+        remaining = max_total_seconds - (time.monotonic() - start)
+        try:
+            future.result(timeout=max(0.1, remaining))
+        except Exception:  # noqa: BLE001 - 超时/异常源放弃，保留已完成源。
+            deadline_hit = True
+    if deadline_hit:
+        with lock:
+            error_kinds.append("acg:timeout")
+    for future in futures:
+        future.cancel()
 
     # 稳定序：bangumi → moegirl → bilibili（与 SOURCE_LABELS 对齐）。
     merged: list[AcgResult] = []

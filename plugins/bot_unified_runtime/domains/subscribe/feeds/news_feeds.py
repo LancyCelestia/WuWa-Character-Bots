@@ -44,12 +44,12 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 
 # 审查 Q-01：user_copy 为零依赖纯常量池，sources 跨层引用不构成装配环。
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.core.shared_pool import get_shared_pool
 from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
     http_get_text,
 )
@@ -649,18 +649,20 @@ def fetch_headlines(
         return []
     per_feed_cap = _MIX_PER_FEED_CAP if key == "mix" else 20
     timeout = max(1.0, float(timeout_seconds))
-    workers = min(len(feeds), 8)
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="news-feed") as pool:
-        futures = [
-            pool.submit(_fetch_single_feed, url, source, feed_category, per_feed_cap, timeout)
-            for url, source, feed_category in feeds
-        ]
-        per_feed_lists: list[list[NewsItem]] = []
-        for future in futures:
-            try:
-                per_feed_lists.append(future.result())
-            except Exception:  # noqa: BLE001 - 单源线程异常同样静默跳过。
-                per_feed_lists.append([])
+    # P2 减量波：逐次新建池 → 共享有界池（原上限 min(len(feeds),8) ≤ 8，
+    # 独跑时并发度不变）。逐个 future.result() 阻塞收齐＝「返回前所有
+    # futures 已完成」，与旧 with 退出 join 语义一致。
+    pool = get_shared_pool()
+    futures = [
+        pool.submit(_fetch_single_feed, url, source, feed_category, per_feed_cap, timeout)
+        for url, source, feed_category in feeds
+    ]
+    per_feed_lists: list[list[NewsItem]] = []
+    for future in futures:
+        try:
+            per_feed_lists.append(future.result())
+        except Exception:  # noqa: BLE001 - 单源线程异常同样静默跳过。
+            per_feed_lists.append([])
 
     merged = _merge_dedup(per_feed_lists, interleave=key == "mix", cap=_MIX_MERGE_CAP)
     if merged:

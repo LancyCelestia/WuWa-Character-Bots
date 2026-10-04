@@ -38,7 +38,6 @@ import re
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -47,6 +46,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from plugins.bot_unified_runtime.domains.core.shared_pool import get_shared_pool
 from plugins.bot_unified_runtime.domains.link_parse.parsers.ssrf_guard import (
     check_fetch_landing,
 )
@@ -1286,39 +1286,45 @@ class UnifiedSearchService:
         per_source_lists: list[list[SearchHit]] = []
         retrieved_at = self._now_fn()
 
-        with ThreadPoolExecutor(
-            max_workers=plan.concurrency, thread_name_prefix="search-v21"
-        ) as pool:
-            index = 0
-            while index < len(plan.tasks):
-                batch = plan.tasks[index : index + plan.concurrency]
-                index += plan.concurrency
-                futures = [
-                    (task, pool.submit(search_provider, provider_by_source[task.source_id], task, clock=self._clock))
-                    for task in batch
-                ]
-                for task, future in futures:
-                    result = self._collect(task, future, plan)
-                    outcomes.append(
-                        SourceOutcome(
-                            source_id=result.source_id,
-                            status=(
-                                SourceRunStatus.EMPTY
-                                if result.status is SourceRunStatus.OK and not result.hits
-                                else result.status
-                            ),
-                            detail=result.detail,
-                            hit_count=len(result.hits) if result.status is SourceRunStatus.OK else 0,
-                            attempts=result.attempts,
-                            elapsed_ms=result.elapsed_ms,
-                        )
+        # P2 减量波：逐次新建池 → 共享有界池（线程 churn 治理）。
+        # 原 ``with`` 退出会 join 全部 future（含 _collect 已判 TIMEOUT 的
+        # 迟到源）；共享池没有退出语义，循环后显式 wait 等齐，保持
+        # 「返回前所有 futures 已完成」的旧墙钟语义（shared_pool 边界④）。
+        pool = get_shared_pool()
+        all_futures: list[concurrent.futures.Future[ProviderCallResult]] = []
+        index = 0
+        while index < len(plan.tasks):
+            batch = plan.tasks[index : index + plan.concurrency]
+            index += plan.concurrency
+            futures = [
+                (task, pool.submit(search_provider, provider_by_source[task.source_id], task, clock=self._clock))
+                for task in batch
+            ]
+            all_futures.extend(future for _, future in futures)
+            for task, future in futures:
+                result = self._collect(task, future, plan)
+                outcomes.append(
+                    SourceOutcome(
+                        source_id=result.source_id,
+                        status=(
+                            SourceRunStatus.EMPTY
+                            if result.status is SourceRunStatus.OK and not result.hits
+                            else result.status
+                        ),
+                        detail=result.detail,
+                        hit_count=len(result.hits) if result.status is SourceRunStatus.OK else 0,
+                        attempts=result.attempts,
+                        elapsed_ms=result.elapsed_ms,
                     )
-                    if result.status is SourceRunStatus.OK and result.hits:
-                        hits = [
-                            normalize_hit(raw_hit, source_id=task.source_id, retrieved_at=retrieved_at)
-                            for raw_hit in result.hits
-                        ]
-                        per_source_lists.append(deduplicate_hits(hits))
+                )
+                if result.status is SourceRunStatus.OK and result.hits:
+                    hits = [
+                        normalize_hit(raw_hit, source_id=task.source_id, retrieved_at=retrieved_at)
+                        for raw_hit in result.hits
+                    ]
+                    per_source_lists.append(deduplicate_hits(hits))
+
+        concurrent.futures.wait(all_futures)
 
         ranked = rank_hits(
             per_source_lists,

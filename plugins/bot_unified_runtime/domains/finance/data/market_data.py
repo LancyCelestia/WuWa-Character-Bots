@@ -221,31 +221,35 @@ def gather_within_budget(
     * ``wait(timeout=剩余预算)`` 后只收已完成项；
     * 未完成/失败项如实记 None（由调用方换算成缺席展示），未开跑的
       future 直接 cancel；
-    * ``shutdown(wait=False, cancel_futures=True)``：with 退出不再无条件
-      join 慢 future——慢源被放弃为「缺席」，有界聊天 worker 即刻归还，
-      不再出现「一条行情命令钉死 worker 分钟级」。
+    * 共享池（``domains/core/shared_pool``，P2 减量波起替代逐次新建）
+      绝不 shutdown：未完成 future 显式 cancel 后即刻返回——慢源被放弃
+      为「缺席」，有界聊天 worker 即刻归还，不再出现「一条行情命令钉死
+      worker 分钟级」（FIN-R1② 语义不变）。
+
+    ``max_workers`` 形参保留以兼容既有调用，共享池下为建议值（实际并发
+    受全局 8 workers 上限与兄弟站点占用约束）。
     """
-    from concurrent.futures import ThreadPoolExecutor
     from concurrent.futures import wait as futures_wait
 
+    from plugins.bot_unified_runtime.domains.core.shared_pool import (
+        get_shared_pool,
+    )
+
     budget = _budget_or_new(budget)
-    pool = ThreadPoolExecutor(max_workers=max(1, int(max_workers)))
-    try:
-        futures = {key: pool.submit(fetch, key) for key in keys}
-        futures_wait(list(futures.values()), timeout=max(0.0, budget.remaining_seconds()))
-        results: dict[Any, Any] = {}
-        for key, future in futures.items():
-            if future.done():
-                try:
-                    results[key] = future.result()
-                except Exception:  # noqa: BLE001 - 单项失败如实缺席，语义与旧结构一致。
-                    results[key] = None
-            else:
-                future.cancel()
+    pool = get_shared_pool()
+    futures = {key: pool.submit(fetch, key) for key in keys}
+    futures_wait(list(futures.values()), timeout=max(0.0, budget.remaining_seconds()))
+    results: dict[Any, Any] = {}
+    for key, future in futures.items():
+        if future.done():
+            try:
+                results[key] = future.result()
+            except Exception:  # noqa: BLE001 - 单项失败如实缺席，语义与旧结构一致。
                 results[key] = None
-        return results
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+        else:
+            future.cancel()
+            results[key] = None
+    return results
 
 
 # ==================== FIN-I1（2026-09-27 评审票）：远端自由文本清洗 ============

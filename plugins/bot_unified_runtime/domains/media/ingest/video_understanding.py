@@ -19,7 +19,6 @@ import subprocess
 import tempfile
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +27,7 @@ from typing import Any
 from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
     LLMProviderError,
 )
+from plugins.bot_unified_runtime.domains.core.shared_pool import get_shared_pool
 from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
     _clip,
     _encode_image_bytes,
@@ -453,7 +453,8 @@ def build_video_brief(
     work_dir = ""
     frames_future = None
     asr_future = None
-    pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="bot-video-brief")
+    # P2 减量波：逐次新建池 → 共享有界池（frames+asr 至多 2 并发 ≤ 8）。
+    pool = get_shared_pool()
     try:
         work_dir = tempfile.mkdtemp(prefix="bot_video_brief_")
         native_part: dict[str, Any] | None = None
@@ -504,7 +505,12 @@ def build_video_brief(
     except Exception:  # 编排器兜底：任何意外降级为空简报，绝不抛异常。
         logger.exception("video brief build failed")
     finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+        # 原 ``pool.shutdown(wait=False, cancel_futures=True)``：共享池绝不
+        # shutdown，改为显式撤未启动的 future；运行中的照旧不被打断，由
+        # 下方 reap 线程等齐后再清目录（语义与旧 finally 一致）。
+        for future in (frames_future, asr_future):
+            if future is not None:
+                future.cancel()
         if work_dir:
             pending = [
                 future

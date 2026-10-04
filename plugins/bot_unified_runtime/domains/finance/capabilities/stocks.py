@@ -527,8 +527,10 @@ def build_stocks_capability(config: Any | None = None, *, render_backend: Any | 
         分布箱形图；纯文字回退为面板 brief。失败降级与个股路径同构。
         """
         import time as _time
-        from concurrent.futures import ThreadPoolExecutor
 
+        from plugins.bot_unified_runtime.domains.core.shared_pool import (
+            get_shared_pool,
+        )
         from plugins.bot_unified_runtime.domains.finance.data.stock_data import (
             fetch_stock_history,
             fetch_stock_quotes,
@@ -562,11 +564,13 @@ def build_stocks_capability(config: Any | None = None, *, render_backend: Any | 
             points = fetch_stock_history(symbol, days=30)
             return symbol, tuple(point.close for point in points)
 
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            for symbol, closes in pool.map(
-                _history, [quote.symbol for quote in shown]
-            ):
-                histories[symbol] = closes
+        # P2 减量波：逐次新建池 → 共享有界池（原 6 workers，软并发上限；
+        # map 迭代器消费完＝全部 future 已完成，与旧 with 退出 join 一致）。
+        pool = get_shared_pool()
+        for symbol, closes in pool.map(
+            _history, [quote.symbol for quote in shown]
+        ):
+            histories[symbol] = closes
 
         rows: list[dict[str, Any]] = []
         returns_by_symbol: list[tuple[str, tuple[float, ...]]] = []
