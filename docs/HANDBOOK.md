@@ -6061,20 +6061,30 @@ AxonHub 自动降级重试＝登记后置；⑥ 巡检 JSONL 曲线视图后置�
 - 🔴 **根修④（她"只回一句话"的最后一块）**：`chat.py` 装配段与 `intimate_control.py` 的 `show` 面都把「覆盖册里有没有 `BOT_REPLY_DETAIL`」当**第①层本轮明示**，而那枚值是某次 `/bot runtime set` 留下的**跨重启常驻值** ⇒ **每一个人的永久策略被一枚常驻值静音**（她库里 `verbose`＋note「每次回复要600字以上」`source=explicit` 可查，实测送达 60／135／151／189 字）。修法＝常驻热改降回**第③层全局档**，"本轮明示"由写库那条腿（`resolve_turn_reply_policy`）承担。RED→GREEN 各一枚实证（改前判据读数是 `当前档＝适中`，不是解析失败）；两把按旧序写的锁按裁定原文重述——`test_priority_chain_…` 拆成「本轮改口压过上一句」＋「常驻全局档不得压过策略」两条真腿，`…_runtime_override_beats_person_policy` 更名 `…_falls_to_global_when_person_said_nothing`（读数不变、证明力改准）。配置审计席**独立同判**：`.env` 里 `BOT_REPLY_DETAIL=auto` 是死值，两条 `get_or` 都被覆盖册钉成 detail。
 - **261／227 之谜闭合（三件同时成立，非单一 bug）**：①15:53／15:55 两轮带 `length_intimate_floor:detail` 却只送达 237／227＝**重启前进程走 `strip_action_brackets` 支**（该支实测删 **45.7%**，234→127）；②15:59:16 重启把进程内 LRU 档态清零＝D-1 尚未上线；③地板腿量的是归一化**之前**的 `reply.text`——授予轮纯散文支只削 **中位 −3%／p95 −0.3%**（读数可信），全量 format 分支 **p95 22.7%** 才是待裁的那道缝（§76.8-F5）。唯一在地板之后截断的是 `_apply_output_message_budget`，现网 no-op。
 - **假账与红账两条更正**：①波次台账曾记 adopt「自报副本未改，sha256 前缀 `7f3742ff`」——人格审计席**证伪**（该前缀与盘上任何一件都不匹配；锚册 `scripts/persona_sync_anchor.json` **单槽**，09:06:08Z 重锚抹掉了中间态）；替代证据＝锚相对漂移两轴皆零、副本 13,522 B ＝ 锚 C、副本首行无顶层禁令、`--check` 绿。⚠ 结构性事实：该工具**从不逐字节比较源与副本**（行重合度实测 0%），只校验凭证对 (S,C) ⇒ "改副本忘源"归形态门管，不归它。②**哈希门在 HEAD 轴红了连续好几枚**：`831b02b5`／`4d069645`／`94694459`／`e26c3709`／`ffbd8c9` 各点上 `echo.py` 实算字节与台账记值全部 MISMATCH（记值长期停在 `20c23877…`→`37f0ff82…`，字节却是 `2d9677…`→`958f07…`→`835d12ac…`）⇒ 不是"这一波没重录"，是**这条门被连续越过多枚提交**；本会话只读看清单确认漂移仅 `echo.py` 一枚后 `--write`，由用户入于 `20c10a3`（现算 HEAD 处 MATCH）。
-- **盘面读数（10-04 01:1x 当时值）**：runtime-layout **PASS**、ruff **All checks passed**、mypy **Success（614 files）**；两枚已知红＝`test_word_site_debt_within_ceiling`（计账 477 > 上限 467，＋10 枚未登记抄位，**逐提交归因中**，台账 28 枚落点无一涉亲密词面）与 `test_copy_redline_gate::test_gate_scope_sanity`（**HEAD 起就红**：退役件 `capabilities/auto_send/__init__.py` 在 HEAD 在册、工作树零改动）。
+- **盘面读数（10-04 01:1x 当时值）**：runtime-layout **PASS**、ruff **All checks passed**、mypy **Success（614 files）**。
+- **两枚已知红已按 HEAD 轴定性**（席 head2：`git checkout-index` 抽仓外副本 2577/2577 件、8 枚 CJK 名全在——naive `git ls-files | grep -c` 报 0 是坑）：①`test_word_site_debt_within_ceiling` **红在 HEAD 且已红约 78 笔**＝最后绿 `3b3d1aa3`（HEAD~80，恰 467）、首红 `1a92fdae`/`94694459`（10-01 15:51）；**上限从未动**（467 是手写字面量，仅 `831b02b5` 引入一次），**动的是数据**（自上次绿新增 38 枚 词×落点：raw 552／名册抵销 75）；18 腿只红 2（上限腿＋复用它的方向锁），四名册齿全绿 ⇒ 名册诚实。修法 (ii)＝10 枚逐枚登记（单文件可坐，但那是"登记 dirt"，待她点头）／(i)＝约 10 处跨 8 个插件文件改引用（`echo.py`/`aliases.py` 被帮助闭包门与双向门别住）／**(iii) 抬上限既是放宽又结构走不通**（477 > 469，而该尺只准降）。②`test_gate_scope_sanity` 同属**红在 HEAD**：退役件 `capabilities/auto_send/__init__.py` **从未在任何一笔被删**、零生产导入方；退役＝文件＋`SHIM_ROWS`（走 `--write-ledger`）＋`PUBLIC_READONLY_BASELINE_AT_RULE_TIME`＋垫片/边/摆放地板＋板块与文档载体＋两枚哈希台账**同批动**，属主会话活，**未经她许可不删**。
 
 ### 76.8 待裁清单（编号＝问题本体，席不代裁）
 
 | # | 问题本体 | 可选 / 建议 |
 |---|---|---|
 | F-1 | 覆盖册那枚常驻 `BOT_REPLY_DETAIL` 该不该压住永久策略 | 乙＝判据已落码（§76.7）；**甲仍建议顺手做**＝`/bot runtime reset BOT_REPLY_DETAIL`（热生效、不需重启），否则她普通轮仍由全局档说话 |
-| F-2 | 群聊授予轮「整条 BLOCK、什么都收不到」的敞口 | 甲＝只留防自陈护栏句／乙＝群支降级不整拦／丙＝群内不发叙述授予——实测数在席 D 报告里 |
+| F-2 | 群聊授予轮「整条 BLOCK、什么都收不到」的敞口 | 🔴 **已裁（10-04 用户连说两遍）**＝「在群聊里，我跟 bot 聊天也采取多段、尽可能长的详细、动态、具体的描述」⇒ **丙出局**（群内不得收窄给她的叙述）、甲不够（护栏句管不住指令段自己自带那枚分级字样）、落点＝**乙＝群支降级不整拦**＋摘掉自爆字样＋她的档位保底。实测敞口＝碰撞权重样本 24%、真实语料基率≈每 480 字 0.3%（`性` 单字出现在 8.1% 回复里）；误伤形状＝两词跨边界相连即中、日期/门牌号一类也中 |
 | F-3 | 「其他用户普通轮＝一句话」要不要让**题型自己**判进简洁档 | 与 09-28「只有显式钉过才走简洁」正面冲突；现矩阵 auto/detail×寒暄＝适中(100–260) |
 | F-4 | 科普／知识题要不要也拓到 600–1200 | 现＝详尽(≥300，上不封顶)；上铺写要为知识题**另写一套交付面**（铺写那句是场景口径） |
 | F-5 | 地板腿改量**送达**字数 | 席 C 建议乙（≤1 次额外调用／轮），须同批防「追完又被剥」的回环 |
 | F-8 | `/bot identity unset-name` 删整行会连她的亲密钉一起收回，回执不披露 | 甲＝按列清（保 `intimate_pin_*`）／乙＝保留整删但必须披露；⚠ 与 `docs/db-owners.md`「清理＝按行删」的成文语义相关 |
 | F-9 | 四枚键既不在 SETTABLE 也不在 RESTART（三面齐缺一面） | 席 F2 深查"拒收"是护栏还是死角后再裁 |
 | F-10 | `addressing.py` 的 `set()` lost-update 窗／`providers.py:1238` 把跨进程 ALTER 竞争咽成 store-off／`runtime_paths.py:282-284` 绝对路径支不过测试守卫 | 先记，逐条立小锁 |
+
+### 76.9 群聊长文的落地读数（10-04 收尾批，三席实测）
+
+- **出站只有两道长度闸，都不拦 1200**：①文字裁切腿 `chat.py:6966-6999` 现网**关**（`.env:74 BOT_REPLY_MAX_CHARS_PER_MESSAGE=0`、各 `max_messages=0`、覆盖册无该键；⚠ 缺省值是 1200，别把缺省当现值）；②卡片折线 `renderer.py:677-685` ＝ **1500**（`config.py:1479` 缺省，`.env` 无此行、不在 `_RUNTIME_HOT_OVERRIDE_FIELDS`、走裸 Config）。渲染/队列/OneBot 侧**零长度逻辑**、`allow_split` 无消费者、纯 text 永不分 part（`worker.py:826` 返回 None）。⇒ 1200 字群聊回复＝**一条气泡**。
+- 🔴 **但那条卡片线后面是坏的**：队列表（保留 1000 行＝3.62 天）里 8 条 forward 行**全部 `failed_final`**，同批也有短消息失败 ⇒ 一旦哪路真把正文推过 1500（科普长文最可能），落到的是一条**一直在失败**的通路。该面属 #77 波（"transport 部分投递 FAILED_FINAL 分支仍红"在册），本波不代修，**只登记为 F-2 的后续阻塞**。
+- 历史长度事实：群 sent 最大 **1018**、私聊最大 **1375**；chat >1200＝群 0 条／私聊 6 条；>1500＝0 条；无修剪通知。⇒ 她的"群内尽可能长"在 ≤1500 区间内今天仍是**从未跑过的新 Territory**，只能靠重启后真发一条验。
+- **群侧阻塞已拆两处**：群分支命中禁词由"整条吞"改**逐段涂销**（正文走既有 `safe_text`、parts 就地洗、媒体保留、`REWRITE` 首次有了生产者并进审计行；命中在媒体／洗完无内容／内部异常 ⇒ 逐字节回退旧整拦；私聊面 A/B 字节不变）；指令段自带那枚分级字样**已摘除**（改成中性的成年向措辞，权限范围一字未动），并加不变锁：两段样式常量对 `reviewer` 真身清单**零命中**——清单**从模块导入**，测试里不留第二副本（注入标签字样的内存副本即红，sha256 不变）。
+- 🔴 **我上一条口径要更正**：先前写"8 条合并转发行全部 failed_final ⇒ 长文通路一直在失败"，**归因错了**。现体重查＝`send_requests` `sent 917 / failed_final 83`、`send_request_parts` `sent 1437 / failed_final 79 / unknown 77 / pending 75`，失败面按能力＝`bot.text 12／bot.weather 8／bot.alert(onebot) 6／bot.market 6／bot.music 6／bot.news 6／bot.error_report(telegram) 5／bot.divination 4／bot.fx 4／bot.meme_library 4`＝**定时推送与告警族，不是聊天卡片通路**。真缺陷另有两条：①**一次定终态**——样本 part `attempts=1` 即 `failed_final`，`last_error_kind=retcode_failure` 说明**任何 retcode 都被当不可重试**（瞬时错一次就永久毙掉一条推送，`aebf743` 自陈"腿内剩余根因＝部分投递分支"）；②**不可诊断**——part 表 11 列里没有任何位置存 retcode 或适配器原因，`provider_message_id=None`、`last_public_message=None`，事后无从知道是哪码。⇒ 交席 sendterm（TDD＋只读复核先行，禁碰生产库）。
+- ⚠ 该席还钉了一条事实：`reviewer` 那条分级形状**无词界**（`r[- ]?18`），`MAR18`／`v2R-18` 一类会被误咬。收窄它＝**放宽红线**，不擅自做，进 F-12 待裁；现下它的后果已由"整条吞"降为"只涂那一段"。
 
 ## 77. push 前体检+切笔+修红+主仓推送（2026-10-04；主仓已上 GitHub `143098d..20c10a3`）
 
@@ -6113,3 +6123,10 @@ AxonHub 自动降级重试＝登记后置；⑥ 巡检 JSONL 曲线视图后置�
 3. **queue Windows 清理锁**：待查。
 4. **`.superpowers` 档案约 26.9 万行待归档**。
 5. **AGENTS 瘦身第二批**（约 1,985B，六行 #73/#68/#75/#76/#66/#69，方案在案）；第一批（#70/#71/#72）已落盘。
+
+### 77.6 增补（2026-10-04 恢复窗：挂账三项清偿＋15 库全上线）
+
+- **挂账 2 清偿（transport 真回归修复）**：`onebot.py` 单次调用分支 `progress.count += 1` 无条件自增——失败 dict 也计数，撞 M10「count>0 ⇒ 部分投递 ⇒ 无条件 FAILED_FINAL」守卫，把任意单调用非白名单 retcode 失败**误终态化＝消息丢失不重试**（异常形态同错误却正确重试，M-63「两条失败形态语义归一」被打破）。修＝自增加 `_onebot_result_is_success` 成功守卫（与 chunks/file 路径对齐）；transport-smoke `retcode_classification` 转绿，发送链回归 31 测绿。
+- **挂账 3 清偿（queue 清理锁）**：`SQLiteSendRequestQueue` 补公开 `close()`（代理 `_discard_connection`，生产无人调用＝B-10 长连接语义零改动）＋queue-smoke 收尾先关连接；WinError 32 消失，queue-smoke 转绿。
+- **挂账 1 清偿（15 库全上线）**：前置＝L8 库板相撞根修（adapter-qq/adapter-mail 名册回**播种态③**，协议腿四枚 9469445 粒度手术后被 B01 前缀罩住；板侧零改动；工厂复跑 RC=0 成员 479+12 无主 123 双认领 0——当时值）＋api-surface 全队重算＋分库 git 身份一次性 `-c` 注入（分库无全局身份，commit 全灭根因）＋GitHub 建仓限速退避（"too many repositories too quickly"）。**15/15 私有仓上线：`LancyCelestia/<slug>`，main＋`<slug>/v0.0.1` tag 齐备**；快照含 .gitignore/README 基建（manifest 现算）。
+- 主仓推送终值：`143098d..25ddd9b`（切笔＋修红＋生产修复＋taxonomy 回播种，48 笔，当时值）。挂账余＝77.5 之 4/5（`.superpowers` 归档、AGENTS 二批瘦身）。
