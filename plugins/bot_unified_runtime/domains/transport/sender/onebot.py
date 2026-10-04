@@ -869,9 +869,13 @@ async def _dispatch_onebot_send(
         # 作用 ⇒ 可安全整发重投」恒真式 → 超时/断连盲重投（P0 根因，T55
         # §一③⑤）。成功后 count+=1 使前提变真；part_sink（纯观测钩子，
         # 生产现无消费方）对 mixed 各 part 回报 SENT。text/image/card/forward
-        # 走同一分支：count 在单次调用形态下仅成功后有值（失败分类读不到），
-        # 行为不变；_mixed_part_indexes 对非 mixed 内容返回空，零开销。
-        progress.count += 1
+        # 走同一分支；count 只在真成功后自增（_SendSideEffects 契约＝已成功
+        # 发出的件数，与 chunks/file 路径 :796/:719 对齐）——失败 dict 若也
+        # 自增，会被 M10 的「count>0 ⇒ 部分投递 ⇒ 无条件 FAILED_FINAL」
+        # 守卫把可重试失败误终态化（消息丢失，2026-10-04 transport-smoke
+        # retcode_classification 红根因）。
+        if _onebot_result_is_success(result):
+            progress.count += 1
         for part_index in _mixed_part_indexes(send_request):
             if part_sink is not None:
                 _report_part_safely(part_sink, part_index, PART_REPORT_SENT)
