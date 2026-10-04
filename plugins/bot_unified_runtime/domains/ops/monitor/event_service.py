@@ -62,7 +62,7 @@ MAX_PAGE_LIMIT = 200  # §6 分页上限；SSE 单页取满以减少查询次数
 DEFAULT_HEARTBEAT_SECONDS = 15.0  # §6：心跳 15s
 DEFAULT_BUFFER_EVENTS = 128  # §6：每连接缓冲 ≤128 事件
 DEFAULT_BUFFER_BYTES = 256 * 1024  # §6：且 ≤256KiB
-DEFAULT_POLL_INTERVAL = 0.25
+DEFAULT_POLL_INTERVAL = 1.0  # P2 减量波 0.25→1.0：控制面 watcher 空闲轮询 4 倍降频（监控 UI 1s 延迟可接受）；要更密由调用方显式传 poll_interval
 _STREAM_FILTERS = ("source", "category", "severity")
 
 _RESYNC_HINTS = {
