@@ -8,15 +8,60 @@ import re
 import struct
 import time
 
-try:
-    import numpy as np
-except Exception:  # noqa: BLE001 - numpy 可选，缺失回退纯 Python 余弦。
-    np = None  # type: ignore[assignment]
+# --- numpy / faiss 懒加载（P2 减量波：启动期不再载入两枚重 C 库） --------------
+# 旧写法是模块级 try/except import——功能默认关（
+# bot_chat_fast_disable_vector_knowledge=True）时这两枚重 C 库照样随启动进内存。
+# 改为：模块级只留**裸类型声明**（不绑值），首次真实使用点经 _get_numpy/
+# _get_faiss 载入并写回模块级名字。三条语义不变：
+# ① 库在 + 功能开 ⇒ 行为照旧（只把载入点从模块 import 推迟到首次使用）；
+# ② 库缺 ⇒ 回退链不变（np/faiss 落 None ⇒ "numpy 暴力检索 / 纯 Python 余弦"
+#    回退与旧 AttributeError 面逐点一致，且同样一辈子只试一次 import）；
+# ③ 对外只读面（tests 多处在收集期直读 `vk.faiss is None` 判装没装）与库缺失
+#    时的诚实 None 面都靠"不绑值"保住：**任何值占位（None/哨兵）都是真绑定，
+#    会挡住 PEP 562 __getattr__**——None 占位把已装库读成 None（套件静默
+#    skip＝行为变化），哨兵占位把缺失库读成非 None（skip 闸失明）。
+np: Any  # 裸声明：仅进 __annotations__，不进 globals；运行期首写点在 _get_numpy
+faiss: Any  # 同上；首写点在 _get_faiss
 
-try:
-    import faiss
-except Exception:  # noqa: BLE001 - faiss 可选，缺失回退 numpy 暴力检索。
-    faiss = None  # type: ignore[assignment]
+
+def _get_numpy() -> Any | None:
+    """首次调用才 import numpy 并写回模块级 ``np``；缺失落 None（只试一次）。"""
+    global np
+    if "np" not in globals():  # 裸声明不进 globals ⇒ 键缺席即"从未写过"
+        try:
+            import numpy as np_mod
+        except Exception:  # noqa: BLE001 - numpy 可选，缺失回退纯 Python 余弦。
+            np = None
+        else:
+            np = np_mod
+    return np
+
+
+def _get_faiss() -> Any | None:
+    """首次调用才 import faiss 并写回模块级 ``faiss``；缺失落 None（只试一次）。"""
+    global faiss
+    if "faiss" not in globals():  # 同 _get_numpy：键缺席即"从未写过"
+        try:
+            import faiss as faiss_mod
+        except Exception:  # noqa: BLE001 - faiss 可选，缺失回退 numpy 暴力检索。
+            faiss = None
+        else:
+            faiss = faiss_mod
+    return faiss
+
+
+def __getattr__(name: str) -> Any:
+    """PEP 562 模块属性惰性面：外部读 ``vk.np``/``vk.faiss`` 走同一惰性载入。
+
+    裸声明不占 globals ⇒ 外部首读必然查找落空进本函数 ⇒ 与内部使用点共享
+    同一次 import；真身（或缺失落定的 None）一经写回即命中模块 globals，本
+    函数不再被触发。未在册名字照常 AttributeError，不吞任何拼错属性。
+    """
+    if name == "np":
+        return _get_numpy()
+    if name == "faiss":
+        return _get_faiss()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 import sqlite3
 import threading
 from collections import OrderedDict
@@ -685,7 +730,7 @@ def _resolve_ann_quantizer() -> Any | None:
     `faiss.ScalarQuantizer.QT_8bit` 会让整个模块导入就崩。取不到 ⇒ None = 不建索引，
     绝不悄悄退回 fp32（那会让位宽与价模型脱钩，是"两把尺"形态）。
     """
-    if faiss is None or np is None:
+    if _get_faiss() is None or _get_numpy() is None:
         return None
     scalar_quantizer = getattr(faiss, "ScalarQuantizer", None)
     if scalar_quantizer is None:
@@ -2943,7 +2988,7 @@ class SqliteVectorKnowledgeStore:
             if isnan(best):
                 best = 0.0
             return chunk_ids, best
-        if np is None:
+        if _get_numpy() is None:
             return self._brute_candidates_python(query_vector, limit, scores_out)
         try:
             matrix, chunk_ids = self._load_vector_cache()
@@ -3168,7 +3213,7 @@ class SqliteVectorKnowledgeStore:
         代次不进缓存键：能改判定输入的三件事里，代次只在「又嵌了一批」时变，
         而那一批必然同时涨计数戳（同事务、同写点）⇒ 戳值那一维已经够用。
         """
-        if faiss is None:
+        if _get_faiss() is None:
             return False
         index_path, order_path = self._ann_files()
         stamp = self._ann_stat_pair(index_path, order_path)
@@ -3343,6 +3388,9 @@ class SqliteVectorKnowledgeStore:
         order = self._ann_order
         if index is None or order is None:
             return None
+        # 查询向量预处理走模块级 np：这里补一发惰性载入——ANN 命中路径可能早于
+        # _vector_candidates 的暴力回退闸触达 np（缺失时维持旧 AttributeError→None 面）。
+        _get_numpy()
         try:
             query = np.asarray(query_vector, dtype=np.float32).reshape(1, -1)
             norm = float(np.linalg.norm(query))
@@ -3385,10 +3433,13 @@ class SqliteVectorKnowledgeStore:
         kb-sync 汇总靠这两枚看见"续跑发生过/丢过、为什么丢"。门挡下/抢锁失败
         等未进主体的早退路径不碰检查点，也不带这两枚键。
         """
-        if faiss is None:
+        if _get_faiss() is None:
             # faiss 缺失不影响关键词索引：仍幂等构建 FTS，供关键词/降级检索使用。
             self.ensure_fts_index(force=True)
             return {"built": False, "reason": "faiss_missing"}
+        # numpy 惰性取用：批解码/归一化全程走模块级 np（缺失＝维持旧模块级
+        # import 失败时逐点一致的 AttributeError 面，不另造回退语义）。
+        _get_numpy()
         verdict = _evaluate_ann_build_memory_gate(
             _estimate_rebuild_scale(self), self._ann_assumed_dimension()
         )
@@ -4325,7 +4376,7 @@ class SqliteVectorKnowledgeStore:
         if db_embedded_count > max_items or attested_ntotal > max_items:
             return False, "too_large_for_set_proof"
         try:
-            if faiss is None:
+            if _get_faiss() is None:
                 return False, "index_does_not_cover_embedded_rows"
             live_index = faiss.read_index(str(index_path), faiss.IO_FLAG_MMAP)
         except Exception:  # noqa: BLE001 - 读不到 ntotal 就是无从证明，不许放行。
@@ -4714,6 +4765,9 @@ class SqliteVectorKnowledgeStore:
         self._lock（否则锁外预热会与检索路径成环）。行序 = 表序，与旧实现
         一致（chunk_ids 与矩阵行对齐）。
         """
+        # 惰性载入 numpy：_prewarm_vector_cache 不经 _vector_candidates 的
+        # np 闸直呼本方法（缺失＝维持旧 AttributeError 面，预热 fail-open 照旧）。
+        _get_numpy()
         vectors: list = []
         chunk_ids: list[str] = []
         blob_miss_ids: list[str] = []
