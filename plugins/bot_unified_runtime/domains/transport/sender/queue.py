@@ -413,6 +413,14 @@ class SQLiteSendRequestQueue:
                     pass
                 self._connection = None
 
+    def close(self) -> None:
+        """显式收尾口：释放 B-10 单条长连接（生产无人调用＝语义零改动）。
+
+        供临时目录/测试等「实例随目录销毁」的调用方在清理前关闭句柄——
+        Windows 上打开的 sqlite 文件不可 unlink（WinError 32）。
+        """
+        self._discard_connection()
+
     @contextmanager
     def _transaction(self):
         """共享连接上的读写事务：显式 BEGIN，正常提交、异常回滚。

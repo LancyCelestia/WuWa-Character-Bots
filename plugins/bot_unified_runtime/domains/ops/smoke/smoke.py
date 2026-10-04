@@ -1189,6 +1189,9 @@ def run_queue_smoke(
         )
     )
     summary = queue.safe_summary()
+    # 临时目录场景收尾：先关 B-10 长连接再退 with，否则 Windows 删不掉 sqlite
+    # 文件（WinError 32，句柄被共享连接占着——2026-10-04 queue-smoke 红根因）。
+    queue.close()
     return {
         "ok": True,
         "checked": worker_result.checked,
