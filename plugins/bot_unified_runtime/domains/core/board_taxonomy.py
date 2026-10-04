@@ -1221,9 +1221,15 @@ LIBRARY_TAXONOMY: tuple[ReleaseLibNode, ...] = (
                 '（`nonebot.py`：Telegram／Mail／Console 三条通道的 deliver 实现同住这一枚）。'
                 '⚠ 座名叫 adapter-qq 而成员跨四通道的口径偏差已登记，见本包 §待裁 F-1。',
         channel='onebot',
-        member_paths=(
-            'plugins/bot_unified_runtime/domains/transport/sender/nonebot.py',
-            'plugins/bot_unified_runtime/domains/transport/sender/onebot.py',
+        pending_seed=(
+            (
+                'plugins/bot_unified_runtime/domains/transport/sender/nonebot.py',
+                '落点在盘上、已被 B01.qq-snowluma 板块库装着（板块账未让位，S-FIX-PLACE3 2026-09-29 归主）＝播种三态之③',
+            ),
+            (
+                'plugins/bot_unified_runtime/domains/transport/sender/onebot.py',
+                '落点在盘上、已被 B01.qq-snowluma 板块库装着（板块账未让位，S-FIX-PLACE3 2026-09-29 归主）＝播种三态之③',
+            ),
         ),
     ),
     ReleaseLibNode(
@@ -1247,9 +1253,15 @@ LIBRARY_TAXONOMY: tuple[ReleaseLibNode, ...] = (
         kind='adapter',
         summary='ResilientMailAdapter 与来信桥：全仓唯一以 import 上游适配器包为通道证据的一路。',
         channel='mail',
-        member_paths=(
-            'plugins/bot_unified_runtime/domains/transport/mail/mail_adapter.py',
-            'plugins/bot_unified_runtime/domains/transport/mail/mail_bridge.py',
+        pending_seed=(
+            (
+                'plugins/bot_unified_runtime/domains/transport/mail/mail_adapter.py',
+                '落点在盘上、已被 B01.mail-console 板块库装着（板块账未让位）＝播种三态之③',
+            ),
+            (
+                'plugins/bot_unified_runtime/domains/transport/mail/mail_bridge.py',
+                '落点在盘上、已被 B01.mail-console 板块库装着（板块账未让位）＝播种三态之③',
+            ),
         ),
     ),
     ReleaseLibNode(
