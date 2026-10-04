@@ -20,18 +20,9 @@ from __future__ import annotations
 
 #: 每条 = (垫片 path, 真身 path, 引用方数上限)。字段顺序即契约，勿加派生表达式。
 SHIM_ROWS: tuple[tuple[str, str, int], ...] = (
-    ("plugins/bot_unified_runtime/capabilities/auto_send/__init__.py",
-     "plugins/bot_unified_runtime/domains/schedule/auto_send/__init__.py",
-     0),
-    ("plugins/bot_unified_runtime/capabilities/chat.py",
-     "plugins/bot_unified_runtime/domains/chat_reply/capabilities/chat.py",
-     0),
     ("plugins/bot_unified_runtime/capabilities/content_parser.py",
      "plugins/bot_unified_runtime/domains/link_parse/capabilities/content_parser.py",
      1),
-    ("plugins/bot_unified_runtime/capabilities/market.py",
-     "plugins/bot_unified_runtime/domains/finance/capabilities/market.py",
-     0),
     ("plugins/bot_unified_runtime/character/providers.py",
      "plugins/bot_unified_runtime/domains/chat_reply/character/providers.py",
      4),
@@ -65,37 +56,19 @@ SHIM_ROWS: tuple[tuple[str, str, int], ...] = (
     ("plugins/bot_unified_runtime/runtime/pricing.py",
      "plugins/bot_unified_runtime/domains/chat_reply/llm_engine/pricing.py",
      2),
-    ("plugins/bot_unified_runtime/runtime/settings.py",
-     "plugins/bot_unified_runtime/domains/chat_reply/runtime/settings.py",
-     0),
-    ("plugins/bot_unified_runtime/security/memory_sanitize.py",
-     "plugins/bot_unified_runtime/domains/chat_reply/security/memory_sanitize.py",
-     0),
-    ("plugins/bot_unified_runtime/sender/__init__.py",
-     "plugins/bot_unified_runtime/domains/transport/sender/__init__.py",
-     0),
-    ("plugins/bot_unified_runtime/sender/onebot.py",
-     "plugins/bot_unified_runtime/domains/transport/sender/onebot.py",
-     0),
-    ("plugins/bot_unified_runtime/sources/fetchers/__init__.py",
-     "plugins/bot_unified_runtime/domains/link_parse/fetchers/__init__.py",
-     0),
     ("plugins/bot_unified_runtime/sources/parsers/__init__.py",
      "plugins/bot_unified_runtime/domains/link_parse/parsers/__init__.py",
      1),
     ("plugins/bot_unified_runtime/sources/registry.py",
      "plugins/bot_unified_runtime/domains/link_parse/support/registry.py",
      4),
-    ("plugins/bot_unified_runtime/sources/subscriptions/__init__.py",
-     "plugins/bot_unified_runtime/domains/subscribe/adapters/__init__.py",
-     0),
 )
 
 #: 待退役(垫片) 现算快照参照点（手写字面量 · 只准降；上升仅在待搬迁等额或更多下降时可放行）。
-SHIM_RETIRE_BASELINE = 23
+SHIM_RETIRE_BASELINE = 14
 #: 待搬迁 现算快照参照点（手写字面量 · 只准降；上升仅在待退役等额或更多下降时可放行）。
 RELOCATE_BASELINE = 45
 #: 【硬锁】域外未落地总量 = 待搬迁＋待退役 之和（手写字面量 · 单调下降，锁加数不锁加项）。
-UNLANDED_SUM_BASELINE = 68
+UNLANDED_SUM_BASELINE = 59
 #: 【硬锁】三态之和 = 域外全量（手写字面量 · 单调下降；正当认领只改分配不改全量）。
-OUTSIDE_BASELINE = 74
+OUTSIDE_BASELINE = 65

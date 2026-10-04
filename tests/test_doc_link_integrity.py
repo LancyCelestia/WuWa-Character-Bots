@@ -1303,7 +1303,10 @@ def test_negative_sample_coord_detection(tmp_path: Path) -> None:
     good = "domains/transport/sender/onebot.py"
     resolved, _ = _resolve("docs/x.md", good)
     assert resolved == _ONEBOT, f"好坐标没解析到真身：{resolved}"
-    resolved2, _ = _resolve("docs/x.md", "capabilities/chat.py")
+    # 2026-10-04 P2 减量波换钉：原负样本 `capabilities/chat.py` 已随退役波物理删除
+    # （其坐标现在解析到 canonical 真身，判不出"垫片档"），改钉长期在册的最重垫片
+    # `output/plain_text.py`（账上引用上限 7＝生产控制面在用，短期不会退役）。
+    resolved2, _ = _resolve("docs/x.md", "output/plain_text.py")
     assert resolved2 and _is_shim(resolved2), "垫片坐标没被认成垫片 ⇒ 垫片档形同虚设"
     assert _truth_retcode(), "真身 retcode 集为空"
     assert len(_truth_event_sources()) >= 6, "真身事件源集异常"
@@ -1317,12 +1320,13 @@ def test_negative_sample_carrier_detection() -> None:
         "## 第四部分：x\n\n"
         "| 功能 | 载体文件 | 子模块 | 入口 |\n|---|---|---|---|\n"
         "| 假能力 | capabilities/definitely_missing_zz.py | x | y |\n"
-        "| 假能力2 | capabilities/chat.py | x | y |\n"
+        "| 假能力2 | output/plain_text.py | x | y |\n"
         "## 第五部分：y\n"
     )
     res = collect_carrier_findings(fake)
     assert res["dead"], "载体列负样本没判成死路径 ⇒ 子门形同虚设"
-    assert res["shim"], "载体列负样本没判成垫片（capabilities/chat.py 应判垫片）"
+    # 2026-10-04 P2 减量波换钉：原负样本 `capabilities/chat.py` 已退役，改钉长期在册垫片。
+    assert res["shim"], "载体列负样本没判成垫片（output/plain_text.py 应判垫片）"
     assert res["literal"] == [], "负样本里混进了合格条目 ⇒ 判据太松"
 
 

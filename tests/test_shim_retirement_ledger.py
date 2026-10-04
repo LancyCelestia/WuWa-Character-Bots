@@ -51,7 +51,19 @@ LEDGER = s34.LEDGER_PY
 #: （本席实测 `--report` 域外 100、三态铺满），是地板 stale 过高误报进展为塌陷。现按现算写入。
 #: 复跑取值：`python scripts/shim_retirement_census.py --report`（「域外 py」行 + 「三态: … 待退役」段）。
 #: 铁律：此地板只准随归位继续下降，**永不因某波把件挪回域外而抬**（那是要红、不是搬账）。
-MIN_OUTSIDE_FLOOR = 66  # 2026-09-29 主树还原波收尾现算 66（原 73；再往前 74/76）：06:30:29 那次还原把
+MIN_OUTSIDE_FLOOR = 65  # 2026-10-04 P2 减量波现算 65（原 66）：上一档 66 系 2026-09-29 主树还原波收尾
+#   为「还原写回的 8 枚垫片按 S-SHIM-WAVE1 原裁定再退一次」预留的预期值，但该批删除当时未落地
+#   （波首现算域外仍 74）。本波（P2 垫片三态退役）把那 8 枚连同 `capabilities/chat.py` 共 **9 枚**
+#   可删档垫片逐枚退役（chat.py/market.py/auto_send/__init__.py/runtime/settings.py/
+#   security/memory_sanitize.py/sender/__init__.py/sender/onebot.py/sources/fetchers/__init__.py/
+#   sources/subscriptions/__init__.py；逐枚 census `reference_index` 现算引用边=0 复核＋全仓精确
+#   grep 零命中），`board_shim_ledger.SHIM_ROWS` 行由 `--write-ledger` 同批摘除 ⇒ 域外**真少九枚**，
+#   非扫描面塌陷。逐枚字节备份 `%TEMP%/p2wave/shim-backup/`（路径镜像）。
+#   复跑取证：`python scripts/shim_retirement_census.py --report` 读「域外 py 65」；
+#   配对锁 `test_copy_redline_gate::test_gate_scope_sanity`（auto_send 退役断言）与
+#   `test_dev_ps1_no_shim_module_targets::test_real_repo_shim_is_detected_by_classifier`
+#   （memory_sanitize 禁回写断言）两枚复活件红随本波转绿。
+#   ── 上一档原文（2026-09-29 主树还原波收尾现算 66；原 73；再往前 74/76）：06:30:29 那次还原把
 #   S-SHIM-WAVE1 T5/T6 已退役的 **8 枚 tracked 垫片连行带件**一起写回盘上（auto_send/__init__.py、
 #   capabilities/market.py、runtime/settings.py、security/memory_sanitize.py、sender/__init__.py、
 #   sender/onebot.py、sources/fetchers/__init__.py、sources/subscriptions/__init__.py），本批按原裁定
@@ -88,7 +100,12 @@ MIN_OUTSIDE_FLOOR = 66  # 2026-09-29 主树还原波收尾现算 66（原 73；�
 #   地板方向＝只准降不升（降须带这种"归位/退役"证据行）；本批旧件已按规程备份
 #   %TEMP%/shim-w2b4-backup-20260927/（decision-trace.py 613B、decision-init.py 664B、
 #   mail_bridge.py 173B、mail_adapter.py 329B，`git show HEAD:` 只读抽取）。
-MIN_SHIM_FLOOR = 15  # 2026-09-29 主树还原波收尾现算 15（原 22；再往前 23/25/28）：与上方 MIN_OUTSIDE_FLOOR
+MIN_SHIM_FLOOR = 14  # 2026-10-04 P2 减量波现算 14（原 15）：与上方 MIN_OUTSIDE_FLOOR 同批同因——
+#   上一档 15 亦是 2026-09-29 为 8 枚复活垫片再退预留的预期值（删除当时未落地）；本波 9 枚退役后
+#   `--report` 现读「待退役(垫片) 14」与「账上登记垫片: 14 枚」两数一致＝记号面没被改窄，
+#   只是在册垫片真少了一枚（第 9 枚＝`capabilities/chat.py`，不在 09-29 那 8 枚清单内）。
+#   逐枚字节备份 `%TEMP%/p2wave/shim-backup/`；复跑：`python scripts/shim_retirement_census.py --report`。
+#   ── 上一档原文（2026-09-29 主树还原波收尾现算 15；原 22；再往前 23/25/28）：与上方 MIN_OUTSIDE_FLOOR
 #   同批同因——还原写回的 8 枚垫片按原裁定再退一次，`--report` 现读「待退役(垫片) 15」与「账上登记垫片: 15 枚」
 #   两数一致＝记号面没被改窄，只是在册垫片真少了七枚。原 22 一档的注记逐字保留在下一行起。：`capabilities/auto_send/__init__.py`
 #   随 06:30 还原被写回、本批按原裁定再退一次（文件退役＋`board_shim_ledger.SHIM_ROWS` 行摘除，

@@ -16,11 +16,9 @@ ALLOWLIST: dict[str, dict[str, str]] = {
     # 创造者单名（澜汐/霞月）不得在用户可见文案单独出现绑定创造者身份。
     # addressing.py 是规则内建豁免（称谓权威模块），不在此登记。
     "creator_name": {
-        "plugins/bot_unified_runtime/capabilities/chat.py": (
-            "管理团队人格注入分区（_render_admin_section 的权威规则文本）："
-            "创造者双名『澜汐、霞月』成对出现于身份权威规则，与 addressing.py 同源同权，"
-            "属人格资产而非普通文案（AGENTS.md 第四部分 角色/权限 v2；persona-trigger-audit.md §二 判合规）。"
-        ),
+        # 2026-10-04 P2 减量波：旧顶层 `capabilities/chat.py` 垫片已退役，其条目随之摘除
+        # （该垫片是 3-18 行 PEP562 转发薄壳，从不含创造者名；管理团队分区的权威文本
+        # 在真身 `domains/chat_reply/capabilities/chat.py`，由 addressing.py 内建豁免同源覆盖）。
         # 2026-09-14 三次扩面（G-08）：人格资产入扫描面后的登记。创造者双名在
         # 人格源里是 identity.md §1.3 稳定世界观事实（人格档案本体，非外发文案）；
         # 防泄漏由输出层 plain_text 打码承担，门保证「登记文件之外的人格文件

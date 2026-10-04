@@ -14,6 +14,9 @@ providers``）会被壳的 ``__getattr__`` 兜到 canonical——静态普查看
 退役台账收口判据会被它糊过去。本门把两种形态一并钉死：**全树不允许再有任何 import
 指向这四条已删路径（含壳包属性形）**。
 
+2026-10-04 P2 减量波续锁 9 枚（复活件二次清偿，`DELETED_MODULES` 追加 8 条 dotted
+path ＋下方物理存在锁扩面），见各清单内注释。
+
 判据口径（防三型假绿）：
 - **扫描面不许塌陷**：只数命中不数被检文件数，glob 一改就能把账做没，故设文件数地板。
 - **注毒走内存源码**：判据函数吃字符串，不往树里写毒件；每形态一发、各杀各锁。
@@ -39,6 +42,20 @@ DELETED_MODULES: frozenset[str] = frozenset(
         "plugins.bot_unified_runtime.llm.providers",
         "plugins.bot_unified_runtime.character.reminders",
         "plugins.bot_unified_runtime.character.vector_knowledge",
+        # ── 2026-10-04 P2 减量波（垫片三态退役·复活件二次清偿）追加 8 条：sender/security
+        #    两包随退役**整目录消失**（前缀匹配连带其一切子模块）；capabilities/runtime/sources
+        #    三父包仍在且是普通命名空间（无惰性 `__getattr__`），属性形 import 会响亮
+        #    ImportError ⇒ 只锁子模块 dotted path、不进 SHELL_PACKAGES。
+        #    逐枚退役前 census `reference_index` 现算引用边=0＋全仓精确 grep 零命中；
+        #    字节备份 `%TEMP%/p2wave/shim-backup/`（路径镜像）。
+        "plugins.bot_unified_runtime.capabilities.auto_send",
+        "plugins.bot_unified_runtime.capabilities.chat",
+        "plugins.bot_unified_runtime.capabilities.market",
+        "plugins.bot_unified_runtime.runtime.settings",
+        "plugins.bot_unified_runtime.security",
+        "plugins.bot_unified_runtime.sender",
+        "plugins.bot_unified_runtime.sources.fetchers",
+        "plugins.bot_unified_runtime.sources.subscriptions",
     }
 )
 
@@ -163,7 +180,7 @@ def test_no_import_targets_deleted_shims() -> None:
 
 
 def test_shell_packages_still_lazy_but_lock_targets_are_gone() -> None:
-    """壳包与四枚垫片文件的现状对照：壳在（不许误删），垫片文件必须已物理消失。"""
+    """壳包与已退役垫片文件的现状对照：壳在（不许误删），垫片文件必须已物理消失。"""
     assert (PKG_ROOT / "llm" / "__init__.py").is_file()
     assert (PKG_ROOT / "character" / "__init__.py").is_file()
     for gone in (
@@ -171,8 +188,29 @@ def test_shell_packages_still_lazy_but_lock_targets_are_gone() -> None:
         PKG_ROOT / "llm" / "providers.py",
         PKG_ROOT / "character" / "reminders.py",
         PKG_ROOT / "character" / "vector_knowledge.py",
+        # ── 2026-10-04 P2 减量波退役 9 件（复活件二次清偿，备份 %TEMP%/p2wave/shim-backup/）：
+        #    本仓已两次实锤「外部 restore 把已退役 tracked 件连文件带账本行写回」（§68；
+        #    HANDOFF-FIXWAVE-20261002 §⑨），物理存在锁与 DELETED_MODULES 同批扩面。
+        PKG_ROOT / "capabilities" / "chat.py",
+        PKG_ROOT / "capabilities" / "market.py",
+        PKG_ROOT / "capabilities" / "auto_send" / "__init__.py",
+        PKG_ROOT / "runtime" / "settings.py",
+        PKG_ROOT / "security" / "memory_sanitize.py",
+        PKG_ROOT / "sender" / "__init__.py",
+        PKG_ROOT / "sender" / "onebot.py",
+        PKG_ROOT / "sources" / "fetchers" / "__init__.py",
+        PKG_ROOT / "sources" / "subscriptions" / "__init__.py",
     ):
         assert not gone.exists(), f"已删垫片又出现在盘上（谁还原的？）：{gone}"
+    # 五个随退役消失的目录（防「空目录先回来」的中间态被当作正常盘面）。
+    for gone_dir in (
+        PKG_ROOT / "security",
+        PKG_ROOT / "sender",
+        PKG_ROOT / "capabilities" / "auto_send",
+        PKG_ROOT / "sources" / "fetchers",
+        PKG_ROOT / "sources" / "subscriptions",
+    ):
+        assert not gone_dir.exists(), f"已退役目录又出现在盘上（谁还原的？）：{gone_dir}"
 
 
 # ------------------------------------------------------------------ 注毒自证（纯内存）
