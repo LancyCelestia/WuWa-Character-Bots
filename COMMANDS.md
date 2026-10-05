@@ -229,7 +229,7 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 backend-smoke -Message 
 | `/bot intimate deep` / `l2` | 同上，进深档：唯一多出来的是**首跳换到该档配置的模型**；叙述面与浅档同权。 |
 | `/bot intimate off` | 收回档位并撤回标记；回到「只用说话回应」的日常段。 |
 | `/bot intimate show` | 只读：当前档位读数逐格（真身＝`runtime/intimate_control.py` 的 `_state_body`，手册不抄成员、不写格数）。不动任何状态。 |
-| `/bot narration speech`（同义 `/bot 描写 speech`） | 本人自助，群侧需管理员（写腿作用域门＝与亲密开关同一个角色集合）：把自己钉回「只说出口的话」，这就是缺省那一格。认不出的子命令一律不受理，不拿错字悄悄改文风。 |
+| `/bot narration speech`（同义 `/bot 描写 speech`） | 本人自助，群／频道侧需管理员（写腿作用域门＝与亲密开关同一个角色集合）：把自己钉回「只说出口的话」，这就是缺省那一格。认不出的子命令一律不受理，不拿错字悄悄改文风。 |
 | `/bot narration scene`（同义 `/bot 描写 scene`） | 同上：把自己钉上「铺开写」。**这一格不等亲密档**（裁定 G-1：普通模式也铺得开）；日常那一档铺开时**语言／动作／神态／心理照写＋外貌作观感＋衣着按当下写＋环境铺开**（裁定 G-4＝乙，10-04 深夜改判；只有"落在身体上的细部"留给亲密档）。🔴 例外一条：**群聊那一侧的 `scene` 不落笔身形／衣着**（裁定 I-3＝丙——群是公共空间、旁人也在看；同一段其余四维与环境照写，长度档不动）。能不能真铺开仍只问 `grants_intimate_narration` 那一处。 |
 | `/bot narration reset`（同义 `/bot 描写 reset`） | 收回这一格交回缺省，只清描写档那两列——称谓、性别自述与关系档不受牵连。 |
 | `/bot narration show`（同义 `/bot 描写 show`） | 只读：描写档、依据、细节描写开没开、库里的钉。`show` 这个词与开关面共用同一枚真身。 |

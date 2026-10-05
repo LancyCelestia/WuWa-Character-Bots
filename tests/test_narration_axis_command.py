@@ -907,3 +907,50 @@ def test_narration_person_key_uses_the_central_constructor_and_normalizer(tmp_pa
     assert cr._narration_person_key(
         group_scope_key(tg_group_key), "", None, platform=""
     ) == ""
+
+
+# ---------------------------------------------------------------- ⑪ channel 归群侧
+#
+# 裁定（用户 2026-10-06「telegram：群侧」）：`channel` 会话形态（Telegram 频道/超级组，
+# 会话键形 `channel_<chat.id>`；QQ 频道另一形 `guild_<g>_channel_<c>`）**按群侧判**，
+# 不再落进"非群即本人自助"那一支。三处同轴：写腿角色门、I-2 的会话齿、I-3 的公共空间界线。
+
+
+def test_channel_sessions_are_judged_group_side() -> None:
+    """写腿门：channel 与 group 同侧（要 admin/super_admin），private/console 仍本人自助。"""
+    assert cr.narration_write_allowed(session_type="group", sender_roles=["user"]) is False
+    assert cr.narration_write_allowed(session_type="channel", sender_roles=["user"]) is False
+    assert cr.narration_write_allowed(session_type="channel", sender_roles=["admin"]) is True
+    assert (
+        cr.narration_write_allowed(session_type="channel", sender_roles=["super_admin"]) is True
+    )
+    assert cr.narration_write_allowed(session_type="private", sender_roles=["user"]) is True
+    assert cr.narration_write_allowed(session_type="console", sender_roles=None) is True
+
+
+def test_channel_pin_gets_its_own_conversation_bucket(tmp_path: Path) -> None:
+    """会话齿：频道那一格不与私聊同桶、也不与别的频道同桶（换会话要重开延伸到群侧）。"""
+    cfg = _addr_config(tmp_path)
+    ch_a = "channel_-1001960000220"
+    ch_b = "channel_-1001960000999"
+    assert cr.write_narration_pin(
+        ch_a, mode=cr.NARRATION_MODE_SCENE, sender_id=_HER_UID, config=cfg,
+        platform="telegram",
+    ) is True
+    assert cr.read_narration_pin(
+        ch_a, sender_id=_HER_UID, config=cfg, platform="telegram"
+    ) == cr.NARRATION_MODE_SCENE
+    # 另一个频道读不到（不同会话＝不同桶）
+    assert cr.read_narration_pin(
+        ch_b, sender_id=_HER_UID, config=cfg, platform="telegram"
+    ) == ""
+    # 🔴 私聊读不到频道那一格——修前同一把 ("private","") 桶，这条就是泄漏面
+    assert cr.read_narration_pin(
+        private_session_key(_HER_UID), config=cfg, platform="telegram"
+    ) == ""
+    assert cr.clear_narration_pin(
+        ch_a, sender_id=_HER_UID, config=cfg, platform="telegram"
+    ) is True
+    assert cr.read_narration_pin(
+        ch_a, sender_id=_HER_UID, config=cfg, platform="telegram"
+    ) == ""

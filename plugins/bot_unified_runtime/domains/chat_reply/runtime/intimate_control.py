@@ -530,6 +530,7 @@ def _narration_state_lines(
     route_key: str,
     sender_id: str,
     platform: str = "",
+    session_type: str,
 ) -> list[str]:
     """当前描写档读数（写腿与 `show` 共用同一份行文，不留两套说法）。
 
@@ -537,11 +538,21 @@ def _narration_state_lines(
     唯一那把尺的来源（人话映射表转过的，绝不外端码串）、`细节描写`＝**尺本身的读数**
     （只准 `grants_intimate_narration(narration_source)` 这一处调用）、`库里的钉`＝
     持久面（`reset` 过就是"没钉过"，与"钉了 speech"分得开）。
+
+    `session_type` 只准转述调用方从契约字段拿到的那一枚（`message.session_type` 的规范值）：
+    钉的会话段由轴心 `_narration_store_scope` 算，**读侧不交会话事实就会落到私聊那一格**，
+    而注入缝（`chat.py` 三处 `resolve_intimate_context`）是按 (`"channel"`, 键) 去读的
+    ⇒ 她在 QQ 频道／公会里 `/bot 描写 scene` 钉进去、聊天主链永远读不到（I-2 同批的
+    另一半；`session_keys` docstring 第 4 条明写 `guild_` 那形中央件不判，只能靠契约字段）。
     """
     mode = str(ctx.get("narration_mode") or "")
     source = str(ctx.get("narration_source") or INTIMATE_SOURCE_NONE)
     pinned = read_narration_pin(
-        route_key, sender_id=sender_id, config=config, platform=platform
+        route_key,
+        sender_id=sender_id,
+        config=config,
+        platform=platform,
+        conversation_type=session_type,
     )
     return [
         f"描写档：{_label(_NARRATION_LABELS, mode)}",
@@ -607,7 +618,11 @@ def build_narration_control_result(
             )
         if parsed == "":
             saved = clear_narration_pin(
-                route_key, sender_id=sender_id, config=config, platform=platform
+                route_key,
+                sender_id=sender_id,
+                config=config,
+                platform=platform,
+                conversation_type=session_type,
             )
         else:
             saved = write_narration_pin(
@@ -616,6 +631,7 @@ def build_narration_control_result(
                 sender_id=sender_id,
                 config=config,
                 platform=platform,
+                conversation_type=session_type,
             )
         # 本轮读数**带着本轮那一格**再合成一次：落库失败时这一句照样算数（写失败不许
         # 升级成"这一轮白说"），成功时读数与库里那份自然同形。
@@ -634,7 +650,8 @@ def build_narration_control_result(
             lines.append(_NARRATION_UNSAVED_SUFFIX)
         lines.extend(
             _narration_state_lines(
-                shown, config, route_key=route_key, sender_id=sender_id, platform=platform
+                shown, config, route_key=route_key, sender_id=sender_id,
+                platform=platform, session_type=session_type,
             )
         )
         if not saved:
@@ -645,7 +662,8 @@ def build_narration_control_result(
         )
     if raw.lower() == SHOW_SUBCOMMAND:
         lines = _narration_state_lines(
-            ctx, config, route_key=route_key, sender_id=sender_id, platform=platform
+            ctx, config, route_key=route_key, sender_id=sender_id,
+            platform=platform, session_type=session_type,
         )
         return _text_result(
             request_id,
@@ -660,7 +678,8 @@ def build_narration_control_result(
         )
     head = [] if not raw else [f"没认出这个子命令：{raw}"]
     body = "\n".join([*head, *_narration_state_lines(
-        ctx, config, route_key=route_key, sender_id=sender_id, platform=platform
+        ctx, config, route_key=route_key, sender_id=sender_id,
+        platform=platform, session_type=session_type,
     ), *_NARRATION_USAGE_LINES, INTIMATE_HELP_POINTER])
     verb = "usage" if not raw else "unknown"
     return _text_result(

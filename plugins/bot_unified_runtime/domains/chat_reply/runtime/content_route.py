@@ -90,7 +90,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Final
 
 from plugins.bot_unified_runtime.domains.chat_reply.character.relationships import (
     relation_instruction,
@@ -821,10 +821,27 @@ def _narration_person_key(
     return _explicit_pin_person_key(session_key, config)
 
 
+#: 公共空间会话面（用户 2026-10-06 裁「telegram：群侧」）：`channel`（Telegram 频道/超级组，
+#: 键形 `channel_<chat.id>`；QQ 频道另形 `guild_<g>_channel_<c>_<u>`）与 `group` **同侧**。
+#: 判据只这一枚，三处共用：写腿角色门、I-2 的会话齿、I-3 的"群里不落笔身形衣着"界线——
+#: 各写一份就是第二把尺。取值只认契约字段 `IncomingMessage.session_type` 的规范形
+#: （`contracts/runtime.py:SessionType.CHANNEL="channel"`），**不靠会话键前缀猜**
+#: （中央件 docstring 第 4 条：`guild_/friend_/console_` 诸形一律不判，字符串前缀不是判据）。
+PUBLIC_SPACE_SESSION_TYPES: Final[frozenset[str]] = frozenset({"group", "channel"})
+
+
+def is_public_space_session(session_type: Any) -> bool:
+    """这一轮是不是"旁人也在看"的公共空间会话（群侧的统一判据，唯一出处）。"""
+    return str(session_type or "").strip().lower() in PUBLIC_SPACE_SESSION_TYPES
+
+
 def narration_write_allowed(*, session_type: str, sender_roles: Any) -> bool:
-    """描写档**写腿**的作用域门（唯一判据处；命令面只准调它，不许自己抄角色集合）。"""
-    if str(session_type or "").strip().lower() != "group":
-        return True  # 非群侧＝本人自助（G-3 只收群侧）
+    """描写档**写腿**的作用域门（唯一判据处；命令面只准调它，不许自己抄角色集合）。
+
+    群侧（含 2026-10-06 归进来的 `channel`）要 admin/super_admin；私聊/控制台本人自助。
+    """
+    if not is_public_space_session(session_type):
+        return True  # 非公共空间＝本人自助（G-3 只收群侧）
     try:
         from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
             ROLE_ADMIN,
@@ -837,7 +854,7 @@ def narration_write_allowed(*, session_type: str, sender_roles: Any) -> bool:
     return bool(roles & {ROLE_ADMIN, ROLE_SUPER_ADMIN})
 
 
-def _narration_store_scope(session_key: str) -> tuple[str, str]:
+def _narration_store_scope(session_key: str, session_type: str = "") -> tuple[str, str]:
     """描写钉三元组里的**会话段** `(session_type, session_id)`（I-2，2026-10-04 21:0x 裁定）。
 
     她原话：「'跟着人走'的意思就是，在这个会话里面跟着这个人走……换了会话就需要重新激发。
@@ -849,6 +866,11 @@ def _narration_store_scope(session_key: str) -> tuple[str, str]:
     （读点交进来的是 `route_key`），再 `parse_session_key` 认形，禁自拼第四形。
 
     - 群 ⇒ ``("group", 群号)``：同一个人换群＝换桶（她要的"重开一次"）。
+    - 频道 ⇒ ``("channel", 该频道会话键)``（用户 2026-10-06 裁「telegram：群侧」）：
+      一个频道一把桶，频道之间、频道与私聊之间**都不同桶**。认形以契约字段
+      `session_type` 为正解（中央件对 `channel_/guild_` 诸形明写"不判"，见
+      `session_keys` docstring 第 4 条）；只有拿不到契约字段时才退到**前缀 fallback**——
+      那一退的方向是 fail-closed（宁可多分一刀桶，也绝不把公共空间的钉折进私聊那一格）。
     - 私聊／控制台／认不出 ⇒ 沿用 ``("private", "")`` 那一格：私聊这一路"会话"就是这个人，
       键形不必变 ⇒ **她私聊里已有的钉原地不动，零迁移**。
     """
@@ -856,9 +878,12 @@ def _narration_store_scope(session_key: str) -> tuple[str, str]:
     split = split_member_session_key(key)
     if split is not None:
         key = split[0]
+    st = str(session_type or "").strip().lower()
     parsed = parse_session_key(key)
     if parsed.kind == KIND_GROUP and parsed.group_id:
         return "group", str(parsed.group_id)
+    if st == "channel" or (not st and key.lower().startswith("channel_")):
+        return "channel", sanitize_key_segment(key, forbidden=_MEMBER_SCOPE_SEP)[:128]
     return _EXPLICIT_PIN_SESSION_TYPE, _EXPLICIT_PIN_SESSION_ID
 
 
@@ -868,6 +893,7 @@ def read_narration_pin(
     sender_id: str = "",
     config: Any = None,
     platform: Any = "",
+    conversation_type: str = "",
 ) -> str:
     """库里有哪枚描写档钉（``""``＝没钉过／读不出／没配这本库）；原样交回、不猜档。
 
@@ -882,7 +908,7 @@ def read_narration_pin(
         store = _explicit_pin_store(config)
         if store is None:
             return ""
-        session_type, session_id = _narration_store_scope(session_key)
+        session_type, session_id = _narration_store_scope(session_key, conversation_type)
         mode, _updated_at = store.get_narration_pin(
             session_type=session_type,
             session_id=session_id,
@@ -900,6 +926,7 @@ def write_narration_pin(
     sender_id: str = "",
     config: Any = None,
     platform: Any = "",
+    conversation_type: str = "",
 ) -> bool:
     """钉下「此人要 ``mode`` 这一格描写」（覆盖旧值；时刻取墙钟）。轴外的值拒收。
 
@@ -916,7 +943,7 @@ def write_narration_pin(
         store = _explicit_pin_store(config)
         if store is None:
             return False
-        session_type, session_id = _narration_store_scope(session_key)
+        session_type, session_id = _narration_store_scope(session_key, conversation_type)
         store.set_narration_pin(
             session_type=session_type,
             session_id=session_id,
@@ -935,6 +962,7 @@ def clear_narration_pin(
     sender_id: str = "",
     config: Any = None,
     platform: Any = "",
+    conversation_type: str = "",
 ) -> bool:
     """收回钉（``reset``）：只清那两格，**不删整行**（称谓／性别自述／关系档不是这条指令说过的话）。
 
@@ -948,7 +976,7 @@ def clear_narration_pin(
         store = _explicit_pin_store(config)
         if store is None:
             return False
-        session_type, session_id = _narration_store_scope(session_key)
+        session_type, session_id = _narration_store_scope(session_key, conversation_type)
         store.clear_narration_pin(
             session_type=session_type,
             session_id=session_id,
@@ -967,6 +995,7 @@ def _narration_axis_reading(
     turn_narration_mode: Any = "",
     platform: Any = "",
     intimate_scene_source: str = "",
+    session_type: str = "",
 ) -> tuple[str, str]:
     """优先级四格 → ``(narration_mode, narration_source)``；授予与否由调用方问唯一那把尺。
 
@@ -1002,7 +1031,11 @@ def _narration_axis_reading(
             else (raw_turn, INTIMATE_SOURCE_NONE)
         )
     pinned = read_narration_pin(
-        session_key, sender_id=sender_id, config=config, platform=platform
+        session_key,
+        sender_id=sender_id,
+        config=config,
+        platform=platform,
+        conversation_type=session_type,
     )
     if pinned == NARRATION_MODE_SCENE:
         return NARRATION_MODE_SCENE, INTIMATE_SOURCE_NARRATION_PIN
@@ -1924,6 +1957,7 @@ def resolve_intimate_context(
             turn_narration_mode=turn_narration_mode,
             platform=platform,
             intimate_scene_source=intimate_scene_source,
+            session_type=session_type,
         )
         return {
             "eligible": eligible,

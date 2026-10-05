@@ -191,6 +191,7 @@ from plugins.bot_unified_runtime.runtime.content_route import (
     SHARED_CONTENT_ROUTE_ENGINE,
     explicit_allowed_for_session,
     grants_intimate_narration,
+    is_public_space_session,
     match_intimate_command,
     match_master_love_admin,
     member_session_key,
@@ -5178,16 +5179,16 @@ def build_chat_result(
         # 样式段＝表驱动（(描写档, 亲密授予态) → 段 × 会话面二选一），本波从「二选一」升级而来。
         # 传进表的轴值过的是 `_rp_scene_now` 那道外门：safety 拦截轮／路由关／未准入
         # 会话一律收回 `speech` 那一格 ⇒ 被拦的那一轮拿不到任何"展开描写"的鼓励。
-        # I-3＝丙（2026-10-04 深夜）加**会话面**那一枚参数：群是公共空间，群侧的 `scene`
-        # 不落笔身形／衣着（私聊照旧，其余四维与环境段照写）。判据只转述本函数已有的
-        # `_session_type_value`（口径同上面 `_auto_pin_key` 那一支与出站那把公共尺
-        # `reviewer.py` 的 `SessionType.GROUP` 单值），**没有**新建第三把尺；`"channel"`
-        # 归哪一侧未裁 ⇒ 本波照旧按私聊面取段（收窄的方向由裁定说了算，不由顺手说了算）。
+        # I-3＝丙（2026-10-04 深夜）加**会话面**那一枚参数：公共空间不落笔身形／衣着
+        # （私聊照旧，其余四维与环境段照写）。判据只转述中央那把唯一的尺
+        # `content_route.is_public_space_session`（用户 2026-10-06 裁「telegram：群侧」⇒
+        # `group` 与 `channel` 同侧；写腿角色门、I-2 会话齿、这一处**共用同一枚判据**，
+        # 在这里手抄 `== "group"` 就是长出第二把尺、并把频道悄悄放回私聊面）。
         # 长度档／升格腿（上面 `_floor_tier` 那一支）与审计标签一字未动。
         "content": resolve_rp_style_block(
             NARRATION_MODE_SCENE if _rp_scene_now else NARRATION_MODE_SPEECH,
             intimate=_rp_intimate_now,
-            group=_session_type_value == "group",
+            group=is_public_space_session(_session_type_value),
         ),
     })
     if (

@@ -14,9 +14,9 @@
 3. **认不出的平台只会给出更窄的那一格**（speech／不授予），永不更宽。
 4. **重启模拟**：换一具全新的引擎实例（进程内档态清零）之后，本人的描写钉照旧读得到。
 
-🔴 本波**只**接平台这一维：钉的作用域**仍是"整个人"全局**（`(平台域, 用户号)`），
-不是"每 (平台, 会话, 人)"——会话那一维是**另一条待裁的裁定**（等设计回报），别把
-这里读成已经做完。
+🔴 本件判的是**接线**：平台那一维之外，会话那一维（I-2 的 (平台域, 会话, 人) 三段键，
+2026-10-04 裁定）与"公共空间归哪一侧"（用户 2026-10-06 裁「telegram：群侧」）也都各有一枚
+调用点锁，见下面 ③ 段——**三处消费方必须交同一个会话事实**，只接一侧就是 #33★ 那族病。
 
 夹具铁律照 `tests/test_narration_axis_styles.py`（规则 6／台账 #66★／#76★）：走
 `/bot reply`-类命令面与聊天主链的测试必 monkeypatch `shared_reply_policy_store`；
@@ -51,6 +51,9 @@ from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import 
 from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
     content_route as cr,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+    intimate_control as ic,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
     SHARED_CONTENT_ROUTE_ENGINE,
     grants_intimate_narration,
@@ -67,6 +70,15 @@ _CHAT_SRC = (
     / "chat.py"
 )
 _INIT_SRC = _ROOT / "plugins" / "bot_unified_runtime" / "__init__.py"
+_IC_SRC = (
+    _ROOT
+    / "plugins"
+    / "bot_unified_runtime"
+    / "domains"
+    / "chat_reply"
+    / "runtime"
+    / "intimate_control.py"
+)
 
 _QQ_UID = "7770002299"
 _TG_SESSION = f"private_{_QQ_UID}"          # TG 私聊键形（中央件 FORM_PRIVATE 的另一写法）
@@ -401,3 +413,160 @@ def test_the_pin_survives_a_fresh_engine_instance(tmp_path: Path) -> None:
     SHARED_CONTENT_ROUTE_ENGINE._sessions = OrderedDict()
     joined = _one_turn(platform="qq", session_id=_QQ_SESSION, cfg=cfg)
     assert any(h in joined for h in _scene_headers()), "新引擎实例读不到自己的钉＝键形随进程漂"
+
+
+# -------------------------------------- ③ 会话维接线（I-2 落地 ＋ 用户 2026-10-06 裁「telegram：群侧」）
+
+#: 描写钉的**会话段**唯一的交法：命令面三处取钉口各转述一次本函数已有的 `session_type`
+#: （契约字段 `IncomingMessage.session_type` 的规范值），与注入缝那一支同源。
+_CONV_LINE = "conversation_type=session_type,"
+
+#: 会话面归侧的**唯一判据**名（`content_route.is_public_space_session`）；样式表选择点
+#: 只准转述它，抄一份 `== "group"` 就是第二把尺（公共空间判据三处共用，见轴心 docstring）。
+_PUBLIC_RULER = "is_public_space_session"
+
+
+def _missing_conversation_type_sites(src: str, path_name: str) -> list[str]:
+    """三枚取钉口（读／写／收）每一处都必须交会话事实，且值只准出自 `session_type`。"""
+    bad: list[str] = []
+    for name in ("read_narration_pin", "write_narration_pin", "clear_narration_pin"):
+        for call in _call_sites(src, name):
+            given = _kwarg_source(src, call, "conversation_type")
+            if not given:
+                bad.append(f"{path_name}:{call.lineno} `{name}` 没交 conversation_type")
+            elif "session_type" not in given:
+                bad.append(
+                    f"{path_name}:{call.lineno} {name}(..., conversation_type={given!r}) "
+                    "交的不是本函数已有的 session_type（猜键形＝T-1 同族）"
+                )
+    return bad
+
+
+def test_every_narration_pin_site_in_the_command_leg_threads_the_session_type() -> None:
+    """`intimate_control.py` 三处取钉口**逐处**交 `conversation_type=session_type`。
+
+    未接的那一侧会落到 `("private", "")` 那一格，而注入缝按 (`"channel"`, 键) 去读 ⇒
+    她在 TG 频道里 `/bot 描写 scene` 钉进去，聊天主链永远读不到（写在 A 形、读在 B 形，
+    #33★ 那族在会话维上的另一型；台账 T-1 的复发形态）。
+    """
+    src = _IC_SRC.read_text(encoding="utf-8")
+    sites = [
+        call
+        for name in ("read_narration_pin", "write_narration_pin", "clear_narration_pin")
+        for call in _call_sites(src, name)
+    ]
+    assert len(sites) == 3, f"取钉口数量变了（现算 {len(sites)} 处）：请同步本锁与接线"
+    assert _missing_conversation_type_sites(src, _IC_SRC.name) == []
+    assert src.count(_CONV_LINE) == 3, (
+        f"三处接线形状变了（现算 {src.count(_CONV_LINE)} 处）：请同步本件"
+    )
+
+
+def _style_group_source(src: str) -> str:
+    """样式表选择点那一处 `group=` 的**源码文本**（选择点全仓唯一，多处＝先同步本件）。"""
+    calls = _call_sites(src, "resolve_rp_style_block")
+    assert len(calls) == 1, f"样式段注入点应恰好一处，现算 {len(calls)} 处"
+    return _kwarg_source(src, calls[0], "group")
+
+
+def test_the_style_table_choice_uses_the_one_public_space_ruler() -> None:
+    """样式表选择点（`chat.py` 唯一一处 `resolve_rp_style_block`）的 `group=` 只准转述中央判据。
+
+    方向是**变严**：`channel` 归群侧后，群侧那张表（不落笔身形／衣着）覆盖的会话面只会
+    更大，不会更小；把判据抄回 `== "group"` 等于悄悄把频道放回了私聊面。
+    """
+    src = _CHAT_SRC.read_text(encoding="utf-8")
+    given = _style_group_source(src)
+    assert _PUBLIC_RULER in given, (
+        f"group={given!r} 没走中央那把尺 `{_PUBLIC_RULER}`＝第二把尺（或频道归侧没接上）"
+    )
+    assert f"def {_PUBLIC_RULER}" not in src, "chat.py 里自己造了一枚同名判据＝第二真身"
+    assert f"{_PUBLIC_RULER}," in src, "chat.py 没从 content_route 导入那把尺"
+
+
+def _channel_reading(cfg: Any, session_key: str) -> dict[str, Any]:
+    return cr.resolve_intimate_context(
+        SHARED_CONTENT_ROUTE_ENGINE,
+        session_type="channel",
+        sender_id=_QQ_UID,
+        session_key=session_key,
+        config=cfg,
+        platform="telegram",
+    )
+
+
+#: 两形都要：`channel_<chat.id>` 是 TG 侧写法（键形自己带得出"频道"，前缀 fallback 兜得住）；
+#: `guild_<g>_channel_<c>_<u>` 是官方 QQ 适配器写法，中央件 `session_keys` docstring 第 4 条
+#: 明写它**不判** ⇒ 只有契约字段 `session_type` 交进来才分得开桶。只测前一形＝把 fallback
+#: 当接线（真接线没被量到）。
+_CHANNEL_KEYS = ("channel_-1001234567890", "guild_98765_43210_7770002299")
+
+
+@pytest.mark.parametrize("session_key", _CHANNEL_KEYS)
+def test_a_channel_pin_written_by_the_command_is_read_by_the_injection_leg(
+    session_key: str, tmp_path: Path
+) -> None:
+    """行为面（不只形状）：频道里管理员亲手钉下的 `scene`，注入缝那次读数必须吃到。
+
+    键形一律现算自中央件（`route_key` 由 `resolve_intimate_context` 交回），测试不猜第四形。
+    """
+    cfg = _db_cfg(tmp_path, f"channel-roundtrip-{session_key[:6]}")
+    before = _channel_reading(cfg, session_key)
+    assert before["narration_mode"] != cr.NARRATION_MODE_SCENE, (
+        "夹具没清干净：这一格改判前就已经是 scene，下面的断言会在空跑"
+    )
+    ic.build_narration_control_result(
+        config=cfg,
+        request_id="req-channel-pin",
+        subcommand="scene",
+        session_type="channel",
+        session_key=session_key,
+        sender_id=_QQ_UID,
+        sender_roles=["super_admin"],
+        platform="telegram",
+    )
+    after = _channel_reading(cfg, session_key)
+    assert after["narration_mode"] == cr.NARRATION_MODE_SCENE, (
+        f"命令面钉在频道里、注入缝读不到（现算 {after['narration_mode']!r}）"
+        "＝会话维只接了一侧"
+    )
+    assert grants_intimate_narration(str(after["narration_source"])) is True, after
+
+    private = cr.resolve_intimate_context(
+        SHARED_CONTENT_ROUTE_ENGINE,
+        session_type="private",
+        sender_id=_QQ_UID,
+        session_key=f"private_{_QQ_UID}",
+        config=cfg,
+        platform="telegram",
+    )
+    assert private["narration_mode"] != cr.NARRATION_MODE_SCENE, (
+        "频道那枚钉串进了私聊那一格＝换会话不用重开（I-2 要求换会话重钉）"
+    )
+
+
+def test_conversation_wiring_lock_goes_red_on_a_poisoned_copy() -> None:
+    """注毒自证两腿：抹掉一处 `conversation_type=` ⇒ 尺红；把 `group=` 换回手抄的等值判断 ⇒ 尺红。
+
+    只毒内存里的副本，源码树一字不动（失效形态 247／#68★：修法在册≠修好在盘）。
+    """
+    original = _IC_SRC.read_text(encoding="utf-8")
+    total = original.count(_CONV_LINE)
+    assert total == 3, f"命令面接线形状变了（现算 {total} 处）：请同步本件"
+    lines = original.splitlines(keepends=True)
+    index = next(i for i, line in enumerate(lines) if line.strip() == _CONV_LINE)
+    lines[index] = ""
+    stripped = "".join(lines)
+    assert stripped.count(_CONV_LINE) == total - 1, "注毒没恰好少一处"
+    hits = _missing_conversation_type_sites(stripped, "ic_strip.py")
+    assert len(hits) == 1 and "没交 conversation_type" in hits[0], hits
+
+    src = _CHAT_SRC.read_text(encoding="utf-8")
+    given = _style_group_source(src)
+    assert _PUBLIC_RULER in given, "选择点还没走中央判据＝注毒腿没有可毒的锚（先接线性）"
+    poisoned_chat = src.replace(f"group={given}", 'group=_session_type_value == "group"', 1)
+    assert poisoned_chat != src, "注毒没落到选择点＝空跑"
+    assert _PUBLIC_RULER not in _style_group_source(poisoned_chat), (
+        "手抄一份等值判断后尺没照出来＝这把尺是瞎的"
+    )
+
