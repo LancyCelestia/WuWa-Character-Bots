@@ -11,8 +11,10 @@
 3. **`show` 是只读查询**：既不动钉，也只准说人话。三条红线——
    ① 内部码串（模型名/来源串/档位码）绝不外端，来源必须过本模块的人话映射表；
    ② 长度**只报档名、不报字数区间**（正文里连数字都不该出现）；
-   ③ 生效长度档必须走 `chat.py` 那条**四层优先级链**（运行时覆盖→该人永久策略→
-      `BOT_REPLY_DETAIL`→auto）——只读 `config.bot_reply_detail` 就是谎报。
+   ③ 生效长度档必须走 `chat.py` 那条**四层优先级链**（本轮明示→该人永久策略→
+      全局 `BOT_REPLY_DETAIL`（覆盖册那枚常驻值在这一层）→auto）——只读
+      `config.bot_reply_detail` 就是谎报；把常驻值当本轮明示同样就是谎报
+      （2026-10-04 根修，见 `test_show_length_tier_durable_override_yields_to_person_policy`）。
 4. **裸命令必须自己交出「用法 + 当前档 + 指路一行」**。今天裸 `/bot intimate` 是靠
    `_handle_status` 落空后经 `bot.help` → `_HELP_ALIAS_MAP["intimate"]` 出帮助页的；
    新加一支 elif 就把那条旧行为顶掉了 ⇒ 不补就是静默回归，所以这条进锁。
@@ -509,15 +511,48 @@ def test_show_length_tier_follows_per_user_policy_over_config() -> None:
     assert "详略：简洁" in body, body
 
 
-def test_show_length_tier_runtime_override_beats_person_policy() -> None:
-    """层①（运行时覆盖）压过层②——次序与 `chat.py` 那条链逐字同形。"""
+def test_show_length_tier_falls_to_global_when_person_said_nothing() -> None:
+    """层③（全局档，含覆盖册那枚常驻值）的本职：**没表过态的人**照它报。
+
+    2026-10-04 重述：本件旧名/旧判据是「层①运行时覆盖压过层②永久策略」——那是把
+    跨重启的常驻热改当成了「本轮明示」，与她 2026-09-28 的链原文相反（正解由
+    `test_show_length_tier_durable_override_yields_to_person_policy` 钉住）。
+    这里保留同一组读数（`auto` ⇒ 适中），但换成它真正能证明的那件事：
+    这位没钉过策略的人，报的就是覆盖册那一层的档，而不是 config 里那枚 detail。
+    """
     cfg = _config("1000000114", bot_reply_detail="detail")
+    store = rp_module.shared_reply_policy_store(cfg)
+    assert store is not None
+    assert (
+        store.read_policy(person_reply_policy_key(sender_id=_ADMIN))[0] is None
+    ), "本件要测『没表过态』，这个人库里不能有行"
+    body = _slash(
+        "show",
+        config=cfg,
+        sender=_ADMIN,
+        runtime_settings=_RuntimeOverrides({"BOT_REPLY_DETAIL": "auto"}),
+    ).body
+    assert "详略：适中" in body, body
+
+
+def test_show_length_tier_durable_override_yields_to_person_policy() -> None:
+    """层③（覆盖册里**常驻**的全局档）必须给层②（该人永久策略）让路。
+
+    她 2026-09-28 裁的链原文＝「当轮明示 > 永久策略 > 全局 BOT_REPLY_DETAIL > 缺省」。
+    覆盖册里那枚 `BOT_REPLY_DETAIL` 是某次 `/bot runtime set` 留下的**跨重启常驻值**，
+    它属于第③层「全局档」，不是第①层「当轮明示」——把它当层①，就等于一枚常驻值
+    把每一个人的永久策略整段静音（2026-10-03 现网实锤：她钉过「每次回复要600字以上」
+    `verbose`，实测收到 60 / 135 / 151 / 189 字）。
+    「本轮真的又说明示」那一层由既有那把锁 `..._explicit_override_beats_permanent_policy`
+    守，本格只钉常驻值不得压过策略。
+    """
+    cfg = _config("1000000117", bot_reply_detail="auto")
     store = rp_module.shared_reply_policy_store(cfg)
     assert store is not None
     store.put(
         ReplyPolicy(
             person_key=person_reply_policy_key(sender_id=_ADMIN),
-            length_mode="concise",
+            length_mode="verbose",
         )
     )
     body = _slash(
@@ -526,7 +561,7 @@ def test_show_length_tier_runtime_override_beats_person_policy() -> None:
         sender=_ADMIN,
         runtime_settings=_RuntimeOverrides({"BOT_REPLY_DETAIL": "auto"}),
     ).body
-    assert "详略：适中" in body, body
+    assert "详略：详尽" in body, f"常驻全局档把她的永久策略压掉了：{body}"
 
 
 def test_show_length_tier_reports_tier_name_only() -> None:

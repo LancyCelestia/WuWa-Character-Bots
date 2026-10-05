@@ -1190,9 +1190,9 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '权限=仅管理员；在哪个群/私聊执行就对哪个会话生效，各会话互不影响；只影响称呼与语气，人格不变（渲染层内建防 OOC 护栏）。',
                 '/bot identity set-name <称呼>：作用=设置机器人对你的称谓偏好；参数=称呼（必填，非空，≤32 字）；内容=已记下确认；意义=无需管理员，你自己决定机器人怎么叫你（群里按「这个群+你」生效，私聊按你生效）。',
                 '/bot identity set-gender <male|female|nonbinary|custom|unknown>：作用=登记你的性别自述；参数=五个值之一（大小写不敏感）；内容=已记下确认；意义=让语气分寸更合适；非法值不记录并列出可接受值。',
-                '/bot identity unset-name：作用=清除称谓偏好；参数=无；内容=已清除/本就没有；意义=恢复自动称呼。',
-                '/bot identity unset-gender：作用=清除性别自述；参数=无；内容=已清除/本就没有；意义=恢复 unknown。',
-                '自助子命令权限=所有用户（只能操作自己的偏好，无他人参数）；unset-name/unset-gender 为整条记录清除（称谓与性别自述一并移除），unset-relation 只清关系档那一列；称谓偏好与上方管理员会话身份是两套数据，自助偏好优先级更高；关系档的开关语义与词表口径见「亲密模式」模块（/bot help 亲密模式）。',
+                '/bot identity unset-name：作用=只清称谓偏好那一列；参数=无；内容=已清除（并点名这一行上原样保住的性别自述／关系档／亲密档／描写档）或本来就没有；意义=恢复自动称呼，别人的格子一格都不动（2026-10-04 用户裁定 F-8 甲＝按列清、不删整行）。',
+                '/bot identity unset-gender：作用=只清性别自述那一列；参数=无；内容=已清除或本来就没有（同样点名保住的格子）；意义=性别自述回到 unknown，称谓偏好、关系档与两枚标记列一概不动（与 unset-name 同一条按列清腿）。',
+                '自助子命令权限=所有用户（只能操作自己的偏好，无他人参数）；unset-name 只清称谓偏好那一列、unset-gender 只清性别自述那一列（2026-10-04 裁定 F-8 甲＝按列清、**不删整行**），unset-relation 只清关系档那一列；两枚标记列（亲密档／描写档）谁的一条 unset 都碰不到，要收回请各自走「亲密模式 关」／/bot intimate off 与 /bot narration reset；称谓偏好与上方管理员会话身份是两套数据，自助偏好优先级更高；关系档的开关语义与词表口径见「亲密模式」模块（/bot help 亲密模式）。',
             ],
             "detail": (
                 '【板块介绍】\n'
@@ -2048,7 +2048,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "lines": [
                 '同意卡 待批：作用=列出还没人批的工单；参数=无；内容=每张卡的工单号、短码、要改哪枚参数、旧值→新值、风险档、申请人、签出与过期时刻；意义=点头之前先把要改的东西看完整，不靠别人转述。',
                 '同意卡 看 <工单号>：作用=单看一张卡的全文；参数=工单号（卡面上那一串，必填）；内容=与待批页同一套字段，多一个「状态」；意义=群里传话传了一半时，以账上的原文为准。',
-                '同意卡 批 <工单号> <短码>：作用=照卡面批准这一件；参数=工单号 + 卡上短码（两个都必填，短码必须逐字对上）；内容=批语已记下，并说清接下来该谁做什么；意义=危险的参数改动要的是有权限的人亲手的一句话，不是模型顺手的一个字。',
+                '同意卡 批 <工单号> <短码>：作用=照卡面批准这一件；参数=工单号 + 卡上短码（两个都必填，短码必须逐字对上）；内容=批语已记下，再照变更流水现算一句「这张卡落没落」的回执；意义=危险的参数改动要的是有权限的人亲手的一句话，不是模型顺手的一个字。',
                 '同意卡 驳 <工单号> <短码>：作用=驳回并作废这张卡；参数=工单号 + 短码；内容=已驳回，这张卡不再有效；意义=不想改就明说不改，别让它挂到过期还占着待办。',
                 '认不下的句子一律不当命令：触发词后面跟了我看不懂的东西，我就当没听见，绝不「大概像」就把它读成一次批准。',
             ],
@@ -2058,15 +2058,17 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '  分级表唯一住 domains/core/safety_exec/config_risk.py，同意账唯一住 domains/core/safety_exec/consent.py，\n'
                 '  执法点唯一住 domains/core/safety_exec/settings_gate.py——本命令面零判定、零第二本账，只把一句入站消息交给它。\n'
                 '【档位是什么】\n'
-                '  R0 不问就改（每次照记一行流水）；R1 由管理员在原会话里确认（超管本人发起的 R1 免卡直改）；R2 要超级管理员在私聊里亲口批；\n'
+                '  R0 不问就改（每次照记一行流水）；R1 由管理员在原会话里确认，发起人是超管也一样先签卡（没有免卡直改这条腿）；R2 要超级管理员在私聊里亲口批；\n'
                 '  R3 连批都不给，只允许出待审补丁，部署由主人亲手做。\n'
                 '【权限与效果】\n'
                 '  权限=管理员可看单；一张具体的卡够不够格批，由账上的阶梯判：可信级、私聊门、原会话门、\n'
                 '  发起人不得批自己发起的那张（超管例外）、一次性、到点作废（不可续）。判据只有一处，这里不复制。\n'
                 '  效果=改动的真身在批之前一个字节都不动；短码对不上不算批也不算驳，那张卡照旧待批，但这次尝试会落一条流水。\n'
                 '【批了之后】\n'
-                '  批准即当场落地：核销那一刻我照卡上冻结的那件事直接落笔，不用再发一遍；凭证一次有效。\n'
-                '  账本装不上、值与当初批的对不上、没有热改路径的，一律不改并退回同参重发，明说为什么——不做「看起来改了」那种回显。\n'
+                '  批准只完成记账：凭证按卡上冻结的那件事收进同意账，一次有效；没有「批完自动回灌执行」这条腿，我不会因为一句批准就去动参数。\n'
+                '  要真落地，请原来发起这件事的人用卡上同一参数再说一次——值与当初批的对不上、账本装不上、没有热改路径的，一律不改并明说为什么。\n'
+                '  「落没落」这句回显照变更流水现算：有这张卡的落笔行才点名键与指纹说它落了；停在失败、或终态我认不得，就两头都不声称；\n'
+                '  一行都查不到，我直说这次批准没有改动任何参数，并请发起人同参再提一次；流水读不到也照样不声称——不做「看起来改了」那种回显。\n'
                 '【示例】同意卡 待批｜同意卡 看 3f2a1b｜同意卡 批 3f2a1b 8c1d4e7a｜书面同意 驳 3f2a1b 8c1d4e7a'
             ),
         },
@@ -2510,7 +2512,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '亲密模式',
             "admin_only": False,
             "aliases": ('亲密模式', '亲密档位', 'intimate', 'qinmimoshi'),
-            "index": '【亲密模式】整句开关：亲密模式 开|深开|关｜命令开关：/bot intimate on|deep|off|show（不带子命令＝用法＋当前档）｜关系档自助设定：/bot identity set-relation|unset-relation|show-relation',
+            "index": '【亲密模式】整句开关：亲密模式 开|深开|关｜命令开关：/bot intimate on|deep|off|show（不带子命令＝用法＋当前档）｜描写档：/bot narration（同义 /bot 描写）speech|scene|reset|show｜关系档自助设定：/bot identity set-relation|unset-relation|show-relation',
             "title_line": '【亲密模式】这一阵用什么语气相处，你们自己说（整句开关＋关系档）',
             "lines": [
                 '亲密模式 开（同义：亲密模式开／开启亲密模式／打开亲密模式／亲密模式 on）：作用=把当前会话上到亲密档的**浅档**（只给关系语气，不改默认模型）；参数=无（整句才算命令，句子中间带这几个字不算）；内容=一句守岸人语气的确认；意义=想被更柔软地对待就说一句，不必念名单。',
@@ -2521,15 +2523,21 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '五维展开描写给谁：作用=决定这一轮把场景铺开写，还是只用说话回应；参数=无——不看名单、不看好感度深浅，只看这枚亲密档**是被谁推上去的**；内容=语言／动作／神态／心理／外貌五维（连同呼吸、触感与周遭）只授予人亲手推动的三支：本人显式那句「亲密模式 开／深开」、管理员替全群钉上的那枚、内容信号自己跨了阈；Master Love 名单派生与好感度达档自动只给语气与放行，写的仍是日常那段「只说话」；意义=「进了亲密档」与「有权铺开写」是两件事，判据真身＝content_route 的 grants_intimate_narration，本册不抄第二份成员表。',
                 '写多长这一维：作用=说清长度的真身在哪一处、亲密档不另立第二把尺；参数=无；内容=两段场景指令里都没有任何长度口径，唯一那一行长度分档指令仍按你的详略档与本轮问题取值（真身＝chat 能力的 intimate_reply_length_tier 与 REPLY_LENGTH_TIERS），只有拿到展开描写授权的那一轮才把生效档直接取到长度登记表的顶格档（现名「铺写」），钉过「短一点」的人同样到顶，未获授权的轮次一字不动；意义=换档只换描写维度，不会一换成亲密档就把你自己钉过的讲法整段盖掉。',
                 '/bot identity set-relation <关系>：作用=告诉守岸人你们是什么关系，让这一档有具体的形状；参数=受控词表内的关系或其口语别名（词表与每档语气指令的真身=character/relationships.py，本册零抄录）；内容=已记下的档号；意义=同一句「亲密模式 开」，关系不同语气就该不同；词表外的值不落档也不清档，并把整张词表回给你。',
-                '/bot identity unset-relation：作用=只清关系档那一列；参数=无；内容=已清除（带原先记的档号）；意义=称谓偏好与性别自述不受牵连——这与 unset-name 的整行删除是两件事。',
+                '/bot identity unset-relation：作用=只清关系档那一列；参数=无；内容=已清除（带原先记的档号）；意义=称谓偏好与性别自述不受牵连——2026-10-04 裁定 F-8 甲之后 unset-name 也一样只清名字那一列，几条自助 unset 各清各的列、都不动这一行的其余格子。',
                 '/bot identity show-relation：作用=看自己当前的关系档；参数=无；内容=档号，或明说「没设定过，按相处深浅自然来」；意义=先核对再改，不靠猜。',
                 '权限=全员：任何人对自己说一句就生效，无需管理员。群聊里成员说的只对自己（个人档），要把整群钉上得管理员；群聊整面还受黑白名单约束（白名单为空=整群关闭，绝不猜群；黑名单永远赢）。',
-                '群聊里看不看得见：作用=诚实交代出站那一道闸；参数=无；内容=群聊出站比私聊多一道审查（domains/render/reviewer.py 的 _PUBLIC_OUTPUT_UNSAFE，只在群聊那一支跑），正文里一旦出现内容分级词或类别标签名就**整条拦下不发**，亲密段因此自带一句「别替这段文字贴类别标签」的护栏；意义=本册不承诺铺开写的场景在群里一定出得来，要让它被看见，私聊说一句更稳。',
+                '群聊里看不看得见：作用=诚实交代出站那一道闸；参数=无；内容=群聊出站比私聊多一道审查（domains/render/reviewer.py 的 _PUBLIC_OUTPUT_UNSAFE，只在群聊那一支跑）。命中**不再是整条吞**：文字里那一处就地涂销、其余正文与部件照发，并留一行 stage="review" 审计痕迹；只剩两种情形仍整条不发——命中的是**改不掉的媒体载荷**，或**涂销后已没剩下要说的话**。另有一条边界（2026-10-06 起）：这条形状加了左右词界，MAR18／v2R-18／October 18 一类正常文本不再被误咬，在册真命中一枚未少；亲密段自带那句「别替这段文字贴类别标签」的护栏未动；意义=本册不承诺铺开写的场景在群里一定出得来，要让它被看见，私聊说一句更稳。',
                 '/bot intimate on（同义：open／l1）：作用=用命令面把当前会话上到亲密档的**浅档**，与整句「亲密模式 开」同效、只给关系语气不改默认模型；参数=子命令（三词同义，大小写不敏感、首尾空白容忍；认不出的一律不受理，绝不拿错字悄悄顶成"开"）；内容=一句守岸人语气的确认；意义=习惯敲命令的人不必迁就整句说法，两条路各说各的、档位口径一致。',
                 '/bot intimate deep（同义：deeper／l2）：作用=浅档之上再允许把首跳换到在册的成人内容通道，与整句「亲密模式 深开」同效；参数=子命令（三词同义，大小写不敏感）；内容=深档确认一句；意义=「档成立」与「该换通道」分家这件事，命令面与整句面同判据。',
                 '/bot intimate off（同义：close／unset）：作用=把浅深两档一起放下、回到平时语气，与整句「亲密模式 关」同效；参数=子命令（三词同义）；内容=回到平时这样聊的确认；意义=撤档一句话就撤干净，不粘着。',
-                '/bot intimate show：作用=只看现在是什么档、什么都不改（只读查询，既不上钉也不解钉）；参数=子命令 show；内容=档位、由谁拨上、五维细节描写开没开、当前生效的详略档名、作用域、这一处准不准入六格读数；意义=先核对再决定要不要改，不靠猜。这一支不回内部来源串、不回模型名、也不回字数——那几样本就不该从这页漏出去。',
+                '/bot intimate show：作用=只看现在是什么档、什么都不改（只读查询，既不上钉也不解钉）；参数=子命令 show；内容=当前档位读数逐格清单（真身＝runtime/intimate_control.py 的 _state_body，本册不抄成员、不写格数）；意义=先核对再决定要不要改，不靠猜。这一支不回内部来源串、不回模型名、也不回字数——那几样本就不该从这页漏出去。',
                 '/bot intimate（不带子命令）：作用=自己交出这份用法并附当前档位读数，末尾指路「/bot help 亲密模式」；参数=无；内容=用法清单加当前档，不撞帮助兜底；意义=裸敲一条命令既不会被静默当成"开"，也不会掉进无关的帮助页。',
+                '/bot narration（同义词头 /bot 描写；不带子命令）：作用=交出描写档自己的用法与当前读数；参数=无；内容=用法清单＋描写档／依据／细节描写／库里的钉四格读数，末尾指路「/bot help 亲密模式」；意义=这一轴的词表只住一处（runtime/content_route.py 的 _NARRATION_SUBCOMMAND_TABLE），本册不复述成员——要哪一格，命令面会当场说给你听。',
+                '/bot narration speech（中文同义：/bot 描写 speech）：作用=把自己钉回「只说出口的话」那一格——语言之外不写动作、神色与心里；参数=子命令（大小写不敏感、首尾空白容忍，认不出的一律不受理，绝不拿错字悄悄改你的文风）；内容=一句守岸人语气的确认加当前读数；意义=这是缺省那一格，也是你随时能退回的地方。',
+                '/bot narration scene（中文同义：/bot 描写 scene）：作用=把自己钉上「铺开写」那一格，说出口的话与没说出口的都算数；参数=子命令（同上）；内容=铺开写的确认加读数；意义=这一格**不等亲密档**——日常相处里你要，我就这样写；日常那一档铺开时**衣着与环境照当下写**（裁定 G-4＝乙，10-04 深夜改判：「普通档既然都改成场景模式了，那就把衣着和环境也都写上」），只有落在身体上的细部留给亲密场景；另有一条界线：**群聊那一侧不落笔身形与衣着**（裁定 I-3＝丙，身旁另有别人在看，那几样留给只剩你们两个人的时候）；能不能真铺开仍只问 grants_intimate_narration 那一处，本册不抄第二份判据。',
+                '/bot narration reset（中文同义：/bot 描写 reset）：作用=把这一格交回缺省、连持久钉一起收回；参数=子命令（同上）；内容=收回确认；意义=只清描写档那两列，称谓、性别自述与关系档不是这条指令说过的话，一个字都不动。',
+                '/bot narration show（中文同义：/bot 描写 show）：作用=只看现在是什么档，什么都不改；参数=子命令（与开关面共用同一枚 show，词面不另立第二份）；内容=描写档、依据、细节描写开没开、库里的钉；意义=先核对再决定要不要改。这一支不回内部来源串、不回模型名、也不回字数。',
+                '描写档跟谁、跟多久：作用=交代作用域与持久面；参数=无；内容=这一轴按**会话里的这个人**——你在群 A 说的那一句只管群 A 里对你的回复，换到群 B 要再说一次，私聊那一格也只管私聊（裁定 I-2「换了会话就需要重新激发」）；群里管理员替整群拨的亲密档永不广播描写档，别人的钉你也拨不动（裁定 G-3＋写腿沿用亲密开关同一道角色门）；钉落下就跨重启（住在 addressing_preferences 那两列，不靠进程内缓存），与亲密档那条 60 分钟 TTL 是两件事——**描写档没有 TTL**，一句 reset 才收得回；意义=文风偏好该由本人在自己那一路说了算，也不该被一次超时悄悄拿走。⚠ 群侧这一格只在**内容路由白名单群**里生效：判据读 `BOT_CONTENT_ROUTE_GROUP_WHITELIST`，它既不可运行时 set 也不走热改表，加群＝改 `.env` 那一行后重启；名单外的群里你钉了 scene 也会落回日常档（不是钉坏了，是准入门收的）。',
                 '硬线：内容放行面不因关系档而改变，仍由会话门 explicit_allowed_for_session 判；六条硬线任何关系、任何开关、任何设定都压不过（security/content_safety.py）。',
                 '开关不受理时：总闸关／本会话没准入／群里普通成员但个人档总闸关——命令面没有正文可落回，仍会老实说一句"这一处还没放开"，不静默、不假装生效。',
             ],
@@ -2541,7 +2549,13 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '  内容信号三类有权换模型，Master Love 与好感度自动腿属于「给档不换模型」。\n'
                 '  同一处来源还答第二件事——**这一轮铺不铺开写**：语言／动作／神态／心理／外貌\n'
                 '  五维只授予那三支**人亲手推动**的来源（同文件的 grants_intimate_narration），\n'
-                '  名单派生与好感度自动腿回落到「只用说话回应」那一段。「换模型」「免 TTL 上限」\n'
+                '  名单派生与好感度自动腿回落到「只用说话回应」那一段。2026-10-04 起这一轴\n'
+                '  有了**第五根、独立的一格**：描写档（speech／scene，命令面 /bot narration，\n'
+                '  中文同义词头 /bot 描写），它**不看亲密档在不在**——本人把自己钉上铺开那一格，\n'
+                '  日常相处里也照样铺开（衣着与环境照当下写＝裁定 G-4＝乙；群聊那一侧不落笔\n'
+                '  身形与衣着＝裁定 I-3＝丙）；亲手把亲密档推上去的那一轮，这一轴的缺省也跟你\n'
+                '  走到 scene（裁定 H-1＝甲），但换一个会话要再说一次（裁定 I-2）；钉这一格同样是"人亲手推动"，\n'
+                '  故它与那三支同交同一把尺，全仓不长第二张成员表。「换模型」「免 TTL 上限」\n'
                 '  「给描写」各立一集，谁也不许拿谁顶数。关系档（恋人/情侣/夫妻/长辈/晚辈/\n'
                 '  家人/挚友/master…）给这一档具体的形状。\n'
                 '【取值范围】\n'
@@ -2549,7 +2563,10 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '  激活时刻起算、活跃不续期、重开即重置）；显式钉与管理员钉不再被第二道\n'
                 '  max_ttl 悄悄截掉（2026-09-24 裁定 R4 A）。关系档取值由受控词表决定，\n'
                 '  词表外一律不落档；同时命中两档按歧义不记录，不替谁编一个方向。\n'
-                '  描写维度=拿到授予的那一轮五维齐，没拿到的轮次与日常同样只说话；长度这一维\n'
+                '  描写维度=拿到授予的那一轮五维齐，没拿到的轮次与日常同样只说话；描写档本身\n'
+                '  只有 speech／scene 两格（词表真身＝content_route 的那张子命令表，本册不复述\n'
+                '  成员），缺省 speech，钉上就跨重启、**没有 TTL**（与上面那 60 分钟是两套账）；\n'
+                '  长度这一维\n'
                 '  不由本档表态——唯一真身＝那一行长度分档指令（由详略档与本轮问题共同取值）。\n'
                 '【权限与效果】\n'
                 '  权限=全员（任何人对自己拨）。会话准入门链：总闸 BOT_CONTENT_ROUTE_ENABLED\n'
@@ -2558,7 +2575,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '  只改变称呼与投入度，不推翻任何既有的身份与称谓事实；六条硬线压不过。\n'
                 '  出站面：群聊比私聊多一道审查（只在群聊那一支跑），命中内容标签词即整条不发，\n'
                 '  故本册不承诺铺开写的场景在群里一定出得来；私聊不走这一支。\n'
-                '【示例】亲密模式 开｜亲密模式 深开｜亲密模式 关｜/bot identity set-relation 恋人'
+                '【示例】亲密模式 开｜亲密模式 深开｜亲密模式 关｜/bot intimate on｜/bot intimate deep｜/bot intimate off｜/bot intimate show｜/bot narration scene｜/bot 描写 show｜/bot identity set-relation 恋人'
             ),
         },
     ]
@@ -2800,12 +2817,20 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "config_vars": ("BOT_SESSION_IDENTITY_DB_PATH",),
         "examples": ("/bot identity set 岸宝｜/bot identity tag 早起,秃头,干饭人",),
     },
-    # 亲密模式（2026-09-24 R1/R2/R3/R4 裁定的门面）：tests 只登记**今天在盘上**的
-    # 回归件——`test_meta_test_paths_exist` 对不存在的路径直接判红，把另两枚
-    # （tests/test_intimate_tier_wiring_v4.py、tests/test_relationships.py）写进来
-    # 等于本席凭空造两条红。它们落地后由收口席补登记（同先例见 S38/T84 的补录口径）。
+    # 亲密模式（2026-09-24 R1/R2/R3/R4 裁定的门面）：tests 只登记**今天在盘上**且**被本
+    # topic 判据直接覆盖**的回归件——`test_documentation_consistency.py::test_meta_test_paths_exist`
+    # 对不存在的路径直接判红，登记一条没落盘的件＝凭空造一条红。名册真身＝下面 `tests`
+    # 那一行，此处不复述成员。收口席核对口径＝`git ls-files` 认下且 `ls` 在盘，两问都过
+    # 才登记。命令面那一族（`/bot intimate`）的 slash 门面、子命令解析、与整句面的等值锁，
+    # 连同显式开档跨重启那一支的持久化件，两问都过 ⇒ 随本批补齐（补录先例见 S38/T84 的口径）。
+    # 另三枚同在盘上的件随本批登记：接线席判的是本档真的进 chat 主链且无第二套判据；关系
+    # 词表那一枚归本 topic 不归「身份」轴，因为「身份」主题自己把话让了出来（其参数行原文
+    # 「关系档的开关语义与词表口径见「亲密模式」模块」），本 topic 正文也确实在列 `/bot
+    # identity set-relation`；群内开关送达那一枚判的就是本档指令在群聊能否出门。至于在盘但
+    # `git ls-files` 不认的在飞新稿——两问只过一问＝不登记，硬登记等于凭空造一条红。成员
+    # 名册真身仍＝下面 `tests` 那一行，此处不复述。
     "亲密模式": {
-        "capability": "bot.chat（整句「亲密模式 开/深开/关」；关系档子命令见 /bot identity）",
+        "capability": "bot.chat（整句「亲密模式 开/深开/关」＋命令面 /bot intimate on|l1|deep|off|show＋描写档 /bot narration|/bot 描写；关系档子命令见 /bot identity）",
         "network": False,
         "chat_scope": "私聊按本人；群聊成员说的只对自己（个人档），管理员拨上去的才是整群钉",
         "triggers_nl": ("亲密模式 开", "亲密模式 深开", "亲密模式 关"),
@@ -2822,9 +2847,23 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         ),
         "examples": (
             "亲密模式 开", "亲密模式 深开", "亲密模式 关",
+            "/bot intimate on", "/bot intimate deep", "/bot intimate off", "/bot intimate show",
+            "/bot narration speech", "/bot narration scene", "/bot narration reset",
+            "/bot narration show", "/bot 描写 scene", "/bot 描写 show",
             "/bot identity set-relation 恋人", "/bot identity show-relation",
         ),
-        "tests": ("tests/test_intimate_tiers_v4.py",),
+        "tests": (
+            "tests/test_intimate_tiers_v4.py",
+            "tests/test_intimate_slash_command.py",
+            "tests/test_intimate_subcommand_parse.py",
+            "tests/test_intimate_switch_equivalence.py",
+            "tests/test_intimate_pin_persistence.py",
+            "tests/test_intimate_tier_wiring_v4.py",
+            "tests/test_relationships.py",
+            "tests/test_intimate_group_switch_delivery.py",
+            "tests/test_narration_axis_command.py",
+            "tests/test_narration_command_dispatch.py",
+        ),
         "outputs": ("文本确认（语气与首跳资格的变化，不改内容放行面）",),
     },
     "怪癖": {
@@ -4256,18 +4295,52 @@ def build_identity_preference_result(
             session_id=session_id,
             sender=sender,
         )
-    # unset-name / unset-gender：store.clear 为整行清除（称谓与性别自述一并移除）。
-    # ⚠ 关系档**不走**这里——unset-relation 只清关系那一列（见上分支），因为这两个
-    # 子命令的历史语义就是"整行删除"，把它们拆开各自可撤销才是用户要的。
-    before_preference, before_gender = store.get(
-        session_type=session_type, session_id=session_id, sender_id=sender
-    )
-    store.clear(session_type=session_type, session_id=session_id, sender_id=sender)
-    if not before_preference and before_gender == "unknown":
+    # unset-name / unset-gender：🔴 F-8 裁定甲（2026-10-04 深夜用户亲裁）＝**按列清**。
+    # 旧语义是 `store.clear()` 整行 DELETE；QQ 私聊里"那一行"与本人的亲密档标记／描写档钉
+    # **天生同一枚键形**（裸 uid 撞车，席 rowwipe 报告第 1 节）⇒ 一条"取消称呼"顺手把
+    # 没人点过名的两格钉一起收回，而描写档**没有 TTL**、本该活到本人 reset。
+    # 现两条各清各列：unset-name 清 `addressing_preference`、unset-gender 清
+    # `gender_identity`，行不删、关系档与两枚标记列一字节不动（收回它们只准走
+    # `unset-relation`／`/bot intimate off`／`/bot narration reset` 那三条明说了的话）。
+    # ⚠ 两次读各答一件事：**清之前**那一次只答"这条指令到底有没有东西可清"（席 receiptorder
+    # 的谎报腿就栽在先删后读）；**清之后**那一次才答"别的格子确实还在着"——`clear_columns()`
+    # 命中 0 行时不建行，事后反推不出有没有，所以前一读不可省；而"保住了哪几列"是当下的
+    # 事实陈述，拿删除后的读数作证，谁把这条腿改回整行删，回执自己就说不出"保住"了。
+    lookup = {"session_type": session_type, "session_id": session_id, "sender_id": sender}
+    targets_name = sub == "unset-name"
+    own_label = "称谓偏好" if targets_name else "性别自述"
+    own_column = "addressing_preference" if targets_name else "gender_identity"
+    before_preference, before_gender = store.get(**lookup)
+    had_own = bool(before_preference) if targets_name else before_gender != "unknown"
+    store.clear_columns(**lookup, columns=(own_column,))
+    # 只点名、绝不回显本人内容（值不外流）。
+    after_preference, after_gender = store.get(**lookup)
+    kept = [
+        label
+        for label, present in (
+            ("称谓偏好", bool(after_preference)),
+            ("性别自述", after_gender != "unknown"),
+            ("关系档", bool(store.get_relationship(**lookup))),
+            ("亲密档", bool(store.get_intimate_pin(**lookup)[0])),
+            ("描写档", bool(store.get_narration_pin(**lookup)[0])),
+        )
+        if present and label != own_label
+    ]
+    if not had_own and not kept:
         return _identity_preference_result(request_id, "你还没有设置过称谓偏好。")
-    return _identity_preference_result(
-        request_id, "已清除称谓偏好（整条记录移除，含性别自述），恢复自动称呼。"
-    )
+    if not had_own:
+        return _identity_preference_result(
+            request_id,
+            f"{own_label}那一列本来就没有，这一条什么都没清；"
+            "这一行上原样保住的还有" + "、".join(kept) + "。",
+        )
+    body = f"已清除{own_label}（只清这一列，行没删）。"
+    body += "恢复自动称呼。" if targets_name else "性别自述回到 unknown。"
+    if kept:
+        body += "这一行上原样保住的还有" + "、".join(kept) + "。"
+    else:
+        body += "这一行上此刻也没有别的显式声明，谁也没被牵连。"
+    return _identity_preference_result(request_id, body)
 
 
 # ---- 中央能力健康度读出（S-HEALTH 席：收口 R2「中央登记了探针却零生产读者」）----

@@ -411,7 +411,7 @@ def test_help_topics_equal_registry_book_order() -> None:
     """
     live_topics = [str(entry["topic"]) for entry in HELP_ENTRIES]
     assert _HELP_DECLARED_TOPICS == live_topics
-    assert len(_HELP_DECLARED_TOPICS) == len(set(_HELP_DECLARED_TOPICS)) == 82  # 81→82：第 20 项「日程」topic（公开，S-SCHEDULE-20，2026-09-26）  # 80→81：「书面同意」（admin_only）
+    assert len(_HELP_DECLARED_TOPICS) == len(set(_HELP_DECLARED_TOPICS)) == 83  # 82→83：「表情册」（admin_only，S-ALBUM 2026-09-30 落 `94694459`，本席 2026-10-04 补计数登记；机器册 docs/auto-facts.md「帮助 topic 数」同值）  # 81→82：第 20 项「日程」topic（公开，S-SCHEDULE-20，2026-09-26）  # 80→81：「书面同意」（admin_only）
 
 
 def test_help_visibility_and_capability_equal_registry() -> None:
@@ -437,7 +437,7 @@ def test_help_public_visibility_derived_from_declaration() -> None:
     declared_admin = {d.topic for d in cr.HELP_TOPIC_DECLARATIONS if d.admin_only}
     assert declared_public == set(_PUBLIC_HELP_TOPICS)
     assert declared_admin.isdisjoint(_PUBLIC_HELP_TOPICS)
-    assert len(declared_public) == 39 and len(declared_admin) == 43  # 38→39：第 20 项「日程」（公开，S-SCHEDULE-20，2026-09-26）  # 42→43：书面同意（admin_only，裁定第 18 项）  # 41→42：宿主机状态上线（2026-09-26 goal18 波，主代理接线）  # 37→38：亲密模式波新增公开主题（2026-09-24，D 席）
+    assert len(declared_public) == 39 and len(declared_admin) == 44  # 43→44：「表情册」（admin_only，S-ALBUM 2026-09-30 落 `94694459`，本席 2026-10-04 补计数登记）  # 38→39：第 20 项「日程」（公开，S-SCHEDULE-20，2026-09-26）  # 42→43：书面同意（admin_only，裁定第 18 项）  # 41→42：宿主机状态上线（2026-09-26 goal18 波，主代理接线）  # 37→38：亲密模式波新增公开主题（2026-09-24，D 席）
 
 
 def test_help_categories_reference_declared_topics() -> None:

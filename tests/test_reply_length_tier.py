@@ -1016,3 +1016,358 @@ def test_floor_leg_and_prompt_line_share_the_scene_tier() -> None:
     lines = [ln for ln in joined.splitlines() if chat.TIER_LINE_PREFIX in ln]
     assert len(lines) == 1, f"长度指令必须恰好一条，实得 {len(lines)} 条"
     assert f"当前档＝{scene.label_cn}" in lines[0]
+
+
+# ===========================================================================
+# F-5 乙（2026-10-05 用户裁定）：出口地板腿改量**送达**的字数
+#
+# 背景（§76.7 / §76.8-F5）：`_reply_length_floor_leg` 量的是归一化**之前**的
+# `reply.text`，而出站链后半段（`naturalize_chat_text` 剥 markdown 骨架、
+# `normalize_paragraph_breaks` 折空行、`strip_action_brackets` 删动作……）会再削一层。
+# 席 floorread 在 HEAD 副本实测（48 枚合成样本、seed 20261005、走真身能力腿、
+# 现网出站预算形）：format 支 p50 6.08% / p95 18.37% / max 19.09%
+# （list 形 p50 17.89%、quote 形 p50 15.40%、纯散文 0%、带（动作）括号 −1.20%）；
+# strip 支 p95 37.27%。本件那枚 markdown 样本单独削减 **21.35%**（370 → 291）。
+# ⇒ 名义 600 字的地板在 markdown 形上实收 ~490。裁定＝乙：在归一化**之后**再判一次，
+#   成本硬顶 ≤1 次额外调用／轮，不得与上游地板腿叠加、不得追「出站预算截断」那种
+#   追不动的因、补写的稿子必须照样过出站闸、失败一律 fail-open。
+# 用例全部**跑到生产腿** `chat.build_chat_result`；数值一律现取登记表，不手抄。
+# ===========================================================================
+
+#: 单段（无空行）markdown 形回复：raw 过详尽档下限、送达被 `naturalize_chat_text`
+#: 剥掉骨架后**够不着**下限——F-5 那道缝的形状。刻意不含空行，免得撞上
+#: `_apply_output_message_budget`（那是另一条腿，本件单独钉它）。
+_DELIVERY_MD_TEXT = (
+    "## 她守着的那条线\n"
+    "- **黑海岸**：潮退时露出的石阶，她每天从这里走到灯下，再把灯擦一遍。\n"
+    "- `今州` 的旧档她翻过三遍，`七丘` 的潮表只剩半页，其余都被水泡开了。\n"
+    "- **潮位表**：高则守、低则让，她自己那句压在声音里的话就写在表尾。\n"
+    "| 潮位 | 她的说法 |\n| --- | --- |\n| 高 | 守 |\n| 低 | 让 |\n"
+    "> 「我不是在等谁，我只是把这条线守成有人在的样子。」\n"
+    "> 「夜再长也不要紧，灯亮着就还有人认得回来的路。」\n"
+    "- **灯下那句**：她说得很少，多数时候只是把海图摊开，指着那条等深线出神。\n"
+    "| 名字 | 她会不会主动提 |\n| --- | --- |\n| 漂泊者 | 会 |\n| 今州 | 不会 |\n"
+    r"她还说潮满足 $h=a\sin(2\pi t)+b$ ，这一条她记了很多年，从没漏过一次潮退。"
+)
+#: 补写用的达标版：纯散文、无骨架可剥 ⇒ 送达字数＝判定字数（实测削减 0%）。
+_DELIVERY_PLAIN_TEXT = _LONG_TEXT + _FLOOR_TAIL + _FLOOR_TAIL
+#: 出站闸形状（在册危险命令家族的 `rm -rf /`），用来钉「补写的稿子不许绕过闸」。
+_DELIVERY_GUARDED_TEXT = _LONG_TEXT + "她顺口念了一句 rm -rf / ，念完就抿住了嘴。"
+
+
+def _run_delivery_leg_turn(
+    *,
+    texts: list[str],
+    reply_detail: str = "detail",
+    question: str = KNOWLEDGE_TEXT,
+    raise_after: int | None = None,
+    max_messages: int = 0,
+    output_max_chars: int = 0,
+) -> tuple[str, list[str], int]:
+    """跑一条真实能力腿。缺省把出站预算腿关掉（＝现网形，§76.9 在册），
+    好让削减只可能来自归一化那一段；预算那一支另开一个用例单独钉。"""
+    from plugins.bot_unified_runtime.contracts import (
+        BotDecision,
+        IncomingMessage,
+        PrivacyLevel,
+        RiskLevel,
+        SendPolicy,
+        SessionType,
+    )
+
+    provider = _QueueProvider(texts, raise_after=raise_after)
+    context = _floor_bundle(reply_detail=reply_detail, question=question)
+    message = IncomingMessage(
+        platform="qq",
+        adapter="nonebot",
+        bot_id="b",
+        session_id="private_u1",
+        session_type=SessionType.PRIVATE,
+        sender_id="u1",
+        plain_text=question,
+        mentions_bot=True,
+    )
+    decision = BotDecision(
+        request_id=message.request_id,
+        should_respond=True,
+        mode="chat",
+        trigger="private",
+        capability_id="bot.chat",
+        target_scope=SessionType.PRIVATE,
+        privacy_level=PrivacyLevel.PERSONAL,
+        risk_level=RiskLevel.LOW,
+        send_policy=SendPolicy.IMMEDIATE,
+        decision_reason="delivery-floor",
+        max_messages=max_messages,
+    )
+    result = chat.build_chat_result(
+        message,
+        decision,
+        context,
+        llm_provider=provider,
+        output_max_chars_per_message=output_max_chars,
+    )
+    return str(result.body), list(result.audit_tags or []), provider.calls
+
+
+def _delivery_tags(tags: list[str]) -> list[str]:
+    return [tag for tag in tags if tag.startswith("length_delivery_floor")]
+
+
+def test_delivery_floor_adopts_only_a_retry_that_actually_arrives() -> None:
+    """raw 达标、送达不达标 ⇒ 必须补一跳，且只有**送达真的更长**才交补写版。"""
+    tier = _floor_tier("detail", KNOWLEDGE_TEXT)
+    assert len(_DELIVERY_MD_TEXT.strip()) >= tier.min_chars, (
+        "样本的 raw 已够不到下限 ⇒ 上游地板腿会先追写，本件验不到送达那一维，先修样本"
+    )
+    baseline, baseline_tags, _baseline_calls = _run_delivery_leg_turn(
+        texts=[_DELIVERY_MD_TEXT]
+    )
+    assert not [t for t in baseline_tags if t.startswith("length_floor")], (
+        "上游地板腿在本件里必须沉默（否则两条腿混在一起，归因不清）"
+    )
+    assert len(baseline.strip()) < tier.min_chars, (
+        f"送达竟然已过下限（{len(baseline.strip())}）⇒ 样本形状变了，本件失去判据"
+    )
+
+    body, tags, calls = _run_delivery_leg_turn(
+        texts=[_DELIVERY_MD_TEXT, _DELIVERY_PLAIN_TEXT]
+    )
+    assert calls == 2, "送达不够下限却一跳到底 ⇒ 送达地板腿失活"
+    assert "length_delivery_floor_rewritten" in tags, "补过却不留痕＝事后无从归因"
+    assert len(body.strip()) >= tier.min_chars, (
+        f"补写后送达仍低于下限：{len(body.strip())} 字"
+    )
+    assert _LONG_HEAD in body
+    # 留痕必须描述**真正交付的那一版**：原文是被外层引号裹着进来的（会留
+    # llm_speech_quotes_normalized），补写版没有 ⇒ 上位之后这一枚不得再出现。
+    quoted = "「" + _DELIVERY_MD_TEXT + "」"
+    _kept, kept_tags, _kc = _run_delivery_leg_turn(texts=[quoted])
+    assert "llm_speech_quotes_normalized" in kept_tags, "样本不再触发拆外层引号留痕 ⇒ 本件失去判据"
+    _body2, adopted_tags, _c2 = _run_delivery_leg_turn(
+        texts=[quoted, _DELIVERY_PLAIN_TEXT]
+    )
+    assert "length_delivery_floor_rewritten" in adopted_tags
+    assert "llm_speech_quotes_normalized" not in adopted_tags, (
+        "上位的是补写版、留痕却还在说原文那一条 ⇒ 审计标签替没交付的稿子说话"
+    )
+
+
+def test_delivery_floor_never_stacks_on_the_upstream_floor() -> None:
+    """成本硬顶（F-5 乙：≤1 次额外调用／轮）⇒ 上游地板腿已经追过的那一轮不再追。"""
+    body, tags, calls = _run_delivery_leg_turn(
+        texts=[_SHORT_TEXT, _DELIVERY_MD_TEXT]
+    )
+    assert calls == 2, "上游腿一跳＋送达腿一跳＝本轮两次额外调用，超出裁定成本顶"
+    assert any(tag.startswith("length_floor") for tag in tags)
+    assert not _delivery_tags(tags), (
+        f"两条腿叠著追（{tags}）⇒ 送达腿没认「本轮已补写过」这一条"
+    )
+    assert len(body.strip()) < _floor_tier("detail", KNOWLEDGE_TEXT).min_chars, (
+        "本件的前提是送达确实不足额；它够额了就说明样本不再走归一化削减这条路"
+    )
+
+
+def test_delivery_floor_does_not_chase_the_output_budget_truncation() -> None:
+    """缺的那一截来自**出站预算截断**（不是归一化削的）⇒ 追它永远追不满：
+    只留痕、不烧调用。现网该腿是 no-op（§76.9），所以这条是「别追完又被剥」的硬门。"""
+    multi_block = (
+        "## 她守着的那条线\n\n" + _DELIVERY_MD_TEXT + "\n\n" + _DELIVERY_PLAIN_TEXT
+    )
+    _body, tags, calls = _run_delivery_leg_turn(
+        texts=[multi_block, _DELIVERY_PLAIN_TEXT], max_messages=1, output_max_chars=1200
+    )
+    assert "llm_output_trimmed" in tags, "样本没走到预算截断腿 ⇒ 本件空跑"
+    assert calls == 1, "预算截断造成的缺口去追补写＝白花一次调用还永远追不满"
+    assert "length_delivery_floor_skipped:budget" in tags, "跳过却不留痕＝事后无从归因"
+
+
+def test_delivery_floor_failure_keeps_the_delivered_answer() -> None:
+    """补写炸了 ⇒ 原样交付本轮已经送达的那一版，绝不为凑字数把回复弄没。"""
+    baseline, _tags, _calls = _run_delivery_leg_turn(texts=[_DELIVERY_MD_TEXT])
+    body, tags, _calls2 = _run_delivery_leg_turn(
+        texts=[_DELIVERY_MD_TEXT, "x"], raise_after=1
+    )
+    assert "length_delivery_floor_failed" in tags
+    assert body == baseline, "补写失败却改了交付内容 ⇒ fail-open 不成立"
+
+
+def test_delivery_floor_never_walks_past_the_outbound_guards() -> None:
+    """追回来的字数不许绕过出站闸：补写稿命中危险命令守门 ⇒ 丢弃、原文照旧。"""
+    baseline, _tags, _calls = _run_delivery_leg_turn(texts=[_DELIVERY_MD_TEXT])
+    body, tags, calls = _run_delivery_leg_turn(
+        texts=[_DELIVERY_MD_TEXT, _DELIVERY_GUARDED_TEXT]
+    )
+    assert calls == 2, "没去补写就谈不上「过闸」，本件失去判据"
+    assert "length_delivery_floor_guard_rejected" in tags
+    assert body == baseline
+    assert "rm -rf" not in body
+
+
+def test_delivery_floor_reads_the_registered_numbers_both_ways() -> None:
+    """注毒双向：把登记表的详尽下限挪到「送达之上／之下」各一格 ⇒ 送达腿必须跟着变。
+    咬不动＝这条新腿另有第二把尺（不是读那一本登记表）。"""
+    tier = _floor_tier("detail", KNOWLEDGE_TEXT)
+    baseline, _tags, _calls = _run_delivery_leg_turn(texts=[_DELIVERY_MD_TEXT])
+    delivered = len(baseline.strip())
+    assert delivered < tier.min_chars, (
+        f"基线送达 {delivered} 已 ≥ 下限 ⇒ 注毒区间不存在，先修样本"
+    )
+    assert delivered + 1 <= len(_DELIVERY_MD_TEXT.strip()), (
+        "抬起下限会连 raw 一起压到线下（上游腿抢先）⇒ 本件失去判据"
+    )
+
+    lifted = dataclasses.replace(tier, min_chars=delivered + 1)
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(chat, "REPLY_TIER_DETAIL", lifted)
+        monkeypatch.setitem(chat.REPLY_LENGTH_TIERS, "detail", lifted)
+        _body, tags_up, calls_up = _run_delivery_leg_turn(
+            texts=[_DELIVERY_MD_TEXT, _DELIVERY_PLAIN_TEXT]
+        )
+    assert calls_up == 2 and "length_delivery_floor_rewritten" in tags_up, (
+        "抬高下限却不追 ⇒ 送达腿读的不是这张登记表（另有真身）"
+    )
+
+    exact = dataclasses.replace(tier, min_chars=delivered)
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(chat, "REPLY_TIER_DETAIL", exact)
+        monkeypatch.setitem(chat.REPLY_LENGTH_TIERS, "detail", exact)
+        _body2, tags_down, calls_down = _run_delivery_leg_turn(
+            texts=[_DELIVERY_MD_TEXT, _DELIVERY_PLAIN_TEXT]
+        )
+    assert calls_down == 1, (
+        f"下限正好等于送达还追（calls={calls_down}）⇒ 尺用错了方向（应为 <，非 <=）"
+    )
+    assert not _delivery_tags(tags_down)
+
+
+def test_delivery_floor_follows_the_narration_grant_up_to_the_top_tier() -> None:
+    """授予轮读的还是同一个升格：intimate=True ⇒ 补写要求里的数值与档名都由登记表
+    顶格档（今天＝铺写）派生，不另立第二把尺、也不另抄 600。"""
+    captured: list[list[dict[str, str]]] = []
+
+    class _RecordingProvider:
+        def __init__(self, second: str) -> None:
+            self._text = second
+            self.calls = 0
+
+        def generate(self, messages, **kwargs):
+            from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+                LLMReply,
+            )
+
+            self.calls += 1
+            captured.append([dict(item) for item in messages])
+            return LLMReply(text=self._text, provider="rec", model="rec", confidence=0.0)
+
+    scene = chat.REPLY_LENGTH_TIERS[chat.REPLY_TIER_SCENE_ID]
+    provider = _RecordingProvider(_DELIVERY_PLAIN_TEXT)
+    context = _floor_bundle(reply_detail="detail", question=KNOWLEDGE_TEXT)
+    delivered = "她" + "只说了半句话，剩下的都留在潮声里。" * 20
+    assert len(delivered) < scene.min_chars, "样本自己就够到顶格档下限 ⇒ 本件空跑"
+    _body, tags, leg_finalize_tags = chat._delivery_length_floor_leg(
+        delivered=delivered,
+        delivered_tags=[],
+        upstream_tags=[],
+        context=context,
+        intimate=True,
+        messages=[
+            {"role": "system", "content": chat.reply_length_guidance_text("detail")}
+        ],
+        llm_provider=provider,
+        model_router=None,
+        llm_options={},
+        request_budget=None,
+        message_text=KNOWLEDGE_TEXT,
+        override="",
+        session_id="",
+        max_messages=0,
+        output_max_chars_per_message=0,
+    )
+    assert provider.calls == 1, "授予轮送达不足额却没补写 ⇒ 送达腿没跟着升格走"
+    assert _delivery_tags(tags), "补过却不留痕"
+    assert leg_finalize_tags == [], (
+        "交付的是纯散文补写版，归一化留痕却非空 ⇒ 第三个返回值没跟着交付走"
+    )
+    retry_prompt = "\n".join(str(item.get("content") or "") for item in captured[-1])
+    assert f"（{scene.label_cn}，至少 {scene.min_chars} 字）的下限" in retry_prompt, (
+        "补写要求里的数值/档名不是从登记表顶格档派生 ⇒ 长出了第二把尺"
+    )
+    assert scene.label_cn in retry_prompt
+
+
+def test_delivery_floor_is_wired_with_no_second_chain_or_selector() -> None:
+    """结构锁：① 送达腿现取同一对选档函数，不自造判档；② 归一化那一段只有**一处**
+    实现（`build_chat_result` 里不许再留副本）；③ 两条腿都真接在出站缝上，
+    且授予轮把 `intimate=_rp_intimate_now` 一并带进送达腿。"""
+    tree = ast.parse(CHAT_PY.read_text(encoding="utf-8"))
+
+    def body_of(name: str) -> ast.FunctionDef:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == name:
+                return node
+        raise AssertionError(f"chat.py 里没有 {name} ⇒ 本件要钉的那条腿不存在")
+
+    def called_ids(node: ast.AST) -> set[str]:
+        return {
+            getattr(item.func, "id", "")
+            for item in ast.walk(node)
+            if isinstance(item, ast.Call)
+        }
+
+    delivery = body_of("_delivery_length_floor_leg")
+    delivery_calls = called_ids(delivery)
+    assert "_length_floor_tier" in delivery_calls, "送达腿自判档＝长出第二套长度判据"
+    assert "select_reply_length_tier" not in delivery_calls
+    # 两条地板腿共用的那一处取档口：读的就是那一对既有选档函数，不长第三套判据。
+    shared = body_of("_length_floor_tier")
+    shared_calls = called_ids(shared)
+    assert "resolve_reply_length_tier" in shared_calls, "取档口自判档＝长出第二套长度判据"
+    assert "intimate_reply_length_tier" in shared_calls, "取档口没跟着授予升格走"
+    assert "select_reply_length_tier" not in shared_calls
+    # 补写话术也只此一份（两条腿共引同一个 builder，长不出第二套说法）。
+    assert "_length_floor_retry_messages" in delivery_calls
+    assert "_length_floor_retry_messages" in called_ids(body_of("_reply_length_floor_leg"))
+
+    entry = body_of("build_chat_result")
+    entry_calls = called_ids(entry)
+    assert "_reply_length_floor_leg" in entry_calls, "上游地板腿没接进出站缝"
+    assert "_delivery_length_floor_leg" in entry_calls, "送达地板腿没接进出站缝"
+    assert "_finalize_reply_text" in entry_calls, "归一化那一段没收成一处"
+    assert "_finalize_reply_text" in delivery_calls, (
+        "送达腿没走同一处归一化 ⇒ 它量到的不是送达"
+    )
+    # 两条地板腿都不许自带发送通路：只共引既有的 `_finalize_reply_text` 与
+    # `_generate_with_tool_loop`，别的一律不引（新通路＝第二发送腿，本仓明令禁）。
+    for leg_calls in (delivery_calls, called_ids(body_of("_reply_length_floor_leg"))):
+        assert not ({"open", "send_message", "post"} & leg_calls), leg_calls
+    assert "_generate_with_tool_loop" in delivery_calls
+
+    for name in (
+        "strip_outer_speech_quotes",
+        "_apply_output_message_budget",
+        "naturalize_chat_text",
+        "humanize_reply",
+        "format_roleplay_paragraphs",
+        "strip_action_brackets",
+        "normalize_paragraph_breaks",
+    ):
+        callers = {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and name in called_ids(node)
+        }
+        assert "_finalize_reply_text" in callers, f"{name} 没收进唯一那一段 ⇒ 第二处实现的苗"
+        assert (
+            "build_chat_result" not in callers
+        ), f"{name} 在 build_chat_result 里还留着一份副本"
+
+    passed_intimate = False
+    for item in ast.walk(entry):
+        if isinstance(item, ast.Call) and getattr(item.func, "id", "") == (
+            "_delivery_length_floor_leg"
+        ):
+            for keyword in item.keywords:
+                if keyword.arg == "intimate" and isinstance(keyword.value, ast.Name):
+                    passed_intimate = keyword.value.id == "_rp_intimate_now"
+    assert passed_intimate, "送达腿没接到 `_rp_intimate_now` ⇒ 授予轮的地板在这条腿上会失配"

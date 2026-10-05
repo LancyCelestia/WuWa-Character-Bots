@@ -118,27 +118,104 @@ def test_set_gender_invalid_value_lists_choices_without_write(
 
 
 # --------------------------------------------------------------------------
-# unset-name / unset-gender：整行清除语义 + 未设置时的诚实回复
+# unset-name / unset-gender：**按列清**语义（F-8 裁定甲，2026-10-04 用户亲裁）
+# + 未设置时的诚实回复。旧名 `test_unset_*_clears_whole_row` 与旧判据（整行 DELETE）
+# 都随这条裁定翻转：列作用域的逐枚锁在 `tests/test_identity_unset_name_column_scope.py`，
+# 本节只留"各自那一列清掉了、另一列照在"这一层。
 # --------------------------------------------------------------------------
 
 
-def test_unset_name_clears_whole_row(store: AddressingPreferenceStore) -> None:
+def test_unset_name_clears_only_the_name_column(store: AddressingPreferenceStore) -> None:
     _run(store, "set-name 岸宝")
     _run(store, "set-gender male")
     result = _run(store, "unset-name")
     assert result.kind == "text"
-    assert store.get(session_type="group", session_id="g1", sender_id="u1") == ("", "unknown")
+    # 名字清了，性别自述**不是这条指令说过的话**（旧序会把两格一起抹掉）。
+    assert store.get(session_type="group", session_id="g1", sender_id="u1") == ("", "male")
 
 
-def test_unset_gender_clears_whole_row(store: AddressingPreferenceStore) -> None:
+def test_unset_gender_clears_only_the_gender_column(store: AddressingPreferenceStore) -> None:
+    _run(store, "set-name 岸宝")
     _run(store, "set-gender male")
     _run(store, "unset-gender")
-    assert store.get(session_type="group", session_id="g1", sender_id="u1") == ("", "unknown")
+    assert store.get(session_type="group", session_id="g1", sender_id="u1") == ("岸宝", "unknown")
 
 
 def test_unset_without_any_setting_replies_honestly(store: AddressingPreferenceStore) -> None:
     result = _run(store, "unset-name")
     assert "没有" in result.body
+
+
+# --------------------------------------------------------------------------
+# 席 receiptorder（F-8 回执谎报腿，只修"说谎"不裁"删什么"）+ 本席把"删"换成"按列清"：
+# unset-name/unset-gender 的旧 `store.clear()` 是**整行 DELETE**，QQ 私聊里那一行与
+# 本人的亲密档／描写档钉同一行（裸 uid 撞键形，见席 rowwipe 报告第 1 节）。
+# 旧序＝先删后判 ⇒ 行没了、回执还说"你还没有设置过称谓偏好"。
+# 现判据两半：①回执照**清之前那一次读**说实话（本节）；②别的格子**根本不再被牵连**
+# （`test_identity_unset_name_column_scope.py` 那四枚列作用域锁）。
+# 什么都没设过那一支原文**逐字不动**。
+# --------------------------------------------------------------------------
+
+_LYING_TEXT = "你还没有设置过称谓偏好。"
+
+
+def test_unset_name_private_keeps_no_lie_when_intimate_pin_was_there(
+    store: AddressingPreferenceStore,
+) -> None:
+    """私聊裸 uid：只开过亲密档、没设过称谓 → 回执不许宣称"本来就没有"就完事。"""
+    store.set_intimate_pin(
+        session_type="private", session_id="", sender_id="u1", tier="l1", explicit_at=1.0
+    )
+    result = _run(store, "unset-name", group_id="")
+    assert result.body != _LYING_TEXT
+    assert "亲密档" in result.body
+    # 点名可以，回显内容不行（值不外流）。
+    assert "l1" not in result.body
+    # 🔴 裁定甲落地后：钉**不再被收回**（旧判据"确实被收走了"随裁定翻转，本行重锚为"照在"）。
+    assert store.get_intimate_pin(session_type="private", session_id="", sender_id="u1") == (
+        "l1",
+        1.0,
+    )
+
+
+def test_unset_name_private_names_narration_and_relationship_too(
+    store: AddressingPreferenceStore,
+) -> None:
+    store.set_narration_pin(
+        session_type="private", session_id="", sender_id="u1", mode="scene", updated_at=1.0
+    )
+    store.set_relationship(
+        session_type="private", session_id="", sender_id="u1", relationship="lover"
+    )
+    result = _run(store, "unset-name", group_id="")
+    assert result.body != _LYING_TEXT
+    assert "描写档" in result.body
+    assert "关系档" in result.body
+    assert "scene" not in result.body
+    assert "lover" not in result.body
+
+
+def test_unset_name_with_addressing_and_pin_discloses_both(
+    store: AddressingPreferenceStore,
+) -> None:
+    """设过称谓、又挂着钉：原有"已清除"讲法还在，顺带收回的那枚必须点名。"""
+    _run(store, "set-name 岸宝", group_id="")
+    store.set_intimate_pin(
+        session_type="private", session_id="", sender_id="u1", tier="l2", explicit_at=1.0
+    )
+    result = _run(store, "unset-name", group_id="")
+    assert "已清除称谓偏好" in result.body
+    assert "亲密档" in result.body
+    assert "l2" not in result.body
+
+
+def test_unset_name_without_anything_says_the_original_words_verbatim(
+    store: AddressingPreferenceStore,
+) -> None:
+    """诚实空手那一支：回执与旧文本**逐字节相同**（只修说谎腿，不动没撒谎的腿）。"""
+    for text in ("unset-name", "unset-gender"):
+        assert _run(store, text, group_id="").body == _LYING_TEXT
+        assert _run(store, text, group_id="g1").body == _LYING_TEXT
 
 
 # --------------------------------------------------------------------------

@@ -203,6 +203,7 @@ class PartStoreQueue(Protocol):
         part_index: int,
         *,
         error_kind: str | None = None,
+        error_detail: str | None = None,
         provider_message_id: str | None = None,
         now: datetime | None = None,
         dedupe_key: str | None = None,
@@ -215,6 +216,7 @@ class PartStoreQueue(Protocol):
         part_index: int,
         *,
         error_kind: str | None = None,
+        error_detail: str | None = None,
         now: datetime | None = None,
         dedupe_key: str | None = None,
     ) -> bool:
@@ -1152,6 +1154,23 @@ def _part_issue(kind: str) -> OperationalIssue:
     )
 
 
+def _part_error_detail(issue: OperationalIssue | None) -> str | None:
+    """part 账 ``last_error_detail`` 的值＝回执里 kind **之外**的增量（SEAT-SENDTERM A2）。
+
+    ``last_error_kind`` 存的已经是 ``issue.kind``，safe_summary 若仍等于 kind（全部
+    既有分支、以及未富化的老回执）就写 NULL——零冗余、零回填，老库老行不猜原因。
+    只有 sender 侧富化过的失败（现＝OneBot 退码结构因）才落这一列。
+    消费方仅存证与运维读数，绝不参与任何投递判定（判定仍只看 ``kind``/``state``）。
+    """
+    if issue is None:
+        return None
+    summary = str(getattr(issue, "safe_summary", "") or "").strip()
+    kind = str(getattr(issue, "kind", "") or "").strip()
+    if not summary or summary == kind:
+        return None
+    return summary[:96]
+
+
 async def _try_deliver_by_parts(
     send_queue: DrainableSendQueue,
     entry: QueuedSendRequest,
@@ -1313,7 +1332,12 @@ async def _try_deliver_by_parts(
                 )
                 if issue_kind == "result_unknown":
                     store.mark_part_unknown(
-                        request_id, part_index, error_kind=issue_kind, now=now, **dkw
+                        request_id,
+                        part_index,
+                        error_kind=issue_kind,
+                        error_detail=_part_error_detail(receipt.operational_issue),
+                        now=now,
+                        **dkw,
                     )
                     parts_unknown += 1
                 else:
@@ -1321,6 +1345,7 @@ async def _try_deliver_by_parts(
                         request_id,
                         part_index,
                         error_kind=issue_kind or None,
+                        error_detail=_part_error_detail(receipt.operational_issue),
                         now=now,
                         **dkw,
                     )
@@ -1510,14 +1535,30 @@ async def _deliver_atomic_mixed_parts(
                 # 记 UNKNOWN 而非 FAILED_FINAL（未判定不能写死终态）。
                 for part_index in pending:
                     store.mark_part_unknown(
-                        request_id, part_index, error_kind=kind, now=now, **dkw
+                        request_id,
+                        part_index,
+                        error_kind=kind,
+                        error_detail=_part_error_detail(issue),
+                        now=now,
+                        **dkw,
                     )
                 parts_unknown += len(pending)
                 progress_made = True
             elif receipt.state is ReceiptState.FAILED_FINAL:
+                # Q-G5（SEAT-SENDTERM C）：本臂此前是四条段级写里唯一没带
+                # ``**dkw`` 的——同 request_id 兄弟行并存时（生产 7 组实锤，
+                # error_report ack/card 共键）按 request_id 解析行身份必歧义，
+                # 终态写既进不了自己那本账（行已 FAILED_FINAL 而 part 仍
+                # PENDING 的幽灵终态行），也可能错踩兄弟行、把兄弟的断点
+                # 打死成永不续发。判定与状态值一字未动，只补寻址。
                 for part_index in pending:
                     store.mark_part_failed_final(
-                        request_id, part_index, error_kind=kind or None, now=now
+                        request_id,
+                        part_index,
+                        error_kind=kind or None,
+                        error_detail=_part_error_detail(issue),
+                        now=now,
+                        **dkw,
                     )
             else:
                 # 超时/断连/传输异常=结果未知：全部记 UNKNOWN 停 PARTIAL。
@@ -1526,6 +1567,7 @@ async def _deliver_atomic_mixed_parts(
                         request_id,
                         part_index,
                         error_kind=kind or "result_unknown",
+                        error_detail=_part_error_detail(issue),
                         now=now,
                         **dkw,
                     )

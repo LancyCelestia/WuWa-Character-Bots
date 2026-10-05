@@ -328,23 +328,33 @@ def test_outbound_guard_is_wired_into_the_send_chain() -> None:
     """接线锁：守门真在 `build_chat_result` 的出站链上被调，命中进 audit_tags。
 
     只扫函数体（AST），不看注释——注释里提一句不算接上（#72★「三格哑面在盘不在码」）。
+    F-5 乙（2026-10-05）把出站归一化那一段收进 `_finalize_reply_text` 一处（补写的
+    那一版必须再过同一段才谈得上"送达"），所以本锁的扫描面＝出站缝 **加上它走的那一段**，
+    并显式钉「那一段真的被出站缝调到」——少了这一跳，搬进助手就等於摘掉接线。
     """
     tree = ast.parse(CHAT_FILE.read_text(encoding="utf-8"))
-    target = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "build_chat_result"
-    )
+
+    def body_of(name: str) -> ast.FunctionDef:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == name:
+                return node
+        raise AssertionError(f"chat.py 里没有 {name} ⇒ 本件要钉的那段链不在了")
+
+    entry = body_of("build_chat_result")
+    finalize = body_of("_finalize_reply_text")
     called = {
         node.func.id
-        for node in ast.walk(target)
+        for scope in (entry, finalize)
+        for node in ast.walk(scope)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
+    assert "_finalize_reply_text" in called, "出站缝不再经过归一化那一段 ⇒ 守门脱管"
     assert "_strip_borrowed_recital_sentences" in called, called
     assert "_persona_recital_whitelist_text" in called, called
     strings = {
         node.value
-        for node in ast.walk(target)
+        for scope in (entry, finalize)
+        for node in ast.walk(scope)
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
     assert "llm_borrowed_recital_stripped" in strings, "命中没有留痕＝被摘掉的那句无处回查"

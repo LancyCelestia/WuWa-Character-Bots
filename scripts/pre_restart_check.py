@@ -88,13 +88,43 @@ T4 渠道能力标签保险 / T5 PX-1 MCP 模块保险 / S141 ANN 代际可用�
                    语料读不到主题=SKIP（读不到＝没有证据，绝不据此宣称没有缺口）。
                    接线由 ``tests/test_kb_domain_anchor_central_wiring.py`` 拿 AST
                    调用图锁住（含注毒自证：摘掉调用即红）。
+  15. entry_chain 入口 import 链（重启到底「起不起得来」，SDD M2-44 的落地腿）：调
+                   ``scripts/import_chain_probe.py``（缺省轴＝**当前工作树**，经
+                   ``--root`` 指被测根）按**探针退出码＋结构化读数**定红绿——回显通篇报喜
+                   也照 rc 判红、回显危言耸听也照 rc 判绿（本仓被骗过的那一型）；rc=0 只算
+                   **必要**条件（2026-10-04 复核后收紧，失效形态 249）：读数解析不出 JSON
+                   （空壳桩件／读数写到非 stdout）、``cells`` 一格没有（＝探针 setup 自己没
+                   跑成；现算：解释器缺 nonebot 时它就报 rc=0「全链可导」）、或 ``cells`` 里
+                   躺着 status=FAIL（退出码与自家读数相互矛盾）⇒ 一律属**没有证据**，判红
+                   不判绿。缺件/超时/rc=2 同样 FAIL；本项自身不产 SKIP（拦的就是「按下重启」
+                   那一下），但 INCONCLUSIVE＝环境缺席的格不改判红，只点名成「SKIP x{N}＋
+                   格名」上屏——静默跳过证据的绿和放行的红是同一个谎。
+                   同时把「这次重启会带走谁」当**数据**交付：``details`` 里给出
+                   ``plugins/**`` 下 tracked-modified 模块的点分名清单与计数（porcelain
+                   前两字符含 ``M`` 才算，未跟踪/删除/文档/脚本一概不进——它们不进运行时），
+                   git 读不到时 ``working_tree_known=False`` 并写明原因，**绝不宣称
+                   「没有改动」**（读不到＝没有证据，照第 7/14 项口径）。读不到含四形：
+                   rc≠0／git 不在 PATH／``git status`` 挂过有界超时／采集面抛出——四形折成
+                   **同一种**表示（禁第二表示法），且一律不外抛：本采集排在探针之前，
+                   抛穿 ``run_all`` 就是顶穿 ``run-watch`` 的 loop 步＝看门狗自尽、永久 down。
+                   为什么要这一格：入口链上任一**模块级求值**抛错 ⇒ nonebot 只记一条
+                   error、``bot.py`` 崩溃守卫 ``raise`` ⇒ 插件全体不注册；
+                   ``BOT_SUPERVISE=1`` 退避 5+15+60+60≈140 秒后永久 down。载体
+                   （``ChatBot_Runtime\\restart_bot.ps1``）先杀后起、中间零判据，
+                   本格＋任务表 ``restart-check`` 就是那道「杀之前先看一眼」的门。
 
 用法：
   venv python scripts/pre_restart_check.py            # 人读表格
   venv python scripts/pre_restart_check.py --json     # 结构化输出
   venv python scripts/pre_restart_check.py --project-root <path>   # 供测试注入
+  venv python scripts/pre_restart_check.py --only entry_chain      # 单格判定（restart-check 门）
 
-.exit code：0 = 无 FAIL（PASS/SKIP 均放行）；1 = 有 FAIL。
+.exit code：0 = 无 FAIL（PASS/SKIP 均放行）；1 = 有 FAIL；2 = 命令行本身不合法
+（``--only`` 给了不在册的 id——静默少跑一项比红更糟）。
+``--only`` 交出的表格/JSON 与退出码**只由被点名的在册项决定**：旁格红（ruff、文档账）
+不该把「起得来」这条路一起堵死，反之亦然；全部项仍会跑一遍（注册面那几行的形状由
+``tests/test_tts_identity_watch.py`` 与 ``tests/test_kb_domain_anchor_central_wiring.py``
+的注毒锁钉住，改成惰性/闭包形状会让那两把锁的锚点静默失配＝锁变空腿）。
 """
 
 from __future__ import annotations
@@ -109,9 +139,9 @@ import subprocess
 import sys
 import tempfile
 import types
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -161,6 +191,10 @@ class CheckResult:
     status: str
     message: str
     fix_hint: str = ""
+    #: 结构化读数（``--json`` 消费方按这格现算，不参与判定）：历史上本文件只有一句话
+    #: message，「这次重启会带走几枚在改模块」这类数只能靠人读字。第 15 项要把它当
+    #: **数据**交付 ⇒ 加一枚默认空的字段，既有项一字不改（判定语义、退出码、表格形状全不动）。
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -1822,12 +1856,306 @@ def check_kb_domain_anchor(env: dict[str, str], project_root: Path) -> CheckResu
 
 
 # ---------------------------------------------------------------------------
+# 15. entry_chain：入口 import 链（SDD M2-44 的落地腿，2026-10-04）
+# ---------------------------------------------------------------------------
+# 为什么这一格非有不可（现算，见 ChatBot_Runtime/cache/seat-restartsafe/REPORT.md §6 B4）：
+# 探针真身 ``scripts/import_chain_probe.py`` 自 09-27 就在库、施工图也在册，但**没有任何
+# 门指向它**——「修法在册≠修好在盘」。入口链上任一模块级求值抛错（2026-09-29 实撞的形态
+# 是 ``re.compile`` 里多一枚右括号）⇒ nonebot 只记一条 error、``bot.py`` 崩溃守卫 ``raise``
+# ⇒ 插件全体不注册；``BOT_SUPERVISE=1`` 退避 5+15+60+60≈140 秒后永久 down。而载体
+# ``ChatBot_Runtime\restart_bot.ps1`` 先杀后起、中间零判据 ⇒ 坏在这里的代价是「杀掉那一棒
+# 救不回」，本格拦的就是这一秒。
+#
+# 判据纪律（本格的命门）：取探针自己的退出码，**且**必须拿到与它一致的结构化读数——
+# rc 是必要条件，不再是充分条件。绝不取回显：本项目被「宣布成功的回显」骗过不止一次
+# （台账 #63★「批即落」从未实现、#75★溯源门）。rc 语义真身＝探针模块 docstring「退出码」
+# 段：0=全链可导、1=至少一格 FAIL、2=探针自身无从判定。
+# 结构地板（2026-10-04 ``seat-gateverify`` 复核后收紧，假绿形态清单 249）：rc=0 而
+# ①stdout 解析不出 ``--json`` 对象／②``cells`` 一格没有／③``cells`` 里有 ``status=FAIL``
+# ⇒ 一律 FAIL。旧写法「解析不出就按 rc 放行」把洞留在门最想防的那一格：一枚只写注释的
+# 空壳桩件（本仓「退役＝留再导出垫片」的先例正好造得出这东西）或探针把读数写到非 stdout
+# 的改版 ⇒ 门恒绿且自称「全链可导」，而它一行代码没验。加的都是**结构化字段**要求
+# （payload/cells/status），照旧一个字也不采散文。
+# 现算形态＝解释器没装 nonebot 时子进程 setup 抛 ModuleNotFoundError、父进程仍报 rc=0
+# 「全链可导」，那是「没有证据」被洗成「绿」。
+# 探针输出只按 ``--json`` 的结构化字段读（格名/状态/落点）。
+# 本项不产 SKIP：拦的就是「按下重启」那一下；探针真身缺席、超时、rc=2 一律红。
+# 「没验到」的格（INCONCLUSIVE＝环境缺席）不改判红（离线/CI 不许被门炸掉），但必须
+# 当**点名 SKIP**上屏：一把静默跳过证据的绿门和一把放行的红门是同一个谎。
+# git 采集缝（「重启会带走谁」那一半）不外抛：它在探针之前跑，抛穿 ``run_all`` 就等于
+# 顶穿 ``run-watch`` 的 loop 步＝看门狗自尽、永久 down。读不到一律折成
+# ``working_tree_known=False`` 那一种表示（禁第二表示法），报「unknown」而非「干净」。
+
+ENTRY_CHAIN_PROBE_REL = "scripts/import_chain_probe.py"
+PRE_RESTART_CHECK_REL = "scripts/pre_restart_check.py"
+ENTRY_CHAIN_PROBE_TIMEOUT = 900  # 实测工作树 ≈10-30s（2026-10-04 当时值），留足冷启动余量
+#: 工作树读数的有界超时：``git status`` 挂住（复核实测见过 120s 那一级）必须由这里兜住，
+#: 兜不住的那一段时间本来就该换成「读不到」继续交付探针证据，而不是把整张预检炸掉
+ENTRY_CHAIN_GIT_TIMEOUT = 60
+_PROBE_RC_GREEN = 0
+_PROBE_RC_UNJUDGED = 2
+_PROBE_INCONCLUSIVE = "INCONCLUSIVE"
+#: 探针 rc → 人话（只用于读数说明，判定不看这段文字）
+_PROBE_RC_READING = {0: "全链可导", 1: "至少一格不可导", 2: "探针自身无从判定"}
+#: 结构地板的缺证原因 → 人话（判定看的是 payload/cells/status 这些字段，不是这句话）
+_PROBE_NO_EVIDENCE = {
+    "unparseable": "探针 rc=0 却交不回可解析的 --json 读数（stdout 里没有一枚 JSON 对象）",
+    "empty_cells": "探针 rc=0 却交回 0 格（它自己的 setup 没跑成，一格证据都没有）",
+    "failed_cells": "探针 rc=0 却交回 {n} 格 status=FAIL（退出码与自家读数相互矛盾）",
+}
+_TREE_UNKNOWN_SUFFIX = "——在改模块清单无从现算，不宣称「没有改动」"
+#: 在改模块点名上限（再多只报计数——判据不因此变松，全量清单在 ``details`` 里）
+_ENTRY_CHAIN_MODULES_SHOWN = 8
+#: 「没验到」的格点名上限（SKIP 要出声：操作者在表格里看得见名字，不是只见一个数）
+_ENTRY_CHAIN_SKIPS_SHOWN = 5
+
+_ENTRY_CHAIN_HINT = (
+    f"入口链不过＝重启下去大概率是「插件全体不注册 + 140 秒熔断永久 down」，先修再按。"
+    f"定位：{ENTRY_CHAIN_PROBE_REL} --json 的 cells[] 里 status=FAIL 那几格点名了模块、"
+    "异常类型与落点（kind/error/location）；改完复跑本项。注意本探针按设计只 "
+    "compile() bot.py（不执行），抓得到 SyntaxError 抓不到 bot.py 的 ImportError——"
+    "已知边界见探针真身 docstring 纪律 2，不许拿本格的绿当 bot.py 的保证。"
+    "机制全账见 .superpowers/sdd/2026-09-27-fullload/reports-m2/M2-44-ENTRY-PROBE-LANDING.md。"
+)
+
+
+def _module_dotted(rel_path: str) -> str:
+    """仓内相对路径 → 点分模块名（``__init__.py`` 折成包名）."""
+    parts = rel_path[: -len(".py")].split("/")
+    if parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts)
+
+
+def working_tree_plugin_modules(project_root: Path) -> tuple[tuple[str, ...], str]:
+    """列出「tracked 且已改」的 ``plugins/**`` Python 模块（点分名，排序）＋读不到的原因.
+
+    这格要交付的是**数据**，不是那句口头警告：重启读的是盘，盘上有多少枚别人没收笔的
+    运行时代码，操作者按之前就该看到一个数（口径同 ``seat-restartsafe`` 报告 §3 的
+    「进运行时的只有 plugins/** 那几枚」）。
+
+    取数＝``git status --porcelain``（cwd=``project_root``，经 ``run_cmd`` 这一唯一子进程
+    缝，测试可注）。解析形状照既有采集器 ``scripts/physical_placement_census.py`` 的
+    ``_s11_git_outside_sets``（前两字符=XY、第三字符起=路径、rename 取箭头右侧、剥引号
+    与反斜杠）——复用它的**形状**而非它的尺：那把尺绑死在本仓 ``REPO_ROOT`` 与「域外 .py」
+    判据上，指不了 ``--project-root`` 传进来的副本，且它 import 会牵起整张板块树。
+    谓词差量：``XY`` 含 ``M``（tracked-modified）且路径在 ``plugins/`` 下、以 ``.py`` 结尾；
+    ``??``（未跟踪）、``D``（删除）、``docs/``/``scripts/``（不进运行时）一概不入——
+    未跟踪件确实也在盘上，但那属「谁的稿」之争，本格只报「重启会把已入库的哪几枚换掉」。
+    **读不到＝没有证据**：``git`` 不可用（副本非检出、无权限、没装 git）、``git status``
+    挂过超时、或这一路抛出任何异常时，返回空清单 + 非空原因（与 ``rc!=0`` 同一种表示，
+    禁第二表示法），调用方必须带着原因上屏，绝不得据此宣称「这棵树没有改动」。
+    本函数**一律不外抛**：它在入口链探针之前跑，抛穿 ``run_all`` 会顶穿 ``run-watch``
+    的 loop 步＝看门狗自尽、永久 down（复核 §2(e)(f) 记的就是这一条）。
+    """
+    try:
+        rc, out, _err = run_cmd(
+            ["git", "status", "--porcelain"], project_root, timeout=ENTRY_CHAIN_GIT_TIMEOUT
+        )
+    except subprocess.TimeoutExpired:
+        return (), (
+            f"git status 读不到（{ENTRY_CHAIN_GIT_TIMEOUT}s 未回）{_TREE_UNKNOWN_SUFFIX}"
+        )
+    except OSError as exc:  # FileNotFoundError=没装 git/不在 PATH；PermissionError=无权限
+        return (), f"git 读不到（调用失败 {type(exc).__name__}）{_TREE_UNKNOWN_SUFFIX}"
+    if rc != 0:
+        return (), f"git status 读不到（rc={rc}）{_TREE_UNKNOWN_SUFFIX}"
+    modules: set[str] = set()
+    for line in out.splitlines():
+        if len(line) < 4:
+            continue
+        xy, pathspec = line[:2], line[3:]
+        if " -> " in pathspec:  # rename：取箭头右侧（工作树形态）
+            pathspec = pathspec.split(" -> ", 1)[1]
+        pathspec = pathspec.strip().strip('"').replace("\\", "/")
+        if "?" in xy or "M" not in xy:
+            continue
+        if not pathspec.startswith("plugins/") or not pathspec.endswith(".py"):
+            continue
+        modules.add(_module_dotted(pathspec))
+    return tuple(sorted(modules)), ""
+
+
+def _probe_payload(stdout: str) -> dict[str, Any] | None:
+    """取探针 ``--json`` 的结构化读数（解析不出＝None，本项绝不猜内容也不因它改判）.
+
+    探针真身的 ``--json`` 走 ``indent=2`` ⇒ 整个读数是一枚**跨行**对象，逐行扫必然只撞到
+    ``{`` 这种半截串（第一版就是这么栽的：解析失败当场 ``return None``，真实读数全被
+    当成「没跑过」⇒ 本项对真探针恒红）。所以先按行试（兼容单行 JSON 的直跑态），
+    再把整串当一枚对象试；任何一片解析不了就**接着找**，不是提前收工。
+    """
+    text = stdout.strip()
+    if not text:
+        return None
+    candidates: list[object] = [reversed(text.splitlines()), [text]]
+    for group in candidates:
+        for chunk in group:
+            try:
+                parsed = json.loads(str(chunk))
+            except ValueError:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+    return None
+
+
+def check_entry_chain(project_root: Path) -> CheckResult:
+    """第 15 项：入口 import 链（缺省轴＝当前工作树）＋「这次重启会带走谁」."""
+    cid, name = "entry_chain", "入口 import 链（重启到底起不起得来）"
+    try:
+        modules, tree_note = working_tree_plugin_modules(project_root)
+    except Exception as exc:  # noqa: BLE001 — 采集面抛出（含桩件/替换实现）也不许顶穿 run-watch 的 loop 步
+        modules, tree_note = (), f"在改模块采集抛穿（{type(exc).__name__}）{_TREE_UNKNOWN_SUFFIX}"
+    if tree_note:
+        tree_part = f"；在改模块读不到（{tree_note}）"
+    elif modules:
+        shown = "、".join(modules[:_ENTRY_CHAIN_MODULES_SHOWN])
+        if len(modules) > _ENTRY_CHAIN_MODULES_SHOWN:
+            shown += " …等"
+        tree_part = f"；本次重启会带走 plugins/** 在改模块 x{len(modules)}：{shown}"
+    else:
+        tree_part = "；plugins/** 无 tracked-modified 模块（工作树与 HEAD 同码）"
+    details: dict[str, Any] = {
+        "probe_root": str(project_root),
+        "probe_script": ENTRY_CHAIN_PROBE_REL,
+        "probe_rc": None,
+        "probe_cells_total": 0,
+        "probe_cells_fail": [],
+        "probe_inconclusive": 0,
+        "probe_payload_parsed": False,
+        "probe_skipped_cells": [],
+        "probe_structural_floor": "",
+        "probe_plugins_leg": {},
+        "working_tree_known": not tree_note,
+        "working_tree_note": tree_note,
+        "modified_plugin_modules": list(modules),
+        "modified_plugin_count": len(modules),
+    }
+
+    if not (project_root / ENTRY_CHAIN_PROBE_REL).is_file():
+        return CheckResult(
+            cid, name, FAIL,
+            f"探针真身缺席：{ENTRY_CHAIN_PROBE_REL} 不在 {project_root}——本格无从判定，"
+            "宁可红也不放行" + tree_part,
+            _ENTRY_CHAIN_HINT,
+            details,
+        )
+    argv = [
+        sys.executable,
+        ENTRY_CHAIN_PROBE_REL,
+        "--root",
+        str(project_root),
+        "--json",
+    ]
+    try:
+        rc, out, _err = run_cmd(argv, project_root, timeout=ENTRY_CHAIN_PROBE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return CheckResult(
+            cid, name, FAIL,
+            f"探针 {ENTRY_CHAIN_PROBE_TIMEOUT}s 未回——没有证据，按红记账" + tree_part,
+            _ENTRY_CHAIN_HINT,
+            details,
+        )
+    payload = _probe_payload(out)
+    cells = [c for c in (payload or {}).get("cells") or [] if isinstance(c, dict)]
+    failed_cells = [c for c in cells if c.get("status") == FAIL]
+    skipped_cells = [str(c.get("cell", "")) for c in cells if c.get("status") == _PROBE_INCONCLUSIVE]
+    details.update(
+        {
+            "probe_rc": rc,
+            "probe_cells_total": len(cells),
+            "probe_cells_fail": [str(c.get("cell", "")) for c in failed_cells],
+            "probe_inconclusive": len(skipped_cells),
+            "probe_payload_parsed": payload is not None,
+            "probe_skipped_cells": skipped_cells,
+            "probe_plugins_leg": (payload or {}).get("plugins") or {},
+        }
+    )
+
+    if rc != _PROBE_RC_GREEN:
+        reading = _PROBE_RC_READING.get(rc, "未预期退出码")
+        head = f"探针 rc={rc}（{_scrub_probe(reading)}）——本项判据＝退出码＋结构化读数，回显不参与判定"
+        if payload is None:
+            head += f"；{_PROBE_NO_EVIDENCE['unparseable']}"
+        if failed_cells:
+            picks = "、".join(
+                f"{c.get('cell')}[{_scrub_probe(str(c.get('kind', '')))} @{c.get('location', '')}]"
+                for c in failed_cells[:3]
+            )
+            head += f"；不可导格 x{len(failed_cells)}：{picks}" + (
+                f"（余 {len(failed_cells) - 3} 枚见 --json）" if len(failed_cells) > 3 else ""
+            )
+        plugins_leg = details["probe_plugins_leg"]
+        if isinstance(plugins_leg, dict) and plugins_leg:
+            head += (
+                f"；注册腿 loaded={plugins_leg.get('loaded')} "
+                f"target_loaded={plugins_leg.get('target_loaded')} "
+                f"failed={_scrub_probe(str(plugins_leg.get('failed')))}"
+            )
+        return CheckResult(cid, name, FAIL, head + tree_part, _ENTRY_CHAIN_HINT, details)
+
+    # 结构地板：rc=0 只是必要条件——还必须有**与它一致**的结构化读数（三形任一即红）
+    if payload is None:
+        floor = "unparseable"
+    elif not cells:
+        floor = "empty_cells"
+    elif failed_cells:
+        floor = "failed_cells"
+    else:
+        floor = ""
+    if floor:
+        details["probe_structural_floor"] = floor
+        why = _PROBE_NO_EVIDENCE[floor].format(n=len(failed_cells))
+        picks = ""
+        if failed_cells:
+            picks = "：" + "、".join(
+                f"{c.get('cell')}[{_scrub_probe(str(c.get('kind', '')))} @{c.get('location', '')}]"
+                for c in failed_cells[:3]
+            )
+        return CheckResult(
+            cid, name, FAIL,
+            f"{why}——没有结构化证据，不算「全链可导」{picks}" + tree_part,
+            _ENTRY_CHAIN_HINT, details,
+        )
+
+    # 到这里才是绿：rc=0 + 读得回 JSON + 至少一格 + 没有一格说 FAIL
+    n_verified = len(cells) - len(skipped_cells)
+    if skipped_cells:
+        named = "、".join(skipped_cells[:_ENTRY_CHAIN_SKIPS_SHOWN]) + (
+            f" …余 {len(skipped_cells) - _ENTRY_CHAIN_SKIPS_SHOWN} 枚见 --json"
+            if len(skipped_cells) > _ENTRY_CHAIN_SKIPS_SHOWN
+            else ""
+        )
+        proof = (
+            f"探针 rc=0：{n_verified}/{len(cells)} 格可导；"
+            f"⚠ SKIP x{len(skipped_cells)}（点名：{named}）＝这些格这一轮**没验到**"
+            "（环境缺席，按设计不算红，但也不许当验过——本格的绿只覆盖其余格）"
+        )
+    else:
+        proof = f"探针 rc=0：{len(cells)} 格全无可导失败（无一格 SKIP＝逐格都真验到了）"
+    return CheckResult(cid, name, PASS, proof + tree_part, "", details)
+
+
+def _scrub_probe(text: str) -> str:
+    """探针落点/异常原文进读数前压平（防多行与超长串打崩表格，不截语义）."""
+    flat = " ".join(str(text).split())
+    return flat if len(flat) <= 200 else flat[:197] + "…"
+
+
+# ---------------------------------------------------------------------------
 # 汇总与输出
 # ---------------------------------------------------------------------------
 
-def run_all(project_root: Path) -> list[CheckResult]:
+def run_all(project_root: Path, only: Sequence[str] = ()) -> list[CheckResult]:
+    """跑齐在册项；``only`` 非空时只**交出**被点名那些格（顺序仍按声明侧）.
+
+    全部项仍各跑一遍：注册面那几行的**行形状**被两把注毒锁当锚点钉着
+    （``tests/test_tts_identity_watch.py`` 摘行/挪位必红、``tests/test_kb_domain_anchor_central_wiring.py``
+    走 AST 调用图），改成惰性表或 ``add(...)`` 包装会让锚点静默失配＝把锁掏空。
+    取舍＝多花几十秒读表，换两把锁继续有牙；判定与退出码只由 ``only`` 那几格说话。
+    """
     env = load_env(project_root)
-    return [
+    results = [
         check_env_paths(env, project_root),
         check_persona_sync(env, project_root),
         check_hash_ledger(project_root),
@@ -1842,7 +2170,17 @@ def run_all(project_root: Path) -> list[CheckResult]:
         check_mcp_server_spec(env, project_root),
         check_ann_generation_pair(env, project_root),
         check_kb_domain_anchor(env, project_root),
+        check_entry_chain(project_root),
     ]
+    if not only:
+        return results
+    wanted = list(only)
+    declared = declared_item_ids()
+    unknown = [item for item in wanted if item not in declared]
+    if unknown:
+        raise ValueError(f"--only 给了不在册的体检项：{unknown}（在册＝{declared}）")
+    return [r for r in results if r.id in wanted]
+
 
 
 # 在册清单的唯一声明侧 = 本模块 docstring 的编号列表（`N. id …` 行，两空格缩进）。
@@ -1900,10 +2238,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--json", action="store_true", help="结构化 JSON 输出")
     parser.add_argument("--project-root", default=None, help="覆盖项目根（默认仓库根，供测试/异构部署）")
+    parser.add_argument(
+        "--only",
+        default=None,
+        help=(
+            f"只交出任几格（逗号分隔在册 id，如 entry_chain）；退出码随之收窄——"
+            f"restart-check 门用，旁格红不堵「起得来」这条路。在册项现算自声明侧："
+            f"{','.join(declared_item_ids())}"
+        ),
+    )
     args = parser.parse_args(argv)
 
     project_root = Path(args.project_root).resolve() if args.project_root else PROJECT_ROOT
-    results = run_all(project_root)
+    only = tuple(s.strip() for s in str(args.only).split(",") if s.strip()) if args.only else ()
+    try:
+        results = run_all(project_root, only)
+    except ValueError as exc:  # --only 的 id 不在册：大声失败，绝不静默少跑一项
+        print(f"[pre_restart_check] 命令行不合法：{exc}", file=sys.stderr)
+        return 2
 
     try:  # Windows 控制台中文输出防 mojibake/编码异常
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]

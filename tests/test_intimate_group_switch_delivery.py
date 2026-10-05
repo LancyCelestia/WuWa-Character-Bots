@@ -62,6 +62,7 @@ from plugins.bot_unified_runtime.contracts import (
     ToneProfile,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    GROUP_INTIMATE_SCENE_STYLE_INSTRUCTION,
     INTIMATE_RP_STYLE_INSTRUCTION,
     MANUAL_ON_REPLY,
     build_chat_result,
@@ -565,7 +566,14 @@ def test_member_pin_does_not_leak_to_other_group_members() -> None:
         cfg,
         provider_a,
     )
-    assert INTIMATE_RP_STYLE_INSTRUCTION in _system_join(provider_a)
+    # 正向腿重指（I-3＝丙，2026-10-04 深夜裁定）：群是公共空间，群侧那一格的铺写段
+    # **不含身形／衣着**，所以"私聊五维段整段在场"不再是"这个人进了档"的合法代理。
+    # 判据不减反增：群段必须在场，**且私聊段必须不在场**（读到私聊格＝会话面选表失效）。
+    joined_a = _system_join(provider_a)
+    assert GROUP_INTIMATE_SCENE_STYLE_INSTRUCTION in joined_a
+    assert INTIMATE_RP_STYLE_INSTRUCTION not in joined_a, (
+        "群聊轮读到了私聊那一格＝会话面选表失效（I-3＝丙）"
+    )
 
 
 def test_admin_group_pin_covers_the_group_but_writes_only_the_scope_key() -> None:

@@ -4,6 +4,7 @@ import re
 import sqlite3
 import threading
 import unicodedata
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -236,13 +237,32 @@ def build_addressing_context(
     )
 
 
+#: 按列清（F-8 裁定甲）唯一的语句册：**只有这两列**归自助称谓面管。
+#: 键＝列名（与下面 `CREATE TABLE` 里的 DEFAULT **逐字同值**：`''`／`'unknown'`），
+#: 值＝整条**静态** UPDATE（列名不来自调用方，`columns` 只当选择器 ⇒ 无拼注入面）。
+#: 关系档／亲密档标记／描写档钉**不在册**——它们各有自己的收回口，走这里一律 ValueError。
+_SELF_CLEARABLE_COLUMNS: dict[str, str] = {
+    "addressing_preference": (
+        "UPDATE addressing_preferences SET addressing_preference=''"
+        " WHERE session_type=? AND session_id=? AND sender_id=?"
+    ),
+    "gender_identity": (
+        "UPDATE addressing_preferences SET gender_identity='unknown'"
+        " WHERE session_type=? AND session_id=? AND sender_id=?"
+    ),
+}
+
+
 class AddressingPreferenceStore:
-    """用户主动设置的称谓／性别／关系档，外加「本人亲手把亲密档开到哪一档」的标记。
+    """用户主动设置的称谓／性别／关系档，外加两枚"本人亲手声明"的标记：
+    「亲密档开到哪一档」（含开启时刻，供跨重启沿用，TTL 判据在引擎侧）与
+    「描写档钉在哪一格」（speech/scene，**无 TTL**，reset 才收回）。
 
     SQLite 单连接 + ``threading.Lock`` + WAL 先于 DDL（与会话身份 store 同款）。
     主键 (session_type, session_id, sender_id)：私聊按人、群聊按群+人。
     只存用户显式设置/纠正的值；本 store 不做任何推断，也不含任何 TTL 判据
-    （亲密档标记的"还能不能用"由 `runtime/content_route.py` 判，见下面三张口）。
+    （亲密档标记的"还能不能用"、描写档的"要不要授予"都由 `runtime/content_route.py` 判，
+    本件只当带时间戳的格子）。
     """
 
     def __init__(self, path: str | Path) -> None:
@@ -302,6 +322,27 @@ class AddressingPreferenceStore:
                     (
                         "ALTER TABLE addressing_preferences"
                         " ADD COLUMN intimate_explicit_at REAL NOT NULL DEFAULT 0"
+                    ),
+                ),
+                (
+                    # 描写档（2026-10-04 用户裁定 G-1／G-3「scene 走每人的持久钉、
+                    # 群侧只认她自己开过的那一格」）：**与上面两列同一族、同一行、同一先例**
+                    # ——都是"这个人显式声明过的相处面"，只是答的问题不同（一枚答亲密档
+                    # 开到哪一档、一枚答描写铺开没有）。仍然不新建库、不加配置键。
+                    # 与亲密档标记**不同轴**的一条：这一格**没有 TTL**（判据住
+                    # `runtime/content_route.py` 那节注释，那里才有时钟旋钮），
+                    # 所以时间戳只用于审计"什么时候钉的"，不参与任何过期判定。
+                    "narration_mode",
+                    (
+                        "ALTER TABLE addressing_preferences"
+                        " ADD COLUMN narration_mode TEXT NOT NULL DEFAULT ''"
+                    ),
+                ),
+                (
+                    "narration_updated_at",
+                    (
+                        "ALTER TABLE addressing_preferences"
+                        " ADD COLUMN narration_updated_at REAL NOT NULL DEFAULT 0"
                     ),
                 ),
             ):
@@ -406,8 +447,11 @@ class AddressingPreferenceStore:
     # `runtime/content_route.py`（那里才有 `intimate_ttl_minutes` 这枚旋钮），
     # 存储层不判 TTL ⇒ 判据不长第二处。
     # 键位与 `get_relationship`/`set_relationship` 完全同一把 PK 三元组，
-    # 因此「这个人」的显式声明在同一行里并存；`clear()`（/bot identity
-    # unset-name 的整行删除语义）连这两格一并抹掉＝与关系档同族的既有口径。
+    # 因此「这个人」的显式声明在同一行里并存；也正因如此，收回这两格的**只准是**
+    # `clear_intimate_pin()`／`clear_narration_pin()`／`reset` 那三条明说了要收回的口。
+    # 🔴 自助称谓面（`/bot identity unset-name|unset-gender`）2026-10-04 裁定 F-8 甲起
+    # 改走 `clear_columns()`＝按列清；旧口径「清理＝按行删」（`clear()`）会把这两格
+    # 连同一行的关系档一起静默收走，已从命令面退役（`docs/db-owners.md` 同批改口）。
 
     def get_intimate_pin(
         self,
@@ -489,6 +533,98 @@ class AddressingPreferenceStore:
                 (str(session_type), str(session_id), str(sender_id)),
             )
 
+    # ---- 描写档持久钉（2026-10-04 用户裁定 G-1／G-2／G-3）------------------------------
+    #
+    # 与上面那三张口**同一把 PK 三元组**（同一个人的显式声明并存在同一行里）、
+    # 同样**只存事实、不含判据**：模式串原样存，合法性由引擎侧的 `NARRATION_MODES`
+    # 在读出来之后再认一次（认不出＝当没有，fail-safe 落"只说话"）；时刻由调用方交出
+    # （epoch 秒，**墙钟**）。
+    # 🔴 与亲密档标记**不同**的一点：这一格**没有 TTL**——它活到本人 `reset` 为止，
+    # 因为它是文风偏好而不是放行授权；`updated_at` 只供审计，不参与任何过期判定
+    # （判据全住 `runtime/content_route.py` 的「描写档的钉」那一节，这里不判一次）。
+
+    def get_narration_pin(
+        self,
+        *,
+        session_type: str,
+        session_id: str = "",
+        sender_id: str,
+    ) -> tuple[str, float]:
+        """描写档钉 → ``(mode, updated_at)``；无记录/读失败回 ``("", 0.0)``。"""
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT narration_mode, narration_updated_at"
+                    " FROM addressing_preferences"
+                    " WHERE session_type=? AND session_id=? AND sender_id=?",
+                    (str(session_type), str(session_id), str(sender_id)),
+                ).fetchone()
+        except sqlite3.Error:
+            return "", 0.0
+        if row is None:
+            return "", 0.0
+        try:
+            stamp = float(row[1] or 0.0)
+        except (TypeError, ValueError):
+            stamp = 0.0
+        return str(row[0] or "").strip(), stamp
+
+    def set_narration_pin(
+        self,
+        *,
+        session_type: str,
+        session_id: str = "",
+        sender_id: str,
+        mode: str,
+        updated_at: float,
+    ) -> None:
+        """钉下「此人要 ``mode`` 这一格描写」（覆盖旧值；时刻由调用方交出）。
+
+        只 UPSERT 自己那两格 ⇒ 同一行的称谓／性别自述／关系档／亲密档标记一个字节都不动。
+        """
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO addressing_preferences (
+                    session_type, session_id, sender_id,
+                    narration_mode, narration_updated_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_type, session_id, sender_id) DO UPDATE SET
+                    narration_mode=excluded.narration_mode,
+                    narration_updated_at=excluded.narration_updated_at,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    str(session_type),
+                    str(session_id),
+                    str(sender_id),
+                    str(mode or "").strip()[:16],
+                    float(updated_at),
+                    _utc_now_iso(),
+                ),
+            )
+
+    def clear_narration_pin(
+        self,
+        *,
+        session_type: str,
+        session_id: str = "",
+        sender_id: str,
+    ) -> None:
+        """收回钉（本人 ``reset``）：只清那两格，**不删整行**。
+
+        删行会连人家的称谓偏好／关系档／亲密档标记一起抹掉，那不是这条指令说过的话
+        （同 `clear_intimate_pin`；`clear()` 那支整行 DELETE 自 2026-10-04 裁定 F-8 甲起
+        **不再被任何命令面调用**，自助称谓面改走 `clear_columns()`，别混用）。
+        """
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE addressing_preferences"
+                " SET narration_mode='', narration_updated_at=0"
+                " WHERE session_type=? AND session_id=? AND sender_id=?",
+                (str(session_type), str(session_id), str(sender_id)),
+            )
+
     def set(
         self,
         *,
@@ -541,9 +677,53 @@ class AddressingPreferenceStore:
         session_id: str = "",
         sender_id: str,
     ) -> None:
+        """**整行**移除（九个字节一起走）。
+
+        🔴 2026-10-04 用户裁定 F-8 甲之后，**命令面不再用这一支**：自助称谓面
+        （`/bot identity unset-name`／`unset-gender`）改走 `clear_columns()`。
+        本支保留只给"确实要抹掉这个人这一格"的手工/测试场合——QQ 私聊里那一行与本人的
+        亲密档标记、描写档钉**天生同一行**（裸 uid 撞键形，见席 rowwipe 报告第 1 节），
+        拿它当"取消称呼"的实现就会顺手收回没人点过名的东西。
+        """
         with self._lock, self._conn:
             self._conn.execute(
                 "DELETE FROM addressing_preferences"
                 " WHERE session_type=? AND session_id=? AND sender_id=?",
                 (str(session_type), str(session_id), str(sender_id)),
             )
+
+    def clear_columns(
+        self,
+        *,
+        session_type: str,
+        session_id: str = "",
+        sender_id: str,
+        columns: Sequence[str],
+    ) -> tuple[str, ...]:
+        """按列清（2026-10-04 用户裁定 F-8 甲＝「改成按列清，只清点名的那一列」）。
+
+        只把 `columns` 点到的列落回**表自己的缺省值**，其余列一字节不动、**行不删**；
+        与 `clear_intimate_pin()`／`clear_narration_pin()` 同族（同一把锁、同一条连接、
+        同一整条主键三元组），所以「这个人显式声明过的东西」不会因一条"取消称呼"蒸发。
+
+        - `columns` 只认 `_SELF_CLEARABLE_COLUMNS` 在册的名字（`addressing_preference`／
+          `gender_identity`）；点别的列当场 `ValueError`——**关系档／亲密档标记／描写档钉
+          各有自己的收回口**，这里不放开，免得长出第二个"整行收回"的入口。
+        - 返回值＝实际写回的列名。行不存在时 UPDATE 命中 0 行，仍原样交回列名（**不新建行**），
+          "到底清没清到东西"由调用方**清之前那一次读**判定（回执纪律，席 receiptorder）。
+        - 不判任何 TTL、不做任何推断（与类 docstring 同口径）；`updated_at` 不动，
+          照两支 `clear_*` 先例——审计戳由写腿自己带。
+        """
+        names = tuple(str(column) for column in columns)
+        unknown = [column for column in names if column not in _SELF_CLEARABLE_COLUMNS]
+        if unknown:
+            raise ValueError(f"这一列不归自助称谓面清（在册只有 {sorted(_SELF_CLEARABLE_COLUMNS)}）：{unknown}")
+        key = (str(session_type), str(session_id), str(sender_id))
+        cleared: list[str] = []
+        with self._lock, self._conn:
+            for column in names:
+                if column in cleared:
+                    continue
+                self._conn.execute(_SELF_CLEARABLE_COLUMNS[column], key)
+                cleared.append(column)
+        return tuple(cleared)

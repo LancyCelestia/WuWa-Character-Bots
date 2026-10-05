@@ -41,7 +41,7 @@
 
 ## 退役与并入记录
 
-- 旧路径 `capabilities.auto_send`、`runtime.reactions` 已在 v21r2 域重组中迁到 `domains/schedule/auto_send` 与 `domains/meme/reactions/engine.py`，旧名保留为再导出垫片（非实现）；本板块文档只认新真身。
+- 旧路径 `capabilities.auto_send`、`runtime.reactions` 已在 v21r2 域重组中迁到 `domains/schedule/auto_send` 与 `domains/meme/reactions/engine.py`；那两枚**再导出垫片本身已于 P2 减量波三态退役**（文件＋账本行＋牵动面同批动，旧名不可 import，防写回锁在册），本板块文档只认新真身。
 - 校园自动转发原"裸 `send_queue.submit` 旁路"经 U17 收编进中央出站管线（review 门 fail-closed + 打码前置），旁路口径已退役。
 - 每日摘要推送的 llm_provider 缺传、群摘要 session_id 口径两项早期缺陷在各自波次修于 shared_group 域（B04/B05），B07 只保留"到点触发"这条腿，不再重复记录内容侧沿革。
 - 波次过程件（席位日志/brief/report）留在 `.superpowers/`，不进本板块目录。

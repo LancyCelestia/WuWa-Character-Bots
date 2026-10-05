@@ -1686,6 +1686,7 @@ class SQLiteSendRequestQueue:
         part_index: int,
         *,
         error_kind: str | None = None,
+        error_detail: str | None = None,
         provider_message_id: str | None = None,
         now: datetime | None = None,
         dedupe_key: str | None = None,
@@ -1696,6 +1697,7 @@ class SQLiteSendRequestQueue:
             part_index,
             state=PART_STATE_UNKNOWN,
             last_error_kind=error_kind,
+            last_error_detail=error_detail,
             provider_message_id=provider_message_id,
             now=now,
             dedupe_key=dedupe_key,
@@ -1707,6 +1709,7 @@ class SQLiteSendRequestQueue:
         part_index: int,
         *,
         error_kind: str | None = None,
+        error_detail: str | None = None,
         now: datetime | None = None,
         dedupe_key: str | None = None,
     ) -> bool:
@@ -1716,6 +1719,7 @@ class SQLiteSendRequestQueue:
             part_index,
             state=PART_STATE_FAILED_FINAL,
             last_error_kind=error_kind,
+            last_error_detail=error_detail,
             now=now,
             dedupe_key=dedupe_key,
         )
@@ -1745,6 +1749,7 @@ class SQLiteSendRequestQueue:
         state: str,
         increment_attempts: bool = False,
         last_error_kind: str | None = None,
+        last_error_detail: str | None = None,
         provider_message_id: str | None = None,
         now: datetime | None = None,
         dedupe_key: str | None = None,
@@ -1777,6 +1782,11 @@ class SQLiteSendRequestQueue:
                 if last_error_kind is not None:
                     assignments.append("last_error_kind = ?")
                     params.append(last_error_kind)
+                if last_error_detail is not None:
+                    # SEAT-SENDTERM A2：结构因单列存写侧自截（防越界写入），
+                    # 读侧 NULL＝旧行无原因可考，与「不回填不猜」一致。
+                    assignments.append("last_error_detail = ?")
+                    params.append(str(last_error_detail)[:96])
                 if provider_message_id is not None:
                     assignments.append("provider_message_id = ?")
                     params.append(provider_message_id)
@@ -2333,6 +2343,23 @@ class SQLiteSendRequestQueue:
                 connection,
                 "send_request_parts",
                 "dedupe_key",
+                "TEXT",
+            )
+            # SEAT-SENDTERM A1/A2（2026-10-04）：「为什么失败」的结构因列（如
+            # ``retcode_failure retcode=403 status=failed``）。此前 part 明细只有
+            # ``last_error_kind``＝失败**族**，判死用的那枚 OneBot 退码在
+            # ``sender/onebot.py`` 用完即丢 ⇒ 事后无从复核是哪枚码判的生死。
+            # 与上方 dedupe_key 同法：additive ALTER-if-missing（元数据级、非破坏
+            # 性、幂等），旧行 NULL＝无原因可考，不回填、不猜。内容全部由 sender
+            # 侧结构化拼装（数字 + 协议状态词白名单形状），适配器/异常自由文本按
+            # tests/test_operational_failures.py:368-373 裁决锁不入册。
+            # db-owners 门（tests/test_db_owners_coverage.py 尺①键名/尺②文件名）
+            # 比对的是 config.py 库路径键 ⇄ 登记的库文件名，本列既不加库键也不加
+            # 库文件 ⇒ 该门不受本改动影响（已实跑复核）。
+            self._ensure_column(
+                connection,
+                "send_request_parts",
+                "last_error_detail",
                 "TEXT",
             )
             connection.execute(

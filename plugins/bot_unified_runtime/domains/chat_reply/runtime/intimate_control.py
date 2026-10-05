@@ -10,6 +10,9 @@
   （`tests/test_intimate_slash_command.py` 末段一枚 AST 锁盯着这件事）；
 - 档位/来源读数＝`content_route.resolve_intimate_context`（注入缝与路由双门同源）；
   五维叙述那一格＝`content_route.grants_intimate_narration`（判据只在那一处）。
+  🔴 判据一枚 ≠ 问法一枚：`chat.py` 交出两枚**取量口** `narration_ruler_source`
+  （叙述轴，答"这一轮能不能铺开写"）与 `intimate_axis_source`（亲密轴，答"这档是谁
+  推上去的"），本模块**凡是「细节描写」那一格只准问前者**（席 na-showalign，独立复查 B-4）。
 
 分诊口径照 `match_intimate_subcommand` 的 docstring 执行，三条腿互不吞：
 ① 先取开关口，非 None 走开关腿；② 返回 None 后再自己认一次 `show` 走查询腿
@@ -50,7 +53,9 @@ from plugins.bot_unified_runtime.contracts import (
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
     REPLY_LENGTH_TIERS,
     apply_intimate_switch,
+    intimate_axis_source,
     intimate_reply_length_tier,
+    narration_ruler_source,
     normalize_reply_detail_mode,
     resolve_reply_length_tier,
 )
@@ -64,16 +69,24 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import
     INTIMATE_SOURCE_CONTENT_SIGNAL,
     INTIMATE_SOURCE_MANUAL,
     INTIMATE_SOURCE_MASTER_LOVE,
+    INTIMATE_SOURCE_NARRATION_PIN,
     INTIMATE_SOURCE_NONE,
     INTIMATE_TIER_L1,
     INTIMATE_TIER_L2,
     INTIMATE_TIER_NONE,
     MODE_INTIMATE,
     MODE_NORMAL,
+    NARRATION_MODE_SCENE,
+    NARRATION_MODE_SPEECH,
     SHARED_CONTENT_ROUTE_ENGINE,
+    clear_narration_pin,
     grants_intimate_narration,
     match_intimate_subcommand,
+    match_narration_subcommand,
+    narration_write_allowed,
+    read_narration_pin,
     resolve_intimate_context,
+    write_narration_pin,
 )
 
 #: 帮助页指路行：裸命令与"不认得"两支都附在末尾，替被新 elif 顶掉的那条旧 help 兜底。
@@ -100,6 +113,18 @@ _SOURCE_LABELS: dict[str, str] = {
     INTIMATE_SOURCE_MASTER_LOVE: "在册名单自动给的",
     INTIMATE_SOURCE_CONTENT_SIGNAL: "这几句话自己带进来的",
     INTIMATE_SOURCE_AFFINITY: "处着处着自然到的",
+    # 描写档那一格的"依据"也走这张表（键是同一族 `INTIMATE_SOURCE_*`，另立一本＝
+    # 长第二处映射；这一支永远只出现在 `narration_source` 上，亲密档的来源取不到它，
+    # 所以不会互相糊）。
+    INTIMATE_SOURCE_NARRATION_PIN: "你自己钉过描写",
+}
+
+#: 描写档两格的人话（2026-10-04 裁定 G-1）。键引 `NARRATION_MODE_*` 常量，不重抄码串。
+#: 说法刻意**不承诺身形衣着**——普通档 `scene` 写哪几维归样式常量那一席（G-4），
+#: 这里只说"说出口之外的部分写不写"，一个字都不替她裁定。
+_NARRATION_LABELS: dict[str, str] = {
+    NARRATION_MODE_SPEECH: "只说出口的话",
+    NARRATION_MODE_SCENE: "连动作神色一起铺开",
 }
 
 _MODE_LABELS: dict[str, str] = {
@@ -225,21 +250,21 @@ def _effective_detail_mode(
 ) -> str:
     """详略「模式」的四层优先级链——次序与 `chat.py` 装配段那条一字不差：
 
-    ① 运行时覆盖（`/bot reply 精简` 那类热改）→ ② 该人永久策略 →
-    ③ `BOT_REPLY_DETAIL` → ④ auto。层①在场时层②让路，这是原链的规矩，
-    这里照抄、不自行放宽——少读一层就是对钉过「短一点」的人谎报「详尽」。
+    ① 本轮明示（这一句刚写进库的说法）→ ② 该人永久策略 → ③ 全局档
+    `BOT_REPLY_DETAIL`（**覆盖册里那枚常驻值就在这一层**）→ ④ auto。
+    裁定原文（2026-09-28）＝「当轮明示 > 永久策略 > 全局 BOT_REPLY_DETAIL > 缺省」。
+    2026-10-04 根修：本函数（与 `chat.py` 同形）曾把「覆盖册里有这枚键」当第①层，
+    于是某次 `/bot runtime set` 留下的跨重启常驻值把每一个人的永久策略整段静音——
+    报出来的档位与她实际拿到的档位相反，对钉过「短一点」的人就是谎报。
+    本轮真说过什么，由 ①② 那条写腿（`resolve_turn_reply_policy`）负责，不在这里判。
     """
-    base_mode = normalize_reply_detail_mode(getattr(config, "bot_reply_detail", "auto"))
-    detail_mode = base_mode
-    layer_one_hit = False
+    detail_mode = normalize_reply_detail_mode(getattr(config, "bot_reply_detail", "auto"))
     get_or = getattr(runtime_settings, "get_or", None)
     if callable(get_or):
-        detail_mode = normalize_reply_detail_mode(get_or("BOT_REPLY_DETAIL", base_mode))
-        layer_one_hit = get_or("BOT_REPLY_DETAIL", None) is not None
-    if not layer_one_hit:
-        person_mode = _person_length_mode(config, sender_id, session_key)
-        if person_mode:
-            detail_mode = normalize_reply_detail_mode(person_mode)
+        detail_mode = normalize_reply_detail_mode(get_or("BOT_REPLY_DETAIL", detail_mode))
+    person_mode = _person_length_mode(config, sender_id, session_key)
+    if person_mode:
+        detail_mode = normalize_reply_detail_mode(person_mode)
     return detail_mode
 
 
@@ -270,6 +295,17 @@ def _text_result(
     )
 
 
+def _narration_grant_line(ctx: dict[str, Any]) -> str:
+    """「细节描写」这一格的**唯一渲染口**（两处 `show` 面共用一句，不留第二处字面）。
+
+    读数＝拿**叙述轴**那枚取量口去问唯一那把尺（调用形态只准落在下面那一行）⇒
+    `/bot intimate show` 与 `/bot 描写 show` 在同一轮里必然同值（独立复查 B-4 的用户
+    可见面：旧写法两句互斥）。字面只落这一处也顺带过了「同源单句」那道门。
+    """
+    granted = grants_intimate_narration(narration_ruler_source(ctx))
+    return f"细节描写：{'已开' if granted else '没开'}"
+
+
 def _state_body(
     ctx: dict[str, Any],
     config: Any,
@@ -288,7 +324,15 @@ def _state_body(
     return [
         f"当前档位：{_tier_phrase(mode, tier)}",
         f"谁开的：{_label(_SOURCE_LABELS, source)}",
-        f"细节描写：{'已开' if grants_intimate_narration(source) else '没开'}",
+        # 🔴 席 na-showalign（独立复查 B-4／Q4）：这一格从此只按**叙述轴**回答——与
+        # `/bot 描写 show` 那一句**同名同问、同一段字面**（旧写法拿亲密轴的 `source` 答
+        # "细节描写开没开"，于是同一轮里两句互斥；形状锁
+        # `tests/test_narration_axis_show_consistency.py` 钉的就是这一句）。
+        _narration_grant_line(ctx),
+        # 亲密轴那一问（"这档是谁推上去的"）答的是**另一件事**：样式段第二枚键、
+        # 亲密轮的出站动作括号豁免读它（`chat.py` 装配段），它不决定描写档钉没钉。
+        # 留在这一格是因为它是真读数、不是那把尺的答案——名字换了，值一个字没动。
+        f"亲密档带来的描写：{'已开' if grants_intimate_narration(intimate_axis_source(ctx)) else '没开'}",
         f"详略：{_length_label(detail_mode, in_intimate=mode == MODE_INTIMATE)}",
         f"作用域：{scope_phrase}",
         f"这一处准进：{'是' if ctx.get('eligible') else '否'}",
@@ -307,6 +351,7 @@ def build_intimate_control_result(
     sender_roles: list[str] | tuple[str, ...] | None = None,
     privacy_level: PrivacyLevel | None = None,
     runtime_settings: Any = None,
+    platform: str = "",
 ) -> CapabilityResult:
     """/bot intimate 的三腿分诊口：开关 → 只读查询 → 用法（都不中才回"不认得"）。
 
@@ -332,6 +377,11 @@ def build_intimate_control_result(
         sender_id=sender_id,
         session_key=session_key,
         config=config,
+        # 席 na-land 补的第五处（2026-10-05）：亲密面也读描写钉（那一句「细节描写」），
+        # 不交平台事实时 `_narration_person_key` 走 fail-closed 支⇒**群里读不到本人的钉**，
+        # 于是 `/bot intimate show` 与 `/bot 描写 show` 在群里可以各说各话（同值锁只在
+        # 内存钉那一格成立）。值只出自契约字段 `IncomingMessage.platform`。
+        platform=platform,
     )
     route_key = str(ctx.get("route_key") or session_key or "")
     per_user_enabled = bool(
@@ -403,5 +453,219 @@ def build_intimate_control_result(
         request_id,
         body,
         ["content_route", "slash_intimate", f"slash_intimate:{verb}"],
+        resolved_privacy,
+    )
+
+
+# ================================================================ 描写档命令面（G-0～G-3）
+#
+# `/bot 描写 speech|scene|reset|show`（2026-10-04 裁定 G-0 取「乙」）。本节的身份与
+# 上面 `/bot intimate` 那一族**完全一样**：只做分诊与行文，生效链一条都不重造——
+#
+# - 参数解析＝`content_route.match_narration_subcommand`（词表真身在那边，这里不抄成员）；
+# - 写腿的作用域门＝`content_route.narration_write_allowed`（唯一判据处，群里非管理员拒写；
+#   这一枚与 `_manual_command_scope_key` 的管理员分支同一个角色面，`chat.py` 不改一行）；
+# - 落盘＝`content_route.write_narration_pin` / `clear_narration_pin`（键口、库口都在那边，
+#   本模块不建 store、不解析路径、不自拼键形）；
+# - 读数＝`content_route.resolve_intimate_context` 新增的 `narration_mode` / `narration_source`
+#   两格；**能不能铺开写只准问 `grants_intimate_narration(narration_source)` 那一处**；
+# - `show` 的词面沿用本文件已有的 `SHOW_SUBCOMMAND`（与开关面同一枚，不重列）。
+#
+# 三条腿互不吞：①认下子命令走写腿（`reset` 的返回值是空串＝收回钉，与"认不出"的 None
+# 分家）；②None 之后自己认一次 `show` 走只读腿；③两条都不中才回"不认得"＋用法。
+# 全程 fail-open：落库失败**不改变本轮判定**（那句明示照样生效，只是留不到下一轮，
+# 回执据实说一句"没钉上"），绝不因为写失败就把命令升级成报错。
+
+#: 描写档用法表（裸命令与"不认得"共用；四枚子命令一名不遗漏，词面只指回真身那张表）。
+_NARRATION_USAGE_LINES: Final[tuple[str, ...]] = (
+    "描写档（/bot 描写）的子命令：",
+    "  speech  只说出口的话（这就是缺省）",
+    "  scene   动作、神色、心里那一层也写出来",
+    "  reset   把这格交回缺省，连钉一起收回",
+    "  show    只看现在是什么档，什么都不改",
+    "  不带子命令＝看这份用法加当前读数。",
+)
+
+#: 群侧被门挡下那一格（G-3：描写档只在她自己开过的那一格生效，普通成员恒只说话）。
+#: 这句与 `REFUSED_REPLY` 同为**命令面独有**——整句面那三格能落回普通聊天，这里没有正文可落。
+#: 🔴 席 na-showalign 改文（独立复查 W-2）：旧句「要它，得她自己或管理员说一句」**指了一条
+#: 走不通的路**——`narration_write_allowed` 群侧只放 admin/super_admin，群里那位"她自己"
+#: 再说一次仍被拒；而描写钉**按人不按群**（`_narration_person_key` 在群作用域键上读不出
+#: 本人段），管理员在群里这一句也只钉得住**管理员自己**那一格 ⇒ 群里让管理员替她说
+#: 从来就不是通路。唯一真能落下的动作＝她本人在**非群会话**里说一句。按规则 8（不谎报）
+#: 只报那条真的。被这一支拒到的永远是「群里的非管理员」本人（管理员不被拒、私聊不吃门），
+#: 所以一句就够，不必再按角色分叉。
+NARRATION_REFUSED_REPLY: Final[str] = (
+    "描写这一格我只按在「这个人、这一路会话」身上，不替旁人按下——"
+    "想要它，私聊里跟我说一句 /bot 描写 scene 就好；钉下就一直留着，"
+    "但换一个群还得再说一次（I-2：换会话要重开）。"
+)
+
+#: 三态确认话（守岸人语气，不提键名/库/来源码；空串键＝`reset`）。
+_NARRATION_ACKS: dict[str, str] = {
+    NARRATION_MODE_SCENE: "好，到你这里我不只说出口的话——动作、神色、心里那一层都写给你。",
+    NARRATION_MODE_SPEECH: "嗯，那我只说口上的话，旁的都收着。",
+    "": "这一格我放回原处了——往后照旧只说口上的话，除非你再钉一次。",
+}
+
+#: 落库那一腿没成时补的一句（本轮照样生效，但留不到下一轮——不说就是谎报）。
+_NARRATION_UNSAVED_SUFFIX: Final[str] = "库里那一格这会儿没写进去，下次再说一次才留得住。"
+
+
+def _narrated_scope_tag(session_type: str, source: str) -> str:
+    """描写档回执的 scope 标签：这一轴**恒按人**（钉按人不按群，G-3 的实现面）。
+
+    群作用域键读不出本人段 ⇒ 群里普通成员永远走"没钉"那一侧；这里打的标签只用于
+    审计可分辨，不参与任何判定，与 `apply_intimate_switch` 那枚 scope 标签同族。
+    """
+    if str(session_type or "") == "group":
+        return "scope:user" if str(source or "") else "scope:none"
+    return "scope:self" if str(source or "") else "scope:none"
+
+
+def _narration_state_lines(
+    ctx: dict[str, Any],
+    config: Any,
+    *,
+    route_key: str,
+    sender_id: str,
+    platform: str = "",
+) -> list[str]:
+    """当前描写档读数（写腿与 `show` 共用同一份行文，不留两套说法）。
+
+    四格各有分工：`描写档`＝本轮生效的那一格（优先级三格的**结果**）、`依据`＝交给
+    唯一那把尺的来源（人话映射表转过的，绝不外端码串）、`细节描写`＝**尺本身的读数**
+    （只准 `grants_intimate_narration(narration_source)` 这一处调用）、`库里的钉`＝
+    持久面（`reset` 过就是"没钉过"，与"钉了 speech"分得开）。
+    """
+    mode = str(ctx.get("narration_mode") or "")
+    source = str(ctx.get("narration_source") or INTIMATE_SOURCE_NONE)
+    pinned = read_narration_pin(
+        route_key, sender_id=sender_id, config=config, platform=platform
+    )
+    return [
+        f"描写档：{_label(_NARRATION_LABELS, mode)}",
+        f"依据：{_label(_SOURCE_LABELS, source)}",
+        _narration_grant_line(ctx),  # 与 `/bot intimate show` 同一渲染口 ⇒ 两句必然同值
+        f"库里的钉：{_label(_NARRATION_LABELS, pinned) if pinned else '没钉过'}",
+    ]
+
+
+def build_narration_control_result(
+    *,
+    config: Any,
+    request_id: str,
+    subcommand: str,
+    session_type: str,
+    session_key: str,
+    sender_id: str = "",
+    group_id: str = "",
+    sender_roles: list[str] | tuple[str, ...] | None = None,
+    privacy_level: PrivacyLevel | None = None,
+    platform: str = "",
+) -> CapabilityResult:
+    """/bot 描写 的三腿分诊口：写腿 → 只读查询 → 用法（都不中才回"不认得"）。
+
+    `subcommand` **必须是已剥掉 `/bot 描写` 前缀**后剩下的参数串（前缀归命令面，
+    与 `match_narration_subcommand` 同一口径）。`privacy_level` 交**会话自己的隐私档**，
+    缺席时按会话类型回落一次（与开关面那一支逐字同形，本模块不另立第三套判据）。
+    `platform` 交 **`message.platform`**（qq/telegram/…）：描写档的钉按 (平台域, 用户号)
+    归属（`content_route._narration_person_key`），平台缺席即 fail-closed＝群侧读不出钉。
+    🔴 接线面（根 `__init__.py`）与注入缝（`capabilities/chat.py` 那三个 `resolve_intimate_context`
+    调用点）**必须同一批**各交同一个平台事实，只接一侧＝"写在 `qq:<uid>`、读在 `<uid>`"
+    两形不相交（#33★ 那族；方向上是少写、绝不误串到别人的桶）。
+    返回值永远是 `CapabilityResult`——命令面没有"落回普通聊天"这条路。
+
+    与开关面**不同**的一格：这一族**不吃** `bot_content_route_enabled` 总闸与
+    `eligible` 名单门。描写档是文风偏好（G-1 明写"普通模式也能用"），把总闸当它的门
+    等于让一次路由开关静默改掉文风面；总闸真正管的是路由/放行那两件事。
+    """
+    resolved_privacy = privacy_level or (
+        PrivacyLevel.GROUP if str(session_type or "") == "group" else PrivacyLevel.PERSONAL
+    )
+    raw = str(subcommand or "").strip()
+    parsed = match_narration_subcommand(raw)
+    ctx = resolve_intimate_context(
+        SHARED_CONTENT_ROUTE_ENGINE,
+        session_type=session_type,
+        group_id=group_id,
+        sender_id=sender_id,
+        session_key=session_key,
+        config=config,
+        platform=platform,
+    )
+    route_key = str(ctx.get("route_key") or session_key or "")
+    if parsed is not None:
+        verb = "reset" if parsed == "" else parsed
+        tags = ["content_route", "slash_narration", f"slash_narration:{verb}"]
+        if not narration_write_allowed(session_type=session_type, sender_roles=sender_roles):
+            return _text_result(
+                request_id,
+                f"{NARRATION_REFUSED_REPLY}\n{INTIMATE_HELP_POINTER}",
+                [*tags, "scope:none", "slash_narration_refused"],
+                resolved_privacy,
+            )
+        if parsed == "":
+            saved = clear_narration_pin(
+                route_key, sender_id=sender_id, config=config, platform=platform
+            )
+        else:
+            saved = write_narration_pin(
+                route_key,
+                mode=parsed,
+                sender_id=sender_id,
+                config=config,
+                platform=platform,
+            )
+        # 本轮读数**带着本轮那一格**再合成一次：落库失败时这一句照样算数（写失败不许
+        # 升级成"这一轮白说"），成功时读数与库里那份自然同形。
+        shown = resolve_intimate_context(
+            SHARED_CONTENT_ROUTE_ENGINE,
+            session_type=session_type,
+            group_id=group_id,
+            sender_id=sender_id,
+            session_key=session_key,
+            config=config,
+            turn_narration_mode=parsed,
+            platform=platform,
+        )
+        lines = [_NARRATION_ACKS[parsed]]
+        if not saved:
+            lines.append(_NARRATION_UNSAVED_SUFFIX)
+        lines.extend(
+            _narration_state_lines(
+                shown, config, route_key=route_key, sender_id=sender_id, platform=platform
+            )
+        )
+        if not saved:
+            tags.append("narration_unsaved")
+        tags.append(_narrated_scope_tag(session_type, str(shown.get("narration_source") or "")))
+        return _text_result(
+            request_id, "\n".join(lines), tags, resolved_privacy
+        )
+    if raw.lower() == SHOW_SUBCOMMAND:
+        lines = _narration_state_lines(
+            ctx, config, route_key=route_key, sender_id=sender_id, platform=platform
+        )
+        return _text_result(
+            request_id,
+            "\n".join(lines),
+            [
+                "content_route",
+                "slash_narration",
+                "slash_narration:show",
+                _narrated_scope_tag(session_type, str(ctx.get("narration_source") or "")),
+            ],
+            resolved_privacy,
+        )
+    head = [] if not raw else [f"没认出这个子命令：{raw}"]
+    body = "\n".join([*head, *_narration_state_lines(
+        ctx, config, route_key=route_key, sender_id=sender_id, platform=platform
+    ), *_NARRATION_USAGE_LINES, INTIMATE_HELP_POINTER])
+    verb = "usage" if not raw else "unknown"
+    return _text_result(
+        request_id,
+        body,
+        ["content_route", "slash_narration", f"slash_narration:{verb}"],
         resolved_privacy,
     )

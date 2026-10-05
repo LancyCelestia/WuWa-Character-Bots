@@ -153,7 +153,17 @@ REGISTRY: tuple[ClusterFamily, ...] = (
             Cluster("e59f05a2dd37", "bot.moegirl（二次元问句路由同归此能力）"),
             # S-BASE 基线席 2026-09-29 补账：亲密档（台账 #36 R 系列）帮助条目与声明面同句双写，
             # 同族判据（echo._HELP_ENTRIES ↔ capability_registry 声明），收编方向不变。
-            Cluster("c555ddcb459f", "bot.chat（整句「亲密模式 开/深开/关」；关系档子命令见 /bot identity）"),
+            # 席 red9fix（2026-10-05）补账：亲密档波在飞改写该说明句（两侧同批同形加
+            # 「＋命令面 /bot intimate on|l1|deep|off|show」，echo.py ↔ capability_registry.py），
+            # 旧 key c555ddcb459f 的簇随文案改写消失＝STALE 即删；新 key 由 census 现算照抄（勿手改 key）。
+            # 席 copyfix（2026-10-05）换键（同类修复，非放宽）：描写档波把「＋描写档 /bot narration|/bot 描写」
+            # 同批同形加进两侧（echo.py:2831 ↔ capability_registry.py:1063，census 现算两枚 unit 的 raw/norm
+            # 逐字全等 ⇒ 仍是「一簇两份、零分叉」，本族判据未动），簇 key 由 e52b579784f7 漂为 dd3748d34dc3。
+            # 旧簇消失＝STALE 即删、新簇照 census 现算登记；home / family / reason 一字未动，门槛与下限未动。
+            # ⚠ 本条仍钉在**未入库**的 echo/capability_registry 文案上，该波再改此句本登记即再转红，页主跟办。
+            # ⚠ 收编方向未变（帮助条目由声明源投影＝WP8 挂账）：真要「只留一份」须动 capability_registry.py
+            # 且受 help 闭包/双向门两把别的锁按字面索取，属页主的设计裁，不在补账席的射程内。
+            Cluster("dd3748d34dc3", "bot.chat（整句「亲密模式 开/深开/关」＋命令面 /bot intimate on|l1|deep|off|show＋描写档 /bot narration|/bot 描写；关系档子命令见 /bot identity）"),
         ),
     ),
     # 2026-09-22 SEAT-S-AFFCOPY：affinity-tier-attitude 族 6 簇已收编（展示表与

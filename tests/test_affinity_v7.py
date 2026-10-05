@@ -25,6 +25,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     _V7_CONFIG_FIELDS,
     _V7_DEFAULT_DAILY_MOVE_CAP_Z,
     _V7_NOVELTY_FLOOR,
+    _V8_DEFAULT_DAILY_MOVE_CAP_Z,
     DynamicAffinityStore,
     attitude_for_affinity,
     classify_behavior,
@@ -67,7 +68,7 @@ def _v7_config(**overrides: object) -> types.SimpleNamespace:
         "bot_affinity_novelty_halo_days": 21,
         "bot_affinity_rhythm_reference_turns": 8,
         "bot_affinity_negative_event_cap_z": 0.10,
-        # 日额度随登记常量现取（2026-10-03 用户裁定消除双源，.env/.env.example 同值）
+        # 日额度随登记常量现取（台账 F-16 拆轴 2026-10-06：评分判据侧缺省 0.12z；键面/展示侧另册 0.04）
         "bot_affinity_daily_move_cap_z": _V7_DEFAULT_DAILY_MOVE_CAP_Z,
         "bot_affinity_fuse_daily_events": 25,
         "bot_affinity_repair_gain": 1.4,
@@ -683,6 +684,18 @@ def test_twelve_v7_keys_registered_on_config_class() -> None:
         assert hasattr(instance, field_name), f"{field_name} 未落 config.py"
         actual = getattr(instance, field_name)
         assert type(actual) is type(default), f"{field_name} 类型漂移"
+        if field_name == "bot_affinity_daily_move_cap_z":
+            # 台账 F-16 拆轴（2026-10-06 裁定甲）：这枚键**设计性双面**——
+            # 键面缺省（Config/.env，两路共读的运行面值）随 v8 展示收紧侧 0.04；
+            # v7 评分判据的「无配置缺省」另住 _V7_DEFAULT_DAILY_MOVE_CAP_Z=0.12。
+            # 两面各按各自真身点名，不抄字面值、不动 config.py。
+            assert actual == _V8_DEFAULT_DAILY_MOVE_CAP_Z, (
+                f"键面缺省漂移：Config {actual!r} != v8 展示收紧侧 {_V8_DEFAULT_DAILY_MOVE_CAP_Z!r}"
+            )
+            assert _V7_DEFAULT_DAILY_MOVE_CAP_Z > actual, (
+                "评分判据侧缺省必须宽于展示收紧键面值（F-16 拆轴判据，混轴回潮即红）"
+            )
+            continue
         assert actual == default, f"{field_name} 缺省漂移：{actual!r} != {default!r}"
 
 

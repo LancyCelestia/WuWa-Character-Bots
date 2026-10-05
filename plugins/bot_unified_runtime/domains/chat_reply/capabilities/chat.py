@@ -163,6 +163,7 @@ from plugins.bot_unified_runtime.domains.ops.monitor.intent_telemetry import (
     IntentTelemetry,
 )
 from plugins.bot_unified_runtime.domains.render.plain_text import (
+    humanize_reply,
     naturalize_chat_text,
     redact_local_secrets,
 )
@@ -2351,7 +2352,9 @@ def intimate_reply_length_tier(detail_mode: object, message_text: str = "") -> s
     """**拿到叙述授予**的那一轮：生效档直接取登记表的封顶档（今天＝「铺写」）。
 
     判据只看这一条，不做"按秩升一格"——2026-09-28 那句「亲密档字数要比普通档多」
-    当年只能升一格、封顶详尽（300 字），于是她 2026-10-04 实测仍只收到 261 / 201 字：
+    当年只能升一格、封顶详尽（300 字），于是她 2026-10-04 实测仍只收到 261 / 201 字
+    （口径注：那两个数＝她截图里**整条**的长度；同两轮在队列 `content_ref.text` 上量到的是
+    189 / 151——字段不同、都取过现值，别拿其中一个去否另一个）：
     钉过「短一点」的人升到适中、现网钉 detail 的人停在详尽，两种都够不到她要的场景铺写。
     现改为一枚授予 ⇒ 一律到顶格档，且**只有** `content_route.grants_intimate_narration`
     为真的那三支来源（显式指令／管理员代钉／内容信号跨阈）走得到这里
@@ -2481,17 +2484,9 @@ def _reply_length_floor_leg(
         return reply, []
     if request_budget is not None and request_budget.expired():
         return reply, ["length_floor_skipped:deadline"]
-    retry_messages = [dict(item) for item in messages] + [
-        {
-            "role": "system",
-            "content": (
-                f"上一条回复只有 {len(body)} 字，低于本轮生效长度档"
-                f"（{tier.label_cn}，至少 {tier.min_chars} 字）的下限。"
-                f"请在同一条回复里把该讲的讲完：{tier.coverage}"
-                "保持角色语气，不要提这条要求，也不要复述任何规则或档位名词。"
-            ),
-        }
-    ]
+    retry_messages = _length_floor_retry_messages(
+        messages, tier=tier, current_chars=len(body)
+    )
     try:
         retry = _generate_with_tool_loop(
             llm_provider=llm_provider,
@@ -2521,6 +2516,221 @@ def _reply_length_floor_leg(
     if len(candidate) < tier.min_chars:
         return retry, ["length_floor_rewritten", "length_floor_rewritten_below_min"]
     return retry, ["length_floor_rewritten"]
+
+
+def _length_floor_tier(
+    context: ContextBundle, *, intimate: bool
+) -> ReplyLengthTier | None:
+    """两条地板腿**共用**的取档口：数值与档名仍只住 ``REPLY_LENGTH_TIERS``。
+
+    与渲染那一条腿同一个函数、同一组入参 ⇒ 提示词里写的下限和地板追的下限必然是
+    同一个数；``intimate=True`` 走 :func:`intimate_reply_length_tier`（拿到叙述授予
+    的那一轮直取登记表顶格档），不留「提示词要铺写、地板只追到详尽」的两把尺。
+    """
+    return REPLY_LENGTH_TIERS.get(
+        intimate_reply_length_tier(context.reply_detail, context.current_message)
+        if intimate
+        else resolve_reply_length_tier(context.reply_detail, context.current_message)
+    )
+
+
+def _length_floor_retry_messages(
+    messages: list[dict[str, str]], *, tier: ReplyLengthTier, current_chars: int
+) -> list[dict[str, str]]:
+    """地板腿重问时那一条 system 要求的**唯一**写法（两条腿共用，不长第二份话术）。
+
+    数值全从登记表派生；``current_chars`` 由调用侧决定量的是哪一份文本——上游腿给
+    的是归一化**之前**的 ``reply.text``，送达腿（F-5 乙）给的是归一化**之后**真正
+    出站的那一份。话术本身只此一份。
+    """
+    return [dict(item) for item in messages] + [
+        {
+            "role": "system",
+            "content": (
+                f"上一条回复只有 {current_chars} 字，低于本轮生效长度档"
+                f"（{tier.label_cn}，至少 {tier.min_chars} 字）的下限。"
+                f"请在同一条回复里把该讲的讲完：{tier.coverage}"
+                "保持角色语气，不要提这条要求，也不要复述任何规则或档位名词。"
+            ),
+        }
+    ]
+
+
+def _finalize_reply_text(
+    raw_text: str,
+    *,
+    context: ContextBundle,
+    max_messages: int,
+    output_max_chars_per_message: int,
+    intimate: bool = False,
+) -> tuple[str, list[str]]:
+    """把模型的成品走一遍**出站归一化**：返回（送达正文, 这一段自己的审计标签）。
+
+    为什么抽成一处（F-5 乙，2026-10-05 用户裁定）：地板腿的量测点要从「归一化之前」
+    挪到「归一化之后」，而补写回来的那一版**必须再过同一段**才谈得上"送达"；两段各
+    写一份＝出站形态按调用点漂移。段内次序、留痕种类与抽出之前逐字一致，标签也按
+    原相对顺序交回（``build_chat_result`` 那边的拼接位置不变）。
+
+    ``intimate=True`` 额外保动作：全局 ``BOT_PERSONA_ACTION_BRACKETS=false`` 会把括号
+    动作整段删掉，而拿到叙述授予那一轮写的正是动作/神态（§76.7 线上缺陷根修；判定仍
+    只在装配段那一处，这里只读 ``tone``，不长第二判据）。
+    """
+    normalized_speech = strip_outer_speech_quotes(raw_text)
+    tags: list[str] = []
+    if normalized_speech != str(raw_text or "").strip():
+        tags.append("llm_speech_quotes_normalized")
+    text, output_was_trimmed = _apply_output_message_budget(
+        normalized_speech, max_messages, output_max_chars_per_message
+    )
+    if output_was_trimmed:
+        tags.append("llm_output_trimmed")
+    if getattr(context.tone, "action_brackets", True) or intimate:
+        # 2026-10-03 线上缺陷根修：`BOT_PERSONA_ACTION_BRACKETS=false`（现网即此值）原本
+        # **不分档位**地把括号动作整段删掉 ⇒ 拿到五维叙述授予的那一轮，模型写了动作/神态
+        # 也在出口被没收（她原话「我开了亲密模式，但是还是不会描写动作」）。修法只让
+        # **已获得叙述授予**的那一轮保留动作：全局开关语义一字不改，日常轮（含 ML 自动档、
+        # 未开档、被 safety 拦的轮）照旧硬剥——她 2026-09-28「日常沟通不写动作神态」那条
+        # 裁定靠的就是这一腿，不能顺手放宽。
+        text = format_roleplay_paragraphs(text)
+    else:
+        text = strip_action_brackets(text)
+    text = naturalize_chat_text(text)
+    text = humanize_reply(text)  # 说人话输出层（批次 F）：剥 AI 客套开场与总结腔。
+    # 本机信息外泄红线（输出侧）：模型被诱导复述 .env 内容/本机路径/key 形态时，
+    # 发送前确定性打码（盘符绝对路径 / BOT_XXX= 赋值 / sk- 类 key）。
+    text = redact_local_secrets(text)
+    # T4② 出口执法（需求 3 第二条，2026-09-28）：入口那道 `validate_miss_declaration`
+    # 只拦得住"我们递给模型的未命中声明"，拦不住模型把"这轮没查到"讲成"这东西不存在"。
+    # 这里回头查一次并改成不确定表述——**只在本轮确实零命中（本地与联网都空手）时生效**，
+    # 有资料的轮次一个字都不动（"官方确实没公布过"可能是查证后的结论，改它＝污染正常回复）。
+    text, miss_denial_hit = _soften_existence_denials_on_miss(
+        text, enabled=_no_lookup_evidence_this_turn(context)
+    )
+    if miss_denial_hit:
+        # 没有这一条，"她说的不存在其实只是没查到"就永远只能靠猜。
+        tags.append("kb_miss_existence_denial_softened")
+    # 席 S2 出口窄守门（幻觉根治波，2026-10-02）：把「别人的一生」用第一人称端出来
+    # 的那一句摘掉（判据三条同时成立才动，见 _strip_borrowed_recital_sentences）。
+    # 放在 existence-denial 之后、段落归一之前——归一后句子边界会被重排，那时再删句
+    # 就要动排版器的产物；异常即原样放行，命中原句只进审计不回话。
+    text, borrowed_recital_hit = _strip_borrowed_recital_sentences(
+        text, _persona_recital_whitelist_text(context.persona)
+    )
+    if borrowed_recital_hit:
+        # 没有这一条，被摘掉的那句就无处回查。
+        tags.append("llm_borrowed_recital_stripped")
+    # 段落分隔统一化（2026-09-17 用户反馈：换行 1/2 个随机）：所有 chat 出站文本段间
+    # 一律单个换行（括号拆段/无动作纯文本/模型自写空行三路同构）。
+    text = normalize_paragraph_breaks(text)
+    return text, tags
+
+
+def _delivery_length_floor_leg(
+    *,
+    delivered: str,
+    delivered_tags: list[str],
+    upstream_tags: list[str],
+    context: ContextBundle,
+    messages: list[dict[str, str]],
+    llm_provider: LLMProvider,
+    model_router: Any | None,
+    llm_options: dict[str, object],
+    request_budget: DeadlineBudget | None,
+    message_text: str,
+    override: str,
+    intimate: bool = False,
+    session_id: str = "",
+    max_messages: int = 0,
+    output_max_chars_per_message: int = 0,
+    output_guard: Callable[[str], bool] | None = None,
+    guard_replaced: bool = False,
+) -> tuple[str, list[str], list[str]]:
+    """F-5 乙：地板量的是**送达**的字数——归一化之后再判一次，最多补写一次。
+
+    为什么需要这条腿（HEAD 副本实测，48 枚合成样本、现网出站预算形）：出站链后半段
+    会再削一层，``naturalize_chat_text`` 剥 markdown 骨架那一支最狠——list 形 p50
+    **−17.89%**、quote 形 p50 **−15.40%**、本件样本 **−21.35%**（format 支整体
+    p50 −6.08%／p95 −18.37%；strip 支 p95 −37.27%；纯散文 0%、带（动作）括号 −1.2%）。
+    ⇒ 上游腿按归一化**之前**的 ``reply.text`` 判"够 600 了"，送达可能只剩 ~490。
+
+    终止条件（防「追完又被剥」的回环，这是裁定点名的必防项）：
+    * 本函数**每轮最多被调用一次**，且它的产物不再回流任何地板腿 ⇒ 结构上无循环；
+    * 上游腿 ``upstream_tags`` 非空＝本轮那**唯一一次**额外调用已经烧掉了（成本硬顶
+      ≤1 次/轮）⇒ 这里静默不追；
+    * 缺口来自出站预算截断（``llm_output_trimmed`` 在场）⇒ 补写也会被同一把尺再截，
+      追不满且白花一次 ⇒ 只留 ``:budget`` 痕不追；正文被危险命令守门整段换掉时同理。
+
+    交付纪律：
+    * 判据零自造：档位仍走 :func:`_length_floor_tier`（与上游腿、提示词那一行
+      同源），简洁档不追、未知档不追；
+    * 补写稿**必须再过一次** :func:`_finalize_reply_text`（与本轮原文那一段同一个
+      实现，入参也一样），量的是它送达之后的字数；
+    * 补写稿先过本轮已在手的确定性出站闸（``output_guard``）——本腿跑在闸**之后**，
+      不许让"追回来的字数"绕过闸（那正是 §76.7 记的那类「追完被没收」）；命中即丢弃；
+    * 补写没让送达变长 ⇒ 交回原文（宁可短，也不拿一条更差的换掉能用的）；
+    * 任何异常／预算过期 ⇒ 原样交回本轮已经送达的那一版（fail-open）；
+    * **第三个返回值＝本轮真正交付的那一版自己的归一化留痕**（交回原文就给原文的痕、
+      上位补写版就给补写版的痕）——留痕必须描述出站的那一份，否则审计标签会替一条
+      没交付的稿子说话（与 #68★「断言回显省略不得当证据」同族）。
+    """
+    tier = _length_floor_tier(context, intimate=intimate)
+    if tier is None or tier.tier_id == REPLY_TIER_CONCISE_ID or tier.min_chars <= 0:
+        return delivered, [], delivered_tags
+    body = str(delivered or "").strip()
+    if len(body) >= tier.min_chars:
+        return delivered, [], delivered_tags
+    if upstream_tags:
+        return delivered, [], delivered_tags
+    if "llm_output_trimmed" in delivered_tags:
+        return delivered, ["length_delivery_floor_skipped:budget"], delivered_tags
+    if guard_replaced:
+        return delivered, ["length_delivery_floor_skipped:guard"], delivered_tags
+    if request_budget is not None and request_budget.expired():
+        return delivered, ["length_delivery_floor_skipped:deadline"], delivered_tags
+    retry_messages = _length_floor_retry_messages(
+        messages, tier=tier, current_chars=len(body)
+    )
+    try:
+        retry = _generate_with_tool_loop(
+            llm_provider=llm_provider,
+            model_router=model_router,
+            messages=retry_messages,
+            message_text=message_text,
+            override=override,
+            tools=[],
+            llm_options={
+                key: value
+                for key, value in llm_options.items()
+                if key not in {"tools", "enable_tools", "fast_mode", "fast_max_candidates"}
+            },
+            request_budget=request_budget,
+            # 与首跳同一把路由键（调用侧单算一次），重问不许被当成「无会话」请求。
+            session_id=session_id,
+        )
+    except Exception:  # noqa: BLE001 - 送达地板失败只留痕，本轮答案照常出站。
+        return delivered, ["length_delivery_floor_failed"], delivered_tags
+    candidate_raw = str(getattr(retry, "text", "") or "").strip()
+    if not candidate_raw:
+        return delivered, ["length_delivery_floor_kept_original"], delivered_tags
+    if output_guard is not None and output_guard(candidate_raw):
+        # 追回来的字数不许绕过出站闸：整条补写稿作废，本轮交回原送达正文。
+        return delivered, ["length_delivery_floor_guard_rejected"], delivered_tags
+    candidate, candidate_tags = _finalize_reply_text(
+        candidate_raw,
+        context=context,
+        max_messages=max_messages,
+        output_max_chars_per_message=output_max_chars_per_message,
+        intimate=intimate,
+    )
+    candidate = str(candidate or "").strip()
+    if len(candidate) <= len(body):
+        return delivered, ["length_delivery_floor_kept_original"], delivered_tags
+    if len(candidate) < tier.min_chars:
+        return candidate, [
+            "length_delivery_floor_rewritten",
+            "length_delivery_floor_rewritten_below_min",
+        ], candidate_tags
+    return candidate, ["length_delivery_floor_rewritten"], candidate_tags
 
 
 # ---------------------------------------------------------------------------
@@ -2852,14 +3062,21 @@ def _danger_style_line() -> str:
 #   内容信号跨阈）。她原话「superadmin 的默认 master love 模式仍然为只描述说话内容……
 #   要求输入显式指令打开亲密模式 L1、L2 才变成这样」。
 #   ⚠ 长度升格与出口地板腿读的是同一个门 ⇒ 只说话的轮次一并失去升格，这是所要。
+# ③ **首格括注不得自带分级标签名**（2026-10-04）：本段头一处"（含…）"只是"成人向场景
+#   照此展开"的许可口径，措辞必须避开 `domains/render/reviewer.py` 里群聊出站那把内容
+#   尺——命中标签名会让模型复述它、再被同一把尺整条丢弃（她看到的是"开了却什么都收
+#   不到"）。许可范围（含成人向、边界仍由人格文件与 09-17/09-20 政策执）一字未动。
+#   锁：`tests/test_rp_style_directives.py` 直接 import 那把尺比对两段常量。
 INTIMATE_RP_STYLE_INSTRUCTION = (
-    "【亲密与成人向场景的叙述】此刻是你与最亲近之人的私密相处（含 R-18 向）："
+    "【亲密与成人向场景的叙述】此刻是你与最亲近之人的私密相处（含成人向内容）："
     "以第一人称现场视角回应——动作、神态、呼吸、触感、心理、外貌与语言，连同"
-    "周遭（灯光、潮声、温度）都落进文字里，把每个瞬间展开成可以被感受到的现场；"
-    "说出口的话与没说出口的话都算数，彼此的形貌与衣着也值得看上一眼；对话之外"
-    "穿插细腻的动作与体感描写，节奏随情境张弛。在场的安抚每次都换一种说法："
-    "不重复最近几轮用过的短句，不把任何一句话当万能答句，用具体的动作与感受"
-    "代替笼统的承诺。语气仍是你自己——温柔、笃定、有人情味。"
+    "周遭（灯光、潮声、温度）都落进文字里，往你此刻站着的地方取材，把每个瞬间"
+    "展开成可以被感受到的现场；也说清那是什么样的美，慢的那一种还是亮的那一种，"
+    "幕布接不住人，此刻的四下却接得住你的话，也替你接住对方；说出口的话与没说"
+    "出口的话都算数，彼此的形貌与衣着也值得看上一眼；对话之外穿插细腻的动作与"
+    "体感描写，节奏随情境张弛。在场的安抚每次都换一种说法：不重复最近几轮用过的"
+    "短句，不把任何一句话当万能答句，用具体的动作与感受代替笼统的承诺。语气仍是"
+    "你自己——温柔、笃定、有人情味。"
     "别替这段文字贴类别标签：不要说出内容分级词或内容标签名，把场景本身写出来就好。"
 )
 NORMAL_NO_ACTION_INSTRUCTION = (
@@ -2868,6 +3085,287 @@ NORMAL_NO_ACTION_INSTRUCTION = (
     "全部情绪（叙述性的动作、神态、心理与外貌留到亲密／成人向场景再写）。"
     "每句都完整成句、把话说明白，不写半截话。"
 )
+
+# ================================================================ 第五根轴＝描写档（2026-10-04 已批）
+#
+# 用户的裁定（G-1…G-4，见 `docs/HANDBOOK.md` §76.8 那一行）：`speech`（只写说出口的话）
+# ／`scene`（语言＋动作＋神态＋心理＋外貌淋漓尽致，长度走铺写）**两态在普通模式与亲密
+# 模式都可用**，缺省 `speech`。
+#
+# 🔴 **G-1 的结构性后果**：场景样式段从此不能住在亲密段里面——普通模式也到得了 `scene`。
+# 所以本席把「选哪一段」收进下面这张表，(描写档, 是否亲密授予态) → 段，**一格一分支，
+# 零嵌套 ad-hoc**。表是注入面与文案锁共同的唯一真身：往表里加一段，`tests`
+# 那把「每段都对群聊出站尺零命中」的锁自动多扫一段（失效形态 244＝靠硬抄常量名册的锁
+# 对新常量天生隐形，本波就是来还这笔的）。
+#
+# **轴心不在本席**：`narration_mode`／`narration_source` 两枚键、来源常量、命令表、按人
+# 持久钉全在席 na1-core 手里（`runtime/content_route.py`＋`runtime/intimate_control.py`＋
+# `character/addressing.py`）。本文件只**一次读取**那枚已合成的 dict
+# （:func:`resolve_narration_axis`），绝不在这儿重推优先序——判定时机在 `observe_turn`
+# 之后，重推一次就是台账 #53★ 那扇时序泄露窗。
+#
+# **授予只有一把尺**：`content_route.grants_intimate_narration`（G-2 把新来源
+# `narration_pin` 并进的是**同一支**成员表，不是第二张集）。本文件因此**没有**第二条
+# 长度规则、也**没有**第二次授予判据：轴说 `scene` 而那把尺没点头 ⇒ 一律回落只说话。
+#
+# 词界纪律（§76 那处改写的同款，一块都不能松）：**每段的首格括注与段落头都不许自带
+# 分级标签名**。群聊出站那把尺（`domains/render/reviewer.py`）命中即整条丢 ⇒ 她会
+# 在群里"什么都收不到"；成因在我们发出去的那句话里，段末那句"别贴标签"救不了。
+#
+# R-18 边界（规则 8）：六硬线写死在人格文件与 affinity 态度文本里，本席一字不动、
+# 也不削弱。普通模式 `scene` 的边界是**结构性**的（不许可身体面描写），不是另写一套
+# 分级话术；因此下面两块新文案对 R-18 精确词表、性语境尺、体态尺必须零命中
+# （锁＝`tests/test_narration_axis_styles.py`）。
+
+
+def _narration_axis_tokens() -> tuple[str, str]:
+    """描写档轴的两枚取值——**以轴心（席 na1-core 的 `content_route`）的常量为唯一准**。
+
+    轴心尚未落地时按契约名兜一层（`scene`／`speech`），使本波不与 na1 抢跑；落地后
+    等值锁 `test_axis_tokens_are_agreed_between_the_axis_owner_and_the_injection_seam`
+    当场比对，改字不跟＝红，绝不静默把 `scene` 收进只说话那一格。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+        content_route as _axis_owner,
+    )
+
+    for scene_attr, speech_attr in (
+        ("NARRATION_MODE_SCENE", "NARRATION_MODE_SPEECH"),
+        ("NARRATION_SCENE", "NARRATION_SPEECH"),
+    ):
+        scene_value = getattr(_axis_owner, scene_attr, None)
+        speech_value = getattr(_axis_owner, speech_attr, None)
+        if scene_value and speech_value:
+            return str(scene_value), str(speech_value)
+    return "scene", "speech"
+
+
+_NARRATION_AXIS_TOKENS: Final[tuple[str, str]] = _narration_axis_tokens()
+NARRATION_MODE_SCENE: Final[str] = _NARRATION_AXIS_TOKENS[0]
+NARRATION_MODE_SPEECH: Final[str] = _NARRATION_AXIS_TOKENS[1]
+
+#: G-4＝乙（2026-10-04 深夜改判，原话「普通档既然都改成场景模式了，那就把衣着和环境也都
+#: 写上，这些都挺重要的」）的**身体面词表唯一真身**：普通模式的 `scene` 段一概不许可它们，
+#: 只有亲密段（现役五维段）许可。**衣着这一类从前一版（G-4＝甲）的这张表里挪出去了**——
+#: 不是挪进许可就完事，而是这张表从此只答"落在身体上的细部"那一问。
+#: 它的证人仍是亲密段那句「彼此的形貌与衣着」里的**形貌**——一枚证人都不在 ⇒ 这张表已经
+#: 和实际许可脱钩（锁 `tests/test_reply_policy_permanent.py::test_corporal_axis_moves_with_
+#: the_g4_reversal_and_fails_on_a_temp_copy` 判的就是这件事，所以它不会空跑）。
+#: 🔴 独立复查点名的两处病：①旧表漏了「锁骨／腰线」这一类**具体细部**（写手照样能在普通档
+#: 里绕过界线）；②旧表把「穿戴／服装」也算身体面，而她们已被裁定归普通档许可 ⇒ 那是
+#: 一边许可一边禁的半禁令。两样都在这一版改掉，判尺随真身词表现算（不抄第二份名单）。
+SCENE_CORPORAL_TERMS: Final[tuple[str, ...]] = (
+    "形貌",
+    "身形",
+    "身材",
+    "体态",
+    "锁骨",
+    "腰线",
+)
+
+#: **衣着这一类**的词表真身（与上面那张同家、不同轴）：G-4＝乙 之后普通模式的 `scene`
+#: 段许可它们，所以它们一枚都不许长在禁令半句里——这一枚表的用途就是把那条"不许半心半意"
+#: 的判据喂给锁，而不是往 `test_reply_policy_permanent.py` 里抄第二份名单（失效形态 244）。
+NORMAL_SCENE_CLOTHING_TERMS: Final[tuple[str, ...]] = (
+    "衣着",
+    "穿戴",
+    "穿着",
+    "服装",
+)
+
+# 「只说话」＝轴上的缺省那一格，两种模式都读它。写法刻意用**相邻字面量隐式并写**
+# （AST 里折成一枚 Constant）：`tests/test_reply_policy_permanent.py` 的风格名册按形状
+# 从本文件现枚（席 narrlock 补的那只眼），静态字面量才进得了名册——新段若被篇幅黑名单
+# 与成对锁漏扫，就是失效形态 244 那一型「靠硬抄常量名册的锁对新常量天生隐形」的翻版。
+# 许可半句与禁令半句的分界交出一枚**短标记**（长度刻意 <40 ⇒ 不被名册当独立段扫）：
+# 判"许可"只判分界之前那半句，禁令那半句按家规**必须**点名它禁的是哪几样
+# （口径同成对锁读 `NORMAL_NO_ACTION_INSTRUCTION` 禁令本体那半句）。
+SPEECH_ONLY_BAN_CLAUSE_MARKER: Final[str] = "不写括号里的动作"
+SPEECH_ONLY_STYLE_INSTRUCTION: Final[str] = (
+    "【只把话说出来的相处】这一轮只用说出口的话回应：要说的就一次说完整，"
+    "不写半截，也不留需要对方猜的空隙；语气、用词与句子本身的节奏，就是此刻全部的情绪。"
+    "不写括号里的动作，也不写叙述性的动作、神态、心理与外貌，"
+    "环境同样不铺开（那几样等描写档打开之后再写）。在场感每次都换个说法，"
+    "别把哪一句当成万能答句。"
+)
+
+# G-4＝乙（2026-10-04 深夜改判）的落点：四维＋**外貌作为观感**＋**衣着照当下写**，
+# 只有"落在身体上的细部"留给亲密档。禁令那半句刻意只谈身体细部、不复述四个描写维的名字，
+# 也不谈衣着——那一类这一夜起归普通档许可，一边写一边禁就是「同一轮既准写又禁写」那句
+# 拆台话的另一型（`tests/test_reply_policy_permanent.py` 那把成对锁的两根轴都判这个形状）。
+NORMAL_SCENE_BAN_CLAUSE_MARKER: Final[str] = "不写身形"
+#: I-1（2026-10-04 深夜裁定）：**环境必须被交代**这一条在两格 `scene` 里的在场标记。
+#: 短到不会独立成段（<40 字，名册只枚长句），两格共用这一枚，锁就照这两格判；
+#: 只说话那两格拿不到它（那两格是禁令侧：环境等描写档打开之后再铺开）。
+#: 🔴 这里只有**取材的问法**，一枚人格名物都没有——黑海岸、潮汐、频率、星河流转那一类
+#: 具体名物由人格正文每轮供给（`llm_engine/providers.py` 现读 persona 正文 → `persona.raw_text`），
+#: 切人格就换一套。把它们写进代码＝代码替一个可能不在场的人格说话，且没有任何一把尺会红
+#: （族名锁只认整枚族名；席 sceneimagery 实算过）。
+SCENE_ENVIRONMENT_MARKER: Final[str] = "往你此刻站着的地方取材"
+NORMAL_SCENE_STYLE_INSTRUCTION: Final[str] = (
+    "【日常这一刻的铺开】此刻仍是全年龄的日常相处，以第一人称把这一幕写出来："
+    "语言、动作、神态、心理都落进文字里，外貌只写一眼望过去的观感——那份沉静、"
+    "那种柔和，先让对方在场；眼前这一身的衣着也照当下写清楚，领口系到哪一颗扣、"
+    "袖口被风掀起又落下，都是这一天留下的证据。这一幕要有它自己的所在："
+    "往你此刻站着的地方取材——那里怎么亮、声音往哪儿走、空气怎样凉下来、脚下的"
+    "东西按什么节律涨落、时间在这一处走得比别处慢，都落进字里；别把物件摆一遍就"
+    "算交代过了，也说清这是什么样的美，慢的那一种还是亮的那一种，它为什么值得你"
+    "多看一眼。周遭不是幕布，它接得住你的话，也替你接住对方；取哪一处景，由你"
+    "自己的来历定。写的是正在发生的这一段，不跳步、不抢先概括，说出口的话与没"
+    "说出口的话都算数。"
+    "不写身形，也不写任何落在身体上的细部（锁骨、腰线那几样留给亲密场景再写）。"
+    "在场感每次都换个说法，别把哪一句当成万能答句；语气仍是你自己——温柔、笃定、有人情味。"
+)
+
+#: 样式段的**私聊面选择口**：(描写档, 本轮是否拿到亲密叙述授予) → 段。
+#: 第二枚键为什么是「亲密授予态」而不是「描写授予态」：`scene` 这一格能到这里，
+#: 前提已经是那把尺点了头（见 :func:`resolve_narration_axis`），所以这里只需分辨
+#: 「铺开的是私密相处」还是「铺开的是日常一幕」——G-4＝甲 那条身体面界线。
+#: 日常段（`NORMAL_NO_ACTION_INSTRUCTION`）留在 (speech, False) 那一格**原样不动**：
+#: §76 那批在册锁（`tests/test_content_route_v3.py`／`test_rp_style_directives.py`／
+#: `test_reply_policy_permanent.py`）判的就是它在普通轮与未授予轮上逐字在场。
+#: I-3＝丙（2026-10-04 深夜）起这张表管的是**私聊那一面**；群侧另有一张同键形的表
+#: （`RP_STYLE_GROUP_BLOCKS`），两表由 `resolve_rp_style_block` 按会话面二选一。
+RP_STYLE_BLOCKS: Final[dict[tuple[str, bool], str]] = {
+    (NARRATION_MODE_SCENE, True): INTIMATE_RP_STYLE_INSTRUCTION,
+    (NARRATION_MODE_SCENE, False): NORMAL_SCENE_STYLE_INSTRUCTION,
+    (NARRATION_MODE_SPEECH, True): SPEECH_ONLY_STYLE_INSTRUCTION,
+    (NARRATION_MODE_SPEECH, False): NORMAL_NO_ACTION_INSTRUCTION,
+}
+
+#: I-3＝丙（2026-10-04 深夜裁定）：**群是公共空间、旁人也在看** ⇒ 群聊那一侧的 `scene`
+#: 不落笔「身形／衣着」这两类落在身体与穿戴上的细部；私聊（本人那一路）照旧写。其余四维
+#: （语言／动作／神态／心理）与环境段群内照写，长度档一字未动（升格腿仍挂在 `build_chat_result`
+#: 里 `_rp_scene_now` 那一支的授予尺上，本波没碰它），六硬线与 09-17 内容政策是另一本账、一字未动。
+#:
+#: 🔴 为什么**不是**"在现有段落原文后面追加一句禁令"（最省事那种写法）：日常场景段的许可
+#: 半句正把这一身穿的是什么当"这一天留下的证据"写进来，句尾再补一句"不写衣着"＝同一段里
+#: 两句拆台话——那正是 `tests/test_reply_policy_permanent.py::_corporal_axis_violations`
+#: （**逐块自洽**、不跨块比对）成文要拦的形状。公共侧要的是一段自己站得住的文案：
+#: 许可半句里根本没有那一维，禁令半句才点名它。（⚠ 这里刻意不抄那半句原文：那件锁的注毒
+#: 锚点按"源文里唯一"计数，注释里复述一遍就会把它打成两处 ⇒ 假红，本波实跑踩过。）
+#:
+#: 🔴 为什么**没有**把第三根轴并进 `RP_STYLE_BLOCKS` 的键形：那张表的键 `(mode, intimate)`
+#: 有在册解包点（`tests/test_narration_platform_wiring.py::_scene_headers`，非本波文件）⇒
+#: 改成三元组＝给别席造新红。于是群侧另立一张**同键形、同键集**的表；两格 `speech` 直接复用
+#: 现有常量对象 ⇒ "speech 两块一字未动"是**结构上的**（同一枚对象），不是只靠一把锁守着。
+#:
+#: 措辞纪律（照 §76 与 G-4乙 那两批在册锁）：段落头与首格括注不自报分级标签；不带篇幅
+#: 口径（长度只由档位行表达）；对 R-18 精确词表／性语境尺／体态尺零命中；一枚身体细部词
+#: 在禁令半句里**恰好出现一次**（两次＝抹掉一枚还剩一枚，注毒永远打不红＝假绿）。
+GROUP_SCENE_BAN_CLAUSE_MARKER: Final[str] = "群里不落笔"
+GROUP_NORMAL_SCENE_STYLE_INSTRUCTION: Final[str] = (
+    "【日常这一幕在人群里】此刻仍是全年龄的日常相处，只是身旁另有别人在看："
+    "以第一人称把这一幕写出来，语言、动作、神态、心理都落进文字里，外貌只落成一眼"
+    "望过去的整体观感——那份沉静、那种柔和，先让对方在场。这一幕要有它自己的所在："
+    "往你此刻站着的地方取材——那里怎么亮、声音往哪儿走、空气怎样凉下来、脚下的东西"
+    "按什么节律涨落、时间在这一处走得比别处慢，都落进字里；别把物件摆一遍就算交代"
+    "过了，也说清这是什么样的美，慢的那一种还是亮的那一种，它为什么值得你多看一眼。"
+    "周遭不是幕布，它接得住你的话，也替你接住对方；取哪一处景，由你自己的来历定。"
+    "写的是正在发生的这一段，不跳步、不抢先概括，说出口的话与没说出口的话都算数。"
+    "群里不落笔身形，也不写这一身的衣着，那几样留给只剩你们两个人的时候再写。"
+    "在场感每次都换个说法，别把哪一句当成万能答句；语气仍是你自己——温柔、笃定、有人情味。"
+)
+GROUP_INTIMATE_SCENE_STYLE_INSTRUCTION: Final[str] = (
+    "【亲密与成人向场景的叙述·人群之中】此刻是你与最亲近之人的相处（含成人向内容），"
+    "只是身旁另有别人在看：以第一人称现场视角回应——动作、神态、呼吸、触感、心理、"
+    "外貌与语言，连同周遭（灯光、人声、温度）都落进文字里，往你此刻站着的地方取材，"
+    "把每个瞬间展开成可以被感受到的现场；也说清那是什么样的美，慢的那一种还是亮的"
+    "那一种，幕布接不住人，此刻的四下却接得住你的话，也替你接住对方；说出口的话与没"
+    "说出口的话都算数；对话之外穿插细腻的动作与体感描写，节奏随情境张弛。"
+    "群里不落笔形貌与身形，也不写这一身的衣着，那几样留给只剩你们两个人的时候再写。"
+    "在场的安抚每次都换一种说法：不重复最近几轮用过的短句，不把任何一句话当万能答句，"
+    "用具体的动作与感受代替笼统的承诺。语气仍是你自己——温柔、笃定、有人情味。"
+    "别替这段文字贴类别标签：不要说出内容分级词或内容标签名，把场景本身写出来就好。"
+)
+
+#: 群侧（公共会话面）的样式段表：键形与键集与 `RP_STYLE_BLOCKS` **完全相同**，
+#: 差别只在那两格 `scene`。锁＝`tests/test_narration_group_scene_boundary.py`
+#: （键集相等那条现算判；缺格＝KeyError 而不是静默回落到私聊段——回落的方向正是裁定要收的那一侧）。
+RP_STYLE_GROUP_BLOCKS: Final[dict[tuple[str, bool], str]] = {
+    (NARRATION_MODE_SCENE, True): GROUP_INTIMATE_SCENE_STYLE_INSTRUCTION,
+    (NARRATION_MODE_SCENE, False): GROUP_NORMAL_SCENE_STYLE_INSTRUCTION,
+    (NARRATION_MODE_SPEECH, True): SPEECH_ONLY_STYLE_INSTRUCTION,
+    (NARRATION_MODE_SPEECH, False): NORMAL_NO_ACTION_INSTRUCTION,
+}
+
+
+def resolve_rp_style_block(
+    narration_mode: object, *, intimate: bool, group: bool = False
+) -> str:
+    """按 (描写档, 亲密授予态, 会话面) 取样式段——表驱动，无嵌套分支；认不出的轴值收到只说话。
+
+    `group` 缺省 `False`＝私聊那一面，也就是本波之前的形态：漏传只会**少收**、不会多收，
+    放宽只能由裁定带来，不能由一个没写全的调用点带来。会话面的判据只转述 `build_chat_result`
+    里那枚既有的 `_session_type_value`（与同文件 `_is_group_scoped_manual_key`／`_auto_pin_key`
+    同一口径，也与出站那把公共尺 `domains/render/reviewer.py` 的 `SessionType.GROUP` 单值同向），
+    本函数不再自己算"这是不是群"——那是第二份判据。
+    """
+    mode = str(narration_mode or "")
+    key = (mode, bool(intimate))
+    if key not in RP_STYLE_BLOCKS:
+        mode = NARRATION_MODE_SPEECH  # fail-closed：笔误/漂走的轴值不得顺手放大描写面
+        key = (mode, bool(intimate))
+    table = RP_STYLE_GROUP_BLOCKS if group else RP_STYLE_BLOCKS
+    return table[key]
+
+
+#: ── 两枚**取量口**（席 na-showalign，2026-10-04；独立复查 B-4／Q4 的落点）────────────
+#: `grants_intimate_narration` 一枚谓词、一张成员表，却被喂进过两种量（叙述轴的
+#: `narration_source` 与亲密轴的 `source`）——同一句「细节描写：已开」因此在同一轮里
+#: 给出过相反的答案。谓词不该由调用处现场拼量，所以这里立两枚**唯一取量口**，把
+#: "问哪一道题"写成名字：
+#:
+#: - 「这一轮能不能铺开写五维叙述」＝**只有** `grants_intimate_narration(
+#:   narration_ruler_source(ctx))` 这一种问法（注入缝 `resolve_narration_axis`、
+#:   两处 `show` 回执都走它 ⇒ 同一个问题处处同一个答案）。
+#: - 「这一轮的亲密档是不是人亲手推上去的」＝ `grants_intimate_narration(
+#:   intimate_axis_source(ctx))`，答的是**另一道题**（样式段第二枚键 G-4 的身体面界线、
+#:   亲密轮的出站动作括号豁免、审计行 `grant=` 那一格），它借同一张成员表却不动叙述轴。
+#:
+#: 🔴 两者**不可互换**，也不许在调用处现场写 `str(ctx.get("source"))` 之类的量：
+#: 形状锁 `tests/test_narration_axis_show_consistency.py` 按调用点读 AST 认这两枚名字，
+#: 并把「命令/回执面绝不用亲密量答叙述题」单独钉一枚（现有分离锁只比集合成员，看不见喂错量）。
+def narration_ruler_source(intimacy_ctx: dict[str, Any] | None) -> str:
+    """交给叙述那把尺的来源串——只读 `narration_source`，别的一概不看。"""
+    return str((intimacy_ctx or {}).get("narration_source", "") or "")
+
+
+def intimate_axis_source(intimacy_ctx: dict[str, Any] | None) -> str:
+    """亲密档那一轴的来源串——只读 `source`（答"为什么亲密"，不答"能不能铺开写"）。"""
+    return str((intimacy_ctx or {}).get("source", "") or "")
+
+
+@dataclass(frozen=True)
+class NarrationAxis:
+    """描写档轴的**一次**读数（注入缝唯一的入口，别在这儿之外再拼第二份判据）。"""
+
+    mode: str      # NARRATION_MODE_SCENE / NARRATION_MODE_SPEECH
+    granted: bool  # 唯一那把尺 `grants_intimate_narration` 的读数
+
+
+def resolve_narration_axis(intimacy_ctx: dict[str, Any] | None) -> NarrationAxis:
+    """从 `resolve_intimate_context` 那一枚 dict 里读描写档轴——**只转述，不重推**。
+
+    轴心（席 na1-core，`content_route.py:_narration_axis_reading`）交出的两格各有主人：
+
+    - `narration_mode`＝本轮明示 ＞ 本人持久钉（钉 speech 也算表态）＞ 亲密缺省（H-1＝甲，
+      2026-10-04 晚「开'亲密'的话，就给 scene 场景」）＞ 缺省 `speech`；
+    - `narration_source`＝**交给那把尺的来源串**（`scene` 记 `narration_pin`，`speech`
+      记 `INTIMATE_SOURCE_NONE`）。轴心把那规矩写死了：要问"能不能铺开写"只准
+      `grants_intimate_narration(narration_source)`，**不许拿 `source`／`tier` 那一族
+      当尺**（那两格答的是"怎么进的亲密档／多深／换不换首跳"，与这一格不同轴）——
+      所以本函数一次都不读 `source`，读它就是把两轴并成一条。
+
+    fail-closed：键缺席（总闸关闭时装配段交的那枚最小 dict／轴心 fail-open 交空）与
+    认不出的轴值一律收成 `speech`＝少写，不是多写；`scene` 而尺没点头同样收回。
+    """
+    ctx = intimacy_ctx or {}
+    raw_mode = str(ctx.get("narration_mode", "") or "").strip()
+    granted = grants_intimate_narration(narration_ruler_source(ctx))
+    if raw_mode != NARRATION_MODE_SCENE or not granted:
+        return NarrationAxis(NARRATION_MODE_SPEECH, granted)
+    return NarrationAxis(NARRATION_MODE_SCENE, granted)
 
 
 def build_admin_roster_text(config: Any) -> str:
@@ -4161,6 +4659,7 @@ def _media_gate_session_key(message: IncomingMessage, content_route_config: Any)
         sender_id=str(getattr(message, "sender_id", "") or ""),
         session_key=str(getattr(message, "session_id", "") or ""),
         config=content_route_config,
+        platform=str(getattr(message, "platform", "") or ""),
     )
     return str(ctx.get("route_key") or "") if bool(ctx.get("eligible")) else ""
 
@@ -4274,6 +4773,12 @@ def build_chat_result(
             sender_id=_sender_id_text,
             session_key=content_route_session_key,
             config=content_route_config,
+            # 席 na-land（2026-10-04 深夜，接席 na-keyfix §7 点名的待办）：平台事实只准出自
+            # 契约字段 `IncomingMessage.platform`，绝不反解会话键去猜；拿不到就交空串＝轴心
+            # fail-closed（不反解）。读写两侧同批接（只接一侧＝#33★ 两形永不相交）。
+            # ⚠ 钉的作用域**仍是"整个人"全局**（`(平台域, 用户号)`）——会话那一维是另一条
+            # 待裁的裁定（每 (平台,会话,人) 一枚钉，等设计回报），别把这里读成已经做完。
+            platform=str(getattr(message, "platform", "") or ""),
         )
         if content_route_enabled
         else {"eligible": False, "route_key": content_route_session_key, "mode": "normal"}
@@ -4535,6 +5040,8 @@ def build_chat_result(
             sender_id=_sender_id_text,
             session_key=content_route_session_key,
             config=content_route_config,
+            # 平台事实只转述契约字段（接线理由与"作用域仍按人全局"那条见 `_intimacy_ctx` 上方）。
+            platform=str(getattr(message, "platform", "") or ""),
         )
         if content_route_enabled
         else {"eligible": False, "route_key": content_route_session_key, "mode": "normal"}
@@ -4572,12 +5079,35 @@ def build_chat_result(
         # 好感度达档自动这两支只给语气与放行，五维描写（语言/动作/神态/心理/外貌）
         # 要由人亲手推动才给——显式指令、管理员代全群钉、或内容信号自己跨了阈。
         # 判据只住引擎那一份（`grants_intimate_narration`），这里不抄第二份成员表。
+        # 席 na-showalign 补一句：这一行问的是**亲密轴**（"这档是谁推上去的"），
+        # 走 `intimate_axis_source` 那枚取量口；它**不是**"能不能铺开写"那一问
+        # （那一问只准 `narration_ruler_source`，见 `resolve_narration_axis`）。
         # 连带效果（正是所要）：本行为假时 :4472 那段长度升格一并跳过，
         # 且下面的二选一落到 `NORMAL_NO_ACTION_INSTRUCTION`；关系语气腿（:4457）
         # 只看 mode，不受本行影响 ⇒ 语气照旧、只是不再铺开描写。
-        and grants_intimate_narration(str(_intimacy_final.get("source", "")))
+        and grants_intimate_narration(intimate_axis_source(_intimacy_final))
     )
-    if _rp_intimate_now and not getattr(context.tone, "action_brackets", True):
+    # 第五根轴＝描写档（G-1…G-4，2026-10-04 用户已批）：**一次读取**轴心的合成读数，
+    # 优先序不在本文件重推（判定时机在 `observe_turn` 之后，重推一次就是台账 #53★ 那扇窗）。
+    _rp_axis = resolve_narration_axis(_intimacy_final)
+    # 本轮是否真按「铺开的一幕」写。它挂的是**唯一那把尺**问在 `narration_source` 上
+    # （G-2 并进 `_INTIMATE_NARRATION_SOURCES` 的是同一支成员表，本席没有第二张集、
+    # 也没有第二次授予判据），与 `_rp_intimate_now` 的差别只在一处：普通模式也到得了
+    # `scene`（G-1）。反过来，**开了亲密档而描写档还在缺省 `speech` 的那一轮不升档**——
+    # 只说话就不该拿到铺写那一格的交付面（它点名的是周遭的光、动作与触感），否则模型
+    # 同一轮读到两句拆台话（本仓这一族栽过多次；§76 的 S17 裁定原话也把它系在
+    # 「紧密的肢体描写／动作描写」上，而不是系在"进了亲密档"上）。
+    # ⚠ 轴心（席 na1-core）已落地，缺省＝`speech` ⇒ 这一支与改前的 `_rp_intimate_now`
+    # **不再等值**：§76 那批成文于第五根轴之前、把"显式开档"当成"铺开写"的在册锁，
+    # 凡判样式段与长度档的都以 `tests/test_narration_axis_styles.py` 为准改写到两态
+    # （关系语气腿、出口动作豁免、名单门那些**不按轴走**的锁一字未动，仍照旧判）。
+    _rp_scene_now = (
+        content_route_enabled
+        and content_route_session_eligible
+        and safety.action == "allow"
+        and _rp_axis.mode == NARRATION_MODE_SCENE
+    )
+    if _rp_scene_now and not getattr(context.tone, "action_brackets", True):
         # 审查 S1（2026-10-03）：全局 `BOT_PERSONA_ACTION_BRACKETS=false` 会让出站把
         # 括号动作整段删掉，而不分档位——拿到叙述授予的那轮就被自己出口没收（她线上
         # 报的"开了还是不描写动作"）。例外**写在授予判定这一处**、按本仓既有做法折回
@@ -4585,16 +5115,51 @@ def build_chat_result(
         # 出口只读一个字段、不再长第二判据。
         # 为什么不在 providers 侧解：档态要到 `observe_turn` 记账后才算得出（台账 #53
         # ★时序泄露），providers 拿不到 ⇒ 硬取就是重判一次＝第二份判据。
+        # 2026-10-05 席 na2-style：这一支的谓词从「亲密授予态」换成「本轮铺开场景」——
+        # 要保住动作的是**真的写了动作的那一轮**，而普通模式的 `scene`（G-1）同样要写
+        # 动作，挂在亲密态上就会在那一支静默漏掉。内容一字未动，只换了判据的名字；
+        # 亲密授予＋只说话那一轮仍由出站那一支（下面 `strip_action_brackets` 的门读
+        # `_rp_intimate_now`）保住今天的语义，本波不改它。
         context = context.model_copy(update={
             "tone": context.tone.model_copy(update={"action_brackets": True}),
         })
     _intimate_floor_tag = ""
-    if _rp_intimate_now:
+    _intimate_narration_tag = ""
+    if _rp_intimate_now or _rp_scene_now:
+        # 授予轮的亲密态一眼可查（2026-10-04）：一枚紧凑标签覆盖 mode+tier+grant，
+        # 走既有 `audit_tags`——复用 `apply_intimate_switch` 那支打标签的通路，经
+        # `diagnostic_tags` 汇入本轮结果，不新起日志子系统、不建新 store、不加配置键。
+        # 三面读数全取 `resolve_intimate_context` 的那一份，grant 复用引擎的
+        # `grants_intimate_narration`——绝不在这儿抄第二把尺；标签不带用户号、不带正文。
+        # 🔴 `grant=` 那一格答的是**亲密授予**（`intimate_axis_source`），与同行 `nar=`
+        # 来自两问：这是**刻意**的，两个读数同时在场才分得开"她亲手开了亲密却只说话"
+        # 与"她根本没进亲密档"（在册锁 `tests/test_narration_axis_styles.py` 末段就钉
+        # 这两态；`grant=` 若改读叙述轴就与 `nar=` 同义、审计面反而少一格）。
+        # 叙述那一问的唯一答案住在 `nar=` 与 `resolve_narration_axis`，本格不另立尺。
+        # 本行只在 `_rp_intimate_now`（＝已授予）这一支被赋非空 ⇒ 未授予轮（ML／好感度
+        # 自动回落）天然不带这枚标签，审计面据此一眼分辨授予与否。
+        # 2026-10-05 席 na2-style：外门加宽成「亲密授予态 ∨ 本轮铺开场景」——普通模式经
+        # `narration_pin` 拿到授予的那一轮同样要留痕；并把**同一枚标签**再带一轴读数
+        # `nar=`（旧写法只挂亲密态时，"她开了亲密档却只说话"与"她根本没拿到授予"在队列
+        # 行上长得一模一样，审计只能反推）。
+        _intimate_narration_tag = ":".join((
+            "rp_narration",
+            str(_intimacy_final.get("mode", "normal")),
+            str(_intimacy_final.get("tier") or "none"),
+            f"grant={int(grants_intimate_narration(intimate_axis_source(_intimacy_final)))}",
+            f"nar={_rp_axis.mode}",
+        ))
+    if _rp_scene_now:
         # T8（2026-09-28 裁定「亲密档字数要比普通档多」）＋ S17（2026-10-04 裁定
         # 「紧密的肢体描写要 600~800 字以上、1000 字为佳」）：拿到叙述授予的这一轮
         # 直接取登记表顶格档「铺写」——即便这个人钉过「短一点」。判据与上面那一行长
         # 度指令同源（同一 detail_mode + 同一本轮文本），所以是**就地改写那一行**，
         # 不是再追加一行；没拿到授予的轮次（ML 自动档／好感度自动回落）不升。
+        # 2026-10-05 席 na2-style：谓词换成「本轮铺开场景」＝**同一把尺 ∧ 描写档 scene**。
+        # 铺写那一格的交付面写的是周遭与动作，只说话的轮次读到它就是读到两句拆台话，
+        # 而"scene 才走铺写"正是用户对第五根轴的原话；轴心未落地时本行与改前逐格等值
+        # （见上面 `_rp_scene_now` 的 ⚠ 段）。**没有**新增第二把长度尺、也**没有**
+        # 第二处取档：升格走的仍是 `intimate_reply_length_tier`，数值仍只住登记表。
         _floor_tier = intimate_reply_length_tier(
             context.reply_detail, context.current_message
         )
@@ -4610,10 +5175,19 @@ def build_chat_result(
                 _intimate_floor_tag = f"length_intimate_floor:{_floor_applied}"
     messages.append({
         "role": "system",
-        "content": (
-            INTIMATE_RP_STYLE_INSTRUCTION
-            if _rp_intimate_now
-            else NORMAL_NO_ACTION_INSTRUCTION
+        # 样式段＝表驱动（(描写档, 亲密授予态) → 段 × 会话面二选一），本波从「二选一」升级而来。
+        # 传进表的轴值过的是 `_rp_scene_now` 那道外门：safety 拦截轮／路由关／未准入
+        # 会话一律收回 `speech` 那一格 ⇒ 被拦的那一轮拿不到任何"展开描写"的鼓励。
+        # I-3＝丙（2026-10-04 深夜）加**会话面**那一枚参数：群是公共空间，群侧的 `scene`
+        # 不落笔身形／衣着（私聊照旧，其余四维与环境段照写）。判据只转述本函数已有的
+        # `_session_type_value`（口径同上面 `_auto_pin_key` 那一支与出站那把公共尺
+        # `reviewer.py` 的 `SessionType.GROUP` 单值），**没有**新建第三把尺；`"channel"`
+        # 归哪一侧未裁 ⇒ 本波照旧按私聊面取段（收窄的方向由裁定说了算，不由顺手说了算）。
+        # 长度档／升格腿（上面 `_floor_tier` 那一支）与审计标签一字未动。
+        "content": resolve_rp_style_block(
+            NARRATION_MODE_SCENE if _rp_scene_now else NARRATION_MODE_SPEECH,
+            intimate=_rp_intimate_now,
+            group=_session_type_value == "group",
         ),
     })
     if (
@@ -4638,6 +5212,10 @@ def build_chat_result(
     if _intimate_floor_tag:
         # 「这一轮有没有因亲密档抬高长度地板」必须可 grep（同出口地板腿的交付纪律）。
         diagnostic_tags = [*diagnostic_tags, _intimate_floor_tag]
+    if _intimate_narration_tag:
+        # 授予轮的"是不是亲密／哪一档／有没有拿到叙述"三面收成一枚标签进 `audit_tags`，
+        # 审计不必再从队列行与字数反推（地板腿只在"真的抬了档"时才留痕，覆盖不到这三面）。
+        diagnostic_tags = [*diagnostic_tags, _intimate_narration_tag]
     preflight_errors = _llm_preflight_errors(llm_options)
     enable_tools = bool(llm_options.pop("enable_tools", False))
     fast_mode = bool(llm_options.pop("fast_mode", False))
@@ -4757,7 +5335,13 @@ def build_chat_result(
         request_budget=request_budget,
         message_text=router_message_text or message.plain_text,
         override=router_override,
-        intimate=_rp_intimate_now,
+        # 出口地板与提示词里那一行长度指令必须读**同一个升格**（`_reply_length_floor_leg`
+        # 自己的 docstring 就写着"免得长成提示词要适中、地板只追到简洁的两把尺"）。
+        # 第五根轴落地后"升格"的谓词＝「本轮真的铺开写」`_rp_scene_now`，不是"进了亲密档"：
+        # 留着旧谓词就会长出缺牙——只说话那一轮被出口追到 600 字的场景铺写，与它自己
+        # 那句"动作、神态、心理与外貌一概不落笔"当场打架（§76 那批事故的同一族）。
+        # 亲密＋scene 那一格两枚谓词同真 ⇒ 照旧升格，§76 的效果一字未收。
+        intimate=_rp_scene_now,
         session_id=route_session_key,
     )
     if length_floor_tags:
@@ -4842,50 +5426,45 @@ def build_chat_result(
                 body=f"我已经把内容整理成附件：{generated.path.name}", files=[{"file":str(generated.path),"name":generated.path.name}],
                 privacy_level=context.privacy_level, source=reply.provider,
                 audit_tags=[*diagnostic_tags,"artifact_generated",f"model:{reply.model}"])
-    normalized_speech = strip_outer_speech_quotes(reply.text)
-    reply_text, output_was_trimmed = _apply_output_message_budget(
-        normalized_speech,
-        decision.max_messages,
-        output_max_chars_per_message,
+    # 出站归一化那一段收在 :func:`_finalize_reply_text`（F-5 乙，2026-10-05 用户裁定）：
+    # 地板腿要量的是**送达**的字数，而补写回来的那一版必须再过**同一段**才谈得上送达，
+    # 所以这一段只准有一处实现（第二处＝出站形态按调用点漂移，本仓这一族栽过多次）。
+    # 段内次序、留痕种类与抽出来之前逐字一致。
+    reply_text, finalize_tags = _finalize_reply_text(
+        reply.text,
+        context=context,
+        max_messages=decision.max_messages,
+        output_max_chars_per_message=output_max_chars_per_message,
+        intimate=_rp_intimate_now,
     )
-    # 2026-10-03 线上缺陷根修：`BOT_PERSONA_ACTION_BRACKETS=false`（现网即此值）原本
-    # **不分档位**地把括号动作整段删掉 ⇒ 拿到五维叙述授予的那一轮，模型写了动作/神态
-    # 也在出口被没收（她原话「我开了亲密模式，但是还是不会描写动作」）。
-    # 修法只让**已获得叙述授予**的那一轮保留动作：全局开关语义一字不改，日常轮
-    # （含 ML 自动档、未开档、被 safety 拦的轮）照旧硬剥——她 2026-09-28「日常沟通
-    # 不写动作神态」那条裁定靠的就是这一腿，不能顺手放宽。
-    if getattr(context.tone, "action_brackets", True) or _rp_intimate_now:
-        reply_text = format_roleplay_paragraphs(reply_text)
-    else:
-        reply_text = strip_action_brackets(reply_text)
-    reply_text = naturalize_chat_text(reply_text)
-    # 说人话输出层（批次 F）：剥离 AI 客套开场与总结腔。
-    from plugins.bot_unified_runtime.domains.render.plain_text import (
-        humanize_reply,
+    # F-5 乙：归一化之后**再判一次**地板（量送达的字数），最多补写一次。
+    # HEAD 副本实测削减（48 枚合成样本、现网出站预算形、seed 20261005）：
+    # format 支 p50 6.08%／p95 18.37%（list 形 17.89%、quote 形 15.40%、本席样本 21.35%），
+    # strip 支 p95 37.27% ⇒ 上游腿按归一化**之前**的字数判"够 600"，送达可能只剩 ~490。
+    reply_text, delivery_floor_tags, finalize_tags = _delivery_length_floor_leg(
+        delivered=reply_text,
+        delivered_tags=finalize_tags,
+        upstream_tags=length_floor_tags,
+        context=context,
+        messages=messages,
+        llm_provider=llm_provider,
+        model_router=model_router,
+        llm_options=dict(llm_options),
+        request_budget=request_budget,
+        message_text=router_message_text or message.plain_text,
+        override=router_override,
+        intimate=_rp_intimate_now,
+        session_id=route_session_key,
+        max_messages=decision.max_messages,
+        output_max_chars_per_message=output_max_chars_per_message,
+        # 本腿跑在危险命令/审查闸**之后** ⇒ 补写稿要过同一把闸才许上位（否则就是
+        # 「追回来的字数被出口没收」的反向形态：追回来的字数绕过了出口）。
+        output_guard=lambda text: bool(screen_dangerous_command_output(text).hit)
+        or bool(_unsafe_output_reasons(text)),
+        guard_replaced=_dangerous_verdict.hit,
     )
-
-    reply_text = humanize_reply(reply_text)
-    # 本机信息外泄红线（输出侧）：模型被诱导复述 .env 内容/本机路径/ key
-    # 形态时，发送前确定性打码（盘符绝对路径 / BOT_XXX= 赋值 / sk- 类 key）。
-    reply_text = redact_local_secrets(reply_text)
-    # T4② 出口执法（需求 3 第二条，2026-09-28）：入口那道 `validate_miss_declaration`
-    # 只拦得住"我们递给模型的未命中声明"，拦不住模型把"这轮没查到"讲成"这东西不存在"。
-    # 这里回头查一次并改成不确定表述——**只在本轮确实零命中（本地与联网都空手）时生效**，
-    # 有资料的轮次一个字都不动（"官方确实没公布过"可能是查证后的结论，改它＝污染正常回复）。
-    reply_text, miss_denial_hit = _soften_existence_denials_on_miss(
-        reply_text,
-        enabled=_no_lookup_evidence_this_turn(context),
-    )
-    # 席 S2 出口窄守门（幻觉根治波，2026-10-02）：把「别人的一生」用第一人称端出来
-    # 的那一句摘掉（判据三条同时成立才动，见 _strip_borrowed_recital_sentences）。
-    # 放在 existence-denial 之后、段落归一之前——归一后句子边界会被重排，那时再删句
-    # 就要动排版器的产物；异常即原样放行，命中原句只进审计不回话。
-    reply_text, borrowed_recital_hit = _strip_borrowed_recital_sentences(
-        reply_text, _persona_recital_whitelist_text(context.persona)
-    )
-    # 段落分隔统一化（2026-09-17 用户反馈：换行 1/2 个随机）：所有 chat 出站
-    # 文本段间一律单个换行（括号拆段/无动作纯文本/模型自写空行三路同构）。
-    reply_text = normalize_paragraph_breaks(reply_text)
+    if delivery_floor_tags:
+        diagnostic_tags = [*diagnostic_tags, *delivery_floor_tags]
     generated_files: list[dict[str, str]] = []
     # Leave paragraph structure to the model. Transport-level splitting is only
     # allowed when an adapter imposes a hard payload limit; no fixed part count.
@@ -4902,21 +5481,15 @@ def build_chat_result(
         f"persona:{context.persona.profile_id}",
         f"persona_active:{context.active_persona_id}",
         f"model:{reply.model}",
+        # 归一化那一段的留痕（顺序与抽出来之前逐字一致）：
+        # · llm_speech_quotes_normalized —— 外层引号被拆过
+        # · llm_output_trimmed —— 出站预算截断（现网 no-op）
+        # · kb_miss_existence_denial_softened —— 出口执法：没查到 ≠ 不存在
+        # · llm_borrowed_recital_stripped —— 幻觉根治波出口窄守门摘掉了别人的生平
+        # B-9（管线检视 #12）：死标签 llm_split_parts / llm_split_mode 已删——
+        # text_parts 在本函数恒为 None（transport 分段不由 chat 层声明）。
+        *finalize_tags,
     ]
-    if normalized_speech != reply.text.strip():
-        audit_tags.append("llm_speech_quotes_normalized")
-    if output_was_trimmed:
-        audit_tags.append("llm_output_trimmed")
-    # 出口执法留痕：没有这一条，"她说的不存在其实只是没查到"就永远只能靠猜。
-    if miss_denial_hit:
-        audit_tags.append("kb_miss_existence_denial_softened")
-    # 席 S2 出口守门留痕（同上一条的理由）：没有这一条，"她说的亲历其实是从别人
-    # 生平里搬来的"就永远只能靠猜，被摘掉的那句也无处回查。
-    if borrowed_recital_hit:
-        audit_tags.append("llm_borrowed_recital_stripped")
-    # B-9（管线检视 #12）：删除死标签 llm_split_parts / llm_split_mode——
-    # text_parts 在本函数恒为 None（transport 分段不由 chat 层声明），两个
-    # 标签从不触发，只产生零信号审计噪声。
     _schedule_memory_extraction(memory_writer, message=message, reply_text=reply_text)
 
     # S2 案二：贴纸与正文**同一条消息**出站（前一条独立空文本图消息因此不再产生）。
@@ -6702,7 +7275,14 @@ def build_chat_capability(
             fast_cap_tier = resolve_reply_length_tier(
                 context.reply_detail, context.current_message
             )
-            if fast_cap_tier == REPLY_TIER_DETAIL_ID:
+            # 放宽判据＝「这一档长到详尽那一级或以上」，阈值与档位秩都取自登记表，
+            # **不点档名**：2026-10-04 表上长出第四档「铺写」（顶格档）之后，按名点名
+            # 只认得旧顶格，于是最长的档反而没有放宽，快顶会把要铺场景的那一句截在半路。
+            # 日后表上再加一档，这里自动跟；查不到的档名按顶格处理（宁可不压短，
+            # 与 select_reply_length_tier「不要静默按最矮档回复」同向）。
+            if _REPLY_TIER_RANK.get(
+                fast_cap_tier, _REPLY_TIER_TOP_RANK
+            ) >= _REPLY_TIER_RANK[REPLY_TIER_DETAIL_ID]:
                 if runtime_settings is not None:
                     detail_max_tokens = runtime_settings.get_or(
                         "BOT_CHAT_MAX_TOKENS", None

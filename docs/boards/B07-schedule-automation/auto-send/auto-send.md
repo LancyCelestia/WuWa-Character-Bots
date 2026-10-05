@@ -18,7 +18,7 @@
 
 ## 怎么调用
 
-- 真身：`domains/schedule/auto_send/parser.py` 的 `is_auto_send_command_text` / `parse_auto_send_command` / `build_auto_send_preview_result`（旧 `capabilities.auto_send` 与 `runtime` 路径为再导出垫片）。意图契约 `domains/core/contracts/auto_send.py:AutoSendIntent`。
+- 真身：`domains/schedule/auto_send/parser.py` 的 `is_auto_send_command_text` / `parse_auto_send_command` / `build_auto_send_preview_result`。旧 `capabilities.auto_send` 与 `runtime.reactions` 两枚再导出垫片**已于 P2 减量波三态退役**（文件＋`SHIM_ROWS` 行＋牵动面同批动，物理不在盘也不在 HEAD，防写回锁＝`tests/test_deleted_shim_import_lock.py`），**旧名一律不可 import**。意图契约 `domains/core/contracts/auto_send.py:AutoSendIntent`。
 - 装配：根 `__init__.py` 的 `auto_send` matcher（`priority=13, block=True`），handle 里调 `build_auto_send_preview_result(...)` 产出回执，`capability_id=bot.auto_send.preview`（受控内部能力，直调下限见 outbound_gate T6）。收件人段用 、,， 分隔多人，"主题：/内容"分别解析，繁体链（報存/發/郵件/訊息）同改可达。
 
 ## 开关与参数

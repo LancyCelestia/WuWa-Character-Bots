@@ -336,6 +336,13 @@ def test_unknown_and_malformed_values_degrade_to_auto(tmp_path: Path) -> None:
 
 
 def test_priority_chain_explicit_override_beats_permanent_policy(tmp_path: Path) -> None:
+    """她裁的链（2026-09-28 原文）：本轮明示 > 永久策略 > 全局 BOT_REPLY_DETAIL > 缺省。
+
+    2026-10-04 重述本件第②段：旧写法拿 `set_override` 当「本轮明示」，而覆盖册那枚值是
+    **跨重启的常驻热改**＝第③层「全局档」，于是这把锁把裁定反着钉，并且与
+    `test_durable_override_is_layer_three_not_layer_one` 正面冲突。本轮明示由
+    「同一轮里改口的那句话」承担（谓词轨当场覆盖），这才是链①的真身。
+    """
     store = ReplyPolicyStore(tmp_path / "reply_policy.sqlite3")
     provider = ScriptedProvider([])
     _run_turn(store=store, provider=provider, text=ASK_SHORT)
@@ -344,12 +351,26 @@ def test_priority_chain_explicit_override_beats_permanent_policy(tmp_path: Path)
     )
     assert "当前档＝简洁" in tier, "永久策略应压过全局 BOT_REPLY_DETAIL=detail"
 
+    # ① 本轮明示：先钉 verbose，再在同一串轮次里改口「短一点」⇒ 反悔即覆盖
+    store2 = ReplyPolicyStore(tmp_path / "reply_policy_b.sqlite3")
+    provider2 = ScriptedProvider([])
+    _run_turn(store=store2, provider=provider2, text=ASK_LONG_BACK)
+    assert store2.get(person_reply_policy_key(sender_id="u-1")).length_mode == LENGTH_MODE_VERBOSE
+    _run_turn(store=store2, provider=provider2, text=ASK_SHORT)
+    reversed_tier = _tier_line_of(
+        _run_turn(store=store2, provider=provider2, text=PROBE_QUESTION)
+    )
+    assert "当前档＝简洁" in reversed_tier, "本轮改口没压过上一句钉的 verbose（链①失效）"
+
+    # ③ 全局档（含覆盖册那枚常驻值）**不**压过永久策略
     settings = RuntimeSettingsStore(allow_no_gate=True)
     settings.set_override("BOT_REPLY_DETAIL", "详细")
     overridden = _tier_line_of(
-        _run_turn(store=store, provider=provider, text=PROBE_QUESTION, settings=settings)
+        _run_turn(store=store2, provider=provider2, text=PROBE_QUESTION, settings=settings)
     )
-    assert "当前档＝详尽" in overridden, "当轮明示必须压过永久策略（她是管理员，说了就改）"
+    assert "当前档＝简洁" in overridden, (
+        f"全局档越过她刚说过的那句：{overridden}"
+    )
 
     untouched = _tier_line_of(
         _run_turn(
@@ -361,6 +382,32 @@ def test_priority_chain_explicit_override_beats_permanent_policy(tmp_path: Path)
         )
     )
     assert "当前档＝详尽" in untouched, "没说过的人仍走全局档（auto×知识题＝详尽）"
+
+
+def test_durable_override_is_layer_three_not_layer_one(tmp_path: Path) -> None:
+    """**跨重启的常驻热改**＝第③层「全局档」，绝不能冒充第①层「当轮明示」。
+
+    她 2026-09-28 的裁定原文（本文件抬头⑤）：当轮明示 > 永久策略 > 全局 BOT_REPLY_DETAIL > 缺省。
+    而 2026-10-03 现网抓到的是反的：覆盖册里**常驻**着一枚 `BOT_REPLY_DETAIL`（它是某次
+    `/bot runtime set` 留下的，重启也还在），判据把「覆盖册有这一枚」当成轮明示 ⇒
+    每一个人的永久策略被它整段静音。她自己钉过「每次回复要600字以上」（库里 `source=explicit`
+    可查），实测收到的却是 60 / 135 / 151 / 189 字。
+    本格用**同一枚常驻值**判第③层让位，用**本轮原话**判第①层仍压得过策略（既有那把锁）。
+    """
+    store = ReplyPolicyStore(tmp_path / "reply_policy.sqlite3")
+    provider = ScriptedProvider([])
+    _run_turn(store=store, provider=provider, text=ASK_LONG_BACK)
+    row = store.get(person_reply_policy_key(sender_id="u-1"))
+    assert row is not None and row.length_mode == LENGTH_MODE_VERBOSE, "本轮原话没落成永久策略"
+
+    settings = RuntimeSettingsStore(allow_no_gate=True)
+    settings.set_override("BOT_REPLY_DETAIL", "detail")  # 常驻全局档：跨重启仍在
+    tier = _tier_line_of(
+        _run_turn(store=store, provider=provider, text="在吗", settings=settings)
+    )
+    assert "当前档＝详尽" in tier, (
+        f"钉过「详细点」的人在常驻全局档 detail 下被压回普通档：{tier}"
+    )
 
 
 # ============================ ⑥ 谓词不定 ⇒ 只有 LLM 确认才落库 ============================
@@ -732,6 +779,124 @@ def test_intimate_floor_rewrites_the_single_tier_line_in_place() -> None:
     assert no_line[0]["content"] == "人设原文，本轮没有长度行", "没那一行却动了正文＝凭空造指令"
 
 
+# ============ 风格常量名册：从 chat.py **现枚举**，不抄名字（2026-10-04） ============
+#: 来历＝只读席 narrlock 报告（`ChatBot_Runtime/cache/seat-narrlock/REPORT.md` §1.7
+#: GAP A / GAP B）。下面两把锁过去各自**手抄**要扫的常量：篇幅黑名单扫
+#: `("INTIMATE", "NORMAL")` 两枚、成对锁也只读那两枚的文案。本波正往 `chat.py` 里加
+#: **新风格块**（speech-only／普通模式铺写），手抄名册的新块＝天然在视野外：门从
+#: "执法"退化成"守一份过期花名册"而**永不翻红**——同型失效见台账 #68★ 幽灵字段、
+#: #72★ 三格哑面。故判据换成**形状**（模块顶层＋全大写名＋纯字符串字面量＋带叙述
+#: 标记词），谁在名册里由 `chat.py` 自己回答，不由本件抄。
+_STYLE_MARKER_TOKENS = ("描写", "叙述", "动作", "神态", "心理", "语气", "视角")
+#: 禁令引导词。刻意收**双字**词：单一个「不」会把亲密段"不重复最近几轮用过的短句"
+#: 那类与描写无关的否定误判成禁令块（成对锁就会要求 grant 段自禁四维）。
+_STYLE_PROHIBITION_CUES = (
+    "不写",
+    "不加",
+    "不做",
+    "不表达",
+    "不呈现",
+    "不用",
+    "禁写",
+    "禁止",
+    "勿写",
+    "别写",
+    "不许",
+    "不要写",
+)
+#: 叙述维度词表（切句判"这一维被禁/被开"用），**宽**于下面的 `_SCENE_DIMENSIONS`：
+#: 那张四维表才是要人签字的裁定表，这里只是词面。⚠ 当时值 12 枚（2026-10-04 现算）。
+_STYLE_DIM_TOKENS = (
+    "动作",
+    "神态",
+    "心理",
+    "外貌",
+    "环境",
+    "语言",
+    "呼吸",
+    "触感",
+    "体感",
+    "形貌",
+    "衣着",
+    "周遭",
+)
+#: 名册地板。⚠ 当时值＝ **2** 枚（2026-10-04 现算：`INTIMATE_RP_STYLE_INSTRUCTION` +
+#: `NORMAL_NO_ACTION_INSTRUCTION`）；复跑取数口＝`_style_instruction_constants()` 本身。
+#: 为什么要地板：检测器**自己被改窄**（删一枚标记词、抬高长度门槛、退回点名）时名册会
+#: 静默缩水，两把锁当场退回"守过期花名册"却不翻红——本件要治的正是这类静默失效，
+#: 所以缩水的后果必须是红，不是少扫一点。
+_MIN_STYLE_INSTRUCTION_CONSTANTS = 2
+#: 名册必须在场的锚点＝**下限**而非上限：只保证既有两段没被检测器漏掉，不限制名册
+#: 还能长多大（上限由上面那条地板腿守住"不许变窄"）。
+_STYLE_ROSTER_ANCHORS = ("INTIMATE_RP_STYLE_INSTRUCTION", "NORMAL_NO_ACTION_INSTRUCTION")
+
+
+def _module_level_string_constants(source: str) -> dict[str, str]:
+    """模块**顶层**、全大写名、值是纯字符串字面量的常量 → `{名字: 文本}`。
+
+    相邻字面量的隐式并写（两段现在的写法）在 AST 里已折成一枚 `Constant`，直接收；
+    f-string / `.join(...)` 这类非静态值**不收**——宁可让改写法的人看见红，也不许
+    检测面静默绕过（台账 #68★「三面齐、缺一必红」同向）。
+    """
+    found: dict[str, str] = {}
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign):
+            targets, value = list(node.targets), node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets, value = [node.target], node.value
+        else:
+            continue
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+            continue
+        name = targets[0].id
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{3,}", name):
+            continue
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            found[name] = value.value
+    return found
+
+
+def _style_roster_from_source(source: str) -> dict[str, str]:
+    """纯取数（不带地板判定）：按形状从 chat 源文里枚出叙述风格判据块。"""
+    return {
+        name: text
+        for name, text in _module_level_string_constants(source).items()
+        if len(text) >= 40 and any(mark in text for mark in _STYLE_MARKER_TOKENS)
+    }
+
+
+def _assert_style_roster_floor(roster: dict[str, str]) -> dict[str, str]:
+    """地板＋锚点：名册只准长、不准静默缩（缩了必须红，见上面 `_MIN_...` 那条注释）。"""
+    assert len(roster) >= _MIN_STYLE_INSTRUCTION_CONSTANTS, (
+        f"风格常量名册只剩 {sorted(roster)}，地板＝{_MIN_STYLE_INSTRUCTION_CONSTANTS} 枚"
+        "（当时值，见上一行注释的复跑取数口）⇒ 检测器被改窄或真身被搬走："
+        "名册一缩，篇幅黑名单与成对锁同时退化成守一份过期花名册"
+    )
+    missing = [name for name in _STYLE_ROSTER_ANCHORS if name not in roster]
+    assert not missing, f"名册看不见既有锚点 {missing} ⇒ 检测词或写法变了，两把锁即将空跑"
+    return roster
+
+
+def _style_instruction_constants() -> dict[str, str]:
+    """从 `chat.py` 现枚「叙述风格判据块」名册（判据＝形状，见上面那张注释）。"""
+    return _assert_style_roster_floor(
+        _style_roster_from_source(CHAT_PY_FOR_FORM.read_text(encoding="utf-8"))
+    )
+
+
+def _prohibited_dimensions(text: str) -> tuple[str, ...]:
+    """这段文案**禁写**了哪几维：同一小句里既点禁令引导词又点叙述维度词才算。
+
+    小句按逗号/句号级切，**不断在顿号**——「动作、神态、心理、外貌」正是一句禁令的
+    宾语，断在顿号会把日常段读成"只禁了动作"（半禁令误判＝成对锁假红）。
+    """
+    banned: list[str] = []
+    for run in re.split(r"[，。；！？!?;\n]", text):
+        if any(cue in run for cue in _STYLE_PROHIBITION_CUES):
+            banned.extend(dim for dim in _STYLE_DIM_TOKENS if dim in run)
+    return tuple(dict.fromkeys(banned))
+
+
 #: 篇幅类措辞黑名单：长度只准由档位行表达（一处真身），两段场景文风只管**描写维度**。
 _ROUTE_LENGTH_PHRASES = (
     "放宽篇幅", "放开篇幅", "篇幅放开", "能详则详", "绝不一句话打发",
@@ -745,14 +910,20 @@ def test_route_style_instructions_carry_no_length_truth() -> None:
     这条锁的来历：09-28 她指出「从普通档换成亲密档，换了个模型，结果文风全部
     都变了，那肯定不对」。判据不是散文措辞好不好看，而是**两段里都不许再有
     长度口径**——否则用户那份永久策略会在换档时被整段散文覆盖。
+    扫描面 2026-10-04 起＝`chat.py` 现枚的风格常量名册（**不再手抄两枚名字**），
+    所以"新加一块风格判据自带 600–1200 字"这类写法当场被扫到（narrlock GAP B）。
     """
-    for label, text in (
-        ("INTIMATE", chat.INTIMATE_RP_STYLE_INSTRUCTION),
-        ("NORMAL", chat.NORMAL_NO_ACTION_INSTRUCTION),
-    ):
+    roster = _style_instruction_constants()
+    for label, text in roster.items():
         smuggled = [phrase for phrase in _ROUTE_LENGTH_PHRASES if phrase in text]
         assert not smuggled, f"{label} 段自带篇幅口径 {smuggled} ⇒ 换档即换风格"
         assert not re.search(r"\d+\s*字", text), f"{label} 段手抄了字数"
+    # 名册与运行时真身必须是**同一份文本**：有人把常量搬进函数体／改成条件赋值／
+    # 换成 f-string 时，AST 名册与 `chat` 里的活值会各说各话（那要的是红，不是少扫）
+    for name, text in roster.items():
+        assert getattr(chat, name, None) == text, (
+            f"{name}：名册读数（AST）与运行时活值不同文 ⇒ 扫的是死文案、注入的是另一份"
+        )
     # 注毒自证：塞回一句「放宽篇幅」，本门必须红
     poisoned = chat.NORMAL_NO_ACTION_INSTRUCTION + "日常放宽篇幅。"
     assert any(phrase in poisoned for phrase in _ROUTE_LENGTH_PHRASES), "注毒没打红＝门是空跑的"
@@ -767,28 +938,129 @@ def test_route_style_instructions_carry_no_length_truth() -> None:
 _SCENE_DIMENSIONS = ("动作", "神态", "心理", "外貌")
 
 
-def test_normal_route_bans_every_dimension_intimate_route_opens() -> None:
-    """亲密段开哪几维，日常段就得在**禁令那一格里点名关**哪几维。
+def _tuple_constant_from_source(source: str, name: str) -> tuple[str, ...]:
+    """从 `chat.py` 源文里枚出一枚**顶层元组常量**的值（词表真身在那边，本件不抄第二份）。
 
-    来历：她裁定 2b 时说清了分工「普通档只是说话，不表达动作、神态、心理等」。
-    实测漏网的是「心理」：亲密段把它列进了许可维度，日常段的禁令却只点了动作/神态/
-    环境，于是日常轮同时读到「只用说话来回应」与「内心没禁」⇒ 模型自己择宽的。
-    判据取「（」之前那段＝禁令本体，免得尾随的「留到亲密场景再写」括注把命中骗过去。
+    认不出形状（不是顶层赋值／值不是纯元组字面量）一律抛——静默回落到"本件自己抄一份"
+    就是失效形态 244（靠硬抄名册的锁对新值天生隐形）。顶层写法两种都认：
+    `X = (...)` 与带注解的 `X: Final[...] = (...)`（后者在 AST 里是 AnnAssign）。
     """
-    ban_clause = chat.NORMAL_NO_ACTION_INSTRUCTION.split("（")[0]
-    for dimension in _SCENE_DIMENSIONS:
-        assert dimension in chat.INTIMATE_RP_STYLE_INSTRUCTION, f"亲密段应准写{dimension}"
-        assert dimension in ban_clause, f"日常段禁令应明确禁写{dimension}"
-    # 注毒自证：从禁令那一格里抹掉**末位**维度名，本门必须当场失效。
-    # 刻意派生化（旧写法手抄整串散文 `"动作、神态、心理与环境描写"`）：文案一改，
-    # 那个源串就不在文本里了 ⇒ `replace` 变成空操作 ⇒ 毒没打上、尾断言反而报"本门是
-    # 空跑的"——一枚语义正确却归因说谎的红。派生之后这张表加长，毒腿自动跟着走。
-    last_dimension = _SCENE_DIMENSIONS[-1]
-    poisoned = ban_clause.replace(last_dimension, "", 1)
-    assert last_dimension not in poisoned, "毒腿本身没打上＝自证腿空跑"
-    assert any(dimension not in poisoned for dimension in _SCENE_DIMENSIONS), (
-        "抹掉一格维度却没让判据失效＝本门是空跑的"
-    )
+    values: list[ast.expr] = []
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+            assert node.value is not None, f"{name} 没有值"
+            values.append(node.value)
+    assert len(values) == 1, f"{name} 在顶层应有恰好一处赋值，现算 {len(values)} 处"
+    value = ast.literal_eval(values[0])
+    assert isinstance(value, tuple), f"{name} 不是元组字面量：{type(value).__name__}"
+    return tuple(str(item) for item in value)
+
+
+def _string_constant_from_source(source: str, name: str) -> str:
+    """同上，取一枚顶层**字符串**常量（分界枚那种短标记）。"""
+    for node in ast.parse(source).body:
+        target = node.targets[0] if isinstance(node, ast.Assign) else None
+        if isinstance(node, ast.AnnAssign):
+            target = node.target
+        if isinstance(target, ast.Name) and target.id == name and node.value is not None:
+            value = ast.literal_eval(node.value)
+            assert isinstance(value, str), f"{name} 不是字符串字面量"
+            return value
+    raise AssertionError(f"chat.py 顶层找不到字符串常量 {name}")
+
+
+def _corporal_axis_violations(
+    source: str, blocks: dict[str, str], marker: str
+) -> list[str]:
+    """G-4＝乙（2026-10-04 深夜改判）之后，**衣着这一类**与**身体细部那一类**分家判。
+
+    她原话「普通档既然都改成场景模式了，那就把衣着和环境也都写上，这些都挺重要的」⇒
+    衣着归普通档许可，落在身体上的细部仍只留给亲密档。于是"禁令不许半心半意"这一族
+    规矩要在**第二根轴**上重述一遍（四维那条老腿一字未动，仍照旧判）：
+
+    ① 日常场景段的**许可半句**必须真点名衣着（说了"也写衣着"却没写进文案＝空判）；
+    ② 它的**禁令半句**里一枚衣着词都不许出现——禁一格许可一格＝同一轮两句拆台话；
+    ③ 身体细部那张表里被点过名的每一枚，必须在禁令半句里**恰好出现一次**
+       （两次＝抹掉一枚还剩一枚，注毒永远打不红＝假绿）；
+    ④ 身体细部词一枚都不许长在许可半句里（界线仍长在原地，只是把衣着挪了出去）。
+
+    `marker`（分界枚）由调用方从**未注毒**的源文里取，刻意做成必填实参：从被改坏的副本
+    现取分界枚，注毒会先把"标记本身"改掉、两截再也分不开（失效形态 250 那一型）。
+    """
+    corporal = _tuple_constant_from_source(source, "SCENE_CORPORAL_TERMS")
+    clothing = _tuple_constant_from_source(source, "NORMAL_SCENE_CLOTHING_TERMS")
+    block = blocks["NORMAL_SCENE_STYLE_INSTRUCTION"]
+    assert marker in block, f"分界枚 {marker!r} 不在日常场景段里 ⇒ 两截分不开，本腿会空跑"
+    permission, _, ban = block.partition(marker)
+    bad: list[str] = []
+    if not any(term in permission for term in clothing):
+        bad.append("许可半句没点名衣着这一类＝G-4乙 没落地")
+    smuggled = [term for term in clothing if term in ban]
+    if smuggled:
+        bad.append(f"禁令半句还在禁衣着这一类 {smuggled} ⇒ 与许可半句同轮拆台")
+    named = [term for term in corporal if term in ban]
+    if not named:
+        bad.append("禁令半句没点名身体细部词表 ⇒ 那条界线只是句空话")
+    for term in named:
+        if ban.count(term) != 1:
+            bad.append(f"身体细部词「{term}」在禁令半句里出现 {ban.count(term)} 次（要恰好一次）")
+    for term in corporal:
+        if term in permission:
+            bad.append(f"身体细部词「{term}」长进了许可半句")
+    return bad
+
+
+def test_corporal_axis_moves_with_the_g4_reversal_and_fails_on_a_temp_copy(
+    tmp_path: Path,
+) -> None:
+    """G-4 改判乙的**成对腿**：衣着与身体细部分家，判据按真身词表现算，注毒落 `%TEMP%` 副本。
+
+    源码树一字不动（规则 6／台账 #68★ 那道"落地件必过三道闸"的教训：改坏的是副本）。
+    """
+    source = CHAT_PY_FOR_FORM.read_text(encoding="utf-8")
+    blocks = _style_roster_from_source(source)
+    marker = _string_constant_from_source(source, "NORMAL_SCENE_BAN_CLAUSE_MARKER")
+    assert _corporal_axis_violations(source, blocks, marker) == []
+
+    poisons: dict[str, tuple[str, str]] = {
+        # ② 那一腿的毒：把衣着塞回禁令半句（普通档一边写一边禁）
+        "ban_bans_clothing": (
+            "也不写任何落在身体上的细部",
+            "不写衣着，也不写任何落在身体上的细部",
+        ),
+        # ① 那一腿的毒：许可半句从此不写衣着
+        "permission_drops_clothing": (
+            "眼前这一身的衣着也照当下写清楚",
+            "眼前这一身也照当下写清楚",
+        ),
+        # ③ 那一腿的毒：抹掉禁令里点名的身体细部词（半心半意的禁）
+        "ban_drops_corporal_terms": (
+            "（锁骨、腰线那几样留给亲密场景再写）",
+            "（那几样留给亲密场景再写）",
+        ),
+        # ④ 那一腿的毒：把一枚身体细部词挪进许可半句
+        "permission_smuggles_body_term": (
+            "外貌只写一眼望过去的观感",
+            "外貌与身形只写一眼望过去的观感",
+        ),
+    }
+    for label, (anchor, replacement) in poisons.items():
+        assert source.count(anchor) == 1, (
+            f"{label}：锚点在源文里不唯一（{source.count(anchor)} 处）⇒ 注毒会打到别处"
+        )
+        poisoned = source.replace(anchor, replacement, 1)
+        assert poisoned != source, f"{label}：注毒没落到任何一处＝本件空跑"
+        target = tmp_path / f"chat_{label}.py"
+        target.write_text(poisoned, encoding="utf-8")
+        copied = target.read_text(encoding="utf-8")
+        hits = _corporal_axis_violations(copied, _style_roster_from_source(copied), marker)
+        assert hits, f"{label} 被注毒后判据仍全绿＝这把尺是空跑的"
 
 
 def test_both_routes_share_one_policy_section() -> None:

@@ -36,11 +36,13 @@ from plugins.bot_unified_runtime.contracts import (
     ToneProfile,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    GROUP_INTIMATE_SCENE_STYLE_INSTRUCTION,
     INTIMATE_RP_STYLE_INSTRUCTION,
     MANUAL_DEEP_ON_REPLY,
     MANUAL_OFF_REPLY,
     MANUAL_ON_REPLY,
     NORMAL_NO_ACTION_INSTRUCTION,
+    SPEECH_ONLY_STYLE_INSTRUCTION,
     _manual_command_scope_key,
     build_chat_result,
 )
@@ -573,6 +575,8 @@ def _section_header(instruction: str) -> str:
 
 
 _INTIMATE_HEADER = _section_header(INTIMATE_RP_STYLE_INSTRUCTION)
+# I-3＝丙 之后群侧另有一格 ⇒ 泄漏代理也得两形都判（只判私聊段＝群段漏了也看不见）。
+_GROUP_INTIMATE_HEADER = _section_header(GROUP_INTIMATE_SCENE_STYLE_INSTRUCTION)
 _NORMAL_HEADER = _section_header(NORMAL_NO_ACTION_INSTRUCTION)
 
 
@@ -613,7 +617,11 @@ def test_group_member_command_scopes_to_self() -> None:
         content_route_config=cfg,
     )
     joined_a = _system_join(provider_a)
-    assert "【亲密与成人向场景的叙述】" in joined_a
+    # I-3＝丙（2026-10-04 深夜裁定）重指：群侧那一格才是要判的那一段——私聊五维段
+    # 整段在场不再是"进了亲密叙述档"的合法代理（群里刻意不落身形／衣着）。
+    # 强度不降：群段必须在场 **＋** 私聊段必须不在场（读错表＝会话面失效）。
+    assert GROUP_INTIMATE_SCENE_STYLE_INSTRUCTION in joined_a
+    assert INTIMATE_RP_STYLE_INSTRUCTION not in joined_a, "群聊轮读到了私聊那一格"
     # B 完全不受影响：普通叙述档。
     provider_b = _CapturingProvider()
     msg_b = _group_message(_GROUP, "b", "今天天气怎么样？", ["user"])
@@ -627,6 +635,7 @@ def test_group_member_command_scopes_to_self() -> None:
     joined_b = _system_join(provider_b)
     assert "【日常对话的叙述】" in joined_b
     assert _INTIMATE_HEADER not in joined_b
+    assert _GROUP_INTIMATE_HEADER not in joined_b  # 群侧那一格也不许跟过来
     # A 关闭后回到普通档。
     msg_off = _group_message(_GROUP, "a", "亲密模式 关", ["user"])
     result_off = build_chat_result(
@@ -650,7 +659,14 @@ def test_group_member_command_scopes_to_self() -> None:
 
 
 def test_group_admin_command_scopes_to_group() -> None:
-    """集成：管理员说「亲密模式 开」→ 全群（含未自拨的成员）进亲密档。"""
+    """集成：管理员说「亲密模式 开」→ 全群（含未自拨的成员）进亲密档，**但描写档不跟着广播**。
+
+    「进了亲密档」的证据在改前是样式段（那一格当时只有亲密态才铺写）。第五根轴落地后
+    「在亲密档」与「本轮真的铺开写」是两问（`chat.py` 里 `_rp_scene_now` 的 ⚠ 段），
+    而按 G-3 的第二句（2026-10-04 晚「别人找你依旧是 speech」）后一问**不**随全群开关走
+    ⇒ 本件判据换成审计标签：`:intimate:` 与 `grant=1` 仍在＝亲密档全群生效一字未动，
+    `nar=speech` 与样式段落点＝铺写没有替全群每个没开过口的人做主。
+    """
     cfg = _group_cfg(_GROUP_ADMIN)
     msg_admin = _group_message(_GROUP_ADMIN, "admin-1", "亲密模式 开", ["admin"])
     result = build_chat_result(
@@ -662,10 +678,10 @@ def test_group_admin_command_scopes_to_group() -> None:
     )
     assert result.body == MANUAL_ON_REPLY
     assert "scope:group" in (result.audit_tags or [])
-    # 未自拨的普通成员也进亲密档（全群生效）。
+    # 未自拨的普通成员也进亲密档（全群生效）——但铺写只跟着"人"，不跟着"群"。
     provider_b = _CapturingProvider()
     msg_b = _group_message(_GROUP_ADMIN, "b", "今天吃什么好", ["user"])
-    build_chat_result(
+    result_b = build_chat_result(
         msg_b,
         _group_decision(msg_b),
         _group_context(msg_b),
@@ -673,7 +689,12 @@ def test_group_admin_command_scopes_to_group() -> None:
         content_route_config=cfg,
     )
     joined = _system_join(provider_b)
-    assert "【亲密与成人向场景的叙述】" in joined
+    marks = [t for t in (result_b.audit_tags or []) if str(t).startswith("rp_narration:")]
+    assert len(marks) == 1, result_b.audit_tags  # 没标签＝亲密态这一问从审计面消失
+    assert ":intimate:" in marks[0] and "grant=1" in marks[0], marks[0]
+    assert marks[0].endswith(":nar=speech"), marks[0]
+    assert SPEECH_ONLY_STYLE_INSTRUCTION in joined
+    assert INTIMATE_RP_STYLE_INSTRUCTION not in joined
 
 
 def test_group_member_command_rejected_when_per_user_disabled() -> None:

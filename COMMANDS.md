@@ -103,7 +103,7 @@
 - 忽略（仅管理员）：matcher:IGNORE（空消息静默；未知命令形态回引导）
 - 决策（仅管理员）：/bot decision
 - 紧急信息（仅管理员）：bot.emergency_info
-- 亲密模式（普通用户可用）：bot.chat（整句「亲密模式 开/深开/关」；关系档子命令见 /bot identity）
+- 亲密模式（普通用户可用）：bot.chat（整句「亲密模式 开/深开/关」＋命令面 /bot intimate on|l1|deep|off|show＋描写档 /bot narration|/bot 描写；关系档子命令见 /bot identity）
 <!-- END AUTO:COMMANDS-MODULE-INDEX -->
 
 ## 管理员专属（/bot 前缀命令族）
@@ -220,6 +220,23 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 backend-smoke -Message 
 | `/bot feature preview <ID> on\|off\|reset` | 仅超管；返回影响节点，不修改状态。 |
 
 示例：`/bot feature disable bot.plugin.weather`。详细帮助：`/bot help 功能管理`。
+
+## 亲密档位（叙述授予面）
+
+| 指令 | 权限与效果 |
+|---|---|
+| `/bot intimate on` / `l1` | 本人私聊，或管理员在本群代全群上钉；进浅档——**不换首跳模型**，但**同样拿到叙述授予**（授予看的是"谁推动的"，不是这一档深浅）。私聊显式开档会落一条跨重启的标记，群钉不落标记。 |
+| `/bot intimate deep` / `l2` | 同上，进深档：唯一多出来的是**首跳换到该档配置的模型**；叙述面与浅档同权。 |
+| `/bot intimate off` | 收回档位并撤回标记；回到「只用说话回应」的日常段。 |
+| `/bot intimate show` | 只读：当前档位读数逐格（真身＝`runtime/intimate_control.py` 的 `_state_body`，手册不抄成员、不写格数）。不动任何状态。 |
+| `/bot narration speech`（同义 `/bot 描写 speech`） | 本人自助，群侧需管理员（写腿作用域门＝与亲密开关同一个角色集合）：把自己钉回「只说出口的话」，这就是缺省那一格。认不出的子命令一律不受理，不拿错字悄悄改文风。 |
+| `/bot narration scene`（同义 `/bot 描写 scene`） | 同上：把自己钉上「铺开写」。**这一格不等亲密档**（裁定 G-1：普通模式也铺得开）；日常那一档铺开时**语言／动作／神态／心理照写＋外貌作观感＋衣着按当下写＋环境铺开**（裁定 G-4＝乙，10-04 深夜改判；只有"落在身体上的细部"留给亲密档）。🔴 例外一条：**群聊那一侧的 `scene` 不落笔身形／衣着**（裁定 I-3＝丙——群是公共空间、旁人也在看；同一段其余四维与环境照写，长度档不动）。能不能真铺开仍只问 `grants_intimate_narration` 那一处。 |
+| `/bot narration reset`（同义 `/bot 描写 reset`） | 收回这一格交回缺省，只清描写档那两列——称谓、性别自述与关系档不受牵连。 |
+| `/bot narration show`（同义 `/bot 描写 show`） | 只读：描写档、依据、细节描写开没开、库里的钉。`show` 这个词与开关面共用同一枚真身。 |
+
+拿到叙述授予的来源＝**本人显式开档、管理员代全群钉、内容信号自己跨过阈值，加上本人自己钉过描写档那一格**；自动回落的两支（Master Love 名单、好感度达档）**只给语气与放行，不自带叙述授予**。整句「亲密模式 开／深开／关」与命令面同效（同一 verdict 三字段全等）。描写档的键形＝**(平台域 · 会话 · 这个人)**：群 A 钉过≠群 B 有、私聊钉过≠群里也有，**换一个会话要再说一次**（裁定 I-2，10-04 深夜；库里按 `session_type`/`session_id`/本人键三段存，私聊与群因此互不继承）；管理员替整群拨的那枚亲密档永不广播描写档（裁定 G-3：群级钉不出自"这个人"那一桶，`route_verdict` 的 `from_group_pin` 一支交空）。亲手把亲密档推上去的那一轮，描写轴缺省**跟着走 `scene`**（裁定 H-1＝甲；自动回落那两支照旧只说话）。钉在库里、跨重启活得住，**没有 TTL**（与亲密档那 60 分钟是两套账）。详细帮助：`/bot help 亲密模式`。
+
+描写档同义入口：`/bot 描写 ...` 与 `/bot narration ...` 派到同一支 handler、剥出的子命令逐字相同；子命令词表唯一的家＝`runtime/content_route.py` 的 `_NARRATION_SUBCOMMAND_TABLE`（本手册不复述成员）。昵称形式（`/岸宝…`）**只给引导、不执行写操作**——要改描写档得走 `/bot`。
 
 `/bot runtime set`、`reset` 、模型写操作和核心人格 switch/probability 仅超管可修改。参数API与命令共用ConfigControlService及按实例隔离SQLite，资源重载尚未完成的键明确拒绝热改，不假称更新成功。当前仅覆盖已登记主能力，入站媒体/自动副作用的细分门禁仍在迁移。
 

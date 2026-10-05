@@ -398,7 +398,13 @@ def test_config_fields_are_registered_and_path_remaps() -> None:
     # 重映射生效 ⇒ 拿到的必须是绝对路径（相对写法会按 CWD 漂，那是铁律 6 的漏点）。
     root = sticker_packs.configured_sticker_dir(config)
     assert root is not None and root.is_absolute()
-    assert str(root).replace("\\", "/").endswith("data/bot_stickers/shorekeeper")
+    # 断言"挂在数据根下 + 尾巴逐字是字段缺省那一段"，**不**把数据根长什么形状写死：
+    # 根由 ``scripts/runtime_paths`` 定（测试进程＝conftest L1 的隔离根，生产＝``.env`` 那枚）。
+    # 旧写法 ``endswith("data/bot_stickers/shorekeeper")`` 把"缺省锚在源码树 ``<仓根>/data``"
+    # 那一代落点编进了尺里，中央缝（席 remapseam，台账 P1 H-1／F-10）修好当晚它就红了。
+    from plugins.bot_unified_runtime.config import runtime_data_root_of
+
+    assert root == runtime_data_root_of(config) / "bot_stickers" / "shorekeeper"
     # 读一遍库**不**该把目录造出来（她还没放贴纸时也不该有）；源码树零残留。
     existed_before = root.exists()
     sticker_packs.list_sticker_images(config)

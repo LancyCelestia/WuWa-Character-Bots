@@ -110,10 +110,26 @@ _TEXT_RECEIVER: Final[re.Pattern[str]] = re.compile(
 # 论证「只收无参数坠 help 兜底的头」）；现算 467＝raw 527 − 名册抵销 60，零余量复钉。
 # 今日门形先红 477>467（raw 527/抵销 50），归因全干净走 K-3乙名册通道后回绿；「43-44>42」旧红系
 # S33 表级尺（另一维度，R8 甲已收口），与本尺无涉。**判据、扫描面、上限数值一字未动。**
-WORD_SITE_CEILING: Final[int] = 467
-#: 逐次核账记录（日期, 当时债数），必须单调不升，且末项＝当前上限（零余量锁）。
+#: 上限 467→477＝2026-10-05 用户裁 F-13「抬上限」（知情放宽），签字见 `AUTHORIZED_RAISES`。
+WORD_SITE_CEILING: Final[int] = 477
+#: 逐次核账记录（日期, 当时债数），必须单调不升；**要抬必须在 `AUTHORIZED_RAISES` 里留一条
+#: 同日期同数值的签字凭据**（2026-10-05 用户裁 F-13「抬上限」时同批立的替代锁——
+#: 放宽一条腿必配一条牙），且末项＝当前上限（零余量锁）。
 AUDIT_HISTORY: Final[tuple[tuple[str, int], ...]] = (
-    ("2026-09-24", 469), ("2026-09-27", 467), ("2026-09-27", 467),
+    ("2026-09-24", 469), ("2026-09-27", 467), ("2026-09-27", 467), ("2026-10-05", 477),
+)
+
+#: 授权上调凭据（日期, 该次核账值, 授权出处摘要）。写不出"谁在哪一天裁的"就抬不了上限。
+AUTHORIZED_RAISES: Final[tuple[tuple[str, int, str], ...]] = (
+    (
+        "2026-10-05",
+        477,
+        (
+            "用户 2026-10-05 裁定「F-13抬上限」（知情：这是放宽一条门腿）；同批立 AUTHORIZED_RAISES "
+            "签字锁为替代牙——无签字的回升、以及越过最后签字值的上限，当场红。债现算 477＝raw 552−名册抵销 75，"
+            "零余量钉死；真修（乙＝改引用去重）另立一批，登记不等于修好。"
+        ),
+    ),
 )
 
 #: 扫描面地板（塌陷即红，不是「大家都干净了」）。
@@ -732,12 +748,63 @@ def test_ceiling_is_hand_written_literal() -> None:
     assert isinstance(history, (ast.Tuple, ast.List)) and len(history.elts) >= 1, (
         "AUDIT_HISTORY 必须留在本文件且非空——它是「只准降」的对账凭据"
     )
+    raises = assigned.get("AUTHORIZED_RAISES")
+    assert isinstance(raises, (ast.Tuple, ast.List)), (
+        "AUTHORIZED_RAISES 被改成派生表达式或删掉＝签字凭据失去手写性，上限就没了刹车"
+    )
+
+
+def _unsigned_rises(
+    history: tuple[tuple[str, int], ...], signed: set[tuple[str, int]]
+) -> list[tuple[str, int, int]]:
+    """核账记录里**没签字**的回升（日期, 前值, 抬到的值）。判据只这一处，两把锁共用。"""
+    out: list[tuple[str, int, int]] = []
+    for i in range(1, len(history)):
+        prev, cur = history[i - 1][1], history[i][1]
+        if cur > prev and (history[i][0], cur) not in signed:
+            out.append((history[i][0], prev, cur))
+    return out
+
+
+def test_audit_history_rise_requires_signed_authorization() -> None:
+    """替代锁（2026-10-05 用户裁 F-13「抬上限」同批立）：上限可以抬，抬的动作必须留名。
+
+    三条腿各证一种瞎法：①无签字的回升必被点出（锁不是空转）；②签了字的不误报（否则锁
+    会把合法核账也咬死，下一位就直接删锁）；③凭据自己有牙——日期数值必须真在历史里、
+    授权出处必须点名"用户"且 ≥20 字、签字值必须单调不降、且**上限高于首届核账值时
+    必须有最后一条签字兜住**（原 `test_audit_history_never_rises` 里那句 `<= counts[0]`
+    整条搬到这里，一处判一半，不留第二把尺）。
+    """
+    signed = {(d, v) for d, v, _why in AUTHORIZED_RAISES}
+    assert _unsigned_rises(AUDIT_HISTORY, signed) == [], (
+        f"核账记录出现无签字的回升：{_unsigned_rises(AUDIT_HISTORY, signed)}＝调大换绿，本门不允许"
+    )
+    forged = (("2026-01-01", 470), ("2026-01-02", 480))
+    assert _unsigned_rises(forged, set()) == [("2026-01-02", 470, 480)], (
+        "注毒①没咬住＝方向锁空转（回升不会被点出）"
+    )
+    assert _unsigned_rises(forged, {("2026-01-02", 480)}) == [], "注毒②误报＝合法签字也被咬死"
+    values = [v for _d, v, _w in AUTHORIZED_RAISES]
+    assert values == sorted(values), f"签字凭据必须按值单调不降（先抬回去再签）：{AUTHORIZED_RAISES}"
+    for d, v, why in AUTHORIZED_RAISES:
+        assert (d, v) in AUDIT_HISTORY, f"凭据 ({d}, {v}) 在核账历史里不存在＝凭据与账对不上"
+        assert len(why.strip()) >= 20 and "用户" in why, f"授权出处没写清（≥20 字且点名用户）：{why!r}"
+    if AUTHORIZED_RAISES:
+        assert WORD_SITE_CEILING <= AUTHORIZED_RAISES[-1][1], (
+            f"上限 {WORD_SITE_CEILING} 高于最后一条签字值 {AUTHORIZED_RAISES[-1][1]}＝抬了却没签"
+        )
+    else:
+        assert WORD_SITE_CEILING <= AUDIT_HISTORY[0][1], (
+            "上限高于首届核账值却一条签字都没有＝调大换绿，本门不允许"
+        )
 
 
 def test_audit_history_never_rises() -> None:
-    counts = [c for _, c in AUDIT_HISTORY]
-    assert counts == sorted(counts, reverse=True), f"核账记录出现回升（方向锁）：{AUDIT_HISTORY}"
-    assert WORD_SITE_CEILING <= counts[0], "上限超过首届核账值＝调大换绿，本门不允许"
+    """方向锁：只准降；要升走 `AUTHORIZED_RAISES` 签字（判据一处＝`_unsigned_rises`）。"""
+    signed = {(d, v) for d, v, _why in AUTHORIZED_RAISES}
+    assert not _unsigned_rises(AUDIT_HISTORY, signed), (
+        f"核账记录出现无签字的回升（方向锁）：{AUDIT_HISTORY}"
+    )
 
 
 def test_scan_surface_did_not_collapse() -> None:

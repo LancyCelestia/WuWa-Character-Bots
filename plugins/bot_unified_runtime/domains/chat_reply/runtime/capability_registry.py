@@ -1047,10 +1047,20 @@ HELP_TOPIC_DECLARATIONS: tuple[HelpTopicDecl, ...] = (
     HelpTopicDecl(topic="紧急信息", admin_only=True, capability="bot.emergency_info"),
     # 2026-09-24 亲密模式分级波（D 席登记）：位置必须与 echo._HELP_ENTRIES 同序
     # （tests/test_capability_registry.py 逐行 zip 比对，含 topic/admin_only/capability）。
+    # 2026-10-04 斜杠面收口（本席补登记）：echo `_HELP_ENTRY_META["亲密模式"]["capability"]`
+    # 已随 `/bot intimate on|l1|deep|off|show` 命令面改写，权威声明行未跟改 ⇒
+    # `test_help_visibility_and_capability_equal_registry` 判字段不符即红（台账 §76.6 挂账①）。
+    # 2026-10-04 描写档接线（席 na3-declare，裁定 G-0～G-4）：**并入本 topic，不另立主题**——
+    # 三条理由：①授予判据只有那一把尺（grants_intimate_narration），描写档是它多出来的第 4 枚
+    # 成员，本 topic 正文里「这一轮铺不铺开写」那一行讲的就是同一件事，分两页＝把一把尺说两遍；
+    # ②另立新主题要往 aliases/triggers 里加词面，而宿主 bot.chat 在双向门的三个面上**全为空表**
+    # （该门自己写明：宿主 bot.chat 的帮助词只能从 face1/face3 求通行）⇒ 每枚新词都是台账外的
+    # help→route 缺口，而那本台账不在本席地盘；③G-0 乙要词表只住一处，新主题只会多一本名册。
+    # 可见性照旧 False（全员可用，与裁定 G-1「普通模式也铺得开」同向），不改 _PUBLIC_HELP_TOPICS。
     HelpTopicDecl(
         topic="亲密模式",
         admin_only=False,
-        capability="bot.chat（整句「亲密模式 开/深开/关」；关系档子命令见 /bot identity）",
+        capability="bot.chat（整句「亲密模式 开/深开/关」＋命令面 /bot intimate on|l1|deep|off|show＋描写档 /bot narration|/bot 描写；关系档子命令见 /bot identity）",
     ),
 )
 

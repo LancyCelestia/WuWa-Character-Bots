@@ -1214,20 +1214,28 @@ class _MergedMemoryProvider:
 _ADDRESSING_STORES_LOCK = threading.Lock()
 _ADDRESSING_STORES: dict[str, AddressingPreferenceStore] = {}
 
+#: 称谓偏好库那枚配置键的**键名**（真身＝``config.py`` 的字段声明与
+#: ``PATH_REMAPPED_FIELDS`` 名册；这里只是读点拿来问中央解析口，**不落任何路径值**——
+#: 路径缺省只住 config 一处，抄第二份就长回台账 P1 H-1／F-10 那条缝）。
+_ADDRESSING_PREFERENCES_FIELD = "bot_addressing_preferences_db_path"
+
 
 def _shared_addressing_preferences(config: object) -> AddressingPreferenceStore | None:
-    """进程级共享称谓偏好 store（懒构建；路径解析/建库失败返回 None 不阻断对话）。"""
+    """进程级共享称谓偏好 store（懒构建；路径解析/建库失败返回 None 不阻断对话）。
+
+    取径＝``config.resolve_runtime_data_field`` 这一处中央读取口（席 remapseam，
+    台账 P1 H-1／F-10）：本函数**不再**自带一份 ``data/...`` 硬编码缺省——那是字段缺省的
+    第二真身，且会与 ``runtime/content_route.py`` 那道门各说一句话（门按"字段没声明＝
+    没这本库"休眠、这里却照样按缺省开一本）。两处问同一把尺之后，下面按**路径字符串**
+    缓存的这把桶才不可能分裂成两只（同一枚配置只会有一只 store）。
+    """
     try:
-        path = build_runtime_data_path(
-            config,
-            str(
-                getattr(
-                    config,
-                    "bot_addressing_preferences_db_path",
-                    "data/addressing_preferences.sqlite3",
-                )
-            ),
-        )
+        from plugins.bot_unified_runtime.config import resolve_runtime_data_field
+
+        raw_path = resolve_runtime_data_field(config, _ADDRESSING_PREFERENCES_FIELD)
+        if not raw_path:
+            return None
+        path = build_runtime_data_path(config, raw_path)
     except Exception:  # noqa: BLE001 - 路径解析失败时降级为无持久化称谓上下文。
         return None
     cache_key = str(path)

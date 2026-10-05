@@ -41,11 +41,18 @@ from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
     build_chat_result,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import LLMReply
+from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+    content_route as cr,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
     MASTER_LOVE_INSTRUCTION,
     SHARED_CONTENT_ROUTE_ENGINE,
     grants_intimate_narration,
 )
+
+# 群聊出站那把内容尺从真身 import——绝不在测试里抄第二份词表（本仓反复把"第二真身"
+# 记成自己的根因）。尺若换词、本锁自动跟着变严；抄一份＝锁与闸从此各行其是。
+from plugins.bot_unified_runtime.domains.render.reviewer import _PUBLIC_OUTPUT_UNSAFE
 
 _REPO = Path(__file__).resolve().parents[1]
 
@@ -194,19 +201,23 @@ def test_ungranted_turn_still_stripped_when_brackets_suppressed() -> None:
 
 
 def test_granted_intimate_turn_keeps_actions_despite_global_suppression() -> None:
-    """拿到叙述授予的那轮，出站**不得**再把括号动作整段删掉（线上缺陷根修）。
+    """拿到叙述授予**且描写档在 `scene`** 的那轮，出站**不得**再把括号动作整段删掉。
 
-    判据复用同一个门（`_rp_intimate_now`）：授予了叙述却仍被 `strip_action_brackets`
-    抹掉，等于"令在 prompt 里、货在出口被没收"——她看到的就是这个。
-    反向保护：本波**不动** `BOT_PERSONA_ACTION_BRACKETS` 的全局语义，未授予轮次照旧剥
-    （见上一枚测试）。
+    线上缺陷原文：令在 prompt 里、货在出口被没收——她看到的就是"开了还是不描写动作"。
+    10-04 晚第五根轴裁定后，"写了动作的那一轮"＝`scene` 那一格（缺省 `speech` 不写动作，
+    出口照旧剥是对的），所以本件把描写钉一起上；判据本身一字未收。
+    反向保护：本波**不动** `BOT_PERSONA_ACTION_BRACKETS` 的全局语义，未授予/未铺开的轮次
+    照旧剥（见上一枚测试）。
     """
     cfg = _config()
+    session = "private:rp-style-strip-granted"
+    assert SHARED_CONTENT_ROUTE_ENGINE.apply_manual(session, "intimate", cfg) is True
+    _pin_scene(session, cfg)
     body = _run_action_turn(
-        session="private:rp-style-strip-granted", cfg=cfg,
+        session=session, cfg=cfg,
         command="亲密模式 开", action_brackets=False,
     )
-    assert "轻轻靠近你" in body, f"开档后仍被剥掉动作段 ⇒ 缺陷未修：{body!r}"
+    assert "轻轻靠近你" in body, f"开档＋铺开仍被剥掉动作段 ⇒ 缺陷未修：{body!r}"
     assert "我在" in body
 
 
@@ -239,15 +250,41 @@ _INTIMATE_HEADER = _section_header(INTIMATE_RP_STYLE_INSTRUCTION)
 _NORMAL_HEADER = _section_header(NORMAL_NO_ACTION_INSTRUCTION)
 
 
+# ---------------------------------------------------------------- 第五根轴＝描写档（2026-10-05 补）
+#
+# 本文件成文于 §76（2026-10-03/04）：那批用例把"显式开亲密档"当成"铺开写"。用户
+# 10-04 晚上裁了**第五根轴**（G-1…G-4，见 `docs/HANDBOOK.md` §76.8 那一行）：
+# 档位（`/bot intimate`）与描写档（`speech`／`scene`，缺省 `speech`）从此是两件事，
+# 五维展开段只在「亲密 ∧ scene」那一格。⇒ 凡判"开档就拿到五维段／铺写档"的既有用例，
+# 都要把描写钉一起上才对应得上裁定原文；**上钉走轴心的真实写腿**（`write_narration_pin`，
+# 键由 `_narration_person_key` 唯一取键口算出），不在测试里伪造读数。
+# 轴自己的样式面/篇幅面/审计面另有 `tests/test_narration_axis_styles.py` 判，本文件
+# 只把既有那几条锁的前提补全，不重复判据。
+
+
+def _pin_scene(session: str, cfg: object, sender_id: str = "user-rp") -> None:
+    """把**本人**的描写档钉到 `scene`（真实写腿；写不进＝前提塌，当场红，不许静默降级成 speech）。"""
+    assert cr.write_narration_pin(
+        session, mode=cr.NARRATION_MODE_SCENE, sender_id=sender_id, config=cfg
+    ) is True, f"描写钉没写进去（session={session}）⇒ 本用例的前提不成立"
+
+
 def test_two_scene_sections_have_distinct_headers() -> None:
     """互斥判据的前提：两段各有自己的头。同头 ⇒ 上面那三条 not in 全是空判。"""
     assert _INTIMATE_HEADER != _NORMAL_HEADER
 
 
 def test_intimate_session_gets_action_directive() -> None:
+    """「亲密 ∧ scene」那一格才拿五维段（10-04 晚第五根轴裁定后，前提要两枚都上）。
+
+    本件成文时只有一枚开关，"开了亲密档"与"铺开写"是同一件事；G-1/G-4 把它们拆成
+    两轴后，这一条判的仍是**原来那一格**——所以补上描写钉，断言一字不收。
+    反面（只开档、描写档还在缺省 `speech`）由 `test_narration_axis_styles.py` 判。
+    """
     session = "private:rp-style-intimate-1"
     cfg = _config()
     assert SHARED_CONTENT_ROUTE_ENGINE.apply_manual(session, "intimate", cfg) is True
+    _pin_scene(session, cfg)
     provider = _CapturingProvider()
     message = _message(session)
     build_chat_result(
@@ -428,8 +465,14 @@ def test_route_disabled_still_gets_normal_directive() -> None:
 # ---------------------------------------------------------------- 复读三连治理
 
 def test_repeat_trio_absent_from_prompt_constants() -> None:
-    assert "我不会躲" not in INTIMATE_RP_STYLE_INSTRUCTION
-    assert "我不会躲" not in NORMAL_NO_ACTION_INSTRUCTION
+    """复读三连不得以固定形态进**任何一段**样式文案（枚举面派生自选择表，见 S24 那段）。
+
+    本波往注入面加了两块新文案，旧写法只点名两枚常量＝新段从来不在这一条的射程里；
+    三连的成因是"万能答句"，与哪一档无关 ⇒ 判据面跟着注入面走。
+    """
+    for block, name in _all_style_instructions().items():
+        for fixed_form in ("我不会躲", "我在这里。", "我在。"):
+            assert fixed_form not in block, f"{name} 里长着固定口头禅 {fixed_form!r}"
     for variant in _DANGER_COMFORT_EXAMPLES:
         assert "我不会躲" not in variant
         assert "我在这里。" not in variant
@@ -500,15 +543,19 @@ def _length_line_of(joined: str) -> str:
 
 
 def test_granted_turn_carries_the_scene_length_line() -> None:
-    """显式开档那一轮：长度指令＝铺写档（她 10-04 裁定「六百到一千字为佳」）。
+    """「亲密 ∧ scene」那一轮：长度指令＝铺写档（她 10-04 裁定「六百到一千字为佳」）。
 
     现网实测 261 / 201 字的机理＝那一行最远只到「详尽：不少于 300 字」，
     且后半句是知识题口径；本件钉的是**改完之后真发出去的那一行**。
+    10-04 晚第五根轴裁定后，"铺开写"这一格由描写档答（`scene`），所以两枚都要上；
+    只开档而描写档留在缺省 `speech` 的那一轮**不该**拿到铺写——那一格由
+    `test_narration_axis_styles.py::test_speech_turn_keeps_today_tier_resolution` 判。
     """
     chat = _chat_module()
     session = "private:rp-style-scene-granted"
     cfg = _config()
     assert SHARED_CONTENT_ROUTE_ENGINE.apply_manual(session, "intimate", cfg) is True
+    _pin_scene(session, cfg)
     provider = _CapturingProvider()
     message = _message(session)
     build_chat_result(
@@ -556,3 +603,184 @@ def test_ungranted_master_love_turn_keeps_normal_prose_and_short_tier() -> None:
     assert line == chat.reply_length_guidance_text(ungranted), (
         f"未授予轮的长度指令不再是那条单一真身：{line!r} vs {ungranted!r}"
     )
+
+
+# ==================== S24（2026-10-04）：出站尺命中面 + 授予轮审计标签 ====================
+#
+# 两把尺都只**借同源真身**，本段一个词都不抄：
+# ① 两段场景常量对群聊出站内容尺必须零命中——亲密段那处括注曾是"模型复述分级标签
+#    → 群聊整条丢弃"的成因（`domains/render/reviewer.py` 群聊那一支命中即 BLOCK），
+#    成因在**我们发出去的那句话**里 ⇒ 段末"别贴标签"那句护栏救不了（标签已在文本中）。
+#    改写只动许可措辞，许可范围（含成人向）一字未收、一字未放。
+# ② 授予轮一枚紧凑标签覆盖 mode+tier+grant，走既有 `audit_tags` 通路（`apply_intimate_switch`
+#    同款打标签法，经 `diagnostic_tags` 汇入本轮），审计不必再从队列行与字数反推。
+
+
+def _screen_hit_count(text: str) -> int:
+    """按真身尺统计命中条数（只回数字——断言式里没有原文，pytest 重写抓不到词）。"""
+    return sum(1 for _label, pattern in _PUBLIC_OUTPUT_UNSAFE if pattern.search(text))
+
+
+def _one_literal_token_from_screen() -> str:
+    """从尺真身里取一枚字面命中文样，专供注毒自证；全程只活在一帧内存里。"""
+    for _label, pattern in _PUBLIC_OUTPUT_UNSAFE:
+        for alt in pattern.pattern.split("|"):
+            alt = alt.strip("()").strip()
+            if not alt or any(ch in alt for ch in "[](){}*+?\\^$"):
+                continue  # 字符类/量词构造的字面量取不出原样，交给别的备选
+            if pattern.search(alt):
+                return alt
+    raise AssertionError("取不出字面命中文样＝尺已漂移或只剩字符类，本锁无从注毒")
+
+
+# ---------------------------------------------------------------- 枚举面（10-05 席 na2-style 补的那颗牙）
+#
+# 旧写法逐枚点名两段常量（`INTIMATE_RP_STYLE_INSTRUCTION` ＋ `NORMAL_NO_ACTION_INSTRUCTION`）。
+# 第五根轴往注入面上加了两块新文案（`chat.SPEECH_ONLY_STYLE_INSTRUCTION`／
+# `chat.NORMAL_SCENE_STYLE_INSTRUCTION`），而这两枚名字**不在**那两枚常量的集合里 ⇒
+# 手抄名册的锁对新常量天生隐形：新段只要带上一枚分级标签字样，群聊出站那把尺命中即
+# 整条丢弃，"她打开却什么都收不到"这枚刚修好的事故会在新文案上原地复活，且**测试全绿**。
+# 名册因此改成**从注入面真身派生**＝选择表 `chat.RP_STYLE_BLOCKS` 的值集：往表里加一格，
+# 本锁自动多扫一段；没进表的段压根注入不了，也就不需要名册多一行（枚举面与注入面从此
+# 不可能各行其是）。地板腿守"名册不许静默变窄"，注毒腿逐段自证"名册里的每段都咬得动"。
+
+
+def _all_style_instructions(blocks: object = None) -> dict[str, str]:
+    """注入面上的全部样式段：`{段真身文本: 在册名}`，名册**派生自选择表**，一处都不手抄。
+
+    `blocks` 缺省＝真表；注毒腿自己拷一份**内存副本**再传进来（真表一个字节都不动，
+    也不给同进程的别的用例留半改状态）。名字反查走模块自身的公开常量面（`vars(chat)`），
+    所以连"哪几枚叫什么样"都不在本文件另立名册——新段只要挂进表，本锁自动扫它、
+    并自动叫出它的真名。
+    """
+    chat_module = _chat_module()
+    table = chat_module.RP_STYLE_BLOCKS if blocks is None else blocks
+    assert hasattr(table, "values"), "名册的取数面必须是一张表（注入面唯一选择口）"
+    names = {
+        str(value): name
+        for name, value in vars(chat_module).items()
+        if name.isupper() and isinstance(value, str)
+    }
+    roster: dict[str, str] = {}
+    for block in table.values():  # type: ignore[union-attr]
+        text = str(block or "")
+        assert text, "选择表里出现空段＝注入面会送一句空话进模型"
+        roster[text] = names.get(text, f"<表里第 {len(roster) + 1} 段：没有公开名的新段>")
+    return roster
+
+
+def test_style_roster_is_derived_and_never_shrinks() -> None:
+    """名册必须是**派生**的、且不许比注入面窄（缺牙的形态＝绿着漏扫新段）。"""
+    chat_module = _chat_module()
+    roster = _all_style_instructions()
+    # ① 表里有几段，名册就必须有几段（同段复用只发生在同一格文案上）
+    assert len(roster) == len({str(block) for block in chat_module.RP_STYLE_BLOCKS.values()})
+    # ② 地板＝既有两枚锚点必须在册（检测器被改窄／表被改空 ⇒ 当场红，不许静默缩面）
+    for anchor in (
+        chat_module.INTIMATE_RP_STYLE_INSTRUCTION,
+        chat_module.NORMAL_NO_ACTION_INSTRUCTION,
+    ):
+        assert anchor in roster, "既有样式段从名册上消失了＝锁退回守一份过期花名册"
+    # ③ 本波新增的两段也必须在册（这正是简报点名要补的那颗牙）
+    assert chat_module.SPEECH_ONLY_STYLE_INSTRUCTION in roster
+    assert chat_module.NORMAL_SCENE_STYLE_INSTRUCTION in roster
+    assert len(roster) >= 4, f"样式段名册只剩 {len(roster)} 段 ⇒ 新段没进锁面"
+    # ④ 注毒形态自证：在**内存副本**里"加"一段未登记的文案，名册必须立刻看见它
+    #    （真表一个字节不动，也不污染同进程其它用例）
+    extra = "【注入面外的新段】测试副本：这一段只活在这一帧里。"
+    poisoned_table = dict(chat_module.RP_STYLE_BLOCKS)
+    poisoned_table[(chat_module.NARRATION_MODE_SCENE, True)] = extra
+    assert extra in _all_style_instructions(poisoned_table), (
+        "表里多了一段而名册没跟上＝锁面不是派生的，新常量将永远隐形"
+    )
+    assert extra not in roster, "注毒串漏进了真名册＝副本与真身没分清"
+
+
+def test_every_style_instruction_is_screen_clean() -> None:
+    """**每一段**样式文案对本仓真实群聊出站尺零命中——成因收在源头，不靠模型自觉。
+
+    枚举面派生自选择表（见上面 `_all_style_instructions` 那段注释），不再逐枚点名。
+    """
+    for block, name in _all_style_instructions().items():
+        assert _screen_hit_count(block) == 0, f"样式段带分级标签字样 ⇒ 群聊整条丢弃：{name}"
+
+
+def test_screen_lock_bites_on_injected_token() -> None:
+    """注毒自证：**逐段**粘上命中文样后尺必须变红；任何一段粘不动＝那一段在锁上是空跑的。
+
+    旧写法只对亲密段注一次毒，两块新段因此"没被证明咬得动"——正是缺牙那一型（硬抄
+    名册的锁对新常量天生隐形）。副本只活在内存里，不落源码树（规则 6）。
+    """
+    token = _one_literal_token_from_screen()
+    roster = _all_style_instructions()
+    assert len(roster) >= 4, f"注毒面只剩 {len(roster)} 段＝毒根本没打到新段上"
+    # 🔴 名册的形状是 `{段真身文本: 在册名}`（见 `_all_style_instructions` 的 docstring），
+    # 本函数原先写成 `for name, block` ⇒ 拿**常量名**去过尺：尺永远命中不了名字，
+    # 于是"每段都干净"这条主锁与这条注毒腿**双双空跑**（注毒腿把 token 拼在名字后面，
+    # 拼接必命中＝永真好判，是重言式）。正解＝按真身文本过尺，并要求 token **原本不在段里**
+    # ——否则这一腿量的就不是"尺认不认得它"，而是"字符串能不能拼起来"。
+    for block, name in roster.items():
+        assert token not in block, f"{name} 里本来就带着 token＝注毒腿量不到尺，先判假"
+        assert _screen_hit_count(block + token) > 0, (
+            f"注毒后尺对 {name} 不命中＝这把锁对这一段是空跑的"
+        )
+
+
+def _narration_tags(result: object) -> list[str]:
+    return [
+        str(tag)
+        for tag in (getattr(result, "audit_tags", None) or [])
+        if str(tag).startswith("rp_narration:")
+    ]
+
+
+def test_granted_turn_carries_compact_narration_tag() -> None:
+    """授予轮：mode+tier+grant+nar 四面收成一枚标签进 `audit_tags`，恰好一枚。
+
+    10-05 席 na2-style 在同一枚标签上追加**描写档轴**那一面（`nar=speech|scene`）：
+    旧写法只挂亲密态时，"她开了亲密档却只说话"与"她根本没拿到授予"在队列行上
+    长得一模一样。字段仍是 `resolve_intimate_context` 那一份读数＋引擎那一把尺，
+    不新起日志子系统、不建新 store、不加配置键。
+    """
+    session = "private:rp-style-narration-tag-granted"
+    cfg = _config()
+    assert SHARED_CONTENT_ROUTE_ENGINE.apply_manual(session, "intimate", cfg) is True
+    _pin_scene(session, cfg)
+    provider = _CapturingProvider()
+    message = _message(session)
+    result = build_chat_result(
+        message,
+        _decision(message),
+        _context(session),
+        llm_provider=provider,
+        content_route_config=cfg,
+    )
+    tags = _narration_tags(result)
+    assert len(tags) == 1, f"授予轮的叙述标签应有恰好一枚：{tags}"
+    tag = tags[0]
+    # `nar=` 收在末尾，前三段的形状一字未改（既有 grep 与台账口径继续读得动）
+    assert re.fullmatch(
+        rf"rp_narration:intimate:[a-z0-9]+:grant=1:nar={cr.NARRATION_MODE_SCENE}", tag
+    ), tag
+    assert f":nar={cr.NARRATION_MODE_SCENE}" in tag, "轴读数没进标签＝审计仍要反推"
+    # 四面读数齐了才算这条锁成立（缺 mode/tier/grant/nar 任一面＝审计仍要反推）
+    assert _INTIMATE_HEADER in _system_join(provider)
+    # 标签只带判定读数：不带用户号、不带正文、不带换行
+    assert "user-rp" not in tag
+    assert "\n" not in tag and " " not in tag
+
+
+def test_ungranted_master_love_turn_has_no_narration_tag() -> None:
+    """未授予轮（ML 自动档）不得出现这枚标签——它是授予与否的唯一区分位。"""
+    session = "private:rp-style-narration-tag-ml"
+    cfg = _config(bot_master_love_enabled=True, bot_master_love_admins=["user-rp"])
+    provider = _CapturingProvider()
+    message = _message(session)
+    result = build_chat_result(
+        message,
+        _decision(message),
+        _context(session),
+        llm_provider=provider,
+        content_route_config=cfg,
+    )
+    assert _narration_tags(result) == [], f"未授予轮被打了授予标签：{_narration_tags(result)}"

@@ -170,6 +170,258 @@ PATH_LIST_REMAPPED_FIELDS: Final[tuple[str, ...]] = (
     "bot_files_write_allowed_dirs",
 )
 
+#: 数据根的相对缺省落点锚（仓库根）：与 ``scripts/runtime_paths._SOURCE_TREE_FALLBACK``
+#: 同语义——装载方没给 ``BOT_RUNTIME_DATA_DIR`` 时才落这里（生产 .env 一直给，故此路
+#: 径在生产不走）。
+_DATA_ROOT_FALLBACK_ANCHOR = Path(__file__).resolve().parents[2]
+
+#: 「根本没给数据根」的读数（逐字等于 ``Config.bot_runtime_data_dir`` 的字段缺省那枚
+#: 字面，与 ``scripts/runtime_paths._SOURCE_TREE_FALLBACK`` 同一个字符串）。只有这一支
+#: 才交中央出口算落点；任何别的读数（绝对路径、``data/side_root`` 这类带尾巴的相对值）
+#: 都算"给了根"，逐字走本模块既有拼法 ⇒ **字段缺省语义一字未动**。
+_DATA_ROOT_UNDECLARED_READING: Final[str] = "data"
+
+
+def _runtime_paths_symbol(name: str) -> Any:
+    """从唯一真身 ``scripts.runtime_paths`` 取一枚符号（逐次现取，不记旧的）。
+
+    与 ``_test_runtime_root_judge`` 同一套懒导形态（函数级懒导 + 仓库根注入 sys.path），
+    本函数只是把"取哪个名字"参数化，判据一律不在本包复制。返回 ``None`` 只有一个可接受
+    含义＝骨架最小仓里真身文件缺席（``tests/_autosync_fixture.py`` 拷出的树）；调用方据此
+    回落到本模块既有拼法。
+    """
+    try:
+        import sys
+
+        if str(_DATA_ROOT_FALLBACK_ANCHOR) not in sys.path:
+            sys.path.insert(0, str(_DATA_ROOT_FALLBACK_ANCHOR))
+        import scripts.runtime_paths as runtime_paths_module
+
+        return getattr(runtime_paths_module, name, None)
+    except Exception:  # noqa: BLE001 - 真身缺席时按既有语义回落（执法锁见上）。
+        return None
+
+
+def _central_runtime_data_dir() -> Path | None:
+    """数据根缺省落点的**唯一出口** ``scripts.runtime_paths.runtime_data_dir()``。
+
+    它读 env→dotenv→缺省，且出口本身已经过唯一判定件（``guard_test_runtime_root``）。
+    本函数只取它、不问它，判据不在 config 侧抄第二份。
+    """
+    symbol = _runtime_paths_symbol("runtime_data_dir")
+    return symbol() if callable(symbol) else None
+
+
+def _test_runtime_root_judge() -> Any:
+    """唯一判定件 ``scripts.runtime_paths.guard_test_runtime_root`` 的取用口。
+
+    「测试进程把落点解析进了生产 Runtime 根」这条判据**全仓只有一份实现**（住在
+    ``scripts/runtime_paths.py``，执法锁＝``tests/test_datafix_runtime_paths.py``
+    A/B/C/D 四组）；本函数只负责**取到它**，不在本包复制任何判据（禁第二副本＝本仓
+    反复复发的根因）。取用形态＝同目录消费方既有范式（函数级懒导 + 仓库根注入
+    sys.path），因此逐次现取：注毒/替换该模块属性时本侧同步生效，不会记住旧的。
+
+    返回 ``None`` 只有一个可接受含义：骨架最小仓里真身文件缺席
+    （``tests/_autosync_fixture.py`` 拷出的树，与 ``tests/conftest.py`` L1 同一口径）。
+    真树里 import 失败被 ``except`` 洗成 ``None`` ＝静默绿形态，由
+    ``test_config_side_consults_the_single_judge`` 当场打红。
+    """
+    return _runtime_paths_symbol("guard_test_runtime_root")
+
+
+def _judge_runtime_data_landing(value: Any) -> None:
+    """把一枚落点交给唯一判定件问一遍：**只判定、不改写**。
+
+    * refuse 态（缺省）命中生产根 ⇒ 抛 ``RuntimeIsolationViolation``——它住
+      ``BaseException`` 族，不会被 pydantic 装载链或消费点的 ``except Exception`` 咽成
+      两声日志；
+    * 其余一切（非测试进程 / 落点根本不在生产根内 / 在册件显式 opt-in 的 redirect 态）
+      ⇒ 返回，调用方手里的读数**逐字不变**。
+
+    redirect 态刻意不在这里改写读数：它的存在理由是「把在册只读对照用例挪走而不是打
+    死」，而 Config 的相对值落点早已按进程 env（装配层挤成的隔离根）解析；就地改写绝
+    对读数会漂动生产字符串（本函数在装载链上，每次 ``Config`` 构造都过）。尾巴保留
+    那条腿只住在 ``runtime_path`` 里，两侧不各留一套形状。
+    """
+    judge = _test_runtime_root_judge()
+    if judge is not None:
+        judge(value)
+
+
+def _is_absolute_landing(value: Any) -> bool:
+    """值是不是「已经是绝对落点」（绝对腿＝判定件过去看不见的那一支）。"""
+    text = str(value).strip()
+    if not text:
+        return False
+    try:
+        return Path(text).expanduser().is_absolute()
+    except (ValueError, OSError):
+        return False
+
+
+def runtime_data_root_of(config: Any) -> Path:
+    """``bot_runtime_data_dir`` 读数 → 绝对数据根（重映射的唯一锚点）。
+
+    锚点交唯一判定件问一遍再返回：测试进程里那枚读数被直接设成生产根（``.env`` 的
+    声明值、或按盘上声明原样装载的构造点）⇒ 当场拒，整张路径名册不再一起指向生产。
+    判定件放行时返回逐字原读数（不 resolve）＝今天的形态、生产零变化。
+
+    **没给根那一支不在本函数算落点**（2026-10-05 中央缝，锁＝
+    ``tests/test_remap_central_seam.py``）：读数是空串或正缺省那枚 ``data`` 时，落点交
+    唯一出口 ``scripts.runtime_paths.runtime_data_dir()``——它读 env→dotenv→缺省且已过
+    判定件。此前这里硬锚 ``_DATA_ROOT_FALLBACK_ANCHOR / "data"``，于是同一个"数据根"概念
+    长出两把尺：``runtime_paths`` 那把被 ``tests/conftest.py`` 的 L1 装配挤成隔离根，
+    这把只读 pydantic 字段值（``Config`` 是 ``BaseModel``、装载期不读 env），真
+    ``Config(...)`` 在测试树里必然拿到字面 ``"data"`` ⇒ 整张名册折进**源码树**（10-02
+    ``data/control_plane_config.sqlite3``、10-04/10-05 ``data/addressing_preferences.sqlite3``
+    三次的同一条根因）。显式给了根（绝对或带尾巴的相对值）逐字照旧，字段缺省语义未动。
+    """
+    raw_root = (
+        str(getattr(config, "bot_runtime_data_dir", "") or "").strip()
+        or _DATA_ROOT_UNDECLARED_READING
+    )
+    if _normalizes_to_undeclared_root(raw_root):
+        central = _central_runtime_data_dir()
+        if central is not None:
+            return central
+    data_root = Path(raw_root).expanduser()
+    if not data_root.is_absolute():
+        data_root = _DATA_ROOT_FALLBACK_ANCHOR / data_root
+    _judge_runtime_data_landing(data_root)
+    return data_root
+
+
+def _normalizes_to_undeclared_root(raw_root: str) -> bool:
+    """读数是不是"根本没给根"那一支（空串／逐字就是字段缺省那枚 ``data``）。
+
+    归一形状与 ``resolve_runtime_data_value`` 同一套（反斜杠→``/``、剥 ``./``、剥首尾
+    ``/``、小写），只认这一枚字面；其余一律算"给了根"。
+    """
+    normalized = raw_root.replace("\\", "/").strip()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    normalized = normalized.strip("/").lower()
+    return not normalized or normalized == _DATA_ROOT_UNDECLARED_READING
+
+
+def resolve_runtime_data_field(config: Any, field_name: str) -> str:
+    """名册路径字段**读侧**的唯一解析口：手里那枚值必为按当前数据根重映射后的读数。
+
+    存在理由（台账 P1 H-1／F-10 的读侧那一半）：装载期校验器只覆盖"经 ``Config(...)``
+    构造"这一条来路——``model_copy(update=...)`` 不重跑校验器、鸭子类型配置面（
+    ``SimpleNamespace`` 一类）根本没有校验器，于是消费点 ``getattr(config, "<路径键>")``
+    随时可能拿到未重映射的裸值，按 CWD 解析即写进源码树。本函数把「就地问一次中央尺」
+    收进读点，使"字段在册就安全"这种假设不再需要成立。
+
+    三条口径都借既有真身，不另立一把：锚点＝``runtime_data_root_of``（内含唯一判定件），
+    形状与绝对腿判定＝``_resolve_scalar_landing``（装载期那条标量循环用的就是它），
+    幂等因此同构——校验器已重映射过的字段再问一次得到逐字相同的读数。
+    真身校验器锁＝``tests/test_remap_central_seam.py::test_the_two_read_points_share_one_resolution``。
+
+    字段没声明（鸭子配置缺那枚属性）或读数为空 ⇒ 回空串＝"这枚配置没点名落点"，
+    调用方据此让整条腿休眠，**绝不**在这里替它补一份硬编码缺省（那是第二真身）。
+    """
+    if not hasattr(config, field_name):
+        return ""
+    text = str(getattr(config, field_name, "") or "").strip()
+    if not text:
+        return ""
+    return str(_resolve_scalar_landing(text, runtime_data_root_of(config)))
+
+
+def resolve_runtime_data_value(value: Any, data_root: Path) -> Any:
+    """单值重映射：``data/...`` 折进 ``data_root``，其余（含绝对路径）原样透传。
+
+    **幂等**——已经是绝对路径、或非 ``data/`` 前缀的值再喂一次得到逐字相同的读数，
+    因此装载期校验器与「``model_copy(update=...)`` 之后补一刀」能共用这一条实现，
+    不存在第二副本（与 ``scripts/runtime_paths.py`` 对齐：剥 ``./`` 前缀、对 ``data/``
+    前缀大小写不敏感重映射，两侧对 ``"./DATA/x"`` 得到同一结果）。
+
+    本函数保持**纯字符串映射**（不碰 env、不问判定件），幂等性才谈得上；「这枚绝对落点
+    在测试进程里能不能用」由调用侧 ``remap_runtime_data_paths`` / ``runtime_data_root_of``
+    问唯一判定件，判据不在这里抄第二份。
+    """
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    normalized = text.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    if normalized.lower() == "data":
+        return str(data_root)
+    if normalized.lower().startswith("data/"):
+        return str(data_root / normalized[5:])
+    return value
+
+
+def _resolve_scalar_landing(value: Any, data_root: Path) -> Any:
+    """一枚标量路径读数 → 折进 ``data_root``；绝对落点同批问一遍唯一判定件。
+
+    装载期循环（``remap_runtime_data_paths``）与读侧口（``resolve_runtime_data_field``）
+    共用这一条 ⇒ "重映射"这件事全仓只有一个形状，不在读侧重抄一遍判据。
+    非字符串读数原样透传（``resolve_runtime_data_value`` 的既有语义）。
+    """
+    if _is_absolute_landing(value):
+        _judge_runtime_data_landing(value)
+    return resolve_runtime_data_value(value, data_root)
+
+
+def remap_runtime_data_paths(target: Any) -> Any:
+    """把 ``target`` 的路径字段按 ``PATH_*_REMAPPED_FIELDS`` 就地折进数据根，原样返回。
+
+    存在理由（PATH-REMAP-GUARD 席位，2026-10-04）：pydantic 的
+    ``model_copy(update=...)`` **不重跑校验器**，所以「运行时热改合并层」
+    （根 ``__init__.py::_config_with_runtime_overrides``）用 model_copy 造出的
+    Config 视图里，任何被合并进来的 ``data/...`` 相对值都会**保持裸值**——
+    而全仓 112 处消费点直接 ``getattr(config, "<路径键>")`` 就开库/落盘、不做二次
+    解析（另有 17 处自己走 ``build_runtime_data_path``），裸相对值按 CWD 解析即写进
+    源码树（AGENTS 铁律 6）。
+
+    本函数是那条 after 校验器的**等价体**且**幂等**，故合并层在 ``model_copy`` 之后
+    调它一次即闭合该缝；锁＝``tests/test_config_model_copy_path_remap_guard.py``。
+    字段缺席（``getattr`` 取不到）时跳过＝对 Config 之外的鸭子类型也安全。
+
+    判定的覆盖面（2026-10-04 绝对腿补牙，执法锁＝``tests/test_datafix_runtime_paths.py``
+    D 组）：**数据根锚点**（``runtime_data_root_of`` 内部问一次）＋**标量名册里本身就
+    是绝对读数的值**（下面第一趟循环）都交唯一判定件问一遍；相对 ``data/`` 值折进的是
+    已判定的根，无需重复问。第二趟**列表名册刻意不判**：``bot_persona_files`` /
+    ``bot_knowledge_files`` 是只读引用件（A-8 登记域口径 ``EXTERNAL_REFERENCE_FIELDS``
+    那一族），生产 ``.env`` 逐值把它们指向 Runtime 根内的副本，判定件不分读写会当场把
+    「现网同构装载」那类在册用例打死（现算：``test_tts_probability_lock`` 的装载腿）。
+    写面列表根（``bot_files_write_allowed_dirs``）残留见席位报告。
+    """
+    data_root = runtime_data_root_of(target)
+    for name in PATH_REMAPPED_FIELDS:
+        current = getattr(target, name, None)
+        if current is None and not hasattr(target, name):
+            continue
+        setattr(target, name, _resolve_scalar_landing(current, data_root))
+    for name in PATH_LIST_REMAPPED_FIELDS:
+        if not hasattr(target, name):
+            continue
+        items = getattr(target, name) or []
+        setattr(target, name, [resolve_runtime_data_value(item, data_root) for item in items])
+    return target
+
+
+#: 路径名册并集（标量 + 列表两把尺同一张表，禁抄第二份）。
+PATH_REMAPPED_FIELD_NAMES: Final[frozenset[str]] = frozenset(
+    PATH_REMAPPED_FIELDS
+) | frozenset(PATH_LIST_REMAPPED_FIELDS)
+
+
+def path_typed_fields_in(field_names: Any) -> tuple[str, ...]:
+    """从任意「热改登记表」的字段名里挑出**路径型**的那些（排序、确定读数）。
+
+    判据：热合并层靠 ``model_copy(update=...)`` 生效，而它不重跑校验器 ⇒ 表里只要
+    出现一张名册内的路径键，该键的 ``data/...`` 值就会绕过重映射。登记表本体归根
+    ``__init__.py``（``_RUNTIME_HOT_OVERRIDE_FIELDS``，本包禁写面），所以这条判定
+    做成**入参注入**的纯函数：常驻门把现算读到的真表喂进来，将来谁登记了路径键而
+    没同批接重映射，门当场打红。
+    """
+    given = {str(name) for name in field_names}
+    return tuple(sorted(given & PATH_REMAPPED_FIELD_NAMES))
+
 
 class Config(BaseModel):
     # 运行数据与源码工作区分离：生产环境可把 data/ 放到工作区外，
@@ -1907,36 +2159,15 @@ class Config(BaseModel):
         }
     @model_validator(mode="after")
     def _resolve_runtime_data_paths(self) -> Config:
-        """将 data/... 路径统一解析到 BOT_RUNTIME_DATA_DIR。"""
-        raw_root = str(self.bot_runtime_data_dir or "").strip() or "data"
-        data_root = Path(raw_root).expanduser()
-        if not data_root.is_absolute():
-            project_root = Path(__file__).resolve().parents[2]
-            data_root = project_root / data_root
+        """将 data/... 路径统一解析到 BOT_RUNTIME_DATA_DIR。
 
-        def resolve(value: Any) -> Any:
-            if not isinstance(value, str):
-                return value
-            text = value.strip()
-            normalized = text.replace("\\", "/")
-            # 与 scripts/runtime_paths.py 对齐：剥 ./ 前缀并对 data/ 前缀
-            # 大小写不敏感重映射，两侧对 "./DATA/x" 得到同一结果。
-            while normalized.startswith("./"):
-                normalized = normalized[2:]
-            if normalized.lower() == "data":
-                return str(data_root)
-            if normalized.lower().startswith("data/"):
-                return str(data_root / normalized[5:])
-            return value
-
-        # 名册单一来源 = 模块级 PATH_REMAPPED_FIELDS（A-8 席位 2026-09-27 上提，
-        # 供「生产配置值 ∈ 允许根」常驻断言按同一张名册逐字段过登记闸）。
-        for name in PATH_REMAPPED_FIELDS:
-            setattr(self, name, resolve(getattr(self, name)))
-
-        for name in PATH_LIST_REMAPPED_FIELDS:
-            setattr(self, name, [resolve(item) for item in getattr(self, name)])
-        return self
+        实现体已上提为模块级 ``remap_runtime_data_paths``（幂等、可在
+        ``model_copy(update=...)`` 之后补调，见该函数文档），本校验器只是装载期
+        的薄壳——**同一条尺**，不留第二副本。名册单一来源 = 模块级
+        ``PATH_REMAPPED_FIELDS``（A-8 席位 2026-09-27 上提，供「生产配置值 ∈
+        允许根」常驻断言按同一张名册逐字段过登记闸）。
+        """
+        return remap_runtime_data_paths(self)
 
     @field_validator(
         "bot_persona_files",

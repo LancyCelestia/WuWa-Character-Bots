@@ -383,6 +383,9 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 help_topics=("亲密模式",),
                 impl_paths=(
                     "plugins/bot_unified_runtime/domains/chat_reply/runtime/content_route.py",
+                    # 〔2026-10-04 亲密档波补登记〕`/bot intimate` 命令面的真实入口与三腿分诊口，
+                    # 与 content_route 同目录同一条腿（词表真身仍只在 content_route.py 那一处）。
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/intimate_control.py",
                     # 〔2026-09-29 S-FIX-PLACE3 双认领拆账〕B10.security-guardrails 的旧顶层
                     # `security` 垫片（S-SHIM-WAVE1R T6 已退役）被复原波改锚到
                     # `domains/chat_reply/security` 整目录，与本 fid 的字面目录认领撞成

@@ -88,6 +88,9 @@ from plugins.bot_unified_runtime.domains.core.session_keys import (
     build_session_key,
     private_session_key,
 )
+from plugins.bot_unified_runtime.domains.media.ingest.transcribe import (
+    extract_audio_source,
+)
 
 MINUTE = 60.0
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -611,9 +614,27 @@ class _ModelOverrideSettings:
 
 
 def _voice_segments(tmp_path) -> list:
+    """造一条「本轮带语音」的 record 段，并**当场自证这条前提真成立**。
+
+    为什么必须自证（台账 #76／席 basetempisolate REPORT §4(c)）：``--basetemp`` 落进
+    ``ChatBot_Runtime`` 树时，``tmp_path`` 不在 ``path_gate.media_read_roots()`` 那份唯一
+    合法读根名册里，消费侧 ``vision_describe._local_path_from_value`` 只 ``logger.debug``
+    后返回 ``None`` ⇒ 语音既没原生送达也没转写，「本轮带语音」整条前提**静默蒸发**。旧形状下
+    只有断言跳序的用例因此变红（＝假红），而 ``test_preview_and_accounted_verdict_agree`` 与
+    ``test_one_turn_accounts_signals_exactly_once`` 两条**失前提仍照绿**＝静默空跑，比假红更坏。
+    问一句**真身判定件**（``extract_audio_source`` 走的就是那条带容器的路：形态→归属→禁触名册
+    →在场），于是错 basetemp 变成会说人话的一条红，且每条媒体用例都拿到同一枚自证，零重复。
+    """
     clip = tmp_path / "voice.mp3"
     clip.write_bytes(b"ID3\x04" + b"\x00" * 128)
-    return [{"type": "record", "data": {"file": str(clip)}}]
+    segments = [{"type": "record", "data": {"file": str(clip)}}]
+    assert extract_audio_source(segments) is not None, (
+        f"前提自证失败：{clip} 没有被媒体容器门放行 ⇒ 本轮根本没有可读的语音件，"
+        f"所有「带语音」的断言都会退化成空跑。合法读根名册＝path_gate.media_read_roots()"
+        f"（工作区 + tempfile.gettempdir() + 测试隔离根，不含 ChatBot_Runtime 树）；"
+        f"请把 --basetemp 放到 {tempfile.gettempdir()} 之下再跑。"
+    )
+    return segments
 
 
 def _run_media_turn(

@@ -148,15 +148,27 @@ def test_build_chat_result_forwards_message_group_id() -> None:
     provider = _CapturingProvider()
     message = _message(group_id=GROUP_ID)
     build_chat_result(message, _decision(message), _context(raw_text=""), llm_provider=provider)
-    assert len(provider.prompts) == 1, "前置：成功路径才会触达 LLM"
-    system_prompt = provider.prompts[0][0]["content"]
-    assert "【当前群聊】" in system_prompt
-    assert f"群号 {GROUP_ID}" in system_prompt
+    assert provider.prompts, "前置：成功路径才会触达 LLM"
+    # 本件**不钉「恰好一跳」**：成品低于本轮生效长度档下限时，T6 出口地板腿
+    # （`chat._reply_length_floor_leg`）按契约「只多问一次」再走一跳，那一跳的系统提示词
+    # 里带着【当前群聊】分区属正常。把跳数写死成 1 会误红，且真红了也看不见"追写那跳
+    # 把群分区弄丢了"。跳数=2 的正向契约由 tests/test_reply_length_tier.py 专责执法
+    # （`test_floor_leg_rewrites_when_below_the_tier_minimum`、
+    #   `test_floor_leg_marks_a_retry_that_still_misses_the_floor` 都锁 calls == 2），
+    # 这里只守本件的地盘：**每一跳都得看得见自己 in 哪个群**。
+    for index, prompts in enumerate(provider.prompts):
+        system_prompt = prompts[0]["content"]
+        assert "【当前群聊】" in system_prompt, f"第 {index + 1} 跳丢了群分区"
+        assert f"群号 {GROUP_ID}" in system_prompt, f"第 {index + 1} 跳丢了群号"
 
 
 def test_build_chat_result_private_has_no_group_partition() -> None:
     provider = _CapturingProvider()
     message = _message(group_id=None)
     build_chat_result(message, _decision(message), _context(raw_text=""), llm_provider=provider)
-    assert len(provider.prompts) == 1
-    assert "【当前群聊】" not in provider.prompts[0][0]["content"]
+    assert provider.prompts, "前置：成功路径才会触达 LLM"
+    # 私聊同理：分区不得出现在**任何**一跳里（含地板腿的追写跳）——见上一件注释。
+    for index, prompts in enumerate(provider.prompts):
+        system_prompt = prompts[0]["content"]
+        assert "【当前群聊】" not in system_prompt, f"第 {index + 1} 跳漏进群分区"
+        assert f"群号 {GROUP_ID}" not in system_prompt, f"第 {index + 1} 跳漏出群号"

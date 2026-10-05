@@ -19,7 +19,7 @@ from nonebot.typing import T_State
 from pydantic import BaseModel
 
 from .audit import AuditRepository, build_audit_repository
-from .config import Config, translate_env_keys
+from .config import Config, remap_runtime_data_paths, translate_env_keys
 from .contracts import (
     AuditRecord,
     CapabilityResult,
@@ -854,7 +854,13 @@ def _config_with_runtime_overrides(config: Any, runtime_settings: Any) -> Any:
     if not updates:
         return config
     try:
-        return config.model_copy(update=updates)
+        # PATH-REMAP-GUARD 闭合波（2026-10-04）：``model_copy(update=...)``
+        # 不重跑校验器，所以热表里一旦出现名册内的路径键，``data/...`` 裸值会绕过
+        # 「折进 BOT_RUNTIME_DATA_DIR」这一步、按 CWD 解析落进源码树（AGENTS 铁律 6）。
+        # 把合并结果**当实参**喂进装载期校验器的等价体 ⇒ 绕过在结构上不可能，而不是
+        # 只靠「热表里不许登记路径键」的禁令。助手幂等：已折叠的读数逐字不变（锁
+        # tests/test_config_model_copy_path_remap_guard.py::test_hot_path_extra_remap_pass_is_a_verified_noop）。
+        return remap_runtime_data_paths(config.model_copy(update=updates))
     except Exception:  # noqa: BLE001 - 合并失败回退原 config。
         return config
 
@@ -8921,6 +8927,50 @@ def _register_nonebot_handlers() -> None:
                     # 硬写成 PERSONAL 就是 D1 那一格——群回执会被审核判 move_private。
                     privacy_level=message.privacy_level,
                     runtime_settings=runtime_settings,
+                    # 描写钉按 (平台域, 人[, 会话]) 取键：亲密面也渲染那一句「细节描写」，
+                    # 平台事实只出自契约字段（口径同下面 narration 那一支）。
+                    platform=message.platform,
+                )
+
+        elif command_text == "narration" or command_text.startswith("narration "):
+            # /bot narration speech|scene|reset|show（同义中文词头 /bot 描写 …）：
+            # 描写档＝这一轮把场景铺开写、还是只说出口的话（席 na3-declare 接线，
+            # 轴心/词表/三腿真身全在 runtime/content_route.py 与 intimate_control.py，
+            # 本支**只做派发**：认词头、剥词头、把剩下的参数串原样交给 handler）。
+            # 🔴 四枚子命令的字面量**不在这里出现**——词表唯一的家＝
+            # `_NARRATION_SUBCOMMAND_TABLE`（裁定 G-0 乙），此处重列＝第二处声明位；
+            # 认不出什么也不改，判据锁在 tests/test_narration_command_dispatch.py。
+            # 中文词头**不在这一式里**：`描写 → narration` 住 `runtime/aliases.py::
+            # MODULE_ALIASES`（席 aliasgap 归位，`功能管理 → feature` 同一先例），上面
+            # `command_text = normalize_command_text(...)` 已经把它归一成英文正形 ⇒
+            # 条件式只读 canonical 名，词面全仓一处。别名册是派发路径的一环、不是文案件。
+            # 能力 id 复用 bot.chat（与 /bot intimate 同一先例：铸 bot.narration 要同改
+            # capability_protocols 唯一在册表 + 那本"只准降缺口"的账，不划算）；
+            # 可分辨性交给 audit_tags 的 slash_narration:*。
+            from .domains.chat_reply.runtime.intimate_control import (
+                build_narration_control_result,
+            )
+
+            capability_id = "bot.chat"
+            narration_command = command_text.removeprefix("narration").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_narration_control_result(
+                    config=config,
+                    request_id=message.request_id,
+                    subcommand=narration_command,
+                    session_type=str(getattr(message.session_type, "value", "") or ""),
+                    session_key=str(message.session_id or ""),
+                    sender_id=str(message.sender_id or ""),
+                    group_id=str(message.group_id or ""),
+                    sender_roles=list(_decision.actor_roles),
+                    # 只转述会话本身的隐私档（同 intimate 那一支的口径）：硬写成
+                    # PERSONAL 会让群回执被审核判 move_private。
+                    privacy_level=message.privacy_level,
+                    # 席 na-land（接席 na-keyfix §7）：命令面与注入缝**同批**交平台事实，
+                    # 值只出自契约字段 `IncomingMessage.platform`（猜平台／反解会话键＝T-1
+                    # 同族；只接一侧＝#33★"写在 qq:<uid>、读在 <uid>"）。作用域仍按人全局。
+                    platform=message.platform,
                 )
 
         elif command_text == "route" or command_text.startswith("route "):

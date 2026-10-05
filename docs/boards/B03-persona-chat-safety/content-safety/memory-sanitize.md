@@ -6,7 +6,7 @@
 ## B03.content-safety · 记忆侧净化同源
 
 - 层级：一级 B03 → 二级 content-safety → 三级 `memory-sanitize`
-- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/content_route.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/content_safety.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/memory_sanitize.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/content_route.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/intimate_control.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/content_safety.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/memory_sanitize.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

@@ -41,6 +41,14 @@ MODULE_ALIASES: dict[str, str] = {
     "帮助": "help",
     "runtime": "runtime",
     "功能管理": "feature",
+    # 描写档中文词头（席 aliasgap，2026-10-04）：`/bot 描写 …` 与 `/bot narration …`
+    # 是同一支 handler 的两个词头。词面**只准住这一格**——派发条件式只读 canonical 名
+    # （`功能管理 → feature` 的在册先例同式；此前中文词头被硬写进 `__init__.py` 的
+    # 条件式里＝第二处声明位，判据锁 tests/test_narration_alias_dispatch.py）。
+    # ⚠ 只搬**词头**：四枚子命令（speech/scene/reset/show）的词表真身仍是
+    # `content_route._NARRATION_SUBCOMMAND_TABLE`，本格不收录它们（裁定 G-0 乙：
+    # 命令面走英文子命令、人格口语面走中文整句，两套词面互不引用）。
+    "描写": "narration",
     "设置": "runtime",
     "参数": "runtime",
     "wiki": "wiki",

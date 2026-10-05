@@ -464,7 +464,7 @@ _V7_DEFAULT_NOVELTY_RATIO = 0.90        # ρ：同类显著信号新鲜度比率
 _V7_DEFAULT_NOVELTY_HALO_DAYS = 21      # 新鲜度计数回升半衰（天）
 _V7_DEFAULT_RHYTHM_REFERENCE_TURNS = 8  # r_ref：日均互动轮次参考水位
 _V7_DEFAULT_NEGATIVE_EVENT_CAP_Z = 0.10  # 单事件 |Δz| 上限（A-1 裁定后正负同额，键名历史见 V7Settings）
-_V7_DEFAULT_DAILY_MOVE_CAP_Z = 0.04     # 滚动 24h 总位移上限 |ΣΔz|（2026-10-03 用户裁定消除双源：v7/v8 共键同值，与 config.py/.env 对齐；A-1 裁定：旧「本地自然日」窗形作废）
+_V7_DEFAULT_DAILY_MOVE_CAP_Z = 0.12     # 评分判据侧吃这枚：v7 路滚动 24h 总位移上限 |ΣΔz|（无配置缺省）。台账 F-16 拆轴（2026-10-06 用户裁定甲）：9bdcfc7 曾把它随展示限幅改成 0.04，同日 4 条好评即可吃满评分预算、辱骂实发恰好 0.0——现回到改动前语义 0.12。展示收紧侧另尺（_V8_DEFAULT_DAILY_MOVE_CAP_Z=0.04z 与 _SENTIMENT_DISPLAY_DAILY_DROP_CAP=4.0 分），禁再把两侧写成同值/别名（锁 tests/test_affinity_display_vs_scoring_caps.py）；A-1 裁定：旧「本地自然日」窗形作废
 _V7_DEFAULT_FUSE_DAILY_EVENTS = 25      # 同类信号每日熔断事件数（超出不再计分）
 _V7_DEFAULT_REPAIR_GAIN = 1.4           # 修复通道（道歉/和解）步长加成
 _V7_DEFAULT_Z_HARD_BOUND = 0.985        # v8 起语义变迁：由「tanh 饱和域硬边界（展示 ±98.5）」
@@ -493,7 +493,7 @@ _V7_RHYTHM_HALFLIFE_DAYS = 28.0
 # 每轮一个凸组合冲量：|δ_z| ≤ κ 由构造给出（Σ|w|=1 归一化），不是事后 if-list；
 # 缺省灰度关死（enabled=False ⇒ v5/v6/v7 路径逐字节不变，与 v7 同一家规）。
 _V8_DEFAULT_IMPULSE_CAP_Z = 0.02       # κ：每轮最大位移（§C.2，展示最坏 2.0 分/轮）
-_V8_DEFAULT_DAILY_MOVE_CAP_Z = 0.04    # 日额度沿用 bot_affinity_daily_move_cap_z 键，v8 缺省 0.04（§C.7）
+_V8_DEFAULT_DAILY_MOVE_CAP_Z = 0.04    # 展示收紧侧吃这枚：v8 日额度＝「一天展示最多挪 4 分」的纪律尺（§C.7，与 bound_sentiment_display 的 _SENTIMENT_DISPLAY_DAILY_DROP_CAP=4.0 展示分同 magnitude 同源，9bdcfc7 有意收紧、一字不动）；v7 评分判据侧另尺 _V7_DEFAULT_DAILY_MOVE_CAP_Z=0.12（台账 F-16 拆轴 2026-10-06），禁「顺手」把两枚改回同值
 _V8_DEFAULT_AMBIENT_HALFLIFE_DAYS = 28.0  # āmbient 质量基线 EMA 半衰（§C.2 之 φ_q 去基线）
 _V8_DEFAULT_BAND_MIN = 2.60            # 善意底保护带·新人端（≈全谱，fail-open 端；§C.4 散文语义）
 _V8_DEFAULT_BAND_MAX = 0.55            # 善意底保护带· saturation 端（一年以上关系最多回落到峰值减此带）
@@ -1142,9 +1142,10 @@ _V8_CONFIG_FIELDS: tuple[tuple[str, Any], ...] = (
     ("bot_affinity_goodwill_band_max", _V8_DEFAULT_BAND_MAX),
     ("bot_affinity_goodwill_band_saturate_days", _V8_DEFAULT_BAND_SATURATE_DAYS),
     ("bot_affinity_v8_tier_blend_band", _V8_DEFAULT_TIER_BLEND_EDGE),
-    # 日额度沿用在册键（§C.7：枚数以四处登记后现算为准）；2026-10-03 用户裁定消除
-    # 双源：v8 缺省与 v7 缺省同为 0.04（_V8/_V7_DEFAULT_DAILY_MOVE_CAP_Z 两常量同值），
-    # env 显式给了就同吃一值——两路各自的缺省是"没配置时"的答案。
+    # 日额度沿用在册键（§C.7：枚数以四处登记后现算为准）；台账 F-16 拆轴（2026-10-06
+    # 用户裁定甲）：v7 缺省回到评分判据语义 0.12，v8 缺省保持展示收紧纪律 0.04——
+    # 两枚常量各归各侧（键缺省时各给各的答案）；env/Config 键显式在场时两路同吃一值，
+    # 生产 .env 钉 0.04 属运行面值（要评分侧在生产也吃 0.12 需用户动 .env，交裁面）。
     ("bot_affinity_daily_move_cap_z", _V8_DEFAULT_DAILY_MOVE_CAP_Z),
 )
 

@@ -160,6 +160,31 @@ def _onebot_result_is_success(result: Any) -> bool:
     return retcode is None or retcode == 0
 
 
+# 失败结构因的长度/形状上限（SEAT-SENDTERM A1，2026-10-04）。
+_FAILURE_SUMMARY_MAX_CHARS = 96
+# status 词只收「协议状态词」这一形状，其余一律不上回执：适配器回的自由文本
+# （OneBot v11 failedResponse.wording）按 nonebot._send_failure_summary 与
+# tests/test_operational_failures.py:368-373 的裁决锁**绝不进回执 JSON**——
+# 回执要落库并内插进管理员告警文本，原文只准进本地日志。
+_ONEBOT_STATUS_TOKEN = re.compile(r"^[a-z][a-z0-9_]{0,15}$")
+
+
+def _onebot_failure_detail(retcode: int | None, source: Any) -> str:
+    """判死依据的结构因：那枚数字 retcode（＋白名单形状的 status 词）。
+
+    治的生产空白：``_is_final_failure_retcode`` 用数字退码挑终态/可重试分支，
+    挑完就把数字丢了——``safe_summary`` 从来只等于 ``kind``，库里 79/79 枚
+    ``retcode_failure`` 明细行看不出是哪一枚码判的生死，事后既不能复核白名单、
+    也不能按码分流。本函数只补**结构 token**（数字 + 协议状态词），零自由文本、
+    零新泄露面。
+    """
+    head = f"retcode={retcode}" if retcode is not None else "retcode=absent"
+    status = _extract_onebot_status(source)
+    if status and _ONEBOT_STATUS_TOKEN.match(status):
+        head = f"{head} status={status}"
+    return head[:_FAILURE_SUMMARY_MAX_CHARS]
+
+
 def _is_final_failure_retcode(retcode: int | None) -> bool:
     """「平台明确拒绝且重发必同败」白名单（T46-N1，2026-09-20 扩码）。
 
@@ -208,13 +233,19 @@ def _onebot_issue(
     retryable: bool,
     debug_id: str,
     attempts: int = 1,
+    detail: str = "",
 ) -> OperationalIssue:
+    """失败回执。``kind`` 是 worker 判据与幂等去重逐字消费的承重串，一个字节不许动；
+    ``detail``（SEAT-SENDTERM A1）只富化 ``safe_summary``，缺省空 ⇒ 与加本参数前
+    逐字节一致（含 ``retcode_failure`` 之外的全部既有分支）。
+    """
+    summary = f"{kind} {detail}".strip()[:_FAILURE_SUMMARY_MAX_CHARS] if detail else kind
     return OperationalIssue(
         stage="onebot",
         kind=kind,
         retryable=retryable,
         debug_id=debug_id,
-        safe_summary=kind,
+        safe_summary=summary,
         attempts=max(1, attempts),
     )
 
@@ -1054,6 +1085,7 @@ async def send_onebot_v11(
                     "retcode_failure",
                     retryable=state is ReceiptState.FAILED_RETRYABLE,
                     debug_id=debug_id,
+                    detail=_onebot_failure_detail(exc.retcode, None),
                 ),
             )
         except asyncio.TimeoutError:
@@ -1174,6 +1206,9 @@ async def send_onebot_v11(
                         retryable=state is ReceiptState.FAILED_RETRYABLE,
                         debug_id=debug_id,
                         attempts=attempt + 1,
+                        detail=_onebot_failure_detail(
+                            rejection_retcode, getattr(exc, "info", None)
+                        ),
                     ),
                 )
             last_error = exc
@@ -1210,9 +1245,22 @@ async def send_onebot_v11(
         # （见上方 `if progress.count > 0` 守卫）语义不一致。文件类投递里
         # 上传可能已经成功、只有 caption 的 retcode 失败，此时整条链路回到
         # 队列重试会**重新上传同一个文件**（max_attempts=3 → 最多 3 份）。
-        # 只要本次尝试已产生副作用且不是明确的永久失败码，就按 result_unknown
-        # 终态化——与 `_send_file_parts` 文档声明的「有副作用后绝不重投」一致。
-        if progress.count > 0 and not _is_final_failure_retcode(retcode):
+        # SEAT-PARTIALFIX §8-A（2026-10-04）：只要本次尝试已产生副作用
+        # （progress.count > 0），一律按 result_unknown 终态化——与本文件另三道
+        # 失败出口（_ChunkRejectedError :1050 / 超时 :1106 / 异常 :1153，皆
+        # 「count>0 即无条件 result_unknown」）一字对齐，落实 worker
+        # _chunk_part_plan 注释 :802 钉死的契约「file 腿多调用形态 ⇒ 部分已送达 ⇒
+        # result_unknown 终态，绝不整体重投」。改前此处多挂一句
+        # `and not _is_final_failure_retcode(retcode)`，让落在白名单里的退码绕过
+        # 副作用守卫、滑进 retcode_failure FAILED_FINAL；worker 原子臂
+        # （_deliver_atomic_mixed_parts :1545）据此把**其实已投递成功的文件部件**
+        # 也一并写成 failed_final，断点守卫按 SENT 计数判 delivered==0 不介入 ⇒
+        # 部分投递的记录被擦（本文件三枚测试在改前即复现此形态）。
+        # 终态轴未放宽：result_unknown 仍是 FAILED_FINAL（不因此变可重试→无限重投）；
+        # 判死那枚数字仍经 _onebot_failure_detail 进 last_error_detail 留痕、事后
+        # 仍能从库里复核白名单。退码白名单成员集与 count==0（零副作用、单条原子
+        # 整发的明确拒绝）照旧由白名单判 retcode_failure 终态/可重试——一字未动。
+        if progress.count > 0:
             logger.warning(
                 "onebot send retcode failure after partial delivery side_effects=%d retcode=%s request_id=%s debug_id=%s",
                 progress.count,
@@ -1232,6 +1280,7 @@ async def send_onebot_v11(
                     retryable=False,
                     debug_id=debug_id,
                     attempts=attempt + 1,
+                    detail=_onebot_failure_detail(retcode, result),
                 ),
             )
         state = (
@@ -1250,6 +1299,7 @@ async def send_onebot_v11(
                 "retcode_failure",
                 retryable=state is ReceiptState.FAILED_RETRYABLE,
                 debug_id=debug_id,
+                detail=_onebot_failure_detail(retcode, result),
             ),
         )
 

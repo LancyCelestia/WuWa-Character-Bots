@@ -49,6 +49,24 @@ v21r5 双开关扩展（2026-09-19 用户裁定）：
    群侧两支（管理员钉、群内成员个人钉）都不入库；``intimate_ttl_minutes`` 语义不变
    （回填起算点⇒重启也不续期，到点仍清）。判据与边界全在 ``_EXPLICIT_PIN_REPIN_SOURCES``
    上方那一节，改之前先读它。
+9. 描写档（2026-10-04 用户裁定 G-1～G-3）：「进没进亲密档」(``MODE_*``) 与
+   「档的深浅」(``INTIMATE_TIER_*``) 之外的**第三轴**——只答"出口之外那些维度写不写"，
+   两值 ``speech``（只说出口的话，**缺省**）/ ``scene``（语言＋动作＋心理＋神态＋外貌
+   全铺开），**普通模式同样能拿**（G-1，判据不看档在不在）。本人持久钉落进**已有**的
+   ``addressing_preferences``（再两列 ALTER-if-missing、与第 8 条同表同键、**没有 TTL**、
+   不新建库不加配置键）；来源 ``narration_pin`` 是 ``_INTIMATE_NARRATION_SOURCES`` 的
+   **第 4 枚**（G-2：并进那把唯一的授予尺，换模型/TTL 豁免/缺省浅档/重钉那四张轴一个成员
+   都不跟着动，也不许拿 ``manual_command`` 蒙混）。群侧"只有她自己开过的才算"＝钉的键形是
+   **(平台域, 会话, 这个人)** 三段（I-2，2026-10-04 21:0x「'跟着人走'就是在这个会话里跟着
+   这个人走……换了会话就需要重新激发」：群 A 钉过≠群 B 也有，私聊钉过≠群里也有；会话段
+   复用库里已有的 ``session_type``/``session_id`` 两列，零新表零新列零迁移）＋写腿沿用亲密
+   开关同一道角色门（G-3，两腿同守——①钉的读键是成员派生键，群作用域键压根没有本人段；
+   ②H-1＝甲 那格"开亲密即缺省 scene"只在裁决
+   **不出自整群那一桶**时才交，全群开关（``from_group_pin``）照旧把旁人留在 ``speech``，
+   于是管理员替整群拨的亲密档永不广播描写档）。读数走 ``resolve_intimate_context`` 新增的
+   ``narration_mode`` / ``narration_source`` 两格，授予判据仍只有 ``grants_intimate_narration``
+   一处。命令面 ``/bot 描写 speech|scene|reset|show``（词表真身＝``_NARRATION_SUBCOMMAND_TABLE``，
+   分诊与行文在 ``runtime/intimate_control.py``）。
 
 会话准入门在 capabilities/chat.py（持有 session_type 与群黑白名单配置）：
 仅私聊/控制台/已获准群聊参与评分与手动开关。
@@ -78,10 +96,12 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.relationships impo
     relation_instruction,
 )
 from plugins.bot_unified_runtime.domains.core.session_keys import (
+    KIND_GROUP,
     KIND_PRIVATE,
     UNKNOWN_SENDER,
     group_scope_key,
     parse_session_key,
+    person_scope_key,
     sanitize_key_segment,
 )
 
@@ -152,6 +172,32 @@ INTIMATE_TIER_L2: str = "l2"  # 深档：同上 + grok 优先（R-18 在册通�
 MODE_INTIMATE: str = "intimate"  # 进了亲密档（深浅由 `INTIMATE_TIER_*` 记）
 MODE_NORMAL: str = "normal"  # 普通档：默认链原样
 
+# ---------------------------------------------------------------- 描写档（第三轴）
+#
+# 2026-10-04 用户裁定 G-1～G-3：在「进没进亲密档」(`MODE_*`) 与「档的深浅」
+# (`INTIMATE_TIER_*`) 之外立**第三轴**——这一轴只回答一件事：**出口之外的那些维度
+# 写不写**（动作／神态／心理／外貌）。两格、缺省只说话：
+# - ``speech``：只写说出口的话（**缺省**，G-1「普通模式也能用 scene，缺省 speech」
+#   的另一面就是"亲密档本身不再自带描写"）；
+# - ``scene``：语言＋动作＋心理＋神态＋外貌一并铺开写长。
+# 与上面两对常量的同一条纪律：**字面量只在这里声明一次**，其余各处只准引名字
+# （词面级独立声明账按 `tests/test_trigger_word_single_source.py` 记债，09-25 S256
+# 那一格就是把裸串升格成声明位被当场记红的先例）。
+NARRATION_MODE_SPEECH: str = "speech"  # 只写说出口的话（缺省）
+NARRATION_MODE_SCENE: str = "scene"  # 语言＋动作＋心理＋神态＋外貌全铺开
+NARRATION_MODE_DEFAULT: str = NARRATION_MODE_SPEECH  # 裁定缺省＝只说话
+NARRATION_MODES: tuple[str, ...] = (NARRATION_MODE_SPEECH, NARRATION_MODE_SCENE)
+
+
+def normalize_narration_mode(raw: object) -> str:
+    """任意输入 → 轴上取值：认不出／空的都落**缺省**，绝不抛。
+
+    fail-safe 的方向是"少写"不是"多写"：把一句没认出来的话糊成 ``scene``，等于凭一个
+    错字把五维叙述塞进这一轮（同 `match_intimate_subcommand` 不猜档的口径）。
+    """
+    key = str(raw if raw is not None else "").strip().lower()
+    return key if key in NARRATION_MODES else NARRATION_MODE_DEFAULT
+
 _MANUAL_ON_RE = re.compile(
     r"^\s*/?\s*(?:亲密模式\s*(?:开启|打开|开|on)|(?:开启|打开|开|on)\s*亲密模式)"
     r"\s*[。!！~～]?\s*$",
@@ -177,8 +223,19 @@ _MANUAL_OFF_RE = re.compile(
 def match_intimate_command(text: str) -> tuple[str, str] | None:
     """亲密命令 → ``(mode, tier)``；非命令返回 None。
 
-    档位的**深浅**只有这一个解析口：``("intimate", L1)`` 浅档（不换模型）、
-    ``("intimate", L2)`` 深档（grok 优先）、``("normal", "")`` 两档一起解除。
+    深浅档位的**解析口按词面分两条、同形不同路**，本函数只是其中一条：
+    ①整句面＝本函数（吃中文整句，词面即下方三条 ``_MANUAL_*_RE``，都带行锚）；
+    ②命令面＝``match_intimate_subcommand``（吃 ``/bot intimate`` 剥掉前缀剩下的参数串，
+    词面真身＝本文件的 ``_INTIMATE_SUBCOMMAND_TABLE``，此处不抄它的成员）。
+    两套词面互不引用是有意为之；两条路返回的形状与三态语义逐字同——
+    ``(MODE_INTIMATE, INTIMATE_TIER_L1)`` 浅档（不换模型）、
+    ``(MODE_INTIMATE, INTIMATE_TIER_L2)`` 深档（grok 优先）、
+    ``(MODE_NORMAL, INTIMATE_TIER_NONE)`` 两档一起解除。
+    "两个口"不冲掉另外三处单真身：档位**字面量**只落本文件 ``MODE_*``/``INTIMATE_TIER_*``
+    那一处；「L2 才有资格换真实首跳」的**判据**只住 ``_head_if_switchable``；命令面的
+    **入口与三腿分诊**在 ``runtime/intimate_control.py`` 的 ``build_intimate_control_result``
+    （能力 id 复用 ``bot.chat``，未另铸）。旧读面 ``match_manual_command`` 是本函数的薄壳、
+    不成第三条口。
     """
     stripped = str(text or "").strip()
     if not stripped:
@@ -247,6 +304,48 @@ def match_intimate_subcommand(arg: str) -> tuple[str, str] | None:
     if not key:
         return None
     return _INTIMATE_SUBCOMMAND_TABLE.get(key)
+
+
+# ------------------------------------------------- 描写档子命令参数口（G-0 乙：词面只这一处）
+#
+# `/bot 描写 <子命令>` 一族（2026-10-04 裁定 G-0 取「乙」＝**一枚令牌只住一个家**：命令名
+# 与帮助册都指这张表，全仓不重列 ⇒ 词债实测 0~3 枚，甲案「新词面在别名/触发/昵称三处重列」
+# 要 +11~18）。词表**与 `_INTIMATE_SUBCOMMAND_TABLE` 挨着放、形状照它**：一张表、一次
+# `strip().lower()`、认不出 None，**不新写解析器**。
+#
+# ⚠ **只有英文子命令，不带中文整句别名**（有意与开关面同纪律）：那两张表的 docstring 都写明
+# 「命令面走英文子命令、人格口语面走中文整句，两套词面互不引用是有意为之——共用一张表只会
+# 让一次改词静默改掉另一条路」。中文整句那一族（`_MANUAL_*_RE`）今天说的是"亲密模式 开/关"，
+# 给描写档另起整句正则＝新造第三族词面，本波不做（要做需她另裁词面）。
+#
+# 三态返回形状与开关面**不同**（那里是 `(mode, tier)`，这里是单枚模式串）：
+# - ``NARRATION_MODE_SPEECH`` / ``NARRATION_MODE_SCENE``＝轴上两值（引常量，不重抄字面量）；
+# - ``""``＝**收回钉**（reset：把这一格交回缺省，与"钉上 speech"在库里是两回事——
+#   前者库里没行、后者库里明明白白写着本人要 speech，`show` 要能分辨）；
+# - ``None``＝认不出（不猜档）。
+# ⚠ ``show`` 有意**不在表里**：只读查询拿到任何一格模式都等于"看一眼顺手把描写改了"
+# （与 `match_intimate_subcommand` 同一纪律）；它的词面真身住在命令面
+# `runtime/intimate_control.SHOW_SUBCOMMAND`（那里已声明过一次，这里再抄就是第二处声明位）。
+_NARRATION_SUBCOMMAND_TABLE: dict[str, str] = {
+    NARRATION_MODE_SPEECH: NARRATION_MODE_SPEECH,  # 只说出口的话（轴上缺省那一格）
+    NARRATION_MODE_SCENE: NARRATION_MODE_SCENE,  # 语言＋动作＋心理＋神态＋外貌全铺开
+    "reset": "",  # 收回钉：库里那两格一起清掉（无 TTL，见 `_narration_axis_reading`）
+}
+
+
+def match_narration_subcommand(arg: str) -> str | None:
+    """`/bot 描写` 的子命令参数串 → 描写档模式串；认不出返回 None。
+
+    输入＝调用方**已剥掉前缀**后剩下的参数串（与 `match_intimate_subcommand` 同口径，
+    前缀归命令面）。三态见上面那张表的注释块：两值 / ``""``（收回钉）/ ``None``
+    （认不出，**不猜**）。大小写不敏感、首尾空白容忍。
+    """
+    key = str(arg or "").strip().lower()
+    if not key:
+        return None
+    return _NARRATION_SUBCOMMAND_TABLE.get(key)
+
+
 
 
 # 确认话术（守岸人语气：温和、定性、不提协议细节——两档的回话都得让人看得出"档不同"，
@@ -341,6 +440,13 @@ INTIMATE_SOURCE_CONTENT_SIGNAL: str = "content_signal"  # L1/L2 强词越阈（�
 # 进档（达 `bot_content_route_l1_auto_min_tier` 那一档及以上），不是"名单内才给"。
 # 它与 master_love 同类：只给档、绝不换模型。
 INTIMATE_SOURCE_AFFINITY: str = "affinity_tier"
+# 描写档持久钉（2026-10-04 用户裁定 G-2「scene 并入既有那**一把**授予尺，不许长第二张
+# 成员表」）：这一枚答的是"这个人亲手把描写钉在了哪一格"，与"怎么进的亲密档"无关，
+# 所以它**只**进 `_INTIMATE_NARRATION_SOURCES`（叙述授予轴），
+# 不进换模型／TTL 豁免／缺省浅档／跨重启重钉那四张（钉了描写≠换了首跳、≠免 TTL、
+# ≠自动浅档、≠亲密档活过重启）。锁：`tests/test_narration_axis_command.py`
+# 的 `test_other_four_source_axes_are_untouched_by_the_new_member`。
+INTIMATE_SOURCE_NARRATION_PIN: str = "narration_pin"
 
 # 允许据此**更换真实首跳**的来源集合：ML 与好感度派生不在其中（用户裁定）。
 # 内容信号单列在案是有意的——「R-18/成人/性相关内容直切 grok-4.6」是 2026-09-16 的
@@ -371,15 +477,25 @@ _MAX_TTL_EXEMPT_SOURCES: frozenset[str] = frozenset(
 # 所以"进了亲密档"与"有权展开叙述"是两件事：`master_love`（名单派生）与
 # `affinity_tier`（好感度达档自动）这两支**只给档、给语气、给放行，不给描写**；
 # 要描写得由人亲手推动——下指令、管理员代全群钉，或内容信号自己跨了阈。
-# ⚠ 成员与 `_MODEL_SWITCH_SOURCES` 今天恰好同形，纯属巧合，**不得复用那一枚**：
-# 一枚答"要不要换真实首跳"，一枚答"要不要展开叙述"。两轴日后可能各自放宽（给 ML 免
+# ⚠ 成员与 `_MODEL_SWITCH_SOURCES` **曾经恰好同形**（本波之前三支全等），纯属巧合，
+# **不得复用那一枚**：一枚答"要不要换真实首跳"，一枚答"要不要展开叙述"。两轴日后可能各自放宽（给 ML 免
 # TTL 也好、给浅档换模型也好），复用会让一条裁定静默改写另一条例子——正是本波要防的
 # 「换了个档，结果文风全部都变了」（她 2026-09-28 原话，见 `NORMAL_NO_ACTION_INSTRUCTION`
 # 上方注释与 §53）。
+# 🔴 2026-10-04 G-2 之后本集合是 `_MODEL_SWITCH_SOURCES` 的**超集**（多出
+# `narration_pin`：钉了描写档**不**换模型）。结构锁
+# `tests/test_intimate_source_set_separation.py` 里"今天同形"那一枚等值断言据此**过期**
+# ——那是那条锁自己写明的用法（放宽必须红一次、要人确认是有意的轴分离，不是并枚）。
+# 改的是断言、不是尺：本席不动那把锁，交由主会话按裁定重锚。
 # ⚠ 取**白名单**形而不是"排除 ML/affinity"的黑名单形：未知来源（含 `INTIMATE_SOURCE_NONE`）
 # 一律不授予，与全仓 fail-closed 的口径一致。
 _INTIMATE_NARRATION_SOURCES: frozenset[str] = frozenset(
-    {INTIMATE_SOURCE_MANUAL, INTIMATE_SOURCE_ADMIN_PIN, INTIMATE_SOURCE_CONTENT_SIGNAL}
+    {
+        INTIMATE_SOURCE_MANUAL,
+        INTIMATE_SOURCE_ADMIN_PIN,
+        INTIMATE_SOURCE_CONTENT_SIGNAL,
+        INTIMATE_SOURCE_NARRATION_PIN,
+    }
 )
 
 
@@ -562,20 +678,341 @@ def _explicit_pin_person_key(session_key: str, config: Any = None) -> str:
     return _canonical_person_key(parsed.normalized, config)
 
 
+#: 称谓偏好库那枚配置键的**键名**（真身＝``config.py`` 字段声明与 ``PATH_REMAPPED_FIELDS``
+#: 名册；本文件只拿它去问中央解析口，**不落任何路径值**，路径缺省只住 config 一处）。
+#: 与 ``character/providers.py`` 用的是同一个键名——两处都只认名字、不认落点。
+_ADDRESSING_PREFERENCES_FIELD = "bot_addressing_preferences_db_path"
+
+
 def _explicit_pin_store(config: Any) -> Any:
     """标记所在的 per-person store（**复用进程级共享实例**，零第二连接、零第二把锁）。
 
     懒 import：``providers`` 会牵进 NoneBot/LLM 栈，只在配置真点名了这本库时才要它
     （见上面边界第 4 条）。任何失败回 None＝这条腿本轮不存在。
+
+    取径那几枚（席 remapseam，台账 P1 H-1／F-10）：判"这枚配置点没点这本库"**不再**用裸
+    ``getattr`` 拿字段原值，改问 ``config.resolve_runtime_data_field`` 那一处中央解析口
+    ——与 ``character/providers`` 的 store 取径同一把尺（两处各写一份时，"字段在册就安全"
+    这种假设一旦不成立，源码树就会在全量测试期间长出运行库＝10-02/10-04/10-05 三次现场）。
     """
-    raw_path = str(getattr(config, "bot_addressing_preferences_db_path", "") or "").strip()
-    if not raw_path:
-        return None
+    from plugins.bot_unified_runtime.config import resolve_runtime_data_field
     from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
         build_addressing_preference_store,
     )
 
+    if not resolve_runtime_data_field(config, _ADDRESSING_PREFERENCES_FIELD):
+        return None
     return build_addressing_preference_store(config)
+
+
+# ---------------------------------------------------------------- 描写档的钉（G-1～G-3）
+#
+# 裁定：描写档是**每人的持久钉**，缺省 ``speech``，``scene`` 走 G-2 那把唯一的授予尺。
+# 本节只做四件事，全都不长新账：
+#
+# - **存哪**：与 D-1 显式开档标记**同一行**（``addressing_preferences`` 的
+#   ``_EXPLICIT_PIN_SESSION_TYPE`` / ``_EXPLICIT_PIN_SESSION_ID`` 那一把三元组，
+#   owner `character/addressing.py`，两列 ALTER-if-missing）——同一个"他自己声明过的
+#   相处面"，不新建库、不加 ``BOT_*`` 键、不加第三张来源集合表。取 store 只经既有
+#   `_explicit_pin_store` 这一口（进程级共享、零第二连接）。
+# - **按谁**：`_narration_person_key` 是全仓唯一的取键口（读写同口 ⇒ 不会"写在 A 读在 B"，
+#   #33★/#68★ 那族"两形永不相交"的老坑）。键形**只准**出自中央件
+#   `session_keys.person_scope_key(平台域, 用户号)`（T-1 那条裁定的构造侧真身），平台写法
+#   归一只准用 `policy/roles.platform_domain_of`（本文件不写第四张别名表）；本人段先取
+#   `sender_id`，缺席才**拆**既有成员段（`split_member_session_key`／中央件
+#   `parse_session_key` 的 user_id 段）——**绝不**把拆出来的段经 `private_session_key`
+#   重拼成裸号（席 na-review B-1 的成因：TG 群键 `group_-1001_<uid>` 与 QQ 私聊裸键
+#   `<uid>` 会折成同一段＝两个平台上同号的陌生人共用一枚钉、谁也清不掉自己那枚）。
+#   平台事实**拿不到**时 fail-closed：只认 D-1 那一口（私聊会话键本身），群侧/成员键一律
+#   回空串＝这条腿本轮不存在，绝不把"未知平台"当通配去同时匹配两侧。
+#   并号仍走 `_canonical_person_key` 那一枚真身。⇒ **钉按人不按群**（G-3 的实现面：
+#   群作用域键 `group:<gid>` 压根没有本人段，读不出任何钉，所以管理员替整群拨的亲密档
+#   绝不广播描写档）。⚠ 但"按人"**不等于**"全局跟人走"：完整键形还有会话那一段
+#   （`_narration_store_scope`，I-2 裁定「换了会话就需要重新激发」）——人是这把锁的第二齿，
+#   不是唯一一齿。
+# - **谁能写**：`narration_write_allowed`——判据只这一枚（命令面只调它、不抄角色集合）。
+#   群侧要 admin/super_admin（与 `_manual_command_scope_key` 的管理员分支同一个角色面：
+#   群里"只有她自己开的"才算，普通成员恒 ``speech``）；非群侧本人自助，不吃角色门
+#   （G-3 收的是群侧，不是将整条命令关在管理员屋里；口径同 #66「自助偏好仅本人」）。
+# - **怎么判**：`_narration_axis_reading` 交出 ``(mode, source)`` 两格，优先级
+#   ①本轮明示 → ②本人持久钉（钉 speech 也算表态）→ ③亲密缺省（H-1＝甲，2026-10-04 晚
+#   「开'亲密'的话，就给 scene 场景」）→ ④缺省 ``speech``。**授予判据仍只在
+#   `grants_intimate_narration` 那一处**——本节一次都不调它，调用方拿
+#   ``grants_intimate_narration(narration_source)`` 就是唯一那一条路（无第二把尺）；
+#   ③只**选缺省**、不放宽授予：自动腿那两支（`master_love`／`affinity_tier`）交不进来源。
+#   ⚠ 模式必须**编码进来源**：``scene`` 交出授予集里那枚**新**来源
+#   （①②都记 `narration_pin`，绝不借用 `manual_command`——那枚是"亲密档
+#   怎么进来的"，借它等于没裁定就放宽授予，见 `_narration_axis_reading`）；③交出的是
+#   **她那一句"开亲密"自己的来源**（她的裁定把那句的效果定义成"同时给 scene"，
+#   如实记下≠借光；①②那条负面清单管的是"本轮说了描写"那一格），
+#   ``speech`` 交出 `INTIMATE_SOURCE_NONE`。
+#   反过来说＝"来源同一枚、授予却看模式"就是长了第二把尺，正是要防的那件事。
+# - **没有 TTL**（与紧挨着它的亲密档标记**不同**）：描写档钉一直活到本人 ``reset``，
+#   因为它是文风偏好而不是放行授权；`intimate_ttl_minutes` 管不到它，也不该管它。
+# - **全腿 fail-open**：读不到＝当没钉（落缺省 ``speech``＝少写，不是多写）；
+#   写失败**不改变本轮判定**（落库坏掉时那句明示照样生效，下一轮照旧回到钉的原值）。
+# - **线程口径**：与上面 D-1 那一节同——公开入口都在 `pipeline.offload_capability`
+#   的线程池里跑，每次触碰都是按主键的单行 SELECT/UPSERT；读发生在每轮合成
+#   `resolve_intimate_context` 时（一人一轮一行），写只发生在命令面上。
+
+
+def _narration_platform_domain(platform: Any) -> str:
+    """平台写法 → 平台域（唯一归一器＝`policy/roles.platform_domain_of`，本文件不另立表）。
+
+    认不出／拿不到／任何异常 ⇒ ``""``＝**fail-closed**：未知平台不继承任何已知平台的归属
+    数据（在册口径 `project-platform-scoped-privilege-judgment`，与 `resolve_roles` 同一把尺）。
+    懒 import：`policy/roles` 牵进 config/contracts 栈，只在真要取键时才要它（本模块
+    "不导入 NoneBot/LLM 栈"的头部承诺照旧成立），口径同 `narration_write_allowed`。
+    """
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
+            platform_domain_of,
+        )
+
+        return platform_domain_of(platform)
+    except Exception:  # noqa: BLE001 - 认不出平台域＝不放开（宁可读不到钉）。
+        return ""
+
+
+def _narration_person_uid(session_key: str, sender_id: str = "") -> str:
+    """本人段（**拆**而不**拼**）：先 `sender_id`，缺席才拆成员段／中央件 user_id 段。
+
+    ``||u:`` 段若不去掉，中央件会把"456||u:456"整个当 user_id 交回来，所以成员派生键先过
+    `split_member_session_key`。``unknown`` 兜底段一律当"没有这个人"，绝不把两个陌生人
+    抬进同一只桶。群作用域键（``group:<gid>``）没有本人段 ⇒ 空串，这正是 G-3 的落点。
+    """
+    uid = str(sender_id or "").strip()
+    if not uid:
+        split = split_member_session_key(session_key)
+        uid = split[1] if split is not None else parse_session_key(session_key).user_id
+    if not uid or uid == UNKNOWN_SENDER:
+        return ""
+    return uid
+
+
+def _narration_person_key(
+    session_key: str,
+    sender_id: str = "",
+    config: Any = None,
+    *,
+    platform: Any = "",
+) -> str:
+    """会话键（＋发送者号＋**平台事实**）→ 描写档钉的本人键；拿不到本人段一律回空串。
+
+    两支，次序是刻意的：
+
+    ① **平台域认得出来**（接线面交了 `message.platform`）⇒ 键形只出自中央件
+    `person_scope_key(域, 用户号)`：私聊与群侧因此折进**同一个人**那一格（B-2 的推论——
+    她在 TG 私聊钉的档，她自己在 TG 群里也读得到），而 QQ 的同号者落在另一只桶
+    （B-1 就此闭合：跨平台同号既互不可见，也各自 reset 得掉自己的）。
+    ② **平台域认不出来**（缺省调用面／合成消息／未接线的读点）⇒ 绝不反解：回落到 D-1
+    那一口 `_explicit_pin_person_key`，只认私聊会话键本身，群侧/成员键一律空串。
+    🔴 这里**不许**用空域段兜底（`person_scope_key("", uid)` 会把两个都拿不到平台事实的
+    陌生人重新折进同一只 ``":<uid>"`` 桶＝换个姿势复发 B-1），也不许让"未知"当通配。
+
+    末了一道**并号**（`config` 缺席＝不并）：同一个人的多个号收成同一把键，读写都从这里出。
+    """
+    uid = _narration_person_uid(session_key, sender_id)
+    domain = _narration_platform_domain(platform)
+    if domain:
+        if not uid:
+            return ""
+        return _canonical_person_key(person_scope_key(domain, uid), config)
+    return _explicit_pin_person_key(session_key, config)
+
+
+def narration_write_allowed(*, session_type: str, sender_roles: Any) -> bool:
+    """描写档**写腿**的作用域门（唯一判据处；命令面只准调它，不许自己抄角色集合）。"""
+    if str(session_type or "").strip().lower() != "group":
+        return True  # 非群侧＝本人自助（G-3 只收群侧）
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
+            ROLE_ADMIN,
+            ROLE_SUPER_ADMIN,
+        )
+
+        roles = {str(role).strip().lower() for role in (sender_roles or [])}
+    except Exception:  # noqa: BLE001 - 认不出角色面＝不放开（宁缺毋滥）
+        return False
+    return bool(roles & {ROLE_ADMIN, ROLE_SUPER_ADMIN})
+
+
+def _narration_store_scope(session_key: str) -> tuple[str, str]:
+    """描写钉三元组里的**会话段** `(session_type, session_id)`（I-2，2026-10-04 21:0x 裁定）。
+
+    她原话：「'跟着人走'的意思就是，在这个会话里面跟着这个人走……换了会话就需要重新激发。
+    比如在群 A 用户 A 说'开场景模式'；到了群 B，用户 A 就还得再问一次、再开一次。」
+    ⇒ 钉的完整键形＝**(平台域, 会话, 这个人)**：人那一条腿住 `_narration_person_key`，
+    会话这一条腿就是本函数，两腿缺一即"开一次处处跟随"或"同群两人同等待遇"。
+    落点选库里**已有的** `(session_type, session_id)` 两列（表的主键本来就是这三段），
+    零新表零新列；键形只准出自中央件：成员派生键先 `split_member_session_key` **拆**出基键
+    （读点交进来的是 `route_key`），再 `parse_session_key` 认形，禁自拼第四形。
+
+    - 群 ⇒ ``("group", 群号)``：同一个人换群＝换桶（她要的"重开一次"）。
+    - 私聊／控制台／认不出 ⇒ 沿用 ``("private", "")`` 那一格：私聊这一路"会话"就是这个人，
+      键形不必变 ⇒ **她私聊里已有的钉原地不动，零迁移**。
+    """
+    key = str(session_key or "")
+    split = split_member_session_key(key)
+    if split is not None:
+        key = split[0]
+    parsed = parse_session_key(key)
+    if parsed.kind == KIND_GROUP and parsed.group_id:
+        return "group", str(parsed.group_id)
+    return _EXPLICIT_PIN_SESSION_TYPE, _EXPLICIT_PIN_SESSION_ID
+
+
+def read_narration_pin(
+    session_key: str,
+    *,
+    sender_id: str = "",
+    config: Any = None,
+    platform: Any = "",
+) -> str:
+    """库里有哪枚描写档钉（``""``＝没钉过／读不出／没配这本库）；原样交回、不猜档。
+
+    合法性由调用方在**读出来之后**再认一次（`NARRATION_MODES` 那一处词表），与
+    `get_intimate_pin` 同一口径 ⇒ 存储层不含判据。`platform`＝平台事实（缺席＝取键口
+    fail-closed，见 `_narration_person_key`）。
+    """
+    try:
+        person_key = _narration_person_key(session_key, sender_id, config, platform=platform)
+        if not person_key:
+            return ""
+        store = _explicit_pin_store(config)
+        if store is None:
+            return ""
+        session_type, session_id = _narration_store_scope(session_key)
+        mode, _updated_at = store.get_narration_pin(
+            session_type=session_type,
+            session_id=session_id,
+            sender_id=person_key,
+        )
+    except Exception:  # noqa: BLE001 - 读不到＝当没钉，落缺省。
+        return ""
+    return mode
+
+
+def write_narration_pin(
+    session_key: str,
+    *,
+    mode: str,
+    sender_id: str = "",
+    config: Any = None,
+    platform: Any = "",
+) -> bool:
+    """钉下「此人要 ``mode`` 这一格描写」（覆盖旧值；时刻取墙钟）。轴外的值拒收。
+
+    键**恒随"那个会话里的那个人"**走（会话段＝`_narration_store_scope`，人段＝
+    `sender_id`／会话键的本人段），不随调用方是谁——所以"管理员替旁人钉"落的是旁人
+    在**该会话**里的那一格，绝不会像 T-1 那样悄悄落回操作者自己名下。
+    """
+    if mode not in NARRATION_MODES:
+        return False
+    try:
+        person_key = _narration_person_key(session_key, sender_id, config, platform=platform)
+        if not person_key:
+            return False
+        store = _explicit_pin_store(config)
+        if store is None:
+            return False
+        session_type, session_id = _narration_store_scope(session_key)
+        store.set_narration_pin(
+            session_type=session_type,
+            session_id=session_id,
+            sender_id=person_key,
+            mode=mode,
+            updated_at=float(time.time()),
+        )
+    except Exception:  # noqa: BLE001 - 记不住也不影响本轮已定的判定。
+        return False
+    return True
+
+
+def clear_narration_pin(
+    session_key: str,
+    *,
+    sender_id: str = "",
+    config: Any = None,
+    platform: Any = "",
+) -> bool:
+    """收回钉（``reset``）：只清那两格，**不删整行**（称谓／性别自述／关系档不是这条指令说过的话）。
+
+    会话段与写腿**同轴**（`_narration_store_scope`）：不同轴的话，"在群 B reset"会去清
+    私聊那一格、群里她那句「别铺开了」当场失效＝写了收不掉的一族（I-2 同批）。
+    """
+    try:
+        person_key = _narration_person_key(session_key, sender_id, config, platform=platform)
+        if not person_key:
+            return False
+        store = _explicit_pin_store(config)
+        if store is None:
+            return False
+        session_type, session_id = _narration_store_scope(session_key)
+        store.clear_narration_pin(
+            session_type=session_type,
+            session_id=session_id,
+            sender_id=person_key,
+        )
+    except Exception:  # noqa: BLE001 - fail-open。
+        return False
+    return True
+
+
+def _narration_axis_reading(
+    *,
+    session_key: str,
+    sender_id: str = "",
+    config: Any = None,
+    turn_narration_mode: Any = "",
+    platform: Any = "",
+    intimate_scene_source: str = "",
+) -> tuple[str, str]:
+    """优先级四格 → ``(narration_mode, narration_source)``；授予与否由调用方问唯一那把尺。
+
+    ①本轮明示（调用方刚认下来的那句，走开关面同一条"本轮"路径）；②本人持久钉（**两格都
+    算表态**：钉 scene 交出 scene，钉 speech 交出 speech——H-1＝甲 之后"没表态"与"表态
+    只说话"必须分得开，否则她那句 `/bot 描写 speech` 会被下面的亲密缺省顶掉）；
+    ③亲密缺省（H-1＝甲，2026-10-04 晚裁定「开'亲密'的话，就给 scene 场景」：亲手把亲密档
+    推上去的那一轮，没在描写轴上说过话也拿到 ``scene``）；④缺省 ``speech``。
+    四格都只**转述**，本节一次都不调授予尺。
+    🔴 ``scene`` 交出的来源必须在授予面上：①②两格交 `INTIMATE_SOURCE_NARRATION_PIN`，
+    ③交调用方送来的**那一支亲密来源串本身**（`intimate_scene_source`，空串＝这一格不存在）。
+    不许拿 `manual_command` **蒙混①②那一格**（2026-10-04 裁定 G-2 的负面清单，席 narrlock
+    点名过的"假保证"）：本轮那句**说的是描写**，把它记成"她开了亲密"就把两件事混成一件事了；
+    而③这一格答的**本来就不是描写**——她说的是"开亲密"，而她的裁定把这一句的效果定义成
+    "同时给 scene"，所以这里交出她那句亲密的来源是**如实记录**，不是借光。
+    🔴 ③**不放宽授予面**：那一格只在这份来源串已经在 `_INTIMATE_NARRATION_SOURCES` 里时
+    才由调用方交进来（Master Love 名单派生／好感度达档自动都不在，故自动腿的亲密照旧
+    只说话），而**最终授权仍只由唯一那把尺**在调用方判一次：`grants_intimate_narration(
+    narration_source)`。本节读那张表**只为选缺省**，不产第二个"能不能写"的答案——
+    尺若日后收紧，③交出的 scene 会在注入缝（`chat.py:resolve_narration_axis`）当场收回
+    ``speech``＝fail-closed，不会长出第二通路。
+    ``speech`` 交出 `INTIMATE_SOURCE_NONE`（白名单外＝不授予），于是"模式编码进来源"
+    始终成立：**要问能不能铺开写，只准 `grants_intimate_narration(narration_source)`**，
+    全仓不设第二条判据。
+    本轮那一格**认不出＝不表态**（`normalize_narration_mode` 会落缺省，这里偏偏不能用
+    它：拿缺省当"本轮说了"会把持久钉静默顶掉），所以直接对 `NARRATION_MODES` 判成员。
+    """
+    raw_turn = str(turn_narration_mode if turn_narration_mode is not None else "").strip().lower()
+    if raw_turn in NARRATION_MODES:
+        return (
+            (raw_turn, INTIMATE_SOURCE_NARRATION_PIN)
+            if raw_turn == NARRATION_MODE_SCENE
+            else (raw_turn, INTIMATE_SOURCE_NONE)
+        )
+    pinned = read_narration_pin(
+        session_key, sender_id=sender_id, config=config, platform=platform
+    )
+    if pinned == NARRATION_MODE_SCENE:
+        return NARRATION_MODE_SCENE, INTIMATE_SOURCE_NARRATION_PIN
+    if pinned in NARRATION_MODES:
+        # 钉过 speech＝她表过态（收回路），压过③那一格；库里漂出轴外的值不算表态。
+        return NARRATION_MODE_SPEECH, INTIMATE_SOURCE_NONE
+    if str(intimate_scene_source or "").strip():
+        return NARRATION_MODE_SCENE, str(intimate_scene_source).strip()
+    return NARRATION_MODE_DEFAULT, INTIMATE_SOURCE_NONE
+
 
 
 # ---------------------------------------------------------------- 引擎
@@ -612,6 +1049,25 @@ def _pin_tier(state: _SessionState) -> str:
     """ intimate 钉的档位读数（唯一取数口）：没记档就按来源派生缺省档。"""
     return state.pin_tier or _tier_for_source(_pin_source(state))
 
+
+def _is_whole_group_bucket(key: Any) -> bool:
+    """这把键**自己就是**整群共享桶吗（一把桶对全群所有人，不区分发言者）。
+
+    构造只准经中央件 ``session_keys.group_scope_key``——与写侧（管理员上钉）和
+    查钉侧（``_group_pin_state``）同一个真身，判"是不是全群那一桶"不许长第二形。
+    🔴 但**必须先认成员段**：``group_scope_key`` 对 ``group:<gid>||u:a`` 是原样回吐
+    （它把 ``||u:`` 之后的整段当成群号，拆不出第二层），只比"收拢后等不等自己"会把
+    **本人那一桶**误判成全群桶（实测：`test_group_member_command_scopes_to_self` 因此
+    把亲手说了「亲密模式 开」的 A 自己关回 speech＝少写她要点的那一格）。判据两句：
+    带 ``_MEMBER_SCOPE_SEP`` ⇒ 那是"这个人"的桶；其余形态收拢后与自身相等 ⇒ 全群桶
+    （``group:<gid>``、per_user 关闭时路由直接读的那把键）；逐成员下划线形 ``group_<gid>_<uid>``
+    与私聊/控制台键一律判否。
+    """
+    text = str(key or "")
+    if not text or _MEMBER_SCOPE_SEP in text:
+        return False
+    scoped = group_scope_key(text)
+    return bool(scoped) and scoped == text
 
 
 def _synchronized(method: Any) -> Any:
@@ -903,6 +1359,10 @@ class ContentRouteEngine:
         ②「亲密模式分深浅，「开」只给浅档」⇒ 看 ``tier``。
         v21r5：成员派生键先查群级钉（管理员全群开关）——群 ON→全员 intimate；
         群 OFF 不压制成员个人档（开关一个人自主，设计裁定）。
+        ``from_group_pin``：这一轮的亲密裁决**出自整群那一桶**（全群开关，或 per_user
+        关闭时路由直接读的那把群键）。存在只为一条边界——描写轴③格「开亲密即给 scene」
+        **不跟着广播**（G-3，2026-10-04 晚「别人找你依旧是 speech」）：本引擎只如实报
+        "答案从哪把桶取的"，判不判广播住在 ``resolve_intimate_context``，此处不产第二个"能不能写"。
         """
         try:
             knobs = self._knobs(config)
@@ -912,6 +1372,7 @@ class ContentRouteEngine:
                     "head_models": [],
                     "source": INTIMATE_SOURCE_NONE,
                     "tier": INTIMATE_TIER_NONE,
+                    "from_group_pin": False,
                 }
             now = float(self.clock())
             group_state = self._group_pin_state(session_key, knobs=knobs, now=now)
@@ -927,6 +1388,7 @@ class ContentRouteEngine:
                     ),
                     "source": group_source,
                     "tier": group_tier,
+                    "from_group_pin": True,
                 }
             state = self._state(
                 session_key,
@@ -946,6 +1408,7 @@ class ContentRouteEngine:
                 ),
                 "source": source,
                 "tier": tier,
+                "from_group_pin": _is_whole_group_bucket(session_key),
             }
         except Exception:  # noqa: BLE001 - fail-open。
             return {
@@ -953,6 +1416,7 @@ class ContentRouteEngine:
                 "head_models": [],
                 "source": INTIMATE_SOURCE_NONE,
                 "tier": INTIMATE_TIER_NONE,
+                "from_group_pin": False,
             }
 
     @_synchronized
@@ -1361,6 +1825,8 @@ def resolve_intimate_context(
     sender_id: str = "",
     session_key: str = "",
     config: Any = None,
+    turn_narration_mode: str = "",
+    platform: Any = "",
 ) -> dict[str, Any]:
     """v21r5 亲密上下文合成单一事实源（裁定：双开关 + 1h TTL + 四名单）。
 
@@ -1370,12 +1836,34 @@ def resolve_intimate_context(
       ∧ 用户级状态（群级钉→全员 / 成员键个人钉与滞回 / TTL 惰性过期）。
 
     返回 {"eligible": bool, "route_key": str, "mode": "intimate"|"normal",
-    "source": str}；``route_key``=群聊且 per_user 开启时的成员派生键（个人级状态载体），
+    "source": str, "tier": str, "narration_mode": str, "narration_source": str}；
+    ``route_key``=群聊且 per_user 开启时的成员派生键（个人级状态载体），
     否则原会话键。``source`` 回答"为什么亲密"（`INTIMATE_SOURCE_*`，未进档=空串）——
     2026-09-24 用户裁定 Master Love 只给档、不改默认模型，判据就是这个字段，
     而它的真身只有引擎里 `_SessionState.pin_source` 一处（本函数只转述、不再判一次）。
-    fail-open：异常时 eligible=False、键回退原会话键、mode=normal、source=""
-    （安全侧，绝不因合成失败放大亲密面）。
+
+    🔴 2026-10-04 G-1～G-3 加的**两格描写档**（`narration_mode` / `narration_source`）
+    与上面那些字段**不同轴**，读法要分清：
+    - 它们**不看 `eligible`**，①②两格也**不看 `mode`**：描写档是文风偏好，普通模式同样能拿
+      ``scene``（G-1），所以这一轴独立合成、永远在场（缺省 ``speech``）；只有③那一格
+      读 `mode`（H-1＝甲，见下面优先级那一行）；
+    - ``narration_source`` 是**交给唯一那把尺的来源串**——要"能不能铺开写"只准
+      问 `grants_intimate_narration(ctx["narration_source"])`，全仓不设第二条判据
+      （`source`／`tier` 那一族回答的是"怎么进的亲密档／多深／换不换首跳"，
+      与这一格无关，别拿它们当尺）。
+    - ``turn_narration_mode``＝**本轮明示**（调用方刚在命令面认下来的那一句，可缺省
+      空串＝本轮没说）。优先级＝本轮 > 本人持久钉 > **亲密缺省**（H-1＝甲：亲手推上亲密档
+      且那一支来源在授予面上 ⇒ 没表态也拿到 ``scene``）> 缺省 ``speech``，详见
+      `_narration_axis_reading` 那一节。
+    - ``platform``＝**平台事实**（``message.platform``，qq/telegram/…；可缺省空＝拿不到）。
+      描写档的钉按 (平台域, 用户号) 归属 ⇒ 这一枚**决定读得到读不到**：缺席时取键口
+      fail-closed（只认私聊会话键本身，群侧读不出钉），🔴 读写两面必须**同一批**接同一个
+      平台事实，否则"写在 ``qq:<uid>``、读在 ``<uid>``"＝#33★ 那族两形永不相交（宁缺毋串，
+      方向上是少写、不是串档）。
+
+    fail-open：异常时 eligible=False、键回退原会话键、mode=normal、source=""、
+    narration_mode=缺省 speech、narration_source=""（安全侧，绝不因合成失败放大亲密面
+    或放大描写面）。
     """
     base_key = str(session_key or "").strip()
     try:
@@ -1398,17 +1886,53 @@ def resolve_intimate_context(
         mode = MODE_NORMAL
         source = INTIMATE_SOURCE_NONE
         tier = INTIMATE_TIER_NONE
+        from_group_pin = False
         if eligible:
             verdict = engine.route_verdict(route_key, config)
             mode = str(verdict.get("mode", MODE_NORMAL))
             source = str(verdict.get("source", INTIMATE_SOURCE_NONE) or INTIMATE_SOURCE_NONE)
             tier = str(verdict.get("tier", INTIMATE_TIER_NONE) or INTIMATE_TIER_NONE)
+            from_group_pin = bool(verdict.get("from_group_pin"))
+        # 描写档那一轴自成一体：键取**合成后的作用域键**（群侧才是"这个人"的那把桶），
+        # 但不吃 `eligible`——文风门与内容准入门是两件事（G-1 要的就是普通模式也写得开）。
+        # 🔴 唯一一处**读表**（不是第二把尺）：H-1＝甲（2026-10-04 晚「开'亲密'的话，就
+        # 给 scene 场景」）要的是"亲手推上亲密档的那一轮，描写轴的缺省跟着走"，所以这里
+        # 把"这一支亲密来源是不是人亲手推动的那几支"算成一枚**缺省选择器**送给轴心。
+        # 判据仍只有 `_INTIMATE_NARRATION_SOURCES` 那一张表（本模块就是它的家），而
+        # **能不能真的铺开写**照旧只在调用方问一次 `grants_intimate_narration(narration_source)`
+        # ⇒ 自动腿（`master_love`／`affinity_tier`，表外）交空串＝缺省仍是 speech，
+        # 尺日后收紧时③那一格当场收回（详见 `_narration_axis_reading` 的 docstring）。
+        # 🔴 **`from_group_pin` 那一路必须交空串**（G-3 同批的第二句「别人找你依旧是 speech」）：
+        # 管理员/超管拨的是"开关二＝全群生效"那把群级钉时，裁决出自整群那一桶，桶里没有
+        # "本人"这一段——③ 若照发，就等于把描写档**广播**给全群每个没开过口的人。描写档
+        # 按人（钉按人、缺省也按人）：她自己在群里/私聊里那句「开亲密」落的是本人键
+        # （来源 `manual_command`，见 chat 侧 `_manual_pin_source` 与 `_is_group_scoped_manual_key`），
+        # 那一支照旧吃到 scene。收口＝宁少不增多：少了她补一句 `/bot 描写 scene`，多了替旁人做主。
+        intimate_scene_source = (
+            source
+            if (
+                mode == MODE_INTIMATE
+                and not from_group_pin
+                and source in _INTIMATE_NARRATION_SOURCES
+            )
+            else INTIMATE_SOURCE_NONE
+        )
+        narration_mode, narration_source = _narration_axis_reading(
+            session_key=route_key or base_key,
+            sender_id=str(sender_id or ""),
+            config=config,
+            turn_narration_mode=turn_narration_mode,
+            platform=platform,
+            intimate_scene_source=intimate_scene_source,
+        )
         return {
             "eligible": eligible,
             "route_key": route_key,
             "mode": mode,
             "source": source,
             "tier": tier,
+            "narration_mode": narration_mode,
+            "narration_source": narration_source,
         }
     except Exception:  # noqa: BLE001 - fail-open：安全侧收口。
         return {
@@ -1417,6 +1941,8 @@ def resolve_intimate_context(
             "mode": MODE_NORMAL,
             "source": INTIMATE_SOURCE_NONE,
             "tier": INTIMATE_TIER_NONE,
+            "narration_mode": NARRATION_MODE_DEFAULT,
+            "narration_source": INTIMATE_SOURCE_NONE,
         }
 
 

@@ -42,6 +42,13 @@ def make_project(tmp_path: Path, *, with_qx: bool = True) -> Path:
         qx_dir = root / "plugins" / "bot_unified_runtime" / "domains" / "weather" / "assets"
         qx_dir.mkdir(parents=True)
         (qx_dir / "qx.json").write_text("{}", encoding="utf-8")
+    # 2026-10-04 第 15 项 entry_chain：本件的假根必须供得起那一格的「真身在不在」前提——
+    # 探针真身缺席＝该项判红＝整份预检 exit 1，会把「其余项全绿」的既有判据一并带走。
+    # 占位件足够：本件全程把 run_cmd 注掉，真探针由 tests/test_pre_restart_entry_chain.py
+    # 在仓外副本里真跑。
+    probe_dir = root / "scripts"
+    probe_dir.mkdir(parents=True, exist_ok=True)
+    (probe_dir / "import_chain_probe.py").write_text("# 假根占位件（真探针在仓外副本里跑）\n", encoding="utf-8")
     (root / ".env").write_text(
         "\n".join(
             [
@@ -82,10 +89,41 @@ def make_kb(db_path: Path, *, chunks: int, embedded: int) -> None:
 def all_subproc_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     """三个子进程检查（persona/hash/docsync/ruff）全部注入为 exit 0."""
 
-    def fake_run(args, cwd, timeout=600):
-        return 0, "[绿] OK", ""
+    monkeypatch.setattr(prc, "run_cmd", _honest_run)
 
-    monkeypatch.setattr(prc, "run_cmd", fake_run)
+
+#: 探针 ``--json`` 的真身形状（格名取自 scripts/import_chain_probe.py 的 CELL_MODULES，
+#: status 取值照该文件的 ``OK = "OK"``）——第 15 项 entry_chain 读的就是这些字段。
+_ENTRY_CHAIN_PROBE_JSON = json.dumps(
+    {
+        "root": "",
+        "setup": "",
+        "cells": [
+            {"cell": "plugins.bot_unified_runtime.config", "status": "OK"},
+            {"cell": "plugins.bot_unified_runtime", "status": "OK"},
+        ],
+        "plugins": None,
+    },
+    ensure_ascii=False,
+)
+
+
+def _honest_run(args: list[str], cwd: Path, timeout: int = 600) -> tuple[int, str, str]:
+    """子进程替身：判它绿之前，先交得出真身会给得出的读数。
+
+    2026-10-04 ``seat-gatefix`` 洞1 把 entry_chain 的判据收成「rc=0 **且**有结构化读数」
+    （rc=0 只算必要条件）：散文 ``"[绿] OK"`` 从此＝``unparseable``＝红。这正是门要防的形态
+    （一把只会宣称成功的回显），所以该改的是**替身**、不是地板。两路各自照实：
+    ①探针那路交回可解析 --json + 两格 ``status=OK``（本件全离线，真探针只在仓外副本跑，
+    见 tests/test_pre_restart_entry_chain.py）；②``git status`` 在 tmp_path 假根上按定义
+    就是 rc=128（不是 git 检出），替身不再把它洗成 rc=0——否则 entry_chain 会谎报
+    「plugins/** 无 tracked-modified 模块（工作树与 HEAD 同码）」。
+    """
+    if "import_chain_probe" in " ".join(args):
+        return 0, _ENTRY_CHAIN_PROBE_JSON, ""
+    if args[:2] == ["git", "status"]:
+        return 128, "", "fatal: not a git repository（假根按定义不是检出）"
+    return 0, "[绿] OK", ""
 
 
 @pytest.fixture(autouse=True)
@@ -330,6 +368,11 @@ def test_main_exit_code_and_json_structure(monkeypatch: pytest.MonkeyPatch, tmp_
     def ruff_fail(args, cwd, timeout=600):
         if "ruff" in args:
             return 1, "E501 line too long", ""
+        if "import_chain_probe" in " ".join(args):
+            # 2026-10-04 第 15 项 entry_chain 落地：本件的「只有 ruff 该红」前提要求入口链
+            # 报绿。替身给不出真链证据（本件全离线），所以交回**可解析的空 cells**——
+            # 该项自己的纪律是「一格都没跑＝没有证据＝红」，故这里必须给一格真读数。
+            return 0, json.dumps({"cells": [{"cell": "plugins.bot_unified_runtime", "status": "OK"}]}), ""
         return 0, "[绿] OK", ""
 
     monkeypatch.setattr(prc, "run_cmd", ruff_fail)

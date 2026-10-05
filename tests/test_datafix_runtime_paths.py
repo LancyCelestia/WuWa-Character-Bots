@@ -22,9 +22,12 @@ usage_report_state.json。根因是三类入口绕过 BOT_RUNTIME_DATA_DIR 重�
 from __future__ import annotations
 
 import ast
+import importlib
+import inspect
 import os
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -532,4 +535,177 @@ def test_auditor_bites_when_a_live_site_drops_its_isolation(tmp_path: Path) -> N
     assert any("没传隔离根" in line for line in off), f"缝关掉后尺子没咬住：{off}"
     on = _audit_store_injection(staged, isolation_active=True)
     assert on == [], f"缝开着却仍报这族构造点＝中央缝没真正兜底（读数={on}）"
+
+
+# ===========================================================================
+# D 组（2026-10-04 seat-pathguard）：**绝对路径腿**——缝的第二处缺口
+# ===========================================================================
+# A/B/C 三组量的是「相对 data/ 值按 env 解析」那条路：conftest L1 把 env 挤成隔离根
+# ⇒ 相对值天然落隔离根。缺口在**读数本身已经是绝对路径**的那一支：
+#   ① ``runtime_path()`` 的绝对分支 ``return path.resolve()``——判定件一个字没问；
+#   ② ``config.runtime_data_root_of`` / ``remap_runtime_data_paths``——合并/装配层
+#      交进来的绝对读数被当终值，同样没问判定件。
+# 已实现的后果（2026-10-04 现算）：一枚测量夹具往**生产**
+# ``ChatBot_Runtime\data\addressing_preferences.sqlite3``（她跨重启亲密称谓的私库）
+# 插了一条真行——它的「只重映射相对 data/ 路径」过滤器永不相交，因为路径早就是绝对的。
+# 本组只判**解析出的字符串**：不 import store、不建目录、不开库，且逐条核对生产根
+# 目录清单前后一致（`_live_root_listing`）＝本锁自己绝不制造第二起事故。
+
+#: 事故落点的文件名（生产私库；本组只拿它拼字符串）。
+PRODUCTION_STORE_TAIL = "addressing_preferences.sqlite3"
+
+
+def _live_root_listing() -> tuple[str, ...] | None:
+    """生产数据根的目录清单快照（只读）：缺席检出返回 None（前后同为 None 即未动）。"""
+    target = _forbidden_roots()[0]
+    return tuple(sorted(os.listdir(target))) if target.is_dir() else None
+
+
+def _assert_live_root_untouched(before: tuple[str, ...] | None) -> None:
+    assert _live_root_listing() == before, "本用例在生产数据根里创建了东西（越界写）"
+
+
+def _arm_refuse_mode(monkeypatch: pytest.MonkeyPatch) -> tuple[Path, ...]:
+    """把判定件装配成「测试进程 + refuse（缺省态）」：逐枚显式设，不蹭环境运气。"""
+    roots = _forbidden_roots()
+    monkeypatch.setenv(runtime_paths.TEST_PROCESS_ENV, "1")
+    monkeypatch.setenv(runtime_paths.TEST_RUNTIME_GUARD_MODE_ENV, runtime_paths.GUARD_MODE_REFUSE)
+    monkeypatch.setenv(
+        runtime_paths.TEST_FORBIDDEN_ROOTS_ENV, os.pathsep.join(str(root) for root in roots)
+    )
+    monkeypatch.setenv(
+        runtime_paths.TEST_RUNTIME_DATA_DIR_ENV, str(Path(tempfile.gettempdir()) / "pg-seat-unused")
+    )
+    return roots
+
+
+def test_runtime_path_refuses_absolute_production_rooted_value(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """①缺口：测试进程把**绝对**生产落点喂给 ``runtime_path`` ⇒ 必须拒，不许原样放行。"""
+    violation = _seam("RuntimeIsolationViolation")
+    roots = _arm_refuse_mode(monkeypatch)
+    before = _live_root_listing()
+    target = roots[0] / PRODUCTION_STORE_TAIL
+    with pytest.raises(violation):
+        runtime_path(target)
+    _assert_live_root_untouched(before)
+
+
+def test_config_remap_refuses_absolute_production_rooted_field(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """②缺口（字段面）：数据根安全、但**某枚路径字段本身**是生产根下的绝对值 ⇒ 拒。
+
+    这是测量夹具那次的形状：它的过滤器只盯 ``data/`` 相对写法，绝对读数直接成了终值。
+    """
+    violation = _seam("RuntimeIsolationViolation")
+    from plugins.bot_unified_runtime.config import Config
+
+    roots = _arm_refuse_mode(monkeypatch)
+    before = _live_root_listing()
+    poisoned = str(roots[0] / PRODUCTION_STORE_TAIL)
+    with pytest.raises(violation):
+        Config(bot_runtime_data_dir=str(tmp_path), bot_addressing_preferences_db_path=poisoned)
+    _assert_live_root_untouched(before)
+
+
+def test_config_remap_refuses_a_production_data_root(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """②缺口（根面）：测试进程把 ``bot_runtime_data_dir`` 直接设成生产根 ⇒ 拒。
+
+    ``.env`` 那枚读数就是生产根；任何「按盘上声明原样装载」的测试构造点都走这条腿，
+    于是整张路径名册一起指向生产——比单枚字段更狠，必须同一条判定件拦住。
+    """
+    violation = _seam("RuntimeIsolationViolation")
+    from plugins.bot_unified_runtime.config import Config
+
+    roots = _arm_refuse_mode(monkeypatch)
+    before = _live_root_listing()
+    with pytest.raises(violation):
+        Config(bot_runtime_data_dir=str(roots[0]))
+    _assert_live_root_untouched(before)
+
+
+def test_config_side_consults_the_single_judge() -> None:
+    """结构锁：config 侧只**问**那唯一判定件，不抄第二份判据；取用口瞎了要当场红。
+
+    ``_test_runtime_root_judge()`` 返回 None 的两种含义必须分开：骨架最小仓（判定件
+    文件本身缺席，conftest L1 同一口径放行）＝可接受；真树里 import 失败被 try/except
+    洗成 None＝「全树绿、库被写了」的静默形态 ⇒ 本腿红。
+    """
+    judge = _seam("guard_test_runtime_root")
+    config_module = importlib.import_module("plugins.bot_unified_runtime.config")
+    accessor = getattr(config_module, "_test_runtime_root_judge", None)
+    if accessor is None:
+        pytest.fail("config.py 没有 _test_runtime_root_judge 取用口 ⇒ 绝对腿仍无人判定")
+    if runtime_paths.__file__ and (PROJECT_ROOT / "scripts" / "runtime_paths.py").is_file():
+        assert accessor() is judge, (
+            f"config 侧问到的不是唯一判定件（拿到={accessor()}）⇒ 判据出现第二副本或取用口已瞎"
+        )
+    resolver_source = inspect.getsource(runtime_paths.runtime_path)
+    guard_branch_calls: set[str] = set()
+    for node in ast.walk(ast.parse(resolver_source)):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        if not (isinstance(test, ast.Call) and getattr(test.func, "attr", "") == "is_absolute"):
+            continue
+        for call in ast.walk(node):
+            if isinstance(call, ast.Call):
+                callee = call.func.id if isinstance(call.func, ast.Name) else getattr(call.func, "attr", "")
+                if callee:
+                    guard_branch_calls.add(callee)
+    assert guard_branch_calls, "runtime_path 里读不到绝对分支 ⇒ 尺已瞎（形状改了）"
+    assert "guard_test_runtime_root" in guard_branch_calls, (
+        f"runtime_path 的绝对分支不再问判定件（该分支调用={sorted(guard_branch_calls)}）⇒ ①缺口复发"
+    )
+
+
+def test_absolute_leg_is_inert_without_the_test_marker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """生产方向锁（与 D1–D3 反向）：标记缺席 ⇒ 绝对生产落点**逐字**照旧放行。
+
+    她的运行时真的住在这枚根里：判定件在未装配时必须原样返回，且 config 侧不得改写
+    读数（今天 ``runtime_data_root_of`` 返回未 resolve 的 ``Path``、字段值＝
+    ``str(data_root / tail)``，改一个字都会漂出哈希/链接门）。
+    """
+    roots = _forbidden_roots()
+    monkeypatch.delenv(runtime_paths.TEST_PROCESS_ENV, raising=False)
+    before = _live_root_listing()
+    target = roots[0] / PRODUCTION_STORE_TAIL
+    assert runtime_path(target) == target, "非测试进程里判定件改了落点＝越权改生产语义"
+
+    from plugins.bot_unified_runtime.config import Config
+
+    config = Config(bot_runtime_data_dir=str(roots[0]))
+    assert config.bot_runtime_data_dir == str(roots[0])
+    assert config.bot_addressing_preferences_db_path == str(target), "生产缺省落点漂了"
+    assert config.bot_reminder_db_path == str(roots[0] / "reminders.sqlite3"), "相对名册读数漂了"
+    assert _live_root_listing() == before, "装载一次就在生产根里建了东西"
+
+
+def test_runtime_path_redirect_moves_absolute_value_but_keeps_its_tail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """redirect 态（在册只读对照用例的显式 opt-in）：挪进隔离根、**保留相对尾巴**。
+
+    尾巴丢了会把 ``<库文件>`` 折成一枚目录：只读对照用例从此开目录当库＝假绿形态。
+    """
+    roots = _forbidden_roots()
+    isolated = (tmp_path / "isolated-runtime").resolve()
+    monkeypatch.setenv(runtime_paths.TEST_PROCESS_ENV, "1")
+    monkeypatch.setenv(runtime_paths.TEST_RUNTIME_DATA_DIR_ENV, str(isolated))
+    monkeypatch.setenv(runtime_paths.TEST_RUNTIME_GUARD_MODE_ENV, runtime_paths.GUARD_MODE_REDIRECT)
+    monkeypatch.setenv(
+        runtime_paths.TEST_FORBIDDEN_ROOTS_ENV, os.pathsep.join(str(root) for root in roots)
+    )
+    before = _live_root_listing()
+    got = runtime_path(roots[0] / PRODUCTION_STORE_TAIL)
+    assert not _under(got, roots), f"redirect 后仍在生产根里：{got}"
+    assert got == (isolated / PRODUCTION_STORE_TAIL).resolve(), (
+        f"重定向落点形状不对（期望尾巴={PRODUCTION_STORE_TAIL}）：{got}"
+    )
+    assert not got.exists(), "重定向落点被创建了"
+    _assert_live_root_untouched(before)
 

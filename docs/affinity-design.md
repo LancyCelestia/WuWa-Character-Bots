@@ -478,6 +478,26 @@ z          = max(z_new, anchor)                        # 只抬高下界，绝�
 参 #50 里 `BOT_VIDEO_PROGRESS_ACK_ENABLED` 的同型处理）；`SETTABLE` 只给 `_v8_enabled`。
 **生产 `.env` 由她改，本席不动。**
 
+### C.7.1 日额度拆轴：展示限幅侧与评分判据侧各归各吃（台账 F-16，2026-10-06 用户裁定甲案）
+
+- **病灶（现算复现，锁 `tests/test_affinity_display_vs_scoring_caps.py` 行为腿）**：`9bdcfc7`
+  给 v8 加「只出不进」展示限幅的同时，把 `_V7_DEFAULT_DAILY_MOVE_CAP_Z` 随展示收紧改成 0.04
+  （名义「消除双源」），评分判据也吃这把尺 ⇒ 同日 4 条好评耗光滚动 24h 预算后，一句辱骂的
+  实发 Δz **恰好 0.0**——负向信号根本进不了分数。
+- **拆轴后的归属（数值唯一权威即本节；真身＝`character/affinity.py` 两枚常量）**：
+  - 评分判据侧：`_V7_DEFAULT_DAILY_MOVE_CAP_Z`＝0.12——v7 路「无配置时」的滚动 24h 位移预算缺省，
+    回到改动前语义（§v7.2 因子表「位移额度」行的在册缺省本就是 0.12，本次＝让代码回到规范）；
+  - 展示限幅侧：`_V8_DEFAULT_DAILY_MOVE_CAP_Z`＝0.04——v8 时代有意收紧的日额度纪律尺
+    （≤4 展示分/日，§C.7 上文；一字未动）。「你对守岸人」读数的单向下行限幅另有展示分真身
+    `_SENTIMENT_DISPLAY_DAILY_DROP_CAP`＝4.0（§C.8），它与上面两枚 z 域常量互不读取，仅量级同源。
+- **键面（运行面值）另账交裁**：`bot_affinity_daily_move_cap_z` 一枚键同时喂 v7 与 v8 两条评分路，
+  Config 缺省与生产 `.env`、`.env.example` 三面现钉 0.04 ⇒ 键在场时两路同吃一值（"env 显式给了
+  就同吃一值"在册口径）；本次拆轴只恢复**缺省语义**（无键/无 Config 时的答案）。要让生产评分路
+  也吃 0.12，需用户动 `.env`——注意同键会连 v8 展示收紧一起放宽；若要两侧在运行面并存，需第二枚
+  配置键，本波「不新建配置键」红线未获豁免，留主会话/用户裁。
+- **执法落点**：`tests/test_affinity_display_vs_scoring_caps.py` 四腿（行为／联锁／单源／本页在册）；
+  键面↔代码面双脸核对特例＝`tests/test_affinity_v7.py::test_twelve_v7_keys_registered_on_config_class`。
+
 ## D. 实现工单（文件级，按序）
 
 | 步 | 落点 | 动作 |

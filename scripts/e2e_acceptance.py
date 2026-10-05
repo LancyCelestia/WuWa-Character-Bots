@@ -240,12 +240,22 @@ def _bot_self_name(runtime: E2eRuntime) -> str:
     )
 
 
-def build_pipeline(runtime: E2eRuntime, send_queue: Any) -> RuntimePipeline:
-    """与 __init__.py 注册函数内同一套 RuntimePipeline 装配（子集）。"""
+def build_pipeline(
+    runtime: E2eRuntime, send_queue: Any, audit_logger: Any = None
+) -> RuntimePipeline:
+    """与 __init__.py 注册函数内同一套 RuntimePipeline 装配（子集）。
+
+    ``audit_logger``＝可选注入（席 e2e2 追加，缺省仍新建进程内 InMemory ⇒ 存量调用面
+    与 `tests/test_e2e_acceptance.py` 语义逐字节不变）。只多这一枚口，是为了让
+    「群内逐段涂销」那行 review 审计在验收面**可回查**——它是 2026-10-04 才接上的
+    一行，改前「已落账」是假话；不注入就得再造第二套装配。
+    """
     config = runtime.config
     return RuntimePipeline(
         send_queue=send_queue,
-        audit_logger=InMemoryAuditLogger(),
+        audit_logger=audit_logger
+        if audit_logger is not None
+        else InMemoryAuditLogger(),
         reply_budget_settings=build_reply_budget_settings(config),
         role_settings=build_role_settings(config),
         group_command_prefix=config.bot_runtime_group_command_prefix,
@@ -915,6 +925,868 @@ def expect_pipeline_busy_silent(outcome: ItemOutcome) -> str:
     return ""
 
 
+# --------------------------------------------------------------------------
+# 叙述授予波判定（席 e2e2，2026-10-05）：六枚**纯谓词**
+#
+# 契约与上面 `expect_*` 同族：返回空串＝PASS，非空＝失败原因。判据一律住在被测件里
+# （`runtime/content_route.py` / `capabilities/chat.py` / `runtime/intimate_control.py`
+# / `domains/render/reviewer.py` / `transport/sender/{onebot,queue}.py`），这里只调用、
+# 不复制一份 ⇒ 长不出第二把尺。**每枚都可能红**（离线锁：
+# `tests/test_e2e_acceptance_narration.py`，逐枚注毒给过红线）。
+#
+# 离线边界（DRY-RUN 零发送、零生产写）：
+# - ①② 纯函数；⑥ 的嘴形腿是只读 AST、落账腿用 `%TEMP%` 下的临时发送队列库；
+# - ③⑤ 要写永久策略行与亲密钉 ⇒ `narration_probe_config` 把那两本库
+#   （addressing_preferences / reply_policy）改指 `%TEMP%`，生产库零字节（规则 2）；
+# - ④ 走真实 RuntimePipeline + InMemory 队列 + InMemory 审计（`group-failure-ack`
+#   同一先例，零 transport）。
+# 只有现网才看得见的那半面（真实 OneBot 退码、真实模型肯不肯写动作）在各 item 的
+# ``note`` 里标 `requires restart` / `requires --execute`，判定本身不假装验过它。
+# --------------------------------------------------------------------------
+
+#: 群内涂销用例：干净正文两头 + 中间一枚命中词面。命中词面**刻意是清单里的原文**，
+#: 清单若换词，本用例会在「命中词面仍出门」那一行报红（＝用例要跟改，不是漏网）。
+_GROUP_SCRUB_CLEAN_HEAD = "例会议程照旧：上午对方案、下午过预算。"
+_GROUP_SCRUB_CLEAN_TAIL = "散会后我把纪要发到群里，不在这里贴。"
+_GROUP_SCRUB_SPAN = "R-18"
+_GROUP_SCRUB_BODY = (
+    f"{_GROUP_SCRUB_CLEAN_HEAD}你要的那段 {_GROUP_SCRUB_SPAN} 描写我不会写。"
+    f"{_GROUP_SCRUB_CLEAN_TAIL}"
+)
+
+#: 动作括号用例的模型回话替身（离线静态 provider 的原样输出）。
+_ACTION_BRACKET_REPLY = "（她把台灯拧暗了一格）嗯，你说，我在听。"
+_ACTION_BRACKET_OPEN = "（"
+
+
+def narration_probe_dir() -> Path:
+    """判定用的临时数据根（OS 临时目录：不在仓库内、不在 `ChatBot_Runtime` 下）。"""
+    return Path(tempfile.mkdtemp(prefix="e2e-narration-"))
+
+
+def narration_probe_config(base: Any, tmp_dir: Path) -> Any:
+    """照抄生产 config，只把**会被写到的那两本库**改指临时目录。
+
+    亲密钉的跨重启标记落 `addressing_preferences`（D-1 那节），永久策略落
+    `reply_policy` ⇒ 这两枚路径不挪就直接写生产库。用 `model_copy` 而不是新建
+    ``Config(...)``：后者不读环境变量、缺省 ``bot_runtime_data_dir="data"`` 会把路径
+    折回源码树（`tests/test_e2e_acceptance.py::_runtime_stub` 记过这条后果链）。
+    """
+    update: dict[str, object] = {
+        "bot_addressing_preferences_db_path": str(
+            tmp_dir / "addressing_preferences.sqlite3"
+        ),
+        "bot_reply_policy_db_path": str(tmp_dir / "reply_policy.sqlite3"),
+        "bot_reply_policy_enabled": True,
+    }
+    copier = getattr(base, "model_copy", None)
+    if callable(copier):
+        return copier(update=update)
+    merged = {
+        key: value
+        for key, value in vars(base).items()
+        if not key.startswith("_") and isinstance(value, (str, int, float, bool, list, tuple, dict, set, type(None)))
+    }
+    merged.update(update)
+    return SimpleNamespace(**merged)
+
+
+def _axis_probe_config(base: Any, tmp_dir: Path) -> Any:
+    """② 的轴判定专用 config：`narration_probe_config` 之上把**四枚名单清空**。
+
+    为什么要清空：(c)(d) 用的是合成会话键（`e2e-narration-tier-*`），它们不在现网私聊
+    白名单里 ⇒ `eligible=False` ⇒ 甲那一腿永远造不出来，验收面就会在 DRY-RUN 里报一枚
+    与裁定无关的红（假红）。清空后私聊门＝「白名单空＝默认放开」（既有裁定），判定只
+    依赖被测的那条优先级链本身。写库路径仍指 `%TEMP%`，生产库零字节。
+    """
+    staged = narration_probe_config(base, tmp_dir)
+    update = {
+        "bot_content_route_private_whitelist": [],
+        "bot_content_route_private_blacklist": [],
+        "bot_content_route_group_whitelist": [],
+        "bot_content_route_group_blacklist": [],
+    }
+    copier = getattr(staged, "model_copy", None)
+    if callable(copier):
+        return copier(update=update)
+    merged = {
+        key: value
+        for key, value in vars(staged).items()
+        if not key.startswith("_")
+    }
+    merged.update(update)
+    return SimpleNamespace(**merged)
+
+
+def _audit_records_for(logger: Any, request_id: str) -> list[Any] | None:
+    """从进程内审计仓库取某轮的全部记录；取不到返回 ``None``（＝判定红，不是静默跳过）。
+
+    三种读法依次退让（按 request_id 过滤 → 全表 → 裸 deque）；都不通才算读口形变。
+    """
+    reader = getattr(logger, "list_records", None)
+    records: Any = None
+    if callable(reader):
+        try:
+            records = list(reader(request_id=request_id))
+        except Exception:  # noqa: BLE001 - 签名不收过滤参数：退全表读法
+            try:
+                records = list(reader())
+            except Exception:  # noqa: BLE001 - 全表读法也不通：退裸容器
+                records = None
+    if records is None:
+        container = getattr(logger, "_records", None)
+        if container is None:
+            return None
+        records = list(container)
+    return [
+        record
+        for record in records
+        if str(getattr(record, "request_id", "")) == request_id
+    ]
+
+
+def check_narration_grant_is_source_scoped() -> str:
+    """① 叙述授予**按来源**：人工推动的那几支才给，自动回落两支只说话。
+
+    只判「哪些必须给／哪些必须不给」，不判集合的大小 ⇒ 席 grpfix 那一路再加第四枚
+    来源（描写档 `scene`）时本用例照旧成立。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+        content_route as cr,
+    )
+
+    registered = {
+        value
+        for name, value in vars(cr).items()
+        if name.startswith("INTIMATE_SOURCE_") and isinstance(value, str)
+    }
+    stray = sorted(set(cr._INTIMATE_NARRATION_SOURCES) - registered)
+    if stray:
+        return f"授予集里有未登记的来源字面量 {stray}（拼错的来源＝静默不授予）"
+    ungranted: list[str] = []
+    for name in (
+        "INTIMATE_SOURCE_MANUAL",
+        "INTIMATE_SOURCE_ADMIN_PIN",
+        "INTIMATE_SOURCE_CONTENT_SIGNAL",
+        # 第四枚授予来源＝描写档持久钉（2026-10-04 裁定 G-2：`scene` 并进**这同一把**
+        # 尺，不许长第二张成员表）。它今天只被上面那道「未登记字面量」的腿间接看着：
+        # 把这一枚从集合里摘掉 ⇒ `grants_intimate_narration("narration_pin")` 静默 False
+        # ⇒ 普通模式钉过 scene 的人拿不到铺写，而本项照绿——那就是假绿，所以点名要它。
+        "INTIMATE_SOURCE_NARRATION_PIN",
+        # 席 e2ealign（2026-10-05）：H-1＝甲之后「亲手开亲密」这一支的来源串会被描写
+        # 轴原样转述（`content_route.py:1824`），所以它必须在授予面上——上面四枚缺一
+        # 都等于把某一类「人亲手推动」静音掉。
+    ):
+        value = getattr(cr, name, None)
+        if value is None:
+            return f"来源常量缺席：{name}（判据换了名字，验收面要跟改）"
+        if not cr.grants_intimate_narration(value):
+            ungranted.append(f"{name}={value!r}")
+    if ungranted:
+        return "人工推动的来源没拿到叙述授予 " + ", ".join(ungranted)
+    none_source = getattr(cr, "INTIMATE_SOURCE_NONE", "")
+    denied = [
+        cr.INTIMATE_SOURCE_MASTER_LOVE,
+        cr.INTIMATE_SOURCE_AFFINITY,
+        none_source,
+        "",
+        "   ",
+        "not_a_registered_source",
+    ]
+    leaked = sorted({value for value in denied if cr.grants_intimate_narration(value)})
+    if leaked:
+        return f"自动回落/未知来源拿到了叙述授予 {leaked}（回落腿本该只说话）"
+    return ""
+
+
+#: 非授予腿要穷举的问题样例（判题型用，覆盖各 intent/category 分支）。
+_TOP_TIER_PROBE_QUESTIONS: tuple[str, ...] = (
+    "",
+    "今天天气怎么样",
+    "介绍一下守岸人",
+    "LPR 又降了吗",
+    "嗯？在吗",
+    "刚才那个报错怎么排查",
+    "写一段守岸人与漂泊者的场景",
+)
+
+
+def check_top_reply_tier_needs_the_grant(
+    base_config: Any = None, tmp_dir: Path | None = None
+) -> str:
+    """② 顶格档（今天＝「铺写」）只有授予腿走得到：矩阵里没有任何一格指向它。
+
+    构造性证明、不按名字断言：
+    (a) `REPLY_TIER_MATRIX` 逐格 + 题型×配置档穷举 + 无正文兜底映射 ⇒ 全部 ≠ 顶格档；
+    (b) 授予腿 `intimate_reply_length_tier` 每一枚配置档都必须 == 顶格档（顶格档是
+        活档，不是死档——它一旦到不了同样是回归）。
+    (c) H-1＝甲（2026-10-04 晚裁定「开'亲密'的话，就给 scene 场景」）：**亲手把亲密档
+        推上去的那一轮**，即便这个人从没有在描写轴上说过一个字，描写轴的读数也必须是
+        `scene` 且过唯一那把尺，长度于是落到顶格档。甲改的是「哪些来源算亲手推动」，
+        不是「只有授予腿走得到」——所以 (a)(b) 一字不放宽，本腿只把「到得了」那一半
+        补上：少了它，「开了亲密仍只说话」那一枚改前形态在验收面是全绿的。
+    (d) 负对照：`master_love`／`affinity_tier` 两支**只给档、不给描写**（2026-10-04 裁定
+        原文），自动腿推上去的亲密读数必须仍是 `speech` 且不过尺——否则 (c) 就是「凡亲密
+        皆铺写」的第二次放宽，而那正是她 2026-09-28 原话要防的「换个档文风全变」。
+
+    🔴 本函数**一次都不写描写钉**：(c)(d) 都靠引擎自己的显式开档（`apply_manual`）与注入
+    缝同一个读数口（`resolve_intimate_context`）拿轴值，钉的键形（I-2 要改成
+    平台·会话·人 三元组）因此**不参与**本判定，换群要不要重开都不影响这里绿不绿。
+    写盘只可能落在 D-1 显式开档标记那一格，`narration_probe_config` 已把它指到 `%TEMP%`。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities import chat
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+        content_route as cr,
+    )
+
+    top = str(getattr(chat, "_REPLY_TIER_TOP_ID", "") or "")
+    if not top or top not in chat.REPLY_LENGTH_TIERS:
+        return f"顶格档 {top!r} 不在 REPLY_LENGTH_TIERS 里（派生尺与登记表不同源）"
+    for qtype, row in sorted((chat.REPLY_TIER_MATRIX or {}).items()):
+        for mode, tier_id in sorted((row or {}).items()):
+            if str(tier_id) == top:
+                return (
+                    f"REPLY_TIER_MATRIX[{qtype}][{mode}] 指向顶格档 {top}："
+                    "全局长度被吃进铺写（矩阵本不该有任何一格指向它）"
+                )
+    for mode in sorted(chat.REPLY_DETAIL_MODES):
+        for qtype in sorted(chat.REPLY_QUESTION_TYPES):
+            if chat.select_reply_length_tier(detail_mode=mode, question_type=qtype) == top:
+                return f"select_reply_length_tier({mode}, {qtype}) 到得了顶格档（非授予腿漏）"
+        for question in _TOP_TIER_PROBE_QUESTIONS:
+            if chat.resolve_reply_length_tier(mode, question) == top:
+                return (
+                    f"resolve_reply_length_tier({mode}, {question!r}) 到得了顶格档"
+                    "⇒ 没拿到授予的人也被铺写"
+                )
+            reached = chat.intimate_reply_length_tier(mode, question)
+            if str(reached) != top:
+                return (
+                    f"intimate_reply_length_tier({mode}, {question!r}) 只到 {reached!r}，"
+                    f"到不了顶格档 {top} ⇒ 授予腿断，铺写成了死档"
+                )
+
+    # ---- (c) H-1＝甲：亲手开亲密 ⇒ 描写轴 scene ⇒ 顶格档
+    probe_dir = tmp_dir or narration_probe_dir()
+    cfg = _axis_probe_config(
+        base_config if base_config is not None else SimpleNamespace(), probe_dir
+    )
+    manual_key = "e2e-narration-tier-manual"
+    if not cr.SHARED_CONTENT_ROUTE_ENGINE.apply_manual(
+        manual_key, "intimate", cfg, source=cr.INTIMATE_SOURCE_MANUAL
+    ):
+        return (
+            "显式开亲密（apply_manual→manual_command）没生效 ⇒ 判不了甲那一腿"
+            "（总闸/键形/TTL 哪一道门改了？本项不静默通过）"
+        )
+    manual_ctx = cr.resolve_intimate_context(
+        cr.SHARED_CONTENT_ROUTE_ENGINE,
+        session_type="private",
+        session_key=manual_key,
+        sender_id=manual_key,
+        config=cfg,
+    )
+    if not bool(manual_ctx.get("eligible", False)):
+        return (
+            "判定用的私聊会话没过 content_route 准入门（eligible=False）⇒ 甲这一腿"
+            "无从产生（本席已把四枚名单清空，仍不中＝准入门换了形状，不是通过）"
+        )
+    manual_axis = chat.resolve_narration_axis(manual_ctx)
+    if manual_axis.mode != chat.NARRATION_MODE_SCENE:
+        return (
+            f"亲手开了亲密，描写轴读数={manual_axis.mode!r}（甲要求 scene）"
+            f"，narration_source={str(manual_ctx.get('narration_source', ''))!r}"
+            "⇒ 开亲密仍只说话＝甲没落地，铺写在现网永远到不了"
+        )
+    if not manual_axis.granted or not cr.grants_intimate_narration(
+        str(manual_ctx.get("narration_source", "") or "")
+    ):
+        return (
+            f"开亲密那一轮的 narration_source={str(manual_ctx.get('narration_source', ''))!r}"
+            " 不过唯一那把尺 ⇒ 轴值是 scene 也拿不到交付面"
+        )
+    if chat.intimate_reply_length_tier("auto", "今天有点累") != top:
+        return f"甲这一腿拿到了 scene，长度却到不了顶格档 {top!r}"
+
+    # ---- (d) 自动腿负对照：ML／好感度只给档，不给描写
+    for source_name in ("INTIMATE_SOURCE_MASTER_LOVE", "INTIMATE_SOURCE_AFFINITY"):
+        auto_source = getattr(cr, source_name, None)
+        if auto_source is None:
+            return f"来源常量缺席：{source_name}（自动腿换了名字，(d) 要跟改）"
+        auto_key = f"e2e-narration-tier-{source_name}"
+        cr.SHARED_CONTENT_ROUTE_ENGINE.apply_manual(
+            auto_key, "intimate", cfg, source=auto_source
+        )
+        auto_ctx = cr.resolve_intimate_context(
+            cr.SHARED_CONTENT_ROUTE_ENGINE,
+            session_type="private",
+            session_key=auto_key,
+            sender_id=auto_key,
+            config=cfg,
+        )
+        if str(auto_ctx.get("mode", "")) != "intimate":
+            return (
+                f"{source_name} 没能把会话推上亲密档（mode={str(auto_ctx.get('mode', ''))!r}）"
+                "⇒ 这一格无从判，本项不认这是通过"
+            )
+        auto_axis = chat.resolve_narration_axis(auto_ctx)
+        if auto_axis.mode != chat.NARRATION_MODE_SPEECH or auto_axis.granted:
+            return (
+                f"自动腿（{source_name}={auto_source!r}）的描写轴读成了 {auto_axis.mode!r}"
+                f"、granted={auto_axis.granted} ⇒ 名单派生/好感度达档也能铺开写，"
+                "授予面被甲顺手放宽了一格"
+            )
+    return ""
+
+
+def check_person_policy_beats_standing_global_detail(tmp_dir: Path | None = None) -> str:
+    """③ 该人的永久策略压过覆盖册里那枚常驻 `BOT_REPLY_DETAIL`（本波最大根修）。
+
+    事故形状（台账 #76 ③）：`/bot runtime set` 留下跨重启常驻值，被当「本轮明示」
+    ⇒ 每个人的永久策略整段静音，`show` 报的档与她实收相反。这里把 `get_or` 直接
+    喂成「覆盖册有 BOT_REPLY_DETAIL=detail」，看第②层还站不站得住。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        resolve_turn_reply_policy,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.character import (
+        reply_policy as rp,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+        intimate_control as ic,
+    )
+
+    probe_dir = tmp_dir or narration_probe_dir()
+    uid = "e2e-narration-policy"
+    quiet_uid = "e2e-narration-quiet"
+    cfg = SimpleNamespace(
+        bot_reply_policy_enabled=True,
+        bot_reply_policy_db_path=str(probe_dir / "reply_policy.sqlite3"),
+        bot_reply_detail="detail",  # 层③（config 面）
+    )
+    store = rp.shared_reply_policy_store(cfg)
+    if store is None:
+        return "永久策略 store 构不出来（enabled/db_path 没吃到）⇒ 层② 无从判"
+    message = synthesize_message(
+        text="以后回复我都短一点",
+        session_type=SessionType.PRIVATE,
+        target_id=uid,
+        sender_id=uid,
+        bot_id="bot-e2e",
+        seq=903,
+    )
+    pinned_policy = resolve_turn_reply_policy(
+        store=store,
+        message=message,
+        text="以后回复我都短一点",
+        llm_provider=None,
+        # 第④轨（线索门→另起一线问模型）在验收判定里必须**不启动**：零外呼。
+        judgment_starter=lambda _prompt, _work: False,
+    )
+    if pinned_policy is None:
+        return "「以后回复我都短一点」没落成永久策略（返回 None）⇒ 层② 没有可判的行"
+    pinned = rp.normalize_length_mode(pinned_policy.length_mode)
+    if pinned in ("", rp.LENGTH_MODE_AUTO):
+        return f"永久策略落成了 auto（读到 {pinned!r}）⇒ 层② 是空的，压不住全局档"
+    override_settings = SimpleNamespace(
+        get=lambda key, config: None,
+        get_or=lambda key, default: "detail" if str(key) == "BOT_REPLY_DETAIL" else default,
+    )
+    shown = ic._effective_detail_mode(cfg, override_settings, uid, uid)
+    if shown != pinned:
+        return (
+            f"该人永久策略（{pinned}）被常驻 BOT_REPLY_DETAIL=detail 静音："
+            f"show 读数={shown!r}（与她实收相反的那枚谎报）"
+        )
+    # 反向不伤：没表过态的人照旧吃全局档（永久策略层不得凭空造档）
+    quiet_shown = ic._effective_detail_mode(cfg, override_settings, quiet_uid, quiet_uid)
+    if quiet_shown != "detail":
+        return f"未表态的人读数变成 {quiet_shown!r}（期望全局 detail）⇒ 层② 反向误伤"
+    plain_settings = SimpleNamespace(
+        get=lambda key, config: None, get_or=lambda key, default: default
+    )
+    if ic._effective_detail_mode(cfg, plain_settings, quiet_uid, quiet_uid) != "detail":
+        return "覆盖册不表态时全局档没吃到 config 的 bot_reply_detail（层③ 自己断了）"
+    return ""
+
+
+def expect_group_span_scrub(outcome: ItemOutcome) -> str:
+    """④（外层真实管道那一跑）群内命中＝涂掉那一处、其余照发，不得整条吞。"""
+    from plugins.bot_unified_runtime.domains.render import reviewer as rv
+
+    if outcome.error:
+        return outcome.error
+    if outcome.session_type and outcome.session_type != SessionType.GROUP.value:
+        # 群内容面只在群会话生效：私聊跑到本项**不静默通过**，直接报「换个目标再跑」。
+        return (
+            f"本项按 {outcome.session_type} 会话跑，群内逐段涂销判不到——"
+            "请用 --target-group <BOT_GROUP_WHITE1 群号> 重跑本项"
+        )
+    if outcome.receipt is not None and outcome.receipt.state.value == "blocked":
+        return "群内命中被整条 BLOCK（回执 blocked）⇒ 逐段涂销的腿没生效"
+    request, reason = _expect_preamble(outcome)
+    if reason:
+        return reason + "（群内命中本该只剩那一处被涂掉、其余照发）"
+    text = request.content.text_fallback
+    if _GROUP_SCRUB_SPAN in text:
+        return (
+            f"命中词面 {_GROUP_SCRUB_SPAN!r} 仍原样出门 ⇒ 涂销腿没跑"
+            "（或禁词清单换了词，本用例要跟改）"
+        )
+    placeholder_name = "_PUBLIC_OUTPUT_SPAN_PLACEHOLDER"
+    placeholder = str(getattr(rv, placeholder_name, "<已略>"))
+    if placeholder not in text:
+        return f"出门正文里没有涂销记号 {placeholder!r}：{text[:120]!r}"
+    for keep in (_GROUP_SCRUB_CLEAN_HEAD, _GROUP_SCRUB_CLEAN_TAIL):
+        if keep not in text:
+            return f"其余正文被吞（缺 {keep[:16]!r}…）⇒ 不是逐段涂销"
+    return ""
+
+
+def check_group_span_scrub_is_recorded(runtime: E2eRuntime) -> str:
+    """④（审计腿）降级那行 review 审计**必须真的落**——它 2026-10-04 才被接上。
+
+    自成一跑：自己的 InMemory 审计仓库 + InMemory 队列 + 真实 `RuntimePipeline`
+    （群目标取运行时白名单第一枚，与主矩阵同一道门），零 transport、零落盘。
+    """
+    from plugins.bot_unified_runtime.contracts import ReceiptState
+    from plugins.bot_unified_runtime.domains.render import reviewer as rv
+
+    lists = load_group_lists(runtime.config)
+    pool = [str(item) for item in (lists["white1"] or lists["white2"] or []) if str(item)]
+    if not pool:
+        return (
+            "BOT_GROUP_WHITE1/WHITE2 为空 ⇒ 群内涂销用例无法装配"
+            "（先把验收群加进白名单，这不是通过）"
+        )
+    group_id = min(pool)
+    logger = InMemoryAuditLogger()
+    queue = InMemorySendQueue(audit_logger=logger)
+    pipeline = build_pipeline(runtime, queue, audit_logger=logger)
+    message = synthesize_message(
+        text=_GROUP_SCRUB_BODY,
+        session_type=SessionType.GROUP,
+        target_id=group_id,
+        sender_id=runtime.sender_id,
+        bot_id=runtime.bot_id,
+        seq=904,
+    )
+    try:
+        receipt = pipeline.handle(
+            message,
+            _text_capability(runtime, body=_GROUP_SCRUB_BODY),
+            capability_id="bot.text",
+        )
+    except Exception as exc:  # noqa: BLE001 - 跑不起来就是失败，绝不静默通过
+        return f"群内涂销用例没跑起来：{type(exc).__name__}: {exc}"
+    if receipt.state is ReceiptState.BLOCKED:
+        return "整条 BLOCK 而非逐段涂销 ⇒ 降级腿退回改前形态（词面位置/载体变了？）"
+    records = _audit_records_for(logger, message.request_id)
+    if records is None:
+        return "取不到审计记录（InMemoryAuditLogger 的读口形变）⇒ 审计行断言无从落地"
+    review_rows = [
+        record for record in records if str(getattr(record, "stage", "")) == "review"
+    ]
+    if not review_rows:
+        return (
+            "review 审计行缺席——「降级已落账」在验收面是假话"
+            f"（本轮 {len(records)} 行里 stage 只有 "
+            f"{sorted({str(getattr(r, 'stage', '')) for r in records})}）"
+        )
+    rewrite = str(getattr(rv.ReviewAction.REWRITE, "value", "rewrite"))
+    if not any(str(getattr(r, "event", "")) == rewrite for r in review_rows):
+        return (
+            f"review 行里没有 event={rewrite!r} 的降级记号，实际 "
+            f"{sorted({str(getattr(r, 'event', '')) for r in review_rows})}"
+        )
+    return ""
+
+
+def _roleplay_strip_mouths(module_path: Path) -> tuple[int, list[str]]:
+    """AST 只读数：``strip_action_brackets(`` 调用点枚数 + 未被 if 包住的裸调用行号。
+
+    用 AST 而不是文本匹配：`if ...: strip_action_brackets(x)` 与
+    函数体里的裸调用，文本看着一样，判据却完全不同。
+    """
+    import ast
+
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    guarded_if = {
+        id(node)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+    }
+    parents: dict[int, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+    total = 0
+    bare: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = node.func.id if isinstance(node.func, ast.Name) else getattr(
+            node.func, "attr", ""
+        )
+        if callee != "strip_action_brackets":
+            continue
+        total += 1
+        owner = parents.get(id(node))
+        inside_if = False
+        depth = 0
+        while owner is not None and depth < 12:
+            if id(owner) in guarded_if and "action_brackets" in ast.unparse(owner.test):
+                inside_if = True
+                break
+            owner = parents.get(id(owner))
+            depth += 1
+        if not inside_if:
+            bare.append(str(node.lineno))
+    return total, bare
+
+
+def check_action_brackets_follow_narration_grant(
+    base_config: Any, tmp_dir: Path | None = None
+) -> str:
+    """⑤ 出站不再**不分档位**剥动作——按描写档那一轴分腿判（席 e2ealign 2026-10-05 拆轴）。
+
+    四条腿：
+    (a) 形（AST）——`capabilities/chat.py` 里 `strip_action_brackets` 的每枚调用点都
+        必须待在「test 里出现 `action_brackets`」的 if 分支内；裸调用＝改前那一手。
+    (b) **scene 轮**（不放宽）——静态 provider 交回带括号动作的回话，`ToneProfile
+        .action_brackets=False`（现网即此值）：会话经**真入口**「亲密模式 深开」钉成
+        `manual` 源（在授予集里）⇒ 先要求描写轴读数就是 `scene`，再要求括号留在正文。
+        轴读数不是 scene 时本腿**报红而不代判**：H-1＝甲 之后亲手开亲密必给 scene，
+        读成 speech 即甲没落地；而只说话那一轮按裁定**本来就不该有** `（…）`——
+        把「动作段一定在场」当所有授予轮的通式去判＝假红（这一枚差集就是本席补的）。
+    (c) **轴真在选文风**——`resolve_rp_style_block` 按 (描写档 × 亲密态) 选出的两段必须
+        互不相同，且认不出的轴值 fail-closed 收回 `speech` 那一格。
+    (d) 没开档的会话 ⇒ 括号照旧硬剥，且轴读数必须是 `speech`（2026-09-28「日常沟通
+        不写动作神态」那条裁定靠的就是这一腿，不许顺手放宽）。
+
+    🔴 本判定**不写描写钉**：`scene` 那一格从「亲手开亲密」的轴读数来（甲），所以 I-2
+    把钉改成 (平台·会话·人) 三元组之后本腿照样成立；写库（D-1 开档标记）经
+    `narration_probe_config` 指 `%TEMP%`。
+    """
+    from plugins.bot_unified_runtime.contracts import (
+        ContextBundle,
+        ConversationHistoryResult,
+        MemoryRetrievalResult,
+        PersonaProfile,
+        RetrievalResult,
+        ToneProfile,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities import chat
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_chat_result,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+        StaticLLMProvider,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+        content_route as cr,
+    )
+
+    total, bare = _roleplay_strip_mouths(Path(chat.__file__))
+    if total == 0:
+        return (
+            "chat.py 里再也找不到 strip_action_brackets 调用点 ⇒ 日常轮的硬剥被整条删掉"
+            "（2026-09-28 裁定失效），本用例判红"
+        )
+    if bare:
+        return f"剥动作那条腿有 {len(bare)} 处不在 action_brackets 判据里：{bare}"
+
+    probe_dir = tmp_dir or narration_probe_dir()
+    cfg = narration_probe_config(base_config, probe_dir)
+    if not bool(getattr(cfg, "bot_content_route_enabled", False)):
+        return "content_route 未启用（bot_content_route_enabled=False）⇒ 授予腿无从产生"
+
+    def _context(message: IncomingMessage) -> ContextBundle:
+        return ContextBundle(
+            request_id=message.request_id,
+            persona=PersonaProfile(
+                profile_id="shorekeeper",
+                version="1",
+                display_name="守岸人",
+                identity="守岸人",
+            ),
+            tone=ToneProfile(profile_id="shorekeeper", mode="default", action_brackets=False),
+            memory_results=MemoryRetrievalResult(request_id=message.request_id),
+            conversation_history=ConversationHistoryResult(request_id=message.request_id),
+            knowledge_results=RetrievalResult(request_id=message.request_id),
+            current_message=message.plain_text,
+            sender_id=message.sender_id,
+            session_id=message.session_id,
+        )
+
+    def _turn(uid: str, text: str, reply_text: str) -> CapabilityResult:
+        message = synthesize_message(
+            text=text,
+            session_type=SessionType.PRIVATE,
+            target_id=uid,
+            sender_id=uid,
+            bot_id="bot-e2e",
+            seq=905,
+        )
+        return build_chat_result(
+            message,
+            _decision_for_chat(message),
+            _context(message),
+            llm_provider=StaticLLMProvider(text=reply_text),
+            affinity_store=None,
+            content_route_config=cfg,
+        )
+
+    granted_uid = "e2e-narration-granted"
+    _ = _turn(granted_uid, "亲密模式 深开", "嗯。")
+    verdict = cr.SHARED_CONTENT_ROUTE_ENGINE.route_verdict(granted_uid, cfg)
+    source = str((verdict or {}).get("source", "") or "")
+    if not cr.grants_intimate_narration(source):
+        return (
+            f"钉完深开后来源={source!r} 不在授予集里 ⇒ 授予腿没能把这一轮换成人亲手推动"
+        )
+
+    def _axis_reading(uid: str) -> Any:
+        """注入缝同一个读数口（`resolve_intimate_context` → `resolve_narration_axis`）。
+
+        只转述、不在验收面重推优先级——判据住 `content_route`，本席不抄第二把尺。
+        """
+        return chat.resolve_narration_axis(
+            cr.resolve_intimate_context(
+                cr.SHARED_CONTENT_ROUTE_ENGINE,
+                session_type="private",
+                session_key=uid,
+                sender_id=uid,
+                config=cfg,
+            )
+        )
+
+    # (b) 前半：先确认这一轮**确实**是 scene 轮（甲的读数），再判括号留没留。
+    granted_axis = _axis_reading(granted_uid)
+    if granted_axis.mode != chat.NARRATION_MODE_SCENE:
+        return (
+            f"亲手开了亲密（source={source!r}），描写轴读数却是 {granted_axis.mode!r}"
+            "：本腿只判 scene 轮的交付面——只说话那一轮按裁定**不该**有 `（…）`，"
+            "这里不代它判通过（甲＝开亲密即给 scene，读成 speech 即甲没落地）"
+        )
+    kept = _turn(granted_uid, "今天有点累", _ACTION_BRACKET_REPLY)
+    if _ACTION_BRACKET_OPEN not in str(kept.body or ""):
+        return (
+            f"拿到授予（source={source!r}）的那一轮括号动作仍被剥光："
+            f"{str(kept.body)[:120]!r}"
+        )
+    # (c) 轴真的在选文风：scene ≠ speech，且认不出的轴值收回只说话那一格（fail-closed）。
+    scene_block = chat.resolve_rp_style_block(chat.NARRATION_MODE_SCENE, intimate=True)
+    speech_block = chat.resolve_rp_style_block(chat.NARRATION_MODE_SPEECH, intimate=True)
+    if not scene_block or not speech_block:
+        return "resolve_rp_style_block 交出空段（样式段表缺格）⇒ 交付面无从判"
+    if scene_block == speech_block:
+        return (
+            "scene 与 speech 选出同一段样式 ⇒ 描写档轴只剩读数、不选文风"
+            "（「只说话就不该拿到铺写交付面」那条裁定在出口没人执法）"
+        )
+    if chat.resolve_rp_style_block("e2e-unknown-axis-mode", intimate=True) != speech_block:
+        return (
+            "认不出的轴值没 fail-closed 收回 speech（选出了别一段）"
+            "⇒ 漂走的轴值在放大描写面，方向反了"
+        )
+    # (d) 没开档的那一条：日常轮照旧硬剥，轴读数必须是 speech。
+    plain_uid = "e2e-narration-plain"
+    plain = _turn(plain_uid, "今天有点累", _ACTION_BRACKET_REPLY)
+    if _ACTION_BRACKET_OPEN in str(plain.body or ""):
+        return (
+            "未开档的会话也留了括号动作 ⇒ 全局开关被顺手放宽（日常轮不写动作神态那条裁定）"
+        )
+    plain_axis = _axis_reading(plain_uid)
+    if plain_axis.mode != chat.NARRATION_MODE_SPEECH or plain_axis.granted:
+        return (
+            f"未开档会话的描写轴读数={plain_axis.mode!r}、granted={plain_axis.granted}"
+            "（期望 speech/False）⇒ 缺省那一格被改，日常轮白拿了铺写文风"
+        )
+    return ""
+
+
+def _decision_for_chat(message: IncomingMessage) -> BotDecision:
+    """判定用的最小 BotDecision（私聊 chat 轮，与生产同形，零决策引擎依赖）。"""
+    from plugins.bot_unified_runtime.contracts import (
+        PrivacyLevel,
+        RiskLevel,
+        SendPolicy,
+    )
+
+    return BotDecision(
+        request_id=message.request_id,
+        should_respond=True,
+        mode="chat",
+        trigger="private",
+        capability_id="bot.chat",
+        target_scope=message.session_type,
+        privacy_level=PrivacyLevel.PERSONAL,
+        risk_level=RiskLevel.LOW,
+        send_policy=SendPolicy.IMMEDIATE,
+        decision_reason="e2e_acceptance_narration",
+    )
+
+
+def _narration_chunks_request(request_id: str, chunks: list[str]) -> SendRequest:
+    """⑥ 判定用的两部件 chunks 请求（临时库，绝不到 transport）。"""
+    from plugins.bot_unified_runtime.contracts import PrivacyLevel, RenderedOutput
+
+    rendered = RenderedOutput(
+        request_id=request_id,
+        content_type="chunks",
+        content_ref={"chunks": list(chunks)},
+        text_fallback="正文",
+        privacy_level=PrivacyLevel.PERSONAL,
+    )
+    return SendRequest(
+        request_id=request_id,
+        session_id="private:e2e-narration",
+        target_scope=SessionType.PRIVATE,
+        target_id="e2e-narration",
+        capability_id="bot.chat",
+        content=rendered,
+        send_policy=SendPolicy.IMMEDIATE,
+        priority="normal",
+        max_messages=len(chunks),
+        dedupe_key=f"dedupe-{request_id}",
+        cooldown_key="bot.chat:private:e2e-narration",
+        privacy_level=PrivacyLevel.PERSONAL,
+        persona_profile_id="default",
+    )
+
+
+def check_delivery_failure_reason_is_readable(tmp_dir: Path | None = None) -> str:
+    """⑥ 投递失败原因可查、部分投递不被擦成终态。
+
+    (a) 形（AST）——`sender/onebot.py` 的四枚 `result_unknown` 手足出口都得被
+        `count > 0` 那枚守卫单独罩住（守卫里混进白名单判据＝第 4 枚嘴的原形：已投成功
+        的部件被一并擦成 failed_final）；引用 retcode 的终态出口≥2 枚且枚枚带
+        `detail=_onebot_failure_detail(...)`（判死的数字不许用完即丢）。
+    (b) 实（临时库，零发送）——两部件请求：0 号 sent、1 号 failed_final 带原因；
+        读回必须 ① 列在册 ② 原因逐字可读 ③ 已送达那行不被改成终态。
+    """
+    import ast
+    import sqlite3
+
+    from plugins.bot_unified_runtime.domains.transport.sender import onebot as ob
+    from plugins.bot_unified_runtime.domains.transport.sender import queue as sendq
+
+    tree = ast.parse(Path(ob.__file__).read_text(encoding="utf-8"))
+    parents: dict[int, Any] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+    unknown_arms: list[tuple[Any, str]] = []
+    retcode_arms: list[tuple[Any, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or _e2e_callee_name(node) != "_onebot_issue":
+            continue
+        unparsed = ast.unparse(node)
+        kind_match = re.search(r"""_onebot_issue\(\s*["']([^"']+)["']""", unparsed)
+        kind = kind_match.group(1) if kind_match else "(未取到 kind)"
+        if kind == "result_unknown":
+            unknown_arms.append((node, unparsed))
+        if "retcode" in unparsed:
+            retcode_arms.append((node, unparsed))
+    if len(unknown_arms) < 4:
+        return (
+            f"只认到 {len(unknown_arms)} 枚 result_unknown 出口（期望 ≥4：部件被拒/超时/"
+            "异常/退码四枚手足）⇒ 部分投递的 result_unknown 通路被并掉了"
+        )
+    for arm_node, _arm_text in unknown_arms:
+        tests: list[str] = []
+        owner = parents.get(id(arm_node))
+        depth = 0
+        while owner is not None and depth < 14:
+            if isinstance(owner, ast.If):
+                tests.append(ast.unparse(owner.test))
+            owner = parents.get(id(owner))
+            depth += 1
+        joined = " || ".join(tests)
+        if "count" not in joined:
+            return (
+                f"result_unknown 出口（第 {arm_node.lineno} 行）没被 `count > 0` 那枚守卫"
+                f"罩住（沿途 if 判据={joined!r}）⇒ 部分投递不再无条件转 unknown"
+            )
+        if "_is_final_failure_retcode" in joined:
+            return (
+                f"result_unknown 出口（第 {arm_node.lineno} 行）的守卫里混进了白名单判据"
+                f"（{joined!r}）⇒ 白名单退码会绕过副作用守卫、把已投成功的部件也擦成终态"
+                "（那正是本波修掉的第 4 枚嘴的原形）"
+            )
+    if len(retcode_arms) < 2:
+        return (
+            f"只有 {len(retcode_arms)} 枚终态出口引用了 retcode（期望 ≥2：判死与判可重试"
+            "两支都要把码带上）⇒ 判死用的数字又变成用完即丢"
+        )
+    detailless = [
+        str(node.lineno) for node, text in retcode_arms if "detail=" not in text
+    ]
+    if detailless:
+        return (
+            f"带 retcode 的终态出口第 {detailless} 行没把原因交出去（缺 detail=）"
+            " ⇒ 事后无从复核是哪枚码判的生死"
+        )
+
+    probe_dir = tmp_dir or narration_probe_dir()
+    db_path = probe_dir / "sendq.sqlite3"
+    ledger_queue = sendq.SQLiteSendRequestQueue(db_path, InMemoryAuditLogger())
+    request = _narration_chunks_request("e2e-failure-reason", ["分片甲", "分片乙"])
+    ledger_queue.submit(request)
+    # part 账本是**首次 part 化投递前**预写的（worker 的认领路径才建账）：验收判定
+    # 不出网、不进 worker ⇒ 自己按同一只口把两行 PENDING 铺出来，再走标注腿。
+    if (
+        ledger_queue.ensure_parts_planned(
+            request.request_id,
+            ["digest-0", "digest-1"],
+            dedupe_key=request.dedupe_key,
+        )
+        is None
+    ):
+        return "ensure_parts_planned 没铺出 part 账 ⇒ 断点续发的账本无从建"
+    detail = "retcode_failure retcode=403 status=failed"
+    if not ledger_queue.mark_part_sent(request.request_id, 0):
+        return "part 0 标 sent 没落账 ⇒ 断点续发的账本腿断了"
+    if not ledger_queue.mark_part_failed_final(
+        request.request_id, 1, error_kind="retcode_failure", error_detail=detail
+    ):
+        return "part 1 标 failed_final 没落账 ⇒ 终态腿断了"
+    with sqlite3.connect(db_path) as connection:
+        columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(send_request_parts)")
+        }
+        rows = connection.execute(
+            "SELECT part_index, state, last_error_kind, last_error_detail"
+            " FROM send_request_parts WHERE request_id = ? ORDER BY part_index",
+            (request.request_id,),
+        ).fetchall()
+    if "last_error_detail" not in columns:
+        return "发送队列库没有 last_error_detail 列（ALTER-if-missing 那条腿没跑）"
+    ledger = {int(row[0]): (str(row[1]), row[2], row[3]) for row in rows}
+    if len(ledger) != 2:
+        return f"part 账本应有 2 行，读到 {len(ledger)} 行"
+    if ledger[0][0] != sendq.PART_STATE_SENT:
+        return (
+            f"已送达的 0 号被写成 {ledger[0][0]!r} ⇒ 部分投递被擦成终态"
+            "（断点续发与补偿据此判 delivered==0，会整条重投）"
+        )
+    if ledger[1][0] != sendq.PART_STATE_FAILED_FINAL:
+        return f"1 号终态没落住（读到 {ledger[1][0]!r}）"
+    if (ledger[1][1] or "") != "retcode_failure":
+        return f"失败族没落账（last_error_kind={ledger[1][1]!r}）"
+    if (ledger[1][2] or "") != detail:
+        return f"原因不可读：last_error_detail={ledger[1][2]!r}（期望 {detail!r}）"
+    return ""
+
+
+def _e2e_callee_name(node: Any) -> str:
+    """AST 调用点函数名（`Name` 与 `Attribute` 两种形态都认）。"""
+    func = node.func
+    return str(getattr(func, "id", None) or getattr(func, "attr", "") or "")
+
+
 def build_matrix(runtime: E2eRuntime) -> list[MatrixItem]:
     """验收矩阵（①文本/长文本/多段 ②解析卡 ③点歌候选 ④全球股指 ⑤财经/科技快报
     ⑥天气+预警 ⑦随机图 ⑧占卜 ⑨help ⑩好感度 ⑪提醒查询
@@ -1326,6 +2198,135 @@ def build_matrix(runtime: E2eRuntime) -> list[MatrixItem]:
                 "（零入队请求）；本项在群/私聊两会话下同语义"
             ),
             expect=expect_pipeline_busy_silent,
+        ),
+        # ---- 四期扩展（席 e2e2，2026-10-05）：叙述授予波六项可失败判定 ----
+        MatrixItem(
+            key="narration-grant-source",
+            label="⑱叙述授予按来源（①）",
+            capability_id="bot.selftest-narration",
+            build=lambda rt: _text_capability(
+                rt,
+                body="叙述授予判定：按来源核过——人工推动的那几支给，自动回落两支只说话。",
+            ),
+            text="E2E 验收 · 叙述授予按来源",
+            note=(
+                "判据只住 `runtime/content_route.py::grants_intimate_narration`"
+                "（读 `_INTIMATE_NARRATION_SOURCES`）；本项离线可判、零外呼、零落盘，"
+                "现网那半面（她真说一句把档叫醒）requires restart + --execute"
+            ),
+            expect=lambda _outcome: check_narration_grant_is_source_scoped(),
+        ),
+        MatrixItem(
+            key="narration-scene-tier",
+            label="⑱第四档「铺写」只有授予腿走得到（②）",
+            capability_id="bot.selftest-narration",
+            build=lambda rt: _text_capability(
+                rt,
+                body=(
+                    "长度档判定：没拿到授予的每一条路都到不了顶格档；"
+                    "亲手开亲密的那一轮，描写轴给 scene、顶格档也就到得了。"
+                ),
+            ),
+            text="E2E 验收 · 顶格档可达性",
+            note=(
+                "构造性证明（`REPLY_TIER_MATRIX` 逐格 + 题型×配置档穷举 + 无正文兜底），"
+                "不按档名断言；全局长度一字未动这件事由本项执法。"
+                "2026-10-05 补两腿：H-1＝甲（开亲密即给 scene，故顶格档**到得了**）"
+                "与自动腿负对照（Master Love／好感度达档照旧只说话）；"
+                "两腿都不写描写钉 ⇒ I-2 换钉的键形（平台·会话·人）与本项无关，"
+                "D-1 开档标记经 `narration_probe_config` 落 %TEMP%"
+            ),
+            expect=lambda _outcome: check_top_reply_tier_needs_the_grant(runtime.config),
+        ),
+        MatrixItem(
+            key="narration-person-policy",
+            label="⑱该人永久策略压过常驻全局档（③）",
+            capability_id="bot.selftest-narration",
+            build=lambda rt: _text_capability(
+                rt,
+                body="策略判定：她钉过的档压过覆盖册里那枚常驻 BOT_REPLY_DETAIL。",
+            ),
+            text="E2E 验收 · 永久策略优先",
+            note=(
+                "四层链（当轮明示>永久策略>全局 BOT_REPLY_DETAIL>auto）与 "
+                "`intimate_control._effective_detail_mode` 的 show 侧同尺；"
+                "写库全落 %TEMP% 临时 reply_policy，生产库零字节"
+            ),
+            expect=lambda _outcome: check_person_policy_beats_standing_global_detail(),
+        ),
+        MatrixItem(
+            key="narration-group-scrub",
+            label="⑱群内命中逐段涂销 + 审计行落账（④）",
+            capability_id="bot.text",
+            build=lambda rt: _text_capability(rt, body=_GROUP_SCRUB_BODY),
+            text=_GROUP_SCRUB_BODY,
+            note=(
+                "两段断言：本项走真实管道，验「那一处被涂掉、其余正文照发」；"
+                "另一跑（`check_group_span_scrub_is_recorded`）自带 InMemory 审计仓库，"
+                "验 `stage=review`/`event=rewrite` 那行**确实落盘**——该行 2026-10-04 "
+                "才接上，改前「已落账」是假话"
+            ),
+            expect=expect_group_span_scrub,
+        ),
+        MatrixItem(
+            key="narration-audit-row",
+            label="⑱群内涂销的 review 审计行（④·落账腿）",
+            capability_id="bot.selftest-narration",
+            build=lambda rt: _text_capability(
+                rt,
+                body="审计判定：降级那行 review 记录与 BLOCK 同一条通道，验收面可回查。",
+            ),
+            text="E2E 验收 · 涂销审计行",
+            note=(
+                "自成一跑（自己的 InMemory 审计+队列、真实 RuntimePipeline，零 transport）；"
+                "群目标取运行时白名单第一枚，白名单空＝报红不是静默通过"
+            ),
+            expect=lambda _outcome: check_group_span_scrub_is_recorded(runtime),
+        ),
+        MatrixItem(
+            key="narration-action-brackets",
+            label="⑱铺开写那一轮保住（…）动作（⑤）",
+            capability_id="bot.selftest-narration",
+            build=lambda rt: _text_capability(
+                rt,
+                body=(
+                    "动作括号判定：铺开写的那一轮括号留在正文里；"
+                    "只说话那一轮本就不写动作，日常轮照旧不收。"
+                ),
+            ),
+            text="E2E 验收 · 动作括号随描写档",
+            note=(
+                "形腿＝chat.py 里 `strip_action_brackets` 每枚调用点都在 "
+                "`action_brackets` 判据的 if 分支内；实腿按描写档**分态**判（席 e2ealign "
+                "2026-10-05 拆轴）：静态 provider 跑真 `build_chat_result`"
+                "（`BOT_PERSONA_ACTION_BRACKETS=false` 同形），先确认「亲密模式 深开」那一轮"
+                "的描写轴读数＝`scene`（甲）再判括号留——只说话那一轮**不判**括号在场"
+                "（那正是裁定要的静默），另判 `resolve_rp_style_block` 两段互不相同且认不出的"
+                "轴值收回 speech；未开档会话照旧硬剥。零网络、零真实模型；"
+                "真实模型肯不肯写动作那一半 requires restart + --execute"
+            ),
+            expect=lambda _outcome: check_action_brackets_follow_narration_grant(
+                runtime.config
+            ),
+        ),
+        MatrixItem(
+            key="narration-failure-reason",
+            label="⑱投递失败原因可查 + 部分投递不被擦（⑥）",
+            capability_id="bot.selftest-narration",
+            build=lambda rt: _text_capability(
+                rt,
+                body="投递判定：每一枚终态嘴都交得出原因，已送达的那一行不被改写。",
+            ),
+            text="E2E 验收 · 投递失败可读性",
+            note=(
+                "形腿＝`sender/onebot.py` 四枚 result_unknown 手足出口都被 `count > 0` "
+                "单独罩住（守卫混进白名单判据＝第 4 枚嘴的原形）、引用 retcode 的终态出口"
+                "枚枚带 `detail=_onebot_failure_detail(...)`；实腿＝%TEMP% 临时发送队列库"
+                "两部件（0 号 sent、1 号 failed_final 带原因）读回对账。真实退码现网复核 "
+                "requires restart（改前存量行 last_error_detail 为 NULL＝无原因可考，"
+                "不回填不猜）"
+            ),
+            expect=lambda _outcome: check_delivery_failure_reason_is_readable(),
         ),
     ]
 

@@ -8,7 +8,7 @@
 > 六硬线确定性闸、亲密档位判定、名单门与记忆净化。
 
 - 归属板块：[B03](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/content_route.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/content_safety.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/memory_sanitize.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/content_route.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/intimate_control.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/content_safety.py`、`plugins/bot_unified_runtime/domains/chat_reply/security/memory_sanitize.py`
 - 帮助主题：亲密模式
 - 配置键前缀：`bot_content_route_`, `bot_master_love_`（逐键以目录册为准）
 

@@ -109,6 +109,7 @@
       "pythonTool": true,
       "steps": [
         { "type": "conditional", "condition": "botAlreadyRunning", "then": [ { "type": "abortWithMessage", "message": "[dev] NoneBot 已经在运行（8080 端口被占用）。不要重复启动；如需重启请先关闭原进程。" } ] },
+        { "type": "subtask", "task": "restart-check" },
         { "type": "step", "message": "starting NoneBot (run)" },
         { "type": "command", "runner": "external", "tool": "python", "pythonScript": "bot.py" }
       ]
@@ -119,11 +120,20 @@
       "steps": [
         { "type": "loop", "steps": [
           { "type": "conditional", "condition": "botAlreadyRunning", "then": [ { "type": "abortWithMessage", "message": "[dev] NoneBot 已经在运行（8080 端口被占用）。不要重复启动；如需重启请先关闭原进程。" } ] },
+          { "type": "subtask", "task": "restart-check" },
           { "type": "step", "message": "starting NoneBot (run-watch, auto-restart on exit)" },
           { "type": "command", "runner": "loop-plain", "tool": "python", "pythonScript": "bot.py" },
           { "type": "step", "message": "[dev] NoneBot 退出（exit code = $LASTEXITCODE），5 秒后自动重启。按 Ctrl+C 退出本循环。", "raw": true },
           { "type": "sleep", "seconds": 5 }
         ] }
+      ]
+    },
+    "restart-check": {
+      "push": false,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "pre-start gate: entry import chain (read-only; never touches the running bot)" },
+        { "type": "command", "runner": "external", "tool": "python", "pythonScript": "scripts/pre_restart_check.py", "args": ["--only", "entry_chain"] }
       ]
     },
     "test": {

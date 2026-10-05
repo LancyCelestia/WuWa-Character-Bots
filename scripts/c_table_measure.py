@@ -151,14 +151,21 @@ def _collect_count(files: list[str]) -> tuple[int, list[str]]:
         if m:
             total += int(m.group(1))
         else:
-            missing.append(f + "=无 collected 行")
+            # rc 进册（席 temprootguard，2026-10-05）：会话级拒绝（tests/conftest.py G2 一类）
+            # 退 rc=2 且零 collected；旧写法只记"无 collected 行"，读表人分不清「门没跑」与「门拒了」。
+            missing.append(f + f"=无 collected 行（rc={out.returncode}）")
     return total, missing
 
 
-def m_c1() -> str | None:
+def m_c1() -> str:
     n, missing = _collect_count(GATE_FILES)
     if not n and missing:
-        return None
+        # 🔴 不许 `return None`（席 guardverify2 记账 1 点名的唯一一条「缩而不红」腿）：
+        # None 会让实测列折成「（拿不到）」，C1 整行的读数从表里消失——八道门**全部**被拒
+        # （如 basetemp/暂存根被容器门拒绝）时，读表人拿到的是"没有这条数"，而不是"这条数红了"。
+        # 现在明说：0 条 + 全部被拒 + 逐件 rc ⇒ 表里留着，且绝不冒充"通过"。
+        return (f"0 条（全部 {len(GATE_FILES)}/{len(GATE_FILES)} 件未取得 collected 行，"
+                f"疑会话级拒绝：{'、'.join(missing)}）")
     return f"{n} 条（实到 {len(GATE_FILES) - len(missing)}/{len(GATE_FILES)} 件{'' if not missing else '，缺：' + '、'.join(missing)}）"
 
 

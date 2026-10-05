@@ -13,6 +13,10 @@ reads only path settings from dotenv files and never prints their contents.
 * ``guard_test_runtime_root`` —— 命中生产根即抛 ``RuntimeIsolationViolation``；
 * 未装配（``BOT_TEST_PROCESS`` 缺席）时**原样放行**＝生产 bot 进程零行为变化。
 
+问它的腿只有两条（判据不得在别处再抄一份）：本模块 ``runtime_path`` 的绝对分支与
+``runtime_data_dir``；``plugins/bot_unified_runtime/config.py`` 经
+``_test_runtime_root_judge`` **只判定不改写**——绝对读数逐字返回，否则生产字符串会漂。
+
 装配期入口是 ``isolate_test_runtime_environment``（由 ``tests/conftest.py`` 以**赋值**式
 调用，把生产根挤掉并登记成禁写根）；判定模式默认 ``refuse``＝fail-closed，在册的
 只读对照用例要显式设 ``BOT_TEST_RUNTIME_GUARD_MODE=redirect`` 才会被「挪走」而不是打死。
@@ -206,7 +210,8 @@ def guard_test_runtime_root(path: str | Path) -> Path:
     * 标记缺席 ⇒ 返回逐字解析结果＝生产语义零变化（不许静默改生产落点）；
     * 标记在、落点不在任何生产根内 ⇒ 放行（在册件不误伤）；
     * 标记在、落点命中生产根 ⇒ 缺省抛 ``RuntimeIsolationViolation``；只有显式
-      ``BOT_TEST_RUNTIME_GUARD_MODE=redirect`` 且登记过隔离根时才挪进隔离根。
+      ``BOT_TEST_RUNTIME_GUARD_MODE=redirect`` 且登记过隔离根时才连根内相对尾巴一起
+      挪进隔离根。
       模式读数不认识的值一律按缺省 refuse 处理（fail-closed）。
     """
     resolved = _as_root(str(path))
@@ -218,7 +223,14 @@ def guard_test_runtime_root(path: str | Path) -> Path:
     mode = (_env_text(TEST_RUNTIME_GUARD_MODE_ENV) or _DEFAULT_GUARD_MODE).lower()
     replacement = _env_text(TEST_RUNTIME_DATA_DIR_ENV)
     if mode == GUARD_MODE_REDIRECT and replacement:
-        return _as_root(replacement)
+        isolated = _as_root(replacement)
+        # 尾巴要一起挪：``<生产根>/data/x.sqlite3`` 折成隔离根**目录**本身的话，在册的
+        # 只读对照用例会拿目录当库文件开（＝假绿形态），而相对值那条腿本来就保留尾巴
+        # （``runtime_path("data/x")`` → 隔离根/x）。同一条腿两种形状＝第二套口径。
+        for root in roots:
+            if resolved != root and resolved.is_relative_to(root):
+                return (isolated / resolved.relative_to(root)).resolve()
+        return isolated
     raise RuntimeIsolationViolation(
         f"测试进程把落点解析进了生产 Runtime 根：{resolved}"
         f"（禁写根={', '.join(str(root) for root in roots)}；判定模式={mode}）——"
@@ -281,7 +293,12 @@ def runtime_path(value: str | Path) -> Path:
     """Resolve data/... into the configured external runtime data directory."""
     path = Path(value).expanduser()
     if path.is_absolute():
-        return path.resolve()
+        # 绝对腿过去**直接 return path.resolve()**＝缝的第二处缺口：测试进程里一枚已经
+        # 是绝对形态的生产落点（``.env`` 读数、model_copy 合并值、夹具直传）原样放行，
+        # 2026-10-04 实测由此往生产 addressing_preferences.sqlite3 插了一条真行。
+        # 判定件在 inert 态返回 ``Path(value).expanduser().resolve()``＝与本行旧读数
+        # 逐字相同（expanduser 已在上一行做过）⇒ 生产路径零字节变化（锁＝D4 反向腿）。
+        return guard_test_runtime_root(path)
     # 与 config.py 的路径解析器对齐：统一剥 ./ 前缀并对 data/ 前缀
     # 大小写不敏感重映射，两侧对 "./DATA/x"、"data/x" 得到同一结果。
     normalized = str(path).replace("\\", "/").strip()

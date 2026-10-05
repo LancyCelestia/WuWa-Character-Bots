@@ -13,6 +13,16 @@
    process displaces it to a per-pid temp root and registers the production root
    as forbidden (fail-closed ``refuse``).  Guard 2 only watches the source tree;
    without L1 a test could open the production SQLite files themselves.
+4. basetemp container gate (G2, right below L1): L1 pushes the runtime root into
+   ``%TEMP%``, so the only read roots ``domains/media/path_gate.py`` accepts are
+   the workspace + ``%TEMP%`` + that isolated root.  A pytest container outside
+   them makes every media-bearing premise die at ``logger.debug`` and produces
+   fake reds; G2 refuses the whole session up front and names **which** option or
+   environment variable supplied that container.  It judges the container pytest
+   really derives (``--basetemp``, else ``PYTEST_DEBUG_TEMPROOT`` / the temp root),
+   and additionally refuses a temp root pinned inside the protected runtime tree
+   (the roster drifts with ``TMP``/``TEMP``, so the containment question alone is
+   blind there).
 
 Repo rules (AGENTS.md #2/#6): the source tree must never contain ``data/`` --
 runtime paths resolve through ``scripts/runtime_paths.py`` into
@@ -96,6 +106,138 @@ if (REPO_ROOT / "scripts" / "runtime_paths.py").is_file():
     _DISPLACED_PROD_ROOTS: tuple[str, ...] = isolate_test_runtime_environment(
         os.environ, replacement_root=_PYTEST_RUNTIME_ROOT
     )
+
+# ---------------------------------------------------------------------------
+# basetemp 容器门守卫（G2，2026-10-04 立 · 2026-10-05 补两腿，根治台账 #76「basetemp 落在 Runtime 根下＝造出假红」）
+# ---------------------------------------------------------------------------
+# 机制（席 basetempisolate 四趟 A/B/C/D 现算＝cache/seat-basetempisolate/REPORT.md §4(c)）：
+# 上面的 L1 把运行数据根挤进 %TEMP% 之后，``domains/media/path_gate.py::media_read_roots``
+# 那份**唯一合法读根名册**＝工作区 + ``%TEMP%`` + 隔离根，**不含 ``ChatBot_Runtime`` 树**；
+# 于是容器落在名册外时，``tmp_path`` 里的媒体件被容器门判 ``outside_root``，而拒读在
+# ``ingest/vision_describe.py::_local_path_from_value`` **只写 ``logger.debug``** ⇒「本轮带语音/
+# 带图」这条用例前提静默蒸发 ⇒ 只有断言跳序的用例因此变红（测量假象，不是被测代码坏了）；
+# 不断言跳序的那些更是**失前提仍照绿**＝静默空跑。
+# 本守卫＝把「容器必须是消费侧真用得上的容器」这一问收进这条中央缝，且只问**既有**判定件
+# （``path_gate.contain_within`` + ``path_gate.media_read_roots``，全树判定面仍只 ``path_gate``
+# 一处，见 ``tests/test_media_path_gate.py::test_single_containment_judgement_site``）：不新抄
+# 名册、不开新根、不加配置键、不建新模块、不自派生第二套 tmp 根。判不过 ⇒ ``pytest.exit`` 当场
+# 拒绝整场会话、点名**是哪一枚选项/环境变量**供出的根，绝不再让前提死在 debug 级。
+#
+# 两腿（同一次 ``contain_within`` 调用形态，各管一类，去掉任一腿都留下静默通路；
+# 锁＝``tests/test_pytest_temproot_container_guard.py``）：
+# ① 容器 ∈ 名册。判定输入＝**pytest 本轮真正会用的那一个容器**，按 installed
+#    ``_pytest/tmpdir.py::TempPathFactory.getbasetemp``（:154-166）的派生法现算，不猜 API：
+#    有 ``--basetemp`` 就用它；没有则 ``temproot = Path(os.environ.get("PYTEST_DEBUG_TEMPROOT")
+#    or tempfile.gettempdir())``，其下再落 ``pytest-of-<user>/pytest-N`` ⇒ **判父即判子**
+#    （包含按段元组前缀，父在册⇒子必在册），于是不必复制 user 名、更不必调 ``getbasetemp()``。
+#    这一腿补的正是复核席 guardverify2 §4 点名的洞：旧写法只读 ``--basetemp`` 字面值，
+#    **环境钉而不传选项**时全盲（``PYTEST_DEBUG_TEMPROOT`` 钉进 Runtime＝#76 事故原形，
+#    实测 6 枚假红 + 其余媒体用例假绿，守卫一声不吭）。
+# ② 暂存根 ∉ 受保护运行数据根。``TMP``/``TEMP``/``TMPDIR`` 钉进 ``ChatBot_Runtime`` 时**名册自己
+#    跟着漂**（``media_temp_root()`` 就是同一枚 ``tempfile.gettempdir()``）⇒ ① 在这条路上必然放行，
+#    而产物（含 L1 的隔离运行数据根 ``chatbot-pytest-runtime/``）整颗长在受保护根里＝规则 2 直接
+#    命中面。故拿**同一把尺**反着问一次：根表＝``_RUNTIME_ROOT``，「在里面」才是罪 ⇒ 判得进即拒。
+# 不调 ``tmp_path_factory.getbasetemp()``：后者会在 ``_pytest/tmpdir.py:156-158`` 先 ``rm_rf``
+# 再返回——那等于"先把在籍目录删了再拒绝启动"（规则 2）；两腿都只读**原始值**，被拒路径连创建
+# 都不会发生（席 guardverify2 §1 反向取证：按 ``getbasetemp()`` 判时哨兵文件真被抹）。
+# 8.3 短名 / 分隔符安全：判定输入与根表**两侧**都在 ``contain_within`` 里过 ``resolve()``
+# （:363 ``resolve_roots`` 折根、:367 折候选），本机 ``%TEMP%`` 实测常是 ``LANCYC~1`` 短形态，
+# 故 ``ChatBot_R~1`` 这类短名钉进来一样判"在内"，在册短名跑法一样判"在内"（不误拒）。
+# 在册路线零行为变化：``scripts/dev.ps1`` 的 ``Get-PytestScratchBase``（:180-196，首候选＝
+# ``%LOCALAPPDATA%\Temp\qoder-chatbot-ci``）先把子进程 TMP/TEMP/PYTEST_DEBUG_TEMPROOT 钉进那棵树、
+# 再传 ``--basetemp=<同一目录>\basetemp``（:468-491）⇒ 两值同源且不在 ``ChatBot_Runtime`` 下。
+# 骨架最小仓（``tests/_autosync_fixture.py`` 不拷 ``domains/media``）取不到容器门 ⇒ 两腿一起按本
+# 文件既有缺席口径跳过（degrade＝不做判定、绝不崩；与 ``_quarantine_render_pool_between_modules`` 同形）。
+
+#: 供出「暂存/容器根」的环境变量名——**逐字照 installed ``_pytest/tmpdir.py`` 与 CPython
+#: ``tempfile`` 的取值顺序**（PYTEST_DEBUG_TEMPROOT 决定 pytest 派生根；TMP/TEMP/TMPDIR 决定
+#: ``tempfile.gettempdir()``，而媒体名册与 L1 隔离根都从它派生）。判定只读这些**原始值**。
+_G2_TEMP_ROOT_ENV_VARS: tuple[str, ...] = ("PYTEST_DEBUG_TEMPROOT", "TMP", "TEMP", "TMPDIR")
+
+
+def _g2_effective_containers(config: pytest.Config) -> list[tuple[str, Path, bool]]:
+    """pytest 本轮真正会用的容器 → ``[(来源标签, 待判容器, allow_root)]``（派生法见上①）。"""
+    given = config.getoption("basetemp", None)
+    if given:
+        # 传了选项 ⇒ pytest 会对该目录先 rm_rf：allow_root 保持"根算越界"（--basetemp=%TEMP% 不许放行）。
+        return [("--basetemp", Path(str(given)), False)]
+    pinned = (os.environ.get("PYTEST_DEBUG_TEMPROOT") or "").strip()
+    if pinned:
+        return [
+            (
+                "PYTEST_DEBUG_TEMPROOT（未传 --basetemp ⇒ pytest 由它派生容器）",
+                Path(pinned),
+                True,
+            )
+        ]
+    return [
+        (
+            "tempfile.gettempdir()（TMP/TEMP/TMPDIR 之一所定，未传 --basetemp）",
+            Path(tempfile.gettempdir()),
+            True,
+        )
+    ]
+
+
+def _g2_env_pins_into_protected_tree(path_gate) -> list[tuple[str, Path]]:
+    """② 那一问：枚枚变量原值 → 命中「被钉进 ``_RUNTIME_ROOT`` 之内」的（判得进＝罪）。"""
+    hits: list[tuple[str, Path]] = []
+    for name in _G2_TEMP_ROOT_ENV_VARS:
+        raw = (os.environ.get(name) or "").strip()
+        if not raw:
+            continue
+        probe = Path(raw)
+        try:
+            path_gate.contain_within(probe, [_RUNTIME_ROOT], allow_root=True)
+        except path_gate.PathEscapeError:
+            continue  # 不在受保护根内（或形态判不了）＝本腿不拒；那一问归 ①
+        hits.append((name, probe))
+    return hits
+
+
+def _g2_refuse(source: str, container: Path, reason: str, remedy: str) -> None:
+    """响亮拒绝：rc≠0、收集零条、被拒路径不碰；点名是**哪一枚**选项/环境变量供出的根。"""
+    pytest.exit(
+        f"tests/conftest.py G2 拒绝启动：{source}={container} {reason}"
+        f"（判定件＝plugins/bot_unified_runtime/domains/media/path_gate.py::contain_within，"
+        f"全树判定面只此一处）。这样跑出来的红是测量假象：tmp_path 下的媒体件会被"
+        f" _local_path_from_value 静默拒读（只 logger.debug），凡「本轮带媒体」的用例前提无声"
+        f"蒸发，不跳序的那些更是失前提仍照绿。{remedy}——本守卫不开根、不加键、不调"
+        f" getbasetemp()（那会先 rm_rf 再拒绝，撞规则 2）。"
+    )
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_configure(config: pytest.Config) -> None:
+    """G2：有效容器不在媒体读根名册里（或被钉进受保护运行数据根）⇒ 会话启动即拒绝并点名来源。"""
+    try:
+        from plugins.bot_unified_runtime.domains.media import path_gate
+    except ImportError:  # 骨架最小仓无 domains/media ⇒ 无容器门可问，跳过即语义等价
+        return
+    for source, container, allow_root in _g2_effective_containers(config):
+        try:
+            path_gate.contain_within(
+                container, path_gate.media_read_roots(container), allow_root=allow_root
+            )
+        except path_gate.PathEscapeError as exc:
+            _g2_refuse(
+                source,
+                container,
+                f"不在媒体容器门（media_read_roots）认得的任何合法读根内（code={exc.code}）",
+                f"改把 scratch 放到 {path_gate.media_temp_root()} 之下（scripts/dev.ps1 的 "
+                f"Get-PytestScratchBase 就走这条），或按 "
+                f"patches/W5-MEDIA-PATH-GATE-CLOSURE-20261001.md 的正门裁定通道登记容器根",
+            )
+    for name, pinned in _g2_env_pins_into_protected_tree(path_gate):
+        _g2_refuse(
+            f"环境变量 {name}",
+            pinned,
+            f"落在受保护运行数据根 {_RUNTIME_ROOT} 之内（AGENTS.md 规则 2）：媒体读根名册会随这枚"
+            f"变量一起漂走 ⇒「容器 ∈ 名册」那一问在这条路上永远判不到，而测试缓存与 L1 的隔离"
+            f"运行数据根整颗写进运行数据根",
+            "scratch 请留在 %LOCALAPPDATA%\\Temp\\qoder-chatbot-ci 或 %TEMP% 一侧"
+            "（scripts/dev.ps1 的 Get-PytestScratchBase 走的就是前者）",
+        )
 
 # ---------------------------------------------------------------------------
 # BOT_AUTOSYNC 常驻自动同步钩子（session 级，人完全无感）
