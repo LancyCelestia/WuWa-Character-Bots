@@ -985,6 +985,20 @@ _ISSUE_SELF_REVIEW_RULES: dict[str, tuple[str, str]] = {
         "推测是此刻没有在线的发送账号，消息留在队列里等账号回来",
         "看协议端连接状态与登录回执；这类通常是断线窗口，不必改代码",
     ),
+    # VIS（2026-10-06）：等账号等到超过年龄闸时限、被队列**判终态丢弃**那一臂
+    # （真身=queue.py 的 `_BOT_UNAVAILABLE_DROP_KIND`）。与上面那枚的区别就是
+    # 「还挂着」与「已经丢了」——丢了不会自动补发，得有人看见并人工处理。
+    "send_queue_dropped_bot_unavailable": (
+        (
+            "推测是这段时间没有可认领的在线发送账号（协议端掉线，"
+            "或这条请求的 bot_id 对不上任何在线账号），队列把它挂到年龄闸上限后丢弃了"
+        ),
+        (
+            "先看协议端连接与登录回执，再核这条请求的 bot_id/adapter；"
+            "年龄闸时限是配置键 bot_send_bot_unavailable_max_age_seconds，"
+            "要找回这一条只能人工重发"
+        ),
+    ),
     "result_unknown": (
         "推测是发出去了但没读到回执，不代表对方没收到",
         "按 request_id 在 runtime 事件日志里对账；反复出现再查传输超时预算",
@@ -1056,6 +1070,9 @@ _ISSUE_REASON_LABELS: dict[str, str] = {
     # 照样漏代号／落「未归类」。覆盖由 `tests/test_alert_plain_text.py` 从真身派生执法。
     "send_queue_dormant_partial": "旧任务发到一半停住，等自动归档出清",
     "send_queue_inflight_saturated": "在途投递占满窗口，新消息在排队",
+    # VIS（2026-10-06）：年龄闸判终态丢弃那一臂（与 alerts._KIND_PLAIN 两面同步登记，
+    # 缺任一面即另一面漏代号／落「未归类」）。
+    "send_queue_dropped_bot_unavailable": "无在线发送账号，等到超时限后被丢弃",
     "creation_not_configured": "创作预留位未接后端，功能未启用",
     # 紧急预警域（真身=collector.ISSUE_KIND 与 push.ISSUE_KIND_PUSH_EXPIRED，
     # stage 同一枚 `emergency_info`）。两面同步登记，缺任一面即另一面漏代号／落「未归类」。

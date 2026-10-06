@@ -102,6 +102,20 @@ def _inline_delivery_grace_seconds() -> float:
 _BOT_UNAVAILABLE_KIND = "bot_unavailable"
 _BOT_UNAVAILABLE_RETRY_DELAY_SECONDS = 90.0
 _BOT_UNAVAILABLE_MAX_AGE_SECONDS = 1800.0
+# VIS（2026-10-06 澜汐裁定「发丢了没人喊是最贵的一种坏」）：**被年龄闸判死刑**
+# 那一臂的告警代号（真身＝本常量，两面人话在册：`alerts._KIND_PLAIN` 与
+# `error_report._ISSUE_REASON_LABELS`；缺登记时走既有兜底句，不另开通道）。
+# 为什么换代号而不是照抄 `bot_unavailable`：worker 的告警腿
+# （`worker._notify_operational_issue_safely`，R2 2026-09-17）对
+# `kind=="bot_unavailable"` 一律只留 DEBUG、不打管理员告警——那句防的是「启动期
+# 成批挂起逐条骚扰管理员」，判据吃的是**挂起**语义；而行被本臂写成终态后既不再
+# 被认领也不会自动补发，再套同一句静默就等于「71 条消息没了、没有任何出口说过
+# 一句」（真机验收事故原形，全账 §76.20）。
+# 🔴 只换**返回回执**里的那一枚 issue：盘上 `request_json` 落的仍是挂起代号
+# （`_update_state_in` 收到的还是传进来的原 issue），事后取证面逐字不变；
+# 认领判据/重试预算/终态判定/幂等键形一律未动；抑制走装配现场那枚
+# `operational_alert_suppression`（`AdminAlertSuppression`，缺省 300s），不自造节流。
+_BOT_UNAVAILABLE_DROP_KIND = "send_queue_dropped_bot_unavailable"
 # Q-G7（SEAT-ATK-QUEUE）休眠 PARTIAL 永久停摆的收口三件（S-FIX-QPARK 补丁）：
 # ① mark_partial(resumable=False) 不再写 next_retry_at=NULL 的永久死档——
 #   「无可推进 PENDING part（且 attempts 未烧尽）」的行直接终态化 FAILED_FINAL
@@ -1123,6 +1137,9 @@ class SQLiteSendRequestQueue:
         只顺延下次尝试时间、不递增 retry_count（挂起至 bot 恢复，恢复后
         下一轮认领即投）；入队超过 bot_unavailable 年龄上限仍不可投才置
         终态，防止 A4 契约（非终态永不淘汰）下死挂行无限堆积。
+
+        VIS（2026-10-06）：终态那一臂**必须出声**——挂起臂继续静默（每个 tick 都
+        喊就是刷屏），被判死刑的臂不再静默（丢了没人喊是最贵的一种坏）。
         """
         hold_expired = (
             now - entry.created_at
@@ -1138,6 +1155,22 @@ class SQLiteSendRequestQueue:
                 now=now,
                 operational_issue=issue,
                 dedupe_key=dedupe_key,
+            )
+            # VIS（2026-10-06）：这一臂从此出声。只改写**返回回执**里的那枚 issue
+            # （换成 `_bot_unavailable_drop_issue` 那枚终态代号），既有链条就把它送到
+            # 中央告警口：queue → worker `_notify_operational_issue_safely` →
+            # 装配 `operational_notifier`（`__init__._notify_queue_operational_receipt`）
+            # → `alerts.notify_operational_issue`（300s 抑制窗 + 诊断卡照旧，fail-open
+            # 也照旧：告警腿整段 try/except，炸了只留痕、不改回执）。
+            # 行上落的仍是原挂起 issue（上方 `_update_state_in` 已提交），盘上账与
+            # 审计行（`send_failed_final`，读的是 state/retry_count/public_message）
+            # 逐字不变；挂起那一臂（else）仍不带这枚代号 ⇒ 不会每个 tick 都喊。
+            receipt = receipt.model_copy(
+                update={
+                    "operational_issue": self._bot_unavailable_drop_issue(
+                        entry, issue, now=now
+                    )
+                }
             )
             event = "send_failed_final"
         else:
@@ -1160,6 +1193,42 @@ class SQLiteSendRequestQueue:
             event = "send_deferred_bot_unavailable"
         self._append_sender_audit(entry.send_request, receipt, event)
         return receipt
+
+    def _bot_unavailable_drop_issue(
+        self,
+        entry: QueuedSendRequest,
+        issue: OperationalIssue,
+        *,
+        now: datetime,
+    ) -> OperationalIssue:
+        """年龄闸终态那一臂的人话抓手（只喂告警面：不落盘、不参与任何判定）。
+
+        一条告警要能自己回答四件事——因为什么（`kind` 的中文在册）、哪一枚请求、
+        投给哪个会话、还能不能补发（`retryable=False` ⇒ 告警的「要不要再试」行说
+        「重试也没用，得有人看一眼」；队列侧的事实是终态行永不再被认领、也不会
+        自动补发）。批量的「多少条」不在这里编：那是既有抑制窗的读数
+        （`AdminAlertSuppression` → 告警的「同时压着 N 条同类没重复发」行）。
+        `safe_summary` 保持单行且≤118 字——`alerts` 的「具体情况」行按 120 裁、
+        技术行按 60 裁，把最要命的两件（哪一枚请求/哪个会话）排在前面。
+        """
+        request = entry.send_request
+        held_seconds = max(0.0, (now - entry.created_at).total_seconds())
+        summary = " ".join(
+            (
+                _BOT_UNAVAILABLE_DROP_KIND,
+                f"req={str(request.request_id)[:24]}",
+                f"sess={str(request.session_id)[:30]}",
+                f"held={held_seconds:.0f}s>={self._bot_unavailable_max_age_seconds:.0f}s",
+            )
+        )
+        return OperationalIssue(
+            stage="queue",
+            kind=_BOT_UNAVAILABLE_DROP_KIND,
+            retryable=False,
+            severity=issue.severity,
+            attempts=max(1, int(entry.retry_count)),
+            safe_summary=summary[:118],
+        )
 
     def mark_retryable_failure(
         self,

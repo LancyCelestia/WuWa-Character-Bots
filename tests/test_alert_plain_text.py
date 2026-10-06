@@ -446,6 +446,10 @@ def test_diagnostic_card_reason_for_server_kind_is_not_unclassified() -> None:
 #: 谁在紧急域再加一枚告警 kind 而忘了填人话，这把锁当场红。
 _OBSERVED_KIND_SOURCES: tuple[str, ...] = (
     "domains/transport/sender/worker.py",
+    # VIS（2026-10-06）：发送队列自己的观测代号（`_BOT_UNAVAILABLE_KIND` 挂起臂 +
+    # `_BOT_UNAVAILABLE_DROP_KIND` 年龄闸终态臂）——年龄闸那一条此前只落盘上账、
+    # 全树零告警，分母不含它就只能靠人记得去补人话；派生尺扩到真身文件才叫有牙。
+    "domains/transport/sender/queue.py",
     "domains/creation/reserved_health_alert.py",
     "domains/emergency_info/service/collector.py",
     "domains/emergency_info/service/push.py",
@@ -522,6 +526,9 @@ def test_observed_kind_coverage_lock_bites_on_a_poisoned_vocabulary() -> None:
     [
         ("queue", "send_queue_dormant_partial", "归档"),
         ("queue", "send_queue_inflight_saturated", "排队"),
+        # VIS（2026-10-06）：年龄闸判死那一臂——人话必须说清"丢了、不会自动补发"，
+        # 不许写成"不要紧"（那正是这次事故里没人喊的形态）。
+        ("queue", "send_queue_dropped_bot_unavailable", "人工重发"),
         ("creation", "creation_not_configured", "预留位"),
         ("emergency_info", "collect_failed", "没采到数据"),
         ("emergency_info", "push_expired", "时效窗"),
