@@ -4280,6 +4280,7 @@ def _register_nonebot_handlers() -> None:
     # 形参名以真身 domains/transport/sender/outbound_gate.py 的 build_outbound_gate 为准
     # （settings_provider / quiet_settings_provider / audit_logger / clock / store / issue_sink）。
     from .domains.transport.sender.outbound_gate import (
+        build_move_private_redirector,
         build_outbound_gate,
         build_outbound_gate_settings,
     )
@@ -4453,11 +4454,23 @@ def _register_nonebot_handlers() -> None:
         _ack_ema_cache["at"] = now
         _ack_ema_cache["ema_ms"] = ema_ms
         return ema_ms
+    # 隐私转私聊通路（用户 2026-10-06 裁定「先建立起来，但不代表现在就要它真正启用」）：
+    # 开关 `BOT_REVIEW_MOVE_PRIVATE_ENABLED` **缺省 False**，关时工厂返回 None ⇒ pipeline
+    # 里那一支整体不可达、行为与今日逐字节相同。装配期取一次 ⇒ 该键登记
+    # RESTART_REQUIRED_KEYS（真身 domains/transport/sender/outbound_gate.py，投递只走
+    # 中央出口 submit_active_push，本文件不在这条腿上再开第二条 send 通路）。
+    review_move_private_redirect = build_move_private_redirector(
+        config,
+        send_queue=send_queue,
+        gate=outbound_gate,
+        audit_logger=audit_logger,
+    )
     pipeline = RuntimePipeline(
         progress_ack_latency_probe=_slowest_gateway_ema_ms,
         redrive_settings=build_redrive_settings(config),
         feature_gate=product_feature_gate,
         outbound_voice_enricher=pipeline_voice_enricher,
+        review_move_private_redirect=review_move_private_redirect,
         send_queue=send_queue,
         audit_logger=audit_logger,
         reply_budget_settings=build_reply_budget_settings(config),

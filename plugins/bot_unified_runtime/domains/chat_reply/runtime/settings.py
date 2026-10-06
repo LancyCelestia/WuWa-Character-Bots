@@ -851,6 +851,17 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
         "消费点读裸 config 非合并层（根 __init__.py 队列 worker 作业与"
         " domains/transport/sender/onebot.py），覆盖不可达；真机取证前也不宜热开"
     ),
+    # ---- 隐私转私聊通路（2026-10-06 建通路批，用户裁定「先建立、不代表现在启用」）----
+    # 唯一读点＝domains/transport/sender/outbound_gate.py::move_private_redirect_enabled，
+    # 由根装配在**构造 RuntimePipeline 时取一次**：产物（协作者或 None）冻进实例属性，
+    # 运行期不再回读 config，且合并表 _RUNTIME_HOT_OVERRIDE_FIELDS 未登记本键（该表归于
+    # 文件，本席禁写）⇒ 热 set 一次也不改判据，按 C-09「死开关不许骗人」登记需重启。
+    # 缺省 False＝今日形态逐字节不变（那一支整体不可达）。
+    "BOT_REVIEW_MOVE_PRIVATE_ENABLED": (
+        "装配期取一次（协作者引用冻进 RuntimePipeline），合并层未登记 ⇒ 覆盖不可达；"
+        "且总闸热翻会即时把「隐私内容发往群」从 BLOCKED 改成转投本人私聊（一键改行为），"
+        "保守裁定需改 .env + 重启"
+    ),
     # ---- 半接线（诚实拒绝优于半生效）----
     "BOT_DOWNLOAD_PROXY": (
         "下载代理 getter 每次现读 store，但 Telegram 媒体路径直读 env 不经 store"

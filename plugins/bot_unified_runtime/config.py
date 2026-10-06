@@ -718,6 +718,16 @@ class Config(BaseModel):
     # domains/transport/sender/onebot.py（B4b 席独占面），SnowLuma 侧未取证前生产不开；
     # 缺省 False=现状字节级不动。config.py 本波唯一登记人=B4a，故该键在此落账。
     bot_outbound_verify_enabled: bool = False
+    # 隐私转私聊通路（`ReviewAction.MOVE_PRIVATE` 的第一个消费者，2026-10-06 建通路批）。
+    # 病根（台账 #77／§「回执与队列」⑦）：reviewer 把「个人隐私级内容发往群」判成
+    # MOVE_PRIVATE，而全仓零消费者 ⇒ 它与 BLOCK 走同一支，「转私聊」从未实装。
+    # 用户 2026-10-06 裁定＝**建通路、不启用**（「我需要你先把它建立起来，但并不代表我
+    # 现在就需要它真正启用」）⇒ 缺省 **False**：关时根装配拿到的协作者是 None、pipeline
+    # 那一支整体不可达，今日形态逐字节不变（回执仍 BLOCKED、发送队列零新请求）。
+    # 开=内容改投**请求者本人**的私聊会话、群侧不发言；投递只走主动投递的中央出口
+    # （真身 domains/transport/sender/outbound_gate.py，`move_private_redirect_enabled`
+    # 是全树唯一读点）。装配期取一次 ⇒ 需重启。
+    bot_review_move_private_enabled: bool = False
     # 消息编辑/撤回通路（席 S34 建通路 2026-10-04、席 S34b 三面落键同日，用户已点头开面）：
     # 唯一读点＝domains/transport/message_mutation.py::mutation_feature_enabled /
     # mutation_window_seconds（属性式直读在册字段，不再 getattr 容缺省＝第二套口径）。

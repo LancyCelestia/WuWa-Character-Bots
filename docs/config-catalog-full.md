@@ -1415,3 +1415,4 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 | `BOT_DB_BACKUP_MAX_FOOTPRINT_BYTES` | int | `4294967296` | 1 MiB-512 GiB | 🟡需重启 | 备份区总量上界 | 超界按保留序淘汰 |
 | `BOT_DB_BACKUP_MIN_FREE_BYTES` | int | `21474836480` | 0-1 TiB | 🟡需重启 | 开跑前同卷剩余空间下限：不足不开火 | 缺省 20 GiB（基线普查同卷剩 111 GB） |
 | `BOT_DB_BACKUP_STALE_AFTER_HOURS` | int | `24` | 1-720 | 🟡需重启 | 副本过期时限（小时） | 超龄在体检报告点名，不自动删 |
+| `BOT_REVIEW_MOVE_PRIVATE_ENABLED` | bool | `False` | — | 🟡需重启（装配期取一次） | 隐私输出「转私聊」通路总闸：开＝`ReviewAction.MOVE_PRIVATE` 那一轮把正文改投**请求者本人**的私聊会话、群侧零发言（不加任何引导句）；关＝与改前逐字节相同（仍 `BLOCKED`、队列零新请求） | 真身 `domains/transport/sender/outbound_gate.py::build_move_private_redirector`（关时工厂返回 `None`⇒`pipeline` 那一支整体不可达）。只吃 MOVE_PRIVATE，**BLOCK 绝不转**（否则开关一开就多出一条把违规内容搬进私聊的泄露腿）；私聊键形只由 `domains/core/session_keys.private_session_key` 构造；投递只走中央出口 `submit_active_push`。用户 2026-10-06 裁「先把它建立起来，但并不代表现在就需要它真正启用」⇒ 缺省关；锁＝`tests/test_move_private_redirect.py` |

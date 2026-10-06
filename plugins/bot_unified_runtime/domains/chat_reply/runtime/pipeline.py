@@ -31,6 +31,7 @@ from plugins.bot_unified_runtime.contracts import (
     PrivacyLevel,
     ReceiptState,
     RenderedOutput,
+    ReviewAction,
     ReviewResult,
     RiskLevel,
     SendPolicy,
@@ -967,9 +968,20 @@ class RuntimePipeline:
         progress_ack_latency_probe: Callable[[], float | None] | None = None,
         # 被限流拦下的明确请求「期后补回」的参数；None=不补（旧行为逐字节保持）。
         redrive_settings: RedriveSettings | None = None,
+        # 隐私转私聊（`ReviewAction.MOVE_PRIVATE` 的第一个消费者，2026-10-06 建通路批）。
+        # 缺省 None=那一支不可达 ⇒ 与今日逐字节相同（回执仍 BLOCKED、队列零新请求）；
+        # 键开时由根装配注入 `domains/transport/sender/outbound_gate.py` 的工厂产物，
+        # 投递只走中央出口。本模块不拼 SendRequest、不自开 send 通路（同
+        # `outbound_voice_enricher` 那一族可选协作者的写法）。
+        review_move_private_redirect: Callable[
+            [IncomingMessage, BotDecision, CapabilityResult, ReviewResult],
+            DeliveryReceipt | None,
+        ]
+        | None = None,
     ) -> None:
         self.feature_gate = feature_gate
         self.outbound_voice_enricher = outbound_voice_enricher
+        self.review_move_private_redirect = review_move_private_redirect
         self.progress_ack_settings = progress_ack_settings
         self.progress_ack_submit = progress_ack_submit
         self.progress_ack_latency_probe = progress_ack_latency_probe
@@ -1362,6 +1374,13 @@ class RuntimePipeline:
             return self._record_receipt_safely(receipt, message)
         review = review_capability_result(result, decision)
         if not review.approved:
+            # 隐私转私聊（`BOT_REVIEW_MOVE_PRIVATE_ENABLED`，缺省关）：协作者=None 时这三行
+            # 整体不可达 ⇒ 与今日逐字节相同（仍落下面那支 BLOCKED）。真身在
+            # `domains/transport/sender/outbound_gate.py`（投递只走中央出口）。
+            if self.review_move_private_redirect is not None:
+                moved = self.review_move_private_redirect(message, decision, result, review)
+                if moved is not None:
+                    return self._record_receipt_safely(moved, message)
             public_message = _review_block_public_message(result, review)
             receipt = DeliveryReceipt(
                 request_id=message.request_id,

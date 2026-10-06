@@ -6,6 +6,10 @@
 去重键规范」收成一处，紧急信息域（`domains/emergency*`）只允许经
 `submit_active_push` 触达 `SendQueue.submit`。
 
+本文件同时是**主动投递类消费腿的家**（2026-10-06 起多一条：`MOVE_PRIVATE` 的隐私转私聊
+通路，见文件末尾那一节）——理由与上面同一句：凡是「不由入站请求直接触发、要把一条内容
+改投到某个会话」的动作，都必须在同一把闸后面出门，否则中央判定就有第二条通路。
+
 设计硬约束（与规格同口径，勿在下游软化）：
 
 - **缺省=现状字节级不动**：`enabled=False` 时直通裸 `submit(send_request)`，零
@@ -53,15 +57,24 @@ from plugins.bot_unified_runtime.domains.chat_reply.policy.quiet_hours import (
 )
 from plugins.bot_unified_runtime.domains.core.contracts import (
     AuditRecord,
+    BotDecision,
+    CapabilityResult,
     DeliveryReceipt,
+    IncomingMessage,
     OperationalIssue,
     ReceiptState,
+    ReviewAction,
+    ReviewResult,
+    SendPolicy,
     SendRequest,
+    SessionType,
 )
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import StrictBaseModel
 from plugins.bot_unified_runtime.domains.core.moment_parsing import parse_moment
+from plugins.bot_unified_runtime.domains.core.session_keys import private_session_key
 from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
     EMERGENCY_DEDUPE_PREFIX,
+    active_push_key_segment,
     active_push_key_shape_ok,
     is_emergency_dedupe_key,
     wash_active_push_key,
@@ -73,6 +86,7 @@ from plugins.bot_unified_runtime.domains.render.plain_text import (
 __all__ = [
     "KIND_GATE_TTL_EXPIRED",
     "KIND_GATE_TTL_INVALID",
+    "REVIEW_MOVE_PRIVATE_NAMESPACE",
     "TTL_STATE_ABSENT",
     "TTL_STATE_ACTIVE",
     "TTL_STATE_EXPIRED",
@@ -83,10 +97,12 @@ __all__ = [
     "OutboundGateSettings",
     "OutboundGateVerdict",
     "SQLiteOutboundSendStore",
+    "build_move_private_redirector",
     "build_outbound_gate",
     "build_outbound_gate_settings",
     "dedupe_key_shape_ok",
     "effective_gate_enabled",
+    "move_private_redirect_enabled",
     "parse_gate_ttl",
     "submit_active_push",
 ]
@@ -1226,3 +1242,247 @@ def build_outbound_gate(
         audit_logger=audit_logger,
         issue_sink=issue_sink,
     )
+
+
+# =============================================================================
+# 隐私转私聊（`ReviewAction.MOVE_PRIVATE` 的消费腿，2026-10-06 建通路批）
+#
+# 为什么这一腿住本文件：`submit_active_push` 是主动投递触达发送队列的**唯一中央出口**，
+# 而「改投请求者本人的私聊」正是一次主动投递。放别处就要么新开一条 send 通路（本仓禁），
+# 要么让 `pipeline` 自己去拼 SendRequest（等于把出站判定从闸口搬回能力层）。
+#
+# 病根（台账 #77／`docs/HANDBOOK.md`「回执与队列」⑦／U15-10）：reviewer 的隐私那一腿
+# （PERSONAL/CREDENTIALED + 群作用域）把动作置成 `ReviewAction.MOVE_PRIVATE`，而**全仓零
+# 消费者**——`pipeline._complete` 只看 `review.approved`，于是它与 `BLOCK` 走同一支
+# （`ReceiptState.BLOCKED` + 一句机器文案），「转私聊」只是契约里的名字。
+# `ReceiptState.REDIRECTED` 也一直「有消费者、无生产者」——本腿就是那个缺席的生产者。
+#
+# 用户 2026-10-06 裁定＝**建通路、不启用**（原文「我需要你先把它建立起来，但并不代表我
+# 现在就需要它真正启用」）⇒ 三条硬约束，缺省关时逐字节等于今日形态：
+# ① 总闸 `bot_review_move_private_enabled` 缺省 False，且**本文件是全树唯一读点**；
+#    键关/键缺席 ⇒ 工厂返回 `None` ⇒ `pipeline` 那一支不可达（鸭子配置面没这枚属性
+#    也判关，与「键未落地」同形，绝不 fail-open 成「读不到就当开」）。
+# ② 转投只走 `submit_active_push`（闸关=与裸 `submit` 同形的 passthrough），
+#    禁 `send_queue.submit` 直调、禁低层 sender 直调——本文件不许长出第二条通路。
+# ③ 群侧**零发言**：转成功就只回一条 `REDIRECTED` 空正文回执；任何一步判不出「该投给谁」
+#    或闸判 skip（= 这条永远送不出去）⇒ 返回 `None`，落回今日那支 BLOCKED，
+#    宁可少发也绝不新增泄露。
+#
+# 内容面：转出去的那封**就是原本要发的那一份**——成形口仍是 `render_reviewed_output`
+# （`_redacted` 那条咽喉），零新增文案（话术属规则 8 审批面，本波不造句子）；即便被
+# 投到私聊，`_redact_active_push_body` 也在中央出口再洗一次密钥/盘符形态（铁律 3）。
+# =============================================================================
+
+#: 转投族的 dedupe 命名空间（申报给 `dedupe_key_shape_ok`，规则本体仍住
+#: `domains/emergency_info/service/dedupe.py`——本文件不重写键形判据）。
+REVIEW_MOVE_PRIVATE_NAMESPACE = "review-move-private"
+#: 审计事件名与回执 transport（与 BLOCK 那支同一个 reviewer 面，现网按 stage="review" 查得到）。
+MOVE_PRIVATE_TRANSPORT = "reviewer"
+MOVE_PRIVATE_AUDIT_TAG = "review_move_private:v1"
+#: 队列「这条真的被接管了」那一侧的回执形态（`skipped`/`failed_*` 不在内 ⇒ 只出声不改判）。
+_MOVE_PRIVATE_ACCEPTED_STATES = frozenset(
+    {
+        ReceiptState.ACCEPTED,
+        ReceiptState.QUEUED,
+        ReceiptState.SENT,
+        ReceiptState.REDIRECTED,
+    }
+)
+
+
+def move_private_redirect_enabled(config: object) -> bool:
+    """隐私转私聊总闸（**全树唯一读点**，键 `bot_review_move_private_enabled`，缺省 False）。"""
+    return bool(getattr(config, "bot_review_move_private_enabled", False))
+
+
+def build_move_private_redirector(
+    config: object,
+    *,
+    send_queue: Any,
+    gate: OutboundGate,
+    audit_logger: Any = None,
+    clock: Callable[[], datetime] | None = None,
+) -> Callable[
+    [IncomingMessage, BotDecision, CapabilityResult, ReviewResult], DeliveryReceipt | None
+] | None:
+    """按开关装配转投协作者；**关⇒ `None`**（`pipeline` 那一支因此不可达，今日形态不变）。
+
+    开关只在**装配期**读一次（产物冻进协作者引用），所以 `BOT_REVIEW_MOVE_PRIVATE_ENABLED`
+    登记在 `runtime/settings.py:RESTART_REQUIRED_KEYS`——热 set 一次也不改判据，按 C-09
+    「死开关不许骗人」的口径登记需重启，不做「看着能热改」的假承诺。
+
+    返回的协作者签名＝`(message, decision, result, review) -> DeliveryReceipt | None`：
+    给出回执＝本轮已由本腿接管（群侧零发言）；给 `None`＝让 `pipeline` 落回原有分支。
+    """
+    if not move_private_redirect_enabled(config):
+        return None
+    moment = clock if clock is not None else (lambda: datetime.now(timezone.utc))
+
+    def redirect(
+        message: IncomingMessage,
+        decision: BotDecision,
+        result: CapabilityResult,
+        review: ReviewResult,
+    ) -> DeliveryReceipt | None:
+        # 判据不越界：本腿**只**吃 MOVE_PRIVATE。BLOCK（临界风险/密钥泄露/persona 漂移）
+        # 一律照旧整条拦——否则「开了个开关」就凭空多出一条把违规内容转进私聊的泄露腿。
+        if review.action is not ReviewAction.MOVE_PRIVATE:
+            return None
+        # 收件人只有请求者本人：拿不到 sender_id 就没有「本人」，绝不退化成群桶或全表。
+        sender_id = str(getattr(message, "sender_id", "") or "").strip()
+        if not sender_id:
+            _logger.warning(
+                "move_private skipped (no sender to attribute) request_id=%s capability_id=%s",
+                getattr(message, "request_id", ""),
+                getattr(decision, "capability_id", ""),
+            )
+            return None
+        # 键形唯一构造口（`domains/core/session_keys.private_session_key`）：本文件不许
+        # 自拼 `private_…`/`private:…`——#33/#29 那族「同一棵树两种键形、判据各认一种」
+        # 的坑在本仓咬过三次，锁＝tests/test_move_private_redirect.py 第⑥节（含注毒腿）。
+        private_key = private_session_key(sender_id)
+        try:
+            # 惰性导入：`domains/render/renderer` 经 chat_reply 一族回指运行时，模块级
+            # 导入成环（同目录 reviewer 引 content_route 走的是同一手，先例在册）。
+            from plugins.bot_unified_runtime.domains.render.renderer import (
+                render_reviewed_output,
+            )
+
+            rendered = render_reviewed_output(result, review)
+            request = SendRequest(
+                request_id=message.request_id,
+                session_id=private_key,
+                target_scope=SessionType.PRIVATE,
+                target_id=sender_id,
+                # 引用链不带过去：群消息 id 塞进私聊请求只会让 TG 线程头/引用反查指错地方。
+                origin_message_id=None,
+                capability_id=decision.capability_id,
+                content=rendered,
+                send_policy=getattr(decision, "send_policy", SendPolicy.IMMEDIATE),
+                priority="normal",
+                max_messages=int(getattr(decision, "max_messages", 1) or 1),
+                dedupe_key=(
+                    f"{REVIEW_MOVE_PRIVATE_NAMESPACE}:"
+                    f"{active_push_key_segment(message.request_id)}"
+                ),
+                cooldown_key=(
+                    f"{REVIEW_MOVE_PRIVATE_NAMESPACE}:"
+                    f"{active_push_key_segment(private_key)}"
+                ),
+                expires_at=None,
+                privacy_level=review.privacy_level,
+                # 私密内容不拆条、不合并转发（合并转发的节点在 QQ 里可整份展开）。
+                allow_split=False,
+                allow_forward=False,
+                persona_profile_id=str(
+                    getattr(decision, "persona_profile_id", "") or "default"
+                ),
+                adapter=message.adapter,
+                bot_id=message.bot_id,
+                audit_tags=[MOVE_PRIVATE_AUDIT_TAG],
+                deadline_monotonic=getattr(result, "deadline_monotonic", None),
+            )
+            outcome = submit_active_push(
+                send_queue,
+                request,
+                gate,
+                now=moment(),
+                dedupe_family="once",
+                dedupe_namespace=REVIEW_MOVE_PRIVATE_NAMESPACE,
+            )
+        except Exception:  # 转投腿坏了就退回今日形态，绝不带出新的删除/新的泄露
+            _logger.warning(
+                "move_private redirect failed request_id=%s capability_id=%s",
+                getattr(message, "request_id", ""),
+                getattr(decision, "capability_id", ""),
+                exc_info=True,
+            )
+            return None
+        if outcome.receipt is None or outcome.verdict.action == "skip":
+            # skip＝这条被闸吃掉、永远不会送出。此时**不许**报「已转私聊」：落回今日那支
+            # （BLOCKED + reviewer 审计行），群侧照旧沉默，但账是真的。
+            _logger.warning(
+                "move_private not submitted request_id=%s verdict=%s reason=%s",
+                getattr(message, "request_id", ""),
+                outcome.verdict.action,
+                outcome.verdict.reason,
+            )
+            return None
+        _note_move_private_audit(
+            audit_logger,
+            message,
+            decision,
+            review,
+            verdict_action=outcome.verdict.action,
+            deferred_at=outcome.verdict.deliver_after,
+        )
+        if outcome.receipt.state not in _MOVE_PRIVATE_ACCEPTED_STATES:
+            # 队列回的是 skipped/failed 一形（同 request_id 重投撞 dedupe_key 最常见）：
+            # 本轮内容并没有因这一次调用新出门，必须留一行可见的 warning——「报了已转私聊
+            # 而队列里其实没这条」与在册的「谎报送达」同罪（B4-spec §3.2 治的就是它）。
+            # 不改判 BLOCKED：群侧此刻确实沉默，而那条内容早先已被接管。
+            # 观测面只出声不抛（鸭子形回执没有 `.value` 也不许把转投腿炸回 pipeline）。
+            _logger.warning(
+                "move_private queue receipt not accepted request_id=%s state=%s",
+                getattr(message, "request_id", ""),
+                getattr(outcome.receipt.state, "value", outcome.receipt.state),
+            )
+        return DeliveryReceipt(
+            request_id=message.request_id,
+            state=ReceiptState.REDIRECTED,
+            transport=MOVE_PRIVATE_TRANSPORT,
+            public_message="",  # 群侧不发言，也不加任何引导句/说明句（规则 8：本波不造文案）
+            debug_id=review.debug_id,
+            operational_issue=outcome.receipt.operational_issue,
+        )
+
+    return redirect
+
+
+def _note_move_private_audit(
+    audit_logger: Any,
+    message: IncomingMessage,
+    decision: BotDecision,
+    review: ReviewResult,
+    *,
+    verdict_action: str,
+    deferred_at: datetime | None,
+) -> None:
+    """转投这件事必须**可见**（审计 stage="review"，与 BLOCK 同一条通道）。
+
+    行里只有结构化事实：规则名（`review.reasons`，reviewer 那一手本就只报规则名不报
+    原文）、隐私级、目标作用域、闸结论。回复正文/群号/他人号一律不落盘——审计行是**另一条**
+    落盘面，出站要脱敏这里同理（见 `pipeline._review_rewrite_audit_detail` 同口径）。
+    审计口生病不许影响投递（照本文件 `OutboundGate.audit` 的 fail-open）。
+    """
+    if audit_logger is None:
+        return
+    try:
+        audit_logger.append(
+            AuditRecord(
+                request_id=message.request_id,
+                session_id=message.session_id,
+                capability_id=decision.capability_id,
+                stage="review",
+                event=ReviewAction.MOVE_PRIVATE.value,
+                severity=review.risk_level,
+                public_message="",
+                private_debug=(
+                    f"{'; '.join(review.reasons)}; privacy="
+                    f"{review.privacy_level.value}; target_scope="
+                    f"{SessionType.PRIVATE.value}; verdict={verdict_action}; "
+                    f"dedupe_namespace={REVIEW_MOVE_PRIVATE_NAMESPACE}"
+                    + (
+                        f"; deliver_after={_format_moment(deferred_at)}"
+                        if deferred_at is not None
+                        else ""
+                    )
+                ),
+            )
+        )
+    except Exception:  # 观测不得炸投递链路（本文件既有 `audit` 同一方向锁）
+        _logger.warning(
+            "move_private audit_failure request_id=%s",
+            getattr(message, "request_id", ""),
+            exc_info=True,
+        )
