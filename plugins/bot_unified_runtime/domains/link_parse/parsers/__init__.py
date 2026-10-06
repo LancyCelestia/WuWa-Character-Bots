@@ -668,9 +668,15 @@ _RULE_ALLOWED_HOSTS: dict[str, list[str]] = {
 }
 
 # parser_id → Cookie 提供方的平台键（无 cookie 需求的平台不在此列）。
+# 🔴 收 `cookie_header` 且宿主域已在 `PLATFORM_COOKIE_DOMAINS` 的解析器**必须**在此表内；
+# 不绑的两族由 tests/test_cookie_key_contract_locks.py 拦着，豁免理由写在这：
+#   · 自读兜底＝steam/epic（自带 Netscape 读取腿，后缀匹配，不走本表）；
+#   · 票不是它的＝ds163/buff/huajia（域借在 .163.com＝网易云音乐键下）、qsmusic（借 .douyin.com）——
+#     绑进来＝把音乐/抖音的登录态发给游戏与饰品站，要修得先给它们注册自己的平台键。
 _PARSER_COOKIE_PLATFORM: dict[str, str] = {
     "bilibili": "bilibili",
     "bilibili_goods": "bilibili",
+    "bilibili_show": "bilibili",
     "douyin": "douyin",
     "xiaohongshu": "xiaohongshu",
     "youtube": "youtube",
@@ -687,6 +693,10 @@ _PARSER_COOKIE_PLATFORM: dict[str, str] = {
     "qqmusic": "qqmusic",
     "kuwo": "kuwo",
     "kugou": "kugou",
+    "kugou_mixsong": "kugou",
+    # 知乎解析器签名收 cookie_header（`parse_zhihu`→`_headers()` 真放进请求头），
+    # 但此前漏在本表外 ⇒ 每次取头拿到空串，登录 cookie 导了也永不生效。
+    "zhihu": "zhihu",
 }
 
 

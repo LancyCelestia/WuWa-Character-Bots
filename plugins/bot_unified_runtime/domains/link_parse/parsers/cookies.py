@@ -63,7 +63,10 @@ PLATFORM_COOKIE_DOMAINS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     # WP1 新增：两处自读兜底平台的 Cookie 目标域入册（唯一真身，不另建表）。
     "steam": (
         (".steamcommunity.com", "steamcommunity.com", ".steampowered.com", "steampowered.com"),
-        ("steamLoginSecure", "browserid", "birthtime", "steam Machineid"),
+        # 🔴 原名单里的 `steam Machineid` 已删：真实 cookie 名不含空格，该判据永不成立；
+        # Steam 的机器验证票名形如 `steamMachineAuth<steamid>`（带号），本就无法用静态名单表达，
+        # 列进去只会让「缺主证键」永久误报。登录主证只认 steamLoginSecure。
+        ("steamLoginSecure", "browserid", "birthtime"),
     ),
     "epic": ((".epicgames.com", "epicgames.com"), ("EPIC_SESSID", "cf_clearance")),
 }
@@ -150,6 +153,9 @@ class PlatformCookieProvider:
     headers: dict[str, str] = field(default_factory=dict)
     key_names: dict[str, list[str]] = field(default_factory=dict)
     expires: dict[str, int] = field(default_factory=dict)
+    # 🔴 注册表第二元素（登录主证键）的唯一消费者：该平台**有凭据但缺哪张主证票**。
+    # 此前八个消费点全把它写成 `_key_names` 丢弃＝死数据，只会骗读代码的人（缺登录态时静默发匿名票）。
+    missing_required: dict[str, list[str]] = field(default_factory=dict)
     # ↓ 未认领账目（只含域名与计数，**绝不含 cookie 值**）。
     # unclaimed_domains：域名 → 该域名被丢弃的条目数（无任何平台认领它）。
     unclaimed_domains: dict[str, int] = field(default_factory=dict)
@@ -455,7 +461,7 @@ def build_platform_cookie_provider(path: str | Path | None) -> PlatformCookiePro
         # 零条目 + 有正文 = 分隔符/列数不合 Netscape，整份文件白导。
         provider.unparsable_lines = _count_payload_lines(cookie_path)
     now = int(time.time())
-    for platform, (domains, _key_names) in PLATFORM_COOKIE_DOMAINS.items():
+    for platform, (domains, required) in PLATFORM_COOKIE_DOMAINS.items():
         matched = [
             entry
             for entry in entries
@@ -478,6 +484,11 @@ def build_platform_cookie_provider(path: str | Path | None) -> PlatformCookiePro
             cookie_domains=tuple(domains),
         )
         provider.key_names[platform] = [entry.name for entry in ordered]
+        if required:
+            present = {entry.name for entry in ordered}
+            absent = [name for name in required if name not in present]
+            if absent:
+                provider.missing_required[platform] = absent
         # 全为会话 cookie（expires=0/空）时 min() 空序列会抛 ValueError：
         # 用 default=0 语义化为「无过期时间」，不让单条消息解析路径崩溃。
         provider.expires[platform] = min(

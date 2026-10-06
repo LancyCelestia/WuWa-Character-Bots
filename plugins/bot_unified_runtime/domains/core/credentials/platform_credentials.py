@@ -127,7 +127,14 @@ def cookie_status_text(config: object) -> str:
                 expiry_text = "，到期 " + datetime.fromtimestamp(expires).astimezone().strftime(
                     "%Y-%m-%d"
                 )
-            lines.append(f"✅ {platform}：{len(names)} 项（{'、'.join(names[:6])}{'…' if len(names) > 6 else ''}{expiry_text}）")
+            # 🔴 有凭据≠已登录：注册表那半列「登录主证键」在此变成真消费者（此前全被丢弃＝死数据）。
+            absent = provider.missing_required.get(platform) or []
+            absent_text = (
+                "；缺主证键 " + "、".join(absent[:6]) + ("…" if len(absent) > 6 else "") + "（可能未登录）"
+                if absent
+                else ""
+            )
+            lines.append(f"✅ {platform}：{len(names)} 项（{'、'.join(names[:6])}{'…' if len(names) > 6 else ''}{expiry_text}）{absent_text}")
         else:
             lines.append(f"⬜ {platform}：未配置")
     lines.append(f"共 {with_credentials}/{len(PLATFORM_COOKIE_DOMAINS)} 个平台已有凭证。")

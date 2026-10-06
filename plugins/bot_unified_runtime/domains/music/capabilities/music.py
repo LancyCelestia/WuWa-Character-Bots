@@ -445,7 +445,10 @@ def _default_audio_downloader(config: Any | None = None) -> Callable[[str], str 
     cookie_header = ""
     if config is not None:
         try:
-            cookie_header = build_cookie_provider(config).cookie_header("netease_music")
+            # 🔴 实参必须是**平台键** `netease`：provider 的头按平台键存
+            # （`cookies.py` `headers.get(platform, "")`），旧写法传 parser_id `netease_music`
+            # ＝恒空串，网易云登录票在这条下载腿上从来没用上过。
+            cookie_header = build_cookie_provider(config).cookie_header("netease")
         except Exception:  # noqa: BLE001
             cookie_header = ""
 
