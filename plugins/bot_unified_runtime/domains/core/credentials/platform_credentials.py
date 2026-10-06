@@ -31,6 +31,10 @@ _COMMAND_ALIASES = ("cookie", "凭证", "憑證", "凭据", "憑據", "登录凭
 # 统一命令格式：/bot <模块词:cookie> <功能词:status|import> [参数]
 _COMMAND_PREFIX = "/bot "
 _IMPORT_VERBS = ("import", "导入")
+# 动作标签＝动词册的英文头词（F-13 乙案第一批 2026-10-06：原来三处 return 手打 "import"
+# 字面量＝本件真身 `_IMPORT_VERBS` 的第二处独立声明位，被 tests/test_trigger_word_single_source.py
+# 按词面级记债。改派生引用后值一字未变（`_IMPORT_VERBS[0] == "import"`），词面只住册内一格。）
+_ACTION_IMPORT = _IMPORT_VERBS[0]
 
 _DEFAULT_TTL_SECONDS = 180 * 86400
 # 审计#28：cookies.txt 是读-判-写（读 existing → 判重 → append），
@@ -72,11 +76,11 @@ def parse_cookie_command(text: str) -> tuple[str, str, str] | None:
             parts = after.split(None, 1)
             if parts:
                 return (
-                    "import",
+                    _ACTION_IMPORT,
                     parts[0].strip().lower(),
                     parts[1].strip() if len(parts) > 1 else "",
                 )
-            return ("import", "", "")
+            return (_ACTION_IMPORT, "", "")
     if not rest or lowered == "status" or lowered.startswith("status "):
         return ("status", "", "")
     if lowered == "expiry" or lowered.startswith(
@@ -88,7 +92,7 @@ def parse_cookie_command(text: str) -> tuple[str, str, str] | None:
         after = rest[len(verb):].strip()
         return (verb, after.split(None, 1)[0].strip().lower() if after else "", "")
     # /bot cookie <未知功能词>：交给 import 分支按"缺平台"报错，或按 status 提示。
-    return ("import", rest.split(None, 1)[0].strip().lower(), "")
+    return (_ACTION_IMPORT, rest.split(None, 1)[0].strip().lower(), "")
 
 
 def _parse_header_pairs(header: str) -> list[tuple[str, str]]:

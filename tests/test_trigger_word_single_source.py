@@ -111,12 +111,25 @@ _TEXT_RECEIVER: Final[re.Pattern[str]] = re.compile(
 # 今日门形先红 477>467（raw 527/抵销 50），归因全干净走 K-3乙名册通道后回绿；「43-44>42」旧红系
 # S33 表级尺（另一维度，R8 甲已收口），与本尺无涉。**判据、扫描面、上限数值一字未动。**
 #: 上限 467→477＝2026-10-05 用户裁 F-13「抬上限」（知情放宽），签字见 `AUTHORIZED_RAISES`。
-WORD_SITE_CEILING: Final[int] = 477
+# 2026-10-06 F-13 乙案第一批（用户同日裁「乙案开」＝真修，登记不等于修好）：三枚收编位把
+# 手打词面改成引用真身，账 477 → 472（现算 raw 552→547＝−5，名册抵销 75 一字未动、无枚虚设）：
+# ①`domains/core/credentials/platform_credentials.py` 三处动作标签 "import" → 派生本件真身
+#   `_IMPORT_VERBS[0]`（−1：词面只剩册内一格）；②`domains/meme/capabilities/meme.py`
+#   `parse_meme_command` 的 4 处 "list"/"help" 标签（含同件两处消费点）→ 派生 `_LIST_VERBS[0]`/
+#   `_HELP_VERBS[0]`（−2：两标签各只剩真身一格；两册 set→tuple 只为给稳定头词，成员一字未增删）；
+#   ③`domains/chat_reply/policy/gate.py::_flag_from_text` 的 truthy/falsy 手打字集 → 引用中央
+#   真身 `domains/core/config/config_readiness.py`（−2：yes/no 三份同型实现里的第三份折进中央；
+#   本批一度落在新建件里，用户裁「不留新文件、规则要保住」后并入上述已存在文件、新件删除；
+#   另两份 control_plane/__init__.py 与 llm_engine/channel_health.py 仍在名册署名，留第二批收）。
+#   判据、扫描面、四枚地板（1100/700/140/100）、名册条数一字未动；AUTHORIZED_RAISES 不签
+#   （那是放宽方向用的）。牙口替代证明＝`test_poison_f13b_converged_sites_revert_is_debt`。
+WORD_SITE_CEILING: Final[int] = 472
 #: 逐次核账记录（日期, 当时债数），必须单调不升；**要抬必须在 `AUTHORIZED_RAISES` 里留一条
 #: 同日期同数值的签字凭据**（2026-10-05 用户裁 F-13「抬上限」时同批立的替代锁——
 #: 放宽一条腿必配一条牙），且末项＝当前上限（零余量锁）。
 AUDIT_HISTORY: Final[tuple[tuple[str, int], ...]] = (
     ("2026-09-24", 469), ("2026-09-27", 467), ("2026-09-27", 467), ("2026-10-05", 477),
+    ("2026-10-06", 472),
 )
 
 #: 授权上调凭据（日期, 该次核账值, 授权出处摘要）。写不出"谁在哪一天裁的"就抬不了上限。
@@ -708,6 +721,35 @@ def _synth_inline_redeclare(words: tuple[str, ...]) -> str:
     return "def _s53_virtual_probe(command_text: str) -> bool:\n    return command_text.startswith((" + body + ",))\n"
 
 
+def _synth_reverted_return_tag(word: str) -> str:
+    """收编位回归形态①（F-13 乙案第一批）：函数体内把动作标签再手打一遍。
+
+    这就是 platform_credentials／meme 两处改引用之前的原形——混合容器里的字面量元素。
+    """
+    return (
+        "def _s53_virtual_probe(command_text: str) -> tuple[str, str, list[str]]:\n"
+        "    return " + '"' + word + '"' + ", \"\", []\n"
+    )
+
+
+def _synth_reverted_flag_set(words: tuple[str, ...]) -> str:
+    """收编位回归形态②：比较式里手打一整份 truthy/falsy 字集（`_flag_from_text` 的原形）。"""
+    body = ", ".join('"' + w + '"' for w in words)
+    return (
+        "def _s53_virtual_probe(command_text: str) -> bool:\n"
+        "    return command_text in {" + body + "}\n"
+    )
+
+
+def _home_by_part(file_part: str, label_part: str) -> Site:
+    """按「文件名片段＋标签片段」挑一枚现算真身（注毒词面一律现算，本文件零词面字面量）。"""
+    _total, sites, _inline = current_debt()
+    for s in sites:
+        if file_part in s.file and label_part in s.label:
+            return s
+    raise AssertionError(f"注毒前置：找不到真身 {file_part}:{label_part}（先查判据是否被改坏）")
+
+
 # ---------------------------------------------------------------------------
 # 账
 # ---------------------------------------------------------------------------
@@ -911,6 +953,63 @@ def test_copy_turned_into_reference_lowers_ledger_stays_green() -> None:
     ref_debt, _, _ = compute_debt(extra=((rel, _synth_derived_table("S53_POISON_TRIGGER_WORDS", "REGISTERED_HOME")),))
     assert copy_debt > ref_debt == base >= 0 and acct_base <= WORD_SITE_CEILING, (
         f"方向锁失效：手抄={copy_debt} 引用={ref_debt} 基线={base} 计账基线={acct_base} 上限={WORD_SITE_CEILING}"
+    )
+
+
+def test_poison_f13b_converged_sites_revert_is_debt() -> None:
+    """注毒⑦（F-13 乙案第一批的替代牙）：三枚收编位退回手打形态 ⇒ 账必须原样涨回来。
+
+    本批降的 5 格全靠「引用真身」——判据、扫描面、豁免面一枚没动，所以牙只能验一件事：
+    手打形态照旧逐格记债。三发各吃一枚**现算**真身的词面（本文件继续零词面字面量）：
+      ①动作标签手打（platform_credentials `_IMPORT_VERBS`／meme `_LIST_VERBS` 改前原形）；
+      ②比较式里手打整份字集（policy/gate `_flag_from_text` 改前原形，词面取自同意命令面批语册）；
+      ③最小的一枚抄位（单个词面回到混合容器）也要顶穿新上限——零余量钉死后仍咬得住一格。
+    """
+    base, sites, inline = current_debt()
+    acct_base, _raw, _rem = accounted_debt()
+    assert acct_base == WORD_SITE_CEILING, (
+        f"前置没成立：计账 {acct_base} ≠ 上限 {WORD_SITE_CEILING}＝本批零余量没钉上，先刷账再谈牙"
+    )
+    import_home = _home_by_part("platform_credentials.py", "_IMPORT_VERBS")
+    list_home = _home_by_part("meme/capabilities/meme.py", "_LIST_VERBS")
+    approve_home = _home_by_part("consent_admin.py", "_APPROVE_VERBS")
+
+    # ①动作标签形：两枚真身的每个词面单独手打一遍 ⇒ 每发恰 +1 笔。
+    for rel, home in (
+        ("plugins/bot_unified_runtime/domains/ops/_s53_f13b_virtual_tag_a.py", import_home),
+        ("plugins/bot_unified_runtime/domains/ops/_s53_f13b_virtual_tag_b.py", list_home),
+    ):
+        for word in sorted(home.words):
+            got, _ss, _ii = compute_debt(extra=((rel, _synth_reverted_return_tag(word)),))
+            assert got == base + 1, (
+                f"动作标签手打没记满账（{word!r}：base {base}→{got}）＝收编位退回原形时本尺失明"
+            )
+
+    # ②字集形：整册在比较式里重打一遍 ⇒ 恰 +len(words) 笔（gate 那枚改前的形态）。
+    rel_set = "plugins/bot_unified_runtime/domains/ops/_s53_f13b_virtual_flagset.py"
+    got_set, _ss, _ii = compute_debt(
+        extra=((rel_set, _synth_reverted_flag_set(tuple(sorted(approve_home.words)))),)
+    )
+    assert got_set == base + len(approve_home.words), (
+        f"手打字集没按词面记满账（base {base}→{got_set}，词数 {len(approve_home.words)}）"
+        "＝三态布尔折叠再抄一份时本尺看不见"
+    )
+
+    # ③一格即红：挑一枚今天只剩一处声明的词面，抄回混合容器 ⇒ 计账必超新上限。
+    solo = next(
+        (
+            w
+            for w in sorted(import_home.words)
+            if len(_fold_unit_keys(w, list(sites), inline)) == 1
+        ),
+        "",
+    )
+    assert solo, "前置没成立：`_IMPORT_VERBS` 两枚词面都还有第二声明位，本发换靶再验"
+    rel_solo = "plugins/bot_unified_runtime/domains/ops/_s53_f13b_virtual_solo.py"
+    acct_solo, _r, _m = accounted_debt(extra=((rel_solo, _synth_reverted_return_tag(solo)),))
+    assert acct_solo == acct_base + 1 and acct_solo > WORD_SITE_CEILING, (
+        f"抄回一枚词面后计账 {acct_base}→{acct_solo}（上限 {WORD_SITE_CEILING}）＝降账把钉死的上限"
+        "变成了余量，本批的修法不配留这种钝牙"
     )
 
 

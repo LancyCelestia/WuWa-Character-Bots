@@ -70,8 +70,14 @@ _COMMAND_RE = re.compile(
     r"(?:\s+(?P<rest>.+)|(?P<tail>帮助|幫助|help|用法|菜单|菜單|列表|list)?$)",
     re.IGNORECASE,
 )
-_LIST_VERBS = {"列表", "菜单", "全部", "list", "all", "keys"}
-_HELP_VERBS = {"帮助", "用法", "help", "?"}
+_LIST_VERBS = ("list", "列表", "菜单", "全部", "all", "keys")
+_HELP_VERBS = ("help", "帮助", "用法", "?")
+# 动作标签＝各自动词册的英文头词（F-13 乙案第一批 2026-10-06）。原先 4 处 return 手打
+# "list"/"help" 字面量＝本件真身 `_LIST_VERBS`/`_HELP_VERBS` 的第二处独立声明位，被
+# tests/test_trigger_word_single_source.py 按词面级记债。两册由 set 改 tuple 只为给出
+# 稳定头词（成员一字未增删，`in` 判定与消费面逐字节不变），标签值今日等值："list"/"help"。
+_ACTION_LIST = _LIST_VERBS[0]
+_ACTION_HELP = _HELP_VERBS[0]
 
 # key 硬白名单（攻击审计 A-3 修复）：key 原样拼进后端 URL（/memes/{key}、
 # /memes/{key}/info）与本地文件名（meme_{key}_{digest}.png 后 write_bytes），
@@ -196,19 +202,19 @@ def parse_meme_command(text: str) -> tuple[str, str, list[str]]:
     rest = (match.group("rest") or "").strip()
     tail = (match.groupdict().get("tail") or "").strip().lower()
     if tail in _LIST_VERBS:
-        return "list", "", []
+        return _ACTION_LIST, "", []
     if not rest or rest.lower() in _HELP_VERBS:
-        return "help", "", []
+        return _ACTION_HELP, "", []
     first, _, remainder = rest.partition(" ")
     if not remainder.strip():
         # “表情 列表”这种整体是关键词。
         if first.lower() in _LIST_VERBS:
-            return "list", "", []
+            return _ACTION_LIST, "", []
         # 纯 key（无文字）：可能是零文字的图片表情（如 petpet），
         # 也可能只是打错了 key——由能力层按 info 的 min_texts 区分。
         return "render", first, []
     if first.lower() in _LIST_VERBS:
-        return "list", "", []
+        return _ACTION_LIST, "", []
     texts = [item.strip() for item in remainder.split("｜") if item.strip()] or [
         remainder.strip()
     ]
@@ -318,7 +324,7 @@ def build_meme_capability(
                 body=_usage_body(),
                 audit_tags=["meme", "meme_missing_query"],
             )
-        if action == "help":
+        if action == _ACTION_HELP:
             return CapabilityResult(
                 request_id=message.request_id,
                 capability_id="bot.meme",
@@ -331,7 +337,7 @@ def build_meme_capability(
             )
 
         requester = request_fn or _default_request_fn(base_url, timeout)
-        if action == "list":
+        if action == _ACTION_LIST:
             status, body = requester("GET", "/meme/keys")
             if status != 200 or not isinstance(body, list) or not body:
                 return _service_down_result(message, requester, base_url)

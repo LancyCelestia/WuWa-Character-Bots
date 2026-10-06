@@ -17,6 +17,10 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.mentions import (
     looks_like_direct_question,
     starts_with_name_mention,
 )
+from plugins.bot_unified_runtime.domains.core.config.config_readiness import (
+    ENV_FALSE_WORDS,
+    ENV_TRUE_WORDS,
+)
 
 from .roles import ROLE_BLOCKED, role_audit_tags
 
@@ -98,15 +102,21 @@ def _flag_from_text(raw: object) -> bool | None:
     所以 `"false"` 这类写法必须在这里折成 False——直接 `bool("false")` 恒真，正是
     「写了没用」那类静默失效的成因（台账 #68★）。认不出的形态一律返回 None，
     由调用方落到下一级或安全缺省：**宁按缺省收紧，也不猜用户的意思**。
+
+    认哪些字面＝中央真身 ``domains/core/config/config_readiness.py``（F-13 乙案第一批收编：
+    下面两格原本是手打的第二份 truthy/falsy 字集，词面级独立声明债由
+    ``tests/test_trigger_word_single_source.py`` 逐枚记；收成引用后字集一字未增删。
+    真身件 2026-10-06 由一枚新建件搬进这枚**已存在**的配置体检件——家换了、词没换、
+    三态语义逐格没动，"同一事实只一处真身"由 ``tests/test_group_policy.py`` 的结构锁盯着）。
     """
     if isinstance(raw, bool):
         return raw
     if raw is None:
         return None
     text = str(raw).strip().lower()
-    if text in {"1", "true", "yes", "on"}:
+    if text in ENV_TRUE_WORDS:
         return True
-    if text in {"0", "false", "no", "off"}:
+    if text in ENV_FALSE_WORDS:
         return False
     return None
 

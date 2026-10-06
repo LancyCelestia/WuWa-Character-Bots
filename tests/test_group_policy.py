@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import importlib
 import re
 from pathlib import Path
 
@@ -11,9 +13,11 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
     SessionType,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.policy import gate as gate_module
 from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
     GROUP_POLICY_SLOTS,
     PolicySettings,
+    _flag_from_text,
     configure_proactive_affinity_gate,
     evaluate_policy,
     group_is_listed,
@@ -422,6 +426,106 @@ def test_explicit_flag_beats_the_config_surface(monkeypatch: pytest.MonkeyPatch)
         PolicySettings(command_requires_listed_group=True),
     )
     assert decision.reason == "command_group_unlisted"
+
+
+# ---------------------------------------------------------------------------
+# F-13 乙案 · 配置面布尔词表的两把尺（词表搬家批 2026-10-06）。
+# 真身今天住 `domains/core/config/` 里一枚**已存在**的件（本批把词表从一枚新建件
+# 搬进 `config_readiness.py`——同一条事实只准有一处真身，为此多开一个生产文件不算修）。
+# 搬家前后下面三枚读数必须逐格相同：①三态语义（None＝读不出、交下一级，这一格的
+# 落点就是「硬合并判定逻辑」会改掉的东西，故只折字集不折逻辑）；②字集成员本身；
+# ③全仓只准一处定义。判定逻辑的三份同型实现今天仍各住各家（control_plane 与
+# llm_engine/channel_health 在 `test_trigger_word_single_source` 的名册逐枚署名在册）。
+# ---------------------------------------------------------------------------
+
+#: (配置面原始值, `_flag_from_text` 应有读数)——期望列取自搬家**前**的实跑对拍基线。
+#: 覆盖：空串／纯空白／认不出／纯数字／大小写混排／首尾带空白／真值词／假值词／
+#: 原生 bool／原生 int／None。21 格，任一格的读数变了都算行为变了。
+FLAG_TRISTATE_CASES: tuple[tuple[object, bool | None], ...] = (
+    ("", None),
+    ("   ", None),
+    ("maybe", None),
+    ("1", True),
+    ("true", True),
+    ("TRUE", True),
+    ("  Yes  ", True),
+    ("on", True),
+    ("0", False),
+    ("false", False),
+    ("FALSE", False),
+    ("off", False),
+    ("no", False),
+    ("2", None),
+    ("y", None),
+    ("on1", None),
+    ("10", None),
+    (None, None),
+    (True, True),
+    (False, False),
+    (1, True),
+)
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_PLUGINS_ROOT = _REPO_ROOT / "plugins"
+_FLAG_TABLE_NAMES = frozenset({"ENV_TRUE_WORDS", "ENV_FALSE_WORDS"})
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    FLAG_TRISTATE_CASES,
+    ids=[f"{index}_{value!r}" for index, (value, _e) in enumerate(FLAG_TRISTATE_CASES)],
+)
+def test_flag_from_text_tristate_table(raw: object, expected: bool | None) -> None:
+    """三态逐格对拍：`is` 而非 `==`——不许把 `""`／`0` 这类"读不出"折成 False 档。"""
+    assert _flag_from_text(raw) is expected, (
+        f"输入 {raw!r} 的读数从 {expected!r} 变成 {_flag_from_text(raw)!r}＝搬家动了语义"
+        "（None 那一格＝读不出交下一级，是 fail-close 的落点，不是可以顺手抹平的死格）"
+    )
+
+
+def test_flag_word_tables_membership_is_the_blessed_one() -> None:
+    """字集成员本身也是账：真值集/假值集逐格点名且两集互斥——搬家只准换家、不准换词。"""
+    assert gate_module.ENV_TRUE_WORDS == frozenset({"1", "true", "on", "yes"})
+    assert gate_module.ENV_FALSE_WORDS == frozenset({"0", "false", "off", "no"})
+    assert not (gate_module.ENV_TRUE_WORDS & gate_module.ENV_FALSE_WORDS), (
+        "同一枚字面既真又假＝词表被并成了一坨，三态读数会随书写顺序变"
+    )
+
+
+def test_flag_word_tables_have_exactly_one_home_in_the_source_tree() -> None:
+    """单一真身结构锁：全树**模块级定义**这两枚词表的文件只准一枚，且 gate 引用的就是它。
+
+    这条锁管的是"再抄一份"和"为这件事再开一个生产文件"两种跑偏：搬家（换文件）与
+    复制（多文件）在这里都是可现算的——改家数＝当场红。
+    """
+    definers: dict[str, set[str]] = {}
+    for path in sorted(_PLUGINS_ROOT.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for stmt in tree.body:
+            if isinstance(stmt, ast.Assign):
+                targets: list[ast.expr] = list(stmt.targets)
+            elif isinstance(stmt, ast.AnnAssign):
+                targets = [stmt.target]
+            else:
+                continue
+            names = {t.id for t in targets if isinstance(t, ast.Name)} & set(_FLAG_TABLE_NAMES)
+            if names:
+                definers.setdefault(path.relative_to(_REPO_ROOT).as_posix(), set()).update(names)
+    assert len(definers) == 1, (
+        f"配置面布尔词表被 {len(definers)} 枚文件定义：{sorted(definers)}"
+    )
+    home_rel, home_names = next(iter(definers.items()))
+    assert home_names == set(_FLAG_TABLE_NAMES), (
+        f"真值集与假值集被拆散到别处（第二处定义）：{sorted(home_names)}"
+    )
+    assert home_rel.startswith("plugins/bot_unified_runtime/domains/core/config/"), (
+        f"词表真身跑出配置域：{home_rel}"
+    )
+    home_module = importlib.import_module(
+        home_rel[: -len(".py")].replace("/", "."),
+    )
+    assert gate_module.ENV_TRUE_WORDS is home_module.ENV_TRUE_WORDS
+    assert gate_module.ENV_FALSE_WORDS is home_module.ENV_FALSE_WORDS
 
 
 def test_new_config_fields_drive_the_consumer_settings() -> None:

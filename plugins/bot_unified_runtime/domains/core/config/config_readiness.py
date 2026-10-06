@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 from urllib.parse import urlsplit, urlunsplit
 
 from plugins.bot_unified_runtime.config import Config
@@ -17,6 +17,31 @@ from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import 
 
 PERSONA_PROFILE_MIN_CHARS = 10
 PERSONA_PROFILE_MIN_MEANINGFUL_LINES = 2
+
+# ---- 配置面取值折成布尔的**词表中央真身**（F-13 乙案第一批，2026-10-06 搬家批落位）----
+# 为什么这两枚词表住在配置体检件里：本件已经是「把配置面原始取值折成判定」的住处
+# （`has_real_api_key`／`is_placeholder_model`／`base_url_error` 都是同一族——收字符串、
+# 出判定），布尔字面量词表是同一件事的第四枚，不是外来的东西。
+#
+# 只收词表，不收判定逻辑：仓里同型判定今天有三份实现，形态并不同族——
+# `domains/chat_reply/policy/gate.py` 的 `_flag_from_text` 之后还要**逐级回落**
+# （driver config → os.environ → 安全缺省，None＝交给下一级），
+# `control_plane/__init__.py` 与 `domains/chat_reply/llm_engine/channel_health.py`
+# 的 `_flag_value` 各自落到自己那条链的安全缺省。逻辑硬合并会改掉「读不出」那一格的
+# 落点，故本批只把**撞词面的字集**收成一处，逻辑各件照旧。第二批再谈把另两枚抄位
+# 也折进来（它们今天在 `tests/test_trigger_word_single_source.py` 的 `INTENTIONAL_UNITS`
+# 上逐枚署名在册）。
+#
+# 为什么这本账不会因此变瞎（写死在这里，防下一位误读本段）：两枚词表都含纯数字格
+# （`1`/`0`），而两本触发词账的词形谓词本来就不收纯数字元素——同族的
+# `domains/chat_reply/llm_engine/ledger.py` `_TRUE_WORDS` 与 `domains/ops/monitor/error_report.py`
+# `_BOOL_TRUE` 今天同样落在谓词之外。所以**新增可见声明单元＝0**；债能降只可能来自
+# 「调用侧不再手打字面」，谁把手打字面抄回去，该尺的内联口当场记债（注毒腿 `test_poison_*`）。
+# 两枚词表各住一格、同文件同批，`tests/test_group_policy.py` 有「全仓只准一处定义」的结构锁。
+#: 「真」的字面集（入参须已 ``strip().lower()``）。词面只住这一格。
+ENV_TRUE_WORDS: Final[frozenset[str]] = frozenset({"1", "true", "on", "yes"})
+#: 「假」的字面集（同上口径）。词面只住这一格。
+ENV_FALSE_WORDS: Final[frozenset[str]] = frozenset({"0", "false", "off", "no"})
 
 
 def has_real_api_key(value: str) -> bool:
