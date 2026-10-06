@@ -195,6 +195,7 @@ from plugins.bot_unified_runtime.runtime.content_route import (
     match_intimate_command,
     match_master_love_admin,
     member_session_key,
+    narration_allowed_for_session,
     resolve_intimate_context,
 )
 
@@ -5102,9 +5103,23 @@ def build_chat_result(
     # **不再等值**：§76 那批成文于第五根轴之前、把"显式开档"当成"铺开写"的在册锁，
     # 凡判样式段与长度档的都以 `tests/test_narration_axis_styles.py` 为准改写到两态
     # （关系语气腿、出口动作豁免、名单门那些**不按轴走**的锁一字未动，仍照旧判）。
+    # 🔴 会话那一问从本波起改读**叙述可达**那把尺（`content_route.narration_allowed_for_session`，
+    # 用户 2026-10-06 裁「频道里可以写场景描写」）：`content_route_session_eligible` 读的是
+    # `explicit_allowed_for_session`＝**露骨内容放行**判定（其 docstring 自陈"其余会话类型
+    # （TG 频道/邮件等公开面）不放行"），于是她在频道里亲手钉了 `scene` 也永远拿不到那一格。
+    # 两问分开后：本行只问"这一轮的描写轴可达吗"（除频道外那四型＝把入参原样转给旧尺，逐格
+    # 同值⇒群/私聊/控制台/邮件语义一字未动），露骨那条腿（上面 `_rp_intimate_now` 与喂给
+    # 内容政策的 `explicit_allowed`）继续只读旧尺⇒频道拿到的是**公共面**那一格 scene
+    # （`resolve_rp_style_block(group=is_public_space_session(…))`，身形／衣着照旧不落笔）、
+    # 亲密档与露骨放行在频道照旧走不通。锁＝`tests/test_channel_scene_admission.py`。
     _rp_scene_now = (
         content_route_enabled
-        and content_route_session_eligible
+        and narration_allowed_for_session(
+            _session_type_value,
+            _group_id_text,
+            content_route_config,
+            sender_id=_sender_id_text,
+        )
         and safety.action == "allow"
         and _rp_axis.mode == NARRATION_MODE_SCENE
     )
