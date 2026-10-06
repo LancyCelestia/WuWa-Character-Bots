@@ -5,6 +5,18 @@
 随机图、占卜、help 卡、好感度卡、提醒查询、个股行情+非上市守卫、汇率面板/
 定向换算、称谓自助），供用户回 ``test`` 人工验收。2026-09-13 批次起部分检查项
 带 ``expect`` 回执断言（作用于入队 SendRequest 层，DRY-RUN/--execute 同语义）。
+2026-10-06 起，群侧斜杠命令那四枚（identity set/unset-name、decision-query admin/member）
+改成**与门禁同形的双轨**：真入队了 → 验真跑通的回执；被 ``policy/gate`` 的
+``command_group_unlisted``／``group_white2_need_trigger`` 按设计拦下 → 期望值就是
+blocked＋原因可查（判 PASS，不是 FAIL）；被**别的**原因拦（安静时间/限流/黑名单，以及
+「个人输出不出群」那格 reviewer 改道）→ 照旧判红并回显留痕。判据一条都没放宽：
+见 ``expect_command_after_group_gate``。这四枚的正跑面今天只在**私聊**
+（``--target-user``）看得见——它们的回复都自带 ``privacy_level=personal`` 声明，
+群侧会被 reviewer 判 ``move_private`` 而改道（转私聊的消费侧仍未实装，属待裁残余）。
+🔴 还有一条已知失真要说在前面：本脚本的 ``build_pipeline`` 没把生产那份群名单输入
+（``group_black1/2``＋``group_white1/2``＋``group_lists_provider``）接给管线，
+所以**验收面里任何群都算未在册**——这一轨证明的是门禁形状，不是「这群真的不在册」；
+全注见 ``_COMMAND_GATE_DENIALS`` 上方（补接线＝改门禁输入，未获授权，留给用户裁）。
 
 真实管线（不绕过）：
     合成 IncomingMessage
@@ -481,14 +493,39 @@ def _affinity_capability(
     )
 
 
+def _identity_dry_run_dir() -> Path:
+    """DRY-RUN 称谓自助的**临时库根**（OS 临时目录：不在源码树、不在 ``ChatBot_Runtime``）。
+
+    为什么需要它（2026-10-06）：`/bot identity set-name` 的能力体会真写
+    ``AddressingPreferenceStore``。群侧命令在册门（``f3f177a3``，2026-10-01）今天在
+    未在册群上把它拦住了——那是**恰好**拦住，不是设计保证：换一枚在册群跑 DRY-RUN，
+    或改走私聊（私聊不受群门约束），就会在「只验形状不发」的模式下动到真实库。
+    硬红线是「DRY-RUN 绝不写她的生产偏好库」，所以这一面必须结构性成立，
+    不能靠群号碰巧未在册。
+
+    固定名而非 ``mkdtemp``：``set-name`` 与 ``unset-name`` 两项要在**同一本**临时库里
+    才验得出成对语义（各建一本的话 unset 永远只会看到「还没有设置过」）。
+    ``--execute`` 不走这里——真机验收要落的正是真实库（净效果由成对项清零）。
+    """
+    root = Path(tempfile.gettempdir()) / "e2e-identity-dryrun"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def _identity_preference_capability(
     runtime: E2eRuntime, *, command_text: str
 ) -> Callable[[IncomingMessage, BotDecision], CapabilityResult]:
     """镜像 __init__ `/bot identity` 分支 + runtime_admin 对四个自助子命令
     （set-name/set-gender/unset-name/unset-gender）管理员门前的拦截转发
-    （echo.build_identity_preference_result）。写真实 AddressingPreferenceStore
-    （与 bot 同库，data/ 相对路径经 runtime_paths 落运行区）；验收矩阵里
-    set-name 与 unset-name 成对出现，净效果为零。"""
+    （echo.build_identity_preference_result）。写 AddressingPreferenceStore：
+    **DRY-RUN 写临时库**（``_identity_dry_run_dir``，生产库零字节），
+    ``--execute`` 才写真实库（与 bot 同库，data/ 相对路径经 runtime_paths 落运行区）；
+    验收矩阵里 set-name 与 unset-name 成对出现，净效果为零。"""
+    config = runtime.config
+    if not runtime.execute:
+        # 复用文件里既有那把尺（把「会被写到的那两本库」改指临时目录的单一读点），
+        # 不另抄一份键名清单，免得长第二套重定向。
+        config = narration_probe_config(config, _identity_dry_run_dir())
 
     def capability(message: IncomingMessage, _decision: BotDecision) -> CapabilityResult:
         from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
@@ -496,7 +533,7 @@ def _identity_preference_capability(
         )
 
         return build_identity_preference_result(
-            runtime.config,
+            config,
             request_id=message.request_id,
             sender_id=str(message.sender_id or ""),
             group_id=str(message.group_id or ""),
@@ -877,6 +914,83 @@ def expect_admin_gate_refusal(outcome: ItemOutcome) -> str:
     if leaks:
         return f"拒绝话术泄漏了查询结果形态 {leaks}"
     return ""
+
+
+#: 群侧命令「按设计被拦」的两枚门名（真身＝``policy/gate.py`` 里 ``_denied`` 的 reason，
+#: 引入笔 ``f3f177a3``（2026-10-01，HEAD 祖先））：
+#:   · ``command_group_unlisted`` —— 命令态的群必须在 BOT_GROUP_* 任一册里（E05 缺口一）；
+#:   · ``group_white2_need_trigger`` —— 白名单2 群要真 @ 它或带显式命令。
+#: 这两枚是**门禁的名字**，不是放宽判据：门若改名、新增第三枚拦命令的门、或本轮其实
+#: 是被安静时间/限流/黑名单拦下 ⇒ 下面那把尺当场报红并回显实际留痕（要的就是这个响）。
+#:
+#: 🔴 本验收面的一个已知失真（2026-10-06 现算发现，未获授权所以**没动**）：
+#: ``build_pipeline`` 只给管线传了 ``group_command_prefix``，**没传** 生产 ``__init__``
+#: 传的那五枚名单输入（``group_black1/2``＋``group_white1/2``＋``group_lists_provider``，
+#: 真身见 ``plugins/bot_unified_runtime/__init__.py`` 的管线装配段）。后果＝
+#: **验收面里任何群都算未在册**，所以群侧斜杠命令在这里恒被 ``command_group_unlisted``
+#: 拦下——连确在 BOT_GROUP_WHITE1 的验收群也不例外（同一脚本的安全阀会打印
+#: 「群 <id> 在 BOT_GROUP_WHITE1」，与这条拦截同时出现，就是证据）。
+#: 于是本把尺的「按设计被拦」这一轨证明的是**门禁形状**（拦了必须有门名、可归因），
+#: 不是「这个群真的不在册」。要验真落群的那一面：走私聊 ``--target-user``，或先给
+#: ``build_pipeline`` 补上那五枚输入（那是改门禁输入、会另放出「个人输出不出群」
+#: ``move_private`` 的红——管线至今没有 MOVE_PRIVATE 消费侧，转私聊从未实装）。
+_COMMAND_GATE_DENIALS: tuple[str, ...] = (
+    "command_group_unlisted",
+    "group_white2_need_trigger",
+)
+
+
+def expect_command_after_group_gate(
+    positive: Callable[[ItemOutcome], str],
+) -> Callable[[ItemOutcome], str]:
+    """群侧斜杠命令的双形断言：与门禁同形，且不撒谎。
+
+    - **入队了** → 原样跑 ``positive``，一条字都不改。这四枚的正跑面今天只在私聊
+      （``--target-user``）出现：它们的回执 ``privacy_level=personal``，群侧即使在册
+      也会被 reviewer 的「个人输出不出群」改道 ⇒ 那种红**留着**（真问题，不吞）。
+    - **没入队** → 只接受「按设计拦」这一种形状：``state=blocked``、
+      ``transport=policy``、且本轮审计留痕点名 ``_COMMAND_GATE_DENIALS`` 之一。
+      拦得没有原因可查＝判红（「随便拦」不算通过）。
+    - 其余形态（被别的门拦、skipped、有回执却查无请求、审计读口形变）→ 判红并回显
+      实际 state/transport/留痕，便于当场归因。
+
+    本把尺写死的是「未在册群里的群侧命令必然被拦、且拦得有原因可查」，
+    不是「随便拦都算过」：原因不在那两枚门名之内就红。
+    """
+
+    def expect(outcome: ItemOutcome) -> str:
+        if outcome.error:
+            return outcome.error
+        if outcome.send_request is not None:
+            return positive(outcome)
+        state = outcome.receipt.state.value if outcome.receipt is not None else "无回执"
+        transport = (
+            outcome.receipt.transport if outcome.receipt is not None else "无回执"
+        )
+        if outcome.audit_reasons is None:
+            return (
+                f"state={state} transport={transport}：本轮审计留痕取不到（读口形变）"
+                "＝判红，不静默当「没原因」"
+            )
+        trail = _flatten("; ".join(outcome.audit_reasons))[:200]
+        if state != "blocked" or transport != "policy":
+            return (
+                "无入队请求且回执不是 blocked/policy"
+                f"（state={state} transport={transport}）；本轮审计留痕：{trail!r}"
+            )
+        hit = [
+            token
+            for token in _COMMAND_GATE_DENIALS
+            if any(token in reason for reason in outcome.audit_reasons)
+        ]
+        if not hit:
+            return (
+                "命令被门禁拦下，但原因不是两枚在册/触发门之一（拦得查不到原因＝判红）；"
+                f"本轮审计留痕：{trail!r}"
+            )
+        return ""
+
+    return expect
 
 
 def expect_group_failure_ack(outcome: ItemOutcome) -> str:
@@ -1980,10 +2094,14 @@ def build_matrix(runtime: E2eRuntime) -> list[MatrixItem]:
             ),
             text="/bot identity set-name 岸友",
             note=(
-                "镜像 runtime_admin 管理员门前拦截转发；写真实 AddressingPreferenceStore"
-                "（运行区库），随后由 identity-unset-name 项成对清理"
+                "镜像 runtime_admin 管理员门前拦截转发；写库两轴——DRY-RUN 把称谓/策略两本库"
+                "改指 %TEMP% 探针根（生产库零字节），--execute 才写真实 AddressingPreferenceStore"
+                "（运行区库），并由 identity-unset-name 项成对清理、净效果为零。"
+                "群侧命令面＝blocked＋原因可查（command_group_unlisted）；正跑面 requires 私聊"
+                "--target-user（群侧个人输出被判 move_private；验收面所有群都算未在册，"
+                "见文件头 _COMMAND_GATE_DENIALS 注）"
             ),
-            expect=expect_identity_set_confirmed,
+            expect=expect_command_after_group_gate(expect_identity_set_confirmed),
         ),
         MatrixItem(
             key="identity-unset-name",
@@ -1993,8 +2111,12 @@ def build_matrix(runtime: E2eRuntime) -> list[MatrixItem]:
                 rt, command_text="unset-name"
             ),
             text="/bot identity unset-name",
-            note="整行移除称谓偏好（含性别自述），与 set-name 成对执行、净效果为零",
-            expect=expect_identity_unset_confirmed,
+            note=(
+                "整行移除称谓偏好（含性别自述），与 set-name 成对执行、净效果为零；"
+                "群侧命令面与 set-name 同轨（blocked＋门名可查＝PASS；"
+                "正跑面 requires 私聊 --target-user）"
+            ),
+            expect=expect_command_after_group_gate(expect_identity_unset_confirmed),
         ),
         # ---- 二期扩展（2026-09-13）：多语言触发形态抽样 + 劫持守卫负样本 ----
         # 词表取证：.superpowers/sdd/2026-09-12-shorekeeper-global-audit/ 下
@@ -2159,9 +2281,11 @@ def build_matrix(runtime: E2eRuntime) -> list[MatrixItem]:
                 "§26.2 P-03：/bot decision [N] 缺省 20（1-100）；读真实 "
                 "decision_trace.sqlite3（只读，缺库回落热缓冲→「暂无记录」同达成）；"
                 "影子模式 legacy_only 下无痕迹属预期；生产 __init__ elif 接线待 "
-                "§26.10 登记的补贴，本项验收能力出口本体"
+                "§26.10 登记的补贴，本项验收能力出口本体。"
+                "群侧命令面＝blocked＋门名可查（command_group_unlisted）；正跑面 requires 私聊"
+                "--target-user（群侧个人输出被判 move_private，见文件头注）"
             ),
-            expect=expect_decision_query_admin,
+            expect=expect_command_after_group_gate(expect_decision_query_admin),
         ),
         MatrixItem(
             key="decision-query-member",
@@ -2171,9 +2295,11 @@ def build_matrix(runtime: E2eRuntime) -> list[MatrixItem]:
             text="/bot decision",
             note=(
                 "同命令非管理员 → ADMIN_GATE_TEMPLATES 池温和拒绝"
-                "（audit: decision_denied），不得泄漏任何查询结果形态"
+                "（audit: decision_denied），不得泄漏任何查询结果形态。"
+                "群侧命令面与 admin 那枚同轨（blocked＋门名可查＝PASS；"
+                "正跑面 requires 私聊 --target-user）"
             ),
-            expect=expect_admin_gate_refusal,
+            expect=expect_command_after_group_gate(expect_admin_gate_refusal),
         ),
         MatrixItem(
             key="group-failure-ack",
@@ -2349,6 +2475,10 @@ class ItemOutcome:
     # 本项执行时的会话类型（SessionType.value；自测/离线构造可留空）。
     # 供会话敏感的 expect 区分群/私聊语义（如 A-19 只覆盖群聊）。
     session_type: str = ""
+    # 本轮 pipeline 审计留痕（event + private_debug 摊平；execute_item 在 handle 之后
+    # **只读**回查）。三态各有语义：``None``＝读口形变（拿不到留痕＝判红）；
+    # ``[]``＝管道确实没留痕；非空＝原因清单。群侧命令的「按设计被拦」断言读它。
+    audit_reasons: list[str] | None = None
 
 
 def _flatten(text: str) -> str:
@@ -2373,6 +2503,28 @@ def format_preview(send_request: SendRequest | None) -> str:
         f"content_type={content.content_type} target={send_request.target_scope.value}:"
         f"{send_request.target_id} media={media} text[{len(content.text_fallback)}字]={preview!r}"
     )
+
+
+def _outcome_audit_reasons(
+    pipeline: RuntimePipeline, request_id: str
+) -> list[str] | None:
+    """回查本轮审计留痕（只读、零写入）：``event`` 与 ``private_debug`` 去重摊平。
+
+    读口复用文件里已有的 ``_audit_records_for``（同一把尺，不另造一份）；它取不到时
+    返回 ``None``——调用方**必须判红**，不得当成「没有原因」。门禁的 ``policy.reason``
+    就落在这里（``pipeline`` 里 stage=policy / event=policy_denied / private_debug=reason），
+    回执对象本身不带原因，所以断言「拦得有原因可查」只能问这一处。
+    """
+    records = _audit_records_for(getattr(pipeline, "audit_logger", None), request_id)
+    if records is None:
+        return None
+    reasons: list[str] = []
+    for record in records:
+        for value in (record.event, record.private_debug):
+            text = str(value or "").strip()
+            if text and text not in reasons:
+                reasons.append(text)
+    return reasons
 
 
 def execute_item(
@@ -2416,6 +2568,12 @@ def execute_item(
         outcome.send_request = send_queue.find_request(message.request_id)
     except Exception:  # noqa: BLE001 - 队列回查失败不影响主流程。
         outcome.send_request = None
+    # 审计留痕回查（只读）：读口坏掉也不拖垮单项——读不到记 None，由断言判红，
+    # 绝不静默折成「本轮没有原因」（假绿的一种：把量具故障读成被测件清白）。
+    try:
+        outcome.audit_reasons = _outcome_audit_reasons(pipeline, message.request_id)
+    except Exception:  # noqa: BLE001 - 同上：形变＝None＝判红。
+        outcome.audit_reasons = None
     return outcome
 
 
