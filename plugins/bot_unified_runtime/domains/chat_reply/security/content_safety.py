@@ -547,7 +547,21 @@ _RULES: tuple[tuple[str, str, re.Pattern[str] | tuple[re.Pattern[str], ...], str
     ("excretion", "refuse", _EXCRETION_PATTERNS,
      "掺着排泄物的玩法我不写。我们可以有别的亲密方式，好吗？", "all"),
     # ---- 以下为公开面规则（explicit 会话跳过；词面与 2026-09-17 版一致）----
-    ("sexual", "refuse", re.compile(r"(nsfw|r[- ]?18|色情|性爱|性行为|露骨|裸体|性交|黄片)", re.IGNORECASE),
+    # sexual 里「字母 + 可选分隔 + 数字」那一枚带**左右词界**（F-12 入站腿，用户
+    # 2026-10-06 明示「改」）：改前两枚环视都没有，于是 MAR18／October 18／v2R-18／
+    # R-1800／TR-18 一类正常文本被当露骨内容拒答。边界写法与出站真身
+    # domains/render/reviewer.py 的 _PUBLIC_OUTPUT_UNSAFE **逐字同形**（同一族判据
+    # 在两处不许分叉；左右都不用 \b 的理由见那侧注释：汉字是 Unicode 词字符，
+    # 用 \b 会把「为R-18」「R-18向」这类在册真命中一起放过）。
+    # 🔴 本条改动的性质＝让公开面红线**少拦东西**（放宽一条腿），不是顺手收紧：
+    # 词表成员一个没动、action 仍 refuse、scope 仍 public、六条硬线（scope="all"）
+    # 与 explicit 收敛面一概未碰。执法锁＝tests/test_content_safety_v2.py 下半段
+    # （含摘掉边界的变异腿与真形态反证腿）；出站那腿的锁另见
+    # tests/test_redline_word_boundary.py。
+    ("sexual", "refuse", re.compile(
+        r"(nsfw|(?<![0-9A-Za-z])r[- ]?18(?![0-9])|色情|性爱|性行为|露骨|裸体|性交|黄片)",
+        re.IGNORECASE,
+    ),
      "不展开露骨性内容，转为边界和情感沟通。", "public"),
     ("harassment", "reframe", re.compile(r"(叫.{0,12}(废物|傻逼|垃圾|畜生)|羞辱|人身攻击|辱骂)", re.IGNORECASE),
      "不替用户羞辱他人，改为描述事实或用中性称呼。", "public"),
