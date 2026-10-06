@@ -50,11 +50,29 @@ from __future__ import annotations
 import ast
 import importlib.util
 import warnings
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 import pytest
+
+# 退役断言的**同源**真身（D-DELSPEC-3 并轨波，2026-10-06）：已物理删除垫片的唯一名单住在
+# `tests/test_deleted_shim_import_lock.py`，本门**只 import、不复制**（禁第二本账）。
+# 跨测试导入＋复用下划线开头的私有判据都是本仓既有做法，先例见
+# `tests/test_queue_sendq_f3f4.py`（顶部 import 段）、`tests/test_claims_subset_implementation_gate.py`
+# （复用 `_dangling_verb_capabilities`）、`tests/test_render_orb_route_ssrf.py`（复用 `_FakeOrbBrowser`）。
+# 形态展开一律走名单侧 `_absence_forms`（它只吃 census 的 `shim_target_dotted` 那把点号尺），
+# 本门不另起第二把尺——另起一把就等于又抄了一份真身。
+# `reference_index` / `deleted_target_dotted` 是名单侧为本次并轨新加的两个**导出名**
+# （只加名字、未动任何既有判据），真身仍是 census `shim_retirement_census` 的唯一取数口。
+from tests.test_deleted_shim_import_lock import (
+    DELETED_MODULE_FORMS,
+    DELETED_MODULES,
+    _absence_forms,
+    deleted_target_dotted,
+    reference_index,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_PKG = REPO_ROOT / "plugins" / "bot_unified_runtime"
@@ -535,6 +553,257 @@ def scan_scope(
 
 
 # ---------------------------------------------------------------------------
+# 退役断言 ↔ 唯一名单 同源对账（D-DELSPEC-3，2026-10-06）
+#
+# 病根：本门 `test_gate_scope_sanity` 末尾那段「退役断言」是仓里**第四处**手抄的
+# 「已删/已退役路径」清单，与唯一名单 `DELETED_MODULES` 之间**零对账** ⇒ 名单漂了本门
+# 照样绿（账在、尺瞎；台账 #68★「退役＝文件＋账本行＋只读面登记同批动」缺的那条执法腿）。
+# 并轨方向＝该文件末段债注的原话：「那段的清单改由名单派生」。
+# ---------------------------------------------------------------------------
+
+#: 本门退役断言的**唯一字面清单真身**：相对仓根的 posix 路径，逐条断言「盘上不许存在」。
+#: 定义在下方 `_derive_scope_retired_paths` 之后（派生需要那把尺先就位）＝
+#: 唯一名单派生集 ∪ `RETIRED_NON_SHIM_PATHS`，**不可手抄**：手抄一条没出处的路径由 M3 点名、
+#: 漏掉名单的一条由 M2 点名，两腿都咬在本文件的常驻门测试里。
+#: 语义＝原 `test_gate_scope_sanity` 内联手抄五条的超集（下限见 `LEGACY_RETIRED_CLAIM_FLOOR`）。
+
+#: 「不进唯一名单」的显式例外表：`相对仓根 posix 路径 → 为什么不进名单`。
+#: 登记纪律（由 M4 逐条执法，理由不是散文而是尺）：
+#: ①不得与名单派生集重叠（名单哪天扩面覆盖它＝本表须同批摘除，见 D-DELSPEC-1 待裁）；
+#: ②理由非空且必须是**可复核的事实**（现算引用边＝0，见 `_exception_reference_problems`）；
+#: ③必须真不在盘（例外里塞一枚活模块＝「已退役」这句在撒谎）；
+#: ④必须真出现在退役断言面上（登记了却没接线＝判据空转）。
+#:
+#: 这四枚是 2026-10-06 并轨前那段手抄里**名单没有**的独有路径（名单侧只有 `capabilities/
+#: auto_send/__init__.py` 一枚与之同批）。共同形状＝**随 v21r2 域重组迁走**、真身都还活着，
+#: 且现算（census 唯一引用口）引用边＝0、指向它们的 import 都只会响亮报错而不会被静默兜走：
+#: 名单管的是「已物理删除的垫片还能被静默解引用」这条隐形面（PEP562 惰性壳兜 canonical），
+#: 这四处那条面已经不存在 ⇒ 它们唯一有牙的判据就是「盘上不许再出现」，落在本门。
+#: 是否把它们也塞进名单＝D-DELSPEC-1（名单要不要扩成全量退役镜像）的一半，**待用户裁**；
+#: 裁前本表只登记、不擅自扩名单。
+RETIRED_NON_SHIM_PATHS: dict[str, str] = {
+    # v21r2 reorg RWC3：曾是指向 domains/chat_reply/capabilities/echo.py 的 PEP562 再导出垫片
+    # （删除前件首行＝`Compat shim` + `_CANONICAL`，取证 git 删除笔 ed802d3）。父包
+    # `capabilities/__init__.py` 现算**无** `__getattr__`（名单侧尺④同尺现算）⇒ 属性形 import
+    # 也解不出来，只会 ImportError ⇒ 无静默面可锁。
+    "plugins/bot_unified_runtime/capabilities/echo.py": (
+        "v21r2 重组期垫片随真身迁走（domains/chat_reply/capabilities/echo.py 存活）；"
+        "父包 capabilities 现算无 __getattr__ ⇒ import 面响亮报错、无静默兜走；引用边现算=0"
+    ),
+    # v21r2 reorg W15a：曾是指向 domains/chat_reply/character/addressing.py 的同族垫片
+    # （删除笔 31467b4）。`character/__init__.py` 现算**无** `__getattr__`（它 eager 再导出
+    # build_addressing_context），`SHELL_PACKAGES["…character"]` 也只钉 reminders/
+    # vector_knowledge 两名 ⇒ addressing 不在任何静默解引用面上。
+    "plugins/bot_unified_runtime/character/addressing.py": (
+        "v21r2 重组期垫片随真身迁走（domains/chat_reply/character/addressing.py 存活）；"
+        "character 壳包现算无 __getattr__、SHELL_PACKAGES 亦未钉该名 ⇒ 无静默面；引用边现算=0"
+    ),
+    # v21r2 RWOC：这两枚**从来不是垫片**——删除前件首行是模块本体文档（无 Compat shim/
+    # _CANONICAL 记号，取证删除笔 ebb7130），整文件搬进 domains/ops/monitor/。
+    # 父包 `runtime/__init__.py` 现算确有 `__getattr__`，但它只认 `_PIPELINE_NAMES` 三名
+    # （RuntimeControlState/RuntimePipeline/offload_capability），其余名 raise AttributeError
+    # ⇒ 属性形 `from …runtime import usage_monitor` 解不出来（名单侧尺④只钉名单已有的名，
+    # 这正是 D-DELSPEC-2 待裁的那格；本表据盘上现算把它记成「无静默面」而非「有静默面」）。
+    "plugins/bot_unified_runtime/runtime/usage_monitor.py": (
+        "v21r2 原件搬家、非垫片（真身 domains/ops/monitor/usage_monitor.py 存活）；"
+        "runtime 壳的 __getattr__ 只认 _PIPELINE_NAMES 三名 ⇒ 该属性形响亮 AttributeError；引用边现算=0"
+    ),
+    "plugins/bot_unified_runtime/runtime/error_report.py": (
+        "v21r2 原件搬家、非垫片（真身 domains/ops/monitor/error_report.py 存活）；"
+        "runtime 壳的 __getattr__ 只认 _PIPELINE_NAMES 三名 ⇒ 该属性形响亮 AttributeError；引用边现算=0"
+    ),
+}
+
+#: 历史下限：本门在 2026-10-06 并轨**之前**实际就在断言的那五条（原样保留、只准加长）。
+#: 用途＝并轨是「改引用」不是「减断言」：名单万一缩面、例外万一被摘，这五条仍必须在面上，
+#: 否则 M5 当场点名是哪一条丢了（门只准变严）。
+LEGACY_RETIRED_CLAIM_FLOOR: tuple[str, ...] = (
+    "plugins/bot_unified_runtime/capabilities/echo.py",
+    "plugins/bot_unified_runtime/capabilities/auto_send/__init__.py",
+    "plugins/bot_unified_runtime/character/addressing.py",
+    "plugins/bot_unified_runtime/runtime/usage_monitor.py",
+    "plugins/bot_unified_runtime/runtime/error_report.py",
+)
+
+
+def _repo_rel_exists(rel: str) -> bool:
+    """相对仓根的存在性判定（越界＝清单撕裂 ⇒ 拒判，与名单侧 `_path_on_disk` 同一口径）。"""
+    pure = Path(rel)
+    if pure.is_absolute() or ".." in pure.parts:
+        raise AssertionError(f"退役清单取到越界路径 {rel!r}（清单/映射撕裂）⇒ 本门拒判，不静默放行")
+    return (REPO_ROOT / pure).exists()
+
+
+def deleted_list_absence_paths(deleted: frozenset[str], forms: Mapping[str, str]) -> set[str]:
+    """唯一名单 → 盘上不得存在的相对路径全集（展开尺＝名单侧 `_absence_forms`，禁第二把尺）。"""
+    out: set[str] = set()
+    for dotted in sorted(set(deleted) & set(forms)):
+        out.update(_absence_forms(dotted, forms[dotted]))
+    return out
+
+
+def _derive_scope_retired_paths(
+    deleted: frozenset[str], forms: Mapping[str, str], exceptions: Mapping[str, str]
+) -> tuple[str, ...]:
+    """退役断言面＝名单派生集 ∪ 显式例外集（除此之外没有第三条通路）。"""
+    return tuple(sorted(deleted_list_absence_paths(deleted, forms) | set(exceptions)))
+
+
+def _exception_reference_problems(exceptions: Mapping[str, str]) -> list[str]:
+    """例外表的「为什么不进名单」必须是现算事实：census 唯一引用口现算**引用边＝0**。
+
+    名单管的是 import 语义（指向已删垫片会 ImportError／被惰性壳静默兜到 canonical）。
+    一条路径若还有活引用，它就**必须**进名单由 import 锁执法，不能靠本门一条 `exists()` 蒙过去。
+    引用面读不出（census 的 `ReferenceIndexError`/`Unstable`）⇒ 判红，绝不当「零引用」放行。
+    """
+    if not exceptions:
+        return []
+    try:
+        refs = reference_index()
+    except Exception as exc:  # noqa: BLE001 ——  census 的坏读形态按其文档原样抛，一律转判红
+        return [f"引用面读不出 ⇒ 例外判据拒判（不当零引用放行）：{type(exc).__name__}: {exc}"]
+    problems: list[str] = []
+    for rel in sorted(exceptions):
+        dotted = deleted_target_dotted(rel)
+        holders = refs.get(dotted, frozenset())
+        if holders:
+            problems.append(
+                f"例外条目 {rel}（点号名 {dotted}）仍有 {len(holders)} 处活引用 ⇒ 它属 import 语义面，"
+                f"必须进 DELETED_MODULES 由名单侧 import 锁执法，不许登记成本门的例外"
+            )
+    return problems
+
+
+def retirement_mesh_problems(
+    deleted: frozenset[str],
+    forms: Mapping[str, str],
+    exceptions: Mapping[str, str],
+    retired: Sequence[str],
+    legacy_floor: Sequence[str],
+    *,
+    exists_on_disk: Callable[[str], bool] = _repo_rel_exists,
+) -> list[str]:
+    """本门退役断言 ↔ 唯一名单 的成员级对账（纯函数，注毒一律吃内存副本）。
+
+    每腿都**点名是哪一条**，不许用「数一下相等」糊过去：
+    - M1 名单与形态映射两集同批（互缺各点名一次）；
+    - M2 名单每一条的每一形都必须在退役面上（漏一条＝本门对那枚退役彻底失明）；
+    - M3 退役面每一条都必须有出处：名单派生 or 登记过的例外（手抄第六条当场红）；
+    - M4 例外四条纪律：不与名单重叠／理由非空／真不在盘／真在面上；
+    - M5 历史下限一条都不许丢；
+    - M6 取数侧为空（名单空／形态空／派生集空／退役面空）⇒ 拒判，不当「没有历史」放行。
+    """
+    problems: list[str] = []
+    retired_set = set(retired)
+    if not deleted:
+        problems.append("唯一名单 DELETED_MODULES 取到 0 条 ⇒ 对账拒判（不当空名单放行）")
+    if not forms:
+        problems.append("名单形态映射 DELETED_MODULE_FORMS 取到 0 条 ⇒ 对账拒判（不当空映射放行）")
+    for dotted in sorted(set(deleted) - set(forms)):
+        problems.append(f"名单条目在形态映射里没有物理形态出处 ⇒ 本门无从派生它的退役形：{dotted}")
+    for dotted in sorted(set(forms) - set(deleted)):
+        problems.append(f"形态映射里有名单没有的条目（谁把名单摘薄了？）：{dotted}")
+    list_paths = deleted_list_absence_paths(deleted, forms)
+    if deleted and forms and not list_paths:
+        problems.append("名单派生出 0 条退役形 ⇒ 展开尺塌陷（`_absence_forms` 读点断了）")
+    if not retired_set:
+        problems.append("本门退役断言面为空 ⇒ 退役整腿没了，拒判（不当『无需断言』放行）")
+    for rel in sorted(list_paths - retired_set):
+        problems.append(f"名单已退役的形态不在本门退役断言面上（本门对它失明）：{rel}")
+    for rel in sorted(retired_set - list_paths - set(exceptions)):
+        problems.append(f"退役面上有既非名单派生、也未登记例外的条目（＝又抄了一份新真身？）：{rel}")
+    for rel, reason in sorted(exceptions.items()):
+        if rel in list_paths:
+            problems.append(f"例外条目已被唯一名单覆盖 ⇒ 例外陈旧，同批摘掉它：{rel}")
+        if not str(reason).strip():
+            problems.append(f"例外条目没写「为什么不进名单」：{rel}")
+        if exists_on_disk(rel):
+            problems.append(f"例外声称已退役却在盘上（例外表里塞了一枚活模块）：{rel}")
+        if rel not in retired_set:
+            problems.append(f"登记了例外却没进退役断言面（判据没接线＝空转）：{rel}")
+    for rel in sorted(set(legacy_floor) - retired_set):
+        problems.append(f"并轨前的退役断言丢了（门只准变严）：{rel}")
+    problems.extend(_exception_reference_problems(exceptions))
+    return problems
+
+
+def retirement_wiring_problems(source: str) -> list[str]:
+    """接线锁（AST 读本文件自身源码）：语义尺只保证「清单在时它对得死」，
+    整腿被删干净时语义尺读的是空表——本锁按名字点出少了哪根线：
+
+    - W1 必须从名单侧 import 真身（摘掉这行＝本门退回手抄，名单漂了没人响）；
+    - W2 必须定义派生面 `SCOPE_RETIRED_PATHS` 与例外表 `RETIRED_NON_SHIM_PATHS`；
+    - W3 `test_gate_scope_sanity` 里必须有一条 `for … in SCOPE_RETIRED_PATHS:` 的退役断言，
+      且循环体是 `assert not <…>.exists()`（换成手抄字面量、或把 `not` 摘掉，都算断线）。
+    """
+    problems: list[str] = []
+    tree = ast.parse(source)
+    imported_from_list = any(
+        isinstance(n, ast.ImportFrom) and (n.module or "") == "tests.test_deleted_shim_import_lock"
+        for n in ast.walk(tree)
+    )
+    if not imported_from_list:
+        problems.append(
+            "W1 断了：本文件不再从 tests.test_deleted_shim_import_lock 引唯一名单"
+            "（退役清单退回手抄，名单漂了本门不响）"
+        )
+    assigned: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for t in targets:
+                if isinstance(t, ast.Name):
+                    assigned.add(t.id)
+    for missing in ("SCOPE_RETIRED_PATHS", "RETIRED_NON_SHIM_PATHS"):
+        if missing not in assigned:
+            problems.append(f"W2 断了：模块级 {missing} 不见了（派生面/例外表没了载体）")
+    fn = next(
+        (
+            n
+            for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name == "test_gate_scope_sanity"
+        ),
+        None,
+    )
+    if fn is None:
+        problems.append("W3 断了：test_gate_scope_sanity 整枚函数不见了")
+        return problems
+    loops = [
+        n
+        for n in ast.walk(fn)
+        if isinstance(n, ast.For) and isinstance(n.iter, ast.Name) and n.iter.id == "SCOPE_RETIRED_PATHS"
+    ]
+    if not loops:
+        problems.append(
+            "W3 断了：test_gate_scope_sanity 里没有「for … in SCOPE_RETIRED_PATHS」这条退役断言"
+            "（改成手抄字面量＝退回第四处真身，整腿删掉＝退役事实从此无人作证）"
+        )
+        return problems
+    if not any(
+        isinstance(a, ast.Assert)
+        and isinstance(a.test, ast.UnaryOp)
+        and isinstance(a.test.op, ast.Not)
+        and isinstance(a.test.operand, ast.Call)
+        and isinstance(a.test.operand.func, ast.Attribute)
+        and a.test.operand.func.attr == "exists"
+        for loop in loops
+        for a in loop.body
+    ):
+        problems.append(
+            "W3 断了：SCOPE_RETIRED_PATHS 那条循环里没有 `assert not <…>.exists()`"
+            "（判据本体被摘／被反写）"
+        )
+    return problems
+
+
+#: 退役断言面的真身（见上方注释）＝唯一名单派生集 ∪ 显式例外集，除 `_derive_scope_retired_paths`
+#: 这条路之外本文件没有任何方式往里加路径。枚数以现算为准（名单涨它自动跟着涨，规则 10）。
+SCOPE_RETIRED_PATHS: tuple[str, ...] = _derive_scope_retired_paths(
+    DELETED_MODULES, DELETED_MODULE_FORMS, RETIRED_NON_SHIM_PATHS
+)
+
+
+# ---------------------------------------------------------------------------
 # 门测试：现网必须全绿
 # ---------------------------------------------------------------------------
 
@@ -577,14 +846,12 @@ def test_gate_scope_sanity() -> None:
     # --- 退役断言（原为「钉住不存在路径」的 scope pin，按简报③挪到断言侧作证） ---
     # 语义：这些旧坐标是**历史路径**，钉在扫描面上只会造成静默缩面（见文件头注释）；
     # 它们该证明的是「旧布局确实不再有余留件」，那是断言侧的活，不是面上的活。
-    for retired in (
-        RUNTIME_PKG / "capabilities" / "echo.py",
-        RUNTIME_PKG / "capabilities" / "auto_send" / "__init__.py",
-        RUNTIME_PKG / "character" / "addressing.py",
-        RUNTIME_PKG / "runtime" / "usage_monitor.py",
-        RUNTIME_PKG / "runtime" / "error_report.py",
-    ):
-        assert not retired.exists(), f"旧布局路径复活（退役断言被打破，先查是谁把它写回来）：{retired}"
+    # 清单本体不在这里手抄：`SCOPE_RETIRED_PATHS` 由唯一名单派生 ∪ 显式例外表（D-DELSPEC-3），
+    # 与名单的同源对账由 test_gate_scope_retirement_assertions_mesh_the_single_list 执法。
+    for rel in SCOPE_RETIRED_PATHS:
+        assert not (REPO_ROOT / rel).exists(), (
+            f"旧布局路径复活（退役断言被打破，先查是谁把它写回来）：{rel}"
+        )
     # 2026-09-14 三次扩面（G-08）：人格资产入扫描面。
     assert (REPO_ROOT / "personas" / "shorekeeper" / "identity.md") in scope
     assert (
@@ -597,6 +864,131 @@ def test_gate_scope_sanity() -> None:
             "生产人格副本不存在（CI 无 Runtime），副本扫描面优雅跳过并注明",
             stacklevel=1,
         )
+
+
+def test_gate_scope_retirement_assertions_mesh_the_single_list() -> None:
+    """退役断言 ↔ 唯一名单 同源锁（D-DELSPEC-3，2026-10-06）：本门那段手抄从此没人权。
+
+    并轨前它是仓里**第四处**手抄的「已删路径」清单，与 `DELETED_MODULES` 零对账——名单漂了
+    本门照样绿（＝台账 #68★「修法在册≠修好在盘」的镜像面：账在、尺瞎）。本锁把「字面清单必须
+    由名单派生，未派生到的必须逐枚登记理由并现算证其 import 面已死」升成判据，**逐名点名**。
+    """
+    problems = retirement_mesh_problems(
+        DELETED_MODULES,
+        DELETED_MODULE_FORMS,
+        RETIRED_NON_SHIM_PATHS,
+        SCOPE_RETIRED_PATHS,
+        LEGACY_RETIRED_CLAIM_FLOOR,
+    )
+    assert not problems, "本门退役断言与唯一名单对不上（成员级点名）：\n" + "\n".join(problems)
+
+
+def test_gate_scope_retirement_leg_is_wired() -> None:
+    """接线锁：语义尺只保证「清单在时它对得死」；整腿删掉 ⇒ 本锁按名字点出断了哪根线。"""
+    source = Path(__file__).resolve().read_text(encoding="utf-8")
+    problems = retirement_wiring_problems(source)
+    assert not problems, "退役断言的接线断了（逐条点名）：\n" + "\n".join(problems)
+
+
+# --------------------------------------------------------------- 注毒自证（纯内存）
+# 一律吃内存副本／合成源码，源码树一字不写；每形一发，各杀各腿，且必须红在**点名成员**。
+
+
+def test_poison_live_module_registered_as_exception_reds() -> None:
+    """注毒①：往例外表塞一枚**生产仍在用的活模块** ⇒ M4 红并点名它（例外＝在撒谎的退役声明）。"""
+    live = "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py"
+    assert _repo_rel_exists(live), f"注毒前提不成立：{live} 今天不在盘上"
+    fat = dict(RETIRED_NON_SHIM_PATHS)
+    fat[live] = "（毒）随手登记一枚活模块"
+    v = retirement_mesh_problems(
+        DELETED_MODULES, DELETED_MODULE_FORMS, fat, SCOPE_RETIRED_PATHS, LEGACY_RETIRED_CLAIM_FLOOR
+    )
+    assert any(live in x for x in v), f"活模块塞进例外表未被点名（M4 瞎了）：{v}"
+    # 第二道牙：活模块必然有活引用 ⇒ 「为什么不进名单」那条理由现算就不成立（引用口同源）。
+    assert any(live in x or "echo" in x for x in _exception_reference_problems(fat)), (
+        f"活模块的引用边非零却没被引用腿点名：{v}"
+    )
+
+
+def test_poison_entry_dropped_from_deleted_list_reference_reds() -> None:
+    """注毒②：从名单的**引用**里摘掉一条 ⇒ 本锁必须响，且报出被摘的是哪一条。
+
+    两形各咬一次：②a 只摘名单（形态表还认它）＝M1/M3 两腿点名；
+    ②b 名单与形态表一起摘（＝名单彻底忘了这枚）＝M5 历史下限点名盘上形态。
+    """
+    victim = "plugins.bot_unified_runtime.capabilities.auto_send"
+    thinned = DELETED_MODULES - {victim}
+    v = retirement_mesh_problems(
+        thinned, DELETED_MODULE_FORMS, RETIRED_NON_SHIM_PATHS, SCOPE_RETIRED_PATHS,
+        LEGACY_RETIRED_CLAIM_FLOOR,
+    )
+    assert any(victim in x for x in v), f"从名单引用里摘掉 {victim} 未被点名（M1/M3 瞎了）：{v}"
+    forms_thinned = {k: v2 for k, v2 in DELETED_MODULE_FORMS.items() if k != victim}
+    v2 = retirement_mesh_problems(
+        thinned,
+        forms_thinned,
+        RETIRED_NON_SHIM_PATHS,
+        _derive_scope_retired_paths(thinned, forms_thinned, RETIRED_NON_SHIM_PATHS),
+        LEGACY_RETIRED_CLAIM_FLOOR,
+    )
+    assert any("capabilities/auto_send/__init__.py" in x for x in v2), (
+        f"名单彻底忘了这枚时历史下限没响（M5 瞎了）：{v2}"
+    )
+
+
+def test_poison_retirement_leg_deleted_or_handcopied_reds() -> None:
+    """注毒③：同源断言**整腿删掉**／退回手抄字面量／摘掉 `not`／摘掉名单 import／摘掉派生面
+    ⇒ 接线锁各响一次，且报出断的是哪根线（W1/W2/W3）。
+
+    毒全在内存源码串里做（`replace` 前先验锚点，锚点漂了这条注毒就不算数），源码树一字不写。
+    """
+    source = Path(__file__).resolve().read_text(encoding="utf-8")
+    assert retirement_wiring_problems(source) == [], "注毒前提不成立：现网接线本就断了"
+    # 锚点一律拼串构造：本文件自身含这些锚点的**字面量**（就在下面这几行里），
+    # 直接写整串会被 `str.replace` 连注毒代码一起改掉（2026-10-06 实测：毒件语法当场崩）。
+    loop_head = "    for rel in SCOPE_RETIRED_" + "PATHS:"
+    leg_end_marker = "\n    # 2026-09-14 三次扩面（G-08）"
+    exists_assert = "assert not (REPO_ROOT / rel).exists(" + ")"
+    list_import = "from tests.test_deleted_shim_import_" + "lock import ("
+    derived_def_head = "SCOPE_RETIRED_" + "PATHS: tuple[str, ...] = "
+    for anchor in (loop_head, leg_end_marker, exists_assert, list_import, derived_def_head):
+        assert source.count(anchor) == 1, f"注毒锚点不唯一/已漂移，这条注毒不算数：{anchor!r}"
+    leg_start = source.index(loop_head)
+    leg_end = source.index(leg_end_marker, leg_start)
+    variants: list[tuple[str, str, str]] = [
+        (
+            "整腿删掉",
+            source[:leg_start] + "    pass  # （毒）退役断言整腿被删" + source[leg_end:],
+            "W3",
+        ),
+        (
+            "退回手抄字面量",
+            source.replace(
+                loop_head, '    for rel in ("plugins/bot_unified_runtime/capabilities/echo.py",):'
+            ),
+            "W3",
+        ),
+        (
+            "把 not 摘掉",
+            source.replace(exists_assert, "assert (REPO_ROOT / rel).exists()"),
+            "W3",
+        ),
+        (
+            "名单侧 import 改指别处",
+            source.replace(list_import, "from tests.test_some_other_ledger_module import ("),
+            "W1",
+        ),
+        (
+            "摘掉派生面定义",
+            source.replace(derived_def_head, "_SCOPE_RETIRED_" + "PATHS_MOVED: tuple[str, ...] = "),
+            "W2",
+        ),
+    ]
+    for label, mutated, expect in variants:
+        assert mutated != source, f"{label} 的毒没改到任何东西（锚点被同形文本吃掉了）"
+        ast.parse(mutated)  # 毒件必须语法可解析，否则这条注毒不算数
+        problems = retirement_wiring_problems(mutated)
+        assert any(expect in x for x in problems), f"{label} 未被接线锁点名（锁瞎了）：{problems}"
 
 
 def test_gate_scope_coordinates_are_live() -> None:
