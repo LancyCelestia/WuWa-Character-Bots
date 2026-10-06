@@ -1416,3 +1416,20 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 | `BOT_DB_BACKUP_MIN_FREE_BYTES` | int | `21474836480` | 0-1 TiB | 🟡需重启 | 开跑前同卷剩余空间下限：不足不开火 | 缺省 20 GiB（基线普查同卷剩 111 GB） |
 | `BOT_DB_BACKUP_STALE_AFTER_HOURS` | int | `24` | 1-720 | 🟡需重启 | 副本过期时限（小时） | 超龄在体检报告点名，不自动删 |
 | `BOT_REVIEW_MOVE_PRIVATE_ENABLED` | bool | `False` | — | 🟡需重启（装配期取一次） | 隐私输出「转私聊」通路总闸：开＝`ReviewAction.MOVE_PRIVATE` 那一轮把正文改投**请求者本人**的私聊会话、群侧零发言（不加任何引导句）；关＝与改前逐字节相同（仍 `BLOCKED`、队列零新请求） | 真身 `domains/transport/sender/outbound_gate.py::build_move_private_redirector`（关时工厂返回 `None`⇒`pipeline` 那一支整体不可达）。只吃 MOVE_PRIVATE，**BLOCK 绝不转**（否则开关一开就多出一条把违规内容搬进私聊的泄露腿）；私聊键形只由 `domains/core/session_keys.private_session_key` 构造；投递只走中央出口 `submit_active_push`。用户 2026-10-06 裁「先把它建立起来，但并不代表现在就需要它真正启用」⇒ 缺省关；锁＝`tests/test_move_private_redirect.py` |
+
+#### 怎么把「转私聊」打开（这颗键缺省关，教一次性开法）
+
+1. `.env` 加一行（真实 `.env` 只有你能改——本仓规矩：生产配置与密钥不由 AI 代改）：
+
+   ```
+   BOT_REVIEW_MOVE_PRIVATE_ENABLED=true
+   ```
+
+2. **重启 bot**。这枚键只在装配时读一次（产物冻进 `RuntimePipeline` 的协作者引用），所以它登记在重启类；`/bot runtime set` 会**拒绝**并点名它需重启——这是刻意的，不做"看着能热改"的假承诺。
+3. 自证一次：在已白名单的群里 @ 她，问一句会被判「你的隐私」的话（私人安排、只有你俩知道的称呼之类）。预期两件事同时成立：
+   - **群里一句都不发**——包括不会有"我转到私聊了"这类说明句（刻意设计：本波零新增人格话术）；
+   - **你本人的私聊**收到本该回复的正文原文。
+4. 要是群里没回声、私聊也没到：先看 `ChatBot_Runtime/data/wuwa_send_queue.sqlite3` 的 `send_requests` 里有没有 `target_scope=private` 的新行，再看审计行（`stage=review`、event=`move_private`）。闸判 `skip` 时**不会**谎报"已转私聊"——那一轮照旧落 blocked 并留原因，这是在册的诚实腿。
+5. 关掉＝把那行删掉或改 `false`＋重启。**关着的每一天，行为与这颗键出现之前逐字节相同**。
+
+🔴 别误解这颗开关：它只管一种情形——内容被判定为你的隐私、却正要发往群/频道。**BLOCK 类（六条硬线、密钥外泄、人格漂移）绝不因它转进私聊**，它不放宽任何准入，也不新增自动重投。
