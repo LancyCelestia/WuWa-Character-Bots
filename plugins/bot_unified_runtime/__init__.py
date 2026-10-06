@@ -8894,6 +8894,13 @@ def _register_nonebot_handlers() -> None:
                     command_text=identity_command,
                     sender_id=str(message.sender_id or ""),
                     group_id=str(message.group_id or ""),
+                    # 席 idplat：unset-name 的回执要说得出"描写档这一格有没有被牵连"，平台
+                    # 事实就得进这一轮（钉落在三段键 (平台域, 会话, 人) 上，人段形如 `qq:<uid>`）。
+                    # 只转述契约字段，口径逐字照下面 intimate／narration 两支（现成先例，不造
+                    # 新机制）：反解会话键猜平台＝T-1 同族；拿不到就交空串＝读侧 fail-closed
+                    # 明说"说不准"，绝不把"读空"报成"没有"。
+                    platform=message.platform,
+                    conversation_type=str(getattr(message.session_type, "value", "") or ""),
                 )
 
         elif command_text == "intimate" or command_text.startswith("intimate "):

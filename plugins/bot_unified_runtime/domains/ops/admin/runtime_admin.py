@@ -2058,6 +2058,8 @@ def build_session_identity_admin_result(
     command_text: str,
     sender_id: str = "",
     group_id: str = "",
+    platform: str = "",
+    conversation_type: str = "",
 ) -> CapabilityResult:
     """/bot identity set|tag|show|clear —— 会话级身份记忆（管理员专用）。
 
@@ -2067,6 +2069,11 @@ def build_session_identity_admin_result(
     unset-gender 四个子命令在管理员门**之前**拦截，转交
     capabilities/echo.build_identity_preference_result 处理发送者本人的
     称谓偏好（AddressingPreferenceStore）。
+
+    `platform`／`conversation_type` 是本层**过路**的两枚会话事实（派发面从契约字段
+    `IncomingMessage.platform` / `.session_type` 转述而来）：自助拦截必须原样转发给回执
+    读点，否则 unset-name 那句"描写档有没有被牵连"永远读空（席 idplat；只接一侧＝#33★
+    那族两形不相交）。本层一律不猜、不补值、不改写——拿不到就让它空着下去。
     """
     parts = command_text.split()
     sub = parts[0].lower() if parts else ""
@@ -2081,6 +2088,9 @@ def build_session_identity_admin_result(
             sender_id=sender_id,
             group_id=group_id,
             command_text=command_text,
+            session_key=session_key,
+            platform=platform,
+            conversation_type=conversation_type,
         )
     if "admin" not in actor_roles:
         return _admin_only_result(request_id)
