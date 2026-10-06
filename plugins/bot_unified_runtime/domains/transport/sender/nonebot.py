@@ -245,7 +245,14 @@ async def send_telegram_rich_media(
     if not callable(method):
         # 适配器没有这一枚出口 ⇒ 诚实点名，不假装发过（历史上这三族正是静默无通路）。
         raise _FinalSendError(f"telegram_api_unavailable:{api}")
-    return await method(chat_id=chat_id, **{kwarg: payload}, caption=caption or None)
+    return await method(
+        chat_id=chat_id,
+        **{kwarg: payload},
+        caption=caption or None,
+        # 媒体 caption 遮罩（§76.21 残余）：命中才出原生 caption_entities，
+        # 没命中回空 dict ⇒ 与改前逐字节相同（罩只加元数据、正文不改写）。
+        **_telegram_caption_entities_kwargs(caption),
+    )
 
 
 def _voice_cache_path(key: str) -> Path:
@@ -441,27 +448,21 @@ def _adapter_name(bot: Any) -> str:
     return str(getattr(adapter, "name", ""))
 
 
-def _telegram_masked_payload(text: str) -> Any:
-    """Telegram 遮罩（用户 2026-10-06 裁「色情、敏感内容在 tg 加遮罩，QQ 不拦也不做措施」）。
+def _telegram_spoiler_segments(text: str) -> list[Any]:
+    """把命中露骨词面的文本切成适配器 `Entity` 段（命中段包 `spoiler`、其余原样 `text`）。
 
-    命中露骨词面的那几段包成官方 `spoiler` 实体（点一下才显示），**其余一字不动**：
-    - 判据转述 `reviewer.explicit_output_spans` 那一枚真身（与群侧涂销同一清单，
-      禁第二份词表）；没命中就原样交裸 `str`，§10「TG 不设 parse_mode 的纯文本契约」
-      与改前逐字节相同。
-    - 走适配器**已有的 `Entity` 消息段**而不是新开格式化通道：`str(Message)` 仍是原文，
-      偏移由适配器按 UTF-16 自己算（本函数不数，避免量具与被包件同源）。
-    - 射程＝已经允许出门的文本。罩 ≠ 放行：六条硬线在 reviewer/内容政策那一层照旧拦，
-      到不了这里；群侧/频道侧的涂销也先本腿生效（公共面命中已被换成记号），所以本函数
-      实际只在 **TG 私聊**那一面咬得住。
-    - 通路保证「QQ 不做措施」：QQ 走 `send_onebot_v11`，结构上到不了这一支。
+    没命中返回 **空列表**（调用方据此保持裸 `str` / 原 `caption` 逐字节不变）。
+    判据复用 `reviewer.explicit_output_spans` 那一枚真身（与群侧涂销同一清单，
+    禁第二份词表）；偏移**不在这里数**——`Entity` 段的 UTF-16 偏移由适配器
+    `Entity.build_telegram_entities` 现算，量具与被包件不同源。
+    延迟导入：本模块要在 console/mail 也在场时工作，适配器缺席不该拖垮出站腿。
+    符号从 `.message` 取——`nonebot.adapters.telegram` 的 `__init__` 只再导出
+    Bot/Event/Adapter/Message/MessageSegment，`Entity` 不在门面上（实跑 ImportError）。
     """
     spans = explicit_output_spans(text)
     if not spans:
-        return text
-    # 延迟导入：本模块要在 console/mail 也在场时工作，适配器缺席不该拖垮出站腿。
-    # 符号从 `.message` 取——`nonebot.adapters.telegram` 的 `__init__` 只再导出
-    # Bot/Event/Adapter/Message/MessageSegment，`Entity` 不在门面上（实跑 ImportError）。
-    from nonebot.adapters.telegram.message import Entity, Message
+        return []
+    from nonebot.adapters.telegram.message import Entity
 
     segments: list[Any] = []
     cursor = 0
@@ -472,7 +473,52 @@ def _telegram_masked_payload(text: str) -> Any:
         cursor = end
     if cursor < len(text):
         segments.append(Entity.text(text[cursor:]))
+    return segments
+
+
+def _telegram_masked_payload(text: str) -> Any:
+    """Telegram 遮罩（用户 2026-10-06 裁「色情、敏感内容在 tg 加遮罩，QQ 不拦也不做措施」）。
+
+    命中露骨词面的那几段包成官方 `spoiler` 实体（点一下才显示），**其余一字不动**：
+    - 判据转述 `reviewer.explicit_output_spans` 那一枚真身（与群侧涂销同一清单，
+      禁第二份词表）；没命中就原样交裸 `str`，§10「TG 不设 parse_mode 的纯文本契约」
+      与改前逐字节相同。
+    - 走适配器**已有的 `Entity` 消息段**而不是新开格式化通道：`str(Message)` 仍是原文，
+      偏移由适配器按 UTF-16 自己算（见 `_telegram_spoiler_segments`，本函数不数）。
+    - 射程＝已经允许出门的文本。罩 ≠ 放行：六条硬线在 reviewer/内容政策那一层照旧拦，
+      到不了这里；群侧/频道侧的涂销也先本腿生效（公共面命中已被换成记号），所以本函数
+      实际只在 **TG 私聊**那一面咬得住。
+    - 通路保证「QQ 不做措施」：QQ 走 `send_onebot_v11`，结构上到不了这一支。
+    """
+    segments = _telegram_spoiler_segments(text)
+    if not segments:
+        return text
+    from nonebot.adapters.telegram.message import Message
+
     return Message(segments)
+
+
+def _telegram_caption_entities_kwargs(caption: str) -> dict[str, Any]:
+    """媒体 caption 的官方遮罩 kwargs（§76.21 残余 · 图片/视频/文件的说明文字那一路）。
+
+    命中露骨词面才回 `{"caption_entities": [...]}`；没命中回 **空 dict** ⇒ 调用方以
+    `**` 展开后与改前**逐字节相同**（缺省不变量、§10 纯文本契约）。caption 正文一个字
+    都不改：遮罩是**元数据**（`spoiler` 实体），不是把词面涂成星号——与文本腿同一口径。
+
+    偏移为何仍交适配器算：`Entity.build_telegram_entities` 正是 `Bot.send_to` 图文同发
+    分支组装 `caption_entities` 用的同一枚函数（nonebot/adapters/telegram/bot.py:247、:266），
+    它按每段 `_length`（UTF-16 单位）累加偏移；本函数只切段、不自己数坐标。
+    罩 ≠ 放行：不改任何准入/拦截判据、不新增配置键、不动 `content_safety`。
+    """
+    segments = _telegram_spoiler_segments(caption)
+    if not segments:
+        return {}
+    from nonebot.adapters.telegram.message import Entity
+
+    entities = Entity.build_telegram_entities(segments)
+    if not entities:  # pragma: no cover - 有命中必出 spoiler 实体，防御性收口
+        return {}
+    return {"caption_entities": entities}
 
 
 def _provider_message_id(result: Any) -> str | None:
@@ -824,6 +870,9 @@ async def send_nonebot_message(
                             chat_id=send_request.target_id,
                             photo=photo_ref,
                             caption=remaining or None,
+                            # §76.21 残余：图片 caption 同样只在命中露骨词面时出
+                            # caption_entities，没命中回空 dict（逐字节同改前）。
+                            **_telegram_caption_entities_kwargs(remaining),
                         )
                         remaining = ""
                     else:

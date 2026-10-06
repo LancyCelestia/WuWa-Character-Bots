@@ -744,10 +744,20 @@ class FileTransferGateway:
         # （收件人拿到 `ft_ef2f84_report.md`）。`path` 来源两值本就相同 ⇒ 既有
         # golden 锁（tests/test_file_gateway_phase1.py:386-395、:505）逐字仍绿。
         delivered_name = ticket.name or path.name
+        # §76.21 残余：文件 caption 也走 Telegram 原生 caption_entities（只在命中
+        # 露骨词面时加，正文一字不改）。局部导入避开顶层循环（sender/nonebot.py 顶
+        # 层就 import 本模块），偏移仍交适配器 Entity.build_telegram_entities 现算。
+        # 遮罩只加在 Telegram 这一支；QQ(_deliver_onebot)/邮件(_deliver_mail) 不经此函数。
+        from plugins.bot_unified_runtime.domains.transport.sender.nonebot import (
+            _telegram_caption_entities_kwargs,
+        )
+
+        sent_caption = caption[:1000]
         result = await bot.send_document(
             chat_id=target.target_id,
             document=(delivered_name, path.read_bytes()),
-            caption=caption[:1000],
+            caption=sent_caption,
+            **_telegram_caption_entities_kwargs(sent_caption),
         )
         return FileTransferReceipt(
             request_id=target.request_id,

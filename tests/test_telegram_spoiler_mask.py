@@ -36,6 +36,8 @@ CLEAN_TEXT = "今晚的潮汐很安静，我把灯留着。"
 DIRTY_TEXT = "今晚的潮汐很安静。露骨性行为那一段我只写给你看，别的话照旧。"
 EDGE_TEXT = "她靠过来，呼吸贴着你的耳廓，指尖顺着袖口滑进去。"
 BOUNDARY_TEXT = "MAR18、October 18、R-1800 这些编号都不是裁定词面。"
+DIRTY_CAPTION = "配图说明：露骨性行为那一段。"
+CLEAN_CAPTION = "配图说明：今晚的潮汐很安静。"
 
 
 class _RecordingBot:
@@ -166,6 +168,115 @@ def test_clean_telegram_text_stays_a_bare_string() -> None:
     assert isinstance(payload, str), "普通内容被包成实体＝把裁定的'不准进'做反了"
     assert payload == CLEAN_TEXT
     assert kwargs == {}
+
+
+# ===========================================================================
+# 媒体 caption 那一路（§76.21 残余 · 用户 10-06 裁「补」）
+# 图片/视频（走 send_animation 的动图与贴纸替代件）的说明文字此前没包：
+# TG 的 caption 要遮得走原生 `caption_entities`（type=spoiler、UTF-16 偏移）。
+# ===========================================================================
+
+
+class _MediaRecordingBot(_RecordingBot):
+    """带媒体出口的替身：`send_*` 收到的**出站 kwargs** 逐枚记下。
+
+    真实适配器上这些 API 名由 `Bot.__getattribute__` 动态转 `call_api`
+    （nonebot/adapters/telegram/bot.py:107），**不是**写死的 def ⇒ 接线只借
+    适配器已有的 API 面，遮罩只往 `caption_entities` 这一枚原生参数上加。
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.media_calls: list[tuple[str, dict[str, Any]]] = []
+
+    def _record_media(self, api: str, **kwargs: Any) -> dict[str, str]:
+        self.media_calls.append((api, kwargs))
+        return {"message_id": f"tg-media-{len(self.media_calls)}"}
+
+    async def send_photo(self, **kwargs: Any) -> dict[str, str]:
+        return self._record_media("send_photo", **kwargs)
+
+    async def send_animation(self, **kwargs: Any) -> dict[str, str]:
+        return self._record_media("send_animation", **kwargs)
+
+
+def _media_request(text: str, part: dict[str, Any]) -> SendRequest:
+    """带一段媒体（直链＝本机零读字节，不经网关判定门）的请求。"""
+    request = _request(text)
+    request.content = request.content.model_copy(
+        update={"content_type": "mixed", "content_ref": {"parts": [part]}}
+    )
+    return request
+
+
+def _run_media(bot: _MediaRecordingBot, request: SendRequest) -> dict[str, Any]:
+    import asyncio
+
+    receipt = asyncio.run(send_nonebot_message(bot, None, request))
+    assert receipt.state is ReceiptState.SENT, receipt.public_message
+    assert bot.media_calls, "本腿压根没发出媒体件＝测了个空壳"
+    return bot.media_calls[0][1]
+
+
+def _assert_caption_entities(caption: str, kwargs: dict[str, Any]) -> None:
+    """断言 caption 的遮罩形态：实体是**元数据**（正文一字未改），偏移按 UTF-16。"""
+    assert kwargs["caption"] == caption, f"caption 被改写：{kwargs['caption']!r}"
+    entities = kwargs.get("caption_entities")
+    assert entities, "命中露骨词面却没出 caption_entities＝caption 那一路还是哑巴"
+    assert [entity.type for entity in entities] == ["spoiler"]
+    start, end = explicit_output_spans(caption)[0]
+    assert entities[0].offset == _utf16_len(caption[:start]), "偏移不是 UTF-16 单位＝罩错位"
+    assert entities[0].length == _utf16_len(caption[start:end])
+
+
+def test_explicit_caption_on_photo_leg_gets_spoiler_entities() -> None:
+    """图片 caption 命中露骨词面 ⇒ 出站 kwargs 出 `caption_entities`，正文不变。"""
+    kwargs = _run_media(
+        _MediaRecordingBot(),
+        _media_request(DIRTY_CAPTION, {"type": "image", "url": "https://cdn.example.com/a.png"}),
+    )
+    _assert_caption_entities(DIRTY_CAPTION, kwargs)
+
+
+def test_explicit_caption_on_animation_leg_gets_spoiler_entities() -> None:
+    """动图/视频 caption（`send_animation`）同一条尺：别只做图片半条腿。"""
+    kwargs = _run_media(
+        _MediaRecordingBot(),
+        _media_request(
+            DIRTY_CAPTION, {"type": "animation", "url": "https://cdn.example.com/a.gif"}
+        ),
+    )
+    _assert_caption_entities(DIRTY_CAPTION, kwargs)
+
+
+def test_clean_caption_sends_no_caption_entities() -> None:
+    """缺省不变量：caption 没命中 ⇒ 出站参数里**没有** caption_entities（kwargs 逐字节同改前）。"""
+    for part in (
+        {"type": "image", "url": "https://cdn.example.com/a.png"},
+        {"type": "animation", "url": "https://cdn.example.com/a.gif"},
+    ):
+        kwargs = _run_media(_MediaRecordingBot(), _media_request(CLEAN_CAPTION, part))
+        assert "caption_entities" not in kwargs, "普通 caption 被罩＝越出裁定面"
+        assert kwargs["caption"] == CLEAN_CAPTION
+
+
+@pytest.mark.parametrize(
+    "caption",
+    [
+        EDGE_TEXT,  # 16+ 擦边
+        BOUNDARY_TEXT,  # MAR18 / October 18 / R-1800 编号
+        "18+ 与 16+ 只是分级标签，不是裁定词面。",
+        CLEAN_CAPTION,
+    ],
+)
+def test_edge_and_numbered_captions_never_enter_the_mask(caption: str) -> None:
+    """🔴 用户硬边界：普通非 18+ 内容不准进罩、16+ 也不进——caption 与文本同一把尺。"""
+    kwargs = _run_media(
+        _MediaRecordingBot(),
+        _media_request(caption, {"type": "image", "url": "https://cdn.example.com/a.png"}),
+    )
+    assert "caption_entities" not in kwargs, f"{caption!r} 不该被遮罩"
+    assert explicit_output_spans(caption) == []
 
 
 @pytest.mark.parametrize("adapter_name", ["Console", "Mail"])
