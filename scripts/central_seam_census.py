@@ -1030,6 +1030,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fail-on-violations", action="store_true", help="第二通路 violations 非空时退出码 3")
     args = parser.parse_args(argv)
 
+    # 台账 #47 的镜像面：本件两种输出都含中文，而**子进程 stdout 默认吃机器代码页**（本机 cp936），
+    # 父侧（如 `tests/test_capability_manifest_gate.py::_census`）却按 `encoding="utf-8"` 解码
+    # ⇒ 解码炸 ⇒ `stdout=None` ⇒ `json.loads(None)` TypeError ⇒ 58 枚红＝量具哑火，不是量值不符。
+    # 在 CLI 入口自钉 UTF-8（不放模块顶部：被 import 时不得改宿主进程的流），使量具与调用方环境无关。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
     census = Census(args.poison)
     output = census.collect()
     reconciliation = census.reconcile(output, args.baseline_json) if args.baseline_json else None
