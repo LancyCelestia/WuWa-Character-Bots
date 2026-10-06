@@ -705,6 +705,49 @@ def _explicit_pin_store(config: Any) -> Any:
     return build_addressing_preference_store(config)
 
 
+def read_intimate_pin(session_key: str, *, config: Any = None) -> str:
+    """库里有哪枚「本人亲手把亲密档开到某档」的标记（``""``＝没标记／读不出／没配这本库）。
+
+    D-1 标记本来只有**三条腿**（`_record_explicit_pin` 写／`_retract_explicit_pin` 收／
+    `_honored_explicit_pin` 在自动腿重钉那一刻读），回执面要问"这一行上还有什么别的"就只能
+    自己去查库——而它按裸 uid 查（席 unmask-intimate 收的那一格）：标记写在
+    `_explicit_pin_person_key(session_key)` 交出的**会话键本身**上（QQ 私聊＝裸 `<uid>`、
+    TG 私聊＝`private_<chat.id>`），读点在 TG 那一侧因此**永远读空**，"亲密档保住了"这句
+    说不出来（台账 #33★／T-1 那族"写在 A 形、读在 B 形"）。本函数是那三条腿之外的**第四口，
+    只读**，纪律与 `read_narration_pin` 同档：
+
+    - **取键只经写腿那一口** `_explicit_pin_person_key`（私聊键门＋并号），会话段恒
+      `_EXPLICIT_PIN_SESSION_TYPE`/`_EXPLICIT_PIN_SESSION_ID` ⇒ 与写侧逐字同一把三元组，
+      读写无从各说各话。
+    - 🔴 **不猜平台、不反解、也不在这里另起一把 (平台域, 人) 的尺**：那是描写钉的键形
+      （`_narration_person_key`），拿它读标记＝换个形状把所有人的标记都读成"没有"。
+      群作用域键与成员派生键在 `KIND_PRIVATE` 那道门外侧就被挡掉——群侧标记**本就不入库**
+      （本节边界第 1 条），所以这一路"读空"与"这一格不存在"确实是同一件事。
+    - **fail-closed**：键取不出／没配这本库／任何异常 ⇒ ``""``，绝不猜一档。⚠ 但
+      ``""`` 只回答"**这一格**没有"，不回答"这个人哪儿都没有"——拿不到会话事实的调用方
+      **应当不表态**，不许把本函数的空串当"确实没有"报出去（那一层守卫住在
+      `capabilities/echo.py::_identity_intimate_cell`）。
+    - 合法性由调用方在**读出来之后**再认一次（`INTIMATE_TIER_L1`/`INTIMATE_TIER_L2` 那一处
+      词表），与 `read_narration_pin`／`store.get_intimate_pin` 同一口径 ⇒ 存储层与本函数
+      都不含判据。
+    """
+    try:
+        person_key = _explicit_pin_person_key(session_key, config)
+        if not person_key:
+            return ""
+        store = _explicit_pin_store(config)
+        if store is None:
+            return ""
+        tier, _explicit_at = store.get_intimate_pin(
+            session_type=_EXPLICIT_PIN_SESSION_TYPE,
+            session_id=_EXPLICIT_PIN_SESSION_ID,
+            sender_id=person_key,
+        )
+    except Exception:  # noqa: BLE001 - 读不到＝不宣称有，绝不拖累回执的其它格子。
+        return ""
+    return tier
+
+
 # ---------------------------------------------------------------- 描写档的钉（G-1～G-3）
 #
 # 裁定：描写档是**每人的持久钉**，缺省 ``speech``，``scene`` 走 G-2 那把唯一的授予尺。
@@ -827,6 +870,9 @@ def _narration_person_key(
 #: 各写一份就是第二把尺。取值只认契约字段 `IncomingMessage.session_type` 的规范形
 #: （`contracts/runtime.py:SessionType.CHANNEL="channel"`），**不靠会话键前缀猜**
 #: （中央件 docstring 第 4 条：`guild_/friend_/console_` 诸形一律不判，字符串前缀不是判据）。
+#: ⚠ 本句管的是"**归哪一侧**"这把尺。`_narration_store_scope` 里那枚只在**拿不到契约字段**时
+#: 才走的前缀 fallback 是另一件事：它按在册键形**多分一刀桶**（不改本判据、不判"是不是群"、
+#: 也不放宽任何一侧的授予），方向仍是上面那句自称的 fail-closed。
 PUBLIC_SPACE_SESSION_TYPES: Final[frozenset[str]] = frozenset({"group", "channel"})
 
 
@@ -870,7 +916,16 @@ def _narration_store_scope(session_key: str, session_type: str = "") -> tuple[st
       一个频道一把桶，频道之间、频道与私聊之间**都不同桶**。认形以契约字段
       `session_type` 为正解（中央件对 `channel_/guild_` 诸形明写"不判"，见
       `session_keys` docstring 第 4 条）；只有拿不到契约字段时才退到**前缀 fallback**——
-      那一退的方向是 fail-closed（宁可多分一刀桶，也绝不把公共空间的钉折进私聊那一格）。
+      那一退的方向是 fail-closed（宁可多分一刀桶，也绝不把公共空间的钉折进私聊那一格），
+      所以兜底把**在册的两形都认齐**：`channel_<chat.id>`（TG 侧，`session_keys`
+      docstring 第 1 条）与 `guild_<g>_channel_<c>_<u>`（官方 QQ 适配器侧，同 docstring
+      第 4 条在册）。🔴 只认前一形时，`guild_` 那形在"没交契约字段"的调用方手里会折进
+      私聊那一格＝与本句自称的方向**正好反向**，同一枚钉还在接线侧／未接线侧读写分叉
+      （席 guildfall 2026-10-06 根修，锁 `tests/test_narration_platform_wiring.py`
+      的 `test_the_prefix_fallback_does_not_fold_a_guild_key_into_the_private_cell`）。
+      ⚠ 本枚 fallback **只**兜"没拿到契约字段"那一面：生产三处取钉口（`intimate_control`
+      的 read／write／clear）都交会话事实，那由同件测试里的 AST 锁逐处盯着；`friend_`／
+      `console_`／裸号／`private_` 诸形一律照旧落私聊格（零迁移承诺一字未动）。
     - 私聊／控制台／认不出 ⇒ 沿用 ``("private", "")`` 那一格：私聊这一路"会话"就是这个人，
       键形不必变 ⇒ **她私聊里已有的钉原地不动，零迁移**。
     """
@@ -882,7 +937,9 @@ def _narration_store_scope(session_key: str, session_type: str = "") -> tuple[st
     parsed = parse_session_key(key)
     if parsed.kind == KIND_GROUP and parsed.group_id:
         return "group", str(parsed.group_id)
-    if st == "channel" or (not st and key.lower().startswith("channel_")):
+    # 兜底认形两形齐认（方向＝fail-closed：多分一刀桶，绝不把公共空间的钉折进私聊那一格）；
+    # 前缀只在这条 fallback 腿上当"键形登记"用，判"是不是群"照旧只走中央件。
+    if st == "channel" or (not st and key.lower().startswith(("channel_", "guild_"))):
         return "channel", sanitize_key_segment(key, forbidden=_MEMBER_SCOPE_SEP)[:128]
     return _EXPLICIT_PIN_SESSION_TYPE, _EXPLICIT_PIN_SESSION_ID
 
@@ -1848,6 +1905,50 @@ def explicit_allowed_for_session(
         return False
     except Exception:  # noqa: BLE001 - fail-open：判不了按不放行。
         return False
+
+
+#: 叙述可达面的**频道**那一格（用户 2026-10-06 裁定「频道里可以写场景描写」）。
+#: 值只认契约字段 `IncomingMessage.session_type` 的规范形
+#: （`domains/core/contracts/runtime.py:SessionType.CHANNEL == "channel"`，与本文件
+#: `PUBLIC_SPACE_SESSION_TYPES` 同一来源、同一写法），**不靠会话键前缀判**（中央件
+#: `session_keys` docstring 第 4 条：`guild_/friend_/console_` 诸形一律不判）。
+#: 🔴 这一枚**只**答"描写轴可达吗"，一枚都不进"露骨内容放行吗"那把尺——
+#: `explicit_allowed_for_session` 不读它，它也不读任何名单配置（零新 `BOT_*` 键、
+#: 零第二张名单）。锁 `tests/test_channel_scene_admission.py`。
+_NARRATION_REACHABLE_EXTRA_SESSION_TYPES: Final[frozenset[str]] = frozenset({"channel"})
+
+
+def narration_allowed_for_session(
+    session_type: str, group_id: str, config: Any, sender_id: str = ""
+) -> bool:
+    """这一轮的**描写轴可达**判据——只答「这一轮的叙述能不能铺开写」这一问。
+
+    为什么要有第二枚函数（用户 2026-10-06 裁定要的就是把两问分开）：`explicit_allowed_for_session`
+    的 docstring 自己写明它答的是「露骨内容放行判定」（群走黑白名单、私聊默认放开、**其余会话
+    类型（TG 频道/邮件等公开面）不放行**），而注入缝 `_rp_scene_now` 一直把同一枚准入门同时当
+    「这一轮的描写轴可达吗」在用 ⇒ 后果是她在频道里钉了 `scene` 也永远拿不到场景描写那一格。
+    她的裁定**只开第二问**。
+
+    分工（一枚问题一把尺，全仓不设第二套）：
+
+    - 「能不能放行露骨内容」＝ `explicit_allowed_for_session`，本波一个字节未改；消费方＝
+      会话准入门（`chat.py:content_route_session_eligible`）、`resolve_intimate_context` 的
+      `eligible`、TTS 内容闸（M-02/M-17）、被动好感感知、跟戳与回戳那两面——**继续只读它**。
+    - 「能不能铺开写」＝本函数，消费方只有 `chat.py:_rp_scene_now` 那一处。除频道那一格外，
+      本函数就是把四个入参**原样转给** `explicit_allowed_for_session` ⇒ 群／私聊／控制台／邮件
+      四态语义逐字不变（`tests/test_channel_scene_admission.py` 拿名单矩阵逐格对拷两把尺读数）。
+    - 频道 ⇒ True，而同一条 `explicit_allowed_for_session("channel", …)` 恒 False：
+      频道是公开面，露骨内容照旧不放行，六硬线与 09-17 内容政策一字未动。
+
+    只**开门**、不**授予**：真到不到 `scene` 那一格仍只由唯一那把授予尺判
+    （`grants_intimate_narration(narration_source)`），并且频道吃到的是**公共面**那一格样式段
+    （`chat.py` 的 `resolve_rp_style_block(group=is_public_space_session(…))`，`channel` 与
+    `group` 同侧 ⇒ 不落笔身形／衣着），亲密那条腿 `_rp_intimate_now` 在频道照旧走不通。
+    """
+    st = str(session_type or "").strip().lower()
+    if st in _NARRATION_REACHABLE_EXTRA_SESSION_TYPES:
+        return True
+    return explicit_allowed_for_session(session_type, group_id, config, sender_id=sender_id)
 
 
 def resolve_intimate_context(

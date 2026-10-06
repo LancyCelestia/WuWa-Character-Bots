@@ -570,3 +570,129 @@ def test_conversation_wiring_lock_goes_red_on_a_poisoned_copy() -> None:
         "手抄一份等值判断后尺没照出来＝这把尺是瞎的"
     )
 
+
+# ---- ③ 续：拿不到契约字段那一退的**方向**（`guild_` 形 × 未接线调用方）
+#
+# 缺陷（席 guildfall 报，2026-10-06）：`_narration_store_scope` 的 docstring 自称"只有拿不到
+# 契约字段时才退到**前缀 fallback**——那一退的方向是 fail-closed（宁可多分一刀桶，也绝不把
+# 公共空间的钉折进私聊那一格）"，可那一退只认 `channel_` 一形。官方 QQ 适配器的频道键是另一形
+# `guild_<g>_channel_<c>_<u>`（`session_keys` docstring 第 1 条与第 4 条都在册）⇒ 不交
+# `session_type` 的调用方把一枚**公共空间**的钉折进 `("private", "")` 那一格＝与它自称的方向
+# **正好反向**，同一枚钉因此还在"交会话事实"与"没交"两侧**读写分叉**。
+# 🔴 本段只判**兜底方向**：契约字段仍是正解——生产三处取钉口（`read`／`write`／`clear`
+# `_narration_pin`）都交会话事实，那由上面
+# `test_every_narration_pin_site_in_the_command_leg_threads_the_session_type` 锁着，
+# 它咬得住的自证在 `test_conversation_wiring_lock_goes_red_on_a_poisoned_copy`。
+# 🔴 方向＝只准**变严**：`guild_` 那几行从**共桶**（私聊格）拆成**各按整键分桶**；群格与
+# 私聊格的既有键形、零迁移承诺（裸号／`private_`／`friend_`／`console_` 诸形照旧
+# `("private", "")`）一字不动 ⇒ 另有一枚"其余各形逐格不漂"的锁在同一段里守着。
+
+#: 键形只复用 ③ 段已在册的两形（`_CHANNEL_KEYS`），本段不自拼第四形；成员派生键一律经
+#: 真身构造口 `content_route.member_session_key` 造（其逆即轴心在用的 `split_member_session_key`），
+#: 认形只准用中央件 `parse_session_key`。
+_GUILD_CHANNEL_KEY: str = _CHANNEL_KEYS[1]
+_TG_CHANNEL_KEY: str = _CHANNEL_KEYS[0]
+_OTHER_GUILD_CHANNEL_KEY: str = "guild_11111_22222_7770002299"  # 同一在册形，只换号
+#: 私聊那一格的**真身**（不抄字面）：轴心 fail-closed 的兜底落点就是这两个常量。
+_PRIVATE_CELL: tuple[str, str] = (cr._EXPLICIT_PIN_SESSION_TYPE, cr._EXPLICIT_PIN_SESSION_ID)
+
+
+@pytest.mark.parametrize(
+    "session_key",
+    [_GUILD_CHANNEL_KEY, cr.member_session_key(_GUILD_CHANNEL_KEY, _QQ_UID)],
+    ids=["guild_形", "guild_形+成员段"],
+)
+def test_the_prefix_fallback_does_not_fold_a_guild_key_into_the_private_cell(
+    session_key: str,
+) -> None:
+    """不交 `session_type` 时，`guild_` 形既不得落进私聊格，也必须与交了契约字段的读侧同格。
+
+    三句断言：①不是 `("private", "")`；②`session_type` 在场／缺席两侧**同一格**（＝"同一枚钉
+    在接线侧与未接线侧读写分叉"这一族就此闭合）；③会话段非空 ⇒ 频道之间仍各按整键分桶
+    （I-2 那枚"换会话要重开"的齿在群侧同样咬合，不换格＝全频道共用一格）。
+    """
+    unwired = cr._narration_store_scope(session_key)
+    wired = cr._narration_store_scope(session_key, SessionType.CHANNEL.value)
+    assert unwired != _PRIVATE_CELL, (
+        f"未接线的兜底把公共空间（官方 QQ 频道形）的钉折进了私聊那一格：{unwired!r}"
+        "＝docstring 自称的 fail-closed 方向写反了"
+    )
+    assert unwired == wired, (
+        f"兜底与接线不同格（未交={unwired!r} / 交了={wired!r}）＝读写分叉"
+    )
+    assert unwired[0] == SessionType.CHANNEL.value, unwired
+    assert unwired[1], f"会话段是空串＝所有频道共用一格（换会话不用重开）：{unwired!r}"
+    assert cr._narration_store_scope(_OTHER_GUILD_CHANNEL_KEY) != unwired, (
+        "另一枚频道键与它同桶＝把分桶改成了共桶（本段只准变严）"
+    )
+
+
+def test_the_other_key_shapes_keep_their_cells_untouched() -> None:
+    """真值表里其余各形**逐格不漂**：群格三形、私聊格四形、已有的 `channel_` 兜底照旧。
+
+    这枚锁守的是"变严不许顺手搬家"：`friend_`／`console_`／裸号／`private_` 都是**私聊面**
+    （中央件 docstring 第 4 条在册），把它们的兜底也"补全"出去＝把零迁移承诺吃掉了。
+    """
+    group_cell = (SessionType.GROUP.value, "123456")
+    cases: tuple[tuple[str, tuple[str, str]], ...] = (
+        ("group:123456", group_cell),
+        (f"group_123456_{_QQ_UID}", group_cell),
+        (cr.member_session_key(f"group_123456_{_QQ_UID}", _QQ_UID), group_cell),
+        (_QQ_SESSION, _PRIVATE_CELL),  # QQ 私聊＝裸号
+        (_TG_SESSION, _PRIVATE_CELL),  # TG 私聊键形
+        ("friend_OX001abc", _PRIVATE_CELL),  # 中央件第 4 条在册：`friend_<openid>`＝私聊面
+        ("console_7770002299", _PRIVATE_CELL),  # 同条在册：console 的 `<channel>_<user>`
+        (_TG_CHANNEL_KEY, (SessionType.CHANNEL.value, _TG_CHANNEL_KEY)),  # 原有兜底不迁
+    )
+    for key, want in cases:
+        assert cr._narration_store_scope(key) == want, f"{key} 那一格漂了（现算 {want!r}）"
+
+
+def test_an_unwired_write_leg_lands_where_the_wired_read_leg_looks(tmp_path: Path) -> None:
+    """行为面（不只纯函数）：未接线的写腿落库后，注入缝按契约字段读数必须吃到**同一格**。
+
+    修前这一格是**反着**的两件事：写腿把频道钉折进 `("private", "")` ⇒ ①注入缝按
+    (`"channel"`, 键) 读不到她钉下的那一格；②反倒被**私聊**那一轮读到＝换会话不用重开
+    （I-2 的齿在群侧失灵）。第三枚消费者（`clear`）同轴性一并判：写进了新桶却收不回
+    ＝"写了收不掉"那一族。
+    """
+    cfg = _db_cfg(tmp_path, "guild-fallback-roundtrip")
+    before = _channel_reading(cfg, _GUILD_CHANNEL_KEY)
+    assert before["narration_mode"] != cr.NARRATION_MODE_SCENE, (
+        "夹具没清干净：这一格改判前就已经是 scene，下面的断言会在空跑"
+    )
+    assert cr.write_narration_pin(
+        _GUILD_CHANNEL_KEY,
+        mode=cr.NARRATION_MODE_SCENE,
+        sender_id=_QQ_UID,
+        config=cfg,
+        platform="telegram",
+    ) is True, "描写钉没写进去＝下面的断言全在空跑"
+
+    after = _channel_reading(cfg, _GUILD_CHANNEL_KEY)
+    assert after["narration_mode"] == cr.NARRATION_MODE_SCENE, (
+        f"未接线写腿落在 {cr._narration_store_scope(_GUILD_CHANNEL_KEY)!r}、"
+        f"注入缝按 {cr._narration_store_scope(_GUILD_CHANNEL_KEY, SessionType.CHANNEL.value)!r} 读"
+        "＝同一枚钉读写分叉（兜底那一退把公共空间折进了私聊格）"
+    )
+    assert grants_intimate_narration(str(after["narration_source"])) is True, after
+
+    private = cr.resolve_intimate_context(
+        SHARED_CONTENT_ROUTE_ENGINE,
+        session_type="private",
+        sender_id=_QQ_UID,
+        session_key=_TG_SESSION,
+        config=cfg,
+        platform="telegram",
+    )
+    assert private["narration_mode"] != cr.NARRATION_MODE_SCENE, (
+        "频道那枚钉被私聊那一轮吃到了＝兜底把公共空间折进私聊格的行为面实锤"
+    )
+
+    assert cr.clear_narration_pin(
+        _GUILD_CHANNEL_KEY, sender_id=_QQ_UID, config=cfg, platform="telegram"
+    ) is True, "收腿没落库＝下面那条断言在空跑"
+    assert _channel_reading(cfg, _GUILD_CHANNEL_KEY)["narration_mode"] != cr.NARRATION_MODE_SCENE, (
+        "写腿与收腿不同轴＝写了收不掉"
+    )
+

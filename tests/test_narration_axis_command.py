@@ -954,3 +954,159 @@ def test_channel_pin_gets_its_own_conversation_bucket(tmp_path: Path) -> None:
     assert cr.read_narration_pin(
         ch_a, sender_id=_HER_UID, config=cfg, platform="telegram"
     ) == ""
+
+
+# ---------------------------------------------------------------- ⑫ 回执诚实：铺不开要说得出为什么
+#
+# 2026-10-06 只读审计席实跑的两形：
+# ① 非白名单群里 `/bot 描写 scene` 回「描写档：连动作神色一起铺开｜细节描写：已开｜
+#    库里的钉：铺开」，聊天主链那一轮吃到的却是 `speech`（会话那一问由
+#    `content_route.narration_allowed_for_session` 判，非白名单群恒不可达；写腿与 `show`
+#    一次都不读它）；
+# ② `bot_content_route_enabled=False` 时命令面照样落库并说"说一次就一直算"，主链走缺省
+#    仍是 `speech`。
+# 🔴 落库本身没错（写腿**有意**不吃总闸与 eligible 门，见 `build_narration_control_result`
+# docstring：描写档是文风偏好，不该被一次路由开关静默改掉）。错的是**回执说得比盘面满**。
+# 所以本节的判据＝**只报不门**：钉照旧落下、门一枚都不加，而「这一处铺不开」必须并排说出
+# **为什么**（名单没放开／总闸关着），并交代钉还在、门一开就照这份写。
+# 判据只准转述两枚既有尺——`narration_allowed_for_session`（＝主链 `_rp_scene_now` 读的
+# 那一枚）与 config 上那枚总闸；命令面**一份名单都不判**（第二把尺＝本仓的门会咬），
+# 末枚形状锁钉的就是这件事。
+
+_ROOT = Path(__file__).resolve().parents[1]
+_IC_SRC = (
+    _ROOT / "plugins" / "bot_unified_runtime" / "domains" / "chat_reply" / "runtime" / "intimate_control.py"
+)
+
+_OUTSIDE_GROUP = "700000299"  # **不在** `bot_content_route_group_whitelist`（那是 `_GROUP`）里的一群
+_BLOCKED_HEAD = "这一处这会儿铺不开"
+_BLOCKED_BY_LIST = "准入名单还没放开到这里"
+_BLOCKED_BY_GATE = "总闸这会儿关着"
+_PIN_QUEUED = "钉已经落下，门一开就照这份写"
+_STATE_GRID = ("描写档：", "依据：", "细节描写：", "库里的钉：")
+#: 「铺开」那一格的人话读数（真身＝`intimate_control._NARRATION_LABELS`，这里只用在
+#: 「库里的钉：…」那一行的比对上，不另立词表）。
+_NAR_SCENE_LABEL = "连动作神色一起铺开"
+
+
+def test_group_outside_the_admission_list_says_why_it_cannot_spread(tmp_path: Path) -> None:
+    """①那一形：名单外的群里钉了 scene ⇒ 回执既照旧落钉，也点名"这一处铺不开＋为什么"。"""
+    cfg = _addr_config(tmp_path)
+    # 尺先现算：这一群真的够不着（白名单里是 `_GROUP`，不是 `_OUTSIDE_GROUP`）。
+    assert (
+        cr.narration_allowed_for_session("group", _OUTSIDE_GROUP, cfg, sender_id=_HER_UID)
+        is False
+    )
+    leg = _narration_leg(
+        "scene", cfg, session_type="group", group_id=_OUTSIDE_GROUP, platform="qq"
+    )
+    # 🔴 不加门：钉照旧落下（写腿有意不吃准入门，这一条一字不许动）。
+    assert "slash_narration_refused" not in (leg.audit_tags or []), leg.audit_tags
+    assert (
+        cr.read_narration_pin(
+            build_session_key(_OUTSIDE_GROUP, _HER_UID),
+            sender_id=_HER_UID,
+            config=cfg,
+            platform="qq",
+        )
+        == cr.NARRATION_MODE_SCENE
+    )
+    body = leg.body
+    assert _BLOCKED_HEAD in body and _BLOCKED_BY_LIST in body, body
+    assert _PIN_QUEUED in body, body
+    assert _BLOCKED_BY_GATE not in body, f"这一腿是名单收的，不是总闸收的：{body}"
+    # 只并排、不替换：原有四格读数必须全在场。
+    for prefix in _STATE_GRID:
+        assert prefix in body, body
+
+
+def test_master_gate_off_names_the_gate_as_the_blocker(tmp_path: Path) -> None:
+    """②那一形：总闸关着 ⇒ 回执说得出"是总闸"，而不是含糊一句或照旧宣称已开。"""
+    cfg = _addr_config(tmp_path, bot_content_route_enabled=False)
+    # 准入这一腿其实是通的（私聊缺省放开）⇒ 那句原因只能指向总闸，不许糊给名单。
+    assert cr.narration_allowed_for_session("private", "", cfg, sender_id=_HER_UID) is True
+    leg = _narration_leg("scene", cfg, platform="qq")
+    assert (
+        cr.read_narration_pin(private_session_key(_HER_UID), config=cfg, platform="qq")
+        == cr.NARRATION_MODE_SCENE
+    ), "总闸关着就不落钉＝把'不加门'改成了加门"
+    body = leg.body
+    assert _BLOCKED_HEAD in body and _BLOCKED_BY_GATE in body, body
+    assert _BLOCKED_BY_LIST not in body, f"名单明明是通的却甩锅名单：{body}"
+    assert _PIN_QUEUED in body, body
+
+
+def test_show_in_a_blocked_group_names_the_same_reason(tmp_path: Path) -> None:
+    """`show` 与写腿同一份行文：那一格铺不开的原因也得并排说，且仍只读、不动钉。"""
+    cfg = _addr_config(tmp_path)
+    _narration_leg("scene", cfg, session_type="group", group_id=_OUTSIDE_GROUP, platform="qq")
+    shown = _narration_leg(
+        "show", cfg, session_type="group", group_id=_OUTSIDE_GROUP, platform="qq"
+    )
+    assert "slash_narration:show" in (shown.audit_tags or []), shown.audit_tags
+    body = shown.body
+    assert _BLOCKED_HEAD in body and _BLOCKED_BY_LIST in body, body
+    assert _PIN_QUEUED in body, body
+    assert f"库里的钉：{_NAR_SCENE_LABEL}" in body, body
+    for prefix in _STATE_GRID:
+        assert prefix in body, body
+
+
+def test_no_blocked_wording_when_this_spread_or_when_she_said_speech(
+    tmp_path: Path,
+) -> None:
+    """防过修：够得着的那一格、以及她钉的是 speech 那一轮，都**不许**冒这句。"""
+    cfg = _addr_config(tmp_path)
+    admitted = _narration_leg("scene", cfg, session_type="group", group_id=_GROUP, platform="qq")
+    assert _BLOCKED_HEAD not in admitted.body, admitted.body
+    assert cr.narration_allowed_for_session("group", _GROUP, cfg, sender_id=_HER_UID) is True
+    speech = _narration_leg(
+        "speech", cfg, session_type="group", group_id=_OUTSIDE_GROUP, platform="qq"
+    )
+    assert _BLOCKED_HEAD not in speech.body, speech.body
+
+
+_LIST_KEYS: tuple[str, ...] = (
+    "bot_content_route_group_whitelist",
+    "bot_content_route_group_blacklist",
+    "bot_content_route_private_whitelist",
+    "bot_content_route_private_blacklist",
+)
+
+
+def _second_ruler_hits(src: str) -> list[str]:
+    """命令面里"自己读名单"的命中清单（谓词只这一份，正面与注毒腿共用）。"""
+    return [key for key in _LIST_KEYS if key in src]
+
+
+def test_the_command_surface_relays_the_rulers_and_reads_no_list_of_its_own() -> None:
+    """形状锁（只报不门的结构性保证）：命令面不碰任何名单配置键，只转述那两枚尺。"""
+    src = _IC_SRC.read_text(encoding="utf-8")
+    assert _second_ruler_hits(src) == [], (
+        f"命令面自己读了名单键＝长了第二把尺：{_second_ruler_hits(src)}"
+    )
+    assert "narration_allowed_for_session(" in src, (
+        "回执没转述主链读的那枚可达尺＝谎报腿还在原地"
+    )
+    assert 'getattr(config, "bot_content_route_enabled"' in src, "总闸那枚尺没转述"
+
+
+def test_the_no_list_lock_bites_when_a_surface_copies_the_list_check() -> None:
+    """注毒自证（护栏不空转）：把一份名单判断抄进命令面那份副本 ⇒ 上面那枚当场红。
+
+    副本只在内存里改，源码树一个字节不动（台账 #72★「断言重写仅双 env 不设时写
+    `tests/__pycache__`」那一族教训：取证产物不许留在树里）。
+    """
+    src = _IC_SRC.read_text(encoding="utf-8")
+    anchor = "def _narration_reach_lines("
+    assert src.count(anchor) == 1, "注毒锚点没了＝本枚空跑，先同步本件"
+    poisoned = src.replace(
+        anchor,
+        '    wl = {str(x) for x in getattr(config, "bot_content_route_group_whitelist", [])}\n'
+        + anchor,
+        1,
+    )
+    assert poisoned != src, "注毒没落到任何一处＝本件空跑"
+    assert _second_ruler_hits(poisoned) == ["bot_content_route_group_whitelist"], (
+        "抄了名单却不红＝那枚锁是摆设"
+    )

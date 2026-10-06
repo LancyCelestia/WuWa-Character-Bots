@@ -83,6 +83,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import
     grants_intimate_narration,
     match_intimate_subcommand,
     match_narration_subcommand,
+    narration_allowed_for_session,
     narration_write_allowed,
     read_narration_pin,
     resolve_intimate_context,
@@ -477,6 +478,8 @@ def build_intimate_control_result(
 # 回执据实说一句"没钉上"），绝不因为写失败就把命令升级成报错。
 
 #: 描写档用法表（裸命令与"不认得"共用；四枚子命令一名不遗漏，词面只指回真身那张表）。
+#: 末两行＝主人 2026-10-06 要的那两句（三形各自都要重说一次／说一次即长期，收回只在她自己
+#: 另下一句）。措辞按她的形状走，不写"永久"、不写裁定编号——那两样都是给她读不懂的东西。
 _NARRATION_USAGE_LINES: Final[tuple[str, ...]] = (
     "描写档（/bot 描写）的子命令：",
     "  speech  只说出口的话（这就是缺省）",
@@ -484,32 +487,64 @@ _NARRATION_USAGE_LINES: Final[tuple[str, ...]] = (
     "  reset   把这格交回缺省，连钉一起收回",
     "  show    只看现在是什么档，什么都不改",
     "  不带子命令＝看这份用法加当前读数。",
+    "  跟的是「这个人、这一路会话」：换一个群、换一个频道、换一路会话，都要再说一次。",
+    "  说一次就一直算，除非你再说一次只说话。",
 )
 
-#: 群侧被门挡下那一格（G-3：描写档只在她自己开过的那一格生效，普通成员恒只说话）。
+#: 群／频道侧被门挡下那一格（G-3：描写档只在她自己开过的那一格生效，普通成员恒只说话；
+#: 频道与群同侧＝用户 2026-10-06 裁「telegram：群侧」，判据＝`is_public_space_session`）。
 #: 这句与 `REFUSED_REPLY` 同为**命令面独有**——整句面那三格能落回普通聊天，这里没有正文可落。
 #: 🔴 席 na-showalign 改文（独立复查 W-2）：旧句「要它，得她自己或管理员说一句」**指了一条
-#: 走不通的路**——`narration_write_allowed` 群侧只放 admin/super_admin，群里那位"她自己"
+#: 走不通的路**——`narration_write_allowed` 公共空间侧只放 admin/super_admin，群里那位"她自己"
 #: 再说一次仍被拒；而描写钉**按人不按群**（`_narration_person_key` 在群作用域键上读不出
 #: 本人段），管理员在群里这一句也只钉得住**管理员自己**那一格 ⇒ 群里让管理员替她说
-#: 从来就不是通路。唯一真能落下的动作＝她本人在**非群会话**里说一句。按规则 8（不谎报）
-#: 只报那条真的。被这一支拒到的永远是「群里的非管理员」本人（管理员不被拒、私聊不吃门），
+#: 从来就不是通路。唯一真能落下的动作＝她本人在**非公共空间会话**里说一句。按规则 8（不谎报）
+#: 只报那条真的。被这一支拒到的永远是「群／频道里的非管理员」本人（管理员不被拒、私聊不吃门），
 #: 所以一句就够，不必再按角色分叉。
+#: 🔴 席 narr-wording-0610 改文（主人 2026-10-06 原话）：旧句只说"换一个群"，把**换频道**与
+#: **换一路会话**两形漏了（`_narration_store_scope` 里三形各有各的桶），也没交代"一次即长期"；
+#: 顺带去掉句尾那枚裁定编号（I-2 是我们的账，不是给她看的话）。
 NARRATION_REFUSED_REPLY: Final[str] = (
     "描写这一格我只按在「这个人、这一路会话」身上，不替旁人按下——"
-    "想要它，私聊里跟我说一句 /bot 描写 scene 就好；钉下就一直留着，"
-    "但换一个群还得再说一次（I-2：换会话要重开）。"
+    "想要它，私聊里跟我说一句 /bot 描写 scene 就好。"
+    "说一次就一直算，除非你再说一次只说话；"
+    "换一个群、换一个频道、换一路会话，都要再说一次。"
 )
 
-#: 三态确认话（守岸人语气，不提键名/库/来源码；空串键＝`reset`）。
+#: 三态确认话（守岸人语气，不提键名/库/来源码/裁定编号；空串键＝`reset`）。
+#: 两枚"钉上"的确认各带一句跟多久（2026-10-06 原话：激活一次就长期有效，直到本人再说一句）。
 _NARRATION_ACKS: dict[str, str] = {
-    NARRATION_MODE_SCENE: "好，到你这里我不只说出口的话——动作、神色、心里那一层都写给你。",
-    NARRATION_MODE_SPEECH: "嗯，那我只说口上的话，旁的都收着。",
-    "": "这一格我放回原处了——往后照旧只说口上的话，除非你再钉一次。",
+    NARRATION_MODE_SCENE: (
+        "好，到你这里我不只说出口的话——动作、神色、心里那一层都写给你。"
+        "说一次就一直算，除非你再说一次只说话。"
+    ),
+    NARRATION_MODE_SPEECH: (
+        "嗯，那我只说口上的话，旁的都收着。这一句也说一次就一直算，"
+        "要再铺开跟我说一次 scene。"
+    ),
+    "": "这一格我放回原处了——往后照旧只说口上的话，要再铺开就再说一次。",
 }
 
 #: 落库那一腿没成时补的一句（本轮照样生效，但留不到下一轮——不说就是谎报）。
 _NARRATION_UNSAVED_SUFFIX: Final[str] = "库里那一格这会儿没写进去，下次再说一次才留得住。"
+
+# ---------------------------------------------------------------- 「这一处铺不开」（只报不门）
+#
+# 2026-10-06 只读审计席实跑两形（台账「回执说得比盘面满」那一族，失效形态 261）：
+# 名单外的群里 `/bot 描写 scene` 回「描写档：连动作神色一起铺开｜细节描写：已开｜库里的钉：
+# 铺开」，聊天主链那一轮吃到的却是 `speech`；总闸关着时命令面照样落库、照样说"说一次就
+# 一直算"，主链仍走缺省。
+# 🔴 落库没错（写腿**有意**不吃总闸与 `eligible` 门，见 `build_narration_control_result`
+# docstring：描写档是文风偏好，不该被一次路由开关静默改掉），错的是回执。本节的修法＝
+# **只补一句实情，一枚门都不加**：读数说"铺开"而这一处够不着时，把够不着的**原因**并排说出，
+# 并交代钉已落下、门一开就照这份写。判据只转述两枚既有尺（总闸 ＋
+# `narration_allowed_for_session`＝主链 `_rp_scene_now` 读的那一枚），命令面一份名单都不判。
+
+#: 够不着的两格（守岸人语气，不提键名/配置键/裁定编号；一个字都不承诺"永远"）。
+_NARRATION_BLOCKED_BY_LIST: Final[str] = "这一处这会儿铺不开——准入名单还没放开到这里。"
+_NARRATION_BLOCKED_BY_GATE: Final[str] = "这一处这会儿铺不开——总闸这会儿关着。"
+#: 钉真在库里时才补的这一句（`_NARRATION_UNSAVED_SUFFIX` 在场那一轮**不许**说它）。
+_NARRATION_PIN_QUEUED: Final[str] = "钉已经落下，门一开就照这份写。"
 
 
 def _narrated_scope_tag(session_type: str, source: str) -> str:
@@ -523,6 +558,44 @@ def _narrated_scope_tag(session_type: str, source: str) -> str:
     return "scope:self" if str(source or "") else "scope:none"
 
 
+def _narration_reach_lines(
+    ctx: dict[str, Any],
+    config: Any,
+    *,
+    session_type: str,
+    group_id: str,
+    sender_id: str,
+    pinned: str,
+) -> list[str]:
+    """读数说「铺开」而这一处够不着时，把够不着的原因**并排**说出来（只报、不加门）。
+
+    两枚尺，都是既有真身，本函数一份名单都不判（第二把尺＝判据与构造各写一份那一族）：
+
+    - `config.bot_content_route_enabled`＝总闸（开关面 `build_intimate_control_result`
+      那一支读的同一枚，值与读数都不另立）；
+    - `content_route.narration_allowed_for_session`＝聊天主链 `_rp_scene_now` 问
+      「这一轮的描写轴可达吗」读的那一枚——本模块只**转述**它，绝不在这儿抄一份名单判断，
+      也**不读** `ctx["eligible"]`（那枚是「能不能放行露骨内容」的另一道题，频道那一格
+      两把尺的答案本来就不同，拿它报原因就是把两问并回一枚）。
+
+    两格次序是刻意的：总闸先看——它关着的时候名单那条腿压根没被问过，两句一起说＝新的谎报。
+    🔴 这里**不判**该不该落钉：写腿照旧不吃这两枚尺（G-1 那条裁定一字未动），落成了就把
+    「门一开就照这份写」一起说给她；那一格没写进库时（`_NARRATION_UNSAVED_SUFFIX` 已在场）
+    **不许**说这句——说了就是替库里没有的东西作保。
+    """
+    if str(ctx.get("narration_mode") or "") != NARRATION_MODE_SCENE:
+        return []  # 读数没宣称铺开（她钉的是只说话）⇒ 这一格无事可补
+    if not bool(getattr(config, "bot_content_route_enabled", False)):
+        blocked = _NARRATION_BLOCKED_BY_GATE
+    elif narration_allowed_for_session(
+        session_type, group_id, config, sender_id=sender_id
+    ):
+        return []  # 够得着：不许冒出一句"铺不开"
+    else:
+        blocked = _NARRATION_BLOCKED_BY_LIST
+    return [blocked, _NARRATION_PIN_QUEUED] if pinned == NARRATION_MODE_SCENE else [blocked]
+
+
 def _narration_state_lines(
     ctx: dict[str, Any],
     config: Any,
@@ -531,6 +604,7 @@ def _narration_state_lines(
     sender_id: str,
     platform: str = "",
     session_type: str,
+    group_id: str = "",
 ) -> list[str]:
     """当前描写档读数（写腿与 `show` 共用同一份行文，不留两套说法）。
 
@@ -538,12 +612,15 @@ def _narration_state_lines(
     唯一那把尺的来源（人话映射表转过的，绝不外端码串）、`细节描写`＝**尺本身的读数**
     （只准 `grants_intimate_narration(narration_source)` 这一处调用）、`库里的钉`＝
     持久面（`reset` 过就是"没钉过"，与"钉了 speech"分得开）。
+    第五格（`_narration_reach_lines`）＝**这一处够不够得着**：前四格答的都是"档"与"钉"，
+    够不着时不补那一句，回执就替主链作了一个它没作过的保（2026-10-06 只读审计席两形）。
 
     `session_type` 只准转述调用方从契约字段拿到的那一枚（`message.session_type` 的规范值）：
     钉的会话段由轴心 `_narration_store_scope` 算，**读侧不交会话事实就会落到私聊那一格**，
     而注入缝（`chat.py` 三处 `resolve_intimate_context`）是按 (`"channel"`, 键) 去读的
     ⇒ 她在 QQ 频道／公会里 `/bot 描写 scene` 钉进去、聊天主链永远读不到（I-2 同批的
     另一半；`session_keys` docstring 第 4 条明写 `guild_` 那形中央件不判，只能靠契约字段）。
+    `group_id` 同源于契约字段，只用于转述那枚可达尺，不参与任何取键。
     """
     mode = str(ctx.get("narration_mode") or "")
     source = str(ctx.get("narration_source") or INTIMATE_SOURCE_NONE)
@@ -559,6 +636,14 @@ def _narration_state_lines(
         f"依据：{_label(_SOURCE_LABELS, source)}",
         _narration_grant_line(ctx),  # 与 `/bot intimate show` 同一渲染口 ⇒ 两句必然同值
         f"库里的钉：{_label(_NARRATION_LABELS, pinned) if pinned else '没钉过'}",
+        *_narration_reach_lines(
+            ctx,
+            config,
+            session_type=session_type,
+            group_id=group_id,
+            sender_id=sender_id,
+            pinned=pinned,
+        ),
     ]
 
 
@@ -590,6 +675,8 @@ def build_narration_control_result(
     与开关面**不同**的一格：这一族**不吃** `bot_content_route_enabled` 总闸与
     `eligible` 名单门。描写档是文风偏好（G-1 明写"普通模式也能用"），把总闸当它的门
     等于让一次路由开关静默改掉文风面；总闸真正管的是路由/放行那两件事。
+    🔴 但也**不许**拿它当"这一处铺得开"来说——那一问由 `_rp_scene_now` 那两枚尺判，
+    够不着时读数末尾并排补一句原因（`_narration_reach_lines`，只报不门）。
     """
     resolved_privacy = privacy_level or (
         PrivacyLevel.GROUP if str(session_type or "") == "group" else PrivacyLevel.PERSONAL
@@ -609,6 +696,10 @@ def build_narration_control_result(
     if parsed is not None:
         verb = "reset" if parsed == "" else parsed
         tags = ["content_route", "slash_narration", f"slash_narration:{verb}"]
+        # 🔴 2026-10-06 复核（席 receipt-honesty）：这一支**有意**只判角色门
+        # （`narration_write_allowed`）。上面那段"不吃总闸与 eligible"的裁定管的正是写腿
+        # ——落库照旧、一枚门都不加；够不着的那一格由下面的读数补一句实情
+        # （`_narration_reach_lines`），不在这里判第二次。
         if not narration_write_allowed(session_type=session_type, sender_roles=sender_roles):
             return _text_result(
                 request_id,
@@ -651,7 +742,7 @@ def build_narration_control_result(
         lines.extend(
             _narration_state_lines(
                 shown, config, route_key=route_key, sender_id=sender_id,
-                platform=platform, session_type=session_type,
+                platform=platform, session_type=session_type, group_id=group_id,
             )
         )
         if not saved:
@@ -663,7 +754,7 @@ def build_narration_control_result(
     if raw.lower() == SHOW_SUBCOMMAND:
         lines = _narration_state_lines(
             ctx, config, route_key=route_key, sender_id=sender_id,
-            platform=platform, session_type=session_type,
+            platform=platform, session_type=session_type, group_id=group_id,
         )
         return _text_result(
             request_id,
@@ -679,7 +770,7 @@ def build_narration_control_result(
     head = [] if not raw else [f"没认出这个子命令：{raw}"]
     body = "\n".join([*head, *_narration_state_lines(
         ctx, config, route_key=route_key, sender_id=sender_id,
-        platform=platform, session_type=session_type,
+        platform=platform, session_type=session_type, group_id=group_id,
     ), *_NARRATION_USAGE_LINES, INTIMATE_HELP_POINTER])
     verb = "usage" if not raw else "unknown"
     return _text_result(
