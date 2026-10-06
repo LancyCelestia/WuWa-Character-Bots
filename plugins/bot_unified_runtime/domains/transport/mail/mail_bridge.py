@@ -11,6 +11,8 @@ from email.utils import parseaddr
 from pathlib import Path
 from typing import Any
 
+from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
+
 
 @dataclass(frozen=True)
 class MailCommand:
@@ -383,6 +385,12 @@ def build_mail_notification(
     limit = max(20, int(max_preview_chars))
     if len(preview) > limit:
         preview = preview[: limit - 1].rstrip() + "…"
+    # 🔴 主题与摘要＝外部来信可控文本，出站前必过中央尺（与出站正文同一把
+    # `redact_local_secrets`）：伪造正文里的 `BOT_X=`／`sk-` 段／盘符路径不得原样
+    # 进管理员通知（此前只靠"通知发给管理员"这层隐含信任，无任何脱敏＝#55 族缺口）。
+    # 发件人标签**不脱敏**：那是分诊必需的地址，打码等于把告警作废。
+    subject = redact_local_secrets(subject)
+    preview = redact_local_secrets(preview)
     return (
         "📧 收到新邮件\n"
         f"收件账户：{account}\n"
