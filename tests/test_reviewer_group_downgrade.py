@@ -22,6 +22,9 @@
 ④私聊那一支本来就不跑内容面 ⇒ **逐字节不变**，正文一个字都不许被动；
 ⑤内部错误 fail-open：本可出门的干净消息绝不因新腿被吃掉；命中消息退回调前形态
   （改前它本来也不出门 ⇒ 不新增删除，也不新增泄露）。
+⑦（用户 2026-10-06 裁「telegram 频道＝群侧」）**公共空间归侧**：出站内容闸的作用域
+  判据只转述中央那把尺 `content_route.is_public_space_session`，`channel` 与 `group`
+  同侧一样涂销；私聊／控制台／邮件三面一字不改。本文件末尾一节钉这一格。
 
 全离线，零网络零落盘。**本文件不抄录词面清单**：需要命中串时一律拿
 `_PUBLIC_OUTPUT_UNSAFE` 自己 `search` 现取，条目在注释里只以 `‹pattern-N›` 叙述。
@@ -32,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+from pathlib import Path
 
 import pytest
 
@@ -321,6 +325,8 @@ _AUDIT_STAGE = "review"
 _MARKER_PREFIX = "public output span neutralised"
 _SENDER_ID = "u-auditrow-1"
 _GROUP_ID = "g-auditrow-1"
+# TG 频道侧的夹具会话号（⑦ 那一节用；负数是 Telegram 超级群/频道的常规形态）。
+_CHANNEL_ID = "-1001234567890"
 # 出站字节基线：F-12 之前实测＝`32fd522029e8`（英文月日那半段也被涂掉），
 # F-12 之后现算复录＝下面这枚（只有中文词界碰撞那一处被涂）。复录命令＝本文件的
 # `test_downgrade_outbound_bytes_are_the_measured_baseline` 跑一遍取断言里的实得值。
@@ -347,6 +353,14 @@ def _message(scope: SessionType) -> IncomingMessage:
             session_id=f"group:{_GROUP_ID}", session_type=SessionType.GROUP,
             sender_id=_SENDER_ID, group_id=_GROUP_ID,
             plain_text="你好", mentions_bot=True,
+        )
+    if scope is SessionType.CHANNEL:
+        # TG 频道那一侧的会话形态（用户 2026-10-06 裁「频道＝群侧」）：`channel_<chat.id>`
+        # 键形、无 group_id。键形只当夹具数据用，判据一律走契约字段 `session_type`。
+        return IncomingMessage(
+            platform="telegram", adapter="onebot", bot_id="10000",
+            session_id=f"channel:{_CHANNEL_ID}", session_type=SessionType.CHANNEL,
+            sender_id=_SENDER_ID, plain_text="你好", mentions_bot=True,
         )
     return IncomingMessage(
         platform="qq", adapter="onebot", bot_id="10000",
@@ -504,4 +518,154 @@ def test_privacy_override_after_downgrade_still_yields_exactly_one_row() -> None
     assert rows[0].event == "move_private", rows[0].event
     assert "neutralised=" not in rows[0].private_debug
     assert receipt.state is ReceiptState.BLOCKED
+
+
+# ================================================== ⑦ 公共空间归侧：频道与群同侧（2026-10-06 裁定）
+#
+# 改前实测：出站内容闸的作用域判据是 `target_scope is SessionType.GROUP` **单值**，
+# `channel` 落不进那一支 ⇒ 频道轮里 `_PUBLIC_OUTPUT_UNSAFE` 命中面**一个字都不涂**、
+# 原样出门（现算证据＝下面 `test_a_channel_turn_is_scrubbed…` 改前必红）。
+# 用户 2026-10-06 的裁定＝Telegram 频道（`channel`）与群（`group`）**同侧**：都是
+# 「旁人也在看」的公共空间。这一格已在轴心落地
+# （`domains/chat_reply/runtime/content_route.py` 的 `PUBLIC_SPACE_SESSION_TYPES` /
+# `is_public_space_session`，管着描写档写腿角色门、描写钉会话分桶、样式表选表三处），
+# 本节把它接进出站涂销那条腿。
+#
+# 🔴 方向只有**变严**：本节的私聊／控制台／邮件三面断言钉的是「一字不改」，
+# 频道那一面钉的是「和群一样涂销」。词面清单、命中判据、BLOCK 的两种退回情形
+# 一枚都没动——动的是「哪些会话过这道闸」。
+# 🔴 判据只准转述中央那把尺；在 reviewer 里再写一份 `in {"group", "channel"}` ＝
+# 第二把尺（形状锁 `test_the_scrub_gate_transcribes_the_one_public_space_ruler` 拦它）。
+
+#: 中央判据的名字（唯一出处＝`content_route.is_public_space_session`）。本节只按名字
+#: 断言「转述了它」，**不抄它的成员表**——抄成员表就是本波要防的那第二把尺。
+_PUBLIC_RULER = "is_public_space_session"
+_REVIEWER_SRC = (
+    Path(__file__).resolve().parents[1]
+    / "plugins"
+    / "bot_unified_runtime"
+    / "domains"
+    / "render"
+    / "reviewer.py"
+)
+
+
+def test_a_channel_turn_is_scrubbed_the_same_way_a_group_turn_is() -> None:
+    """核心 RED：频道轮 + 群侧会涂销的那一类句子 ⇒ 那一处必须被涂掉、其余照发。"""
+    result = _result()
+    assert _hits(_BODY), "夹具本身必须真的命中一枚词面，否则本例是空跑"
+
+    review = review_capability_result(result, _decision(SessionType.CHANNEL))
+
+    assert review.approved is True, "频道命中被整条吃掉了：改法应当是逐段涂销，不是拦死"
+    assert review.action is ReviewAction.REWRITE, (
+        f"频道轮没进公共空间那一支（action={review.action.value}）＝频道仍不过这道闸"
+    )
+    assert not _hits(review.safe_text), "频道正文里的命中面原样出门了"
+    for fragment in _UNTOUCHED_FRAGMENTS:
+        assert fragment in review.safe_text, f"清白的其余内容被一起吃掉了：{fragment}"
+    assert reviewer_module._PUBLIC_OUTPUT_SPAN_PLACEHOLDER in review.safe_text
+    assert any(
+        "public output span neutralised" in reason for reason in review.reasons
+    ), review.reasons
+
+
+def test_channel_parts_and_media_disposition_mirror_the_group_leg() -> None:
+    """频道那一侧的**部件面与媒体面**也要和群一致：文字部件就地涂销、清白媒体不丢、
+    命中落在改不掉的媒体载荷里时退回 BLOCK（两种退回情形一条都没放宽）。"""
+    parts_result = _colliding_result()
+    review = review_capability_result(parts_result, _decision(SessionType.CHANNEL))
+
+    assert review.approved is True, review.reasons
+    parts = parts_result.text_parts or []
+    assert len(parts) == 2, "部件数量不得因涂销而减少"
+    assert parts[0] == _PARA_HEADLINE, "清白的部件被改了"
+    assert not any(_hits(part) for part in parts)
+    prefixes = parts_result.prefix_parts or []
+    assert len(prefixes) == 1
+    assert not _hits(str(prefixes[0].get("text") or ""))
+    assert parts_result.images == [{"file": "tide.png", "caption": _PARA_TAIL}]
+
+    span = _matched_span(_BODY)
+    assert span, "取不到命中词面 ⇒ 本例空跑"
+    blocked = review_capability_result(
+        _result(body=span, text_parts=None, prefix_parts=[], images=[]),
+        _decision(SessionType.CHANNEL),
+    )
+    assert blocked.approved is False, "整条就是违规内容时频道不许放行（判据被放宽了）"
+    assert blocked.action is ReviewAction.BLOCK
+
+    for field in ("images", "audio", "video", "files", "actions"):
+        media_result = _result(
+            body="潮汐窗口在四点前后。",
+            kind="mixed",
+            **{field: [{"file": "payload.bin", "caption": _PARA_COLLISION_CN}]},
+        )
+        media_review = review_capability_result(media_result, _decision(SessionType.CHANNEL))
+        assert media_review.approved is False, f"{field} 载荷里的命中面在频道被放行了"
+        assert media_review.action is ReviewAction.BLOCK
+
+
+@pytest.mark.parametrize("scope", [SessionType.GROUP, SessionType.CHANNEL])
+def test_both_public_space_scopes_run_the_same_gate(scope: SessionType) -> None:
+    """同侧＝**同一个动作同一个记号**，不是各写一套：两面的处置逐项相等。"""
+    review = review_capability_result(_result(), _decision(scope))
+
+    assert review.approved is True, review.reasons
+    assert review.action is ReviewAction.REWRITE
+    assert not _hits(review.safe_text)
+    assert reviewer_module._PUBLIC_OUTPUT_SPAN_PLACEHOLDER in review.safe_text
+    assert [r for r in review.reasons if "neutralised" in r], review.reasons
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [SessionType.PRIVATE, SessionType.CONSOLE, SessionType.EMAIL],
+)
+def test_non_public_space_scopes_still_keep_every_byte(scope: SessionType) -> None:
+    """私聊／控制台／邮件三面**一字不改**：归侧只把频道拉进群那一侧，绝不把其它面推进涂销。"""
+    result = _colliding_result()
+    review = review_capability_result(result, _decision(scope))
+
+    assert review.approved is True, review.reasons
+    assert review.action is ReviewAction.ALLOW
+    assert review.reasons == []
+    assert review.safe_text == _BODY, "非公共空间正文被改了一个字都不算「不变」"
+    assert result.text_parts == [_PARA_HEADLINE, _PARA_COLLISION_CN]
+    assert _hits(review.safe_text), f"{scope.value} 被涂销＝给本来不筛的那一支加了道闸"
+
+
+def test_channel_downgrade_writes_the_same_review_audit_row() -> None:
+    """管线面（跑真 `_complete`）：频道降级落在与群**同一条**审计通道里，
+    `scope=` 那一枚如实报 `channel`（结构化事实，不是散文）。"""
+    receipt, audit, queue = _drive_pipeline(_colliding_result(), SessionType.CHANNEL)
+
+    assert receipt.state is ReceiptState.SENT, receipt.state
+    rows = audit.review_rows()
+    assert len(rows) == 1, f"频道降级没进审计行：全部行={[(r.stage, r.event) for r in audit.rows]}"
+    assert rows[0].event == "rewrite"
+    assert _MARKER_PREFIX in rows[0].private_debug, rows[0].private_debug
+    assert "scope=channel" in rows[0].private_debug, rows[0].private_debug
+    assert _span() not in rows[0].private_debug, "命中的那一段是回复原文，审计行不许落它"
+    outbound = _outbound_text(queue)
+    assert queue.sent_requests, "频道降级消息本身也得真出门"
+    assert not _hits(outbound), "频道出站正文里命中面没被涂销"
+    assert reviewer_module._PUBLIC_OUTPUT_SPAN_PLACEHOLDER in outbound
+
+
+def test_the_scrub_gate_transcribes_the_one_public_space_ruler() -> None:
+    """形状锁：出站涂销那道闸只准**转述**中央判据，不许在 reviewer 里再长一把尺。
+
+    抄一份 `{"group", "channel"}` ＝第二把尺（本仓的门与裁定都不认）；自己 `def`
+    一枚同名判据＝第二真身。三面都钉：引到了、没另立、没重抄成员表。
+    """
+    src = _REVIEWER_SRC.read_text(encoding="utf-8")
+
+    assert f"{_PUBLIC_RULER}(" in src, f"reviewer 没调用中央那把尺 `{_PUBLIC_RULER}`"
+    assert "content_route" in src, (
+        f"reviewer 里的 `{_PUBLIC_RULER}` 不是从轴心 `content_route` 取的那一把"
+    )
+    assert f"def {_PUBLIC_RULER}" not in src, "reviewer 里自己造了一枚同名判据＝第二真身"
+    assert '{"group", "channel"}' not in src, "reviewer 里重抄了公共空间的成员表＝第二把尺"
+    assert "PUBLIC_SPACE_SESSION_TYPES" not in src, "reviewer 直接读中央的成员表而不是问判据"
 

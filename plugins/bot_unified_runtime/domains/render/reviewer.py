@@ -307,6 +307,31 @@ def _try_neutralise_group_output(
         return None
 
 
+def _is_public_space_scope(scope: object) -> bool:
+    """这一轮的作用域是不是**公共空间**（「旁人也在看」）——群与频道同侧。
+
+    本函数**不设判据**，只做两件事：把契约枚举收成规范值字符串、转述轴心那把唯一的尺
+    （`domains/chat_reply/runtime/content_route.is_public_space_session`；成员表只住它
+    那一处，这里再抄一份就是第二把尺，本仓的门与裁定都不认）。
+
+    🔴 必须取 `.value` 再交，不能裸交枚举：`SessionType` 是 `str` 混入枚举，而
+    `str(SessionType.GROUP)` 得到的是 `"SessionType.GROUP"` 不是 `"group"`（Py 3.12
+    现算）——那一交会让判据对**每一个**会话都回假，正好把本波要收紧的那一格又静默松开
+    （形态同台账 #68「三面齐、缺一必红」里「接线在盘、判据哑」那一型）。
+    口径同 `capabilities/chat.py` 的 `_session_type_value = str(getattr(..., "value", ""))`。
+
+    懒 import（不在模块头）：`domains/chat_reply/runtime/__init__` 会拉起 `pipeline`，
+    而 `pipeline` 回头 import 本模块 ⇒ 模块级导入成环；同目录 `renderer.py` 引
+    chat_reply 走的也是这一手，先例在册。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
+        is_public_space_session,
+    )
+
+    raw = getattr(scope, "value", scope)
+    return is_public_space_session(str(raw) if isinstance(raw, str) else "")
+
+
 def review_capability_result(
     result: CapabilityResult,
     decision: BotDecision,
@@ -319,7 +344,7 @@ def review_capability_result(
     # 过去两者都只看 body→summary→title，媒体能力把这三样留空 ⇒ 审核恒无输入。
     leak_text = _collect_scan_text(result, output_text, _META_TEXT_KEYS)
     payload_text = _collect_scan_text(result, output_text, _PAYLOAD_TEXT_KEYS)
-    # 外发正文：默认就是原文，只有群聊降级腿会把它换成中和后的版本。
+    # 外发正文：默认就是原文，只有公共空间（群/频道）那支降级腿会把它换成中和后的版本。
     # persona 审与内容审一律看**原文**——降级只改「出去的是什么」，不改「判据读到什么」。
     outbound_text = output_text
 
@@ -334,7 +359,7 @@ def review_capability_result(
         action = ReviewAction.BLOCK
         reasons.extend(unsafe_reasons)
 
-    if decision.target_scope is SessionType.GROUP:
+    if _is_public_space_scope(decision.target_scope):
         # 不再限定 `bot.chat`：任何能力把不安全内容发进群都该拦（媒体能力免检
         # 是 M-02 的中央半）。persona 审仍只看 chat 自己的话——语音命令的正文
         # 是用户原文，不该被当成「守岸人自述」。
@@ -345,6 +370,12 @@ def review_capability_result(
         # auditrow 补的就是这一手，改前该行**从未写出**，锁 ⑥ 那一腿跑真管线）。
         # 命中在媒体载荷 / 中和后没剩下要说的话 / 本腿内部出错 ⇒ 一律退回下面
         # 那一手（＝改前形态，一字不变）。
+        # 2026-10-06 公共空间归侧（用户裁「telegram 频道＝群侧」）：这一支的作用域
+        # 判据由 `target_scope is SessionType.GROUP` **单值**改为转述轴心那把尺
+        # （见 `_is_public_space_scope`），`channel` 自此与 `group` 过**同一道**闸。
+        # 🔴 方向只有变严：词面清单、两种退回 BLOCK 的情形、私聊/控制台/邮件三面
+        # 一字未动（本波没放宽任何一条腿）。改前频道轮**根本不过这道闸**——命中面
+        # 原样出门，锁＝`tests/test_reviewer_group_downgrade.py` 第⑦节。
         downgrade = _try_neutralise_group_output(result, output_text) if approved else None
         if downgrade is not None:
             outbound_text, neutralised_markers = downgrade
