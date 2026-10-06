@@ -415,7 +415,8 @@ z ← max( min(z + δ_z, +Z_HARD), anchor )   # 上界硬界、下界善意底�
 - **引理 2（展示域界）**：`s = 100·tanh(z)` 且 `sech² ≤ 1` ⇒ `|Δs| ≤ 100·|Δz| ≤ 100κ`。
   κ=0.02 ⇒ **任何一轮最多 2.0 个展示分**（基准处实际现算 1.98）。
 - **推论 3（任意突发界）**：与既有 60 s 冷却（`domains/chat_reply/character/affinity.py:228`，v8 保留）联立 ⇒
-  时间窗 T 内 `|Δz| ≤ min(κ·⌈T/60s⌉, D)`，`D =` 日额度（`bot_affinity_daily_move_cap_z`，v8 缺省降到 0.04）。
+  时间窗 T 内 `|Δz| ≤ min(κ·⌈T/60s⌉, D)`，`D =` 日额度（v8 侧读 `bot_affinity_daily_move_cap_v8_z`，缺省 0.04；
+  键面拆轴见 §C.7.1）。
   数值化：**6 分钟突发 ≤ 0.04z ≤ 4.0 展示分**（对比 v7 现算的 11.7 分）；一日 ≤ 4 分；一日之内不可能跨档。
 - **推论 4（单调下包络）**：`anchor` 定义为历史 `z` 的高水位减去随相处时长收敛的保护带（C.4），
   更新式 `anchor ← max(anchor, z − band(days))` 使 anchor **单调不减** ⇒
@@ -470,7 +471,8 @@ z          = max(z_new, anchor)                        # 只抬高下界，绝�
 `bot_affinity_v8_enabled` / `bot_affinity_v8_impulse_cap_z` / `bot_affinity_v8_impulse_weights`（JSON w1..w6）
 / `bot_affinity_v8_ambient_centering` / `bot_affinity_v8_ambient_halflife_days`
 / `bot_affinity_v8_goodwill_band_min|max|saturate_days` / `bot_affinity_v8_tier_blend_band`
-（日额度沿用 `bot_affinity_daily_move_cap_z`，值由 0.12 改缺省 0.04；
+（日额度**不**沿用 v7 那枚键：v8 侧自 2026-10-06 键面拆轴起读
+`bot_affinity_daily_move_cap_v8_z`（缺省 0.04），详见 §C.7.1；
 `bot_affinity_negative_event_cap_z` 在 v8 路径退役为只读兼容项——界已由 κ 给出，留着会造成"两把尺"）。
 
 登记纪律（在册教训，一次漏登即线上死键）：`config.py` 字段 + `docs/config-catalog-full.md` +
@@ -490,13 +492,24 @@ z          = max(z_new, anchor)                        # 只抬高下界，绝�
   - 展示限幅侧：`_V8_DEFAULT_DAILY_MOVE_CAP_Z`＝0.04——v8 时代有意收紧的日额度纪律尺
     （≤4 展示分/日，§C.7 上文；一字未动）。「你对守岸人」读数的单向下行限幅另有展示分真身
     `_SENTIMENT_DISPLAY_DAILY_DROP_CAP`＝4.0（§C.8），它与上面两枚 z 域常量互不读取，仅量级同源。
-- **键面（运行面值）另账交裁**：`bot_affinity_daily_move_cap_z` 一枚键同时喂 v7 与 v8 两条评分路，
-  Config 缺省与生产 `.env`、`.env.example` 三面现钉 0.04 ⇒ 键在场时两路同吃一值（"env 显式给了
-  就同吃一值"在册口径）；本次拆轴只恢复**缺省语义**（无键/无 Config 时的答案）。要让生产评分路
-  也吃 0.12，需用户动 `.env`——注意同键会连 v8 展示收紧一起放宽；若要两侧在运行面并存，需第二枚
-  配置键，本波「不新建配置键」红线未获豁免，留主会话/用户裁。
+- **键面（运行面值）已拆轴（2026-10-06 用户裁定：豁免「本波不新建配置键」自律）**：
+  旧状＝`bot_affinity_daily_move_cap_z` 一枚键同时喂 v7 与 v8 两条评分路，Config 缺省与
+  `.env.example` 三面同钉 0.04 ⇒ 键在场时两路同吃一值、代码缺省永不现形。现拆为**两枚并存**：
+  - `bot_affinity_daily_move_cap_z`＝**只喂 v7 评分判据侧**，Config／`.env.example` 缺省回到 **0.12**
+    （与 `_V7_DEFAULT_DAILY_MOVE_CAP_Z` 合流，键面↔代码面不再双脸）；
+  - `bot_affinity_daily_move_cap_v8_z`＝**只喂 v8 收紧侧**，缺省 **0.04**（= `_V8_DEFAULT_DAILY_MOVE_CAP_Z`），
+    三面登记＝`config.py` 字段 + `runtime/settings.py::RESTART_REQUIRED_KEYS` + `.env.example`
+    （尺度类键一律"看起来不能热改"，§C.7 登记纪律；未进 `SETTABLE_KEYS`）。
+  读点＝`character/affinity.py`：v7 两处（`_V7_CONFIG_FIELDS`、`resolve_v7_settings`）读旧键，
+  v8 两处（`_V8_CONFIG_FIELDS`、`resolve_v8_settings`）读新键；`V8Settings` 的字段缺省指 `_V8` 常量。
+  ⚠ **生产 `.env` 由她改、本席不动**：`.env` 里那枚 `BOT_AFFINITY_DAILY_MOVE_CAP_Z` 拆轴后**只喂评分侧**，
+  要评分侧在生产吃 0.12 须把它改成 `0.12` 或摘掉（摘掉即落 Config 缺省 0.12），并另钉
+  `BOT_AFFINITY_DAILY_MOVE_CAP_V8_Z=0.04` 把收紧侧留在原纪律上——只加新键不动旧键＝收紧侧吃新键缺省、
+  评分侧仍被旧键钉在 0.04。
 - **执法落点**：`tests/test_affinity_display_vs_scoring_caps.py` 四腿（行为／联锁／单源／本页在册）；
-  键面↔代码面双脸核对特例＝`tests/test_affinity_v7.py::test_twelve_v7_keys_registered_on_config_class`。
+  键面↔代码面核对＝`tests/test_affinity_v7.py::test_twelve_v7_keys_registered_on_config_class`
+  （旧键缺省合流 0.12 ＋ 新键在册 0.04）与 `::test_daily_move_cap_key_is_split_between_v7_and_v8`
+  （两路各读各的键，四腿互斥）。
 
 ## D. 实现工单（文件级，按序）
 

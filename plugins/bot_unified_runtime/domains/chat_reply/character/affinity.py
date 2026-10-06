@@ -951,6 +951,9 @@ _V7_CONFIG_FIELDS: tuple[tuple[str, Any], ...] = (
     ("bot_affinity_novelty_halo_days", _V7_DEFAULT_NOVELTY_HALO_DAYS),
     ("bot_affinity_rhythm_reference_turns", _V7_DEFAULT_RHYTHM_REFERENCE_TURNS),
     ("bot_affinity_negative_event_cap_z", _V7_DEFAULT_NEGATIVE_EVENT_CAP_Z),
+    # 台账 F-16 **键面**拆轴（2026-10-06 用户裁定，豁免「本波不新建配置键」自律）：
+    # 这枚旧键从此**只有 v7 评分判据侧**读它（缺省 0.12z＝滚动 24h 位移预算）；
+    # v8 收紧侧另住 `bot_affinity_daily_move_cap_v8_z`（见 `_V8_CONFIG_FIELDS`）。
     ("bot_affinity_daily_move_cap_z", _V7_DEFAULT_DAILY_MOVE_CAP_Z),
     ("bot_affinity_fuse_daily_events", _V7_DEFAULT_FUSE_DAILY_EVENTS),
     ("bot_affinity_repair_gain", _V7_DEFAULT_REPAIR_GAIN),
@@ -1068,6 +1071,8 @@ def resolve_v7_settings(config: Any) -> V7Settings:
             "bot_affinity_rhythm_reference_turns", float(_V7_DEFAULT_RHYTHM_REFERENCE_TURNS))),
         negative_event_cap_z=positive_float(
             "bot_affinity_negative_event_cap_z", _V7_DEFAULT_NEGATIVE_EVENT_CAP_Z),
+        # 旧键 `bot_affinity_daily_move_cap_z` 现**只喂 v7 评分判据侧**（F-16 键面拆轴，
+        # 2026-10-06）；v8 收紧侧另键另读，两路不再同吃一枚键。
         daily_move_cap_z=positive_float("bot_affinity_daily_move_cap_z", _V7_DEFAULT_DAILY_MOVE_CAP_Z),
         fuse_daily_events=positive_int("bot_affinity_fuse_daily_events", _V7_DEFAULT_FUSE_DAILY_EVENTS),
         repair_gain=positive_float("bot_affinity_repair_gain", _V7_DEFAULT_REPAIR_GAIN),
@@ -1123,11 +1128,12 @@ def v7_raw_delta_z(
 # 「界」从"事后 if-list"迁到"数学构造"——Σ|w_i|=1 归一 ⇒ |u|≤1 ⇒ |δ_z|≤κ，
 # 删掉任何事后 clamp 都不破坏此界（设计 §F 每轮界判据的牙齿）。
 # 灰度：bot_affinity_v8_enabled 缺省 False ⇒ v5/v6/v7 路径逐字节不变、可一键回退。
-# 键登记现状（2026-10-03 本席复核后更新，原「四处待补」注释已过期）：config.py
-# 字段已全部登记（config.py:381-394，含善意带三键 + 日额度），.env.example 亦已
-# 登记（:1146 起）；RESTART_REQUIRED_KEYS / 命令 catalog 尚未收录 v8 键——v8 面
-# 走逐调用现读口，本就不设热改面，未收录即「不可热改」，语义安全；拨闸形态 =
-# 环境变量 + 重启（与 v7 同路）。
+# 键登记现状（2026-10-06 本席按现算复核，原「RESTART 尚未收录 v8 键」一句已过期——
+# v8 族九键当日已在 `runtime/settings.py::RESTART_REQUIRED_KEYS`）：config.py 字段、
+# `.env.example`、RESTART_REQUIRED_KEYS 三面齐；坐标不写在册（行号会漂，规则 10）。
+# v8 面走逐调用现读口、本就不设热改面 ⇒ 未进 SETTABLE 即「不可热改」，语义安全；
+# 拨闸形态 = 环境变量 + 重启（与 v7 同路）。日额度键面拆轴后新增的
+# `bot_affinity_daily_move_cap_v8_z` 同批三面登记（§C.7 登记纪律）。
 # ============================================================================
 
 _V8_CONFIG_FIELDS: tuple[tuple[str, Any], ...] = (
@@ -1142,11 +1148,12 @@ _V8_CONFIG_FIELDS: tuple[tuple[str, Any], ...] = (
     ("bot_affinity_goodwill_band_max", _V8_DEFAULT_BAND_MAX),
     ("bot_affinity_goodwill_band_saturate_days", _V8_DEFAULT_BAND_SATURATE_DAYS),
     ("bot_affinity_v8_tier_blend_band", _V8_DEFAULT_TIER_BLEND_EDGE),
-    # 日额度沿用在册键（§C.7：枚数以四处登记后现算为准）；台账 F-16 拆轴（2026-10-06
-    # 用户裁定甲）：v7 缺省回到评分判据语义 0.12，v8 缺省保持展示收紧纪律 0.04——
-    # 两枚常量各归各侧（键缺省时各给各的答案）；env/Config 键显式在场时两路同吃一值，
-    # 生产 .env 钉 0.04 属运行面值（要评分侧在生产也吃 0.12 需用户动 .env，交裁面）。
-    ("bot_affinity_daily_move_cap_z", _V8_DEFAULT_DAILY_MOVE_CAP_Z),
+    # 日额度（§C.7）——台账 F-16 **键面**拆轴（2026-10-06 用户裁定，豁免「本波不新建配置键」
+    # 自律）：本侧改读**新键** `bot_affinity_daily_move_cap_v8_z`（缺省 0.04＝展示收紧纪律尺）。
+    # 旧键 `bot_affinity_daily_move_cap_z` 现只喂评分判据侧（缺省 0.12），两路各读各的键：
+    # `.env` 钉住收紧侧那一枚时，评分侧的代码缺省照样现形——这条正是拆轴前要治的病理。
+    # 生产 `.env` 由她改，本席不动（§C.7 登记纪律）。
+    ("bot_affinity_daily_move_cap_v8_z", _V8_DEFAULT_DAILY_MOVE_CAP_Z),
 )
 
 
@@ -1317,6 +1324,8 @@ class V8Settings:
 
     enabled: bool = False
     impulse_cap_z: float = _V8_DEFAULT_IMPULSE_CAP_Z
+    # 展示收紧侧缺省；它的**键面**真身＝`bot_affinity_daily_move_cap_v8_z`（F-16 键面拆轴
+    # 2026-10-06：本侧只读这一枚新键，评分侧那枚旧键与本字段无关）。
     daily_move_cap_z: float = _V8_DEFAULT_DAILY_MOVE_CAP_Z
     ambient_centering: bool = True
     ambient_halflife_days: float = _V8_DEFAULT_AMBIENT_HALFLIFE_DAYS
@@ -1384,8 +1393,10 @@ def resolve_v8_settings(config: Any) -> V8Settings:
         enabled=_v7_coerce_bool(value_of("bot_affinity_v8_enabled", False), False),
         impulse_cap_z=min(0.25, positive_float(
             "bot_affinity_v8_impulse_cap_z", _V8_DEFAULT_IMPULSE_CAP_Z)),
+        # 日额度只读**本侧新键** `bot_affinity_daily_move_cap_v8_z`（F-16 键面拆轴 2026-10-06）：
+        # 评分侧那枚旧键钉多少都不再影响这里，两路各读各的键。
         daily_move_cap_z=min(0.5, positive_float(
-            "bot_affinity_daily_move_cap_z", _V8_DEFAULT_DAILY_MOVE_CAP_Z)),
+            "bot_affinity_daily_move_cap_v8_z", _V8_DEFAULT_DAILY_MOVE_CAP_Z)),
         ambient_centering=_v7_coerce_bool(
             value_of("bot_affinity_v8_ambient_centering", True), True),
         ambient_halflife_days=max(0.5, positive_float(

@@ -210,11 +210,19 @@ def test_resolve_defaults_disabled_and_byte_stable() -> None:
 
 
 def test_resolve_domain_clamps_and_falls_back() -> None:
-    """尺度键：非正/非数值 ⇒ 代码缺省；过松 ⇒ 域钳（κ≤0.25、D≤0.5、edge∈[0.05,0.45]）。"""
+    """尺度键：非正/非数值 ⇒ 代码缺省；过松 ⇒ 域钳（κ≤0.25、D≤0.5、edge∈[0.05,0.45]）。
+
+    台账 F-16 键面拆轴（2026-10-06 用户裁定甲）：v8 收紧侧的日额度改读
+    `bot_affinity_daily_move_cap_v8_z`，旧键 `bot_affinity_daily_move_cap_z` 只喂 v7
+    评分判据侧。桩因此改**喂哪枚键**（断言一条没松）：本侧那枚仍喂过松值 99.0 ⇒
+    仍须被域钳到 0.5（证收紧侧的值真被吃到），同批把旧键钉一枚**很紧**的 0.01 ——
+    若两路还串着同一枚键，读数会掉到 0.01 而不是 0.5，拆轴就算没落地。
+    """
     cfg = types.SimpleNamespace(
         bot_affinity_v8_enabled="true",
         bot_affinity_v8_impulse_cap_z=99.0,
-        bot_affinity_daily_move_cap_z=99.0,
+        bot_affinity_daily_move_cap_v8_z=99.0,
+        bot_affinity_daily_move_cap_z=0.01,
         bot_affinity_v8_tier_blend_band=99.0,
     )
     s = resolve_v8_settings(cfg)

@@ -1034,9 +1034,10 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
         "安静时段直连豁免的 commands 腿：同上（合并层未登记本枚 ⇒ 覆盖不可达）。"
         "True＝命令类能力夜间直通（缺省＝既有语义）；False＝把命令关进安静时间这道门"
     ),
-    # ---- 好感度 v8 九键 + files TTL（2026-10-03 全量修复批，席20 交回 A 项）----
-    # 九键读点 character/affinity.py resolve_v8_settings::value_of：getattr(config)
-    # 缺句柄才落 env——而十键均未进 _RUNTIME_HOT_OVERRIDE_FIELDS（归根文件）⇒
+    # ---- 好感度 v8 族键 + files TTL（2026-10-03 全量修复批，席20 交回 A 项；
+    #     2026-10-06 F-16 键面拆轴另补日额度一枚，枚数以本表现算为准、不写在册）----
+    # 族键读点 character/affinity.py resolve_v8_settings::value_of：getattr(config)
+    # 缺句柄才落 env——而该族各键均未进 _RUNTIME_HOT_OVERRIDE_FIELDS（归根文件）⇒
     # 运行时覆盖不可达，改 .env + 重启；files TTL 读点 restricted_runner.
     # sweep_ttl_days_from_config（装配期现算口，config.py:1633 注记同裁定）。
     "BOT_AFFINITY_V8_ENABLED": (
@@ -1045,6 +1046,11 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
     ),
     "BOT_AFFINITY_V8_IMPULSE_CAP_Z": (
         "v8 每轮冲量帽 κ：同族，合并层未登记 ⇒ 需重启"
+    ),
+    "BOT_AFFINITY_DAILY_MOVE_CAP_V8_Z": (
+        "好感度日额度·展示收紧侧（v8 路专用键，台账 F-16 键面拆轴 2026-10-06）："
+        "resolve_v8_settings 现读装配期 config，合并层未登记 ⇒ 热 set 不可达，改 .env + 重启。"
+        "与评分判据侧那枚 BOT_AFFINITY_DAILY_MOVE_CAP_Z 各读各的键，改一枚不动另一枚"
     ),
     "BOT_AFFINITY_V8_IMPULSE_WEIGHTS": (
         "v8 六信号凸组合权重（JSON，Σ|w|=1 构造归一）：同族，需重启"

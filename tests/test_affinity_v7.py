@@ -31,6 +31,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     classify_behavior,
     linear_transition_for_affinity,
     resolve_v7_settings,
+    resolve_v8_settings,
     tier_for_affinity,
     v7_display_fraction_to_z,
     v7_novelty_factor,
@@ -676,7 +677,12 @@ def test_settings_env_fallback_when_no_config(tmp_path, monkeypatch) -> None:
 
 
 def test_twelve_v7_keys_registered_on_config_class() -> None:
-    """配置面只读核对：12 枚键在 Config 真身在册且缺省与设计一致（本席不改 config.py）。"""
+    """配置面只读核对：12 枚 v7 键在 Config 真身在册且缺省与设计一致（本席不改 config.py）。
+
+    台账 F-16 **键面**拆轴（2026-10-06 用户裁定）后，日额度一枚键喂两路的状态结束：
+    旧键 `bot_affinity_daily_move_cap_z` 只喂评分判据侧、键面缺省与代码缺省**合流**成 0.12；
+    展示收紧侧另住新键 `bot_affinity_daily_move_cap_v8_z`（缺省 0.04），本用例一并核。
+    """
     from plugins.bot_unified_runtime.config import Config
 
     instance = Config()
@@ -685,18 +691,62 @@ def test_twelve_v7_keys_registered_on_config_class() -> None:
         actual = getattr(instance, field_name)
         assert type(actual) is type(default), f"{field_name} 类型漂移"
         if field_name == "bot_affinity_daily_move_cap_z":
-            # 台账 F-16 拆轴（2026-10-06 裁定甲）：这枚键**设计性双面**——
-            # 键面缺省（Config/.env，两路共读的运行面值）随 v8 展示收紧侧 0.04；
-            # v7 评分判据的「无配置缺省」另住 _V7_DEFAULT_DAILY_MOVE_CAP_Z=0.12。
-            # 两面各按各自真身点名，不抄字面值、不动 config.py。
-            assert actual == _V8_DEFAULT_DAILY_MOVE_CAP_Z, (
-                f"键面缺省漂移：Config {actual!r} != v8 展示收紧侧 {_V8_DEFAULT_DAILY_MOVE_CAP_Z!r}"
+            # 键面拆轴后不再需要「键面随 v8 / 代码缺省随 v7」的双脸特例：两面同值 0.12。
+            assert actual == _V7_DEFAULT_DAILY_MOVE_CAP_Z, (
+                f"评分侧键面缺省漂移：Config {actual!r} != {_V7_DEFAULT_DAILY_MOVE_CAP_Z!r}"
             )
-            assert _V7_DEFAULT_DAILY_MOVE_CAP_Z > actual, (
-                "评分判据侧缺省必须宽于展示收紧键面值（F-16 拆轴判据，混轴回潮即红）"
+            assert actual != _V8_DEFAULT_DAILY_MOVE_CAP_Z, (
+                "日额度两枚键的缺省又并回同值＝键面拆轴回潮"
             )
             continue
         assert actual == default, f"{field_name} 缺省漂移：{actual!r} != {default!r}"
+
+    # v8 收紧侧新键：Config 在册、类型 float、缺省＝展示侧常量，且不读旧键的值。
+    assert hasattr(instance, "bot_affinity_daily_move_cap_v8_z"), (
+        "bot_affinity_daily_move_cap_v8_z 未落 config.py（三面齐缺第一面）"
+    )
+    v8_cap = instance.bot_affinity_daily_move_cap_v8_z
+    assert type(v8_cap) is float, f"bot_affinity_daily_move_cap_v8_z 类型漂移：{type(v8_cap)!r}"
+    assert v8_cap == _V8_DEFAULT_DAILY_MOVE_CAP_Z, (
+        f"v8 收紧侧键面缺省漂移：Config {v8_cap!r} != {_V8_DEFAULT_DAILY_MOVE_CAP_Z!r}"
+    )
+
+
+def test_daily_move_cap_key_is_split_between_v7_and_v8(monkeypatch) -> None:
+    """F-16 **键面**拆轴锁（2026-10-06 用户裁定：豁免「本波不新建配置键」自律）。
+
+    上一批只拆了**常量面**（`_V7_DEFAULT_DAILY_MOVE_CAP_Z`=0.12 / `_V8_DEFAULT_...`=0.04），
+    键名没分：一枚 `bot_affinity_daily_move_cap_z` 同时喂 v7 与 v8 两条评分路。
+    病灶＝那枚键在 `.env` 里显式在场（钉 0.04）时，两路一起读它、代码缺省永不现形
+    ⇒「同一天四条好评把滚动 24h 预算耗光后，一句辱骂实发 Δz 恰好 0.0」这条生产病理
+    消不掉（`tests/test_affinity_display_vs_scoring_caps.py` 行为腿复现的正是它）。
+    目标语义＝两枚键并存、各读各的：v7 评分读旧键（缺省 0.12）、v8 收紧侧读新键
+    `bot_affinity_daily_move_cap_v8_z`（缺省 0.04）。
+    """
+    monkeypatch.delenv("BOT_AFFINITY_DAILY_MOVE_CAP_Z", raising=False)
+    monkeypatch.delenv("BOT_AFFINITY_DAILY_MOVE_CAP_V8_Z", raising=False)
+
+    # 腿 ①：只给旧键交值 ⇒ v7 必须照吃（拆轴后同样成立的一半）。
+    only_old = _v7_config(bot_affinity_daily_move_cap_z=0.30)
+    assert resolve_v7_settings(only_old).daily_move_cap_z == pytest.approx(0.30)
+    # 腿 ②：v8 收紧侧**不该**吃旧键——今天它吃了 ⇒ 本腿 RED。
+    assert resolve_v8_settings(only_old).daily_move_cap_z == pytest.approx(
+        _V8_DEFAULT_DAILY_MOVE_CAP_Z
+    ), "v8 侧读了 v7 那枚旧键＝两路同键未拆（F-16 键面另账未闭合）"
+
+    # 腿 ③：只给新键交值 ⇒ v8 必须吃它（今天无人读这把键 ⇒ 本腿 RED）；v7 绝不跟吃。
+    only_new = _v7_config(bot_affinity_daily_move_cap_v8_z=0.02)
+    assert resolve_v8_settings(only_new).daily_move_cap_z == pytest.approx(
+        0.02
+    ), "新键无人读＝v8 侧仍挂在旧键上"
+    assert resolve_v7_settings(only_new).daily_move_cap_z == pytest.approx(
+        _V7_DEFAULT_DAILY_MOVE_CAP_Z
+    ), "v7 评分侧吃了 v8 那枚键＝混轴回潮"
+
+    # 腿 ④：两枚键同时在座且值不同 ⇒ 各取各的，谁也不覆盖谁。
+    both = _v7_config(bot_affinity_daily_move_cap_z=0.30, bot_affinity_daily_move_cap_v8_z=0.02)
+    assert resolve_v7_settings(both).daily_move_cap_z == pytest.approx(0.30)
+    assert resolve_v8_settings(both).daily_move_cap_z == pytest.approx(0.02)
 
 
 def test_quality_weights_env_json_parsed(tmp_path) -> None:

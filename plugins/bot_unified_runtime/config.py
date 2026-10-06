@@ -619,9 +619,11 @@ class Config(BaseModel):
     # 总位移上限（窗形=滚动 24h，旧「本地自然日」窗作废）、熔断事件数
     # （护栏，不可被设定架空）。
     bot_affinity_negative_event_cap_z: float = 0.10
-    # 日额度缺省 2026-10-03 起 0.12→0.04（用户裁定消除双源：v8 时代值原走 .env
-    # 显式覆盖，现缺省对齐——生产 .env 亦显式 0.04，行为零变化；.env.example 同值）。
-    bot_affinity_daily_move_cap_z: float = 0.04
+    # 日额度键面（台账 F-16 **键面**拆轴，2026-10-06 用户裁定：豁免「本波不新建配置键」自律）：
+    # 本枚只喂 **v7 评分判据侧** ⇒ 缺省回到评分语义 0.12（2026-10-03 那次「0.12→0.04 消除双源」
+    # 的前提＝一枚键同喂两路，键面拆开后前提消失；v8 收紧侧另住
+    # `bot_affinity_daily_move_cap_v8_z`）。生产 `.env` 由她改，本席不动。
+    bot_affinity_daily_move_cap_z: float = 0.12
     bot_affinity_fuse_daily_events: int = 25
     bot_affinity_repair_gain: float = 1.4
     # tanh 饱和域硬边界（score 永不触 ±100）。
@@ -631,10 +633,16 @@ class Config(BaseModel):
     bot_affinity_decay_tau_days: str = ""
     # ---- 好感度 v8（§C-§G，2026-10-02 全量修复批登记；此前 resolve_v8_settings
     # 纯 getattr+env 现读、九键零登记＝线上死键风险）。优先序 v8>v7>v5/v6；
-    # 日额度共享键 bot_affinity_daily_move_cap_z 的 v8 时代值 0.04 走 .env（§C.7）。----
+    # 日额度**键面**已拆轴（台账 F-16，2026-10-06）：本侧读下面那枚
+    # `bot_affinity_daily_move_cap_v8_z`，上一段的 `bot_affinity_daily_move_cap_z`
+    # 只喂 v7 评分判据侧，两路各读各的键（§C.7）。----
     bot_affinity_v8_enabled: bool = False
     # κ：单轮冲量位移上限（展示最坏 2.0 分/轮，§C.2）。
     bot_affinity_v8_impulse_cap_z: float = 0.02
+    # 日额度·展示收紧侧（§C.7）：只有 **v8 路**读这枚（resolve_v8_settings 与
+    # _V8_CONFIG_FIELDS）；v7 评分判据侧读 `bot_affinity_daily_move_cap_z`（0.12）。
+    # 缺省 0.04z ＝「一天最多挪 4 展示分」的纪律尺。
+    bot_affinity_daily_move_cap_v8_z: float = 0.04
     # ambient 质量基线去心与 EMA 半衰（§C.2 之 φ_q）。
     bot_affinity_v8_ambient_centering: bool = True
     bot_affinity_v8_ambient_halflife_days: float = 28.0

@@ -258,10 +258,20 @@ def test_v8_refusal_is_unscored_and_unlogged(tmp_path) -> None:
 def test_v8_has_no_daily_fuse_day_counters_observe_only(tmp_path) -> None:
     """§C.4 在册豁免：v8 **不设日熔断/兜底帽**——同类 positive 30 连打（D 放宽到
     域钳上限 0.5 以隔离额度因素），第 25 发之后照常有位移（v7 路 fuse=25 会掐死）；
-    day_counters 仅观测落账（与 v7 同步律），绝不参与执法。"""
+    day_counters 仅观测落账（与 v7 同步律），绝不参与执法。
+
+    台账 F-16 键面拆轴（2026-10-06 用户裁定甲）：v8 侧的 D 改喂新键
+    `bot_affinity_daily_move_cap_v8_z`（旧键 `bot_affinity_daily_move_cap_z` 现只喂
+    v7 评分判据侧）。桩随之只改**喂哪枚键**，判据一字不松：新键仍喂 0.5（域钳上限），
+    旧键同批钉一枚 0.01——两路若仍串同一枚键，v8 会被 0.01 掐死、30 连打必断。
+    """
     clock = _Clock()
     store = _v8_store(
-        tmp_path, clock, "v8nofuse.sqlite3", bot_affinity_daily_move_cap_z=0.5
+        tmp_path,
+        clock,
+        "v8nofuse.sqlite3",
+        bot_affinity_daily_move_cap_v8_z=0.5,
+        bot_affinity_daily_move_cap_z=0.01,
     )
     zs: list[float] = []
     for i in range(30):
