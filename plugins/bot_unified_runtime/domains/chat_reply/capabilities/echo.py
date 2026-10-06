@@ -2533,11 +2533,11 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '/bot intimate show：作用=只看现在是什么档、什么都不改（只读查询，既不上钉也不解钉）；参数=子命令 show；内容=当前档位读数逐格清单（真身＝runtime/intimate_control.py 的 _state_body，本册不抄成员、不写格数）；意义=先核对再决定要不要改，不靠猜。这一支不回内部来源串、不回模型名、也不回字数——那几样本就不该从这页漏出去。',
                 '/bot intimate（不带子命令）：作用=自己交出这份用法并附当前档位读数，末尾指路「/bot help 亲密模式」；参数=无；内容=用法清单加当前档，不撞帮助兜底；意义=裸敲一条命令既不会被静默当成"开"，也不会掉进无关的帮助页。',
                 '/bot narration（同义词头 /bot 描写；不带子命令）：作用=交出描写档自己的用法与当前读数；参数=无；内容=用法清单＋描写档／依据／细节描写／库里的钉四格读数，末尾指路「/bot help 亲密模式」；意义=这一轴的词表只住一处（runtime/content_route.py 的 _NARRATION_SUBCOMMAND_TABLE），本册不复述成员——要哪一格，命令面会当场说给你听。',
-                '/bot narration speech（中文同义：/bot 描写 speech）：作用=把自己钉回「只说出口的话」那一格——语言之外不写动作、神色与心里；参数=子命令（大小写不敏感、首尾空白容忍，认不出的一律不受理，绝不拿错字悄悄改你的文风）；内容=一句守岸人语气的确认加当前读数；意义=这是缺省那一格，也是你随时能退回的地方。',
-                '/bot narration scene（中文同义：/bot 描写 scene）：作用=把自己钉上「铺开写」那一格，说出口的话与没说出口的都算数；参数=子命令（同上）；内容=铺开写的确认加读数；意义=这一格**不等亲密档**——日常相处里你要，我就这样写；日常那一档铺开时**衣着与环境照当下写**（裁定 G-4＝乙，10-04 深夜改判：「普通档既然都改成场景模式了，那就把衣着和环境也都写上」），只有落在身体上的细部留给亲密场景；另有一条界线：**群聊那一侧不落笔身形与衣着**（裁定 I-3＝丙，身旁另有别人在看，那几样留给只剩你们两个人的时候）；能不能真铺开仍只问 grants_intimate_narration 那一处，本册不抄第二份判据。',
+                '/bot narration speech（中文同义：/bot 描写 speech）：作用=把自己钉回「只说出口的话」那一格——语言之外不写动作、神色与心里；参数=子命令（大小写不敏感、首尾空白容忍，认不出的一律不受理，绝不拿错字悄悄改你的文风）；内容=一句守岸人语气的确认加当前读数；意义=这是缺省那一格，也是你随时能退回的地方；这一句也说一次就一直算。',
+                '/bot narration scene（中文同义：/bot 描写 scene）：作用=把自己钉上「铺开写」那一格，说出口的话与没说出口的都算数；参数=子命令（同上）；内容=铺开写的确认加读数；意义=这一格**不等亲密档**——日常相处里你要，我就这样写；日常那一档铺开时**衣着与环境照当下写**（裁定 G-4＝乙，10-04 深夜改判：「普通档既然都改成场景模式了，那就把衣着和环境也都写上」），只有落在身体上的细部留给亲密场景；另有一条界线：**群聊那一侧不落笔身形与衣着**（裁定 I-3＝丙，身旁另有别人在看，那几样留给只剩你们两个人的时候）；说一次就一直算，除非你再说一次只说话；能不能真铺开仍只问 grants_intimate_narration 那一处，本册不抄第二份判据。',
                 '/bot narration reset（中文同义：/bot 描写 reset）：作用=把这一格交回缺省、连持久钉一起收回；参数=子命令（同上）；内容=收回确认；意义=只清描写档那两列，称谓、性别自述与关系档不是这条指令说过的话，一个字都不动。',
                 '/bot narration show（中文同义：/bot 描写 show）：作用=只看现在是什么档，什么都不改；参数=子命令（与开关面共用同一枚 show，词面不另立第二份）；内容=描写档、依据、细节描写开没开、库里的钉；意义=先核对再决定要不要改。这一支不回内部来源串、不回模型名、也不回字数。',
-                '描写档跟谁、跟多久：作用=交代作用域与持久面；参数=无；内容=这一轴按**会话里的这个人**——你在群 A 说的那一句只管群 A 里对你的回复，换到群 B 要再说一次，私聊那一格也只管私聊（裁定 I-2「换了会话就需要重新激发」）；群里管理员替整群拨的亲密档永不广播描写档，别人的钉你也拨不动（裁定 G-3＋写腿沿用亲密开关同一道角色门）；钉落下就跨重启（住在 addressing_preferences 那两列，不靠进程内缓存），与亲密档那条 60 分钟 TTL 是两件事——**描写档没有 TTL**，一句 reset 才收得回；意义=文风偏好该由本人在自己那一路说了算，也不该被一次超时悄悄拿走。⚠ 群侧这一格只在**内容路由白名单群**里生效：判据读 `BOT_CONTENT_ROUTE_GROUP_WHITELIST`，它既不可运行时 set 也不走热改表，加群＝改 `.env` 那一行后重启；名单外的群里你钉了 scene 也会落回日常档（不是钉坏了，是准入门收的）。',
+                '描写档跟谁、跟多久：作用=交代作用域与持久面；参数=无；内容=这一轴按**会话里的这个人**——你在群 A 说的那一句只管群 A 里对你的回复，换一个群、换一个频道、换一路会话都要再说一次（私聊那一格也只管私聊；裁定 I-2「换了会话就需要重新激发」，频道与群同侧＝用户 2026-10-06 裁「telegram：群侧」）；群里管理员替整群拨的亲密档永不广播描写档，别人的钉你也拨不动（裁定 G-3＋写腿沿用亲密开关同一道角色门）；说一次就一直算——钉落下就跨重启（住在 addressing_preferences 那两列，不靠进程内缓存，那枚时间戳只供审计、不参与任何过期判定），与亲密档那条 60 分钟 TTL 是两件事——**描写档没有 TTL**，没有哪条通路会替她把它拿走，只有你自己再说一句 speech 或 reset 才收得回；意义=文风偏好该由本人在自己那一路说了算，也不该被一次超时悄悄拿走。⚠ 群侧这一格只在**内容路由白名单群**里生效：判据读 `BOT_CONTENT_ROUTE_GROUP_WHITELIST`，它既不可运行时 set 也不走热改表，加群＝改 `.env` 那一行后重启；名单外的群里你钉了 scene 也会落回日常档（不是钉坏了，是准入门收的）。',
                 '硬线：内容放行面不因关系档而改变，仍由会话门 explicit_allowed_for_session 判；六条硬线任何关系、任何开关、任何设定都压不过（security/content_safety.py）。',
                 '开关不受理时：总闸关／本会话没准入／群里普通成员但个人档总闸关——命令面没有正文可落回，仍会老实说一句"这一处还没放开"，不静默、不假装生效。',
             ],
@@ -2554,7 +2554,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '  中文同义词头 /bot 描写），它**不看亲密档在不在**——本人把自己钉上铺开那一格，\n'
                 '  日常相处里也照样铺开（衣着与环境照当下写＝裁定 G-4＝乙；群聊那一侧不落笔\n'
                 '  身形与衣着＝裁定 I-3＝丙）；亲手把亲密档推上去的那一轮，这一轴的缺省也跟你\n'
-                '  走到 scene（裁定 H-1＝甲），但换一个会话要再说一次（裁定 I-2）；钉这一格同样是"人亲手推动"，\n'
+                '  走到 scene（裁定 H-1＝甲），但换一个群、换一个频道、换一路会话都要再说一次（裁定 I-2）；钉这一格同样是"人亲手推动"，\n'
                 '  故它与那三支同交同一把尺，全仓不长第二张成员表。「换模型」「免 TTL 上限」\n'
                 '  「给描写」各立一集，谁也不许拿谁顶数。关系档（恋人/情侣/夫妻/长辈/晚辈/\n'
                 '  家人/挚友/master…）给这一档具体的形状。\n'
@@ -4191,6 +4191,75 @@ def _identity_relation_result(
     )
 
 
+#: 平台事实没接进这一轮时，描写档那一格**只准说不准**。这行字面是 fail-closed 腿的唯一
+#: 投递（摘掉它，`tests/test_identity_unset_name_column_scope.py` 的变异锁当场红）。
+_IDENTITY_NARRATION_UNCERTAIN_LINE = "描写档那一格这会儿说不准，不说它被牵连。"
+#: 亲密档标记同一档纪律（席 unmask-intimate，2026-10-06）：这一格的键形**由平台产出**
+#: （QQ 私聊给裸 `<uid>`、TG 私聊给 `private_<chat.id>`），事实不齐时只准说不准。
+#: 摘掉下面那一腿，同件测试的亲密档变异锁当场红。
+_IDENTITY_INTIMATE_UNCERTAIN_LINE = "亲密档那一格这会儿说不准，不说它被牵连。"
+
+
+def _identity_intimate_cell(
+    config: object,
+    *,
+    session_key: str,
+    platform: str,
+) -> bool | None:
+    """unset-name 那一轮问亲密档的**标记齿**：``True``＝在、``False``＝确实没有、``None``＝说不准。
+
+    只准经唯一标记口 `runtime/content_route.read_intimate_pin`——键形在那一处现算（取键口＝
+    **写腿那一把** `_explicit_pin_person_key`），本文件**不拼第二形、也不按裸 uid 去猜那一格**：
+    标记写在 `private_<chat.id>` 而旧读点在裸 `<chat.id>` 上＝两形永不相交（#33★／T-1 那一族），
+    TG 侧"亲密档保住了"这句从此说不准（本席 RED 的失败原文就交这两串键形）。
+    🔴 平台事实或会话事实**任一缺席**一律回 ``None``：认不出平台就认不出这把会话键该归哪一侧
+    写，读空不等于没有；宁可回执说不准，绝不替它作保（同 `_identity_narration_cell` 那一格）。
+    ⚠ 本函数只管**标记那一格**；被清的这一行自己那两列由调用点直读（同一行的列，不是第二形），
+    两齿的合并口径见调用点那段注释。
+    """
+    if not str(platform or "").strip() or not str(session_key or "").strip():
+        return None
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
+        read_intimate_pin,
+    )
+
+    return bool(read_intimate_pin(str(session_key), config=config))
+
+
+def _identity_narration_cell(
+    config: object,
+    *,
+    sender: str,
+    session_key: str,
+    platform: str,
+    conversation_type: str,
+) -> bool | None:
+    """unset-name 那一轮问描写档：``True``＝钉着、``False``＝确实没钉、``None``＝这会儿说不准。
+
+    只准经唯一取钉口 `runtime/content_route.read_narration_pin`——键形在那一处现算（人段
+    `session_keys.person_scope_key(平台域, 用户号)`、会话段 `_narration_store_scope`），本文件
+    **不拼第二形、也不按裸 uid 查**（席 idplat 的债正是"写在 `qq:<uid>`、读在 `<uid>`"，
+    #33★ 那族两形永不相交 ⇒ 回执永远说不出"描写档保住了"）。
+    🔴 平台事实或会话事实**任一缺席**一律回 ``None``：宁可回执说不准，绝不把"读空"报成
+    "没有"（把谎从"读不到"挪到"读得到"不算修好，那一型的锁见本文件同名常量的上一行）。
+    """
+    if not str(platform or "").strip() or not str(session_key or "").strip():
+        return None
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
+        read_narration_pin,
+    )
+
+    return bool(
+        read_narration_pin(
+            str(session_key),
+            sender_id=sender,
+            config=config,
+            platform=platform,
+            conversation_type=conversation_type,
+        )
+    )
+
+
 def build_identity_preference_result(
     config: object,
     *,
@@ -4198,6 +4267,9 @@ def build_identity_preference_result(
     sender_id: str,
     group_id: str = "",
     command_text: str,
+    session_key: str = "",
+    platform: str = "",
+    conversation_type: str = "",
 ) -> CapabilityResult:
     """/bot identity set-name|set-gender|unset-name|unset-gender —— 用户自助称谓偏好。
 
@@ -4207,6 +4279,12 @@ def build_identity_preference_result(
     存进 AddressingPreferenceStore，被聊天人格上下文优先读取
     （键位与读取端 providers.build_context 完全一致：群=group_id，私聊=空）。
     仅能操作发送者本人的偏好，无管理员门槛。
+
+    `session_key`／`platform`／`conversation_type` 三枚是**回执读点**要用的会话事实，
+    由派发面逐字转述契约字段（`IncomingMessage.session_id` / `.platform` / `.session_type`
+    的规范值），缺省空串＝拿不到（`_identity_narration_cell` 与 `_identity_intimate_cell`
+    据此 fail-closed：两枚钉各有各的键形，事实不齐时这一格只准说不准）。写腿仍按
+    「群=群号、私聊=空」那把作用域键落，一格未动：本波只补读侧，不迁行形。
     """
     from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
         build_addressing_preference_store,
@@ -4315,31 +4393,63 @@ def build_identity_preference_result(
     store.clear_columns(**lookup, columns=(own_column,))
     # 只点名、绝不回显本人内容（值不外流）。
     after_preference, after_gender = store.get(**lookup)
+    # 两枚钉各走各的唯一取口（席 idplat／席 unmask-intimate），都**不许**只按裸 uid 查：
+    # 描写钉落在三段键 (平台域, 会话, 人) 上、人段形如 `qq:<uid>`（`lookup` 那把裸 uid 永远
+    # 读空＝上一席位实跑那句谎的来处）；亲密档的**标记**落在写腿那把会话键形上（QQ 私聊＝裸
+    # uid、TG 私聊＝`private_<chat.id>`），按裸 uid 查在 TG 那一侧永不相交。
+    # 亲密档另有**一齿**：被清的这一行自己那两列（`lookup` 是写腿在册的作用域键，读同一行的
+    # 列不叫拼第二形）——F-8 要防的正是这一格被顺手收回，它读到就是读到、不吃平台事实。
+    # 两齿任一说"在"就说"在"；标记齿在事实不齐时回 None＝整格只准说"说不准"，
+    # 绝不写"谁也没被牵连"（那等于替看不见的格子作保）。
+    row_intimate_present = bool(store.get_intimate_pin(**lookup)[0])
+    intimate_present = _identity_intimate_cell(
+        config,
+        session_key=session_key,
+        platform=platform,
+    )
+    if row_intimate_present:
+        intimate_present = True
+    narration_present = _identity_narration_cell(
+        config,
+        sender=sender,
+        session_key=session_key,
+        platform=platform,
+        conversation_type=conversation_type,
+    )
     kept = [
         label
         for label, present in (
             ("称谓偏好", bool(after_preference)),
             ("性别自述", after_gender != "unknown"),
             ("关系档", bool(store.get_relationship(**lookup))),
-            ("亲密档", bool(store.get_intimate_pin(**lookup)[0])),
-            ("描写档", bool(store.get_narration_pin(**lookup)[0])),
+            ("亲密档", bool(intimate_present)),
+            ("描写档", bool(narration_present)),
         )
         if present and label != own_label
     ]
+    unclear = ""
+    if intimate_present is None:
+        unclear += _IDENTITY_INTIMATE_UNCERTAIN_LINE
+    if narration_present is None:
+        unclear += _IDENTITY_NARRATION_UNCERTAIN_LINE
     if not had_own and not kept:
         return _identity_preference_result(request_id, "你还没有设置过称谓偏好。")
     if not had_own:
         return _identity_preference_result(
             request_id,
             f"{own_label}那一列本来就没有，这一条什么都没清；"
-            "这一行上原样保住的还有" + "、".join(kept) + "。",
+            "这一行上原样保住的还有" + "、".join(kept) + "。" + unclear,
         )
     body = f"已清除{own_label}（只清这一列，行没删）。"
     body += "恢复自动称呼。" if targets_name else "性别自述回到 unknown。"
     if kept:
         body += "这一行上原样保住的还有" + "、".join(kept) + "。"
-    else:
+    elif intimate_present is False and narration_present is False:
         body += "这一行上此刻也没有别的显式声明，谁也没被牵连。"
+    else:
+        # 说不准的那一格不许被算进"谁也没被牵连"——那是另一形式的替它作保。
+        body += "这一行上别的格子没有说得出保住的。"
+    body += unclear
     return _identity_preference_result(request_id, body)
 
 

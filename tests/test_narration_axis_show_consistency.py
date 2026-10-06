@@ -1,6 +1,6 @@
 """「细节描写」这一问只能有一个答案（席 na-showalign，2026-10-04；独立复查 B-4／Q4 与 W-2）。
 
-要钉的四件事：
+要钉的事（编号与下方分节 ①–⑤ 一一对应）：
 
 1. **同一个人类可读的问题，同一轮只准一个答案**：`/bot intimate show` 与 `/bot 描写 show`
    都渲染「细节描写：已开/没开」。旧写法让前者读**亲密轴** `source`、后者读**叙述轴**
@@ -20,6 +20,12 @@
    `tests/test_intimate_source_set_separation.py` 只比成员集合，**结构性看不见喂错量**这一族
    ——本件补的就是那一枚瞎眼。护栏写完即空转过多次，所以末段两枚**注毒**用例把改动后的
    副本放进 `%TEMP%`（绝不动源码树）验它必红。
+5. **人读话术＝主人 2026-10-06 的三层原话**（席 narr-wording-0610，纯文案、一条判定都不动）：
+   ①「换个群、换个频道或换个会话」三形都要点名（旧回执只说"换一个群"）；②「激活一次就可以
+   永久」落笔成她给的形状「说一次就一直算」，**不写"永久"**（那会被读成系统保证，规则 8）；
+   ③「除非用户又发出新的指令，让它切换回 speech」＝「除非你再说一次只说话」。三处同步面各锁
+   各的字面（命令面常量／`echo.py` 帮助册那一格／人读版 `COMMANDS.md` 那一行），另有一枚
+   **行为腿**把②那句现算跑一遍——②不成立时先红在这里，而不是让文案空说。
 
 夹具铁律照 `tests/test_narration_axis_command.py`（AGENTS 规则 6／台账 #66★／#76★）：
 `shared_reply_policy_store` 指 tmp、`SHARED_CONTENT_ROUTE_ENGINE._sessions` 逐枚换新、
@@ -29,6 +35,7 @@ from __future__ import annotations
 
 import ast
 import shutil
+import sqlite3
 from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
@@ -616,3 +623,131 @@ def test_shape_lock_goes_red_when_a_site_reassembles_the_quantity_on_the_spot(
     (work / "chat.py").write_text(poisoned, encoding="utf-8")
     hits = _scan_provenance(work)
     assert any("现场取数" in line for line in hits), hits
+
+
+# ================================================================ ⑤ 人读话术（2026-10-06 三层原话）
+#
+# 尺按她原话的三层摆，**只判文案**：
+# ①三形齐全＝「群／频道／一路会话」都要点名（`_narration_store_scope` 里这三形各有各的桶，
+#    旧回执只说"换一个群"是把两形漏了）；②「说一次就一直算」＝一次即长期、无到期通路
+#    （`read_narration_pin` 把 `narration_updated_at` 取出来就丢，`addressing.py` 那两列的
+#    注释也明写"不参与任何过期判定"——末尾那枚行为腿现算证它）；③「除非你再说一次只说话」＝
+#    收回只在本人另下一句，且钉 `speech` 压过③那格"开亲密即缺省 `scene`"。
+# 同步面各锁各的字面：命令面常量／`echo.py` 帮助册那一格／人读版 `COMMANDS.md` 那一行。
+# 板块页 `docs/boards/B03-persona-chat-safety/content-safety/intimate-mode.md` 是内部技术卡，
+# **不锁字面**——把它钉进测试等于亲手造第二处副本。
+
+_SHAPE_PHRASES: tuple[str, ...] = ("换一个群", "换一个频道", "换一路会话")
+_DURATION_PHRASE = "说一次就一直算"
+_REVERSAL_PHRASE = "除非你再说一次只说话"
+#: 发给她的句子里不许出现的东西：系统保证（"永久"）、内部口径名（TTL）、裁定编号（I-2）。
+_NOT_FOR_HER_EARS: tuple[str, ...] = ("永久", "TTL", "I-2")
+
+
+def test_refusal_reply_names_all_three_conversation_shapes() -> None:
+    refused = ic.NARRATION_REFUSED_REPLY
+    missing = [phrase for phrase in _SHAPE_PHRASES if phrase not in refused]
+    assert not missing, (
+        f"被拒回执没把三形说全（只说了「群」那一形）：缺 {missing}｜原文={refused!r}"
+    )
+    assert _DURATION_PHRASE in refused, f"被拒回执没说「一次即长期」：{refused!r}"
+    assert _REVERSAL_PHRASE in refused, f"被拒回执没说「除非再说一次只说话」：{refused!r}"
+
+
+def test_usage_lines_name_the_three_shapes_and_the_duration() -> None:
+    usage = "\n".join(ic._NARRATION_USAGE_LINES)
+    missing = [phrase for phrase in _SHAPE_PHRASES if phrase not in usage]
+    assert not missing, f"用法表没把三形说全：缺 {missing}｜原文={usage!r}"
+    assert _DURATION_PHRASE in usage, f"用法表没交代跟多久：{usage!r}"
+
+
+def test_scene_and_speech_acks_carry_the_duration_and_the_way_back() -> None:
+    """钉**成功**那一格也得把"跟多久、怎么收回"说给她——不能只在被拒那一次才说。"""
+    scene_ack = ic._NARRATION_ACKS[cr.NARRATION_MODE_SCENE]
+    assert _DURATION_PHRASE in scene_ack, f"scene 回执没说跟多久：{scene_ack!r}"
+    assert _REVERSAL_PHRASE in scene_ack, f"scene 回执没说怎么收回：{scene_ack!r}"
+    speech_ack = ic._NARRATION_ACKS[cr.NARRATION_MODE_SPEECH]
+    assert _DURATION_PHRASE in speech_ack, f"speech 回执没说跟多久：{speech_ack!r}"
+    assert "只说" in speech_ack, f"speech 回执丢了它自己那一格的读数：{speech_ack!r}"
+
+
+def test_user_facing_narration_copy_says_no_system_guarantees() -> None:
+    """文案不许写成系统保证，也不许漏裁定编号与内部口径名（规则 8：说人话）。"""
+    copies = {
+        "refused": ic.NARRATION_REFUSED_REPLY,
+        "usage": "\n".join(ic._NARRATION_USAGE_LINES),
+        "ack:scene": ic._NARRATION_ACKS[cr.NARRATION_MODE_SCENE],
+        "ack:speech": ic._NARRATION_ACKS[cr.NARRATION_MODE_SPEECH],
+        "ack:reset": ic._NARRATION_ACKS[""],
+    }
+    for name, text in copies.items():
+        leaked = [token for token in _NOT_FOR_HER_EARS if token in text]
+        assert not leaked, f"{name} 里漏给了她内部口径/系统保证：{leaked}｜原文={text!r}"
+
+
+def test_help_book_and_commands_md_carry_the_same_three_shapes() -> None:
+    """帮助册那一格与 `COMMANDS.md` 那一行同轴（同批同步，不留第二份旧说法）。"""
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+        _HELP_ENTRIES,
+    )
+
+    entry = next((item for item in _HELP_ENTRIES if item["topic"] == "亲密模式"), None)
+    assert entry is not None, "帮助册里没有「亲密模式」这一 topic"
+    scope_lines = [line for line in entry["lines"] if line.startswith("描写档跟谁、跟多久")]
+    assert len(scope_lines) == 1, f"那一格渲染了两遍或不见了：{scope_lines}"
+    missing = [phrase for phrase in _SHAPE_PHRASES if phrase not in scope_lines[0]]
+    assert not missing, f"帮助册那一格没把三形说全：缺 {missing}"
+    assert _DURATION_PHRASE in scope_lines[0], f"帮助册那一格没交代跟多久：{scope_lines[0]}"
+
+    commands_md = (
+        Path(__file__).resolve().parents[1] / "COMMANDS.md"
+    ).read_text(encoding="utf-8")
+    key_rows = [line for line in commands_md.splitlines() if "描写档的键形" in line]
+    assert len(key_rows) == 1, f"COMMANDS.md 那一行应有恰好一处，现算 {len(key_rows)} 处"
+    missing_md = [phrase for phrase in _SHAPE_PHRASES if phrase not in key_rows[0]]
+    assert not missing_md, f"COMMANDS.md 没把三形说全：缺 {missing_md}"
+    assert _DURATION_PHRASE in key_rows[0], f"COMMANDS.md 没交代跟多久：{key_rows[0]}"
+
+
+def _age_the_narration_row(tmp_path: Path, mode: str) -> int:
+    """把库里那枚时间戳拨到 1970 年（**证它不参与判定**，不是证它判得出过期）。"""
+    with sqlite3.connect(tmp_path / _ADDR_DB) as conn:
+        cursor = conn.execute(
+            "UPDATE addressing_preferences"
+            " SET narration_updated_at=1.0, updated_at='1970-01-01T00:00:00+00:00'"
+            " WHERE narration_mode=?",
+            (mode,),
+        )
+        conn.commit()
+        return int(cursor.rowcount or 0)
+
+
+def test_the_pin_has_no_expiry_path_and_speech_reversal_wins(tmp_path: Path) -> None:
+    """②③两层的**现算证据**（不是文案锁）：时间戳拨到 1970 年读数不动；钉 `speech` 压过③格。
+
+    若日后真长出过期通路或被别的键顶掉，本腿先红 ⇒ 上面那句「说一次就一直算」就不该再写。
+    """
+    cfg = _addr_config(tmp_path)
+    key = private_session_key(_HER)
+    assert cr.write_narration_pin(key, mode=cr.NARRATION_MODE_SCENE, config=cfg) is True
+    assert _age_the_narration_row(tmp_path, cr.NARRATION_MODE_SCENE) == 1, "拨龄没落盘＝本腿空跑"
+    assert cr.read_narration_pin(key, config=cfg) == cr.NARRATION_MODE_SCENE, (
+        "钉 scene 被时间戳吃掉了＝「说一次就一直算」是假话"
+    )
+
+    # ③那一格（亲手推上去的亲密档）先在场的证据，再证钉 speech 把它压下去（她的"切回 speech"）。
+    assert cr.clear_narration_pin(key, config=cfg) is True
+    SHARED_CONTENT_ROUTE_ENGINE.apply_manual(
+        key, MODE_INTIMATE, cfg, source=INTIMATE_SOURCE_MANUAL, tier=INTIMATE_TIER_L2
+    )
+    opened = _private_ctx(cfg)
+    assert str(opened.get("narration_mode") or "") == cr.NARRATION_MODE_SCENE, (
+        f"③格不在场＝下面那句「压过它」是空跑：{opened}"
+    )
+    assert cr.write_narration_pin(key, mode=cr.NARRATION_MODE_SPEECH, config=cfg) is True
+    assert _age_the_narration_row(tmp_path, cr.NARRATION_MODE_SPEECH) == 1, "拨龄没落盘＝本腿空跑"
+    pinned = _private_ctx(cfg)
+    assert str(pinned.get("narration_mode") or "") == cr.NARRATION_MODE_SPEECH, (
+        f"她说了只说话，却被③格顶回铺开写：{pinned}"
+    )
+    assert str(pinned.get("narration_source") or "") == INTIMATE_SOURCE_NONE, pinned
