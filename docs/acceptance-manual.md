@@ -140,11 +140,23 @@ docs/napcat-setup.md，新接入不要再照它操作），要点：
 
 ## 6.3 全能力真机验收（2026-09-12 批次，e2e 脚本）
 
-bot 重启并在线后，向 white1 群真发验收矩阵（默认 DRY-RUN 安全阀，`--execute` 才真发）：
+bot 重启并在线后跑验收矩阵。**投递形态两档**（用户 2026-10-06 裁「隔离为默认＋真发要显式旗」）：
+
+| 怎么跑 | 队列落在哪 | 会不会真发 |
+|---|---|---|
+| 不带 `--execute`（缺省 DRY-RUN） | 内存队列，一张 SQLite 都不开 | ❌ 只打印"将发内容" |
+| `--execute` | **OS 临时目录**里的真 SQLite 队列（真实 submit/建表/part 账本） | ❌ 在线 bot 的 worker 看不见这本库 |
+| `--execute --live-delivery` | **生产库** `ChatBot_Runtime/data/wuwa_send_queue.sqlite3` | ✅ 真发到目标群/私聊，且每一行写进生产投递台账 |
+
+⇒ 想验证"真的发出去了"（例如 10-06 那次查哨兵洞），必须带 `--live-delivery`；带旗时脚本会在
+目标行之后当场打一行"本轮为真实投递"。**日常回归别带旗**——测试消息会进群，台账会留行。
 
 ```powershell
 python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 ```
+
+要真发时追加 `--live-delivery`。锁＝`tests/test_e2e_live_delivery_flag.py`（缺省隔离／带旗落生产库／
+DRY-RUN 带旗也绝不真发／披露必打印／旗不放宽准入）＋`tests/test_e2e_acceptance_queue_isolation.py`。
 
 覆盖项数以 `scripts/e2e_acceptance.py` 矩阵实况为准：文本三态（直发/长文合并
 转发/chunks）/ B站解析卡 / 点歌候选卡 / 全球股指 18 指数 / 财经+科技快报 / 天气+预警 / 随机图 /

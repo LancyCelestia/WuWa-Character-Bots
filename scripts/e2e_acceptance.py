@@ -30,15 +30,17 @@ blocked＋原因可查（判 PASS，不是 FAIL）；被**别的**原因拦（�
   逐项打印「将发内容」（渲染后的 content_type / 文本预览 / 媒体计数）。
 - ``--execute`` 走 **临时库** 的 SQLite 队列（结构性隔离，非条件式，2026-10-07）：
   send_queue 换成 ``build_send_queue(...)`` 的真 SQLite 队列，但 ``bot_send_queue_db_path``
-  被 ``choose_send_queue``→``send_queue_isolation_config`` 无条件改指 **OS 临时目录**
+  被 ``choose_send_queue``→``send_queue_isolation_config`` 改指 **OS 临时目录**（缺省无条件；
+  唯一例外＝``--live-delivery``，见下）
   （``send_queue_isolation_dir``，不在源码树、不在 ``ChatBot_Runtime`` 根），
   **绝不**落 ``ChatBot_Runtime/data/wuwa_send_queue.sqlite3``。理由＝那本库是在线 bot 的
   send-queue worker 共读的**投递账本**：验收器往里入队＝在线 worker 会拿它去真发群/私聊
   （盘上实据：曾因此产生 38 枚 ``sent``+107 枚 ``failed_final`` 的 e2e 行）。落临时库后
   走的是真实 submit/建表/part 账本/``find_request``，但**在线 worker 看不见 ⇒ 零真实投递**。
   若 .env 未启用持久化发送队列则拒绝执行（准入判定仍读原配置那枚生产路径）。
-  ⚠ 本波把「借生产队列交在线 worker 真发」这条通路整体切断；要在验收面看到真投递，
-  须另起一个跑在这本临时库上的 worker（属投递/transport 面，本波未动、留下一批）。
+  ⚠ 「借生产队列交在线 worker 真发」这条通路**默认关闭**（用户 2026-10-06 裁「隔离为默认＋
+  真发要显式旗」）：要真投递就显式带 ``--live-delivery``，此时队列落回生产库、目标会真收到，
+  并且每一行都写进生产投递台账——旗只作用于 ``--execute``，DRY-RUN 带旗也绝不真发。
 - ``--target-group`` / ``--target-user`` 必填其一；群目标必须已在运行时 store
   的 BOT_GROUP_WHITE1 白名单（与 pipeline 同源读取），否则拒绝执行。
 - 逐项打印 ``[序号] 能力 → 发送结果回执``：state/transport/skipped 原样可见，
@@ -205,6 +207,9 @@ class E2eRuntime:
     city: str
     bot_id: str
     sender_id: str
+    # 用户 2026-10-06 裁「A」：`--execute` **缺省隔离**（不碰她的生产投递台账），要真发必须
+    # 显式带 `--live-delivery`。旗只作用于 execute 态——DRY-RUN 带旗也绝不真发。
+    live_delivery: bool = False
 
 
 def build_runtime(
@@ -214,6 +219,7 @@ def build_runtime(
     city: str,
     bot_id: str,
     sender_id: str,
+    live_delivery: bool = False,
 ) -> E2eRuntime:
     config = load_smoke_config(env_file)
     settings_manager = build_instance_settings_manager(config)
@@ -234,6 +240,7 @@ def build_runtime(
         city=city,
         bot_id=resolved_bot_id,
         sender_id=sender_id,
+        live_delivery=live_delivery,
     )
 
 
@@ -365,10 +372,14 @@ def choose_send_queue(
     isolation_root: str | Path | None = None,
 ) -> tuple[Any, str]:
     """DRY-RUN → InMemory（零真实发送路径、一张 SQLite 都不开）；
-    --execute → **临时库**上的 SQLite 队列（绝不合在线 bot 共用生产发送队列）。
+    --execute → **临时库**上的 SQLite 队列（缺省绝不与在线 bot 共用生产发送队列）。
 
     ``isolation_root`` 只是给测试注入 ``tmp_path`` 的口；缺省走 OS 临时根
-    （``send_queue_isolation_dir``）。两态都**无条件**隔离，不接受「这次就写生产库」。
+    （``send_queue_isolation_dir``）。
+    🔴 唯一例外＝``runtime.live_delivery``（命令行 ``--live-delivery``，用户 2026-10-06 裁
+    「**隔离为默认＋真发要显式旗**」）：带旗才落回生产库、让在线 worker 真发。除此之外
+    两态都无条件隔离，不接受「这次就写生产库」——旗不是绕过安全阀的口子，上面那两跳
+    准入判定（``bot_send_queue_enabled`` 与生产路径在场）照样执法。
     """
     config = runtime.config
     if not runtime.execute:
@@ -392,6 +403,19 @@ def choose_send_queue(
     # 生产 ``wuwa_send_queue.sqlite3`` 由在线 worker 共读，验收器一旦往里入队就等于
     # 让真人群/真私聊收到测试消息（本波根治）。``build_send_queue`` 只读它拿到的
     # config 属性、不做任何路径重映射，故 ``model_copy`` 换绝对临时路径即逐字生效。
+    # 🔴 上面那两跳准入判定**不因旗放宽**：没启用持久化队列就照样拒绝执行（防"假真发"）。
+    if runtime.live_delivery:
+        # 用户 2026-10-06 裁「A」的后半：缺省隔离，**真发要显式旗**。带旗＝直接用 config 那枚
+        # 生产库路径建队列 ⇒ 在线 bot 的 send-queue worker 看得见 ⇒ 真发到群/私聊，并把行写进
+        # 她的投递台账（这正是 `--live-delivery` 存在的唯一理由：验收"投递真身"没有别的替身）。
+        live_queue = build_send_queue(config, audit_logger=audit_logger)
+        if not isinstance(live_queue, SQLiteSendRequestQueue):
+            raise E2eSafetyError(
+                "--live-delivery 期望 SQLite 发送队列，实际构建出 "
+                f"{type(live_queue).__name__}；拒绝执行以防假真发。"
+            )
+        return live_queue, f"execute:sqlite:live-production-queue:{live_queue.db_path}"
+
     tmp_dir = send_queue_isolation_dir(isolation_root)
     isolated = send_queue_isolation_config(config, tmp_dir)
     queue = build_send_queue(isolated, audit_logger=audit_logger)
@@ -401,6 +425,20 @@ def choose_send_queue(
             f"{type(queue).__name__}；拒绝执行以防假真发。"
         )
     return queue, f"execute:sqlite:isolated:{queue.db_path}"
+
+
+def warn_live_delivery(queue_desc: str) -> None:
+    """带旗时把"这一轮真发、会写生产投递台账"说到明处（用户 2026-10-06 裁 A 的披露面）。
+
+    旗本身不改变任何链路，只改变**看得见的程度**：她要在真机测投递时才需要它，而误用它的
+    代价是让真人群/真私聊收到测试消息——所以这句必须打在目标行之后、入队之前，不能只在
+    末段汇总里出现。
+    """
+    if "live-production-queue" in str(queue_desc or ""):
+        print(
+            "⚠ 本轮为**真实投递**：队列指回生产库，在线 bot 的 send-queue worker 会逐条真发"
+            "到上面的目标，并把每一行写进生产投递台账。不带 `--live-delivery` 就绝不会被真发。"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -3555,6 +3593,7 @@ def run_help_matrix(args: argparse.Namespace) -> int:
         sender_id=str(
             args.sender_id or str(args.target_user or "").strip() or "10000"
         ).strip(),
+        live_delivery=bool(getattr(args, "live_delivery", False)),
     )
     specs, unknown = filter_topic_specs(load_help_topic_specs(), args.subset)
     if unknown:
@@ -3665,6 +3704,7 @@ def run_help_matrix(args: argparse.Namespace) -> int:
         print(f"[安全阀] {exc}", file=sys.stderr)
         return 2
     print(f"[队列] {queue_desc}")
+    warn_live_delivery(queue_desc)
     pipeline = build_pipeline(runtime, send_queue)
 
     # worker 存活探针：一条无害文本，预算内拿到投递确认才继续（防 68 条延迟补发轰炸）。
@@ -3993,6 +4033,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--live-delivery",
+        action="store_true",
+        help=(
+            "**真实投递**：把发送队列指回生产库，在线 bot 的 worker 会逐条真发到目标并"
+            "写进生产投递台账（用户 2026-10-06 裁「隔离为默认＋真发要显式旗」）。"
+            "只作用于 --execute；DRY-RUN 带此旗也绝不真发。"
+        ),
+    )
+    parser.add_argument(
         "--interval",
         type=float,
         default=DEFAULT_INTERVAL_SECONDS,
@@ -4110,6 +4159,7 @@ def main(argv: list[str] | None = None) -> int:
             or str(args.target_user or "").strip()
             or "10000"
         ).strip(),
+        live_delivery=bool(getattr(args, "live_delivery", False)),
     )
     matrix = build_matrix(runtime)
     if args.list:
@@ -4159,6 +4209,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[安全阀] {exc}", file=sys.stderr)
         return 2
     print(f"[队列] {queue_desc}")
+    warn_live_delivery(queue_desc)
 
     pipeline = build_pipeline(runtime, send_queue)
 
@@ -4216,9 +4267,17 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"共 {len(outcomes)} 项，错误 {len(errors)} 项，期望未达成 {len(expect_fails)} 项。"
         + (
-            "\n说明：--execute 项已入队到 **临时库** 上的 SQLite 发送队列（真实 submit/"
-            "建表/part 账本全走），但生产 wuwa_send_queue.sqlite3 零字节、在线 worker "
-            "看不见 ⇒ **不会真发到群/私聊**（本波结构性切断，见文件头安全阀）。"
+            (
+                "\n⚠ 本轮带 `--live-delivery`：以上项已入队到**生产发送队列**，在线 bot 的 "
+                "worker 会逐条真发到目标，每一行都写进生产投递台账（这是真实投递，不是预览）。"
+                if bool(getattr(args, "live_delivery", False))
+                else (
+                    "\n说明：--execute 项已入队到 **临时库** 上的 SQLite 发送队列（真实 submit/"
+                    "建表/part 账本全走），但生产 wuwa_send_queue.sqlite3 零字节、在线 worker "
+                    "看不见 ⇒ **不会真发到群/私聊**（本波结构性切断，见文件头安全阀；"
+                    "要真发须显式带 `--live-delivery`）。"
+                )
+            )
             if args.execute
             else "\nDRY-RUN：以上为「将发内容」，未入任何队列。"
         )
