@@ -370,8 +370,13 @@ def _real_spec(family: str, tmp_path, monkeypatch: pytest.MonkeyPatch):
             content_parser as card_body,
         )
 
+        # 🔴 桩形必须与真身同签：`nmc_weather_query(query, *, proxy="", timeout=None)`
+        # （S-FIX-WX-T6 加了 timeout 逐次透传，锁＝tests/test_wx_t6_timeout_plumbing.py）。
+        # 本桩此前只收 (query, proxy) ⇒ 生产侧透传 timeout 时 TypeError 被吞成 DEGRADED，
+        # 表现为"e2e 不等值"假缺陷（2026-10-07 现算：错文＝`<lambda>() got an unexpected
+        # keyword argument 'timeout'`，真身 `nmc_weather.py:190` 是收 timeout 的）。
         monkeypatch.setattr(weather_mod, "nmc_weather_query",
-                            lambda query, proxy="": f"【{query}天气】晴 25℃")
+                            lambda query, proxy="", timeout=None: f"【{query}天气】晴 25℃")
         monkeypatch.setattr(weather_mod, "fetch_city_alerts", lambda query, proxy="": [])
         monkeypatch.setattr(card_body, "render_card_png",
                             lambda backend, item, **kw: {"file": str(tmp_path / "weather.png")})
