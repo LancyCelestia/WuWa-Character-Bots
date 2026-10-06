@@ -221,6 +221,30 @@ class AliasResolution:
     rest_text: str
 
 
+def nickname_verbs_for(capability_id: str) -> tuple[str, ...]:
+    """某能力的昵称动词列——**帮助册 `triggers_nickname` 列的唯一投影口**（F-13 乙案批 2）。
+
+    为什么要有这一口：帮助册那几列此前把 `DEFAULT_VERB_MAP` 的动词**又手打一遍**，
+    同一份词面于是有两个声明位＝尺上的债（`tests/test_trigger_word_single_source.py`
+    词面级账，批 1 末现算 raw 547／计账 472）。这里把它降为读册：帮助侧只转述，
+    动词只在这张表里声明一次；表改了帮助页自动跟随（AGENTS 铁律：禁第二真身）。
+
+    口径纪律（三条，改动前先读）：
+    * **只筛不造**——按 `capability_id` 精确等值过滤，不并集、不补形、不做繁简/拼音派生；
+      投影结果与批 1 前那七列手抄词面**逐字同集**（锁＝
+      ``tests/test_help_nickname_projection_f13b2.py``，快照凭据提交 ``064535d``）。
+      想给某能力多一个词，只能往 ``DEFAULT_VERB_MAP`` 加，而那会同时改路由面（属扩功能，
+      不属这条腿）。
+    * **顺序按表的书写序**，帮助册那列的既有词序不参与执法：`triggers_nickname` 既不进
+      `docs/command-catalog.md`（生成器只渲染 `aliases` 与 `triggers_nl`），也不进
+      `/bot help` 正文，只经 `_HELP_ALIAS_MAP` 落成检索键集合——逐词命中结果与序无关。
+    * **本函数体内不许出现任何词面字面量**（尺＝同一把锁的 `no_word_literal` 那条），
+      否则投影口自己变成第二真身。
+
+    禁新建生产件（用户 2026-10 明令）：真身表与这条投影口都住在**本既有文件**里。
+    """
+    return tuple(verb for verb, capability in DEFAULT_VERB_MAP.items() if capability == capability_id)
+
 class CommandAliasResolver:
     """把昵称命令解析成能力 id；不负责执行，执行仍走统一流水线。
 

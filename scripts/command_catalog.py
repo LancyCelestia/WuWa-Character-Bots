@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import re
 import sys
 from collections.abc import Callable
@@ -51,6 +52,17 @@ _MANIFEST_KEYS = (
     "help_topic",
     "internal_note",
 )
+
+#: F-13 乙案批 2（2026-10-07）：帮助册昵称触发列的**在册纯投影**白名单。
+#: `echo._HELP_ENTRY_META[*]["triggers_nickname"]` 里那七簇「就是 `DEFAULT_VERB_MAP` 某能力
+#: 动词全集」的词面不再手抄（尺＝tests/test_trigger_word_single_source.py 词面级账），
+#: 改为转述 `runtime/aliases.py::nickname_verbs_for`。本脚本认这一枚 Call、不认任何别的：
+#: 函数名要在册、参数逐枚字符串常量、真源必须是仓内模块的模块级定义（取原语句就地 exec，
+#: 与 `_echo_help_detail_composer` 同一条通道，零复制实现）。放宽面到此为止。
+HELP_LITERAL_PROJECTIONS: frozenset[str] = frozenset({"nickname_verbs_for"})
+
+#: 「真身模块 → 可调用投影」缓存（同一份定义在一次生成里最多 exec 一次）。
+_PROJECTION_CALLABLE_CACHE: dict[tuple[str, str], Callable[..., object]] = {}
 
 
 def _module_tree(path: Path) -> ast.Module:
@@ -85,45 +97,192 @@ def _module_literal_values(tree: ast.Module) -> dict[str, ast.expr]:
     return mapping
 
 
-def _eval_literal(node: ast.expr, constants: dict[str, ast.expr], stack: tuple[str, ...]) -> object:
+def _module_import_targets(tree: ast.Module) -> dict[str, tuple[Path, str]]:
+    """模块级 `from plugins.… import 名字` → (该模块在仓内的文件, 原名)。
+
+    只认**仓内**绝对导入（`plugins.` 打头）、非通配、非相对——外部/stdlib 名字一律不进解析面，
+    `import x.y` 裸模块名也不进（那要靠属性访问，本脚本不追）。放宽到此为止：这张表唯一的
+    消费者是下面那枚在册纯投影（`HELP_LITERAL_PROJECTIONS`），不是「随便 import 什么都能求值」。
+    """
+    out: dict[str, tuple[Path, str]] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom) or node.level:
+            continue
+        module = node.module or ""
+        if not module.startswith("plugins."):
+            continue
+        target = ROOT.joinpath(*module.split(".")).with_suffix(".py")
+        if not target.is_file():
+            continue
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            out[alias.asname or alias.name] = (target, alias.name)
+    return out
+
+
+def _projection_callable(path: Path, original_name: str) -> Callable[..., object]:
+    """取「在册纯投影」函数的本体并可调用（与 `_echo_help_detail_composer` 同一条已审通道）。
+
+    为什么又是「按 AST 取源码片段 + 隔离命名空间 exec」而不是 import：import 插件包会触发
+    NoneBot 装配（本脚本的既有约束是能脱离 bot 独跑）；在本文件里另写一份筛选逻辑＝造出
+    第二个事实源。这里 exec 的是**真身模块**的原定义语句，实现仍只有一份：它改了这里自动
+    跟随，它改名/删定义/多塞自由名都当场响亮抛错。
+
+    喂给该函数的全局名只取它函数体里**实际读到**的那些模块级常量，且必须本模块能静态求值——
+    少喂＝NameError 抛，多喂＝不喂（不做"整文件常量表都塞进去"的省事版，防顺路把无关字面量
+    卷进求值面）。
+    """
+    key = (path.as_posix(), original_name)
+    cached = _PROJECTION_CALLABLE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    source = path.read_text(encoding="utf-8")
+    tree = _module_tree(path)
+    constants = _module_literal_values(tree)
+    imports = _module_import_targets(tree)
+    namespace: dict[str, object] = {"__name__": f"command_catalog_literal_projection:{path.name}"}
+    needed: set[str] = set()
+    defined = False
+    for node in tree.body:
+        if not (isinstance(node, ast.FunctionDef) and node.name == original_name):
+            continue
+        if original_name not in HELP_LITERAL_PROJECTIONS:
+            raise ValueError(f"{original_name} 不在册（HELP_LITERAL_PROJECTIONS）＝不认的求值面")
+        segment = ast.get_source_segment(source, node)
+        if segment is None:
+            raise RuntimeError(f"{path.name}：取不到 {original_name} 的源码片段，无法复用投影真源")
+        exec(  # noqa: S102 - 输入源固定为仓内真身模块（非任何外部/用户输入）：执行的是按 AST
+            # 原样取出的模块级定义语句，目的正是复用真身的投影实现而非在生成器里另抄一份。
+            compile(segment, f"{path.name}::<literal-projection>", "exec"),
+            namespace,
+        )
+        defined = True
+        bound = {
+            arg.arg
+            for group in (node.args.posonlyargs, node.args.args, node.args.kwonlyargs)
+            for arg in group
+        }
+        for spec in (node.args.vararg, node.args.kwarg):
+            if spec is not None:
+                bound.add(spec.arg)
+        bound.update(
+            sub.id
+            for sub in ast.walk(node)
+            if isinstance(sub, ast.Name) and isinstance(sub.ctx, (ast.Store, ast.Del))
+        )  # 推导式/for/with/赋值的局部绑定名（verb、capability 之类），不是真身依赖
+        needed.update(
+            sub.id
+            for sub in ast.walk(node)
+            if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Load) and sub.id not in bound
+        )
+    if not defined:
+        raise RuntimeError(
+            f"{path.name} 里找不到在册投影 {original_name}；请同步本脚本的 "
+            "HELP_LITERAL_PROJECTIONS——禁止在生成器里另抄一份投影逻辑"
+        )
+    for name in sorted(needed):
+        if name in namespace or name.startswith("__"):
+            continue
+        if hasattr(builtins, name):
+            continue  # 内建（tuple/sorted 之类）由 exec 自带的 __builtins__ 供，不进真身喂料面
+        definition = constants.get(name)
+        if definition is None:
+            raise RuntimeError(
+                f"{path.name}::{original_name} 引用了非模块级常量 {name}＝投影口不纯，拒绝对拍"
+            )
+        namespace[name] = _eval_literal(definition, constants, (name,), imports)
+    fn = namespace.get(original_name)
+    if not callable(fn):
+        raise TypeError(f"{path.name} 的 {original_name} 不可调用（投影真源形状变了）")
+    call = cast("Callable[..., object]", fn)
+    _PROJECTION_CALLABLE_CACHE[key] = call
+    return call
+
+
+def _eval_projection_call(
+    node: ast.Call,
+    imports: dict[str, tuple[Path, str]],
+    stack: tuple[str, ...],
+) -> object:
+    """求值一枚**在册纯投影调用**：函数名在册、参数逐枚是字符串常量、不认关键字与星号参数。
+
+    这是 S38 白名单唯一新增的一格，其余 `Call` 一律照旧 ValueError（禁无限放宽）。
+    """
+    func = node.func
+    if not (isinstance(func, ast.Name) and func.id in HELP_LITERAL_PROJECTIONS):
+        raise ValueError(
+            f"不支持的字面量节点: Call（只认在册纯投影 {sorted(HELP_LITERAL_PROJECTIONS)}）"
+        )
+    if node.keywords or any(isinstance(arg, ast.Starred) for arg in node.args):
+        raise ValueError(f"在册投影 {func.id} 的调用形态不纯（关键字或星号参数）")
+    origin = imports.get(func.id)
+    if origin is None:
+        raise ValueError(
+            f"{func.id} 不是本模块从仓内模块 import 的名字＝无法确认投影真源住在哪份真身册里"
+        )
+    args: list[str] = []
+    for arg in node.args:
+        value = _eval_literal(arg, {}, (*stack, func.id))
+        if not isinstance(value, str):
+            raise TypeError(f"在册投影 {func.id} 的参数必须是字符串常量，得到 {type(value).__name__}")
+        args.append(value)
+    return _projection_callable(origin[0], origin[1])(*args)
+
+
+def _eval_literal(
+    node: ast.expr,
+    constants: dict[str, ast.expr],
+    stack: tuple[str, ...],
+    imports: dict[str, tuple[Path, str]] | None = None,
+) -> object:
     """AST 级字面量求值：`ast.literal_eval` 的整个认域 **加上** 同模块模块级常量的 Name 引用。
 
     安全红线（S38 简报逐字，P-S28-1）：只准对 AST 白名单节点求值，绝不解析/执行源码文本
     （不许把 literal_eval 放宽成 eval）。认域＝Constant（str/bytes/bool/int/float/complex/None）、
     tuple/list/set/dict 容器、一元 ±（仅数字）、以及能经同模块模块级简单赋值解析到底的 Name
     （递归展开、自环检测）。其余节点一律 ValueError——宁响失败，不静默吞值。
+
+    F-13 乙案批 2（2026-10-07）新增且仅新增一格：`imports` 给了认域时，在册纯投影调用
+    （`HELP_LITERAL_PROJECTIONS`）可按真身模块的定义求值——它不是"任意函数调用"，函数名、
+    参数形态、真源文件三者都要对上，任一不符照旧 ValueError。
     """
     if isinstance(node, ast.Constant):
         return node.value
     if isinstance(node, ast.Tuple):
-        return tuple(_eval_literal(elt, constants, stack) for elt in node.elts)
+        return tuple(_eval_literal(elt, constants, stack, imports) for elt in node.elts)
     if isinstance(node, ast.List):
-        return [_eval_literal(elt, constants, stack) for elt in node.elts]
+        return [_eval_literal(elt, constants, stack, imports) for elt in node.elts]
     if isinstance(node, ast.Set):
-        return {_eval_literal(elt, constants, stack) for elt in node.elts}
+        return {_eval_literal(elt, constants, stack, imports) for elt in node.elts}
     if isinstance(node, ast.Dict):
         if any(key is None for key in node.keys):
             raise ValueError("dict 的 ** 解包不是受支持的字面量形态")
-        keys = [_eval_literal(key, constants, stack) for key in node.keys if key is not None]
-        values = [_eval_literal(value, constants, stack) for value in node.values]
+        keys = [_eval_literal(key, constants, stack, imports) for key in node.keys if key is not None]
+        values = [_eval_literal(value, constants, stack, imports) for value in node.values]
         return dict(zip(keys, values))
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
-        operand = _eval_literal(node.operand, constants, stack)
+        operand = _eval_literal(node.operand, constants, stack, imports)
         if isinstance(operand, (int, float, complex)) and not isinstance(operand, bool):
             return +operand if isinstance(node.op, ast.UAdd) else -operand
         raise TypeError("一元 +/- 的字面量操作数必须是数字")
+    if isinstance(node, ast.Call):
+        if imports is None:
+            raise ValueError("不支持的字面量节点: Call")
+        return _eval_projection_call(node, imports, stack)
     if isinstance(node, ast.Name):
         if node.id in stack:
             raise ValueError("模块级常量循环引用: " + " -> ".join([*stack, node.id]))
         definition = constants.get(node.id)
         if definition is None:
             raise ValueError(f"无法解析的模块级名字: {node.id}（只认同模块的模块级简单常量赋值）")
-        return _eval_literal(definition, constants, (*stack, node.id))
+        return _eval_literal(definition, constants, (*stack, node.id), imports)
     raise ValueError(f"不支持的字面量节点: {type(node).__name__}")
 
 
 def _literal_assign(tree: ast.Module, name: str) -> object:
     constants = _module_literal_values(tree)
+    imports = _module_import_targets(tree)
     for node in tree.body:
         target = getattr(node, "target", None)
         targets = node.targets if isinstance(node, ast.Assign) else [target]
@@ -134,8 +293,9 @@ def _literal_assign(tree: ast.Module, name: str) -> object:
             value = getattr(node, "value", None)
             if value is None:
                 raise ValueError(f"assignment has no value: {name}")
-            return _eval_literal(value, constants, (name,))
+            return _eval_literal(value, constants, (name,), imports)
     raise ValueError(f"assignment not found: {name}")
+
 
 
 def _entries() -> list[dict[str, object]]:

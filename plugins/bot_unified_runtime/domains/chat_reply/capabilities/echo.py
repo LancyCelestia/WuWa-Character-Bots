@@ -25,6 +25,9 @@ from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
     ROLE_SUPER_ADMIN,
     build_role_settings,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.aliases import (
+    nickname_verbs_for,
+)
 from plugins.bot_unified_runtime.domains.core.config.config_readiness import (
     run_config_smoke,
 )
@@ -545,6 +548,18 @@ def build_ignore_guide_result(
 # 命令行文案的**唯一事实源是本表的 `lines[]`**；`detail` 只写叙述小节，
 # 【指令与参数】段在装配期由 `_compose_help_detail()` 派生注入，手写即被
 # tests/test_help_single_source.py 的结构锁拦下。
+#
+# 例外一格（F-13 乙案批 2，2026-10-07）：`_HELP_ENTRY_META[*]["triggers_nickname"]` 里
+# 那七簇「就是 `DEFAULT_VERB_MAP` 某能力的动词全集」的词面，改为转述真身
+# （`nickname_verbs_for("<capability id>")`，定义住在 runtime/aliases.py）。
+# 静态提取没被绕开——`scripts/command_catalog.py` 沿用 `_echo_help_detail_composer()`
+# 那条**已审**的口径（按 AST 取既有模块的模块级定义、隔离命名空间就地求值、零复制），
+# 只多认这一枚在册投影调用；装配期注入仍然禁止（尺＝tests/test_help_entries_coverage.py
+# 「META 声明集与运行时并集零差」那条，两取数口对拍＝
+# tests/test_help_nickname_projection_f13b2.py::test_runtime_and_static_extraction_agree）。
+# 其余字段（`aliases`/`triggers_nl`/`config_vars`/`tests`…）照旧必须写字面量：
+# `aliases` 与 `triggers_nl` 直接进 `docs/command-catalog.md` 的可见文案，而
+# `aliases` 那几簇与能力侧词表的镜像对还是触发词双向门的对照面（删任一侧当场拆门）。
 
 _HELP_ENTRIES: list[HelpEntry] = [
         {
@@ -2596,7 +2611,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
     },
     "状态": {
         "capability": "bot.status",
-        "triggers_nickname": ("状态", "狀態", "status", "查询"),
+        "triggers_nickname": nickname_verbs_for("bot.status"),
         "examples": ("/bot status",),
         "tests": ("tests/test_bot_commands_catalog_b10.py",),
     },
@@ -2649,7 +2664,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "capability": "bot.dialogue",
         "network": True,
         "outputs": ("文本诊断",),
-        "triggers_nickname": ("对话验收", "dialogue"),
+        "triggers_nickname": nickname_verbs_for("bot.dialogue"),
         "examples": ("/bot dialogue 今天状态怎么样",),
     },
     "接入": {
@@ -2708,7 +2723,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "capability": "bot.control",
         "network": False,
         "outputs": ("文本",),
-        "triggers_nickname": ("暂停", "暫停", "pause", "继续", "繼續", "resume"),
+        "triggers_nickname": nickname_verbs_for("bot.control"),
         "examples": ("/bot pause → 维护 → /bot resume",),
     },
     "回复": {
@@ -2798,7 +2813,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "capability": "bot.logs",
         "network": False,
         "outputs": ("文本",),
-        "triggers_nickname": ("日志", "logs", "查询日志"),
+        "triggers_nickname": nickname_verbs_for("bot.logs"),
         "examples": ("/bot logs error 20",),
     },
     "文件": {
@@ -2951,7 +2966,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
     },
     "订阅": {
         "capability": "bot.subscribe",
-        "triggers_nickname": ("订阅", "訂閱", "subscribe", "查询订阅"),
+        "triggers_nickname": nickname_verbs_for("bot.subscribe"),
         "network": True,
         "chat_scope": "群内 add/list 需管理员且推往本群，pause/resume/remove 群内需管理员；私聊添加=推给自己",
         "examples": ("/订阅 add https://space.bilibili.com/123456",),
@@ -3111,7 +3126,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "fallback": "区分「独立页缺失/列表缺失/网络失败」的文本提示",
         "chat_scope": _CHAT_SCOPE_CONSISTENT,
 
-        "triggers_nickname": ("wiki", "维基", "维基百科", "wikipedia"),
+        "triggers_nickname": nickname_verbs_for("bot.wiki"),
         "network": True,
         "triggers_nl": ("维基 <词条>", "wiki <词条>"),
         "config_vars": ("BOT_WIKI_LANG", "BOT_WIKI_ENTRY_PAGES"),
@@ -3248,7 +3263,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "capability": "bot.randpic",
         "chat_scope": _CHAT_SCOPE_CONSISTENT,
 
-        "triggers_nickname": ("隨機圖", "來張圖"),
+        "triggers_nickname": nickname_verbs_for("bot.randpic"),
         "network": False,
         "triggers_nl": ("随机图", "来张图", "隨機圖", "來張圖"),
         "outputs": ("图片",),

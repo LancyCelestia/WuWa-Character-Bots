@@ -123,13 +123,32 @@ _TEXT_RECEIVER: Final[re.Pattern[str]] = re.compile(
 #   另两份 control_plane/__init__.py 与 llm_engine/channel_health.py 仍在名册署名，留第二批收）。
 #   判据、扫描面、四枚地板（1100/700/140/100）、名册条数一字未动；AUTHORIZED_RAISES 不签
 #   （那是放宽方向用的）。牙口替代证明＝`test_poison_f13b_converged_sites_revert_is_debt`。
-WORD_SITE_CEILING: Final[int] = 472
+# 2026-10-07 F-13 乙案第二批（打 echo.py——10-06 普查现算的 Top1：9 枚单元／573 词次）：
+#   账 472 → 447（现算 raw 547→522＝−25，名册抵销 75 一字未动、登记仍 75 条、无一枚虚设）：
+#   `domains/chat_reply/capabilities/echo.py` 的 `_HELP_ENTRY_META` 七簇「某能力昵称动词全集」
+#   手抄词面（状态 4／暂停 6／日志 3／订阅 4／对话 2／维基 4／随机图 2＝25 枚词面）改为转述
+#   真身 `domains/chat_reply/runtime/aliases.py::DEFAULT_VERB_MAP`；投影口 `nickname_verbs_for()`
+#   住在真身表所在的**既有**模块（用户明令禁新建生产件，批 1 的 env_flags.py 教训照抄）。
+#   此前「引用这条路对本文件不成立」的依据（`command_catalog::_eval_literal` 只认同模块简单
+#   常量）已由 S38 那条**已审**通道补上：生成器按 AST 取真身模块的模块级定义、隔离命名空间
+#   就地求值、零复制实现，且只认 `HELP_LITERAL_PROJECTIONS` 这一枚在册函数、参数只准字符串
+#   常量——其余 Call 照旧 ValueError（旧两枚负锁一根没钝）。行为面零变化：那七列不进
+#   `docs/command-catalog.md`（生成器只渲染 aliases/triggers_nl），词集与批前手抄逐枚全等、
+#   `/bot help <词>` 落点与「守岸人<词>」解析逐项对拍、`--check` 现跑目录逐字节如旧。
+#   批 1 后仍在册的其余可收编簇（宿主机状态/书面同意/媒体归档/随机图 aliases/群信息 等）本批
+#   **刻意没动**：echo aliases ≡ 能力侧词表那几簇是触发词双向门的对照面，echo 侧
+#   aliases ≡ triggers_nickname 八簇又是 S33 `HOME_MIRROR_NOT_DEBT` 的在册镜像——动它们要先迁
+#   两本名册（放宽方向），不属本批「收口」；现算证据＝本批注毒那一发对 S33 零扰动（93/42 不动）。
+#   判据、扫描面、四枚地板一字未动；AUTHORIZED_RAISES 不签。
+#   牙口＝`test_poison_hand_copy_back_breaks_the_new_ceiling`
+#   ＋`tests/test_help_nickname_projection_f13b2.py`。
+WORD_SITE_CEILING: Final[int] = 447
 #: 逐次核账记录（日期, 当时债数），必须单调不升；**要抬必须在 `AUTHORIZED_RAISES` 里留一条
 #: 同日期同数值的签字凭据**（2026-10-05 用户裁 F-13「抬上限」时同批立的替代锁——
 #: 放宽一条腿必配一条牙），且末项＝当前上限（零余量锁）。
 AUDIT_HISTORY: Final[tuple[tuple[str, int], ...]] = (
     ("2026-09-24", 469), ("2026-09-27", 467), ("2026-09-27", 467), ("2026-10-05", 477),
-    ("2026-10-06", 472),
+    ("2026-10-06", 472), ("2026-10-07", 447),
 )
 
 #: 授权上调凭据（日期, 该次核账值, 授权出处摘要）。写不出"谁在哪一天裁的"就抬不了上限。
