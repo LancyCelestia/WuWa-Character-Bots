@@ -28,9 +28,17 @@ blocked＋原因可查（判 PASS，不是 FAIL）；被**别的**原因拦（�
 安全阀：
 - 默认 **DRY-RUN**：send_queue 为进程内 InMemorySendQueue，绝无真实发送路径；
   逐项打印「将发内容」（渲染后的 content_type / 文本预览 / 媒体计数）。
-- ``--execute`` 才真发：send_queue 换成 build_send_queue(config) 的 SQLite 队列
-  （与在线 bot 的 send-queue worker 共库），入队后由 bot worker 真实投递。
-  若 .env 未启用持久化发送队列则拒绝执行（InMemory 队列跨进程不可达）。
+- ``--execute`` 走 **临时库** 的 SQLite 队列（结构性隔离，非条件式，2026-10-07）：
+  send_queue 换成 ``build_send_queue(...)`` 的真 SQLite 队列，但 ``bot_send_queue_db_path``
+  被 ``choose_send_queue``→``send_queue_isolation_config`` 无条件改指 **OS 临时目录**
+  （``send_queue_isolation_dir``，不在源码树、不在 ``ChatBot_Runtime`` 根），
+  **绝不**落 ``ChatBot_Runtime/data/wuwa_send_queue.sqlite3``。理由＝那本库是在线 bot 的
+  send-queue worker 共读的**投递账本**：验收器往里入队＝在线 worker 会拿它去真发群/私聊
+  （盘上实据：曾因此产生 38 枚 ``sent``+107 枚 ``failed_final`` 的 e2e 行）。落临时库后
+  走的是真实 submit/建表/part 账本/``find_request``，但**在线 worker 看不见 ⇒ 零真实投递**。
+  若 .env 未启用持久化发送队列则拒绝执行（准入判定仍读原配置那枚生产路径）。
+  ⚠ 本波把「借生产队列交在线 worker 真发」这条通路整体切断；要在验收面看到真投递，
+  须另起一个跑在这本临时库上的 worker（属投递/transport 面，本波未动、留下一批）。
 - ``--target-group`` / ``--target-user`` 必填其一；群目标必须已在运行时 store
   的 BOT_GROUP_WHITE1 白名单（与 pipeline 同源读取），否则拒绝执行。
 - 逐项打印 ``[序号] 能力 → 发送结果回执``：state/transport/skipped 原样可见，
@@ -289,16 +297,88 @@ def build_pipeline(
     )
 
 
+def send_queue_isolation_dir(override: str | Path | None = None) -> Path:
+    """验收器**发送队列那本 SQLite 库**（同库带 ``send_request_parts`` part 账本）的
+    临时落点根——OS 临时目录：不在源码树、不在 ``ChatBot_Runtime`` 根。
+
+    🔴 结构性隔离，不是条件隔离（2026-10-07 本波）：``--execute`` 旧写法直接拿
+    ``build_send_queue(runtime.config)`` 的 ``bot_send_queue_db_path``，而 `.env` 那枚
+    ``data/wuwa_send_queue.sqlite3`` 经 ``runtime_paths`` 折成**生产库**
+    ``ChatBot_Runtime/data/wuwa_send_queue.sqlite3``——在线 bot 的 send-queue worker
+    读的正是同一本库，于是验收器入队的合成请求**被在线 worker 拿去真发**到群
+    662948429 / 私聊，协议端 ``retcode=100`` 打成 ``failed_final``，并把
+    ``origin_message_id`` 为 ``e2e-*`` 的行写进了投递台账（盘上实据见
+    tests/test_e2e_acceptance_queue_isolation.py 与本文件头）。这与 DRY-RUN
+    「只验形状不发」的承诺自相矛盾，也正是本波要根治的事故面。
+
+    改指 OS 临时目录后：验收器走的仍是**真实** ``SQLiteSendRequestQueue``（真实建表、
+    真实 submit、真实 part 账本、真实 ``find_request``），但库文件落在临时目录 ⇒
+    在线 worker 看不见 ⇒ 生产队列零字节、零真发。DRY-RUN 更不消说（InMemory，
+    一张 SQLite 都不开）。**不新增全局配置键**——复用 ``narration_probe_config``
+    那把 ``model_copy`` 换库路径的既有尺（见 ``send_queue_isolation_config``）。
+
+    固定名而非 ``mkdtemp``：与 ``_identity_dry_run_dir`` 同理，让同一轮验收的 probe
+    与逐项入队落在同一本临时库里才验得出连续性；轮与轮之间靠 OS 临时目录天然隔离。
+    ``override`` 供测试注入 ``tmp_path``（缺省 None 才走 OS 临时根）。
+    """
+    root = (
+        Path(override)
+        if override is not None
+        else Path(tempfile.gettempdir()) / "e2e-send-queue-isolation"
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def send_queue_isolation_config(base: Any, tmp_dir: Path) -> Any:
+    """照抄生产 config，只把**发送队列那本库**改指临时目录。
+
+    只动 ``bot_send_queue_db_path`` 一枚键——``send_request_parts``（part 账本，即本波
+    说的「ledger」）与 ``send_requests`` 同库同文件，改路径即两本一起隔离；审计/回执
+    两本在验收器里本就走内存实现（``InMemoryAuditLogger`` / 管线缺省
+    ``InMemoryReceiptRepository``），不碰磁盘、无须改。手法与 ``narration_probe_config``
+    一致（``model_copy`` 而非新建 ``Config``，否则不读环境变量、缺省
+    ``bot_runtime_data_dir="data"`` 会把路径折回源码树）。
+    """
+    update = {
+        "bot_send_queue_db_path": str(tmp_dir / "wuwa_send_queue.sqlite3"),
+    }
+    copier = getattr(base, "model_copy", None)
+    if callable(copier):
+        return copier(update=update)
+    merged = {
+        key: value
+        for key, value in vars(base).items()
+        if not key.startswith("_")
+        and isinstance(
+            value, (str, int, float, bool, list, tuple, dict, set, type(None))
+        )
+    }
+    merged.update(update)
+    return SimpleNamespace(**merged)
+
+
 def choose_send_queue(
-    runtime: E2eRuntime, audit_logger: Any
+    runtime: E2eRuntime,
+    audit_logger: Any,
+    *,
+    isolation_root: str | Path | None = None,
 ) -> tuple[Any, str]:
-    """DRY-RUN → InMemory（零真实发送路径）；--execute → 与 bot 共享的 SQLite 队列。"""
+    """DRY-RUN → InMemory（零真实发送路径、一张 SQLite 都不开）；
+    --execute → **临时库**上的 SQLite 队列（绝不合在线 bot 共用生产发送队列）。
+
+    ``isolation_root`` 只是给测试注入 ``tmp_path`` 的口；缺省走 OS 临时根
+    （``send_queue_isolation_dir``）。两态都**无条件**隔离，不接受「这次就写生产库」。
+    """
     config = runtime.config
     if not runtime.execute:
         return InMemorySendQueue(audit_logger=audit_logger), "dry-run:in-memory"
     enabled = bool(getattr(config, "bot_send_queue_enabled", False))
-    db_path = str(getattr(config, "bot_send_queue_db_path", "") or "").strip()
-    if not enabled or not db_path:
+    # 仍读**原配置**那枚生产路径做准入判定：部署侧没启用持久化队列 = 连生产队列本身
+    # 都不存在，验收器更不该假装能走「入队后被 worker 投递」这一面（存量安全阀语义不变，
+    # 锁 tests/test_e2e_acceptance.py::test_execute_requires_persistent_sqlite_queue）。
+    configured_db = str(getattr(config, "bot_send_queue_db_path", "") or "").strip()
+    if not enabled or not configured_db:
         raise E2eSafetyError(
             "--execute 需要持久化发送队列（BOT_SEND_QUEUE_ENABLED + "
             "BOT_SEND_QUEUE_DB_PATH），否则入队请求没有任何进程会投递。"
@@ -308,13 +388,19 @@ def choose_send_queue(
         build_send_queue,
     )
 
-    queue = build_send_queue(config, audit_logger=audit_logger)
+    # 🔴 结构性隔离：即便上面判定用的是生产库路径，真建队列时也必须换到临时库——
+    # 生产 ``wuwa_send_queue.sqlite3`` 由在线 worker 共读，验收器一旦往里入队就等于
+    # 让真人群/真私聊收到测试消息（本波根治）。``build_send_queue`` 只读它拿到的
+    # config 属性、不做任何路径重映射，故 ``model_copy`` 换绝对临时路径即逐字生效。
+    tmp_dir = send_queue_isolation_dir(isolation_root)
+    isolated = send_queue_isolation_config(config, tmp_dir)
+    queue = build_send_queue(isolated, audit_logger=audit_logger)
     if not isinstance(queue, SQLiteSendRequestQueue):
         raise E2eSafetyError(
             "--execute 期望 SQLite 发送队列，实际构建出 "
             f"{type(queue).__name__}；拒绝执行以防假真发。"
         )
-    return queue, f"execute:sqlite:{db_path}"
+    return queue, f"execute:sqlite:isolated:{queue.db_path}"
 
 
 # --------------------------------------------------------------------------
@@ -367,6 +453,8 @@ def synthesize_message(
     bot_id: str,
     seq: int,
 ) -> IncomingMessage:
+    # ``seq`` 仍保留在签名里（存量调用点逐字不改、并把序号写进日志/触发文本），
+    # 但**不再拿它去伪造 ``message_id``**——见下面 IncomingMessage 构造的注释。
     is_group = session_type is SessionType.GROUP
     return IncomingMessage(
         platform="qq",
@@ -382,7 +470,18 @@ def synthesize_message(
         raw_segments=[{"type": "text", "data": {"text": text}}],
         # 群里等价「@bot + 指令」，white1/white2 门均放行；私聊天然 mentions。
         mentions_bot=True,
-        message_id=f"e2e-{seq}-{int(time.time())}",
+        # 🔴 绝不伪造来件号（2026-10-07 本波）。旧写法 ``message_id=f"e2e-{seq}-{ts}"``
+        # 造了一枚看着像真号的假 id：管线把它原样抄进 ``SendRequest.origin_message_id``
+        # （pipeline 三处），而真身尺 ``transport/sender/nonebot.py::_MailRedriveEvent``
+        # 读的正是 ``origin_message_id`` 去盖邮件的 ``In-Reply-To`` / ``References``
+        # 线程头——生产里这是**唯一**的引用/回复把手来源。验收器没有真来件可指，
+        # 盘上实据即那批 ``"origin_message_id":"e2e-4-…"` 的 e2e 行落进了发送面。
+        # 正解＝验收器**不带引用**发（``message_id`` 留 None ⇒ ``origin_message_id=None``
+        # ⇒ ``_build_mail_reply_message`` 的 ``if message_id:`` 自然跳过线程头），
+        # 而不是「随手编一个」。生产零变化：真人真事仍由摄取层填真实号、照旧引用/回复。
+        # 锁＝tests/test_e2e_acceptance_queue_isolation.py::
+        # test_harness_payload_carries_no_reply_reference。
+        message_id=None,
     )
 
 
@@ -3887,7 +3986,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--execute",
         action="store_true",
-        help="真发：入队 SQLite 发送队列，由在线 bot worker 投递（默认 DRY-RUN）",
+        help=(
+            "真走发送链路：入队 **临时库** 上的 SQLite 发送队列（库经 "
+            "send_queue_isolation_config 改指 OS 临时目录，绝不碰生产 "
+            "wuwa_send_queue.sqlite3、绝不被在线 worker 真发；默认 DRY-RUN）"
+        ),
     )
     parser.add_argument(
         "--interval",
@@ -4038,7 +4141,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[安全阀] 私聊目标 {target_id}（私聊策略默认放行，角色/风控拦截除外）")
 
     mode_line = (
-        "execute（真发：入队 SQLite 队列，由在线 bot worker 投递）"
+        "execute（真走发送链路：入队 **临时库** 上的 SQLite 队列，"
+        "生产库零字节、不被在线 worker 真发）"
         if args.execute
         else "DRY-RUN（默认；InMemory 队列，无任何真实发送路径）"
     )
@@ -4112,10 +4216,11 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"共 {len(outcomes)} 项，错误 {len(errors)} 项，期望未达成 {len(expect_fails)} 项。"
         + (
-            "\n真发提示：--execute 项已入队，bot 的 send-queue worker 会按 "
-            "BOT_SEND_QUEUE_WORKER_INTERVAL_SECONDS 逐条投递；请在目标群/私聊回 test 验收。"
+            "\n说明：--execute 项已入队到 **临时库** 上的 SQLite 发送队列（真实 submit/"
+            "建表/part 账本全走），但生产 wuwa_send_queue.sqlite3 零字节、在线 worker "
+            "看不见 ⇒ **不会真发到群/私聊**（本波结构性切断，见文件头安全阀）。"
             if args.execute
-            else "\nDRY-RUN：以上为「将发内容」，未入真实队列。确认无误后加 --execute 重跑。"
+            else "\nDRY-RUN：以上为「将发内容」，未入任何队列。"
         )
     )
     return 1 if errors or expect_fails else 0
