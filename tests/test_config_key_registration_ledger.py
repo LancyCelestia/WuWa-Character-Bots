@@ -192,7 +192,20 @@ TEMPLATE_COVERED_BASELINE = 17
 # 2026-09-26 席 S-CONSENT-WIRE 现算复录 39 → 40：新增一枚＝`bot_safetyexec_enabled`
 #   （第 18 项咽喉波登记真字段，键名字面住在 consent.py::ConsentPolicy.from_config
 #   与 settings_gate.py 生产件里；归属本波，逐枚点名见 AST_DEAD 注释与本桶证据用例）。
-LITERAL_COVERED_BASELINE = 57
+LITERAL_COVERED_BASELINE = 59
+# 2026-10-06 席 F16-ANCHOR 现算复录 57 → 59（**两格分账、不并成一枚**）：
+#   ① 57 → 58＝**HEAD 轴存量**——本席 `git checkout-index -a -f --prefix=<仓库外>` 抽 HEAD 副本
+#     （2578 枚 tracked 件全数落地、含中文名件，副本内零 `.env`），同尺现算字面桶 58 枚
+#     ⇒ 基线早在 2026-10-03 之后入库的那批件里就落后一格（一枚键的 AST 可见直读在那批里
+#     消失、键名仍以字面量住在生产件 ⇒ 落本桶）。逐枚归属未做，本席不冒领。
+#   ② 58 → 59＝**本波那一枚**＝`bot_affinity_daily_move_cap_v8_z`（台账 F-16 日额度**键面**
+#     拆轴，2026-10-06 用户裁定甲）。两轴桶成员**差集现算**＝worktree-only `{该枚}`、
+#     HEAD-only `∅` ⇒ 本波只贡献这一格，可点可验。键名以字面量住在
+#     `domains/chat_reply/character/affinity.py` 的 `_V8_CONFIG_FIELDS` 与
+#     `positive_float("…")` 形参里，AST 直读尺结构上看不见 ⇒ 不落直读健康面、落本桶。
+#   模板/中央/绕中央/硬死四桶逐桶未动（17/1/1/39），待修总账 40 与指纹 7d16b0a81871fd65
+#   一字未动 ⇒ 不给任何一枚键发健康证；判据与容差零改动，桶升＝尺更利，不是放宽。
+#   五桶之和随之 115 → 117（`AST_DEAD_BASELINE` 同批复录）。
 # 2026-10-03 施工席20 现算复录 48 → 57：+9 全进字面桶＝affinity v8 波九枚新键
 #   （bot_affinity_v8_{enabled,impulse_weights,impulse_cap_z,ambient_centering,ambient_halflife_days,
 #   tier_blend_band} ＋ bot_affinity_goodwill_band_{min,max,saturate_days}），键名字面在场于
@@ -231,7 +244,13 @@ DEBT_ROSTER_SET_SHA = "7d16b0a81871fd65"
 #   形参转手 ⇒ AST 直读尺结构上看不见，与 sync_drift 七枚同形），键名字面在场于
 #   consent.py/settings_gate.py 生产件 ⇒ 落**字面桶**、不落硬死（待修总账 41 与
 #   各指纹逐字未动，下方逐桶恒等式现场复算兜底）。
-AST_DEAD_BASELINE = 115  # = 17 + 57 + 1 + 1 + 39（恒等式由 test_bucket_arithmetic_holds 现场核）
+AST_DEAD_BASELINE = 117  # = 17 + 59 + 1 + 1 + 39（恒等式由 test_bucket_arithmetic_holds 现场核）
+# 2026-10-06 席 F16-ANCHOR 现算复录 115 → 117：差数**全在字面桶**（57 → 59，逐格分账见
+#   `LITERAL_COVERED_BASELINE` 注＝HEAD 轴存量一格 ＋ 本波 `bot_affinity_daily_move_cap_v8_z`
+#   一枚），模板/中央/绕中央/硬死四桶逐桶未动（17/1/1/39），待修总账 40 与指纹
+#   7d16b0a81871fd65 一字未改 ⇒ 本次复录**不给任何一枚键发健康证**，只是把落后的棘轮对齐真值。
+#   两轴取证＝本席 `git checkout-index` 仓库外 HEAD 副本同尺现算 116（差集 worktree-only
+#   `{bot_affinity_daily_move_cap_v8_z}`），本席只认领其中一枚。
 # 2026-10-03 施工席20 现算复录 106 → 115：affinity v8 九枚新键落字面桶（逐枚点名见
 #   LITERAL_COVERED_BASELINE 注），模板/中央/绕中央/硬死四桶逐桶未动（17/1/1/39），
 #   待修总账 40 与指纹一字未改 ⇒ 不给任何一枚键发健康证。
@@ -315,7 +334,44 @@ GHOST_BY_NAME_SET_SHA = "01daed191cb06480"
 #   HEAD 侧 +1（已入库）＋在飞未跟踪生产件 7 枚（prompt_template/dangerous_command/
 #   write_trace/db_backup/host_snapshot/ab_red_bucket/rebuild_ann_index）。
 #   容差 CORPUS_FLOOR_SLACK=(0,200,0,50) 一字未动；地板升＝尺更利，不是放宽。
-CORPUS_FLOOR_BASELINE = (804, 1623, 3, 697)  # 2026-10-03 主会话终窗现算复录：直读维 1618→1623（差 5＝席25 媒体面 gate/chat.py 修改意图/席35 mail 地址恢复在飞读点，未逐枚冒领）、.py 维 696→697（＝tests 新件归 DEFAULT_SCOPES）；字段/模板维未动；容差 (0,200,0,50) 一字未动；地板升＝尺更利。毒发 11 上一窗 SILENT 即本维落后所致（账内有先例）。
+# 2026-10-06 席 FLOOR-PY（**用户明确授权「把这条 .py 维下限跟着事实降下来」**）现算复录：`.py` 维 697→**689**。
+#   现算四维＝**805 / 1624 / 3 / 689**；尺身份＝本件 `_corpus_sizes()`（＝`read_point_leg()` ＋
+#   `census.py_files(list(DEFAULT_SCOPES))`，与 `test_read_point_leg_is_not_blind`/`test_poison_11` 同一把尺）。
+#   口径原文＝`scripts/config_read_point_census.py` 的 `DEFAULT_SCOPES = ("plugins", "scripts", "bot.py")`
+#   ＋ `py_files()`（`rglob("*.py")`、跳 `__pycache__`、按 seen 去重）——**tests/、`ChatBot_Runtime/`、
+#   `ChatBot_Archive/`、`.superpowers/` 都不在这把尺里**，别拿 `find` 自造口径对数。逐 scope 现算
+#   ＝plugins 606 ＋ scripts 82 ＋ bot.py 1 ＝ 689。
+#   缩的真理由＝**HEAD 轴存量**，不是在飞抖动：垫片三态退役波 `17a160f`（2026-10-04，P2 减量波）删了
+#   **9 枚** .py 垫片（capabilities/chat.py、capabilities/market.py、capabilities/auto_send/__init__.py、
+#   runtime/settings.py、security/memory_sanitize.py、sender/__init__.py、sender/onebot.py、
+#   sources/fetchers/__init__.py、sources/subscriptions/__init__.py——`git show --diff-filter=D --name-only 17a160f`
+#   现算 9 行），同批只把 `tests/test_shim_retirement_ledger.py` 的 `MIN_SHIM_FLOOR 15→14`／
+#   `MIN_OUTSIDE_FLOOR 74→65` 两把尺按现算复录了，**这把 `.py` 维地板没跟着降** ⇒ 697 从此陈旧。
+#   链条现算（`git ls-tree -r --name-only <轴> -- plugins scripts bot.py | grep -c '\.py$'`，与 census 同口）：
+#   在册 697（2026-10-03 主会话终窗）→ `17a160f~1`＝**698**（其间 HEAD 侧净 +1 枚新件）→ `17a160f`＝**689**
+#   （698−9）→ **HEAD＝689**（`17a160f..HEAD` 区间对 plugins/scripts/bot.py 的 `--diff-filter=ARD` 现算**零**
+#   增删）。⚠ 与简报口径的出入照实写：简报说"退役 9 枚、**其后**又新增 1 枚"，git 现算是那 +1 在退役**之前**
+#   ⇒ 净差 −8 不变、落点 689 不变。登记格式即照 `17a160f` 同批那两笔先例（本席注在上、原账逐字在下）。
+#   两轴取证（同一把尺、产物不落源码树）：①HEAD 轴＝`git archive HEAD | tar -x -C <仓库外>` 后**在副本内**跑
+#   本尺＝**689**（副本内另两维 fields 804 / 直读 1623，与下方席 F16-ANCHOR 记的两轴差账逐维对得上）；
+#   ②工作树＝**689**（等值 ⇒ 落后全属存量，非在飞件造成）。⚠ 本窗曾短暂现算 **690**（一枚未跟踪在飞件
+#   `domains/core/config/env_flags.py` 在场，16:34 被它那席删除后回 689）——本维执法读**工作树**盘上现数，
+#   故录落定后的 689；若他席再有未跟踪生产件落地/摘除，本维会再漂，红了就按本口径重录（那是"棘轮≠现算"的
+#   正常红，不是判据坏）。
+#   ⚠ 易错点（前窗真踩过，此处留字面防再犯）：红文里那个「现算 NNN」**不是现算值**，是喂值——本维现算 689
+#   时绿腿喂 639（＝现算−容差）、红腿喂 638（＝现算−容差−1）；本窗红文里的 640 是工作树短暂现算 690 时的
+#   绿腿喂值。报数一律报**现算值本身**并点名它跟容差 (0,200,0,50) 的关系，别把喂值当现算录上去。
+#   牙口自证（本席实跑，非推定）：689 ⇒ `test_poison_15`＋`test_poison_16` **2 passed**；
+#   改 **688** ⇒ 15 红「第 3 维红腿不红：喂 现算−容差−1＝638 竟被判没变瞎 ⇒ 地板 688 已低于现算 689」、
+#   16 红（`DID NOT RAISE`）＝**低了红**；改 **690** ⇒ 15 红「生产 .py 文件数 现算 639，低于地板 640
+#   （基线 690 − 容差 50）」、16 红（`DID NOT RAISE`）＝**高了也红** ⇒ 双向咬，不是随便填个数都行。
+#   🔴 纪律：**下一次这一维再缩，必须先复跑 `_corpus_sizes()` 现算＋`test_poison_15`/`_16` 双发，
+#   并逐枚点名删的是哪些件（`git show --diff-filter=D`）＋跑一发 HEAD 轴仓库外副本同尺对照，不许顺手降。**
+#   本席零碰其余三维与全部桶/指纹（同刻复算逐条等值：字段 805／直读 1624／模板 3 与基线等值，
+#   五桶 17/59/1/1/39、`AST_DEAD_BASELINE` 117、待修 40 与指纹 7d16b0a81871fd65、未表态 549 与指纹
+#   9fb2a62679b67652、`GHOST_BY_NAME` 1、`CORPUS_FLOOR_SLACK` (0,200,0,50) 一字未动）；
+#   `CENTRAL_DYNAMIC_SITE_FLOOR` 现算 5 > 地板 4 属"只升不降"下界、非落后，未动。
+CORPUS_FLOOR_BASELINE = (805, 1624, 3, 689)  # 〔2026-10-06 席 FLOOR-PY 用户授权下调：`.py` 维 697→689，全账见上方注块；本行往下是席 F16-ANCHOR 当时的原账，逐字保留未改——它那句「🔴 .py 维未动／现算 689＜地板 697／越权停手交主会话裁」正是本席这次裁定的落地对象〕2026-10-06 席 F16-ANCHOR 现算复录**只动前两维、且只升不降**：①字段维 804→805＝台账 F-16 日额度键面拆轴新增那枚 `bot_affinity_daily_move_cap_v8_z`（config.py 字段，三面已登记；尺身份＝本件 `read_point_leg()`＋`census.py_files(list(DEFAULT_SCOPES))`；HEAD 轴仓库外副本同尺现算 804 ⇒ 两轴字段差恰＝这一枚，归本波、逐枚可点）。②直读维 1623→1624＝**他席在飞件**那一枚：两轴直读坐标 (file,key,kind) multiset 差集现算＝仅此一处 `runtime/intimate_control.py` 新增字面 getattr 读点 `bot_content_route_enabled`（其余差数全是行号漂移）——本席不冒领归属，但按本件在册教训（2026-09-25 席 MAIN-B1：「本波故意不动这两维 ⇒ 被 test_poison_11 当场揭穿是错的，地板落后把砍穿腿吃成 DID NOT RAISE」）把它对齐现算：本席 10-06 实跑同形复现（地板留 1623 时毒发 11 最后一发喂 1624−200−1＝1423 ≥ 1423 ⇒ SILENT；钉到 1624 后 1423 < 1424 ⇒ 咬住）。模板维 3 等值未动。🔴 `.py` 维 **未动**：现算 689 < 地板 697 落后 8 枚＝HEAD 轴存量（P2 减量波 `17a160f` 退役 9 枚垫片 −9 ＋其后入库新件 +1；仓库外 HEAD 副本同尺亦现算 689 ⇒ 非在飞件造成），对齐它要**下调**地板 ⇒ 越本席授权（门只准变严）⇒ 停手交主会话裁；689 ≥ 697−50 故变瞎腿不红，毒发 15/16 照旧红的是「地板≠现算」那两条等值腿，与本波无关。容差 (0,200,0,50) 一字未动；地板升＝尺更利，不是放宽。上一值 2026-10-03 主会话终窗现算复录 (804, 1623, 3, 697)：直读维 1618→1623（差 5＝席25 媒体面 gate/chat.py 修改意图/席35 mail 地址恢复在飞读点，未逐枚冒领）、.py 维 696→697（＝tests 新件归 DEFAULT_SCOPES）；字段/模板维未动；容差 (0,200,0,50) 一字未动；地板升＝尺更利。毒发 11 上一窗 SILENT 即本维落后所致（账内有先例）。
 # 上一值 (792, 1613, 3, 688)＝2026-10-02 席 S1（网络巡检连续失败去抖波）现算复录：字段维 791→792＝一枚 `bot_network_patrol_down_threshold`（读点＝根装配 `_register_network_patrol_scheduler` 的 getattr 字面键名），直读维 1612→1613＝同席这一处读点，模板维/.py 维逐枚未动（3/688）；巡检族四枚键全进 RESTART_REQUIRED_KEYS ⇒ 未表态 549 与指纹 9fb2a62679b67652 逐枚不变；判据与容差 (0,200,0,50) 一字未动。上一值 (791, 1612, 3, 688) ＝ 2026-10-02 傍窗主会话（db_backup 七键四面落键批）现算复录：只动字段维 784→791（差数逐枚＝`bot_db_backup_{enabled,dir,keep_last,size_ceiling_bytes,max_footprint_bytes,min_free_bytes,stale_after_hours}` 七枚新字段，消费点 domains/ops/db_backup.py:201-224；直读/模板/.py 三维一字未动——两枚真直读晨窗已计入直读维、五枚走 _read_int 形态不进直读尺）；容差 `CORPUS_FLOOR_SLACK = (0, 200, 0, 50)` 一字未动；地板升＝尺更利（更容易红），不是放宽。上一值 (784, 1612, 3, 688)＝2026-10-02 傍窗（修复波续做；CHK 席普查抓到漂→主会话现算复录）现算复录：poison 四腿实跑定位 dim1 cur=1612 base=1610、dim3 cur=688 base=687（喂 现算−容差−1 全 SILENT＝地板落后吃掉「砍穿容差」腿检测力，与下行前账同形）。**只动两维**＝直读维 1610→1612（差数逐枚点名＝席 INT 亲密人腿在 content_route.py 群分支新增两枚字面 getattr 读点 `bot_content_route_private_{whitelist,blacklist}`）、`.py` 维 687→688（＝席 DBT 新建 tests/test_db_backup.py，tests/ 在 DEFAULT_SCOPES 内）；字段维与模板维一字未动；容差 `CORPUS_FLOOR_SLACK = (0, 200, 0, 50)` 一字未动；地板升＝尺更利（更容易红），不是放宽。上一值 (784, 1610, 3, 687)＝2026-10-02 主会话（自主窗·目标项④尾红定位）现算复录：两趟同尺读数逐维等值 (784,1610,3,687) ⇒ 非瞬态（尺身份＝本件 `read_point_leg()`＋`census.py_files(list(DEFAULT_SCOPES))`，复算产物不落源码树）。**只动两维**＝直读维 1606→1610、`.py` 维 684→687；字段维与模板维一字未动；容差 `CORPUS_FLOOR_SLACK = (0, 200, 0, 50)` 一字未动；地板升＝尺更利（更容易红），不是放宽。差数逐枚点名（本席不冒领归属，三枚都是**未入库的在飞生产件**，各波 owner 自己认领）：`plugins/bot_unified_runtime/domains/chat_reply/llm_engine/prompt_template.py`、`plugins/bot_unified_runtime/domains/core/write_trace.py`、`plugins/bot_unified_runtime/runtime/db_backup.py`＝`.py` 维 +3（对照组＝HEAD 侧同尺 684 枚，`git -c core.quotePath=false ls-files` 与工作树路径两侧归一后差集为空反向）。**根因照实写（这一条是本窗才复现出来的）**：地板低于现算时，`test_poison_11`/`_14`/`_15`/`_16` 那几发「一次性砍穿容差才该红」的腿全部 SILENT（DID NOT RAISE）——喂进去的 现算−容差−1 仍 ≥ 地板−容差，检测力被地板自己那 4 枚/3 枚的落后吃掉了；本窗把这条从历史账升级成当场复现（复算读数 dim1 cur=1610 base=1606 ⇒ SILENT、dim3 cur=687 base=684 ⇒ SILENT，另两维 slack=0 恒 BITES）。上一值 (784, 1606, 3, 684)＝2026-10-01 席 W2（门禁配置三面补齐）现算复录（字段维 776→784＝**本席八枚**，逐枚可点：`bot_gate_command_requires_listed_group`（读点 domains/chat_reply/policy/gate.py `_command_listed_gate_from_config`）、`bot_quiet_hours_direct_bypass_{mentions,commands}`（读点 policy/quiet_hours.py::build_quiet_hours_settings——W1 在飞把早前那枚单键 `..._requires_both` 拆成两腿各一枚，本席按**落盘读点**定名）、`bot_rate_limit_command_{enabled,window_seconds,sender_max_requests,group_max_requests,bypass_roles}`（读点 policy/rate_limit.py::build_rate_limit_settings）；直读维 1604→1606＝本席 gate.py 新增一处字面 getattr 读点 ＋ W1 在飞把安静时间那枚读点拆成两腿（各一枚），其余读点本来就在树上（正是它们被 `test_config_read_points_declared` 判成幽灵的那几条），差数不逐枚冒领；`.py` 维 684 未动（本席零新生产件，只新建 patches 册）。八枚全进 `RESTART_REQUIRED_KEYS` ⇒ 未表态集合与指纹（9fb2a62679b67652）逐枚不变、`UNACCOUNTED_BASELINE` 仍 549。上一值 (776, 1604, 3, 684)：2026-09-30 席 树回铺后现算复录（直读 1586→1598、.py 676→684；差数＝回铺树把 W9a 的 `_album_container`/`row_hint` 两处新读点与事故前那批未回铺件一起算进来了，逐枚归属未做，按门自身口径「棘轮不等于真值就重录」整维对齐；判据与容差 (0,200,0,50) 一字未动）。上一值 (776,1586,3,676) 为 09-30 席「人格分册收尾」在替身树上的复录；再上行为前账：2026-09-29 席 FLOW（需求项 D2）现算复录 1554→1567 / 657→659：
 #   根因照实写：上一席只把**字段维**对齐真值，直读维与 .py 维留在容差 (0,200,0,50) 内
 #   没动 ⇒ `test_poison_11_new_field_floor_tracks_the_field_set` 的「一次性砍穿直读维才红」
