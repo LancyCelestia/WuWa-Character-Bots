@@ -213,6 +213,29 @@ def _public_output_hits(text: str) -> list[_ScanHit]:
     return hits
 
 
+def explicit_output_spans(text: str) -> list[tuple[int, int]]:
+    """群侧那把露骨尺的**区间形态**：返回命中词面在 `text` 里的 `(start, end)` 半开区间。
+
+    清单与 `_public_output_hits` 逐字同一枚真身（`_PUBLIC_OUTPUT_UNSAFE`），这里只是
+    把"命中了什么"换成"命中在哪"——Telegram 遮罩（用户 2026-10-06 裁「色情、敏感内容
+    在 tg 加遮罩，QQ 不拦也不做措施」）要的是坐标，涂销要的是标签，两读点零第二词表。
+    方向上是**少包不多包**：三枚模式各只取**第一处**命中（与 `_public_output_hits` 的
+    `pattern.search` 同口径），重叠区间合并一次，所以同一词面在一句里出现三次不会罩三段。
+    """
+    spans: list[tuple[int, int]] = []
+    for _label, pattern in _PUBLIC_OUTPUT_UNSAFE:
+        match = pattern.search(text)
+        if match is not None and match.end() > match.start():
+            spans.append((match.start(), match.end()))
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
 def _neutralise_public_spans(text: str, hits: list[_ScanHit]) -> str:
     """把命中的**那一处**换成记号，其余字符一个不动（就地中和，不整条丢掉）。
 

@@ -27,6 +27,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.deadline import (
     apply_request_deadline,
 )
 from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
+from plugins.bot_unified_runtime.domains.render.reviewer import explicit_output_spans
 from plugins.bot_unified_runtime.domains.transport.sender.failure_class import (
     RETRY_SAFETY_UNCERTAIN,
     classify_send_failure,
@@ -438,6 +439,40 @@ def _adapter_name(bot: Any) -> str:
     if callable(get_name):
         return str(get_name())
     return str(getattr(adapter, "name", ""))
+
+
+def _telegram_masked_payload(text: str) -> Any:
+    """Telegram 遮罩（用户 2026-10-06 裁「色情、敏感内容在 tg 加遮罩，QQ 不拦也不做措施」）。
+
+    命中露骨词面的那几段包成官方 `spoiler` 实体（点一下才显示），**其余一字不动**：
+    - 判据转述 `reviewer.explicit_output_spans` 那一枚真身（与群侧涂销同一清单，
+      禁第二份词表）；没命中就原样交裸 `str`，§10「TG 不设 parse_mode 的纯文本契约」
+      与改前逐字节相同。
+    - 走适配器**已有的 `Entity` 消息段**而不是新开格式化通道：`str(Message)` 仍是原文，
+      偏移由适配器按 UTF-16 自己算（本函数不数，避免量具与被包件同源）。
+    - 射程＝已经允许出门的文本。罩 ≠ 放行：六条硬线在 reviewer/内容政策那一层照旧拦，
+      到不了这里；群侧/频道侧的涂销也先本腿生效（公共面命中已被换成记号），所以本函数
+      实际只在 **TG 私聊**那一面咬得住。
+    - 通路保证「QQ 不做措施」：QQ 走 `send_onebot_v11`，结构上到不了这一支。
+    """
+    spans = explicit_output_spans(text)
+    if not spans:
+        return text
+    # 延迟导入：本模块要在 console/mail 也在场时工作，适配器缺席不该拖垮出站腿。
+    # 符号从 `.message` 取——`nonebot.adapters.telegram` 的 `__init__` 只再导出
+    # Bot/Event/Adapter/Message/MessageSegment，`Entity` 不在门面上（实跑 ImportError）。
+    from nonebot.adapters.telegram.message import Entity, Message
+
+    segments: list[Any] = []
+    cursor = 0
+    for start, end in spans:
+        if start > cursor:
+            segments.append(Entity.text(text[cursor:start]))
+        segments.append(Entity.spoiler(text[start:end]))
+        cursor = end
+    if cursor < len(text):
+        segments.append(Entity.text(text[cursor:]))
+    return Message(segments)
 
 
 def _provider_message_id(result: Any) -> str | None:
@@ -870,11 +905,15 @@ async def send_nonebot_message(
                 return result
             if result is None and not remaining and parts:
                 raise ValueError("telegram media part is not sendable")
+        # 遮罩只在这一处挂（两枚出口共用同一枚 payload）：mail/console 逐字节走原值。
+        payload = (
+            _telegram_masked_payload(remaining) if adapter_name == "telegram" else remaining
+        )
         if event is None:
             send_to = getattr(bot, "send_to", None)
             if not callable(send_to):
                 raise RuntimeError("adapter does not expose send_to")
-            return await send_to(send_request.target_id, remaining)
+            return await send_to(send_request.target_id, payload)
         if adapter_name == "mail":
             send_mail = getattr(bot, "send_mail", None)
             if not callable(send_mail):
@@ -886,7 +925,7 @@ async def send_nonebot_message(
             # send_mail 抛错/超时路径绝不引用未经出口证明的号）。
             outbound_message_id = str(reply_message["Message-ID"])
             return await send_mail(reply_message)
-        return await bot.send(event, remaining, **kwargs)
+        return await bot.send(event, payload, **kwargs)
 
     timeout = resolve_transport_timeout(timeout_seconds)
     try:
