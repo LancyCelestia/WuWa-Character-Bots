@@ -6319,7 +6319,7 @@ AxonHub 自动降级重试＝登记后置；⑥ 巡检 JSONL 曲线视图后置�
 
 ## 76.21 设计A 落地：Telegram 官方遮罩（点一下才显示），判据零第二词表（10-06 18:3x，主会话单席；未 commit；生效需重启）
 
-- **她的裁定原文**：「遮罩：色情、敏感内容，普通非18+内容不准进，16+也不能进遮罩」＋先前的「成人向内容在 tg 加遮罩，QQ 不直接拦、也不做措施」。⇒ 三条硬边界：只 Telegram、只有露骨词面命中、罩 ≠ 放行。
+- **她的裁定原文**：「遮罩：色情、敏感内容，普通非18+内容不准进，16+也不能进遮罩」＋先前的「成人向内容在 tg 加遮罩，QQ 不直接拦、也不做措施」。⇒ 三条硬边界：只 Telegram、只有露骨词面命中、罩 ≠ 放行。**追认（同日 19:1x）**：我把"敏感"按尺落成三族（露骨性描写／血腥细节／辱骂羞辱）并问她要不要收窄，她回「**三族都罩**」⇒ 现有实现即终态，**没做标签收窄**、也没为 QQ 造任何开关（"撤掉 QQ 涂销"不是待实施项，那等于放宽公开面、与她"第 2 层不要放开"冲突）。
 - **实现形态＝复用适配器已有的 `Entity` 消息段，不开新格式化通道**：`domains/transport/sender/nonebot.py::_telegram_masked_payload` 把命中段包成 `Entity.spoiler(...)`、其余包成 `Entity.text(...)`，偏移由适配器按 **UTF-16** 自算（本函数不数，避免量具与被包件同源）。**没有** `parse_mode`、**没有** HTML/MarkdownV2 转义面 ⇒ `str(Message)` 与改前逐字节相同，§10「TG 不设 parse_mode 的纯文本契约」（`domains/core/decision/outbound_registry.py` 在册那句）原文照旧成立。符号从 `nonebot.adapters.telegram.message` 取——包门面 `__init__` 只再导出 Bot/Event/Adapter/Message/MessageSegment，按 `from nonebot.adapters.telegram import Entity` 写会当场 `ImportError`（本波实撞，实跑取证）。
 - **判据＝群侧涂销那一枚真身的区间形态**：`domains/render/reviewer.py::explicit_output_spans`，读的是 `_PUBLIC_OUTPUT_UNSAFE` 同一清单（色情／血腥／辱骂三枚标签），只是把"命中了什么"换成"命中在哪"。口径与 `_public_output_hits` 同（各取**第一处**、重叠并一次）⇒ 同一词面一句里出现三次不会罩三段。锁内点名三种"不准进罩"：普通话、16+ 擦边（「呼吸贴着你的耳廓」那形）、带词界的编号（`MAR18`／`October 18`／`R-1800`＝F-12 那批裁定的形状）。
 - **「QQ 不做措施」由通路保证而非判据收窄**：QQ 走 `send_onebot_v11`，结构上到不了这一支；console/mail 也在 `adapter_name == "telegram"` 那一层挡住。公共面（群／频道）的涂销在本腿**之前**生效，所以遮罩实际只在 TG 私聊那一面咬得住。
