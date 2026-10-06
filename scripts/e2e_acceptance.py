@@ -371,7 +371,9 @@ def synthesize_message(
     return IncomingMessage(
         platform="qq",
         adapter="nonebot",
-        bot_id=bot_id or "unknown",
+        # 空串＝让队列按适配器选在线号；虚构哨兵会顶掉那一条腿（锁见
+        # tests/test_e2e_acceptance.py::test_harness_never_hands_the_queue_an_unmatchable_bot_id）。
+        bot_id=bot_id,
         session_id=(f"group_{target_id}_{sender_id}" if is_group else target_id),
         session_type=session_type,
         sender_id=sender_id,

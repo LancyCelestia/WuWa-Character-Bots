@@ -64,6 +64,7 @@ def _runtime_stub(tmp_path, **config_kwargs) -> e2e.E2eRuntime:
     在源码树 ``data/`` mkdir + ``sqlite3.connect`` 建库（生产库另住 ``ChatBot_Runtime/data/``）。
     """
     city = str(config_kwargs.pop("city", "北京"))
+    bot_id = str(config_kwargs.pop("bot_id", ""))
     # bot_affinity_enabled=False：离线测试不得打开 Runtime 真实好感度库；
     # 能力层对 store=None 会走降级文案，构造路径依旧完整可测。
     config_kwargs.setdefault("bot_runtime_data_dir", str(tmp_path / "runtime-data"))
@@ -86,7 +87,7 @@ def _runtime_stub(tmp_path, **config_kwargs) -> e2e.E2eRuntime:
         render_backend=None,
         execute=False,
         city=city,
-        bot_id="",
+        bot_id=bot_id,
         sender_id="10000",
     )
 
@@ -147,6 +148,51 @@ def test_synthesize_message_group_and_private_shapes() -> None:
     assert private_msg.session_type is SessionType.PRIVATE
 
 
+def test_harness_never_hands_the_queue_an_unmatchable_bot_id(tmp_path) -> None:
+    """验收面没配 bot 自身号时**必须交空串**，不许造一枚 `"unknown"` 哨兵顶上去。
+
+    真身尺 `__init__._select_queue_bot` 的身份臂判的是 `expected_bot_id` **是否非空**：
+    非空就走精确匹配（`self_id`/注册键），匹配不到直接 `return None`。于是虚构的
+    `"unknown"` 比空串更糟——空串会落到「按适配器选在线号」那一条（生产里 14 枚
+    `bot_id=""` 的请求照常 SENT 就是这条腿），而 `"unknown"` 恒选不出 bot ⇒ 队列侧
+    `bot_unavailable` 挂起 ⇒ 到 `bot_send_bot_unavailable_max_age_seconds` 绝对年龄闸
+    置 `failed_final`，**一条都没投出去、且全程没有报错**。
+    实案（2026-10-06 现算）：`wuwa_send_queue.sqlite3` 里发往群 662948429 的 71 枚
+    请求全部是 `('unknown','nonebot')` 形状、全部 `failed_final`；同期正常流量
+    `('3958874605','nonebot')` 569 枚 `sent`。
+    """
+    from plugins.bot_unified_runtime import _select_queue_bot
+
+    no_self_id = e2e.synthesize_message(
+        text="全球股市",
+        session_type=SessionType.GROUP,
+        target_id="123",
+        sender_id="456",
+        bot_id="",
+        seq=1,
+    )
+    assert no_self_id.bot_id == "", (
+        f"验收面虚构了 bot 身份 {no_self_id.bot_id!r}＝队列身份臂永不匹配（见本件 docstring）"
+    )
+
+    qq_bot = SimpleNamespace(self_id="3958874605", adapter=SimpleNamespace(get_name=lambda: "onebot"))
+
+    def provider() -> dict[str, object]:
+        return {"3958874605": qq_bot}
+
+    by_adapter = SimpleNamespace(bot_id="", adapter="nonebot")
+    by_sentinel = SimpleNamespace(bot_id="unknown", adapter="nonebot")
+    assert _select_queue_bot(provider, by_adapter) is qq_bot, "空 bot_id 应按适配器选出在线 QQ 号"
+    assert _select_queue_bot(provider, by_sentinel) is None, "哨兵必须证伪：它选不出任何号"
+
+    # 配了自身号那一形：原样带到请求上（走身份臂，不靠适配器猜）。
+    _, configured = _run_matrix_keys(
+        _runtime_stub(tmp_path, bot_id="789"), ["text-short"]
+    )
+    assert configured[0].send_request is not None
+    assert configured[0].send_request.bot_id == "789"
+
+
 def _run_matrix_keys(runtime: e2e.E2eRuntime, keys: list[str], group_id: str = "555"):
     queue = InMemorySendQueue(audit_logger=InMemoryAuditLogger())
     pipeline = e2e.build_pipeline(runtime, queue)
@@ -188,7 +234,7 @@ def test_dry_run_walks_real_pipeline_into_mock_queue(tmp_path) -> None:
         assert request.target_scope is SessionType.GROUP
         assert request.target_id == "555"
         assert request.session_id == "group_555_10000"
-        assert request.bot_id == "unknown"  # stub bot_id 为空 → 合成消息回退 unknown
+        assert request.bot_id == ""  # 没配自身号＝交空串，队列按适配器选在线号
 
 
 def test_dry_run_preview_describes_content_types(tmp_path) -> None:
