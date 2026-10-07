@@ -59,7 +59,12 @@ _MANIFEST_KEYS = (
 #: 改为转述 `runtime/aliases.py::nickname_verbs_for`。本脚本认这一枚 Call、不认任何别的：
 #: 函数名要在册、参数逐枚字符串常量、真源必须是仓内模块的模块级定义（取原语句就地 exec，
 #: 与 `_echo_help_detail_composer` 同一条通道，零复制实现）。放宽面到此为止。
-HELP_LITERAL_PROJECTIONS: frozenset[str] = frozenset({"nickname_verbs_for"})
+#: F-13 乙案批 3（同日）再加两枚**同族同形**的在册纯投影：`echo` 帮助册 `aliases` 列转述
+#: 能力自己的触发词表（宿主机状态/媒体归档）。两枚都不吃参数、体内零词面，仍只认
+#: 「函数名在册＋真源是仓内模块的模块级定义」——其余 Call 照旧 ValueError（旧两枚负锁没钝）。
+HELP_LITERAL_PROJECTIONS: frozenset[str] = frozenset(
+    {"nickname_verbs_for", "host_state_trigger_words", "media_archive_trigger_words"}
+)
 
 #: 「真身模块 → 可调用投影」缓存（同一份定义在一次生成里最多 exec 一次）。
 _PROJECTION_CALLABLE_CACHE: dict[tuple[str, str], Callable[..., object]] = {}
