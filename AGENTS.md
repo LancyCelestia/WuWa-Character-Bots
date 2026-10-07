@@ -160,7 +160,7 @@ QQ/SnowLuma(WS 3001) ⇄ bot.py(forward-WS)
 | 17 | meme 主动调用需防骚扰门（有意不上半吊子）→ 待评审 |
 | 18 | 点歌同名先问 → 完成 |
 | 19 | 随机 cos 照片 → 等外部 |
-| 20 | queue `source_bot=unknown` 已定性 → 重启后观察 |
+| 20 | queue `source_bot=unknown` 已根修 → §76.20 |
 | 21 | help 页脚头像缺省 → 等用户 |
 | 22 | R 系列角色体系 → 重启生效 |
 | 23 | CC 字幕必存 → 完成 |
