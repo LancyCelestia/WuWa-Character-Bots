@@ -2984,6 +2984,45 @@ class CommandOutcome:
     payload: dict[str, Any] = field(default_factory=dict)
 
 
+def classify_probe_outcome(queue_desc: str, state: str) -> str:
+    """worker 存活探针的结论必须看**这本队列有没有 worker 会去 drain**（`1eda900` 的后半账）。
+
+    隔离态（label 含 ``isolated``）下没人投递那条请求是**设计使然**，据此判"bot 未重启/未启用队列"
+    是错诊断（本仓 10-07 现算：真机 bot 在线、探针必然超时、整轮被 rc=3 中止）⇒ 记 ``not-verified``：
+    不中止，但必须当场说"这一态验不了投递"，不许静默跳过让下一个人以为验过。
+    真发态（``--live-delivery``，label 含 ``live-production-queue``）超时**仍然**是 ``worker-offline``
+    ——那支中止是本脚本的牙，不许因为本修被顺手磨掉。
+    """
+    desc = str(queue_desc or "")
+    if desc.startswith("dry-run") or "in-memory" in desc:
+        return "not-applicable"
+    if str(state or "") in _DELIVERY_TERMINAL_OK:
+        return "alive"
+    if "live-production-queue" in desc:
+        return "worker-offline"
+    if "isolated" in desc:
+        return "not-verified"
+    return "worker-offline"
+
+
+def probe_confirmation_text(verdict: str, elapsed: float) -> str:
+    """报告行「探针 …」的措辞真身：**没拿到确认就不许写成"确认"**。
+
+    在册形态＝把"未发生"叙述成"已发生"（与 §76.20 那枚 `bot_id="unknown"` 哨兵同族的反面：
+    那次是把真发说成没发，这次会把隔离态的**零验证**说成 0.0s 秒过）。隔离/拦截/预览三态
+    各有一句人话，只有 ``alive`` 允许出现"确认"二字。
+    """
+    if verdict == "alive":
+        return f"{elapsed:.1f}s 确认"
+    if verdict == "not-verified":
+        return "存活未验（队列落在临时库＝无 worker 会投这本库；要验请带 `--live-delivery`）"
+    if verdict == "not-applicable":
+        return "存活未验（预览态没有可探的队列）"
+    if verdict == "probe-blocked":
+        return "存活未验（探针被策略门拦截，未入队）"
+    return f"未确认（{verdict}）"
+
+
 def wait_for_delivery(
     queue: Any,
     *,
@@ -3729,45 +3768,58 @@ def run_help_matrix(args: argparse.Namespace) -> int:
     except Exception as exc:  # noqa: BLE001
         print(f"[探针] 管线异常，按离线中止：{type(exc).__name__}: {exc}", file=sys.stderr)
         return 3
+    probe_verdict = "pending"
     if probe_receipt.state.value in ("blocked", "skipped"):
+        probe_verdict = "probe-blocked"
         print(
             f"[探针] 被策略门拦截（state={probe_receipt.state.value}），"
             "无法验证 worker 存活；改由运行中连续超时早停兜底。"
         )
     else:
-        state, took = wait_for_delivery(
-            send_queue,
-            request_id=probe_message.request_id,
-            budget=float(args.probe_wait),
-        )
-        probe_outcome.status = status_from_delivery_state(state)
-        probe_outcome.state, probe_outcome.elapsed = state, took
-        if probe_outcome.status != "delivered":
-            report = render_run_report(
-                outcomes,
-                mode=mode,
-                target_desc=target_desc,
-                generated_at=generated_at,
-                subset_desc=",".join(subset_list) or "无",
-                ws_desc=f"{ws_endpoint[0]}:{ws_endpoint[1]} TCP 可达，但 worker {args.probe_wait:g}s 内无投递确认",
-                headline="离线中止：发送队列 worker 无响应（bot 未重启或未启用发送队列），全部条目未执行。",
+        if classify_probe_outcome(queue_desc, "pending") == "not-verified":
+            probe_verdict = "not-verified"
+            # 隔离态＝这本临时库压根没有 worker 会读，等下去必然超时 ⇒ 不烧 `--probe-wait` 预算。
+            # 🔴 但必须当场说"这一态验不了投递"——静默跳过会让下一个人以为探针跑过了（在册形态：
+            # 门会缩不会红）。逐项形状断言照常执行，不受本分支影响。
+            print(
+                "[探针] 队列落在临时库（隔离态）＝无 worker 会投递这本库 ⇒ worker 存活**本态不可验**；"
+                "要真投递请显式带 `--live-delivery`。以下各项仍按形状断言逐条执行。"
             )
-            for outcome in outcomes:
-                outcome.status = "skipped"
-                outcome.state = "worker-offline"
-            document = build_results_document(
-                outcomes, mode=mode, target_desc=target_desc, subset=subset_list,
-                ws_endpoint=ws_endpoint, ws_online=True, generated_at=generated_at,
+        else:
+            state, took = wait_for_delivery(
+                send_queue,
+                request_id=probe_message.request_id,
+                budget=float(args.probe_wait),
             )
-            json_path = write_json_document(document, args.json_out)
-            report_desc = deliver_or_write_report(
-                report, runtime=runtime, pipeline=None, execute=False, online=False,
-                report_file=args.report_file,
-            )
-            print(f"[离线] 探针超时（state={state}，{took:.1f}s）。JSON：{json_path}")
-            print(f"[报告] {report_desc}")
-            return 3
-        print(f"[探针] worker 在线（state={state}，{took:.1f}s），开始逐条发送。")
+            probe_verdict = classify_probe_outcome(queue_desc, state)
+            probe_outcome.status = status_from_delivery_state(state)
+            probe_outcome.state, probe_outcome.elapsed = state, took
+            if probe_verdict != "alive":
+                report = render_run_report(
+                    outcomes,
+                    mode=mode,
+                    target_desc=target_desc,
+                    generated_at=generated_at,
+                    subset_desc=",".join(subset_list) or "无",
+                    ws_desc=f"{ws_endpoint[0]}:{ws_endpoint[1]} TCP 可达，但 worker {args.probe_wait:g}s 内无投递确认",
+                    headline="离线中止：发送队列 worker 无响应（bot 未重启或未启用发送队列），全部条目未执行。",
+                )
+                for outcome in outcomes:
+                    outcome.status = "skipped"
+                    outcome.state = "worker-offline"
+                document = build_results_document(
+                    outcomes, mode=mode, target_desc=target_desc, subset=subset_list,
+                    ws_endpoint=ws_endpoint, ws_online=True, generated_at=generated_at,
+                )
+                json_path = write_json_document(document, args.json_out)
+                report_desc = deliver_or_write_report(
+                    report, runtime=runtime, pipeline=None, execute=False, online=False,
+                    report_file=args.report_file,
+                )
+                print(f"[离线] 探针超时（state={state}，{took:.1f}s）。JSON：{json_path}")
+                print(f"[报告] {report_desc}")
+                return 3
+            print(f"[探针] worker 在线（state={state}，{took:.1f}s），开始逐条发送。")
 
     total = len(outcomes)
     delivered_so_far = 0
@@ -3873,7 +3925,10 @@ def run_help_matrix(args: argparse.Namespace) -> int:
             generated_at=generated_at,
             subset_desc=",".join(subset_list) or "无",
             wait_budget=float(args.wait),
-            ws_desc=f"{ws_endpoint[0]}:{ws_endpoint[1]} 可达，探针 {probe_outcome.elapsed:.1f}s 确认",
+            ws_desc=(
+                f"{ws_endpoint[0]}:{ws_endpoint[1]} 可达，探针 "
+                + probe_confirmation_text(probe_verdict, probe_outcome.elapsed)
+            ),
             headline=(
                 "离线早停：部分条目未执行。" if offline_abort else ""
             ),
