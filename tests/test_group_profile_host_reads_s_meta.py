@@ -384,12 +384,20 @@ def test_unprobed_qq_meta_never_becomes_offline() -> None:
     未探测态一旦被塞进它（或展示层缺省填一个状态），用户读到的就是「对方离线」——
     凭空替真人编出一个他/她没做过的动作。这里用「整格不进答案」做结构锁：
     未探测时 ``在线状态`` 这个标签**一个字都不许出现在正文里**。
+
+    2026-10-07 用户裁甲案后改判单元层：QQ 私聊问「群信息」不再走对端资料腿（那条路本就该
+    回「去群里问」，见 ``test_group_info.py`` 三枚证人），所以这条锁不再借能力入口取证，
+    直接钉答句生产者 ``_qq_private_meta``——它同时是每轮提示词注入腿用的同一份真身。
     """
-    body = _cap_without_api()(_peer_message("qq", "386506762", "386506762"), None).body
+    lines, audit = gi._qq_private_meta(
+        _never_called_fetch, _peer_message("qq", "386506762", "386506762"), probed=False
+    )
+    body = "\n".join(lines)
     assert gi.QQ_META_UNPROBED_ANSWER in body, "未探测退成了失败态＝谎报一次没发生的请求"
     assert "离线" not in body, f"未探测被写成离线：{body}"
     assert "在线状态" not in body, "未探测态不许产出在线状态这一格（连标签都不许出现）"
     assert "接口这次没答上" not in body, "未探测与失败两态必须分家，不许共用答句"
+    assert gi.qq_meta_probe_state(audit) == gi.QQ_META_PROBE_UNPROBED
 
 
 def test_the_offline_label_is_live_so_the_absence_lock_is_not_vacuous() -> None:
@@ -409,22 +417,17 @@ def test_failed_qq_meta_still_says_the_api_answered_badly() -> None:
 
     只写上面那条的话，把两态一起删光也能绿；这一条钉住「失败态仍然像失败」，
     两合起来才堵死「统一推给一句万金油降级」的偷懒改法。
+
+    与上一条同批改判单元层（甲案）。协议端**抛异常**那条通路不在这里锁——它由
+    ``tests/test_group_info.py`` 的能力级失败腿看着（本文件只锁三态答句的分家）。
     """
-
-    class _BadApi:
-        def __call__(self, action: str, **params: object) -> object:
-            raise TimeoutError("模拟协议端超时")
-
-    from plugins.bot_unified_runtime.domains.chat_reply.runtime.group_cache import (
-        GroupInfoCache,
-    )
-
-    body = gi.build_group_info_capability(
-        api=_BadApi(), cache=GroupInfoCache()
-    )(_peer_message("qq", "386506762", "386506762"), None).body
+    fetch = _fetch_factory({}, fail={gi.QQ_ACCOUNT_META_ACTION})
+    lines, audit = gi._qq_private_meta(fetch, _peer_message("qq", "386506762", "386506762"))
+    body = "\n".join(lines)
     assert "接口这次没答上" in body
     assert gi.QQ_META_UNPROBED_ANSWER not in body, "真打了接口却答「没去探测」＝反向谎报"
     assert "离线" not in body
+    assert gi.qq_meta_probe_state(audit) == gi.QQ_META_PROBE_FAILED
 
 
 def test_telegram_unprobed_leg_shares_the_three_state_wording() -> None:

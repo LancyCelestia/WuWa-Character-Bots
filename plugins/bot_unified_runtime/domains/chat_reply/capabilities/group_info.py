@@ -1223,20 +1223,22 @@ def build_group_info_capability(
             wants_session_meta = platform == "email" or (
                 platform == "telegram" and is_private
             )
-            # QQ 私聊对端资料腿（需求 4 · 2026-09-28 S-META）：旧注释写「get_stranger_info
-            # 的签名/在线状态在协议册里有、bot 侧尚无宿主能力」——那半句已过期，能力
-            # 就在 read_qq_account_meta。这里放开这一格，**其余 QQ 非私聊会话**（控制台等）
-            # 仍回口语提示：群 API 无对象可查这件事没变，变的只是「对端资料能不能读」。
-            wants_qq_peer_meta = platform == "qq" and is_private
+            # QQ 私聊**不**放开对端资料腿（2026-10-07 用户裁甲案）：在册设计面从未改口
+            # （`docs/boards/B01-ingress-protocol/qq-snowluma/group-info.md`：私聊问群信息＝回
+            # 一句「去群里问」，不硬答也不拒人），三枚证人同时锁该答句与「零协议调用」。
+            # 旧形制把这条腿挂在群 profile 意图上，于是「问的是群、答的是人」，还顺手对
+            # 提问者打一次 get_stranger_info。QQ 对端资料的正当消费者是每轮提示词注入腿
+            # （conversation_profile → chat.py 的 sender_profile_note），不经群信息触发词；
+            # `_qq_private_meta` 与下面 qq 那一臂因此原样留在盘上（本波不退役）。
             wants_meta = wants_participants or (
-                "profile" in intents and (wants_session_meta or wants_qq_peer_meta)
+                "profile" in intents and wants_session_meta
             )
             if not wants_meta:
                 return _result(_PRIVATE_HINT, audit=["group_info", "private_hint"])
             blocks: list[str] = []
             audits: list[str] = ["group_info", "conversation_participants"]
             meta_emitted_mail_line = False
-            if "profile" in intents and (wants_session_meta or wants_qq_peer_meta):
+            if "profile" in intents and wants_session_meta:
                 if platform == "telegram":
                     meta_lines, meta_audit = _telegram_private_meta(
                         _fetch, message, probed=api is not None
