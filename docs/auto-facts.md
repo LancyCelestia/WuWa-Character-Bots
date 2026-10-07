@@ -9,7 +9,7 @@
 - RouteKind（37）：ALIAS, ADMIN, SUBSCRIBE, AUTO_SEND, MEME, MEME_LIBRARY, MUSIC_MODE, MUSIC, TODAY_HISTORY, WIKI, MOEGIRL, MOEGIRL_QUESTION, EPIC, WEATHER, MARKET, STOCKS, COMMODITIES, BOND, NORTHBOUND, FX, NEWS, RANDPIC, REMINDER, MEDIA_ARCHIVE, DAILY_ASSIST, GROUP_INFO, HOST_STATE, CONSENT, EAT, AFFINITY, DIVINATION, TTS, NATURAL_COMMAND, CONTENT, CHAT, EMERGENCY_INFO, IGNORE
 
 - 帮助 topic 数：83（重名 0）
-- 测试文件数：1070
+- 测试文件数：1071
 - config.py bot_* 字段数：806
 
 - 哈希清单范围（19）：plugins/bot_unified_runtime/domains/render/card_render/templates/universal_card.html, plugins/bot_unified_runtime/domains/render/card_render/templates/affinity_card.html, plugins/bot_unified_runtime/domains/render/card_render/templates/finance_card.html, plugins/bot_unified_runtime/domains/render/card_render/templates/market_card.html, plugins/bot_unified_runtime/domains/render/card_render/templates/mermaid_card.html, plugins/bot_unified_runtime/domains/render/card_render/templates/song_candidates.html, plugins/bot_unified_runtime/domains/render/card_render/templates/error_card.html, plugins/bot_unified_runtime/domains/render/card_render/theme_tokens.py, docs/rendering-contract.md, DESIGN-SPEC.md, docs/design/fstring-card-dom-spec.md, docs/design/render-pipeline-optimization-spec.md, docs/design/visual-effects-catalog.md, plugins/bot_unified_runtime/domains/render/card_render/bridge.py, plugins/bot_unified_runtime/domains/ops/admin/debug.py, plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py, plugins/bot_unified_runtime/domains/render/card_render/usage_cards.py, plugins/bot_unified_runtime/domains/render/renderer.py, plugins/bot_unified_runtime/domains/render/templates.py
