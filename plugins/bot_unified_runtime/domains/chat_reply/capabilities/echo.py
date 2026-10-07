@@ -35,11 +35,17 @@ from plugins.bot_unified_runtime.domains.creation.reserved_health_alert import (
     creation_status_line,
     flush_reserved_issues_to_alerts,
 )
+from plugins.bot_unified_runtime.domains.media.capabilities.media_archive import (
+    media_archive_trigger_words,
+)
 from plugins.bot_unified_runtime.domains.media.voice_health_alert import (
     flush_probe_issue_to_alerts,
 )
 from plugins.bot_unified_runtime.domains.media.voice_health_probe import (
     voice_status_line,
+)
+from plugins.bot_unified_runtime.domains.ops.capabilities.host_state import (
+    host_state_trigger_words,
 )
 from plugins.bot_unified_runtime.runtime import RuntimeControlState
 
@@ -564,7 +570,7 @@ def build_ignore_guide_result(
 _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": "功能管理", "admin_only": True,
-            "aliases": ("功能管理", "feature"),
+            "aliases": nickname_verbs_for("bot.runtime"),
             "index": "【功能管理】查询和控制能力树：/bot feature",
             "title_line": "【功能管理】能力树状态与版本",
             "lines": [
@@ -604,7 +610,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '记忆',
             "admin_only": False,
-            "aliases": ('记忆', 'memory'),
+            "aliases": nickname_verbs_for("bot.memory"),
             "index": '【记忆】管理我的长期记忆：/bot memory add|list|delete',
             "title_line": '【记忆】管理我交给机器人的长期记忆',
             "lines": [
@@ -628,7 +634,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '为什么',
             "admin_only": True,
-            "aliases": ('为什么', '为啥', 'why'),
+            "aliases": nickname_verbs_for("bot.why"),
             "index": '【为什么】解释最近决策：/bot why [id]',
             "title_line": '【为什么】解释最近一次回复的决策与错误',
             "lines": [
@@ -776,7 +782,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '配置',
             "admin_only": True,
-            "aliases": ('配置', 'config'),
+            "aliases": nickname_verbs_for("bot.config"),
             "index": '【配置】配置检查：/bot config',
             "title_line": '【配置】配置就绪检查',
             "lines": [
@@ -794,7 +800,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '就绪',
             "admin_only": True,
-            "aliases": ('就绪', 'readiness'),
+            "aliases": nickname_verbs_for("bot.readiness"),
             "index": '【就绪】聚合就绪状态：/bot readiness',
             "title_line": '【就绪】聚合就绪状态',
             "lines": [
@@ -812,7 +818,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '角色',
             "admin_only": True,
-            "aliases": ('角色', 'roles'),
+            "aliases": nickname_verbs_for("bot.roles"),
             "index": '【角色】权限角色摘要：/bot roles',
             "title_line": '【角色】权限角色摘要',
             "lines": [
@@ -830,7 +836,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '人格',
             "admin_only": True,
-            "aliases": ('人格', 'persona'),
+            "aliases": nickname_verbs_for("bot.persona"),
             "index": '【人格】人格自检：/bot persona',
             "title_line": '【人格】守岸人人格材料自检',
             "lines": [
@@ -1971,7 +1977,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '媒体归档',
             "admin_only": True,
-            "aliases": ('收藏', '归档', '存图', '收图', '存聊天记录', '存记录', 'archive', 'shoucang', 'guidang'),
+            "aliases": media_archive_trigger_words(),
             "index": '【媒体归档】媒体按 类别/作品 归档：收藏｜归档 IP=原神｜存聊天记录',
             "title_line": '【媒体归档】把媒体按 类别×作品 归档到本机',
             "lines": [
@@ -2028,9 +2034,10 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '宿主机状态',
             "admin_only": True,
-            # 词表必须写字面量（command_catalog 的静态求值只认同模块常量），
-            # 且与 host_state.DEFAULT_TRIGGER_WORDS 逐字同集，由触发词双向门执法。
-            "aliases": ('宿主机状态', '机器状态', '机器配置', '宿主状态', '宿主機狀態', '機器狀態', 'hoststate', 'jiqizhuangtai', 'jizhuangtai', 'jiqipeizhi'),
+            # 词表真身＝host_state.DEFAULT_TRIGGER_WORDS；本列经 HELP_LITERAL_PROJECTIONS
+            # 那条在册纯投影口转述它（F-13 乙案批 3），不再手打第二遍。触发词双向门
+            # 仍逐词执法——现在执法的是「一处真身 + 一条投影口」而不是「两份抄件」。
+            "aliases": host_state_trigger_words(),
             "index": '【宿主机状态】超管看本机：机器状态｜机器配置｜版本与占用',
             "title_line": '【宿主机状态】这台机器的配置、占用与运行版本（仅管理员）',
             "lines": [
@@ -2619,7 +2626,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "capability": "bot.memory",
         "network": False,
         "outputs": ("文本",),
-        "triggers_nickname": ("记忆", "memory"),
+        "triggers_nickname": nickname_verbs_for("bot.memory"),
         "chat_scope": "私聊=全部个人记忆；群聊=仅 public/group 两级，防止个人私事被围观",
         "config_vars": ("BOT_MEMORY_ENABLED", "BOT_MEMORY_DB_PATH"),
         "examples": ("/bot memory add 我对芒果过敏 --sensitivity=group",),
@@ -2627,7 +2634,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
     },
     "为什么": {
         "capability": "bot.why",
-        "triggers_nickname": ("为什么", "为啥", "why"),
+        "triggers_nickname": nickname_verbs_for("bot.why"),
         "examples": ("/bot why｜/bot why help_8f2a1b3c",),
     },
     "回执": {
@@ -2680,21 +2687,21 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "capability": "bot.config",
         "network": False,
         "outputs": ("文本",),
-        "triggers_nickname": ("配置", "config"),
+        "triggers_nickname": nickname_verbs_for("bot.config"),
         "examples": ("/bot config",),
     },
     "就绪": {
         "capability": "bot.readiness",
         "network": False,
         "outputs": ("文本",),
-        "triggers_nickname": ("就绪", "readiness"),
+        "triggers_nickname": nickname_verbs_for("bot.readiness"),
         "examples": ("/bot readiness",),
     },
     "角色": {
         "capability": "bot.roles",
         "network": False,
         "outputs": ("文本",),
-        "triggers_nickname": ("角色", "roles"),
+        "triggers_nickname": nickname_verbs_for("bot.roles"),
         "config_vars": ("BOT_ADMIN_USER_IDS", "BOT_TELEGRAM_ADMIN_USER_IDS"),
         "examples": ("/bot roles",),
         "tests": ("tests/test_admin_roster_and_roles.py",),
@@ -2703,7 +2710,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "capability": "bot.persona",
         "network": False,
         "outputs": ("文本",),
-        "triggers_nickname": ("人格", "persona"),
+        "triggers_nickname": nickname_verbs_for("bot.persona"),
         "examples": ("/bot persona",),
     },
     "路由": {
@@ -3225,7 +3232,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "capability": "bot.host_state",
         "network": False,
         "outputs": ("文本", "图片"),
-        "triggers_nickname": ("宿主机状态", "机器状态", "机器配置", "宿主状态", "宿主機狀態", "機器狀態", "hoststate", "jiqizhuangtai", "jizhuangtai", "jiqipeizhi"),
+        "triggers_nickname": host_state_trigger_words(),
         "chat_scope": "仅超级管理员（其余角色得到一句温和拒绝）；群聊与私聊同面可问；读数本机现算、逐行打码，只读不改任何设置",
         "examples": ("机器状态｜机器配置｜宿主状态｜hoststate",),
         "tests": ("tests/test_host_state_card.py", "tests/test_host_metrics.py", "tests/test_host_status.py"),
@@ -3463,7 +3470,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "capability": "/bot decision",
         "network": False,
         "outputs": ("文本",),
-        "triggers_nickname": ("决策", "decision"),
+        "triggers_nickname": nickname_verbs_for("bot.decision"),
         "examples": ("/bot decision", "/bot decision 50"),
         "tests": ("tests/test_decision_trace_persistence.py",),
     },

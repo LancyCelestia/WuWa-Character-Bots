@@ -51,8 +51,9 @@ from plugins.bot_unified_runtime.domains.ops import host_metrics as hm
 CAPABILITY_ID = "bot.host_state"
 
 # 触发词表（简中/繁中/英文/拼音，与 randpic 的 DEFAULT_TRIGGER_WORDS 同族形态）。
-# 主代理接线时把这组词同步进 base_router 谓词与 echo 帮助词表——双向门按词级
-# diff 执法，两头必须一字不差。
+# 本表是这组词的唯一真身：主代理接线时把它同步进 base_router 谓词；帮助册（echo 两列）
+# 经 `host_state_trigger_words()` 转述，不再各手打一遍（F-13 乙案批 3）。
+# 触发词双向门仍按词级 diff 执法，两头必须一字不差——现在是「一处真身 + 一条投影口」。
 DEFAULT_TRIGGER_WORDS: tuple[str, ...] = (
     "宿主机状态",
     "机器状态",
@@ -69,6 +70,28 @@ DEFAULT_TRIGGER_WORDS: tuple[str, ...] = (
 # 词尾边界集：与 randpic/media_archive 现行手抄串逐字节相同（中央权威集加宽
 # 属行为变更，本席不动别的能力的既有口径，只对齐同族现状）。
 _BOUNDARY_CHARS = "，,。！？!?：:、 的了呢吗呀啊哈～~"
+
+
+def host_state_trigger_words() -> tuple[str, ...]:
+    """帮助册转述本能力触发词的**唯一投影口**（F-13 乙案批 3）。
+
+    为什么要有这一口：`echo.py` 的 `_HELP_ENTRIES[宿主机状态].aliases` 与
+    `_HELP_ENTRY_META[宿主机状态].triggers_nickname` 此前把这组词**各手打一遍**，
+    加上本件这份就是三处声明位（同一事实三处抄＝AGENTS 铁律「禁第二真身」）。
+    帮助侧从此只转述：本件这张表改了，帮助页与检索面自动跟随。
+
+    口径纪律（与批 2 的 `nickname_verbs_for` 同族）：
+    * **只转述不改造**——逐字返回 `DEFAULT_TRIGGER_WORDS`，不并集、不补形、不派生繁简/拼音；
+      投影输出与批前那两列手抄词面**逐枚有序全等**（锁＝
+      ``tests/test_help_alias_projection_f13b3.py``，快照凭据＝改动前现算存证）。
+      顺序也钉：`aliases` 列进 `docs/command-catalog.md`，顺序＝可见内容。
+    * **本函数体内不许出现任何词面字面量**（同锁的 wordless 那条），否则投影口自己变第二真身。
+    * 静态取数口（`scripts/command_catalog.py`）按在册纯投影通道解这一枚——函数名进
+      `HELP_LITERAL_PROJECTIONS`，参数只准字符串常量（本口不吃参数）。
+    * 禁新建生产件（用户 2026-10-06 裁定）：投影口就住在真身表所在的**本既有文件**里。
+    """
+    return tuple(DEFAULT_TRIGGER_WORDS)
+
 
 CARD_FAIL_NOTE = "宿主机卡未出图（渲染后端不可用），以上读数即全部结果。"
 LOOP_DEGRADE_NOTE = (
@@ -250,6 +273,7 @@ __all__ = [
     "build_host_state_capability",
     "build_host_state_result",
     "host_state_body_lines",
+    "host_state_trigger_words",
     "is_host_state_command",
     "is_super_admin_actor",
 ]

@@ -522,18 +522,16 @@ COPY_NOT_DEBT: Final[tuple[NotDebtCopy, ...]] = (
     ),  # S-BASE归因新增｜真身 reply_policy.py:181:_HUMAN_DIRECTIVE_WORDS#dictkeys（在账）｜现算位 654
 )
 
-#: **ruleA 不计账名册（11 簇在册镜像对，2026-09-26 随同意门入第 11 簇；另「订阅」簇为跨能力撞词、刻意不入本册＝继续记账经移交）**。
+#: **ruleA 不计账名册（在册镜像对逐枚点名，条数以本元组现算为准；另「订阅」簇为跨能力撞词、
+#: 刻意不入本册＝继续记账经移交）**。
+#: ⚠ F-13 乙案第三批（2026-10-07）同批摘 8 行：帮助册那侧的**手抄字面量**被改成转述真身
+#:   （六枚 echo 内部 aliases≡triggers_nickname 镜像对＝记忆/为什么/配置/就绪/角色/人格，
+#:   加「媒体归档」aliases↔media_archive.DEFAULT_TRIGGER_WORDS、「宿主机状态」三员簇），
+#:   镜像对从此不存在 ⇒ 那八行成了虚设豁免（活性锁会当场点它），按「名册随生产同批迁」摘掉。
+#:   本尺 raw 随之下掉同样的量、豁免同数下掉 ⇒ **计账 42 一字未动**（不是把债搬走，是债本身没了）。
+#:   未摘：history/随机图/群信息/书面同意四行——前两条列的词集与真身不同序或不同集（投影会改
+#:   交付物字节），后两条的宿主件此刻有别席在飞半件，本批按共享树纪律让路。
 HOME_MIRROR_NOT_DEBT: Final[tuple[NotDebtMirror, ...]] = (
-    NotDebtMirror(
-        words_text="archive、guidang、shoucang、存图、存聊天记录、存记录、归档、收图、收藏",
-        sites=(("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:aliases"), ("plugins/bot_unified_runtime/domains/media/capabilities/media_archive.py", "DEFAULT_TRIGGER_WORDS")),
-        reason="媒体归档族 9 词：帮助册 aliases ≡ 能力侧 media_archive.DEFAULT_TRIGGER_WORDS＝双向覆盖门要求的「能力词表必须出现在帮助册」镜像，删任一侧当场拆门",
-    ),  # 现算位 49×1858
-    NotDebtMirror(
-        words_text="config、配置",
-        sites=(("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:aliases"), ("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:triggers_nickname")),
-        reason="config/配置：echo _HELP_ENTRIES.aliases（:680）≡ _HELP_ENTRY_META.triggers_nickname（:2341）同一 topic 的两个呈现位，帮助别名闭合门要求两册同时在场",
-    ),  # 现算位 680×2341
     NotDebtMirror(
         words_text="history、历史、清理历史",
         sites=(("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:aliases"), ("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:triggers_nickname")),
@@ -545,31 +543,6 @@ HOME_MIRROR_NOT_DEBT: Final[tuple[NotDebtMirror, ...]] = (
         reason="随机图族 9 词：同型跨册镜像，且 echo.py:1947 注释明文「隨機圖/來張圖（tra2 波入 DEFAULT_TRIGGER_WORDS）help 同步入册」＝有意同步的盘上铁证",
     ),  # 现算位 29×1949
     NotDebtMirror(
-        words_text="memory、记忆",
-        sites=(("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:aliases"), ("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:triggers_nickname")),
-        reason="memory/记忆：同型镜像对（:508 × :2280）",
-    ),  # 现算位 508×2280
-    NotDebtMirror(
-        words_text="persona、人格",
-        sites=(("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:aliases"), ("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:triggers_nickname")),
-        reason="persona/人格：同型镜像对（:734 × :2364）",
-    ),  # 现算位 734×2364
-    NotDebtMirror(
-        words_text="readiness、就绪",
-        sites=(("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:aliases"), ("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:triggers_nickname")),
-        reason="readiness/就绪：同型镜像对（:698 × :2348）",
-    ),  # 现算位 698×2348
-    NotDebtMirror(
-        words_text="roles、角色",
-        sites=(("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:aliases"), ("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:triggers_nickname")),
-        reason="roles/角色：同型镜像对（:716 × :2355）",
-    ),  # 现算位 716×2355
-    NotDebtMirror(
-        words_text="why、为什么、为啥",
-        sites=(("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:aliases"), ("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:triggers_nickname")),
-        reason="why/为什么/为啥：同型镜像对（:532 × :2288）",
-    ),  # 现算位 532×2288
-    NotDebtMirror(
         words_text="我都跟谁聊过、本群信息、本群参与者、本群多大了、本群待办、本群相册、本群谁说过话、本群都有谁、精华消息、群主是谁、群人数、群信息、群公告、群参与者、群待办、群待办列表、群相册、群相册列表、群精华、群资料、群里谁说过话、群里都有谁、谁是群主、跟谁聊过、都有谁说过话",
         sites=(("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:aliases"), ("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:triggers_nickname")),
         reason="群信息族 25 词：同一帮助条目的 aliases ≡ triggers_nickname 双位镜像；"
@@ -577,18 +550,6 @@ HOME_MIRROR_NOT_DEBT: Final[tuple[NotDebtMirror, ...]] = (
         "再扩 9 词（群里都有谁/群参与者/谁说过话/跟谁聊过 一族，真身 group_info._INTENT_WHO_WORDS），"
         "词表不能改派生成跨模块引用——command_catalog.py::_eval_literal 只认同模块简单常量。",
     ),  # 现算位 1880×2820
-    NotDebtMirror(
-        words_text="hoststate、jiqipeizhi、jiqizhuangtai、jizhuangtai、宿主机状态、宿主機狀態、宿主状态、机器状态、机器配置、機器狀態",
-        sites=(
-            ("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:aliases"),
-            ("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:triggers_nickname"),
-            ("plugins/bot_unified_runtime/domains/ops/capabilities/host_state.py", "DEFAULT_TRIGGER_WORDS"),
-        ),
-        reason="宿主机状态族 10 词（需求 5 超管读卡）：三处镜像＝帮助条目 aliases ≡ "
-        "triggers_nickname 双位 ＋ 能力侧 DEFAULT_TRIGGER_WORDS 真身；帮助侧两枚位是"
-        "command_catalog::_eval_literal 只认同模块常量所要求的字面量，能力侧那枚才是路由真身，"
-        "双向门与触发词单一来源门都要求三者词集相等。",
-    ),  # 现算位 echo 1992×3027 × host_state 56
     NotDebtMirror(
         words_text="同意卡、书面同意、同意單、書面同意、consentcard、yijika、shumiantongyi",
         sites=(

@@ -142,13 +142,39 @@ _TEXT_RECEIVER: Final[re.Pattern[str]] = re.compile(
 #   判据、扫描面、四枚地板一字未动；AUTHORIZED_RAISES 不签。
 #   牙口＝`test_poison_hand_copy_back_breaks_the_new_ceiling`
 #   ＋`tests/test_help_nickname_projection_f13b2.py`。
-WORD_SITE_CEILING: Final[int] = 447
+# 2026-10-07 F-13 乙案第三批（剩余镜像簇＋布尔字集；用户同日裁「批3」）：
+#   账 447 → 430（现算 raw 522→503＝−19；名册抵销 75→73、登记 75→73 条＝同批摘掉丙族那两枚
+#   已不存在的抄位署名，无一枚虚设）：
+#   ①甲族·`_ECHO_MIRROR_CLUSTER` 那族在册镜像——`echo.py` 帮助册 `_HELP_ENTRIES[*].aliases` 与
+#     `_HELP_ENTRY_META[*].triggers_nickname` 把 `DEFAULT_VERB_MAP` 某能力动词全集逐字同集各抄
+#     一遍（记忆/为什么/配置/就绪/角色/人格 两列一起，功能管理只有 aliases 列、决策只有昵称列），
+#     全部改为转述 `runtime/aliases.py::nickname_verbs_for`（批 2 那条在册纯投影口，本批零新通道）
+#     ＝本尺 −17。②乙族·帮助册转述能力侧真身——「宿主机状态」两列与「媒体归档」aliases 列抄的是
+#     `host_state`／`media_archive` 自己的 `DEFAULT_TRIGGER_WORDS`；在两枚**既有**能力件里各加一条
+#     零词面纯投影口并同批进 `command_catalog.HELP_LITERAL_PROJECTIONS`。这两族在本尺是**债中性**
+#     （全等重复本尺折成一枚声明单元，摘任一侧单元数都不减）——做它不是因为能降账，是同一事实
+#     今天有三份手抄；它们在 S33 那本（ruleA 全等簇）上是 raw −9、计账仍 42，同批摘 S33
+#     `HOME_MIRROR_NOT_DEBT` 八行＝没把债从一把尺搬到另一把尺。③丙族·`control_plane/__init__.py::
+#     _flag_value` 的 truthy/falsy 手打字集改引批 1 落位的中央真身 `config_readiness.ENV_TRUE_WORDS/
+#     ENV_FALSE_WORDS`（本尺 raw −2；这两枚词面今天全额署名在册 ⇒ 计账不动、抵销 −2）。
+#     `llm_engine/channel_health.py` 那一份刻意未折＝该件此刻有别席在飞半件（现算
+#     `git diff --numstat`＝9/0），共享树让路，它那两枚署名照旧在名册里干活。
+#   🔴 未收编三处（逐条现算取证，不是漏做）：**群信息族 25 词**——`echo` 两列的词集是
+#     `group_info._INTENT_*` 九表并集（34 词）的**子集**（少的九枚正是双向门
+#     `LEDGER_ROUTE_TO_HELP` 在册那组口语族），两列一起转述就要把九枚塞进帮助页＝改 `/bot help`
+#     可见内容；只转述一列则本尺单元数不减、而名册那 15 枚 `_ECHO_MIRROR_CLUSTER` 署名当场虚设
+#     ＝把债升上去再把尺弄瞎。**随机图 aliases**——手抄序 …suijitu, sjt, laizhangtu, lzt 与真身序
+#     …suijitu, laizhangtu, sjt, lzt 不同：`aliases` 进 `docs/command-catalog.md`，顺序＝可见内容
+#     ⇒ 投影会改交付物字节。**书面同意**——宿主件 `consent_admin.py` 有在飞半件（21/12），共享树让路。
+#   判据、扫描面、四枚地板（1100/700/140/100）一字未动；AUTHORIZED_RAISES 不签（放宽方向）。
+#   牙口＝`tests/test_help_alias_projection_f13b3.py`（含注毒：任一枚退回手抄 ⇒ 计账必超 430）。
+WORD_SITE_CEILING: Final[int] = 430
 #: 逐次核账记录（日期, 当时债数），必须单调不升；**要抬必须在 `AUTHORIZED_RAISES` 里留一条
 #: 同日期同数值的签字凭据**（2026-10-05 用户裁 F-13「抬上限」时同批立的替代锁——
 #: 放宽一条腿必配一条牙），且末项＝当前上限（零余量锁）。
 AUDIT_HISTORY: Final[tuple[tuple[str, int], ...]] = (
     ("2026-09-24", 469), ("2026-09-27", 467), ("2026-09-27", 467), ("2026-10-05", 477),
-    ("2026-10-06", 472), ("2026-10-07", 447),
+    ("2026-10-06", 472), ("2026-10-07", 447), ("2026-10-07", 430),
 )
 
 #: 授权上调凭据（日期, 该次核账值, 授权出处摘要）。写不出"谁在哪一天裁的"就抬不了上限。
@@ -511,12 +537,14 @@ INTENTIONAL_UNITS: Final[tuple[DeclaredUnit, ...]] = (
                  "同 view 的中文单字形跨能力撞词：命令面子动词，路由靠「同意卡/书面同意」前缀让路"),
     DeclaredUnit("详情", _CONSENT_ADMIN + "#t1:_SHOW_VERBS", "bot.consent",
                  "同 view 的中文详情形跨能力撞词：命令面子动词第三枚"),
-    DeclaredUnit("yes", "inline:plugins/bot_unified_runtime/control_plane/__init__.py", "control_plane",
-                 "布尔字面量解析（1/true/on/yes 归真）：词面撞上同意动词表纯属通用布尔别名巧合，不驱动任何路由，非触发面"),
+    # ── 布尔字面量解析（批 1 立中央真身 `config_readiness.ENV_TRUE_WORDS/ENV_FALSE_WORDS`）。
+    # ⚠ F-13 乙案批 3（2026-10-07）同批摘行：`control_plane/__init__.py::_flag_value` 的
+    #   truthy/falsy 手打字集已折进上述中央真身 ⇒ 那两枚「yes/no @ inline:control_plane」
+    #   署名对应的声明位不在场，留着＝虚设豁免（活性锁当场点它），已摘。
+    #   `channel_health` 那份此刻仍在盘上（该件有别席在飞半件，本批只让路不折），
+    #   下面两枚署名照旧逐枚干活。
     DeclaredUnit("yes", "inline:plugins/bot_unified_runtime/domains/chat_reply/llm_engine/channel_health.py", "llm_engine",
                  "同上布尔解析的第二实现位（str(raw).strip().lower() 判 1/true/on/yes）：结构串不是触发词抄写"),
-    DeclaredUnit("no", "inline:plugins/bot_unified_runtime/control_plane/__init__.py", "control_plane",
-                 "布尔字面量解析（0/false/off/no 归假）：与 yes 同位的反向枚，不是触发面"),
     DeclaredUnit("no", "inline:plugins/bot_unified_runtime/domains/chat_reply/llm_engine/channel_health.py", "llm_engine",
                  "同上布尔解析第二实现位的反向枚：结构串与触发词表零关系"),
     # ── web 检索脚手架词表（检索查询拼装用，非命令触发面）：词面与触发词汇表 V 重合。

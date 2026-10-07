@@ -46,12 +46,21 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 def _flag_value(raw: object) -> bool | None:
+    # 布尔字面量词集的唯一真身在 `domains/core/config/config_readiness.py`（F-13 乙案批 1
+    # 落位、批 3 收本调用侧）。这里**函数内**导入：本包顶层刻意不引域内件（总开关默认关时
+    # 不得有导入副作用），三态判定的**逻辑**照旧各件自持（None＝交给下一级回落），
+    # 只把撞词面的字集收成一处。判定语义逐格不变。
+    from plugins.bot_unified_runtime.domains.core.config.config_readiness import (
+        ENV_FALSE_WORDS,
+        ENV_TRUE_WORDS,
+    )
+
     if raw is None:
         return None
     text = str(raw).strip().lower()
-    if text in {"1", "true", "on", "yes"}:
+    if text in ENV_TRUE_WORDS:
         return True
-    if text in {"0", "false", "off", "no"}:
+    if text in ENV_FALSE_WORDS:
         return False
     return None
 

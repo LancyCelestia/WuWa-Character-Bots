@@ -66,6 +66,21 @@ DEFAULT_TRIGGER_WORDS: tuple[str, ...] = (
     "guidang",
 )
 
+
+def media_archive_trigger_words() -> tuple[str, ...]:
+    """帮助册转述本能力触发词的**唯一投影口**（F-13 乙案批 3）。
+
+    与 `host_state_trigger_words` 同族同纪律：帮助册 `aliases` 列此前把这组词又手打
+    一遍（在册镜像对，双向覆盖门要求帮助侧同面在场），现在只转述本件这张表——
+    **只转述不改造**（逐字返回、不并集不派生），函数体内零词面字面量，投影输出与批前
+    手抄列逐枚有序全等（锁＝``tests/test_help_alias_projection_f13b3.py``）。
+    ⚠ 本能力 META 的 `triggers_nickname` 列是真身的**六词子集**（少了三枚拼音/别名形），
+    与真身不同集、投影不出来，故本批刻意不折它——折它就得改帮助页可见内容（属行为变更）。
+    禁新建生产件（用户 2026-10-06 裁定）：投影口住在真身表所在的**本既有文件**里。
+    """
+    return tuple(DEFAULT_TRIGGER_WORDS)
+
+
 _ROLE_RANK: dict[str, int] = {
     "user": 0,
     "trusted": 1,
