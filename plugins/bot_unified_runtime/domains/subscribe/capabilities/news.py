@@ -21,6 +21,11 @@ B05 快讯域呈现面），与纯文本**同发**（``kind="mixed"``——她�
 （与 epic/weather/market/today_history 同一口径），能力侧不自建、不自取——
 缺省 ``render_backend=None`` 即逐字节维持旧的纯文本行为。
 
+卡面多源同日呈现（2026-10-08）：按域成组出域带（域序与域名沿用数据侧
+``CATEGORY_LABELS`` 登记册，本件不抄第二份表）、跨源同题折叠的出处**全部**并列
+上卡、单域与全卡各有铺开上限，卡上没铺开的逐域出折叠注脚（在场可见；全量条目
+始终在随发的纯文本里，卡只裁呈现、不裁信息）。
+
 定时推送（21:30 群摘要、早晚简报）不经本能力出卡：那是既有的「推送保持
 纯文本」裁定，本文件的卡只服务会话里的显式提问。
 """
@@ -41,6 +46,7 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.core.search import source_authority as sa
 from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
     card_text_value,
 )
@@ -50,6 +56,7 @@ from plugins.bot_unified_runtime.domains.subscribe.feeds.news_feeds import (
     NewsItem,
     fetch_headlines,
     format_news_brief,
+    unverified_drop_count,
 )
 
 # 显式触发词：复合词在前仅便于阅读；「新闻」单独出现不算触发。
@@ -133,6 +140,17 @@ _CARD_FEATURE_LABEL = card_text_value("static_news_72")
 #: bridge._CARD_TEXT（S-T-VISUAL-1 收口，值逐字符未动）。
 _CARD_FOOT = card_text_value("static_news_71")
 
+#: 多源同日呈现（2026-10-08）：卡上按域成组后的两个长度闸——**有界**呈现的尺。
+#: 单域铺开上限与全卡铺开总量；折掉的每一枚都必须进该域的折叠注脚（在场可见），
+#: 「卡上数得出来的枚数 == 交给卡的全部枚数」由 tests/test_news_card_outbound.py
+#: 的守恒腿执法。总量闸切到整域时该域仍出域带＋全量折叠注脚，绝不静默消失
+#: （「缺牙未修＝缺的段永远不进截断账」是本仓已知病，禁造同型）。
+_CARD_GROUP_CAP = 5
+_CARD_TOTAL_CAP = 12
+#: 折叠注脚的字面量真身＝bridge._CARD_TEXT（S79/S95 同一口径），{count} 由本侧
+#: 现算回填；它是**只含内部整数**的常量模板，RSS 内容进不了它。
+_CARD_GROUP_MORE = card_text_value("static_news_73")
+
 
 def _display_text(value: Any) -> str:
     """卡面文本：转字符串 + 走同一把打码尺（本地盘符路径/密钥形态）。
@@ -167,6 +185,33 @@ def _brief_date_text(body: str) -> str:
     return parts[1] if len(parts) >= 3 and parts[1] else ""
 
 
+def _outlets_label(item: NewsItem) -> str:
+    """一条目的**全部出处**并列（跨源同题折叠在卡面不退化回单源）。
+
+    数据侧 ``fold_same_topic`` 折叠后把出处写进 ``NewsItem.sources``（首枚恒＝
+    ``source``，2026-10-08 裁定面）；旧 payload 只上 ``source`` 首枚，折叠结果
+    在卡面上读成「只有一家报」＝出处被静默吃掉。这里全部并列，顺序照 sources
+    （先到先得的确定性序），``、`` 只作排版、不新增字面量文案。
+    """
+    outlets = tuple(getattr(item, "sources", ()) or ())
+    if not outlets:
+        single = getattr(item, "source", "")
+        return _display_text(single)
+    names: list[str] = []
+    for outlet in outlets:
+        text = _display_text(outlet)
+        if text and text not in names:
+            names.append(text)
+    return "、".join(names)
+
+
+def _group_key(item: NewsItem) -> str:
+    """条目归域：类目键在册即用册内键；未在册的类目并进「综合」桶（诚实兜底，
+    绝不让一条已抓到的条目因为归不了域而静默消失）。"""
+    category = str(getattr(item, "category", "") or "")
+    return category if category in CATEGORY_LABELS else "mix"
+
+
 def build_news_card_content(
     items: Any,
     *,
@@ -177,29 +222,59 @@ def build_news_card_content(
     """条目列表 → 新闻摘要卡 payload（纯构造、零 IO；能力层与测试共用）。
 
     载荷键的**唯一真相源**是 ``bridge.render_news_digest_card_html`` 的取数面
-    （``domains/render/card_render/bridge.py:1879`` 起）与其模板
-    ``news_digest_card.html``：``title/sub/foot`` + ``items=[{source,time,name,
-    snip}]`` + ``bot_name/bot_avatar_url/feature_label``；``platform_color`` 故意
+    （``data.get(...)``/``item.get(...)`` 现读，锁＝tests/test_news_card_outbound.py
+    的 payload 键对照腿）与其模板 ``news_digest_card.html``：``title/sub/foot``
+    + ``groups=[{label, rows=[{source,time,name,snip}], hidden, more}]``（组内行
+    字段名**刻意不叫 items**——dict.items 是方法，模板属性访问先撞上它）
+    + ``items``（各组铺开行的扁平序列，与 groups 同源同尺，兼容直接消费 ``items``
+    的旧形态）+ ``bot_name/bot_avatar_url/feature_label``；``platform_color`` 故意
     不填——无平台语境的快讯卡按 bridge 缺省落守岸人本命蓝，不随内容漂移。
+
+    多源同日呈现（2026-10-08）：
+    - 按域分组，域序取数据侧 ``CATEGORY_LABELS`` 的登记序（不在本件抄第二份表）；
+    - 跨源同题折叠的出处全部并列上卡（``_outlets_label``）；
+    - 长度有界：单域最多铺开 ``_CARD_GROUP_CAP`` 枚、全卡最多 ``_CARD_TOTAL_CAP``
+      枚，折掉的枚数逐域写进折叠注脚（在场可见，禁「缺牙」同型）；
+    - ``sub`` 只带日期：出处已逐枚上行，域已逐带上行，12+ 家的枚举不再压成一行。
     条目 URL 一律**不上卡**（``NewsItem.url`` 被有意丢弃）：二十条链接刷在一张
     图上既不可点也是刷屏面，要读原文她把链接发回来即可。
     """
-    card_items: list[dict[str, str]] = []
+    rows_by_group: dict[str, list[dict[str, str]]] = {}
     for item in items or ():
         name = _display_text(getattr(item, "title", ""))
         if not name:
             # 无标题的条目连文本快报都不会出现（parse_feed 已跳过），这里同样不留空行。
             continue
-        card_items.append(
+        rows_by_group.setdefault(_group_key(item), []).append(
             {
-                "source": _display_text(getattr(item, "source", "")),
+                "source": _outlets_label(item),
                 "time": _published_label(item),
                 "name": name,
                 "snip": _display_text(getattr(item, "summary", "")),
             }
         )
-    sources = sorted({str(row.get("source") or "").strip() for row in card_items} - {""})
-    sub = " · ".join([segment for segment in (date_text, "、".join(sources)) if segment])
+    groups: list[dict[str, Any]] = []
+    card_items: list[dict[str, str]] = []
+    # 域序＝CATEGORY_LABELS 登记序；名册现算后来出的键（理论空集，真出现也不许
+    # 静默丢）追加在末尾、走同一道折叠账。
+    ordered_keys = [key for key in CATEGORY_LABELS if key in rows_by_group]
+    ordered_keys += [key for key in rows_by_group if key not in CATEGORY_LABELS]
+    budget = max(0, _CARD_TOTAL_CAP)
+    for category_key in ordered_keys:
+        rows = rows_by_group[category_key]
+        shown_count = min(len(rows), _CARD_GROUP_CAP, budget)
+        shown = rows[:shown_count]
+        hidden = len(rows) - shown_count
+        budget -= shown_count
+        card_items.extend(shown)
+        groups.append(
+            {
+                "label": CATEGORY_LABELS.get(category_key, CATEGORY_LABELS["mix"]),
+                "rows": shown,
+                "hidden": hidden,
+                "more": _CARD_GROUP_MORE.format(count=hidden) if hidden else "",
+            }
+        )
     # 署名唯一读法（P-G3 第二波）：人格册按当前生效人格现读 → 兼容显示名 → 空串交
     # 品牌胶囊统一回落；不再自取配置名并手抄「守岸人」。禁 get_login_info（#60★）。
     from plugins.bot_unified_runtime.domains.chat_reply.character.persona_profile import (
@@ -212,9 +287,10 @@ def build_news_card_content(
 
     return {
         "title": f"{_CARD_FEATURE_LABEL} · {label}",
-        "sub": sub,
+        "sub": date_text,
         "foot": _CARD_FOOT,
         "items": card_items,
+        "groups": groups,
         "bot_name": bot_name,
         "bot_avatar_url": str(bot_avatar_uri(config) or ""),
         "feature_label": _CARD_FEATURE_LABEL,
@@ -222,12 +298,22 @@ def build_news_card_content(
 
 
 def news_card_digest(payload: dict[str, Any]) -> str:
-    """稳定文件名摘要：同一批条目重复出图覆盖同一文件，不喂爆卡片目录。"""
+    """稳定文件名摘要：同一批条目重复出图覆盖同一文件，不喂爆卡片目录。
+
+    分组折叠的读数（各域 hidden）一并进材料——同铺不同折＝不同文件，
+    折叠结构变了还覆盖旧图就是把旧折叠态挂在新条目上。
+    """
     material = "|".join(
         f"{row.get('source')}={row.get('time')}={row.get('name')}={row.get('snip')}"
         for row in (payload.get("items") or ())
     )
-    material = f"{payload.get('title')}||{payload.get('sub')}||{material}"
+    group_material = "|".join(
+        f"{group.get('label')}:{len(group.get('rows') or ())}:{group.get('hidden')}"
+        for group in (payload.get("groups") or ())
+    )
+    material = (
+        f"{payload.get('title')}||{payload.get('sub')}||{material}||{group_material}"
+    )
     return hashlib.sha1(material.encode("utf-8", "ignore")).hexdigest()[:12]
 
 
@@ -295,6 +381,8 @@ def build_news_capability(
         del decision
         category = extract_news_category(message.plain_text)
         label = CATEGORY_LABELS.get(category, CATEGORY_LABELS["mix"])
+        # 本轮丢弃数按**增量**记（进程级计数是累计的，逐轮差值才是「这一条快报丢了几个」）。
+        dropped_before = unverified_drop_count()
         items = fetch_headlines(
             category,
             timeout_seconds=float(
@@ -314,21 +402,45 @@ def build_news_capability(
                 audit_tags=["capability:news", "news:fetch_failed"],
             )
         body = format_news_brief(items, label)
+        payload = build_news_card_content(
+            items, label=label, date_text=_brief_date_text(body), config=config
+        )
         card = _render_card(
-            build_news_card_content(
-                items, label=label, date_text=_brief_date_text(body), config=config
-            ),
+            payload,
             render_backend=render_backend,
             card_dir=resolved_card_dir,
         )
         # 三种出卡结果分开记账，别把「没注入后端」读成「渲染失败」：
         # rendered=卡已同发；failed=后端在场却没出图（要看日志）；disabled=压根没给后端。
+        audit_tags = [
+            "capability:news",
+            f"news_items:{len(items)}",
+            f"news_category:{category}",
+        ]
+        # 出口标源逐枚入审读面（2026-10-11 裁定：每条必带 ``SRC=``，四值闭集）：
+        # 正文已经带过的那枚标在机器侧同现一枚，「哪条是以谁的口径发出去的」事后可查；
+        # 判不出而被丢弃的条数另记一枚（丢弃必须留痕，不许静默少条）。
+        audit_tags += [sa.src_marker(item.src) for item in items]
+        audit_tags.append(f"news_src_dropped_unverified:{unverified_drop_count() - dropped_before}")
+        if any(not sa.is_src_label(item.src) for item in items):
+            audit_tags.append("news_src_unlabelled:" + str(
+                sum(1 for item in items if not sa.is_src_label(item.src))
+            ))
         if card:
             card_tag = "news_card_rendered"
+            # 折叠账同录入审读面：卡上铺开几枚、折掉几枚，机器侧与卡面同一本账
+            # （守恒判据＝shown+hidden==received，锁在 outbound 测试）。
+            groups = list(payload.get("groups") or ())
+            hidden_total = sum(int(group.get("hidden") or 0) for group in groups)
+            audit_tags += [
+                f"news_card_groups:{len(groups)}",
+                f"news_card_hidden:{hidden_total}",
+            ]
         elif render_backend is None:
             card_tag = "news_card_disabled"
         else:
             card_tag = "news_card_failed"
+        audit_tags.append(card_tag)
         return CapabilityResult(
             request_id=message.request_id,
             capability_id="bot.news",
@@ -338,12 +450,7 @@ def build_news_capability(
             images=[{"file": card}] if card else [],
             risk_level=RiskLevel.LOW,
             privacy_level=PrivacyLevel.PUBLIC,
-            audit_tags=[
-                "capability:news",
-                f"news_items:{len(items)}",
-                f"news_category:{category}",
-                card_tag,
-            ],
+            audit_tags=audit_tags,
         )
 
     return capability

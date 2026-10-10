@@ -9,6 +9,10 @@ from __future__ import annotations
 import html
 import re
 
+from plugins.bot_unified_runtime.domains.core.search.source_authority import (
+    sanitize_src_markers,
+)
+
 PLAIN_TEXT_VERSION = "chat_plain_text:v1"
 # TeX token 提阶为模块级编译（热路径压榨项）：_math_text 逐字符循环内此前
 # 每次 re.match 都要过 re 模块缓存查找；长公式一段上百次。
@@ -277,6 +281,28 @@ _INNER_STATE_NUM_RE = re.compile(
     r"[-+]?\d+(?:\.\d+)?(?:\s*分|\s*%|%)?"
 )
 
+# 句中 AI 味短语替换（2026-10-06 补：用户实锤"结论是/接住你/给出一个结论"等）：
+# 提示词面已加禁令（chat._RUNTIME_ANSWER_RULES），本件是出站侧兜底——LLM 偶发
+# 绕不过禁令时在这里洗掉。顺序：长模式先匹配，避免被短模式截断。
+_AI_FLAVOR_REPLACEMENTS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # "给出一个结论" → 直接去掉，后面通常跟 "：" 或 "是" 自成句。
+    (re.compile(r"给出\s*一个\s*结论[，,：:]?\s*"), ""),
+    # "结论是" → "答案是"（去掉报告体，保留语义）。
+    (re.compile(r"结论是"), "答案是"),
+    # "接住你" 族（情感语境高频，字面"接住物体"罕见）→ 去掉 AI 治疗腔。
+    (re.compile(r"被你接住"), "被你理解"),
+    (re.compile(r"稳稳接住"), "好好接住"),
+    (re.compile(r"一起接住"), "一起感受"),
+    (re.compile(r"接住你"), ""),
+    # 报告体/论文腔连接词。
+    (re.compile(r"值得注意的是[，,]?\s*"), ""),
+    (re.compile(r"需要指出的是[，,]?\s*"), ""),
+    (re.compile(r"从[某种这]+意义上[来说来讲来看]*[，,]?\s*"), ""),
+    # 客服腔收尾（行锚 _HUMANIZE_CLOSING_RE 漏掉的句中形态）。
+    (re.compile(r"希望(?:这|以上)?(?:些)?(?:能)?帮到你"), ""),
+    (re.compile(r"如果还有(?:其他)?问题[，,]?随时问我"), ""),
+)
+
 
 def _redact_inner_state_number(match: re.Match[str]) -> str:
     name = match.group(1) or "内心状态"
@@ -310,6 +336,8 @@ def humanize_reply(text: str) -> str:
     value = _HUMANIZE_OPENING_RE.sub("", value).strip()
     value = _HUMANIZE_CLOSING_RE.sub("", value).strip()
     value = _INNER_STATE_NUM_RE.sub(_redact_inner_state_number, value)
+    for pattern, replacement in _AI_FLAVOR_REPLACEMENTS:
+        value = pattern.sub(replacement, value)
     return value or (text or "").strip()
 
 
@@ -619,6 +647,16 @@ _COOKIE_PAIR_RE = re.compile(
 
 
 
+# 出口标源（``SRC=``）的消毒腿（2026-10-11 裁定接线）：判定行加字段必同批补消毒
+# （台账 #67★ 的旧病），真身＝``source_authority.sanitize_src_markers``——闭集外的任何
+# 取值（上游写错、或外部内容伪造出一枚 ``SRC=ORG-PRIMARY``）在出站闸一律涂成
+# ``SRC=UNVERIFIED``，绝不认「长得像标」就当标。幂等：闭集值原样放回。
+# 哨兵登记：``src=``（小写后扫）＝本腿唯一入口，宁可多扫不能漏。
+# 排在**全链最后**：前面的结构性腿（路径/键值/凭据）先收干净，本腿只认 ``SRC=`` 词形，
+# 不与任何占位符字符重叠 ⇒ 产物不会再被别的腿二次命中（也不被自己二次命中）。
+_SRC_MARKER_SENTINEL = "src="
+
+
 def redact_local_secrets(text: str) -> str:
     """打码回复文本中的本机敏感形态；**只有快路径哨兵全部落空时**才原样返回。
 
@@ -653,7 +691,7 @@ def redact_local_secrets(text: str) -> str:
             and "bearer" not in lowered and "key" not in lowered
             and "token" not in lowered and "secret" not in lowered
             and "passw" not in lowered and "cookie" not in lowered
-            and "authorization" not in lowered
+            and "authorization" not in lowered and _SRC_MARKER_SENTINEL not in lowered
             and not any(mark in lowered for mark in _VENDOR_KEY_SENTINELS)):
         return value
     # 顺序：先整段打掉 BOT_XXX=赋值（值里可能含路径/key），再打独立 key 与
@@ -695,6 +733,7 @@ def redact_local_secrets(text: str) -> str:
     value = _CN_MOBILE_RE.sub(_mask_cn_mobile, value)
     value = _PRIVATE_IP_RE.sub(_mask_private_ip, value)
     value = _EMAIL_RE.sub(_mask_email, value)
+    value = sanitize_src_markers(value)
     return value
 
 
