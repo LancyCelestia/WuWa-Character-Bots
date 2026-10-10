@@ -842,6 +842,47 @@ def _maybe_dispatch_issue_card(
         return False
 
 
+def _record_issue_to_ledger(
+    ledger_sink: Callable[..., Any] | None,
+    issue: OperationalIssue,
+    *,
+    source_adapter: str,
+    source_bot: str,
+    session_type: SessionType | str,
+    session_id: str = "",
+    capability_id: str = "",
+    request_id: str = "",
+) -> None:
+    """把一次报错交给台账口（W-7 唯一 fail-open 点）。
+
+    这里**只有一处** except：台账写不进去（磁盘、权限、库被锁）绝不许把文本告警
+    带下水，但也绝不允许第二处静默——载荷键与 ``ErrorIssueLedger.record`` 的签名
+    不匹配时，两处 except 会让台账静默长期为空而所有锁仍绿（本仓反复付过的学费，
+    故 ``tests/test_alert_error_card.py`` 用真账本写一次真载荷，而不是比键名）。
+    """
+    if ledger_sink is None:
+        return
+    payload: dict[str, Any] = {
+        "stage": issue.stage,
+        "kind": issue.kind,
+        "severity": issue.severity,
+        "safe_summary": issue.safe_summary,
+        "source_adapter": source_adapter,
+        "source_bot": source_bot,
+        "session_type": session_type,
+        "session_id": session_id,
+        "capability_id": capability_id,
+        "request_id": request_id or "",
+        "debug_id": issue.debug_id,
+        "attempts": issue.attempts,
+        "elapsed_ms": issue.elapsed_ms,
+    }
+    try:
+        ledger_sink(**payload)
+    except Exception:  # 台账故障不得反噬文本告警（处理器已记日志=BLE001 不触发）。
+        logger.warning("error issue ledger sink failed", exc_info=True)
+
+
 async def notify_operational_issue(
     issue: OperationalIssue,
     *,
@@ -857,14 +898,29 @@ async def notify_operational_issue(
     session_id: str = "",
     group_id: str = "",
     request_id: str = "",
+    ledger_sink: Callable[..., Any] | None = None,
 ) -> list[AdminAlertDispatchResult]:
     """运行时告警投递：每个目标**先发文本、再补一张诊断卡**（2026-09-25）。
 
     ``pipeline`` 是卡的投递依赖（诊断卡经 send_queue 补发）。调用方（根装配层
     的四个告警口）手上有 pipeline，不传就等于今天仍然只发文本——闸与载荷照旧
     走同一条函数，不留第二条实现。
+
+    ``ledger_sink`` 是持久台账的入口（W-7 D-3）。它在**逐目标循环之前**调用一次，
+    所以被抑制窗吃掉的那次也留了账——这是本腿存在的理由，顺序即判据，锁在
+    ``tests/test_alert_error_card.py``。不传＝未接线那态（静默跳过，不抛）。
     """
     suppression = suppression or AdminAlertSuppression()
+    _record_issue_to_ledger(
+        ledger_sink,
+        issue,
+        source_adapter=source_adapter,
+        source_bot=source_bot,
+        session_type=session_type,
+        session_id=session_id,
+        capability_id=capability_id,
+        request_id=request_id,
+    )
     results: list[AdminAlertDispatchResult] = []
     for target in targets:
         allowed, suppressed_count = suppression.allow_issue(

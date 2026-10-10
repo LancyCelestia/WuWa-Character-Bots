@@ -10,6 +10,10 @@
 ④ 冷却闸命中 ⇒ 不发第二张卡（沿用异常卡那本闸，不另立）；
 ⑤ 开关关 ⇒ 一次渲染都不调（替身调用数为 0）；
 ⑥ `timeout` / `retcode_failure` 各自的人话主句进 `human_text`，且自查那句带「推测」；
+⑦ 报错→台账收敛口（W-7 D-3 乙腿）：咽喉必须在**逐目标循环之前**调 `ledger_sink`
+   （被抑制的那次也要落账）、且 sink 抛异常绝不带下水文本告警；
+⑧ 审计窗读点（W-7 D-3 甲腿）：`describe_audit_window` 不许把「查不到」讲成「没发生」
+   ——整体出窗与窗内确实无记是两种状态，不可判时必须明写不可判。
 另加：真渲染分支的入队形状（假后端 + 同步池 + 桩队列，证明生产分支不是死码）、
 「没有可投递面时不烧冷却闸」、告警链把 `pipeline` 透传到卡这一段的装配可达性锁。
 
@@ -34,6 +38,7 @@ import pytest
 from plugins.bot_unified_runtime.domains.core.contracts import (
     IncomingMessage,
     OperationalIssue,
+    RiskLevel,
     SendRequest,
     SessionType,
 )
@@ -168,6 +173,7 @@ async def _notify(
     suppression: alerts.AdminAlertSuppression | None = None,
     delivered: list[SendRequest],
     online_bots: dict[str, Any] | None = None,
+    ledger_sink: Any = None,
 ) -> list[Any]:
     async def delivery(_t: Any, _b: Any, request: SendRequest) -> None:
         delivered.append(request)
@@ -183,6 +189,7 @@ async def _notify(
         ),
         delivery=delivery,
         suppression=suppression or alerts.AdminAlertSuppression(),
+        **({} if ledger_sink is None else {"ledger_sink": ledger_sink}),
     )
 
 
@@ -736,3 +743,302 @@ def test_card_avatar_inlines_as_data_uri(tmp_path: Path) -> None:
         assert got == "" or got.startswith("data:image/"), got[:40]
     # 超大文件不内联（整页要进 HTML，不能被一张图撑爆）：上限常量必须存在且为正。
     assert error_report._AVATAR_INLINE_MAX_BYTES > 0
+
+
+# ==================== ⑦ 报错→台账收敛口（W-7，D-3 乙腿）====================
+# 判据来历（实算）：告警链此前**零落盘**——`OperationalIssue` 只出文本与卡，
+# `AdminAlertSuppression` 的抑制窗住在进程内存（`time.monotonic` + dict），重启归零；
+# 审计库 `bot_audit_max_items` 剪到只剩几小时 ⇒ 隔夜复盘读的是被覆盖的缓冲。
+# 所以本腿锁的是「一次真报错事后能被读到」，不是「代码里有个 sink」。
+# 🔴 全部**函数内 import**：模块不存在时用例按 FAILED 记账，不许吃 collection ERROR
+#   （ERROR 不是被抓到的违规，是坏掉的运行）。
+
+
+def _error_ledger_module() -> Any:
+    from plugins.bot_unified_runtime.domains.ops.monitor import error_ledger
+
+    return error_ledger
+
+
+def test_choke_takes_a_ledger_sink_keyword_and_records_before_the_loop() -> None:
+    """咽喉结构锁：`ledger_sink` 必须是关键字参，且记账排在**逐目标循环之前**。
+
+    排在循环之后＝被抑制的那次不记账（抑制正是刷屏时发生），台账就只看得见
+    放行的那一条——那是本腿要治的病的另一半。
+    """
+    signature = inspect.signature(alerts.notify_operational_issue)
+    param = signature.parameters.get("ledger_sink")
+    assert param is not None, "咽喉没有 ledger_sink 参数＝根装配层无从接线"
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY, "必须是关键字参"
+
+    tree = ast.parse(inspect.getsource(alerts.notify_operational_issue))
+    fn = next(
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    )
+    loop_lines = [
+        node.lineno
+        for node in ast.walk(fn)
+        if isinstance(node, ast.For)
+        and getattr(node.iter, "id", "") == "targets"
+    ]
+    assert loop_lines, "找不到逐目标循环（`for … in targets`）＝本锁射程失效"
+    record_calls = [
+        node
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", "") in {"_record_issue_to_ledger", "ledger_sink"}
+    ]
+    assert record_calls, "咽喉没有调用台账口＝接了参数也是死的"
+    first_record = min(node.lineno for node in record_calls)
+    assert first_record < min(loop_lines), (
+        f"记账（L{first_record}）排在投递循环（L{min(loop_lines)}）之后"
+        "＝被抑制的报错永远不进台账"
+    )
+
+
+def test_ledger_recording_is_fail_open_and_payload_matches_the_record_signature(
+    tmp_path: Path,
+) -> None:
+    """行为锁：sink 抛异常不许带下水文本告警；载荷键必须真落得进 `record`。
+
+    第二腿是本仓反复付过学费的形状：fail-open 的 `except` 会把「签名不匹配」
+    一起咽掉 ⇒ 台账静默长期为空、而所有锁仍然绿。所以这里**不只看键名**，
+    而是拿真账本把真载荷写一次。
+    """
+    captured: list[dict[str, Any]] = []
+
+    def spy(**payload: Any) -> None:
+        # sink 契约＝关键字展开（`ledger_sink(**payload)`），所以根装配层可以直接
+        # 把 `ErrorIssueLedger.record` 裸交进来，不需要再包一层 lambda。
+        captured.append(dict(payload))
+
+    alerts._record_issue_to_ledger(
+        spy,
+        _issue(stage="llm", kind="deadline_exceeded", safe_summary="chain=17"),
+        source_adapter="onebot",
+        source_bot="3958874605",
+        session_type=SessionType.GROUP,
+        session_id="g-1",
+        capability_id="bot.chat",
+        request_id="req-1",
+    )
+    assert len(captured) == 1, "一次报错一条也没记"
+    payload = captured[0]
+
+    ledger = _error_ledger_module().ErrorIssueLedger(tmp_path / "error_issue.sqlite3")
+    accepted = set(inspect.signature(ledger.record).parameters)
+    # 全集相等（不是子集）：少一个键＝那维信息静默不再进台账，多一个键＝写盘当场抛
+    # 而被 fail-open 咽掉。两种漂移都让台账长期为空而所有其它锁仍绿。
+    assert set(payload) == accepted, (
+        f"咽喉载荷与台账 record 签名漂移："
+        f"咽喉多={sorted(set(payload) - accepted)} 台账要而咽喉不给={sorted(accepted - set(payload))}"
+    )
+    assert ledger.record(**payload) is True
+
+    # sink 自己坏 ⇒ 只出警告，不向上抛（否则一次磁盘故障会把告警链整条打死）。
+    def raiser(**_kwargs: Any) -> None:
+        raise RuntimeError("disk on fire")
+
+    alerts._record_issue_to_ledger(
+        raiser, _issue(), source_adapter="onebot", source_bot="b",
+        session_type=SessionType.PRIVATE, session_id="", capability_id="",
+        request_id="",
+    )
+    # 没有 sink（生产未接线那态）＝静默跳过，不许抛。
+    alerts._record_issue_to_ledger(
+        None, _issue(), source_adapter="onebot", source_bot="b",
+        session_type=SessionType.PRIVATE, session_id="", capability_id="",
+        request_id="",
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_operational_issue_feeds_the_ledger_even_when_suppressed(
+    tmp_path: Path,
+) -> None:
+    """端到端：同型报错两条 ⇒ 一条放行一条被抑制，**两条都要进台账**。"""
+    from plugins.bot_unified_runtime.domains.ops.monitor import error_ledger
+
+    ledger = error_ledger.ErrorIssueLedger(tmp_path / "error_issue.sqlite3")
+    target = _target()
+    delivered: list[SendRequest] = []
+    suppression = alerts.AdminAlertSuppression()
+
+    await _notify(
+        target, delivered=delivered, suppression=suppression,
+        ledger_sink=ledger.record,
+    )
+    await _notify(
+        target,
+        issue=_issue(),  # 新实例＝新 debug_id、同 stage/kind ⇒ 必须并成同一枚指纹
+        delivered=delivered,
+        suppression=suppression,
+        ledger_sink=ledger.record,
+    )
+
+    rows = ledger.recent(limit=10)
+    assert len(rows) == 1, f"同型报错应并成一枚指纹，实得 {len(rows)} 行"
+    assert int(rows[0]["hit_count"]) == 2, "第二条（被抑制那条）没记账"
+    assert len(delivered) == 1, "抑制窗本该只放一条文本"
+    assert str(rows[0]["stage"]) == "llm"
+    assert str(rows[0]["kind"]) == "timeout"
+
+
+def test_ledger_stores_enum_fields_as_their_values(tmp_path: Path) -> None:
+    """枚举字段必须存 `.value`：`str(SessionType.GROUP)` 是 "SessionType.GROUP"，
+    按值比成员的读点会对每个输入都回假（本机 3.12 实测过的静默松闸）。"""
+    from plugins.bot_unified_runtime.domains.ops.monitor import error_ledger
+
+    ledger = error_ledger.ErrorIssueLedger(tmp_path / "error_issue.sqlite3")
+    ledger.record(
+        stage="onebot",
+        kind="retcode_failure",
+        severity=RiskLevel.HIGH,
+        source_adapter="onebot",
+        source_bot="b",
+        session_type=SessionType.GROUP,
+        session_id="g",
+        capability_id="bot.chat",
+        request_id="r",
+        debug_id="dbg-1",
+        safe_summary="retcode=-1200",
+    )
+    row = ledger.recent(limit=1)[0]
+    assert str(row["session_type"]) == "group", row["session_type"]
+    assert str(row["severity"]) == str(RiskLevel.HIGH.value), row["severity"]
+    assert "SessionType" not in str(row["session_type"])
+
+
+def test_ledger_bumps_one_row_and_keeps_first_seen(tmp_path: Path) -> None:
+    """同一枚报错复发 ⇒ 一行、计数涨、first_seen 保最早、debug_id 取最新。"""
+    from plugins.bot_unified_runtime.domains.ops.monitor import error_ledger
+
+    moments = iter([1_700_000_000.0, 1_700_000_060.0, 1_700_000_120.0])
+    ledger = error_ledger.ErrorIssueLedger(tmp_path / "e.sqlite3", clock=lambda: next(moments))
+    for debug_id, kind in (("dbg-1", "timeout"), ("dbg-2", "timeout"), ("dbg-3", "network")):
+        ledger.record(
+            stage="llm", kind=kind, source_adapter="onebot", source_bot="b",
+            debug_id=debug_id, request_id="r", safe_summary="",
+        )
+    rows = {str(row["kind"]): row for row in ledger.recent(limit=10)}
+    assert set(rows) == {"timeout", "network"}, "不同 kind 必须分枚（合并＝信息丢失）"
+    timeout = rows["timeout"]
+    assert int(timeout["hit_count"]) == 2
+    assert float(timeout["first_seen_at"]) == 1_700_000_000.0, "first_seen 被复发顶掉了"
+    assert float(timeout["last_seen_at"]) == 1_700_000_060.0
+    assert str(timeout["debug_id"]) == "dbg-2", "debug_id 必须留最新（对读审计/卡靠它）"
+
+
+def test_ledger_is_durable_across_reopen(tmp_path: Path) -> None:
+    """重启后仍在＝本腿存在的理由（抑制窗在进程内存里，重启归零）。"""
+    from plugins.bot_unified_runtime.domains.ops.monitor import error_ledger
+
+    path = tmp_path / "error_issue.sqlite3"
+    first = error_ledger.ErrorIssueLedger(path)
+    assert first.record(stage="llm", kind="timeout", source_adapter="onebot", source_bot="b")
+    assert path.is_file(), "台账不落盘＝假的持久"
+
+    reopened = error_ledger.ErrorIssueLedger(path)
+    rows = reopened.recent(limit=5)
+    assert len(rows) == 1 and int(rows[0]["hit_count"]) == 1, "重开读不到＝没落盘"
+    assert reopened.record(
+        stage="llm", kind="timeout", source_adapter="onebot", source_bot="b"
+    )
+    assert int(reopened.recent(limit=5)[0]["hit_count"]) == 2
+
+
+def test_ledger_ttl_is_two_stage_expire_then_purge(tmp_path: Path) -> None:
+    """TTL 两段式（照 `ResultUnknownLedger` 既有形状）：先标 expired 留排查窗，
+    超过 purge 窗才物理删 ⇒ 过期不等于立刻查不到，也不许无限增长。"""
+    from plugins.bot_unified_runtime.domains.ops.monitor import error_ledger
+
+    now = [1_700_000_000.0]
+    ledger = error_ledger.ErrorIssueLedger(
+        tmp_path / "e.sqlite3",
+        expire_seconds=3600.0,
+        purge_after_seconds=3600.0,
+        clock=lambda: now[0],
+    )
+    ledger.record(stage="llm", kind="timeout", source_adapter="onebot", source_bot="b")
+
+    now[0] += 3700.0  # 过 expire 窗、未过 purge 窗
+    summary = ledger.reconcile()
+    assert int(summary.expired) == 1, summary
+    assert int(summary.pending) == 0, summary
+    assert len(ledger.recent(limit=5, include_expired=True)) == 1, "expired 应仍可读到"
+    assert ledger.recent(limit=5) == [], "默认口径不得把过期行混进来当现役"
+
+    now[0] += 3700.0  # 过 purge 窗
+    summary = ledger.reconcile()
+    assert int(summary.purged) == 1, summary
+    assert ledger.recent(limit=5, include_expired=True) == [], "物理删除没执行＝台账无上限增长"
+
+
+# ==================== ⑧ 审计窗读点（W-7，D-3 甲腿）====================
+def _audit_record(request_id: str) -> Any:
+    from plugins.bot_unified_runtime.domains.core.contracts import AuditRecord
+
+    return AuditRecord(
+        request_id=request_id,
+        session_id="s",
+        capability_id="bot.chat",
+        stage="llm",
+        event="model_call",
+        severity=RiskLevel.MEDIUM,
+        public_message="ok",
+        private_debug="",
+    )
+
+
+def test_describe_audit_window_never_calls_pruned_absence_definitive(tmp_path: Path) -> None:
+    """「查不到」有三种，不许混成一种：窗没覆盖到＝判不了；窗覆盖到了＝真没记；
+    读点自己坏了＝明说坏。把前者讲成后者就是「隔夜复盘读被覆盖的缓冲」那笔账。"""
+    from plugins.bot_unified_runtime.domains.core.contracts import RiskLevel as _RL
+    from plugins.bot_unified_runtime.domains.ops.audit import logger as audit_logger
+
+    assert _RL is RiskLevel  # 同名同真身，防拿到别处的第二枚 RiskLevel
+
+    repository = audit_logger.SQLiteAuditRepository(tmp_path / "audit.sqlite3", max_items=2)
+    for request_id in ("req-1", "req-2", "req-3"):
+        repository.append(_audit_record(request_id))
+
+    window = audit_logger.describe_audit_window(repository, request_id="req-1")
+    assert window["backend"] == "sqlite"
+    assert int(window["retained"]) == 2, "max_items=2 应剪到只剩两条"
+    assert str(window["request_id"]) == "req-1"
+    # 没给发生时刻＝判不了，且必须说"判不了"而不是"没有"。
+    assert window["request_id_state"] == "indeterminate", window
+    assert str(window["oldest_iso"]) and str(window["newest_iso"])
+
+    # 给了时刻、但保留窗根本覆盖不到那段 ⇒ 依然判不了（可能已被剪掉）。
+    short_window = audit_logger.describe_audit_window(
+        repository, request_id="req-1", occurred_within_seconds=3600.0
+    )
+    assert short_window["request_id_state"] == "outside_window", short_window
+
+    # 窗覆盖得到的那段（此刻＝刚写入的秒级窗口）⇒ 才可以说「确实没记」。
+    present = audit_logger.describe_audit_window(repository, request_id="req-3")
+    assert present["request_id_state"] == "present", present
+    no_ask = audit_logger.describe_audit_window(repository)
+    assert no_ask["request_id_state"] == "not_asked", no_ask
+    covered = audit_logger.describe_audit_window(
+        repository, request_id="req-1", occurred_within_seconds=0.0
+    )
+    assert covered["request_id_state"] == "confirmed_absent", covered
+    assert covered["span_seconds"] is not None
+
+    empty = audit_logger.InMemoryAuditLogger()
+    assert audit_logger.describe_audit_window(
+        empty, request_id="req-9"
+    )["request_id_state"] == "store_empty"
+    assert audit_logger.describe_audit_window(empty)["backend"] == "memory"
+
+    class Broken:
+        def list_records(self, request_id: str | None = None) -> list[Any]:
+            raise RuntimeError("db locked")
+
+    assert audit_logger.describe_audit_window(
+        Broken(), request_id="req-1", occurred_within_seconds=60.0
+    )["request_id_state"] == "unreadable", "读点自己失败必须自报，不得伪装成「没发生」"

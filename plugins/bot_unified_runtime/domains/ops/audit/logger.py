@@ -4,9 +4,9 @@ import re
 import sqlite3
 from collections import deque
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.domains.core.contracts import AuditRecord, RiskLevel
@@ -242,3 +242,86 @@ def build_audit_repository(config: Config) -> AuditRepository:
     if enabled and db_path:
         return SQLiteAuditRepository(db_path, max_items=max_items)
     return InMemoryAuditLogger(max_entries=max_items)
+
+
+# 「查不到」≠「没发生」：审计库按 max_items 剪枝（本机实测回溯只有几小时），
+# 所以 absence 有三种成因——真没记、被剪掉、读点自己坏了。把它们混成一个词，
+# 就是隔夜复盘把被覆盖的缓冲当证据那笔账（W-7 D-3 甲腿）。状态词封闭名册：
+#   present / confirmed_absent / outside_window / indeterminate / store_empty /
+#   unreadable / not_asked
+def describe_audit_window(
+    repository: AuditRepository,
+    *,
+    request_id: str = "",
+    occurred_within_seconds: float | None = None,
+) -> dict[str, Any]:
+    """读审计库的**保留窗**，并把"这条 request_id 在不在"判到有据可依。
+
+    ``occurred_within_seconds``＝调用方能保证"这事发生在最近 N 秒内"。给了它才
+    可能得出 ``confirmed_absent``（窗完整覆盖那段 Yet 没有）；不给则一律
+    ``indeterminate``——本函数禁止替调用方假设发生时刻。
+    """
+    asked = str(request_id or "").strip()
+    window: dict[str, Any] = {
+        "backend": _backend_name(repository),
+        "request_id": asked,
+        "retained": 0,
+        "oldest_iso": "",
+        "newest_iso": "",
+        "span_seconds": None,
+        "occurred_within_seconds": (
+            None if occurred_within_seconds is None else float(occurred_within_seconds)
+        ),
+        "request_id_state": "not_asked" if not asked else "indeterminate",
+        "window_start_iso": "",
+    }
+    try:
+        records = list(repository.list_records())
+    except Exception as error:  # noqa: BLE001 - 读点自身故障必须自报，不得伪装成"没发生"
+        window["request_id_state"] = "unreadable"
+        window["error_type"] = type(error).__name__
+        return window
+
+    window["retained"] = len(records)
+    if not records:
+        if asked:
+            window["request_id_state"] = "store_empty"
+        return window
+
+    moments = [_aware(record.created_at) for record in records]
+    oldest, newest = min(moments), max(moments)
+    window["oldest_iso"] = oldest.isoformat()
+    window["newest_iso"] = newest.isoformat()
+    window["window_start_iso"] = oldest.isoformat()
+    window["span_seconds"] = (newest - oldest).total_seconds()
+    if not asked:
+        window["request_id_state"] = "not_asked"
+        return window
+
+    if any(str(record.request_id) == asked for record in records):
+        window["request_id_state"] = "present"
+        return window
+    if occurred_within_seconds is None:
+        window["request_id_state"] = "indeterminate"
+        return window
+    earliest_possible = datetime.now(timezone.utc) - timedelta(
+        seconds=max(0.0, float(occurred_within_seconds))
+    )
+    # 保留窗起点晚于"最早可能的发生时刻" ⇒ 那段时间整体已被剪掉，缺席不证明任何事。
+    window["request_id_state"] = (
+        "outside_window" if oldest > earliest_possible else "confirmed_absent"
+    )
+    return window
+
+
+def _aware(value: datetime) -> datetime:
+    """SQLite 往返后可能是 naive（缺省 `_utc_now()` 是 aware）；统一按 UTC 对齐再比。"""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
+def _backend_name(repository: AuditRepository) -> str:
+    if isinstance(repository, SQLiteAuditRepository):
+        return "sqlite"
+    if isinstance(repository, InMemoryAuditLogger):
+        return "memory"
+    return type(repository).__name__
