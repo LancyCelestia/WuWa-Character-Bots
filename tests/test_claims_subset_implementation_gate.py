@@ -61,9 +61,18 @@ ALIASES_PY = PLUGIN / "domains/chat_reply/runtime/aliases.py"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# ↓ 以下三条 import 有意置于 sys.path.insert 之后（中段 import＝E402 场景，逐枚意图见各自注释）。
+# ↓ 以下这一段 import 有意置于 sys.path.insert 之后（中段 import＝E402 场景，逐枚意图见各自注释）。
 # 字段集与"接收者是否 configish"两条口径都 import 自普查真身（禁在本席文件里另写一份正则）。
 import scripts.config_read_point_census as census
+
+# 腿 A 的**归一口**＝生产那一只（`__init__.py:8627` 在 if/elif 分发段之前就是调它）。
+# 主会话 2026-10-08 裁定（席 CB-CMDUNIFY 把口径留给本席）：E1 字面集天生看不见中文词头，
+# 判落点前先把宣称子令交这只**当场折一遍**——🔴 不是把 `MODULE_ALIASES` 抄进本席文件：
+# 抄表＝第二真身，别名一改这尺立刻骗人；执行原文＝别名册是唯一事实源，折不折得动由它说了算。
+# `aliases.py` 仍在 `_CLAIM_SIDE`（不作取证出处），这里只借它的**函数**，不借它的**词表**。
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.aliases import (
+    normalize_command_text as _production_normalize,
+)
 
 # 配置键申报的第二条通路＝真身册（S186 收编波定的单一真身）。只 import 求值，不抄清单。
 from plugins.bot_unified_runtime.domains.core.capability_manifest import (
@@ -84,9 +93,14 @@ from tests.test_trigger_matcher_ratchet import (
 # 违规基线（席 G1 · 2026-10-02 现算复录；逐枚读数与出处见本席工单 §2）
 # ---------------------------------------------------------------------------
 
-#: 腿 A 存量：册上宣称、E1/E2/E3 皆无落点的 `/bot` 子令。现算起点＝1 枚（decision）。
-#: 修法＝在 `_handle_status` 接分支（复用 logs 分支先例，不建第三条旁路），或撤掉那四层登记。
-DANGLING_SUBCOMMAND_BASELINE: frozenset[str] = frozenset({"decision"})
+#: 腿 A 存量：册上宣称、E1/E2/E3 皆无落点的 `/bot` 子令。
+#: 2026-10-08 席 CB-CMDUNIFY 清账：`decision` 已随 G-2（乙）在 `_handle_status` 接上
+#: 分发支（复用 logs 分支同构先例），本基线归零。
+#: 2026-10-08 主会话裁定（席把口径留给本席）：`描写` 那枚**不是**册子骗人——链上 `narration`
+#: 支真在，是 E1 看不见中文词头＝尺瞎。修法给判据补归一腿（`_landing_candidates`，执行生产
+#: `normalize_command_text` 原文），**基线一字未动、仍为空**：没把任何真悬空项登记成豁免，
+#: 今后新造一枚没牙的中文词头照样当场红（牙口锁＝`test_alias_fold_leg_never_launders_a_headless_subcommand`）。
+DANGLING_SUBCOMMAND_BASELINE: frozenset[str] = frozenset()
 
 #: 腿 B 存量：册上宣称却无在册落点的能力 id。现算起点＝0 枚 ⇒ 零档硬口径，新增即红。
 UNLANDED_CAPABILITY_CLAIM_BASELINE: frozenset[str] = frozenset()
@@ -260,6 +274,32 @@ def _docstring_lines(tree: ast.Module) -> set[int]:
     return out
 
 
+def startswith_head_literals(node: ast.AST) -> list[str]:
+    """E1 取数口：`command_text.startswith(…)` 的**字面量**，单串形与元组/列表/集合形都逐个交出。
+
+    ⚠ 口径＝逐个比字面量，不是「见到 startswith 就算落点」：元组里每一枚都单独进集，
+    摘掉或改掉任一枚 ⇒ 那枚词头当场从 E1 消失（注毒腿
+    `test_poison_tuple_form_head_literals_are_compared_individually` 执法）。
+    先例同尺＝`tests/test_trigger_bidirectional_gate.py::command_text_literal_heads`（已认元组形）。
+    非字面量（变量、`f-string`、函数调用）一律不交——否则一句 `startswith(prefixes)` 就能替悬空命令作证。
+    """
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        return []
+    if node.func.attr != "startswith" or not isinstance(node.func.value, ast.Name):
+        return []
+    if node.func.value.id != "command_text" or not node.args:
+        return []
+    first = node.args[0]
+    if isinstance(first, ast.Constant):
+        return [first.value] if isinstance(first.value, str) else []
+    if isinstance(first, (ast.Tuple, ast.List, ast.Set)):
+        return [
+            element.value for element in first.elts
+            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+        ]
+    return []
+
+
 @lru_cache(maxsize=1)
 def dispatch_literals() -> tuple[frozenset[str], frozenset[str]]:
     """E1：根 `_handle_status` 里对 `command_text` 的字面比较 → (整串字面, 词头)。"""
@@ -284,9 +324,9 @@ def dispatch_literals() -> tuple[frozenset[str], frozenset[str]]:
                     heads.add(subcommand_head(literal))
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
                 and node.func.attr == "startswith" and isinstance(node.func.value, ast.Name) \
-                and node.func.value.id == "command_text" and node.args \
-                and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-            heads.add(subcommand_head(str(node.args[0].value)))
+                and node.func.value.id == "command_text":
+            for literal in startswith_head_literals(node):
+                heads.add(subcommand_head(literal))
     return frozenset(full), frozenset(heads)
 
 
@@ -573,10 +613,26 @@ def landed_subcommand_set() -> dict[str, set[str]]:
     return {"full": set(full), "heads": set(heads) | set(landing_evidence())}
 
 
+def _landing_candidates(sub: str) -> tuple[str, ...]:
+    """宣称子令在 root 链上**真会被拿去比对的形**：原文一枚 ＋ 经生产归一口折过的一枚。
+
+    2026-10-08 的假红本体：`描写` 在册上教用户敲（topic＝亲密模式），链上 `narration` 支
+    也真在（`__init__.py:8983`），但 E1 只收 `command_text` 的字面比较 ⇒ 中文词头永远
+    比不中 ⇒ 判成"册子教了一枚没牙的命令"。根链实际比对的是**归一后**的 `command_text`
+    （`:8627`），所以本腿也照这条走：折得动且折后的形有落点 ⇒ 有牙。
+    🔴 折不动的（`描写zzz`）照旧悬空——归一口不认它，就没有"顺手放宽"这回事。
+    """
+    raw = str(sub or "").strip().lower()
+    folded = _production_normalize(raw)
+    return (raw,) if folded == raw else (raw, folded)
+
+
 def is_landed(full: str, landed: dict[str, set[str]] | None = None) -> bool:
     pool = landed or landed_subcommand_set()
-    lowered = full.strip().lower()
-    return lowered in pool["full"] or subcommand_head(lowered) in pool["heads"]
+    for candidate in _landing_candidates(full):
+        if candidate in pool["full"] or subcommand_head(candidate) in pool["heads"]:
+            return True
+    return False
 
 
 def dangling_subcommands(claims: dict[str, list[str]]) -> dict[str, list[str]]:
@@ -722,20 +778,47 @@ def test_dangling_subcommands_decreasing_ratchet() -> None:
     )
 
 
-def test_decision_is_the_recorded_dangling_subcommand() -> None:
-    """实证锁（简报 §10-1 点名那条）：`decision` 确在悬空集，且三条落点腿都给不出它的出处。"""
+def test_decision_is_wired_and_must_not_return_to_dangling() -> None:
+    """实证锁（G-2 乙接线后的翻正版，原条文自述"届时翻正成活性锁"）：
+    `decision` 必须**有** E1 落点，且不得再回到悬空集——撤了接线这枚就红。"""
     subs, _caps = help_claims()
     gaps = dangling_subcommands(subs)
     current = {sub for group in gaps.values() for sub in group}
-    assert "decision" in current, (
-        "`decision` 不再悬空＝分发链接上了 ⇒ 请从基线清账（递减放行），别静默留着这本账"
+    assert "decision" not in current, (
+        "`decision` 又悬空了＝分发支被摘掉 ⇒ /bot decision 重新变成手册骗人"
     )
-    assert "决策" in gaps, "悬空子令没挂在「决策」主题下＝宣称面取数口径变了，先核对再动判据"
-    assert "decision" not in landing_evidence(), "E2/E3 竟给 decision 发了落点 ⇒ 判据被放宽"
     full, heads = dispatch_literals()
-    assert "decision" not in full and "decision" not in heads, (
-        "E1 认了 decision ⇒ 本条应随接线清账，别让它继续挂在基线上"
+    assert "decision" in full and "decision" in heads, (
+        f"E1 不再认 decision（full={sorted(full)[:0]}…）⇒ 接线缺席"
     )
+    assert "决策" in full or "决策" in heads, "中文词头那支不见了＝/bot 决策 重新坠兜底"
+
+
+def test_alias_fold_leg_never_launders_a_headless_subcommand() -> None:
+    """腿 A 的牙口（归一腿两向自证；合成落点面，不碰磁盘、不靠"全绿"自证）。
+
+    给判据补一条腿＝必须同时证明它**咬得住**，否则今天消掉的这枚红只是把尺子磨钝：
+
+    - 正向不误伤：`描写` 折成 `narration`、链上支真在 ⇒ 不许判悬空。
+    - 折不动的假词头（`描写zzz`）照旧悬空——归一口不认它就没有"顺手放宽"。
+    - 🔴 真格子：把 `narration` 从落点面抽掉（＝哪天那支被摘），`描写` **必须立刻**
+      回到悬空集。这条才是"归一腿只借真落点、不自我发证"的证明。
+    """
+    pool = landed_subcommand_set()
+    assert "narration" in pool["heads"], "E1 的 narration 支不见了＝本腿前提失效（先去查接线）"
+    assert not dangling_subcommands({"归一腿": ["描写", "描写 speech"]}), "真接上的中文词头被误判悬空"
+
+    assert not is_landed("描写zzz speech", pool), "折不动的词头被判有牙＝归一腿在自我发证"
+    assert not is_landed("zzzfabricated", pool), "假词头池子塌了，本腿其实什么都没比"
+
+    hollowed = {
+        "full": set(pool["full"]) - {"narration"},
+        "heads": set(pool["heads"]) - {"narration"},
+    }
+    assert not is_landed("描写", hollowed), (
+        "把 narration 分支抽掉后 `描写` 仍判有牙 ⇒ 归一腿绕过了真落点面，这尺已经瞎了"
+    )
+    assert is_landed("描写", pool), "同一枚词头在真落点面下必须有牙（两向只差在落点面本身）"
 
 
 def test_unlanded_capability_claims_are_zero_tolerance() -> None:
@@ -836,8 +919,8 @@ def test_dangling_verb_ledger_still_matches_existing_authority() -> None:
         f"动词轴悬空集与既有真身基线漂移：现算 {sorted(dangling)}"
         f"｜基线 {sorted(DANGLING_VERB_CAPABILITIES_BASELINE)}"
     )
-    assert "decision" not in landed_subcommand_set()["heads"], (
-        "读数矛盾：动词轴判 decision 悬空、子令轴却认它有落点 ⇒ 有一把尺被放宽了"
+    assert "decision" in landed_subcommand_set()["heads"], (
+        "读数矛盾：动词轴已无悬空、子令轴却查不到 decision 落点 ⇒ 接线或尺被摘掉一边"
     )
 
 
@@ -999,4 +1082,45 @@ def test_poison_docstring_is_not_a_landing_but_a_probe_pattern_is() -> None:
     assert not has_prefix2, (
         "没有 /bot 前缀常量的模块也放行别名字册 ⇒ 任何一枚同名 alias 都能替悬空命令作证"
     )
+
+
+def test_poison_tuple_form_head_literals_are_compared_individually() -> None:
+    """注毒 F（元组形扩口时补的牙）：E1 认 `startswith((a, b))` ＝**逐个取字面量**，不是「见到 startswith 就算」。
+
+    三面都判：
+    - 改掉元组里任一枚字面 ⇒ 那枚词头当场从 E1 消失（若仍「有落点」＝门被锯成摆设）；
+    - 单串形口径一字不变（扩口不得回头吃掉旧判据）；
+    - 非字面量实参（变量表）与认错接收者/方法名都不许作证——否则一句 `startswith(常量表)`
+      就能替一条没有分支的命令作证，与 docstring 洗白同病。
+    全内存造树，绝不写盘。
+    """
+
+    def heads_of(src: str) -> set[str]:
+        return {
+            subcommand_head(literal)
+            for node in ast.walk(ast.parse(src))
+            for literal in startswith_head_literals(node)
+        }
+
+    assert heads_of('if command_text.startswith("queue "):\n    pass\n') == {"queue"}, (
+        "单串形回归判据变了 ⇒ 扩元组形时把旧口径也动了"
+    )
+    assert heads_of('if command_text.startswith(("decision ", "决策 ")):\n    pass\n') == {
+        "decision", "决策"
+    }, "元组形取数错位 ⇒ 新腿没真读出两枚词头（会误伤健康接线）"
+
+    assert "decision" not in heads_of(
+        'if command_text.startswith(("desicion ", "决策 ")):\n    pass\n'
+    ), "改掉元组里一枚字面后 decision 仍被判有落点 ⇒ 本腿退化成「见到 startswith 就算」"
+    assert "decision" not in heads_of('if command_text.startswith(("决策 ",)):\n    pass\n'), (
+        "摘掉一枚字面后那枚词头未被摘掉 ⇒ 同上"
+    )
+
+    assert heads_of('_H = ("decision",)\nif command_text.startswith(_H):\n    pass\n') == set(), (
+        "变量实参被当成落点 ⇒ 任何一张常量表都能替悬空命令作证"
+    )
+    assert heads_of(
+        'if other_text.startswith(("decision",)):\n    pass\n'
+        'if command_text.endswith(("decision",)):\n    pass\n'
+    ) == set(), "认错接收者/认错方法名也作证 ⇒ 落点集被稀释"
 

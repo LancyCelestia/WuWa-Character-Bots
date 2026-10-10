@@ -31,6 +31,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 from typing import Any
 
@@ -801,3 +802,348 @@ def test_ledger_leg_catches_ledger_evidence_split() -> None:
     problems = _ledger_evidence_problems(LEDGER_HELP_TO_ROUTE_EVIDENCE, **inputs)
     assert any("凭证有、台账没有" in problem for problem in problems), problems
     assert any(repr(victim[1]) in problem or victim[1] in problem for problem in problems), problems
+
+
+# ===========================================================================
+# G-3 腿①（席 CB-CMDUNIFY-20261008）：「帮助页宣称的 /bot 子令 ⊆ root 真受理集合」
+# ===========================================================================
+# 与既有两把尺的分工（刻意不重抄实物，避免第二真身）：
+# - `tests/test_claims_subset_implementation_gate.py` 腿 A 判「宣称有没有落点」，落点
+#   认 E1 分发链字面 ∪ E2 判定正则 ∪ E3 别名字册三条腿。它的 E1 只吃 `==`/`startswith`
+#   的**字面量**，不吃 `MODULE_ALIASES` 归一，所以 `/bot 描写` 那枚到今天还红（既存红，
+#   本席不代修）；本腿把宣称先过 `normalize_command_text`（＝生产真口）再比，量的正是
+#   "敲下去到底派到哪一支"。
+# - 词级双向台账（本文件上面那两本）管"册上的词路由认不认"，看不见"这条入口能不能真出结果"。
+# - **本腿新咬的那一格**＝G-1 之后链尾不再有"什么都往 help 兜底"的 Catch-all：一条宣称
+#   再也不能靠兜底 laundering 成"看起来有回应"。所以兜底形必须逐枚**显式在册**，
+#   白名单只有下列四组，多一枚都要在交接报告里点名。
+
+_INIT_PY = (
+    Path(__file__).resolve().parents[1] / "plugins" / "bot_unified_runtime" / "__init__.py"
+)
+
+#: 在册兜底形（G-1 显式登记，唯一一把尺；扩一枚＝报告点名）：
+#:   ""                         ＝ `/bot` 裸打 → 帮助总览（主人的手感，不许变）
+#:   "status"                   ＝ `/bot status` → 状态（旧 else 支的正身）
+#:   HELP_COMMAND_HEAD_WORDS    ＝ `/bot help|帮助|幫助 …` → 总览/深度页
+#:   _COMMANDS_CATALOG_QUERY     ＝ `/bot commands|cmds|命令|命令列表|命令目录` → 命令目录
+def _registered_fallback_forms() -> set[str]:
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities import echo
+
+    return (
+        {"", "status"}
+        | {str(w).lower() for w in echo.HELP_COMMAND_HEAD_WORDS}
+        | {str(w).lower() for w in echo._COMMANDS_CATALOG_QUERY}
+    )
+
+
+def _status_handler_ast() -> ast.AsyncFunctionDef:
+    tree = ast.parse(_INIT_PY.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_handle_status":
+            return node
+    raise AssertionError("根 __init__.py 里找不到 _handle_status（命令面已搬家？）")
+
+
+def command_text_literal_heads() -> set[str]:
+    """根分发链上对 `command_text` 的字面比较 → 词头集（== / in 容器 / startswith，含元组形）。"""
+    heads: set[str] = set()
+
+    def add(token: object) -> None:
+        text = str(token or "").strip().lower()
+        if text:
+            heads.add(text.split(maxsplit=1)[0])
+
+    for node in ast.walk(_status_handler_ast()):
+        if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name) \
+                and node.left.id == "command_text":
+            for comparator in node.comparators:
+                if isinstance(comparator, ast.Constant):
+                    add(comparator.value)
+                elif isinstance(comparator, (ast.Tuple, ast.List, ast.Set)):
+                    for element in comparator.elts:
+                        if isinstance(element, ast.Constant):
+                            add(element.value)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and node.func.attr == "startswith" and isinstance(node.func.value, ast.Name) \
+                and node.func.value.id == "command_text" and node.args:
+            first = node.args[0]
+            if isinstance(first, ast.Constant):
+                add(first.value)
+            elif isinstance(first, (ast.Tuple, ast.List, ast.Set)):
+                for element in first.elts:
+                    if isinstance(element, ast.Constant):
+                        add(element.value)
+    return heads
+
+
+#: 🔴 `、`（顿号）必须在排除集里：册上并列命令行就按它排（`/bot status、/bot pause|resume`），
+#: 少了这一枚正则会一路吞到下一个空格，把 `status、/bot` 当成**一枚**词头报出来——
+#: 假红的同时更要紧的是**吞掉了后半枚**（`pause` 从此不在宣称面上＝尺瞎）。2026-10-08 实测。
+_BOT_CLAIM_PATTERN = r"/bot\s*([^\s｜|<>（）()，,。、；;：:]+)"
+
+
+def bot_claim_heads(text: object) -> list[str]:
+    """一枚册上字符串里所有 `/bot X` 宣称的词头（先过生产归一口 normalize_command_text）。"""
+    import re
+
+    heads: list[str] = []
+    for raw in re.findall(_BOT_CLAIM_PATTERN, str(text or "")):
+        head = normalize_command_text(raw).split(maxsplit=1)[0].strip().lower()
+        if head:
+            heads.append(head)
+    return heads
+
+
+def help_page_subcommand_claims() -> dict[str, str]:
+    """帮助页与主题登记册**自己申报**的 `/bot` 入口：topic → 词头（每 topic 记第一枚）。
+
+    取数三处真身：`_HELP_ENTRY_META[topic]["capability"]` ∪ `["examples"]` ∪
+    `capability_registry` 的 `HelpTopicDecl.capability` ∪ `_HELP_ENTRIES` 的 `index`
+    （册顶那一行就是给用户照着敲的）。本腿不另立第二份词表。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities import echo
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+        capability_registry,
+    )
+
+    claims: dict[str, str] = {}
+
+    def note(topic: object, text: object) -> None:
+        found = bot_claim_heads(text)
+        if found:
+            claims.setdefault(f"{topic}", found[0])
+
+    for topic, record in echo._HELP_ENTRY_META.items():
+        note(topic, record.get("capability"))
+        for example in record.get("examples") or ():
+            note(topic, example)
+    for entry in echo._HELP_ENTRIES:
+        note(entry.get("topic"), entry.get("index"))
+    for decl in getattr(capability_registry, "HELP_TOPIC_DECLARATIONS", ()):
+        note(getattr(decl, "topic", ""), getattr(decl, "capability", ""))
+    return claims
+
+
+def _chain_predicate_legs() -> list[str]:
+    """链上「整支交给一个谓词」的判定名（现网只有一支：`is_memory_command_text(command_text)`）。
+
+    这类支没有字面词头可比——它的受理集住在谓词自家模块里。本腿**不去抄那张词表**
+    （抄＝第二真身），而是把谓词本身 import 回来、拿宣称词头当场问它一遍。
+    """
+    names: list[str] = []
+    for node in ast.walk(_status_handler_ast()):
+        # 🔴 只看**判定式**（`If.test`），不看支体：整颗 handler 里 walk 会把支体内的
+        # `route_memory_command(command_text, sender_id=…, db_path=…)` 也当成谓词收进来，
+        # 而它不是"一个字符串进、布尔出"的谓词——当场 TypeError＝这条 slash 判据瞎掉。
+        if not isinstance(node, ast.If):
+            continue
+        for call in ast.walk(node.test):
+            if (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.args
+                and isinstance(call.args[0], ast.Name)
+                and call.args[0].id == "command_text"
+            ):
+                names.append(call.func.id)
+    return sorted(set(names))
+
+
+def _predicate_accepts(head: str) -> bool:
+    """链上任一谓词认这枚词头 ⇒ root 真受理（执行生产谓词原文，零第二份词表）。"""
+    import importlib
+
+    plugins_root = _INIT_PY.parent
+    for name in _chain_predicate_legs():
+        for path in plugins_root.rglob("*.py"):
+            rel = path.relative_to(plugins_root).as_posix()
+            if f"def {name}(" not in path.read_text(encoding="utf-8", errors="ignore"):
+                continue
+            module = importlib.import_module(
+                "plugins.bot_unified_runtime." + rel[: -len(".py")].replace("/", ".")
+            )
+            predicate = getattr(module, name, None)
+            if callable(predicate) and predicate(head):
+                return True
+    return False
+
+
+def root_accepted_head_set(claims: dict[str, str] | None = None) -> set[str]:
+    from tests.test_claims_subset_implementation_gate import landing_evidence
+
+    accepted = (
+        command_text_literal_heads()
+        | set(landing_evidence())
+        | _registered_fallback_forms()
+    )
+    # 宣称值既可能是单枚词头也可能是词头清单（一枚主题宣称多个可敲形），
+    # 直接 `set(values())` 会在清单上炸 `TypeError: unhashable type: 'list'`
+    # ＝整条 slash 面判据当场瞎掉（2026-10-08 实测）。所以先摊平再判。
+    for value in (claims or {}).values():
+        heads = value if isinstance(value, (list, tuple, set, frozenset)) else (value,)
+        for head in heads:
+            if not isinstance(head, str):
+                continue
+            if head not in accepted and _predicate_accepts(head):
+                accepted.add(head)
+    return accepted
+
+
+def _claims_subset_problems(claims: dict[str, str], accepted: set[str]) -> list[str]:
+    return sorted(
+        f"帮助页宣称 /bot {head}（topic＝{topic}）在 root 真受理集合里没有落点"
+        for topic, head in claims.items()
+        if head not in accepted
+    )
+
+
+def test_help_page_claims_are_subset_of_root_accepted_heads() -> None:
+    """主门：册上每枚 `/bot X` 宣称，root 必须真收得住——收不住就是手册骗人。"""
+    claims = help_page_subcommand_claims()
+    assert claims, "尺读空＝宣称面搬家了，本腿先报警而不是静默绿"
+    accepted = root_accepted_head_set()
+    assert accepted, "尺读空＝受理面取数失效，本腿先报警而不是静默绿"
+    assert "decision" in command_text_literal_heads(), "G-2（乙）的 decision 分发支不见了"
+    problems = _claims_subset_problems(claims, root_accepted_head_set(claims))
+    assert not problems, "宣称 ⊄ 受理：" + "；".join(problems)
+
+
+def test_root_accepted_leg_catches_fabricated_claim() -> None:
+    """注毒②：往帮助页塞一枚 root 不认的宣称（`/bot zzzfabricated`）⇒ 本腿必红。"""
+    poisoned = dict(help_page_subcommand_claims(), 注毒样本="zzzfabricated")
+    problems = _claims_subset_problems(poisoned, root_accepted_head_set())
+    assert any("zzzfabricated" in p for p in problems), (
+        "注毒未奏效：宣称面多一枚没牙的命令，门照样绿 ⇒ 本腿已退化成摆设"
+    )
+
+
+def test_root_accepted_leg_catches_unwired_claim() -> None:
+    """注毒①：往 root 塞一枚真未登记动词（受理面凭空多一支 `zzznewverb`）而册上不写 ⇒
+    由 `_claims_subset_problems` 的对偶面验：把一枚**真在册词头**从受理集合里摘掉必红。
+
+    两头都咬实物：②动宣称、①动受理；只动一边就绿的尺不算尺。
+    """
+    claims = help_page_subcommand_claims()
+    accepted = root_accepted_head_set(claims)
+    claimed = set(claims.values())
+    victims = sorted(claimed & accepted)
+    assert victims, "注毒前提失效：宣称与受理没有交集，本腿其实什么都没比"
+    victim = victims[0]
+    problems = _claims_subset_problems(
+        {f"注毒/{victim}": victim}, accepted - {victim}
+    )
+    assert any(victim in p for p in problems), (
+        f"注毒未奏效：受理面少了 {victim}，门照样绿"
+    )
+    # 对偶：真未登记动词绝不许出现在受理集合里（兜底形只有那四组）
+    from tests.test_claims_subset_implementation_gate import landing_evidence
+
+    extra = accepted - command_text_literal_heads() - set(landing_evidence()) - claimed
+    assert extra <= _registered_fallback_forms(), (
+        f"兜底形白名单被扩了：{sorted(extra - _registered_fallback_forms())}"
+    )
+
+
+# ===========================================================================
+# G-4 腿（席 CMD-SLASH-HEADS-20261008）：`_HELP_ENTRIES` **命令行**宣称的 `/bot <词头>`
+# 必须在 root 链上找到落点（分支字面量或谓词支当场执行）
+# ===========================================================================
+# 上面那把尺（G-3 腿①）读的是 `META.capability` ∪ `META.examples` ∪ `_HELP_ENTRIES.index`
+# ∪ registry `HelpTopicDecl.capability`，**每主题只记第一枚词头**，且看不见 `lines[]`——
+# 而 `lines[]` 才是 HELP-1 定的命令行唯一事实源（深页的【指令与参数】段由它派生）。
+# 于是「册子在命令行里教了一条没牙的 `/bot 天气 <城市>`」这一格今天没人管：
+# G-1 拒止支上线后，它会当场把用户拒掉，而帮助页照旧教着。本腿补的就是这一格。
+# 🔴 同门加腿、不另立第二件门：宣称面仍由 `bot_claim_heads`（先过生产归一口
+# `normalize_command_text`）取词，受理面仍由 `root_accepted_head_set`（链上字面量 ∪
+# E2/E3 判定正则与别名字册 ∪ 在册兜底形 ∪ 谓词支**当场执行**）作答。
+
+#: 判据 7 的命令行骨架（`^…：作用=…；参数=…；内容=…；意义=`）——只有合这个骨架的行
+#: 才是「命令行」，其余是讲解散文（讲解行按甲批口径该迁 `_HELP_EXTRA_LINES`）。
+_HELP_COMMAND_LINE_RE = re.compile(r"^([^：]+：)作用=.+；参数=.+；内容=.+；意义=")
+#: 行末独立短句「（中文｜英文）同义：…」——甲批定的形：同义**不进命令段**，只在这句里出现，
+#: 所以它同样是宣称面（写了就得有牙），也必须过这把尺。
+_HELP_SYNONYM_CLAUSE_RE = re.compile(r"[\u4e00-\u9fff]*同义[:：](.+)$")
+
+
+def help_entry_command_line_claims() -> dict[str, list[str]]:
+    """topic → `_HELP_ENTRIES[*]["lines"]` 命令行里宣称的 `/bot` 词头（命令段＋同义短句）。"""
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities import echo
+
+    claims: dict[str, list[str]] = {}
+    for entry in echo._HELP_ENTRIES:
+        topic = str(entry.get("topic") or "")
+        for line in entry.get("lines") or ():
+            text = str(line or "")
+            if not _HELP_COMMAND_LINE_RE.match(text):
+                continue  # 讲解行不是命令行，不在本尺面上
+            found = bot_claim_heads(_HELP_COMMAND_LINE_RE.match(text).group(1))
+            synonym = _HELP_SYNONYM_CLAUSE_RE.search(text)
+            if synonym is not None:
+                found = [*found, *bot_claim_heads(synonym.group(1))]
+            if found:
+                claims.setdefault(topic, []).extend(found)
+    return claims
+
+
+def _command_line_claim_problems(claims: dict[str, list[str]], accepted: set[str]) -> list[str]:
+    return sorted(
+        f"帮助册命令行宣称 /bot {head}（topic＝{topic}）在 root 链上找不到落点"
+        for topic, heads in claims.items()
+        for head in set(heads)
+        if head not in accepted
+    )
+
+
+def test_help_entry_command_line_claims_land_on_root_chain() -> None:
+    """主门：`lines[]` 命令行（含行末「…同义：…」短句）里每枚 `/bot 词头` 都得有牙。"""
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities import echo
+
+    claims = help_entry_command_line_claims()
+    assert claims, "尺读空＝命令行骨架或词头取数口塌了，本腿先报警而不是静默绿"
+    # 宣称面确实覆盖了本波补的那几枚（尺不许只对着空集自证）
+    landed_topics = {str(entry["topic"]) for entry in echo._HELP_ENTRIES if entry.get("lines")}
+    assert set(claims) <= landed_topics
+    accepted = root_accepted_head_set(claims)
+    problems = _command_line_claim_problems(claims, accepted)
+    assert not problems, "命令行宣称 ⊄ root 受理：" + "；".join(problems)
+
+
+def test_command_line_leg_catches_new_headless_claim() -> None:
+    """注毒：往某一枚**合法骨架**的命令行里塞一枚没牙词头（`/bot zzzheadless`）⇒ 必红。
+
+    注在**行末同义短句**上（＝甲批那形），因为「命令段有牙、同义没牙」正是本波最容易
+    再犯的一格：补了英文正形忘了中文同义，用户照册敲中文就被拒止支拒掉。
+    """
+
+    claims = help_entry_command_line_claims()
+    poisoned_topic = next(iter(sorted(claims)))
+    poisoned = dict(claims, **{poisoned_topic: [*claims[poisoned_topic], "zzzheadless"]})
+    problems = _command_line_claim_problems(poisoned, root_accepted_head_set(claims))
+    assert any("zzzheadless" in problem for problem in problems), (
+        "注毒未奏效：命令行多教了一条没牙的命令（还是同义短句那一格），门照样绿"
+    )
+    # 反向不误伤：同一枚词头真有落点时不得被点名
+    real = sorted({head for heads in claims.values() for head in heads})
+    clean_problems = _command_line_claim_problems({poisoned_topic: real[:1]}, root_accepted_head_set(claims))
+    assert not clean_problems, f"在册真词头被误判没牙：{clean_problems}"
+
+
+def test_claim_tokenizer_keeps_every_enum_item_on_the_ruler() -> None:
+    """量具自证：`/bot A、/bot B` 必须拆成**两枚**词头，后半枚不许被吞进前一枚的串里。
+
+    2026-10-08 实测的反面：排除集缺 `、` 时正则一路吞到空格 ⇒ 整行只吐 `status、/bot` 一枚，
+    既造出「/bot status、/bot 在 root 链上找不到落点」这枚假红，又把真词头 `pause` 从宣称面上
+    **整枚吃掉**。后者比假红贵得多——那一格此后怎么写没牙命令都没人管，而门照绿。
+    🔴 断言只认拆出来的**序列本身**：拿「报错文案里有没有这枚字面」当判据会被合并串蒙混过关
+    （合并后 `status、/bot zzzheadless` 照样含 `zzzheadless` 子串）。
+    """
+    assert bot_claim_heads("/bot status、/bot pause|resume：") == ["status", "pause"]
+
+    headless = bot_claim_heads("/bot status、/bot zzzheadless")
+    assert headless == ["status", "zzzheadless"], f"没牙的后半枚被吞掉了：{headless}"
+    problems = _command_line_claim_problems({"注毒": headless}, root_accepted_head_set())
+    assert problems == [
+        "帮助册命令行宣称 /bot zzzheadless（topic＝注毒）在 root 链上找不到落点"
+    ], f"注毒点名不精确（合并串会把 `status` 或整串一起咬进来）：{problems}"
+
