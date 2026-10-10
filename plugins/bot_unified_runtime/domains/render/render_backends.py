@@ -478,7 +478,9 @@ class PlaywrightRenderBackend:
     available = False
     # 线程本地常驻浏览器的空闲回收阈值：超过即关旧开新，避免僵死实例常驻。
     _BROWSER_IDLE_SECONDS = 600.0
-    # 单页内容加载超时：networkidle 等待上限，防止慢资源把锁持有 30s（默认）。
+    # 单页内容加载超时：set_content 就绪等待（load 形态）与后续 wait_for_* 的
+    # 页面上限，防止慢资源把锁持有 30s（Playwright 默认）。数值不动，形态口径
+    # 见 render_card 内「就绪形态＝load」段（SEAT-G 2026-10-11）。
     _SET_CONTENT_TIMEOUT_MS = 8000
     # 浏览器级故障的特征串：命中才整体重启浏览器，页面级失败只关页面。
     _BROWSER_CRASH_MARKERS = (
@@ -763,9 +765,32 @@ class PlaywrightRenderBackend:
                     set_default_timeout = getattr(page, "set_default_timeout", None)
                     if callable(set_default_timeout):
                         set_default_timeout(self._SET_CONTENT_TIMEOUT_MS)
-                    page.set_content(html, wait_until="networkidle")
-                    # 封面清晰度关键：等所有 <img> 真正解码完成（networkidle
-                    # 只保证请求静默，大图可能仍在解码）；再兜底固定等待。
+                    # 就绪形态＝load（SEAT-G 2026-10-11 实测裁决；反向护栏＝
+                    # tests/test_render_wait_budget.py 的三枚 AST 常驻锁）。
+                    # 为什么不是 networkidle：它的定义「网络静默满 500ms」在这
+                    # 套卡面上是纯白烧——同 HTML/同视口/同 dsf 实跑 n=6 中位
+                    # universal 511.9ms、affinity 512.7ms、news_digest 513.3ms，
+                    # 换 load 后 20.0/6.5/6.4ms（domcontentloaded 9.7/6.8/7.0ms）。
+                    # 覆盖面（同批实跑请求计数；card_render 八张模板＋旧 media_card
+                    # 共九张面）：只有 mermaid 那张发出 1 枚 http(s) 请求，而它已被
+                    # 上面 page.route 换成本地字节回源 ⇒ 静默窗口等的是「没有东西在
+                    # 飞」。affinity 卡里的 http://www.w3.org/2000/svg 是 XML
+                    # 命名空间、不发请求。
+                    # 为什么不是 domcontentloaded（更快但护栏少一层）：1200ms 延迟
+                    # 图的离线对拍下，load 的 set_content 自身就把图取回等完了
+                    # （1209.3ms），domcontentloaded 4.9ms 返回、图还要 1205.7ms
+                    # 才 ready ⇒ 等图 100% 压在下面 img.complete/预算信号上；阻塞式
+                    # 外链脚本（mermaid.min.js）同理只在 load 面保证已执行完。
+                    # 字节等值（同一条生产链 set_content→img.complete→预算→钉帧→
+                    # .card 元素截图，三形态各渲两次）：universal c7ab971810b7937e
+                    # / affinity 393221a2c43729e5 / news_digest ecf830eab5c18475 /
+                    # mermaid 402cbd01c260a242，跨形态与跨重渲均逐字节一致。
+                    page.set_content(html, wait_until="load")
+                    # 封面清晰度关键：等所有 <img> 真正解码完成（load 只保证取回、
+                    # 大图可能仍在解码）；再兜底固定等待。本条与预算信号②是
+                    # 「图真解码完」的两道闸——换等待形态**不减少等图**，摘掉本条
+                    # 必有锁红（test_render_wait_budget 两枚 ＋
+                    # tests/test_render_phase2_env_keys.py 的 _legacy_expected_ops）。
                     try:
                         page.wait_for_function(
                             "Array.from(document.images).every(img => img.complete)",

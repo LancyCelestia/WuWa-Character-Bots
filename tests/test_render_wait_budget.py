@@ -13,15 +13,18 @@
 
 from __future__ import annotations
 
+import ast
 import os
 import queue
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from plugins.bot_unified_runtime.domains.render import render_backends as _rb_module
 from plugins.bot_unified_runtime.domains.render.render_backends import (
     _RENDER_READY_SIGNALS,
     PlaywrightRenderBackend,
@@ -142,7 +145,7 @@ def test_default_payload_keeps_legacy_wait_sequence(
             {"viewport": {"width": 320, "height": 240}, "device_scale_factor": 2},
         ),
         ("set_default_timeout", 8000),
-        ("set_content", _HTML, "networkidle"),
+        ("set_content", _HTML, "load"),
     ]
     # 既有 img-complete 等待原样保留（8s 上限）。
     assert ops[3][0] == "wff"
@@ -508,3 +511,172 @@ def test_real_browser_default_payload_renders_equivalently() -> None:
         backend.close()
     assert png_a is not None and png_b is not None
     assert png_a == png_b
+
+
+# ==================== ④ 渲染就绪等待形态常驻锁（AST 只读真身取数） ====================
+# 立规背景（SEAT-G 2026-10-11 实测）：``set_content(wait_until="networkidle")`` 的
+# 语义是「网络静默满 500ms 才算完」，而这套模板压根不等东西——九张卡面 HTML 里只有
+# mermaid 那张发出 1 枚 http(s) 请求，且它已被 render_card 内的 page.route 换成本地
+# 字节回源（affinity 里的 http://www.w3.org/2000/svg 是 XML 命名空间、不发请求）。
+# 改前同 HTML/同视口/同 dsf 实跑 n=6 中位：networkidle 511.9 / 512.7 / 513.3ms
+# vs load 20.0 / 6.5 / 6.4ms（universal / affinity / news_digest）。形态换了但像素
+# 没换：三形态跑同一条生产链（set_content → img.complete → 预算信号 → 钉帧 → .card
+# 元素截图）各渲两次，sha256[:16] 跨形态跨重渲全等
+# （universal c7ab971810b7937e / affinity 393221a2c43729e5 /
+#   news_digest ecf830eab5c18475 / mermaid 402cbd01c260a242）。
+# 为什么裁 load、不裁 domcontentloaded（快的那条反而不选）：1200ms 延迟图的离线
+# route.fulfill 对拍下，load 的 set_content 自身就把图的「取回」等完了（1209.3ms），
+# domcontentloaded 4.9ms 就返回、图还要再 1205.7ms 才 complete ⇒ 等图 100% 压到
+# 下面的 img.complete 与预算信号上；阻塞式外链脚本（mermaid.min.js 本地回源）同理
+# 只在 load 面保证「已执行完」。省下的 500ms 一分不少，白丢的护栏一枚不加。
+# 本组锁的取数方式＝AST 读 render_backends.py 真身那几行：不在测试里抄 HTML/模板
+# 清单、不复制第二份 JS 字面量、不锁数值天花板（8000/1500/并发槽属另册）。
+# 两枚注毒各自咬住：①形态改回 networkidle → ①号锁红；②摘掉 img.complete 那条
+# wait_for_function → ②号锁红（_legacy_expected_ops 与
+# test_default_payload_keeps_legacy_wait_sequence 同批红，属既有牙）。
+
+_ACCEPTED_READY_FORMS = frozenset({"load", "domcontentloaded"})
+_IMAGE_READINESS_MARKER = "document.images"
+_READY_CALL_NAMES = frozenset({"set_content", "wait_for_load_state", "goto"})
+
+
+def _render_backends_tree() -> ast.Module:
+    """真身源码 AST（render_backends.py 本体，非测试替身）。"""
+    source_path = Path(getattr(_rb_module, "__file__", "") or "")
+    assert source_path.is_file(), f"读不到渲染后端真身：{source_path}"
+    return ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+
+
+def _calls_named(tree: ast.AST, names: set[str]) -> list[ast.Call]:
+    """按属性名收集调用（``page.set_content(...)`` 这种形态 func 是 Attribute）。"""
+    found: list[ast.Call] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        attr = func.attr if isinstance(func, ast.AST) and hasattr(func, "attr") else None
+        if isinstance(attr, str) and attr in names:
+            found.append(node)
+    return sorted(found, key=lambda call: call.lineno)
+
+
+def _literal_value(node: ast.AST) -> object | None:
+    """常量取数：字面量或隐式拼接的字符串常量（JS 片段就是分行写的）。"""
+    if isinstance(node, ast.Constant):
+        return node.value
+    return None
+
+
+def _ready_form_of(call: ast.Call) -> object:
+    """取该调用的就绪形态字面值。
+
+    返回 ``None`` 表示没显式给形态；返回 ``False`` 表示形态不是可判的字面量
+    （被人换成变量 ⇒ 本锁看不见裁决依据，必须红，不许静默放行）。
+    """
+    for keyword in call.keywords:
+        if keyword.arg == "wait_until":
+            value = _literal_value(keyword.value)
+            return value if isinstance(value, str) else False
+    # playwright 的 wait_until 是关键字限定参数；仍兼容 positional 写法，防绕过。
+    if len(call.args) >= 2:
+        value = _literal_value(call.args[1])
+        return value if isinstance(value, str) else False
+    return None
+
+
+def _render_body_with_set_content(tree: ast.Module) -> tuple[ast.FunctionDef, ast.Call]:
+    """返回「持有 set_content 的函数体 + 那枚调用」（真身只此一处）。"""
+    calls = _calls_named(tree, {"set_content"})
+    assert calls, "render_backends.py 里找不到 set_content：渲染链被改了形态之外"
+    assert len(calls) == 1, f"set_content 应当只有一处，实得 {len(calls)} 处"
+    target = calls[0]
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.lineno <= target.lineno <= (node.end_lineno or node.lineno):
+            return node, target
+    raise AssertionError("set_content 不在任何函数体内？AST 结构已不可信")
+
+
+def test_render_ready_wait_form_never_reverts_to_networkidle() -> None:
+    """①号锁：就绪等待形态必须是显式字面量、且绝不回到 networkidle。"""
+    tree = _render_backends_tree()
+    calls = _calls_named(tree, set(_READY_CALL_NAMES))
+    assert calls, "渲染后端里一枚就绪调用都没有：本锁失去观察对象，必须红"
+
+    forms: list[str] = []
+    for call in calls:
+        form = _ready_form_of(call)
+        assert form is not None, (
+            f"render_backends.py:{call.lineno} 的 {getattr(call.func, 'attr', '?')}"
+            " 没有显式就绪形态：缺省形态＝实现说了算，本锁读不到裁决"
+        )
+        assert form is not False, (
+            f"render_backends.py:{call.lineno} 的就绪形态不是字面量（被换成变量？）"
+            "：形态是渲染口径，必须留在源码里可读"
+        )
+        assert isinstance(form, str), f"{call.lineno}: 就绪形态类型异常 {form!r}"
+        forms.append(form)
+
+    assert "networkidle" not in forms, (
+        f"渲染就绪等待形态回到 networkidle（{forms}）：它的定义是「网络静默满 "
+        "500ms」，而这套模板只有 mermaid 那张发得出远程请求、还已被 page.route "
+        "换成本地字节 ⇒ 那 500ms 等的是「没有东西在飞」（实测 n=6 中位 "
+        "511.9ms vs load 20.0ms，字节零差异）。要换形态请先拿字节等值证据来改本锁。"
+    )
+    illegal = sorted({form for form in forms} - set(_ACCEPTED_READY_FORMS))
+    assert not illegal, (
+        f"就绪形态 {illegal} 不在许可集 {sorted(_ACCEPTED_READY_FORMS)}：许可集只收"
+        "「等完了子资源」或「有独立等图闸兜着」的形态，扩容要配证据"
+    )
+
+
+def test_image_decode_gate_still_sits_between_set_content_and_screenshot() -> None:
+    """②号锁：改了形态不等于没人等图——img.complete 那道闸必须仍在截图之前。
+
+    洞的形态＝换成 domcontentloaded（或任何人手抖摘掉 :770）之后，set_content 返回
+    时图还没取回、又没人等它，截图截到灰图位而全树无感。这条按 AST 顺序判：
+    set_content 之后、任何 screenshot 之前，必须存在一枚等 ``document.images`` 的
+    ``wait_for_function``（表达式从真身读，测试不抄第二份 JS 字面量）。
+    """
+    tree = _render_backends_tree()
+    body, set_content = _render_body_with_set_content(tree)
+
+    image_waits = [
+        call
+        for call in _calls_named(body, {"wait_for_function"})
+        if call.args
+        and isinstance(call.args[0], ast.Constant)
+        and _IMAGE_READINESS_MARKER in str(call.args[0].value)
+    ]
+    assert image_waits, (
+        "render_card 里再没有等 document.images 的 wait_for_function：改就绪形态只许"
+        "换「请求静默」那一枚等待，不许把等图闸一起摘掉（灰图/糊封面是用户可感的）"
+    )
+    shots = _calls_named(body, {"screenshot"})
+    assert shots, "找不到截图调用：本锁的「截图之前」坐标消失"
+    shot_start = min(shot.lineno for shot in shots)
+    for wait in image_waits:
+        assert wait.lineno > set_content.lineno, (
+            f"等图闸（:{wait.lineno}）排到了 set_content（:{set_content.lineno}）"
+            "之前：那样等于谁也没等"
+        )
+        assert wait.lineno < shot_start, (
+            f"等图闸（:{wait.lineno}）在截图（:{shot_start}）之后：图来不及进画面"
+        )
+
+
+def test_budget_ready_signals_still_sample_image_completion() -> None:
+    """③号锁：预算路径的第二道等图担保仍在（信号②对 document.images 双采样）。
+
+    与②号锁分掌两条腿：②管「不配预算也照样等图」的显式闸，本条管配置了
+    ``BOT_RENDER_WAIT_BUDGET_MS`` 之后的就绪信号。数据从真身 ``_RENDER_READY_SIGNALS``
+    读，不在测试里誊 JS。
+    """
+    assert _RENDER_READY_SIGNALS, "预算就绪信号元组空了：预算模式没有任何等待语义"
+    assert any(
+        _IMAGE_READINESS_MARKER in signal for signal in _RENDER_READY_SIGNALS
+    ), (
+        "预算就绪信号里不再有 document.images 采样：那预算模式下就只剩字体与 rAF，"
+        "等图这一维只靠 render_card 的显式闸，本文件②号锁成了唯一防线（不许）"
+    )
