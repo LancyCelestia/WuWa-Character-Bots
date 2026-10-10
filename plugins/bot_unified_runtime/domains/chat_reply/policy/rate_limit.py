@@ -6,12 +6,13 @@ import sqlite3
 import threading
 import time
 from collections import defaultdict, deque
-from collections.abc import Callable
-from contextlib import closing
+from collections.abc import Callable, Iterator
+from contextlib import closing, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import ClassVar, Protocol
+from typing import Any, ClassVar, Protocol
 
 from pydantic import Field, field_validator
 
@@ -233,6 +234,54 @@ class RateLimitSettings(StrictBaseModel):
         if value < 0:
             raise ValueError("command request caps must not be negative")
         return value
+
+
+# ---------------------------------------------------------------------------
+# 判定作用域（一次判定＝一条消息）：把「每读一次 `limiter.settings` 就重算一遍合并
+# 视图」折成**一次**（席 Q，2026-10-11 延迟收尾波；**一个数值都没动**）。
+#
+# 为什么不是第二枚缓存：合并视图的版本尺是 backend 那枚 CAS ``revision`` 列，读它
+# 本身就是成本（席 K 实测单趟 ~0.44ms）。根链的轮内 memo 已把「一趟合并」压到只读
+# 一次 revision，但 ``SQLiteRateLimiter.settings`` / ``InMemoryRateLimiter.settings``
+# 这两个属性在**一条消息**里被读 19 次（现算尺＝``tests/test_settings_hot_audit.py``
+# 的作用域计数腿）⇒ 19 趟 memo 命中、19 枚新 ``RateLimitSettings``。
+#
+# 形状选择（只准在这里说清，别处禁写第二份）：
+# * **调用侧取一次快照、交下去**（路线 ①），不是给 ``revision`` 读加缓存（路线 ②）——
+#   版本读一旦被缓存，跨进程写库的可见性就退化，而「热改当轮可见」是台账 #3 的判据。
+# * 快照经 ``ContextVar`` 往下传，**不是**实例属性：限流器被 APScheduler 线程与事件
+#   循环并发调用（见 ``self._lock`` 注释），挂在实例上的 pin 会让 A 线程吃到 B 线程
+#   刚装的快照 ⇒ 同一条判定中途换尺。ContextVar 天生线程/任务隔离。
+# * 槽里存 ``(limiter 身份, 快照)`` 并按 ``is`` 比对：同进程里有多把尺（装配口
+#   ``build_rate_limiter`` 被主管道与各 smoke/控制面构造点各调一次），一把尺的作用域
+#   绝不外借给另一把。
+# * 作用域只在**公开入口**那一层装（``check_and_record`` / ``rollback``），出入口即
+#   解装 ⇒ 下一条目一定重新现算 ⇒ 同进程写覆盖与跨进程写覆盖都当轮可见。忘装/装坏
+#   的失效方向＝退回「每轮现算」的老行为（慢但对），不存在"读到上一条消息的尺"。
+# ---------------------------------------------------------------------------
+_SettingsPin = tuple[Any, "RateLimitSettings"]
+_SETTINGS_EVAL_PIN: ContextVar[_SettingsPin | None] = ContextVar(
+    "bot_rate_limit_settings_eval_pin", default=None
+)
+
+
+@contextmanager
+def _pinned_settings(limiter: Any, snapshot: RateLimitSettings) -> Iterator[RateLimitSettings]:
+    """把 ``snapshot`` 作为 ``limiter`` 本次判定的唯一合并视图交下去（出块必解装）。"""
+    token: ContextVar[_SettingsPin | None] = _SETTINGS_EVAL_PIN
+    pinned = token.set((limiter, snapshot))
+    try:
+        yield snapshot
+    finally:
+        token.reset(pinned)
+
+
+def _pinned_settings_for(limiter: Any) -> RateLimitSettings | None:
+    """当前作用域里属于 ``limiter`` 的快照；不属于本尺／没开作用域 ⇒ ``None``。"""
+    pin = _SETTINGS_EVAL_PIN.get()
+    if pin is None or pin[0] is not limiter:
+        return None
+    return pin[1]
 
 
 class RateLimiter(Protocol):
@@ -532,7 +581,19 @@ class InMemoryRateLimiter:
 
     @property
     def settings(self) -> RateLimitSettings:
-        """当前限流设置（callable 时实时求值；失败回退默认，保持限流不放开）。"""
+        """当前限流设置（判定作用域内＝入口那一份快照，作用域外实时求值）。
+
+        热改面未动：没开判定作用域时逐字照旧「每轮现算」（callable 时实时求值、
+        失败回退默认，保持限流不放开）；开了作用域也只是把**同一条判定**里的重复
+        解析折成入口那一次——下一条消息重新解析，见 ``_pinned_settings`` 的说明。
+        """
+        pinned = _pinned_settings_for(self)
+        if pinned is not None:
+            return pinned
+        return self._resolve_settings()
+
+    def _resolve_settings(self) -> RateLimitSettings:
+        """解析腿真身：一趟 ``settings_source()``（＝根链合并视图的一趟命中）。"""
         source = self._settings_source
         if callable(source):
             try:
@@ -603,6 +664,28 @@ class InMemoryRateLimiter:
         amount: int = 1,
         interactive: bool = False,
         proactive: bool = False,
+    ) -> RateLimitDecision:
+        # 一条消息一把尺（席 Q 延迟收尾波，**一个数值都没动**）：入口解析**一次**
+        # 合并视图并交下去，本条判定的历次 ``self.settings`` 读点全吃这一份快照。
+        # 作用域在出入口解装 ⇒ 下一条消息必定重新现算 ⇒ 热改（同进程写覆盖、跨进程
+        # 写库）都当轮可见；异常照原样往外抛（``finally`` 只解装、不吞异常）。
+        with _pinned_settings(self, self._resolve_settings()):
+            return self._check_and_record_scoped(
+                message,
+                capability_id,
+                amount=amount,
+                interactive=interactive,
+                proactive=proactive,
+            )
+
+    def _check_and_record_scoped(
+        self,
+        message: IncomingMessage,
+        capability_id: str,
+        *,
+        amount: int,
+        interactive: bool,
+        proactive: bool,
     ) -> RateLimitDecision:
         if proactive:
             return self._check_proactive(message, capability_id)
@@ -766,6 +849,20 @@ class InMemoryRateLimiter:
         *,
         amount: int = 1,
         reason: str = "allowed",
+    ) -> None:
+        """公开入口：一次回滚只解析一次合并视图（口径见 ``_rollback_scoped``）。"""
+        # 退账判据必须吃**同一把尺**：判据中途换尺＝把账退错桶。作用域出块即解装，
+        # 下一条消息重新现算 ⇒ 热改当轮可见（与 check_and_record 同一刀）。
+        with _pinned_settings(self, self._resolve_settings()):
+            self._rollback_scoped(message, capability_id, amount=amount, reason=reason)
+
+    def _rollback_scoped(
+        self,
+        message: IncomingMessage,
+        capability_id: str,
+        *,
+        amount: int,
+        reason: str,
     ) -> None:
         """审查 A-18 额度回滚：撤销一次 check_and_record 的真实记账。
 
@@ -1365,10 +1462,22 @@ class SQLiteRateLimiter:
 
     @property
     def settings(self) -> RateLimitSettings:
-        """当前限流设置（callable 时实时求值；失败回退默认，保持限流不放开）。
+        """当前限流设置（判定作用域内＝入口那一份快照，作用域外实时求值）。
 
         与 ``InMemoryRateLimiter.settings`` 逐字同语义——两把尺的热改面是同一件事，
-        任何一把独走都会让「/bot runtime set」按注入路径给出两种答案。
+        任何一把独走都会让「/bot runtime set」按注入路径给出两种答案（判定作用域
+        这一刀同样两把尺同批动，见 ``_pinned_settings``）。
+        """
+        pinned = _pinned_settings_for(self)
+        if pinned is not None:
+            return pinned
+        return self._resolve_settings()
+
+    def _resolve_settings(self) -> RateLimitSettings:
+        """解析腿真身：一趟 ``settings_source()``（＝根链合并视图的一趟命中）。
+
+        与 ``InMemoryRateLimiter._resolve_settings`` 逐字同语义（callable 时实时求值、
+        失败回退默认，保持限流不放开）。
         """
         source = self._settings_source
         if callable(source):
@@ -1387,6 +1496,28 @@ class SQLiteRateLimiter:
         amount: int = 1,
         interactive: bool = False,
         proactive: bool = False,
+    ) -> RateLimitDecision:
+        # 一条消息一把尺（席 Q 延迟收尾波，**一个数值都没动**）：入口解析**一次**
+        # 合并视图并交下去，本条判定的历次 ``self.settings`` 读点全吃这一份快照；
+        # 与 ``InMemoryRateLimiter.check_and_record`` 同批同语义（两把尺一面尺）。
+        # 作用域在出入口解装 ⇒ 下一条消息必定重新现算 ⇒ 热改当轮可见。
+        with _pinned_settings(self, self._resolve_settings()):
+            return self._check_and_record_scoped(
+                message,
+                capability_id,
+                amount=amount,
+                interactive=interactive,
+                proactive=proactive,
+            )
+
+    def _check_and_record_scoped(
+        self,
+        message: IncomingMessage,
+        capability_id: str,
+        *,
+        amount: int,
+        interactive: bool,
+        proactive: bool,
     ) -> RateLimitDecision:
         if proactive:
             return self._check_proactive(message, capability_id)
@@ -1622,6 +1753,20 @@ class SQLiteRateLimiter:
         *,
         amount: int = 1,
         reason: str = "allowed",
+    ) -> None:
+        """公开入口：一次回滚只解析一次合并视图（口径见 ``_rollback_scoped``）。"""
+        # 与 ``InMemoryRateLimiter.rollback`` 同批同语义：退账判据吃同一把尺，
+        # 作用域出块即解装 ⇒ 下一条消息重新现算 ⇒ 热改当轮可见。
+        with _pinned_settings(self, self._resolve_settings()):
+            self._rollback_scoped(message, capability_id, amount=amount, reason=reason)
+
+    def _rollback_scoped(
+        self,
+        message: IncomingMessage,
+        capability_id: str,
+        *,
+        amount: int,
+        reason: str,
     ) -> None:
         """审查 A-18 额度回滚（SQLite 版，桶集判定与 InMemory 版同语）。
 
