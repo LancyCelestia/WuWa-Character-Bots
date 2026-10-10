@@ -1,9 +1,19 @@
 """生成触发词拼音映射草稿（触发规范化规格的候选材料）。
 
 输入（程序化提取，零 import 副作用，纯 AST 静态解析）：
-- capabilities/echo.py 的 ``_HELP_ENTRIES`` 全部 aliases；
+- domains/chat_reply/capabilities/echo.py 的 ``_HELP_ENTRIES`` 全部 aliases；
 - runtime/base_router.py 引用的各 ``is_*`` 触发判定函数所在 capability 模块的词表
   （沿函数体 → 模块级常量 → re.compile 参数递归取字符串字面量）。
+
+⚠ 真身位置（席 CMD-PINYIN-UNIFY，2026-10-08 修）：echo 早在 v21r2 RWC3 迁到
+``domains/chat_reply/capabilities/``，本脚本的 ``ECHO_PATH`` 却还指着重构前的
+``capabilities/echo.py``（那一格里如今只剩 ``__init__.py`` / ``content_parser.py``）
+⇒ ``read_text()`` 当场 ``FileNotFoundError``、拼音候选表**今天根本生成不出来**。
+同批第二个坑：``_HELP_ENTRIES`` 里有 **九簇** 词面不是字面量而是「在册纯投影」调用
+（``nickname_verbs_for(...)`` × 7、``host_state_trigger_words()``、
+``media_archive_trigger_words()``），对本文件自己 ``ast.literal_eval`` 必 ``ValueError``。
+解法＝**复用 `scripts/command_catalog.py` 的取数口**（那里是这类投影的唯一在册实现，
+`command_catalog.py:187` 明写「禁止在生成器里另抄一份投影逻辑」）——本脚本不自造第二把尺。
 
 输出 JSON：
 - mapping: {中文词: {"full": 全拼, "abbr": 首字母缩写(≤4位), "multi_tone_review"?, "abbr_truncated"?, "sources"}}
@@ -29,7 +39,15 @@ from pathlib import Path
 from pypinyin import Style, lazy_pinyin, pinyin
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ECHO_PATH = REPO_ROOT / "plugins" / "bot_unified_runtime" / "capabilities" / "echo.py"
+if str(REPO_ROOT / "scripts") not in sys.path:  # 与 board_doc_sync/command_catalog 同形：同目录兄弟脚本直取
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+# 在册纯投影的唯一取数口（_HELP_ENTRIES 里 nickname_verbs_for 一类的 Call 只有它认）。
+# 在本脚本里另写一份筛选逻辑＝造第二个事实源，command_catalog.py:187 已明文禁掉。
+import command_catalog as cc
+import doc_sync as ds  # 塌陷锁唯一真身（require_surface），不自造第二把「读空即抛」的尺
+
+ECHO_PATH = cc.ECHO_SOURCE
 BASE_ROUTER_PATH = REPO_ROOT / "plugins" / "bot_unified_runtime" / "domains" / "chat_reply" / "runtime" / "base_router.py"
 DEFAULT_OUT = (
     REPO_ROOT
@@ -186,24 +204,34 @@ def _base_router_capability_targets() -> dict[str, list[str]]:
 
 
 def extract_echo_aliases() -> tuple[set[str], dict[str, set[str]]]:
-    """提取 echo.py _HELP_ENTRIES 的全部 aliases。"""
-    tree = ast.parse(ECHO_PATH.read_text(encoding="utf-8"), filename=str(ECHO_PATH))
+    """提取 echo.py ``_HELP_ENTRIES`` 的全部 aliases。
+
+    取数走 `command_catalog` 的在册字面量口（见模块 docstring）：它认字面量，也认
+    ``nickname_verbs_for`` / ``host_state_trigger_words`` / ``media_archive_trigger_words``
+    这三枚**在册纯投影**的 Call（按真身模块的定义就地求值，实现只有一份）。
+
+    🔴 响亮失败三处（「门会缩不会红」那一型，2026-10-08 同批根修）：
+    缺文件／``_HELP_ENTRIES`` 取空／aliases 一枚没提到 ⇒ 一律抛，不返回空集。
+    旧写法是 `for node in tree.body: … if not hit: continue`——别名册改名或整块搬走时
+    这里安静返回 ``set()``，草稿照样写出、照样「跑通」，只是词全没了。
+    """
+    if not ECHO_PATH.is_file():
+        raise FileNotFoundError(
+            f"帮助册真身不在位：{ECHO_PATH}（echo 的 aliases 词面取不到 ⇒ 拼音候选表无从生成；"
+            "先核对 ECHO_PATH 是否又跟着 domains/ 重构漂了）"
+        )
+    entries = cc._literal_assign(cc._module_tree(ECHO_PATH), "_HELP_ENTRIES")
+    if not isinstance(entries, list) or not all(isinstance(item, dict) for item in entries):
+        raise ValueError(f"{ECHO_PATH.name}::_HELP_ENTRIES 不是 dict 列表 ⇒ 无法按条目取 aliases")
+    ds.require_surface("echo._HELP_ENTRIES 条目集", entries, ECHO_PATH, ("_HELP_ENTRIES",))
+
     words: set[str] = set()
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            hit = any(isinstance(t, ast.Name) and t.id == "_HELP_ENTRIES" for t in node.targets)
-        elif isinstance(node, ast.AnnAssign):
-            hit = isinstance(node.target, ast.Name) and node.target.id == "_HELP_ENTRIES"
-        else:
-            hit = False
-        if not hit:
-            continue
-        for entry in ast.literal_eval(node.value):
-            aliases = entry.get("aliases", ()) if isinstance(entry, dict) else ()
-            for alias in aliases:
-                token = str(alias).strip()
-                if token:
-                    words.add(token)
+    for entry in entries:
+        for alias in entry.get("aliases", ()) or ():
+            token = str(alias).strip()
+            if token:
+                words.add(token)
+    ds.require_surface("echo._HELP_ENTRIES[*].aliases 词面集", words, ECHO_PATH, ("aliases",))
     return words, {word: {"echo._HELP_ENTRIES"} for word in words}
 
 
@@ -220,13 +248,22 @@ def extract_all() -> tuple[set[str], set[str], dict[str, set[str]]]:
             sources.setdefault(word, set()).update(word_sources.get(word, set()))
 
     absorb(*extract_echo_aliases())
-    for path_str, func_names in _base_router_capability_targets().items():
+    targets = _base_router_capability_targets()
+    # 🔴 路由面整体取空也要抛（同「门会缩不会红」型）：`_base_router_capability_targets`
+    # 对非文件的 import 目标静默 `continue`，base_router 若整体搬家/改名 ⇒ 这里返回 {} ⇒
+    # 草稿只剩帮助册那一簇词，看起来仍是「跑通且有一堆词」。
+    ds.require_surface("base_router 的 is_* 能力模块目标表", targets, BASE_ROUTER_PATH, ("is_",))
+    for path_str, func_names in targets.items():
         path = Path(path_str)
         label = f"{path.stem}.{','.join(sorted(set(func_names)))}"
         words, word_sources = _extract_module_triggers(path, func_names, label)
+        # 单模块取空**不**抛：is_* 判定常从他处 import 后再被 base_router 引名，那一格本就无词；
+        # 聚合面由下一行的 require_surface 兜住（一枚中文词都没有 ⇒ 响）。
         absorb(words, word_sources)
 
-    return chinese, english, sources
+    return ds.require_surface(
+        "中文触发词候选集（拼音映射的输入面）", chinese, BASE_ROUTER_PATH, ("_HELP_ENTRIES",)
+    ), english, sources
 
 
 # ---------------------------------------------------------------------------
