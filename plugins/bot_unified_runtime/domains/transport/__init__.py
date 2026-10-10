@@ -4,3 +4,6 @@
 旧路径 ``plugins.bot_unified_runtime.sender`` / ``...mail_adapter`` / ``...mail_bridge``
 由原位 re-export 薄壳垫片覆盖（退役条件见 docs/design/v21r2-reorg-plan.md §3.1）。
 """
+
+# 分库共装（split package，主人 2026-10-11 裁定①「组合可导入」）：生产单树时 no-op。
+__path__ = __import__("pkgutil").extend_path(__path__, __name__)

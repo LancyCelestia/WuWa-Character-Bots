@@ -30,6 +30,10 @@ from __future__ import annotations
 
 import ast
 import functools
+import importlib.util
+import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -752,3 +756,597 @@ def test_poison_roster_lock_is_shape_based_not_name_list() -> None:
     assert len(_top_level_external_fetches(synth)) == 2, "形状尺退化＝抓不到新命名"
     benign = "from pathlib import Path\nREPO_ROOT = Path(__file__).resolve().parents[1]\n"
     assert _top_level_external_fetches(benign) == [], "from-import 路径件被误伤＝豁免形状破了"
+
+
+# ===========================================================================
+# 锁⑥（工单 W-2 同族补口，2026-10-08）：`--fail-on-violations` 执法口
+#   病根：`pre_restart_check.py` 的 structure_readiness「物理归类」那格 argv 里钉着这枚旗，
+#   而本尺的 argparse 名册里没有 ⇒ 尺回 `unrecognized arguments` ⇒ 那格恒落
+#   `RULER_PARAM_MISSING`（不参与判定、也不许洗成绿）＝③这一面**结构性无牙**。
+#   本组用例钉的是补完之后执法口的四形，词汇与 rc 语义**逐字照抄**姊妹尺
+#   `scripts/spec_gates_census.py`（那里已有一组同形用例：0=无违规／2=前置不可用或读数不全
+#   ／3=越上限；行前缀 VF|，三形 token OVER_CEILING／BUCKET_ROW_MISSING／CEILING_SYMBOL_MISSING）：
+#     ① 越上限必 rc=3 且那行点名格名与两个数；② 缺行必 rc=2（缺行不是免检、也不许折成 0）；
+#     ③ 上限符号失踪必 rc=2；④ **不带旗时行为一字不变**（尺不许恒红，也不许空跑装执法）。
+#   全部走**内存合成读数**（`violation_rows` 是纯函数）＋ 必要时 monkeypatch 取数口，
+#   一个字节都不往源码树写：落盘造违规＝亲手往仓里添无主件。
+#   🔴 判据一律复用本尺既有现算面与门里在册上限，本组用例不新增任何判定标准。
+# ===========================================================================
+
+
+def _canned_data() -> dict[str, Any]:
+    """合成「两扇门」读数：每格都在册上限内、必空清单皆空（键形与 `compute()` 一字同）。"""
+    return {
+        "counts": {
+            "claims": 145, "features": 58, "domain_roots": 22, "scanned_py": 608,
+            "g_p1_exempt_entries": 0, "g_p2_exempt_entries": 28,
+        },
+        "g_p1": {
+            "outside_domain": [("B01.x", "plugins/p/a.py")] * 25,
+            "unknown_domain": [], "double_claim": [], "duplicate_within": [],
+            "contain_pairs": [("B01.x", "p", "q")] * 9,
+            "empty_dir_claims": [], "banned_claims": [],
+        },
+        "g_p1_size": {
+            "outside_domain": 25, "unknown_domain": 0, "double_claim": 0, "duplicate_within": 0,
+            "contain_pairs": 9, "empty_dir_claims": 0, "banned_claims": 0,
+        },
+        "g_p1_dead_exempts": [],
+        "g_p2_semantic_a": {"unclaimed": 131, "violations": 103},
+        "g_p2_semantic_b": {"unclaimed": 519, "violations": 491},
+        "unclaimed_gap_a_b": 388,
+        "exempt_shape_errors": [],
+        "a_unclaimed_list": [], "a_violation_list": [],
+        "stale_exempts": [], "dead_exempts": [],
+    }
+
+
+def _canned_four() -> dict[str, Any]:
+    """合成「四本账」读数：三把尺对上、两本账在限内、斥离与体检皆净（键形与真身一字同）。"""
+    return {
+        "stamp_utc": "2026-10-08T00:00:00Z",
+        "baseline_source": ".superpowers/sdd/2026-09-24-central-dispatch/BASELINE.md",
+        "accounts": {
+            "a1_outside_py_dual_ruler": {
+                "start": 99, "current": 65, "verdict": "较起点改善 −34（99→65）",
+                "signed_delta_vs_start": -34, "dual_ruler_error": None, "consistent": True,
+                "mismatch_count": 0, "only_in_find": {}, "only_in_git": {},
+                "rulers": {
+                    "find_disk": {"count": 65, "crosscheck_c_table_m_c3": 65},
+                    "git_ls_files": {"count": 65, "crosscheck_c_table_m_c3_git": 65},
+                    "git_worktree_reconciled": {"count": 65},
+                },
+            },
+            "a2_page_unplaced": {
+                "start": {"面A_managed": 460, "面B_unmoved": 160},
+                "current": {"面A_managed": 89, "面B_unmoved": 283},
+                "signed_delta_vs_start": {"面A_managed": -371, "面B_unmoved": 123},
+                "verdict": {"面A_managed": "较起点改善 −371", "面B_unmoved": "较起点退步 +123"},
+            },
+            "a3_shims_two_ledgers": {
+                "prod_ledger": {"start_ceiling": 73, "last_audit": 50, "current": 0,
+                                "signed_delta_vs_ceiling": -73, "verdict": "较起点改善 −73",
+                                "top_files": [], "top_files_truncated": False},
+                "tests_ledger": {"start_ceiling": 202, "last_audit": 197, "current": 0,
+                                 "signed_delta_vs_ceiling": -202, "verdict": "较起点改善 −202",
+                                 "top_files": [], "top_files_truncated": False},
+                "separation_lock": {"disjoint": True, "overlap": []},
+                "proxy_indicators": {"shim_marker_files_m_c0c": 8, "live_shim_leaves": 1},
+            },
+            "a4_roster_vs_real_debt": {
+                "roster_count": 14, "real_count": 14,
+                "in_roster_paid_off": [], "real_not_in_roster": [], "existence_not_alive": [],
+                "register_baselines": {"SHIM_RETIRE_BASELINE": 14, "OUTSIDE_BASELINE": 65},
+                "verdict": {"paid_off_count": 0, "blind_count": 0, "not_alive_count": 0},
+            },
+        },
+        "snapshot_integrity": {"ok": True, "problems": []},
+    }
+
+
+def _canned_rows(data: dict[str, Any] | None = None, four: dict[str, Any] | None = None,
+                 ceilings: dict[str, int] | None = None) -> list[str]:
+    return pc.violation_rows(
+        _canned_data() if data is None else data,
+        _canned_four() if four is None else four,
+        pc.ceiling_literals() if ceilings is None else ceilings,
+    )
+
+
+_BAD_ROW = ("OVER_CEILING", "BUCKET_ROW_MISSING", "CEILING_SYMBOL_MISSING")
+
+
+def test_vf_canned_clean_reading_bites_nothing() -> None:
+    """正向对照（先证明尺不冤枉）：合成「全在限内」的读数 ⇒ 越限/缺行一行都不该出现，rc=0。"""
+    rows = _canned_rows()
+    assert not [r for r in rows if r.startswith(_BAD_ROW)], rows
+    assert pc.enforcement_rc(rows) == 0
+
+
+def test_vf_leg_rows_cover_every_registered_face_exactly_once() -> None:
+    """反「静默少一面」：执法行必须逐枚点名在册判据表与四本账的七条腿，一枚不许多许多、不许少。
+
+    为什么钉：`--fail-on-violations` 若某天只算了三格就回 rc=0，聚合器读到的「PASS」就是假绿——
+    行数以真身名册（`VF_CEILING_GATES`/`VF_ZERO_GATES`）现算为准，本文件不抄第二份清单。
+    """
+    rows = _canned_rows()
+    labels = [r.split("｜")[0].removeprefix("VF|") for r in rows]
+    assert len(labels) == len(rows) == len(set(labels)), [x for x in labels if labels.count(x) > 1]
+    for label, _path, _sym, _unit in pc.VF_CEILING_GATES:
+        assert f"格名={label}" in labels, f"上限格 {label} 没出行＝那一面被静默摘掉"
+    for label, _path, _case in pc.VF_ZERO_GATES:
+        assert f"格名={label}" in labels, f"必空格 {label} 没出行"
+    for prefix in ("格名=G-P2 语义B", "格名=① 域外 py", "格名=② 页级未归位",
+                   "格名=③ 垫片·生产侧", "格名=③ 垫片·测试侧", "格名=③ 垫片两本账斥离",
+                   "格名=④ 名册真债差集", "格名=⑤ 具名快照体检"):
+        assert any(lbl.startswith(prefix) for lbl in labels), f"四本账的腿 {prefix} 没出行"
+
+
+def test_vf_over_ceiling_returns_three_and_names_both_numbers() -> None:
+    """真越限（在册豁免上限 29 那枚改成 1、现算 28）⇒ rc=3 且行内点名两个数与上限真身。"""
+    lowered = dict(pc.ceiling_literals())
+    lowered["G_P2_EXEMPT_CEILING"] = 1
+    rows = _canned_rows(ceilings=lowered)
+    assert pc.enforcement_rc(rows) == 3
+    hit = [r for r in rows if r.startswith("OVER_CEILING")]
+    assert len(hit) == 1, hit
+    assert "G-P2 豁免条数" in hit[0] and "现算 28 > 上限 1" in hit[0], hit[0]
+    assert "G_P2_EXEMPT_CEILING" in hit[0], "越限行没点出上限真身＝修法无从下手"
+
+
+def test_vf_present_hard_zero_class_is_red() -> None:
+    """必空型在册判据（门里写的是 `assert not …`）⇒ 清单非空即越限：上限 0、出处点名用例名。"""
+    data = _canned_data()
+    data["dead_exempts"] = ["plugins/bot_unified_runtime/domains/core/board_placement.py"]
+    rows = _canned_rows(data=data)
+    hit = [r for r in rows if r.startswith("OVER_CEILING")]
+    assert len(hit) == 1 and "G-P2 死豁免" in hit[0], hit
+    assert "> 上限 0" in hit[0] and "test_g_p2_exemptions_are_literal_existing_and_still_needed" in hit[0]
+    assert pc.enforcement_rc(rows) == 3
+
+
+def test_vf_missing_bucket_is_not_a_free_pass() -> None:
+    """缺行不是免检：把 `g_p2_semantic_a` 整键摘掉 ⇒ BUCKET_ROW_MISSING ⇒ rc=2，绝不折成 rc=0。"""
+    data = _canned_data()
+    del data["g_p2_semantic_a"]
+    rows = _canned_rows(data=data)
+    assert any(r.startswith("BUCKET_ROW_MISSING") and "g_p2_semantic_a" in r for r in rows), rows
+    assert pc.enforcement_rc(rows) == 2
+
+
+def test_vf_missing_ceiling_symbol_is_undecidable() -> None:
+    """上限符号失踪（门里被改名／改成派生式）⇒ CEILING_SYMBOL_MISSING ⇒ rc=2，不当绿也不当红。"""
+    ceilings = dict(pc.ceiling_literals())
+    ceilings.pop("G_P1_CONTAIN_CEILING")
+    rows = _canned_rows(ceilings=ceilings)
+    assert any(r.startswith("CEILING_SYMBOL_MISSING") and "G_P1_CONTAIN_CEILING" in r for r in rows), rows
+    assert pc.enforcement_rc(rows) == 2
+
+
+def test_vf_missing_reading_beats_over_ceiling() -> None:
+    """优先级与姊妹尺一字同：**同时**有缺行与越限时回 rc=2——没有证据时不许宣称抓到了红。"""
+    data = _canned_data()
+    data["dead_exempts"] = ["plugins/p/x.py"]
+    del data["stale_exempts"]
+    rows = _canned_rows(data=data)
+    assert any(r.startswith("OVER_CEILING") for r in rows), rows
+    assert any(r.startswith("BUCKET_ROW_MISSING") for r in rows), rows
+    assert pc.enforcement_rc(rows) == 2
+
+
+def test_vf_shim_ledgers_and_separation_are_teeth() -> None:
+    """③ 垫片两本账：现算越过 a3 自带的在册上限（SHIM_EDGE_CEILING／TESTS_SHIM_EDGE_CEILING）⇒ 红；
+    斥离交集非空（在册判据＝两本账扫描根互斥）⇒ 红。只读四本账已有数，不另起第二把尺。"""
+    four = _canned_four()
+    four["accounts"]["a3_shims_two_ledgers"]["prod_ledger"]["current"] = 74
+    rows = _canned_rows(four=four)
+    assert any(r.startswith("OVER_CEILING") and "SHIM_EDGE_CEILING" in r for r in rows), rows
+    assert pc.enforcement_rc(rows) == 3
+    four = _canned_four()
+    four["accounts"]["a3_shims_two_ledgers"]["separation_lock"] = {"disjoint": False, "overlap": ["a|b"]}
+    rows = _canned_rows(four=four)
+    assert any(r.startswith("OVER_CEILING") and "斥离" in r for r in rows), rows
+    assert pc.enforcement_rc(rows) == 3
+
+
+def test_vf_unavailable_four_accounts_are_undecidable_not_clean() -> None:
+    """① 双尺任一交不出／两尺不一致 ⇒ rc=2；⑤ 体检清单失踪 ⇒ rc=2（「读不出」永不等于「零违规」）。"""
+    four = _canned_four()
+    four["accounts"]["a1_outside_py_dual_ruler"]["rulers"]["git_ls_files"]["count"] = None
+    assert pc.enforcement_rc(_canned_rows(four=four)) == 2
+    four = _canned_four()
+    four["accounts"]["a1_outside_py_dual_ruler"]["consistent"] = False
+    four["accounts"]["a1_outside_py_dual_ruler"]["mismatch_count"] = 3
+    rows = _canned_rows(four=four)
+    assert any(r.startswith("BUCKET_ROW_MISSING") and "① 域外 py" in r for r in rows), rows
+    assert pc.enforcement_rc(rows) == 2
+    four = _canned_four()
+    del four["snapshot_integrity"]["problems"]
+    assert pc.enforcement_rc(_canned_rows(four=four)) == 2
+    four = _canned_four()
+    four["snapshot_integrity"] = {"ok": False, "problems": ["a: 快照被裁", "b: 标量不符"]}
+    rows = _canned_rows(four=four)
+    assert any(r.startswith("OVER_CEILING") and "具名快照体检" in r for r in rows), rows
+    assert pc.enforcement_rc(rows) == 3
+
+
+def test_vf_no_flag_leaves_behaviour_untouched(monkeypatch, capsys) -> None:
+    """不带旗时即使读数越限也 rc=0 且一行 VF| 都不印 ⇒ 证明是**旗标**在拨判定，不是尺恒红。"""
+    monkeypatch.setattr(pc, "compute", _canned_data)
+    monkeypatch.setattr(pc, "compute_four_accounts", _canned_four)
+    monkeypatch.setattr(pc, "ceiling_literals", lambda: {"G_P2_EXEMPT_CEILING": 1})
+    assert pc.main(["--report"]) == 0
+    out = capsys.readouterr().out
+    assert "VF|" not in out, out
+    assert "豁免条数: 28" in out, "人读账被改写了＝不带旗不再是一字不变"
+
+
+def test_vf_flag_on_real_tree_with_lowered_ceiling_returns_three(monkeypatch, capsys) -> None:
+    """注毒一发（纯内存改上限、真树取数）：把在册豁免上限压到 1 ⇒ 真树现算必越限 ⇒ rc 必 3。
+
+    走的是聚合器**实际调用**的 CLI 支路（`main` 而非纯函数）；四本账换合成读数——真身那一支要
+    20-60s 并起 git 子进程，而本条证明的是 rc 折法，不是四本账的取数（取数由常驻门自己逐枚管）。
+    """
+    lowered = dict(pc.ceiling_literals())
+    lowered["G_P2_EXEMPT_CEILING"] = 1
+    real_data = _real()  # 先取真数再换帽子：直接把 compute 绑成 `_real` 会在冷缓存上自我递归
+    monkeypatch.setattr(pc, "compute", lambda: real_data)
+    monkeypatch.setattr(pc, "compute_four_accounts", _canned_four)
+    monkeypatch.setattr(pc, "ceiling_literals", lambda: lowered)
+    assert pc.main(["--report", "--fail-on-violations"]) == 3
+    assert "OVER_CEILING G-P2 豁免条数" in capsys.readouterr().out
+
+
+def test_vf_flag_on_four_accounts_branch_returns_three_via_stderr(monkeypatch, capsys) -> None:
+    """聚合器 argv 那一支（`--four-accounts --four-accounts-human --fail-on-violations`）：越限 ⇒ rc=3；
+    VF 行走 **stderr**——那一支的 stdout 是 JSON 载荷，掺非 JSON 行会把机读面打断。"""
+    lowered = dict(pc.ceiling_literals())
+    lowered["G_P1_OUTSIDE_CEILING"] = 0
+    real_data = _real()  # 同上：冷缓存下 `compute=_real` 会自我递归（注毒跑法实撞过一次）
+    monkeypatch.setattr(pc, "compute", lambda: real_data)
+    monkeypatch.setattr(pc, "compute_four_accounts", _canned_four)
+    monkeypatch.setattr(pc, "ceiling_literals", lambda: lowered)
+    assert pc.main(["--four-accounts", "--four-accounts-human", "--fail-on-violations"]) == 3
+    captured = capsys.readouterr()
+    assert "OVER_CEILING G-P1 ①越界声明点" in captured.err, captured.err[-2000:]
+    assert "VF|" not in captured.out, captured.out[:400]
+    assert '"a1_outside_py_dual_ruler"' in captured.out, "JSON 载荷被挤掉了＝机读面断了"
+
+
+def test_vf_enforcement_port_is_declared_in_this_rulers_argparse() -> None:
+    """形状锁（自证在册）：本尺的 argparse 名册里**必须**有 `--fail-on-violations`。
+
+    聚合器 `structure_readiness` 正是 AST 现读这一枚来判「有没有执法口」；同名串出现在
+    docstring／注释里不算 declare（文本对账踩过这一雷），故本锁也只认 `add_argument` 的字面量。
+    """
+    source = Path(pc.__file__).read_text(encoding="utf-8")
+
+    def _declared(text: str) -> bool:
+        return any(
+            isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "add_argument"
+            and any(isinstance(a, ast.Constant) and a.value == "--fail-on-violations" for a in node.args)
+            for node in ast.walk(ast.parse(text))
+        )
+
+    assert _declared(source), "本尺的 argparse 名册里没有 --fail-on-violations ⇒ ③这一面退回无牙"
+
+    # 注毒自证（纯内存）：把那枚字面量改名 ⇒ 同一把尺必须看不见它（证明本锁不是恒真）
+    anchor = '"--fail-on-violations",\n'
+    assert source.count(anchor) == 1, f"注毒锚点失配（出现 {source.count(anchor)} 次）：本锁的毒腿会打空"
+    poisoned = source.replace(anchor, '"--fail-on-violations-retired",\n', 1)
+    ast.parse(poisoned)  # 毒必须是合法源码，否则红在语法上说明不了本锁抓到了退参数
+    assert not _declared(poisoned), "注毒后仍判「有执法口」＝本锁恒真、聚合器那条锁同形失效"
+
+
+# ===========================================================================
+# 锁⑦（席 U，2026-10-11 用户裁定「4 甲：先立仓根卫生尺，再清根层」）：
+# 仓根卫生尺 `scripts/root_hygiene_census.py` 在盘 ＋ 仓根第一层**全覆盖分区**。
+#
+# 为什么挂在这把门里（简报硬规：🔴 禁新建 `tests/test_*.py`——新建会让 scripts/doc_sync.py
+# 的「测试文件数」派生当场漂）：本门＝物理归位轴的常驻门，与 `pre_restart_check.py`
+# structure_readiness 的「物理归类」面同一支；仓根第一层正是那条轴的**上一层**。尺件的
+# 执法口形状锁（`--fail-on-violations` 那一组）也已经住在这里，同族归同族。
+#
+# 三条腿各证一件事，缺一不可：
+# ① 尺在盘 + 真 CLI 跑得起（走的是聚合器**实际调用**的那条 subprocess 路，rc 只许 0/1，
+#    argparse 用法错 2 与崩都算门瞎）；顺带 AST 现读它 declare 过 `--check`——
+#    `pre_restart_check._enforcement_flag_declared` 认的就是这一枚字面量。
+# ② 全覆盖分区：每一项恰落一桶、无 UNCLASSIFIED、MUST-MOVE 必带建议落点、
+#    ALLOWED 的理由**只能**来自那枚唯一白名单常量（防有人在别处再抄一份名单）。
+# ③ 杀伤力自证（注毒）：同一把判据函数——毒必抓到、干净合成根必不误伤，再加一枚 tmp_path
+#    合成根上的端到端 rc 双腿。为什么这样才算数：本席禁动工作树（禁删禁移、零写盘），
+#    往真仓根埋一颗雷再挖出来＝亲手造无主件（台账 #68★ 那族事故），所以毒只进**合成输入**
+#    与 **%TEMP% 合成根**，判据与真树腿共用同一支函数——红因落在"项"上，不是恒真。
+#
+# 测试缝 `BOT_ROOT_HYGIENE_ROOT`：**只换被检对象、不换尺**（缺省＝真仓根），缝只在用例内读
+# env（模块顶层读＝本文件锁⑤的形状尺要抓的形态）。真树腿另有①那条不带缝的 subprocess 兜着，
+# 所以就算缝被滥用也藏不住整面。
+# ===========================================================================
+
+_ROOT_HYGIENE_REL = "scripts/root_hygiene_census.py"
+_HYGIENE_PROBE_ROOT_ENV = "BOT_ROOT_HYGIENE_ROOT"
+
+
+@functools.lru_cache(maxsize=1)
+def _hygiene() -> Any:
+    """按路径现载入仓根卫生尺（**绝不在模块顶层 import**：尺坏在收集期会把整门打成 ERROR＝门瞎，
+    真树红落在具体用例上才可归因——与本文件 `_real()` 同一姿势）。"""
+    path = REPO_ROOT / _ROOT_HYGIENE_REL
+    assert path.is_file(), f"仓根卫生尺不在盘：{path}"
+    spec = importlib.util.spec_from_file_location("root_hygiene_census_under_gate", path)
+    assert spec is not None and spec.loader is not None, f"载入器都建不出：{path}"
+    module = importlib.util.module_from_spec(spec)
+    # 先登记进 sys.modules 再 exec：本尺用 dataclass + `from __future__ import annotations`，
+    # 字段注解是**字符串**，dataclasses 要按 `cls.__module__` 回查命名空间——没登记就
+    # `sys.modules.get(...) is None` 当场 AttributeError（实测撞过，别当成尺的毛病）。
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _hygiene_probe_root() -> Path:
+    raw = os.environ.get(_HYGIENE_PROBE_ROOT_ENV, "").strip()
+    if not raw:
+        return REPO_ROOT
+    root = Path(raw)
+    assert root.is_dir(), f"{_HYGIENE_PROBE_ROOT_ENV} 指向不存在的目录：{raw}"
+    return root
+
+
+def _hygiene_cli(*args: str) -> subprocess.CompletedProcess[str]:
+    """真 CLI 一路（cwd＝仓根、解释器＝本进程解释器、编码钉 utf-8、卫生前缀齐全）。"""
+    env = dict(os.environ)
+    env.update({
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1",
+        "BOT_AUTOSYNC": "0",
+    })
+    return subprocess.run(
+        [sys.executable, _ROOT_HYGIENE_REL, *args],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+        env=env,
+        check=False,
+    )
+
+
+def test_root_hygiene_ruler_is_on_disk_and_check_mode_is_declared() -> None:
+    """① 尺在盘 + 真 CLI `--json --check` 跑得起 + argparse 名册里真 declare 了 `--check`。
+
+    rc 只许 {0,1}：0＝零违规、1＝有违规（本仓现算根层有债，今天必然走这一支）；
+    2＝argparse 用法错＝聚合器读到的"这面没牙"，别的任何码都算本尺自爆。
+    """
+    script = REPO_ROOT / _ROOT_HYGIENE_REL
+    assert script.is_file(), f"仓根卫生尺不在盘：{_ROOT_HYGIENE_REL}（改名/删除＝structure_readiness 那格重回无尺态）"
+
+    source = script.read_text(encoding="utf-8")
+    declared = any(
+        isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "add_argument"
+        and any(isinstance(a, ast.Constant) and a.value == "--check" for a in node.args)
+        for node in ast.walk(ast.parse(source))
+    )
+    assert declared, "本尺的 argparse 名册里没有 --check ⇒ 聚合器那格会落 RULER_PARAM_MISSING（结构性无牙）"
+
+    proc = _hygiene_cli("--json", "--check")
+    assert proc.returncode in (0, 1), (
+        f"rc={proc.returncode} 不在本尺自述的 {0}/{1} 名册里（2＝执法口没 declare／用法错，"
+        f"其余＝崩）。stderr 尾段：{proc.stderr[-500:]}"
+    )
+    payload = json.loads(proc.stdout)  # stdout 必须只有那一枚对象；掺一行非 JSON 就当场抛＝机读面断了
+    assert payload["ruler"] == "root_hygiene_census", payload["ruler"]
+    assert payload["residue_reference"] == "OK", (
+        f"生成物引用态不是 OK＝这把尺没在引用 runtime-layout 那把尺（{payload['residue_reference']}）"
+    )
+    assert payload["unclassified"] == [], f"仓根第一层有静默漏网项：{payload['unclassified']}"
+    assert payload["partition_problems"] == [], f"全覆盖分区形状体检报病：{payload['partition_problems']}"
+    counts = payload["counts"]
+    assert sum(int(counts[bucket]) for bucket in payload["buckets"]) == int(payload["total_entries"]), (
+        f"四桶加起来不等于总项数＝有项没落桶或落了两桶：{counts} vs {payload['total_entries']}"
+    )
+    violations = sum(int(counts[bucket]) for bucket in _hygiene_violation_buckets())
+    assert int(payload["violations"]) == violations, (
+        f"violations 读数（{payload['violations']}）与按违规桶现算的值（{violations}）不相等＝两套口径"
+    )
+    named = {row["name"] for row in payload["rows"]}
+    assert {"AGENTS.md", "bot.py", "pyproject.toml"} <= named, f"真身件没进读数＝读的不是仓根：{sorted(named)[:8]}"
+
+
+def _hygiene_violation_buckets() -> tuple[str, ...]:
+    """违规桶名册**从尺那一侧现读**（本门不抄第二份清单，抄了就是尺改名本门跟着漂）。"""
+    rhc = _hygiene()
+    return tuple(
+        bucket for bucket in rhc.BUCKETS
+        if bucket in (rhc.BUCKET_MUST_MOVE, rhc.BUCKET_DEBRIS, rhc.BUCKET_UNCLASSIFIED)
+    )
+
+
+def test_root_hygiene_first_layer_partition_is_total_and_never_silent() -> None:
+    """② 全覆盖分区：每项恰一桶、无 UNCLASSIFIED、理由只出自那枚唯一白名单常量。"""
+    rhc = _hygiene()
+    root = _hygiene_probe_root()
+    entries = rhc.iter_first_layer(root)
+    assert entries, f"被检根读空＝门瞎（不是「大家都归位了」）：{root}"
+    findings, state = rhc.generated_residue_by_reference(root)
+    assert state == "OK", f"生成物引用式复核读不到那把尺：{state}"
+    rows = rhc.classify_entries(entries, residue_by_name=rhc.residue_top_segments(findings))
+    problems = rhc.partition_problems(rows, entries)
+    assert problems == [], "仓根第一层分区不成立（任一条都不许静默放行）：\n- " + "\n- ".join(problems)
+
+    assert len(rows) == len(entries) == len({row.name for row in rows}), "项数≠行数或有重名＝分区不互斥不全覆盖"
+    assert {row.name for row in rows} == {entry.name for entry in entries}, "读数与盘上事实不同名"
+    assert {row.bucket for row in rows} <= set(rhc.BUCKETS), "冒出桶名册外的桶"
+    assert rhc.BUCKET_UNCLASSIFIED not in {row.bucket for row in rows}, "UNCLASSIFIED 在场＝有项没人判"
+
+    for row in rows:
+        if row.bucket == rhc.BUCKET_MUST_MOVE:
+            assert row.landing, f"{row.name} 判了必移却没给落点＝清单不可执行"
+        if row.bucket == rhc.BUCKET_ALLOWED:
+            assert row.reason == rhc.ROOT_WHITELIST[row.name], (
+                f"{row.name} 的在册理由不是从 ROOT_WHITELIST 那枚常量来的＝白名单长出第二处"
+            )
+    on_disk = {p.name for p in root.iterdir()}
+    assert {entry.name for entry in entries} == on_disk, "被检面不是仓根第一层全集（漏读＝可以藏项）"
+
+
+def test_root_hygiene_partition_leg_bites_poison_and_spares_clean(tmp_path: Path) -> None:
+    """③ 注毒自证：同一把判据函数——五形各归一桶、无规则那颗必被抓；拔掉毒同一刻立刻干净。
+
+    为什么这样才算数：正向腿与注毒腿吃的是**同一个** `classify_entries` + 同一把
+    `partition_problems`（尺那侧的真身），不是我另写的一份判据；反向"不误伤"腿证明这把尺
+    不恒红，"毒被抓"腿证明它不恒绿。最后再在 tmp_path 合成根上跑真 CLI，验 rc 折法与
+    JSON 点名——那一支连的是聚合器实际会走的出口，不是内存里的自我表扬。
+    """
+    rhc = _hygiene()
+    poisoned = [
+        rhc.FirstLayerEntry(name="AGENTS.md", kind="file", size_bytes=1),
+        rhc.FirstLayerEntry(name="docs", kind="dir", has_content=True),
+        rhc.FirstLayerEntry(name="zzz-later-note.md", kind="file", size_bytes=1),
+        rhc.FirstLayerEntry(name="secret.env.bak-20261011", kind="file", size_bytes=1),
+        rhc.FirstLayerEntry(name="mystery.bin", kind="file", size_bytes=1),
+        rhc.FirstLayerEntry(name="empty-shell", kind="dir", has_content=False),
+    ]
+    rows = rhc.classify_entries(poisoned)
+    by = {row.name: row.bucket for row in rows}
+    assert by["AGENTS.md"] == rhc.BUCKET_ALLOWED and by["docs"] == rhc.BUCKET_ALLOWED, f"在册件被误伤：{by}"
+    assert by["zzz-later-note.md"] == rhc.BUCKET_MUST_MOVE, f"该归位的文档没进必移桶：{by}"
+    assert by["secret.env.bak-20261011"] == rhc.BUCKET_DEBRIS, f"备份残骸没进残骸桶：{by}"
+    assert by["empty-shell"] == rhc.BUCKET_DEBRIS, f"空壳目录没进残骸桶：{by}"
+    assert by["mystery.bin"] == rhc.BUCKET_UNCLASSIFIED, f"没人认的形被静默放行了：{by}"
+
+    problems = rhc.partition_problems(rows, poisoned)
+    assert any("mystery.bin" in problem for problem in problems), (
+        f"注毒没让全覆盖体检变红＝执法腿是空腿：{problems}"
+    )
+    assert len(problems) == 1, f"体检报的病不止毒那一项（说明正向判据也在报病）：{problems}"
+
+    clean = [entry for entry in poisoned if entry.name != "mystery.bin"]
+    clean_rows = rhc.classify_entries(clean)
+    assert rhc.partition_problems(clean_rows, clean) == [], "拔掉毒之后仍报病＝尺恒红，正向腿等于没内容"
+
+    # 端到端：合成根先"零违规"（rc 必 0），埋一颗雷之后（rc 必 1 且 JSON 点名）。
+    fake_root = tmp_path / "fake-repo-root"
+    fake_root.mkdir()
+    (fake_root / "AGENTS.md").write_text("x", encoding="utf-8")
+    (fake_root / "docs").mkdir()
+    (fake_root / "docs" / "a.py").write_text("x", encoding="utf-8")
+    quiet = _hygiene_cli("--json", "--check", "--root", str(fake_root))
+    assert quiet.returncode == 0, f"全白名单的合成根不该红：rc={quiet.returncode} {quiet.stdout[-400:]}"
+    (fake_root / "mystery.bin").write_text("x", encoding="utf-8")
+    loud = _hygiene_cli("--json", "--check", "--root", str(fake_root))
+    assert loud.returncode == 1, f"埋了雷还 rc={loud.returncode}＝执法口没牙"
+    assert json.loads(loud.stdout)["unclassified"] == ["mystery.bin"], loud.stdout[-400:]
+
+
+# --- ⑦-④ / ⑦-⑤（席 AB，2026-10-11）：白名单**不许落后于现实**，也不许跑到现实前面 -------
+#
+# 为什么②腿不够：②腿只断言「没有 UNCLASSIFIED」。但仓根的**目录**掉出白名单后不会落
+# UNCLASSIFIED，而是落 MUST-MOVE（`must_move_reason_and_landing` 的目录分支）——把 `docs`
+# 从 ROOT_WHITELIST 摘掉，②腿照样绿，尺却开始把在册布局报成"该搬走"。这正是
+# "我的名单不全"被读成"她的仓不干净"的那条路（席 U 交回的 ALLOWED=6｜UNCLASSIFIED=47 读数
+# 即此族；本席 2026-10-11 现算真树已是 UNCLASSIFIED=0，缺的从来不是名单而是这条锁）。
+# 本席禁动工作树 ⇒ 只能加锁、不能替用户清根层；清根层动的是 MUST-MOVE/DEBRIS 两桶，
+# 与本腿的锚定名册互不相干（锚子一枚都不在债册里，清理不会踩红本腿）。
+#
+# 锚定名册**只锚名字与桶归属**，不复制白名单理由（理由仍只住 ROOT_WHITELIST，②腿已锁），
+# 也不写任何会随代码漂移的计数（AGENTS.md 规则 10：桶里各几枚一律现算）。
+# 名册本身另有一判据验每枚裸名真在三份在册记录里出现 ⇒ 不许凭空捏、也不许漂成考古名。
+
+#: 「在册记录」＝项目自己写下"这枚该在仓根"的三面文字（AGENTS 目录地图 / 板块归类规范 /
+#: 分类册 / git 忽略面）。第四面＝分类册：`.gitignore` 与 `.gitattributes` 的"保留原地"判词在那儿。
+_HYGIENE_RECORD_DOCS: tuple[str, ...] = (
+    "AGENTS.md",
+    "docs/boards/_conventions.md",
+    "docs/boards/_meta/doc-classification-20260921.md",
+    ".gitignore",
+)
+
+#: 盘上有它 ⇒ 必须落 ALLOWED。出处逐枚：AGENTS.md 第二部分目录地图（docs/plugins/scripts/
+#: tests/personas/bot.py/AGENTS.md/README.md/.env/.env.example）、板块规范与分类册
+#: （patches / .gitignore / .gitattributes 的"保留原地"判词）、以及"只有落在仓根第一层才生效"
+#: 的 git/dotenv 面。
+_HYGIENE_ANCHORED_ENTRIES: tuple[str, ...] = (
+    "AGENTS.md", "README.md", "bot.py", "pyproject.toml",
+    "docs", "plugins", "scripts", "tests", "personas", "patches", "pins",
+    ".gitignore", ".gitattributes", ".env", ".env.example", ".env.prod",
+)
+
+#: 有意豁免"散文出处"这一判的三枚：它们的在册依据是**代码/工具行为**而不是 prose——
+#: ruff 与 mypy 从 cwd 向上找 `pyproject.toml`（移走＝两道门失明）、`scripts/runtime_paths.py`
+#: 的 `_DOTENV_FILENAMES` 逐字读 `.env.prod`（本席已 grep 现算证实）、门禁脚本直读 `pins/`。
+#: 它们仍然吃"盘上有 ⇒ 必须 ALLOWED"这条钉，只是不拿裸名出现在文档里当门槛
+#: （门槛造假比豁免更难查，所以豁免面写死在这里、逐枚点名，不搞通配）。
+_HYGIENE_PROSE_EXEMPT: frozenset[str] = frozenset({"pyproject.toml", "pins", ".env.prod"})
+
+
+def _hygiene_record_doc_text(root: Path) -> dict[str, str]:
+    """读那几份在册记录（缺文件当场说清——"在册面塌了"与"没提到"是两回事，不许混着放行）。"""
+    out: dict[str, str] = {}
+    for rel in _HYGIENE_RECORD_DOCS:
+        path = root / rel
+        assert path.is_file(), f"在册记录不在盘：{rel}＝锚子的出处面塌了，先补这面再谈白名单"
+        out[rel] = path.read_text(encoding="utf-8", errors="replace").replace("\\", "/")
+    return out
+
+
+def _hygiene_whitelist_drift_problems(rhc: Any, root: Path) -> list[str]:
+    """纯判据一个口子：正向腿与注毒腿**共用同一把**，否则注毒证明的是测试自己的牙。"""
+    entries = rhc.iter_first_layer(root)
+    assert entries, f"被检根读空＝门瞎（不是「大家都归位了」）：{root}"
+    findings, state = rhc.generated_residue_by_reference(root)
+    assert state == "OK", f"生成物引用式复核读不到那把尺：{state}"
+    rows = rhc.classify_entries(entries, residue_by_name=rhc.residue_top_segments(findings))
+    by = {row.name: row for row in rows}
+    problems: list[str] = []
+
+    unclassified = sorted(name for name, row in by.items() if row.bucket == rhc.BUCKET_UNCLASSIFIED)
+    if unclassified:
+        problems.append("UNCLASSIFIED 在场（白名单落后于现实的直接症状）：" + "、".join(unclassified))
+
+    texts = _hygiene_record_doc_text(root)
+    on_real_root = root.resolve() == REPO_ROOT.resolve()
+    for name in _HYGIENE_ANCHORED_ENTRIES:
+        if name not in _HYGIENE_PROSE_EXEMPT and not any(name in text for text in texts.values()):
+            problems.append(f"锚子 {name} 在在册记录里找不到裸名＝名册漂成了凭空捏")
+        row = by.get(name)
+        if row is None:
+            if on_real_root:
+                problems.append(f"锚子 {name} 不在仓根第一层＝锚定名册该同批重录（或它真被清走了）")
+            continue
+        if row.bucket != rhc.BUCKET_ALLOWED:
+            problems.append(
+                f"白名单落后于现实：{name} 现落 {row.bucket}——在册的第一层布局不许被判成该搬走"
+            )
+
+    dead = sorted(set(rhc.ROOT_WHITELIST) - {entry.name for entry in entries})
+    if dead and on_real_root:
+        problems.append("白名单跑到现实前面（在册却不在盘＝将来任何同名 junk 免检）：" + "、".join(dead))
+    return problems
+
+
+def test_root_hygiene_whitelist_covers_the_real_tree_in_both_directions() -> None:
+    """⑦-④ 真树现算：白名单与仓根第一层**双向对上**（掉名单必红、空挂名也必红、不写任何计数）。"""
+    problems = _hygiene_whitelist_drift_problems(_hygiene(), _hygiene_probe_root())
+    assert problems == [], "仓根白名单与现实脱节（任一条都要逼人裁，不许静默）：\n- " + "\n- ".join(problems)
+
+
+def test_root_hygiene_anchor_leg_bites_when_whitelist_loses_a_sanctioned_dir(
+    monkeypatch: Any,
+) -> None:
+    """⑦-⑤ 注毒自证：摘掉 `docs`（真该在的在册目录）⇒ 同一把判据**必须**报病。
+
+    ②腿抓不到这一路（目录掉名单落 MUST-MOVE 不落 UNCLASSIFIED），所以毒要下在本腿的牙口上。
+    monkeypatch.delitem 只动进程内那枚字典、测后自动还原，工作树与磁盘一个字节都不碰。
+    """
+    rhc = _hygiene()
+    assert "docs" in rhc.ROOT_WHITELIST, "白名单里没有 docs＝本腿的毒没了靶子，先查尺那侧"
+    monkeypatch.delitem(rhc.ROOT_WHITELIST, "docs", raising=False)
+    problems = _hygiene_whitelist_drift_problems(rhc, _hygiene_probe_root())
+    assert any("docs" in problem and "白名单落后于现实" in problem for problem in problems), (
+        f"摘掉在册目录后判据仍报没事＝⑦-④ 是空腿：{problems}"
+    )
+

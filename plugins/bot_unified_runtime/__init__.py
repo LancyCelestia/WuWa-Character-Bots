@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# 分库共装（split package，主人 2026-10-11 裁定①「组合可导入」）：把同名包的其余成员目录
+# （仓外各座一级库快照）并入本包搜索路径。生产单树时 sys.path 上只有这一份 ⇒ no-op。
+__path__ = __import__("pkgutil").extend_path(__path__, __name__)
+
 import asyncio
 import inspect
 import logging

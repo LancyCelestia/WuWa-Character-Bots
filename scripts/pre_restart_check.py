@@ -112,6 +112,59 @@ T4 渠道能力标签保险 / T5 PX-1 MCP 模块保险 / S141 ANN 代际可用�
                    ``BOT_SUPERVISE=1`` 退避 5+15+60+60≈140 秒后永久 down。载体
                    （``ChatBot_Runtime\\restart_bot.ps1``）先杀后起、中间零判据，
                    本格＋任务表 ``restart-check`` 就是那道「杀之前先看一眼」的门。
+  16. structure_readiness 「结构四项体检」的中央出口（工单 W-1 格 16；**只转贴尺的话**，
+                   本文件零判据、零数值比较）：一面＝一把**已在册的只读尺**，argv 钉死在
+                   ``STRUCTURE_FACES`` 里。面级标签只有三种（PASS／FAIL／UNDECIDABLE），
+                   格级按标签**单调折叠**（FAIL>UNDECIDABLE>PASS），UNDECIDABLE 折到格级是
+                   **SKIP**——SKIP 放行 ⇒ ``main`` 仍 exit 0，与其余「环境里没有＝没有证据」
+                   的格同形（假根上本格必 SKIP 且 exit 0）。五格现状：①命名与规格
+                   ``scripts/spec_gates_census.py --report --fail-on-violations``（尺自己的 rc
+                   语义 0=未越上限／2=取数交不出＝没有证据／3=越上限，``VF|`` 行是它的判据行）；
+                   ②中央调度 ``scripts/central_seam_census.py --json --fail-on-violations``
+                   （同 0/2/3；本格只转贴它自己的字段 ``integrity``／
+                   ``violations_second_route``／``unknown_id_partition``／
+                   ``signature_claimed_not_derived``，一个数也不在这里重算）；③物理归类
+                   ``scripts/physical_placement_census.py --four-accounts --four-accounts-human
+                   --fail-on-violations``（两参必同给，只给人读开关不进分支；人读行在 stderr）——
+                   🔴 这面**至今没有**那枚执法口：本格用 AST 现读那把尺自己的 argparse 名册判它
+                   在不在，判不到就落 ``UNDECIDABLE(RULER_PARAM_MISSING:…)``，**绝不把「尺不会红」
+                   洗成绿**（尺哪天补上这枚口，本格不用改一字就跟着判红）；④板块与文档账
+                   ``scripts/board_doc_sync.py --check``（天生有执法口，rc=1 即红）；⑤仓根卫生
+                   **按字面没有尺** ⇒ 恒 ``UNDECIDABLE(NO_RULER_ON_CALL:仓根卫生)``——这一格
+                   不许从清单里删掉（删＝把「没人管」洗成「不用管」）。零写面是硬约束：argv 里
+                   永不出现写盘／外呼开关（清单与两把锁见 ``tests/test_pre_restart_check.py``
+                   的零写面锁与注毒腿；``c_table_measure``、``measure_latency_chains`` 一律不调）。
+                   取舍＝多付一把尺的现算时间（实测逐面进 ``details``），换「四项就绪度」第一次
+                   有一个中央出口，而不是散在四份报告里等人考古。
+  17. library_roster 分库就绪（工单 W-1 格 17；**三腿一格**，全型「差集为空／逐枚点名」，不写枚数）：
+                   ①**名册差集腿**＝名册侧 AST 现读
+                   ``plugins/bot_unified_runtime/domains/core/board_taxonomy.py`` 的
+                   ``BOARD_TAXONOMY[]``（板块库 ``bid→slug``，派生轴）**并上** ``LIBRARY_TAXONOMY[]``
+                   （发行库 ``lid→slug``）——🔴 绝不把后者单独当盘面对账尺：板块库是派生态、
+                   声明源明文「绝不抄进 LIBRARY_TAXONOMY」，只数名册那一轴盘面永远缺一整排。
+                   不 import 插件包、不执行声明源。盘面侧＝``ChatBot_Libs/MANIFEST.md`` 的成员行，
+                   抓法只认「第二列＝反引号里的 kebab slug」，**不依赖表头字样**（表头改过名，
+                   靠表头的消费者当场瞎过）；只读文件文本——不遍历库目录树、不 import 库内代码、
+                   不动 ``ChatBot_Libs`` 一字节、不碰任何 ``.git``，输出只出相对名不出绝对路径。
+                   判据三形：两轴 slug 交集非空＝FAIL（派生轴被手抄污染）／盘面有而行不在名册
+                   ＝FAIL（幽灵库）／名册有而盘面无＝**逐枚点名的 FAIL**（用户 2026-10-08 已裁：
+                   这一向判红、不许改成只披露；旧口径曾标「待用户裁」，裁决已落）。
+                   ②**可导入三档腿**＝同一张 MANIFEST 的可导入列 ⇄ 第二本册
+                   ``ChatBot_Libs/FACTORY-REPORT.md`` 的**全称**段（前缀等值：只改一本当场红）⇄
+                   两枚独立盘读数（库快照里包门面 ``plugins/bot_unified_runtime/__init__.py``
+                   在不在场、报错模块在不在该库快照里）。每行必须**落进且只落进**闭集
+                   ``{MISSING-INIT, HAS-INIT, NO-SAMPLE, IMPORTABLE}`` 一档；🔴 ``NO-SAMPLE``
+                   永不进「通过」（诚实空仓不是可导入）、``IMPORTABLE`` 必须 ``rc=0`` 才许进；
+                   标签与盘读数打架＝``INIT-TAG-DRIFT``、把 NO-SAMPLE 贴到有成员的库上＝
+                   ``NO_SAMPLE_LIE``，各是一枚独立的红；四档各给唯一修法进 fix_hint。
+                   ③**附账·成员账腿**＝MANIFEST 的成员列 ⇄ 该库自己
+                   ``ChatBot_Libs/<slug>/workspace-lib.manifest.json`` 的 ``members`` 枚数，
+                   🔴 **逐行等值、禁求和**（跨行求和＝把不同维加起来的在册事故形）。
+                   🔴 失明两态：仓外盘面不在／读不出／抓不到任何成员行 ⇒ **SKIP** 且消息带字面量
+                   ``UNTRACKED_GATE``，绝不产 PASS、绝不产 FAIL（HEAD 轴副本按定义没有仓外目录
+                   ＝没有证据，不是有人没干活）；名册侧读不出同口径 SKIP（``ROSTER_*``）；
+                   另两腿各自的仓外面（第二本册／可导入列／某库目录或其成员账）缺席时同形 SKIP
+                   并在消息里点名是哪条腿失明——整格的 PASS 只覆盖差集一轴，读不成「分库已就绪」。
 
 用法：
   venv python scripts/pre_restart_check.py            # 人读表格
@@ -130,6 +183,7 @@ T4 渠道能力标签保险 / T5 PX-1 MCP 模块保险 / S141 ANN 代际可用�
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import re
@@ -140,7 +194,7 @@ import sys
 import tempfile
 import types
 from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -2143,6 +2197,1037 @@ def _scrub_probe(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 16. structure_readiness：结构四项体检（只转贴在册只读尺的话，聚合器零判据）
+# ---------------------------------------------------------------------------
+# 为什么要这一格（工单 W-1）：「命名与规格／中央调度／物理归类／板块与文档账」这四问
+# 各自有尺、各自有报告，但**没有任何中央出口**——问一次要把四把尺逐枚敲一遍，读数散在
+# 四份 stdout 里等人考古。本格只做一件事：把四把尺的**自己的退出码与自己的人读判据行**
+# 转抄进一张表。判据一律留在尺那一侧：
+#   · 本文件对面级读数**不做任何数值比较**（不比大小、不把两处的数加减成一处）；
+#   · 面级标签恰三种（PASS／FAIL／UNDECIDABLE），格级按标签单调折叠
+#     FAIL > UNDECIDABLE > PASS；UNDECIDABLE 折到格级是 SKIP ⇒ exit 码不变
+#     （与既有「环境里没有＝没有证据」的格同形：假根上本格必 SKIP 且 rc=0）；
+#   · 执法口在不在，问尺自己的 argparse 名册（AST 现读、不跑、不猜）：判不到就
+#     UNDECIDABLE(RULER_PARAM_MISSING:…)，绝不因为「它不会红」给绿；
+#   · 仓根卫生按字面没有尺 ⇒ 恒 UNDECIDABLE(NO_RULER_ON_CALL:…)，这一格不许删。
+# 零写面硬约束：argv 全为字面量、钉死在 STRUCTURE_FACES 里，写盘/外呼开关一概不进
+# （锁＝tests/test_pre_restart_check.py 的摊平腿 + AST 腿 + 注毒腿）。
+# c_table_measure（裸跑写 C-TABLE.md）与 measure_latency_chains（默认形态外呼并拉
+# Chromium）不调：本格只准读，一次都不准动盘、一次都不准出门。
+
+STRUCTURE_FACE_TIMEOUT = 120  # 每面一把尺的有界超时（实测面值见本波交付报告，留冷启动余量）
+
+#: 面级标签——**只有这三种**，它们不是 CheckResult 的状态，折叠后才落进状态。
+STRUCTURE_LABEL_PASS = "PASS"
+STRUCTURE_LABEL_FAIL = "FAIL"
+STRUCTURE_LABEL_UNDECIDABLE = "UNDECIDABLE"
+
+
+@dataclass(frozen=True)
+class StructureFace:
+    """一面体检＝一把已在册的只读尺 + 它的执法口 + **它自己**说过的 rc 语义.
+
+    ``rc_verdicts`` 是从各尺 docstring/main 里逐字对来的转抄（本文件不解释它、
+    不在那里加判据）；落在名册外的退出码一律 UNDECIDABLE，不当绿也不当红。
+    ``script_rel`` 为空串＝这面按字面没有尺（``NO_RULER_ON_CALL``）。
+    """
+
+    key: str
+    script_rel: str
+    argv: tuple[str, ...]
+    enforce_flag: str
+    rc_verdicts: tuple[tuple[int, str], ...]
+    json_fields: tuple[str, ...] = ()
+
+
+STRUCTURE_FACES: tuple[StructureFace, ...] = (
+    StructureFace(
+        "命名与规格",
+        "scripts/spec_gates_census.py",
+        ("--report", "--fail-on-violations"),
+        "--fail-on-violations",
+        (
+            (0, STRUCTURE_LABEL_PASS),
+            (2, STRUCTURE_LABEL_UNDECIDABLE),
+            (3, STRUCTURE_LABEL_FAIL),
+        ),
+    ),
+    StructureFace(
+        "中央调度",
+        "scripts/central_seam_census.py",
+        ("--json", "--fail-on-violations"),
+        "--fail-on-violations",
+        (
+            (0, STRUCTURE_LABEL_PASS),
+            (2, STRUCTURE_LABEL_UNDECIDABLE),
+            (3, STRUCTURE_LABEL_FAIL),
+        ),
+        ("integrity", "violations_second_route", "unknown_id_partition", "signature_claimed_not_derived"),
+    ),
+    StructureFace(
+        "物理归类",
+        "scripts/physical_placement_census.py",
+        ("--four-accounts", "--four-accounts-human", "--fail-on-violations"),
+        "--fail-on-violations",
+        (
+            (0, STRUCTURE_LABEL_PASS),
+            (2, STRUCTURE_LABEL_UNDECIDABLE),
+            (3, STRUCTURE_LABEL_FAIL),
+        ),
+    ),
+    StructureFace(
+        "板块与文档账",
+        "scripts/board_doc_sync.py",
+        ("--check",),
+        "--check",
+        ((0, STRUCTURE_LABEL_PASS), (1, STRUCTURE_LABEL_FAIL)),
+    ),
+    StructureFace(
+        "仓根卫生",
+        "",
+        (),
+        "",
+        (),
+    ),
+)
+
+
+def _enforcement_flag_declared(script_path: Path, flag: str) -> bool | None:
+    """问尺**自己的 argparse 名册**：这枚执法口声明了没有（AST 现读，不跑它、不猜它）.
+
+    为什么不跑 ``--help`` 看回显：本仓至少两把尺的 help 文本含 ``⇔``/``↔``，子进程 stderr
+    吃机器代码页（cp936）时 argparse 打印帮助自己就 UnicodeEncodeError、rc=1 且零帮助文本
+    ⇒ 用回显判「有没有这枚口」会随控制台编码翻脸。AST 读 ``add_argument("<flag>")`` 的
+    字面量与运行环境无关；docstring 里出现同名串也不算 declare（文本对账踩过这一雷）。
+    读不出文件／语法坏了 ⇒ None（无从判定，调用方落 UNDECIDABLE，绝不默认「有」）。
+    """
+    try:
+        tree = ast.parse(script_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or getattr(node.func, "attr", "") != "add_argument":
+            continue
+        for arg in node.args:
+            if isinstance(arg, ast.Constant) and arg.value == flag:
+                return True
+    return False
+
+
+def _ruler_names(value: object) -> list[str]:
+    """把尺交回的字段摊成点名字符串（纯转抄：只搬它自己写的名字，不筛、不排、不算数）."""
+    names: list[str] = []
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict):
+                names.append(str(item.get("symbol") or item.get("id") or item.get("file") or item))
+            else:
+                names.append(str(item))
+    elif isinstance(value, dict):
+        for key, sub in value.items():
+            names.append(f"{key}={sub}")
+    return names
+
+
+def _run_structure_face(face: StructureFace, project_root: Path) -> tuple[str, str, dict[str, Any]]:
+    """跑一面 → (面级标签, 转贴的人话, 结构化读数)。判据在尺那一侧，这里只搬运."""
+    details: dict[str, Any] = {
+        "face": face.key,
+        "ruler": face.script_rel,
+        "argv": list(face.argv),
+        "enforce_flag": face.enforce_flag,
+        "flag_declared": None,
+        "ruler_rc": None,
+    }
+    if not face.script_rel:
+        return STRUCTURE_LABEL_UNDECIDABLE, f"NO_RULER_ON_CALL:{face.key}（这一格不许删）", details
+    script = project_root / face.script_rel
+    if not script.is_file():
+        return STRUCTURE_LABEL_UNDECIDABLE, f"RULER_ABSENT:{face.script_rel}（尺不在被测根上＝没有证据）", details
+    flag_state = _enforcement_flag_declared(script, face.enforce_flag)
+    details["flag_declared"] = flag_state
+    if flag_state is None:
+        return STRUCTURE_LABEL_UNDECIDABLE, f"RULER_UNREADABLE:{face.script_rel}（尺源码读不出）", details
+    try:
+        rc, out, err = run_cmd(
+            [sys.executable, face.script_rel, *face.argv], project_root, timeout=STRUCTURE_FACE_TIMEOUT
+        )
+    except subprocess.TimeoutExpired:
+        return (
+            STRUCTURE_LABEL_UNDECIDABLE,
+            f"RULER_TIMEOUT:{face.script_rel}（{STRUCTURE_FACE_TIMEOUT}s 未回＝没有证据）",
+            details,
+        )
+    except OSError as exc:
+        return (
+            STRUCTURE_LABEL_UNDECIDABLE,
+            f"RULER_CALL_FAILED:{face.script_rel}（调用失败 {type(exc).__name__}）",
+            details,
+        )
+    details["ruler_rc"] = rc
+    lines = [ln.strip() for ln in (out.splitlines() + err.splitlines()) if ln.strip()]
+    tail = _scrub_probe(lines[-1]) if lines else "（尺一声不吭）"
+    if flag_state is False:
+        return (
+            STRUCTURE_LABEL_UNDECIDABLE,
+            (
+                f"RULER_PARAM_MISSING:{face.enforce_flag}——{face.script_rel} 的 argparse 名册里没有这枚执法口"
+                f"（尺自己的末行：{tail}）；这面的 rc 只是用法错误，不参与判定，**不许洗成绿**"
+            ),
+            details,
+        )
+    verdict = {int(code): label for code, label in face.rc_verdicts}.get(rc)
+    if verdict is None:
+        return (
+            STRUCTURE_LABEL_UNDECIDABLE,
+            f"RULER_EXIT_UNMAPPED:{face.script_rel} 退出码 {rc} 不在这面自述的名册里（末行 {tail}）",
+            details,
+        )
+    details["ruler_verdict"] = verdict
+    if face.json_fields:
+        payload = _probe_payload(out)
+        if payload is None:
+            return (
+                STRUCTURE_LABEL_UNDECIDABLE,
+                (
+                    f"RULER_READING_UNPARSEABLE:{face.script_rel} 交回了 rc={rc} 但读不出自己的结构化读数"
+                    "（没有证据，不按 rc 放行）"
+                ),
+                details,
+            )
+        picked = {field: payload[field] for field in face.json_fields if field in payload}
+        details["ruler_fields"] = picked
+        missing_fields = [field for field in face.json_fields if field not in payload]
+        if missing_fields:
+            details["ruler_fields_missing"] = missing_fields
+        named_parts: list[str] = []
+        for field in face.json_fields:  # 顺序＝尺自己名册里的顺序，不排不改写
+            if field not in picked:
+                continue
+            names = _ruler_names(picked[field])
+            named_parts.append(f"{field}＝{'、'.join(names) if names else '（空）'}")
+        return (
+            verdict,
+            f"{verdict}（{face.script_rel} rc={rc}）"
+            + (f"；它自己的字段：{'；'.join(named_parts)}" if named_parts else "")
+            + (f"；字段缺席：{'、'.join(missing_fields)}" if missing_fields else ""),
+            details,
+        )
+    return verdict, f"{verdict}（{face.script_rel} rc={rc}；末行 {tail}）", details
+
+
+def _structure_fold(labels: Sequence[str]) -> str:
+    """面级标签 → 格级状态：单调折叠 FAIL > UNDECIDABLE > PASS（不比任何来自尺的数值）."""
+    if STRUCTURE_LABEL_FAIL in labels:
+        return FAIL
+    if STRUCTURE_LABEL_UNDECIDABLE in labels:
+        return SKIP
+    return PASS
+
+
+def check_structure_readiness(env: dict[str, str], project_root: Path) -> CheckResult:
+    """第 16 项：结构四项体检——四把在册只读尺加一面「按字面没有尺」，转贴成一行.
+
+    本格**没有自己的判据**：面级标签全来自各尺自己的退出码与自己声明过的 rc 语义，
+    格级状态由标签单调折叠。UNDECIDABLE 折成 SKIP（放行，与「没有证据不算红」同族），
+    但它必须逐面点名上屏——一把把「没人管」报成全绿的门比红门更坏。
+    ``env`` 不参与判定（本格读的是代码与文档账，不读部署数据），留在签名里只为与
+    注册面 ``check_*(env, project_root)`` 的行形状对齐（那形状被两把注毒锁钉着）。
+    """
+    cid, name = "structure_readiness", "结构四项体检（转贴在册只读尺；无尺的面如实报无尺）"
+    labels: list[str] = []
+    rows: list[str] = []
+    faces: list[dict[str, Any]] = []
+    for face in STRUCTURE_FACES:
+        label, line, details = _run_structure_face(face, project_root)
+        labels.append(label)
+        rows.append(f"　· [{face.key}] {label} — {line}")
+        faces.append(details)
+    status = _structure_fold(labels)
+    undecidable = [face.key for face, label in zip(STRUCTURE_FACES, labels) if label == STRUCTURE_LABEL_UNDECIDABLE]
+    failed = [face.key for face, label in zip(STRUCTURE_FACES, labels) if label == STRUCTURE_LABEL_FAIL]
+    headline = {
+        PASS: "五面全部由尺自己判绿",
+        FAIL: "有面被尺判红：" + "、".join(failed),
+        SKIP: "格级 SKIP＝有无判据的面在场（" + "、".join(undecidable) + "）——**不代表其余面绿，更不代表放行**",
+    }[status]
+    message = "\n".join((headline, *rows))
+    fix_hint = ""
+    if status == FAIL:
+        fix_hint = (
+            "本格不代修、也不放宽任何一把尺：逐面回到那把尺自己的报告里看它点名的违规"
+            "（--report/--json 的判据行都在 details['ruler_fields'] 与各尺 stdout 里）。"
+            "尺的判据要改，改尺那一侧的在册上限，别在这里改 rc 映射。"
+        )
+    elif status == SKIP:
+        fix_hint = (
+            "UNDECIDABLE 分三种，出路各不相同，别笼统当「过」：① RULER_PARAM_MISSING＝那把尺"
+            "还没有执法口，补口是尺那一侧的活（补上后本格不用改一字就跟着判红）；"
+            "② NO_RULER_ON_CALL＝仓根卫生至今无尺，先立尺再谈绿；③ RULER_ABSENT/TIMEOUT/"
+            "UNREADABLE/UNMAPPED/UNPARSEABLE＝这一轮没有证据，确认被测根与被调尺是否还是那枚真身。"
+            "本格 SKIP 时 exit 仍为 0（照既有 SKIP 口径），所以它**必须被读**：SKIP 不是「这四项就绪」。"
+        )
+    return CheckResult(
+        cid,
+        name,
+        status,
+        message,
+        fix_hint,
+        {"faces": faces, "face_labels": labels, "fold": status},
+    )
+
+
+# ---------------------------------------------------------------------------
+# 17. library_roster：分库就绪（三腿一格：名册差集 ⇄ 可导入三档 ⇄ 附账成员账）
+# ---------------------------------------------------------------------------
+# 名册侧＝AST 现读板块声明源（不 import 插件包、不执行声明源）：
+#   · ``BOARD_TAXONOMY``（板块库 bid→slug）是**派生轴**，发行库工厂按它现派生仓外库目录名；
+#   · ``LIBRARY_TAXONOMY``（ReleaseLibNode lid→slug）只登记板块账派不出来的两族。
+# 🔴 两轴必须**并起来**当对账尺：板块库明文「绝不抄进 LIBRARY_TAXONOMY」，只数名册那一轴
+# 盘面永远缺一整排（那是声明源的纪律，不是本格的 bug）。交集非空反而说明有人把手抄混进了
+# 派生轴——当场判红。
+# 盘面侧＝``ChatBot_Libs/MANIFEST.md`` 的成员行。抓法只认形状（第二列＝反引号里的 kebab
+# slug），**不看表头字样**：那张表的表头改过名，靠表头取列的消费者当场瞎过一回。
+# 三腿共读同一张表 + 各自那枚仓外面：可导入腿另读 ``FACTORY-REPORT.md``（记全称，MANIFEST
+# 那一列被截断过）与每库快照的两枚盘读数（包门面在不在、报错模块在不在）；附账腿另读每库自己的
+# ``workspace-lib.manifest.json`` 的 ``members``。全走「只点这一枚路径」的 is_file/read_text：
+# 🔴 不遍历库目录树、不 import 库内代码、不碰任何 ``.git``、``ChatBot_Libs`` 一字节不改。
+# 失明一律腿级 SKIP + 字面量 UNTRACKED_GATE：HEAD 轴副本按定义没有仓外面＝没有证据，
+# 不是有人没干活 ⇒ 相关腿既不产 PASS 也不产 FAIL。整格折叠＝红 > 名册轴绿 > 失明（见
+# ``_library_roster_fold`` 的取舍说明）。
+LIBRARY_TAXONOMY_REL = "plugins/bot_unified_runtime/domains/core/board_taxonomy.py"
+#: 仓外发行库根（与仓根同级）；进输出的只有下面这几枚相对名。
+LIBS_ROOT_DIRNAME = "ChatBot_Libs"
+LIBRARY_MANIFEST_REL = "ChatBot_Libs/MANIFEST.md"
+#: 第二本册：每库「组合可导入性」的**全称**段（MANIFEST 那一列是截断视图，全称只在这里）。
+#: 口径＝主人 2026-10-11 裁定①：15 座共装成同一个 split package（主仓＋各座同 path），
+#: 不是"每座当孤岛都能独立 import"（旧口径结构上永远不可能绿：成员彼此跨库互指）。
+LIBRARY_FACTORY_REPORT_REL = "ChatBot_Libs/FACTORY-REPORT.md"
+#: 每库自己的成员账（附账只对这一枚文件，绝不进目录树去数）。
+LIBRARY_MEMBER_LEDGER_NAME = "workspace-lib.manifest.json"
+#: 包桥接件（＝该层正规包源码 `__init__.py` 的逐字节副本，正文自带 extend）：库快照里有没有它
+#: ＝MISSING-INIT／HAS-INIT 的第一枚**独立盘读数**（不由那两本册自证）。
+LIBRARY_PACKAGE_FACADE_REL = "plugins/bot_unified_runtime/__init__.py"
+#: 可导入终态闭集。🔴 NO-SAMPLE 永不进「通过」（诚实空仓 ≠ 可导入）；IMPORTABLE 必须 rc=0 才许进。
+LIBRARY_IMPORT_BUCKETS: tuple[str, ...] = ("MISSING-INIT", "HAS-INIT", "NO-SAMPLE", "IMPORTABLE")
+LIBRARY_IMPORT_PASSING_BUCKET = "IMPORTABLE"
+#: 每档唯一修法（进 fix_hint）：四档病因不同 ⇒ 修法不同，一锅端就是把人往反方向引。
+LIBRARY_BUCKET_FIXES: dict[str, str] = {
+    "MISSING-INIT": (
+        "MISSING-INIT＝快照**没有包桥接件** plugins/bot_unified_runtime/__init__.py **且**报错点名的 "
+        "leaf 成员也不在该库快照里：补桥接件只是第一步，只补桥接件这一档不解决（leaf 仍缺，导入照样 "
+        "ModuleNotFoundError）。leaf 成员按该库 pending_seed 登记补种。"
+    ),
+    "HAS-INIT": (
+        "HAS-INIT＝包桥接件**已在场**、报错点名的成员仍缺（真坏）：这一档补桥接件无效，只有补成员"
+        "（或按该库 pending_seed 登记／挂延账）才改得了判据。"
+    ),
+    "NO-SAMPLE": (
+        "NO-SAMPLE＝该库无成员模块可测：等播种——它**不算通过**（诚实空仓不是可导入），"
+        "别把它读成就绪，也别为凑绿灯手写一行假成员。"
+    ),
+    "IMPORTABLE": "IMPORTABLE＝终点态（rc=0）：无修法，保持别退档（改快照结构要回看这一档）。",
+}
+#: 成员行形状：列按 ``|`` 切，第二列＝反引号里的 kebab slug（不看表头字样）。
+_KEBAB_CELL_RE = re.compile(r"^`([a-z0-9][a-z0-9_-]*)`$")
+#: 第二本册的开节行＝``## <名册号> `slug```（同样只认反引号 kebab，不认节标题字样）。
+_LIB_HEAD_RE = re.compile(r"^#{2,3}\s")
+_LIB_HEAD_SLUG_RE = re.compile(r"`([a-z0-9][a-z0-9_-]*)`")
+_RC_FIELD_RE = re.compile(r"rc=(-?\d+)")
+#: 裁定①「组合可导入」的合并证据列＝读数里必须写 `组合N段`（N＝`__path__` 实测段数）。
+#: 为什么必须钉这一枚：`IMPORTABLE` 只说"import 没抛"，而单目录自转也能不抛——
+#: 段数 <2 ＝ split package 根本没合并，那一列的绿与分库这件事无关。
+_LIB_SEGMENT_RE = re.compile(r"组合(\d+)段")
+#: 桥接件形状基准：主仓插件根 init（快照里那一枚必须与它逐字节相同）。
+LIBRARY_SOURCE_PACKAGE_INIT_REL = "plugins/bot_unified_runtime/__init__.py"
+#: 模块点分名：只收 ``word(.word)*``，``..``／斜杠进不来 ⇒ 拼路径前无需再消毒。
+_MODULE_FIELD_RE = re.compile(r"ModuleNotFoundError:([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)")
+
+
+def _markdown_row_cells(line: str) -> list[str]:
+    """把一行 Markdown 表切成列（非表格行／不足三列＝空表：调用方按「不是成员行」跳过）."""
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return []
+    cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+    if len(cells) < 3:
+        return []
+    return cells
+
+
+def _manifest_disk_rows(manifest_path: Path) -> tuple[list[tuple[str, list[str]]], str]:
+    """抓盘面成员行 ``[(slug, 该行列集)]`` 与失明原因——只读文件文本，绝不进库目录.
+
+    表形判据只认「第三列之前＝名册号、第二列＝反引号 kebab slug」，表头改字不影响取行。
+    """
+    if not manifest_path.is_file():
+        return [], "UNTRACKED_GATE"
+    try:
+        text = manifest_path.read_text(encoding="utf-8")
+    except (OSError, ValueError, UnicodeDecodeError):
+        return [], "UNTRACKED_GATE:READ_ERROR"
+    rows: list[tuple[str, list[str]]] = []
+    for line in text.splitlines():
+        cells = _markdown_row_cells(line)
+        if not cells:
+            continue
+        slug_cell = _KEBAB_CELL_RE.match(cells[1])
+        if slug_cell is None:
+            continue
+        rows.append((slug_cell.group(1), cells))
+    if not rows:
+        # 读得出文件却一行成员都抓不到：表形变了，或确实一座库都没建——本格无从区分＝没有证据。
+        return [], "UNTRACKED_GATE:NO_MEMBER_ROWS"
+    return rows, ""
+
+
+def _manifest_disk_slugs(manifest_path: Path) -> tuple[set[str], str]:
+    """只要 slug 集合的消费口（失明原因与 ``_manifest_disk_rows`` 同一真身，不另立判据）."""
+    rows, blind = _manifest_disk_rows(manifest_path)
+    return {slug for slug, _ in rows}, blind
+
+
+def _norm_import_cell(line: str) -> str:
+    """剥掉 ``rc=N`` 与其分隔符（MANIFEST 用半角空格、REPORT 用全角竖线）后的可导入段."""
+    rc = _RC_FIELD_RE.search(line)
+    tail = line if rc is None else line[rc.end() :]
+    return tail.strip().lstrip("｜|:： ").strip()
+
+
+def _import_bucket_of(cell: str) -> tuple[str, str, bool]:
+    """``(档位, 报错模块点分名, rc 是否读得出)``；落不进闭集或同时落进多档 ⇒ 档位空串（调用方判红）.
+
+    🔴 「每行必须落进且只落进一档」：返回空串不是失明，是这行没有终态可言＝红（落不进任何桶的行
+    一旦被跳过，整条腿就少一枚证据却被当成全数通过）。
+    """
+    hits = [bucket for bucket in LIBRARY_IMPORT_BUCKETS if bucket in cell]
+    if len(hits) != 1:
+        return "", "", _RC_FIELD_RE.search(cell) is not None
+    module_match = _MODULE_FIELD_RE.search(cell)
+    return hits[0], (module_match.group(1) if module_match else ""), _RC_FIELD_RE.search(cell) is not None
+
+
+def _factory_import_entries(report_path: Path) -> tuple[dict[str, list[str]], str]:
+    """第二本册 ``(slug → 该节可导入全称段列表, 失明原因)``：只读那一枚文件，不碰目录树.
+
+    同节出现多行可导入＝两本册没法一一对齐（不是「读不到」）⇒ 交调用方按 ``FACTORY_MULTI_IMPORT_LINES``
+    判红，这里只如实把列表交出去。
+    """
+    if not report_path.is_file():
+        return {}, "UNTRACKED_GATE:FACTORY_REPORT_ABSENT"
+    try:
+        text = report_path.read_text(encoding="utf-8")
+    except (OSError, ValueError, UnicodeDecodeError):
+        return {}, "UNTRACKED_GATE:FACTORY_REPORT_READ_ERROR"
+    entries: dict[str, list[str]] = {}
+    slug = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if _LIB_HEAD_RE.match(stripped):
+            head = _LIB_HEAD_SLUG_RE.search(stripped)
+            slug = head.group(1) if head else ""  # 无 slug 的节（如「守恒账」）不许继续吃行
+            continue
+        if slug and "rc=" in stripped:
+            entries.setdefault(slug, []).append(_norm_import_cell(stripped))
+    if not entries:
+        return {}, "UNTRACKED_GATE:FACTORY_REPORT_NO_IMPORT_LINES"
+    return entries, ""
+
+
+def _snapshot_facade(lib_dir: Path) -> bool | None:
+    """该库快照有没有包桥接件（``None``＝目录不在场＝没有这次读数，不是「没有桥接件」）."""
+    if not lib_dir.is_dir():
+        return None
+    return (lib_dir / LIBRARY_PACKAGE_FACADE_REL).is_file()
+
+
+def _snapshot_facade_bytes(lib_dir: Path) -> bytes | None | str:
+    """快照里那一枚插件根 init 的字节（裁定①形状腿用）。
+
+    返回 ``None``＝目录不在场（没有读数）；返回 ``str``＝在场但读不到（失明，不是红）；
+    否则返回 bytes。三种分开，否则"读不到"会被写成"形状不对"那一枚红（本仓实犯的反向归因）。
+    """
+    target = lib_dir / LIBRARY_PACKAGE_FACADE_REL
+    if not target.is_file():
+        return None
+    try:
+        return target.read_bytes()
+    except OSError as exc:
+        return f"UNREADABLE:{type(exc).__name__}"
+
+
+def _snapshot_module(lib_dir: Path, module: str) -> bool | None:
+    """报错点名的模块在该库快照里在不在场（模块或目录缺席时交 ``None``＝无从判）."""
+    if not module or not lib_dir.is_dir():
+        return None
+    rel = module.replace(".", "/")
+    return (lib_dir / f"{rel}.py").is_file() or (lib_dir / rel / "__init__.py").is_file()
+
+
+def _member_ledger_count(ledger_path: Path) -> tuple[int | None, str]:
+    """该库自己的 ``members`` 枚数 ``(读数, 失明原因)``——只点这一枚文件，绝不遍历目录树数文件."""
+    if not ledger_path.is_file():
+        return None, "UNTRACKED_GATE:MEMBER_LEDGER_ABSENT"
+    try:
+        payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
+        return None, f"UNTRACKED_GATE:LEDGER_UNREADABLE:{type(exc).__name__}"
+    if not isinstance(payload, dict) or not isinstance(payload.get("members"), list):
+        return None, "UNTRACKED_GATE:LEDGER_SHAPE_NO_MEMBERS"
+    return len(payload["members"]), ""
+
+
+def _row_member_count(row: list[str]) -> int | None:
+    """成员列＝紧跟 slug 的那一列（第三列），只认纯数字；读不出交 ``None`` 由附账腿判红."""
+    if len(row) < 3:
+        return None
+    cell = row[2]
+    return int(cell) if cell.isdigit() else None
+
+
+def _import_cell_of(row: list[str]) -> str:
+    """该行的可导入列＝第三列之后**第一枚带 ``rc=** 的列（不看表头字样、不看它是第几列）."""
+    return next((cell for cell in row[2:] if "rc=" in cell), "")
+
+
+def _library_import_leg(libs_root: Path, manifest_path: Path) -> dict[str, Any]:
+    """腿 C：可导入三档——闭集分档 ⇄ 第二本册前缀等值 ⇄ 三枚独立盘读数（桥接件在不在／报错模块在不在
+    该库快照里／桥接件与主仓真身是否逐字节相同）⇄ 合并证据（`组合N段`≥2），任一打架即红.
+
+    判语只由三件事决定：①有结构红（分档落空／标签与盘读数打架／NO-SAMPLE 撒谎／IMPORTABLE 非 rc=0／
+    两本册前缀分叉／形状是第二种 init／段数不足）⇒ FAIL；②无结构红但有没落进「通过」的行 ⇒ FAIL（🔴 NO-SAMPLE 永不进通过，
+    MISSING-INIT／HAS-INIT 更不是——把「还没好」读成「不用管」才是这格存在的理由）；③只是某枚盘
+    读数取不到（那库的目录不在场）⇒ SKIP。失明绝不产 FAIL、绝不产 PASS。
+    """
+    rows, rows_blind = _manifest_disk_rows(manifest_path)
+    buckets: dict[str, list[str]] = {bucket: [] for bucket in LIBRARY_IMPORT_BUCKETS}
+    not_passing: dict[str, list[str]] = {
+        bucket: [] for bucket in LIBRARY_IMPORT_BUCKETS if bucket != LIBRARY_IMPORT_PASSING_BUCKET
+    }
+    out: dict[str, Any] = {
+        "verdict": SKIP,
+        "reds": [],
+        "buckets": buckets,
+        "not_passing": not_passing,
+        "unverifiable": [],
+        "blind": "",
+    }
+    if rows_blind:
+        out["blind"] = rows_blind
+        return out
+    entries, report_blind = _factory_import_entries(libs_root / "FACTORY-REPORT.md")
+    if report_blind:
+        out["blind"] = report_blind
+        return out
+    if not any(_import_cell_of(row) for _, row in rows):
+        # 整列都不在＝这枚仓外面今天没被写出来：没有证据，不是有人没干活（当场判红会把无列读成有列）。
+        out["blind"] = "UNTRACKED_GATE:IMPORT_COLUMN_ABSENT"
+        return out
+    reds: list[str] = out["reds"]
+    unverifiable: list[str] = out["unverifiable"]
+    # 裁定①形状腿的基准＝主仓那一枚插件根 init。读不到 ⇒ 这一腿失明（不产红、也不产绿）。
+    try:
+        source_init_bytes: bytes | None = (PROJECT_ROOT / LIBRARY_SOURCE_PACKAGE_INIT_REL).read_bytes()
+    except OSError as exc:
+        source_init_bytes = None
+        unverifiable.append(f"SOURCE_INIT_UNREADABLE:{type(exc).__name__}（形状腿没有基准，不判）")
+    for slug, row in rows:
+        import_cell = _import_cell_of(row)
+        if not import_cell:
+            reds.append(f"IMPORT_CELL_ABSENT:{slug}（同表他行有可导入列、这一行没有＝分档无从谈起）")
+            continue
+        bucket, module, rc_read = _import_bucket_of(import_cell)
+        rc_match = _RC_FIELD_RE.search(import_cell)
+        if not rc_read or rc_match is None:
+            reds.append(f"IMPORT_RC_UNREADABLE:{slug}（该列没写 rc=，档位无从复核：{import_cell[:40]}）")
+        if not bucket:
+            reds.append(f"IMPORT_BUCKET_UNCLOSED:{slug}（落不进闭集或同时落进多档：{import_cell[:40]}）")
+            continue
+        buckets[bucket].append(slug)
+        if bucket != LIBRARY_IMPORT_PASSING_BUCKET:
+            not_passing[bucket].append(slug)
+        ledger_count, _ = _member_ledger_count(libs_root / slug / LIBRARY_MEMBER_LEDGER_NAME)
+        row_member = _row_member_count(row)
+        if bucket == "NO-SAMPLE":
+            measurable = [
+                f"该行成员列={row_member}"
+                if row_member is not None and row_member != 0
+                else "",
+                f"该库成员账 members={ledger_count}"
+                if ledger_count is not None and ledger_count != 0
+                else "",
+                f"报错模块={module}" if module else "",
+            ]
+            if any(measurable):
+                reds.append(
+                    f"NO_SAMPLE_LIE:{slug}（说是无样本，可测面却指着：{'；'.join(m for m in measurable if m)}）"
+                )
+        if bucket == LIBRARY_IMPORT_PASSING_BUCKET:
+            if rc_match is not None and rc_match.group(1) != "0":
+                reds.append(
+                    f"IMPORTABLE_RC_NOT_ZERO:{slug}（进「通过」档必须 rc=0，实为 rc={rc_match.group(1)}）"
+                )
+            if module:
+                reds.append(f"IMPORTABLE_NAMES_MISSING_MODULE:{slug}（自称可导入却仍点名模块 {module}）")
+        # 两枚独立盘读数（都不由那两本册自证）：包门面在不在、报错模块在不在该库快照里
+        lib_dir = libs_root / slug
+        facade = _snapshot_facade(lib_dir)
+        leaf = _snapshot_module(lib_dir, module)
+        if facade is None:
+            unverifiable.append(f"SNAPSHOT_DIR_ABSENT:{slug}（{LIBS_ROOT_DIRNAME}/{slug} 不在场）")
+        elif bucket == "MISSING-INIT" and facade:
+            reds.append(f"INIT-TAG-DRIFT:{slug}（标签 MISSING-INIT，盘上包门面却在场）")
+        elif bucket == "HAS-INIT" and not facade:
+            reds.append(f"INIT-TAG-DRIFT:{slug}（标签 HAS-INIT，盘上却没有包门面）")
+        elif bucket == LIBRARY_IMPORT_PASSING_BUCKET and not facade:
+            reds.append(f"INIT-TAG-DRIFT:{slug}（自称 IMPORTABLE，盘上却没有包门面）")
+        elif bucket == "HAS-INIT" and leaf:
+            reds.append(f"INIT-TAG-DRIFT:{slug}（门面与报错模块都在场，却仍报 FAIL）")
+        # 裁定①新腿一（形状）：快照里那枚插件根 init 必须与主仓真身**逐字节相同**。
+        # 为什么值得锁：一行 `extend_path` 门面就是"第二种 init"，它会按装载序把别座那枚带
+        # re-export 正文的真身整段盖掉（本波实犯：`cannot import name 'InjectionAction'`、
+        # `__path__` 只 0 段），而册上读数那时看着照样是绿的。
+        snap_init_bytes = _snapshot_facade_bytes(lib_dir)
+        if isinstance(snap_init_bytes, str):
+            unverifiable.append(f"SNAPSHOT_INIT_UNREADABLE:{slug}（{snap_init_bytes}＝读不到，不判形状）")
+        elif (
+            source_init_bytes is not None
+            and isinstance(snap_init_bytes, bytes)
+            and snap_init_bytes != source_init_bytes
+        ):
+            reds.append(
+                f"BRIDGE-SHAPE-DRIFT:{slug}（快照插件根 init 与主仓真身字节不同＝第二种形状；"
+                "桥接件只准逐字节拷贝，第二种形状会按装载序盖掉别座正文）"
+            )
+        # 裁定①新腿二（合并证据）：`IMPORTABLE` 必须带 `组合N段` 且 N≥2。
+        # 只说"import 没抛"不够——单一目录自转也能不抛，那种绿与"分库共装"这件事毫无关系。
+        if bucket == LIBRARY_IMPORT_PASSING_BUCKET:
+            segment = _LIB_SEGMENT_RE.search(import_cell)
+            if segment is None:
+                reds.append(
+                    f"IMPORTABLE_WITHOUT_SEGMENT_EVIDENCE:{slug}（自称 IMPORTABLE 却没写 `组合N段`＝合并证据缺席）"
+                )
+            elif int(segment.group(1)) < 2:
+                reds.append(
+                    f"SPLIT_NOT_MERGED:{slug}（`__path__` 实测 {segment.group(1)} 段＝同名包没跨座合并）"
+                )
+        # 两本册前缀等值：MANIFEST 是截断视图 ⇒ 第二本册的全称段必须以它为前缀（只改一本当场红）
+        # 🔴 可见范围如实记：这一腿只咬得住**截断窗口之内**的分叉；窗口之外（后缀被单独改）靠上面
+        # 那两枚盘读数兜（报错点名的模块在不在该库快照里）。别把这一腿当成全称比对——那一列不是全称。
+        section = entries.get(slug)
+        if section is None:
+            reds.append(f"FACTORY_ROW_ABSENT:{slug}（MANIFEST 有此库、第二本册没有该节＝两本册分叉）")
+        elif len(section) > 1:
+            reds.append(f"FACTORY_MULTI_IMPORT_LINES:{slug}（同节 {len(section)} 行可导入，无从一一对齐）")
+        else:
+            truncated = _norm_import_cell(import_cell)
+            if not section[0].startswith(truncated):
+                # 分叉点要能看见：整段照抄会被显示长度吃掉（旧写法两头各截 48 枚，两枚读数在窗口里
+                # 一模一样＝红有了、证据没了）。这里从第一枚不同处起各取 40 枚并报出偏移。
+                at = next(
+                    (index for index, (left, right) in enumerate(zip(truncated, section[0])) if left != right),
+                    min(len(truncated), len(section[0])),
+                )
+                reds.append(
+                    f"BOOK_PREFIX_DIVERGENCE:{slug}（两本册第 {at} 枚起分叉："
+                    f"MANIFEST 截断视图「{truncated[at : at + 40]}」⇄ 第二本册全称段"
+                    f"「{section[0][at : at + 40]}」）"
+                )
+    # 结构红与「今天还没好」是同一次 FAIL 的两面：红码说哪一行的判据被破，not_passing 说哪一行
+    # 还没落进通过档——NO-SAMPLE 永远留在后者（永不进通过）。
+    if reds or any(slugs for slugs in not_passing.values()):
+        out["verdict"] = FAIL
+    elif unverifiable:
+        out["verdict"] = SKIP
+    else:
+        out["verdict"] = PASS
+    return out
+
+
+def _library_member_leg(libs_root: Path, manifest_path: Path) -> dict[str, Any]:
+    """附账·腿 A：MANIFEST 成员列 ⇄ 该库自己成员账的 ``members`` 枚数，🔴 逐行等值、禁求和.
+
+    跨行求和＝把「各本册各自的数」加成一枚没有归属的大数（正是把不同维加起来的在册事故形），
+    本腿每一枚读数都停在它自己的 slug 上：比一对、点一对，任何一处不出现总量。
+    """
+    rows, rows_blind = _manifest_disk_rows(manifest_path)
+    out: dict[str, Any] = {"verdict": SKIP, "reds": [], "unverifiable": [], "blind": "", "rows": []}
+    if rows_blind:
+        out["blind"] = rows_blind
+        return out
+    if not any(_row_member_count(row) is not None for _, row in rows):
+        out["blind"] = "UNTRACKED_GATE:MEMBER_COLUMN_ABSENT"
+        return out
+    reds: list[str] = out["reds"]
+    unverifiable: list[str] = out["unverifiable"]
+    for slug, row in rows:
+        ledger_rel = f"{LIBS_ROOT_DIRNAME}/{slug}/{LIBRARY_MEMBER_LEDGER_NAME}"
+        declared = _row_member_count(row)
+        count, ledger_blind = _member_ledger_count(libs_root / slug / LIBRARY_MEMBER_LEDGER_NAME)
+        out["rows"].append(
+            {"slug": slug, "manifest_cell": row[2] if len(row) > 2 else "", "ledger_rel": ledger_rel}
+        )
+        if declared is None:
+            reds.append(
+                f"MEMBER_CELL_UNPARSED:{slug}（成员列不是纯数字："
+                f"{row[2] if len(row) > 2 else '<缺列>'}）"
+            )
+            continue
+        if count is None:
+            unverifiable.append(f"{slug}：{ledger_blind}（{ledger_rel}）")
+            continue
+        if declared != count:
+            reds.append(f"MEMBER_ACCOUNT_MISMATCH:{slug}（MANIFEST 成员列={declared}／该库成员账={count}）")
+    if reds:
+        out["verdict"] = FAIL
+    elif unverifiable:
+        out["verdict"] = SKIP
+    else:
+        out["verdict"] = PASS
+    return out
+
+
+
+def _release_roster_axes(taxonomy_path: Path) -> tuple[dict[str, str], dict[str, str], str]:
+    """AST 现读两轴名册 ``(板块库 bid→slug, 发行库 lid→slug, 失明原因)``.
+
+    只取字面量：``BoardNode(bid=…, slug=…)``／``ReleaseLibNode(lid=…, slug=…)`` 的
+    ``ast.Call`` 关键字。读不出任何一枚 ⇒ 给原因（调用方 SKIP，绝不当成「名册为空 ⇒ 盘面都多余」）。
+    """
+    if not taxonomy_path.is_file():
+        return {}, {}, f"ROSTER_ABSENT:{LIBRARY_TAXONOMY_REL}"
+    try:
+        tree = ast.parse(taxonomy_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
+        return {}, {}, f"ROSTER_UNREADABLE:{type(exc).__name__}"
+    board: dict[str, str] = {}
+    library: dict[str, str] = {}
+    wanted = {
+        "BOARD_TAXONOMY": (board, "BoardNode", "bid"),
+        "LIBRARY_TAXONOMY": (library, "ReleaseLibNode", "lid"),
+    }
+    for node in ast.walk(tree):
+        # 声明源用的是**带注解的赋值**（``BOARD_TAXONOMY: tuple[...] = (``）⇒ AnnAssign；
+        # 只认 ast.Assign 会把两轴都读成空、本格报「名册读不出」＝假失明（本波实撞）。
+        if isinstance(node, ast.Assign):
+            names = {str(target.id) for target in node.targets if isinstance(target, ast.Name)}
+            value = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+            names = {str(node.target.id)}
+            value = node.value
+        else:
+            continue
+        for axis in names & set(wanted):
+            bucket, node_name, id_field = wanted[axis]
+            for call in ast.walk(value):
+                if not isinstance(call, ast.Call) or getattr(call.func, "id", "") != node_name:
+                    continue
+                fields = {kw.arg: kw.value for kw in call.keywords if kw.arg}
+                ident, slug = fields.get(id_field), fields.get("slug")
+                if isinstance(ident, ast.Constant) and isinstance(slug, ast.Constant):
+                    bucket[str(ident.value)] = str(slug.value)
+    if not board or not library:
+        return {}, {}, "ROSTER_SHAPE_UNEXPECTED:两轴任一读不出成员＝声明源形状变了，本格无从对账"
+    return board, library, ""
+
+
+def _library_roster_fold(roster: str, import_leg: str, member_leg: str) -> str:
+    """三腿折成一格：**红 > 名册轴绿 > 失明**.
+
+    为什么绿压过失明（与 ``_structure_fold`` 相反）：本格 declared 的轴就是「名册 ↔ 盘面差集」，
+    那一轴的绿是它自己判出来的；另两腿读的是**另外两枚仓外面**（第二本册／每库成员账／库目录），
+    它们失明只在 message+details 里逐腿点名并带上 ``UNTRACKED_GATE``，不许把已经成立的差集绿吞掉。
+    反过来：任一腿红 ⇒ 整格红（红绝不被别的腿的绿洗掉）；名册轴自己失明 ⇒ 由 ``check_library_roster``
+    的两处早退产 SKIP（仓外面整体不在场＝没有证据），这条折叠因此永不以失明态冒充绿。
+    """
+    labels = (roster, import_leg, member_leg)
+    if FAIL in labels:
+        return FAIL
+    if roster == PASS:
+        return PASS
+    return SKIP
+
+
+#: 腿C／附账每一枚红码的唯一修法（按码点名，一锅端＝把人往反方向引）。
+_LIB_REMEDIES: tuple[tuple[str, str], ...] = (
+    (
+        "INIT-TAG-DRIFT",
+        (
+            "标签与盘读数打架＝那本册记的是历史态：重跑发行库工厂让两本册与快照同步，"
+            "或按盘上实况改标签；🔴 别改本格的判据去迁就标签。"
+        ),
+    ),
+    (
+        "NO_SAMPLE_LIE",
+        (
+            "把 NO-SAMPLE 贴在有成员的库上＝撒谎档：要么真取样（补 seed 后重测出 rc），"
+            "要么按实况改成 MISSING-INIT／HAS-INIT——NO-SAMPLE 不许用来免测。"
+        ),
+    ),
+    (
+        "IMPORTABLE_RC_NOT_ZERO",
+        "IMPORTABLE 这一档必须 rc=0 才许进：把 rc 现测重录进两本册，别手改标签凑绿。",
+    ),
+    (
+        "IMPORTABLE_NAMES_MISSING_MODULE",
+        "自称可导入却仍点名模块＝那行还是失败态：按实况改档或重测。",
+    ),
+    (
+        "BOOK_PREFIX_DIVERGENCE",
+        (
+            f"两本册前缀等值被破＝有一本被单独改过：全称只活在 {LIBRARY_FACTORY_REPORT_REL}，"
+            f"{LIBRARY_MANIFEST_REL} 那一列是截断视图，两本同批重生成。"
+        ),
+    ),
+    ("FACTORY_ROW_ABSENT", "第二本册缺该库那一节＝两本册分叉：补节或收掉那一行，同批动。"),
+    ("FACTORY_MULTI_IMPORT_LINES", "同一节里多行可导入＝一一对不齐：一节只留现测那一行。"),
+    (
+        "IMPORT_BUCKET_UNCLOSED",
+        (
+            f"可导入列落不进闭集或同时落进多档：按 {'／'.join(LIBRARY_IMPORT_BUCKETS)} "
+            "之一重写那一格，别新增第五档。"
+        ),
+    ),
+    (
+        "IMPORT_RC_UNREADABLE",
+        "那一格没写 rc=：档位无从复核，把 rc 现测值写进去（IMPORTABLE 判据就靠它）。",
+    ),
+    (
+        "IMPORT_CELL_ABSENT",
+        "同表他行有可导入列、这一行没有＝这行没终态：补那一格，别让它落进任何桶。",
+    ),
+    (
+        "MEMBER_ACCOUNT_MISMATCH",
+        (
+            f"成员账不齐：以该库自己的 {LIBRARY_MEMBER_LEDGER_NAME} 的 members 为准补 MANIFEST 那一行"
+            "（或反向重生成那一列）；🔴 逐行改逐行点，绝不把两列的数相加去凑。"
+        ),
+    ),
+    ("MEMBER_CELL_UNPARSED", "成员列不是纯数字：那一列被写了别的东西，还原成枚数或整列重生成。"),
+)
+
+
+def _library_roster_fix_hint(*, roster_problems: list[str], import_leg: dict[str, Any], member_leg: dict[str, Any]) -> str:
+    """三腿的修法分列进 fix_hint：档位不同修法不同、红码不同修法不同，禁一锅端."""
+    parts: list[str] = []
+    if roster_problems:
+        parts.append(
+            "【名册差集轴】三个方向的修法不同，别一锅端：① 派生轴污染＝把手抄进 LIBRARY_TAXONOMY 的板块库条目"
+            "撤掉（板块库只准由 BOARD_TAXONOMY 现派生，这是声明源的明文纪律）；"
+            "② 幽灵库＝盘面那座库没在名册里，要么补登记要么收掉目录；"
+            "③ 名册有而盘面无＝**用户 2026-10-08 已裁：判红**（旧口径曾标「待用户裁」，裁决已落，"
+            "不许改成只披露）——修法是把那一座库真建出来或把名册行撤了，别提前建空库凑盘面。"
+        )
+    import_reds = [str(item) for item in import_leg["reds"]]
+    if not import_leg["blind"]:
+        # 四档修法全摊（含今天没人落进的那档）：读红的人要一眼看到终点态长什么样，
+        # 「只摊有人落进的那几档」会把目标态藏起来＝修法册少一页。
+        parts.append(
+            "【可导入三档】每档唯一修法（档位不同病因不同，逐档各走各的）："
+            + " ".join(LIBRARY_BUCKET_FIXES[bucket] for bucket in LIBRARY_IMPORT_BUCKETS)
+        )
+    member_reds = [str(item) for item in member_leg["reds"]]
+    for code, remedy in _LIB_REMEDIES:
+        if any(red.startswith(code) for red in import_reds + member_reds):
+            parts.append(f"【{code}】{remedy}")
+    if member_leg["unverifiable"] or import_leg["unverifiable"]:
+        parts.append(
+            "【失明那几枚】相关读数取不到（库目录／该库成员账不在场）＝没有证据：本格不判它红也不判它绿，"
+            "补上那一枚仓外面再谈就绪。"
+        )
+    return "\n".join(parts)
+
+
+def check_library_roster(env: dict[str, str], project_root: Path) -> CheckResult:
+    """第 17 项：分库就绪——名册差集 + 可导入三档 + 附账成员账，三腿一格、逐枚点名不写枚数.
+
+    三腿共读 ``ChatBot_Libs`` 那两本册（外加每库自己的成员账与快照的两枚盘读数）：名册差集轴判
+    「谁该在盘上」，腿C 判「在盘上的那些今天能不能独立导入、标签与册与盘面是否三方一致」，附账判
+    「成员数在两本账里是不是同一个数」。🔴 每一枚仓外面缺席 ⇒ 相关腿 SKIP + ``UNTRACKED_GATE``，
+    绝不产 PASS／绝不产 FAIL；折叠＝红 > 名册轴绿 > 失明。
+
+    ``env`` 不参与判定（本格既读源码名册也读仓外盘面，不读部署键），留在签名里只为
+    与注册面 ``check_*(env, project_root)`` 的行形状对齐。
+    """
+    cid, name = "library_roster", "分库就绪（名册差集 + 可导入三档 + 附账成员账，三腿一格）"
+    libs_root = project_root.parent / LIBS_ROOT_DIRNAME
+    manifest_path = libs_root / "MANIFEST.md"
+    disk_slugs, blind = _manifest_disk_slugs(manifest_path)
+    details: dict[str, Any] = {
+        "manifest_rel": LIBRARY_MANIFEST_REL,
+        "factory_report_rel": LIBRARY_FACTORY_REPORT_REL,
+        "member_ledger_name": LIBRARY_MEMBER_LEDGER_NAME,
+        "taxonomy_rel": LIBRARY_TAXONOMY_REL,
+        "board_axis": {},
+        "library_axis": {},
+        "disk_slugs": [],
+        "axis_intersection": [],
+        "disk_not_in_roster": [],
+        "roster_not_on_disk": [],
+        "blind_reason": blind,
+        # 失明早退时三腿各自的读数也得交给 --json 消费方（否则「另两腿没跑」这件事在结构里隐身）。
+        "leg_verdicts": {"roster": SKIP, "import": SKIP, "member": SKIP, "fold": SKIP},
+        "import_leg": {
+            "verdict": SKIP,
+            "blind": blind or "LEG_NOT_RUN:名册轴失明",
+            "reds": [],
+            "unverifiable": [],
+            "buckets": {},
+            "not_passing": {},
+        },
+        "member_leg": {
+            "verdict": SKIP,
+            "blind": blind or "LEG_NOT_RUN:名册轴失明",
+            "reds": [],
+            "unverifiable": [],
+            "rows": [],
+        },
+    }
+    if blind:
+        return CheckResult(
+            cid,
+            name,
+            SKIP,
+            f"{blind}——仓外盘面 {LIBRARY_MANIFEST_REL} 读不到成员行＝没有证据：本格既不当绿报、"
+            "也不当红报（HEAD 轴副本／仓外目录缺席的环境里这就是预期态）",
+            "真机对账要在 ``<仓根>/../"
+            f"{LIBS_ROOT_DIRNAME}"
+            "/MANIFEST.md`` 在盘时跑；本格只点那两本册与逐枚库路径（第二本册＝"
+            f"{LIBRARY_FACTORY_REPORT_REL}、每库成员账＝<slug>/{LIBRARY_MEMBER_LEDGER_NAME}），"
+            f"不遍历库目录树、不 import 库内代码、不动 {LIBS_ROOT_DIRNAME} 一字节、不碰任何 .git。"
+            "别把这条 SKIP 读成「分库已就绪」。",
+            details,
+        )
+    board, library, roster_note = _release_roster_axes(project_root / LIBRARY_TAXONOMY_REL)
+    if roster_note:
+        return CheckResult(
+            cid,
+            name,
+            SKIP,
+            f"{roster_note}——名册轴读不出＝没有证据：本格既不当绿报、也不当红报",
+            f"名册真身＝{LIBRARY_TAXONOMY_REL}（两轴 BOARD_TAXONOMY ∪ LIBRARY_TAXONOMY）；"
+            "它读不出时先确认被测根上是那枚真身，别在这里补第二份名册。",
+            details,
+        )
+    where = {slug: f"板块库 {bid}" for bid, slug in sorted(board.items())}
+    where.update({slug: f"发行库 {lid}" for lid, slug in sorted(library.items())})
+    board_slugs = set(board.values())
+    library_slugs = set(library.values())
+    polluted = sorted(board_slugs & library_slugs)
+    roster_slugs = board_slugs | library_slugs
+    ghost = sorted(disk_slugs - roster_slugs)
+    unbuilt = sorted(roster_slugs - disk_slugs)
+    details.update(
+        {
+            "board_axis": dict(sorted(board.items())),
+            "library_axis": dict(sorted(library.items())),
+            "disk_slugs": sorted(disk_slugs),
+            "axis_intersection": polluted,
+            "disk_not_in_roster": ghost,
+            "roster_not_on_disk": unbuilt,
+        }
+    )
+    problems: list[str] = []
+    if polluted:
+        problems.append(
+            "派生轴被手抄污染（同一枚 slug 同时出现在两轴）："
+            + "、".join(f"{slug}（{where.get(slug, '?')}）" for slug in polluted)
+        )
+    if ghost:
+        problems.append("幽灵库（盘面有、名册没有）：" + "、".join(ghost))
+    if unbuilt:
+        problems.append(
+            "名册有、盘面无（逐枚点名）："
+            + "、".join(f"{slug}（{where.get(slug, '?')}）" for slug in unbuilt)
+        )
+    roster_verdict = FAIL if problems else PASS
+
+    # ── 腿 C（可导入三档）与附账（成员账）：同一张表的另外两枚判据，各自独立定夺 ─────────
+    import_leg = _library_import_leg(libs_root, manifest_path)
+    member_leg = _library_member_leg(libs_root, manifest_path)
+    details["import_leg"] = dict(import_leg)
+    details["member_leg"] = {key: value for key, value in member_leg.items()}
+    fold = _library_roster_fold(roster_verdict, str(import_leg["verdict"]), str(member_leg["verdict"]))
+    details["leg_verdicts"] = {
+        "roster": roster_verdict,
+        "import": import_leg["verdict"],
+        "member": member_leg["verdict"],
+        "fold": fold,
+    }
+
+    leg_lines: list[str] = []
+    if import_leg["blind"]:
+        leg_lines.append(f"腿C 可导入三档失明：{import_leg['blind']}（没有证据，不当绿报也不当红报）")
+    else:
+        buckets: dict[str, list[str]] = import_leg["buckets"]
+        tally = "、".join(
+            f"{bucket}＝{'、'.join(sorted(buckets[bucket])) if buckets[bucket] else '无'}"
+            for bucket in LIBRARY_IMPORT_BUCKETS
+        )
+        leg_lines.append(f"腿C 三档实况（逐枚点名）：{tally}")
+        if import_leg["unverifiable"]:
+            leg_lines.append(
+                "腿C 盘读数无从复核（库目录不在场＝没有证据，不是有人没干活）："
+                + "；".join(str(item) for item in import_leg["unverifiable"])
+            )
+        if import_leg["reds"]:
+            leg_lines.append("腿C 红：" + "；".join(str(item) for item in import_leg["reds"]))
+        elif import_leg["verdict"] == FAIL:
+            not_passing: dict[str, list[str]] = import_leg["not_passing"]
+            stalled = "；".join(
+                f"{bucket} 未达可导入（逐枚点名）：{'、'.join(sorted(slugs))}"
+                for bucket, slugs in not_passing.items()
+                if slugs
+            )
+            leg_lines.append(
+                f"腿C 未达「通过」档（通过档只有 IMPORTABLE 且 rc=0；NO-SAMPLE 永不进通过）：{stalled}"
+            )
+        elif import_leg["verdict"] == PASS:
+            leg_lines.append("腿C 逐枚达 IMPORTABLE 且 rc=0、标签与两枚盘读数对齐、两本册前缀等值")
+    if member_leg["blind"]:
+        leg_lines.append(f"附账 成员账失明：{member_leg['blind']}（没有证据，不当绿报也不当红报）")
+    else:
+        if member_leg["reds"]:
+            leg_lines.append(
+                "附账 红（逐行等值判据被破，禁求和）：" + "；".join(str(item) for item in member_leg["reds"])
+            )
+        if member_leg["unverifiable"]:
+            leg_lines.append(
+                "附账 无从复核（该库成员账不在／读不出形状＝没有证据）："
+                + "；".join(str(item) for item in member_leg["unverifiable"])
+            )
+        if not member_leg["reds"] and not member_leg["unverifiable"]:
+            leg_lines.append("附账 成员列 ⇄ 该库自己成员账逐行等值（一行一对，无一处求和）")
+
+    # 折叠到这里只剩两态：名册轴在这一步必然已定夺（它失明时上面两处早退已经产过 SKIP），
+    # 于是 fold 的 SKIP 腿只服务于「名册轴自己失明」那两条早退之外的形状，不在此处重现。
+    if fold == FAIL:
+        return CheckResult(
+            cid,
+            name,
+            FAIL,
+            "；".join(problems + leg_lines),
+            _library_roster_fix_hint(roster_problems=problems, import_leg=import_leg, member_leg=member_leg),
+            details,
+        )
+    disclosure = (
+        ""
+        if str(import_leg["verdict"]) == PASS and str(member_leg["verdict"]) == PASS
+        else "（🔴 本格的绿只覆盖名册差集一轴：另两腿失明＝UNTRACKED_GATE＝没有证据，"
+        "不得读成「分库已就绪」）"
+    )
+    return CheckResult(
+        cid,
+        name,
+        PASS,
+        "两轴名册与仓外盘面逐枚同名、差集为空：" + "、".join(sorted(roster_slugs)) + "；" + "；".join(leg_lines)
+        + disclosure,
+        "",
+        details,
+    )
+
+
+# ---------------------------------------------------------------------------
 # 汇总与输出
 # ---------------------------------------------------------------------------
 
@@ -2171,6 +3256,8 @@ def run_all(project_root: Path, only: Sequence[str] = ()) -> list[CheckResult]:
         check_ann_generation_pair(env, project_root),
         check_kb_domain_anchor(env, project_root),
         check_entry_chain(project_root),
+        check_structure_readiness(env, project_root),
+        check_library_roster(env, project_root),
     ]
     if not only:
         return results
@@ -2229,6 +3316,29 @@ def render_table(results: list[CheckResult]) -> str:
     return "\n".join(lines)
 
 
+@contextmanager
+def _machine_stdout_guard(json_mode: bool) -> Iterator[None]:
+    """``--json`` 那一路把判据面的 stdout 改指到**既有**告警出口（``sys.stderr``）.
+
+    为什么按「投递路径」修而不逐枚追写手：本读数的消费者在
+    ``scripts/tts_offline_selfcheck.py`` 手里，它 ``json.loads(stdout.strip())`` **整串**
+    读——stdout 上多一行警告＝门当场失明，把「读不到」报成「读得出」（本仓那一族反复
+    踩的「量具自己坏了却读成正常」）。而写手不止本文件：第 14 项
+    ``kb_domain_anchor_ruler`` 会**进程内直载**插件模块（``_plugin_module_by_path``），
+    插件侧一枚 import 期的 print 就能把读数压歪，那一侧不归本文件管、本席也无写面。
+    出口只有一处＝既有的 ``sys.stderr``（同「命令行不合法」那一行的约定）：不新建文件、
+    不另立日志框架、不另开第二处出口。
+    🔴 这是**投递路径**修改，不是判据修改：警告照打、不吞、不摘可见性（执法＝
+    ``tests/test_pre_restart_check.py`` 的「警告没被吞」腿，禁止改成丢进 sink）；
+    人读表格那一路（``--json`` 缺席）原样不动，退出码与逐项判定一字未改。
+    """
+    if not json_mode or sys.stderr is None:
+        yield
+        return
+    with redirect_stdout(sys.stderr):
+        yield
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -2251,16 +3361,23 @@ def main(argv: list[str] | None = None) -> int:
 
     project_root = Path(args.project_root).resolve() if args.project_root else PROJECT_ROOT
     only = tuple(s.strip() for s in str(args.only).split(",") if s.strip()) if args.only else ()
-    try:
-        results = run_all(project_root, only)
-    except ValueError as exc:  # --only 的 id 不在册：大声失败，绝不静默少跑一项
-        print(f"[pre_restart_check] 命令行不合法：{exc}", file=sys.stderr)
-        return 2
 
     try:  # Windows 控制台中文输出防 mojibake/编码异常
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     except (AttributeError, OSError):
         pass
+    # 🔴 编码这口必须在进包**之前**：进包后 sys.stdout 就是 sys.stderr 那一枚对象，
+    # 反过来的话编码设置会抹到告警出口上（人读表格那一路本来也不受影响）。
+
+    # 机器读点（scripts/tts_offline_selfcheck.py 整串 json.loads）只认 stdout 上的纯
+    # JSON ⇒ --json 那一路的判据面改到既有告警出口里跑；人读那一路原样。
+    # 详见 _machine_stdout_guard 的 docstring：只改写到哪儿，不改任何判据与退出码。
+    with _machine_stdout_guard(bool(args.json)):
+        try:
+            results = run_all(project_root, only)
+        except ValueError as exc:  # --only 的 id 不在册：大声失败，绝不静默少跑一项
+            print(f"[pre_restart_check] 命令行不合法：{exc}", file=sys.stderr)
+            return 2
 
     if args.json:
         print(
