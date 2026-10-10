@@ -280,3 +280,66 @@ def test_run_supervised_wiring(monkeypatch: pytest.MonkeyPatch) -> None:
     log_path = captured["log_path"]
     assert log_path.name == "supervisor.log"
     assert log_path.parent == runtime_data_dir()
+
+
+def test_entry_suppresses_source_tree_bytecode() -> None:
+    """铁律 6（源码树零缓存）的**启动侧兜底**必须有牙。
+
+    为什么门会被自家进程判红：`scripts/dev.ps1` 自己置了 `PYTHONDONTWRITEBYTECODE`，
+    但现网常按 `python bot.py` 直起 ⇒ 那条环境变量压根没进进程，而 bot 正是从**源码树**
+    import `plugins/bot_unified_runtime/*` 的，Python 一加载就往同目录吐 `.pyc`。
+    手工清完下一轮启动立刻再生，于是 runtime-layout 的 `python_bytecode=absent` 长期红着，
+    而红的是"谁来启动"而不是"代码坏了"。
+
+    判两件事，缺一即红：
+    ① 两行兜底都在**模块顶层**（塞进函数体＝要到那条分支跑到才生效，等于没兜底）；
+    ② 都在 `import nonebot` **之前**——nonebot 本体住 venv 不污染源码树，插件是
+       `nonebot.init` 之后才导入的，故锚在它之前即罩住全部项目代码；
+    ③ `os.environ` 那枚也必须落在顶层：supervisor 分叉的子进程靠继承环境变量才轮得到。
+    """
+    tree = ast.parse(BOT_PATH.read_text(encoding="utf-8"), filename=str(BOT_PATH))
+
+    def top_level_assignment_targets() -> list[tuple[int, ast.expr]]:
+        return [
+            (node.lineno, target)
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            for target in node.targets
+        ]
+
+    dont_write = [
+        lineno
+        for lineno, target in top_level_assignment_targets()
+        if isinstance(target, ast.Attribute)
+        and isinstance(target.value, ast.Name)
+        and target.value.id == "sys"
+        and target.attr == "dont_write_bytecode"
+    ]
+    env_guard = [
+        lineno
+        for lineno, target in top_level_assignment_targets()
+        if isinstance(target, ast.Subscript)
+        and isinstance(target.value, ast.Attribute)
+        and isinstance(target.value.value, ast.Name)
+        and target.value.value.id == "os"
+        and target.value.attr == "environ"
+    ]
+    nonebot_import = next(
+        (
+            node.lineno
+            for node in tree.body
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            and any(
+                ((a.name if isinstance(node, ast.Import) else (node.module or "")).split(".")[0]
+                 == "nonebot")
+                for a in node.names
+            )
+        ),
+        None,
+    )
+
+    assert nonebot_import is not None, "bot.py 顶层不再 import nonebot？本腿失去锚点"
+    assert dont_write, "bot.py 顶层缺 `sys.dont_write_bytecode = True`（源码树会再长 .pyc）"
+    assert env_guard, "bot.py 顶层缺 `os.environ[\"PYTHONDONTWRITEBYTECODE\"]`（子进程不受兜底罩）"
+    assert dont_write[0] < nonebot_import, "字节码兜底被挪到 nonebot 之后＝插件导入已先吐过 .pyc"
+    assert env_guard[0] < nonebot_import, "环境变量兜底被挪到 nonebot 之后＝子进程继承不到"

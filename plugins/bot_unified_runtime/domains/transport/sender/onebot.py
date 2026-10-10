@@ -26,6 +26,18 @@ from plugins.bot_unified_runtime.domains.transport.sender.file_gateway import (
     FileTransferError,
     get_default_file_gateway,
 )
+from plugins.bot_unified_runtime.domains.transport.sender.file_gateway import (
+    coerce_onebot_id as _coerce_onebot_id,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.file_gateway import (
+    extract_onebot_retcode as _extract_onebot_retcode,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.file_gateway import (
+    extract_onebot_status as _extract_onebot_status,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.file_gateway import (
+    onebot_result_is_success as _onebot_result_is_success,
+)
 from plugins.bot_unified_runtime.domains.transport.sender.timeout import (
     resolve_transport_timeout,
 )
@@ -109,13 +121,6 @@ class OneBotV11Bot(OneBotV11SendBot, Protocol):
     async def get_msg(self, *, message_id: int | str) -> Any: ...
 
 
-def _coerce_onebot_id(value: str) -> int | str:
-    stripped = value.strip()
-    if stripped.isdecimal():
-        return int(stripped)
-    return stripped
-
-
 def _extract_message_id(result: Any) -> str | None:
     if isinstance(result, dict):
         message_id = result.get("message_id")
@@ -130,34 +135,6 @@ def _extract_message_id(result: Any) -> str | None:
     if message_id is not None:
         return str(message_id)
     return None
-
-
-def _extract_onebot_retcode(result: Any) -> int | None:
-    if isinstance(result, dict):
-        raw_retcode = result.get("retcode")
-    else:
-        raw_retcode = getattr(result, "retcode", None)
-    if isinstance(raw_retcode, int):
-        return raw_retcode
-    if isinstance(raw_retcode, str) and raw_retcode.strip().lstrip("-").isdigit():
-        return int(raw_retcode)
-    return None
-
-
-def _extract_onebot_status(result: Any) -> str:
-    if isinstance(result, dict):
-        raw_status = result.get("status")
-    else:
-        raw_status = getattr(result, "status", None)
-    return _string_value(raw_status).strip().lower()
-
-
-def _onebot_result_is_success(result: Any) -> bool:
-    status = _extract_onebot_status(result)
-    retcode = _extract_onebot_retcode(result)
-    if status in {"failed", "fail", "error"}:
-        return False
-    return retcode is None or retcode == 0
 
 
 # 失败结构因的长度/形状上限（SEAT-SENDTERM A1，2026-10-04）。
@@ -266,13 +243,18 @@ def _onebot_issue(
 
 
 
-def build_onebot_message_segments(send_request: SendRequest) -> list[OneBotMessageSegment]:
+def build_onebot_message_segments(
+    send_request: SendRequest,
+    *,
+    alive_memo: dict[str, bool] | None = None,
+) -> list[OneBotMessageSegment]:
     content = send_request.content
     segments = _segments_from_rendered_output(
         content_type=content.content_type,
         content_ref=content.content_ref,
         text_fallback=content.text_fallback,
         request_id=send_request.request_id,
+        alive_memo=alive_memo,
     )
     return segments or [_text_segment(content.text_fallback)]
 
@@ -296,23 +278,30 @@ def _segments_from_rendered_output(
     content_ref: dict[str, Any],
     text_fallback: str,
     request_id: str = "",
+    alive_memo: dict[str, bool] | None = None,
 ) -> list[OneBotMessageSegment]:
     normalized_type = content_type.strip().lower()
     if normalized_type == "text":
         return [_text_segment(_string_value(content_ref.get("text")) or text_fallback)]
     if normalized_type == "image":
-        image_segment = _image_segment(content_ref)
+        image_segment = _image_segment(content_ref, alive_memo)
         return [image_segment] if image_segment else [_text_segment(text_fallback)]
     if normalized_type == "card":
         card_segment = _json_card_segment(content_ref)
         return [card_segment] if card_segment else [_text_segment(text_fallback)]
     if normalized_type == "mixed":
-        return _mixed_segments(content_ref, text_fallback=text_fallback, request_id=request_id)
+        return _mixed_segments(
+            content_ref,
+            text_fallback=text_fallback,
+            request_id=request_id,
+            alive_memo=alive_memo,
+        )
     return [_text_segment(text_fallback)]
 
 
 def _mixed_segment_plan(
     content_ref: dict[str, Any],
+    alive_memo: dict[str, bool] | None = None,
 ) -> tuple[int, list[OneBotMessageSegment], list[str]]:
     """mixed 构段唯一事实源：(计划 dict 项数, 构出的段, 被丢段类型名列表)。
 
@@ -321,6 +310,9 @@ def _mixed_segment_plan(
     丢段只记类型名——正文不进本函数返回值，观测链路（日志/审计）因此
     零正文外泄。构造失败判定只覆盖**本地**丢段；上游（协议端）摘段不在
     本层可见范围，见 B4b-report §待取证。
+
+    ``alive_memo``（席 H）：发送作用域死活复用字典，逐部件透传给构段判定，
+    缺省 None＝不 memo（行为同改造前）。
     """
     parts = content_ref.get("parts")
     if not isinstance(parts, list):
@@ -332,7 +324,7 @@ def _mixed_segment_plan(
         if not isinstance(part, dict):
             continue
         planned += 1
-        segment = _segment_from_mixed_part(part)
+        segment = _segment_from_mixed_part(part, alive_memo)
         if segment is not None:
             segments.append(segment)
         else:
@@ -345,14 +337,18 @@ def _mixed_segments(
     *,
     text_fallback: str,
     request_id: str = "",
+    alive_memo: dict[str, bool] | None = None,
 ) -> list[OneBotMessageSegment]:
     """B4b Tier1-a/c：构段行为逐字节保持现状，只追加发前摘段可感知观测。
 
     返回值语义与改造前一致（``segments or [_text_segment(text_fallback)]``，
     parts 非列表直接回落）；新增的只有两条 warning 观测行（丢段明细/纯文本
     回落原因），日志本体无条件常开——纯观测零行为变更。
+
+    ``alive_memo``（席 H）：发送作用域死活复用字典，透传给 ``_mixed_segment_plan``，
+    缺省 None＝不 memo（行为同改造前）。
     """
-    planned, segments, dropped_types = _mixed_segment_plan(content_ref)
+    planned, segments, dropped_types = _mixed_segment_plan(content_ref, alive_memo)
     if planned < 0:
         return [_text_segment(text_fallback)]
     if dropped_types:
@@ -374,7 +370,9 @@ def _mixed_segments(
     return segments or [_text_segment(text_fallback)]
 
 
-def _segment_from_mixed_part(part: dict[str, Any]) -> OneBotMessageSegment | None:
+def _segment_from_mixed_part(
+    part: dict[str, Any], alive_memo: dict[str, bool] | None = None
+) -> OneBotMessageSegment | None:
     part_type = _string_value(part.get("type")).strip().lower()
     if part_type == "at":
         # OneBot V11 at 段：{"type":"at","data":{"qq":<qq>}}；qq=all 全体。
@@ -388,16 +386,16 @@ def _segment_from_mixed_part(part: dict[str, Any]) -> OneBotMessageSegment | Non
         text = _string_value(part.get("text")) or _string_value(part.get("content"))
         return _text_segment(text) if text else None
     if part_type == "image":
-        return _image_segment(part)
+        return _image_segment(part, alive_memo)
     if part_type in {"sticker", "mface"}:
-        return _sticker_segment(part)
+        return _sticker_segment(part, alive_memo)
     if part_type == "card":
         return _json_card_segment(part)
     if part_type == "record":
         file_ref = _string_value(part.get("file")) or _string_value(part.get("url"))
         if not file_ref:
             return None
-        resolved = _resolve_local_file_ref(file_ref)
+        resolved = _resolve_local_file_ref(file_ref, alive_memo)
         if resolved is None:
             # M-38 闭合：死引用不出站（构段期跳过，进 dropped_types 观测）。
             return None
@@ -406,7 +404,7 @@ def _segment_from_mixed_part(part: dict[str, Any]) -> OneBotMessageSegment | Non
         file_ref = _string_value(part.get("file")) or _string_value(part.get("url"))
         if not file_ref:
             return None
-        resolved = _resolve_local_file_ref(file_ref)
+        resolved = _resolve_local_file_ref(file_ref, alive_memo)
         if resolved is None:
             return None
         data: dict[str, Any] = {"file": resolved}
@@ -418,7 +416,7 @@ def _segment_from_mixed_part(part: dict[str, Any]) -> OneBotMessageSegment | Non
         file_ref = _string_value(part.get("file")) or _string_value(part.get("url"))
         if not file_ref:
             return None
-        resolved = _resolve_local_file_ref(file_ref)
+        resolved = _resolve_local_file_ref(file_ref, alive_memo)
         if resolved is None:
             return None
         return {"type": "file", "data": {"file": resolved}}
@@ -449,7 +447,35 @@ def _local_path_alive(path: Path) -> bool:
         return False
 
 
-def _resolve_local_file_ref(file_ref: str) -> str | None:
+def _local_path_alive_scoped(
+    path: Path, alive_memo: dict[str, bool] | None
+) -> bool:
+    """`_local_path_alive` 的**发送作用域**复用壳；判定表达式逐字委托本体。
+
+    治的无用功（席 C 实测）：同一次发送尝试里，同一批本地部件被反复查存活——
+    构段 ``build_onebot_message_segments``（经 ``_resolve_local_file_ref``）、
+    ``_dispatch_onebot_send`` 的 :838 汇总、``send_onebot_v11`` 成功回执处的
+    :1287 汇总，各问一遍同一个问题、同一批路径。本壳只在**同一次尝试内**按
+    ``str(path)`` 复用一次判定结果，把这三次收成一次。
+
+    🔴 不做进程级全局缓存：memo 由调用方（``send_onebot_v11`` 每次尝试新建一个
+    局部 dict）随 dispatch 传入、带到成功回执处；生命周期＝一次尝试。文件真被
+    删时下一尝试现算，跨尝试/跨作用域绝不复用。``alive_memo is None``（外部调用
+    方、未 memo 的路径）＝直连 `_local_path_alive`，行为逐字节不变。
+    """
+    if alive_memo is None:
+        return _local_path_alive(path)
+    key = str(path)
+    if key in alive_memo:
+        return alive_memo[key]
+    verdict = _local_path_alive(path)
+    alive_memo[key] = verdict
+    return verdict
+
+
+def _resolve_local_file_ref(
+    file_ref: str, alive_memo: dict[str, bool] | None = None
+) -> str | None:
     """本地文件引用解析；死引用返回 None（调用方跳过该部件，绝不出站）。
 
     M-38 闭合（T100）：不存在的绝对路径（含 0 字节空文件）原样透传会把
@@ -470,7 +496,7 @@ def _resolve_local_file_ref(file_ref: str) -> str | None:
         return file_ref
     path = Path(file_ref)
     if path.is_absolute():
-        if not _local_path_alive(path):
+        if not _local_path_alive_scoped(path, alive_memo):
             return None
         return str(path.resolve())
     if path.exists():
@@ -478,7 +504,9 @@ def _resolve_local_file_ref(file_ref: str) -> str | None:
     return file_ref
 
 
-def _image_segment(content_ref: dict[str, Any]) -> OneBotMessageSegment | None:
+def _image_segment(
+    content_ref: dict[str, Any], alive_memo: dict[str, bool] | None = None
+) -> OneBotMessageSegment | None:
     file_ref = (
         _string_value(content_ref.get("file"))
         or _string_value(content_ref.get("url"))
@@ -486,7 +514,7 @@ def _image_segment(content_ref: dict[str, Any]) -> OneBotMessageSegment | None:
     )
     if not file_ref:
         return None
-    resolved = _resolve_local_file_ref(file_ref)
+    resolved = _resolve_local_file_ref(file_ref, alive_memo)
     if resolved is None:
         # M-38 闭合波遗留的 image 面留白，2026-09-28 B1 装闸闭合（旧留白由
         # report-T100 §偏差登记记为待办）：死绝对路径不再构段——mixed 部件进
@@ -536,7 +564,9 @@ def _mface_segment(part: dict[str, Any]) -> OneBotMessageSegment | None:
     return {"type": "mface", "data": data}
 
 
-def _sticker_segment(part: dict[str, Any]) -> OneBotMessageSegment | None:
+def _sticker_segment(
+    part: dict[str, Any], alive_memo: dict[str, bool] | None = None
+) -> OneBotMessageSegment | None:
     """贴纸段（S-MEME-MFACE + Task A 探测波，2026-09-29）：原生 mface 优先、真图兜底。
 
     两级通路（SnowLuma v1.14.19 段方向册实测：mface 收/发两侧都是 "yes"，
@@ -552,7 +582,7 @@ def _sticker_segment(part: dict[str, Any]) -> OneBotMessageSegment | None:
     segment = _mface_segment(part)
     if segment is not None:
         return segment
-    fallback = _image_segment(part)
+    fallback = _image_segment(part, alive_memo)
     if fallback is not None:
         logger.warning(
             "onebot sticker segment fell back to image sticker_via_image_segment_fallback=true debug_id=%s",
@@ -761,6 +791,7 @@ async def _dispatch_onebot_send(
     budget: _TimeoutBudget,
     progress: _SendSideEffects,
     part_sink: PartSink | None = None,
+    alive_memo: dict[str, bool] | None = None,
 ) -> Any | DeliveryReceipt:
     """执行一次发送：返回 OneBot API 结果，或不可重试的 BLOCKED 回执。
 
@@ -768,6 +799,10 @@ async def _dispatch_onebot_send(
     一段就在 progress 记一次副作用，供上层判断能否安全整体重试。
     §9.3：chunks 路径每段成功/结果未知时经 part_sink 回报 part 观测，
     供上层做 part 级幂等落库；回报异常绝不影响发送主链路。
+
+    ``alive_memo``（席 H）：由 ``send_onebot_v11`` 每次尝试新建的发送作用域
+    死活复用字典，喂给构段与死件汇总，使二者对同一批路径只 stat 一次；
+    缺省 None＝不 memo（行为同改造前）。
     """
     parts = send_request.content.content_ref.get("parts", [])
     if isinstance(parts, list) and any(isinstance(p, dict) and p.get("type") == "file" for p in parts):
@@ -852,13 +887,14 @@ async def _dispatch_onebot_send(
                 ),
             )
         else:
-            segments = build_onebot_message_segments(send_request)
+            segments = build_onebot_message_segments(send_request, alive_memo=alive_memo)
             # M-38 闭合（T100）：死引用部件已在构段期跳过。这里只处理两种
             # 残留形态：①死件是唯一内容（纯语音 `说 X` 无文字可保）→ 零
             # 派发直接终态失败，不靠平台退码、不凑空消息假成功（诚实边界，
             # R-16② 零自拼文案）；②混排尚有存活部件 → 照发，SENT 回执由
             # send_onebot_v11 挂 missing_file 留痕。
-            dead_types = _mixed_dead_local_file_types(send_request)
+            # 席 H：与上方构段共享 alive_memo，同一次尝试内同一批路径只 stat 一次。
+            dead_types = _mixed_dead_local_file_types(send_request, alive_memo)
             if dead_types and _segments_all_empty_text(segments):
                 debug_id = new_debug_id()
                 logger.warning(
@@ -938,7 +974,9 @@ def _mixed_part_indexes(send_request: SendRequest) -> list[int]:
     return list(range(len(parts)))
 
 
-def _mixed_dead_local_file_types(send_request: SendRequest) -> list[str]:
+def _mixed_dead_local_file_types(
+    send_request: SendRequest, alive_memo: dict[str, bool] | None = None
+) -> list[str]:
     """mixed 部件中「绝对路径死引用」的类型名列表（M-38 观测/终败判定面）。
 
     与 ``_resolve_local_file_ref`` 同一判定（``_local_path_alive``），覆盖闭合面
@@ -946,6 +984,10 @@ def _mixed_dead_local_file_types(send_request: SendRequest) -> list[str]:
     S-MEME-MFACE；image 面 2026-09-28 B1 起同闸，与构段判定同源、
     不会两说）；非 mixed 恒空。用途：① 混排死件跳过后 SENT 回执的 missing_file
     留痕；② 「死件唯一内容、无文字可保」终败门。与构段判定同源，不会两说。
+
+    ``alive_memo``（席 H）：发送作用域死活复用字典，判定仍逐字委托
+    ``_local_path_alive``（经 ``_local_path_alive_scoped``），只是同一次尝试内
+    对同一批路径复用构段期已算出的结果；缺省 None＝不 memo（行为同改造前）。
     """
     if send_request.content.content_type.strip().lower() != "mixed":
         return []
@@ -963,7 +1005,7 @@ def _mixed_dead_local_file_types(send_request: SendRequest) -> list[str]:
         if not file_ref or file_ref.startswith(_NON_LOCAL_REF_PREFIXES):
             continue
         path = Path(file_ref)
-        if path.is_absolute() and not _local_path_alive(path):
+        if path.is_absolute() and not _local_path_alive_scoped(path, alive_memo):
             dead.append(part_type)
     return dead
 
@@ -1018,9 +1060,14 @@ async def send_onebot_v11(
                 debug_id=debug_id,
             ),
         )
+    alive_memo: dict[str, bool] = {}
     for attempt in range(len(_ONEBOT_SEND_RETRY_DELAYS) + 1):
         progress = _SendSideEffects()
         budget = _TimeoutBudget(timeout)
+        # 席 H：每次尝试新建一个发送作用域死活复用字典，喂给 dispatch（构段
+        # 与死件汇总共享）并带到成功回执处的 :1287。🔴 绝不进程级缓存——每
+        # 尝试都换一枚新 dict，跨尝试/跨作用域不复用，文件真被删下一尝试现算。
+        alive_memo = {}
         try:
             dispatch = _dispatch_onebot_send(
                 bot,
@@ -1028,6 +1075,7 @@ async def send_onebot_v11(
                 budget=budget,
                 progress=progress,
                 part_sink=part_sink,
+                alive_memo=alive_memo,
             )
             dispatched = await asyncio.wait_for(dispatch, timeout=timeout)
             if isinstance(dispatched, DeliveryReceipt):
@@ -1307,7 +1355,11 @@ async def send_onebot_v11(
     # 派发送达——SENT 但挂 missing_file 留痕（复用 file_gateway 既有 kind
     # 族），运维面可见「语音缺席」而非无痕假全量。纯语音终败形态在
     # dispatch 门已零派发直接 FAILED_FINAL，不进本分支。
-    dead_types = _mixed_dead_local_file_types(send_request)
+    # 席 H：复用成功尝试留下的 alive_memo（构建于同一尝试内、已被构段与
+    # :838 填过），判定表达式仍逐字走 _local_path_alive，只是对同一批路径不再
+    # 重复 stat。**留痕判定一字未动**——本行只决定要不要挂 missing_file，不
+    # 决定要不要发送；dead_types 与 dispatch 里 :838 那次同值同源。
+    dead_types = _mixed_dead_local_file_types(send_request, alive_memo)
     if dead_types:
         issue = _onebot_issue(
             "missing_file",

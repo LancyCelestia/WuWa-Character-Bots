@@ -4,6 +4,17 @@ import sys
 import threading
 from pathlib import Path
 
+# 铁律 6（源码树零缓存）的**启动侧兜底**：`scripts/dev.ps1:68` 只在走 dev.ps1 起 bot 时置
+# `PYTHONDONTWRITEBYTECODE`，而现网常按 `python bot.py` 直起 ⇒ 那条环境变量根本没生效，
+# 生产进程一边 import `plugins/bot_unified_runtime/*` 一边往源码树吐 `.pyc`，
+# runtime-layout 的 `python_bytecode=absent` 于是被自家进程天天判红（清理只会立刻再生）。
+# 两行都要：`sys.dont_write_bytecode` 管住本进程后续的插件 import；`os.environ` 那枚管住
+# supervisor 分叉出去的子进程（子进程重跑 `python bot.py`，继承 env 才轮得到它自己再设一次）。
+# 位置约束：必须在导入 nonebot/插件之前——上面的 faulthandler/os/sys/threading/pathlib 全是
+# 标准库，落在解释器安装目录，不污染源码树。
+sys.dont_write_bytecode = True
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+
 import nonebot
 from nonebot.adapters.onebot.v11 import Adapter as OneBotV11Adapter
 from nonebot.adapters.telegram import Adapter as TelegramAdapter

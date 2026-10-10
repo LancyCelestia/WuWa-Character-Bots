@@ -47,6 +47,7 @@ from helpers.voice_queue_sim import (
 
 from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
+    DeliveryReceipt,
     ReceiptState,
     ReviewResult,
 )
@@ -430,3 +431,149 @@ async def test_dead_audio_leaves_the_text_leg_delivered(tmp_path: Path) -> None:
 
 def test_segment_from_mixed_part_returns_none_for_unknown_type() -> None:
     assert _segment_from_mixed_part({"type": "unknown_kind", "file": "x"}) is None
+
+
+# ---------------------------------------------------------------------------
+# 席 H：发送作用域存活复用（同一次尝试内同一批路径只 stat 一次）
+#
+# 治的无用功：一次成功发送里，构段（build_onebot_message_segments 经
+# _resolve_local_file_ref）、dispatch :838 汇总、成功回执 :1287 汇总，各问一遍
+# 同一个死活问题。改后三者共享一个「每次尝试新建」的 alive_memo。下面三枚锁
+# 分别钉：① 调用次数确实塌成一次/路径；② 判定结果与不 memo（＝改前）逐字段
+# 一致；③ 死件的 missing_file 留痕绝不因这次复用被悄悄丢掉（注毒＝把 :1287 的
+# 复用改成一刀切掉留痕，第 ③ 枚必红）。
+# ---------------------------------------------------------------------------
+
+
+def _mixed_parts(tmp_path: Path, alive: int, dead: int) -> list[dict[str, str]]:
+    parts: list[dict[str, str]] = []
+    for i in range(alive):
+        p = tmp_path / f"alive_{i}.bin"
+        p.write_bytes(b"RIFF....WAVEfmt ")  # 存在、非常规空、非 0 字节
+        parts.append({"type": ["record", "image", "video"][i % 3], "file": str(p)})
+    for j in range(dead):
+        parts.append({"type": "record", "file": str(tmp_path / f"gone_{j}.bin")})
+    return parts
+
+
+@pytest.mark.asyncio
+async def test_dead_local_part_still_annotated_and_not_dispatched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """留痕锁 + 计数塌缩：2 活 3 死混排 ⇒ missing_file 仍挂、死件不出站、stat 收成一次。
+
+    最容易悄悄丢的就是 :1287 的 missing_file 留痕——它现在复用 dispatch 里的
+    alive_memo。本例同时断三件事：① SENT 回执仍带 missing_file（不是无痕假全量）；
+    ② 3 枚死 record 绝不出站（派发消息只含 2 枚活件段）；③ 同一次尝试内
+    _local_path_alive 只对 5 枚不同路径各查一次（改前 15 次）。
+    """
+    import plugins.bot_unified_runtime.domains.transport.sender.onebot as ob
+
+    calls: list[str] = []
+    real_alive = ob._local_path_alive
+
+    def _spy(path: Path) -> bool:
+        calls.append(str(path))
+        return real_alive(path)
+
+    monkeypatch.setattr(ob, "_local_path_alive", _spy)
+
+    parts = _mixed_parts(tmp_path, alive=2, dead=3)
+    request = build_mixed_request("h-dead-lock", parts=parts, text="")
+    bot = SimulatedOneBotBot(behavior="ok")
+
+    receipt = await send_onebot_v11(bot, request, timeout_seconds=1.0)
+
+    # ① missing_file 留痕仍在（注毒：删掉 :1287 复用块 ⇒ 此处 operational_issue=None ⇒ 红）
+    assert receipt.state is ReceiptState.SENT
+    assert receipt.operational_issue is not None
+    assert receipt.operational_issue.kind == "missing_file"
+    # ② 死件绝不出站：唯一派发只含 2 枚活件（record + image），3 枚死 record 全无
+    assert len(bot.calls) == 1
+    assert [seg["type"] for seg in bot.calls[0].segments] == ["record", "image"]
+    # ③ 计数塌缩：5 枚不同路径各查一次（build 填 memo，:838/:1287 全命中复用）
+    assert len(calls) == 5, calls
+    assert len(set(calls)) == 5, calls
+    assert len(calls) <= 6  # 验收上限：改前 15 ⇒ 改后 ≤6
+
+
+@pytest.mark.asyncio
+async def test_alive_only_mixed_collapses_to_one_scan_per_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """全活 5 件混排（无 missing_file）：_local_path_alive 改前 15 ⇒ 改后 5。"""
+    import plugins.bot_unified_runtime.domains.transport.sender.onebot as ob
+
+    calls: list[str] = []
+    real_alive = ob._local_path_alive
+
+    def _spy(path: Path) -> bool:
+        calls.append(str(path))
+        return real_alive(path)
+
+    monkeypatch.setattr(ob, "_local_path_alive", _spy)
+
+    request = build_mixed_request(
+        "h-alive-count", parts=_mixed_parts(tmp_path, alive=5, dead=0), text="hello"
+    )
+    bot = SimulatedOneBotBot(behavior="ok")
+
+    receipt = await send_onebot_v11(bot, request, timeout_seconds=1.0)
+    assert receipt.state is ReceiptState.SENT
+    assert receipt.operational_issue is None  # 全活 ⇒ 无痕，走普通 SENT 回执
+    assert len(bot.calls) == 1
+    assert len(calls) == 5 and len(set(calls)) == 5
+
+
+def _strip_auto_debug(receipt: DeliveryReceipt) -> dict:
+    """把回执 model_dump 里**每次构造自动生成**的字段归一（debug_id 与 created_at：
+    两条路径共用同一输入对象，但这些值随每次 new receipt 变化，会造成本质相同的
+    输出假失败）；其余字段一字不动地留给逐字段比对。"""
+    dumped = receipt.model_dump()
+    if dumped.get("debug_id") is not None:
+        dumped["debug_id"] = "<auto>"
+    if "created_at" in dumped:
+        dumped["created_at"] = "<auto>"
+    issue = dumped.get("operational_issue")
+    if isinstance(issue, dict) and issue.get("debug_id") is not None:
+        issue["debug_id"] = "<auto>"
+    return dumped
+
+
+@pytest.mark.asyncio
+async def test_send_output_identical_with_and_without_scope_memo(
+    tmp_path: Path,
+) -> None:
+    """输出不变自证：同一次发送走「memo 复用」（改后）与「不 memo」（＝改前逐次现算）
+    两条路径，派发的发送请求与留痕结果逐字段相等。两条路径共用同一个 request 对象，
+    避免自动 id 造成假失败。"""
+    import plugins.bot_unified_runtime.domains.transport.sender.onebot as ob
+
+    parts = _mixed_parts(tmp_path, alive=2, dead=2)
+    request = build_mixed_request("h-identical", parts=parts, text="文字照走")
+
+    # 路径 A：现役（dispatch 共享 alive_memo）。
+    bot_a = SimulatedOneBotBot(behavior="ok")
+    receipt_a = await send_onebot_v11(bot_a, request, timeout_seconds=1.0)
+
+    # 路径 B：把复用壳换成「无视 memo、逐次现算」＝改造前语义（判定表达式一字未动）。
+    real_scoped = ob._local_path_alive_scoped
+    real_alive = ob._local_path_alive
+
+    def _no_memo(path: Path, _memo: dict[str, bool] | None) -> bool:
+        return real_alive(path)
+
+    ob._local_path_alive_scoped = _no_memo
+    try:
+        bot_b = SimulatedOneBotBot(behavior="ok")
+        receipt_b = await send_onebot_v11(bot_b, request, timeout_seconds=1.0)
+    finally:
+        ob._local_path_alive_scoped = real_scoped
+
+    # 派发出去的发送请求（段数组/方法/目标）逐字节一致，死件两路都不出站。
+    assert bot_a.calls == bot_b.calls
+    # 2 活件构出 record+image 两段（parts 显式给定、无独立 text 部件）。
+    assert [seg["type"] for seg in bot_a.calls[0].segments] == ["record", "image"]
+    # 回执逐字段一致（仅归一自动 debug_id）。
+    assert _strip_auto_debug(receipt_a) == _strip_auto_debug(receipt_b)
+
