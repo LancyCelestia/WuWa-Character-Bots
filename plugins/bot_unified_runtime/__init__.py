@@ -179,6 +179,7 @@ from .domains.ops.monitor.disconnect_notice import (
     DisconnectNotifier,
     disconnect_notice_options_from,
 )
+from .domains.ops.monitor.error_ledger import ErrorIssueLedger
 from .domains.ops.monitor.intent_telemetry import build_intent_telemetry
 from .domains.ops.monitor.result_unknown import ResultUnknownLedger
 from .domains.ops.smoke.diagnostics import (
@@ -834,13 +835,81 @@ def _config_with_runtime_overrides(config: Any, runtime_settings: Any) -> Any:
     这些键已从 .env 移入运行时 store（避免"改了 .env 不生效 / 实际值与 .env
     漂移"），但消费方读的是 config 字段，因此每次判定做一次浅合并。
     没有任何覆盖时直接返回原对象，零额外开销。
+
+    轮内省三刀（席 F，2026-10-10；延迟白烧实测定位，**一个数值都没动**）：
+    ① **快照一次**——旧形态对名册 22 枚热键逐枚 ``store.get()``，而每次 ``get()``
+       都重跑一遍 ``list_overrides()``；生产接了 ``control_plane_config`` backend ⇒
+       每枚＝一趟全新 SQLite 事务。改成开头一次 ``list_overrides()``、循环内按下标读，
+       语义逐字等价（覆盖优先；未命中时旧形态传 ``None`` 当 config ⇒ 恒回落 ``None``，
+       本层含义未改）。鸭子替身 store 没有 ``list_overrides`` ⇒ **退回逐枚 get 旧形态**。
+    ② **轮内 memo**——同一 ``(config 身份, store revision, 名册身份)`` 只合并一次。
+       版本尺用 backend 那枚现成的 CAS ``revision`` 列（禁第二枚版本号、禁全局缓存
+       字典：memo 槽位挂在 store 对象上，一格，含强引用故 ``is`` 判定不怕 id 复用）。
+       store 没有 ``revision``（假对象）或读它抛了（库被锁）⇒ 退化成**不缓存**，
+       照样每轮现算，绝不抛给判定链。写侧 ``_change`` 必然 ``revision+1`` ⇒ 热改仍
+       当轮生效（锁 ``tests/test_settings_hot_audit.py``）。
+    ③ **重映射只按差集**——``remap_runtime_data_paths`` 扫整张路径名册（实测十几毫秒），
+       而 ``model_copy(update=updates)`` 只可能改动 ``updates`` 里那几枚键；名册与热表
+       交集为零（主锁 ``test_lock_hot_registration_contains_no_path_field``），故差集为空
+       时这一刀是**恒等变换**（实测锁 ``test_hot_path_extra_remap_pass_is_a_verified_noop``）。
+       一旦有人把路径键登记进热表，差集非空 ⇒ 照旧把 ``model_copy`` 的产物**当实参**喂进
+       助手 ⇒ 绕开面照样堵死（铁律 6：``data/`` 相对值必被折进 Runtime 根）。
     """
     if runtime_settings is None:
         return config
-    updates: dict[str, Any] = {}
-    for env_key, field_name in _RUNTIME_HOT_OVERRIDE_FIELDS:
+    # ② 轮内 memo：键＝(config 身份, store revision, 名册身份)。槽位挂在 store 上。
+    memo_attr = "_bot_hot_override_merge_memo"
+    roster = _RUNTIME_HOT_OVERRIDE_FIELDS
+    revision: Any = None
+    revision_reader = getattr(runtime_settings, "revision", None)
+    if callable(revision_reader):
         try:
-            value = runtime_settings.get(env_key, None)
+            revision = revision_reader()
+        except Exception as exc:  # noqa: BLE001 - 版本读不到 ⇒ 本轮不缓存，不许把异常抛进判定链。
+            logging.getLogger(__name__).debug(
+                "hot override revision read failed error=%s", type(exc).__name__
+            )
+            revision = None
+    if revision is not None:
+        memo = getattr(runtime_settings, memo_attr, None)
+        if (
+            memo is not None
+            and memo[0] is config
+            and memo[1] == revision
+            and memo[2] is roster
+        ):
+            return memo[3]
+
+    # ① 快照一次：拿得到字典就按下标读；拿不到（假 store）退回旧的逐枚 get 形态。
+    snapshot: Any = None
+    list_overrides = getattr(runtime_settings, "list_overrides", None)
+    if callable(list_overrides):
+        try:
+            candidate = list_overrides()
+        except Exception as exc:  # noqa: BLE001 - 整表读失败按"无覆盖"处理，与逐枚 get 各抛一次同效。
+            logging.getLogger(__name__).debug(
+                "hot override snapshot failed error=%s", type(exc).__name__
+            )
+            candidate = None
+        snapshot = candidate if isinstance(candidate, dict) else None
+
+    def _remember(result: Any) -> Any:
+        """把本轮合并结果挂回 store 的那一格 memo（没有版本尺／挂不上＝不缓存）。"""
+        if revision is None:
+            return result
+        try:
+            setattr(runtime_settings, memo_attr, (config, revision, roster, result))
+        except Exception:  # noqa: BLE001, S110 - store 不肯挂属性（冻结/代理对象）＝不缓存，行为逐字不变。
+            pass
+        return result
+
+    updates: dict[str, Any] = {}
+    for env_key, field_name in roster:
+        try:
+            if snapshot is not None:
+                value = snapshot.get(str(env_key).strip().upper(), None)
+            else:
+                value = runtime_settings.get(env_key, None)
         except Exception as exc:  # noqa: BLE001 - store 读取失败按未覆盖处理。
             logging.getLogger(__name__).debug(
                 "hot override read failed key=%s error=%s", env_key, type(exc).__name__
@@ -852,7 +921,10 @@ def _config_with_runtime_overrides(config: Any, runtime_settings: Any) -> Any:
         if value != current:
             updates[field_name] = value
     if not updates:
-        return config
+        return _remember(config)
+    # 名册真身在 config 模块；缺这枚符号＝代码坏了，响亮抛，绝不静默退成「不合并」。
+    from .config import path_typed_fields_in
+
     try:
         # PATH-REMAP-GUARD 闭合波（2026-10-04）：``model_copy(update=...)``
         # 不重跑校验器，所以热表里一旦出现名册内的路径键，``data/...`` 裸值会绕过
@@ -860,9 +932,13 @@ def _config_with_runtime_overrides(config: Any, runtime_settings: Any) -> Any:
         # 把合并结果**当实参**喂进装载期校验器的等价体 ⇒ 绕过在结构上不可能，而不是
         # 只靠「热表里不许登记路径键」的禁令。助手幂等：已折叠的读数逐字不变（锁
         # tests/test_config_model_copy_path_remap_guard.py::test_hot_path_extra_remap_pass_is_a_verified_noop）。
-        return remap_runtime_data_paths(config.model_copy(update=updates))
+        if path_typed_fields_in(updates):
+            # ③ 差集非空＝真合并进了名册在册的路径键 ⇒ 那一刀一刀都不能少。
+            return _remember(remap_runtime_data_paths(config.model_copy(update=updates)))
+        merged = config.model_copy(update=updates)
     except Exception:  # noqa: BLE001 - 合并失败回退原 config。
         return config
+    return _remember(merged)
 
 
 def _effective_route_text(event: Any) -> str:
@@ -1126,12 +1202,38 @@ async def _forward_message_text(
             timeout=max(0.5, min(per_call_timeout, remaining)),
         )
 
+    async def _fetch_captured(one_id: str) -> Any:
+        """同层并发腿的单枚反查：只吞 Exception 并把异常**当值**带回装配段。
+
+        旧串行版在循环里 ``try/except Exception`` 就地打 warning；并发版把
+        「发不发」的判定全部前置（见 _expand 的发起前一次性判定），warning
+        延后到装配段**按原序**补打，日志文本与先后次序与串行版一字不差。
+        ``CancelledError`` 属 BaseException，照旧外传（取消语义不变）。
+        """
+        try:
+            return await _fetch(one_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 子转发失败不阻断主正文。
+            return exc
+
     async def _expand(one_id: str, payload: Any, depth: int) -> str:
-        """深度优先展开：返回本层正文（含其后代子转发正文）。"""
+        """展开本层正文（含其后代子转发正文）：**同层并发发起、按原序装配**。
+
+        同层的 N 枚子转发 id 互不依赖——各自的 id 都已经躺在本层回执里，
+        不必等前一枚的回执才能拿到下一枚（那是引用链 5 层反查的形状，不在这
+        里）。所以三道闸（``seen`` 去重 / ``expanded_count`` 递增 / ``deadline``
+        判定）在**发起前的一次同步遍历里判完**（这段没有 await，对事件循环是
+        原子的，递增次序仍严格等于本层 ids 的原序），随后并发发起 N 枚反查，
+        最后按 ``candidates`` 的原序拼接——正文次序由 ids 列表决定，不由完成
+        次序决定。三道闸的**取值**、单次与总超时预算、深度/总数上限一字未动，
+        省掉的只是 N-1 次 SnowLuma 往返的串行等待。
+        """
         nonlocal expanded_count
         body = _forward_message_text_sync(payload)
         if depth >= _FORWARD_NESTED_MAX_DEPTH:
             return body
+        candidates: list[str] = []
         for nested_id in _collect_nested_forward_ids(payload):
             if expanded_count >= _FORWARD_NESTED_MAX_TOTAL or time.monotonic() >= deadline:
                 break
@@ -1139,17 +1241,20 @@ async def _forward_message_text(
                 continue  # 环引用/重复引用：同 id 只取一次。
             seen.add(nested_id)
             expanded_count += 1
-            try:
-                nested_result = await _fetch(nested_id)
-            except Exception as exc:  # noqa: BLE001 - 子转发失败不阻断主正文。
+            candidates.append(nested_id)
+        if not candidates:
+            return body
+        outcomes = await asyncio.gather(*(_fetch_captured(nid) for nid in candidates))
+        for nested_id, outcome in zip(candidates, outcomes):
+            if isinstance(outcome, BaseException):
                 logging.getLogger(__name__).warning(
                     "nested forward fetch failed id=%s type=%s detail=%s",
                     nested_id,
-                    type(exc).__name__,
-                    str(exc)[:120],
+                    type(outcome).__name__,
+                    str(outcome)[:120],
                 )
                 continue
-            nested_text = await _expand(nested_id, nested_result, depth + 1)
+            nested_text = await _expand(nested_id, outcome, depth + 1)
             if nested_text:
                 body = (body + "\n" if body else "") + f"—— 子转发 {nested_id[:8]} ——\n{nested_text}"
         return body
@@ -1199,9 +1304,39 @@ async def _transcode_record_segments(bot: Any, raw_segments: list[dict[str, Any]
     NapCat 时期收到的 QQ 语音落盘是 SILK 裸流（.slk），ffmpeg 无法解码，
     转写链路会静默降级；get_record(out_format=mp3) 让适配器自行转码
     后把新路径写入段 data.transcoded_path。任何失败静默跳过，段保持原样。
+
+    同层并发（2026-10-11）：一条消息里的多枚语音段**互不依赖**——每段只写
+    自己的 ``data["transcoded_path"]``，段与段之间零共享可变状态，也没有"下一段
+    的 file_id 要从上一段回执里读"这种结构依赖。所以先按原序把"要不要发"判完
+    （纯同步遍历，无 await），再并发发起，最后按原序逐段回填。**单段 20s 上限
+    一字未动**（NapCat 偶发挂起不返回：无超时会把这个用户的后续消息永久卡死），
+    省掉的只是"多条语音一起发"时 N-1 段的串行等待。
     """
     from pathlib import Path as _Path
 
+    async def _one_record_to_mp3(file_id: str) -> tuple[str, str]:
+        """单段转码：返回 ``(可采纳的新路径, 异常类名)``，两者皆空＝保持原段。
+
+        异常**当值带回**、不在这里打日志——串行版按段序就地打，并发版若就地打
+        就变成按完成序打；装配段按原序补打才与旧版逐行同序同文。
+        ``CancelledError`` 属 BaseException，照旧外传（取消语义不变）。
+        """
+        try:
+            result = await asyncio.wait_for(
+                bot.call_api("get_record", file_id=file_id, out_format="mp3"),
+                timeout=20.0,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 适配器不支持/超时/转码失败时保持原段。
+            return "", type(exc).__name__
+        transcoded = str((result or {}).get("file") or "").strip()
+        if transcoded and _Path(transcoded).suffix.lower() in _RECORD_CONVERTIBLE_SUFFIXES:
+            return transcoded, ""
+        return "", ""
+
+    # 发起前一次性判定：四道跳过门全在这里，判定形状与旧串行版逐条同序。
+    targets: list[tuple[dict[str, Any], str]] = []
     for segment in raw_segments:
         if str(segment.get("type", "")).lower() != "record":
             continue
@@ -1215,19 +1350,17 @@ async def _transcode_record_segments(bot: Any, raw_segments: list[dict[str, Any]
         file_id = str(data.get("file_id") or data.get("file") or "").strip()
         if not file_id:
             continue
-        try:
-            # NapCat 时期偶发挂起不返回：无超时会把这个用户的后续消息永久卡死。
-            result = await asyncio.wait_for(
-                bot.call_api("get_record", file_id=file_id, out_format="mp3"),
-                timeout=20.0,
-            )
-        except Exception as exc:  # noqa: BLE001 - 适配器不支持/超时/转码失败时保持原段。
+        targets.append((data, file_id))
+    if not targets:
+        return
+    outcomes = await asyncio.gather(*(_one_record_to_mp3(fid) for _data, fid in targets))
+    for (data, _file_id), (transcoded, exc_name) in zip(targets, outcomes):
+        if exc_name:
             logging.getLogger(__name__).debug(
-                "get_record skipped type=%s", type(exc).__name__
+                "get_record skipped type=%s", exc_name
             )
             continue
-        transcoded = str((result or {}).get("file") or "").strip()
-        if transcoded and _Path(transcoded).suffix.lower() in _RECORD_CONVERTIBLE_SUFFIXES:
+        if transcoded:
             data["transcoded_path"] = transcoded
 
 
@@ -4108,6 +4241,7 @@ def _register_nonebot_handlers() -> None:
     from .domains.chat_reply.capabilities.chat import build_chat_capability
     from .domains.chat_reply.capabilities.echo import (
         build_status_result,
+        is_help_surface_form,
         resolve_help_query,
     )
     from .domains.chat_reply.capabilities.memory import (
@@ -4141,6 +4275,8 @@ def _register_nonebot_handlers() -> None:
     )
     from .domains.ops.admin.runtime_admin import (
         build_alert_check_result,
+        build_alert_report_list_result,
+        build_alert_report_result,
         build_quirk_admin_result,
         build_runtime_admin_result,
         build_session_identity_admin_result,
@@ -4625,6 +4761,14 @@ def _register_nonebot_handlers() -> None:
         _runtime_scripts_path("data/result_unknown.sqlite3")
     )
 
+    # 报错持久台账（W-7 D-3 甲腿）：抑制窗在进程内存里、审计库按 max_items 剪枝，
+    # 重启/隔夜就把"昨天那个报错"整个吃掉。这一册只由 `notify_operational_issue`
+    # 在逐目标循环**之前**喂一次（被抑制的那次也记），所以四个告警口共用一条缝、
+    # 不留第二处落账实现。路径口径与 result_unknown 同例：装配层构造、无新配置键。
+    error_issue_ledger = ErrorIssueLedger(
+        _runtime_scripts_path("data/error_issue.sqlite3")
+    )
+
     group_file_store = GroupFileStore(_runtime_scripts_path("data/group_files.sqlite3"))
     group_info_cache = GroupInfoCache()
     dirty_guard = DirtyGuard(
@@ -4700,8 +4844,8 @@ def _register_nonebot_handlers() -> None:
         # operational_alert_suppression 的抑制窗统一承担（runtime/alerts.py），
         # 本处不再自建第二道静默闸。
         targets = _operational_alert_targets()
-        if not targets:
-            return
+        # 没有可投递目标 ≠ 没有报错：旧早退会把这类故障整条抹掉。空目标下
+        # notify 只落台账、不发文本、不出卡，投递行为与改前逐字一致。
         try:
             await notify_operational_issue(
                 issue,
@@ -4712,6 +4856,7 @@ def _register_nonebot_handlers() -> None:
                 online_bots=_all_online_bots,
                 delivery=_deliver_admin_alert,
                 suppression=operational_alert_suppression,
+                ledger_sink=error_issue_ledger.record,
             )
         except Exception:  # noqa: BLE001 - admin alert side channel is best effort.
             # Administrator alerting is a diagnostic side channel and must never
@@ -4758,6 +4903,7 @@ def _register_nonebot_handlers() -> None:
                     online_bots=_all_online_bots,
                     delivery=_deliver_admin_alert,
                     suppression=operational_alert_suppression,
+                    ledger_sink=error_issue_ledger.record,
                 )
             )
         except Exception:  # noqa: BLE001 - 告警是旁路，绝不能反噬状态查询。
@@ -4859,8 +5005,6 @@ def _register_nonebot_handlers() -> None:
         if issue is None:
             return
         targets = _operational_alert_targets()
-        if not targets:
-            return
         try:
             await notify_operational_issue(
                 issue,
@@ -4871,6 +5015,7 @@ def _register_nonebot_handlers() -> None:
                 online_bots=_all_online_bots,
                 delivery=_deliver_admin_alert,
                 suppression=operational_alert_suppression,
+                ledger_sink=error_issue_ledger.record,
             )
         except Exception:  # noqa: BLE001 - queue alerting is nonblocking and best effort.
             return
@@ -4951,6 +5096,19 @@ def _register_nonebot_handlers() -> None:
                         pending=summary.pending,
                         expired=summary.expired,
                         detail=summary.render(),
+                    )
+                # 报错台账的 TTL 清扫挂**同一条重连缝**（不另起第二个计时器）：
+                # 两段式过期→清除由 `reconcile()` 内部完成，只在真扫出东西时报一行。
+                try:
+                    swept = error_issue_ledger.reconcile()
+                except Exception:  # noqa: BLE001 - 台账清扫失败不影响重连。
+                    swept = None
+                if swept is not None and (swept.expired or swept.purged):
+                    runtime_event_log.warning(
+                        "error_issue_ledger_swept",
+                        pending=swept.pending,
+                        expired=swept.expired,
+                        detail=f"purged={swept.purged} by_stage={swept.by_stage}",
                     )
                 unresolved = unresolved_mail_aliases(
                     _all_online_bots(),
@@ -6478,8 +6636,6 @@ def _register_nonebot_handlers() -> None:
                         ),
                     )
                     targets = _operational_alert_targets()
-                    if not targets:
-                        return
                     try:
                         await notify_operational_issue(
                             issue,
@@ -6490,6 +6646,7 @@ def _register_nonebot_handlers() -> None:
                             online_bots=_all_online_bots,
                             delivery=_deliver_admin_alert,
                             suppression=operational_alert_suppression,
+                            ledger_sink=error_issue_ledger.record,
                         )
                     except Exception:  # 告警侧路绝不反噬监听主链路。
                         logging.getLogger(__name__).debug(
@@ -8601,6 +8758,9 @@ def _register_nonebot_handlers() -> None:
 
         command_text = normalize_command_text(args.extract_plain_text().strip())
         help_bot_avatar_url = ""
+        # G-1：帮助卡头像只在真正要出帮助卡的那一支去取（拒止支用不上，不该为它
+        # 多打一次 get_login_info）。缺省 False＝不取；在册帮助支显式置真。
+        help_card_avatar = False
         # P-G1（S-ATK-PERSONA，2026-09-27）：外观随切腿的角色门采集袋——
         # runtime 管理能力闭包执行时记下本次 actor_roles，随钩子传进 helper。
         persona_gate_roles: list[str] = []
@@ -9257,6 +9417,35 @@ def _register_nonebot_handlers() -> None:
             alert_command = command_text.removeprefix("alert").strip()
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                # 报修面走同一个 alert 动词下的分派（禁第二处 /bot 子命令入口）。
+                # 动作解析留在闭包内：不在外层新增局部名，免得动到既有闭包变量集合的形状锁。
+                parts = alert_command.split(maxsplit=1)
+                action = (parts[0] if parts else "").lower()
+                rest = parts[1] if len(parts) > 1 else ""
+                if action in ("", "check", "体检", "检查"):
+                    return build_alert_check_result(
+                        config,
+                        request_id=message.request_id,
+                        actor_roles=_decision.actor_roles,
+                        probe="--probe" in alert_command,
+                    )
+                if action in ("report", "报修", "故障反馈"):
+                    return build_alert_report_result(
+                        config,
+                        request_id=message.request_id,
+                        actor_roles=_decision.actor_roles,
+                        reporter_id=str(message.sender_id),
+                        platform=str(message.platform),
+                        session_key=str(message.session_id),
+                        text=rest,
+                    )
+                if action in ("list", "列表", "清单"):
+                    return build_alert_report_list_result(
+                        config,
+                        request_id=message.request_id,
+                        actor_roles=_decision.actor_roles,
+                        limit_text=rest,
+                    )
                 return build_alert_check_result(
                     config,
                     request_id=message.request_id,
@@ -9484,9 +9673,157 @@ def _register_nonebot_handlers() -> None:
                 ]
                 return render(f"已更新 {labels[mode_key]}。\n")
 
-        elif command_text != "status":
+        elif command_text.startswith(("weather ", "districts ")):
+            # 补成真支（席 CMD-SLASH-HEADS，用户 2026-10-08 裁「把这几枚补成真支，能补都补」
+            # ＋「中英文都要」）：`/bot 天气 上海`、`/bot weather Shanghai`、`/bot 支持区县 <省>`
+            # 过去册上没登记成子令，靠链尾兜底混一张总览页；G-1 拒止支上线后当场变成"被拒"。
+            # 🔴 天气的两条腿**合在这一支里**：两个词头共用同一个构造口
+            # `_build_weather_with_backend`，拆成两支会在根链上留下两处同能力通路——派发锁
+            # `leg_calling` 判「禁第二通路」2026-10-08 实测当场咬住。
+            # 中文词头只住 `runtime/aliases.py::MODULE_ALIASES`（`功能管理→feature`／
+            # `描写→narration` 同一先例，command-surface 七形态④/⑥），上面的归一已把它折成
+            # 英文正形 ⇒ 条件式只读 canonical 名，派发段零中文硬编＝零第二声明位。
+            # 🔴 剥词头一律写**字面量**：派发锁是 exec 这段算式原文来判"参数有没有掉在地上"
+            # （G-4 腿），换成变量实参它就取不到词头——那是它的口径，不是可以放宽的地方。
+            # 🔴 裸 `/bot 天气`（无城市）不进这一支：天气能力对裸词头按设计静默
+            # （`missing_query_silent`），命令面回空串等于没答，留在链尾由拒止支给指路；
+            # 裸 `/bot 支持区县` 相反——能力自己回「未找到省份」，有牙，所以两支都要求带参数。
+            capability_id = "bot.weather"
+            weather_query = (
+                command_text.removeprefix("districts")
+                if command_text.startswith("districts")
+                else command_text.removeprefix("weather")
+            ).strip()
+            weather_synth_prefix = (
+                "支持区县" if command_text.startswith("districts") else "天气"
+            )
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                synthetic = message.model_copy(
+                    update={"plain_text": f"{weather_synth_prefix} {weather_query}".strip()}
+                )
+                return _build_weather_with_backend(config)(synthetic, _decision)
+
+        elif command_text in ("music_mode", "music mode") or command_text.startswith(("music_mode ", "music mode ")):
+            # `/bot 点歌模式 X`／`/bot music_mode X`／`/bot music mode X` 补成真支（同族，册上
+            # 「点歌」主题本来就写着这一形；自然面 `_MODE_COMMAND_RE` 今天就认这三种写法，
+            # 命令面此前只有兜底，G-1 之后变成被拒）。
+            # 🔴 这一支必须排在 `music` 之前：`/bot music mode 卡片` 若被 `music` 抢走，
+            # 就成了"搜一首叫 mode 卡片 的歌"。管理门**不在这里重写**——
+            # `build_music_mode_result` 体内第一道就是 `"admin" not in normalized_roles`
+            # （拒止走 user_copy 池），缺 mode 时回当前档＋用法。
+            capability_id = "bot.music_mode"
+            music_mode_argument = (
+                command_text.removeprefix("music_mode").removeprefix("music mode").strip()
+            )
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                # import 留在闭包体内（`subscribe`／`logs`／`decision` 三支同一写法）：
+                # 放在分支层会把 builder 名绑成 `_handle_status` 的 cellvar＝台账 #59★ 那型。
+                from .domains.music.capabilities.music import (
+                    build_music_mode_result,
+                    extract_music_mode,
+                )
+
+                return build_music_mode_result(
+                    runtime_settings,
+                    config,
+                    mode=extract_music_mode(f"点歌模式 {music_mode_argument}".strip()),
+                    actor_roles=list(getattr(_decision, "actor_roles", []) or []),
+                    request_id=message.request_id,
+                )
+
+        elif command_text == "music" or command_text.startswith("music "):
+            # `/bot 点歌 X`／`/bot music X` 补成真支（同上裁定；中文词头 点歌/點歌/点唱/點唱
+            # 住 MODULE_ALIASES）。执行面＝别名链 `:8346` 那一条构造调用逐字同形（同一
+            # `build_music_capability` 口、运行期模式与候选 providers 同源），不另起第二通路。
+            # 裸 `/bot 点歌` 留在这里是有意的：能力自己回「用法：点歌 <歌名>」（缺参有牙），
+            # 与天气那支的静默相反——判据锁 tests/test_narration_command_dispatch.py G-4 腿。
+            capability_id = "bot.music"
+            music_query = command_text.removeprefix("music").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                synthetic = message.model_copy(
+                    update={"plain_text": f"点歌 {music_query}".strip()}
+                )
+                mode = runtime_settings.get("BOT_MUSIC_MODE", config) or getattr(
+                    config, "bot_music_default_mode", "card+voice+link"
+                )
+                return build_music_capability(
+                    config,
+                    default_mode=mode,
+                    request_store=music_request_store,
+                    candidate_providers=(
+                        music_candidate_providers(build_cookie_provider(config))
+                        if getattr(config, "bot_music_candidates_enabled", False)
+                        else None
+                    ),
+                    render_backend=render_backend,
+                )(synthetic, _decision)
+
+        elif command_text == "wiki" or command_text.startswith("wiki "):
+            # `/bot wiki X` 与中文同义 `/bot 维基 X`／`/bot 百科 X` 补成真支（三枚中文词头本来
+            # 就在 MODULE_ALIASES 里 → 已归一成 wiki）。执行面 `_build_wiki_with_backend`＝
+            # 维基 matcher 用的同一构造口；裸词头由能力自己回「用法：维基 <词条>」。
+            capability_id = "bot.wiki"
+            wiki_query = command_text.removeprefix("wiki").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                synthetic = message.model_copy(
+                    update={"plain_text": f"维基 {wiki_query}".strip()}
+                )
+                return _build_wiki_with_backend(config)(synthetic, _decision)
+
+        elif command_text == "status":
+            capability_id = "bot.status"
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_status_result(
+                    config,
+                    request_id=message.request_id,
+                    runtime_control=runtime_control,
+                    actor_roles=list(getattr(_decision, "actor_roles", []) or []),
+                )
+
+        elif (
+            command_text == "decision"
+            or command_text == "决策"
+            # 词头两支并成元组形（ruff PIE810）：悬空子令尺
+            # `tests/test_claims_subset_implementation_gate.py` 的 E1 提取器已同时认单串形与
+            # 元组形，并且**逐枚比字面量**（摘掉元组里任一枚词头，它照样坠回悬空集；
+            # 注毒腿 test_poison_tuple_form_head_literals_are_compared_individually 执法）。
+            or command_text.startswith(("decision ", "决策 "))
+        ):
+            # G-2（乙案，用户 2026-10-08 裁定「不统一的通通改掉」）：/bot decision 接线。
+            # 实现体 build_decision_query_result（含 _is_admin_actor 权限门、N 钳制、
+            # SQLite→热缓冲回落）与「决策」帮助主题四层登记早已齐备，缺的只有这一支
+            # 分发落点（U7-F7 / U24-F1 两次独立取证同判）。形照既有 logs 分支同构，
+            # 不建第二条旁路。中文词头一并接（帮助册别名表 (决策, 决策引擎, decision)）。
+            capability_id = "bot.decision"
+            decision_query = (
+                command_text.removeprefix("decision").removeprefix("决策").strip()
+            )
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                from .domains.chat_reply.capabilities.echo import (
+                    build_decision_query_result,
+                )
+
+                return build_decision_query_result(
+                    request_id=message.request_id,
+                    actor_roles=list(getattr(_decision, "actor_roles", []) or []),
+                    query=decision_query,
+                )
+
+        elif is_help_surface_form(command_text):
+            # 在册默认裸形（G-1 显式登记，手感不许变）：
+            #   /bot 裸打              → 帮助总览（resolve_help_query("") == ""）
+            #   /bot help|帮助 [模块]  → 总览 / 深度页（词表真身＝HELP_COMMAND_HEAD_WORDS）
+            #   /bot commands|命令目录 → 命令目录
+            # 判据不在此重列：唯一真身＝resolve_help_query（echo.py，注明「接入层用」）。
             capability_id = "bot.help"
             help_query = resolve_help_query(command_text)
+            help_card_avatar = True
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 from .domains.chat_reply.capabilities.echo import build_help_result
@@ -9505,17 +9842,20 @@ def _register_nonebot_handlers() -> None:
                 )
 
         else:
-            capability_id = "bot.status"
+            # G-1（用户 2026-10-08 裁定「未知子命令一律拒绝」）：认不出＝拒，不再
+            # 静默坠帮助总览（旧形态下 /bot chat、打错的 /bot recemt 都会拿到一张
+            # 无关的总览页，看起来像"回了"，实际什么都没发生）。文案零新写，
+            # 只复用既有未知指令拒绝口；不回显 token（理由见 builder docstring）。
+            capability_id = "bot.help"
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
-                return build_status_result(
-                    config,
-                    request_id=message.request_id,
-                    runtime_control=runtime_control,
-                    actor_roles=list(getattr(_decision, "actor_roles", []) or []),
+                from .domains.chat_reply.capabilities.echo import (
+                    build_unknown_subcommand_result,
                 )
 
-        if capability_id == "bot.help":
+                return build_unknown_subcommand_result(request_id=message.request_id)
+
+        if help_card_avatar:
             help_bot_avatar_url = await _resolve_bot_avatar_url(bot, config)
         receipt = await _run_capability_through_pipeline(
             bot=bot,
