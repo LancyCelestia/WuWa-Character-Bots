@@ -9,8 +9,9 @@
     python scripts/doc_sync.py           # 缺省 = --check
 
 pytest 常驻门：tests/test_cross_validation_gates.py 以 subprocess --check 守门。
-事实来源：RouteKind 注册表、帮助 topic 数、模板清单、测试文件数、
-配置键数、哈希清单范围、**能力真身册的维清单与在册枚数**——全部可从代码/清单机械推导。
+事实来源：RouteKind 注册表、帮助 topic 数、模板清单、测试文件数（**`git ls-files`
+tracked 口径**，未入库件不计）、配置键数、哈希清单范围、**能力真身册的维清单与在册枚数**
+——全部可从代码/清单机械推导。
 
 ## 本件另兼任「声明源塌陷锁」的唯一真身（S246R，2026-09-25）
 四支取数口（`doc_sync` / `board_doc_sync` / `command_catalog` / `ownership_project`）
@@ -27,6 +28,7 @@ from __future__ import annotations
 import argparse
 import ast
 import re
+import subprocess
 import sys
 from collections.abc import Iterable
 from pathlib import Path
@@ -52,6 +54,15 @@ class DeclarationBlind(RuntimeError):
     差别只在异常名沿用本件的「眼睛瞎了」口径。抛错必点名：哪支口、哪件、以及
     「该件是不是已经降成再导出壳」——因为搬迁后读空是这条路径上最常见的死法，
     不点名就只会得到一句 "list is empty"，下一个人还得从头查。
+    """
+
+
+class TrackedAxisUnavailable(DeclarationBlind):
+    """git **只读轴**跑不动 ⇒ 「在册（tracked）」口径**不可得**，不等于「零枚」。
+
+    同族同教义（读不到 ≠ 没有），单独一型的理由只有一条：`build_document()` 必须把两种
+    空分开——①git 根本问不到（可降级，但降级文案要明写原因）；②git 问得出却读出空
+    （塌陷锁，绝不降级成文案，响亮抛）。把 ②也吞进 ①＝把"眼睛瞎了"洗成一句人话。
     """
 
 
@@ -202,6 +213,8 @@ ECHO_PY = ROOT / "plugins/bot_unified_runtime/domains/chat_reply/capabilities/ec
 CONFIG_PY = ROOT / "plugins/bot_unified_runtime/config.py"
 TEMPLATES_DIR = ROOT / "plugins/bot_unified_runtime/domains/render/card_render/templates"
 TESTS_DIR = ROOT / "tests"
+#: 「测试文件数」在册口径的 git pathspec（相对 ROOT 的 posix 段，与 `TESTS_DIR` 同指一处）。
+TESTS_DIRSPEC = "tests"
 VERIFY_HASHES_PY = ROOT / "tests/verify_hashes.py"
 
 
@@ -233,9 +246,58 @@ def _help_topics() -> list[str]:
     )
 
 
+def _git_tracked_test_paths() -> list[str]:
+    """`git ls-files` 现算的**在册** `tests/test_*.py` 相对路径（升序、posix）。
+
+    判 tracked 的唯一正道＝git 的只读命令（`ls-files` 读索引，不碰工作树）：
+    🔴 禁 `git status --porcelain` 全量扫（一次调用把未跟踪/忽略面混进来，判据不纯）、
+    禁任何 git 写操作（add/commit/stash/checkout 都不是取数口）。
+    口径＝索引 ⇒ 与「干净 checkout（`git checkout-index -a`）实际落多少枚测试件」同轴；
+    在飞树里多出的未跟踪件**不进本数**——它们还没入库，机器册不替它们背书。
+    `-z` 取数：NUL 分隔 ⇒ 免 `core.quotePath` 的八进制转义（本仓有中文名件，同
+    `secret_scan_tracked.py` 的配方）；bytes 手解码 ⇒ 不吃 locale（ledger #47 那把坑）。
+    取不到 ⇒ 抛 `TrackedAxisUnavailable` 点名原因，**绝不返回空表**（空表会被读成「没有」）。
+    """
+    argv = ["git", "ls-files", "-z", "--", TESTS_DIRSPEC]
+    try:
+        proc = subprocess.run(
+            argv, cwd=str(ROOT), capture_output=True, timeout=120, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise TrackedAxisUnavailable(
+            f"NO_GIT_AXIS：git 跑不起来（{type(exc).__name__}: {exc}）") from exc
+    if proc.returncode != 0:
+        tail = (proc.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+        raise TrackedAxisUnavailable(
+            f"NO_GIT_AXIS：`{' '.join(argv)}`（cwd={ROOT}）退出码 {proc.returncode}"
+            f"——{tail[-1][:160] if tail else '无 stderr'}")
+    names = [seg.replace("\\", "/")
+             for seg in proc.stdout.decode("utf-8", "replace").split("\0") if seg]
+    return sorted(n for n in names if re.fullmatch(r"tests/test_[^/]*\.py", n))
+
+
 def _test_file_count() -> int:
+    """「测试文件数」＝**只数已入库（tracked）**的测试件（2026-10-08 裁定换口径）。
+
+    旧写法 `len(TESTS_DIR.glob("test_*.py"))` 是**文件系统**口径：谁在飞新建一枚未跟踪
+    测试件，这一格当场 +1 ⇒ 机器册替一个"干净 checkout 上不存在"的状态背书（假绿一型，
+    `P-MAIN-8`/`PARKED.md` 记过账）。现口径＝`_git_tracked_test_paths()` 的枚数；
+    `require_surface` 继续守「读空即抛」（git 问得出却读出 0 枚＝扫描面塌，响亮红）。
+    git 轴跑不动 ⇒ 抛 `TrackedAxisUnavailable`，降级文案在 `build_document()` 那一格出，
+    **既不折成 0、也不折成在盘 glob 的数**。枚数形状不变（int），常驻门的
+    「>0 地板」「注毒 +1」两条腿因此无需改判据。
+    """
     return require_surface(
-        "测试文件数取数口", len(list(TESTS_DIR.glob("test_*.py"))), TESTS_DIR)
+        "测试文件数取数口（tracked 口径）", len(_git_tracked_test_paths()), TESTS_DIR)
+
+
+def _disk_test_glob_count() -> int:
+    """在盘（文件系统）口径——**只作 NO_GIT_AXIS 降级时的取证并列参考**，不充当在册数。
+
+    🔴 它不是「测试文件数」的取数口了：未入库的在飞件会当场顶漂它，把它的数当册数＝旧病。
+    留着它的理由＝git 轴不可得时，让人一眼看出「在盘比在册多几枚」这个缺口本身。
+    """
+    return require_surface(
+        "在盘 glob 取证面", len(list(TESTS_DIR.glob("test_*.py"))), TESTS_DIR)
 
 
 def _config_key_count() -> int:
@@ -261,6 +323,14 @@ def build_document() -> str:
     kinds = _route_kinds()
     topics = _help_topics()
     tracked = _tracked_files()
+    try:
+        test_cell = f"{_test_file_count()}（在册口径＝`git ls-files` tracked；未入库的在飞件不计）"
+    except TrackedAxisUnavailable as exc:
+        # 降级只写「取不到 + 为什么」，那一格**不给数**：折 0 是把瞎掉写成事实，
+        # 折在盘 glob 的数是回到被治的旧病。在盘数只以「取证面」名义并列出现。
+        test_cell = (
+            "NO_GIT_AXIS（在册口径取不到 ⇒ 本格不给数，不折 0、不折在盘数）"
+            f"｜原因：{exc}｜在盘 glob 取证面={_disk_test_glob_count()} 枚（非在册口径）")
     lines = [
         _HEAD,
         f"- 模板清单（{len(tpls)}）：{', '.join(tpls)}",
@@ -268,7 +338,7 @@ def build_document() -> str:
         f"- RouteKind（{len(kinds)}）：{', '.join(kinds)}",
         "",
         f"- 帮助 topic 数：{len(topics)}（重名 {len(topics) - len(set(topics))}）",
-        f"- 测试文件数：{_test_file_count()}",
+        f"- 测试文件数：{test_cell}",
         f"- config.py bot_* 字段数：{_config_key_count()}",
         "",
         f"- 哈希清单范围（{len(tracked)}）：{', '.join(tracked)}",
@@ -298,6 +368,11 @@ def write() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # 控制台按 cp936 时，人读行里的 `⇒`／中文会当场打死输出腿（census 族同坑，
+    # 已实测两回）。入口自钉 utf-8，不要求调用方带 PYTHONIOENCODING。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="机器事实册同步门")
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--check", action="store_true")
