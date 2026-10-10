@@ -678,14 +678,19 @@ def test_w1_items_are_declared_and_skip_on_unconfigured_fake_root(
     assert structure.status == SKIP, f"假根上没有尺，本格只许 SKIP（没有证据）：{structure.message}"
     assert roster.status == SKIP and "UNTRACKED_GATE" in roster.message, roster.message
     assert prc.main(["--json", "--project-root", str(root)]) == 0, "两枚新格的 SKIP 不许把 exit 码顶成 1"
-    # 无尺那一格不许被删（删＝把「没人管」洗成「不用管」）
-    assert any(f.key == "仓根卫生" and not f.script_rel for f in prc.STRUCTURE_FACES), (
-        "STRUCTURE_FACES 里「仓根卫生」那格不见了或被塞了把假尺——它按字面没有尺，"
-        "必须留在清单里恒判 UNDECIDABLE(NO_RULER_ON_CALL)"
+    # 无尺那一格已按裁定 4 甲换成真尺（`scripts/root_hygiene_census.py`）：不许退回空面，
+    # 也不许私自改它的 rc 语义（0＝根层干净 PASS／1＝债未清 FAIL）。
+    hygiene = next(f for f in prc.STRUCTURE_FACES if f.key == "仓根卫生")
+    assert hygiene.script_rel == "scripts/root_hygiene_census.py", hygiene
+    assert hygiene.enforce_flag == "--check" and "--json" in hygiene.argv, hygiene.argv
+    assert tuple(hygiene.rc_verdicts) == (
+        (0, prc.STRUCTURE_LABEL_PASS),
+        (1, prc.STRUCTURE_LABEL_FAIL),
+    ), hygiene.rc_verdicts
+    label, line, _details = prc._run_structure_face(hygiene, root)
+    assert label == prc.STRUCTURE_LABEL_UNDECIDABLE and "RULER_ABSENT" in line, (
+        f"假根上没有那把尺＝没有证据，既不产 PASS 也不产 FAIL：{line}"
     )
-    absent = next(f for f in prc.STRUCTURE_FACES if f.key == "仓根卫生")
-    label, line, _details = prc._run_structure_face(absent, root)
-    assert label == prc.STRUCTURE_LABEL_UNDECIDABLE and "NO_RULER_ON_CALL" in line, line
 
 
 def test_structure_faces_argv_are_read_only_and_the_lock_has_teeth(monkeypatch: pytest.MonkeyPatch) -> None:

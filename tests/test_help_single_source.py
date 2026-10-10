@@ -33,18 +33,43 @@ def _lines_of(entry: Any) -> list[str]:
     return [str(line) for line in entry.get("lines", [])]
 
 
-def _source_entry_literals() -> list[Any]:
-    """AST 静态读 _HELP_ENTRIES 字面量（与 scripts/command_catalog.py 同口径，不取运行期合并结果）。"""
+def _source_entry_literals() -> list[dict[str, Any]]:
+    """AST 静态读 `_HELP_ENTRIES` 每条里的**字符串字面量**（不求值、不取运行期合并结果）。
+
+    🔴 旧形在这里用 `ast.literal_eval`：条目里一旦出现计算值（`"detail": _compose_x(...)`）就抛
+    `malformed node or string` ⇒ 锁当场瞎（本波实犯）。这一锁判的是"源码文本里有没有手写
+    【指令与参数】段"，只需要字面量文本，不需要它的求值结果——改成逐条摘字面量。
+    静态读到的条数与运行期 `HELP_ENTRIES` 逐枚对齐：只许静态**读到更多**或相等，读少了＝静默放行。
+    """
     tree = ast.parse(ECHO_SOURCE.read_text(encoding="utf-8"))
     for node in tree.body:
         if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
             continue
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        for target in targets:
-            if isinstance(target, ast.Name) and target.id == "_HELP_ENTRIES":
-                value = ast.literal_eval(node.value)
-                assert isinstance(value, list)
-                return value
+        if not any(isinstance(t, ast.Name) and t.id == "_HELP_ENTRIES" for t in targets):
+            continue
+        entries: list[dict[str, Any]] = []
+        for item in getattr(node.value, "elts", []):
+            if not isinstance(item, ast.Dict):
+                continue
+            strings: list[str] = []
+            topic = ""
+            for key, value in zip(item.keys, item.values):
+                name = key.value if isinstance(key, ast.Constant) and isinstance(key.value, str) else ""
+                texts = [
+                    n.value
+                    for n in ast.walk(value)
+                    if isinstance(n, ast.Constant) and isinstance(n.value, str)
+                ]
+                if name == "topic" and texts and not topic:
+                    topic = texts[0]
+                strings.extend(texts)
+            entries.append({"topic": topic, "strings": strings})
+        assert entries, "_HELP_ENTRIES 静态读出为空＝读法失效，不是「没有手写段」"
+        assert len(entries) >= len(HELP_ENTRIES), (
+            f"静态读到 {len(entries)} 条 < 运行期 {len(HELP_ENTRIES)} 条＝有条目没被读到，锁瞎"
+        )
+        return entries
     raise AssertionError("_HELP_ENTRIES 未找到")
 
 
@@ -77,10 +102,11 @@ def test_no_handwritten_command_section_in_source() -> None:
     literals = _source_entry_literals()
     assert literals, "源码字面量为空"
     for entry in literals:
-        literal_detail = str(entry.get("detail") or "")
-        assert "【指令与参数】" not in literal_detail, (
-            f"{entry['topic']}：detail 字面量又手写了【指令与参数】，单一事实源被破坏"
-        )
+        for text in entry["strings"]:
+            assert "【指令与参数】" not in text, (
+                f"{entry['topic'] or '(无 topic 字面量)'}：源码字面量里又手写了【指令与参数】，"
+                "单一事实源被破坏"
+            )
     for entry in HELP_ENTRIES:
         assert str(entry.get("detail") or "").count("【指令与参数】") == 1, (
             f"{entry['topic']}：派生段数量异常"

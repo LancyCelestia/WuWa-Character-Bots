@@ -130,8 +130,9 @@ T4 渠道能力标签保险 / T5 PX-1 MCP 模块保险 / S141 ANN 代际可用�
                    在不在，判不到就落 ``UNDECIDABLE(RULER_PARAM_MISSING:…)``，**绝不把「尺不会红」
                    洗成绿**（尺哪天补上这枚口，本格不用改一字就跟着判红）；④板块与文档账
                    ``scripts/board_doc_sync.py --check``（天生有执法口，rc=1 即红）；⑤仓根卫生
-                   **按字面没有尺** ⇒ 恒 ``UNDECIDABLE(NO_RULER_ON_CALL:仓根卫生)``——这一格
-                   不许从清单里删掉（删＝把「没人管」洗成「不用管」）。零写面是硬约束：argv 里
+                   ＝``scripts/root_hygiene_census.py --check``（主人 2026-10-11 裁定 4 甲"先立尺
+                   再清根层"，尺已立 ⇒ 根层有债就如实 FAIL，``NO_RULER_ON_CALL`` 这一格已成历史、
+                   不许退回空面）。零写面是硬约束：argv 里
                    永不出现写盘／外呼开关（清单与两把锁见 ``tests/test_pre_restart_check.py``
                    的零写面锁与注毒腿；``c_table_measure``、``measure_latency_chains`` 一律不调）。
                    取舍＝多付一把尺的现算时间（实测逐面进 ``details``），换「四项就绪度」第一次
@@ -2209,7 +2210,9 @@ def _scrub_probe(text: str) -> str:
 #     （与既有「环境里没有＝没有证据」的格同形：假根上本格必 SKIP 且 rc=0）；
 #   · 执法口在不在，问尺自己的 argparse 名册（AST 现读、不跑、不猜）：判不到就
 #     UNDECIDABLE(RULER_PARAM_MISSING:…)，绝不因为「它不会红」给绿；
-#   · 仓根卫生按字面没有尺 ⇒ 恒 UNDECIDABLE(NO_RULER_ON_CALL:…)，这一格不许删。
+#   · 仓根卫生已立尺（裁定 4 甲）⇒ 走真读数；尺在被测根上缺席才是 RULER_ABSENT（没有证据，
+#     不产 PASS 也不产 FAIL）。`NO_RULER_ON_CALL` 这一支今天没有在册用户，留着只为
+#     「不许把空面塞回名册」这条历史约束，出现即说明有人退了格。
 # 零写面硬约束：argv 全为字面量、钉死在 STRUCTURE_FACES 里，写盘/外呼开关一概不进
 # （锁＝tests/test_pre_restart_check.py 的摊平腿 + AST 腿 + 注毒腿）。
 # c_table_measure（裸跑写 C-TABLE.md）与 measure_latency_chains（默认形态外呼并拉
@@ -2284,10 +2287,11 @@ STRUCTURE_FACES: tuple[StructureFace, ...] = (
     ),
     StructureFace(
         "仓根卫生",
-        "",
-        (),
-        "",
-        (),
+        "scripts/root_hygiene_census.py",
+        ("--json", "--check"),
+        "--check",
+        ((0, STRUCTURE_LABEL_PASS), (1, STRUCTURE_LABEL_FAIL)),
+        ("counts", "unclassified"),
     ),
 )
 
