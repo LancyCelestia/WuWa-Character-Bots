@@ -23,8 +23,10 @@
   全件共用，**不起第二条取数路、不起 subprocess**。
 - 本门**不抄一个活的期望数**：所有对照值都从同一次尺输出的**两个独立读点**互校
   （名册长度 ↔ 标量账 ↔ 快照内嵌 scalar），写成「两口互校」而不是「抄一个数」。
-- 唯一的字面量是扫描面**地板**（只拦「尺子塌了/扫描面被顶穿」，不阻止合法还债——
-  P-65/R5 口径）。地板刻意取实测的一半量级。
+- 扫描面**地板**：①②③ 仍是手写字面量（只拦「尺子塌了/扫描面被顶穿」，不阻止合法还债——
+  P-65/R5 口径，刻意取实测的一半量级；其真身在别席写面，本席不越界派生）；
+  **④ 自 2026-10-12 起改由真身名册自己派生**（`_a4_roster_derived_floor`，规则 10：
+  会随退役漂移的总数不许写死；两枚前置与取证见该处注释）。
 - 反向自证全部走**内存深拷贝**的 accounts：`scripts/` 与真树零写入。
 
 **本门的边界（读绿之前先记住，别当它永远成立）**：
@@ -55,10 +57,11 @@ if str(REPO_ROOT / "scripts") not in sys.path:
 import physical_placement_census as pc  # 唯一取数口（与姊妹门同一条路，禁第二支扫描器）
 
 # --------------------------------------------------------------------------
-# 扫描面地板（手写字面量，只拦塌陷，不拦合法下降）
+# 扫描面地板（①②③ 手写字面量＝只拦塌陷、不拦合法下降；④ 派生式＝真身名册自己定，见下）
 # 起点值 = 本席 2026-09-24 现算（**当时值**）；现值一律以
-# `../ChatBot_Runtime/venv/Scripts/python.exe scripts/physical_placement_census.py --four-accounts-human`
-# 现算为准（AGENTS.md 规则 10：叙述与本注释都不充当今值）。
+# `../ChatBot_Runtime/venv/Scripts/python.exe scripts/physical_placement_census.py --four-accounts --four-accounts-human`
+# 现算为准（AGENTS.md 规则 10：叙述与本注释都不充当今值。⚠ `--four-accounts-human` 单独跑不落四本账分支
+# ——`main()` 只在 `--four-accounts`/`--four-accounts-out` 那一支里打人读行，单旗会打印两扇门报告）。
 # --------------------------------------------------------------------------
 #: ① 域外 py（find 尺）成员数。起点值（当时）100。
 MIN_A1_OUTSIDE_PY = 50
@@ -79,16 +82,138 @@ MIN_A1_OUTSIDE_PY = 50
 MIN_A2_MANAGED_LINES = 40
 #: ② 面B 未归位页数。起点值（当时）170。
 MIN_A2_UNMOVED_PAGES = 80
-#: ④ 在册名册条目数。起点值（当时）47。
-#: 2026-09-29 主树还原波收尾复录 20→15（现算）：`board_shim_ledger.SHIM_ROWS` 在册枚数＝本尺的取数对象。
-#:   06:30:29 那次外部还原把 S-SHIM-WAVE1 已退役的 **8 枚 tracked 垫片连行带件一起写回**，本批按原裁定
-#:   同批退役（逐枚先 grep 真 import 计数＝0 再删；字节备份
-#:   `.superpowers/sdd/2026-09-27-fullload/recovered/shim-retire-batch/`），在册行随之少 7 枚
-#:   （`auto_send` 一枚由上一档 22 那批已摘）。复跑取证：`python scripts/shim_retirement_census.py --report`
-#:   ⇒「账上登记垫片: 15 枚」与「待退役(垫片) 15」两数一致；配对尺
-#:   `tests/test_shim_retirement_ledger.py::MIN_SHIM_FLOOR` 同批由 22 复录为 15。
-#:   ⚠ 本尺只准随**真退役**下降；下一次降必须先给出同两份现算证据，不许为转绿而动。
-MIN_A4_ROSTER_ENTRIES = 15
+#: ④ 在册名册地板＝**派生式**（席 SEAT-PLACE-FLOOR 2026-10-12；规则 10：会随退役漂移的总数不许写死）。
+#:  lineage（当时值，逐档留账）：起点 47 → 2026-09-29 还原波收尾复录 20→15 → 现由真身派生（14）。
+#: 旧形态是手抄常数 15（席 S-FIX-PLACE-FLOOR 提交 `1a92fdae`（2026-10-01）现算 15 的**当时值**）。
+#: `17a160f`（2026-10-04 P2 减量波·用户授权）把 `SHIM_ROWS` 23→14 时，同批只重录了配对尺
+#: `tests/test_shim_retirement_ledger.py::MIN_SHIM_FLOOR`（15→14，逐字见该笔 diff），漏了本门这枚 ⇒ 长期红。
+#: 定性取证（HEAD 轴）：`git archive HEAD` → python `tarfile.extractall(filter="data")` 解进 %TEMP% 副本
+#: ＋铺 gitignored 的 `.superpowers/` 整本，副本里跑同一把尺同一枚腿读到**逐字相同**的「扫描面 14 < 地板 15」
+#: ⇒ 红在 HEAD 成立（非他席在飞）；且 ④ 的 (a)已还清=0 (b)门瞎=0 (c)存在零活性=0、真债同为 14
+#: ⇒ 尺看得见名册里每一枚、枚枚在盘上是活垫片 ⇒ **尺没塌，是地板陈旧**。
+#: 新形态：地板由真身名册自己派生＝本门**独立** AST 读 `SHIM_ROWS` 源列去重枚数（不经尺的取数口，
+#: 两读点互校，与本文件「独立复算腿 ↔ 尺子体检腿」同构），判据取**等值**——比旧的「实测一半量级」更紧：
+#: 少看＝取数口塌陷/SKIP 被放宽，多看＝名册被塞幻影/已退役行未清（方向锁：扫描面不许悄悄变大）。
+#: 两枚前置（缺一不可）：① 反空转——声明缺席／只声明不赋值／非纯字面量／零行 一律当场抛（拒算≠放行），
+#:   本腿另有 `derived > 0` 与尺侧 `available is True` 两道；② 方向锁——派生式只准 `len(真身行集)` 一形
+#:   （`_a4_floor_derivation_shape` 在本文件源码上做 AST 形状闸），不许 `= 尺读数`／`max(...)`／`±常数`／
+#:   字面量，地板因此**永不跟着读数降**（注毒①当场自证）。
+#: ⚠ 边界一：①②③ 三枚地板仍手钉——它们的真身（板块名册 `docs/boards/**`、`.superpowers` 起点册）在别席写面，
+#:   本席不越界动；本格的派生面严格限于 ④。
+#: ⚠ 边界二：合法退役与派生地板**同批动**——退役一枚须走唯一写口 `scripts/shim_retirement_census.py --write-ledger`
+#:   （本席不跑）把真身降到 13，尺读数随之 13 ⇒ 等值照成立；只降尺读数不动真身＝本腿红（这正是注毒①）。
+#: 复跑（注意：`--four-accounts-human` 单独跑不落四本账分支，须配 `--four-accounts`，见本席报告）：
+#: PYTHONDONTWRITEBYTECODE=1 BOT_AUTOSYNC=0 PYTHONIOENCODING=utf-8 \
+#:   ../ChatBot_Runtime/venv/Scripts/python.exe scripts/physical_placement_census.py --four-accounts --four-accounts-human
+_A4_ROSTER_LEDGER_PY = REPO_ROOT / "plugins/bot_unified_runtime/domains/core/board_shim_ledger.py"
+
+
+def _a4_roster_source_rows(source_text: str) -> tuple[Any, ...]:
+    """④ 地板的派生源：本门**独立** AST 读顶层 `SHIM_ROWS` 字面量（不 import 插件包，同尺纪律）。
+
+    fail-closed（前置①反空转）：声明缺席／只声明不赋值／非纯字面量（含调用拼接）／非元组／行形状不合
+    （真身契约＝`(str, str, int)` 三元组，与 `load_ledger_rows` 同口径）／声明出现两处 ⇒ 一律抛，
+    绝不折成 0 或「空账」放行（`scripts/shim_retirement_census.py` 同哲学，TX201/S101 先例）。
+    零行（`SHIM_ROWS = ()`）留给派生函数按「读到空＝红」判。
+    """
+    found: list[tuple[Any, ...]] = []
+    for node in ast.parse(source_text).body:
+        if isinstance(node, ast.Assign):
+            names, value = [t.id for t in node.targets if isinstance(t, ast.Name)], node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names, value = [node.target.id], node.value
+        else:
+            continue
+        if "SHIM_ROWS" not in names:
+            continue
+        if value is None:
+            raise AssertionError("④ 派生地板取数口：SHIM_ROWS 只声明不赋值＝读不到，拒算（拒读≠空账放行）")
+        try:
+            raw = ast.literal_eval(value)
+        except (ValueError, TypeError, SyntaxError) as exc:
+            raise AssertionError(f"④ 派生地板取数口：SHIM_ROWS 不是纯字面量（手抄/加了计算）⇒ 拒算：{exc}") from exc
+        if not isinstance(raw, tuple):
+            raise AssertionError(  # noqa: TRY004 - 形状不合属「账不可信」，与 load_ledger_rows 同抛 AssertionError
+                f"④ 派生地板取数口：SHIM_ROWS 字面量不是元组（got {type(raw).__name__}）⇒ 拒算")
+        for row in raw:
+            if (not isinstance(row, tuple) or len(row) != 3
+                    or not isinstance(row[0], str) or not isinstance(row[1], str) or not isinstance(row[2], int)):
+                raise AssertionError(f"④ 派生地板取数口：SHIM_ROWS 行不是 (str, str, int) 三元组⇒ 拒算：{row!r}")
+        found.append(raw)
+    if not found:
+        raise AssertionError("④ 派生地板取数口：声明源里没有 SHIM_ROWS＝读到空，拒算（不许按 0 放行）")
+    if len(found) > 1:
+        raise AssertionError(f"④ 派生地板取数口：SHIM_ROWS 声明有 {len(found)} 处，不知吃哪本 ⇒ 拒算")
+    return found[0]
+
+
+def _a4_roster_derived_floor(source_text: str | None = None) -> int:
+    """④ 在册名册地板＝真身名册自己派生（方向锁允许的**唯一**形状：`len(真身行集)`）。"""
+    text = _A4_ROSTER_LEDGER_PY.read_text(encoding="utf-8") if source_text is None else source_text
+    paths = {str(row[0]) for row in _a4_roster_source_rows(text)}
+    if not paths:
+        raise AssertionError("④ 派生地板取数口读到空名册（SHIM_ROWS=()）＝账具失明，当场红（0 不是地板）")
+    return len(paths)
+
+
+def _a4_face_vs_floor_errors(measured: Any, floor: Any) -> list[str]:
+    """④ 判据内核（活例与注毒共口）：反空转 → 读数是不是整数 → 面与真身**等值**（两侧都拦）。"""
+    errors: list[str] = []
+    if not isinstance(floor, int) or isinstance(floor, bool) or floor <= 0:
+        errors.append(f"④ 派生地板={floor!r} 不是正整数＝真身取数口读到空（反空转：0 不放行）")
+    if not isinstance(measured, int) or isinstance(measured, bool):
+        errors.append(f"④ 在册名册: 尺读数={measured!r} 不是整数＝尺子取数失败")
+    elif isinstance(floor, int) and not isinstance(floor, bool):
+        if measured < floor:
+            errors.append(
+                f"④ 在册名册: 尺读数 {measured} < 真身名册枚数 {floor}＝取数口塌陷/SKIP 被放宽/目录改名"
+                f"（地板由真身派生，**不跟读数降**，故这里必红）")
+        elif measured > floor:
+            errors.append(
+                f"④ 在册名册: 尺读数 {measured} > 真身名册枚数 {floor}＝名册外幻影/已退役行未清"
+                f"（方向锁：扫描面不许悄悄变大而不被真身解释）")
+    return errors
+
+
+def _a4_floor_derivation_shape(source_text: str) -> dict[str, Any]:
+    """前置②方向锁的内核：现读本文件源码里 `_a4_roster_derived_floor` 的派生形状（活例与注毒共口）。
+
+    只接受：入参恰 `source_text` 一枚（不许接尺读数）∧ 每个 `return` 都是 `len(本函数内的局部集合名)`，
+    且该局部名绑的是**集合形态**（推导式/字面量容器/`set|frozenset|sorted` 调用）。于是
+    「`= 尺读数`」「`len(paths) - 1`」「`max(len(paths), 15)`」「`= 14`」「`len(标量)`」
+    「多一个 measured 入参」这些让地板跟着被检对象动的写法全被拒
+    （同 ③反失明锁 `_literal_baseline_roster_from_source` 的路子）。
+    """
+    fn = next((n for n in ast.parse(source_text).body
+               if isinstance(n, ast.FunctionDef) and n.name == "_a4_roster_derived_floor"), None)
+    if fn is None:
+        return {"found": False, "returns": [], "bad": ["`_a4_roster_derived_floor` 失踪＝④ 地板退回手抄常数"]}
+    bad: list[str] = []
+    params = [a.arg for a in (*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs)]
+    if params != ["source_text"]:
+        bad.append(f"入参不是只有 `source_text`（现 {params}）＝地板可能吃尺读数")
+    returns = [n.value for n in ast.walk(fn) if isinstance(n, ast.Return) and n.value is not None]
+    if not returns:
+        bad.append("函数没有 return＝派生口交不出数")
+    collections: dict[str, ast.expr] = {}
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            collections[node.targets[0].id] = node.value
+    for value in returns:
+        rendered = ast.unparse(value)
+        ok_shape = (isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "len"
+                    and len(value.args) == 1 and not value.keywords and isinstance(value.args[0], ast.Name))
+        if not ok_shape:
+            bad.append(f"返回式不是 `len(本函数局部集合)`：{rendered}")
+            continue
+        local = collections.get(value.args[0].id)  # type: ignore[union-attr]
+        is_collection = isinstance(local, (ast.SetComp, ast.DictComp, ast.ListComp, ast.GeneratorExp, ast.Set,
+                                           ast.List, ast.Dict, ast.Tuple)) or (
+            isinstance(local, ast.Call) and isinstance(local.func, ast.Name)
+            and local.func.id in {"set", "frozenset", "sorted", "list"})
+        if local is None or not is_collection:
+            bad.append(f"`len({value.args[0].id})` 里的 {value.args[0].id!r} 不是本函数局部集合（标量/外来名＝可被读数带着动）")
+    return {"found": True, "returns": [ast.unparse(v) for v in returns], "bad": bad}
 
 #: 名册天然不得有重名（路径／页名／id 三形）；t3_managed 是「rel: 值」行、
 #: 同页两行合法，故**不**列入本表（列进去就是把合法形态判成造假）。
@@ -290,6 +415,11 @@ def test_scan_surface_floors_are_not_collapsed(four: dict[str, Any]) -> None:
 
     地板拦的是「取数口塌陷/SKIP 被放宽/目录改名」，**不是**合法还债（P-65/R5 口径）；
     真低于地板时先判「尺塌了」还是「地板陈旧」，后者须 owner 重录并留账，不得静默下调。
+
+    ①②③ 仍是手钉的「一半量级」地板（真身在别席写面，见 ④ 上方的边界注）；
+    ④ 自 2026-10-12 起改**派生式**：地板＝本门独立 AST 读 `SHIM_ROWS` 源列的枚数，判据取等值
+    （少看＝尺塌、多看＝幻影），并带两枚前置——反空转（地板必须为正整数、尺侧 `available` 必须 True）
+    与方向锁（派生形状由 `_a4_floor_derivation_shape` 在本文件源码上自证，见注毒组）。
     """
     accounts: dict[str, Any] = four["accounts"]
     a1: dict[str, Any] = accounts["a1_outside_py_dual_ruler"]
@@ -299,12 +429,20 @@ def test_scan_surface_floors_are_not_collapsed(four: dict[str, Any]) -> None:
         ("① 域外 py（find 尺）", a1["names"]["find_disk"]["count"], MIN_A1_OUTSIDE_PY),
         ("② 面A 受管行", a2["names"]["t3_managed"]["count"], MIN_A2_MANAGED_LINES),
         ("② 面B 未归位页", a2["names"]["t3_unmoved"]["count"], MIN_A2_UNMOVED_PAGES),
-        ("④ 在册名册", a4["names"]["roster"]["count"], MIN_A4_ROSTER_ENTRIES),
     )
     for tag, measured, floor in checks:
         assert isinstance(measured, int), f"{tag}: 今值不是整数（{measured!r}）＝尺子取数失败"
         assert measured >= floor, f"{tag}: 扫描面 {measured} < 地板 {floor}＝要么尺塌了，要么地板陈旧待重录"
         print(f"[S99] 扫描面 {tag}={measured} / 地板 {floor} / 余量 {measured - floor}")
+    # ④ 派生式腿（地板来自真身名册，不来自本腿读到的数）
+    roster_snapshot = a4["names"]["roster"]
+    derived_floor = _a4_roster_derived_floor()
+    assert roster_snapshot.get("available") is True, (
+        f"④ 在册名册: 尺侧具名快照 available≠True（{roster_snapshot.get('available')!r}）＝取数失败，"
+        f"读不到不许当零成员放行")
+    errors = _a4_face_vs_floor_errors(roster_snapshot.get("count"), derived_floor)
+    assert not errors, "④ 在册名册（派生式）判据不干净：\n" + "\n".join(f"  - {e}" for e in errors)
+    print(f"[S99] 扫描面 ④ 在册名册={roster_snapshot.get('count')} / 派生地板(真身名册)={derived_floor} / 差 0（等值）")
 
 
 # --------------------------------------------------------------------------
@@ -655,3 +793,253 @@ def test_vf_real_tree_rc_is_not_hardcoded(four: dict[str, Any]) -> None:
     hit = [r for r in rows if r.startswith("OVER_CEILING")]
     assert len(hit) == 1 and "G-P2 语义A 违规" in hit[0], hit
     assert pc.enforcement_rc(rows) == 3
+
+
+# ==========================================================================
+# 无主归账波（席 OWNER-PLACE 2026-10-11）——两枚常驻判据腿 + 各自注毒
+# --------------------------------------------------------------------------
+# 背景：G-P2 尺只把「板块树 `feature_impl_paths()`」当认领源；另有两条**正交**的库账在册而尺
+#   不折叠——`LIBRARY_TAXONOMY` 的契约地基库成员、`board_shim_ledger.SHIM_ROWS` 的待退役垫片
+#   源列。它们认领的 py 在尺账里仍算「无主」。上一席报 118、本席现算 103（对不上按现算记，
+#   不圆历史数——规则 10）；本波已把可归板块的 88 枚逐枚归进板块名册，残下 15 枚全属这两条
+#   库账（5 枚 SHIM_ROWS 垫片 + 10 枚 L0 契约成员），G-P2 尺结构性看不见库轴，故留账。
+# 两腿（各证一件事、缺一不可；判据是纯函数、吃显式入参，注毒全走内存合成、真树零写入）：
+#   ① 无主残差棘轮：任何一枚「无主」py **必须**被两条库账之一认领；且无主数 ≤ 两条库账落在扫描
+#      面里的成员并集之**现算**势——上限由库账派生、不写会随代码漂的手抄常数（规则 10）。冒出一
+#      枚既不在板块名册、又不在任何库账的新 py ⇒ 当场红（这才是「不高于现算读数」的真牙）。
+#   ② 幽灵认领门：板块名册每条 `impl_paths` 与每条 `G_P2_EXEMPT` 都必须指向盘上真实存在的文件。
+# ==========================================================================
+_BOARD_TAXONOMY_PY = REPO_ROOT / "plugins/bot_unified_runtime/domains/core/board_taxonomy.py"
+_SHIM_LEDGER_PY = REPO_ROOT / "plugins/bot_unified_runtime/domains/core/board_shim_ledger.py"
+
+
+def _top_level_literal(source_text: str, name: str) -> Any:
+    """AST 现读顶层字面量（`Assign`/`AnnAssign` 两形都认）；缺席即抛，绝不折成空值（fail-closed）。"""
+    tree = ast.parse(source_text)
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            names, value = [t.id for t in node.targets if isinstance(t, ast.Name)], node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names, value = [node.target.id], node.value
+        else:
+            continue
+        if name in names and value is not None:
+            return ast.literal_eval(value)
+    raise LookupError(f"声明源缺顶层字面量 {name!r}——读不到＝拒算，不按空账放行")
+
+
+def _library_roster_members(source_text: str) -> set[str]:
+    """AST 静态读 `LIBRARY_TAXONOMY` 各库的 `member_paths` 全集（不 import 插件包，同尺纪律）。
+
+    `ReleaseLibNode(...)` 是 Call、整棵不能 `literal_eval`；只逐枚抠 `member_paths=` 关键字的字面
+    量元组。`pending_seed` 是另一枚关键字，绝不当成员收进来（那是要搬而未搬的候选，不是在册成员）。
+    """
+    members: set[str] = set()
+    for node in ast.parse(source_text).body:
+        if isinstance(node, ast.Assign):
+            names, value = [t.id for t in node.targets if isinstance(t, ast.Name)], node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names, value = [node.target.id], node.value
+        else:
+            continue
+        if "LIBRARY_TAXONOMY" not in names or value is None:
+            continue
+        for call in ast.walk(value):
+            if isinstance(call, ast.Call):
+                for kw in call.keywords:
+                    if kw.arg == "member_paths":
+                        members |= {str(p) for p in ast.literal_eval(kw.value)}
+    return members
+
+
+def _shim_row_sources(source_text: str) -> set[str]:
+    """AST 静态读 `SHIM_ROWS` 的**源列**（每行 `(旧顶层路径, 真身, n)` 的头一枚＝包根那头的垫片）。"""
+    return {str(row[0]) for row in _top_level_literal(source_text, "SHIM_ROWS")}
+
+
+def _unexplained_orphans(ownerless: set[str], library: set[str], shims: set[str]) -> list[str]:
+    """判据①内核：列出既不在两条库账里的无主 py（注毒与真树共口）。"""
+    return sorted(p for p in ownerless if p not in library and p not in shims)
+
+
+def _ghost_claimed(
+    board_rows: list[tuple[str, tuple[str, ...]]],
+    exempt_paths: list[str],
+) -> list[str]:
+    """判据②内核：板块名册 impl_paths 与 G_P2_EXEMPT 里指向盘上无物的，逐条点名（注毒与真树共口）。"""
+    ghosts: list[str] = []
+    for fid, paths in board_rows:
+        ghosts.extend(f"impl[{fid}]::{p}" for p in paths if not (REPO_ROOT / str(p)).exists())
+    ghosts.extend(f"exempt::{p}" for p in exempt_paths if not (REPO_ROOT / str(p)).exists())
+    return sorted(set(ghosts))
+
+
+def test_ownerless_residual_is_explained_by_the_two_library_axes() -> None:
+    """腿①（真树）：G-P2 无主残差每一枚都必须落在 LIBRARY_TAXONOMY 成员或 SHIM_ROWS 源列之内。"""
+    ownerless = set(pc.compute()["a_violation_list"])
+    library = _library_roster_members(_BOARD_TAXONOMY_PY.read_text(encoding="utf-8"))
+    shims = _shim_row_sources(_SHIM_LEDGER_PY.read_text(encoding="utf-8"))
+    unexplained = _unexplained_orphans(ownerless, library, shims)
+    assert not unexplained, (
+        f"无主残差冒出 {len(unexplained)} 枚既不在板块名册、又不在两条库账的孤儿 py＝归账波失守、"
+        f"无主数在涨（修法：给它在板块树补一条 impl_paths 认领，或落进对应库账，不是把它塞豁免）：{unexplained}"
+    )
+    # 现算派生上限（规则 10：不写手抄常数）——无主数不得高出两条库账在扫描面里能解释的容量。
+    derived_ceiling = len((library | shims) & set(pc.py_universe()))
+    assert len(ownerless) <= derived_ceiling, (
+        f"无主 {len(ownerless)} > 库账派生上限 {derived_ceiling}（该上限由 LIBRARY_TAXONOMY∪SHIM_ROWS"
+        f" 与 py 扫描面交集现算，非手抄；越界＝无主数高于现算读数）"
+    )
+
+
+def test_no_ghost_claim_or_exemption_in_placement_roster() -> None:
+    """腿②（真树）：板块名册每条认领与每条豁免都必须指向盘上真实文件（幽灵认领＝假认领）。"""
+    ghosts = _ghost_claimed(
+        pc.feature_impl_paths(),
+        [p for p, _reason in pc.load_placement()["G_P2_EXEMPT"]],
+    )
+    assert not ghosts, (
+        f"物理归位名册/豁免里 {len(ghosts)} 条指向盘上不存在的文件（幽灵认领，改认领名册、不在本门放宽）：{ghosts}"
+    )
+
+
+# ------------------------------------------- 两腿各一发注毒（纯内存、真声明源一字节未动）
+def test_poison_planted_orphan_off_both_ledgers_is_red() -> None:
+    """注毒①：现役残差本已全在册（前提自证），再塞一枚「哪条账都不沾」的孤儿 py ⇒ 判据必抓到。"""
+    ownerless = set(pc.compute()["a_violation_list"])
+    library = _library_roster_members(_BOARD_TAXONOMY_PY.read_text(encoding="utf-8"))
+    shims = _shim_row_sources(_SHIM_LEDGER_PY.read_text(encoding="utf-8"))
+    assert _unexplained_orphans(ownerless, library, shims) == [], "真树残差本不该有账外孤儿（前提塌了，注毒失去意义）"
+    planted = "plugins/bot_unified_runtime/domains/core/__planted_orphan_off_ledgers__.py"
+    hit = _unexplained_orphans(ownerless | {planted}, library, shims)
+    assert hit == [planted], f"注入的账外孤儿没被判据①抓到（该腿视为失明）：{hit}"
+
+
+def test_poison_ghost_claim_points_at_missing_file_is_red() -> None:
+    """注毒②：往某 fid 的认领里追加一枚盘上无物的路径 ⇒ 判据②必点名；现役真名册不误伤。"""
+    board = pc.feature_impl_paths()
+    live = _ghost_claimed(board, [p for p, _r in pc.load_placement()["G_P2_EXEMPT"]])
+    assert live == [], f"现役真名册本不该有幽灵认领（前提塌了）：{live}"
+    fid, paths = board[0]
+    poisoned_row = (fid, (*paths, "plugins/bot_unified_runtime/domains/__definitely_absent_ghost__.py"))
+    hit = _ghost_claimed([poisoned_row] + board[1:], [])
+    assert any("__definitely_absent_ghost__" in g for g in hit), f"幽灵认领没被判据②抓到（该腿视为失明）：{hit[:4]}"
+
+
+
+# ==========================================================================
+# 席 SEAT-PLACE-FLOOR（2026-10-12）：④ 在册名册地板改**派生式**后的两枚前置自证
+#   来龙去脉见 ④ 地板注释（真仓/HEAD 副本两轴都逐字读到「扫描面 14 < 地板 15」⇒ 定性＝地板陈旧、
+#   非尺塌、非他席在飞）。本格只动本件与取数尺；`board_shim_ledger.py` **一字节未写**（注毒全走
+#   内存合成源串与本文件源码的形状闸；真 FAILED 的取证在 %TEMP% 副本里做，见本席报告）。
+# ==========================================================================
+
+#: 注毒用的合成名册行（路径在盘上不存在也无妨：派生口只读字面量、不查盘）。
+_A4_POISON_ROW = ("plugins/bot_unified_runtime/__seat_poison_row__.py",
+                  "plugins/bot_unified_runtime/domains/core/__seat_poison_row__.py", 0)
+
+
+def _a4_ledger_source_with_rows(rows: tuple[Any, ...]) -> str:
+    """把行集渲染成**只喂派生口**的合成声明源（真树零写入；同尺纪律：纯字面量元组）。"""
+    return "SHIM_ROWS: tuple = " + repr(tuple(tuple(row) for row in rows)) + "\n"
+
+
+def _a4_live_ledger_rows() -> tuple[Any, ...]:
+    """现读真身名册行集（活例与注毒共口；真树只读）。"""
+    return _a4_roster_source_rows(_A4_ROSTER_LEDGER_PY.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------- 正向：两读点互校
+def test_a4_derived_floor_cross_checks_the_rulers_roster_reading(four: dict[str, Any]) -> None:
+    """派生式腿的正向半边：本门独立读的真身枚数 ↔ 尺的 ④ 名册读数（两个取数口，同一个数）。"""
+    snap: dict[str, Any] = four["accounts"]["a4_roster_vs_real_debt"]["names"]["roster"]
+    derived = _a4_roster_derived_floor()
+    assert derived > 0, f"派生地板={derived}＝取数口读到空（反空转前置①）"
+    assert snap["available"] is True, "尺侧具名快照 available≠True＝读不到，不许当零成员放行"
+    assert _a4_face_vs_floor_errors(snap["count"], derived) == [], (snap["count"], derived)
+    # 第三次现读必须与前两次同数（派生口非随机、不被上一轮污染）
+    assert _a4_roster_derived_floor() == derived
+
+
+def test_a4_floor_derivation_shape_is_len_of_a_local_collection() -> None:
+    """前置②（方向锁）：本文件源码里 ④ 地板的派生形状恰是 `len(本函数局部集合)`，无违规项。"""
+    verdict = _a4_floor_derivation_shape(GATE_PATH.read_text(encoding="utf-8"))
+    assert verdict["found"] is True, verdict
+    assert verdict["bad"] == [], f"④ 地板的派生形状不再是纯 `len(真身行集)`（可能已跟着尺读数自随）：{verdict}"
+
+
+# ---------------------------------------------------------------- 注毒①：面缩必红、地板不跟降
+def test_poison_collapsed_roster_reading_is_red_and_floor_does_not_chase(four: dict[str, Any]) -> None:
+    """注毒①：名册读数摘掉一枚（真身不动）⇒ 判据必如实报面缩，**地板不许跟着降**（不许自随空跑）。"""
+    live_floor = _a4_roster_derived_floor()
+    errors = _a4_face_vs_floor_errors(live_floor - 1, live_floor)
+    assert errors, "缩一枚被判据放过＝派生式跟着读数降地板，本门成自随空跑"
+    assert any(f"{live_floor - 1}" in e and "取数口塌陷" in e for e in errors), errors
+    # 地板不跟读数动：同一次调用里再读两遍，仍是真身那个数
+    assert _a4_roster_derived_floor() == live_floor and _a4_roster_derived_floor() == live_floor
+    # 反证（派生确实随真身动，不是抄死）：真身侧摘一枚 ⇒ 地板如实降 1
+    assert _a4_roster_derived_floor(_a4_ledger_source_with_rows(_a4_live_ledger_rows()[:-1])) == live_floor - 1
+    # 深拷贝腿：真动 accounts 里的具名快照（items+count 一起缩），判据口照红
+    acct: dict[str, Any] = copy.deepcopy(four["accounts"])
+    snap = acct["a4_roster_vs_real_debt"]["names"]["roster"]
+    snap["items"] = snap["items"][:-1]
+    snap["count"] = len(snap["items"])
+    assert _a4_face_vs_floor_errors(snap["count"], _a4_roster_derived_floor()), "深拷贝名册缩一枚没被抓"
+
+
+# ---------------------------------------------------------------- 注毒②：补回一枚必跟着涨
+def test_poison_added_roster_entry_raises_the_derived_floor(four: dict[str, Any]) -> None:
+    """注毒②：往真身名册补一枚 ⇒ 派生地板**必须跟着涨** 1（证它是派生、不是抄数）。"""
+    live_floor = _a4_roster_derived_floor()
+    grown = _a4_ledger_source_with_rows(_a4_live_ledger_rows() + (_A4_POISON_ROW,))
+    assert _a4_roster_derived_floor(grown) == live_floor + 1, "补一枚地板没涨＝它其实被抄死了"
+    # 真身涨了而尺读数没涨＝少看一枚 ⇒ 判据照样红（不许用涨上来的地板去配旧读数了事）
+    errors = _a4_face_vs_floor_errors(live_floor, live_floor + 1)
+    assert errors and any("取数口塌陷" in e for e in errors), errors
+
+
+def test_poison_ghost_roster_entry_above_the_ledger_is_red(four: dict[str, Any]) -> None:
+    """方向锁的另一侧：尺读数比真身**多**一枚（幻影/已退役未清行）⇒ 必红（旧 `>=` 写法会放过）。"""
+    live_floor = _a4_roster_derived_floor()
+    errors = _a4_face_vs_floor_errors(live_floor + 1, live_floor)
+    assert errors and any("幻影" in e for e in errors), errors
+    assert _a4_face_vs_floor_errors(live_floor, live_floor) == [], "同一份数被判据误伤＝判据常量真"
+
+
+# ---------------------------------------------------------------- 前置①：反空转（读到空＝当场红，不是 0 地板）
+@pytest.mark.parametrize(
+    "source",
+    [
+        "SHIM_ROWS: tuple = ()\n",                                              # 清成空账
+        "SHIM_ROWS: tuple\n",                                                   # 只声明不赋值
+        'SHIM_ROWS = tuple([("a", "b", 1)])\n',                                 # 非纯字面量（调用拼接）
+        'OTHER_ROWS = (("a", "b", 1),)\n',                                      # 声明失踪
+        'SHIM_ROWS = (("a", "b"),)\n',                                          # 行形状不合契约
+        'SHIM_ROWS = (("a", "b", 1),)\nSHIM_ROWS = (("c", "d", 2),)\n',          # 声明两处
+        "",                                                                     # 空源
+    ],
+)
+def test_poison_blind_ledger_sources_raise_instead_of_zero_floor(source: str) -> None:
+    """真身读不出行/读出零行 ⇒ 派生口一律抛（拒算≠放行）；判据口对 `floor=0` 也必红。"""
+    with pytest.raises((AssertionError, SyntaxError)):
+        _a4_roster_derived_floor(source)
+    assert _a4_face_vs_floor_errors(0, 0), "0 地板 0 读数被判据放过＝反空转前置①无牙"
+
+
+@pytest.mark.parametrize(
+    ("source", "accepted"),
+    [
+        ("def _a4_roster_derived_floor(source_text=None):\n    return measured\n", False),
+        ("def _a4_roster_derived_floor(source_text=None):\n    paths = set()\n    return len(paths) - 1\n", False),
+        ("def _a4_roster_derived_floor(source_text=None):\n    paths = set()\n    return max(len(paths), 15)\n", False),
+        ("def _a4_roster_derived_floor(source_text=None):\n    return 14\n", False),
+        ("def _a4_roster_derived_floor(source_text=None, measured=0):\n    paths = set()\n    return len(paths)\n", False),
+        ("def _a4_roster_derived_floor(source_text=None):\n    n = 1\n    return len(n)\n", False),
+        ("def _a4_roster_derived_floor(source_text=None):\n    return len(paths)\n", False),
+        ("def _a4_roster_derived_floor(source_text=None):\n    paths = {p for p in ()}\n    return len(paths)\n", True),
+    ],
+)
+def test_a4_shape_lock_accepts_only_pure_derivation(source: str, accepted: bool) -> None:
+    """方向锁自证：七种"也是数"的自随/抄死形态被拒，唯一纯派生形态被接受（判据自己有牙）。"""
+    verdict = _a4_floor_derivation_shape(source)
+    assert (verdict["bad"] == []) is accepted, (source, verdict)
