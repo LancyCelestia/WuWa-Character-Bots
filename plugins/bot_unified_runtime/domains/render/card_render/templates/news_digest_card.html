@@ -5,7 +5,10 @@
      液态玻璃内容面板（--mica-glass-main + --mica-glass-edge 内高光描边，无 backdrop-filter）+
      三枚漂移色斑（decor_css/blobs_html 由 mica_shell 生成器单源注入）+ 品牌胶囊。
      token 全部经 bridge 从 theme_tokens 注入，模板零私有值（宽度 news_digest 已登记进 CARD_SHELL_WIDTHS）。
-     payload 契约：title/sub/badge/foot/items=[{source,time,name,snip}]，缺字段区块静默隐藏、
+     payload 契约：title/sub/badge/foot/items=[{source,time,name,snip}]，groups（可空，
+     每格 {label,rows=[同行形],hidden,more}——组内行字段名刻意不叫 items，dict.items
+     是方法、Jinja 属性访问先撞它；在场即按域成组渲染并压过平铺 items，
+     缺位即逐字节维持旧平铺形态），缺字段区块静默隐藏、
      空 items 走「暂无」占位；任何输入都不抛异常（铁律 7：渲染失败→纯文本兜底）。
      中文文案零硬编码：字面量唯一住 bridge._CARD_TEXT（键 static_news_*），
      模板只留 card_text 键与 item 字段表达式（S79/S95 契约）。
@@ -235,6 +238,49 @@ body {
     overflow-wrap: anywhere;
 }
 
+/* ===== 域带（多源同日呈现，2026-10-08）=====
+   groups 在场时逐域成组：域带＝域名胶囊（复用 .src/.badge 的同款配方与数值，
+   零私有档）+ 该域枚数右轨；组内仍走 .list/.item 既有轨道，条目不重新发明。
+   折叠注脚 .more ＝「这个域还有几条没铺开」的在场可见（诚实折叠的腿）。 */
+.gblock { min-width: 0; }
+.ghead {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 6px 18px 0;
+}
+.glabel {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent-dark);
+    letter-spacing: 0.06em;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+    background: color-mix(in srgb, var(--accent) 14%, rgba(255, 255, 255, 0.78));
+    border: 1px solid color-mix(in srgb, var(--accent) 24%, rgba(255, 255, 255, 0.88));
+    padding: 4px 12px;
+    border-radius: var(--r-pill);
+}
+.gcount {
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+.more {
+    margin: 4px 18px 6px;
+    padding: 8px 14px;
+    border-radius: var(--r-tile);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+
 /* ===== 页脚 ===== */
 .foot {
     margin: 12px 18px 0;
@@ -263,14 +309,55 @@ body {
 <body>
 <div class="card"><div class="panel">
     {{ blobs_html | safe }}
+    {# 徽章枚数：分组在场时=各组「铺开+折掉」现算（头行读数与正文「铺开+注明」
+       恒等，不拿铺开的枚数冒充总量）；无 groups 时=平铺 items 枚数，逐字节如旧。
+       ⚠ 组内行字段名是 **rows** 不是 items——dict.items 是方法，Jinja 属性访问会
+       先撞上它（`group.items|length` 当场 TypeError），字段名让路，不跟方法名较劲。
+       ⚠ 这组 set 必须留在 .card 子树内：本面「根元素带 card 类」的源码锁按
+       `<body>` 后第一枚元素判定，控制行挪到 body 顶部会撞锁。 #}
+    {% set folded = namespace(hidden_total=0, shown_total=0) %}
+    {% for group in groups %}{% set folded.hidden_total = folded.hidden_total + (group.hidden if group.hidden else 0) %}{% set folded.shown_total = folded.shown_total + (group.rows | length) %}{% endfor %}
+    {% set badge_count = (folded.shown_total + folded.hidden_total) if groups else (items | length) %}
     <div class="head">
         <div class="head-left">
             <div class="title">{{ title or card_text.static_news_67 }}</div>
             {% if sub %}<div class="sub">{{ sub }}</div>{% endif %}
         </div>
-        {% if items %}<div class="badge">{{ items | length }} {{ card_text.static_news_68 }} · {{ card_text.static_news_69 }}</div>{% endif %}
+        {% if badge_count %}<div class="badge">{{ badge_count }} {{ card_text.static_news_68 }} · {{ card_text.static_news_69 }}</div>{% endif %}
     </div>
-    {% if items %}
+    {% if groups %}
+    {# ===== 按域成组（多源同日）=====
+       每组一条域带 + 一组条目；栏数与斑马纹的取相规则和下方平铺完全同式
+       （columns 同时喂类名与取相算式；括号必需，Jinja 的 `is` 比 `//` 结合更紧）。
+       卡上没铺开的枚数由 more 注脚逐域点名——hidden>0 而 more 缺位是造同型
+       「缺牙」的入口，判据锁在 tests/test_news_digest_card_contract.py。 #}
+    {% for group in groups %}
+    <div class="gblock">
+        <div class="ghead">
+            <span class="glabel">{{ group.label }}</span>
+            <span class="gcount">{{ (group.rows | length) + (group.hidden if group.hidden else 0) }} {{ card_text.static_news_68 }}</span>
+        </div>
+        {% if group.rows %}
+        {% set columns = 2 if group.rows | length >= 4 else 1 %}
+        <div class="list{{ ' two-col' if columns == 2 else '' }}">
+            {% for item in group.rows %}
+            <div class="item glass"{% if (loop.index0 // columns) is even %} style="background:var(--surface-a) padding-box, var(--mica-glass-edge)"{% else %} style="background:var(--surface-b) padding-box, var(--mica-glass-edge)"{% endif %}>
+                <div class="src">{{ item.source }}</div>
+                <div class="info">
+                    <div class="line1">
+                        <div class="name">{{ item.name }}</div>
+                        {% if item.time %}<div class="time">{{ item.time }}</div>{% endif %}
+                    </div>
+                    {% if item.snip %}<div class="snip">{{ item.snip }}</div>{% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% if group.more %}<div class="more">{{ group.more }}</div>{% endif %}
+    </div>
+    {% endfor %}
+    {% elif items %}
     {# 栏数只由条目枚数决定（≥4 条两栏）；斑马纹必须按**视觉行**取相，
        否则两栏下同一行两枚会跳成棋盘（song 面同日已踩过）。columns 同时喂给
        类名与取相算式，两处永不可分别改动。

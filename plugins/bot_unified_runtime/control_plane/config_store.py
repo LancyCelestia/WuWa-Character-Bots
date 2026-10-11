@@ -226,6 +226,21 @@ class SQLiteConfigStateStore:
         with self._transaction() as conn:
             return self._snapshot(conn)
 
+    def revision(self) -> int:
+        """只读现算的实例 CAS 版本号——**与 ``_snapshot`` 同一列、同一把尺**。
+
+        存在理由（席 F，2026-10-10）：热合并层（根 ``__init__.py::_config_with_runtime_overrides``）
+        一条消息要判 15 次，逐枚 ``store.get()`` 又各自重跑一次 ``snapshot()``（本 backend 刻意
+        无覆盖缓存 ⇒ 每次一趟 ``sqlite3.connect``+``BEGIN``+两条 SELECT+逐行 ``json.loads``）。
+        轮内 memo 需要一个**够便宜**的新鲜度尺，而写侧（``_change``/``import_legacy``）本来就
+        必然 ``revision=revision+1`` ⇒ 这里只把那枚既有的列单独读一次，**不新建第二枚版本号、
+        不加缓存**：读不到（库被锁、实例行缺席）就抛，由调用侧按「本轮不缓存」退化。
+        """
+        with self._transaction() as conn:
+            return conn.execute(
+                "SELECT revision FROM config_instances WHERE instance=?", (self.instance,)
+            ).fetchone()[0]
+
     def register_change_listener(self, callback: Callable[[], None]) -> None:
         """仅本对象成功写入后通知；跨进程读取无缓存，不承诺跨进程推送。"""
         with self._listener_lock:

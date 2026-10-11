@@ -63,7 +63,8 @@ from tests.test_trigger_bidirectional_gate import (
 ROUTE_TO_HELP_CEILING = LEDGER_ROUTE_TO_HELP
 HELP_TO_ROUTE_CEILING = LEDGER_HELP_TO_ROUTE
 # B 类：现状悬空动词能力基线（存量登记，禁增长；接线后可单调递减，绝不删基线凑绿）。
-DANGLING_VERB_CAPABILITIES_BASELINE: frozenset[str] = frozenset({"bot.decision"})
+#: 2026-10-08 席 CB-CMDUNIFY 清账：`bot.decision` 已随 G-2（乙）接上 _handle_status 分发支。
+DANGLING_VERB_CAPABILITIES_BASELINE: frozenset[str] = frozenset()
 
 INV = build_inventory()
 
@@ -147,10 +148,13 @@ def test_route_reachable_capability_has_registered_landing() -> None:
     assert count_delta <= 0, f"悬空动词能力规模越界（{len(dangling)} > 基线 {len(DANGLING_VERB_CAPABILITIES_BASELINE)}）"
 
 
-def test_decision_is_the_recorded_dangling_verb() -> None:
-    """实证锁：bot.decision 确在悬空集、确为在册基线（决策/decision 无分发落点）。"""
+def test_decision_is_wired_and_must_stay_landed() -> None:
+    """实证锁（G-2 乙接线后翻正，原条文自述"若已接线请从基线清账"）：
+    bot.decision 必须**离开**悬空集——分发支被摘掉这枚就红。"""
     dangling = _dangling_verb_capabilities(set(DEFAULT_VERB_MAP.values()))
-    assert "bot.decision" in dangling, "bot.decision 悬空态改变：若已接线请从基线清账（递减放行）、勿静默"
+    assert "bot.decision" not in dangling, (
+        "bot.decision 又悬空了＝/bot 决策 与 /bot decision 的执行落点被摘掉"
+    )
     assert any(verb_map_cap == "bot.decision" for verb_map_cap in DEFAULT_VERB_MAP.values())
 
 

@@ -271,6 +271,31 @@ def test_humanize_redacts_inner_state_numbers() -> None:
     assert humanize_reply("好感度排行榜前3名已经更新") == "好感度排行榜前3名已经更新"
 
 
+# ---------- 句中 AI 味短语剥离（2026-10-06 用户实锤） ----------
+
+def test_humanize_strips_ai_flavor_conclusion_phrases() -> None:
+    """「给出一个结论」「结论是」等报告体必须被出站侧洗掉。"""
+    assert "给出一个结论" not in humanize_reply("我来给出一个结论：这条路走不通。")
+    assert "结论是" not in humanize_reply("明确的结论是这个报错源于格式问题。")
+
+
+def test_humanize_strips_ai_flavor_therapy_register() -> None:
+    """「接住你」族＝AI 治疗腔，出站侧必须剥离。"""
+    result = humanize_reply("带着想要被你接住的心意，轻轻落在你耳畔。")
+    assert "接住" not in result
+    result2 = humanize_reply("我想稳稳接住你的所有情绪。")
+    assert "稳稳接住" not in result2
+
+
+def test_humanize_strips_ai_flavor_essay_connectors() -> None:
+    """「值得注意的是」「从某种意义上来说」等论文腔连接词。"""
+    assert "值得注意的是" not in humanize_reply("值得注意的是，这条路有风险。")
+    assert "从某种意义上来说" not in humanize_reply(
+        "从某种意义上来说，我们都一样。"
+    )
+    assert "需要指出的是" not in humanize_reply("需要指出的是，数据有延迟。")
+
+
 # ---------- LLM 流式总预算 deadline ----------
 
 class _FakeStreamResponse:

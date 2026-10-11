@@ -1081,3 +1081,217 @@ def test_volatile_count_leg_has_teeth(tmp_path: Path) -> None:
         'NOTE = "board 为空的行 ⇒ 只进 unattributed，不发明归属"\n',
         encoding="utf-8")
     assert _hand_written_count_hits(good) == [], "派生写法被误伤 ⇒ 本尺会把人逼成'干脆别印枚数'"
+
+
+# ------------------------------------------------- 尺⑦：「测试文件数」只认在册（tracked）口径
+# 2026-10-08 裁定：未跟踪测试文件不入库 ⇒ 机器册不许替它们背书。旧取数口
+# `len(TESTS_DIR.glob("test_*.py"))` 是**文件系统**口径：谁在飞新建一枚未跟踪测试件，
+# 那一格当场 +1（实测 1072 → 1074，肇事件 `test_consent_apply_receipt_honesty.py`／
+# `test_side_leg_timeout_floor.py` 都不是主会话造的）⇒ 册子在替"干净 checkout 上不存在"
+# 的状态签字，是假绿的一型（`P-MAIN-8` 早记过同型账）。本尺四腿：
+# ① 那一格 == `git ls-files` 现算的在册枚数（独立尺，不拿被锁的口自证）；
+# ② 未跟踪件在场 ⇒ 那一格纹丝不动（真树只读 + 合成树两形）；
+# ③ git 轴取不到 ⇒ 印 `NO_GIT_AXIS` 并明写原因，**既不折 0 也不折在盘 glob 的数**；
+# ④ 口径锚（AST）：`_test_file_count` 必须调在册取数口、体内不得再出现 `glob`。
+
+#: 在册/在盘两轴共用的形状尺：`tests/` 顶层的 `test_*.py`（与旧 glob 同形状，只换背书口径）。
+_TEST_NAME_RE = re.compile(r"tests/test_[^/]*\.py")
+
+
+def _git_read_only(argv: list[str]) -> str:
+    """git **只读**命令（本尺唯一 git 出口）：rc!=0 一律响亮红，不折成"没有"。"""
+    import subprocess
+
+    proc = subprocess.run(argv, cwd=str(ROOT), capture_output=True, timeout=120, check=False)
+    assert proc.returncode == 0, (
+        f"`{' '.join(argv)}` 取不到（rc={proc.returncode}）："
+        f"{proc.stderr[:200]!r}——本尺拒绝把「问不到」读成「零枚」，选择当场红")
+    return proc.stdout.decode("utf-8", "replace")
+
+
+def _shell_tracked_test_paths() -> list[str]:
+    """独立尺：`git ls-files -z -- tests` 里的在册测试件（posix、升序）。
+
+    配方抄 `scripts/secret_scan_tracked.py::_run_git_tracked` 那一族：`-z` 免八进制转义、
+    bytes 手解码不吃 locale。🔴 禁 `git status` 全量扫、禁任何 git 写操作。
+    """
+    names = [seg.replace("\\", "/") for seg in _git_read_only(
+        ["git", "ls-files", "-z", "--", "tests"]).split("\0") if seg]
+    return sorted(n for n in names if _TEST_NAME_RE.fullmatch(n))
+
+
+def _shell_untracked_test_paths() -> list[str]:
+    """独立尺：在盘未跟踪（且未被 .gitignore 排除）的测试件——正是旧口径多吃的那批。"""
+    names = [seg.replace("\\", "/") for seg in _git_read_only(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z", "--",
+         "tests"]).split("\0") if seg]
+    return sorted(n for n in names if _TEST_NAME_RE.fullmatch(n))
+
+
+def _disk_test_paths() -> list[str]:
+    """在盘（文件系统）口径：旧写法数的那个集合，本尺拿它当"应当比在册多"的对照。"""
+    return sorted(f"tests/{p.name}" for p in (ROOT / "tests").glob("test_*.py"))
+
+
+def _fake_inflight_tree(tmp_path: Path, tracked_names: list[str], extra_untracked: int,
+                        monkeypatch: pytest.MonkeyPatch) -> Path:
+    """合成树：git 轴给 `tracked_names`、磁盘轴给「在册 + extra」枚 ⇒ 两轴**故意不等**。
+
+    为什么必须合成而不是在真 `tests/` 里造一枚再删：并发窗里别人正在收集 `tests/`，
+    多出来的探针件会被别席的 pytest 当场收走（本仓在飞窗踩过）；注毒一律内存／tmp_path。
+    """
+    import subprocess
+    from types import SimpleNamespace
+
+    disk = tmp_path / "tests"
+    disk.mkdir(parents=True, exist_ok=True)
+    for i in range(len(tracked_names) + extra_untracked):
+        (disk / f"test_synth_{i}.py").write_text('"""合成件：只给判据吃，不被 import。"""\n',
+                                                 encoding="utf-8")
+    monkeypatch.setattr(ds, "TESTS_DIR", disk)
+    payload = b"".join(f"{name}\0".encode() for name in tracked_names)
+    monkeypatch.setattr(ds, "subprocess", SimpleNamespace(
+        run=lambda *a, **k: SimpleNamespace(returncode=0, stdout=payload, stderr=b""),
+        SubprocessError=subprocess.SubprocessError))
+    return disk
+
+
+def _callees_of_test_file_count() -> set[str]:
+    """AST 现算：`doc_sync._test_file_count` 体内调到的名字（函数名 + 属性名两形）。"""
+    tree = ast.parse((ROOT / "scripts" / "doc_sync.py").read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "_test_file_count":
+            out: set[str] = set()
+            for sub in ast.walk(node):
+                if not isinstance(sub, ast.Call) or not isinstance(sub.func, (ast.Name, ast.Attribute)):
+                    continue
+                out.add(sub.func.id if isinstance(sub.func, ast.Name) else sub.func.attr)
+            return out
+    raise AssertionError("doc_sync._test_file_count 找不到——本门的判据宿主变了")
+
+
+def test_test_file_count_cell_equals_tracked_axis() -> None:
+    """腿①：那一格 == `git ls-files` 现算的在册枚数，且当场写明口径。"""
+    tracked = _shell_tracked_test_paths()
+    assert tracked, "独立尺读出 0 枚＝本尺瞎了，不许据此放行"
+    assert ds._test_file_count() == len(tracked), "「测试文件数」不等于 git tracked 口径"
+    line = next(l for l in ds.build_document().splitlines() if l.startswith("- 测试文件数："))
+    assert line.startswith(f"- 测试文件数：{len(tracked)}（"), line
+    assert "tracked" in line, f"那一格没写明口径，下一个人无从判断它数的是什么：{line}"
+
+
+def test_untracked_test_files_are_not_blessed_by_the_ledger() -> None:
+    """腿②（真树、只读、不造件）：未入库件在场 ⇒ 册面数与在盘数**必须**分道。
+
+    判据按现算自适应：今天有未跟踪件就钉「在册 < 在盘且册面＝在册」，
+    全部入库后自动退化成「两轴等值」——地板不写死枚数（AGENTS 规则 10）。
+    """
+    tracked = _shell_tracked_test_paths()
+    untracked = _shell_untracked_test_paths()
+    on_disk = _disk_test_paths()
+    assert set(tracked) <= set(on_disk), "索引里的测试件不在盘上＝本尺的对照面塌了"
+    if untracked:
+        assert len(tracked) < len(on_disk), (
+            f"未跟踪件 {untracked} 没被算进在盘面＝对照面失效，本用例正在空跑")
+        assert ds._test_file_count() == len(tracked), (
+            f"未跟踪的在飞件 {untracked} 被算进了机器册那一格（口径回退成文件系统 glob）")
+    else:
+        assert ds._test_file_count() == len(on_disk), "两轴本应等值，册面却对不上"
+
+
+def test_two_inflight_untracked_probes_do_not_move_the_cell(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """腿②之杀伤力自证（合成树）：在盘多 2 枚未跟踪件 ⇒ 那一格纹丝不动。
+
+    取证面（`_disk_test_glob_count`）必须**看得见**那 2 枚——两轴同数即本用例空跑假绿，
+    故这条断言是注毒针：取数口退回 glob 时它先红。
+    """
+    names = ["tests/test_a.py", "tests/test_b.py", "tests/test_c.py"]
+    _fake_inflight_tree(tmp_path, names, 2, monkeypatch)
+    assert ds._test_file_count() == 3, "未入库的在飞件被算进了在册口径"
+    assert ds._disk_test_glob_count() == 5, "取证面没看见那 2 枚＝两轴同数、本用例空跑"
+    assert "- 测试文件数：3（" in ds.build_document(), "生成器那一格不跟在册口径走"
+
+
+def _raise_oserror(*a: object, **k: object) -> object:
+    """注毒形②：git 二进制不在 PATH。"""
+    raise FileNotFoundError(2, "git: command not found")
+
+
+def _raise_timeout(*a: object, **k: object) -> object:
+    """注毒形③：git 挂住（超时）。"""
+    import subprocess
+
+    raise subprocess.TimeoutExpired(cmd=["git"], timeout=1)
+
+
+def test_no_git_axis_degrades_loudly_and_never_folds_a_number(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """腿③：git 问不到 ⇒ 印 `NO_GIT_AXIS` + 原因；🔴 不折 0、不折在盘 glob 的数（三形都测）。
+
+    三形＝①rc!=0（干净 checkout／沙箱树没有 `.git`，即 HEAD 轴与 autosync 沙箱的实测形态）
+    ②git 二进制不在 PATH（`FileNotFoundError`）③超时（`TimeoutExpired`）。
+    """
+    import subprocess
+    from types import SimpleNamespace
+
+    disk = tmp_path / "tests"
+    disk.mkdir(parents=True, exist_ok=True)
+    for i in range(3):
+        (disk / f"test_synth_{i}.py").write_text('"""合成件。"""\n', encoding="utf-8")
+    monkeypatch.setattr(ds, "TESTS_DIR", disk)
+
+    def _cell() -> str:
+        return next(l for l in ds.build_document().splitlines() if l.startswith("- 测试文件数："))
+
+    for run_leg, expect in (
+        (lambda *a, **k: SimpleNamespace(returncode=128, stdout=b"",
+                                         stderr=b"fatal: not a git repository"),
+         "not a git repository"),
+        (_raise_oserror, "NO_GIT_AXIS：git 跑不起来"),
+        (_raise_timeout, "NO_GIT_AXIS：git 跑不起来"),
+    ):
+        monkeypatch.setattr(ds, "subprocess", SimpleNamespace(
+            run=run_leg, SubprocessError=subprocess.SubprocessError))
+        with pytest.raises(ds.DeclarationBlind, match="NO_GIT_AXIS"):
+            ds._test_file_count()
+        line = _cell()
+        assert "NO_GIT_AXIS" in line and expect in line, f"降级没明写原因：{line}"
+        assert "- 测试文件数：0" not in line, "把「取不到」折成 0＝当场瞎掉还自称有数"
+        assert "- 测试文件数：3" not in line, "把「取不到」折成在盘 glob 的数＝旧病复发"
+        assert "取证面=3" in line, f"降级没把在盘缺口并列出来：{line}"
+
+
+def test_tracked_axis_present_but_empty_hits_the_collapse_lock(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """腿③的边界：git 问得出、索引里却一枚测试件都没有 ⇒ 走塌陷锁，**不许**被降级吃掉。
+
+    新异常族只收「问不到」；把「问到了是空」也降级＝扫描面塌陷被写成一句人话，
+    正是本文件尺①②要治的死法。
+    """
+    import subprocess
+    from types import SimpleNamespace
+
+    disk = tmp_path / "tests"
+    disk.mkdir(parents=True, exist_ok=True)
+    (disk / "test_synth_0.py").write_text('"""合成件。"""\n', encoding="utf-8")
+    monkeypatch.setattr(ds, "TESTS_DIR", disk)
+    monkeypatch.setattr(ds, "subprocess", SimpleNamespace(
+        run=lambda *a, **k: SimpleNamespace(returncode=0, stdout=b"", stderr=b""),
+        SubprocessError=subprocess.SubprocessError))
+    with pytest.raises(ds.DeclarationBlind) as caught:
+        ds._test_file_count()
+    assert not isinstance(caught.value, ds.TrackedAxisUnavailable), (
+        "读空被当成「无 git 轴」降级＝把瞎掉洗成文案")
+
+
+def test_test_file_count_port_reads_tracked_axis_not_the_disk_glob() -> None:
+    """腿④（口径锚）：`_test_file_count` 必须调在册取数口，体内再出现 `glob` 即红。
+
+    为什么要有这条静态腿：真树两轴等值时（未跟踪件全入库），腿①②都咬不住"退回旧写法"；
+    本锚按 AST 现算钉住接线，改名与换实现都躲不过。
+    """
+    callees = _callees_of_test_file_count()
+    assert "_git_tracked_test_paths" in callees, f"在册口径被摘掉，实调：{sorted(callees)}"
+    assert "glob" not in callees, f"文件系统口径又被请回（旧病复发）：{sorted(callees)}"
+    assert "_disk_test_glob_count" not in callees, "取证面冒充在册面"

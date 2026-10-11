@@ -236,8 +236,40 @@ def test_voice_identity_fail_baseline_missing_field(tmp_path: Path) -> None:
 # 接线：run_all 在册注册（派生式判据）+ main exit 码与 --json 沿既有门风格
 # ---------------------------------------------------------------------------
 
+#: 探针 ``--json`` 的真身形状（格名照 scripts/import_chain_probe.py 的 CELL_MODULES，
+#: status 照该文件的 ``OK = "OK"``）——第 15 项 entry_chain 判的就是这些结构化字段。
+_ENTRY_CHAIN_PROBE_JSON = json.dumps(
+    {
+        "root": "",
+        "setup": "",
+        "cells": [
+            {"cell": "plugins.bot_unified_runtime.config", "status": "OK"},
+            {"cell": "plugins.bot_unified_runtime", "status": "OK"},
+        ],
+        "plugins": None,
+    },
+    ensure_ascii=False,
+)
+
+
+def _honest_run(args: list[str], cwd: Path, timeout: int = 600) -> tuple[int, str, str]:
+    """子进程替身：说「绿」之前得交得出真身会给得出的读数。
+
+    2026-10-04 ``seat-gatefix`` 洞1 把 entry_chain 判据收成「rc=0 **且**有结构化读数」，
+    散文 ``"[绿] OK"`` 从此＝``unparseable``＝红。本件的判据是「只有 tts_voice 该红」，
+    所以替身必须给入口链一格真读数（真探针只在仓外副本跑，见
+    tests/test_pre_restart_entry_chain.py）；``git status`` 在 tmp_path 假根上本是 rc=128，
+    照实交回，免得替身替假根谎报「工作树与 HEAD 同码」。其余子进程仍是 ``exit 0``。
+    """
+    if "import_chain_probe" in " ".join(args):
+        return 0, _ENTRY_CHAIN_PROBE_JSON, ""
+    if args[:2] == ["git", "status"]:
+        return 128, "", "fatal: not a git repository（假根按定义不是检出）"
+    return 0, "[绿] OK", ""
+
+
 def all_subproc_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(prc, "run_cmd", lambda args, cwd, timeout=600: (0, "[绿] OK", ""))
+    monkeypatch.setattr(prc, "run_cmd", _honest_run)
 
 
 @pytest.fixture(autouse=True)
@@ -267,6 +299,13 @@ def _make_full_project(tmp_path: Path, yaml_text: str) -> tuple[Path, Path]:
     qx_dir = root / "plugins" / "bot_unified_runtime" / "domains" / "weather" / "assets"
     qx_dir.mkdir(parents=True)
     (qx_dir / "qx.json").write_text("{}", encoding="utf-8")
+    # 2026-10-04 跟随第 15 项 entry_chain：假根要供得起「探针真身在不在」这一前提——
+    # 缺件＝该项判红，会把「只有 tts_voice 该红」这条退出码传播锁的判据一并带走。
+    # 占位件足够：本件把 run_cmd 注掉，真探针只在仓外副本里跑
+    # （tests/test_pre_restart_entry_chain.py）。
+    probe_dir = root / "scripts"
+    probe_dir.mkdir(parents=True, exist_ok=True)
+    (probe_dir / "import_chain_probe.py").write_text("# 假根占位件（真探针在仓外副本里跑）\n", encoding="utf-8")
     env_lines = (
         f"BOT_RUNTIME_DATA_DIR={data_root.as_posix()}\n"
         f"BOT_KB_WIKI_ROOT={wiki.as_posix()}\n"
@@ -388,7 +427,7 @@ def test_voice_wiring_lock_is_live_not_vacuous(tmp_path: Path) -> None:
     root, _ = _make_full_project(tmp_path, CANONICAL_YAML)
 
     def wired(module: object) -> object:
-        module.run_cmd = lambda args, cwd, timeout=600: (0, "[绿] OK", "")  # type: ignore[attr-defined]
+        module.run_cmd = _honest_run  # type: ignore[attr-defined]
         module.probe_tcp = lambda host, port, timeout=2.0: True  # type: ignore[attr-defined]
         return module
 

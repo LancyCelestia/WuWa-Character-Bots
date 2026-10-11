@@ -303,3 +303,68 @@ def test_append_patrol_jsonl_rotates(tmp_path, monkeypatch: pytest.MonkeyPatch) 
     patrol.append_patrol_jsonl(target, report2)
     assert target.with_name(target.name + ".1").exists()
     assert json.loads(target.read_text(encoding="utf-8"))["ts"] == 2.0
+
+
+# ==================== 单轮只读入口（W-3 --once）====================
+
+
+def _fake_report(*, proxy_ok: bool = True, proxy_detail: str = "HTTP 200 in 12ms"):
+    """造一轮结果：Clash 活 + 一枚域的双腿（测试绝不打真网络）。"""
+    report = patrol.PatrolReport(started_at=1.0)
+    report.legs.append(patrol.PatrolLeg("127.0.0.1:7890", "clash", True, "ok"))
+    report.legs.append(patrol.PatrolLeg("example.test", "direct", True, "HTTP 404 in 9ms"))
+    report.legs.append(patrol.PatrolLeg("example.test", "proxy", proxy_ok, proxy_detail))
+    return report
+
+
+def test_once_never_writes_jsonl(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """`--once` 是**诊断入口**，不是巡检的第二条落盘腿：落盘归调度闭包。
+
+    哨兵而非"事后查目录"——本仓实犯过三格"哑面在盘不在码"，注释承诺不算锁。
+    """
+
+    def _tripwire(*args, **kwargs):
+        raise AssertionError("once must not append jsonl; that is the scheduler's leg")
+
+    monkeypatch.setattr(patrol, "append_patrol_jsonl", _tripwire)
+    rc = patrol.main(["--once"], runner=lambda **kw: _fake_report())
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "只读" in out
+    assert "合计 0/3 腿 down" in out
+
+
+def test_once_reports_down_leg_with_failure_kind(capsys) -> None:
+    """有腿炸 ⇒ rc=1，且该行自带分型：她看一眼就知道该不该去动 Clash。"""
+    rc = patrol.main(
+        ["--once"],
+        runner=lambda **kw: _fake_report(proxy_ok=False, proxy_detail="ConnectError: refused"),
+    )
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "example.test" in out and "proxy" in out
+    assert "DOWN" in out
+    assert "合计 1/3 腿 down" in out
+    assert "Clash 进程不在家" in out  # classify_leg_failure 的 refused 族归因
+
+
+def test_once_exit_two_when_probe_cannot_run(capsys) -> None:
+    """探针自身起不来（缺依赖/被墙）⇒ rc=2 并明说，**不许**折成"全通"。
+
+    这防的是本仓最贵的那型：子进程 stdout 为空被读成零违规。
+    """
+
+    def _boom(**kwargs):
+        raise RuntimeError("httpx missing")
+
+    assert patrol.main(["--once"], runner=_boom) == 2
+    assert "探针跑不起来" in capsys.readouterr().out
+
+
+def test_once_json_payload_is_machine_readable(capsys) -> None:
+    rc = patrol.main(["--json"], runner=lambda **kw: _fake_report())
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["total"] == 3
+    assert payload["down"] == 0
+    assert {leg["path"] for leg in payload["legs"]} == {"clash", "direct", "proxy"}

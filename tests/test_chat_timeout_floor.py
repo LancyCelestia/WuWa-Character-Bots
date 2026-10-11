@@ -9,25 +9,39 @@
 共用同一个钳制值（`model_router.build_model_router` 的 `timeout_seconds`），
 换渠道不会更快，只会把同一发超时重放 N 遍。
 
-本锁钉两件事：
-① 两枚超时键的**代码缺省**不得低于地板（新装/漏配时不该回到必然失败的那一档）；
-② 快速模式开着时 `min(normal, fast)` 不得把地板重新压穿（只抬一枚键＝没抬）。
+本锁钉三件事：
+① 超时键的**代码缺省**不得低于地板（新装/漏配时不该回到必然失败的那一档）；
+② 快速模式开着时 `min(normal, fast)` 不得把地板重新压穿（只抬一枚键＝没抬）；
+③ 地板**只有一处真身**（`channel_health.PER_HOP_TIMEOUT_FLOOR_SECONDS`）：本锁不再自带
+   数字，自适应钳制与侧腿（判域／贴纸）都从它取数（台账 #80 根修波）。
 """
 
 from __future__ import annotations
 
 from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health import (
+    PER_HOP_TIMEOUT_FLOOR_SECONDS as PER_HOP_FLOOR_SECONDS,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
     build_model_router,
 )
 
-#: 单跳最小预算（秒）。地板值取用户裁定区间下沿（30-40s），实测缺省已抬到 40s。
-PER_HOP_FLOOR_SECONDS = 30.0
-
 _TIMEOUT_KEYS = (
     "bot_chat_timeout_seconds",
     "bot_chat_fast_timeout_seconds",
+    "bot_reactions_sentiment_timeout_seconds",
 )
+
+#: 地板锚点（测试侧唯一字面量）。生产常量若被下调，其余各测都从它取数、量不出问题，
+#: 只有这把锚能红——把锚和生产真身写成同一个数＝没有锚（台账 #80 复审时补的牙）。
+FLOOR_ANCHOR_SECONDS = 30.0
+
+
+def test_per_hop_floor_constant_is_not_lowered_below_the_anchor() -> None:
+    assert PER_HOP_FLOOR_SECONDS >= FLOOR_ANCHOR_SECONDS, (
+        f"每跳地板被下调到 {PER_HOP_FLOOR_SECONDS}s，低于锚点 {FLOOR_ANCHOR_SECONDS}s："
+        "低于该档思考型渠道连首字都等不到，链上每一跳同死。"
+    )
 
 
 def _default_of(key: str) -> float:

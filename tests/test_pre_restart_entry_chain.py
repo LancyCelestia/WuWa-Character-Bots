@@ -135,7 +135,14 @@ def test_entry_chain_is_declared_and_selected_by_default_run(
     #   形态乙「entry_chain 不在队尾」＝本件**不**放行，只放行「它在册且只在一处」这一事实，
     #         于是这里断的是枚数与唯一性，不再靠 or 蒙位置。
     assert ids.count("entry_chain") == 1, f"本项在注册面出现 {ids.count('entry_chain')} 次：{ids}"
-    assert ids[-1] == "entry_chain", f"注册面队尾必须是 entry_chain（形态甲），实得 {ids[-1]}：{ids}"
+    # 🔴 本行是**显式改判**（工单 W-1 落格 16/17 同批），强度不降反升：原先钉「队尾＝
+    # entry_chain」一枚，现钉**队尾三枚的有序三元组**——entry_chain 仍必须在册、仍在自己
+    # 的位置上，只是不再独占队尾（它后面新添 structure_readiness、library_roster 两格）。
+    # 注释里那句「后续加项要占队尾须显式改这里」今天就是那一次显式改判，别再靠 or 蒙位置。
+    assert ids[-3:] == ["entry_chain", "structure_readiness", "library_roster"], (
+        f"注册面队尾三元组必须是 entry_chain → structure_readiness → library_roster"
+        f"（形态甲的显式改判版），实得 {ids[-3:]}：{ids}"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,12 @@
 """物理归位普查（G-P1 / G-P2 的**唯一取数口**）。
 
-本文件同时服务三件事，且三件事**共用同一批函数**（本仓抓到过"总数另算一套"的假绿）：
+本文件同时服务四件事，且四件事**共用同一批函数**（本仓抓到过"总数另算一套"的假绿）：
 ① 常驻门 `tests/test_physical_placement_gate.py` 的全树判定；
 ② 注毒自证（判据收参数化的合成数据，走内存/`tmp_path`，绝不往源码树写）；
-③ `--report` 打印的现算值（本轮终局"三列表"的取数口）。
+③ `--report` 打印的现算值（本轮终局"三列表"的取数口）；
+④ `--fail-on-violations` 执法口（W-2 同族补口，2026-10-08）——把①②③**已有**的现算面折成
+   退出码，词汇与 rc 三态逐字照抄 `scripts/spec_gates_census.py` 那枚同名词：0=无违规／
+   2=前置不可用或读数不全／3=越上限。它不新增任何判定标准，也不改①②③的读数（详见该节注释）。
 
 口径（写死，别让下游猜；出处=`.superpowers/sdd/2026-09-22-taxonomy/ORPHAN-MAP.md` §1 与
 `GATE-PLAN.md` §三 G-P1/G-P2）：
@@ -1113,7 +1116,322 @@ def _s11_four_lines(data: dict[str, Any]) -> list[str]:
     return out
 
 
-def main() -> int:
+# ==========================================================================
+# 执法口 `--fail-on-violations`（工单 W-2 同族补口，2026-10-08）
+# --------------------------------------------------------------------------
+# 病根：`scripts/pre_restart_check.py` 的 `structure_readiness`「物理归类」那格，argv 里钉着
+#   `--four-accounts --four-accounts-human --fail-on-violations`，而这把尺的 argparse 名册里
+#   **没有**这枚旗 ⇒ 尺回 `unrecognized arguments: --fail-on-violations` ⇒ 那格按在册纪律落
+#   `UNDECIDABLE(RULER_PARAM_MISSING:…)`，不参与判定、也不许洗成绿（③这一面从此结构性无牙）。
+# 本口**照抄 `scripts/spec_gates_census.py` 同名词那枚口的词汇与三态**，不自创第二套：
+#   rc 0＝无违规／2＝前置不可用或读数不全（缺行≠免检）／3＝有违规越限；
+#   判据行前缀 `VF|`，三形 token＝`OVER_CEILING`／`BUCKET_ROW_MISSING`／`CEILING_SYMBOL_MISSING`；
+#   判定优先级与那把尺一字同：**缺行先于越限**（没有证据时不许宣称自己抓到了红）。
+# 判据来源＝本尺**已有的**现算面，只判「在场」与「超限」两种形状，一条新判据也不加：
+#   · 两扇门（`compute()`）：五枚在册上限（上限一律 AST 现读常驻门的字面量，本尺不抄第二份表）
+#     ＋ 常驻门写成 `assert not …` 的「必空」清单（上限即 0，出处逐枚点名用例名）。
+#   · 四本账（`compute_four_accounts()`）：③垫片两本账各自的 `start_ceiling`（真身＝
+#     `tests/test_legacy_shim_import_ratchet.py` 的 `SHIM_EDGE_CEILING`/`TESTS_SHIM_EDGE_CEILING`）
+#     与斥离交集、⑤具名快照体检 problems（`test_real_tree_snapshot_integrity_is_clean`）。
+#     ①域外 py 双尺／②页级未归位／④名册真债差集**只判读数在场**——它们各自的在册上限要么住在
+#     别的尺（面A/面B 的上限＝G-T3，归 `spec_gates_census` 的执法口；域外全量的硬锁＝
+#     `shim_retirement_census` 的「三态之和」，与本尺 `outside_py()` 全集**量纲不同**、不许跨界比数），
+#     要么本仓根本没有「必空」判据（④的 (a)/(b)/(c) 三档是披露账）。在这里再比一次＝替门造第二把尺。
+# 无牙面保持无牙：不带这枚旗时 stdout/stderr/落盘与 rc 一字不变（`--report`/`--json`/
+#   `--four-accounts`/`--four-accounts-human`/`--four-accounts-out` 全走原路）；VF 行只在带旗时打印，
+#   且 `--four-accounts` 那一支带旗时打到 **stderr**（其 stdout 是 JSON 载荷，不许掺非 JSON 行）。
+# 🔴 不许为转绿动上限：上限只住在门里，本文件一处数字也不写。
+# ==========================================================================
+
+#: 上限字面量的家（AST 现读；「上限跟着被检对象一起动」正是 `test_ceilings_are_hand_written_literals` 拦的形状）。
+_CEILING_HOSTS: tuple[str, ...] = ("tests/test_physical_placement_gate.py",)
+
+#: 越限型判据：(格名, `compute()` 里的既有取数路径, 门里的上限符号, 量纲)。
+VF_CEILING_GATES: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
+    ("G-P1 ①越界声明点", ("g_p1_size", "outside_domain"), "G_P1_OUTSIDE_CEILING", "枚"),
+    ("G-P1 附账·包含对", ("g_p1_size", "contain_pairs"), "G_P1_CONTAIN_CEILING", "对"),
+    ("G-P2 语义A 未认领", ("g_p2_semantic_a", "unclaimed"), "G_P2_UNCLAIMED_CEILING", "个 py"),
+    ("G-P2 语义A 违规（未认领∧未豁免）", ("g_p2_semantic_a", "violations"), "G_P2_VIOLATION_CEILING", "个 py"),
+    ("G-P2 豁免条数", ("counts", "g_p2_exempt_entries"), "G_P2_EXEMPT_CEILING", "条"),
+)
+
+#: 「必空」型在册判据：(格名, 取数路径, 出处用例)。上限＝0 来自该用例的 `assert not …`，不是本文件挑的数。
+VF_ZERO_GATES: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    ("G-P1 ③字面双认领", ("g_p1", "double_claim"), "test_g_p1_hard_zero_classes_stay_zero"),
+    ("G-P1 ④同功能重复声明", ("g_p1", "duplicate_within"), "test_g_p1_hard_zero_classes_stay_zero"),
+    ("G-P1 未登记域认领", ("g_p1", "unknown_domain"), "test_g_p1_hard_zero_classes_stay_zero"),
+    ("G-P1 包内空目录认领", ("g_p1", "empty_dir_claims"), "test_g_p1_hard_zero_classes_stay_zero"),
+    ("G-P1 包根禁声明", ("g_p1", "banned_claims"), "test_g_p1_hard_zero_classes_stay_zero"),
+    ("G-P1 死豁免", ("g_p1_dead_exempts",), "test_g_p1_channel_single_construction_port_and_next_step_is_executable"),
+    ("G-P2 豁免形状问题", ("exempt_shape_errors",), "test_g_p2_exemptions_are_literal_existing_and_still_needed"),
+    ("G-P2 stale 豁免（指向不存在的路径）", ("stale_exempts",), "test_g_p2_exemptions_are_literal_existing_and_still_needed"),
+    ("G-P2 死豁免（对象其实已被认领）", ("dead_exempts",), "test_g_p2_exemptions_are_literal_existing_and_still_needed"),
+)
+
+#: 四本账里「只判读数在场」的三本（各自的上限住在别的尺，跨界比数＝造第二把尺）。
+VF_ACCOUNT_KEYS: tuple[str, ...] = (
+    "a1_outside_py_dual_ruler",
+    "a2_page_unplaced",
+    "a4_roster_vs_real_debt",
+)
+
+
+def ceiling_literals() -> dict[str, int]:
+    """从常驻门源码里 AST 现读上限字面量；缺任一枚 ⇒ `LookupError`（fail-closed，同 `spec_gates_census`）。
+
+    不 import 门件：import 会把整件 pytest 门拉起来跑收集期（家法见 `spec_gates_census.ceiling_literals`）。
+    `Assign` 与 `AnnAssign` 两条都认——本仓的门曾因只认 `Assign` 把自己要盯的带注解常量看漏。
+    """
+    wanted = {symbol for _label, _path, symbol, _unit in VF_CEILING_GATES}
+    found: dict[str, int] = {}
+    for rel in _CEILING_HOSTS:
+        path = REPO_ROOT / rel
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        for node in tree.body:
+            targets: list[ast.expr] = []
+            value: ast.expr | None = None
+            if isinstance(node, ast.Assign):
+                targets, value = list(node.targets), node.value
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                targets, value = [node.target], node.value
+            if value is None or not isinstance(value, ast.Constant):
+                continue
+            for target in targets:
+                if isinstance(target, ast.Name) and target.id in wanted:
+                    if isinstance(value.value, bool) or not isinstance(value.value, int):
+                        raise LookupError(f"{target.id} 不是 int 字面量＝上限形状被改")
+                    found[target.id] = value.value
+    missing = sorted(wanted - set(found))
+    if missing:
+        raise LookupError(f"上限符号在门里找不到：{missing}")
+    return found
+
+
+def _vf_value(payload: Any, path: tuple[str, ...]) -> Any:
+    """按路径取**既有**现算值；任一段缺席 ⇒ `KeyError`（缺行不是免检）。"""
+    node: Any = payload
+    for part in path:
+        if not isinstance(node, dict) or part not in node:
+            raise KeyError("/".join(path))
+        node = node[part]
+    return node
+
+
+def _vf_count(value: Any) -> int | None:
+    """清单取长度、标量取整数本身；两形都不是 ⇒ None（读数交不出，不是零违规）。"""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (list, tuple, dict, set)):
+        return len(value)
+    return value if isinstance(value, int) else None
+
+
+def _vf_missing(label: str, why: str) -> str:
+    return f"BUCKET_ROW_MISSING {label}：{why}（缺行≠免检，按「取数交不出」记账）"
+
+
+def _vf_dict(value: Any) -> dict[str, Any]:
+    """读数收成 dict：非清单（含 None）一律当「交不出」，由调用方逐键折成 BUCKET_ROW_MISSING。"""
+    return value if isinstance(value, dict) else {}
+
+
+def _four_accounts_rows(four: dict[str, Any] | None) -> list[str]:
+    """四本账的执法行：③⑤有在册上限/必空判据 ⇒ 判超限；①②④只判读数在场。"""
+    rows: list[str] = []
+    accounts: dict[str, Any] = (four or {}).get("accounts") or {}
+
+    # ── ① 域外 py（双尺交叉）：读数在场；两尺不一致＝读数不可信，同样按「交不出」记，不折零也不判红。
+    a1 = accounts.get(VF_ACCOUNT_KEYS[0]) or {}
+    rulers = a1.get("rulers") or {}
+    read1 = {name: (rulers.get(name) or {}).get("count") for name in
+             ("find_disk", "git_ls_files", "git_worktree_reconciled")}
+    gone1 = sorted(name for name, value in read1.items() if _vf_count(value) is None)
+    if a1.get("dual_ruler_error") or gone1:
+        rows.append(_vf_missing(
+            "① 域外 py（双尺）",
+            f"双尺取数异常={a1.get('dual_ruler_error')}／交不出的尺={gone1 or '无'}"))
+    elif a1.get("consistent") is not True:
+        rows.append(_vf_missing(
+            "① 域外 py（双尺）",
+            f"两尺不一致（不一致数={a1.get('mismatch_count')}）＝读数不可信，"
+            f"不当「零违规」放行（域外全量的硬锁在 `shim_retirement_census`＝三态之和，量纲不同不在此比数）"))
+    else:
+        rows.append(
+            f"VF|格名=① 域外 py（双尺交叉，只判在场）｜磁盘={read1['find_disk']}｜"
+            f"git-tracked={read1['git_ls_files']}｜工作树={read1['git_worktree_reconciled']}｜"
+            f"不一致数={a1.get('mismatch_count')}｜量纲=个 py")
+
+    # ── ② 页级未归位：只判在场（面A/面B 的上限＝G-T3，执法口在 `spec_gates_census`）。
+    a2 = accounts.get(VF_ACCOUNT_KEYS[1]) or {}
+    cur2 = a2.get("current") if isinstance(a2.get("current"), dict) else {}
+    start2 = a2.get("start") if isinstance(a2.get("start"), dict) else {}
+    dims2 = ("面A_managed", "面B_unmoved")
+    gone2 = [f"{dim}（现算={cur2.get(dim)}／起点={start2.get(dim)}）" for dim in dims2
+             if _vf_count(cur2.get(dim)) is None or _vf_count(start2.get(dim)) is None]
+    if gone2:
+        rows.append(_vf_missing("② 页级未归位", "起点册或现算交不出：" + "、".join(gone2)))
+    else:
+        rows.append(
+            f"VF|格名=② 页级未归位（只判在场，上限＝G-T3 那面）｜起点 面A={start2.get('面A_managed')} "
+            f"面B={start2.get('面B_unmoved')}｜现算 面A={cur2.get('面A_managed')} 面B={cur2.get('面B_unmoved')}｜量纲=页")
+
+    # ── ③ 垫片两本账：各账上限＝a3 自己带的 start_ceiling（真身在棘轮门里），只准降 ⇒ 超限即红。
+    a3 = accounts.get("a3_shims_two_ledgers") or {}
+    for slot, label, symbol in (("prod_ledger", "③ 垫片·生产侧", "SHIM_EDGE_CEILING"),
+                                ("tests_ledger", "③ 垫片·测试侧", "TESTS_SHIM_EDGE_CEILING")):
+        ledger = a3.get(slot) or {}
+        current, ceiling = _vf_count(ledger.get("current")), _vf_count(ledger.get("start_ceiling"))
+        if current is None or ceiling is None:
+            rows.append(_vf_missing(label, f"现算={ledger.get('current')}／上限={ledger.get('start_ceiling')}"
+                                           f"（上限真身＝{symbol}）"))
+            continue
+        rows.append(f"VF|格名={label}｜现算={current}｜上限={ceiling}｜差={current - ceiling}｜量纲=条 import 边")
+        if current > ceiling:
+            rows[-1] = (f"OVER_CEILING {label}：现算 {current} > 上限 {ceiling}"
+                        f"（条 import 边；上限真身＝{symbol} @ tests/test_legacy_shim_import_ratchet.py）")
+    separation = a3.get("separation_lock")
+    if not isinstance(separation, dict):
+        rows.append(_vf_missing("③ 垫片两本账斥离", "separation_lock 整行缺席"))
+    else:
+        overlap = separation.get("overlap") or []
+        rows.append(
+            f"VF|格名=③ 垫片两本账斥离｜现算={len(overlap)}｜上限=0｜差={len(overlap)}｜量纲=枚"
+            "（必空型在册判据，出处 test_legacy_shim_import_ratchet.py::test_two_ledgers_are_disjoint）")
+        if overlap:
+            rows[-1] = (f"OVER_CEILING ③ 垫片两本账斥离：现算 {len(overlap)} > 上限 0"
+                        f"（两本账扫描根必须互斥；出处 test_two_ledgers_are_disjoint）交集={overlap[:4]}")
+
+    # ── ④ 名册真债差集：三档是披露账（本仓无「必空」判据）⇒ 只判读数在场。
+    a4 = accounts.get(VF_ACCOUNT_KEYS[2]) or {}
+    gone4 = [f"{k}={a4.get(k)}" for k in ("roster_count", "real_count") if _vf_count(a4.get(k)) is None]
+    verdict4 = a4.get("verdict") if isinstance(a4.get("verdict"), dict) else {}
+    if a4.get("error") or gone4 or not verdict4:
+        rows.append(_vf_missing("④ 名册真债差集", f"取数异常={a4.get('error')}／交不出的数={gone4 or '无'}"))
+    else:
+        rows.append(
+            f"VF|格名=④ 名册真债差集（只判在场，(a)/(b)/(c) 三档是披露账）｜名册={a4['roster_count']}｜"
+            f"真债={a4['real_count']}｜(a)已还清={verdict4.get('paid_off_count')}｜"
+            f"(b)门瞎={verdict4.get('blind_count')}｜(c)存在零活性={verdict4.get('not_alive_count')}｜量纲=枚")
+
+    # ── ⑤ 具名快照体检：`problems` 必空（出处 test_real_tree_snapshot_integrity_is_clean）。
+    integrity = (four or {}).get("snapshot_integrity")
+    if not isinstance(integrity, dict) or not isinstance(integrity.get("problems"), list):
+        rows.append(_vf_missing("⑤ 具名快照体检", "snapshot_integrity 交不出 problems 清单"))
+    else:
+        problems = integrity["problems"]
+        rows.append(
+            f"VF|格名=⑤ 具名快照体检｜现算={len(problems)}｜上限=0｜差={len(problems)}｜量纲=条"
+            "（必空型在册判据，出处 test_placement_snapshot_integrity_gate.py::test_real_tree_snapshot_integrity_is_clean）")
+        if problems:
+            rows[-1] = (f"OVER_CEILING ⑤ 具名快照体检：现算 {len(problems)} > 上限 0"
+                        f"（快照与账不符；problems={problems[:3]}）")
+    return rows
+
+
+def violation_rows(
+    data: dict[str, Any],
+    four: dict[str, Any] | None,
+    ceilings: dict[str, int],
+) -> list[str]:
+    """执法行的全部来源——**纯函数**（注毒用例直接喂合成读数，一个字节都不落源码树）。
+
+    只判两形：缺行（`BUCKET_ROW_MISSING`/`CEILING_SYMBOL_MISSING` ⇒ rc 2）与现算越上限
+    （`OVER_CEILING` ⇒ rc 3）。行形状与 `spec_gates_census.violation_rows` 一字同：
+    未越限的格打 `VF|格名=…｜现算=…｜上限=…｜差=…｜量纲=…`，越限的格把整行换成 `OVER_CEILING …`。
+    """
+    rows: list[str] = []
+    for label, path, symbol, unit in VF_CEILING_GATES:
+        try:
+            value = _vf_value(data, path)
+        except KeyError:
+            rows.append(_vf_missing(label, f"取数口交不出 {'/'.join(path)}"))
+            continue
+        if symbol not in ceilings:
+            rows.append(f"CEILING_SYMBOL_MISSING {label}：门里没有 {symbol}")
+            continue
+        count = _vf_count(value)
+        if count is None:
+            rows.append(_vf_missing(label, f"读数不是数也不是清单（{type(value).__name__}）"))
+            continue
+        ceiling = ceilings[symbol]
+        rows.append(f"VF|格名={label}｜现算={count}｜上限={ceiling}｜差={count - ceiling}｜量纲={unit}")
+        if count > ceiling:
+            rows[-1] = (f"OVER_CEILING {label}：现算 {count} > 上限 {ceiling}"
+                        f"（{unit}；上限真身＝{symbol} @{_CEILING_HOSTS[0]}）")
+    for label, path, case in VF_ZERO_GATES:
+        try:
+            value = _vf_value(data, path)
+        except KeyError:
+            rows.append(_vf_missing(label, f"取数口交不出 {'/'.join(path)}"))
+            continue
+        count = _vf_count(value)
+        if count is None:
+            rows.append(_vf_missing(label, f"读数不是数也不是清单（{type(value).__name__}）"))
+            continue
+        rows.append(
+            f"VF|格名={label}｜现算={count}｜上限=0｜差={count}｜量纲=条"
+            f"（必空型在册判据，出处 test_physical_placement_gate.py::{case}）")
+        if count > 0:
+            rows[-1] = (f"OVER_CEILING {label}：现算 {count} > 上限 0"
+                        f"（必空型，出处 test_physical_placement_gate.py::{case}）")
+    # 语义 B 档：本仓对它只有「与 A 档同源、差值有限」这一条形状判据 ⇒ 只判读数在场。
+    try:
+        b_unclaimed = _vf_value(data, ("g_p2_semantic_b", "unclaimed"))
+        b_gap = _vf_value(data, ("unclaimed_gap_a_b",))
+    except KeyError as exc:
+        rows.append(_vf_missing("G-P2 语义B 未认领（只判在场）", f"取数口交不出 {exc.args[0]}"))
+    else:
+        count_b, count_gap = _vf_count(b_unclaimed), _vf_count(b_gap)
+        if count_b is None or count_gap is None or count_gap < 0:
+            rows.append(_vf_missing("G-P2 语义B 未认领（只判在场）",
+                                    f"B 档未认领={b_unclaimed}／两语义差={b_gap}（差值为负＝口径失控，读数不算）"))
+        else:
+            rows.append(f"VF|格名=G-P2 语义B 未认领（只判在场，判据用 A 档）｜现算={count_b}｜"
+                        f"两语义未认领之差={count_gap}｜量纲=个 py")
+    rows.extend(_four_accounts_rows(four))
+    return rows
+
+
+def enforcement_rc(rows: list[str]) -> int:
+    """rc 三态——**逐字照抄** `scripts/spec_gates_census.py` 那枚同名词的判定次序：
+
+    2＝前置不可用或读数不全（缺行优先，没有证据时不许宣称抓到了红）／3＝有违规越限／0＝无违规。
+    """
+    if any(row.startswith(("BUCKET_ROW_MISSING", "CEILING_SYMBOL_MISSING")) for row in rows):
+        return 2
+    if any(row.startswith("OVER_CEILING") for row in rows):
+        return 3
+    return 0
+
+
+def enforce(*, data: dict[str, Any] | None = None, four: dict[str, Any] | None = None,
+            stream: Any = None) -> int:
+    """执法面：算行 → 打印 → 按行折 rc。打印走**人读通道**（JSON 那支的 stdout 不许掺非 JSON）。"""
+    out = sys.stderr if stream is None else stream
+    try:
+        rows = violation_rows(
+            data if data is not None else compute(),
+            four if four is not None else compute_four_accounts(),
+            ceiling_literals(),
+        )
+    except (LookupError, OSError, SyntaxError) as exc:  # 与 spec_gates_census 那枚口同一组异常
+        print(f"VF|取数失败＝没有证据（不是零违规）：{type(exc).__name__}: {exc}", file=out)
+        return 2
+    print("VF|上限出处＝AST 现读常驻门的字面量＋四本账自带的在册上限（本尺不抄第二份表）；"
+          "差值符号：正＝越限、负＝有余量", file=out)
+    for row in rows:
+        print(row if row.startswith("VF|") else "VF|" + row, file=out)
+    return enforcement_rc(rows)
+
+
+def main(argv: list[str] | None = None) -> int:
+    # CLI 入口自钉 UTF-8（不放模块顶部：被 import 时不得改宿主的流）。
+    # 真伤已实跑坐测：四本账人读行带「带符号差」的 U+2212，在 Git Bash 管道/重定向下
+    # stdout 落 gbk ⇒ UnicodeEncodeError、rc=1，整本账一行都读不出来。
+    # 同家规先例见 scripts/spec_gates_census.py 与 scripts/central_seam_census.py。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", action="store_true", help="打印两扇门的现算值")
     parser.add_argument("--json", metavar="OUT", help="把明细写成 JSON（写到指定路径，不落源码树默认位置）")
@@ -1121,7 +1439,12 @@ def main() -> int:
                         help="S11 四本账（域外py双尺／页级未归位／垫片两本账／名册真债差集）——JSON 打到 stdout")
     parser.add_argument("--four-accounts-out", metavar="OUT", help="四本账 JSON 落盘到指定路径（不落源码树默认位置）")
     parser.add_argument("--four-accounts-human", action="store_true", help="四本账打印成人读行（配合 --four-accounts 时并入 stderr 前）")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--fail-on-violations",
+        action="store_true",
+        help="按在册上限逐面执法：越上限退出码 3，取数交不出／上限符号失踪退出码 2",
+    )
+    args = parser.parse_args(argv)
     if args.four_accounts or args.four_accounts_out:
         four = compute_four_accounts()
         if args.four_accounts_human or args.four_accounts_out:
@@ -1132,6 +1455,9 @@ def main() -> int:
         if args.four_accounts_out:
             Path(args.four_accounts_out).write_text(json.dumps(four, ensure_ascii=False, indent=1), encoding="utf-8")
             print(f"四本账明细已写: {args.four_accounts_out}", file=sys.stderr)
+        if args.fail_on_violations:
+            # 四本账这一支的 stdout 是 JSON 载荷 ⇒ 执法行进 stderr（人读通道），rc 照三态回。
+            return enforce(four=four, stream=sys.stderr)
         return 0
     data = compute()
     for line in report_lines(data):
@@ -1139,6 +1465,8 @@ def main() -> int:
     if args.json:
         Path(args.json).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
         print(f"明细已写: {args.json}")
+    if args.fail_on_violations:
+        return enforce(data=data, stream=sys.stdout)
     return 0
 
 

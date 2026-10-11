@@ -829,6 +829,8 @@ def test_creation_ids_are_not_command_or_prepared_adapters_today() -> None:
         "SEAT-S115-CARD-WIRE：缺位异常已进信封且穿过 invoker，但全树没有任何读者"
         "会为 creation 两通道 raise ⇒「未接 provider ⇒ 诊断卡」这句散文今天不成立。"
         "摘牌条件＝caller 侧 raise 腿落地（补丁文本见 SEAT-S115/S132 §3）后删除本装饰器。"
+        "〔expiry=2026-12-31 owner=SEAT-S115-CARD-WIRE "
+        "摘牌=caller 侧 raise 腿落地并独跑本件转绿后删本 xfail〕"
     ),
 )
 def test_a_layer_one_consumer_actually_raises_for_creation_gap() -> None:

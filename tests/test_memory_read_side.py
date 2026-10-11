@@ -975,6 +975,7 @@ def _root_call_site_kwargs() -> list[str]:
     reason=(
         "S-T-MEM-4 §需要主代理代接：根 __init__ 的 route_memory_command 调用点还没传 "
         "bus= ⇒ 开态命令面永远走旧路径，新抽取的行列不出来。落码后本条转 XPASS，请摘标记。"
+        "〔expiry=2026-12-31 owner=SEAT-MAIN 摘牌=根装配把 bus= 传进 route_memory_command 后删本标记〕"
     ),
 )
 def test_root_assembly_passes_a_bus_to_the_memory_command() -> None:
@@ -989,6 +990,7 @@ def test_root_assembly_passes_a_bus_to_the_memory_command() -> None:
         "S-T-MEM-4 §需要主代理代接：bus 必须是**带影子读的召回同形**那枚"
         "（build_memory_bus + legacy_explicit_reader_for）。照抄写腿配方会让开态 "
         "记忆 list 对存量失忆——实测差别见 test_command_bus_without_the_shadow_reader_…"
+        "〔expiry=2026-12-31 owner=SEAT-MAIN 摘牌=装配改为影子读同形 bus 并独跑转绿后删本标记〕"
     ),
 )
 def test_root_assembly_wires_the_shadow_reader_for_the_command_surface() -> None:

@@ -17,6 +17,7 @@ import pytest
 
 import plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health as channel_health_module
 from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health import (
+    PER_HOP_TIMEOUT_FLOOR_SECONDS,
     ChannelHealthStore,
     resolve_slow_ema_ms,
 )
@@ -228,18 +229,30 @@ class TimeoutCaptureProvider:
 
 
 def _capture_router(captured: list[float], credential_config) -> ModelRouter:
+    """基座超时取生产键缺省（`bot_chat_timeout_seconds`），**不取 30**。
+
+    收紧只在「钳制结果 ≠ 原值」时才注入 `timeout_seconds`（v1 语义）。地板
+    （`PER_HOP_TIMEOUT_FLOOR_SECONDS`，台账 #80 前=8s、后=30s）若与基座相等，
+    两枚参数会同时落到"不注入＝[]"——锁就失去区分度。基座高于地板才量得出方向。
+    """
+    from plugins.bot_unified_runtime.config import Config
+
+    hop_base = float(Config.model_fields["bot_chat_timeout_seconds"].default)
     return _router(
         [_spec("ch-a", 1), _spec("ch-b", 2)],
         lambda spec: TimeoutCaptureProvider(spec.model_id, captured),
         credential_config=credential_config,
+        timeout_seconds=hop_base,
     )
 
 
 @pytest.mark.parametrize(
     ("ema_ms", "expected"),
     [
-        (1000, [8.0]),  # max(8, 1*3)=8 < 30 → 收紧到 8s（显式注入 timeout）
-        (20000, []),  # max(8, 20*3)=60 > 30 → 收紧结果=原值 → 不注入（v1 语义）
+        # ema×3 远低地板 ⇒ 结果由**地板**决定（地板取真身，本文件不另抄秒数）⇒ 注入
+        (1000, [PER_HOP_TIMEOUT_FLOOR_SECONDS]),
+        # ema×3=60 高于基座 ⇒ min 回落原值 ⇒ 不注入（v1 语义）
+        (20000, []),
     ],
 )
 def test_adaptive_timeout_tightens_by_ema(

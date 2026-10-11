@@ -804,6 +804,11 @@ def _facts(boards: list[Board], topics: list[str]) -> dict[str, int]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # 本件 `--help` 曾在 cp936 控制台上直接 UnicodeEncodeError（help 里有 `⇒`）：
+    # 输出腿坏≠判据绿。入口自钉 utf-8，与 census 族同口径。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--write", action="store_true")

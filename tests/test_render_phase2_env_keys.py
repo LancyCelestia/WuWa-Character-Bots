@@ -122,7 +122,7 @@ def _legacy_expected_ops(viewport: dict[str, int], wait_ms: int) -> list[tuple[A
     return [
         ("new_page", {"viewport": viewport, "device_scale_factor": 2}),
         ("set_default_timeout", 8000),
-        ("set_content", _HTML, "networkidle"),
+        ("set_content", _HTML, "load"),
         ("wff", _IMG_COMPLETE_EXPR, 8000),
         ("wait_for_timeout", wait_ms),
         ("query_selector", ".card"),

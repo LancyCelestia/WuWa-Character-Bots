@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 from types import SimpleNamespace
@@ -285,7 +286,8 @@ def test_apply_model_price_fallback_rejects_poison_override() -> None:
         api_key="k",
         # price_in/out 默认 None → needs=True → 进 override 路径
     )
-    # 脏覆盖（负价/inf/NaN/字符串）⇒ 视同缺席，自然下探兜底（1.0），不崩。
+    # 脏覆盖（负价/inf/NaN/字符串）⇒ 视同缺席，自然下探兜底（0.75/2.25，
+    # 2026-10-04 拆雷波：deepseek 族当前实际承载渠道 ch6 的 D13 后牌价），不崩。
     for poison in (-5.0, float("inf"), float("nan"), "junk"):
         config = SimpleNamespace(
             bot_llm_model_price_overrides={
@@ -293,8 +295,8 @@ def test_apply_model_price_fallback_rejects_poison_override() -> None:
             }
         )
         out = _apply_model_price_fallback(spec, config)
-        assert out.price_in == 1.0, f"脏覆盖 {poison!r} 应被拒并下探兜底 1.0"
-        assert out.price_out == 4.0
+        assert out.price_in == 0.75, f"脏覆盖 {poison!r} 应被拒并下探兜底 0.75"
+        assert out.price_out == 2.25
     # 合法覆盖仍生效并优先于兜底。
     config = SimpleNamespace(
         bot_llm_model_price_overrides={
@@ -303,6 +305,92 @@ def test_apply_model_price_fallback_rejects_poison_override() -> None:
     )
     out = _apply_model_price_fallback(spec, config)
     assert out.price_in == 3.0
+
+
+def test_model_price_fallback_luna_terra_removed_honest_unpriced(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """2026-10-04 拆雷波：luna/terra 兜底价行删除——缺行走 unpriced 诚实路径。"""
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+        _MODEL_PRICE_FALLBACKS,
+        ModelSpec,
+        _apply_model_price_fallback,
+    )
+
+    assert "gpt-5.6-luna" not in _MODEL_PRICE_FALLBACKS
+    assert "gpt-5.6-terra" not in _MODEL_PRICE_FALLBACKS
+    with caplog.at_level(logging.WARNING):
+        for model in ("gpt-5.6-luna", "gpt-5.6-terra"):
+            spec = ModelSpec(
+                model_id="ch-x",
+                model=model,
+                base_url="https://example.test/v1",
+                api_key="k",
+            )
+            out = _apply_model_price_fallback(spec)
+            assert out is spec, "表未命中必须原样返回（unpriced 诚实路径）"
+            assert out.price_in is None
+            assert out.price_out is None
+            assert out.price_cache_read is None
+    assert not [
+        r for r in caplog.records if r.levelno >= logging.WARNING
+    ], "未命中路径不得打 warning（防噪声）"
+
+
+def test_model_price_fallback_grok46_station_prices_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """拆雷波：grok-4.6 兜底价换 ch5 站方牌价，且命中必须 logger.warning 留痕。"""
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+        ModelSpec,
+        _apply_model_price_fallback,
+    )
+
+    spec = ModelSpec(
+        model_id="ch-g",
+        model="grok-4.6",
+        base_url="https://example.test/v1",
+        api_key="k",
+    )
+    with caplog.at_level(logging.WARNING):
+        out = _apply_model_price_fallback(spec)
+    assert out.price_in == 1.0
+    assert out.price_out == 3.0
+    assert out.price_cache_read == 0.25
+    assert out.price_cache_creation is None
+    hits = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING and "grok-4.6" in r.getMessage()
+    ]
+    assert hits, "兜底命中必须留痕（logger.warning）"
+    assert "fallback price used" in hits[0].getMessage()
+    assert "price_in" in hits[0].getMessage()
+
+
+def test_model_price_fallback_20261004_new_rows() -> None:
+    """拆雷波新增三行：glm-4.6v-flash 免费（0/0）；qwen3.7-text-embedding、bge-m3 只按 prompt 计价。"""
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+        _MODEL_PRICE_FALLBACKS,
+    )
+
+    assert _MODEL_PRICE_FALLBACKS["glm-4.6v-flash"] == {
+        "price_in": 0,
+        "price_out": 0,
+        "price_cache_read": None,
+        "price_cache_creation": None,
+    }
+    assert _MODEL_PRICE_FALLBACKS["qwen3.7-text-embedding"] == {
+        "price_in": 0.5,
+        "price_out": None,
+        "price_cache_read": None,
+        "price_cache_creation": None,
+    }
+    assert _MODEL_PRICE_FALLBACKS["bge-m3"] == {
+        "price_in": 0,
+        "price_out": None,
+        "price_cache_read": None,
+        "price_cache_creation": None,
+    }
 
 
 # ==================== F-7：remote_request_id 行膨胀截断 ====================

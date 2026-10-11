@@ -218,9 +218,21 @@ def test_adapter_prefers_model_router_and_passes_cheap_budget() -> None:
     )
     assert provider.calls == [], "给了 router 就不该再打 provider"
     messages, kwargs = router.calls[0]
-    assert kwargs["max_tokens"] <= 32 and kwargs["timeout_seconds"] <= 8.0, (
-        "二判必须廉价：小 max_tokens、短超时",
+    # 廉价性改由「候选宽度 × 小 max_tokens」封顶，不再用短秒数（台账 #80）：
+    # 旧断言 `timeout_seconds <= 8.0` 逼出来的不是省钱，是**必然失败**——思考型渠道
+    # 4-8s 连首字都等不到，超时照写渠道健康账，反把主聊天渠道打进 30 分钟黑名单，
+    # 用户侧只剩失败话术。单跳预算的家＝每跳地板（一把尺，见 test_chat_timeout_floor）。
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health import (
+        PER_HOP_TIMEOUT_FLOOR_SECONDS,
     )
+
+    assert kwargs["max_tokens"] <= 32, "二判必须小输出"
+    assert float(kwargs["timeout_seconds"]) >= PER_HOP_TIMEOUT_FLOOR_SECONDS, (
+        "二判单跳预算低于每跳地板＝系统性制造假超时",
+    )
+    assert kwargs.get("fast_mode") is True and 1 <= int(
+        kwargs.get("fast_max_candidates") or 0
+    ) <= 2, "二判必须自封候选宽度：地板级预算 × 整条链＝分钟级阻塞腿"
     assert messages[-1]["content"].startswith("医保报销比例")
 
 

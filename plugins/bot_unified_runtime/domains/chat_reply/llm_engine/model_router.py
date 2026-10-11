@@ -356,8 +356,9 @@ ALL_EFFORT_VALUES: tuple[str, ...] = ("off", "low", "medium", "high", "xhigh", "
 _ENV_DERIVED_SOURCE = "env"
 
 # 自适应超时（v2 无损切换）：已知渠道 EWMA 时单次尝试超时收紧为
-# min(原值, max(下限秒, ema_ms*倍率/1000))，挂死渠道快速失败转移。
-_ADAPTIVE_TIMEOUT_FLOOR_S = 8.0
+# min(原值, max(地板秒, ema_ms*倍率/1000))，挂死渠道快速失败转移。
+# 地板**不在本文件存数**——唯一真身＝`channel_health.PER_HOP_TIMEOUT_FLOOR_SECONDS`
+# （台账 #80：8s 一档遇上被微调用喂小的 EWMA＝每一跳注定等不到首字）。
 _ADAPTIVE_TIMEOUT_EMA_MULTIPLE = 3.0
 # 链预算止损缺省（秒，v21r2 R1）：故障转移链上除首个真实尝试外，剩余预算
 # 低于该值时不再发起新跳（残秒尝试注定超时，只会白烧一跳污染告警轨迹）。
@@ -537,10 +538,23 @@ _AUTO = "auto"
 # 模型级兜底价（元/1M tokens；2026-09-18 账单未计价根修）。
 # 背景：链收敛后渠道选择全权归 axonhub，bot 侧 spec 常缺价——部分渠道条目
 # 残留 axonhub /v1/models 的 0.0 价（记 ¥0 假账）或无价（记未计价）。这里按
-# **模型名**给兜底价（口径=恒星纪元实付价，出自 scripts/import_model_prices.py
-# 2026-09-17 用户实付表）；spec 价缺失或 ≤0 时回退本表，config
+# **模型名**给兜底价（口径=实际承载渠道站方牌价；2026-09-17「恒星纪元实付价」
+# 旧口径已退役）；spec 价缺失或 ≤0 时回退本表，config
 # ``bot_llm_model_price_overrides``（模型名→价字段 dict）可逐模型覆盖。
+# 兜底=最后防线非第二权威；命中即 logger.warning 留痕（2026-10-04 拆雷波）。
 _MODEL_PRICE_FALLBACKS: dict[str, dict[str, float | None]] = {
+    "bge-m3": {
+        "price_in": 0,
+        "price_out": None,
+        "price_cache_read": None,
+        "price_cache_creation": None,
+    },
+    "deepseek-v4.1-flash": {
+        "price_in": 0.75,
+        "price_out": 2.25,
+        "price_cache_read": 0.0275,
+        "price_cache_creation": None,
+    },
     "gemini-3.8-flash": {
         "price_in": 0.1875,
         "price_out": 0.9375,
@@ -548,33 +562,27 @@ _MODEL_PRICE_FALLBACKS: dict[str, dict[str, float | None]] = {
         "price_cache_creation": None,
     },
     "gemini-3.8-flash-high": {
-        "price_in": 0.45,
-        "price_out": 2.25,
+        "price_in": 0.75,
+        "price_out": 3.75,
+        "price_cache_read": 0.075,
+        "price_cache_creation": None,
+    },
+    "glm-4.6v-flash": {
+        "price_in": 0,
+        "price_out": 0,
         "price_cache_read": None,
         "price_cache_creation": None,
     },
-    "gpt-5.6-terra": {
-        "price_in": 0.29,
-        "price_out": 1.74,
-        "price_cache_read": 0.029,
-        "price_cache_creation": 0.3625,
-    },
-    "gpt-5.6-luna": {
-        "price_in": 0.116,
-        "price_out": 0.522,
-        "price_cache_read": 0.0087,
-        "price_cache_creation": 0.10875,
-    },
     "grok-4.6": {
-        "price_in": 0.6,
-        "price_out": 1.8,
-        "price_cache_read": 0.15,
+        "price_in": 1.00,
+        "price_out": 3.00,
+        "price_cache_read": 0.25,
         "price_cache_creation": None,
     },
-    "deepseek-v4.1-flash": {
-        "price_in": 1.0,
-        "price_out": 4.0,
-        "price_cache_read": 0.02,
+    "qwen3.7-text-embedding": {
+        "price_in": 0.5,
+        "price_out": None,
+        "price_cache_read": None,
         "price_cache_creation": None,
     },
 }
@@ -603,6 +611,7 @@ def _apply_model_price_fallback(spec: ModelSpec, config: object | None = None) -
     if not needs:
         return spec
     updates: dict[str, float | None] = {}
+    fallback_filled: list[str] = []
     for price_field in ("price_in", "price_out", "price_cache_read", "price_cache_creation", "price_per_call"):
         current = getattr(spec, price_field, None)
         if current is None or (isinstance(current, (int, float)) and current <= 0):
@@ -613,10 +622,19 @@ def _apply_model_price_fallback(spec: ModelSpec, config: object | None = None) -
             candidate = _optional_price(overrides.get(price_field))
             if candidate is None:
                 candidate = _optional_price(prices.get(price_field))
+                if candidate is not None:
+                    fallback_filled.append(price_field)
             if candidate is not None:
                 updates[price_field] = candidate
     if not updates:
         return spec
+    if fallback_filled:
+        # 拆雷波留痕：只有兜底表真被消费（网关静默未给价）才告警；
+        # 纯 override 填充 / 未命中 / 无填充路径保持静默（防噪声）。
+        logger.warning(
+            "fallback price used (gateway silent): model=%s keys=%s",
+            spec.model, sorted(fallback_filled),
+        )
     return spec.__class__(**{**spec.__dict__, **updates})
 
 
@@ -1515,19 +1533,25 @@ class ModelRouter:
     def _tighten_timeout(
         model_id: str, base_timeout: float, ema_map: dict[str, int] | None
     ) -> float:
-        """自适应超时：已知渠道 EWMA 时收紧为 min(原值, max(8s, ema*3))。
+        """自适应超时：已知渠道 EWMA 时收紧为 min(原值, max(地板, ema*3))。
 
         ema 未知（未实测/健康层关闭）→ 原值不动；挂死渠道快速失败转移。
+        地板每次现取 `channel_health.PER_HOP_TIMEOUT_FLOOR_SECONDS`（本文件不留副本，
+        留副本＝两把尺各改各的，台账 #80 的 8s 饿死正是这么来的）。
         """
         if ema_map is None:
             return base_timeout
         ema_ms = ema_map.get(model_id)
         if not ema_ms or ema_ms <= 0:
             return base_timeout
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health import (
+            PER_HOP_TIMEOUT_FLOOR_SECONDS,
+        )
+
         return min(
             base_timeout,
             max(
-                _ADAPTIVE_TIMEOUT_FLOOR_S,
+                PER_HOP_TIMEOUT_FLOOR_SECONDS,
                 ema_ms * _ADAPTIVE_TIMEOUT_EMA_MULTIPLE / 1000.0,
             ),
         )
@@ -2555,7 +2579,8 @@ class ModelRouter:
                 else:
                     attempt_options.pop("reasoning_effort", None)
                 # 自适应超时（v2）：已知渠道 EWMA 时收紧单次尝试预算
-                # （min(原值, max(8s, ema*3))），再与剩余 failover 预算取小。
+                # （min(原值, max(地板, ema*3))，地板真身＝channel_health），
+                # 再与剩余 failover 预算取小。
                 configured_timeout = attempt_options.get("timeout_seconds")
                 base_timeout = (
                     float(configured_timeout)

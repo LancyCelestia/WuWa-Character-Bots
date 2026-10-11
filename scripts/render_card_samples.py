@@ -43,8 +43,28 @@ html_sha256 为主判据。2026-09-19 ANIM 钉帧席起 render_backends 截图�
     python scripts/render_card_samples.py --out <dir>     # 指定输出目录（after 对比同理）
     python scripts/render_card_samples.py --only market_index,affinity_group
     python scripts/render_card_samples.py --list          # 只列卡型不渲染（离线快）
+    python scripts/render_card_samples.py --serve         # 只读预览已渲好的样张（不重渲、不写盘）
+    python scripts/render_card_samples.py --serve --out <dir> --serve-port 8751
 
-退出码：0 = 全部成功；1 = 有卡失败（其余照常出图）；2 = 渲染后端不可用。
+--serve 的用途边界（工单 W-5，D-2/Q-2 裁定：**只做只读预览，不做可视化编辑器**）：
+- 只列**已经渲好**的产物：不 mkdir、不调渲染、不写任何字节、不建目录；目录里没有
+  样张就明说「还没有产物」并给出该跑的命令，**绝不顺手替使用者渲一份**（那会把出图
+  副作用与内存开销塞进一个预览入口）。
+- 只绑 127.0.0.1（无 --host 开关，0.0.0.0 在代码里根本没有通路），缺省端口 8750——
+  避开 5174（webui dev）/8080（bot webhook）/8090（网关）/8742（控制面）/8743（mock）。
+- 零第三方依赖（stdlib http.server，形状照 scripts/webui_mock_server.py）。
+- 泄露面：产物目录可能落在运行数据根下，**绝对路径本身就是泄露面**，而
+  domains/render/plain_text.py 的 redact_local_secrets 只守 bot 文本出口、管不到
+  HTTP 响应体——所以预览面**从源头上就不产出绝对路径**：列表只给相对文件名，目录根
+  只给脱敏标记（RUNTIME_ROOT / TMP_ROOT / SAMPLES_ROOT），对外文本再过一次
+  redact_local_secrets 兜底。
+- 🔴 预览看过 ≠ 渲染契约通过：判据是三把视觉锁
+  tests/test_rendering_contract.py、tests/test_mica_builders_contract.py、
+  tests/test_template_visual_audit.py 与 python tests/verify_hashes.py --check，
+  --serve 一律不判它们，也不把任何卡标成「改好了」。
+
+退出码：0 = 全部成功；1 = 有卡失败（其余照常出图）；2 = 渲染后端不可用／未知卡型／
+        --serve 无产物可预览或端口不可用。
 """
 
 from __future__ import annotations
@@ -54,14 +74,18 @@ import base64
 import hashlib
 import io
 import json
+import re
 import sys
 import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from html import escape as _html_escape
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -77,6 +101,9 @@ from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import 
 )
 from plugins.bot_unified_runtime.domains.render.card_render.usage_cards import (
     usage_report_mica_html,
+)
+from plugins.bot_unified_runtime.domains.render.plain_text import (
+    redact_local_secrets,
 )
 from plugins.bot_unified_runtime.domains.render.render_backends import (
     build_render_backend,
@@ -1337,6 +1364,370 @@ def print_report(results: list[SampleResult], out_dir: Path) -> bool:
     return all_ok
 
 
+# ---------------------------------------------------------------------------
+# --serve：只读预览（列已渲好的产物；不重渲、不写盘、不建目录、只绑回环）
+# ---------------------------------------------------------------------------
+
+#: 铁律：--serve 只准绑回环。CLI 里没有 --host 开关，0.0.0.0 在代码中不存在通路。
+_SERVE_HOST = "127.0.0.1"
+#: 缺省端口：避开 5174（webui dev）/ 8080（bot webhook）/ 8090（网关）/
+#: 8742（控制面）/ 8743（webui_mock_server，其文档另举 8744）。
+_SERVE_DEFAULT_PORT = 8750
+
+_ROOT_MARK_RUNTIME = "RUNTIME_ROOT"
+_ROOT_MARK_TMP = "TMP_ROOT"
+_ROOT_MARK_PLAIN = "SAMPLES_ROOT"
+
+#: 产物文件名的唯一合法形态（render_baseline 的落盘命名 NN_<key>.png）。
+#: 目录穿越、绝对路径、盘符、单层以上的一切形态在这里先被拒。
+_PNG_NAME_RE = re.compile(r"\A[0-9]{2}_[a-z0-9_]+\.png\Z")
+_LEAF_NAME_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+
+#: 契约提醒（同一份文案同时进启动行、stdout 报告与预览页，见工单 W-5 第 5 条）。
+_CONTRACT_NOTE = (
+    "预览看过 ≠ 渲染契约通过：判据是三把视觉锁 tests/test_rendering_contract.py、"
+    "tests/test_mica_builders_contract.py、tests/test_template_visual_audit.py，"
+    "外加 python tests/verify_hashes.py --check。本预览入口不判它们，"
+    "也不把任何一张卡说成「改好了」。"
+)
+
+
+@dataclass(frozen=True)
+class SampleArtifact:
+    """一张已渲好的样张。**只带相对文件名**，绝对路径不进这个结构。"""
+
+    rel_name: str
+    card_key: str
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class SampleListing:
+    root_mark: str
+    dir_exists: bool
+    artifacts: tuple[SampleArtifact, ...]
+    present_keys: tuple[str, ...]
+    missing_keys: tuple[str, ...]
+    expected_keys: tuple[str, ...]
+    illegal_count: int
+
+    @property
+    def complete(self) -> bool:
+        """假绿判据（四条同时成立，缺一律按「预览不成立」报）：
+        ① 列表非空；② 列出的卡型张数 == --list 现算值（expected_keys 同源 CARDS）；
+        ③ 逐图都报得出所属卡型（文件名对不上在册卡型＝归属缺失）；
+        ④ 逐图文件名形态本身在册（有人往列表里塞目录外路径时，这条把它拦在判据外）。
+        """
+        return (
+            bool(self.artifacts)
+            and not self.missing_keys
+            and not self.illegal_count
+            and all(
+                item.card_key and _PNG_NAME_RE.fullmatch(item.rel_name) for item in self.artifacts
+            )
+        )
+
+
+def _redact_text(text: str) -> str:
+    """出口兜底：复用既有脱敏真身（按符号名引用，不抄它的实现造第二套）。
+
+    注意它只守 bot 文本出口、管不到 HTTP 响应体，所以预览面的主防线是
+    「根本不产出绝对路径」（root_mark_for / collect_samples），这里只是第二层。
+    """
+    return redact_local_secrets(text)
+
+
+def root_mark_for(out_dir: Path) -> str:
+    """产物根的**脱敏标记**：``RUNTIME_ROOT/<末段>`` / ``TMP_ROOT/<末段>`` / ``SAMPLES_ROOT``。
+
+    绝对路径本身是泄露面（运行数据根带着盘符与用户名），预览面一律不输出，
+    只输出这枚相对标记；判定失败时退回中性标记，绝不因此改吐绝对路径。
+    """
+    prefix = _ROOT_MARK_PLAIN
+    try:
+        from scripts import runtime_paths
+
+        resolved = out_dir.resolve()
+        if any(resolved == root or root in resolved.parents for root in runtime_paths.production_runtime_data_dirs()):
+            prefix = _ROOT_MARK_RUNTIME
+        else:
+            tmp_root = Path(tempfile.gettempdir()).resolve()
+            if tmp_root == resolved or tmp_root in resolved.parents:
+                prefix = _ROOT_MARK_TMP
+    except Exception:  # noqa: BLE001 - 标记判不出来就退回中性名，不升级为路径外泄
+        prefix = _ROOT_MARK_PLAIN
+    leaf = out_dir.name
+    if leaf and _LEAF_NAME_RE.fullmatch(leaf):
+        return _redact_text(f"{prefix}/{leaf}")
+    return prefix
+
+
+def collect_samples(out_dir: Path) -> SampleListing:
+    """列举已渲好的样张 PNG。**纯只读**：不 mkdir、不渲染、不写任何字节。
+
+    返回体里没有任何绝对路径（只有 ``path.name`` 这一层相对名），分母 ``expected_keys``
+    与 ``--list`` 同源于 ``CARDS`` 现算，不写死枚数。
+    """
+    dir_exists = out_dir.is_dir()
+    try:
+        files = sorted(out_dir.iterdir()) if dir_exists else []
+    except OSError:  # 权限/竞态：如实当空目录处理，不猜、不建、不修
+        files, dir_exists = [], False
+    artifacts: list[SampleArtifact] = []
+    illegal = 0
+    for path in files:
+        if not path.is_file() or not path.name.lower().endswith(".png"):
+            continue
+        if not _PNG_NAME_RE.fullmatch(path.name):
+            illegal += 1
+            continue
+        key = path.name[3:-4]
+        artifacts.append(
+            SampleArtifact(
+                rel_name=path.name,
+                card_key=key if key in _REGISTRY else "",
+                size_bytes=path.stat().st_size,
+            )
+        )
+    expected = tuple(card.key for card in CARDS)
+    present = sorted({item.card_key for item in artifacts if item.card_key})
+    missing = tuple(key for key in expected if key not in set(present))
+    return SampleListing(
+        root_mark=root_mark_for(out_dir),
+        dir_exists=dir_exists,
+        artifacts=tuple(artifacts),
+        present_keys=tuple(present),
+        missing_keys=missing,
+        expected_keys=expected,
+        illegal_count=illegal,
+    )
+
+
+def resolve_sample_file(root: Path, rel_name: str) -> Path | None:
+    """把请求里的相对名换成盘上真身；任何越界形态一律 ``None``（拒收，不解释）。
+
+    锁的是 ``http.server`` 的既有目录穿越风险：只认产物根下的单层 ``NN_<key>.png``，
+    ``..``／绝对路径／盘符／反斜杠／子目录／NUL 全拒；符号链接跑出根也拒。
+    """
+    if not isinstance(rel_name, str) or not rel_name or "\x00" in rel_name:
+        return None
+    if ":" in rel_name or "\\" in rel_name:  # 盘符、UNC、Windows 绝对形态
+        return None
+    if rel_name.startswith("/"):  # 绝对 POSIX 与 //协议相对 一并拒
+        return None
+    parts = [part for part in rel_name.split("/") if part]
+    if len(parts) != 1 or any(part in (".", "..") for part in parts):
+        return None
+    if not _PNG_NAME_RE.fullmatch(parts[0]):
+        return None
+    candidate = root / parts[0]
+    try:
+        real, real_root = candidate.resolve(), root.resolve()
+    except OSError:
+        return None
+    if real.parent != real_root or not real.is_file():
+        return None
+    return real
+
+
+def listing_summary(listing: SampleListing) -> str:
+    """判据读数（含空目录的诚实说法，绝不产出「可用」这类词）。"""
+    total = len(listing.expected_keys)  # 尺＝--list 现算值（同源 CARDS）
+    if not listing.artifacts:
+        return (
+            f"还没有产物：{listing.root_mark} 下零张样张"
+            f"{'（目录不存在）' if not listing.dir_exists else ''}。\n"
+            "先跑 --only <卡型> --out <目录> 渲一份，再回来看图"
+            "（本预览入口绝不代渲）。"
+        )
+    lines = [
+        (
+            f"已列 {len(listing.artifacts)} 张 PNG，卡型归属 {len(listing.present_keys)}/{total}"
+            "（分母＝--list 现算值，非写死）。"
+        )
+    ]
+    if listing.complete:
+        lines.append(
+            "判据四条齐：列表非空 ∧ 卡型张数==现算值 ∧ 逐图有文件名与所属卡型 ∧ 逐图形态在册。"
+            "这只说明图齐、能看，不说明任何一张改好了。"
+        )
+        return "\n".join(lines)
+    problems = []
+    if listing.missing_keys:
+        problems.append("缺卡型 " + "、".join(listing.missing_keys))
+    unattributed = sum(1 for item in listing.artifacts if not item.card_key)
+    if unattributed:
+        problems.append(f"{unattributed} 张文件名对不上在册卡型（所属卡型报不出）")
+    rejected = listing.illegal_count + sum(
+        1 for item in listing.artifacts if not _PNG_NAME_RE.fullmatch(item.rel_name)
+    )
+    if rejected:
+        problems.append(f"{rejected} 条条目形态不在产物命名册内（预览面拒收，不给换成图）")
+    lines.append("判据未过 → 预览不成立：" + "；".join(problems))
+    return "\n".join(lines)
+
+
+def format_listing(listing: SampleListing) -> str:
+    """stdout 报告：根标记 + 逐图（相对名 · 卡型 · 大小）+ 判据 + 契约提醒。"""
+    lines = [f"样张根（脱敏标记，非路径）：{listing.root_mark}", listing_summary(listing)]
+    for item in listing.artifacts:
+        lines.append(f"  {item.rel_name:<36} {item.card_key or '<未归属>':<24} {item.size_bytes / 1024:>7.1f}KB")
+    lines.append(_CONTRACT_NOTE)
+    return _redact_text("\n".join(lines))
+
+
+def preview_page_html(listing: SampleListing) -> str:
+    """预览页（纯函数，只吃 listing）：每张图**必须**同屏带文件名与所属卡型。
+
+    页内只出现相对名与脱敏标记；形态不合法的条目二次拒收（双保险），
+    即便有人往 listing 里塞了目录外路径，也换不成 ``<img src>``。
+    """
+    figures: list[str] = []
+    for item in listing.artifacts:
+        if not _PNG_NAME_RE.fullmatch(item.rel_name):
+            continue
+        name = _html_escape(item.rel_name)
+        key = _html_escape(item.card_key or "未归属")
+        figures.append(
+            '<figure class="shot">'
+            f'<img src="/img/{quote(item.rel_name, safe="")}" alt="{name}">'
+            f"<figcaption><b>{name}</b><span>卡型 {key}</span>"
+            f"<span>{item.size_bytes / 1024:.1f}KB</span></figcaption>"
+            "</figure>"
+        )
+    summary = _html_escape(listing_summary(listing)).replace("\n", "<br>")
+    note = _html_escape(_CONTRACT_NOTE)
+    body = "\n".join(figures) or '<p class="empty">没有可显示的样张（本页面不代渲）。</p>'
+    return _redact_text(
+        "<!DOCTYPE html>\n<html lang=\"zh-CN\"><head><meta charset=\"UTF-8\">"
+        "<title>卡面样张预览（只读）</title><style>"
+        "body{margin:0;padding:24px;background:#101826;color:#e9eef5;"
+        "font-family:system-ui,'Microsoft YaHei',sans-serif}"
+        "h1{font-size:18px;font-weight:600;margin:0 0 8px}"
+        ".meta{font-size:13px;line-height:1.7;margin-bottom:16px;max-width:900px}"
+        ".note{border-left:3px solid #fb7299;padding:8px 12px;background:#182238;"
+        "font-size:13px;line-height:1.7;margin-bottom:20px;max-width:900px}"
+        ".grid{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}"
+        ".shot{margin:0;background:#182238;padding:10px;border-radius:10px}"
+        ".shot img{display:block;max-width:520px;height:auto;border-radius:6px}"
+        "figcaption{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;margin-top:6px}"
+        "figcaption b{font-weight:600}figcaption span{opacity:.75}"
+        ".empty{color:#f7b6c2}"
+        f"</style></head><body><h1>卡面样张预览 · 只读（不重渲、不写盘）</h1>"
+        f"<div class=\"meta\">{summary}</div><div class=\"note\">{note}</div>"
+        f"<div class=\"grid\">{body}</div></body></html>"
+    )
+
+
+class _SamplePreviewServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, address: tuple[str, int], handler: type[BaseHTTPRequestHandler], *, root: Path) -> None:
+        super().__init__(address, handler)
+        self.root = root
+
+
+class _SamplePreviewHandler(BaseHTTPRequestHandler):
+    server_version = "ShorekeeperSamplePreview/1.0"
+    sys_version = ""
+
+    def _send_bytes(self, status: int, body: bytes, content_type: str) -> None:
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            self.close_connection = True
+
+    def do_GET(self) -> None:
+        path = unquote(urlparse(self.path).path)
+        root = getattr(self.server, "root", Path())
+        if path in ("/", "/index.html"):
+            # 每次现算：她重渲完刷新即见，本服务自己不碰渲染与写盘。
+            page = preview_page_html(collect_samples(root)).encode("utf-8")
+            self._send_bytes(200, page, "text/html; charset=utf-8")
+            return
+        if path == "/listing.json":
+            listing = collect_samples(root)
+            payload = {
+                "root_mark": listing.root_mark,  # 脱敏标记，非路径
+                "complete": listing.complete,
+                "expected_total": len(listing.expected_keys),
+                "present_keys": list(listing.present_keys),
+                "missing_keys": list(listing.missing_keys),
+                "illegal_count": listing.illegal_count,
+                "items": [
+                    {"rel_name": item.rel_name, "card_key": item.card_key, "size_bytes": item.size_bytes}
+                    for item in listing.artifacts
+                ],
+                "contract": _CONTRACT_NOTE,
+            }
+            body = json.dumps(payload, ensure_ascii=False, indent=1).encode("utf-8")
+            self._send_bytes(200, body, "application/json; charset=utf-8")
+            return
+        if path.startswith("/img/"):
+            target = resolve_sample_file(root, path[len("/img/"):])
+            if target is None:
+                self._send_bytes(404, b"rejected\n", "text/plain; charset=utf-8")
+                return
+            try:
+                data = target.read_bytes()
+            except OSError:
+                self._send_bytes(404, b"unreadable\n", "text/plain; charset=utf-8")
+                return
+            self._send_bytes(200, data, "image/png")
+            return
+        self._send_bytes(404, b"not found\n", "text/plain; charset=utf-8")
+
+    def do_HEAD(self) -> None:
+        self.do_GET()
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        sys.stderr.write(_redact_text(fmt % args) + "\n")
+
+
+def serve_samples(out_dir: Path, port: int = _SERVE_DEFAULT_PORT) -> int:
+    """起只读预览服务。无产物 ⇒ 明说并退出码 2，**绝不代渲**；端口只绑 127.0.0.1。"""
+    listing = collect_samples(out_dir)
+    print(format_listing(listing), flush=True)
+    if not listing.artifacts:
+        print("未起服务：产物目录里没有样张，本入口不代渲（上面已给出该跑的命令）。", file=sys.stderr)
+        return 2
+    if not 1 <= port <= 65535:
+        print("端口不在 1-65535，未起服务。", file=sys.stderr)
+        return 2
+    try:
+        server = _SamplePreviewServer((_SERVE_HOST, port), _SamplePreviewHandler, root=out_dir)
+    except OSError:
+        print(f"端口 {port} 起不来（多半被占用），换 --serve-port；未起服务，也没渲任何东西。", file=sys.stderr)
+        return 2
+    if server.server_address[0] != _SERVE_HOST:  # 绑定后复核：绝不接受回环以外的落点
+        server.server_close()
+        print("绑定地址非 127.0.0.1，已拒绝启动。", file=sys.stderr)
+        return 2
+    print(
+        _redact_text(
+            f"预览已就绪：http://{_SERVE_HOST}:{port}/  （图片在 /img/<相对名>，清单在 /listing.json）\n"
+            f"只监听本机 {_SERVE_HOST}，Ctrl-C 退出；本服务不重渲、不写盘、不建目录。\n"
+            + _CONTRACT_NOTE
+        ),
+        flush=True,  # 重定向到文件时也让她第一时间看到启动行（缓冲会把它吃到退出才吐）
+    )
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="离线渲染全套卡面样张 PNG")
     parser.add_argument(
@@ -1354,6 +1745,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="只列出可渲染卡型清单，不渲染（离线快）",
     )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="只读预览 --out 目录里已渲好的样张（只绑 127.0.0.1；不重渲、不写盘、不建目录，"
+        "预览看过 ≠ 渲染契约通过）",
+    )
+    parser.add_argument(
+        "--serve-port",
+        type=int,
+        default=_SERVE_DEFAULT_PORT,
+        help=f"--serve 的监听端口（缺省 {_SERVE_DEFAULT_PORT}，只准绑 127.0.0.1，无 --host 开关）",
+    )
     args = parser.parse_args(argv)
 
     if args.list:
@@ -1361,6 +1764,9 @@ def main(argv: list[str] | None = None) -> int:
         for card in CARDS:
             print(f"  {card.key:<34} {card.label}")
         return 0
+
+    if args.serve:
+        return serve_samples(Path(args.out), args.serve_port)
 
     keys = [part.strip() for part in args.only.split(",") if part.strip()] or None
     unknown = [key for key in (keys or []) if key not in _REGISTRY]

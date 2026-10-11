@@ -1084,8 +1084,10 @@ HELP_TOPIC_DECLARATIONS: tuple[HelpTopicDecl, ...] = (
 # 指针（Wave 2）：本表=唯一在册表 gate 侧输入源；gate 绑定改由
 # capability_protocols.gate_feature_bindings() 派生，勿在本表之外为同 id 另立登记。
 CONTROLLED_INTERNAL_CAPABILITIES: tuple[str, ...] = (
+    # G-2（乙）2026-10-08 席 CB-CMDUNIFY：`/bot decision` 接进 `_handle_status` 分发链，
+    # 动词轴（DEFAULT_VERB_MAP 的 决策/decision）自此有执行落点 ⇒ 按本集既有口径登记。
     "bot.alert", "bot.audit", "bot.auto_send.preview", "bot.campus_forward",
-    "bot.config", "bot.context",
+    "bot.config", "bot.context", "bot.decision",
     "bot.control", "bot.cookie_expiry_notice", "bot.cookie_login",
     "bot.credential_check", "bot.dialogue", "bot.download", "bot.emergency_info_push",
     "bot.file",

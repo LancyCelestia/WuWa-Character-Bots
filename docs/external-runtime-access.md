@@ -93,9 +93,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& .\scripts\dev.ps1 -Tas
 
 `knowledge_progress.py` 一次报两个向量库（`memory`=角色记忆库、`wiki`=百科接货库），只读打开，
 可以在 kb-sync 跑动中随时看。wiki 侧的**收工判据不是行数**：投料阶段块行就已全部落库，
-"库内是否全量带向量"既可能是投完也可能是还没开嵌。真正的四条判据（摘要 `ok`/`error_kind`、
-本轮 `embedded >= embed_pending`、`embedded_after >= 块行数`、`ann_expected_vector_count == embedded_after`）
-由脚本自己打勾，语义锁在 `tests\test_knowledge_progress_settled_gate.py`。
+"库内是否全量带向量"既可能是投完也可能是还没开嵌。判据清单（摘要 `ok`/`error_kind`、
+本轮 `embedded >= embed_pending`、`embedded_after >= 块行数`、`ann_expected_vector_count == embedded_after`、
+**ANN 索引实数 ntotal 比应嵌数**）以脚本自己的 `checks` 为准，本文件不抄条数；语义锁在
+`tests\test_knowledge_progress_settled_gate.py`。
+最后那一条是 2026-10-08 补的牙：前面几条只证明**账面数对得上**，不证明盘上那枚 `.index`
+真把向量装下了——短装的索引照样让账面齐平，后果是载入路径拒用 ANN、每条消息回落暴力扫描，
+而屏幕上仍是一排 `[ok]`。现在脚本同一轮里**现算索引实数 ntotal**（只读 FAISS 序列化头的
+16 字节，🔴 不整本载入：线上 `.index` 是 GB 量级、bot 常驻数 GiB，`faiss.read_index` 一发就能压死），
+人读那一行三个数并列（应嵌／库内已嵌／索引 ntotal）带一枚有符号差（正数＝短装）。
+读不出时打 `UNDECIDABLE:<原因>` 并判 `[!!]`——**"取不到"不折成 ok、也不折成 0**。
 注意摘要里的 `embed_pending` 是**本轮投料数（分母）**，不是"还剩多少"。
 值守/等待类脚本**必须带基线** `--since <ISO>`：库里的摘要只有一枚、永远反映**上一次跑完的那轮**，
 不带基线时"已投完收工"会在本轮还没开跑时就先绿一次（2026-09-22 实犯，值守脚本第一轮即自行退出）。

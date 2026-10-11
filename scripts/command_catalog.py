@@ -739,6 +739,11 @@ def render(entries: list[dict[str, object]]) -> str:
 
 
 def main() -> int:
+    # 控制台按 cp936 时，人读行里的 `⇒`／中文会直接把打印腿打死（父进程读线程
+    # 随之失效＝读成"零输出"）。与 census 族同口径：入口自钉 utf-8，不靠调用方带 env。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     merged = merged_entries()
     expected = render(merged)
     if "--write" in sys.argv[1:]:

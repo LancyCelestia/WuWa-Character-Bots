@@ -166,7 +166,11 @@ def test_check_is_declared_and_registered_in_order() -> None:
     """在册声明侧与 run_all 注册序一起跟着（派生式判据，不写死总项数）."""
     declared = prc.declared_item_ids()
     assert CHECK_ID in declared, f"{CHECK_ID} 没进 docstring 编号在册清单：{declared}"
-    assert declared[-1] == CHECK_ID, f"本项应排在在册清单队尾：{declared}"
+    # 2026-10-04 跟随：原此处钉 `declared[-1] == CHECK_ID`（「本项排队尾」）——第 15 项
+    # entry_chain 正确追加后队尾必然漂移，与本件 ① 的 AST 可达锁无关。整序仍由
+    # tests/test_pre_restart_check.py::test_main_exit_code_and_json_structure
+    # （run_all 交出的 id 序 == declared_item_ids()）与
+    # tests/test_pre_restart_entry_chain.py（同一判据 + 新项在册）守住，不降标准。
     run_all_calls = _reachable_from(ast.parse(PRC_FILE.read_text(encoding="utf-8")), "run_all")["run_all"]
     assert any(call.rsplit(".", 1)[-1] == CHECK_FUNC for call in run_all_calls), (
         f"run_all 没把 {CHECK_FUNC} 注册进去（在册却不可达＝假接线）：{sorted(run_all_calls)}"

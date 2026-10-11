@@ -40,6 +40,15 @@ _SLOW_EMA_MS = 15000
 # config bot_chat_channel_cooldown_seconds / env BOT_CHAT_CHANNEL_COOLDOWN_SECONDS 可覆盖。
 _DEFAULT_COOLDOWN_SECONDS = 90.0
 
+# 每跳超时地板（秒）——**唯一真身**，三处消费：① 自适应钳制
+# `model_router._tighten_timeout` 里的 `max(地板, ema×3)`；② 侧腿交给路由的单跳预算
+# （`question_intent.llm_timely_domain_hint`、`sentiment_selector.classify_sticker_sentiment`）；
+# ③ 锁 `tests/test_chat_timeout_floor.py`（该锁不再自带数字——改一处漏一处的老病由这枚常量治）。
+# 2026-09-27 实弹定档：低于这档不是「响应慢」而是**必然失败**（两跳各 20s 同死、弹失败模板）。
+# 2026-10-06 再证 8s 一档同死：本地渠道 ema 被 12-token 截断的微调用喂成 903ms ⇒ 每跳钳到
+# 8.0s ⇒ 真回复连首字都等不到，且侧腿用 4s/8s 打满整条链＝系统性制造假超时。账见台账 #80。
+PER_HOP_TIMEOUT_FLOOR_SECONDS = 30.0
+
 # 巡检并发/错峰参数（B-2）：config 字段 → os.environ 兜底 → 最终默认。
 # 默认值即历史硬编码值（background 3 线程 + 0.4s 抖动；manual 8 线程），
 # 行为回归约束：默认参数下现网行为不变。

@@ -1075,25 +1075,32 @@ def llm_timely_domain_hint(
     *,
     llm_provider: Any | None = None,
     model_router: Any | None = None,
-    timeout_seconds: float = 4.0,
+    timeout_seconds: float | None = None,
     max_tokens: int = 12,
 ) -> str | None:
     """问题文本 → ``TimelyDomain`` 值（或 ``None``＝不表态）。
 
-    专用形态：GENERAL 兜底处的**廉价**二判（小 max_tokens、短超时、单轮问答）。
+    专用形态：GENERAL 兜底处的**廉价**二判（小 max_tokens、短总预算、单轮问答）。
     任何异常/缺 provider/认不出的回答一律回 ``None``——调用方据此按「没有二判」
     处理，fail-open 到既有行为。同步函数：``generate`` 本就是同步口，调用方
     （chat 层装配点）自行决定跑在管线线程还是守护线程。
 
-    接线（主代理整合进 chat.py 决策点时的一行形）::
-
-        domain_hint=lambda q: llm_timely_domain_hint(
-            q, model_router=model_router, llm_provider=llm_provider
-        )
+    预算口径（台账 #80 根修）：``timeout_seconds`` 缺省取**每跳地板**
+    （``channel_health.PER_HOP_TIMEOUT_FLOOR_SECONDS``，本腿不自带数字）。旧值 4s 是
+    系统性自伤——思考型渠道 4s 连首字都等不到，超时照写健康账，于是这条小腿把主聊天
+    渠道打进 30 分钟黑名单，用户侧只剩失败话术（2026-10-06 17:51 实据：判域腿掐死
+    gemini+grok 之后十秒，真实回复只剩单候选）。抬地板的代价由**候选宽度封顶**兜住：
+    本腿最多问 1 个渠道，问不到就 fail-open，绝不把二判变成分钟级阻塞腿。
     """
     stripped = str(text or "").strip()
     if not stripped:
         return None
+    if timeout_seconds is None:
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health import (
+            PER_HOP_TIMEOUT_FLOOR_SECONDS,
+        )
+
+        timeout_seconds = PER_HOP_TIMEOUT_FLOOR_SECONDS
     messages = [
         {"role": "system", "content": _DOMAIN_HINT_SYSTEM_PROMPT},
         {
@@ -1108,6 +1115,8 @@ def llm_timely_domain_hint(
                 message_text="",
                 override="",
                 session_id="",
+                fast_mode=True,
+                fast_max_candidates=1,
                 timeout_seconds=timeout_seconds,
                 max_tokens=max_tokens,
             )

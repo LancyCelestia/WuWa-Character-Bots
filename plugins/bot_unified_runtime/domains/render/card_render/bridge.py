@@ -170,6 +170,10 @@ _CARD_TEXT: dict[str, str] = {
     # foot 常量锁按值等值断言，迁移两侧同文即绿）。
     "static_news_71": '条目取自各来源的公开订阅源，标题与摘要按原文收录，未作核实。',
     "static_news_72": '今日快报',
+    # 2026-10-08 多源同日呈现波：分组折叠的**诚实注脚**模板（快报卡按域成组后，
+    # 每域卡上未展开的条数必须在场看见）。{count} 由能力侧现算回填，不进 safe 区
+    # （走普通转义渲染），RSS 内容碰不到它。
+    "static_news_73": '另有 {count} 条同域报道没在这张卡上铺开，都在随这张卡发出的文字快报里。',
 }
 
 _ENV.globals["card_text"] = _CARD_TEXT
@@ -1938,8 +1942,11 @@ def render_news_digest_card_html(payload_dict: dict[str, Any] | None = None) -> 
 
     payload_dict 字段：title（缺省回落 card_text.static_news_67）、sub（可空）、
     foot（可空，能力侧带口径说明时传入）、items=[{source,time,name(或 title),
-    snip(或 summary)}]、platform_color（可空，缺省守岸人品牌 accent）、
-    bot_name、bot_avatar_url、feature_label。
+    snip(或 summary)}]、groups（可空；多源同日的按域成组呈现，每格
+    {label,rows=[同 items 行形——字段名不叫 items，避开 dict.items 方法名],
+    hidden(非负整数),more(折叠注脚，可空)}，
+    在场即压过平铺 items；缺位即逐字节维持旧平铺形态）、platform_color（可空，
+    缺省守岸人品牌 accent）、bot_name、bot_avatar_url、feature_label。
     质感与 song_candidates/market 同族（釉瑚云母底 + 液态玻璃浮层 + 漂移色斑 +
     品牌胶囊）；无平台的快讯卡默认落本命蓝，不随内容漂移。空 items 出「暂无」占位，
     任一字段缺失区块静默隐藏，任何输入都不抛异常（铁律 7：渲染失败→纯文本兜底）。
@@ -1965,6 +1972,46 @@ def render_news_digest_card_html(payload_dict: dict[str, Any] | None = None) -> 
                 "snip": _as_str(item.get("snip")) or _as_str(item.get("summary")),
             }
         )
+    # 分组呈现（2026-10-08 多源同日波）：行归一与平铺同一条尺，hidden 归一为非负
+    # 整数（徽章与域带的「共几枚」靠它现算，脏值一律当 0，不猜数）。组内行字段名
+    # 用 **rows** 不用 items——dict.items 是方法，模板属性访问先撞上方法名。
+    groups_out: list[dict[str, Any]] = []
+    for group in _as_list(data.get("groups")):
+        if not isinstance(group, dict):
+            continue
+        group_rows: list[dict[str, Any]] = []
+        for item in _as_list(group.get("rows")):
+            if not isinstance(item, dict):
+                continue
+            name = _as_str(item.get("name")) or _as_str(item.get("title"))
+            if not name:
+                continue
+            group_rows.append(
+                {
+                    "source": _as_str(item.get("source")),
+                    "time": _as_str(item.get("time")),
+                    "name": name,
+                    "snip": _as_str(item.get("snip")) or _as_str(item.get("summary")),
+                }
+            )
+        try:
+            hidden = max(0, int(group.get("hidden") or 0))
+        except (TypeError, ValueError):
+            hidden = 0
+        more_text = _as_str(group.get("more"))
+        if hidden and not more_text:
+            # 缺牙保险（本仓已知病「缺的段永远不进截断账」的同型入口）：折了 N 枚
+            # 而注脚缺位时，用文案册同一枚键自补——字面量真身仍唯一（_CARD_TEXT），
+            # 这不是第二处文案，而是让「折而不报」在渲染口结构性造不出。
+            more_text = card_text_value("static_news_73").format(count=hidden)
+        groups_out.append(
+            {
+                "label": _as_str(group.get("label")),
+                "rows": group_rows,
+                "hidden": hidden,
+                "more": more_text,
+            }
+        )
     template = _ENV.get_template("news_digest_card.html")
     bot_name = _as_str(data.get("bot_name")) or BRAND_THEME.display_name
     bot_avatar_url = _as_str(data.get("bot_avatar_url"))
@@ -1975,6 +2022,7 @@ def render_news_digest_card_html(payload_dict: dict[str, Any] | None = None) -> 
         sub=_as_str(data.get("sub")),
         foot=_as_str(data.get("foot")),
         items=items_out,
+        groups=groups_out,
         platform_color=color,
         platform_color_rgb=f"{rgb[0]},{rgb[1]},{rgb[2]}",
         platform_color_dark=_rgb_to_hex(_darken(rgb)),

@@ -209,8 +209,15 @@ def test_repeat_request_rewrites_same_file_without_growth(
     assert len(list(tmp_path.glob("news_*.png"))) == 1
 
 
-def test_news_card_quota_prunes_only_its_own_prefix(tmp_path: Path) -> None:
+def test_news_card_quota_prunes_only_its_own_prefix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """配额与 today_history/market 同口径（keep=120），且只裁 `news_` 前缀。"""
+    # 桩必打：本件是全文件唯一走能力入口却不打桩的用例（2026-10-08 定案）——真实
+    # `fetch_headlines` 取空时能力降级纯文本、`images` 为空，取 `images[0]` 那一行
+    # 以 IndexError 崩相收场（配额三把断言一把都没跑到，红得没有信息量）。桩一钉死，
+    # 本件回到文件头声明的「全部离线」口径，断言只判配额这一件事。
+    _patch_items(monkeypatch, _sample_items(3))
     for index in range(125):
         stale = tmp_path / f"news_{index:03d}.png"
         stale.write_bytes(b"x")
@@ -226,7 +233,9 @@ def test_news_card_quota_prunes_only_its_own_prefix(tmp_path: Path) -> None:
     capability = build_news_capability(
         config=None, render_backend=backend, card_dir=str(tmp_path)
     )
-    card = str(capability(_message(), _decision()).images[0]["file"])
+    result = capability(_message(), _decision())
+    assert result.images, f"卡没出（audit={result.audit_tags}），配额这一把尺量不到东西"
+    card = str(result.images[0]["file"])
 
     survivors = sorted(path.name for path in tmp_path.glob("news_*.png"))
     assert len(survivors) == 120, f"配额失效或裁过头：现存 {len(survivors)} 张"
@@ -499,9 +508,147 @@ def test_card_title_and_date_share_the_text_one_time_source() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ④ 注毒自证：兜底一摘，失败态当场炸
+# ③′ 多源同日呈现（2026-10-08）：按域分组、出处并列、诚实折叠
 # ---------------------------------------------------------------------------
 
+
+def _mixed_items(per_cat: dict[str, int]) -> list[NewsItem]:
+    """按域造条目（aware 时间；标题带域前缀保证互不同题，折叠账可精确预期）。"""
+    base = datetime(2026, 10, 8, 8, 0, tzinfo=_UTC)
+    items: list[NewsItem] = []
+    seq = 0
+    for category, count in per_cat.items():
+        for index in range(count):
+            seq += 1
+            items.append(
+                NewsItem(
+                    title=f"{category}事件{index}",
+                    url=f"https://example.invalid/{seq}",
+                    source="某源",
+                    published_at=base + timedelta(minutes=seq),
+                    category=category,
+                    summary=f"{category}摘要{index}",
+                )
+            )
+    return items
+
+
+def _conservation_report(payload: dict[str, Any], received: int) -> list[str]:
+    """守恒判据的**唯一谓词**：卡上「铺开+注明」必须恰等于交给卡的全部条数。
+
+    真值腿与注毒腿共用这一把尺（判据只写一遍，两腿各证一次，不造第二形）。
+    返回违规点名列表；空表=守恒成立。折了不报（hidden>0 而注脚缺位）与报了没折
+    （hidden=0 却带注脚）都在此现形——「缺牙未修」同型的构造入口被这条封死。
+    """
+    groups = payload.get("groups") or []
+    shown = sum(len(group.get("rows") or ()) for group in groups)
+    hidden = sum(int(group.get("hidden") or 0) for group in groups)
+    problems: list[str] = []
+    if shown + hidden != received:
+        problems.append(f"铺开{shown}+折掉{hidden} != 应收{received}（有条目没进任何一本账）")
+    if shown != len(payload.get("items") or ()):
+        problems.append("扁平 items 与分组铺开数不等（同一批条目出现两本账）")
+    for group in groups:
+        group_hidden = int(group.get("hidden") or 0)
+        if group_hidden > 0 and not str(group.get("more") or ""):
+            problems.append(f"域「{group.get('label')}」折了 {group_hidden} 枚却没注脚＝缺牙同型")
+        if group_hidden == 0 and str(group.get("more") or ""):
+            problems.append(f"域「{group.get('label')}」没折却带注脚＝虚报")
+    return problems
+
+
+def test_grouped_payload_conserves_and_bounds_every_item() -> None:
+    """30 条四域：逐条要么上卡、要么计入折叠账；单域与全卡各有铺开上限；
+    域序＝CATEGORY_LABELS 登记序（科技→财经→国际→时政，本件不抄第二份表）。"""
+    items = _mixed_items({"tech": 12, "finance": 8, "world": 6, "politics": 4})
+    payload = build_news_card_content(items, label="综合", date_text="2026-10-08", config=None)
+    assert _conservation_report(payload, len(items)) == []
+    cap_group = news_module._CARD_GROUP_CAP
+    cap_total = news_module._CARD_TOTAL_CAP
+    for group in payload["groups"]:
+        assert len(group["rows"]) <= cap_group, f"域「{group['label']}」铺开破单域上限"
+    assert len(payload["items"]) <= cap_total, "全卡铺开破总量上限（一屏平铺的老形态回潮）"
+    labels = [group["label"] for group in payload["groups"]]
+    assert labels == ["科技", "财经", "国际", "时政"], f"域序脱离登记册: {labels}"
+    hidden = {group["label"]: group["hidden"] for group in payload["groups"]}
+    assert hidden["科技"] == 12 - cap_group and hidden["财经"] == 8 - cap_group
+
+
+def test_total_cap_still_raises_bare_band_with_full_note() -> None:
+    """总量闸切到的域：域带仍在场、全量计入注脚——整域静默消失比切条更恶。"""
+    per_cat = 5
+    items = _mixed_items(
+        {"tech": per_cat, "finance": per_cat, "world": per_cat, "politics": per_cat}
+    )
+    payload = build_news_card_content(items, label="综合", config=None)
+    assert _conservation_report(payload, len(items)) == []
+    bands = {group["label"]: group for group in payload["groups"]}
+    assert len(bands) == 4, "四个域都在册，一个都不许缺席"
+    tail = [g for g in payload["groups"] if not g["rows"]]
+    assert tail and all(g["hidden"] > 0 and g["more"] for g in tail), (
+        "被总量闸清零的域必须带全量折叠注脚在场"
+    )
+    assert str(bands["时政"]["hidden"]) in bands["时政"]["more"]
+
+
+def test_all_folded_outlets_reach_the_card() -> None:
+    """跨源同题折叠的出处**全部**上卡（旧 payload 只上 sources 首枚＝折叠在卡面
+    退化成单源，出处被静默吃掉）。"""
+    folded = NewsItem(
+        title="多方会谈进入第二天",
+        url="https://example.invalid/a",
+        source="BBC中文",
+        sources=("BBC中文", "纽约时报", "时代"),
+        published_at=datetime(2026, 10, 8, 8, 0, tzinfo=_UTC),
+        category="world",
+        summary="会谈继续。",
+    )
+    payload = build_news_card_content([folded], label="综合", config=None)
+    row = payload["items"][0]
+    for outlet in ("BBC中文", "纽约时报", "时代"):
+        assert outlet in row["source"], f"出处「{outlet}」没上卡"
+    html = bridge.render_news_digest_card_html(payload)
+    assert "纽约时报" in html and "时代" in html
+
+
+def test_capability_audit_tags_count_the_fold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """折叠账同录入审读面：卡出了几组、折了几枚，机器侧与卡面同一本账。"""
+    items = _mixed_items({"tech": 15})
+    _patch_items(monkeypatch, items)
+    backend = _FakeBackend()
+    result = build_news_capability(
+        config=None, render_backend=backend, card_dir=str(tmp_path)
+    )(_message("快报"), _decision())
+    assert "news_card_groups:1" in result.audit_tags
+    assert f"news_card_hidden:{15 - news_module._CARD_GROUP_CAP}" in result.audit_tags
+
+
+def test_poisoning_the_fold_account_turns_conservation_red() -> None:
+    """注毒自证：把「折了多少」从账上抹掉（hidden 恒 0），守恒尺必须点名——
+    否则上面的绿可能只是尺子瞎（本仓「生成了没发出」病的判据有牙证明）。"""
+    source = Path(news_module.__file__).read_text(encoding="utf-8")
+    anchor = "hidden = len(rows) - shown_count"
+    assert source.count(anchor) == 1, "注毒锚点失配（构造口改样了，先修本锁）"
+    mutated = source.replace(anchor, "hidden = 0  # 注毒：折而不报")
+    namespace: dict[str, Any] = {
+        "__name__": "news_poisoned_fold_account",
+        "__file__": str(news_module.__file__),
+    }
+    exec(  # noqa: S102 - 注毒台：内存里跑一份改账的副本，不落盘、不改真文件
+        compile(mutated, "<poison:news-fold>", "exec"), namespace
+    )
+    items = _mixed_items({"tech": 15})
+    poisoned = namespace["build_news_card_content"](items, label="综合", config=None)
+    assert _conservation_report(poisoned, len(items)), "注毒未被守恒尺抓住＝判据是装饰"
+    calm = build_news_card_content(items, label="综合", config=None)
+    assert _conservation_report(calm, len(items)) == [], "对照态不红，红才归因于注毒"
+
+
+# ---------------------------------------------------------------------------
+# ④ 注毒自证：兜底一摘，失败态当场炸
+# ---------------------------------------------------------------------------
 _POISON_ANCHOR = (
     "    except Exception:  # noqa: BLE001 - 渲染失败回退纯文本快报，契约零破坏。\n"
     "        return \"\"\n"
@@ -530,6 +677,10 @@ def test_poisoning_the_render_guard_turns_the_failure_case_red(
         compile(mutated, "<poison:news.py>", "exec"), namespace
     )
     _patch_items(monkeypatch, _sample_items(2))
+    # 同一把桩也要钉进注毒副本的全局命名空间：exec 出来的那份自己 import 了真
+    # `fetch_headlines`，真实取数一空（RSS 抖动）能力就在出卡前早退，RuntimeError
+    # 根本轮不到抛 ⇒ 本锁会以「DID NOT RAISE」随机假红。
+    namespace["fetch_headlines"] = lambda category, **kw: _sample_items(2)
     poisoned = namespace["build_news_capability"](
         config=None,
         render_backend=_FakeBackend(raises=RuntimeError("boom")),

@@ -12,9 +12,11 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -956,4 +958,477 @@ def test_r0_registered_columns_stay_wired_to_the_scan() -> None:
             f"{face} 的对外欠账栏混进了过程稿主体 {debt_strays[:5]}＝两栏串门（同一条目记两处，"
             "互斥自证被绕开）"
         )
+
+
+# ===========================================================================
+# W-11 腿 B（发行库派生锁，纯仓内、零仓外依赖）：**库轴不得长出板块真身**——把声明源里那句
+# 散文升成 AST 锁。
+#
+# 病根：发行库住在仓外（落点由 `ReleaseLibNode` 名册派生，本腿不碰盘面名册），而 tests/ 与
+# scripts/ 对「分库」这件事零执法。`plugins/bot_unified_runtime/domains/core/board_taxonomy.py`
+# 的模块散文明文裁定「一级板块库的成员只由 ``BOARD_TAXONOMY`` 派生，**绝不抄进
+# ``LIBRARY_TAXONOMY``**——抄进来就是第二真身」，这条裁定今天没有任何门咬过 ⇒ 板块轴与库轴可以
+# 悄悄长出同名 slug、同枚成员路径、冒充板块 id 的 lid，而 `board_doc_sync --check` 那两支尺
+# 全都看不见（库轴根本不进板块文档）。
+#
+# 六条腿（全 AST 现算、不吃行号（台账 #50★）、不写死枚数（规则 10））：
+#   ① 散文在位锁（散文＝本锁唯一依据；撤锁先撤裁定）
+#   ② 读者函数 `iter_release_libs()` 不碰板块轴（派生通道搬进读者口＝第二真身）
+#   ③ 两轴 slug 不相交（slug 同时是仓外库目录名与 git tag 命名空间）
+#   ④ 库 `lid` 不许长成板块 id 形
+#   ⑤ 成员字面不双认领（∩ 板块侧 `impl_paths` 全集；另判库内重复、路径在仓里不存在）
+#   ⑥ slug 必过 kebab 尺
+#
+# 取数口 `_taxonomy_scan()`：按 BoardNode / FeatureNode / ReleaseLibNode 三种 call 节点的
+# **关键字字面量**取值；缺关键字、值非字面量（推导式／变量位／通配）一律**抛**——「缺声明当
+# 空值」会让腿空跑而门照绿，是本仓实犯过的空账形态（台账 #72「三格哑面在盘不在码」同族）。
+#
+# 🔴 本波**没锁**到的维度（诚实边界，交付报告同段点名）：`pending_seed` 三态一枚都不进判据。
+# 态③ 按字面定义就是「落点在盘上、已被某支板块库装着（板块账未让位）」＝与板块账**故意**重叠，
+# 把播种面并进双认领尺会让现役声明源无端红；播种三态的合法边界没有在册文档定死 ⇒ 不判。
+# 只判「`member_paths` 与 `pending_seed` 两者都没声明」这种取数口失明形态（抛，不折空值）。
+# ===========================================================================
+
+TAXONOMY_PY = ROOT / "plugins" / "bot_unified_runtime" / "domains" / "core" / "board_taxonomy.py"
+
+#: 散文裁定的必备片段（全住在**模块 docstring**，缺一即红）。为什么不钉整句：整句里带中文
+#: 破折号与成对反引号，逐字钉会让「同义改写」与「误删」共用一种红；片段尺既能抓住删句，也能
+#: 抓住把「绝不抄进」软化成「不必抄进」这类改写——它同样是撤裁定。
+_TAXONOMY_RULING_FRAGMENTS: tuple[str, ...] = ("绝不抄进", "LIBRARY_TAXONOMY", "第二真身")
+
+#: 板块 id 的形（`B<两位数字>`，真身＝上面 `test_board_count_is_ten_and_ids_unique` 用的那一族）。
+#: 库轴里出现同形的 `lid` ＝冒充板块轴，派生尺会把它当成板块库再发一次。
+_BOARD_ID_SHAPE = re.compile(r"^B\d{2}$")
+
+#: 每种声明节点必须读得出的关键字（读不出即抛；**不是**「读不出当没有」）。
+_TAXON_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
+    "BoardNode": ("bid", "slug"),
+    "FeatureNode": ("fid",),
+    "ReleaseLibNode": ("lid", "slug"),
+}
+
+
+class _TaxonomyUnreadable(RuntimeError):
+    """AST 取数读不出字面量＝判据失明。宁可当场抛，绝不折成空值让腿空跑。"""
+
+
+@dataclass(frozen=True)
+class _BoardRow:
+    bid: str
+    slug: str
+
+
+@dataclass(frozen=True)
+class _FeatureRow:
+    fid: str
+    impl_paths: tuple[str, ...] | None  # None＝本二级功能没声明实现面（空壳判据归板块门自己那把尺）
+
+
+@dataclass(frozen=True)
+class _LibRow:
+    lid: str
+    slug: str
+    member_paths: tuple[str, ...] | None  # None＝成员住在 pending_seed（本波不判，见本节头 🔴）
+    declares_pending_seed: bool
+
+
+@dataclass
+class _TaxonomyScan:
+    """三轴字面声明的累加器（唯一被就地填的枚＝取数过程中途抛即崩，不留半成品给人当绿）。"""
+
+    prose: str
+    boards: list[_BoardRow] = field(default_factory=list)
+    features: list[_FeatureRow] = field(default_factory=list)
+    libs: list[_LibRow] = field(default_factory=list)
+    reader_uses_board_axis: bool = False
+
+
+def _taxonomy_source_text() -> str:
+    """唯一取数口：声明源逐字原文（真源只读，本波一字节不改）。"""
+    return TAXONOMY_PY.read_text(encoding="utf-8")
+
+
+def _as_literal_str(node: ast.expr, ctx: str) -> str:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    raise _TaxonomyUnreadable(
+        f"{ctx}：值不是字面量字符串（推导式／变量位／通配一律拒收）＝{type(node).__name__}："
+        f"{ast.dump(node)[:80]}"
+    )
+
+
+def _as_literal_path_tuple(node: ast.expr, ctx: str) -> tuple[str, ...]:
+    if not isinstance(node, (ast.Tuple, ast.List)):
+        raise _TaxonomyUnreadable(
+            f"{ctx}：路径集不是字面量元组/列表＝{type(node).__name__}（通配或变量位拒收）"
+        )
+    return tuple(_as_literal_str(e, f"{ctx} 的第 {i} 枚路径") for i, e in enumerate(node.elts))
+
+
+def _taxonomy_scan(text: str) -> _TaxonomyScan:
+    """一次 AST 扫描，抽出三轴的字面声明 + 模块散文 + 读者函数体的板块轴引用。
+
+    形状全现算；任何一枚节点读不出必需关键字、或用了非字面量值 ⇒ 抛（fail-closed）。
+    """
+    tree = ast.parse(text)
+    prose = ast.get_docstring(tree)
+    if prose is None:
+        raise _TaxonomyUnreadable(
+            "声明源没有模块 docstring＝散文权威无处可查，腿① 与整把锁的依据一起失明"
+        )
+    scan = _TaxonomyScan(prose=prose)
+    seen: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        kind = node.func.id
+        if kind not in _TAXON_REQUIRED_FIELDS:
+            continue
+        seen[kind] = seen.get(kind, 0) + 1
+        if node.args:
+            raise _TaxonomyUnreadable(f"{kind} 出现位置参数/星号参数＝声明源改版，关键字尺读不到")
+        kws: dict[str, ast.expr] = {}
+        for kw in node.keywords:
+            if kw.arg is None:
+                raise _TaxonomyUnreadable(f"{kind} 出现 ** 解包＝动态关键字，字面量尺拒收")
+            if kw.arg in kws:
+                raise _TaxonomyUnreadable(f"{kind} 同名关键字重复声明＝{kw.arg}")
+            kws[kw.arg] = kw.value
+        for required in _TAXON_REQUIRED_FIELDS[kind]:
+            if required not in kws:
+                raise _TaxonomyUnreadable(
+                    f"{kind} 缺 {required} 关键字声明：不许把「缺声明」折成「空声明」（空账形态）"
+                )
+        slug = (
+            _as_literal_str(kws["slug"], f"{kind}.slug") if "slug" in kws else ""
+        )
+        if kind == "BoardNode":
+            scan.boards.append(
+                _BoardRow(bid=_as_literal_str(kws["bid"], "BoardNode.bid"), slug=slug)
+            )
+        elif kind == "FeatureNode":
+            fid = _as_literal_str(kws["fid"], "FeatureNode.fid")
+            scan.features.append(
+                _FeatureRow(
+                    fid=fid,
+                    impl_paths=(
+                        _as_literal_path_tuple(kws["impl_paths"], f"{fid}.impl_paths")
+                        if "impl_paths" in kws
+                        else None
+                    ),
+                )
+            )
+        else:
+            lid = _as_literal_str(kws["lid"], "ReleaseLibNode.lid")
+            member_paths = (
+                _as_literal_path_tuple(kws["member_paths"], f"{lid}.member_paths")
+                if "member_paths" in kws
+                else None
+            )
+            declares_seed = "pending_seed" in kws
+            if member_paths is None and not declares_seed:
+                raise _TaxonomyUnreadable(
+                    f"ReleaseLibNode lid={lid} 既无 member_paths 也无 pending_seed＝这支库的"
+                    "成员宇宙对任何尺都是隐身的（读不出＝抛，不折成空表）"
+                )
+            scan.libs.append(
+                _LibRow(
+                    lid=lid, slug=slug, member_paths=member_paths,
+                    declares_pending_seed=declares_seed,
+                )
+            )
+    for kind in _TAXON_REQUIRED_FIELDS:
+        if not seen.get(kind):
+            raise _TaxonomyUnreadable(
+                f"AST 提零 {kind} 声明＝声明源改版或取数口失明，六条腿会集体空跑"
+            )
+    funcs = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    if "iter_release_libs" not in funcs:
+        raise _TaxonomyUnreadable(
+            "读者函数 iter_release_libs() 不在声明源里＝库轴取数口改版，腿② 空跑"
+        )
+    scan.reader_uses_board_axis = any(
+        (isinstance(x, ast.Name) and x.id == "BOARD_TAXONOMY")
+        or (isinstance(x, ast.Attribute) and x.attr == "BOARD_TAXONOMY")
+        for x in ast.walk(funcs["iter_release_libs"])
+    )
+    return scan
+
+
+def _library_axis_findings(text: str) -> list[str]:
+    """六条腿的**唯一判据函数**（纯函数：喂真源原文与喂内存注毒走同一支，不落盘、不改真源）。
+
+    返回违规清单，空表＝六条腿全过。腿与腿互不遮蔽：一次扫描把所有能红的都红出来。
+    """
+    scan = _taxonomy_scan(text)
+    findings: list[str] = []
+
+    # 腿①：散文在位。
+    lost = [frag for frag in _TAXONOMY_RULING_FRAGMENTS if frag not in scan.prose]
+    if lost:
+        findings.append(
+            "BOARD_DERIVATION_PROSE_GONE 声明源模块 docstring 里「一级板块库的成员只由 "
+            "BOARD_TAXONOMY 派生、绝不抄进 LIBRARY_TAXONOMY」那句裁定的**散文消失**了"
+            f"（缺片段 {lost}）＝本 AST 锁失去唯一依据。这不是「代码违规」而是「依据被撤」："
+            "撤锁的正确次序是先撤用户裁定、再撤判据，**不许**只删散文把锁留成无据可依，"
+            "也不许只删锁把散文留成没人执法的旧规（叙述与真身分家两例见台账 #48★）"
+        )
+
+    # 腿②：读者函数不许碰板块轴。
+    if scan.reader_uses_board_axis:
+        findings.append(
+            "READER_TOUCHES_BOARD_AXIS 读者函数 iter_release_libs() 体内引用了 BOARD_TAXONOMY"
+            "＝「板块库由板块账派生」这条通道被搬进了读者口，发行库从此有了第二真身"
+            "（同一支板块库会在两处各出现一次）。派生只准住在库工厂那一支尺里"
+        )
+
+    # 腿③：两轴 slug 不相交（逐枚点名，谁和谁撞）。
+    board_by_slug: dict[str, list[str]] = {}
+    for row in scan.boards:
+        board_by_slug.setdefault(row.slug, []).append(row.bid)
+    overlapped = sorted(set(board_by_slug) & {row.slug for row in scan.libs})
+    if overlapped:
+        detail = [
+            f"库 lid={row.lid} 的 slug={row.slug!r} 撞板块 {board_by_slug[row.slug]}"
+            for row in scan.libs
+            if row.slug in board_by_slug
+        ]
+        findings.append(
+            f"AXIS_SLUG_OVERLAP 板块轴与库轴共用 slug {overlapped}＝一枚 slug 两支认领："
+            f"slug 同时是仓外库目录名与 git tag 命名空间，撞名当场撞车（逐枚点名：{detail}）"
+        )
+
+    # 腿④：库 lid 不许长成板块 id 形。
+    impersonators = [
+        f"{row.lid}（slug={row.slug!r}）" for row in scan.libs if _BOARD_ID_SHAPE.match(row.lid)
+    ]
+    if impersonators:
+        findings.append(
+            f"LIB_LID_IMPERSONATES_BOARD 库 lid {impersonators} 长成板块 id 形（B + 两位数字）"
+            "＝库轴冒充板块轴；派生尺会把同一次发行发两遍"
+        )
+
+    # 腿⑤：成员字面不双认领 + 库内重复 + 跨库重复 + 路径在仓里不存在。
+    impl_owner: dict[str, list[str]] = {}
+    for row in scan.features:
+        for path in row.impl_paths or ():
+            impl_owner.setdefault(path, []).append(row.fid)
+    seen_lib_members: dict[str, str] = {}
+    for row in scan.libs:
+        if row.member_paths is None:
+            continue  # 成员住在 pending_seed——本波不判（见本节头 🔴 未锁维度）
+        member_list = list(row.member_paths)
+        doubles = sorted({m for m in member_list if m in impl_owner})
+        if doubles:
+            findings.append(
+                f"LIB_MEMBER_DOUBLE_CLAIMED 库 {row.lid} 的成员 {doubles} 同时被板块侧 impl_paths "
+                f"认领（板块主人 {[[m, impl_owner[m]] for m in doubles]}）＝同一字节进两支仓"
+                "＝库级双认领；板块库的成员只由板块账派生，绝不抄进本表"
+            )
+        dupes = sorted({m for m in member_list if member_list.count(m) > 1})
+        if dupes:
+            findings.append(
+                f"LIB_MEMBER_DUPLICATED 库 {row.lid} 的 member_paths 内部重复 {dupes}"
+                "＝名册自身失真（同一枚路径声明两次，成员账不可加总）"
+            )
+        absent = [m for m in member_list if not (ROOT / m).exists()]
+        if absent:
+            findings.append(
+                f"LIB_MEMBER_PATH_ABSENT 库 {row.lid} 的成员路径在仓里不存在 {absent}"
+                "＝名册指向空位，播种会静默少一支文件"
+            )
+        for member in member_list:
+            prior = seen_lib_members.get(member)
+            if prior is not None and prior != row.lid:
+                findings.append(
+                    f"LIB_MEMBER_CROSS_LIB_DUPLICATED {member} 同时进 {prior} 与 {row.lid} 两支库"
+                    "＝库与库之间不互斥（同一字节进两支仓）"
+                )
+            seen_lib_members[member] = row.lid
+
+    # 腿⑥：slug 必过 kebab 尺（库轴为主，板块轴顺带同尺）+ 库轴内部唯一。
+    for owner_id, slug in [(r.lid, r.slug) for r in scan.libs] + [
+        (r.bid, r.slug) for r in scan.boards
+    ]:
+        if not _KEBAB.match(slug):
+            findings.append(
+                f"SLUG_NOT_KEBAB {owner_id} 的 slug {slug!r} 不过 kebab 尺——"
+                "slug 同时是仓外库目录名与 git tag 命名空间，非法字符＝那一层直接建不出来"
+            )
+    lib_slugs = [row.slug for row in scan.libs]
+    slug_dupes = sorted({s for s in lib_slugs if lib_slugs.count(s) > 1})
+    if slug_dupes:
+        findings.append(
+            f"LIB_SLUG_DUPLICATED 库轴内部 slug 重复 {slug_dupes}＝两支发行库抢同一个目录名与"
+            " tag 命名空间"
+        )
+    return findings
+
+
+def test_release_library_axis_declares_no_second_truth() -> None:
+    """六条腿的正尺：现役声明源必须一条都不红（红因逐枚点名，绝不静默放行）。"""
+    findings = _library_axis_findings(_taxonomy_source_text())
+    assert not findings, (
+        "发行库轴长出板块真身／自失真（W-11 腿 B：「板块库只由板块账派生、绝不抄进 "
+        "LIBRARY_TAXONOMY」这条散文裁定的 AST 锁判红）。修法在声明源 "
+        "plugins/bot_unified_runtime/domains/core/board_taxonomy.py，不在本文件：\n"
+        + "\n".join(findings[:12])
+    )
+
+
+# ------------------------------------------- 三把必带注毒（内存合成文本，真声明源一字节未动）
+_RULING_SENTENCE = "**绝不抄进 ``LIBRARY_TAXONOMY``**——抄进来就是第二真身。"
+
+
+def _poison(needle: str, replacement: str) -> str:
+    """把声明源的一处改坏成内存文本（不落盘、不写回真源；注毒点不命中即抛，防假绿）。"""
+    src = _taxonomy_source_text()
+    assert src.count(needle) == 1, f"注毒点命中 {src.count(needle)} 次（应为恰好 1 次）：{needle!r}"
+    poisoned = src.replace(needle, replacement, 1)
+    assert poisoned != src, f"注毒点未命中，本用例失去意义：{needle!r}"
+    return poisoned
+
+
+def test_axis_lock_detects_board_slug_planted_in_lib_axis() -> None:
+    """注毒①（腿③）：把库轴一枚 slug 换成某板块的 slug ⇒ 必红；现役真声明源不被误伤。"""
+    codes = {f.split(" ", 1)[0] for f in _library_axis_findings(_poison("slug='contracts'", "slug='ingress-protocol'"))}
+    assert "AXIS_SLUG_OVERLAP" in codes, (
+        f"板块 slug 被抄进库轴却没被抓到（该腿视为不存在）：{sorted(codes)}"
+    )
+    assert "AXIS_SLUG_OVERLAP" not in {
+        f.split(" ", 1)[0] for f in _library_axis_findings(_taxonomy_source_text())
+    }, "现役真声明源被腿③ 误伤＝注毒红混进了存量绿"
+
+
+def test_axis_lock_detects_reader_touching_board_axis() -> None:
+    """注毒②（腿②）：往 iter_release_libs() 体内塞 BOARD_TAXONOMY ⇒ 必红，且只红这一条腿。"""
+    findings = _library_axis_findings(
+        _poison(
+            "    yield from LIBRARY_TAXONOMY",
+            "    _boards = BOARD_TAXONOMY\n    yield from LIBRARY_TAXONOMY",
+        )
+    )
+    assert {f.split(" ", 1)[0] for f in findings} == {"READER_TOUCHES_BOARD_AXIS"}, (
+        f"派生通道搬进读者口没被抓到（或连带误伤别的腿）：{[f.split(' ', 1)[0] for f in findings]}"
+    )
+    assert not _library_axis_findings(_taxonomy_source_text()), "现役读者函数被腿② 误伤"
+
+
+def test_axis_lock_detects_missing_ruling_prose() -> None:
+    """注毒③（腿①）：删掉那句散文 ⇒ 必红，且红因必须点名「散文消失」而不是别的。"""
+    findings = _library_axis_findings(_poison(_RULING_SENTENCE, ""))
+    assert len(findings) == 1, f"删散文只该惊动依据腿，实得：{[f.split(' ', 1)[0] for f in findings]}"
+    reason = findings[0]
+    assert reason.startswith("BOARD_DERIVATION_PROSE_GONE"), f"红因代码不对：{reason[:60]}"
+    assert "散文消失" in reason, f"红因没点名「散文消失」这条真根因（会被当成代码违规）：{reason[:120]}"
+    assert "先撤用户裁定" in reason, f"红因没交代撤锁的正确次序（依据被撤≠可以擅自删判据）：{reason[:120]}"
+    assert _TAXONOMY_RULING_FRAGMENTS and all(
+        frag in _taxonomy_scan(_taxonomy_source_text()).prose
+        for frag in _TAXONOMY_RULING_FRAGMENTS
+    ), "现役散文里连片段都不在＝依据腿已在空跑"
+
+
+# --------------------------------------- 腿④⑤⑥ 的注毒自证（本仓纪律：注毒不红＝量具瞎）
+def test_axis_lock_detects_board_shaped_lib_lid() -> None:
+    """注毒（腿④）：把一枚库 lid 改成板块 id 形 ⇒ 必红；现役 lid 族不误伤。"""
+    codes = {f.split(" ", 1)[0] for f in _library_axis_findings(_poison("lid='A1'", "lid='B01'"))}
+    assert "LIB_LID_IMPERSONATES_BOARD" in codes, f"lid 冒充板块 id 未被抓到：{sorted(codes)}"
+    assert "LIB_LID_IMPERSONATES_BOARD" not in {
+        f.split(" ", 1)[0] for f in _library_axis_findings(_taxonomy_source_text())
+    }, "现役 lid 被腿④ 误伤"
+
+
+def test_axis_lock_detects_double_claimed_and_dead_member_paths() -> None:
+    """注毒（腿⑤）：一枚板块已认领的路径抄进库成员表 ⇒ 双认领红；再改成不存在路径 ⇒ 空位红。
+
+    两次注毒各自命中不同子判据（互不遮蔽），另附「同一枚路径在库内写两遍」的自证。
+    """
+    claimed = "'plugins/bot_unified_runtime/domains/core/contracts/errors.py',"
+    live_impl = "plugins/bot_unified_runtime/domains/chat_reply/runtime/base_router.py"
+    both = _library_axis_findings(
+        _poison(claimed, f"{claimed}\n            '{live_impl}',")
+    )
+    codes = {f.split(" ", 1)[0] for f in both}
+    assert codes == {"LIB_MEMBER_DOUBLE_CLAIMED"}, f"双认领判据走样（或连带误伤）：{codes}"
+    assert live_impl in both[0], f"红因没点名被撞的那枚路径：{both[0][:160]}"
+
+    dead = _library_axis_findings(_poison(claimed, f"{claimed}\n            'no/such/lib_member.py',"))
+    assert {f.split(" ", 1)[0] for f in dead} == {"LIB_MEMBER_PATH_ABSENT"}, (
+        f"名册指向空位没被单独抓到（被双认领腿吞了）：{[f.split(' ', 1)[0] for f in dead]}"
+    )
+
+    twice = _library_axis_findings(_poison(claimed, f"{claimed}\n            {claimed}"))
+    assert {f.split(" ", 1)[0] for f in twice} == {"LIB_MEMBER_DUPLICATED"}, (
+        f"库内成员重复没被抓到：{[f.split(' ', 1)[0] for f in twice]}"
+    )
+    assert not _library_axis_findings(_taxonomy_source_text()), "现役成员账被腿⑤ 误伤"
+
+
+def test_axis_lock_detects_non_kebab_lib_slug() -> None:
+    """注毒（腿⑥）：库 slug 写成非法形状 ⇒ 必红；另自证「两支库同名」也被咬住。"""
+    codes = {
+        f.split(" ", 1)[0]
+        for f in _library_axis_findings(_poison("slug='adapter-qq'", "slug='Adapter_QQ'"))
+    }
+    assert "SLUG_NOT_KEBAB" in codes, f"非法 slug 未被抓到（该腿视为不存在）：{sorted(codes)}"
+    same_name = _library_axis_findings(_poison("slug='adapter-mail'", "slug='adapter-qq'"))
+    assert "LIB_SLUG_DUPLICATED" in {f.split(" ", 1)[0] for f in same_name}, (
+        f"两支库抢同名没被抓到：{[f.split(' ', 1)[0] for f in same_name]}"
+    )
+    assert "AXIS_SLUG_OVERLAP" not in {f.split(" ", 1)[0] for f in same_name}, (
+        "同轴重名被当成跨轴撞名＝腿③ 与腿⑥ 串门，红因会指错修法"
+    )
+
+
+# -------------------------------------------------- fail-closed 与端到端自证（防门本体空跑）
+def test_axis_scan_fails_closed_instead_of_folding_absence_into_empty() -> None:
+    """取数口逐态拒收：变量位、推导式、通配解包、缺关键字、星号位置参数、同名关键字重复——**抛**。
+
+    这一枚是对「尺本身」的注毒：若「读不出当没有」，slug 尺、lid 尺、成员双认领尺会集体对着
+    空表放行，门照绿——正是本仓实犯过的空账形态。
+    """
+    cases = (
+        ("变量位 slug", "slug='contracts'", "slug=_RUNTIME_SLUG_CACHE[0]"),
+        (
+            "推导式 impl_paths",
+            'impl_paths=("plugins/bot_unified_runtime/domains/finance",)',
+            "impl_paths=tuple(_p for _p in _RUNTIME_DIRS)",
+        ),
+        ("通配解包 member_paths", "'plugins/bot_unified_runtime/domains/core/contracts/errors.py',",
+         "*_RUNTIME_MEMBERS,"),
+        ("缺 lid 关键字", "lid='A2',\n", ""),
+        ("星号位置参数", "        slug='adapter-console',",
+         "        *_EXTRA,\n        slug='adapter-console',"),
+        ("同名关键字重复", "slug='adapter-mail',", "slug='adapter-mail',\n        slug='x',"),
+    )
+    for label, needle, replacement in cases:
+        poisoned = _poison(needle, replacement)
+        try:
+            _taxonomy_scan(poisoned)
+        except _TaxonomyUnreadable:
+            continue
+        pytest.fail(f"取数口把「{label}」这种读不出的形折成了空值＝缺声明当空账，腿会对着空表绿")
+    with pytest.raises(_TaxonomyUnreadable, match="docstring"):
+        _taxonomy_scan("BOARD_TAXONOMY = ()\n")
+    with pytest.raises(_TaxonomyUnreadable, match="iter_release_libs"):
+        _taxonomy_scan(_poison("def iter_release_libs", "def _renamed_reader"))
+
+
+def test_axis_lock_kills_the_production_assertion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """端到端自证（治「只测判据函数、门本体空跑」）：真文本换成毒形后，**跑那条生产断言本身**必抛。
+
+    注毒只发生在内存字符串上（`monkeypatch` 自动还原取数口），声明源一字节未动、未落盘。
+    """
+    for needle, replacement in (
+        ("slug='contracts'", "slug='engineering-governance'"),
+        ("    yield from LIBRARY_TAXONOMY", "    _ = BOARD_TAXONOMY\n    yield from LIBRARY_TAXONOMY"),
+    ):
+        poisoned = _poison(needle, replacement)
+        monkeypatch.setattr(
+            sys.modules[__name__], "_taxonomy_source_text", lambda p=poisoned: p
+        )
+        with pytest.raises(AssertionError, match="SECOND_TRUTH|AXIS_SLUG_OVERLAP|READER_TOUCHES"):
+            test_release_library_axis_declares_no_second_truth()
+    monkeypatch.undo()
+    test_release_library_axis_declares_no_second_truth()
 

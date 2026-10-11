@@ -1578,6 +1578,21 @@ class RuntimeSettingsStore:
             self._reload_if_changed()
             return dict(self._overrides)
 
+    def revision(self) -> int | None:
+        """热合并层轮内 memo 的版本尺；``None``＝本 store 没有可靠的新鲜度尺＝别缓存。
+
+        接了 SQL backend ⇒ 交 ``SQLiteConfigStateStore.revision()`` 现算那枚 CAS 列
+        （写侧 ``_change`` 必然 ``revision+1``，故读到变了就得重算，热改即时生效）；
+        没接 backend 的 JSON 面 ⇒ 返回 ``None``（那条腿的新鲜度是文件 mtime，粒度不够
+        可靠，宁可每轮重算，也不给「看着在缓存其实是 stale」的假承诺）。
+        库被锁/实例行缺席时**照实抛**，由调用侧退化成不缓存——本方法自己不吞异常。
+        """
+        with self._lock:
+            backend = self._config_backend
+        if backend is None:
+            return None
+        return backend.revision()
+
     def set_override(self, key: str, value: str, *, actor: str = "runtime_internal",
                      request_id: str = "", expected_version: int | None = None,
                      session_key: str = "") -> Any:

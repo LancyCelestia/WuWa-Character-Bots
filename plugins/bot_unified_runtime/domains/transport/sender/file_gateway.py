@@ -116,16 +116,25 @@ class FinalTransferError(FileTransferError):
     """发送前已可判定不可重试的文件失败（对应 Telegram 侧 ``_FinalSendError``）。"""
 
 
+# ---- OneBot V11 响应体原语：全树唯一真身 ----
+#
+# 为什么住这片叶子：`sender/onebot.py` 本来就 import 本件（FileSource /
+# FileTransferError / get_default_file_gateway），反向 import 才会成环。此前
+# 这四个函数在两边各写了一遍（注释写着"等价复制避免循环导入"）——两份等价实现
+# 就是两枚真身，改一边忘一边不会红。收编后由 `onebot.py` 以别名取用，调用点零改动。
+# 执法锁：tests/test_file_gateway_phase1.py::test_onebot_response_primitives_are_defined_exactly_once
+
+
 def coerce_onebot_id(value: str) -> int | str:
-    """与 ``sender/onebot.py:_coerce_onebot_id`` 同源等价（避免循环导入）。"""
+    """数字串转 int、其余原样（OneBot 的 group_id/user_id 两形都吃）。"""
     stripped = value.strip()
     if stripped.isdecimal():
         return int(stripped)
     return stripped
 
 
-def _extract_onebot_retcode(result: Any) -> int | None:
-    # 等价复制自 sender/onebot.py（避免 onebot ↔ gateway 循环导入）。
+def extract_onebot_retcode(result: Any) -> int | None:
+    """取 retcode：dict 与对象两形都认；取不到或非数字 ⇒ None（＝不判定）。"""
     if isinstance(result, dict):
         raw_retcode = result.get("retcode")
     else:
@@ -137,7 +146,8 @@ def _extract_onebot_retcode(result: Any) -> int | None:
     return None
 
 
-def _extract_onebot_status(result: Any) -> str:
+def extract_onebot_status(result: Any) -> str:
+    """取 status 并归一为小写；None／缺失 ⇒ 空串（调用方按"无状态词"处理）。"""
     if isinstance(result, dict):
         raw_status = result.get("status")
     else:
@@ -148,9 +158,9 @@ def _extract_onebot_status(result: Any) -> str:
 
 
 def onebot_result_is_success(result: Any) -> bool:
-    # 等价复制自 sender/onebot.py:_onebot_result_is_success。
-    status = _extract_onebot_status(result)
-    retcode = _extract_onebot_retcode(result)
+    """成功判定：状态词命中失败族即假；否则只看 retcode（None＝不拒，沿用旧语义）。"""
+    status = extract_onebot_status(result)
+    retcode = extract_onebot_retcode(result)
     if status in {"failed", "fail", "error"}:
         return False
     return retcode is None or retcode == 0

@@ -645,5 +645,84 @@ def test_registry_source_lock_bites_on_literal_assignment() -> None:
     assert sourced == {"_CARD_FOOT": None}, f"注毒未咬住：{sourced}"
 
 
+# ==================== 7. 分组呈现面（2026-10-08 多源同日）====================
+def _row(index: int, source: str = "IT之家") -> dict[str, str]:
+    return {"source": source, "time": f"10:0{index % 10}", "name": f"题{index}",
+            "snip": f"摘{index}"}
+
+
+def _grouped_payload() -> dict[str, Any]:
+    big = [_row(i) for i in range(5)]
+    small = [_row(9, source="BBC中文")]
+    return {
+        "title": "今日快报 · 综合",
+        "sub": "2026-10-08",
+        "items": [*big, *small],
+        "groups": [
+            {"label": "科技", "rows": big, "hidden": 3, "more": "另有 3 条同域报道没在这张卡上铺开。"},
+            {"label": "财经", "rows": small, "hidden": 0, "more": ""},
+        ],
+    }
+
+
+def test_groups_path_renders_bands_notes_and_honest_badge() -> None:
+    """域带成组 + 折叠注脚在场 + 徽章读数=铺开+折掉（不拿铺开枚数冒充总量）。"""
+    html = bridge.render_news_digest_card_html(_grouped_payload())
+    assert html.count('class="gblock"') == 2, "两个域就该两条域带"
+    assert '<span class="glabel">科技</span>' in html
+    assert '<span class="glabel">财经</span>' in html
+    assert "另有 3 条同域报道没在这张卡上铺开。" in html, "折叠注脚没上卡＝缺牙同型"
+    assert html.count('class="more"') == 1, "hidden=0 的域不许出注脚（虚报才有折）"
+    badge = re.search(r'<div class="badge">(\d+) ', html)
+    assert badge and badge.group(1) == "9", (
+        f"徽章=铺开6+折掉3=9（总量读数不许冒充铺开数）: {badge and badge.group(1)}"
+    )
+    # 域带右轨=该域总枚数（铺开+折掉），科技 5+3、财经 1+0。
+    counts = re.findall(r'<span class="gcount">(\d+) ', html)
+    assert counts == ["8", "1"], f"域带枚数右轨不对: {counts}"
+
+
+def test_groups_zebra_and_two_column_follow_per_group_rules() -> None:
+    """组内栏数与斑马纹同平铺一把尺：按**视觉行**取相、逐组重新起相。"""
+    html = bridge.render_news_digest_card_html(_grouped_payload())
+    tints = _item_tints(html)
+    assert tints == ["a", "a", "b", "b", "a", "a"], f"5 枚组内取相不对: {tints}"
+    assert html.count('class="list two-col"') == 1, "只有 ≥4 枚的那组该切两栏"
+    assert html.count('class="list">') == 1, "单枚组保持单栏"
+
+
+def test_hidden_without_note_is_self_backed_from_the_registry() -> None:
+    """缺牙保险：hidden>0 而 more 缺位时，渲染口用文案册同一枚键自补注脚。"""
+    payload = _grouped_payload()
+    payload["groups"][0]["more"] = ""
+    html = bridge.render_news_digest_card_html(payload)
+    assert bridge._CARD_TEXT["static_news_73"].format(count=3) in html, "注脚没自补"
+
+
+def test_dirty_group_shapes_never_raise_and_never_invent_hidden() -> None:
+    """脏形状归一：非字典组跳过、hidden 脏值当 0（不猜数）、空 items 域仍可只出注脚。"""
+    html = bridge.render_news_digest_card_html(
+        {
+            "title": "T",
+            "items": [],
+            "groups": [
+                "不是字典",
+                {"label": "国际", "rows": [{"name": "孤条"}], "hidden": "abc", "more": ""},
+            ],
+        }
+    )
+    assert '<span class="glabel">国际</span>' in html
+    badge = re.search(r'<div class="badge">(\d+) ', html)
+    assert badge and badge.group(1) == "1", "hidden 脏值不许被猜成正数抬徽章"
+    assert html.count('class="more"') == 0
+
+
+def test_flat_path_stays_alive_without_groups() -> None:
+    """groups 缺位＝旧平铺逐条同形（本文件上方全部平铺判据即其活性证明，此处补一眼）。"""
+    html = _render([{"name": f"n{i}"} for i in range(4)])
+    assert 'class="gblock"' not in html
+    assert 'class="list two-col"' in html
+
+
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q"]))

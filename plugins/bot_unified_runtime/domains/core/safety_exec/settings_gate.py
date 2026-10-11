@@ -36,10 +36,20 @@ docstring 只记实况、逻辑零触碰）：
   ``apply_approved``（落地前绑定复核＝漂移作废），判据齐；
 - 消费面（``consent_admin._verdict_result``）也**已在册**：批下后按
   ``getattr(gate, "consume_apply_result", None)`` 读门的结果话术；
-- **缺席的是本门**：``consume_apply_result`` 与「批下即按卡回灌执行」的腿在本件
-  没有实现——``getattr`` 恒 None ⇒ 回显永远走 ``_APPLY_RESULT_FALLBACK``
-  （"没再听到别的话，就是已经按卡上批的落到位了"），而实际**什么都没落**。
-  即：现行生产回显是**谎称已落地**，这是在册的诚实缺陷（补实现时本节必须同批改写）。
+- **本门给的是「回执」不是「执行」**（``consume_apply_result``，2026-10-04 席 S-CONSENT-RECEIPT 补）：
+  消费面（``consent_admin._verdict_result``）批下后按
+  ``getattr(gate, "consume_apply_result", None)`` 读门的结果话术。本件那枚钩子现在是
+  **只读现算**：拿同意号去 ``safetyexec_change_audit`` 找这张卡对应的流水行——
+  有 ``applied`` 行才报落地（点名键/变更号/终态/指纹），只有 ``failed``/``pending``
+  就照实报「动过笔但没成」/「终态没回写」，一行都查不到就明说**这次批准没改动任何参数**，
+  流水读不到就两头都不声称。**本件绝不因为这句话去执行任何写**（结构锁
+  ``test_consent_apply_receipt_honesty.py::test_g_consume_apply_result_performs_no_execution``）。
+- 🔴 **「批下即按卡回灌执行」仍然没有实现**（在册缺口，不是已交付）：批准只把凭证记进
+  ``_grants``，真正落库仍要发起人同参重试。此前的形态是这条腿缺席 ⇒ ``getattr`` 恒 None
+  ⇒ 回显永远走 ``_APPLY_RESULT_FALLBACK``（那句写的是"没再听到别的话，就是已经按卡上批的
+  落到位了"，而实际**什么都没落**）＝谎称已落地，台账 #63 记过。兜底句已同批改成诚实口径，
+  并由 ``test_f_no_receipt_wording_claims_landing_without_evidence`` 钉住不许回潮；
+  补真执行属**行为翻转**，要主人裁定（见波日志「待裁」）。
 - §52.2 的另一半「超管本人 R1 免卡直改」同样不在 HEAD 盘面：点名测试
   ``test_super_admin_r1_write_lands_without_a_ticket`` 缺席、本件无 roles 派生导入，
   根 ``__init__.py`` 群策略注释却仍引用该门——两半都疑似台账 #68 还原事故吃掉的
@@ -148,6 +158,59 @@ _ENGINE_BROKEN_HINT = (
     "安全执行引擎的账本装不起来，危险档的参数我一个都不改"
     "（{target}｜{tier}）。这不是一句软话：账落不下去的改动比不改更糟。"
 )
+
+# ---------------------------------------------------------------------------
+# 回执句表（「这张卡落没落」的唯一出口口径；判据在变更流水，不在这里判）
+# ---------------------------------------------------------------------------
+#
+# 规矩：这一族的每一句都必须与流水对得上账——**没有证据就不许说执行过**（台账 #63 的
+# 谎账就是从一句兜底话术出生的）。改动任何一句都归
+# ``test_consent_apply_receipt_honesty.py`` 判：行为锁看真回执、源码锁扫面量回潮。
+
+#: 流水里查不到这张卡对应的写入行 ⇒ 批准只完成了「记账」这一件事。
+_RECEIPT_NOT_APPLIED = (
+    "这张卡按你批的记下了，但这次批准没有改动任何参数——"
+    "最近的变更流水里查不到这张卡对应的写入行。"
+    "工单状态写着已核销，那说的是凭证用掉了，不等于参数被改过。"
+    "要真按卡落地，请发起人 {requester} 用卡上同一参数再说一次（{target}）。"
+)
+
+#: 流水里有 applied 行 ⇒ 照实报是哪枚键、哪次变更、什么终态。
+_RECEIPT_LANDED = (
+    "这张卡按你批的记下了，参数也已按卡执行完："
+    "{target}｜变更 {change_id}｜终态 {state}｜写入指纹 {after_fingerprint}。"
+    "凭证一次有效，再用同一张卡批第二次不算数。"
+)
+
+#: 流水里这张卡停在 failed ⇒ 报失败，不报成功，也不替它猜现值。
+_RECEIPT_APPLY_FAILED = (
+    "这张卡按你批的记下了，也照卡动过笔，但写这一步没成："
+    "{target}｜变更 {change_id}｜终态 {state}｜{reason}"
+    "。这一条现在是什么形我不从流水猜，要人工核对。"
+)
+
+#: 写了却把终态丢在 pending（审计哲学里的「查无终态」），或流水里的终态我不认得 ⇒
+#: 两头都不声称，也不从这一行猜现值。
+_RECEIPT_OUTCOME_UNCLEAR = (
+    "这张卡按你批的记下了，流水里它对应的变更 {change_id} 终态是 {state}："
+    "我不从这一行猜现值，所以不能说它改成了，也不能说它没改（{target}）。要人工核对这一条。"
+)
+
+#: 流水这一读取失败 ⇒ 既不声称改了，也不声称没改（诚实＝不把读不到当成结论）。
+_RECEIPT_UNREADABLE = (
+    "这张卡按你批的记下了。这枚键落没落我读不到变更流水（{detail}），"
+    "所以既不声称参数被改过，也不声称没被改过——请以流水里 {target} 这一条为准。"
+)
+
+#: 同意号在流水与工单面上都读不到（异常形态；正常路径永远撞不上，批语成立才有这句）。
+_RECEIPT_NO_FACTS = (
+    "这张卡按你批的记下了（{consent_id}）。它的键名与落地记录我这次都读不到，"
+    "所以不声称改动过任何参数——请以流水为准。"
+)
+
+#: 回执扫流水的窗口：一次批准之后紧跟着的写入行必然在最新几行里；窗口取宽只为
+#: 「排程撞门刷出的行」把这张卡的记录挤出视野时，回执落进「查不到」而不是误报成功。
+_RECEIPT_SCAN_LIMIT = 200
 
 
 def short_code_of(row: ConsentRow) -> str:
@@ -388,6 +451,74 @@ class SettingsWriteGate:
 
     def deny(self, consent_id: object, *, code: object, message: IncomingMessage):
         return self._adjudicate(consent_id, code=code, message=message, approved=False)
+
+    def consume_apply_result(self, consent_id: object) -> str:
+        """这张卡落没落：**只读**变更流水现算一句回执；本件绝不因这句回执去执行任何写。
+
+        口径：判据全在 ``safetyexec_change_audit`` 的行上——有 ``applied`` 行才报落地
+          （点名键/变更号/终态/指纹），只有 ``failed`` 就报失败，终态不认得就两头不声称，
+          一行都查不到就明说「这次批准没有改动任何参数」并交代真落地要走的那一步
+          （发起人同参重试）。现行门**没有**「批下即回灌执行」这条腿（台账 #63），
+          所以生产上这句正常走的就是「未改动任何参数」那一支。
+        失败：流水读不到 ⇒ 既不声称改过也不声称没改过（不把「读不到」当成结论）；
+          本件不外抛——回执是话术腿，批准的账本体在上一步已经落好，不许这里再咬一道。
+        零执行：这里只 ``list_changes``/``ticket`` 两读（结构锁判这一点，禁写腿混进来）。
+        """
+        wanted = str(consent_id or "").strip()
+        if not self.enabled or not wanted:
+            return ""  # 交回空串＝消费面用它那句诚实兜底（禁在这里补第二套话术）
+        target = ""
+        requester = ""
+        card = self.ticket(wanted)
+        if card is not None:
+            target = str(card.row.target or "")
+            requester = str(card.row.requester or "")
+        unknown_key = target or "（键名读不到）"
+        try:
+            self._ensure_ledger()
+            store = self._ledger_store
+            if store is None:
+                raise AuditWriteError("账本未装载")
+            records = store.list_changes(limit=_RECEIPT_SCAN_LIMIT)
+        except (AuditWriteError, OSError, ValueError, TypeError) as exc:
+            return _redact(
+                _RECEIPT_UNREADABLE.format(
+                    detail=f"{type(exc).__name__}: {exc}", target=unknown_key
+                )
+            )
+        match: ChangeRecord | None = None
+        for record in records:  # 升序流水：留在最后的那条就是这张卡最新的一次动笔
+            if record.consent_id == wanted:
+                match = record
+        if match is None:
+            return _redact(
+                _RECEIPT_NOT_APPLIED.format(
+                    target=unknown_key, requester=requester or "（申请人未记名）"
+                )
+            )
+        if match.state == CHANGE_APPLIED:
+            return _redact(
+                _RECEIPT_LANDED.format(
+                    target=match.target or unknown_key,
+                    change_id=match.change_id,
+                    state=match.state,
+                    after_fingerprint=match.after_fingerprint or "（未记指纹）",
+                )
+            )
+        if match.state == CHANGE_FAILED:
+            return _redact(
+                _RECEIPT_APPLY_FAILED.format(
+                    target=match.target or unknown_key,
+                    change_id=match.change_id,
+                    state=match.state,
+                    reason=(match.reason or "（未记因）")[:200],
+                )
+            )
+        return _redact(
+            _RECEIPT_OUTCOME_UNCLEAR.format(
+                change_id=match.change_id, state=match.state, target=match.target or unknown_key
+            )
+        )
 
     def ticket(self, consent_id: object):
         """按同意号查一张卡（命令面的「看 <工单号>」用；只读，不消费任何东西）。"""

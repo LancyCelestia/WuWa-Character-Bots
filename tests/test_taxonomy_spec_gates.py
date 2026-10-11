@@ -2460,6 +2460,111 @@ def test_s175_poison_broken_identity_is_caught(tmp_path: Path) -> None:
     assert len(tampered_stock) + len(tampered_new) != len(t1)
 
 
+# ==================== 尺的执法口（--fail-on-violations）====================
+#
+# 病根：这把尺今天只有 `--report`/`--dump`，`main` 末尾**无条件 return 0** ⇒
+# "G-T3 转绿"这类说法结构上不可执法（谁都能把欠账讲成进度）。本组用例钉的是
+# 新执法口的三形：越限必 rc=3、取数交不出必 rc=2（缺行不是免检）、不带 flag 时
+# 行为逐字不变（尺不许恒红，也不许"空跑装执法"）。
+# 全部走内存合成 res，**一个字节都不落盘**：落盘造违规页＝亲手往仓里添无主件。
+
+_CANNED_RES: dict[str, object] = {
+    "t1_debt_official": ["p"] * 10,
+    "t2_debt_official": [],
+    "t3_managed": [],
+    "t3_unmoved": [],
+    "t4_debt_official": [],
+    "mismatch": [],
+    "t5": {"missing_template": []},
+}
+
+_CANNED_CEILINGS: dict[str, int] = {
+    "T1_CEILING": 337,
+    "T2_CEILING": 1,
+    "T3_MANAGED_CEILING": 226,
+    "T3_UNMOVED_CEILING": 335,
+    "T4_CEILING": 0,
+    "MISMATCH_CEILING": 0,
+    "T5_MISSING_TEMPLATE_CEILING": 18,
+}
+
+
+def _vf_main(
+    monkeypatch: pytest.MonkeyPatch,
+    res: dict[str, object],
+    argv_extra: tuple[str, ...],
+    ceilings: dict[str, int] | None = None,
+) -> int:
+    """只跑执法面：把 compute/report_lines 换成合成值，判的是 rc，不是那 21 行散文。"""
+    monkeypatch.setattr(sc, "compute", lambda *a, **k: res)
+    monkeypatch.setattr(sc, "report_lines", lambda r: [])
+    monkeypatch.setattr(
+        sc, "ceiling_literals", lambda: dict(_CANNED_CEILINGS if ceilings is None else ceilings)
+    )
+    return sc.main(["--report", *argv_extra])
+
+
+def test_vf_gate_over_ceiling_returns_three(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """真越限（G-T4 上限 0、给 1 项）⇒ rc=3 且那行点名格名与两个数。"""
+    res = dict(_CANNED_RES)
+    res["t4_debt_official"] = ["arg-x"]
+    assert _vf_main(monkeypatch, res, ("--fail-on-violations",)) == 3
+    out = capsys.readouterr().out
+    assert "OVER_CEILING G-T4 参数不对齐" in out
+    assert "现算=1" in out and "上限=0" in out
+
+
+def test_vf_missing_bucket_is_not_a_free_pass(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """缺行不是免检：把 `t3_unmoved` 整键摘掉（合成 res，不动源码）⇒ rc=2 并点名该键。
+
+    这防的是本仓最贵的一型——判据取不到样本就当作"这面干净"。
+    """
+    res = {k: v for k, v in _CANNED_RES.items() if k != "t3_unmoved"}
+    assert _vf_main(monkeypatch, res, ("--fail-on-violations",)) == 2
+    assert "BUCKET_ROW_MISSING" in capsys.readouterr().out
+
+
+def test_vf_missing_ceiling_symbol_is_undecidable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """上限符号失踪 ⇒ rc=2（没有证据），不许折成 rc=0。"""
+    ceilings = dict(_CANNED_CEILINGS)
+    ceilings.pop("T4_CEILING")
+    assert _vf_main(monkeypatch, dict(_CANNED_RES), ("--fail-on-violations",), ceilings) == 2
+
+
+def test_vf_flag_off_leaves_behaviour_untouched(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """不带 flag 时即使有越限也 rc=0 且不印 VF 行：证明是**旗标**在拨判定，不是尺恒红。
+
+    （反空跑：一把永远红的尺与一把永远绿的尺一样没有执法力。）
+    """
+    res = dict(_CANNED_RES)
+    res["t4_debt_official"] = ["arg-x"]
+    assert _vf_main(monkeypatch, res, ()) == 0
+    assert "VF|" not in capsys.readouterr().out
+
+
+def test_vf_symbols_resolve_against_the_gates() -> None:
+    """判定集里每个上限符号必须真能在两把门的源码里 AST 读到（防符号名是我编的）。
+
+    这条不调用尺的扫描、只读两件测试的字面量：它同时是「门里的名字」与「尺表的键」
+    之间的双向对账——改了名忘了另一边，这里当场 LookupError。
+    """
+    found = sc.ceiling_literals()
+    wanted = {symbol for _label, _key, symbol, _unit in sc.VF_GATES}
+    assert wanted == set(found), f"判定集与门里的上限表不等：缺 {sorted(wanted - set(found))}"
+
+
+def test_vf_keys_exist_in_real_compute_output() -> None:
+    """判定集的判债键必须真在 `compute()` 的输出里（尺改了键名而表没跟＝静默交白卷）。
+
+    这条走**真取数口**，不是合成值：注入点选 `violation_rows`，让它逐键去真 res 里取。
+    慢（一次全站扫描），所以只跑一次并断言零 `BUCKET_ROW_MISSING`。
+    """
+    res = sc.compute()
+    rows = sc.violation_rows(res, sc.ceiling_literals())
+    missing = [row for row in rows if "BUCKET_ROW_MISSING" in row or "CEILING_SYMBOL_MISSING" in row]
+    assert not missing, f"真取数口交不出判定集要的档：{missing}"
+
+
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q"]))
 

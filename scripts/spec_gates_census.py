@@ -1936,10 +1936,117 @@ def report_lines(res: dict[str, object]) -> list[str]:
     ]
 
 
+#: 执法判定集：格名 →（`compute()` 的判债键, 上限符号名, 量纲）。
+#:
+#: 上限的**真身住在两把 pytest 门里**（`T1_CEILING` 等在
+#: `tests/test_taxonomy_spec_gates.py` / `tests/test_board_taxonomy_gate.py`，
+#: 并由 `test_ceilings_are_hand_written_literals` 钉死"必须是手写字面 int"）。本尺
+#: 只按符号名去那两件里**读字面量**，不在这里抄第二份表——抄了就是第二真身。
+#:
+#: 🔴 不进本表的三形，逐条有因，别"顺手补上"：
+#:   · `census_*` / `cid_set_matches_census`：起点册在 gitignored `.superpowers/…/CENSUS.md`，
+#:     干净 checkout 里读成空集 ⇒ 一塞就在 HEAD 轴假红；
+#:   · `templates_without_pages`／deadclass 那一档：判债键未逐枚复核（工单 W-2 尾注），
+#:     宁缺毋臆造；
+#:   · 「上限只准缩」的方向锁：已住在门里（`AUDIT_HISTORY_*` + `assert ceiling <= counts[0]`），
+#:     尺再判一遍＝第二把尺，且会把"门的判据"搬进"尺的输出"。
+VF_GATES: tuple[tuple[str, str, str, str], ...] = (
+    ("G-T1 对外欠账", "t1_debt_official", "T1_CEILING", "页"),
+    ("G-T2 小节偏离", "t2_debt_official", "T2_CEILING", "页"),
+    ("G-T3 面 A 管辖", "t3_managed", "T3_MANAGED_CEILING", "行"),
+    ("G-T3 面 B 未迁移", "t3_unmoved", "T3_UNMOVED_CEILING", "页"),
+    ("G-T4 参数不对齐", "t4_debt_official", "T4_CEILING", "项"),
+    ("G-T1面B 类别错配", "mismatch", "MISMATCH_CEILING", "页"),
+    ("G-T5 无模板类别", "t5:missing_template", "T5_MISSING_TEMPLATE_CEILING", "类"),
+)
+
+#: 上限符号的家（AST 读字面量，不 import 测试件——import 会把整件门拉起来跑收集期）。
+_CEILING_HOSTS: tuple[str, ...] = (
+    "tests/test_taxonomy_spec_gates.py",
+    "tests/test_board_taxonomy_gate.py",
+)
+
+
+def ceiling_literals() -> dict[str, int]:
+    """从两把门的源码里现算上限字面量；缺任一枚 ⇒ LookupError（fail-closed）。"""
+    wanted = {symbol for _label, _key, symbol, _unit in VF_GATES}
+    found: dict[str, int] = {}
+    for rel in _CEILING_HOSTS:
+        path = ROOT / rel
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        for node in tree.body:
+            targets: list[ast.expr] = []
+            value: ast.expr | None = None
+            if isinstance(node, ast.Assign):
+                targets, value = list(node.targets), node.value
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                targets, value = [node.target], node.value
+            if value is None or not isinstance(value, ast.Constant):
+                continue
+            for target in targets:
+                if isinstance(target, ast.Name) and target.id in wanted:
+                    if isinstance(value.value, bool) or not isinstance(value.value, int):
+                        raise LookupError(f"{target.id} 不是 int 字面量＝上限形状被改")
+                    found[target.id] = value.value
+    missing = sorted(wanted - set(found))
+    if missing:
+        raise LookupError(f"上限符号在门里找不到：{missing}")
+    return found
+
+
+def _debt_value(res: dict[str, object], key: str) -> object:
+    """支持 `t5:missing_template` 这种嵌套键；取不到 ⇒ KeyError（缺行不是免检）。"""
+    if ":" in key:
+        head, tail = key.split(":", 1)
+        bucket = res[head]
+        if not isinstance(bucket, dict) or tail not in bucket:
+            raise KeyError(key)
+        return bucket[tail]
+    if key not in res:
+        raise KeyError(key)
+    return res[key]
+
+
+def violation_rows(res: dict[str, object], ceilings: dict[str, int]) -> list[str]:
+    """纯函数（注毒用例直接喂合成 res，不落盘）。只判两形：缺行 / 现算越上限。"""
+    rows: list[str] = []
+    for label, key, symbol, unit in VF_GATES:
+        try:
+            value = _debt_value(res, key)
+        except (KeyError, TypeError):
+            rows.append(f"BUCKET_ROW_MISSING {label}：取数口交不出 {key}（缺行≠免检）")
+            continue
+        if symbol not in ceilings:
+            rows.append(f"CEILING_SYMBOL_MISSING {label}：门里没有 {symbol}")
+            continue
+        count = len(value) if isinstance(value, (list, tuple, dict, set)) else value
+        if not isinstance(count, int):
+            rows.append(f"BUCKET_ROW_MISSING {label}：读数不是数也不是清单（{type(count).__name__}）")
+            continue
+        ceiling = ceilings[symbol]
+        rows.append(
+            f"VF|格名={label}｜现算={count}｜上限={ceiling}｜差={count - ceiling}｜量纲={unit}"
+        )
+        if count > ceiling:
+            rows[-1] = f"OVER_CEILING {label}：现算 {count} > 上限 {ceiling}（{unit}）"
+    return rows
+
+
 def main(argv: list[str] | None = None) -> int:
+    # CLI 入口自钉 UTF-8（不放模块顶部：被 import 时不得改宿主的流）。
+    # 真伤：本尺 print 中文带 `↔`，Git Bash 管道下 stdout 落到 gbk ⇒ UnicodeEncodeError
+    # 半本账 + rc=1，会被调用方读成"这面红了"。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--dump", default="", help="打印某道门的违规前 N 条，如 t1/t2/t3/t4/t5")
+    ap.add_argument(
+        "--fail-on-violations",
+        action="store_true",
+        help="按在册上限逐面执法：越上限退出码 3，取数交不出／上限符号失踪退出码 2",
+    )
     args = ap.parse_args(argv)
     res = compute()
     for ln in report_lines(res):
@@ -1950,6 +2057,20 @@ def main(argv: list[str] | None = None) -> int:
             bucket = bucket["missing_template"]
         for r in list(bucket or [])[:40]:
             print(f"  {r}")
+    if not args.fail_on_violations:
+        return 0
+    try:
+        rows = violation_rows(res, ceiling_literals())
+    except (LookupError, OSError, SyntaxError) as exc:
+        print(f"VF|取数失败＝没有证据（不是零违规）：{type(exc).__name__}: {exc}")
+        return 2
+    print("VF|上限出处＝AST 现读两把门的字面量（本尺不抄第二份表）；差值符号：正＝越限、负＝有余量")
+    for row in rows:
+        print(row if row.startswith("VF|") else "VF|" + row)
+    if any(row.startswith(("BUCKET_ROW_MISSING", "CEILING_SYMBOL_MISSING")) for row in rows):
+        return 2
+    if any(row.startswith("OVER_CEILING") for row in rows):
+        return 3
     return 0
 
 

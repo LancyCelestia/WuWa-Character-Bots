@@ -1467,7 +1467,9 @@ async def test_ruling_3_master_switch_off_never_emits(state: str) -> None:
     reason=(
         "DEFECT-6：开闸态闸拦下（submit 正常返回而非抛）⇒ pipeline 的 try_claim "
         "不被 release，本会话冷却坑白烧 60 秒；与根 docstring「不占冷却坑」相反。"
-        "修法坐标见上方注释块。"
+        "修法＝根投递口按 verdict.action 分叉（skip ⇒ 抛以退坑，defer ⇒ 继续占坑），"
+        "或由 _emit_progress_ack 依 submit 返回的 verdict 决定 release。"
+        "〔摘牌=上述分叉落地、本节点 --runxfail 实跑转绿之后删掉本 xfail 标记〕"
     ),
 )
 @pytest.mark.asyncio

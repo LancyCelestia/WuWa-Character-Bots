@@ -110,9 +110,8 @@ def format_roleplay_paragraphs(text: str) -> str:
     """将括号动作与动作之外的连续文字拆成独立段落。
 
     每个动作（含括号、保留括号内原换行结构）和每段非空连续文字各占一段，
-    段落间用 ``\\n`` 连接（2026-09-17 用户裁定：分段统一单换行，消除
-    「有动作双换行、纯文本单换行」的随机观感；配合出站口
-    :func:`normalize_paragraph_breaks` 兜底折叠）；输入不含括号动作时返回
+    段落间用 ``\\n\\n`` 连接（2026-10-06 用户裁定：段间空一行，段内不换行，
+    长回复按部分分开、每部分一口气讲完）；输入不含括号动作时返回
     ``text.strip()``。
     """
     tokens = _action_tokens(text)
@@ -134,19 +133,19 @@ def format_roleplay_paragraphs(text: str) -> str:
     tail = text[cursor:].strip()
     if tail:
         paragraphs.append(tail)
-    return "\n".join(paragraphs)
+    return "\n\n".join(paragraphs)
 
 
 def normalize_paragraph_breaks(text: str) -> str:
-    """出站段落分隔统一化：段间一律单个换行。
+    """出站段落分隔统一化：段间一律空一行。
 
     折叠空行（含全空白行）与行尾空白；作为括号拆段/无动作纯文本两条路径
-    的共同出口，保证「每段之间恰好一个换行符」的确定性分段（2026-09-17
-    用户反馈：换行 1 个/2 个随机）。不动段内文字内容。
+    的共同出口，保证「每段之间恰好一个空行」的确定性分段（2026-10-06
+    用户裁定：长回复按部分分、部分间空一行）。不动段内文字内容。
     """
     value = str(text or "")
     value = re.sub(r"[ \t]+\n", "\n", value)
-    value = re.sub(r"\n[ \t]*\n+", "\n", value)
+    value = re.sub(r"\n[ \t]*\n+", "\n\n", value)
     return value.strip()
 
 def strip_action_brackets(text: str) -> str:
@@ -154,7 +153,7 @@ def strip_action_brackets(text: str) -> str:
 
     与 format_roleplay_paragraphs 共用 _action_tokens：括号内含汉字或嵌套
     括号的片段按动作删除；括号内无汉字（如 (≧▽≦)、（*´▽｀*））视为颜文字
-    保留。删除后折叠多余空行，返回 strip 后的纯文本。
+    保留。删除后段间空一行，返回 strip 后的纯文本。
     """
     tokens = _action_tokens(text)
     if not tokens:
@@ -168,6 +167,6 @@ def strip_action_brackets(text: str) -> str:
     if cursor < len(text):
         kept.append(text[cursor:])
     joined = "".join(kept)
-    joined = re.sub(r"\n[ \t]*\n+", "\n", joined)
+    joined = re.sub(r"\n[ \t]*\n+", "\n\n", joined)
     joined = re.sub(r"[ \t]+\n", "\n", joined)
     return joined.strip()

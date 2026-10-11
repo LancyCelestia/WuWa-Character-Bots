@@ -45,24 +45,37 @@ from plugins.bot_unified_runtime.domains.chat_reply.capabilities.user_copy impor
     GROUP_FAILURE_ACK_TEMPLATES,
     PIPELINE_BUSY_PRIVATE_ACK_TEMPLATES,
 )
-from plugins.bot_unified_runtime.domains.chat_reply.policy import (
-    InMemoryRateLimiter,
+
+# 循环导入根治（Q-1）：这十枚符号一律从 policy 的**具体子模块**直取，不经包出口
+# `...chat_reply.policy` 转手。包 `__init__.py` 第一条语句就是 `from .gate import …`，
+# gate 又经 `runtime.mentions` 牵回 `runtime/__init__` → 本模块：装载序一变（分库共装／
+# 新入口）就撞成「policy 部分初始化 ⇒ cannot import name 'InMemoryRateLimiter'」当场炸。
+# 逐枚住址按 AST 现算（gate/quiet_hours/rate_limit/reply_budget/roles），取到的仍是同一批
+# 对象（id 比对与两向判据锁在 `tests/test_pipeline_hard_timeout.py`）。
+from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
     PolicySettings,
-    QuietHoursChecker,
-    RateLimiter,
-    RedriveSettings,
-    ReplyBudgetSettings,
-    RoleSettings,
-    decide_reply_budget,
     evaluate_policy,
-    redrive_wait_seconds,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.policy.quiet_hours import (
+    QuietHoursChecker,
 )
 
 # 耗尽说明面的判据与文案真身都住 rate_limit（补回名册 + 文案池），从模块直读，
 # 不经 policy 包转手——不在调用侧抄第二份名册（规则 10）。
 from plugins.bot_unified_runtime.domains.chat_reply.policy.rate_limit import (
+    InMemoryRateLimiter,
+    RateLimiter,
+    RedriveSettings,
     pick_rate_limit_exhausted_notice,
     rate_limit_exhausted_notice_due,
+    redrive_wait_seconds,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.policy.reply_budget import (
+    ReplyBudgetSettings,
+    decide_reply_budget,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
+    RoleSettings,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.event_idempotency import (
     EventIdempotencyTable,
@@ -872,6 +885,24 @@ def _looks_like_review_reason(review: ReviewResult, marker: str) -> bool:
     return any(normalized_marker in reason.lower() for reason in review.reasons)
 
 
+_REWRITE_SPAN_MARKER = "public output span neutralised"
+
+
+def _review_rewrite_audit_detail(review: ReviewResult, scope: SessionType) -> str:
+    """群内容面降级那一行的 `private_debug`：**只**放结构化事实。
+
+    `review.reasons` 在降级面上就是 reviewer 给的规则名记号（词面清单与命中的
+    那一段原文都不在其中——那一手只报规则名，见 `domains/render/reviewer.py`
+    `_try_neutralise_group_output`），再补两枚可数的量：中和了几枚规则面（一枚
+    规则的一串命中算一枚）、作用域。回复正文/命中原文/用户号一律不落审计盘：
+    出站要脱敏，审计行是**另一条**落盘面，同理。
+    """
+    neutralised = sum(1 for reason in review.reasons if _REWRITE_SPAN_MARKER in reason)
+    return "; ".join(
+        [*review.reasons, f"neutralised={neutralised}", f"scope={scope.value}"]
+    )
+
+
 def _persona_display_name(result: CapabilityResult) -> str:
     title = result.title.strip()
     suffix = "的回复"
@@ -1373,6 +1404,27 @@ class RuntimePipeline:
             )
             return self._record_receipt_safely(receipt, message)
         review = review_capability_result(result, decision)
+        if review.approved and review.action is ReviewAction.REWRITE:
+            # 群内容面「降级而非整条吃掉」（`domains/render/reviewer.py`）：命中那
+            # 一处被换成记号、其余照发，`approved` 仍为真 ⇒ 走不到下面那一支。
+            # 它**必须**落在与 BLOCK 同一条审计通道（`stage="review"`）里，否则现网
+            # 查不到「哪一条被中和过哪一枚规则」——2026-10-04 席 auditrow 补的正是
+            # 这枚缺席的行（改前只有 sender 队列那一行，review 面静吃）。
+            # 不新建 sink、不加配置键；行里只有结构化事实（见 `_review_rewrite_audit_detail`）。
+            self._append_audit_safely(
+                AuditRecord(
+                    request_id=message.request_id,
+                    session_id=message.session_id,
+                    capability_id=decision.capability_id,
+                    stage="review",
+                    event=review.action.value,
+                    severity=review.risk_level,
+                    public_message="",
+                    private_debug=_review_rewrite_audit_detail(
+                        review, decision.target_scope
+                    ),
+                )
+            )
         if not review.approved:
             # 隐私转私聊（`BOT_REVIEW_MOVE_PRIVATE_ENABLED`，缺省关）：协作者=None 时这三行
             # 整体不可达 ⇒ 与今日逐字节相同（仍落下面那支 BLOCKED）。真身在

@@ -219,6 +219,11 @@ def write() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # 漂移清单里全是路径与中文说明，cp936 控制台上会打死输出腿（读成"无漂移"是
+    # 最坏那种假绿）。入口自钉 utf-8，与 scripts/ census 族同口径。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="交付物 SHA-256 漂移门")
     parser.add_argument("--write", action="store_true", help="记录/重录基线")
     parser.add_argument("--check", action="store_true", help="校验漂移（缺省行为）")

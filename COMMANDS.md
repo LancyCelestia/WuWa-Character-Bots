@@ -11,7 +11,8 @@
 ## 总览
 
 - 帮助本体：`/bot help`、`/bot 帮助`（`/岸宝帮助`、`守岸人帮助` 等昵称形式等价）。
-- 模块深页：`/bot help <模块名>`（如 `/bot help 点歌`）；分类手册：`/bot help 管理员`、`/bot help 大模型`、`/bot help 子功能`。
+- 模块深页：`/bot help <模块名>`（如 `/bot help 点歌`；中文同义：`/bot 帮助 <模块名>`，繁體同形见 词表真身＝runtime/aliases.py::MODULE_ALIASES）；分类手册：`/bot help 管理员`、`/bot help 大模型`、`/bot help 子功能`。
+- 命令目录：`/bot commands`（机器可读的路由表＋命令清单，供脚本对账；与 `/bot help` 同走帮助支）。
 - 普通成员只见公开模块；管理员另见管理员专属模块（含本手册全部内容）。
 
 <!-- BEGIN AUTO:COMMANDS-MODULE-INDEX generated-from=_HELP_ENTRIES by tests/test_commands_md_generated_index.py; 请勿手改本块 -->
@@ -112,7 +113,7 @@
 |---|---|---|---|
 | 状态 | `/bot status` | 运行状态摘要（暂停/角色/存储/LLM） | 无 |
 | 为什么 | `/bot why [id]` | 解释最近一次决策与错误 | id：可选，request_id/debug_id |
-| 决策影子 | `/bot decision [N]` —— **⚠ 当前不可用（未接线）**：帮助与别名层已登记，但 `/bot` 指令分发链无 `decision` 落点 ⇒ 发出即坠 `/bot help` 兜底页，**不会**返回痕迹清单 | 实现体 `build_decision_query_result`（`domains/chat_reply/capabilities/echo.py`）与影子痕迹落盘齐备；缺的是分发接线一行 | N 的取值与缺省**不在本文抄**：以 `echo.py` 的 `_DECISION_QUERY_DEFAULT_LIMIT` / `_DECISION_QUERY_MAX_LIMIT` 为准；接线后本行恢复登记<br>取证（复跑即可，勿信本文转述）：`grep -rn '"decision"' plugins/bot_unified_runtime/__init__.py` 无分发分支、`grep -rn build_decision_query_result plugins/` 除定义外零消费者；详见 `docs/design/link-unification-audit-20260920.md` §B-2 与 `docs/design/audit-20260920-unify-U7-command.md` U7-F7 |
+| 决策影子 | `/bot decision [N]`（同义词头 `/bot 决策 [N]`）—— 查看影子决策引擎最近 N 条路由分歧痕迹；**2026-10-08 席 CB-CMDUNIFY 已接线**（G-2 乙案）：根 `_handle_status` 分发链新增该支，形照既有 logs 分支同构，不建第二条旁路 | 实现体 `build_decision_query_result`（`domains/chat_reply/capabilities/echo.py`）；权限门＝该函数体内 `_is_admin_actor`，非管理员得拒绝回执 | N 的取值与缺省**不在本文抄**：以 `echo.py` 的 `_DECISION_QUERY_DEFAULT_LIMIT` / `_DECISION_QUERY_MAX_LIMIT` 为准<br>取证（复跑即可，勿信本文转述）：`grep -n '"decision"' plugins/bot_unified_runtime/__init__.py` 有分发支、`grep -rn build_decision_query_result plugins/` 除定义外有生产消费者 |
 | 回执 | `/bot receipt <id>` | 查发送回执 | id 必填 |
 | 审计 | `/bot audit <request_id>` | 查审计事件 | request_id 必填 |
 | 最近 | `/bot recent [数量]` | 诊断+回执+审计合并摘要 | 数量 1-20，默认 5 |
@@ -130,7 +131,7 @@
 | 日志 | `/bot logs [级别] [数量]` | 运行时事件日志 | 级别 debug\|info\|warning\|error 默认 info；数量 1-200 默认 50 |
 | 解析 | `/bot parse [数量]` | 全局解析历史 | 数量 1-100，默认 10 |
 | 搜索 | `/bot search <问题>` | 验证联网检索 | 问题必填 |
-| 凭据 | `/bot alert check [--probe]`、`/bot cookie status\|import\|login\|check\|expiry` | 凭据健康与 18 平台 cookie 导入 | `--probe` 可选；import：`<平台> <Cookie头>`；login/check 仅 bilibili 支持扫码 |
+| 凭据 | `/bot alert check [--probe]`、`/bot alert report <一句话>`、`/bot alert list [条数]`、`/bot cookie status\|import\|login\|check\|expiry` | 凭据健康与 18 平台 cookie 导入＋报修册 | `--probe` 可选；import：`<平台> <Cookie头>`；login/check 仅 bilibili 支持扫码；中文同义：`/bot alert 体检｜检查`、`/bot alert 报修 <一句话>`、`/bot alert 列表 [条数]`、`/bot 凭据 status｜导入 <平台> <Cookie头>｜过期`（cookie 面由旁路 matcher `is_cookie_command` 受理，不走 `/bot` 主链分发支） |
 | 群策略 | `/bot group list\|add\|del\|set\|clear …` | 群黑白名单四档 | 档位 black1\|black2\|white1\|white2；群号数字可多个 |
 | 群文件 | `/bot 群文件` | 群上传统计（仅群聊） | 无 |
 | 文件 | `文件 <格式> <主题>` | 生成文档并上传群文件 | 格式 md\|markdown\|docx\|pptx\|xlsx\|pdf |
@@ -142,9 +143,9 @@
 
 | 模块 | 指令 | 作用 | 关键参数 |
 |---|---|---|---|
-| 模型 | `/bot model list\|set\|add\|update\|priority\|effort\|think\|price\|search\|usage\|health\|probe\|routes\|vision\|remove\|reset`（`/bot llm` 诊断） | 模型注册表/故障转移/健康/计费总控 | add：`<id> model= base_url= key= [tags=] [effort=] [group=] [priority=]`；effort/think 档位 off\|low\|medium\|high\|xhigh\|max(default=清除)；price `input=/output=/cache_read=/cache_creation=/per_call=`（元/1M tokens；per_call 为元/请求，按次计费）；usage [today\|YYYY-MM-DD]；**是否即时生效逐键为准**：可写面＝`domains/chat_reply/runtime/settings.py` 的 `SETTABLE_KEYS`，被拒并提示需重启的键列在同文件 `RESTART_REQUIRED_KEYS`（成员与计数不在本文抄）；`/bot runtime get` 可当场看白名单 |
-| 用量 | `/bot model usage [日期]`、`/bot model price …` | Token 账单、价格维护、阈值提醒与 13/18/23 点定时报告 | 日期可选；阈值 .env：BOT_USAGE_ALERT_* |
-| 设置 | `/bot runtime set\|get\|list\|reset\|nickname\|persona\|model\|instance` | 运行时参数热改（白名单键，优先于 .env，可 `--instance <名称>`） | persona：list\|switch `<id\|default>`\|probability `<id> <0-1>`；nickname：add\|remove\|list |
+| 模型 | `/bot model list\|set\|add\|update\|priority\|effort\|think\|price\|search\|usage\|health\|probe\|routes\|vision\|remove\|reset`（`/bot llm` 诊断）（中文同义：`/bot 模型 <同一子命令>`，词头归一表真身＝`runtime/aliases.py` 的 `MODULE_ALIASES`） | 模型注册表/故障转移/健康/计费总控 | add：`<id> model= base_url= key= [tags=] [effort=] [group=] [priority=]`；effort/think 档位 off\|low\|medium\|high\|xhigh\|max(default=清除)；price `input=/output=/cache_read=/cache_creation=/per_call=`（元/1M tokens；per_call 为元/请求，按次计费）；usage [today\|YYYY-MM-DD]；**是否即时生效逐键为准**：可写面＝`domains/chat_reply/runtime/settings.py` 的 `SETTABLE_KEYS`，被拒并提示需重启的键列在同文件 `RESTART_REQUIRED_KEYS`（成员与计数不在本文抄）；`/bot runtime get` 可当场看白名单 |
+| 用量 | `/bot model usage [日期]`、`/bot model price …`（中文同义：`/bot 模型 usage`、`/bot 模型 price`） | Token 账单、价格维护、阈值提醒与 13/18/23 点定时报告 | 日期可选；阈值 .env：BOT_USAGE_ALERT_* |
+| 设置 | `/bot runtime set\|get\|list\|reset\|nickname\|persona\|model\|instance`（中文同义：`/bot 设置 …`、`/bot 参数 …`；繁體 `/bot 設置 …`、`/bot 參數 …`） | 运行时参数热改（白名单键，优先于 .env，可 `--instance <名称>`） | persona：list\|switch `<id\|default>`\|probability `<id> <0-1>`；nickname：add\|remove\|list |
 | 供应商 | BOT_MODEL_REGISTRY（.env） | 静态供应商注册表 | priority 1-999；探测脚本 `--max-tokens` 1-4096 默认 32 |
 | Telegram | TELEGRAM_BOTS、BOT_TELEGRAM_ADMIN_*（.env） | TG 提醒与远程控制 | JSON 数组 |
 
@@ -161,22 +162,22 @@
 
 | 模块 | 触发 | 作用 | 关键参数 |
 |---|---|---|---|
-| 订阅 | `/订阅 add\|list\|pause\|resume\|remove` | 平台新内容推送 | add `<公开目标>`（群内需管理员）；pause/resume/remove `<id>` 目的地粒度 |
-| 点歌 | `点歌 <歌名>`、`点歌 <编号>`、`点歌模式 <模式>` | 搜歌发送（候选选择窗默认开启） | 同名/多候选 ≥2 首一律先出候选卡询问，回复序号数字（如 `2`）或 `点歌 2` 即选播，不再直接播首选；候选时限以配置真身现算为准，不回复不播放；模式 卡片\|语音\|音频\|链接\|全部可组合（管理员持久化） |
+| 订阅 | `/订阅 add\|list\|pause\|resume\|remove`；斜杠同义 `/bot subscribe <同一子命令>`（如 `/bot subscribe list`） | 平台新内容推送 | add `<公开目标>`（群内需管理员）；pause/resume/remove `<id>` 目的地粒度；`/订阅` 与 `/bot subscribe` 等价（前者为中文头旁路 matcher，后者走 `/bot` 主链支） |
+| 点歌 | `点歌 <歌名>`、`点歌 <编号>`、`点歌模式 <模式>`；斜杠同义 `/bot music <歌名\|编号>`、`/bot music_mode <模式>`（同义空格形 `/bot music mode <模式>` 同一支受理）；中文词头同走这一支（简繁同形清单见 词表真身＝runtime/aliases.py::MODULE_ALIASES，本行不复述词面） | 搜歌发送（候选选择窗默认开启） | 同名/多候选 ≥2 首一律先出候选卡询问，回复序号数字（如 `2`）或 `点歌 2` 即选播，不再直接播首选；候选时限以配置真身现算为准，不回复不播放；模式 卡片\|语音\|音频\|链接\|全部可组合（管理员持久化） |
 | 表情 | `表情 <模板> [文字]`、`表情 列表` | meme-generator-rs 生成表情 | 文字多段用 ｜ |
 | 偷表情 | `偷表情 [关键词]`、`表情库统计` | 表情库加权随机 | 关键词/情绪标签可选 |
 | 搜图 | `搜图`＋图片 | SauceNAO 反搜来源 | 图片需同条消息 |
-| 天气 | `天气 <城市>` | NMC 天气（支持 2527 区县级查询） | 同名城市 省-市；查询词需像地名 |
+| 天气 | `天气 <城市>`；斜杠同义 `/bot weather <城市>`、`/bot 天气 <城市>`；区县清单 `/bot districts <省>`、`/bot 支持区县 <省>`（简繁同形见 词表真身＝runtime/aliases.py::MODULE_ALIASES，本行不复述词面） | NMC 天气（支持 2527 区县级查询） | 同名城市 省-市；查询词需像地名；中文词头归一表真身＝`runtime/aliases.py` 的 `MODULE_ALIASES`；`districts` 与 `天气` 同走主链那一支（`/bot weather` 不带城市不落该支，按帮助兜底） |
 | 行情 | `行情`＋可选市场词 | 全球股指（东方财富，60s 缓存） | A股/B股/上证B/深证B/美股/港股/日经/纳斯达克/道指/标普/莫斯科/俄罗斯 等 |
 | 个股行情 | `英伟达股价`、`AMD 股价`、`英特尔股价`、`股价`、`股價`、`個股`、英文 `stocks`＋公司别名；`市值` 须与公司别名共现（如 `英伟达市值`，裸词不触发） | 个股行情（OHLCV/市值，出金融卡；数据带来源与延迟标注） | 与「行情」互不抢路由（裸「行情」归行情）；OpenAI 未上市，只给有来源的公开估值说明 |
 | 汇率 | `汇率`、`美元兑人民币`、`100日元换多少人民币`、`匯率`/`兌換` 等 | 汇率查询/主要货币面板（出金融卡） | 11 币种、基准货币明确；中间价口径带延迟标注；TWD/MOP/AED 暂无行情会明说；与 stocks 重叠时汇率优先 |
 | 占卜 | `占卜`、`塔罗 [三张\|每日一抽]`、`八字 <生日时间>` | 金钱卦/塔罗/八字（含地支藏干） | 日期 `1998年3月2日\|1998-03-02\|1998/3/2`；只给日期按午时；1900-2100 年 |
 | 快报 | `快报`/`早报`/`晚报`/`今日热点`/`科技新闻`/`AI新闻`/`财经快报`/`财经新闻`/`国际新闻`；昵称形式 `守岸人 快报`/`守岸人 AI新闻` 等等价触发 | RSS 聚合快报（缓存窗以配置真身现算为准）：默认条数以配置真身现算为准；标题下带 RSS 摘要行（治标题党）；自动过滤营销条目（求职/招聘/推广/优惠等） | 类目：财经/国际/科技·AI/综合轮转；裸「新闻」不触发 |
-| 维基 | `维基 <词条>` | MediaWiki 百科 | 默认中文维基 |
+| 维基 | `维基 <词条>`；斜杠同义 `/bot wiki <词条>`、`/bot 维基 <词条>`、`/bot 百科 <词条>`（简繁同形见 词表真身＝runtime/aliases.py::MODULE_ALIASES，本行不复述词面） | MediaWiki 百科 | 默认中文维基；省略词条回用法 |
 | 萌娘百科 | `萌娘百科 <词条>`；直接问「XX是谁？」 | 萌百查询＋实体问句自动查询 | 问句剥出实体 2-30 字；未命中转聊天 |
 | 历史上的今天 | `历史上的今天 [设置 HH:MM\|状态\|取消]` | 当日历史＋每日推送 | 群内设置/取消需管理员 |
 | 下载 | `/bot download <链接>`（裸发「下载 …」当前不走路由，请用 /bot 前缀） | yt-dlp 下载回传；多连接并行（分片 8 并发Range 分块大小以配置真身现算为准，装有 aria2c 时自动委托 -x16）；平台有 CC 字幕时自动下载保存（srt 优先、zh 简体优先），回复显示「字幕已保存：路径」 | 单文件上限以配置真身现算为准；拒绝内网地址 |
-| 昵称 | `守岸人/岸宝 <命令>`；`/bot 昵称 set <QQ号> <小名>` | 昵称触发命令（后者管理员）；繁体触发词已支持：`點歌`/`快報`/`財經新聞`/`國際新聞`/`親密度`/`天氣`/`天氣預報`/`隨機圖`/`來張圖` 等 | 昵称表经 `/bot runtime nickname` 维护 |
+| 昵称 | `守岸人/岸宝 <命令>`；`/bot 昵称 set <QQ号> <小名>`（简繁英同形只住 `_NICKNAME_RE` 那一格，本行不复述词面） | 昵称触发命令（后者管理员）；繁体触发词已支持：`點歌`/`快報`/`財經新聞`/`國際新聞`/`親密度`/`天氣`/`天氣預報`/`隨機圖`/`來張圖` 等 | 两张表别混：①**触发昵称表**（哪些称呼能唤起命令）经 `/bot runtime nickname add\|remove\|list` 维护；②**群友小名**（好感度称呼，写在 user_affinity.nickname）经 `/bot 昵称 set <QQ号> <小名>`，通路＝根 `__init__.py` 的旁路 matcher `_NICKNAME_RE`（仅管理员，不走 `/bot` 主链分发支）；本行不写行号（会漂移） |
 | 链接 | 直接发 http(s) 链接 | 平台信息卡解析 | B站/抖音/小红书/油管/推特/GitHub 等 |
 | 草稿 | `报存 给 <收件人> 发消息\|邮件[，主题：…，内容：…]` | 自动发送草稿预览 | 收件人可用 、,， 分隔多个；当前仅预览不实发 |
 | 吃什么 | `吃什么 [三选一\|辣度\|忌口]`、`菜谱 <菜名>` | 家常菜推荐/菜谱 | 约束描述自动走 AI 菜谱 |
@@ -219,28 +220,28 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 backend-smoke -Message 
 | `/bot feature enable\|disable\|reset <ID>` | 仅超管；CAS写入状态与审计。主Pipeline的新任务受门禁控制，已运行任务不强杀。 |
 | `/bot feature preview <ID> on\|off\|reset` | 仅超管；返回影响节点，不修改状态。 |
 
-示例：`/bot feature disable bot.plugin.weather`。详细帮助：`/bot help 功能管理`。
+示例：`/bot feature disable bot.plugin.weather`。详细帮助：`/bot help 功能管理`。中文同义：`/bot 功能管理 …` 与 `/bot feature …` 归一到同一支（词头归一表真身＝`runtime/aliases.py` 的 `MODULE_ALIASES`）。
 
 ## 亲密档位（叙述授予面）
 
 | 指令 | 权限与效果 |
 |---|---|
-| `/bot intimate on` / `l1` | 本人私聊，或管理员在本群代全群上钉；进浅档——**不换首跳模型**，但**同样拿到叙述授予**（授予看的是"谁推动的"，不是这一档深浅）。私聊显式开档会落一条跨重启的标记，群钉不落标记。 |
-| `/bot intimate deep` / `l2` | 同上，进深档：唯一多出来的是**首跳换到该档配置的模型**；叙述面与浅档同权。 |
-| `/bot intimate off` | 收回档位并撤回标记；回到「只用说话回应」的日常段。 |
+| `/bot intimate on`（同义 `open`／`l1`） | 本人私聊，或管理员在本群代全群上钉；进浅档——**不换首跳模型**，但**同样拿到叙述授予**（授予看的是"谁推动的"，不是这一档深浅）。私聊显式开档会落一条跨重启的标记，群钉不落标记。 |
+| `/bot intimate deep`（同义 `deeper`／`l2`） | 同上，进深档：唯一多出来的是**首跳换到该档配置的模型**；叙述面与浅档同权。 |
+| `/bot intimate off`（同义 `close`／`unset`） | 收回档位并撤回标记；回到「只用说话回应」的日常段。 |
 | `/bot intimate show` | 只读：当前档位读数逐格（真身＝`runtime/intimate_control.py` 的 `_state_body`，手册不抄成员、不写格数）。不动任何状态。 |
-| `/bot narration speech`（同义 `/bot 描写 speech`） | 本人自助，群／频道侧需管理员（写腿作用域门＝与亲密开关同一个角色集合）：把自己钉回「只说出口的话」，这就是缺省那一格。认不出的子命令一律不受理，不拿错字悄悄改文风。这一句同样说一次就一直算。 |
-| `/bot narration scene`（同义 `/bot 描写 scene`） | 同上：把自己钉上「铺开写」。**这一格不等亲密档**（裁定 G-1：普通模式也铺得开）；日常那一档铺开时**语言／动作／神态／心理照写＋外貌作观感＋衣着按当下写＋环境铺开**（裁定 G-4＝乙，10-04 深夜改判；只有"落在身体上的细部"留给亲密档）。🔴 例外一条：**群聊那一侧的 `scene` 不落笔身形／衣着**（裁定 I-3＝丙——群是公共空间、旁人也在看；同一段其余四维与环境照写，长度档不动）。说一次就一直算，除非你再说一次只说话。能不能真铺开仍只问 `grants_intimate_narration` 那一处。 |
-| `/bot narration reset`（同义 `/bot 描写 reset`） | 收回这一格交回缺省，只清描写档那两列——称谓、性别自述与关系档不受牵连。 |
-| `/bot narration show`（同义 `/bot 描写 show`） | 只读：描写档、依据、细节描写开没开、库里的钉。`show` 这个词与开关面共用同一枚真身。 |
+| `/bot narration speech`（中文同义：`/bot 描写 speech`） | 本人自助，群／频道侧需管理员（写腿作用域门＝与亲密开关同一个角色集合）：把自己钉回「只说出口的话」，这就是缺省那一格。认不出的子命令一律不受理，不拿错字悄悄改文风。这一句同样说一次就一直算。 |
+| `/bot narration scene`（中文同义：`/bot 描写 scene`） | 同上：把自己钉上「铺开写」。**这一格不等亲密档**（裁定 G-1：普通模式也铺得开）；日常那一档铺开时**语言／动作／神态／心理照写＋外貌作观感＋衣着按当下写＋环境铺开**（裁定 G-4＝乙，10-04 深夜改判；只有"落在身体上的细部"留给亲密档）。🔴 例外一条：**群聊那一侧的 `scene` 不落笔身形／衣着**（裁定 I-3＝丙——群是公共空间、旁人也在看；同一段其余四维与环境照写，长度档不动）。说一次就一直算，除非你再说一次只说话。能不能真铺开仍只问 `grants_intimate_narration` 那一处。 |
+| `/bot narration reset`（中文同义：`/bot 描写 reset`） | 收回这一格交回缺省，只清描写档那两列——称谓、性别自述与关系档不受牵连。 |
+| `/bot narration show`（中文同义：`/bot 描写 show`） | 只读：描写档、依据、细节描写开没开、库里的钉。`show` 这个词与开关面共用同一枚真身。 |
 
 拿到叙述授予的来源＝**本人显式开档、管理员代全群钉、内容信号自己跨过阈值，加上本人自己钉过描写档那一格**；自动回落的两支（Master Love 名单、好感度达档）**只给语气与放行，不自带叙述授予**。整句「亲密模式 开／深开／关」与命令面同效（同一 verdict 三字段全等）。描写档的键形＝**(平台域 · 会话 · 这个人)**：群 A 钉过≠群 B 有、私聊钉过≠群里也有、频道与频道之间也各算一格——**换一个群、换一个频道、换一路会话都要再说一次**（裁定 I-2，10-04 深夜；频道与群同侧＝用户 2026-10-06 裁「telegram：群侧」，判据＝`content_route.is_public_space_session`；库里按 `session_type`/`session_id`/本人键三段存，私聊、群、频道因此互不继承）；管理员替整群拨的那枚亲密档永不广播描写档（裁定 G-3：群级钉不出自"这个人"那一桶，`route_verdict` 的 `from_group_pin` 一支交空）。亲手把亲密档推上去的那一轮，描写轴缺省**跟着走 `scene`**（裁定 H-1＝甲；自动回落那两支照旧只说话）。钉在库里、跨重启活得住，**没有 TTL**（与亲密档那 60 分钟是两套账）：说一次就一直算，除非本人自己再说一句 `speech` 或 `reset`——没有哪条通路会替她把它拿走。被公共空间那道门拒到时给的回执真身＝`runtime/intimate_control.py` 的 `NARRATION_REFUSED_REPLY`（手册不抄整句，免得长出第二处副本）。详细帮助：`/bot help 亲密模式`。
 
-描写档同义入口：`/bot 描写 ...` 与 `/bot narration ...` 派到同一支 handler、剥出的子命令逐字相同；子命令词表唯一的家＝`runtime/content_route.py` 的 `_NARRATION_SUBCOMMAND_TABLE`（本手册不复述成员）。昵称形式（`/岸宝…`）**只给引导、不执行写操作**——要改描写档得走 `/bot`。
+描写档中文同义入口：`/bot 描写 ...` 与 `/bot narration ...` 派到同一支 handler、剥出的子命令逐字相同；子命令词表唯一的家＝`runtime/content_route.py` 的 `_NARRATION_SUBCOMMAND_TABLE`（本手册不复述成员）。昵称形式（`/岸宝…`）**只给引导、不执行写操作**——要改描写档得走 `/bot`。
 
 `/bot runtime set`、`reset` 、模型写操作和核心人格 switch/probability 仅超管可修改。参数API与命令共用ConfigControlService及按实例隔离SQLite，资源重载尚未完成的键明确拒绝热改，不假称更新成功。当前仅覆盖已登记主能力，入站媒体/自动副作用的细分门禁仍在迁移。
 
-功能管理同义入口：`/bot 功能管理 ...` 归一到 `/bot feature ...`；`/bot help feature` 与 `/bot help 功能管理` 返回同一帮助。昵称形式只给管理指令引导，不绕过 `/bot` 直接执行写操作。
+功能管理中文同义入口：`/bot 功能管理 ...` 归一到 `/bot feature ...`；`/bot help feature` 与 `/bot help 功能管理` 返回同一帮助。昵称形式只给管理指令引导，不绕过 `/bot` 直接执行写操作。
 
 
 ## 细分功能管理（本批接线）

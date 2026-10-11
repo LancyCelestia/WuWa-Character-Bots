@@ -222,7 +222,12 @@ def test_verified_trigger_hits_owner_capability(cap: str, word: str, probe: str,
             pytest.fail(
                 f"红点已修复：{word!r} 不再跨能力冲突，请从 KNOWN_CONFLICT_WORDS 移除 {(cap, word)}"
             )
-        pytest.xfail(f"现状红点（台账已登记）：{word!r} 同时命中 {hits}")
+        pytest.xfail(
+            "现状红点（跨能力撞词台账 KNOWN_CONFLICT_WORDS 已登记这一枚 (cap, word)）。"
+            "〔摘牌=这一枚 (cap, word) 从 KNOWN_CONFLICT_WORDS 逐条删掉、"
+            "上面那支 pytest.fail「红点已修复」转正之后，删掉本 pytest.xfail 分支〕 "
+            f"{word!r} 同时命中 {hits}"
+        )
     assert hits == [cap], f"新增跨能力冲突（未登记台账）：{word!r} 探针 {probe!r} 命中 {hits}"
 
 
@@ -245,7 +250,10 @@ def test_ascii_trigger_word_boundary(
                 f"红点已修复：{word!r} {side} 侧已词边界，请从 KNOWN_BOUNDARY_KEYS 移除"
             )
         pytest.xfail(
-            f"现状红点（台账已登记）：{detector_name} 对胶合探针 {glued!r} 仍裸子串命中"
+            "现状红点（词边界台账 KNOWN_BOUNDARY_KEYS 已登记这一枚 (cap, word, side) 三元键）。"
+            "〔摘牌=该三元键从 KNOWN_BOUNDARY_KEYS 删掉、对应 is_* 检测器补上"
+            "_alias_hit 式词边界判定之后，删掉本 pytest.xfail 分支〕"
+            f"{detector_name} 对胶合探针 {glued!r} 仍裸子串命中"
         )
     assert not violated, (
         f"新增 ASCII 词边界违规（未登记台账）：{cap} {detector_name} 命中 {glued!r}"
@@ -544,7 +552,14 @@ def test_poison_attribution_hole_is_red() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="待 T-Spec 七格触发矩阵终确认后启用：英文/简体/繁體/昵称/自然语言全量覆盖与唯一性断言")
+@pytest.mark.skip(
+    reason=(
+        "七格触发矩阵（英文/简体/繁體/昵称/自然语言的全量覆盖与唯一性断言）今天只有占位："
+        "七格口径未定，断言无法按规格写死。"
+        "〔摘牌=七格矩阵的确认口径落进规格册、本用例断言能照那口径写死之日，"
+        "删掉本 skip 标记让用例真跑〕"
+    )
+)
 def test_seven_grid_spec_coverage() -> None:
     raise AssertionError("placeholder")
 

@@ -353,7 +353,17 @@ def classify_sticker_sentiment(
         # 没拿到 bot 实际回复＝时序前置条件不满足（应在回复定型之后调用）⇒ 诚实放弃，
         # 退回旧行为由调用方决定，本腿不猜。
         return None
-    timeout_seconds = float(getattr(config, "bot_reactions_sentiment_timeout_seconds", 8.0) or 8.0)
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health import (
+        PER_HOP_TIMEOUT_FLOOR_SECONDS,
+    )
+
+    # 地板兜底不另抄数字（台账 #80）：小腿用短预算打满整条故障转移链＝系统性制造
+    # 假超时，超时照写健康账，反把主聊天渠道打进 30 分钟黑名单。本腿跑线程池
+    # （engine.py 下放 asyncio.to_thread），抬到地板不拖慢用户可见回复。
+    timeout_seconds = float(
+        getattr(config, "bot_reactions_sentiment_timeout_seconds", PER_HOP_TIMEOUT_FLOOR_SECONDS)
+        or PER_HOP_TIMEOUT_FLOOR_SECONDS
+    )
     ttl = float(getattr(config, "bot_reactions_sentiment_cache_ttl_seconds", 120) or 120)
     key = _cache_key(session_key, user, reply)
     hit, cached = _cache_get(key)

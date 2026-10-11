@@ -621,3 +621,97 @@ def test_golden_telegram_missing_receipt_id_escalates_to_result_unknown(tmp_path
     assert receipt.state.value == "failed_final"
     assert receipt.operational_issue is not None
     assert receipt.operational_issue.kind == "result_unknown"
+
+
+# ==================== 重复真身锁（OneBot 响应体原语，W-4）====================
+
+#: 同一语义的两个候选名都列进来：收编前私有副本有两处定义，收编后只准剩一处。
+_ONEBOT_PRIMITIVE_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("取 retcode", ("_extract_onebot_retcode", "extract_onebot_retcode")),
+    ("取 status", ("_extract_onebot_status", "extract_onebot_status")),
+    ("判成功", ("_onebot_result_is_success", "onebot_result_is_success")),
+    ("转 onebot id", ("_coerce_onebot_id", "coerce_onebot_id")),
+)
+
+
+def _plugin_function_defs() -> dict[str, list[str]]:
+    """AST 扫生产包收集 `def 名 → 文件`（扫描面只 `plugins/`，与归类尺同界）。"""
+    import ast
+
+    repo = Path(__file__).resolve().parents[1]
+    root = repo / "plugins"
+    found: dict[str, list[str]] = {}
+    for py in sorted(root.rglob("*.py")):
+        if "__pycache__" in py.parts:
+            continue
+        try:
+            tree = ast.parse(py.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError) as exc:
+            # 读不出必须出声：静默跳过会让这把锁在坏文件上假零（本仓实犯形态）。
+            raise AssertionError(f"AST 读不出 {py}: {exc}") from exc
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                found.setdefault(node.name, []).append(str(py.relative_to(repo)))
+    return found
+
+
+def test_onebot_response_primitives_are_defined_exactly_once() -> None:
+    """`onebot.py` 与 `file_gateway.py` 曾各写一遍同一套响应体原语（"避免循环导入"）。
+
+    实际只有一边会成环：`onebot.py` 已经 import `file_gateway`，所以真身该落在
+    那片叶子、由 onebot 反向取用。这把锁判的是"同一语义有几个真身"，与跑起来对不对
+    无关（等价性由下面两发单独证）。
+    """
+    defs = _plugin_function_defs()
+    offenders: dict[str, list[str]] = {}
+    for label, names in _ONEBOT_PRIMITIVE_GROUPS:
+        hits = sorted({path for name in names for path in defs.get(name, ())})
+        if len(hits) != 1:
+            offenders[label] = hits
+    assert not offenders, f"OneBot 响应体原语出现多定义（重复真身）：{offenders}"
+
+
+def test_single_home_primitives_behave_as_before() -> None:
+    """收编前后逐字等价的证据表（None／带空白数字串／非数字串／对象属性形都在内）。"""
+    from plugins.bot_unified_runtime.domains.transport.sender import file_gateway as fg
+
+    class _Resp:
+        def __init__(self, retcode: object = None, status: object = None) -> None:
+            if retcode is not None:
+                self.retcode = retcode
+            if status is not None:
+                self.status = status
+
+    assert fg.extract_onebot_retcode({"retcode": 0}) == 0
+    assert fg.extract_onebot_retcode({"retcode": "500"}) == 500
+    assert fg.extract_onebot_retcode({"retcode": " -1200 "}) == -1200
+    assert fg.extract_onebot_retcode({"retcode": "oops"}) is None
+    assert fg.extract_onebot_retcode({}) is None
+    assert fg.extract_onebot_retcode(_Resp(retcode=3)) == 3
+    assert fg.extract_onebot_retcode(_Resp()) is None
+
+    assert fg.extract_onebot_status({"status": "OK"}) == "ok"
+    assert fg.extract_onebot_status({"status": None}) == ""
+    assert fg.extract_onebot_status({}) == ""
+    assert fg.extract_onebot_status(_Resp(status=" Failed ")) == "failed"
+
+    assert fg.onebot_result_is_success({"retcode": 0}) is True
+    assert fg.onebot_result_is_success({}) is True
+    assert fg.onebot_result_is_success({"retcode": 500}) is False
+    assert fg.onebot_result_is_success({"status": "failed", "retcode": 0}) is False
+
+    assert fg.coerce_onebot_id("123") == 123
+    assert fg.coerce_onebot_id(" 45 ") == 45
+    assert fg.coerce_onebot_id("abc") == "abc"
+    assert fg.coerce_onebot_id("") == ""
+
+
+def test_onebot_delegates_to_the_single_home() -> None:
+    """别名必须指向同一对象——"看起来在用了"不算收编，判的是绑定本身。"""
+    from plugins.bot_unified_runtime.domains.transport.sender import file_gateway as fg
+    from plugins.bot_unified_runtime.domains.transport.sender import onebot
+
+    assert onebot._extract_onebot_retcode is fg.extract_onebot_retcode
+    assert onebot._extract_onebot_status is fg.extract_onebot_status
+    assert onebot._onebot_result_is_success is fg.onebot_result_is_success
+    assert onebot._coerce_onebot_id is fg.coerce_onebot_id

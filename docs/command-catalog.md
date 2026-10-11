@@ -87,7 +87,7 @@
 - 配置变量：BOT_CONTROL_PLANE_FEATURES_DB
 - 可复制示例：/bot feature get bot.plugin.weather
 - 关联回归测试：tests/test_runtime_feature_gate.py
-- 总览：【功能管理】查询和控制能力树：/bot feature
+- 总览：【功能管理】查询和控制能力树：/bot feature｜中文同义：/bot 功能管理
 - 标题：【功能管理】能力树状态与版本
 
 ### 教程
@@ -469,7 +469,7 @@
 - 网络依赖：纯本地
 - 输出形式：文本
 - 可复制示例：/bot persona
-- 总览：【人格】人格自检：/bot persona
+- 总览：【人格】人格自检：/bot persona｜中文同义：/bot 人格
 - 标题：【人格】守岸人人格材料自检
 
 ### 教程
@@ -478,7 +478,7 @@
   运行 persona smoke：检查人格档案文件、语气规则与安全边界材料。
   运行期人格切换用 /bot runtime persona（见「设置」模块）。
 【指令与参数】
-/bot persona：作用=人格材料自检；参数=无；内容=人格强度/语气规则/边界的自检结果；意义=确认人格档案完整、语气与边界规则生效。
+/bot persona：作用=人格材料自检；参数=无；内容=人格强度/语气规则/边界的自检结果；意义=确认人格档案完整、语气与边界规则生效。中文同义：/bot 人格。
 【权限与效果】
   权限=仅管理员。
 【示例】/bot persona
@@ -633,7 +633,7 @@ BOT_CHAT_MAX_TOKENS=65538 是最大上限，不是每次强制生成 64K。
 - 配置变量：BOT_MODEL_SCHEDULE；BOT_MODEL_PRIORITY_GROUPS
 - 可复制示例：/bot model add myapi model=deepseek-v4-pro base_url=https://api.xxx.com/v1 key=sk-xxx tags=low,high,max priority=1
 - 关联回归测试：tests/test_model_admin_and_schedule.py；tests/test_model_router_failover.py
-- 总览：【模型】/bot model list | set | add | update | priority | effort | think | price | search | usage | health | probe | routes | vision | remove | reset
+- 总览：【模型】模型与供应商管理：/bot model list | set | add | update | priority | effort | think | price | search | usage | health | probe | routes | vision | remove | reset｜中文同义：/bot 模型 <同一子命令>
 - 标题：【模型】模型与供应商管理（管理员，改动即时生效）
 
 ### 教程
@@ -695,7 +695,7 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
 - 配置变量：BOT_USAGE_ALERT_INPUT_TOKENS；BOT_USAGE_ALERT_OUTPUT_TOKENS；BOT_USAGE_ALERT_DAILY_COST_YUAN；BOT_USAGE_REPORT_HOURS
 - 可复制示例：/bot model usage 2026-09-01
 - 关联回归测试：tests/test_llm_ledger.py；tests/test_model_effort_groups_and_pricing.py
-- 总览：【用量】Token 统计、费用记账与监控提醒：/bot model usage | /bot model price
+- 总览：【用量】Token 统计、费用记账与监控提醒：/bot model usage | /bot model price｜中文同义：/bot 模型 usage｜/bot 模型 price
 - 标题：【用量】Token 统计、费用记账与监控提醒
 
 ### 教程
@@ -730,7 +730,7 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
 - 配置变量：BOT_REPLY_DETAIL；BOT_CHAT_MAX_TOKENS；BOT_CHAT_FAST_MODE；BOT_CHAT_REASONING_EFFORT；BOT_MODEL_PRICES；BOT_MODEL_SCHEDULE；BOT_MODEL_PRIORITY_GROUPS；BOT_VISION_ENABLED；BOT_QUIET_HOURS_ENABLED；BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR；BOT_GROUP_CHAT_AUTO_REPLY_ENABLED
 - 可复制示例：/bot runtime set BOT_QUIET_HOURS_ENABLED true
 - 关联回归测试：tests/test_help_entries_coverage.py
-- 总览：【设置】运行时参数：/bot runtime set|get|list|reset|nickname|persona|instance
+- 总览：【设置】运行时参数：/bot runtime set|get|list|reset|nickname|persona|instance｜中文同义：/bot 设置｜/bot 参数
 - 标题：【设置】运行时参数管理（管理员）
 
 ### 教程
@@ -740,7 +740,7 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
   优先于 .env）；不在白名单的键（如五个持久化开关）只能改 .env 重启。
   所有子命令都可加 --instance <名称> 操作指定实例。
 【指令与参数】
-/bot runtime set <KEY> <VALUE>：作用=热改一个参数；参数=KEY（必填，可写键见 get 列表）＋VALUE（必填，按键校验），或加 --instance <名称>（可选，定位实例）；内容=已设置 KEY = 值（已持久化）；意义=不改 .env 立即生效，重启保留。
+/bot runtime set <KEY> <VALUE>：作用=热改一个参数；参数=KEY（必填，可写键见 get 列表）＋VALUE（必填，按键校验），或加 --instance <名称>（可选，定位实例）；内容=已设置 KEY = 值（已持久化）；意义=不改 .env 也能改，下一条消息起生效（当轮已装配的 config 快照不回改）；登记为需重启的那批键会被当场拒绝并提示改 .env＋重启，不假称写入成功；重启后保留。
 /bot runtime get <KEY>：作用=读参数实际生效值；参数=KEY（必填）；内容=值＋（覆盖值）/（.env 默认值）来源标注；意义=确认运行时覆盖与 .env 谁在生效。
 /bot runtime list：作用=列出全部覆盖项；参数=无；内容=KEY=VALUE 清单；意义=盘点改过哪些。
 /bot runtime reset [KEY]：作用=恢复默认；参数=KEY（可选，省略=清空全部覆盖）；内容=清除项数；意义=撤销热改。
@@ -833,7 +833,7 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
 - 输出形式：文本；cookie login 另含二维码图
 - 可复制示例：/bot cookie import bilibili SESSDATA=...; bili_jct=...
 - 关联回归测试：tests/test_cookie_import_hot_reload.py；tests/test_platform_credentials.py
-- 总览：【凭据】凭据健康与 cookie 导入：/bot alert check｜/bot cookie status|import|login|check|expiry
+- 总览：【凭据】凭据健康与 cookie 导入与报修：/bot alert check｜/bot alert report｜/bot cookie status|import|login|check|expiry
 - 标题：【凭据】检查 cookie/凭据健康
 
 ### 教程
@@ -843,14 +843,16 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
   值永不回显；每天 10:00 定时巡检（bot_cookie_expiry_reminder_enabled
   可关），过期会私聊推送第一位在线管理员。
 【指令与参数】
-/bot alert check：作用=凭据体检；参数=无；--probe（可选开关，追加在线探测，401/403=需重登）；内容=各凭据引用的状态清单；意义=解析突然 403 时的第一排查。
-/bot cookie status：作用=看各平台已录 cookie；参数=无；内容=平台×cookie 名×到期日（永不回显值）；意义=核对导入是否生效。
-/bot cookie import <平台> <Cookie头>：作用=热写入平台 cookie；参数=平台（必填，小写平台名，在收录名单内选 1，名单以 /bot cookie status 输出为准）＋Cookie头（必填，浏览器复制的 名=值; … 整行原文粘贴）；内容=accepted/normalized/skipped 三项统计与导入结果；意义=同名不覆盖、下一次解析即生效无需重启。
+/bot alert check：作用=凭据体检；参数=可选开关 --probe（追加在线探测，401/403=需重登）；内容=各凭据引用的状态清单；意义=解析突然 403 时的第一排查。中文同义：/bot alert 体检｜/bot alert 检查。
+/bot alert report <一句话>：作用=把你看到的问题原话递进报修册；参数=一句话（必填，说清哪条消息、什么时候、哪里不对；打码后截到 400 字）；内容=这条报修的凭据号与时刻；意义=看到不对劲时有一处能递出去，不用猜该找谁。中文同义：/bot alert 报修 <一句话>。
+/bot alert list [条数]：作用=查最近报修；参数=条数（可选，1-30，默认 10）；内容=最近 N 条的凭据号/时刻/来处/正文（已打码）；意义=接手的人先看得见有什么在等着。中文同义：/bot alert 列表 [条数]。
+/bot cookie status：作用=看各平台已录 cookie；参数=无；内容=平台×cookie 名×到期日（永不回显值）；意义=核对导入是否生效。中文同义：/bot 凭据 status。
+/bot cookie import <平台> <Cookie头>：作用=热写入平台 cookie；参数=平台（必填，小写平台名，在收录名单内选 1，名单以 /bot cookie status 输出为准）＋Cookie头（必填，浏览器复制的 名=值; … 整行原文粘贴）；内容=accepted/normalized/skipped 三项统计与导入结果；意义=同名不覆盖、下一次解析即生效无需重启。中文同义：/bot 凭据 导入 <平台> <Cookie头>。
 /bot cookie login <平台>：作用=扫码登录；参数=平台（必填，当前仅 bilibili 支持扫码）；内容=二维码图＋登录指引；意义=免手动导 cookie。
 /bot cookie check <平台>：作用=查扫码结果；参数=平台（必填）；内容=最近一次扫码登录状态；意义=扫码后确认。
-/bot cookie expiry：作用=全平台过期报告；参数=无；内容=各平台凭证有效期报告；意义=批量核对到期情况。
+/bot cookie expiry：作用=全平台过期报告；参数=无；内容=各平台凭证有效期报告；意义=批量核对到期情况。中文同义：/bot 凭据 过期。
 平台（18）：bilibili/xiaohongshu/douyin/qqmusic/netease/kuwo/kugou/twitter/youtube/kurobbs/weibo/kuaishou/acfun/moegirl/xiaoheihe/skland/miyoushe/zhihu
-权限=仅管理员；每天 10:00 自动巡检一次并向在线管理员推送过期预警。
+权限=仅管理员；每天 10:00 自动巡检一次并向在线管理员推送过期预警。通路=alert 面走 /bot 主链的那一支分发（全册唯一落点），cookie 面（含中文词头 /bot 凭据）走旁路 matcher is_cookie_command（也仅一处），两条面各在一处受理。
 【权限与效果】
   权限=仅管理员（命令匹配层就拦，非管理员无感）。
 【示例】/bot cookie import bilibili SESSDATA=...; bili_jct=...
@@ -1390,7 +1392,7 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测全部渠道；参�
 - 配置变量：BOT_MUSIC_MODE；BOT_MUSIC_CANDIDATES_ENABLED；BOT_MUSIC_CANDIDATES_LIMIT；BOT_MUSIC_CANDIDATES_TTL_SECONDS
 - 可复制示例：点歌 晴天｜点歌 2｜点歌模式 卡片+语音
 - 关联回归测试：tests/test_music_capability_analytics_v2.py；tests/test_music_candidates_card.py；tests/test_music_charts_real_sources_v2.py
-- 总览：【点歌】搜索并发送歌曲：点歌 <歌名>｜点歌 <编号>｜点歌模式 <部件组合>
+- 总览：【点歌】搜索并发送歌曲：/bot music <歌名>｜/bot music <编号>｜/bot music_mode <部件组合>｜中文同义：/bot 点歌｜/bot 点歌模式
 - 标题：【点歌】搜索并发送歌曲
 
 ### 教程
@@ -1402,9 +1404,9 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测全部渠道；参�
   有效期 BOT_MUSIC_CANDIDATES_TTL_SECONDS（默认 300 秒，下限 30），
   候选数 BOT_MUSIC_CANDIDATES_LIMIT（默认 5，下限 2）。
 【指令与参数】
-点歌 <歌名>：作用=按平台顺序搜索并发送；参数=歌名或关键词（必填，中英文均可；#歌名=强制按歌名搜索的转义写法）；内容=平台音乐卡片（无卡则封面图）等部件；意义=群内点播。
-点歌 <编号>：作用=同名多候选时二次选择；参数=编号（必填，来自候选列表，默认最多 5 个）；内容=选中歌曲；意义=精确选版本；仅紧随候选列表、默认 300 秒内有效，过期会提示重新点歌。
-点歌模式 <模式>：作用=设置输出方式；参数=模式（卡片|语音|音频|链接|全部，可组合如 卡片+语音，中英文别名均可）；内容=模式持久化确认；意义=控制输出形态；仅管理员，持久保存。
+/bot music <歌名>：作用=按平台顺序搜索并发送；参数=歌名或关键词（必填，中英文均可；#歌名=强制按歌名搜索的转义写法）；内容=平台音乐卡片（无卡则封面图）等部件；意义=群内点播。中文同义：/bot 点歌 <歌名>。
+/bot music <编号>：作用=同名多候选时二次选择；参数=编号（必填，来自候选列表，默认最多 5 个）；内容=选中歌曲；意义=精确选版本；仅紧随候选列表、默认 300 秒内有效，过期会提示重新点歌。中文同义：/bot 点歌 <编号>。
+/bot music_mode <部件组合>：作用=设置输出方式；参数=模式（卡片|语音|音频|链接|全部，可组合如 卡片+语音，中英文别名均可）；内容=模式持久化确认；意义=控制输出形态；仅管理员，持久保存。中文同义见该词表（简繁同形各自在册，指针：词表真身＝runtime/aliases.py::MODULE_ALIASES，本行不复述词面）；同义空格形由同一支受理。
 平台：网易云/酷我/酷狗/QQ音乐/Apple Music/Spotify 顺序尝试，单平台取第一名，失败自动换下一个。
 示例：点歌 晴天｜候选出来后回复「点歌 2」｜点歌模式 卡片+语音
 【权限与效果】
@@ -1519,7 +1521,7 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测全部渠道；参�
 - 网络依赖：需要联网
 - 可复制示例：天气 上海｜天气 河北-大城｜支持区县 浙江
 - 关联回归测试：tests/test_weather_alerts_b10.py；tests/test_weather_nmc_retry_nmcflix.py
-- 总览：【天气】查询城市/区县天气：天气 <城市>｜支持区县 <省>
+- 总览：【天气】查询城市/区县天气：/bot weather <城市>｜/bot districts <省>｜中文同义：/bot 天气｜/bot 支持区县
 - 标题：【天气】查询城市与区县天气
 
 ### 教程
@@ -1530,8 +1532,8 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测全部渠道；参�
   地名——长度受限、不以「今天/真好/怎么样」等口语词开头、不以语气词
   收尾，所以「天气真好」不会误触发。
 【指令与参数】
-天气 <城市>：作用=查天气；参数=城市名（必填，≤20 字且要像地名；同名城市用 省-市 区分，如 浙江-杭州）；内容=当前天气＋预报卡（中国气象局 NMC 免 key，Open-Meteo 兜底）；意义=出行参考。
-支持区县 <省>：作用=列出可查区县；参数=省名（必填）；内容=该省区县码表清单；意义=查县级精细天气前的发现入口。
+/bot weather <城市>：作用=查天气；参数=城市名（必填，≤20 字且要像地名；同名城市用 省-市 区分，如 浙江-杭州）；内容=当前天气＋预报卡（中国气象局 NMC 免 key，Open-Meteo 兜底）；意义=出行参考。中文同义：/bot 天气 <城市>。
+/bot districts <省>：作用=列出可查区县；参数=省名（必填）；内容=该省区县码表清单；意义=查县级精细天气前的发现入口。中文同义：/bot 支持区县 <省>。
 【权限与效果】
   权限=全员。自然语言「帮我查杭州天气」经意图归一化同样命中。
 【示例】天气 上海｜天气 河北-大城｜支持区县 浙江
@@ -1852,7 +1854,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 - 失败兜底：区分「独立页缺失/列表缺失/网络失败」的文本提示
 - 配置变量：BOT_WIKI_LANG；BOT_WIKI_ENTRY_PAGES
 - 可复制示例：维基 量子力学｜维基 鸣潮守岸人
-- 总览：【维基】查通用百科（MediaWiki）：维基 <词条>
+- 总览：【维基】查通用百科（MediaWiki）：/bot wiki <词条>｜中文同义：/bot 维基｜/bot 百科
 - 标题：【维基】查询百科词条
 
 ### 教程
@@ -1862,7 +1864,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
   支持独立页缺失时的精确列表条目提取（BOT_WIKI_ENTRY_PAGES，默认
   鳴潮角色列表，最多优先 3 页）。
 【指令与参数】
-维基 <词条>：作用=查 MediaWiki 百科；参数=词条名（必填，省略回用法）；内容=词条摘要（游戏类词条自动精简）；意义=快速百科查询。
+/bot wiki <词条>：作用=查 MediaWiki 百科；参数=词条名（必填，省略回用法）；内容=词条摘要（游戏类词条自动精简）；意义=快速百科查询。中文同义：/bot 维基 <词条>｜/bot 百科 <词条>。
 【权限与效果】
   权限=全员。查不到时会说明是独立页缺失、列表条目缺失还是网络失败。
 【示例】维基 量子力学｜维基 鸣潮守岸人
@@ -1996,7 +1998,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 /<昵称><命令>：作用=用昵称代替 /bot 前缀触发命令；参数=命令名（必填，如 帮助/状态/为什么/天气/点歌/订阅/日志/清理历史/暂停/继续，斜杠可省略）；内容=同对应命令；意义=角色扮演的日常用法。可用昵称经 /bot runtime nickname 维护。
 模块/动作词归一：模型=model、设置=runtime、帮助=help、维基=wiki；查看/列表=list、切换=set、用量=usage、思考=think 等动词自动映射。
 昵称命令受限：部分管理命令（如日志/记忆）会要求回落到 /bot 形式执行。
-管理员另可用 /bot 昵称 set <QQ号> <小名>（5-11 位数字＋1-32 字小名）为群友记小名，用于好感度称呼。
+管理员另可用 /bot 昵称 set <QQ号> <小名>（5-11 位数字＋1-32 字小名）为群友记小名，用于好感度称呼；简繁英三形同指一支，词面只住根 __init__.py 的 _NICKNAME_RE 那一格（本行不复述）。通路=这一形不走 /bot 主链分发支，由根 __init__.py 的旁路 matcher _NICKNAME_RE 受理（仅管理员）。它与 /bot runtime nickname（触发昵称表，管哪些称呼能唤起命令）是两张不同的表，别当同一处维护。
 【权限与效果】
   权限=触发本身全员；各命令自身的权限照旧生效。
 【示例】/岸宝帮助｜守岸人 天气 上海｜/岸宝点歌 晴天
@@ -2550,7 +2552,7 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 - 失败兜底：渲染失败回退纯文本
 - 可复制示例：/bot help｜/bot help 点歌｜/bot help help
 - 关联回归测试：tests/test_bot_commands_catalog_b10.py；tests/test_help_entries_coverage.py；tests/test_documentation_consistency.py
-- 总览：【帮助】查看功能总览与模块教程：/bot help｜/bot help <模块>
+- 总览：【帮助】查看功能总览与模块教程：/bot help｜/bot help <模块>｜中文同义：/bot 帮助
 - 标题：【帮助】功能总览与模块教程
 
 ### 教程
@@ -2857,7 +2859,7 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 - 配置变量：BOT_CONTENT_ROUTE_ENABLED；BOT_CONTENT_ROUTE_INTIMATE_TTL_MINUTES；BOT_CONTENT_ROUTE_L1_AUTO_ENABLED；BOT_CONTENT_ROUTE_L1_AUTO_MIN_TIER；BOT_CONTENT_ROUTE_GROUP_PER_USER_ENABLED；BOT_CONTENT_ROUTE_GROUP_WHITELIST；BOT_CONTENT_ROUTE_GROUP_BLACKLIST；BOT_CONTENT_ROUTE_PRIVATE_WHITELIST；BOT_CONTENT_ROUTE_PRIVATE_BLACKLIST
 - 可复制示例：亲密模式 开；亲密模式 深开；亲密模式 关；/bot intimate on；/bot intimate deep；/bot intimate off；/bot intimate show；/bot narration speech；/bot narration scene；/bot narration reset；/bot narration show；/bot 描写 scene；/bot 描写 show；/bot identity set-relation 恋人；/bot identity show-relation
 - 关联回归测试：tests/test_intimate_tiers_v4.py；tests/test_intimate_slash_command.py；tests/test_intimate_subcommand_parse.py；tests/test_intimate_switch_equivalence.py；tests/test_intimate_pin_persistence.py；tests/test_intimate_tier_wiring_v4.py；tests/test_relationships.py；tests/test_intimate_group_switch_delivery.py；tests/test_narration_axis_command.py；tests/test_narration_command_dispatch.py
-- 总览：【亲密模式】整句开关：亲密模式 开|深开|关｜命令开关：/bot intimate on|deep|off|show（不带子命令＝用法＋当前档）｜描写档：/bot narration（同义 /bot 描写）speech|scene|reset|show｜关系档自助设定：/bot identity set-relation|unset-relation|show-relation
+- 总览：【亲密模式】整句开关：亲密模式 开|深开|关｜命令开关：/bot intimate on|deep|off|show（不带子命令＝用法＋当前档）｜描写档：/bot narration（中文同义：/bot 描写）speech|scene|reset|show｜关系档自助设定：/bot identity set-relation|unset-relation|show-relation
 - 标题：【亲密模式】这一阵用什么语气相处，你们自己说（整句开关＋关系档）
 
 ### 教程
@@ -2891,16 +2893,16 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 /bot identity show-relation：作用=看自己当前的关系档；参数=无；内容=档号，或明说「没设定过，按相处深浅自然来」；意义=先核对再改，不靠猜。
 权限=全员：任何人对自己说一句就生效，无需管理员。群聊里成员说的只对自己（个人档），要把整群钉上得管理员；群聊整面还受黑白名单约束（白名单为空=整群关闭，绝不猜群；黑名单永远赢）。
 群聊里看不看得见：作用=诚实交代出站那一道闸；参数=无；内容=群聊出站比私聊多一道审查（domains/render/reviewer.py 的 _PUBLIC_OUTPUT_UNSAFE，只在群聊那一支跑）。命中**不再是整条吞**：文字里那一处就地涂销、其余正文与部件照发，并留一行 stage="review" 审计痕迹；只剩两种情形仍整条不发——命中的是**改不掉的媒体载荷**，或**涂销后已没剩下要说的话**。另有一条边界（2026-10-06 起）：这条形状加了左右词界，MAR18／v2R-18／October 18 一类正常文本不再被误咬，在册真命中一枚未少；亲密段自带那句「别替这段文字贴类别标签」的护栏未动；意义=本册不承诺铺开写的场景在群里一定出得来，要让它被看见，私聊说一句更稳。
-/bot intimate on（同义：open／l1）：作用=用命令面把当前会话上到亲密档的**浅档**，与整句「亲密模式 开」同效、只给关系语气不改默认模型；参数=子命令（三词同义，大小写不敏感、首尾空白容忍；认不出的一律不受理，绝不拿错字悄悄顶成"开"）；内容=一句守岸人语气的确认；意义=习惯敲命令的人不必迁就整句说法，两条路各说各的、档位口径一致。
-/bot intimate deep（同义：deeper／l2）：作用=浅档之上再允许把首跳换到在册的成人内容通道，与整句「亲密模式 深开」同效；参数=子命令（三词同义，大小写不敏感）；内容=深档确认一句；意义=「档成立」与「该换通道」分家这件事，命令面与整句面同判据。
-/bot intimate off（同义：close／unset）：作用=把浅深两档一起放下、回到平时语气，与整句「亲密模式 关」同效；参数=子命令（三词同义）；内容=回到平时这样聊的确认；意义=撤档一句话就撤干净，不粘着。
+/bot intimate on：作用=用命令面把当前会话上到亲密档的**浅档**，与整句「亲密模式 开」同效、只给关系语气不改默认模型；参数=子命令（三词同义，大小写不敏感、首尾空白容忍；认不出的一律不受理，绝不拿错字悄悄顶成"开"）；内容=一句守岸人语气的确认；意义=习惯敲命令的人不必迁就整句说法，两条路各说各的、档位口径一致。同义：open／l1。
+/bot intimate deep：作用=浅档之上再允许把首跳换到在册的成人内容通道，与整句「亲密模式 深开」同效；参数=子命令（三词同义，大小写不敏感）；内容=深档确认一句；意义=「档成立」与「该换通道」分家这件事，命令面与整句面同判据。同义：deeper／l2。
+/bot intimate off：作用=把浅深两档一起放下、回到平时语气，与整句「亲密模式 关」同效；参数=子命令（三词同义）；内容=回到平时这样聊的确认；意义=撤档一句话就撤干净，不粘着。同义：close／unset。
 /bot intimate show：作用=只看现在是什么档、什么都不改（只读查询，既不上钉也不解钉）；参数=子命令 show；内容=当前档位读数逐格清单（真身＝runtime/intimate_control.py 的 _state_body，本册不抄成员、不写格数）；意义=先核对再决定要不要改，不靠猜。这一支不回内部来源串、不回模型名、也不回字数——那几样本就不该从这页漏出去。
 /bot intimate（不带子命令）：作用=自己交出这份用法并附当前档位读数，末尾指路「/bot help 亲密模式」；参数=无；内容=用法清单加当前档，不撞帮助兜底；意义=裸敲一条命令既不会被静默当成"开"，也不会掉进无关的帮助页。
-/bot narration（同义词头 /bot 描写；不带子命令）：作用=交出描写档自己的用法与当前读数；参数=无；内容=用法清单＋描写档／依据／细节描写／库里的钉四格读数，末尾指路「/bot help 亲密模式」；意义=这一轴的词表只住一处（runtime/content_route.py 的 _NARRATION_SUBCOMMAND_TABLE），本册不复述成员——要哪一格，命令面会当场说给你听。
-/bot narration speech（中文同义：/bot 描写 speech）：作用=把自己钉回「只说出口的话」那一格——语言之外不写动作、神色与心里；参数=子命令（大小写不敏感、首尾空白容忍，认不出的一律不受理，绝不拿错字悄悄改你的文风）；内容=一句守岸人语气的确认加当前读数；意义=这是缺省那一格，也是你随时能退回的地方；这一句也说一次就一直算。
-/bot narration scene（中文同义：/bot 描写 scene）：作用=把自己钉上「铺开写」那一格，说出口的话与没说出口的都算数；参数=子命令（同上）；内容=铺开写的确认加读数；意义=这一格**不等亲密档**——日常相处里你要，我就这样写；日常那一档铺开时**衣着与环境照当下写**（裁定 G-4＝乙，10-04 深夜改判：「普通档既然都改成场景模式了，那就把衣着和环境也都写上」），只有落在身体上的细部留给亲密场景；另有一条界线：**群聊那一侧不落笔身形与衣着**（裁定 I-3＝丙，身旁另有别人在看，那几样留给只剩你们两个人的时候）；说一次就一直算，除非你再说一次只说话；能不能真铺开仍只问 grants_intimate_narration 那一处，本册不抄第二份判据。
-/bot narration reset（中文同义：/bot 描写 reset）：作用=把这一格交回缺省、连持久钉一起收回；参数=子命令（同上）；内容=收回确认；意义=只清描写档那两列，称谓、性别自述与关系档不是这条指令说过的话，一个字都不动。
-/bot narration show（中文同义：/bot 描写 show）：作用=只看现在是什么档，什么都不改；参数=子命令（与开关面共用同一枚 show，词面不另立第二份）；内容=描写档、依据、细节描写开没开、库里的钉；意义=先核对再决定要不要改。这一支不回内部来源串、不回模型名、也不回字数。
+/bot narration（不带子命令）：作用=交出描写档自己的用法与当前读数；参数=无；内容=用法清单＋描写档／依据／细节描写／库里的钉四格读数，末尾指路「/bot help 亲密模式」；意义=这一轴的词表只住一处（runtime/content_route.py 的 _NARRATION_SUBCOMMAND_TABLE），本册不复述成员——要哪一格，命令面会当场说给你听。中文同义：/bot 描写。
+/bot narration speech：作用=把自己钉回「只说出口的话」那一格——语言之外不写动作、神色与心里；参数=子命令（大小写不敏感、首尾空白容忍，认不出的一律不受理，绝不拿错字悄悄改你的文风）；内容=一句守岸人语气的确认加当前读数；意义=这是缺省那一格，也是你随时能退回的地方；这一句也说一次就一直算。中文同义：/bot 描写 speech。
+/bot narration scene：作用=把自己钉上「铺开写」那一格，说出口的话与没说出口的都算数；参数=子命令（同上）；内容=铺开写的确认加读数；意义=这一格**不等亲密档**——日常相处里你要，我就这样写；日常那一档铺开时**衣着与环境照当下写**（裁定 G-4＝乙，10-04 深夜改判：「普通档既然都改成场景模式了，那就把衣着和环境也都写上」），只有落在身体上的细部留给亲密场景；另有一条界线：**群聊那一侧不落笔身形与衣着**（裁定 I-3＝丙，身旁另有别人在看，那几样留给只剩你们两个人的时候）；说一次就一直算，除非你再说一次只说话；能不能真铺开仍只问 grants_intimate_narration 那一处，本册不抄第二份判据。中文同义：/bot 描写 scene。
+/bot narration reset：作用=把这一格交回缺省、连持久钉一起收回；参数=子命令（同上）；内容=收回确认；意义=只清描写档那两列，称谓、性别自述与关系档不是这条指令说过的话，一个字都不动。中文同义：/bot 描写 reset。
+/bot narration show：作用=只看现在是什么档，什么都不改；参数=子命令（与开关面共用同一枚 show，词面不另立第二份）；内容=描写档、依据、细节描写开没开、库里的钉；意义=先核对再决定要不要改。这一支不回内部来源串、不回模型名、也不回字数。中文同义：/bot 描写 show。
 描写档跟谁、跟多久：作用=交代作用域与持久面；参数=无；内容=这一轴按**会话里的这个人**——你在群 A 说的那一句只管群 A 里对你的回复，换一个群、换一个频道、换一路会话都要再说一次（私聊那一格也只管私聊；裁定 I-2「换了会话就需要重新激发」，频道与群同侧＝用户 2026-10-06 裁「telegram：群侧」）；群里管理员替整群拨的亲密档永不广播描写档，别人的钉你也拨不动（裁定 G-3＋写腿沿用亲密开关同一道角色门）；说一次就一直算——钉落下就跨重启（住在 addressing_preferences 那两列，不靠进程内缓存，那枚时间戳只供审计、不参与任何过期判定），与亲密档那条 60 分钟 TTL 是两件事——**描写档没有 TTL**，没有哪条通路会替她把它拿走，只有你自己再说一句 speech 或 reset 才收得回；意义=文风偏好该由本人在自己那一路说了算，也不该被一次超时悄悄拿走。⚠ 群侧这一格只在**内容路由白名单群**里生效：判据读 `BOT_CONTENT_ROUTE_GROUP_WHITELIST`，它既不可运行时 set 也不走热改表，加群＝改 `.env` 那一行后重启；名单外的群里你钉了 scene 也会落回日常档（不是钉坏了，是准入门收的）。
 硬线：内容放行面不因关系档而改变，仍由会话门 explicit_allowed_for_session 判；六条硬线任何关系、任何开关、任何设定都压不过（security/content_safety.py）。
 开关不受理时：总闸关／本会话没准入／群里普通成员但个人档总闸关——命令面没有正文可落回，仍会老实说一句"这一处还没放开"，不静默、不假装生效。

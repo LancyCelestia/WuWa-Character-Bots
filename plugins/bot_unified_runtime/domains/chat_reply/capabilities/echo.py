@@ -483,6 +483,32 @@ def build_ignore_command_guidance() -> str:
     return line
 
 
+def build_unknown_subcommand_result(
+    request_id: str | None = None,
+) -> CapabilityResult:
+    """``/bot <认不出的子命令>``：拒绝 + 指路，**不再静默坠帮助总览**（G-1，用户 2026-10-08 裁定）。
+
+    文案一行都不新写：正文取自既有未知指令拒绝口 ``build_ignore_command_guidance``
+    （`_IGNORE_GUIDE_LINES` 进程内轮换，句内已含「/bot help」用法出口）。能力 id 复用
+    ``bot.help`` ⇒ 不新增任何登记面（registry / 配置键 / db-owner 一律不动）。
+
+    🔴 不回显用户敲入的那枚 token：`_help_unknown_body` 那种回显形态在本面刻意不采用——
+    出站 `redact_local_secrets` 有已知盲区（嵌词 `sk-` 不认，台账 #55★），把原样 token 弹回
+    等于替对方把可能含凭据的串再过一遍出站闸；拒绝面不需要那个信息也能说清。
+    """
+    return CapabilityResult(
+        request_id=request_id or new_request_id("help"),
+        capability_id="bot.help",
+        kind="text",
+        title="",
+        body=build_ignore_command_guidance(),
+        risk_level=RiskLevel.LOW,
+        privacy_level=PrivacyLevel.PUBLIC,
+        send_policy=SendPolicy.IMMEDIATE,
+        audit_tags=["help", "unknown_subcommand", "rejected"],
+    )
+
+
 class IgnoreGuideGate:
     """同会话引导节流（审查 C-07 防刷屏；进程内即可，默认 60 秒窗口）。
 
@@ -571,7 +597,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": "功能管理", "admin_only": True,
             "aliases": nickname_verbs_for("bot.runtime"),
-            "index": "【功能管理】查询和控制能力树：/bot feature",
+            "index": "【功能管理】查询和控制能力树：/bot feature｜中文同义：/bot 功能管理",
             "title_line": "【功能管理】能力树状态与版本",
             "lines": [
                 "/bot feature list：作用=列出能力节点；参数=无；内容=稳定ID和有效状态；意义=定位待管理功能。",
@@ -837,10 +863,10 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '人格',
             "admin_only": True,
             "aliases": nickname_verbs_for("bot.persona"),
-            "index": '【人格】人格自检：/bot persona',
+            "index": '【人格】人格自检：/bot persona｜中文同义：/bot 人格',
             "title_line": '【人格】守岸人人格材料自检',
             "lines": [
-                '/bot persona：作用=人格材料自检；参数=无；内容=人格强度/语气规则/边界的自检结果；意义=确认人格档案完整、语气与边界规则生效。',
+                '/bot persona：作用=人格材料自检；参数=无；内容=人格强度/语气规则/边界的自检结果；意义=确认人格档案完整、语气与边界规则生效。中文同义：/bot 人格。',
             ],
             "detail": (
                 '【板块介绍】\n'
@@ -951,7 +977,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '模型',
             "admin_only": True,
             "aliases": ('模型', 'model', 'llm', '渠道', '切换模型'),
-            "index": '【模型】/bot model list | set | add | update | priority | effort | think | price | search | usage | health | probe | routes | vision | remove | reset',
+            "index": '【模型】模型与供应商管理：/bot model list | set | add | update | priority | effort | think | price | search | usage | health | probe | routes | vision | remove | reset｜中文同义：/bot 模型 <同一子命令>',
             "title_line": '【模型】模型与供应商管理（管理员，改动即时生效）',
             "lines": [
                 '/bot llm：作用=诊断当前 provider/model/key 并做一次短调用；参数=无；内容=诊断报告（会产生一次真实调用的费用）；意义=验证当前渠道真能通。',
@@ -997,7 +1023,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '用量',
             "admin_only": True,
             "aliases": ('用量', 'usage', '账单', '花费', '监控'),
-            "index": '【用量】Token 统计、费用记账与监控提醒：/bot model usage | /bot model price',
+            "index": '【用量】Token 统计、费用记账与监控提醒：/bot model usage | /bot model price｜中文同义：/bot 模型 usage｜/bot 模型 price',
             "title_line": '【用量】Token 统计、费用记账与监控提醒',
             "lines": [
                 '/bot model usage [today|YYYY-MM-DD]：作用=每日用量账单；参数=日期（可选，省略=今天）；内容=输入/缓存命中（含占输入比例）/缓存创建/输出 Token、调用次数、按模型分组费用与逐模型缓存读建、未计价次数；意义=每天钱花在哪、缓存有没有起作用一目了然。',
@@ -1024,10 +1050,10 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '设置',
             "admin_only": True,
             "aliases": ('设置', 'runtime', '参数', '設置', '參數', '运行时'),
-            "index": '【设置】运行时参数：/bot runtime set|get|list|reset|nickname|persona|instance',
+            "index": '【设置】运行时参数：/bot runtime set|get|list|reset|nickname|persona|instance｜中文同义：/bot 设置｜/bot 参数',
             "title_line": '【设置】运行时参数管理（管理员）',
             "lines": [
-                '/bot runtime set <KEY> <VALUE>：作用=热改一个参数；参数=KEY（必填，可写键见 get 列表）＋VALUE（必填，按键校验），或加 --instance <名称>（可选，定位实例）；内容=已设置 KEY = 值（已持久化）；意义=不改 .env 立即生效，重启保留。',
+                '/bot runtime set <KEY> <VALUE>：作用=热改一个参数；参数=KEY（必填，可写键见 get 列表）＋VALUE（必填，按键校验），或加 --instance <名称>（可选，定位实例）；内容=已设置 KEY = 值（已持久化）；意义=不改 .env 也能改，下一条消息起生效（当轮已装配的 config 快照不回改）；登记为需重启的那批键会被当场拒绝并提示改 .env＋重启，不假称写入成功；重启后保留。',
                 '/bot runtime get <KEY>：作用=读参数实际生效值；参数=KEY（必填）；内容=值＋（覆盖值）/（.env 默认值）来源标注；意义=确认运行时覆盖与 .env 谁在生效。',
                 '/bot runtime list：作用=列出全部覆盖项；参数=无；内容=KEY=VALUE 清单；意义=盘点改过哪些。',
                 '/bot runtime reset [KEY]：作用=恢复默认；参数=KEY（可选，省略=清空全部覆盖）；内容=清除项数；意义=撤销热改。',
@@ -1091,17 +1117,19 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '凭据',
             "admin_only": True,
             "aliases": ('凭据', '凭证', '憑據', '憑證', '登录凭证', '登錄憑證', 'alert', 'cookie'),
-            "index": '【凭据】凭据健康与 cookie 导入：/bot alert check｜/bot cookie status|import|login|check|expiry',
+            "index": '【凭据】凭据健康与 cookie 导入与报修：/bot alert check｜/bot alert report｜/bot cookie status|import|login|check|expiry',
             "title_line": '【凭据】检查 cookie/凭据健康',
             "lines": [
-                '/bot alert check：作用=凭据体检；参数=无；--probe（可选开关，追加在线探测，401/403=需重登）；内容=各凭据引用的状态清单；意义=解析突然 403 时的第一排查。',
-                '/bot cookie status：作用=看各平台已录 cookie；参数=无；内容=平台×cookie 名×到期日（永不回显值）；意义=核对导入是否生效。',
-                '/bot cookie import <平台> <Cookie头>：作用=热写入平台 cookie；参数=平台（必填，小写平台名，在收录名单内选 1，名单以 /bot cookie status 输出为准）＋Cookie头（必填，浏览器复制的 名=值; … 整行原文粘贴）；内容=accepted/normalized/skipped 三项统计与导入结果；意义=同名不覆盖、下一次解析即生效无需重启。',
+                '/bot alert check：作用=凭据体检；参数=可选开关 --probe（追加在线探测，401/403=需重登）；内容=各凭据引用的状态清单；意义=解析突然 403 时的第一排查。中文同义：/bot alert 体检｜/bot alert 检查。',
+                '/bot alert report <一句话>：作用=把你看到的问题原话递进报修册；参数=一句话（必填，说清哪条消息、什么时候、哪里不对；打码后截到 400 字）；内容=这条报修的凭据号与时刻；意义=看到不对劲时有一处能递出去，不用猜该找谁。中文同义：/bot alert 报修 <一句话>。',
+                '/bot alert list [条数]：作用=查最近报修；参数=条数（可选，1-30，默认 10）；内容=最近 N 条的凭据号/时刻/来处/正文（已打码）；意义=接手的人先看得见有什么在等着。中文同义：/bot alert 列表 [条数]。',
+                '/bot cookie status：作用=看各平台已录 cookie；参数=无；内容=平台×cookie 名×到期日（永不回显值）；意义=核对导入是否生效。中文同义：/bot 凭据 status。',
+                '/bot cookie import <平台> <Cookie头>：作用=热写入平台 cookie；参数=平台（必填，小写平台名，在收录名单内选 1，名单以 /bot cookie status 输出为准）＋Cookie头（必填，浏览器复制的 名=值; … 整行原文粘贴）；内容=accepted/normalized/skipped 三项统计与导入结果；意义=同名不覆盖、下一次解析即生效无需重启。中文同义：/bot 凭据 导入 <平台> <Cookie头>。',
                 '/bot cookie login <平台>：作用=扫码登录；参数=平台（必填，当前仅 bilibili 支持扫码）；内容=二维码图＋登录指引；意义=免手动导 cookie。',
                 '/bot cookie check <平台>：作用=查扫码结果；参数=平台（必填）；内容=最近一次扫码登录状态；意义=扫码后确认。',
-                '/bot cookie expiry：作用=全平台过期报告；参数=无；内容=各平台凭证有效期报告；意义=批量核对到期情况。',
+                '/bot cookie expiry：作用=全平台过期报告；参数=无；内容=各平台凭证有效期报告；意义=批量核对到期情况。中文同义：/bot 凭据 过期。',
                 '平台（18）：bilibili/xiaohongshu/douyin/qqmusic/netease/kuwo/kugou/twitter/youtube/kurobbs/weibo/kuaishou/acfun/moegirl/xiaoheihe/skland/miyoushe/zhihu',
-                '权限=仅管理员；每天 10:00 自动巡检一次并向在线管理员推送过期预警。',
+                '权限=仅管理员；每天 10:00 自动巡检一次并向在线管理员推送过期预警。通路=alert 面走 /bot 主链的那一支分发（全册唯一落点），cookie 面（含中文词头 /bot 凭据）走旁路 matcher is_cookie_command（也仅一处），两条面各在一处受理。',
             ],
             "detail": (
                 '【板块介绍】\n'
@@ -1491,12 +1519,12 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "admin_only": False,
             # 點唱/点唱（tra3 波入 music._COMMAND_RE）help 同步入册。
             "aliases": ('点歌', 'music', '點歌', '点唱', '點唱', 'song', 'diange', 'dg', 'diangemoshi', 'dgms'),
-            "index": '【点歌】搜索并发送歌曲：点歌 <歌名>｜点歌 <编号>｜点歌模式 <部件组合>',
+            "index": '【点歌】搜索并发送歌曲：/bot music <歌名>｜/bot music <编号>｜/bot music_mode <部件组合>｜中文同义：/bot 点歌｜/bot 点歌模式',
             "title_line": '【点歌】搜索并发送歌曲',
             "lines": [
-                '点歌 <歌名>：作用=按平台顺序搜索并发送；参数=歌名或关键词（必填，中英文均可；#歌名=强制按歌名搜索的转义写法）；内容=平台音乐卡片（无卡则封面图）等部件；意义=群内点播。',
-                '点歌 <编号>：作用=同名多候选时二次选择；参数=编号（必填，来自候选列表，默认最多 5 个）；内容=选中歌曲；意义=精确选版本；仅紧随候选列表、默认 300 秒内有效，过期会提示重新点歌。',
-                '点歌模式 <模式>：作用=设置输出方式；参数=模式（卡片|语音|音频|链接|全部，可组合如 卡片+语音，中英文别名均可）；内容=模式持久化确认；意义=控制输出形态；仅管理员，持久保存。',
+                '/bot music <歌名>：作用=按平台顺序搜索并发送；参数=歌名或关键词（必填，中英文均可；#歌名=强制按歌名搜索的转义写法）；内容=平台音乐卡片（无卡则封面图）等部件；意义=群内点播。中文同义：/bot 点歌 <歌名>。',
+                '/bot music <编号>：作用=同名多候选时二次选择；参数=编号（必填，来自候选列表，默认最多 5 个）；内容=选中歌曲；意义=精确选版本；仅紧随候选列表、默认 300 秒内有效，过期会提示重新点歌。中文同义：/bot 点歌 <编号>。',
+                '/bot music_mode <部件组合>：作用=设置输出方式；参数=模式（卡片|语音|音频|链接|全部，可组合如 卡片+语音，中英文别名均可）；内容=模式持久化确认；意义=控制输出形态；仅管理员，持久保存。中文同义见该词表（简繁同形各自在册，指针：词表真身＝runtime/aliases.py::MODULE_ALIASES，本行不复述词面）；同义空格形由同一支受理。',
                 '平台：网易云/酷我/酷狗/QQ音乐/Apple Music/Spotify 顺序尝试，单平台取第一名，失败自动换下一个。',
                 '示例：点歌 晴天｜候选出来后回复「点歌 2」｜点歌模式 卡片+语音',
             ],
@@ -1582,11 +1610,11 @@ _HELP_ENTRIES: list[HelpEntry] = [
             # 天氣/查天氣/天氣預報均在 weather._WEATHER_RE（天氣預報=tra3 修活），
             # 与 META triggers_nickname 已登记词形对齐，help 解析同步。
             "aliases": ('天气', 'weather', '天氣', '查天氣', '天氣預報', 'tianqi', 'tq', 'chatianqi', 'ctq'),
-            "index": '【天气】查询城市/区县天气：天气 <城市>｜支持区县 <省>',
+            "index": '【天气】查询城市/区县天气：/bot weather <城市>｜/bot districts <省>｜中文同义：/bot 天气｜/bot 支持区县',
             "title_line": '【天气】查询城市与区县天气',
             "lines": [
-                '天气 <城市>：作用=查天气；参数=城市名（必填，≤20 字且要像地名；同名城市用 省-市 区分，如 浙江-杭州）；内容=当前天气＋预报卡（中国气象局 NMC 免 key，Open-Meteo 兜底）；意义=出行参考。',
-                '支持区县 <省>：作用=列出可查区县；参数=省名（必填）；内容=该省区县码表清单；意义=查县级精细天气前的发现入口。',
+                '/bot weather <城市>：作用=查天气；参数=城市名（必填，≤20 字且要像地名；同名城市用 省-市 区分，如 浙江-杭州）；内容=当前天气＋预报卡（中国气象局 NMC 免 key，Open-Meteo 兜底）；意义=出行参考。中文同义：/bot 天气 <城市>。',
+                '/bot districts <省>：作用=列出可查区县；参数=省名（必填）；内容=该省区县码表清单；意义=查县级精细天气前的发现入口。中文同义：/bot 支持区县 <省>。',
             ],
             "detail": (
                 '【板块介绍】\n'
@@ -1801,10 +1829,10 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '维基',
             "admin_only": False,
             "aliases": ('维基', 'wiki', '百科', 'weiji', 'wjbk'),
-            "index": '【维基】查通用百科（MediaWiki）：维基 <词条>',
+            "index": '【维基】查通用百科（MediaWiki）：/bot wiki <词条>｜中文同义：/bot 维基｜/bot 百科',
             "title_line": '【维基】查询百科词条',
             "lines": [
-                '维基 <词条>：作用=查 MediaWiki 百科；参数=词条名（必填，省略回用法）；内容=词条摘要（游戏类词条自动精简）；意义=快速百科查询。',
+                '/bot wiki <词条>：作用=查 MediaWiki 百科；参数=词条名（必填，省略回用法）；内容=词条摘要（游戏类词条自动精简）；意义=快速百科查询。中文同义：/bot 维基 <词条>｜/bot 百科 <词条>。',
             ],
             "detail": (
                 '【板块介绍】\n'
@@ -1899,7 +1927,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '/<昵称><命令>：作用=用昵称代替 /bot 前缀触发命令；参数=命令名（必填，如 帮助/状态/为什么/天气/点歌/订阅/日志/清理历史/暂停/继续，斜杠可省略）；内容=同对应命令；意义=角色扮演的日常用法。可用昵称经 /bot runtime nickname 维护。',
                 '模块/动作词归一：模型=model、设置=runtime、帮助=help、维基=wiki；查看/列表=list、切换=set、用量=usage、思考=think 等动词自动映射。',
                 '昵称命令受限：部分管理命令（如日志/记忆）会要求回落到 /bot 形式执行。',
-                '管理员另可用 /bot 昵称 set <QQ号> <小名>（5-11 位数字＋1-32 字小名）为群友记小名，用于好感度称呼。',
+                '管理员另可用 /bot 昵称 set <QQ号> <小名>（5-11 位数字＋1-32 字小名）为群友记小名，用于好感度称呼；简繁英三形同指一支，词面只住根 __init__.py 的 _NICKNAME_RE 那一格（本行不复述）。通路=这一形不走 /bot 主链分发支，由根 __init__.py 的旁路 matcher _NICKNAME_RE 受理（仅管理员）。它与 /bot runtime nickname（触发昵称表，管哪些称呼能唤起命令）是两张不同的表，别当同一处维护。',
             ],
             "detail": (
                 '【板块介绍】\n'
@@ -2306,7 +2334,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '帮助',
             "admin_only": False,
             "aliases": ('帮助', 'help', '菜单'),
-            "index": '【帮助】查看功能总览与模块教程：/bot help｜/bot help <模块>',
+            "index": '【帮助】查看功能总览与模块教程：/bot help｜/bot help <模块>｜中文同义：/bot 帮助',
             "title_line": '【帮助】功能总览与模块教程',
             "lines": [
                 '/bot help：作用=按权限输出分类总览；参数=无；内容=管理员/大模型/子功能三类清单，每行附「/bot help <模块>」展开引导；意义=一切入口的入口。渲染成功发 Mica 卡，失败回纯文本。',
@@ -2534,7 +2562,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '亲密模式',
             "admin_only": False,
             "aliases": ('亲密模式', '亲密档位', 'intimate', 'qinmimoshi'),
-            "index": '【亲密模式】整句开关：亲密模式 开|深开|关｜命令开关：/bot intimate on|deep|off|show（不带子命令＝用法＋当前档）｜描写档：/bot narration（同义 /bot 描写）speech|scene|reset|show｜关系档自助设定：/bot identity set-relation|unset-relation|show-relation',
+            "index": '【亲密模式】整句开关：亲密模式 开|深开|关｜命令开关：/bot intimate on|deep|off|show（不带子命令＝用法＋当前档）｜描写档：/bot narration（中文同义：/bot 描写）speech|scene|reset|show｜关系档自助设定：/bot identity set-relation|unset-relation|show-relation',
             "title_line": '【亲密模式】这一阵用什么语气相处，你们自己说（整句开关＋关系档）',
             "lines": [
                 '亲密模式 开（同义：亲密模式开／开启亲密模式／打开亲密模式／亲密模式 on）：作用=把当前会话上到亲密档的**浅档**（只给关系语气，不改默认模型）；参数=无（整句才算命令，句子中间带这几个字不算）；内容=一句守岸人语气的确认；意义=想被更柔软地对待就说一句，不必念名单。',
@@ -2549,16 +2577,16 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '/bot identity show-relation：作用=看自己当前的关系档；参数=无；内容=档号，或明说「没设定过，按相处深浅自然来」；意义=先核对再改，不靠猜。',
                 '权限=全员：任何人对自己说一句就生效，无需管理员。群聊里成员说的只对自己（个人档），要把整群钉上得管理员；群聊整面还受黑白名单约束（白名单为空=整群关闭，绝不猜群；黑名单永远赢）。',
                 '群聊里看不看得见：作用=诚实交代出站那一道闸；参数=无；内容=群聊出站比私聊多一道审查（domains/render/reviewer.py 的 _PUBLIC_OUTPUT_UNSAFE，只在群聊那一支跑）。命中**不再是整条吞**：文字里那一处就地涂销、其余正文与部件照发，并留一行 stage="review" 审计痕迹；只剩两种情形仍整条不发——命中的是**改不掉的媒体载荷**，或**涂销后已没剩下要说的话**。另有一条边界（2026-10-06 起）：这条形状加了左右词界，MAR18／v2R-18／October 18 一类正常文本不再被误咬，在册真命中一枚未少；亲密段自带那句「别替这段文字贴类别标签」的护栏未动；意义=本册不承诺铺开写的场景在群里一定出得来，要让它被看见，私聊说一句更稳。',
-                '/bot intimate on（同义：open／l1）：作用=用命令面把当前会话上到亲密档的**浅档**，与整句「亲密模式 开」同效、只给关系语气不改默认模型；参数=子命令（三词同义，大小写不敏感、首尾空白容忍；认不出的一律不受理，绝不拿错字悄悄顶成"开"）；内容=一句守岸人语气的确认；意义=习惯敲命令的人不必迁就整句说法，两条路各说各的、档位口径一致。',
-                '/bot intimate deep（同义：deeper／l2）：作用=浅档之上再允许把首跳换到在册的成人内容通道，与整句「亲密模式 深开」同效；参数=子命令（三词同义，大小写不敏感）；内容=深档确认一句；意义=「档成立」与「该换通道」分家这件事，命令面与整句面同判据。',
-                '/bot intimate off（同义：close／unset）：作用=把浅深两档一起放下、回到平时语气，与整句「亲密模式 关」同效；参数=子命令（三词同义）；内容=回到平时这样聊的确认；意义=撤档一句话就撤干净，不粘着。',
+                '/bot intimate on：作用=用命令面把当前会话上到亲密档的**浅档**，与整句「亲密模式 开」同效、只给关系语气不改默认模型；参数=子命令（三词同义，大小写不敏感、首尾空白容忍；认不出的一律不受理，绝不拿错字悄悄顶成"开"）；内容=一句守岸人语气的确认；意义=习惯敲命令的人不必迁就整句说法，两条路各说各的、档位口径一致。同义：open／l1。',
+                '/bot intimate deep：作用=浅档之上再允许把首跳换到在册的成人内容通道，与整句「亲密模式 深开」同效；参数=子命令（三词同义，大小写不敏感）；内容=深档确认一句；意义=「档成立」与「该换通道」分家这件事，命令面与整句面同判据。同义：deeper／l2。',
+                '/bot intimate off：作用=把浅深两档一起放下、回到平时语气，与整句「亲密模式 关」同效；参数=子命令（三词同义）；内容=回到平时这样聊的确认；意义=撤档一句话就撤干净，不粘着。同义：close／unset。',
                 '/bot intimate show：作用=只看现在是什么档、什么都不改（只读查询，既不上钉也不解钉）；参数=子命令 show；内容=当前档位读数逐格清单（真身＝runtime/intimate_control.py 的 _state_body，本册不抄成员、不写格数）；意义=先核对再决定要不要改，不靠猜。这一支不回内部来源串、不回模型名、也不回字数——那几样本就不该从这页漏出去。',
                 '/bot intimate（不带子命令）：作用=自己交出这份用法并附当前档位读数，末尾指路「/bot help 亲密模式」；参数=无；内容=用法清单加当前档，不撞帮助兜底；意义=裸敲一条命令既不会被静默当成"开"，也不会掉进无关的帮助页。',
-                '/bot narration（同义词头 /bot 描写；不带子命令）：作用=交出描写档自己的用法与当前读数；参数=无；内容=用法清单＋描写档／依据／细节描写／库里的钉四格读数，末尾指路「/bot help 亲密模式」；意义=这一轴的词表只住一处（runtime/content_route.py 的 _NARRATION_SUBCOMMAND_TABLE），本册不复述成员——要哪一格，命令面会当场说给你听。',
-                '/bot narration speech（中文同义：/bot 描写 speech）：作用=把自己钉回「只说出口的话」那一格——语言之外不写动作、神色与心里；参数=子命令（大小写不敏感、首尾空白容忍，认不出的一律不受理，绝不拿错字悄悄改你的文风）；内容=一句守岸人语气的确认加当前读数；意义=这是缺省那一格，也是你随时能退回的地方；这一句也说一次就一直算。',
-                '/bot narration scene（中文同义：/bot 描写 scene）：作用=把自己钉上「铺开写」那一格，说出口的话与没说出口的都算数；参数=子命令（同上）；内容=铺开写的确认加读数；意义=这一格**不等亲密档**——日常相处里你要，我就这样写；日常那一档铺开时**衣着与环境照当下写**（裁定 G-4＝乙，10-04 深夜改判：「普通档既然都改成场景模式了，那就把衣着和环境也都写上」），只有落在身体上的细部留给亲密场景；另有一条界线：**群聊那一侧不落笔身形与衣着**（裁定 I-3＝丙，身旁另有别人在看，那几样留给只剩你们两个人的时候）；说一次就一直算，除非你再说一次只说话；能不能真铺开仍只问 grants_intimate_narration 那一处，本册不抄第二份判据。',
-                '/bot narration reset（中文同义：/bot 描写 reset）：作用=把这一格交回缺省、连持久钉一起收回；参数=子命令（同上）；内容=收回确认；意义=只清描写档那两列，称谓、性别自述与关系档不是这条指令说过的话，一个字都不动。',
-                '/bot narration show（中文同义：/bot 描写 show）：作用=只看现在是什么档，什么都不改；参数=子命令（与开关面共用同一枚 show，词面不另立第二份）；内容=描写档、依据、细节描写开没开、库里的钉；意义=先核对再决定要不要改。这一支不回内部来源串、不回模型名、也不回字数。',
+                '/bot narration（不带子命令）：作用=交出描写档自己的用法与当前读数；参数=无；内容=用法清单＋描写档／依据／细节描写／库里的钉四格读数，末尾指路「/bot help 亲密模式」；意义=这一轴的词表只住一处（runtime/content_route.py 的 _NARRATION_SUBCOMMAND_TABLE），本册不复述成员——要哪一格，命令面会当场说给你听。中文同义：/bot 描写。',
+                '/bot narration speech：作用=把自己钉回「只说出口的话」那一格——语言之外不写动作、神色与心里；参数=子命令（大小写不敏感、首尾空白容忍，认不出的一律不受理，绝不拿错字悄悄改你的文风）；内容=一句守岸人语气的确认加当前读数；意义=这是缺省那一格，也是你随时能退回的地方；这一句也说一次就一直算。中文同义：/bot 描写 speech。',
+                '/bot narration scene：作用=把自己钉上「铺开写」那一格，说出口的话与没说出口的都算数；参数=子命令（同上）；内容=铺开写的确认加读数；意义=这一格**不等亲密档**——日常相处里你要，我就这样写；日常那一档铺开时**衣着与环境照当下写**（裁定 G-4＝乙，10-04 深夜改判：「普通档既然都改成场景模式了，那就把衣着和环境也都写上」），只有落在身体上的细部留给亲密场景；另有一条界线：**群聊那一侧不落笔身形与衣着**（裁定 I-3＝丙，身旁另有别人在看，那几样留给只剩你们两个人的时候）；说一次就一直算，除非你再说一次只说话；能不能真铺开仍只问 grants_intimate_narration 那一处，本册不抄第二份判据。中文同义：/bot 描写 scene。',
+                '/bot narration reset：作用=把这一格交回缺省、连持久钉一起收回；参数=子命令（同上）；内容=收回确认；意义=只清描写档那两列，称谓、性别自述与关系档不是这条指令说过的话，一个字都不动。中文同义：/bot 描写 reset。',
+                '/bot narration show：作用=只看现在是什么档，什么都不改；参数=子命令（与开关面共用同一枚 show，词面不另立第二份）；内容=描写档、依据、细节描写开没开、库里的钉；意义=先核对再决定要不要改。这一支不回内部来源串、不回模型名、也不回字数。中文同义：/bot 描写 show。',
                 '描写档跟谁、跟多久：作用=交代作用域与持久面；参数=无；内容=这一轴按**会话里的这个人**——你在群 A 说的那一句只管群 A 里对你的回复，换一个群、换一个频道、换一路会话都要再说一次（私聊那一格也只管私聊；裁定 I-2「换了会话就需要重新激发」，频道与群同侧＝用户 2026-10-06 裁「telegram：群侧」）；群里管理员替整群拨的亲密档永不广播描写档，别人的钉你也拨不动（裁定 G-3＋写腿沿用亲密开关同一道角色门）；说一次就一直算——钉落下就跨重启（住在 addressing_preferences 那两列，不靠进程内缓存，那枚时间戳只供审计、不参与任何过期判定），与亲密档那条 60 分钟 TTL 是两件事——**描写档没有 TTL**，没有哪条通路会替她把它拿走，只有你自己再说一句 speech 或 reset 才收得回；意义=文风偏好该由本人在自己那一路说了算，也不该被一次超时悄悄拿走。⚠ 群侧这一格只在**内容路由白名单群**里生效：判据读 `BOT_CONTENT_ROUTE_GROUP_WHITELIST`，它既不可运行时 set 也不走热改表，加群＝改 `.env` 那一行后重启；名单外的群里你钉了 scene 也会落回日常档（不是钉坏了，是准入门收的）。',
                 '硬线：内容放行面不因关系档而改变，仍由会话门 explicit_allowed_for_session 判；六条硬线任何关系、任何开关、任何设定都压不过（security/content_safety.py）。',
                 '开关不受理时：总闸关／本会话没准入／群里普通成员但个人档总闸关——命令面没有正文可落回，仍会老实说一句"这一处还没放开"，不静默、不假装生效。',
@@ -3485,6 +3513,25 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
 HELP_COMMAND_HEAD_WORDS: tuple[str, ...] = tuple(
     str(word).lower() for word in _HELP_ENTRY_META["帮助"]["triggers_nickname"]
 )
+
+def is_help_surface_form(command_text: str) -> bool:
+    """G-1 的「在册帮助面」判定真身：裸打 `/bot`、`/bot help|帮助|幫助`（裸头或带主题）、
+    `/bot commands` 目录族——这三族是**在册默认**，其余一律不算。
+
+    为什么不能只拿 `resolve_help_query` 的返回值当判据：它只交「主题串」，
+    `/bot help`、`/bot 帮助` 这类**裸头**形回空串，照返回值判真假会把帮助命令本身
+    误判成未知子命令（本波注毒腿当场抓到过一次，见 tests/test_narration_command_dispatch.py
+    `test_unknown_subcommand_is_refused_and_registered_defaults_kept`）。
+    """
+    text = (command_text or "").strip().lower()
+    if not text:
+        return True
+    if text in {str(w).lower() for w in _COMMANDS_CATALOG_QUERY}:
+        return True
+    return text in HELP_COMMAND_HEAD_WORDS or text.startswith(
+        tuple(head + space for head in HELP_COMMAND_HEAD_WORDS for space in (" ", "　"))
+    )
+
 
 _HELP_EXTRA_LINES: dict[str, tuple[str, ...]] = {
     "回复": (

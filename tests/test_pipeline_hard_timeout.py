@@ -27,9 +27,12 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import inspect
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -369,3 +372,94 @@ def test_busy_private_send_policy_is_not_silent() -> None:
     )
     assert group.send_policy is SendPolicy.SILENT_AUDIT
     assert group.body == ""
+
+
+# ---------------------------------------------------------------------------
+# Q-1 循环导入根治（两腿锁）：`runtime/pipeline.py` 的 policy 符号一律从**具体子模块**
+# 直取，不许经 `...chat_reply.policy` 包出口转手。
+# 为什么要锁：包 `__init__.py` 第一条语句是 `from .gate import …`，gate 又 import
+# `runtime.mentions` ⇒ 触发 `runtime/__init__.py` 的 `from .pipeline import …` ⇒ 回到
+# 还没绑任何名的 pipeline/policy。生产单树那套装载序恰好把它绕开了（所以 bot 一直
+# 正常），装载序一变（分库共装、新入口）就当场 `ImportError: cannot import name
+# 'InMemoryRateLimiter'`——「bot 不回消息」级。
+# 两向实跑判据（同毒跑未修版，席报留痕）：把该包换成「module_from_spec、不
+# exec_module」的空壳并清掉 `policy.*` 子模块后 reload(pipeline)——改前抛、改后不抛。
+# ---------------------------------------------------------------------------
+
+_POLICY_PKG = "plugins.bot_unified_runtime.domains.chat_reply.policy"
+
+# 逐枚住址按 AST 现算过（不是照 `policy/__init__.py` 的转手表抄）：
+# gate.py 里有 PolicySettings/evaluate_policy，rate_limit.py 里有那三枚限流符号与
+# redrive_wait_seconds，quiet_hours/reply_budget/roles 各自一枚。
+_POLICY_SYMBOL_HOME = {
+    "InMemoryRateLimiter": "rate_limit",
+    "PolicySettings": "gate",
+    "QuietHoursChecker": "quiet_hours",
+    "RateLimiter": "rate_limit",
+    "RedriveSettings": "rate_limit",
+    "ReplyBudgetSettings": "reply_budget",
+    "RoleSettings": "roles",
+    "decide_reply_budget": "reply_budget",
+    "evaluate_policy": "gate",
+    "redrive_wait_seconds": "rate_limit",
+}
+
+
+def _pipeline_import_from_policy_nodes() -> list[ast.ImportFrom]:
+    source = Path(
+        inspect.getsourcefile(pipeline_module)
+        or Path(pipeline_module.__file__).with_suffix(".py")
+    ).read_text(encoding="utf-8")
+    return [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ImportFrom)
+        and node.module
+        and node.module.startswith(_POLICY_PKG)
+    ]
+
+
+def test_pipeline_never_takes_policy_names_through_the_package() -> None:
+    """形状尺①：不许出现「从包出口 import 名字」那一型（循环的唯一入口）。"""
+    via_package = [
+        (node.lineno, alias.name)
+        for node in _pipeline_import_from_policy_nodes()
+        for alias in node.names
+        if node.module == _POLICY_PKG
+    ]
+    assert via_package == [], f"pipeline 仍在经包出口取符号：{via_package}"
+
+
+def test_pipeline_policy_symbol_sources_are_the_exact_submodules() -> None:
+    """形状尺②：十枚符号各从**真身子模块**直取（住址错了＝第二份构造的前兆）。"""
+    got: dict[str, str] = {}
+    for node in _pipeline_import_from_policy_nodes():
+        if node.module == _POLICY_PKG:
+            continue
+        submodule = node.module.rsplit(".", 1)[-1]
+        for alias in node.names:
+            got[alias.name] = submodule
+    misplaced = {
+        name: (got.get(name), home)
+        for name, home in _POLICY_SYMBOL_HOME.items()
+        if got.get(name) != home
+    }
+    assert misplaced == {}, f"符号住址与真身不符（取到＝缺 / 期望＝子模块）：{misplaced}"
+
+
+def test_policy_symbols_are_the_very_objects_the_package_exports() -> None:
+    """行为零变更：直取到的、包出口转手的、pipeline 手里的是**同一枚对象**。
+
+    `id` 全等 ⇒ 修法没造出第二份构造（各取一次会各有其状态，闸门/限流会分家）。
+    顺带断言十枚互不相同，防「名字接错到同一枚」被 `is` 蒙过去。
+    """
+    import importlib
+
+    pkg = importlib.import_module(_POLICY_PKG)
+    ids: dict[str, int] = {}
+    for name, submodule in _POLICY_SYMBOL_HOME.items():
+        direct = getattr(importlib.import_module(f"{_POLICY_PKG}.{submodule}"), name)
+        assert direct is getattr(pkg, name), f"{name}：子模块与包出口不是同一枚对象"
+        assert direct is getattr(pipeline_module, name), f"{name}：pipeline 手里换了对象"
+        ids[name] = id(direct)
+    assert len(set(ids.values())) == len(ids), "两枚符号指向同一对象＝接线接串了"

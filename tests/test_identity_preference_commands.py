@@ -451,6 +451,143 @@ def test_unset_relation_only_touches_relation_column(
     assert "没有要清" in _run(store, "unset-relation").body
 
 
+def _issue_report_lock_module():
+    from plugins.bot_unified_runtime.domains.ops.admin import runtime_admin
+
+    return runtime_admin
+
+
+# ===========================================================================
+# 报修受理面（2026-10-08 用户裁 D-1:A）：四把锁，全离线、绝不写生产数据根
+# ===========================================================================
+
+
+def test_issue_report_has_exactly_one_production_home() -> None:
+    """注毒①：新增第二处报修入口（旁路）⇒ 必红。
+
+    咬三形：别处直接开同一本册、复制一个 builder、在 `/bot` 链上另开子动作动词。
+    🔴 只扫 `plugins/`：`tests/` 里「住户报修」是红线词的假阳性样本，扫进去就是自咬。
+    """
+    import ast
+    from pathlib import Path
+
+    plugins = Path(__file__).resolve().parents[1] / "plugins"
+    home = "bot_unified_runtime/domains/ops/admin/runtime_admin.py"
+    file_hits: list[str] = []
+    builder_defs: list[str] = []
+    for path in sorted(plugins.rglob("*.py")):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if "issue_reports.jsonl" in text:
+            file_hits.append(path.relative_to(plugins).as_posix())
+        tree = ast.parse(text, filename=str(path))
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name in {
+                "build_alert_report_result",
+                "build_alert_report_list_result",
+            }:
+                builder_defs.append(node.name)
+    assert file_hits == [home], f"报修册出现第二写口：{file_hits}"
+    assert sorted(builder_defs) == [
+        "build_alert_report_list_result",
+        "build_alert_report_result",
+    ], f"报修 builder 有缺或有重复定义：{builder_defs}"
+
+
+def test_help_advertised_alert_verbs_are_actually_dispatched() -> None:
+    """注毒②：帮助页向用户承诺了某动作、分发链不认 ⇒ 必红（写了没牙）。
+
+    这把锁必须自造：在册的触发词双向门 help 侧真身是 `aliases ∪ triggers_nl ∪
+    triggers_nickname`，**从不读 `lines`**；本波刻意只往 `lines` 写以压小牵动，
+    于是双向门结构上看不见「帮助页写了但路由不认」这一形。
+    """
+    from pathlib import Path
+
+    entry = next(item for item in HELP_ENTRIES if item["topic"] == "凭据")
+    advertised: set[str] = set()
+    for line in entry["lines"]:
+        head = line.split("：", 1)[0].split()
+        if line.startswith("/bot alert ") and len(head) > 2:
+            advertised.add(head[2])
+    assert advertised, "前提失效：帮助正文里没有 /bot alert <动词> 行了，本锁已瞎"
+
+    root = Path(__file__).resolve().parents[1] / "plugins" / "bot_unified_runtime" / "__init__.py"
+    seam = root.read_text(encoding="utf-8", errors="ignore")
+    start = seam.index('command_text == "alert"')
+    branch = seam[start : seam.index("elif command_text", start)]
+    missing = sorted(verb for verb in advertised if f'"{verb}"' not in branch)
+    assert not missing, f"帮助页承诺了 {missing}，alert 分支不认（写了没牙）"
+
+
+def test_report_receipt_is_computed_from_the_real_write(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """回执必须由实写结果算：写失败要说"没记下来"，绝不返"已收到"（台账 #63 那格的前科）。
+
+    🔴 路径整程被 monkeypatch 到 `tmp_path`：本用例**绝不**经中央数据根解析器落到运行
+    数据根去写真册子（那是她的生产区）。真实解析器由下一条 AST 锁单独守。
+    """
+    admin = _issue_report_lock_module()
+    target = tmp_path / "ops" / "issue_reports.jsonl"
+    monkeypatch.setattr(admin, "_issue_report_path", lambda _config: target)
+
+    ok = admin.build_alert_report_result(
+        None,
+        request_id="r-1",
+        actor_roles=["user"],
+        reporter_id="10001",
+        platform="QQ",
+        session_key="s-1",
+        text="地图卡片点开是空的",
+    )
+    assert "记下了" in ok.body
+    assert target.exists(), "回执说记下了，盘上却没有那一行＝谎报"
+    for banned in ("修复", "尽快", "反馈给", "已处理"):
+        assert banned not in ok.body, f"回执承诺了不可证的事：{banned}"
+
+    blocker = tmp_path / "blocker"
+    blocker.write_text("这一枚要当目录用，必然撞墙", encoding="utf-8")
+    monkeypatch.setattr(admin, "_issue_report_path", lambda _config: blocker / "sub" / "x.jsonl")
+    bad = admin.build_alert_report_result(
+        None,
+        request_id="r-2",
+        actor_roles=["user"],
+        reporter_id="10001",
+        platform="QQ",
+        session_key="s-1",
+        text="再来一条",
+    )
+    assert "没记下来" in bad.body, "写失败了却仍报好消息＝回执谎报"
+
+
+def test_issue_report_path_uses_the_central_data_root_anchor() -> None:
+    """落点必须经既有唯一锚点 `runtime_data_root_of`，不许手搓 `data/...` 相对路径。
+
+    形状闸理由：本仓的数据根重映射只有那一个锚点（`runtime_data_root_of`）；绕过它自己
+    拼路径＝第二通路，且会把产物写进源码树（台账 #2 的 `data/` 残留病根）。
+    """
+    import ast
+    from pathlib import Path
+
+    admin = _issue_report_lock_module()
+    fn_source = next(
+        node
+        for node in ast.parse(Path(admin.__file__).read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef) and node.name == "_issue_report_path"
+    )
+    calls = {
+        getattr(node.func, "id", "") or getattr(node.func, "attr", "")
+        for node in ast.walk(fn_source)
+        if isinstance(node, ast.Call)
+    }
+    assert "runtime_data_root_of" in calls, f"落点没走中央锚点，实际调用＝{sorted(calls)}"
+    literals = [
+        node.value
+        for node in ast.walk(fn_source)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+    assert "data" not in literals, f"手搓了相对数据根字面量：{literals}"
+
+
 def test_set_relation_traditional_alias_accepted(
     store: AddressingPreferenceStore,
 ) -> None:

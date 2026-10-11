@@ -18,6 +18,7 @@ fail-open 约束：探针任何异常归为该腿 down，绝不拖累 bot 主链
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import os
@@ -272,3 +273,90 @@ def append_patrol_jsonl(path: Path, report: PatrolReport) -> None:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
     except OSError as exc:
         _logger.warning("network patrol jsonl append failed: %s", exc)
+
+
+def _leg_lines(report: PatrolReport) -> tuple[list[str], int]:
+    """巡检结果 → 人读行（down 行自带分型，省掉"再去翻 classify"那一步）。"""
+    lines: list[str] = []
+    down = 0
+    for leg in report.legs:
+        key = f"{leg.target}:{leg.path}"
+        if leg.ok:
+            lines.append(f"{leg.target:<26} {leg.path:<7} UP    {leg.detail}")
+        else:
+            down += 1
+            lines.append(
+                f"{leg.target:<26} {leg.path:<7} DOWN  {leg.detail[:80]}"
+                f" ——{classify_leg_failure(key, leg.detail)}"
+            )
+    return lines, down
+
+
+def main(argv: list[str] | None = None, *, runner: Any = None) -> int:
+    """单轮只读巡检入口：``python -m plugins.bot_unified_runtime.domains.ops.network_patrol --once``。
+
+    为什么要有它：缺省 15 分钟的调度腿只把结果写进 jsonl，"现在到底抖没抖"此前
+    没有一条命令能答（要排障的人只能去考古日志）。本入口**不落盘**——落盘与去抖
+    归调度那条腿，在这里补第二处写＝造出第二本账。
+
+    退出码：0＝全腿通；1＝有腿 down；2＝探针自身跑不起来（缺依赖/被拦）。
+    🔴 2 与 0 必须分得开：把"取不到样本"折成"零违规"是本仓付过学费的假绿形态。
+
+    ``runner`` 是测试注入缝（缺省 ``run_patrol``）：单测绝不打真实网络，也绝不对
+    真实 7890 端口做断言——同 ``run_patrol`` 的 ``tcp_probe`` 纪律。
+    """
+    parser = argparse.ArgumentParser(
+        prog="network_patrol",
+        description="网络巡检：单轮只读探活（不落盘；周期巡检由 bot 调度腿负责）。",
+    )
+    parser.add_argument("--once", action="store_true", help="跑一轮并打印（缺省即此行为）")
+    parser.add_argument("--json", action="store_true", help="输出机器可读 JSON（只出 JSON）")
+    parser.add_argument("--timeout", type=float, default=10.0, help="HTTPS 腿超时（秒）")
+    parser.add_argument(
+        "--target",
+        action="append",
+        default=None,
+        help="覆盖缺省巡检域（可重复给；缺省＝PATROL_TARGETS_DEFAULT）",
+    )
+    args = parser.parse_args(argv)
+
+    do_run = run_patrol if runner is None else runner
+    targets = tuple(args.target) if args.target else PATROL_TARGETS_DEFAULT
+    try:
+        report = do_run(targets=targets, timeout=args.timeout)
+    except Exception as exc:  # noqa: BLE001 - 探针起不来要出声，不能折成"全通"。
+        print(f"探针跑不起来：{type(exc).__name__}: {exc}")
+        return 2
+
+    lines, down = _leg_lines(report)
+    total = len(report.legs)
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "started_at": report.started_at,
+                    "total": total,
+                    "down": down,
+                    "legs": [
+                        {
+                            "target": leg.target,
+                            "path": leg.path,
+                            "ok": leg.ok,
+                            "detail": leg.detail,
+                        }
+                        for leg in report.legs
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        )
+    else:
+        print("网络巡检 · 单轮（只读，不落盘）")
+        for line in lines:
+            print(line)
+        print(f"合计 {down}/{total} 腿 down")
+    return 1 if down else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

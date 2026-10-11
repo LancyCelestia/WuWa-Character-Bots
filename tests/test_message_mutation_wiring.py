@@ -29,6 +29,11 @@ from pathlib import Path
 
 import pytest
 
+from plugins.bot_unified_runtime.domains.chat_reply.policy import roles
+from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
+    PLATFORM_QQ,
+    PLATFORM_TELEGRAM,
+)
 from plugins.bot_unified_runtime.domains.transport import message_mutation as mm
 from plugins.bot_unified_runtime.domains.transport.message_mutation import (
     MutationActor,
@@ -441,3 +446,89 @@ def test_root_assembly_actually_installs_the_capability() -> None:
         and node.func.attr == "install_message_mutation"
     ]
     assert hits, "AST 里找不到 install_message_mutation 调用点"
+
+
+# ---------------------------------------------------------------------------
+# ⑤ 平台写法归一：别名册**唯一声明位**＝roles._PLATFORM_ALIASES，本模块不许摆第二份
+#   （席 tgdedupe 2026-10-04：旧写法 ``{PLATFORM_TELEGRAM, "tg"}`` 是该册的漏网第二抄，
+#    词面债门按「tg 的第二声明位」记账 —— 登记进名册＝给真重复洗白，正解是改成引用。）
+# ---------------------------------------------------------------------------
+
+
+def _platform_normalizer_audit(source: str) -> tuple[bool, tuple[str, ...]]:
+    """读一段模块源码里 ``_normalize_platform`` 的形状 → (是否转呼中央读侧, 手打字面量)。
+
+    尺＝AST，不靠人肉记忆；docstring 不算词面（只判函数体的字面量）。
+    """
+    tree = ast.parse(source)
+    fn = next(
+        (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_normalize_platform"),
+        None,
+    )
+    assert fn is not None, "_normalize_platform 定义消失＝本锁素材丢失"
+    calls_central = any(
+        isinstance(n, ast.Call)
+        and (
+            (isinstance(n.func, ast.Name) and n.func.id == "platform_domain_of")
+            or (isinstance(n.func, ast.Attribute) and n.func.attr == "platform_domain_of")
+        )
+        for n in ast.walk(fn)
+    )
+    stmts = fn.body[1:] if ast.get_docstring(fn) else fn.body
+    literals = tuple(
+        node.value
+        for stmt in stmts
+        for node in ast.walk(stmt)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.strip()
+    )
+    return calls_central, literals
+
+
+def test_platform_normalizer_references_the_central_alias_table() -> None:
+    """结构锁⑤-a：归一只准转呼 ``platform_domain_of``，函数体里不许再手打平台词面。"""
+    calls_central, literals = _platform_normalizer_audit(MODULE_PATH.read_text(encoding="utf-8"))
+    assert calls_central, "_normalize_platform 不再调 platform_domain_of＝别名读侧断了"
+    assert not literals, f"本模块又摆出第二份平台字面量词表：{sorted(set(literals))}"
+
+
+def test_central_alias_spellings_normalize_identically() -> None:
+    """行为锁⑤-b（正向·逐枚）：中央册每枚写法 → 本模块归一＝该册给的平台域。
+
+    词表**不在测试里重抄**：枚数与词面全部现读 ``roles._PLATFORM_ALIASES``（真身）。
+    """
+    aliases = roles._PLATFORM_ALIASES
+    assert aliases, "中央平台别名册为空＝本锁前提坏"
+    assert set(aliases.values()) == {PLATFORM_QQ, PLATFORM_TELEGRAM}
+    for spelling, domain in aliases.items():
+        assert mm._normalize_platform(spelling) == domain, spelling
+        assert mm._normalize_platform(f"  {spelling.upper()} ") == domain, spelling
+
+
+def test_unlisted_platform_spelling_falls_back_and_is_refused() -> None:
+    """行为锁⑤-c（反向·fail closed 不变）：册外写法原样回落 ⇒ 下游照旧拒、不猜平台。"""
+    for probe in ("matrix", "邮件", "snowluma-x", "TG-internal", " telegram "):
+        expected = probe.strip().lower()
+        assert mm._normalize_platform(probe) == expected, probe
+    assert mm._normalize_platform("") == ""
+    with pytest.raises(mm.MutationRefused) as boom:
+        mm.build_mutation_payload(_request("delete", platform="matrix", chat_id="7", actor_chat="7"))
+    assert boom.value.reason == "unsupported_platform"
+
+
+def test_poison_handcopied_alias_roster_is_caught() -> None:
+    """注毒⑤：把中央引用换回手抄词表（本波修掉的旧形态）⇒ 结构锁必红（防静默回归）。"""
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    needle = "    return platform_domain_of(text) or text" + chr(10)
+    assert source.count(needle) == 1, "注毒目标行盘上不唯一"
+    poisoned = source.replace(
+        needle,
+        '    if text in {PLATFORM_TELEGRAM, "tg"}:' + chr(10)
+        + "        return PLATFORM_TELEGRAM" + chr(10)
+        + "    return text" + chr(10),
+        1,
+    )
+    assert poisoned != source, "注毒未落文本＝空跑"
+    calls_central, literals = _platform_normalizer_audit(poisoned)
+    assert "tg" in literals, "注毒后仍读不出手抄词面＝结构锁瞎了"
+    assert not calls_central, "注毒后仍判成引用中央册＝结构锁失效"
+    assert _platform_normalizer_audit(source)[1] == ()

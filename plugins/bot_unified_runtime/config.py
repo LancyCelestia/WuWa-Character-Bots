@@ -1449,7 +1449,11 @@ class Config(BaseModel):
     # bot 本轮实际回复文本，由大模型判受控情感闭集再选贴；判不了/超时 ⇒ 整轮不贴
     # （错配比不贴更糟），绝不降级成随便贴一张。表情腿与表情包腿共用一次判定。
     bot_reactions_sentiment_enabled: bool = True
-    bot_reactions_sentiment_timeout_seconds: float = 8.0
+    # 每跳预算取每跳地板（真身＝channel_health.PER_HOP_TIMEOUT_FLOOR_SECONDS，
+    # 此处的值只作键缺省、由 tests/test_chat_timeout_floor.py 与地板比对；台账 #80：
+    # 旧 8s 一档打满整条链＝系统性制造假超时，反把主聊天渠道打进健康黑名单）。
+    # 贴纸腿跑在 asyncio.to_thread（engine.py），抬到地板不拖慢用户可见回复。
+    bot_reactions_sentiment_timeout_seconds: float = 30.0
     bot_reactions_sentiment_cache_ttl_seconds: int = 120
     # NSFW 直接删除阈值（淫秽色情不存储）：>= 该分数删除文件与记录。
     bot_meme_library_nsfw_delete: float = 0.8

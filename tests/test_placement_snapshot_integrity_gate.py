@@ -615,3 +615,43 @@ def test_literal_predicate_rejects_derived_forms(source: str) -> None:
 def test_literal_predicate_accepts_only_literal_dicts(source: str, expected: dict[str, int]) -> None:
     """④正向：只有"串键→整数字面量"的 dict（含空 dict）被接受，与反向用例合成完整牙口证明。"""
     assert _literal_baseline_roster_from_source(source) == expected
+
+
+# ==========================================================================
+# 席 S148-VF（2026-10-08，工单 W-2 同族补口）：四本账 × 两扇门的执法口自证
+#   本件已有 module 级 `four` 全量读数（20-60s 一次），故**真树 rc 的折法**在这一件里证：
+#   `--fail-on-violations` 的行与退出码必须由「行」现算折出来，不许写死今天的读数；
+#   且执法行读的数必须与四本账的附尺**同一支**（本仓的病一律是"总数另算一套"）。
+#   注毒只走内存里的合成上限（抬判据、不改源码树、不碰门里的字面量）。
+# ==========================================================================
+
+_VF_BAD_ROW = ("OVER_CEILING", "BUCKET_ROW_MISSING", "CEILING_SYMBOL_MISSING")
+
+
+def test_vf_real_tree_rows_and_rc_fold_the_same_reading(four: dict[str, Any]) -> None:
+    """真树自证：rc 恰等于「行」折出来的那一态；每行都带在册词头；上限格与四本账附尺同源同数。"""
+    rows = pc.violation_rows(pc.compute(), four, pc.ceiling_literals())
+    assert rows, "执法行一本都没交出来＝尺在空跑"
+    assert all(r.startswith(("VF|",) + _VF_BAD_ROW) for r in rows), [r for r in rows if not r.startswith(("VF|",) + _VF_BAD_ROW)][:3]
+    over = [r for r in rows if r.startswith("OVER_CEILING")]
+    missing = [r for r in rows if r.startswith(("BUCKET_ROW_MISSING", "CEILING_SYMBOL_MISSING"))]
+    assert pc.enforcement_rc(rows) == (2 if missing else (3 if over else 0)), (over[:2], missing[:2])
+    # 单一取数口：执法行里的「G-P2 语义A 未认领」必须等于四本账②的附尺同名列（两处不同源＝假绿）
+    adjacent = (four["accounts"].get("a2_page_unplaced") or {}).get("adjacent_ruler_gp2_unclaimed_py")
+    if isinstance(adjacent, dict) and "unclaimed" in adjacent:
+        row = next(r for r in rows if r.startswith("VF|格名=G-P2 语义A 未认领"))
+        assert f"现算={adjacent['unclaimed']}" in row, (row, adjacent)
+
+
+def test_vf_real_tree_rc_is_not_hardcoded(four: dict[str, Any]) -> None:
+    """注毒（纯内存抬判据）：把 G-P2 违规上限压到 0 ⇒ 真树现算必越限、rc 必 3。
+
+    这一条堵的是「执法口照今天的读数写死」：今天的 rc 该是几由**行**决定，同一次调用换个上限
+    就必须换个码。若谁把这枚口改成恒 0／恒 3，本条当场红（上限真身在门里，本件一字不改它）。
+    """
+    lowered = dict(pc.ceiling_literals())
+    lowered["G_P2_VIOLATION_CEILING"] = 0
+    rows = pc.violation_rows(pc.compute(), four, lowered)
+    hit = [r for r in rows if r.startswith("OVER_CEILING")]
+    assert len(hit) == 1 and "G-P2 语义A 违规" in hit[0], hit
+    assert pc.enforcement_rc(rows) == 3

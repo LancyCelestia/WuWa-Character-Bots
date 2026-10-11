@@ -16,7 +16,7 @@ import argparse
 import sys
 from typing import Any
 
-from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.config import Config, remap_runtime_data_paths
 from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
     PolicySettings,
     evaluate_policy,
@@ -187,8 +187,13 @@ def _capability_smoke(config: Config) -> int:
         ("点歌", "/点歌 晴天", build_music_capability(config, default_mode="card")),
     ]
     # 表情包走本地 meme-generator-rs；未启用时按配置执行。
-    meme_config = config.model_copy(
-        update={"bot_meme_api_enabled": True, "bot_meme_api_output_dir": "data/memes"}
+    # model_copy 不重跑校验器 ⇒ 名册在册的 "data/memes" 会按 CWD（＝仓库根）在源码树里
+    # 开目录（AGENTS 铁律 6）。合并结果过 config.remap_runtime_data_paths 折进运行数据根；
+    # 除落点外行为不变（开关与相对写法照旧、无 NoneBot 依赖），--real 仍可独立运行。
+    meme_config = remap_runtime_data_paths(
+        config.model_copy(
+            update={"bot_meme_api_enabled": True, "bot_meme_api_output_dir": "data/memes"}
+        )
     )
     cases.append(("表情包", "/表情 nokia 无内鬼继续交易", build_meme_capability(meme_config)))
 

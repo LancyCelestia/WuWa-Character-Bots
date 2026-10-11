@@ -57,6 +57,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
     PLATFORM_QQ,
     PLATFORM_TELEGRAM,
     is_admin_message,
+    platform_domain_of,
 )
 from plugins.bot_unified_runtime.domains.core.decision.outbound_contracts import (
     OutboundIntent,
@@ -163,12 +164,20 @@ def mutation_window_seconds(config: Any) -> int:
 
 
 def _normalize_platform(value: str) -> str:
+    """平台写法 → 平台域常量。
+
+    别名册**唯一声明位**＝``roles._PLATFORM_ALIASES``（读侧 ``platform_domain_of``，
+    S-FIX-TRIG-B 2026-09-27 真洗）。此前本函数手打 ``{PLATFORM_QQ, "onebot", …}`` 与
+    ``{PLATFORM_TELEGRAM, "tg"}`` 两份私有小词表＝该册的漏网第二抄（词面债门按「tg
+    的第二声明位」记账，席 tgdedupe 2026-10-04 收口）。取不到平台域＝**原样回落**，
+    由 ``build_mutation_payload`` 按 ``unsupported_platform`` 拒 —— fail closed 方向不变。
+
+    唯一写法差集＝``snowluma``：那是**协议端实现名**、不是入站平台写法，真身在
+    ``_platform_of`` 读 ``bot.adapter.impl_name`` 时就已折成 ``qq``（中央册因此不收它）；
+    反过来中央册多收的 ``nonebot``/``onebot-v11`` 诸写法本就和 ``onebot`` 同属 QQ 协议域。
+    """
     text = str(value or "").strip().lower()
-    if text in {PLATFORM_QQ, "onebot", "onebot_v11", "snowluma"}:
-        return PLATFORM_QQ
-    if text in {PLATFORM_TELEGRAM, "tg"}:
-        return PLATFORM_TELEGRAM
-    return text
+    return platform_domain_of(text) or text
 
 
 # ---------------------------------------------------------------------------

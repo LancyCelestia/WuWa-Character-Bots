@@ -91,11 +91,12 @@
 - **修法**：用户核对后走 `/bot model price` 热改，或改 `scripts/import_model_prices.py` 后 `--apply` 重跑。
 - **验收**：更新后按 billing-report §3 方法复跑价目审计对照，优先 6 项转 OK/确认。
 
-### P2-11 账本历史行 cost 千倍虚大——清洗裁定待用户
+### P2-11 账本历史行 cost 千倍虚大——已裁定免动（2026-10-04 结案）
 - **现象**：`ledger.build_call_draft` 旧实现 `round(tokens × price)` 未除 1000，按「价=元/1M tokens、cost=毫厘（1 元=1000 毫厘）」口径 cost 恰放大 1000 倍；代码已修（`/1000`，与 `runtime/pricing.model_call_cost_milli` 同口径），但**生产 store 中 `pricing_source='channel_spec'` 的历史行（若 `BOT_LLM_BILLING_ENABLED` 开过）费用列仍虚大 1000 倍**。
 - **位置**：生产账本 store（llm/ledger.py 写入路径）；事件日志 transport_receipt cost_milli 走 pricing.py 正确口径，**不受影响**。
 - **修法（等用户裁定，本批未动生产库）**：①按 1/1000 批量 UPDATE 历史行；②加标注字段不动数值；③账本从未开过则无需动作。
 - **验收**：裁定后抽 3 行历史+1 行新写入对账，cost 与 `/bot model usage` 面板一致。
+- **结案注记（2026-10-04 四方对账整改批，用户批准⑤）**：**已消解＝免动**。依据：①2026-10-03 审计实跑生产活库（唯一在册账本，2,292 行、账期 09-25T04:57 起）千倍错账 **0 行**；②幽灵键机制——§44.6 修复前 `BOT_LLM_BILLING_ENABLED` 是 ledger.py 模块常量、Config 无字段、`.env` 值被静默丢弃 ⇒ **账本在修复前机制上无法开启**，09-25 账期之前不可能存在 bug 时代历史行。措辞边界：覆盖面＝本审计可见的活库；若 ChatBot_Archive 等处存在本审计未见的更旧账本库副本则不在覆盖内（幽灵键证据已把「曾开出过含千倍行账本」概率压至极低）。
 
 ### P2-12 HTTP 抓取重定向「事后复查」家族残余——彻底收敛需禁区 http_util 连接级逐跳校验
 - **现象**：全部用户 URL 抓取护栏（downloader/notes/eat/parser 解析链）均为「响应已取回后」判定——入口+最终 URL 双查拦得住**内容回显**，拦不住**请求本身**（302→内网的盲 SSRF 一跳仍在）。
@@ -164,7 +165,7 @@
 | P3-7 | Apple Music #fa243c × 小红书 #ff2442 accent ΔE=2.7 近不可辨（17 平台互异最小值，visual-report P3-1） | output/card_render/theme_tokens.py PLATFORM_THEMES | 两者均官方品牌色，动谁都伤品牌忠实度（实际靠页脚展示名文字区分）；若拉开建议 Apple Music → 粉品红系——**待用户裁决** | 卡面平台 accent 观感 |
 | P3-8 | 视觉收官轮遗留裁决包（visual-report §2/§3/§7）：①universal/旧媒体卡页脚第二槽 'Shorekeeper' 是否改功能名「解析」；②usage 卡 kicker「测试 · 模型用量」与标题部分重复的去留；③market/finance data-foot 11.5px（<12px 下限，别席域）待收口+两测试文件豁免注释同步；④echo/debug 卡 9px/10px+脱刻度字距与 gap 9px 豁免待并入 | bridge.py / usage_cards.py / market_card.html / finance_card.html / echo.py / debug.py | 均为低收益打磨项，逐项用户裁决后按渲染契约收口；③④收口时随其批次 verify_hashes --write | 纯观感 |
 | P3-9 | 账本聚合查询无 completed_at 前缀索引（账本量级下可忽略，报告已自行登记） | `llm/ledger.py` `aggregate_channel_usage`（substr(completed_at,1,10) 日界过滤全表扫描；5ba7c0f 已改完整常量 SQL，索引仍未建） | 修法：日界过滤改日期范围比较 + completed_at 建索引；验收：EXPLAIN QUERY PLAN 走索引，账单席回归绿（review-fin-billing 观察③） | 账单聚合查询耗时 |
-| P3-10 | 价目审计 ¥7.2/USD 汇率假设影响中转「可疑」分档带宽（P2-10 方法学补充；官方直连逐位核对不受影响） | billing-report §3 审计口径 / P2-10 | 修法：并入 P2-10 用户核对动作——按渠道真实扣费账单复核中转 41 行分档，汇率敏感行单独标注；验收：P2-10 复跑审计时分档与真实扣费一致（review-fin-billing §三） | 中转分档判定准确性（low 置信已显式声明） |
+| P3-10 | 价目审计 ¥7.2/USD 汇率假设影响中转「可疑」分档带宽（P2-10 方法学补充；官方直连逐位核对不受影响）——**已消解（2026-10-04 整改批⑤）**：两站 ¥1=$1 额度 1:1 经 new-api topup.go 源码＋/api/status（price=1、usd_exchange_rate=1）定标，¥7.2 折算口径作废，B4 灰区账随之修正 ¥2.1-4.0 | billing-report §3 审计口径 / P2-10 | 修法：并入 P2-10 用户核对动作——按渠道真实扣费账单复核中转 41 行分档，汇率敏感行单独标注；验收：P2-10 复跑审计时分档与真实扣费一致（review-fin-billing §三） | 中转分档判定准确性（low 置信已显式声明） |
 | P3-11 | 视觉报告 ΔE 数字与 token 实算不符（报告笔误，疑调参后未同步；门 ≥2.5 不受影响） | visual-report.md §5.1（ΔE(a,n)=7.99/ΔE(b,n)=9.90 vs 同模型实算 8.46/10.36）；报告为存档件 | 修法：本条即勘误记录，报告以存档原件+本条为准，不回改；验收：无（review-visual-infra M-1） | 报告准确性 |
 | P3-12 | 阴影门 context_keys 手工映射——登记表新增档位需手动补行，否则新档位 :root 字面量一致性不被校验 | tests/test_rendering_contract.py:174（{"--mica-shadow-panel": "shadow_elev_panel"}） | 修法：映射改由 bridge._VIS4_KEYS 反查派生；验收：theme_tokens 临时加假档位时校验自动覆盖（改前漏检、改后红）（review-visual-infra M-3） | 契约完备性（非后门） |
 | P3-13 | box-shadow 门正则依赖行尾分号——无分号收尾声明漏检（当前模板全带分号，无现行漏检） | tests/test_rendering_contract.py:153、tests/test_template_visual_audit.py:115（`([^;]+);`） | 修法：正则改 `([^;]+)(?:;|$)`；验收：构造无分号违规样例两门仍红（review-visual-infra M-4） | 契约门完备性 |

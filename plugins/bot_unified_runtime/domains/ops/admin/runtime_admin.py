@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import threading
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -2299,6 +2300,143 @@ def build_runtime_admin_result(
     except (ValueError, TypeError) as exc:
         return _error_result(request_id, str(exc))
     return _ok_result(request_id, body)
+
+
+# --- 报修受理面（2026-10-08 用户裁 D-1:A）：用户诉求 ≠ 运行期异常 -----------------
+#
+# 为什么不新建 capability／不新建 `/bot` 子命令／不加配置键：报修是 `/bot alert` 这一个
+# 动词下的一个动作，走既有中央分发；数据根走既有唯一锚点 `runtime_data_root_of`；正文
+# 脱敏走既有中央口 `redact_user_text`。任何一处另立＝造第二真身（她的在册口径）。
+# 今天落 Runtime 侧 append-only jsonl：写口唯一＝`build_alert_report_result`，读口唯一＝
+# `build_alert_report_list_result`。Stage-2（错误台账落地那批）把这一对改投台账并**同批**
+# 退役下面三枚常量与 jsonl 写腿——不许"台账有了、jsonl 还在写"。
+# 🔴 回执一律由实写结果算：台账 #63 那格「批即落」从未定义、回显却永远说"已落到位"，
+#    本面写不进去就明说"没记下来"，绝不返"已收到"。
+_ISSUE_REPORT_DIRNAME = "ops"
+_ISSUE_REPORT_FILENAME = "issue_reports.jsonl"
+_ISSUE_REPORT_MAX_CHARS = 400
+_ISSUE_REPORT_LIST_DEFAULT = 10
+_ISSUE_REPORT_LIST_MAX = 30
+
+
+def _issue_report_path(config: object) -> Path:
+    """报修册落点（只经既有数据根锚点求绝对根，不手搓 `data/...` 相对路径）。"""
+    from plugins.bot_unified_runtime.config import runtime_data_root_of
+
+    return runtime_data_root_of(config) / _ISSUE_REPORT_DIRNAME / _ISSUE_REPORT_FILENAME
+
+
+def _report_result(request_id: str, body: str, *, landed: bool) -> CapabilityResult:
+    """报修专用回执。
+
+    不复用 `_ok_result`：它的 `title` 钉死"运行时设置"，报修拿它会顶错帽子；改那枚共享
+    助手会牵动全部既有调用点（快照件可能钉着 title），所以这里另起一个口而不改公共件。
+    """
+    return CapabilityResult(
+        request_id=request_id,
+        capability_id="bot.alert",
+        kind="text",
+        title="报修" if landed else "报修没落册",
+        body=body,
+        confidence=1.0,
+        risk_level=RiskLevel.LOW if landed else RiskLevel.MEDIUM,
+        privacy_level=PrivacyLevel.PERSONAL,
+        send_policy=SendPolicy.IMMEDIATE,
+        audit_tags=["runtime_admin", "bot.alert", "issue_report" if landed else "issue_report_failed"],
+    )
+
+
+def build_alert_report_result(
+    config: object,
+    *,
+    request_id: str,
+    actor_roles: list[str],
+    reporter_id: str,
+    platform: str,
+    session_key: str,
+    text: str,
+) -> CapabilityResult:
+    """受理一条报修：只记"听到了哪一句话"，不承诺任何处置。
+
+    权限腿复用中央既有谓词，不新写一套：被拉黑的不收，其余成员都能报（渠道窄化到
+    管理员就失去意义）；拒绝面整口复用 `_admin_only_result` 的现役文案，不即兴造话术。
+    平台事实取契约字段 `IncomingMessage.platform`（跨平台同号提权按 (平台域, id) 判、
+    缺平台 fail-closed 由 roles 侧承担），不猜、不 `getattr` 兜空串。
+    """
+    if "blocked" in actor_roles:
+        return _admin_only_result(request_id)
+    from plugins.bot_unified_runtime.domains.ops.incident.service import (
+        redact_user_text,
+    )
+
+    body = redact_user_text(str(text or "")).strip()
+    if not body:
+        return _report_result(
+            request_id,
+            "这句没头没尾，我记不下——说清是哪条消息、什么时候、哪里不对。",
+            landed=False,
+        )
+    body = body[:_ISSUE_REPORT_MAX_CHARS]
+    record = {
+        "report_id": str(request_id or "")[:64],
+        "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "platform": str(platform or "")[:32],
+        "sender_id": str(reporter_id or "")[:64],
+        "session_key": str(session_key or "")[:96],
+        "text": body,
+    }
+    try:
+        path = _issue_report_path(config)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except (OSError, TypeError, ValueError) as exc:
+        return _report_result(
+            request_id, f"这句没记下来：{type(exc).__name__}。", landed=False
+        )
+    return _report_result(
+        request_id, "这句话我记下了。修不修、什么时候回，不由我这一句说了算。", landed=True
+    )
+
+
+def build_alert_report_list_result(
+    config: object,
+    *,
+    request_id: str,
+    actor_roles: list[str],
+    limit_text: str = "",
+) -> CapabilityResult:
+    """查最近报修。权限腿与 `build_alert_check_result` 逐字同尺（只认既有 `admin` 角色串）。"""
+    if "admin" not in actor_roles:
+        return _admin_only_result(request_id)
+    try:
+        limit = int(str(limit_text or "").strip() or _ISSUE_REPORT_LIST_DEFAULT)
+    except ValueError:
+        return _report_result(
+            request_id, "条数要是整数，比如：/bot alert list 5", landed=False
+        )
+    limit = max(1, min(_ISSUE_REPORT_LIST_MAX, limit))
+    try:
+        rows = _issue_report_path(config).read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return _report_result(request_id, "报修册还是空的。", landed=True)
+    except (OSError, UnicodeDecodeError) as exc:
+        return _report_result(request_id, f"报修册读不出来：{type(exc).__name__}。", landed=False)
+
+    lines: list[str] = []
+    for raw in reversed([row for row in rows if row.strip()][-limit:]):
+        try:
+            row = json.loads(raw)
+        except ValueError:
+            lines.append("（有一行读不出来，跳过了）")
+            continue
+        lines.append(
+            f"{row.get('report_id') or '—'}｜{row.get('ts') or '—'}｜"
+            f"{row.get('platform') or '?'}:{row.get('sender_id') or '?'}｜{row.get('text') or ''}"
+        )
+    head = f"最近 {len(lines)} 条报修（新→旧）：" if lines else "报修册还没有一条记录。"
+    tail = "（另有更早的没列出）" if len(rows) > limit else ""
+    return _report_result(request_id, head + tail + "\n" + "\n".join(lines), landed=True)
 
 
 def build_alert_check_result(
