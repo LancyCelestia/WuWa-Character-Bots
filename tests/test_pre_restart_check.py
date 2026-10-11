@@ -693,6 +693,83 @@ def test_w1_items_are_declared_and_skip_on_unconfigured_fake_root(
     )
 
 
+# 「每次 push 都要更新」＝主人常令，执法面＝分库远端同步（尺真身 scripts/sync_all_repositories.py）。
+# 为什么不靠上面那几枚通用循环罩住：通用循环只判「argv 干净」「执法口在尺的 argparse 名册里」，
+# 判不到**注册本身**——把 StructureFace 整块删掉，循环照样绿（它就是从那张表里取的）。
+# 名册/实体在盘 ≠ 远端已更新：`library_roster` 那格判前者，这一面判后者，两格不许互替。
+_SYNC_RULER_SOURCE = "scripts/sync_all_repositories.py"
+
+
+def _sync_stub_script(root: Path) -> None:
+    """假根上放一把**只声明执法口**的尺：AST 读 add_argument 要过得去，判定全交给替身子进程."""
+    script = root / _SYNC_RULER_SOURCE
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(
+        "import argparse\n"
+        "p = argparse.ArgumentParser()\n"
+        "p.add_argument('--json')\n"
+        "p.add_argument('--check')\n",
+        encoding="utf-8",
+    )
+
+
+def test_sync_face_is_registered_and_maps_its_own_three_rc_book(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """注册锁 + rc 三态各归各位：0=PASS／1=FAIL／2=UNDECIDABLE，名册外退出码禁折成绿."""
+    sync = next((face for face in prc.STRUCTURE_FACES if face.key == "分库远端同步"), None)
+    assert sync is not None, "「分库远端同步」这面被删＝常令「每次 push 都要更新」失去执法口"
+    assert sync.script_rel == _SYNC_RULER_SOURCE, sync
+    assert sync.enforce_flag == "--check" and "--json" in sync.argv, sync.argv
+    assert tuple(sync.rc_verdicts) == (
+        (0, prc.STRUCTURE_LABEL_PASS),
+        (1, prc.STRUCTURE_LABEL_FAIL),
+        (2, prc.STRUCTURE_LABEL_UNDECIDABLE),
+    ), sync.rc_verdicts
+    assert sync.json_fields == ("counts", "reds"), sync.json_fields
+
+    # 转贴型格子的病＝贴了 rc 却没读尺自己交回的字段；这里反查尺**真 emit** 这两个键。
+    source = (PROJECT_ROOT / _SYNC_RULER_SOURCE).read_text(encoding="utf-8")
+    for field in sync.json_fields:
+        assert f'"{field}"' in source, f"尺的 --json 里找不到 {field}＝这面转的是不存在的读数"
+
+    root = make_project(tmp_path)
+    _sync_stub_script(root)
+    payload = json.dumps({"counts": {"libs": 15, "reds": 0}, "reds": []}, ensure_ascii=False)
+
+    def _stub(rc: int, out: str = payload):
+        def _run(args: list[str], cwd: Path, timeout: int = 600) -> tuple[int, str, str]:
+            return rc, out, ""
+        return _run
+
+    for rc, want in (
+        (0, prc.STRUCTURE_LABEL_PASS),
+        (1, prc.STRUCTURE_LABEL_FAIL),
+        (2, prc.STRUCTURE_LABEL_UNDECIDABLE),
+    ):
+        monkeypatch.setattr(prc, "run_cmd", _stub(rc))
+        label, line, details = prc._run_structure_face(sync, root)
+        assert label == want, f"rc={rc} 该转贴成 {want}，实得 {label}：{line}"
+        assert details["ruler_rc"] == rc and "counts" in details.get("ruler_fields", {}), details
+
+    # 名册外的退出码（尺坏了）＝不可判，既不折绿也不折红
+    monkeypatch.setattr(prc, "run_cmd", _stub(3))
+    label, line, _d = prc._run_structure_face(sync, root)
+    assert label == prc.STRUCTURE_LABEL_UNDECIDABLE and "RULER_EXIT_UNMAPPED" in line, line
+
+    # rc=1 却交不回结构化读数＝门瞎，不许把 rc 当证据洗成 FAIL 更不许当绿
+    monkeypatch.setattr(prc, "run_cmd", _stub(1, out="库全都同步好了（散文，无 JSON）"))
+    label, line, _d = prc._run_structure_face(sync, root)
+    assert label == prc.STRUCTURE_LABEL_UNDECIDABLE and "RULER_READING_UNPARSEABLE" in line, line
+
+    # 尺不在被测根上（HEAD 轴副本／干净 checkout）＝RULER_ABSENT，绝不读成「远端已更新」
+    monkeypatch.setattr(prc, "run_cmd", _stub(0))
+    bare_parent = tmp_path / "bare"
+    bare_parent.mkdir()
+    label, line, _d = prc._run_structure_face(sync, make_project(bare_parent))
+    assert label == prc.STRUCTURE_LABEL_UNDECIDABLE and "RULER_ABSENT" in line, line
+
+
 def test_structure_faces_argv_are_read_only_and_the_lock_has_teeth(monkeypatch: pytest.MonkeyPatch) -> None:
     """② 零写面锁：argv 表摊平 + 源码 AST 双路；注毒腿（纯内存）自证上一条真的在拦事."""
     # 腿 A：运行时把在册面表摊平——禁串连子串都不许出现，且不许出现裸路径

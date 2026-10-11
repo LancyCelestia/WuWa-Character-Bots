@@ -58,7 +58,8 @@
       "  docs-check    Verify minimal runtime docs, archive policy, and project config pointers exist.",
       "  plugin-check  Verify plugins/ is configured and report whether local plugins exist yet.",
       "  smoke         Verify docs, plugin discovery, NoneBot import, and nb CLI availability.",
-      "  verify        Verify docs, plugin discovery, retained pytest tests, lint, and typecheck."
+      "  verify        Verify docs, plugin discovery, retained pytest tests, lint, and typecheck.",
+    "  repo-sync     Read-only: main repo + every first-level library repo vs GitHub (ahead/dirty/owner). Publishing stays an explicit --publish."
     ]
   },
   "tasks": {
@@ -134,6 +135,14 @@
       "steps": [
         { "type": "step", "message": "pre-start gate: entry import chain (read-only; never touches the running bot)" },
         { "type": "command", "runner": "external", "tool": "python", "pythonScript": "scripts/pre_restart_check.py", "args": ["--only", "entry_chain"] }
+      ]
+    },
+    "repo-sync": {
+      "push": false,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "read-only: main repo + every first-level library repo vs its GitHub remote (never commits, never publishes)" },
+        { "type": "command", "runner": "external", "tool": "python", "pythonScript": "scripts/sync_all_repositories.py", "args": ["--check"] }
       ]
     },
     "test": {

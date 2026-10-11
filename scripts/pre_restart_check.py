@@ -2293,6 +2293,21 @@ STRUCTURE_FACES: tuple[StructureFace, ...] = (
         ((0, STRUCTURE_LABEL_PASS), (1, STRUCTURE_LABEL_FAIL)),
         ("counts", "unclassified"),
     ),
+    # 格四的另一半：名册/实体在盘（`library_roster` 那格判）≠ **远端已更新**。
+    # 主人常令"每次 push 都要更新"＝这一面必须有尺，否则"库建好了"会一直替"库是旧的"背书。
+    # rc=2 是**不可判**（仓外库根不在场＝HEAD 轴副本/换机器），绝不折成绿。
+    StructureFace(
+        "分库远端同步",
+        "scripts/sync_all_repositories.py",
+        ("--json", "--check"),
+        "--check",
+        (
+            (0, STRUCTURE_LABEL_PASS),
+            (1, STRUCTURE_LABEL_FAIL),
+            (2, STRUCTURE_LABEL_UNDECIDABLE),
+        ),
+        ("counts", "reds"),
+    ),
 )
 
 
