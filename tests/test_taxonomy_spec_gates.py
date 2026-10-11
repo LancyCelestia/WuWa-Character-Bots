@@ -1356,13 +1356,36 @@ def test_s20_poison_fake_auto_zone_is_unverified(tmp_path: Path) -> None:
     ), "段内无裸事实也被记红＝误伤（违反只加严）"
 
 
-def test_s20_root_md_now_enumerated(tmp_path: Path) -> None:
-    """K-2：根层全部 *.md 进入管辖面、classify 真跑（旧白名单令 root-report 分支永不触发）。"""
+def test_s20_root_md_now_enumerated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """K-2：根层全部 *.md 进入管辖面、classify 真跑（旧白名单令 root-report 分支永不触发）。
+
+    🔴 判据按**盘上现在有哪些根层 md**现算，不许钉某枚一次性散件的名字：那枚 `findings.md`
+    已在 2026-10-11 的根层清理里消失，钉名字的断言在清理当天就变**恒红**（本波实撞一次——
+    门红得有理，但红的是坐标、不是事）。改派生式后本锁只加严不减严。
+    """
     assert dts.classify("findings.md") == "root-report"
     assert dts.classify("AGENTS.md") == "root-rules"
     rels = {p.rel for p in dts.walk_content_pages()}  # 缺省 root＝doc_template_sync.ROOT（仓库根）
-    # 免检旧账里的代表页现在必须在场
-    assert "findings.md" in rels, "根散件仍被扫描面白名单漏掉（K-2 未生效）"
+    root_md = sorted(p.name for p in dts.ROOT.glob("*.md") if p.is_file() and p.name != "nul")
+    assert root_md, f"仓库根一枚 .md 都没有＝这条判据在空转（真身变了要同批改本锁）：{dts.ROOT}"
+    escaped = [name for name in root_md if name not in rels]
+    assert not escaped, f"根散件仍被扫描面白名单漏掉（K-2 未生效）：{escaped}"
+
+    # 注毒自证（纯内存，零写盘）：把扫描面读数缩到"根层一枚都不认"⇒ 同一条判据必须逐枚点名，
+    # 否则上面那句就成了空腿（"取不到样本即放行"那一族）。
+    original_walk = dts.walk_content_pages
+
+    def _blind_walk(root: Path | None = None):
+        return [p for p in original_walk(root) if "/" in p.rel]
+
+    monkeypatch.setattr(dts, "walk_content_pages", _blind_walk)
+    blind_rels = {p.rel for p in dts.walk_content_pages()}
+    blind_escaped = [name for name in root_md if name not in blind_rels]
+    assert blind_escaped == root_md, (
+        f"注毒没让这条判据点名全部根层散件＝它抓不到漏检：{blind_escaped[:3]} vs {root_md[:3]}"
+    )
 
 
 def test_s20_code_home_check_no_longer_shadowed_by_missing_template(
