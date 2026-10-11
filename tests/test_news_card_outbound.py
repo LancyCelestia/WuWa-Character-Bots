@@ -31,6 +31,7 @@ import pytest
 
 # monkeypatch 打真身模块（垫片壳 setattr 进不去真身全局——v21r2 W5 口径）。
 import plugins.bot_unified_runtime.domains.subscribe.capabilities.news as news_module
+import plugins.bot_unified_runtime.domains.subscribe.feeds.news_feeds as feeds_module
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     IncomingMessage,
@@ -44,8 +45,13 @@ from plugins.bot_unified_runtime.domains.subscribe.capabilities.news import (
     news_card_digest,
 )
 from plugins.bot_unified_runtime.domains.subscribe.feeds.news_feeds import (
+    NewsFoldAccount,
     NewsItem,
+    fold_account_for,
+    fold_reading_sequence,
+    fold_same_topic,
     format_news_brief,
+    reset_fold_accounts,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -739,3 +745,177 @@ def test_assembly_hands_the_render_backend_to_news() -> None:
         source,
     )
     assert matcher_calls == ["_build_news_with_backend"], f"matcher 仍直调：{matcher_calls}"
+
+
+# ---------------------------------------------------------------------------
+# ⑤ 席 W-8（2026-10-12）：跨源同题折叠的**两栏读数尺**（去重前／去重后／按源折叠）
+# ---------------------------------------------------------------------------
+# 补的是「NO_RULER_ON_CALL:去重前后条数」这一格：这条链此前只有「出了快报」一个读数，
+# 重复率与「某源静音」外部一律读不出（主人第 ⑤ 条常令要「抓→洗→归类」可核对、
+# 第 ④ 条要故障能定位，这一格是那两条的公共底座）。
+# 🔴 判据一律**派生式**：恒等式现算、不写死任何条数；账本由折叠真身同一趟循环记下，
+# 本件不重算第二遍（第二套去重逻辑＝本仓最贵的一族错误）。
+# 🔴 全程离线：折叠真身是纯函数；端到端那条只 patch 本域声明的唯一出口
+# ``news_feeds._fetch_feed_text``（假 RSS 字符串），不触网、不出卡、不起浏览器。
+
+_SAME_TITLE_A = "央行宣布下调存款准备金率 0.5 个百分点"
+_SAME_TITLE_B = "  央行宣布下调存款准备金率0.5个百分点  "  # 归一后与上枚同题（空白形差）
+_OTHER_TITLE = "沿江高铁新建区间今日开通试运营"
+
+
+def _ruler_items() -> list[NewsItem]:
+    """含重复的样本：同题三枚（三家各报一次）＋一枚异题。"""
+    return [
+        NewsItem(title=_SAME_TITLE_A, url="https://www.ithome.com/1", source="IT之家"),
+        NewsItem(title=_SAME_TITLE_B, url="https://www.wallstreetcn.com/2", source="华尔街见闻"),
+        NewsItem(title=_OTHER_TITLE, url="https://feeds.bbci.co.uk/3", source="BBC中文"),
+        NewsItem(title=_SAME_TITLE_A, url="https://www.chinanews.com.cn/4", source="中国新闻网"),
+    ]
+
+
+def _fold_identity_problems(before: int, after: int, folded: int) -> list[str]:
+    """恒等式的尺（现算，不写死条数）：``去重前 == 去重后 + 折叠``。"""
+    problems: list[str] = []
+    if before != after + folded:
+        problems.append(f"恒等式不成立：去重前 {before} ≠ 去重后 {after} + 折叠 {folded}")
+    return problems
+
+
+def test_fold_account_identity_holds_and_tally_adds_up() -> None:
+    """判据①：恒等式＋两本分列账各自都对得上总数（吃一笔不记账即红）。"""
+    sink: list[NewsFoldAccount] = []
+    folded = fold_same_topic(_ruler_items(), account_out=sink)
+    assert len(sink) == 1, "折叠真身没把账带出来＝读数尺在这一条路上是装饰"
+    account = sink[0]
+    assert _fold_identity_problems(account.before, account.after, account.folded) == []
+    assert account.after == len(folded)
+    assert account.before == len(_ruler_items())
+    # 喂进去的样本含重复 ⇒ 折叠栏必非零（写死成 0 的那一发注毒咬的就是这里）。
+    assert account.folded > 0, "样本里明明有同题，折叠栏却报零"
+    assert sum(account.folded_by_source.values()) == account.folded
+    assert sum(account.seen_by_source.values()) == account.before
+    assert account.body_dropped == 0  # 本组样本没过正文门，不该凭空冒出去重外的少条
+
+
+def test_fold_ruler_shape_lock_collapses_same_title_not_different_one() -> None:
+    """判据②：最小形状锁——同题（含同源、含空白形差）必折叠，异题一枚都不许误折。"""
+    sink: list[NewsFoldAccount] = []
+    folded = fold_same_topic(_ruler_items(), account_out=sink)
+    account = sink[0]
+    assert [row.title for row in folded] == [_SAME_TITLE_A, _OTHER_TITLE]
+    assert folded[0].sources == ("IT之家", "华尔街见闻", "中国新闻网"), folded[0].sources
+    # 被折掉的枚数按**它自己的出处**分列：主位那枚不算吃掉。
+    assert account.folded_by_source == {"华尔街见闻": 1, "中国新闻网": 1}
+    assert account.seen_by_source["IT之家"] == 1
+
+    distinct = [
+        NewsItem(title="甲计划今日公布", url="https://www.ithome.com/a", source="IT之家"),
+        NewsItem(title="乙计划今日公布", url="https://www.wallstreetcn.com/b", source="华尔街见闻"),
+    ]
+    second: list[NewsFoldAccount] = []
+    assert len(fold_same_topic(distinct, account_out=second)) == 2
+    assert second[0].folded == 0
+    assert second[0].folded_by_source == {}
+
+    same_outlet = [
+        NewsItem(title="丙芯片发布新一代架构", url="https://www.ithome.com/c1", source="IT之家"),
+        NewsItem(title="丙芯片发布新一代架构", url="https://www.ithome.com/c2", source="IT之家"),
+    ]
+    third: list[NewsFoldAccount] = []
+    assert len(fold_same_topic(same_outlet, account_out=third)) == 1
+    assert third[0].folded_by_source == {"IT之家": 1}
+    assert _fold_identity_problems(third[0].before, third[0].after, third[0].folded) == []
+
+
+#: 唯一出口打桩用的假 RSS：同题两枚（同一家重列）＋一枚异题，全离线常量。
+_RULER_RSS = (
+    '<rss version="2.0"><channel><title>IT之家</title>'
+    "<item><title>甲线路今日开通试运营</title>"
+    "<link>https://www.ithome.com/1/001/001.htm</link>"
+    "<description>第一条真实内容行，供摘要呈现核对。</description></item>"
+    "<item><title>甲线路今日开通试运营</title>"
+    "<link>https://www.ithome.com/1/001/002.htm</link>"
+    "<description>同题的第二枚，按判据应与上枚折成一格。</description></item>"
+    "<item><title>乙芯片发布新一代架构</title>"
+    "<link>https://www.ithome.com/1/001/003.htm</link>"
+    "<description>异题的一枚，不该被并到别处去。</description></item>"
+    "</channel></rss>"
+)
+
+
+def test_capability_reports_fold_ruler_on_the_brief_tail(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """端到端：快报末尾与审读标签带得出「去重前／去重后／按源折叠」，且三栏自洽。
+
+    走的是真链路（真 ``fetch_headlines`` → 真合并 → 真折叠），只有本域声明的唯一
+    出口被打桩；类目取 tech（名册派生后该类恰好一枚实装源 ⇒ 零补投、零网络）。
+    """
+    feeds_module.reset_news_cache()
+    feeds_module.reset_news_fetch_state()
+    reset_fold_accounts()
+    monkeypatch.setattr(
+        feeds_module, "_fetch_feed_text", lambda url, timeout_seconds: _RULER_RSS
+    )
+    seq_before = fold_reading_sequence()
+    try:
+        result = build_news_capability(
+            config=None, render_backend=None, card_dir=str(tmp_path)
+        )(_message("科技快报"), _decision())
+        assert result.kind == "text", "没给后端就该是纯文本，读数尺不该把契约带歪"
+        entry = fold_account_for("tech")
+        assert entry is not None and entry[0] > seq_before, "本轮没算出账＝这一条链上仍然无尺"
+        account = entry[1]
+        assert account.folded > 0, "假 RSS 里就写着同题，折叠栏却读不出"
+        assert _fold_identity_problems(account.before, account.after, account.folded) == []
+
+        tail = result.body.splitlines()[-1]
+        numbers = [int(raw) for raw in re.findall(r"\d+", tail)]
+        assert len(numbers) == 3, f"末行读数不是三栏：{tail!r}"
+        before_text, after_text, folded_text = numbers
+        assert (before_text, after_text, folded_text) == (
+            account.before,
+            account.after,
+            account.folded,
+        ), "末尾与账本两个口径＝两本账，正是要防的漂移"
+        assert _fold_identity_problems(before_text, after_text, folded_text) == []
+        # 折叠后同题只占一格（正文真少了一条，不只是账上说说）。
+        assert result.body.count("甲线路今日开通试运营") == 1
+
+        for expected in (
+            f"news_fold_before:{account.before}",
+            f"news_fold_after:{account.after}",
+            f"news_fold_dropped:{account.folded}",
+        ):
+            assert expected in result.audit_tags, f"机器侧缺读数标签 {expected}"
+        assert f"news_fold_outlet:IT之家:{account.folded_by_source['IT之家']}" in result.audit_tags
+        assert "news_fold_unread" not in result.audit_tags
+    finally:
+        assert feeds_module.wait_for_outstanding_fetches(
+            20.0
+        ), "补投那批没收干＝还原后会打到真网络"
+        feeds_module.reset_news_cache()
+        feeds_module.reset_news_fetch_state()
+        reset_fold_accounts()
+
+
+def test_fold_ruler_is_not_carried_over_from_a_round_that_did_not_compute(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """陈账不许串台：本轮的 fetch 被替掉（没算过）⇒ 末尾不加读数、只记 ``unread``。
+
+    这条同时是「读数尺不把既有正文弄脏」的锁：``body`` 仍逐字＝``format_news_brief``。
+    """
+    items = _sample_items(2)
+    reset_fold_accounts()
+    # 先造一枚**别的轮次**的账（进程级读数册里躺着东西），再跑本轮被替掉 fetch 的能力。
+    stale_sink: list[NewsFoldAccount] = []
+    fold_same_topic(_ruler_items(), account_out=stale_sink)
+    assert stale_sink[0].folded > 0
+    _patch_items(monkeypatch, items)
+    result = build_news_capability(
+        config=None, render_backend=None, card_dir=str(tmp_path)
+    )(_message("科技快报"), _decision())
+    assert result.body == format_news_brief(items, "科技"), "没算过却把上一轮的账贴到本轮正文上"
+    assert "news_fold_unread" in result.audit_tags
+    assert not [tag for tag in result.audit_tags if tag.startswith("news_fold_before")]

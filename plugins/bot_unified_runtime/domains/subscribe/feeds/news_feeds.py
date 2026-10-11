@@ -1826,6 +1826,60 @@ def cached_snapshot(category: str) -> tuple[NewsItem, ...]:
         return tuple(bucket[1]) if bucket else ()
 
 
+# ==================== 折叠读数册（席 W-8：去重前后各多少条）====================
+# 与 ``_UNVERIFIED_DROPPED`` 同一口径：**进程内读数、供审读标签与快结尾部取用、
+# 不落任何运行数据**。🔴 账本只记「折叠真身在这一趟里已经判出来的事」，不参与判定，
+# 所以这里没有第二套去重逻辑（第二真身＝本仓最贵的一族错误）。
+#: 类目键 → (写序, 账)；写序是**单调递增的全局号**，调用方比对自己调用前后的号，
+#: 就知道这枚读数是不是**本轮现算**（防跨调用/跨用例的陈账串台）。
+_FOLD_ACCOUNTS: dict[str, tuple[int, NewsFoldAccount]] = {}
+_FOLD_WRITE_SEQUENCE = 0
+_FOLD_LOCK = threading.Lock()
+
+
+def fold_reading_sequence() -> int:
+    """当前折叠读数的写序（只读；调用前后各取一次即得「本轮有没有现算」）。"""
+    with _FOLD_LOCK:
+        return int(_FOLD_WRITE_SEQUENCE)
+
+
+def fold_account_for(category: str) -> tuple[int, NewsFoldAccount] | None:
+    """类目 → 最近一次折叠账 ``(写序, 账)``；从没算过＝``None``（诚实缺席，不编 0）。"""
+    key = category if category in CATEGORY_LABELS else "mix"
+    with _FOLD_LOCK:
+        entry = _FOLD_ACCOUNTS.get(key)
+        return (int(entry[0]), entry[1]) if entry else None
+
+
+def _publish_fold_account(key: str, account: NewsFoldAccount) -> None:
+    with _FOLD_LOCK:
+        global _FOLD_WRITE_SEQUENCE
+        _FOLD_WRITE_SEQUENCE += 1
+        _FOLD_ACCOUNTS[key] = (_FOLD_WRITE_SEQUENCE, account)
+
+
+def _republish_cached_fold_account(key: str) -> None:
+    """缓存命中：把**建这份快照时**那枚账重新发一次号（读数没变，只是标「本轮取用」）。
+
+    🔴 不重算、不新造账——命中路径上没有折叠发生，现算就得出第二套去重通路。
+    """
+    with _FOLD_LOCK:
+        entry = _FOLD_ACCOUNTS.get(key)
+        if entry is None:
+            return
+        global _FOLD_WRITE_SEQUENCE
+        _FOLD_WRITE_SEQUENCE += 1
+        _FOLD_ACCOUNTS[key] = (_FOLD_WRITE_SEQUENCE, entry[1])
+
+
+def reset_fold_accounts() -> None:
+    """清空折叠读数册（测试隔离／运维重新对表；纯进程内状态）。"""
+    global _FOLD_ACCOUNTS, _FOLD_WRITE_SEQUENCE
+    with _FOLD_LOCK:
+        _FOLD_ACCOUNTS = {}
+        _FOLD_WRITE_SEQUENCE = 0
+
+
 def wait_for_outstanding_fetches(timeout_seconds: float = 15.0) -> bool:
     """把补投/迟到那批外呼收干净；返回是否全部收干（产线路径不调，测试/运维复跑调）。
 
@@ -2044,7 +2098,49 @@ def news_topic_key(title: str) -> str:
     )
 
 
-def fold_same_topic(items: Iterable[NewsItem]) -> list[NewsItem]:
+@dataclass(frozen=True)
+class NewsFoldAccount:
+    """跨源同题折叠的**两栏读数**（席 W-8，2026-10-12：「出了快报」之外还得读得出重复率）。
+
+    三栏＝``before``（进折叠口的条数）／``after``（折叠后剩下的条数）／
+    ``folded_by_source``（被同题折叠吃掉的那枚条目**按它自己的出处**分列）。恒等式
+    ``before == after + folded`` 与 ``sum(folded_by_source.values()) == folded``
+    都是**同一趟循环的副产品**（折叠事件在循环里只判一次、记一次），不是第二套判据：
+    🔴 本结构只**记账**，不改任何折叠语义（不许把这里的数反喂给判据）。
+
+    ``body_dropped``＝折叠之后又被正文门（``_keep_body_only``：个人条无同题正文条）
+    留在正文之外的枚数，与「同题折叠」**分列不合并**——两件事混成一枚数字就读不出
+    到底是哪条路静音了。出处名允许为空串（无署名条目照样会被折掉，吞进 ``""`` 那一格
+    而不是悄悄漏计；呈现面自己决定怎么落字）。``seen_by_source``＝去重前各出处贡献
+    几枚：某源在名册里、这一轮却一枚没出，这里读得出（诚实缺席）。
+    """
+
+    before: int
+    after: int
+    seen_by_source: dict[str, int]
+    folded_by_source: dict[str, int]
+    body_dropped: int = 0
+
+    @property
+    def folded(self) -> int:
+        """被同题折叠吃掉的枚数（派生量，恒＝``before - after``；不落第二枚计数器）。"""
+        return self.before - self.after
+
+    def as_dict(self) -> dict[str, object]:
+        """机器读数（审读面 / ``--json`` 同一本账；键名住这里，别处不抄第二份）。"""
+        return {
+            "news_before": int(self.before),
+            "news_after": int(self.after),
+            "news_folded": int(self.folded),
+            "news_folded_by_source": {str(k): int(v) for k, v in self.folded_by_source.items()},
+            "news_seen_by_source": {str(k): int(v) for k, v in self.seen_by_source.items()},
+            "news_body_dropped": int(self.body_dropped),
+        }
+
+
+def fold_same_topic(
+    items: Iterable[NewsItem], *, account_out: list[NewsFoldAccount] | None = None
+) -> list[NewsItem]:
     """把「同题多源」折叠成一条并保留出处列表（先到源占主位，确定性可复跑）。
 
     折叠条目的 ``category``/``url``/``summary``/``published_at`` 一律取**先到那条**；
@@ -2056,10 +2152,21 @@ def fold_same_topic(items: Iterable[NewsItem]) -> list[NewsItem]:
     已经折过的条目再折一次（缓存命中后续合并、断点续发、mix 复用同一快照都会走到）
     会把「一条题 × N 个源」的出处**截成一源**＝跨源出处被静默吃掉。修后同输入恒同
     输出，且出处列表只增不减（锁＝``tests/test_news_source_whitelist.py`` 腿 ⑲/⑲b）。
+
+    ``account_out``（席 W-8）：给一个列表就把这一趟的 ``NewsFoldAccount`` 追加进去。
+    🔴 记账与折叠**同一条循环、同一次判定**（吸收事件就在 ``index is not None`` 那一
+    支，原处记一笔），不重跑第二遍、不重算第二个键——第二套去重逻辑是本仓最贵的一族
+    错误。不给 ``account_out`` 时行为与返回值逐字同旧（既有调用方与锁零感知）。
     """
+    rows = list(items)
     folded: list[NewsItem] = []
     position_by_key: dict[str, int] = {}
-    for item in items:
+    seen_by_source: dict[str, int] = {}
+    folded_by_source: dict[str, int] = {}
+    for item in rows:
+        outlet = str(item.source or "")
+        if outlet:
+            seen_by_source[outlet] = seen_by_source.get(outlet, 0) + 1
         topic_key = news_topic_key(item.title)
         if not topic_key:
             # 键算不出来（标题清洗后为空）＝不进判据，原样保留，绝不当重复吞掉。
@@ -2077,6 +2184,16 @@ def fold_same_topic(items: Iterable[NewsItem]) -> list[NewsItem]:
             outlets.append(item.source)
         # 只补出处，不改主链接/主摘要/主时间：一条题在卡面上只占一格、点一次进一家。
         folded[index] = replace(keeper, sources=tuple(outlets))
+        folded_by_source[outlet] = folded_by_source.get(outlet, 0) + 1
+    if account_out is not None:
+        account_out.append(
+            NewsFoldAccount(
+                before=len(rows),
+                after=len(folded),
+                seen_by_source=seen_by_source,
+                folded_by_source=folded_by_source,
+            )
+        )
     return folded
 
 
@@ -2097,20 +2214,31 @@ def _sources_suffix(item: NewsItem) -> str:
 _PERSONAL_CORROBORATION_SUFFIX = "（个人号佐证·非公司口径）"
 
 
-def _fold_to_body(merged: Sequence[NewsItem]) -> list[NewsItem]:
+def _fold_to_body(
+    merged: Sequence[NewsItem], *, account_out: list[NewsFoldAccount] | None = None
+) -> list[NewsItem]:
     """折叠 + 正文过滤的**唯一合成口**：合格标条目先占主位，个人条只作出处并进。
 
     🔴 为什么「合格条在前」：``fold_same_topic`` 的主位是**先到那条**。个人条先到、
     ORG 条后到时直接折会把整格主位交给不合格标 ⇒ 正文过滤把那格整体丢掉 =
     **在册 ORG 条被个人条挤掉**（台账 #73「在册≠已执法」的反向形态）。分区后再折保证
     同题有合格条时主位必是合格条；全员合格时（今日产线全貌）分区是恒等变换 ⇒ 逐字原序。
+
+    ``account_out``（席 W-8 读数尺）：透传给折叠真身，再把正文门留下的枚数另记成
+    ``body_dropped``——与「同题折叠」**分列不合并**，见 ``NewsFoldAccount``。
     """
     rows = list(merged)
     eligible = [item for item in rows if sa.body_admits_src(item.src)]
     if len(eligible) == len(rows):
-        return _keep_body_only(fold_same_topic(rows))
-    donors = [item for item in rows if not sa.body_admits_src(item.src)]
-    return _keep_body_only(fold_same_topic(eligible + donors))
+        body = _keep_body_only(fold_same_topic(rows, account_out=account_out))
+    else:
+        donors = [item for item in rows if not sa.body_admits_src(item.src)]
+        body = _keep_body_only(fold_same_topic(eligible + donors, account_out=account_out))
+    if account_out:
+        dropped = account_out[-1].after - len(body)
+        if dropped > 0:
+            account_out[-1] = replace(account_out[-1], body_dropped=dropped)
+    return body
 
 
 def _keep_body_only(folded: Sequence[NewsItem]) -> list[NewsItem]:
@@ -2148,7 +2276,13 @@ def _keep_body_only(folded: Sequence[NewsItem]) -> list[NewsItem]:
     return body
 
 
-def _merge_dedup(lists: list[list[NewsItem]], *, interleave: bool, cap: int) -> list[NewsItem]:
+def _merge_dedup(
+    lists: list[list[NewsItem]],
+    *,
+    interleave: bool,
+    cap: int,
+    account_out: list[NewsFoldAccount] | None = None,
+) -> list[NewsItem]:
     """合并 + 按 URL 去重 + **跨源同题折叠**；mix 用轮转合并保证类目多样性，其余保源序。
 
     2026-10-08 裁定面：同一条新闻被多家源转载时只占一格，并把出处并列保留
@@ -2176,7 +2310,7 @@ def _merge_dedup(lists: list[list[NewsItem]], *, interleave: bool, cap: int) -> 
                 if item.url:
                     seen_urls.add(item.url)
                 merged.append(item)
-        return _fold_to_body(merged)
+        return _fold_to_body(merged, account_out=account_out)
     for feed_items in lists:
         if len(merged) >= cap:
             break  # 与旧「到 cap 直接 return」等价：外层也不再喂第二源
@@ -2188,7 +2322,7 @@ def _merge_dedup(lists: list[list[NewsItem]], *, interleave: bool, cap: int) -> 
             merged.append(item)
             if len(merged) >= cap:
                 break
-    return _fold_to_body(merged)
+    return _fold_to_body(merged, account_out=account_out)
 
 
 def _evict_cache(ttl_seconds: float) -> None:
@@ -2407,6 +2541,7 @@ def fetch_headlines(
             (cached[0], cached[1]) if cached is not None else (None, None)
         )
     if cached_at is not None and now - cached_at <= ttl:
+        _republish_cached_fold_account(key)
         return list(cached_snapshot_items)[: max(1, int(max_items))]
 
     feeds = _feeds_for(key)
@@ -2423,6 +2558,8 @@ def fetch_headlines(
     blocking, detached = split_dispatch(rotated)
     generation = next(_GENERATION)
     interleave = key == "mix"
+    #: 本轮折叠账的出口（席 W-8）：由折叠真身在它那趟循环里顺手记一笔，本件不重算。
+    fold_sink: list[NewsFoldAccount] = []
 
     pool = get_shared_pool()
     blocking_futures = [(row, _submit(pool, row, per_feed_cap, timeout)) for row in blocking]
@@ -2461,7 +2598,14 @@ def fetch_headlines(
             lambda late, k=key, g=generation, il=interleave: _on_late_result(k, g, il, late)
         )
 
-    merged = _merge_dedup(per_feed_lists, interleave=interleave, cap=_MIX_MERGE_CAP)
+    merged = _merge_dedup(
+        per_feed_lists, interleave=interleave, cap=_MIX_MERGE_CAP, account_out=fold_sink
+    )
+    # 读数只记**本轮出卡这批**自己那一趟折叠（席 W-8）。迟到件并回快照那一步是同
+    # 一批已折叠条目再折一次（幂等），并进来会把同一批条数算两遍＝把读数弄脏；
+    # 那条路照旧不记账，快照语义一字未动。
+    if fold_sink:
+        _publish_fold_account(key, fold_sink[-1])
     with _CACHE_LOCK:
         stashed = list(_PENDING_LATE.pop(generation, []))
         final = (

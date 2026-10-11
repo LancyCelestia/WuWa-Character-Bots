@@ -53,8 +53,11 @@ from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
 from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 from plugins.bot_unified_runtime.domains.subscribe.feeds.news_feeds import (
     CATEGORY_LABELS,
+    NewsFoldAccount,
     NewsItem,
     fetch_headlines,
+    fold_account_for,
+    fold_reading_sequence,
     format_news_brief,
     unverified_drop_count,
 )
@@ -210,6 +213,45 @@ def _group_key(item: NewsItem) -> str:
     绝不让一条已抓到的条目因为归不了域而静默消失）。"""
     category = str(getattr(item, "category", "") or "")
     return category if category in CATEGORY_LABELS else "mix"
+
+
+def _fold_reading_text(account: NewsFoldAccount) -> str:
+    """快结尾部的**两栏读数**（席 W-8，2026-10-12）：去重前多少条、去重后多少条。
+
+    数一律从数据侧折叠真身那一趟循环带来的 ``NewsFoldAccount`` 现取，本件只**读**、
+    不重算第二遍（第二套去重逻辑＝本仓最贵的一族错误）。人读面只报数、不表功：
+    她要看的是「今天重复了几条、哪家在静音」，不是管线自夸。排版沿用首行的
+    ``·`` 分隔口径，句子不加术语、不加「我为你优化了」那类话。
+    """
+    parts = [
+        f"读到 {account.before} 条",
+        f"去重后 {account.after} 条",
+        f"同题并掉 {account.folded} 条",
+    ]
+    if account.body_dropped:
+        parts.append(f"个人号未进正文 {account.body_dropped} 条")
+    return "数目 · " + " · ".join(parts)
+
+
+def _fold_audit_tags(account: NewsFoldAccount) -> list[str]:
+    """折叠读数的机器面（审读标签）：三栏＋按源分列的折叠枚数。
+
+    键名与 ``NewsFoldAccount.as_dict()`` 同一本账（不抄第二份表：这里只加 ``news_fold``
+    前缀拼标签）。按源那一段只列**非零**且有名有姓的出处——空名（无署名条目）不进
+    标签面，但它照数计在 ``news_fold_dropped`` 里，绝不因为不好读就漏记。
+    """
+    tags = [
+        f"news_fold_before:{account.before}",
+        f"news_fold_after:{account.after}",
+        f"news_fold_dropped:{account.folded}",
+        f"news_fold_body_dropped:{account.body_dropped}",
+    ]
+    tags += [
+        f"news_fold_outlet:{name}:{count}"
+        for name, count in sorted(account.folded_by_source.items())
+        if count and name
+    ]
+    return tags
 
 
 def build_news_card_content(
@@ -383,6 +425,9 @@ def build_news_capability(
         label = CATEGORY_LABELS.get(category, CATEGORY_LABELS["mix"])
         # 本轮丢弃数按**增量**记（进程级计数是累计的，逐轮差值才是「这一条快报丢了几个」）。
         dropped_before = unverified_drop_count()
+        # 折叠读数同理按**本轮现算**取（席 W-8）：调用前后各取一次写序，号动了才是
+        # 这一轮自己算出来的账——陈账串台（上一轮/别条目的读数挂到本轮卡上）就是编数。
+        fold_seq_before = fold_reading_sequence()
         items = fetch_headlines(
             category,
             timeout_seconds=float(
@@ -393,15 +438,25 @@ def build_news_capability(
             ),
             max_items=int(getattr(config, "bot_news_max_items", 20) or 20),
         )
+        fold_entry = fold_account_for(category)
+        fold_account = (
+            fold_entry[1] if fold_entry is not None and fold_entry[0] > fold_seq_before else None
+        )
         if not items:
             return CapabilityResult(
                 request_id=message.request_id,
                 capability_id="bot.news",
                 kind="text",
                 body=_empty_degraded_text(),
-                audit_tags=["capability:news", "news:fetch_failed"],
+                audit_tags=[
+                    "capability:news",
+                    "news:fetch_failed",
+                    *(_fold_audit_tags(fold_account) if fold_account else ["news_fold_unread"]),
+                ],
             )
         body = format_news_brief(items, label)
+        if fold_account is not None:
+            body = f"{body}\n{_fold_reading_text(fold_account)}"
         payload = build_news_card_content(
             items, label=label, date_text=_brief_date_text(body), config=config
         )
@@ -417,6 +472,12 @@ def build_news_capability(
             f"news_items:{len(items)}",
             f"news_category:{category}",
         ]
+        # 折叠读数（席 W-8）：去重前后各多少条、哪一家的同题被并掉——机器侧与快结尾部
+        # 同一本账。「读了但没算出来」另记一枚，绝不用 0 冒充「今天确实没重复」。
+        if fold_account is not None:
+            audit_tags += _fold_audit_tags(fold_account)
+        else:
+            audit_tags.append("news_fold_unread")
         # 出口标源逐枚入审读面（2026-10-11 裁定：每条必带 ``SRC=``，四值闭集）：
         # 正文已经带过的那枚标在机器侧同现一枚，「哪条是以谁的口径发出去的」事后可查；
         # 判不出而被丢弃的条数另记一枚（丢弃必须留痕，不许静默少条）。
