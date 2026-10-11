@@ -770,6 +770,80 @@ def test_sync_face_is_registered_and_maps_its_own_three_rc_book(
     assert label == prc.STRUCTURE_LABEL_UNDECIDABLE and "RULER_ABSENT" in line, line
 
 
+# ---------------------------------------------------------------------------
+# 尺**自己**的判据面（不是转贴面）：ahead/dirty 两枚都判不了「库的内容是不是旧的」——
+# 一座库把自己的旧内容提交得干干净净，ahead=0／dirty=0 照样全绿，而主仓早已前进。
+# 所以 `_content_drift` 是这条常令的另一半，它必须有腿；否则又是一枚"只落字段没落判据"的半死件。
+# ---------------------------------------------------------------------------
+
+def _drift_fixture(tmp_path: Path, *, mode: str) -> tuple[Path, Path]:
+    """造「主仓 + 一座库」的仓外对榫面：mode＝same／differ／orphan／shell。"""
+    repo = tmp_path / "ChatBot"
+    libs_root = tmp_path / "ChatBot_Libs"
+    rel = Path("plugins/bot_unified_runtime/domains/core/session_keys.py")
+    twin = repo / rel
+    twin.parent.mkdir(parents=True, exist_ok=True)
+    twin.write_bytes(b"VALUE-NOW\n")
+    lib = libs_root / "ingress-protocol"
+    copy = lib / rel
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    if mode == "same":
+        copy.write_bytes(b"VALUE-NOW\n")
+    elif mode == "differ":
+        copy.write_bytes(b"VALUE-OLD\n")
+    elif mode == "orphan":
+        copy.write_bytes(b"ONLY-IN-LIB\n")
+        (repo / rel).unlink()
+    elif mode == "shell":
+        (lib / "plugins").mkdir(parents=True, exist_ok=True)  # 零实体壳
+    else:  # pragma: no cover - 名册写错当场红，不许静默走默认
+        raise AssertionError(f"未知夹具形态 {mode}")
+    return repo, lib
+
+
+@pytest.mark.parametrize("mode", ["same", "differ", "orphan", "shell"])
+def test_content_drift_leg_sees_stale_library(tmp_path: Path, mode: str) -> None:
+    """实体新旧轴四形：同＝不判；改＝点名；主仓已无＝点名；壳库＝只登记证据缺席（禁判红）。"""
+    from scripts import sync_all_repositories as sync
+
+    repo, lib = _drift_fixture(tmp_path, mode=mode)
+    reading = sync._content_drift(lib, repo)
+    if mode == "same":
+        assert reading["mirrored"] == 1 and reading["differing_count"] == 0 == reading["absent_count"], reading
+    elif mode == "differ":
+        assert reading["differing_count"] == 1 and reading["differing"] == [
+            "plugins/bot_unified_runtime/domains/core/session_keys.py"], reading
+        assert reading["absent_count"] == 0, reading
+    elif mode == "orphan":
+        assert reading["absent_count"] == 1 and reading["differing_count"] == 0, reading
+    else:
+        assert reading["mirrored"] == 0 == reading["differing_count"] == reading["absent_count"], reading
+
+
+def test_content_drift_leg_has_teeth_on_the_real_root(tmp_path: Path) -> None:
+    """反"永远绿"腿：拿**真主仓**当比对源，把一枚副本改一个字节 ⇒ 必须点名（现算，不靠假根自证自）。
+
+    为什么还要这一条：上一条全在 tmp_path 里自造对照，判不到"真树的 `plugins/**` 形状是不是
+    都被这函数看见"（rglob 漏一层目录时，四形夹具照样全绿＝空腿）。这里用真仓根当源，
+    只读不写主仓，写盘只落 tmp。
+    """
+    from scripts import sync_all_repositories as sync
+
+    lib = tmp_path / "lib"
+    rel = Path("plugins/bot_unified_runtime/domains/core/session_keys.py")
+    twin = PROJECT_ROOT / rel
+    assert twin.is_file(), f"对榫源不在盘（真仓结构变了要同批改本锁）：{rel}"
+    copy = lib / rel
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    copy.write_bytes(twin.read_bytes())
+    clean = sync._content_drift(lib, PROJECT_ROOT)
+    assert clean["differing_count"] == 0 == clean["absent_count"] and clean["mirrored"] == 1, clean
+    copy.write_bytes(twin.read_bytes() + b"# drift\n")
+    poisoned = sync._content_drift(lib, PROJECT_ROOT)
+    assert poisoned["differing_count"] == 1, f"改一个字节都没抓到＝这把腿是空腿：{poisoned}"
+    assert sync.SNAPSHOT_SOURCE_ROOT in poisoned["differing"][0], poisoned["differing"]
+
+
 def test_structure_faces_argv_are_read_only_and_the_lock_has_teeth(monkeypatch: pytest.MonkeyPatch) -> None:
     """② 零写面锁：argv 表摊平 + 源码 AST 双路；注毒腿（纯内存）自证上一条真的在拦事."""
     # 腿 A：运行时把在册面表摊平——禁串连子串都不许出现，且不许出现裸路径

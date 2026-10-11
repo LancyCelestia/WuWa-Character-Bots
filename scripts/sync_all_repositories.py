@@ -43,6 +43,8 @@ EXPECTED_OWNER = "LancyCelestia"
 ALLOWED_HOSTS = ("github.com",)
 #: kebab slug 形状（与库工厂/板块门同形）。
 KEBAB_CELL_RE = re.compile(r"^`([a-z0-9][a-z0-9_-]*)`$")
+#: 库里与主仓**同路径比字节**的那一层（工厂就是把这一层逐枚拷过去的；册/工具件不比）。
+SNAPSHOT_SOURCE_ROOT = "plugins"
 #: 库里绝不许出现的残骸（发布前逐枚点名并拒绝）。
 FORBIDDEN_PATTERNS: tuple[str, ...] = (
     ".env", ".env.local", "id_rsa", ".pem", ".key", "__pycache__", ".pytest_cache",
@@ -133,6 +135,44 @@ def _residue(lib_dir: Path) -> list[str]:
         elif len(path.parts) == 1 and path.name not in ALLOWED_ROOT_NAMES:
             bad.append(f"{rel}（库根层出现未登记名）")
     return bad
+
+
+def _content_drift(lib_dir: Path, repo: Path) -> dict[str, object]:
+    """库里的 `plugins/**` 副本 vs 主仓现值 ⇒「主仓又前进了、这座库还是旧的」唯一可判读数。
+
+    为什么不拿 `SNAPSHOT-STAMP.txt` 里那行 HEAD 直接比：stamp 记的是工厂**当时**的取数口径
+    （`caliber=worktree`），主仓后续哪怕只提交文档，stamp 也会永远不一致＝**恒红**；反过来
+    stamp 一致也证明不了内容一致（工厂产物被手工改过就看不出来）。本面判**实体字节**：
+    内容没变就不是旧库，内容变了就逐枚点名。桥接件 `__init__.py` 按设计是源 init 的逐字节
+    副本 ⇒ 同一条比法顺带罩住"桥接件被改成垫片"那一族（裁定①的形状门在 `pre_restart_check` 腿C）。
+
+    🔴 `mirrored=0`（三座适配器空壳今天零实体）**只登记不判**：没有副本可比＝没有证据，
+    既不产红也不进 undecidable 名册（否则整把尺会因为壳子而永久不可判，那是把"没货"读成"坏了"）。
+    成员数对不对是 `pre_restart_check.library_roster` 那格的轴，不在本面重复建第二把尺。
+    """
+    mirrored_root = lib_dir / SNAPSHOT_SOURCE_ROOT
+    mirrored = sorted(p for p in mirrored_root.rglob("*") if p.is_file()) \
+        if mirrored_root.is_dir() else []
+    differing: list[str] = []
+    absent: list[str] = []
+    for src in mirrored:
+        rel = src.relative_to(lib_dir).as_posix()
+        twin = repo / rel
+        if not twin.is_file():
+            absent.append(rel)
+            continue
+        try:
+            if src.read_bytes() != twin.read_bytes():
+                differing.append(rel)
+        except OSError:
+            differing.append(rel)
+    return {
+        "mirrored": len(mirrored),
+        "differing_count": len(differing),
+        "differing": differing[:3],
+        "absent_count": len(absent),
+        "absent_in_repo": absent[:3],
+    }
 
 
 def _state(repo: Path, proxy: str | None) -> dict[str, object]:
@@ -301,6 +341,17 @@ def main(argv: list[str] | None = None) -> int:
         if tag and (state.get("tags") or 0) == 0:
             payload["reds"].append(f"LIB_UNTAGGED:{slug}（有 VERSION={version} 却一枚 tag 都没有）")
         entry["expected_tag"] = tag
+        # 实体新旧轴（ahead/dirty 判不了这一条：库把自己的旧内容提交得干干净净、照样 ahead=0）
+        drift = _content_drift(lib_dir, repo)
+        entry["content"] = drift
+        if drift["differing_count"] or drift["absent_count"]:
+            head = (drift["differing"] + drift["absent_in_repo"])[0]
+            payload["reds"].append(
+                f"LIB_STALE_CONTENT:{slug}（{drift['differing_count']} 枚与主仓现值不同"
+                f"／{drift['absent_count']} 枚主仓已无该文件；首枚 {head}）"
+                "＝重跑库工厂再 --publish，本件不代生成")
+        elif drift["mirrored"] == 0:
+            entry["content_blind"] = "NO_MIRRORED_FILES（壳库零实体＝本面无证据也不判红）"
         payload["libs"].append(entry)
         if args.publish or args.dry_run:
             if residue:
