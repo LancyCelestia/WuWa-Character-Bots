@@ -851,7 +851,7 @@
 | `_tts_auto_reply_enabled` | **`false`** | 对话自动配音：LLM 回复生成后追加语音条（在能力包装层附加 `CapabilityResult.audio`，不侵入 domains/chat_reply/runtime/pipeline.py） |
 | `_tts_auto_reply_scope` | `private` | 自动配音适用会话：`private`=仅私聊 / `group`=仅群聊 / `all`=双向（**三值枚举装载期校验**；M-51 漏登 `group` 已补）；群聊默认不配音以免刷屏；**scope=礼仪维度**，群面另受内容群白名单安全门约束（`bot_content_route_group_whitelist`，黑名单永远赢；白名单空=群面不配音绝不猜群，M-17） |
 | `_tts_auto_reply_max_chars` | `120` | 自动配音文本上限（比命令式合成更短；**`0`=不限**，超硬顶=放弃增益纯文本发出） |
-| `_tts_auto_reply_probability` | `0.05` | 自动配音概率门（2026-09-19 批）：符合条件的回复按此概率配音，**确定性哈希实现**（`should_voice_reply`，seed=`session_id:message_id`，与 `policy/gate.py` 的 `deterministic_group_reply_lottery` 同款）——同一条消息结果恒定，可复现可审计，不用 `random` 以免测试 flaky。`0`=永不配音、`1.0`=全量配音 |
+| `_tts_auto_reply_probability` | `0.10` | 自动配音概率门（2026-09-19 批；**代码真缺省 `0.10`＝`.env.example` 样例值**，本行旧写 `0.05` 属假账，2026-10-11 现算三元对账改齐）：符合条件的回复按此概率配音，**确定性哈希实现**（`should_voice_reply`，seed=`session_id:message_id`，与 `policy/gate.py` 的 `deterministic_group_reply_lottery` 同款）——同一条消息结果恒定，可复现可审计，不用 `random` 以免测试 flaky。`0`=永不配音、`1.0`=全量配音 |
 | `_tts_auto_reply_always` | **`false`** | 跳过概率门的调试/验收旁路：置真则凡过前五道门的回复一律配音（逐条听音用）。日常勿开——等于把概率当 100% |
 | `_tts_voice_hook_enabled` | **`false`** | G-3 配音出站路径开关（M-10/M-13 根修，2026-09-20）：`true`=自动配音改走 pipeline post-review hook（`domains/media/voice_enricher.py` 经 `RuntimePipeline.outbound_voice_enricher` 在 review 批准后、render 前恰调一次；取文口径翻正=只合成 review 批准后的正文，被拦正文零落盘；合成失败挂 `tts_*` OperationalIssue 码族走 300s 抑制告警；群内正文照发、降级仍归中央 A-19）；`false`=旧能力包装路径（根 `_attach_voice_reply`，逐字节现状）。**双态互斥**（键开不装配旧包装）；装配期冻结（重启生效）；退役第二步（摘旧包装）等真机浸泡窗 |
 | `_teaching_enabled` / `_teaching_db_path` | `true` / `data/teaching_knowledge.sqlite3` | V2.1 S8 教导知识库（V21-TEACH-001，`domains/chat_reply/character/teaching_service.py`；装配已落盘 `plugins/bot_unified_runtime/runtime/service_wiring.py`（B2①），受 `_v21_service_wiring_enabled` 主门（缺省关）约束，待重启生效）：用户提议→管理员审核→生效为「背景知识」注入（仅供理解、禁止复述；封闭三值类目 preference/fact/correction+内容红线扫描+注入面结构隔离=不可达人格/权限/路由）；撤销+版本回滚（回滚=新增一版）；db_path 走 runtime 重映射。owner：`domains/chat_reply/character/teaching_service.py TeachingService` |
@@ -1135,6 +1135,7 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 - 反向缺口：`BOT_MEMORY_EXTRACT_ENABLED`/`_TIMEOUT_SECONDS`/`_MAX_TOKENS`/`_ERROR_COOLDOWN_SECONDS` 四键
   与 `BOT_CHAT_FAST_MODE`/`_MAX_CANDIDATES`/`_CONTEXT_BUDGET`/`_WEB_MAX_QUERIES`/`_SKIP_WEB_PAGES` 五键**确在 `SETTABLE_KEYS`**，
   但热更列仍空白（欠标，非假标）——按任务边界「只改被证伪的」未动，提请 `doc_sync.py` 派生时一并补齐。
+- **2026-10-11 三元对账续席（M2-30R）补齐**：上面 9 键之外，ACG 竖源六键 `BOT_SEARCH_ACG_ENABLED`/`_BANGUMI_ENABLED`/`_MOEGIRL_ENABLED`/`_BILIBILI_ENABLED`/`_TIMEOUT_SECONDS`/`_MAX_PER_SOURCE` 现算**亦在 `SETTABLE_KEYS`**、热更列同样空白（欠标，非假标）——本节"反向缺口"合计 15 枚＝§0 规则 4 那句「清单见文末 F 节」自此闭合（原清单只列 9 枚＝指针半死）。处置口径未变：改 `.env` 后重启**永远比不重启好**，只是本席未动主表；下次派生器扫本册时按 SETTABLE_KEYS 反查、把这 15 枚标 ✅热更即可。
 - `BOT_MUSIC_MODE` 同册两行互斥（「音乐能力」节回退 `card+voice+link` vs E4 节回退 `card`）：属**值抄本失真**、不属热更标记面 ⇒ 本席未改，随审计件 §7 R14 落地。
 - C 节 `_outbound_gate_max_per_target_per_*` 行已是全册正确的热改文案样板（明写「勿按字面理解成'写了就生效'」并点名装配期 `getattr(裸 config)` 快照）**未动**，作为其余行的写法范式。
 - C 节 `_rate_limit_group_max_per_hour`/`_rate_limit_group_max_per_minute`/`_rate_limit_emotion_exempt` 三键实测确在 `SETTABLE_KEYS`，标记为真、**未动**。
@@ -1315,8 +1316,8 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 | `BOT_RANDPIC_DISPATCH_COOLDOWN_SECONDS` | float | `600.0` | ≥0 秒 | 🟡需重启 | 派发独立冷却 | 同上 |
 | `BOT_RANDPIC_DISPATCH_MAX_PER_HOUR` | int | `2` | ≥0 | 🟡需重启 | 派发每小时上限 | 同上 |
 | `BOT_RANDPIC_NO_REPEAT_WINDOW_SECONDS` | float | `0.0` | ≥0 秒；0=关 | 🟡需重启 | 窗内不重发同一张（按会话记账）。0 = 关 = 旧行为逐字节同形（纯随机、可重样） | `domains/meme/capabilities/randpic.py` |
-| `BOT_RANDPIC_MIN_FILE_KB` | int | `100` | ≥0；0=关 | 🟡需重启 | B1 池子守卫：单张字节下限（KB），低于不进候选；任一守卫键 > 0 时同时启用文件头魔数验真（假 .png/HTML 改名件计入 `images_bad_magic`） | 同上（`_min_bytes_for`）+ `domains/media/image_guard.py` |
-| `BOT_RANDPIC_MIN_SIDE` | int | `400` | ≥0；0=关（样例 300 ⚠️） | 🟡需重启 | B1 池子守卫：像素短边下限（与 `BOT_MEME_LIBRARY_MIN_SIDE` 语义一致、两把闸各自独立）；代码注释点名该缺省出自现网图库普查（拒的是 QQ 预览/缩略图＝用户所称「糊」那一段），PIL 只解图头；解不开按坏件记 | 同上（`_min_side_for`）+ `domains/media/image_guard.py` |
+| `BOT_RANDPIC_MIN_FILE_KB` | int | `0`（样例 100 ⚠️；2026-09-29 归零裁定，旧缺省 100 KB 出自 2026-09-28 现网 Picture 普查） | ≥0；0=关 | 🟡需重启 | B1 池子守卫：单张字节下限（KB），低于不进候选；**两键同 0 ⇒ 魔数验真一并不参与、扫描行为与 B1 之前逐字节同形**（真身 `domains/meme/capabilities/randpic.py::_scan_dir`；判据注释=config.py 类体同段）。任一守卫键 > 0 时同时启用文件头魔数验真（假 .png/HTML 改名件计入 `images_bad_magic`） | 同上（`_min_bytes_for`）+ `domains/media/image_guard.py` |
+| `BOT_RANDPIC_MIN_SIDE` | int | `0`（样例 300 ⚠️；2026-09-29 归零裁定，旧缺省 400 px 亦出自同一次普查） | ≥0；0=关 | 🟡需重启 | B1 池子守卫：像素短边下限（与 `BOT_MEME_LIBRARY_MIN_SIDE` 语义一致、两把闸各自独立——表情包段与本地原图分布本不同）；归零后**仍无条件生效**的四层：子目录剪枝 `_should_prune_dir`、0 字节空件拒收（`images_empty`）、重解析点不进树（PIC 容器面）、单张体积上限 `BOT_RANDPIC_MAX_FILE_MB`；PIL 只解图头，解不开按坏件记 | 同上（`_min_side_for`）+ `domains/media/image_guard.py` |
 
 ### X10 creation 对接点 provider 选择器（中央调度收编波 P5/S09 §7）
 

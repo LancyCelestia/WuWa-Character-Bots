@@ -407,6 +407,362 @@ def test_config_catalog_registers_all_tts_keys() -> None:
     assert sorted(({fake} | tts_fields) - registered) == [fake]
 
 
+# --------------------------------------------------------------------------
+# 门禁 2b/2c（M2-30R 2026-10-13 三元对账席）：
+#   2b 「默认值/缺省」列必须 == config.py 声明缺省 ⇒ 拦 A-1 型假账（她照册改配置读到假值）；
+#   2c 在册键名必须在 Config 存在或行文本明写「已退役」 ⇒ 拦 A-2 型假账（她照册填 .env、
+#       pydantic `extra='ignore'` 静默吞、无失败信号）。
+# 与既有 `test_config_catalog_covers_config_fields` 是**三把不同的尺**：那把查「字段有没有在册」
+# （Config→catalog 单向），本两把查「在册的假账不能活」两向（catalog→Config 值级 + 名级）。
+# 判据来自 `.superpowers/sdd/2026-09-27-fullload/reports-m2/M2-30-DOC-KEY-TRUTH.md` §3；
+# 跳过口径照该账本 §1（复合行只判存在性与可改性、⚠️/样例自陈格不判默认、F 节自审「位置|改前|改后」
+# 与 C 节「键|转换规则」两张册剔出——那是热改白名单展示与 F 席记账件，非 Config 字段注册表）。
+# --------------------------------------------------------------------------
+
+
+def _fold_const(node: ast.AST, root: ast.Module) -> tuple[bool, Any]:
+    """常量折叠 `(ok, value)`：literal_eval → 模块顶层 Name → BinOp/UnaryOp 递归。
+
+    返回 `(False, None)` 表示"折不动"（函数调用、`Field(default_factory=...)`、
+    `Optional[X] = None` 里 None 之类可折但值确为 None 时会 `(True, None)`，两者要分清）。
+    """
+    try:
+        return True, ast.literal_eval(node)
+    except (ValueError, TypeError, SyntaxError):
+        pass
+    if isinstance(node, ast.Name):
+        for n in root.body:
+            if isinstance(n, ast.Assign):
+                for t in n.targets:
+                    if isinstance(t, ast.Name) and t.id == node.id:
+                        return _fold_const(n.value, root)
+        return False, None
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        ok, v = _fold_const(node.operand, root)
+        if not ok:
+            return False, None
+        return True, (-v if isinstance(node.op, ast.USub) else +v)
+    if isinstance(node, ast.BinOp):
+        okl, l = _fold_const(node.left, root)
+        okr, r = _fold_const(node.right, root)
+        if not (okl and okr):
+            return False, None
+        op = node.op
+        try:
+            if isinstance(op, ast.Add):
+                return True, l + r
+            if isinstance(op, ast.Sub):
+                return True, l - r
+            if isinstance(op, ast.Mult):
+                return True, l * r
+            if isinstance(op, ast.FloorDiv):
+                return True, l // r
+            if isinstance(op, ast.Div):
+                return True, l / r
+        except Exception:
+            return False, None
+        return False, None
+    return False, None
+
+
+def _config_field_defaults() -> dict[str, tuple[str, Any]]:
+    """Config 类体每枚字段的 `(kind, code_default)`；
+    kind ∈ `{'literal','no_default','unevaled'}`；仅 kind=='literal' 时值可判默认列。"""
+    tree = _parse(CONFIG_PY)
+    out: dict[str, tuple[str, Any]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "Config":
+            for stmt in node.body:
+                if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                    fname = stmt.target.id
+                    if stmt.value is None:
+                        out[fname] = ("no_default", None)
+                        continue
+                    val = stmt.value
+                    if isinstance(val, ast.Call) and isinstance(val.func, ast.Name) and val.func.id == "Field":
+                        default_kw = next((kw.value for kw in val.keywords if kw.arg == "default"), None)
+                        if default_kw is None:
+                            out[fname] = ("no_default", None)
+                            continue
+                        ok, v = _fold_const(default_kw, tree)
+                        out[fname] = ("literal", v) if ok else ("unevaled", None)
+                        continue
+                    ok, v = _fold_const(val, tree)
+                    out[fname] = ("literal", v) if ok else ("unevaled", None)
+            break
+    return out
+
+
+def _split_catalog_row(line: str) -> list[str]:
+    s = line.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|"):
+        s = s[:-1]
+    return [c.strip() for c in s.split("|")]
+
+
+def _is_catalog_sep(cells: list[str]) -> bool:
+    return bool(cells) and all(c and set(c) <= set("-: ") for c in cells)
+
+
+def _find_catalog_col(headers: list[str], tokens: tuple[str, ...], skip_first: bool) -> int | None:
+    for i, h in enumerate(headers):
+        if skip_first and i == 0:
+            continue
+        for t in tokens:
+            if t in h:
+                return i
+    return None
+
+
+def _catalog_env_token_to_field(token: str) -> str | None:
+    t = token.strip()
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
+        return None
+    low = t.lower()
+    if low.startswith("bot_"):
+        return low
+    if low.startswith("_"):
+        return "bot_" + low.lstrip("_")
+    return None
+
+
+def _iter_catalog_registration_rows(text: str, need_default_col: bool):
+    """扫 markdown 表格，yield 每张「键名/键/字段」注册表的行（跳过 F 节自审、C 节转换规则、A25 非 Config）。
+
+    返回 dict：line（1 起）、key_tokens（反引号内原文）、keys（归一后 bot_xxx）、
+    default_cell（若 need_default_col=True 且表有「默认值/缺省」列）、row_text、is_compound。
+    """
+    lines = text.splitlines()
+    i = 0
+    n = len(lines)
+    while i < n:
+        if not lines[i].startswith("|"):
+            i += 1
+            continue
+        header = _split_catalog_row(lines[i])
+        if i + 1 >= n or not lines[i + 1].startswith("|") or not _is_catalog_sep(_split_catalog_row(lines[i + 1])):
+            i += 1
+            continue
+        i += 2
+        header_join = "|".join(header)
+        # 剔除：F 席自审「位置|键|改前|改后」／C 节「键|转换规则」／A25 「键名|消费方」（非 Config 键）
+        if any(w in header_join for w in ("改前", "改后")) or "转换规则" in header_join or "消费方" in header_join:
+            # 但仍需消费该表的行范围：走到下一个非 | 行为止
+            while i < n and lines[i].startswith("|"):
+                i += 1
+            continue
+        key_col = _find_catalog_col(header, ("键名", "键", "字段"), skip_first=False)
+        def_col = _find_catalog_col(header, ("默认值", "缺省", "默认"), skip_first=True)
+        if key_col is None:
+            while i < n and lines[i].startswith("|"):
+                i += 1
+            continue
+        if need_default_col and def_col is None:
+            while i < n and lines[i].startswith("|"):
+                i += 1
+            continue
+        while i < n and lines[i].startswith("|"):
+            body = _split_catalog_row(lines[i])
+            if _is_catalog_sep(body):
+                i += 1
+                continue
+            if key_col >= len(body):
+                i += 1
+                continue
+            key_tokens = re.findall(r"`([^`]+)`", body[key_col])
+            keys = [k for k in (_catalog_env_token_to_field(t) for t in key_tokens) if k]
+            yield {
+                "line": i + 1,
+                "key_tokens": key_tokens,
+                "keys": keys,
+                "default_cell": body[def_col] if def_col is not None and def_col < len(body) else None,
+                "row_text": " | ".join(body),
+                "is_compound": len(keys) > 1,
+            }
+            i += 1
+
+
+def _doc_default_matches_code(cell: str, code_default: Any) -> bool:
+    toks = re.findall(r"`([^`]+)`", cell)
+    if not toks:
+        toks = [cell.strip()]
+    for raw in toks:
+        tok = raw.strip()
+        m = re.match(r"^\*\*(.+?)\*\*$", tok)
+        if m:
+            tok = m.group(1).strip()
+        stripped = tok.strip('"').strip("'").strip()
+        if code_default is None:
+            if stripped.lower() in ("none", "null"):
+                return True
+            continue
+        if isinstance(code_default, bool):
+            if stripped.lower() == ("true" if code_default else "false"):
+                return True
+            continue
+        if isinstance(code_default, (int, float)):
+            try:
+                if abs(float(stripped) - float(code_default)) < 1e-9:
+                    return True
+            except ValueError:
+                pass
+            continue
+        if isinstance(code_default, str):
+            if code_default == "" and stripped in ("", "空", "空串", "<空串>", "<空>"):
+                return True
+            if stripped == code_default:
+                return True
+            continue
+        if isinstance(code_default, (list, tuple)):
+            if stripped == "[]" and len(code_default) == 0:
+                return True
+            if stripped.startswith("["):
+                try:
+                    parsed = json.loads(stripped) if False else None  # 不引 json，走 ast
+                except Exception:
+                    parsed = None
+                if parsed is not None and list(parsed) == list(code_default):
+                    return True
+            try:
+                parsed = ast.literal_eval(stripped)
+                if isinstance(parsed, list) and parsed == list(code_default):
+                    return True
+            except Exception:
+                pass
+            continue
+        if isinstance(code_default, dict):
+            if stripped == "{}" and len(code_default) == 0:
+                return True
+            try:
+                parsed = ast.literal_eval(stripped)
+                if isinstance(parsed, dict) and parsed == code_default:
+                    return True
+            except Exception:
+                pass
+            continue
+    return False
+
+
+_RETIRED_MARKERS_RE = re.compile(
+    r"退役|废弃|不再使用|已移除|不生效|extra.*ignore|填了不生效|静默丢弃|静默吞|"
+    r"config\.py 无此字段|config\.py 无字段|无字段|纯运行时|"
+    r"运行时.*覆盖键|运行时.*专属|config\.py 零命中|只存在.*SETTABLE_KEYS|已删"
+)
+
+
+def _catalog_default_column_mismatches(text: str, defaults: dict[str, tuple[str, Any]]) -> tuple[set[str], dict[str, list[dict]]]:
+    matched: set[str] = set()
+    unmatched: dict[str, list[dict]] = {}
+    for r in _iter_catalog_registration_rows(text, need_default_col=True):
+        if r["is_compound"]:
+            continue  # M2-30 §1 口径：复合行不判默认列
+        cell = r["default_cell"]
+        if cell is None:
+            continue
+        if "⚠️" in cell or "样例" in cell:
+            continue  # 册子自陈「样例值 ≠ 代码默认」
+        if "见 config" in cell or "见config" in cell or cell.strip() == "见":
+            continue
+        for k in r["keys"]:
+            kind, code_default = defaults.get(k, ("missing", None))
+            if kind != "literal":
+                continue
+            if _doc_default_matches_code(cell, code_default):
+                matched.add(k)
+            else:
+                unmatched.setdefault(k, []).append(r)
+    return matched, unmatched
+
+
+def test_config_catalog_default_column_matches_config() -> None:
+    """catalog「默认值/缺省」列必须 == config.py 声明缺省（A-1 型假账执法腿，M2-30R 追加）。"""
+    text = CONFIG_CATALOG_MD.read_text(encoding="utf-8")
+    defaults = _config_field_defaults()
+    assert len(defaults) >= 400, f"config.py 字段缺省提取异常：仅 {len(defaults)} 个"
+    matched, unmatched = _catalog_default_column_mismatches(text, defaults)
+    errors: list[str] = []
+    for k in sorted(unmatched):
+        if k in matched:
+            continue  # 同键他行有对上 → 视为已在册，多表间不重复报红
+        first = unmatched[k][0]
+        _, code_default = defaults[k]
+        errors.append(
+            f"docs/config-catalog-full.md:{first['line']} 键 `{k}`「默认值/缺省」列 = {first['default_cell']!r}；"
+            f"config.py 声明缺省 = {code_default!r}（改此格或加 ⚠️/样例 声明）"
+        )
+    assert not errors, (
+        "catalog 默认值列与 config.py 代码缺省漂移（A 档「她照册改配置读到假值」；M2-30R 执法腿）：\n- "
+        + "\n- ".join(errors)
+    )
+    # 注毒自证：把一枚真在册键的默认改成非真值 ⇒ 本腿必须把它列入 unmatched、且不在 matched。
+    probe_key = "bot_pipeline_max_workers"
+    kind, real_default = defaults.get(probe_key, ("missing", None))
+    assert kind == "literal" and real_default == 8, (
+        f"注毒目标锚点变了：{probe_key} 期望 kind=literal、值=8，实得 {kind}={real_default!r}"
+    )
+    lines = text.splitlines()
+    idx = next(
+        (i for i, ln in enumerate(lines)
+         if "BOT_PIPELINE_MAX_WORKERS" in ln and f"`{real_default}`" in ln),
+        None,
+    )
+    assert idx is not None, "注毒点缺失：`BOT_PIPELINE_MAX_WORKERS` 行未找到 ⇒ 本腿可能空转"
+    lines[idx] = lines[idx].replace(f"`{real_default}`", "`99991234`", 1)
+    poisoned = "\n".join(lines)
+    m2, u2 = _catalog_default_column_mismatches(poisoned, defaults)
+    assert probe_key in u2 and probe_key not in m2, (
+        "注毒自证失败：把 bot_pipeline_max_workers 默认改成 99991234，本腿必须把它列入 unmatched"
+        f"（当前 in unmatched={probe_key in u2}、in matched={probe_key in m2}）"
+    )
+
+
+def test_config_catalog_registered_keys_are_live_or_marked_retired() -> None:
+    """在册的 BOT_*/_xxx 键名：要么在 Config 类体存在，要么行文本明写「已退役/无字段/纯运行时」。
+
+    拦的是 A-2 型假账——她照册在 `.env` 填一枚已退役的 `BOT_*` ⇒ pydantic `extra='ignore'`
+    静默吞、连报错都没有；文档若把这枚写成「已登记 Config 字段」＝比过期更重的伪造归属。
+    与 `test_config_catalog_covers_config_fields`（Config→catalog 单向覆盖）反向互补。
+    """
+    text = CONFIG_CATALOG_MD.read_text(encoding="utf-8")
+    fields = _config_field_names()
+    errors: list[str] = []
+    seen: set[tuple[int, str]] = set()
+    for r in _iter_catalog_registration_rows(text, need_default_col=False):
+        for k in r["keys"]:
+            if k in fields:
+                continue
+            if _RETIRED_MARKERS_RE.search(r["row_text"]):
+                continue
+            mark = (r["line"], k)
+            if mark in seen:
+                continue
+            seen.add(mark)
+            errors.append(
+                f"docs/config-catalog-full.md:{r['line']} 键 `{k}` 在 Config 类体零命中，"
+                f"行文本亦未明写「已退役/无字段/纯运行时」 ⇒ 她照此填 .env 会被 `extra='ignore'` 静默吞。"
+            )
+    assert not errors, (
+        "catalog 在册键名与 config.py 字段面漂移（A 档「填了不生效、无失败信号」；M2-30R 执法腿）：\n- "
+        + "\n- ".join(errors)
+    )
+    # 注毒自证：把 A1 表首行的键名换成一枚假键 ⇒ 本腿必须抓红。
+    probe_line = "| `BOT_RUNTIME_DATA_DIR` |"
+    idx = text.find(probe_line)
+    assert idx > 0, "注毒点缺失：`BOT_RUNTIME_DATA_DIR` 未出现在 catalog 首表 ⇒ 本腿可能空转"
+    line_end = text.find("\n", idx)
+    poisoned = text[:idx] + "| `BOT_M2_30R_FAKE_KEY_NOT_A_REAL_FIELD` |" + text[idx + len(probe_line):line_end] + "\n" + text[line_end + 1:]
+    fake = "bot_m2_30r_fake_key_not_a_real_field"
+    assert fake not in fields, "注毒伪键意外与真字段撞名"
+    fake_hit = False
+    for r in _iter_catalog_registration_rows(poisoned, need_default_col=False):
+        if fake in r["keys"] and not _RETIRED_MARKERS_RE.search(r["row_text"]):
+            fake_hit = True
+            break
+    assert fake_hit, "注毒自证失败：伪键未落入'不在 Config + 未标退役'桶 ⇒ 判据空转"
+
+
 # ==========================================================================
 # 门禁 3（S246R 起、S246B 续）：生成链的「漏维 / 读空 / 手写计数」双向锁
 # ==========================================================================
