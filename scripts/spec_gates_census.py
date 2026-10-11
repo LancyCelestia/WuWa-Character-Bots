@@ -1545,6 +1545,16 @@ def compute(root: Path = ROOT) -> dict[str, object]:
     # ——剔除会让总账跟着一起掉、等式照样成立（本席现算实证，见 SEAT-S230.md §2 枚乙）。
     # 「总账栏不许消失」要能被机检，就必须有一枚**只数过程稿**的活性面：它掉了就是扫描面缩了。
     t2_pages_process = 0
+    # 席 T2FACE（P1）：入面的过程稿 rel 集（判「整桶还在不在面」用集合差，不用两条计数比大小——
+    # 比大小对「一边掉一边补」失明，本仓台账 #68★「断言回显省略不当证据」同型教训）。
+    t2_face_process_rels: set[str] = set()
+    # 席 T2FACE（2026-10-12，P1 修尺腿）：进面的过程稿里**靠注册表派生**才进得来的那几页
+    # （页面自己没挂头、或头是假头）。逐页现算，读数看 `--report` 的反缩水腿行（规则 10）。
+    t2_pages_registry = 0
+    # 席 T2FACE：如实登记的「对外正式面里没头、但注册表查得到应套模板」的页数——**只报不判**。
+    # 这一面要不要拉进 G-T2 比对面是一件新裁定（会把 (a) 形挂头从未做完的存量一次性变成
+    # 对外欠账、顶穿 `T2_CEILING`），不在本席面；先把数报出来，别让「没执法」冒充「已合规」。
+    t2_official_headerless_pages = 0
     # 席 S230（R0=A）：与 G-T1 同口径分账——不排除任何页、扫描面一寸不缩，只把每条偏离同时
     # 归入「对外欠账」或「过程稿登记」之一（判定握有 PageInfo，故在此判）。
     t2_process_rels: set[str] = set()
@@ -1561,21 +1571,55 @@ def compute(root: Path = ROOT) -> dict[str, object]:
             heads = headings("\n".join(_no_fences(dfd.strip_auto_zones(human))))
             t2_pages += 1
             if is_process_artifact_page(p):
-                t2_pages_process += 1
+                t2_face_process_rels.add(p.rel)
             found = [f"{p.rel}: {v}" for v in section_findings(heads, canon)]
         elif p.fm is not None and p.fm.template in schemas:
             t2_pages += 1
             if is_process_artifact_page(p):
-                t2_pages_process += 1
+                t2_face_process_rels.add(p.rel)
             found = [
                 f"{p.rel}: {v}" for v in dts.check_sections(schemas[p.fm.template], p.text)
             ]
+        elif is_process_artifact_page(p) and (
+            _tid := registered_template(p.category)
+        ) is not None and _tid in schemas:
+            # ------------------------------------------------------------------
+            # P1 修尺腿（席 T2FACE，2026-10-12）。病灶＝G-T2 比对面的过程稿栏大幅缩水
+            # （现算读数看 `--report`「R0=A 反缩水腿」行；三判一的现算过程见当日 SEAT 报告）。
+            #
+            # 面不是被取数口的代码缩的：这段分支在 `ed802d3`／`ca9c62d`／HEAD 三版逐字相同。
+            # 面是被**被检者自己**缩的——在 P1 之前，一页能不能进 G-T2 比对面，取决于它在文件
+            # 首行挂没挂 `template:`。于是「剥头」（把 `template:` 摘掉）成了一个合法逃逸口：
+            # 摘掉头 ⇒ 既躲过本节形状比对，又从「只数过程稿的活性面」上掉一格。各席报告早已
+            # 点名这处空洞（G-T2/G-T4 的硬零是**人肉剥头**的结果、写侧无拦截），P1 就是那把拦截。
+            #
+            # 判据本体＝**注册表**：`registered_template(p.category)`（唯一真身
+            # `doc_templates.CATEGORIES_BY_ID`，`CENSUS.md` 按同一支报「在册应套 X」）。页面自报
+            # 的头**不再是入面凭证**，只决定「按哪一本册子比」；摘头／假头一律按它这一类该套的
+            # 模板进面比对。与 `is_process_artifact_page`「只由路径派生、绝不读 front-matter」
+            # 同一条准绳（R0=A：分桶不许由被检者自己戴的头决定）。
+            #
+            # 🔴 只开给过程稿、不开给对外正式面：非过程稿的同形页照实记进
+            # `t2_official_headerless_pages`（只报不判）。扩那一面＝凭空造出几百枚对外欠账、
+            # 顶穿 `T2_CEILING`，属新裁定、不属本席；这里不替主人裁。
+            t2_pages += 1
+            t2_pages_registry += 1
+            if is_process_artifact_page(p):  # 分支前提已含此判据，此处保持逐页同形计数
+                t2_face_process_rels.add(p.rel)
+            found = [f"{p.rel}: {v}" for v in dts.check_sections(schemas[_tid], p.text)]
         else:
+            if registered_template(p.category) in schemas:
+                t2_official_headerless_pages += 1
             continue
         if found:  # 记账单位＝「件」（页），一页多码只算一枚偏离页
             t2.append(f"{p.rel}: " + " | ".join(found))
             if is_process_artifact_page(p):
                 t2_process_rels.add(p.rel)
+    t2_pages_process = len(t2_face_process_rels)
+    # 席 T2FACE（P1）：人口 − 入面 ＝ **掉出面**的过程稿 rel 清单（空＝整桶在场）。
+    # 反缩水地板只比大小，抓不到「一边摘头一边被新页补上」；这一枚抓的是**哪几页**掉了。
+    _r0_process_population = r0_process_rels(pages)
+    t2_process_out_of_face = sorted(_r0_process_population - t2_face_process_rels)
     t2_accounting = split_debt_by_accounting(
         t2,
         t2_process_rels,
@@ -1764,9 +1808,16 @@ def compute(root: Path = ROOT) -> dict[str, object]:
         "t2_accounting": t2_accounting,
         "t2_pages": t2_pages,
         "t2_pages_process": t2_pages_process,
+        # 席 T2FACE（P1）：过程稿「人口 − 入面」的差集（点名掉出面的是哪几页）。空＝整桶在场。
+        "t2_process_out_of_face": t2_process_out_of_face,
+        # 席 T2FACE（P1）：过程稿活性面里「页面自己没头／假头、靠注册表派生才进面」的页数。
+        # 这枚读数就是「剥头逃逸口」的活性证据：它 > 0 ⇒ 面已不再由被检者的头决定。
+        "t2_pages_registry": t2_pages_registry,
+        # 席 T2FACE（P1）：同形却属对外正式面的没头页数，**只报不判**（扩面待裁，见循环注释）。
+        "t2_official_headerless_pages": t2_official_headerless_pages,
         # 席 S230R：全扫描面的过程稿人口（反缩水腿的另一半——剔除整桶会当场把它打到 0）。
         # 判定唯一走 `r0_process_rels`（页→过程稿的唯一投影口），本函数不另写一遍类别判据。
-        "r0_process_page_total": len(r0_process_rels(pages)),
+        "r0_process_page_total": len(_r0_process_population),
         "t3": t3,
         "t3_managed": t3_managed,
         "t3_unmoved": t3_unmoved,
@@ -1874,6 +1925,13 @@ def report_lines(res: dict[str, object]) -> list[str]:
             "跟着一起掉、等式照样成立，故单列只数过程稿的活性面）＝ "
             f"全扫描过程稿人口 {res['r0_process_page_total']} ／ "
             f"G-T2 比对面 {res['t2_pages']}（其中过程稿 {res['t2_pages_process']}）"
+            # 席 T2FACE（P1，2026-10-12）：活性面的**进面凭证**由「页面自报的模板头」换成
+            # 「注册表按类别派生」——摘头／假头不再能把页挪出比对面。这两枚数把那条逃逸口
+            # 摆在明面上：前一枚＝靠注册表才进面的过程稿页数（>0 即证明头已不是凭证），
+            # 后一枚＝同形但属对外正式面的没头页数（只报不判，扩面待主人裁）。
+            f" ／ 其中经注册表派生进面 {res['t2_pages_registry']} 页"
+            f" ／ 对外面同形没头 {res['t2_official_headerless_pages']} 页（只报不判）"
+            f" ／ 人口里掉出比对面 {len(res['t2_process_out_of_face'])} 页"
         ),
         (
             f"G-T3 面 A 管辖 {len(res['t3_managed'])} 行 / "

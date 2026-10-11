@@ -961,6 +961,139 @@ def test_r0_registered_columns_stay_wired_to_the_scan() -> None:
 
 
 # ===========================================================================
+# 席 T2FACE（2026-10-12，**P1 修尺腿**）：G-T2 比对面的管辖范围必须由**注册表**决定，
+# 不许由被检者自己在文件首行挂的模板头决定。
+#
+# 病灶（本波那枚在册红的现算归因，全账见当日 SEAT 报告）：`test_r0_registered_columns_stay_wired_to_the_scan`
+# 报「G-T2 比对面里的过程稿只剩几十页（地板 300）」。三判一现算裁定塌陷侧＝
+#   ✗ `BOARD_CANON` 覆盖变少（板块面逐类在场，`docs/boards/` 里 canon=None 的几枚本就归生成器所有）
+#   ✗ `schemas` 装载变少（模板文件枚数＝装载枚数、失格 0，且全仓「有 fm 而 template 不在 schemas」＝0 枚）
+#   ✔ 过程稿页**自己把 `template:` 头摘了**（剥头）——P1 之前「能不能进比对面」的凭证是页面自报的头，
+#     于是摘头＝既躲过节形状比对、又从只数过程稿的活性面掉一格。各席报告早点名：G-T2/G-T4 的硬零
+#     是**人肉剥头**的结果、**写侧无拦截**。取数口的这段分支在 `ed802d3`／`ca9c62d`／HEAD 三版逐字相同
+#     ⇒ 尺的代码没瞎，是面被被检者摘走 ⇒ 处置＝**修尺把面补回来**，两枚地板一字未动。
+#
+# 🔴 为什么不走「派生式地板」那条：本仓 `test_taxonomy_spec_gates.py::test_ceilings_are_hand_written_literals`
+# 用 AST 钉死 `MIN_T2_PAGES` 一类必须是**手写字面整数**——地板派生化会被那把结构锁当场判红
+# （它正是防「上限跟着被检对象一起动」的）。所以本格唯一可入库的处置就是修尺。
+#
+# 四条腿（判据不落本门，只消费取数口新露的三枚投影）：
+#   ① 差集腿：过程稿「人口 − 入面」必须是**空集**（比大小对「一边摘一边补」失明，故比集合）。
+#   ② 凭证腿（注毒自证，tmp 合成根）：同一正文，挂头版与**摘头版必须同样进面**；反向对照＝
+#      非过程稿的没头页**不许**被这一支扫进来（P1 只补被摘掉的那半面，扩对外面属新裁定）。
+#   ③ 同轴腿：注册表点名了骨架的板块类别，`BOARD_CANON`／`BOARD_CANON_SOURCES` 必须有对应行
+#      ——摘掉 canon 行＝缩面，本腿必红（地板跟着降＝换绿，本席不干这事）。
+#   ④ 非空转腿：②③ 的前置判据现算先立，前置塌了本用例自己先红，不许默默变成空跑装饰。
+# ===========================================================================
+
+_BOARD_SKELETON_REF = re.compile(r":(L\d+_BODY)$")
+
+
+def test_g_t2_face_is_governed_by_the_registry_not_by_the_pages_own_hat(
+    tmp_path: Path
+) -> None:
+    """P1 修尺锁：剥头不许再把过程稿挪出 G-T2 比对面；canon 表摘行必红。"""
+    # ---- 腿①：整桶在场（差集，不是比大小）------------------------------------
+    out_of_face = [str(v) for v in _SPEC["t2_process_out_of_face"]]
+    assert not out_of_face, (
+        f"过程稿 {len(out_of_face)} 页被扫到却不在 G-T2 比对面（样例 {out_of_face[:3]}）＝"
+        "管辖面又被缩了一次。修法只有两个：把凭证留在注册表（取数口 P1 分支），或按类别在册豁免"
+        "**并在此点名**；**把地板降下来跟着绿不算修**（`MIN_T2_PROCESS_PAGES` 只准升）。"
+    )
+    assert _SPEC["t2_pages_registry"] > 0, (
+        "取数口自称有页『靠注册表派生才进面』却是 0＝P1 分支已在空跑，本锁失去对象；"
+        "要么扫描面里过程稿真没了（先查腿①与人口行），要么分支被摘——摘分支请先摘本段裁定。"
+    )
+
+    # ---- 腿③：canon 表与注册表同轴（注毒①的捕手）------------------------------
+    skeleton_cats = {
+        cid: m.group(1)
+        for cid, c in sc.dt.CATEGORIES_BY_ID.items()
+        if (m := _BOARD_SKELETON_REF.search(c.generated_by or ""))
+    }
+    assert skeleton_cats, (
+        "注册表里再没有任何『由 L*_BODY 骨架生成』的板块类别＝腿③空转（生成器改了命名形制，"
+        "本锁与 BOARD_CANON 的同轴关系要先重建，不许当免检放过）"
+    )
+    starved = sorted(set(skeleton_cats) - set(sc.BOARD_CANON))
+    assert not starved, (
+        f"注册表点名了骨架、`BOARD_CANON` 却没这行 {starved}＝该级板块页整片离开 G-T2 比对面"
+        "（管辖面被摘，不是这些页都合规了）。补回该行，或同批改注册表并走模板升级裁定。"
+    )
+    src_drift = [
+        f"{cid}: SOURCES≠bds.{sym}"
+        for cid, sym in skeleton_cats.items()
+        if cid in sc.BOARD_CANON_SOURCES and sc.BOARD_CANON_SOURCES[cid] is not getattr(bds, sym)
+    ]
+    assert not src_drift, f"骨架原文与 canon 源分叉（改骨架没跟表＝第二真身）：{src_drift}"
+
+    # ---- 腿②：头不是入面凭证（合成根注毒自证）--------------------------------
+    wave = tmp_path / ".superpowers" / "sdd" / "w-face"
+    wave.mkdir(parents=True)
+    body = "\n\n## 裁决\n\n正文。\n\n## 任务书\n\n正文。\n"
+    hat = (
+        "---\ntemplate: seat-report\nparams:\n  seat_id: SEAT-FACE\n  wave: w-face\n"
+        "  status: DONE\n  role: doc\n  report_class: auto:seat_class\n"
+        "  ledger_events: auto:page_stat:ledger\n---\n"
+    )
+    (wave / "SEAT-HATTED.md").write_text(hat + body, encoding="utf-8")
+    (wave / "SEAT-STRIPPED.md").write_text(body.lstrip("\n"), encoding="utf-8")
+    # 反向对照（P1 的**边界**）：非过程稿的没头页不许被这一支扫进来。
+    docs_design = tmp_path / "docs" / "design"
+    docs_design.mkdir(parents=True)
+    (docs_design / "noheader.md").write_text(body, encoding="utf-8")
+
+    hatted = dts.PageInfo(
+        rel=".superpowers/sdd/w-face/SEAT-HATTED.md",
+        path=wave / "SEAT-HATTED.md",
+        text=hat + body,
+        category=dts.classify(".superpowers/sdd/w-face/SEAT-HATTED.md"),
+    )
+    stripped = dts.PageInfo(
+        rel=".superpowers/sdd/w-face/SEAT-STRIPPED.md",
+        path=wave / "SEAT-STRIPPED.md",
+        text=body,
+        category=dts.classify(".superpowers/sdd/w-face/SEAT-STRIPPED.md"),
+    )
+    # 腿④ 前置：这两枚按路径都必须是过程稿、且注册表查得到应套模板——前置塌了就是空跑装饰。
+    for probe in (hatted, stripped):
+        assert sc.is_process_artifact_page(probe), (
+            f"前置塌了：{probe.rel} 按路径已不再判成过程稿＝本夹具测不到 P1，先修夹具再谈判据"
+        )
+        assert sc.registered_template(probe.category) is not None, (
+            f"前置塌了：类别 {probe.category} 在注册表里查不到应套模板＝P1 分支对它天然不咬"
+        )
+
+    res = sc.compute(tmp_path)
+    assert res["t2_pages_process"] == 2, (
+        f"挂头版＋摘头版应同时进面，实得过程稿活性面 {res['t2_pages_process']}＝"
+        "摘头仍能把页挪出比对面＝P1 逃逸口没焊死（这是本格的病根本体）"
+    )
+    assert res["t2_pages_registry"] == 1, (
+        f"摘头那枚必须经注册表派生进面（`t2_pages_registry`），实得 {res['t2_pages_registry']}＝"
+        "进面凭证仍由页面自报的头决定，或注册表派生腿被摘"
+    )
+    assert not res["t2_process_out_of_face"], (
+        f"合成根里过程稿掉出面 {[str(v) for v in res['t2_process_out_of_face']][:3]}"
+    )
+    assert res["t2_official_headerless_pages"] >= 1, (
+        "非过程稿的没头页没被如实登记（只报不判的那枚）＝扩面代价被藏起来，"
+        "日后有人拿『对外面全绿』当『都合规』讲"
+    )
+    assert res["t2_pages"] == 2, (
+        f"合成根里比对面应恰为这 2 页（挂头版＋摘头版），实得 {res['t2_pages']}＝"
+        "要么摘头那枚没进面（逃逸口未焊死），要么 P1 越界把别的页扫了进来"
+    )
+    face_rels = {
+        sc.entry_subject(str(e)) for e in res["t2_debt_official"]
+    } | {sc.entry_subject(str(e)) for e in res["t2_registered_process"]}
+    assert "docs/design/noheader.md" not in face_rels, (
+        "P1 越界：非过程稿的没头页被扫进了比对面＝凭空造对外欠账、顶穿 T2_CEILING，"
+        "那一面要扩须主人先裁（见取数口注释）"
+    )
+
+
+# ===========================================================================
 # W-11 腿 B（发行库派生锁，纯仓内、零仓外依赖）：**库轴不得长出板块真身**——把声明源里那句
 # 散文升成 AST 锁。
 #
@@ -1391,7 +1524,10 @@ def test_axis_scan_fails_closed_instead_of_folding_absence_into_empty() -> None:
         ("变量位 slug", "slug='contracts'", "slug=_RUNTIME_SLUG_CACHE[0]"),
         (
             "推导式 impl_paths",
-            'impl_paths=("plugins/bot_unified_runtime/domains/finance",)',
+            # 〔2026-10-11 席 OWNER-PLACE〕原钉 finance 那枚单行 impl_paths；无主归账波给 finance
+            # 补了 gscore_bridge 认领、该枚落成多行 ⇒ 针尖改钉仍单行在册的 weather 那枚（判据不变：
+            # 把任一合法单行 impl_paths 换成推导式，取数口必须拒收，而非折成空值放行）。
+            'impl_paths=("plugins/bot_unified_runtime/domains/weather",)',
             "impl_paths=tuple(_p for _p in _RUNTIME_DIRS)",
         ),
         ("通配解包 member_paths", "'plugins/bot_unified_runtime/domains/core/contracts/errors.py',",
