@@ -92,18 +92,33 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.progress_ack import 
     progress_ack_allowed,
 )
 from plugins.bot_unified_runtime.domains.ops.features.feature_gate import FeatureAccess
-from plugins.bot_unified_runtime.domains.transport.sender import (
-    InMemoryReceiptRepository,
-    ReceiptRepository,
-    SendQueue,
-)
-from plugins.bot_unified_runtime.output import (
+from plugins.bot_unified_runtime.domains.render.renderer import (
     build_forward_output,
     render_reviewed_output,
-    review_capability_result,
     should_forward_by_node_count,
     should_forward_long_text,
 )
+from plugins.bot_unified_runtime.domains.render.reviewer import (
+    review_capability_result,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+    SendQueue,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.receipts import (
+    InMemoryReceiptRepository,
+    ReceiptRepository,
+)
+
+# 同一族残余（Q-1 续，上面 sender/output 四枚 import 即其落点）：ca9c62d 把这十枚 policy
+# 符号改成直取，但本模块**另有两处**仍按包出口取符号。sender 那处＝
+# `transport/sender/outbound_gate` 组合序不可导入的真因：装载序
+# `sender/__init__`（首条语句 `from .onebot import …`）→ onebot → `chat_reply.runtime.deadline`
+# → `runtime/__init__` → 本模块 → 部分初始化的 `transport.sender` ⇒ cannot import name
+# 'InMemoryReceiptRepository' 当场炸。output 那处同理，且 `output/renderer.py` 只是
+# `domains/render/renderer.py` 的 compat 垫片（`import *`），白多绕一跳。
+# 逐枚真身按 AST 现算：receipts（两枚 Repository）／queue（SendQueue）／render.renderer
+# （四枚渲染）／render.reviewer（review_capability_result）；取到的仍是同一批对象
+# （id 全等与形状两向判据锁在 `tests/test_pipeline_hard_timeout.py`）。
 
 CapabilityCallable = Callable[[IncomingMessage, BotDecision], CapabilityResult]
 AsyncCapabilityCallable = Callable[

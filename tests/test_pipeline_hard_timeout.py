@@ -463,3 +463,291 @@ def test_policy_symbols_are_the_very_objects_the_package_exports() -> None:
         assert direct is getattr(pipeline_module, name), f"{name}：pipeline 手里换了对象"
         ids[name] = id(direct)
     assert len(set(ids.values())) == len(ids), "两枚符号指向同一对象＝接线接串了"
+
+
+# ==================== 包出口「抢名形」全树普查尺（同一族残余的执法腿） ====================
+# ca9c62d 只把 pipeline 的**十枚 policy 符号**改成直取，上面那三把尺也只罩 policy 一家。
+# 同一坏形状在活图里另有若干处（`transport.sender`／`output`／`core.contracts`／`security`／
+# `ops.audit`／`character`／`llm_engine`／`chat_reply.runtime`），裁定①「组合可导入」的装载序
+# 下照样撞环。本段把判据从「一枚包＋一个文件」扩成「活图＋全体抢名表」，并把本波治好的
+# 坐标钉成零容忍。
+#
+# 判据与 `_pipeline_import_from_policy_nodes` 同口径，只去掉包名限定：
+#   `from <PKG> import <NAME>`，<PKG> 带 `__init__.py`，且 <NAME> 既不在 <PKG>/__init__.py
+#   顶层定义、也不是 <PKG> 的子模块 ⇒ 这枚名字是**转手来的**，取它必须先把整张表跑完
+#   ＝一条 eager 导入边。
+#
+# 🔴 为什么「只改消费者 import」不够（本波现算实锤）：导入子模块**必先到父包**，所以
+# `from …policy.gate import PolicySettings` 冷启照样炸（单跑 `import …policy.gate` 现算
+# ImportError）。环的活边在**表自身**——`chat_reply/runtime/__init__.py` 旧第 6 行
+# `from .pipeline import …` 才是 policy ⇄ runtime 那一环的唯一 eager 边。故第 3 把尺罩的是
+# 表的形状（惰性＝合格），不只是消费者；同族的 `plugins/bot_unified_runtime/runtime/__init__.py`
+# 早已因此改惰性并留注「别改回抢名形」，本尺防的就是这里被改回去。
+
+_LIVE_SCAN_ROOTS = ("plugins", "scripts")
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# 棘轮地板＝本波入库时的现算读数（92 枚／22 个文件；净减 67 枚）。规则 10：会随代码漂的数
+# 只准由尺现算，所以这里存的是**上限**不是统计——新增一枚抢名取用即红，清掉只会更松。
+# 要下调请按 #68 现算复录，别顺手改小。
+_PASS_THROUGH_CEILING = 92
+
+# 本波治好的坐标：抢名取用必须恒为 0（防回潮）。
+_CURED_MODULES = frozenset(
+    {
+        "plugins/bot_unified_runtime/domains/chat_reply/runtime/pipeline.py",
+        "plugins/bot_unified_runtime/domains/chat_reply/runtime/__init__.py",
+        "plugins/bot_unified_runtime/domains/chat_reply/llm_engine/model_router.py",
+        "plugins/bot_unified_runtime/domains/chat_reply/pipeline/backend_unit.py",
+        "plugins/bot_unified_runtime/domains/ops/smoke/diagnostics.py",
+        "plugins/bot_unified_runtime/domains/ops/smoke/smoke.py",
+        "plugins/bot_unified_runtime/domains/ops/smoke/console_chat.py",
+        "plugins/bot_unified_runtime/domains/ops/admin/debug.py",
+        "scripts/e2e_acceptance.py",
+    }
+)
+
+# pipeline 里 sender/output 两族的真身住址（逐枚按 AST 现算，非照抄转手表）。
+_PIPELINE_SENDER_OUTPUT_HOME = {
+    "InMemoryReceiptRepository": (
+        "plugins.bot_unified_runtime.domains.transport.sender.receipts",
+        "plugins.bot_unified_runtime.domains.transport.sender",
+    ),
+    "ReceiptRepository": (
+        "plugins.bot_unified_runtime.domains.transport.sender.receipts",
+        "plugins.bot_unified_runtime.domains.transport.sender",
+    ),
+    "SendQueue": (
+        "plugins.bot_unified_runtime.domains.transport.sender.queue",
+        "plugins.bot_unified_runtime.domains.transport.sender",
+    ),
+    "build_forward_output": (
+        "plugins.bot_unified_runtime.domains.render.renderer",
+        "plugins.bot_unified_runtime.output",
+    ),
+    "render_reviewed_output": (
+        "plugins.bot_unified_runtime.domains.render.renderer",
+        "plugins.bot_unified_runtime.output",
+    ),
+    "should_forward_by_node_count": (
+        "plugins.bot_unified_runtime.domains.render.renderer",
+        "plugins.bot_unified_runtime.output",
+    ),
+    "should_forward_long_text": (
+        "plugins.bot_unified_runtime.domains.render.renderer",
+        "plugins.bot_unified_runtime.output",
+    ),
+    "review_capability_result": (
+        "plugins.bot_unified_runtime.domains.render.reviewer",
+        "plugins.bot_unified_runtime.output",
+    ),
+}
+
+_LAZY_RUNTIME_NAMES = ("RuntimeControlState", "RuntimePipeline", "offload_capability")
+
+
+def _live_tree_sources() -> list[Path]:
+    out: list[Path] = []
+    for root in _LIVE_SCAN_ROOTS:
+        base = _REPO_ROOT / root
+        if not base.is_dir():
+            continue
+        out.extend(
+            p
+            for p in sorted(base.rglob("*.py"))
+            if p.is_file() and "__pycache__" not in p.parts
+        )
+    return out
+
+
+def _dotted(path: Path) -> str | None:
+    parts = list(path.relative_to(_REPO_ROOT).parts)
+    if parts[-1] == "__init__.py":
+        parts.pop()
+        if not parts:
+            return None
+    else:
+        parts[-1] = parts[-1][: -len(".py")]
+    return ".".join(parts)
+
+
+def _resolve_import_source(
+    module: str | None, current: str, is_pkg: bool, level: int
+) -> str | None:
+    """绝对 dotted 名。level 1 == 当前模块所属的那个包（包 __init__ 即其自身）。"""
+    if level == 0:
+        return module
+    container = current if is_pkg else current.rsplit(".", 1)[0]
+    parts = container.split(".") if container else []
+    drop = level - 1
+    if drop > len(parts):
+        return None
+    if drop:
+        parts = parts[: len(parts) - drop]
+    base = ".".join(parts)
+    if module:
+        return f"{base}.{module}" if base else module
+    return base or None
+
+
+def _package_tables(
+    parsed: dict[str, ast.Module],
+) -> dict[str, tuple[set[str], set[str]]]:
+    """pkg -> (在 __init__ 顶层定义的名字, 被**模块级** import 抢进来的名字)。"""
+    tables: dict[str, tuple[set[str], set[str]]] = {}
+    for name, tree in parsed.items():
+        own: set[str] = set()
+        bound: set[str] = set()
+        for st in tree.body:
+            if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                own.add(st.name)
+            elif isinstance(st, ast.Assign):
+                own.update(t.id for t in st.targets if isinstance(t, ast.Name))
+            elif isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name):
+                own.add(st.target.id)
+            elif isinstance(st, ast.ImportFrom):
+                if st.module == "__future__":
+                    continue
+                # 🔴 只认模块级语句：藏在 `__getattr__` 里的取名不是 eager 边（惰性 remedy 的
+                # 本体）。认了就等于把「改成惰性」判成「还在抢名」，尺会把正确修法当红。
+                bound.update(a.asname or a.name for a in st.names if a.name != "*")
+            elif isinstance(st, ast.Import):
+                bound.update(a.asname or a.name.split(".")[0] for a in st.names)
+        tables[name] = (own, bound)
+    return tables
+
+
+def _pass_through_takes() -> list[tuple[str, int, str, str]]:
+    """活图里每一处「从包出口取转手符号」＝(相对文件, 行号, 包, 名字)。"""
+    modules: dict[str, Path] = {}
+    for p in _live_tree_sources():
+        dn = _dotted(p)
+        if dn:
+            modules[dn] = p
+    parsed: dict[str, ast.Module] = {}
+    for dn, p in modules.items():
+        try:
+            parsed[dn] = ast.parse(p.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, SyntaxError):  # pragma: no cover
+            continue
+    inits = {dn for dn, p in modules.items() if p.name == "__init__.py"}
+    tables = _package_tables({dn: parsed[dn] for dn in inits if dn in parsed})
+
+    hits: list[tuple[str, int, str, str]] = []
+    for dn, path in sorted(modules.items()):
+        tree = parsed.get(dn)
+        if tree is None:
+            continue
+        is_pkg = path.name == "__init__.py"
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or not node.names:
+                continue
+            src = _resolve_import_source(node.module, dn, is_pkg, node.level)
+            if src is None or src not in tables:
+                continue
+            own, bound = tables[src]
+            for a in node.names:
+                if a.name == "*" or a.name in own:
+                    continue  # 表自己定义的名字：不是转手
+                if f"{src}.{a.name}" in modules:
+                    continue  # 取子模块本身：合法
+                if a.name in bound:
+                    hits.append(
+                        (
+                            str(path.relative_to(_REPO_ROOT)).replace("\\", "/"),
+                            node.lineno,
+                            src,
+                            a.name,
+                        )
+                    )
+    return hits
+
+
+def test_live_tree_pass_through_takes_within_ratchet_ceiling() -> None:
+    """棘轮：包出口抢名取用总数不得高于入库读数（本波 159→92，净减 67 枚）。"""
+    hits = _pass_through_takes()
+    assert len(hits) <= _PASS_THROUGH_CEILING, (
+        f"新增「从包出口取符号」命中 {len(hits)} 枚 > 上限 {_PASS_THROUGH_CEILING}。"
+        "抢名表＝一条 eager 导入边，裁定①组合序下会撞成部分初始化 ⇒ cannot import name。"
+        f"样例：{sorted(hits)[:6]}"
+    )
+
+
+def test_cured_modules_take_no_symbols_through_a_package() -> None:
+    """零容忍：本波治好的坐标一枚抢名取用都不许回来。"""
+    relapsed = [h for h in _pass_through_takes() if h[0] in _CURED_MODULES]
+    assert relapsed == [], f"这些坐标又开始经包出口取符号了：{relapsed}"
+
+
+def test_pipeline_takes_sender_output_symbols_from_defining_modules() -> None:
+    """形状尺（sender/output 两族）：住址必须是真身子模块，且不走任何包出口。"""
+    source = Path(
+        inspect.getsourcefile(pipeline_module)
+        or Path(pipeline_module.__file__).with_suffix(".py")
+    ).read_text(encoding="utf-8")
+    bound_from: dict[str, str] = {}
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.ImportFrom) or not node.module:
+            continue
+        for a in node.names:
+            if a.name in _PIPELINE_SENDER_OUTPUT_HOME:
+                bound_from[a.name] = node.module
+    wrong = {
+        n: (bound_from.get(n), home)
+        for n, (home, _pkg) in _PIPELINE_SENDER_OUTPUT_HOME.items()
+        if bound_from.get(n) != home
+    }
+    assert wrong == {}, f"sender/output 符号住址与真身不符（None＝还没取）：{wrong}"
+
+
+def test_pipeline_sender_output_symbols_are_the_very_objects_the_package_exports() -> None:
+    """行为零变更：直取到的、包出口转手的、pipeline 手里的是同一枚对象。"""
+    import importlib
+
+    ids: dict[str, int] = {}
+    for name, (home, pkg_name) in _PIPELINE_SENDER_OUTPUT_HOME.items():
+        direct = getattr(importlib.import_module(home), name)
+        assert direct is getattr(importlib.import_module(pkg_name), name), (
+            f"{name}：子模块与包出口不是同一枚对象（改出了第二份构造？）"
+        )
+        assert direct is getattr(pipeline_module, name), f"{name}：pipeline 手里换了对象"
+        ids[name] = id(direct)
+    assert len(set(ids.values())) == len(ids), "两枚符号指向同一对象＝接线接串了"
+
+
+def test_chat_reply_runtime_package_stays_lazy() -> None:
+    """锁住断开 policy ⇄ runtime 环的那条边：本包出口必须保持惰性。
+
+    旧第 6 行 `from .pipeline import RuntimeControlState, …` 是那一环的唯一 eager 边：
+    任一入口 → `chat_reply.policy`（表首句 `from .gate import PolicySettings`）→ gate 第 16 行
+    经 `runtime.mentions` 进本包 → 抢名 ⇒ 此刻 gate 只跑到第 16 行、`PolicySettings` 定义在
+    第 47 行尚未绑定 ⇒ ImportError（本波现算复现并实测：改成惰性后 5 座判 HAS-INIT 的库转 OK）。
+    公开面不许变：三枚名字照旧可取、且必须仍是 pipeline 里那同一批对象。
+    """
+    import importlib
+
+    init = (
+        _REPO_ROOT
+        / "plugins/bot_unified_runtime/domains/chat_reply/runtime/__init__.py"
+    )
+    tree = ast.parse(init.read_text(encoding="utf-8"))
+    eager = [
+        a.asname or a.name
+        for st in tree.body  # 只看模块级：__getattr__ 内的取名不算抢名
+        if isinstance(st, (ast.Import, ast.ImportFrom))
+        for a in st.names
+        if (a.asname or a.name.split(".")[0]) in _LAZY_RUNTIME_NAMES
+    ]
+    assert eager == [], f"chat_reply/runtime 又开始模块级抢 pipeline 的名字了：{eager}"
+
+    rt = importlib.import_module(
+        "plugins.bot_unified_runtime.domains.chat_reply.runtime"
+    )
+    pl = importlib.import_module(
+        "plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline"
+    )
+    for name in _LAZY_RUNTIME_NAMES:
+        assert getattr(rt, name) is getattr(pl, name), f"{name}：公开面换了对象"
+        assert name in dir(rt), f"{name}：dir() 不再列出这枚在册名字"
+    assert set(rt.__all__) == set(_LAZY_RUNTIME_NAMES)
+    assert bool(rt.__path__), "split-package 的 __path__ 被吃掉＝组合共装当场失效"

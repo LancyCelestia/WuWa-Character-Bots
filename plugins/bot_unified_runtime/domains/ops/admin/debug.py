@@ -5,15 +5,17 @@ import random
 from collections.abc import Callable
 from typing import Any
 
-from plugins.bot_unified_runtime.character import (
-    ConversationHistoryStore,
-    build_character_context_provider,
-)
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
     ChatPromptDiagnostics,
     build_chat_prompt_with_diagnostics,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.history import (
+    ConversationHistoryStore,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
+    build_character_context_provider,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.character.source_summary import (
     build_safe_context_source_summary,
@@ -25,7 +27,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import 
     public_llm_error_message,
     safe_llm_finish_reason,
 )
-from plugins.bot_unified_runtime.domains.chat_reply.policy import (
+from plugins.bot_unified_runtime.domains.chat_reply.policy.reply_budget import (
     build_reply_budget_settings,
     decide_reply_budget,
 )
@@ -33,7 +35,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
     ROLE_ORDER,
     build_role_settings,
 )
-from plugins.bot_unified_runtime.domains.chat_reply.security import (
+from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
     InjectionCheckInput,
     check_prompt_injection,
 )
@@ -45,10 +47,12 @@ from plugins.bot_unified_runtime.domains.core.config.config_readiness import (
     run_config_smoke,
     safe_openai_endpoint_url,
 )
-from plugins.bot_unified_runtime.domains.core.contracts import (
+from plugins.bot_unified_runtime.domains.core.contracts.character import (
+    ContextBundle,
+)
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
     AuditRecord,
     CapabilityResult,
-    ContextBundle,
     DeliveryReceipt,
     IncomingMessage,
     PrivacyLevel,
@@ -57,7 +61,7 @@ from plugins.bot_unified_runtime.domains.core.contracts import (
     SessionType,
     new_request_id,
 )
-from plugins.bot_unified_runtime.domains.ops.audit import (
+from plugins.bot_unified_runtime.domains.ops.audit.logger import (
     AuditRepository,
     redact_private_debug,
 )
@@ -71,9 +75,11 @@ from plugins.bot_unified_runtime.domains.ops.smoke.diagnostics import (
     infer_llm_route_hops,
     llm_diagnostic_messages,
 )
-from plugins.bot_unified_runtime.domains.transport.sender import (
-    ReceiptRepository,
+from plugins.bot_unified_runtime.domains.transport.sender.queue import (
     SendQueue,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.receipts import (
+    ReceiptRepository,
 )
 from plugins.bot_unified_runtime.runtime import RuntimeControlState
 

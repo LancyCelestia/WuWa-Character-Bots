@@ -51,7 +51,11 @@ from datetime import time as dt_time
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from plugins.bot_unified_runtime.domains.chat_reply.llm_engine import (
+# 自取环（同一族残余）：本模块就住在 `chat_reply/llm_engine/` 里，却从**自己这个包**的
+# 出口取符号——`llm_engine/__init__.py` 首条语句即 `from …llm_engine.providers import (…)`。
+# 装载序一旦是「providers（或其闭包）→ 本模块」，父包表就还在执行中 ⇒ cannot import name。
+# 真身按 AST 现算＝providers.py 一枚模块四枚名字全在里面，直取即断开这条自取边。
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
     LLMProviderError,
     LLMReply,
     OpenAICompatibleLLMProvider,

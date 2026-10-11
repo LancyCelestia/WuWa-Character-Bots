@@ -18,11 +18,13 @@ from typing import Any
 from urllib import error as url_error
 from urllib import request as url_request
 
-from plugins.bot_unified_runtime.character import build_character_context_provider
 from plugins.bot_unified_runtime.config import Config, translate_env_keys
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
     build_chat_capability,
     build_chat_prompt_with_diagnostics,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
+    build_character_context_provider,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.character.source_summary import (
     build_safe_context_source_summary,
@@ -44,16 +46,24 @@ from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import 
     public_llm_error_message,
     safe_llm_finish_reason,
 )
-from plugins.bot_unified_runtime.domains.chat_reply.policy import (
+from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
     PolicySettings,
-    build_quiet_hours_checker,
-    build_rate_limiter,
-    build_reply_budget_settings,
-    build_role_settings,
-    decide_reply_budget,
     evaluate_policy,
 )
-from plugins.bot_unified_runtime.domains.chat_reply.security import (
+from plugins.bot_unified_runtime.domains.chat_reply.policy.quiet_hours import (
+    build_quiet_hours_checker,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.policy.rate_limit import (
+    build_rate_limiter,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.policy.reply_budget import (
+    build_reply_budget_settings,
+    decide_reply_budget,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
+    build_role_settings,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
     InjectionCheckInput,
     check_prompt_injection,
 )
@@ -69,7 +79,7 @@ from plugins.bot_unified_runtime.domains.core.config.config_readiness import (
 from plugins.bot_unified_runtime.domains.core.config.config_readiness import (
     has_real_api_key as _has_real_api_key,
 )
-from plugins.bot_unified_runtime.domains.core.contracts import (
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
     AuditRecord,
     DeliveryReceipt,
     IncomingMessage,
@@ -81,7 +91,7 @@ from plugins.bot_unified_runtime.domains.core.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.domains.ops.audit import (
+from plugins.bot_unified_runtime.domains.ops.audit.logger import (
     InMemoryAuditLogger,
     redact_private_debug,
 )
@@ -105,15 +115,19 @@ from plugins.bot_unified_runtime.domains.ops.smoke.diagnostics import (
     infer_text_tag,
     llm_diagnostic_messages,
 )
-from plugins.bot_unified_runtime.domains.transport.sender import (
-    InMemoryReceiptRepository,
-    InMemorySendQueue,
-    SQLiteSendRequestQueue,
-    drain_send_queue_once,
-)
 from plugins.bot_unified_runtime.domains.transport.sender.onebot import (
     build_onebot_message_segments,
     send_onebot_v11,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+    InMemorySendQueue,
+    SQLiteSendRequestQueue,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.receipts import (
+    InMemoryReceiptRepository,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.worker import (
+    drain_send_queue_once,
 )
 from plugins.bot_unified_runtime.runtime import RuntimePipeline
 from scripts.load_runtime_config import json_decode_env_values, load_runtime_env_values

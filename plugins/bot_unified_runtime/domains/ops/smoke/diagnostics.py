@@ -13,17 +13,29 @@ from typing import Protocol
 from pydantic import Field
 
 from plugins.bot_unified_runtime.config import Config
-from plugins.bot_unified_runtime.domains.chat_reply.policy import (
+
+# 循环导入根治（同一族残余，接 ca9c62d 的 Q-1）：原先这两枚 import 走
+# `…chat_reply.policy` / `…core.contracts` 的**包出口**转手。两个包的 `__init__.py` 都以
+# 抢名形表开头（policy 首条语句 `from .gate import PolicySettings`、gate 再经
+# `runtime.mentions` 牵进 `chat_reply/runtime/__init__`），装载序一变（分库共装＝裁定①
+# 「组合可导入」／新入口点名成员）就撞成「父表部分初始化 ⇒ cannot import name」当场炸。
+# 逐枚真身按 AST 现算（gate/reply_budget/roles；contracts.runtime），取到的仍是同一批
+# 对象（形状尺与 id 全等锁在 `tests/test_pipeline_hard_timeout.py`）。
+from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
     PolicySettings,
-    build_reply_budget_settings,
-    build_role_settings,
-    decide_reply_budget,
     evaluate_policy,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.policy.reply_budget import (
+    build_reply_budget_settings,
+    decide_reply_budget,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
+    build_role_settings,
 )
 from plugins.bot_unified_runtime.domains.core.config.config_readiness import (
     run_config_smoke,
 )
-from plugins.bot_unified_runtime.domains.core.contracts import (
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
     AuditRecord,
     CapabilityResult,
     DeliveryReceipt,
@@ -32,8 +44,8 @@ from plugins.bot_unified_runtime.domains.core.contracts import (
     RiskLevel,
     SendRequest,
     SessionType,
+    StrictBaseModel,
 )
-from plugins.bot_unified_runtime.domains.core.contracts.runtime import StrictBaseModel
 
 
 class RuntimeDiagnostic(StrictBaseModel):

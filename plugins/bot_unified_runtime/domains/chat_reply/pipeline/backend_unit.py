@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
-from plugins.bot_unified_runtime.character import build_character_context_provider
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
@@ -25,6 +24,9 @@ from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
 from plugins.bot_unified_runtime.domains.chat_reply.character.history import (
     InMemoryConversationHistoryStore,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
+    build_character_context_provider,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
     build_model_router,
 )
@@ -32,10 +34,16 @@ from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import 
     OpenAICompatibleLLMProvider,
     StaticLLMProvider,
 )
-from plugins.bot_unified_runtime.domains.chat_reply.policy import (
+from plugins.bot_unified_runtime.domains.chat_reply.policy.quiet_hours import (
     build_quiet_hours_checker,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.policy.rate_limit import (
     build_rate_limiter,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.policy.reply_budget import (
     build_reply_budget_settings,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
     build_role_settings,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
@@ -55,7 +63,9 @@ from plugins.bot_unified_runtime.domains.ops.smoke.console_chat import (
     _reconfigure_stdio,
     load_smoke_config,
 )
-from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.domains.transport.sender.queue import (
+    InMemorySendQueue,
+)
 
 
 def _build_llm_provider(config: Config) -> Any:
