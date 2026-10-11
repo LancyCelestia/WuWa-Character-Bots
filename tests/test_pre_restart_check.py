@@ -776,48 +776,99 @@ def test_sync_face_is_registered_and_maps_its_own_three_rc_book(
 # 所以 `_content_drift` 是这条常令的另一半，它必须有腿；否则又是一枚"只落字段没落判据"的半死件。
 # ---------------------------------------------------------------------------
 
-def _drift_fixture(tmp_path: Path, *, mode: str) -> tuple[Path, Path]:
-    """造「主仓 + 一座库」的仓外对榫面：mode＝same／differ／orphan／shell。"""
-    repo = tmp_path / "ChatBot"
+_REL = "plugins/bot_unified_runtime/domains/core/session_keys.py"
+
+
+def _drift_fixture(tmp_path: Path, *, mode: str) -> tuple[dict[str, str], Path]:
+    """造「主仓 HEAD 那棵树 ＋ 一座库的副本」两方，返回 (HEAD blob 名册, 库目录)。
+
+    🔴 轴是 **HEAD**，不是工作树：库实体是工厂按名册从主仓取的派生物，拿未提交的在飞改动
+    当基准＝把"别人正在写这枚文件"读成"这座库是旧的"（本席 2026-10-11 首跑就误点名过一枚
+    `news_feeds.py`，实为别席半件）。所以名册在这里**直接构造**，不读盘上的工作树。
+    """
+    from scripts import sync_all_repositories as sync
+
     libs_root = tmp_path / "ChatBot_Libs"
-    rel = Path("plugins/bot_unified_runtime/domains/core/session_keys.py")
-    twin = repo / rel
-    twin.parent.mkdir(parents=True, exist_ok=True)
-    twin.write_bytes(b"VALUE-NOW\n")
     lib = libs_root / "ingress-protocol"
-    copy = lib / rel
+    copy = lib / _REL
     copy.parent.mkdir(parents=True, exist_ok=True)
-    if mode == "same":
-        copy.write_bytes(b"VALUE-NOW\n")
-    elif mode == "differ":
-        copy.write_bytes(b"VALUE-OLD\n")
-    elif mode == "orphan":
-        copy.write_bytes(b"ONLY-IN-LIB\n")
-        (repo / rel).unlink()
-    elif mode == "shell":
-        (lib / "plugins").mkdir(parents=True, exist_ok=True)  # 零实体壳
-    else:  # pragma: no cover - 名册写错当场红，不许静默走默认
-        raise AssertionError(f"未知夹具形态 {mode}")
-    return repo, lib
+    if mode == "shell":
+        shell_lib = libs_root / "adapter-telegram"
+        (shell_lib / "plugins").mkdir(parents=True, exist_ok=True)
+        return {"plugins/anything.py": "0" * 40}, shell_lib
+    content = {"same": b"VALUE-NOW\n", "differ": b"VALUE-OLD\n", "orphan": b"ONLY-IN-LIB\n"}[mode]
+    copy.write_bytes(content)
+    if mode in ("same", "differ"):
+        return {_REL: sync._git_blob_sha(b"VALUE-NOW\n")}, lib
+    return {"plugins/bot_unified_runtime/other.py": "0" * 40}, lib  # orphan：HEAD 里根本没这枚路径
 
 
 @pytest.mark.parametrize("mode", ["same", "differ", "orphan", "shell"])
 def test_content_drift_leg_sees_stale_library(tmp_path: Path, mode: str) -> None:
-    """实体新旧轴四形：同＝不判；改＝点名；主仓已无＝点名；壳库＝只登记证据缺席（禁判红）。"""
+    """实体新旧轴四形：同＝不判；改＝点名；HEAD 已无＝点名；壳库＝只登记证据缺席（禁判红）。"""
     from scripts import sync_all_repositories as sync
 
-    repo, lib = _drift_fixture(tmp_path, mode=mode)
-    reading = sync._content_drift(lib, repo)
+    head_blobs, lib = _drift_fixture(tmp_path, mode=mode)
+    reading = sync._content_drift(lib, head_blobs)
+    assert reading["axis"] == "HEAD" and "blind" not in reading, reading
     if mode == "same":
         assert reading["mirrored"] == 1 and reading["differing_count"] == 0 == reading["absent_count"], reading
     elif mode == "differ":
-        assert reading["differing_count"] == 1 and reading["differing"] == [
-            "plugins/bot_unified_runtime/domains/core/session_keys.py"], reading
+        assert reading["differing_count"] == 1 and reading["differing"] == [_REL], reading
         assert reading["absent_count"] == 0, reading
     elif mode == "orphan":
         assert reading["absent_count"] == 1 and reading["differing_count"] == 0, reading
     else:
         assert reading["mirrored"] == 0 == reading["differing_count"] == reading["absent_count"], reading
+
+
+def test_content_drift_axis_is_head_not_worktree(tmp_path: Path) -> None:
+    """反"在飞半件被读成旧库"那一形：库副本与 HEAD 一致，而盘上工作树那枚文件正被人改着 ⇒ 不判红。
+
+    这一枚锁的是本席**实犯过**的误报形态（首跑把别席在写的 `news_feeds.py` 报成库旧），
+    所以它比的不是"函数返回什么"，而是"取数口读的是哪棵树"。
+    """
+    from scripts import sync_all_repositories as sync
+
+    lib = tmp_path / "ChatBot_Libs" / "contracts"
+    copy = lib / _REL
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    copy.write_bytes(b"AT-HEAD\n")
+    head_blobs = sync._head_blobs(tmp_path)
+    assert head_blobs is None, "假根按定义不是 git 检出，这里要的就是它读不出"
+    blind = sync._content_drift(lib, None)
+    assert blind.get("blind") and "differing_count" not in blind, (
+        f"读不出 HEAD 树时必须失明、不许默认一致：{blind}")
+    matched = sync._content_drift(lib, {_REL: sync._git_blob_sha(b"AT-HEAD\n")})
+    assert matched["differing_count"] == 0 == matched["absent_count"], matched
+    dirty_elsewhere = sync._git_blob_sha(b"WORKTREE-WIP-BY-ANOTHER-SEAT\n")
+    assert dirty_elsewhere != sync._git_blob_sha(b"AT-HEAD\n"), "blob 哈希自身坏了（两向同值＝尺无牙）"
+
+
+def test_content_drift_leg_ignores_line_ending_shape(tmp_path: Path) -> None:
+    """同一份内容、库副本是 CRLF 而 HEAD blob 是 LF ⇒ **不许**判成旧库（本席首跑整面误报的实犯形）。
+
+    机理：主仓工作树里根 `__init__.py` 这类文件带 12006 枚 `\\r`，而 HEAD 的 blob 由
+    `.gitattributes` 归一成 LF ⇒ 逐字节比会点名**每一座**库。本锁钉的是"比的是内容、不是换行形态"。
+    """
+    from scripts import sync_all_repositories as sync
+
+    rel = "plugins/bot_unified_runtime/__init__.py"
+    lf = b"line-one\nline-two\n"
+    lib = tmp_path / "lib"
+    copy = lib / rel
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    copy.write_bytes(lf.replace(b"\n", b"\r\n"))
+    reading = sync._content_drift(lib, {rel: sync._git_blob_sha(lf)})
+    assert reading["differing_count"] == 0 == reading["absent_count"], (
+        f"换行符差异被判成库旧＝本面在 Windows 上恒红：{reading}")
+    copy.write_bytes(b"line-one\r\nline-two\r\n# real content change\r\n")
+    moved = sync._content_drift(lib, {rel: sync._git_blob_sha(lf)})
+    assert moved["differing_count"] == 1, "真改了内容也不报＝上一条成了假锁"
+    assert sync._git_blob_sha(lf) == sync._git_blob_sha(lf.replace(b"\n", b"\r\n")), (
+        "折形没生效：同一份内容两种换行给出不同 sha＝本面在 Windows 上会点名每一座库（首跑的实犯形态）")
+    assert sync._git_blob_sha(lf) != sync._git_blob_sha(lf + b"x"), (
+        "内容变了 sha 都不变＝这把哈希是常数，整面读数无意义")
 
 
 def test_content_drift_leg_has_teeth_on_the_real_root(tmp_path: Path) -> None:
@@ -827,19 +878,27 @@ def test_content_drift_leg_has_teeth_on_the_real_root(tmp_path: Path) -> None:
     都被这函数看见"（rglob 漏一层目录时，四形夹具照样全绿＝空腿）。这里用真仓根当源，
     只读不写主仓，写盘只落 tmp。
     """
+    import subprocess  # 局部 import：本件顶部 import 面不许动（只追加用例的写面纪律）
+
     from scripts import sync_all_repositories as sync
 
+    rel = "plugins/bot_unified_runtime/domains/core/session_keys.py"
+    head_blobs = sync._head_blobs(PROJECT_ROOT)
+    assert head_blobs and rel in head_blobs, (
+        f"取数口读不出真仓 HEAD 那棵树（对榫源变了要同批改本锁）：{rel}")
+    head_bytes = subprocess.run(
+        ["git", "-c", "core.quotePath=false", "show", f"HEAD:{rel}"],
+        cwd=str(PROJECT_ROOT), capture_output=True, check=True).stdout
+    assert sync._git_blob_sha(head_bytes) == head_blobs[rel], "blob 哈希与 ls-tree 那列不同形＝尺的轴坏了"
+
     lib = tmp_path / "lib"
-    rel = Path("plugins/bot_unified_runtime/domains/core/session_keys.py")
-    twin = PROJECT_ROOT / rel
-    assert twin.is_file(), f"对榫源不在盘（真仓结构变了要同批改本锁）：{rel}"
     copy = lib / rel
     copy.parent.mkdir(parents=True, exist_ok=True)
-    copy.write_bytes(twin.read_bytes())
-    clean = sync._content_drift(lib, PROJECT_ROOT)
+    copy.write_bytes(head_bytes)
+    clean = sync._content_drift(lib, head_blobs)
     assert clean["differing_count"] == 0 == clean["absent_count"] and clean["mirrored"] == 1, clean
-    copy.write_bytes(twin.read_bytes() + b"# drift\n")
-    poisoned = sync._content_drift(lib, PROJECT_ROOT)
+    copy.write_bytes(head_bytes + b"# drift\n")
+    poisoned = sync._content_drift(lib, head_blobs)
     assert poisoned["differing_count"] == 1, f"改一个字节都没抓到＝这把腿是空腿：{poisoned}"
     assert sync.SNAPSHOT_SOURCE_ROOT in poisoned["differing"][0], poisoned["differing"]
 

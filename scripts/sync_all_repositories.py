@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -137,12 +138,44 @@ def _residue(lib_dir: Path) -> list[str]:
     return bad
 
 
-def _content_drift(lib_dir: Path, repo: Path) -> dict[str, object]:
-    """库里的 `plugins/**` 副本 vs 主仓现值 ⇒「主仓又前进了、这座库还是旧的」唯一可判读数。
+def _git_blob_sha(data: bytes) -> str:
+    """git 的 blob 哈希＝`sha1("blob <len>\\0" + 内容)`，与 `git ls-tree` 那列 objectname 同形。
+
+    🔴 先把 CRLF 折回 LF 再哈希，且**折形之后**再算长度（同一枚文件的头部字节数必须与它哈希的内容一致）。
+    主仓工作树里根 `__init__.py` 这类文件是 **CRLF**（实测 12006 枚 `\\r`），而 HEAD 的 blob 由
+    `.gitattributes` 归一成 LF ⇒ 逐字节比会判"每一座库都旧"，而真正旧不旧跟换行符无关。
+    本面要的是**内容**新旧，换行形态不算内容（本席首跑就整面误报过 11 座）。
+    """
+    normalized = data.replace(b"\r\n", b"\n")
+    return hashlib.sha1(b"blob %d\0" % len(normalized) + normalized).hexdigest()
+
+
+def _head_blobs(repo: Path) -> dict[str, str] | None:
+    """主仓 **HEAD** 那棵树的 `相对路径 → blob sha`（一次 `ls-tree`，零逐枚子进程）。
+
+    🔴 比对轴必须是 HEAD、不是工作树：库实体是工厂按名册从主仓取的**派生物**，
+    拿在飞的未提交改动当基准，就会把"别人正在写那枚文件"读成"这座库是旧的"
+    （本席 2026-10-11 首跑就是这样误点名了一枚 `news_feeds.py`，实为别席在飞半件）。
+    读不出（非检出／命令坏／空树）⇒ `None`＝失明，调用方禁默认"一致"。
+    """
+    rc, text = _git(repo, "-c", "core.quotePath=false", "ls-tree", "-r", "HEAD",
+                    "--format=%(objectname)\t%(path)")
+    if rc != 0 or not text.strip():
+        return None
+    blobs: dict[str, str] = {}
+    for line in text.splitlines():
+        head, sep, path = line.partition("\t")
+        if sep and path.strip():
+            blobs[path.strip().replace("\\", "/")] = head.strip()
+    return blobs or None
+
+
+def _content_drift(lib_dir: Path, head_blobs: dict[str, str] | None) -> dict[str, object]:
+    """库里的 `plugins/**` 副本 vs 主仓 **HEAD** 那棵树 ⇒「源前进了、库没重生成」唯一可判读数。
 
     为什么不拿 `SNAPSHOT-STAMP.txt` 里那行 HEAD 直接比：stamp 记的是工厂**当时**的取数口径
     （`caliber=worktree`），主仓后续哪怕只提交文档，stamp 也会永远不一致＝**恒红**；反过来
-    stamp 一致也证明不了内容一致（工厂产物被手工改过就看不出来）。本面判**实体字节**：
+    stamp 一致也证明不了内容一致（工厂产物被手工改过就看不出来）。本面判**实体内容**：
     内容没变就不是旧库，内容变了就逐枚点名。桥接件 `__init__.py` 按设计是源 init 的逐字节
     副本 ⇒ 同一条比法顺带罩住"桥接件被改成垫片"那一族（裁定①的形状门在 `pre_restart_check` 腿C）。
 
@@ -153,26 +186,30 @@ def _content_drift(lib_dir: Path, repo: Path) -> dict[str, object]:
     mirrored_root = lib_dir / SNAPSHOT_SOURCE_ROOT
     mirrored = sorted(p for p in mirrored_root.rglob("*") if p.is_file()) \
         if mirrored_root.is_dir() else []
+    out: dict[str, object] = {"mirrored": len(mirrored), "axis": "HEAD"}
+    if head_blobs is None:
+        out["blind"] = "HEAD_AXIS_UNREADABLE（主仓 HEAD 那棵树读不出＝没有证据，不判新旧）"
+        return out
     differing: list[str] = []
     absent: list[str] = []
     for src in mirrored:
         rel = src.relative_to(lib_dir).as_posix()
-        twin = repo / rel
-        if not twin.is_file():
+        twin_sha = head_blobs.get(rel)
+        if twin_sha is None:
             absent.append(rel)
             continue
         try:
-            if src.read_bytes() != twin.read_bytes():
+            if _git_blob_sha(src.read_bytes()) != twin_sha:
                 differing.append(rel)
         except OSError:
             differing.append(rel)
-    return {
-        "mirrored": len(mirrored),
+    out.update({
         "differing_count": len(differing),
         "differing": differing[:3],
         "absent_count": len(absent),
-        "absent_in_repo": absent[:3],
-    }
+        "absent_in_head": absent[:3],
+    })
+    return out
 
 
 def _state(repo: Path, proxy: str | None) -> dict[str, object]:
@@ -312,7 +349,20 @@ def main(argv: list[str] | None = None) -> int:
     slugs = _manifest_slugs(libs_root)
     if not slugs:
         payload["reds"].append(f"ROSTER_EMPTY:{MANIFEST_NAME} 读不出任何 kebab slug＝名册投影没了")
+    head_blobs = _head_blobs(repo)
+    if head_blobs is None:
+        payload["undecidable"].append("HEAD_AXIS_UNREADABLE:主仓 HEAD 树读不出＝实体新旧轴整体失明（不判红不判绿）")
     main_head = str(main_state.get("head") or "?")
+    # 🔴 脏窗禁发布：工厂的取数口是**工作树字节**（`--caliber head` 只收窄成员宇宙，不改取字节的方式），
+    # 所以主仓一 dirty，库副本里就烤着别席的半件；此时 `--publish`＝把未验证的在飞内容烙进她的私有库历史
+    # （一次误提交要重写历史才摘得掉，与本件"残骸即拒发"同一口径）。读数照量，发布腿一律拒。
+    main_dirty = int(main_state.get("dirty") or 0)
+    dirty_window = main_dirty > 0
+    payload["main_dirty"] = main_dirty
+    if dirty_window and (args.publish or args.dry_run):
+        payload["reds"].append(
+            f"PUBLISH_REFUSED:MAIN_DIRTY_WINDOW（主仓工作树脏 {main_dirty} 枚＝库里副本含在飞内容，"
+            "等安静窗再 --publish；本件绝不在脏窗里把别人半件烙进她的库）")
     for slug in slugs:
         lib_dir = libs_root / slug
         if not lib_dir.is_dir():
@@ -342,18 +392,20 @@ def main(argv: list[str] | None = None) -> int:
             payload["reds"].append(f"LIB_UNTAGGED:{slug}（有 VERSION={version} 却一枚 tag 都没有）")
         entry["expected_tag"] = tag
         # 实体新旧轴（ahead/dirty 判不了这一条：库把自己的旧内容提交得干干净净、照样 ahead=0）
-        drift = _content_drift(lib_dir, repo)
+        drift = _content_drift(lib_dir, head_blobs)
         entry["content"] = drift
-        if drift["differing_count"] or drift["absent_count"]:
-            head = (drift["differing"] + drift["absent_in_repo"])[0]
+        if drift.get("blind"):
+            payload["undecidable"].append(f"CONTENT_AXIS_BLIND:{slug}（主仓 HEAD 树读不出＝不判新旧）")
+        elif drift["differing_count"] or drift["absent_count"]:
+            head = (drift["differing"] + drift["absent_in_head"])[0]
             payload["reds"].append(
-                f"LIB_STALE_CONTENT:{slug}（{drift['differing_count']} 枚与主仓现值不同"
-                f"／{drift['absent_count']} 枚主仓已无该文件；首枚 {head}）"
+                f"LIB_STALE_CONTENT:{slug}（{drift['differing_count']} 枚与主仓 **HEAD** 不同"
+                f"／{drift['absent_count']} 枚 HEAD 已无该文件；首枚 {head}）"
                 "＝重跑库工厂再 --publish，本件不代生成")
         elif drift["mirrored"] == 0:
             entry["content_blind"] = "NO_MIRRORED_FILES（壳库零实体＝本面无证据也不判红）"
         payload["libs"].append(entry)
-        if args.publish or args.dry_run:
+        if (args.publish or args.dry_run) and not dirty_window:
             if residue:
                 # 🔴 有残骸就拒发：`git add -A` 在库里会把"根层未登记名"一起烙进她的私有仓历史，
                 # 那正是本件要防的那一型（一次误提交＝要重写历史才能摘掉）。
