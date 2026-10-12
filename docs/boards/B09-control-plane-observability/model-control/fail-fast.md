@@ -6,7 +6,7 @@
 ## B09.model-control · 链级快速中止与冷却
 
 - 层级：一级 B09 → 二级 model-control → 三级 `fail-fast`
-- 实现落点：`plugins/bot_unified_runtime/llm`、`plugins/bot_unified_runtime/domains/chat_reply/llm_engine`
+- 实现落点：`plugins/bot_unified_runtime/llm`、`plugins/bot_unified_runtime/domains/chat_reply/llm_engine`、`plugins/bot_unified_runtime/domains/core/channel_capability_tags.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

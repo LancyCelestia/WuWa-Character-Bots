@@ -6,7 +6,7 @@
 ## B03.affinity-mood · 分数模型与档位
 
 - 层级：一级 B03 → 二级 affinity-mood → 三级 `affinity-model`
-- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/character/affinity.py`、`plugins/bot_unified_runtime/domains/chat_reply/character/mood.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/character/affinity.py`、`plugins/bot_unified_runtime/domains/chat_reply/character/mood.py`、`plugins/bot_unified_runtime/domains/chat_reply/capabilities/affinity.py`、`plugins/bot_unified_runtime/domains/chat_reply/affinity_replay.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

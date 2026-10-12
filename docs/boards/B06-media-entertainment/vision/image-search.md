@@ -6,7 +6,7 @@
 ## B06.vision · 以图搜图与来源
 
 - 层级：一级 B06 → 二级 vision → 三级 `image-search`
-- 实现落点：`plugins/bot_unified_runtime/domains/media`
+- 实现落点：`plugins/bot_unified_runtime/domains/media`、`plugins/bot_unified_runtime/domains/vision/__init__.py`、`plugins/bot_unified_runtime/domains/vision/capabilities/__init__.py`、`plugins/bot_unified_runtime/domains/vision/capabilities/modality_preprocessing.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

@@ -8,7 +8,7 @@
 > lint / typecheck / runtime-layout / test 四门禁与退出码语义。
 
 - 归属板块：[B10](../README.md)
-- 实现落点：`scripts/dev.ps1`、`scripts/runtime_layout_smoke.py`
+- 实现落点：`scripts/dev.ps1`、`scripts/runtime_layout_smoke.py`、`plugins/bot_unified_runtime/domains/ops/acceptance/runner.py`、`plugins/bot_unified_runtime/domains/ops/acceptance/scenarios.py`、`plugins/bot_unified_runtime/domains/ops/smoke/console_chat.py`、`plugins/bot_unified_runtime/domains/ops/smoke/diagnostics.py`、`plugins/bot_unified_runtime/domains/ops/smoke/route_demo.py`、`plugins/bot_unified_runtime/domains/ops/smoke/smoke.py`
 
 ### 三级入口
 

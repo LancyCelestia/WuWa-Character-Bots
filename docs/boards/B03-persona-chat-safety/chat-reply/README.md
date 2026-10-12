@@ -8,7 +8,7 @@
 > CHAT 主能力：上下文拼装、失败话术池、分段换行统一。
 
 - 归属板块：[B03](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/capabilities/chat.py`、`plugins/bot_unified_runtime/domains/chat_reply/capabilities/poke.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/capabilities/chat.py`、`plugins/bot_unified_runtime/domains/chat_reply/capabilities/poke.py`、`plugins/bot_unified_runtime/domains/chat_reply/capabilities/poke_routing.py`、`plugins/bot_unified_runtime/domains/chat_reply/capabilities/user_copy.py`、`plugins/bot_unified_runtime/domains/chat_reply/pipeline/backend_unit.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/pipeline.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/deadline.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/parrot.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/progress_ack.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/message_coalescing.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/message_merge.py`
 - 路由席位：`CHAT`
 - 能力 id：`bot.chat`
 - 帮助主题：对话, 聊天, 回复, 戳一戳

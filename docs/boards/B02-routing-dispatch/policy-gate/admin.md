@@ -9,7 +9,7 @@
 - 路由席位：`ADMIN`（matcher `admin`，command=True）
 - 判定优先级：11
 - 能力 id：`bot.status`
-- 实现落点：`plugins/bot_unified_runtime/policy`、`plugins/bot_unified_runtime/domains/chat_reply/policy`
+- 实现落点：`plugins/bot_unified_runtime/policy`、`plugins/bot_unified_runtime/domains/chat_reply/policy`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/event_idempotency.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/mentions.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

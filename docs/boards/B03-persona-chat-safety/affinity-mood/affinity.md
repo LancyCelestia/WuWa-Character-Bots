@@ -9,7 +9,7 @@
 - 路由席位：`AFFINITY`（matcher `affinity`，command=False）
 - 判定优先级：41
 - 能力 id：`bot.affinity`
-- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/character/affinity.py`、`plugins/bot_unified_runtime/domains/chat_reply/character/mood.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/character/affinity.py`、`plugins/bot_unified_runtime/domains/chat_reply/character/mood.py`、`plugins/bot_unified_runtime/domains/chat_reply/capabilities/affinity.py`、`plugins/bot_unified_runtime/domains/chat_reply/affinity_replay.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

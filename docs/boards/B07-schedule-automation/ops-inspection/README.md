@@ -8,7 +8,7 @@
 > 源-副本漂移检测、告警投递与重启前体检。
 
 - 归属板块：[B07](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/ops/sync_drift`、`scripts/pre_restart_check.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/ops/sync_drift`、`scripts/pre_restart_check.py`、`plugins/bot_unified_runtime/domains/ops/network_patrol.py`
 - 配置键前缀：`bot_sync_drift_`（逐键以目录册为准）
 
 ### 三级入口

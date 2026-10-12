@@ -1568,3 +1568,291 @@ def test_axis_lock_kills_the_production_assertion(monkeypatch: pytest.MonkeyPatc
     monkeypatch.undo()
     test_release_library_axis_declares_no_second_truth()
 
+
+# ===========================================================================
+# 名册区两腿（席 OWNER-PLACE3 2026-10-12）：**反幽灵** ＋ **反一次性坐标**
+# --------------------------------------------------------------------------
+# 为什么这两枚住在这里（不住 `tests/test_placement_snapshot_integrity_gate.py` 那条姊妹尺）：
+# 姊妹尺那腿判的是「物理归位门的声明源」（impl_paths ∪ G_P2_EXEMPT），本区判的是**名册本体**
+# 的两条轴（板块 `impl_paths` ∪ 发行库 `member_paths`）——`pending_seed` 面**不进**反幽灵尺：
+# 播种态的字面定义就允许落点暂不在盘（同本节头 🔴「本波没锁到的维度」），判它＝把播种语义当违规。
+#
+# 🔴 写法纪律＝**派生式**，判据里一枚具体文件名都不许钉死。本窗实犯过一次：某条锁写
+# `assert "findings.md" in rels`，那枚根层散件在 2026-10-11 的清理里消失当天，这条腿就变成
+# **永远做不到的要求**（红得有理，但红的是坐标不是事）——收口写法见提交 `41beaf5`
+# （判据改「盘上当下存在的每一枚都必须在扫描面里」＋反空转前置＋内存注毒自证）。
+# 于是本区第二腿把那条纪律升成**常驻尺**：名册区的判据一旦长出钉死文件坐标的形，当场红。
+# ===========================================================================
+
+#: 仓库内文件坐标的形（带目录分隔与在册扩展名；只用来认「这串是一个文件坐标」，不用来认是哪一枚）。
+_FILE_COORDINATE_SHAPE = re.compile(
+    r"^[A-Za-z0-9_.\-/]+/[A-Za-z0-9_.\-]+\.(?:py|md|json|ps1|txt|html)$"
+)
+
+#: 注毒/夹具腿的形参名——这类腿**天生要**写一枚假坐标才谈得上自证，故不进反一次性坐标尺的射程
+#: （把它算进来＝逼注毒腿改成派生式，反而把牙磨掉；这条豁免是**形状豁免**，不是名单豁免）。
+_FIXTURE_ARG_NAMES = frozenset({"tmp_path", "monkeypatch", "mocked_coverage", "caplog"})
+
+
+def _roster_region_start(source_text: str) -> int:
+    """名册区起点＝模块级 `TAXONOMY_PY` 声明那一行（派生锚，不写行号——台账 #50★「行号会漂」）。
+
+    读不到锚即抛：锚没了＝本节改版，反一次性坐标尺会对着空表绿，那正是本仓的「哑面」形态。
+    """
+    for node in ast.parse(source_text).body:
+        targets = (
+            [t.id for t in node.targets if isinstance(t, ast.Name)]
+            if isinstance(node, ast.Assign)
+            else ([node.target.id] if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) else [])
+        )
+        if "TAXONOMY_PY" in targets:
+            return int(node.lineno)
+    raise _TaxonomyUnreadable(
+        "本门读不到模块级 TAXONOMY_PY 声明＝名册区起点无锚，反一次性坐标尺将在空表上绿"
+    )
+
+
+def _pinned_file_coordinates(source_text: str) -> dict[str, object]:
+    """判据内核（反一次性坐标）：名册区**真树腿**的断言条件里钉死的文件坐标 ⇒ 逐枚点名。
+
+    只吃 `assert <test>` 的 **test 侧**——msg 里点名文件是取证散文（本仓纪律：红要能说出是哪枚），
+    不是判据。返回 `{"pins": [...], "legs_seen": n, "asserts_seen": m}`，`legs_seen/asserts_seen`
+    供反空转前置用：扫到零条腿/零条断言＝这条尺什么都没看过，绝不许当成通过。
+    """
+    start = _roster_region_start(source_text)
+    pins: list[str] = []
+    legs_seen = asserts_seen = 0
+    for fn in [n for n in ast.walk(ast.parse(source_text)) if isinstance(n, ast.FunctionDef)]:
+        if fn.lineno < start:
+            continue
+        arg_names = {a.arg for a in fn.args.args} | {a.arg for a in fn.args.kwonlyargs}
+        if arg_names & _FIXTURE_ARG_NAMES:
+            continue
+        legs_seen += 1
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Assert):
+                continue
+            asserts_seen += 1
+            for lit in (c for c in ast.walk(node.test) if isinstance(c, ast.Constant) and isinstance(c.value, str)):
+                if _FILE_COORDINATE_SHAPE.match(lit.value):
+                    pins.append(f"{fn.name}:{node.lineno}::{lit.value}")
+    return {"pins": sorted(set(pins)), "legs_seen": legs_seen, "asserts_seen": asserts_seen}
+
+
+def _roster_claims(scan: _TaxonomyScan) -> list[tuple[str, str]]:
+    """名册两条轴的全部认领 `(owner, path)`——板块 `impl_paths` ∪ 库 `member_paths`，全派生。"""
+    rows: list[tuple[str, str]] = []
+    for row in scan.features:
+        rows.extend((f"impl[{row.fid}]", str(path)) for path in (row.impl_paths or ()))
+    for row in scan.libs:
+        rows.extend((f"member[{row.lid}]", str(path)) for path in (row.member_paths or ()))
+    return rows
+
+
+def _ghost_claims(claims: list[tuple[str, str]], *, exists) -> list[str]:
+    """判据内核（反幽灵）：认领指向盘上无物 ⇒ 逐条点名。纯函数、吃显式 `exists`，注毒与真树共口。"""
+    return sorted(f"{owner}::{path}" for owner, path in claims if not exists(path))
+
+
+def test_roster_claims_point_at_files_that_exist() -> None:
+    """腿①（反幽灵·真树）：名册每条认领路径都必须在盘上存在（幽灵认领＝假认领）。"""
+    claims = _roster_claims(_taxonomy_scan(_taxonomy_source_text()))
+    assert claims, "名册读出零条认领＝取数口空转，这条腿判过的东西是空的"
+    ghosts = _ghost_claims(claims, exists=lambda path: (ROOT / path).exists())
+    assert not ghosts, (
+        f"ROSTER_GHOST_CLAIM 名册有 {len(ghosts)} 枚认领指向盘上不存在的文件（在册留脏＝假归位，"
+        f"投影页会把它渲成『实现落点』而没人能打开它）：{ghosts}"
+    )
+
+
+def test_roster_ghost_leg_catches_a_poisoned_claim_without_touching_disk() -> None:
+    """注毒（腿①）：把名册里**派生选出的一枚**改成不存在的落点 ⇒ 同一判据必点名它，真源零写入。
+
+    针尖不写死文件名：现算取名册里当下在盘的第一枚认领，改成同目录下一枚不可能存在的名字——
+    「钉住某枚文件」的注毒会在被钉的那枚改名当天失去意义（同本节反一次性坐标纪律）。
+    """
+    text = _taxonomy_source_text()
+    claims = _roster_claims(_taxonomy_scan(text))
+    live = [path for _o, path in claims if (ROOT / path).exists()]
+    assert live, "名册里一枚在盘的认领都没有＝取数口或盘面塌陷，注毒无从起跑"
+    needle = live[0]
+    parent, _sep, _leaf = needle.rpartition("/")
+    poisoned_path = f"{parent}/__roster_ghost_poison__.py"
+    poisoned = text.replace(f'"{needle}"', f'"{poisoned_path}"', 1)
+    assert poisoned != text, f"注毒点未命中（该枚认领不是字面量单枚出现）：{needle}"
+    hits = _ghost_claims(_roster_claims(_taxonomy_scan(poisoned)), exists=lambda p: (ROOT / p).exists())
+    assert any(h.endswith(f"::{poisoned_path}") for h in hits), (
+        f"注毒没被反幽灵腿抓到＝这条腿对着名册空跑：{hits[:3]}"
+    )
+    # 正样控制（只加严不减严）：真源同尺必须一枚不报，否则上面那句抓的是「全都红」而不是毒。
+    assert not _ghost_claims(claims, exists=lambda p: (ROOT / p).exists()), "真源被误伤"
+
+
+def test_one_off_coordinate_leg_catches_a_pinned_filename_in_memory() -> None:
+    """注毒（腿②）：内存里造一条「断言条件钉死某枚文件坐标」的名册区判据 ⇒ 尺必点名它。"""
+    synthetic = (
+        "TAXONOMY_PY = None\n"
+        "def _fake_roster_leg():\n"
+        '    rels = {"docs/boards/x.md"}\n'
+        '    assert "docs/design/one-off.md" in rels, "钉死一枚具体坐标的一次性判据"\n'
+        "def _fake_poison_leg(tmp_path):\n"
+        '    assert "docs/design/poison-only.md" in rels  # noqa: F821\n'
+    )
+    out = _pinned_file_coordinates(synthetic)
+    assert out["pins"] == ["_fake_roster_leg:4::docs/design/one-off.md"], (
+        f"反一次性坐标尺没抓到钉死的坐标、或把夹具腿也算进来（形状豁免失效）：{out}"
+    )
+    assert out["legs_seen"] == 1 and out["asserts_seen"] == 1, (
+        f"计数面失真（注毒腿该被排除、真树腿该被看见）：{out}"
+    )
+
+
+def test_roster_legs_derive_their_coordinates() -> None:
+    """腿②（反一次性坐标·真树）：本门名册区的判据里不许长出钉死的文件坐标。
+
+    反空转前置在内核里：`legs_seen`／`asserts_seen` 读零＝这条尺没看过任何判据，当场红，
+    绝不把「没扫到」当「扫到都没问题」（`test_axis_scan_fails_closed…` 同族纪律）。
+    """
+    out = _pinned_file_coordinates(Path(__file__).read_text(encoding="utf-8"))
+    assert out["legs_seen"] and out["asserts_seen"], (
+        f"反一次性坐标尺空转（名册区读不出真树腿或断言＝锚点改版）：{out}"
+    )
+    assert not out["pins"], (
+        f"ONE_OFF_COORDINATE_PIN 名册区有 {len(out['pins'])} 条判据把某枚具体文件坐标钉进了"
+        "断言条件——那种锁在被钉的那枚改名/清理当天就变成永远做不到的要求（本窗实犯过，"
+        f"收口写法见提交 41beaf5）：{out['pins']}"
+    )
+
+
+# ===========================================================================
+# 名册区第三腿（席 OWNER-PLACE4 2026-10-12）：**反幽灵认领·投影页侧**（无主件登记收口波 T-4）
+# --------------------------------------------------------------------------
+# 病根与本波的死因结构：`docs/boards/**` 每页的「实现落点」行＝**该格对一枚文件的认领登记**
+# （页面上写着「本功能格拥有这条腿」）。上一席的腿①判的是「源声明指向盘上无物」；本腿补
+# 相反方向——**投影页登记了主人，源声明与盘面却对不上榫**，两形皆红：
+#   ① 页上认领的坐标，在该板块树的源声明（全部 fid 的 `impl_paths` 并集）里**已经没有这一行**
+#      ＝「名字登记了主人、对应格实际无主」（源被摘行、页未跟改＝假认领，无主件收口收出个幽灵）；
+#   ② 页上认领的坐标虽仍被声明，但**盘上无此实体**＝指向不存在的东西。
+# 为什么不能只靠 `board_doc_sync --check`：那把尺判「页面==当前源之投影」，两轴同脏（源与页
+# 同一批人同一方向改歪）时它照绿；本腿把「页认领 ⊆ 源声明 ∩ 盘存在」立成**单向不变量**，
+# 摘源不跟页、改名不落盘，当场红。方向与腿①正交互补（腿①查源→盘，本腿查页→源→盘）。
+# 🔴 写法纪律沿用本节头三条：派生式（板块目录名/needle/注毒坐标全现算，一枚不许钉死）、
+# 反空转前置（页认领读出零条或源声明读出零条＝取数口塌陷，绝不折成「没看到＝都通过”）、
+# 注毒内存自证（两形各一枚，不碰真源、不落盘）。
+# ===========================================================================
+
+#: 投影页里「格的认领登记」行的字面标签（BOARD-AUTO 块由 `board_doc_sync` 渲染的那一行；
+#: 人工正文若用同一标签写认领，同样进本腿射程——认领就是认领，不问出处）。
+_PAGE_CLAIM_LABEL = "- 实现落点："
+
+
+def _projection_board_dirs(scan: _TaxonomyScan) -> list[Path]:
+    """板块目录集合由源派生（`bid-slug` 逐枚对名），并在缺失时**抛**——目录改名＝扫描面
+    静默缩水，那正是本腿要抓的「哑面」形态本身，不许拿来判自己。"""
+    names = {f"{row.bid}-{row.slug}" for row in scan.boards}
+    present = {p.name for p in BOARDS_DIR.iterdir() if p.is_dir()}
+    lost = sorted(names - present)
+    if lost:
+        raise _TaxonomyUnreadable(
+            f"源声明的板块 {lost} 在 docs/boards 下没有同名投影目录＝本腿的扫描面对不上源"
+        )
+    return sorted(BOARDS_DIR / name for name in names)
+
+
+def _page_owner_claims(scan: _TaxonomyScan) -> list[tuple[str, str]]:
+    """投影页全部认领 `(页相对路径, 被认领坐标)`——逐页读「实现落点」行里的反引号段。"""
+    claims: list[tuple[str, str]] = []
+    for board_dir in _projection_board_dirs(scan):
+        for page in sorted(board_dir.rglob("*.md")):
+            rel = page.relative_to(ROOT).as_posix()
+            for line in page.read_text(encoding="utf-8").splitlines():
+                if not line.startswith(_PAGE_CLAIM_LABEL):
+                    continue
+                claims.extend(
+                    (rel, match)
+                    for match in re.findall(r"`([^`]+)`", line)
+                )
+    return claims
+
+
+def _ghost_owner_claims(
+    claims: list[tuple[str, str]], *, declared: set[str], exists
+) -> list[str]:
+    """判据内核（纯函数，注毒与真树共口）：页认领必须 ⊆ 源声明 ∩ 盘存在。"""
+    ghosts: set[str] = set()
+    for page, path in claims:
+        if path not in declared:
+            ghosts.add(f"{page}::{path}::格上无主(源已无此行)")
+        elif not exists(path):
+            ghosts.add(f"{page}::{path}::指向不存在实体")
+    return sorted(ghosts)
+
+
+def _owner_claim_findings(text: str) -> list[str]:
+    """真树/注毒共用的现算口：喂声明源原文，出幽灵认领清单（同一支尺，内存注毒不改盘）。"""
+    scan = _taxonomy_scan(text)
+    declared = {
+        str(path) for row in scan.features for path in (row.impl_paths or ())
+    }
+    claims = _page_owner_claims(scan)
+    assert claims, "投影页读出零条认领＝扫描面或标签改版，本腿判过的东西是空的（反空转）"
+    assert declared, "源声明读出零条 impl_paths＝取数口塌陷，sub-set 判据将在空集上假绿（反空转）"
+    return _ghost_owner_claims(claims, declared=declared, exists=lambda p: (ROOT / p).exists())
+
+
+def test_projection_page_claims_are_backed_by_source_and_disk() -> None:
+    """腿③（反幽灵认领·真树）：投影页登记的每一枚主人行，源声明必须有该行、盘上必须有该物。"""
+    ghosts = _owner_claim_findings(_taxonomy_source_text())
+    assert not ghosts, (
+        f"GHOST_OWNER_CLAIM 投影页有 {len(ghosts)} 条「实现落点」认领对不上榫"
+        "（无主件登记波收口收出了幽灵：页上写着格有主，源里那行被摘了/指向的东西不在盘上）："
+        f"{ghosts[:10]}"
+    )
+
+
+def _pick_single_occurrence_claim_needle() -> str:
+    """派生选针：取名册里**当下被页认领、且在源里字面只出现一次**的第一枚坐标。
+
+    只出现一次＝`replace(..., 1)` 的注毒必命中声明行本身（注释里再提一次同名路径会让
+    第一枪打空——那不是判据红，是注毒没注进去，按 8.7 不算抓住）。
+    """
+    text = _taxonomy_source_text()
+    claimed = {path for _page, path in _page_owner_claims(_taxonomy_scan(text))}
+    for needle in sorted(claimed):
+        literal = f'"{needle}"'
+        if text.count(literal) == 1 and (ROOT / needle).exists():
+            return needle
+    raise _TaxonomyUnreadable(
+        "页认领里挑不出一枚「源中字面唯一且在盘」的坐标＝注毒无从起跑，取数口或盘面塌陷"
+    )
+
+
+def test_owner_claim_leg_catches_a_removed_declaration_in_memory() -> None:
+    """注毒形①（摘掉一枚 owner 声明）：源里把选中的认领行抹成空串⇒同一支尺必点名那页。"""
+    needle = _pick_single_occurrence_claim_needle()
+    poisoned = _taxonomy_source_text().replace(f'"{needle}"', '""', 1)
+    assert poisoned != _taxonomy_source_text(), f"注毒点未命中（该枚认领不是字面量单枚出现）：{needle}"
+    hits = _owner_claim_findings(poisoned)
+    assert any(f"::{needle}::格上无主" in h for h in hits), (
+        f"摘掉源声明后反幽灵认领腿没红＝这条腿对着页空跑：{hits[:3]}"
+    )
+    # 正样控制（只加严不减严）：真源同尺必须一枚不报，否则上面那句抓的是「全都红」而不是毒。
+    assert not _owner_claim_findings(_taxonomy_source_text()), "真源被误伤"
+
+
+def test_owner_claim_leg_catches_a_renamed_entity_in_memory() -> None:
+    """注毒形②（改成不存在的实体名）：声明行改指同目录下一枚不可能存在的名字⇒必红。
+
+    针不写死（同腿①注毒纪律）：现算挑一枚在盘认领，改名成 `同目录/__owner_ghost_entity__.py`。
+    页上仍登记旧坐标＝源里那行被换走，旧坐标「格上无主」当场点名；两形共用一支内核。
+    """
+    needle = _pick_single_occurrence_claim_needle()
+    parent, _sep, _leaf = needle.rpartition("/")
+    renamed = f"{parent}/__owner_ghost_entity__.py"
+    poisoned = _taxonomy_source_text().replace(f'"{needle}"', f'"{renamed}"', 1)
+    assert poisoned != _taxonomy_source_text(), f"注毒点未命中：{needle}"
+    hits = _owner_claim_findings(poisoned)
+    assert any(f"::{needle}::格上无主" in h for h in hits), (
+        f"把声明改成不存在实体后反幽灵认领腿没红＝改名逃逸畅通：{hits[:3]}"
+    )
+    assert not _owner_claim_findings(_taxonomy_source_text()), "真源被误伤"

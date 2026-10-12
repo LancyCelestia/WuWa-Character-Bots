@@ -6,7 +6,7 @@
 ## B10.documentation · 板块树与代码的自动同步
 
 - 层级：一级 B10 → 二级 documentation → 三级 `doc-taxonomy-sync`
-- 实现落点：`docs/README.md`、`docs/HANDBOOK.md`、`docs/CODE-MAP.md`
+- 实现落点：`docs/README.md`、`docs/HANDBOOK.md`、`docs/CODE-MAP.md`、`plugins/bot_unified_runtime/domains/core/board_taxonomy.py`、`plugins/bot_unified_runtime/domains/core/board_shim_ledger.py`、`plugins/bot_unified_runtime/domains/core/board_doc_ownership.py`、`plugins/bot_unified_runtime/domains/core/ownership_map.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

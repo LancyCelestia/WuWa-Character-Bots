@@ -6,7 +6,7 @@
 ## B02.route-table · 优先级判定序与拆位
 
 - 层级：一级 B02 → 二级 route-table → 三级 `priority-order`
-- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/base_router.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/base_router.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/aliases.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/natural_language.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/time_window.py`、`plugins/bot_unified_runtime/domains/core/temporal_words.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

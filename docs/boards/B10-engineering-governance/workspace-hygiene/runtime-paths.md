@@ -6,7 +6,7 @@
 ## B10.workspace-hygiene · 相对路径到 Runtime 的映射
 
 - 层级：一级 B10 → 二级 workspace-hygiene → 三级 `runtime-paths`
-- 实现落点：`scripts/runtime_paths.py`、`docs/workspace-archive-policy.md`
+- 实现落点：`scripts/runtime_paths.py`、`docs/workspace-archive-policy.md`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/cache_policy.py`、`plugins/bot_unified_runtime/domains/ops/db_backup.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

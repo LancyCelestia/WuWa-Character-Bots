@@ -8,7 +8,7 @@
 > forward-WS 连接、段收发、平台 API 封装与断线对账。
 
 - 归属板块：[B01](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/transport/sender/onebot.py`、`plugins/bot_unified_runtime/domains/transport/sender/nonebot.py`、`plugins/bot_unified_runtime/message_context.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/transport/sender/onebot.py`、`plugins/bot_unified_runtime/domains/transport/sender/nonebot.py`、`plugins/bot_unified_runtime/message_context.py`、`plugins/bot_unified_runtime/domains/chat_reply/capabilities/group_info.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/group_cache.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/participant_memory.py`、`plugins/bot_unified_runtime/domains/ops/integrations/gscore_bridge.py`
 - 路由席位：`GROUP_INFO`
 - 能力 id：`bot.group_info`
 - 帮助主题：接入, 合并转发, 群信息

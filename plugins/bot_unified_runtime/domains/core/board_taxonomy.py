@@ -145,6 +145,25 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                     "plugins/bot_unified_runtime/domains/transport/sender/onebot.py",
                     "plugins/bot_unified_runtime/domains/transport/sender/nonebot.py",
                     "plugins/bot_unified_runtime/message_context.py",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕群信息腿与其取数件：bot.group_info 的
+                    # 能力入口 + 群资料 TTL 缓存 + 参与者记忆读数（协议侧平台能力面，
+                    # extra_l3「platform-capabilities」与 capability_ids「bot.group_info」同条腿）。
+                    "plugins/bot_unified_runtime/domains/chat_reply/capabilities/group_info.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/group_cache.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/participant_memory.py",
+                    # 〔复核改归 席 OWNER-PLACE3 2026-10-12〕**点名检测不在协议侧**：本件 import 面只有
+                    # `domains/core/text_boundary`，零 OneBot/CQ 段语义；生产消费者现算只两枚——
+                    # `domains/chat_reply/policy/gate.py`（软点名/搭话门）与根 `__init__.py` 的
+                    # `hard_mention` 判定，`domains/transport/**` 零引用。上一席把它和群信息腿打包记进
+                    # 本 fid＝拿注释里「QQ 文本」四个字猜的，按消费者归回门禁侧（见 B02.policy-gate）。
+                    # 〔复核改归 席 OWNER-PLACE2 2026-10-12〕GsCore/gsuid-core 桥**不是**行情件：本件
+                    # docstring 自陈「把 GsCore 当作相邻的 AI/游戏服务接进统一运行时，桥接层只做协议转换与
+                    # 连接维护」，协议模型沿用 OneBot 一族（MessageReceive/MessageSend＋echo 回执、
+                    # msg_id/bot_self_id/user_type/group_id），`base_router` 把它与 SnowLuma 传输并列为
+                    # `core.gscore`「ws 桥接，接收游戏侧消息」，配置面 `bot_gscore_*` 全是 host/port/token/
+                    # retry 一类连接键——零金融语义。原判进 B05.finance＝拿名字猜（"GsCore"≈行情核心），
+                    # 现按 import 面与消费者归回接入协议这一级、二级随 OneBot 形协议腿进本 fid。
+                    "plugins/bot_unified_runtime/domains/ops/integrations/gscore_bridge.py",
                 ),
                 config_prefixes=("bot_onebot_", "bot_snowluma_"),
                 extra_l3=(
@@ -173,7 +192,9 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 slug="mail-console",
                 summary="邮件收发桥接与本地控制台交互，共用同一条主链路。",
                 help_topics=("邮件",),
-                impl_paths=("plugins/bot_unified_runtime/domains/transport/mail/mail_adapter.py", "plugins/bot_unified_runtime/domains/transport/mail/mail_bridge.py"),
+                impl_paths=("plugins/bot_unified_runtime/domains/transport/mail/mail_adapter.py", "plugins/bot_unified_runtime/domains/transport/mail/mail_bridge.py",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕邮件腿两枚：主机 IPv4 限定护栏与入站附件取字打标。
+                    "plugins/bot_unified_runtime/domains/transport/mail/mail_dns_policy.py", "plugins/bot_unified_runtime/domains/transport/mail/mail_ingress_files.py"),
                 config_prefixes=("bot_mail_",),
                 passive_matchers=(("mail_notice", "on_message", 9),),
                 extra_l3=(
@@ -190,6 +211,10 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                     "plugins/bot_unified_runtime/domains/core/session_keys.py",
                     "plugins/bot_unified_runtime/domains/core/text_boundary.py",
                     "plugins/bot_unified_runtime/domains/core/board_placement.py",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕入站段归一双腿：chat_reply 侧的消息段
+                    # 归一（platform-neutral）与「adapter 事件归一的唯一边界」。
+                    "plugins/bot_unified_runtime/domains/chat_reply/ingest/message_context.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/ingress.py",
                 ),
                 extra_l3=(
                     ("session-keys", "会话键派生"),
@@ -219,7 +244,20 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 route_kinds=("ALIAS", "NATURAL_COMMAND", "IGNORE"),
                 capability_ids=("bot.alias", "bot.natural_command", "bot.ignore"),
                 help_topics=("路由", "昵称", "自然语言", "忽略"),
-                impl_paths=("plugins/bot_unified_runtime/domains/chat_reply/runtime/base_router.py",),
+                impl_paths=("plugins/bot_unified_runtime/domains/chat_reply/runtime/base_router.py",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕判定序的三枚基层确定性件：命令别名解析、
+                    # 自然语言命令识别、时间窗总结意图解析（均不调大模型）。
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/aliases.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/natural_language.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/time_window.py",
+                    # 〔复核改归 席 OWNER-PLACE3 2026-10-12〕中文时间副词字面量册（原判 B07.reminders，
+                    # 理由是三级名「时间点解析**词表**」与文件名相近——那是拿字面猜）：现算生产消费者
+                    # 只有两枚，`domains/schedule/**` 零 import（`schedule_board.py` 里那一处是**注释**，
+                    # 正文恰好写着「刻意不含今天/今晚……真身已在中央，不在别处再落该词位的字面」，
+                    # 用它当认领证据方向相反）。本件 docstring 自陈成因＝上一条腿的
+                    # `runtime/time_window.py` 的正则与 `core/search/web_search.py` 的脚手架表共享词形，
+                    # 前者就住在**本 fid**（上一行）⇒ 按消费者归本 fid，与时间窗判定序共一条腿。
+                    "plugins/bot_unified_runtime/domains/core/temporal_words.py",),
                 extra_l3=(
                     ("matcher-family", "matcher 族与谓词"),
                     ("priority-order", "优先级判定序与拆位"),
@@ -236,6 +274,15 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                     "plugins/bot_unified_runtime/domains/chat_reply/runtime/capability_registry.py",
                     "plugins/bot_unified_runtime/domains/chat_reply/runtime/service_wiring.py",
                     "plugins/bot_unified_runtime/capabilities",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕能力 keystone 声明族与调度壳：帮助/回显
+                    # 命令面（bot.echo）、能力 manifest/资源共用/标签证据三本声明册、进程级共享线程池，
+                    # 以及 S10 协议壳 capability_protocols（住包根＝待搬进 domains，计入 G-P1 越界账）。
+                    "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py",
+                    "plugins/bot_unified_runtime/domains/core/capability_manifest.py",
+                    "plugins/bot_unified_runtime/domains/core/capability_resource_ownership.py",
+                    "plugins/bot_unified_runtime/domains/core/capability_tag_evidence.py",
+                    "plugins/bot_unified_runtime/domains/core/shared_pool.py",
+                    "plugins/bot_unified_runtime/runtime/capability_protocols.py",
                 ),
                 extra_l3=(
                     ("keystone-declarations", "声明源与投影表一致性"),
@@ -261,7 +308,15 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 capability_ids=("bot.status",),
                 route_kinds=("ADMIN",),
                 help_topics=("角色", "群策略", "限流", "暂停", "为什么"),
-                impl_paths=("plugins/bot_unified_runtime/policy", "plugins/bot_unified_runtime/domains/chat_reply/policy"),
+                impl_paths=("plugins/bot_unified_runtime/policy", "plugins/bot_unified_runtime/domains/chat_reply/policy",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕入站事件幂等表（extra_l3「idempotency」腿的真身）。
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/event_idempotency.py",
+                    # 〔复核改归 席 OWNER-PLACE3 2026-10-12〕**点名检测不在协议侧**（原判 B01.qq-snowluma）：
+                    # 本件 import 面只有中央 `domains/core/text_boundary`，零 OneBot/CQ 段语义；生产消费者
+                    # 现算＝`policy/gate.py:454`（软点名 ⇒ 不应答）＋根 `__init__.py` 的 `hard_mention` 判定，
+                    # `domains/transport/**` 零引用 ⇒ 归本 fid，与 extra_l3「quiet-hours 安静时间与主动搭话门」
+                    # 同一条腿。上一席把它和群信息腿打包记进协议侧＝拿它 docstring「一段 QQ 文本」的字面猜的。
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/mentions.py",),
                 config_prefixes=("bot_rate_limit_", "bot_quiet_"),
                 extra_l3=(
                     ("role-model", "六级角色与权限叠加"),
@@ -295,6 +350,18 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 impl_paths=(
                     "plugins/bot_unified_runtime/domains/chat_reply/capabilities/chat.py",
                     "plugins/bot_unified_runtime/domains/chat_reply/capabilities/poke.py",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕CHAT 主能力的回复管线与选路/话术件：
+                    # 戳一戳三线选路、跨能力话术池、后端一次性执行单元、回复主管线、请求级时钟预算、
+                    # 群聊复读检测、慢回复先回执、连发折轮与合并。
+                    "plugins/bot_unified_runtime/domains/chat_reply/capabilities/poke_routing.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/capabilities/user_copy.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/pipeline/backend_unit.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/pipeline.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/deadline.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/parrot.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/progress_ack.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/message_coalescing.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/message_merge.py",
                 ),
                 config_prefixes=("bot_chat_", "bot_poke_"),
                 passive_matchers=(("poke_notice", "on_notice", 7),),
@@ -335,6 +402,23 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                     "plugins/bot_unified_runtime/domains/chat_reply/character/trend.py",
                     "plugins/bot_unified_runtime/domains/chat_reply/character/vector_knowledge.py",
                     "plugins/bot_unified_runtime/domains/chat_reply/character/worldbook_service.py",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕人格上下文与称谓身份续批件：意象族名册、
+                    # 按人画像、人格册热切换、永久回复策略、统一会话画像、提示词审计与预览；
+                    # 以及「自我历法/自我认知」两族给模型看的自陈装配件（住 ops 域，域登记在册）。
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/imagery_roster.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/person_profile.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/persona_profile.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/character/reply_policy.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/conversation_profile.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/prompt_audit.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/prompt_preview.py",
+                    "plugins/bot_unified_runtime/domains/ops/self_calendar/__init__.py",
+                    "plugins/bot_unified_runtime/domains/ops/self_calendar/calendar_leg.py",
+                    "plugins/bot_unified_runtime/domains/ops/self_calendar/facts_leg.py",
+                    "plugins/bot_unified_runtime/domains/ops/self_calendar/moments.py",
+                    "plugins/bot_unified_runtime/domains/ops/self_calendar/report.py",
+                    "plugins/bot_unified_runtime/domains/ops/self_knowledge/__init__.py",
+                    "plugins/bot_unified_runtime/domains/ops/self_knowledge/entry.py",
                     "personas/shorekeeper",
                 ),
                 passive_matchers=(("nickname_set", "on_message", 8),),
@@ -357,6 +441,10 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 impl_paths=(
                     "plugins/bot_unified_runtime/domains/chat_reply/character/affinity.py",
                     "plugins/bot_unified_runtime/domains/chat_reply/character/mood.py",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕好感度命令面与历史误扣重放提案器（只读、
+                    # 绝不写好感库），同属 bot.affinity 一条腿。
+                    "plugins/bot_unified_runtime/domains/chat_reply/capabilities/affinity.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/affinity_replay.py",
                 ),
                 config_prefixes=("bot_affinity_", "bot_mood_"),
                 extra_l3=(
@@ -660,7 +748,12 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 slug="vision",
                 summary="识图、搜图、视频抽帧与字幕；失败三分类诚实上报。",
                 help_topics=("搜图", "视频理解"),
-                impl_paths=("plugins/bot_unified_runtime/domains/media",),
+                impl_paths=("plugins/bot_unified_runtime/domains/media",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕#51 多模态原生输入的接货腿与 `domains/vision`
+                    # 包门面/层占位（现役识图/搜图/抽帧真身仍在 domains/media，本域是预处理入口）。
+                    "plugins/bot_unified_runtime/domains/vision/__init__.py",
+                    "plugins/bot_unified_runtime/domains/vision/capabilities/__init__.py",
+                    "plugins/bot_unified_runtime/domains/vision/capabilities/modality_preprocessing.py",),
                 config_prefixes=("bot_vision_", "bot_image_search_"),
                 # image_search：旁路 matcher 有意不入 base_router 审计（__init__ 原注），被动类在案。
                 passive_matchers=(("image_search", "on_message", 46),),
@@ -751,7 +844,20 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 route_kinds=("REMINDER",),
                 capability_ids=("bot.reminder",),
                 help_topics=("提醒",),
-                impl_paths=("plugins/bot_unified_runtime/domains/schedule",),
+                impl_paths=("plugins/bot_unified_runtime/domains/schedule",
+                    # 〔复核改归 席 OWNER-PLACE3 2026-10-12〕本 fid 原先被记了两枚 `domains/core` 时间件
+                    # （`moment_parsing.py`＋`temporal_words.py`），**两枚都判成错归、现已全部摘除**，
+                    # 判据一律按 import 面与消费者、不按二级名「时间点解析词表」的字面相似：
+                    # ①`domains/schedule/**` 对两枚都**零 import**（现算全树 grep：提醒链里只有一处
+                    #   `schedule_board.py` 的**注释**，且那条注释正文正是「刻意不在此再落词面、
+                    #   真身在别处」——拿它当认领证据方向相反）。
+                    # ②时间点真身本就在目录认领之内：`domains/schedule/store/reminders.py::parse_time_target`
+                    #   /`parse_reminder_intent`（三级页 natural-time-parsing 正文自陈同一枚），
+                    #   摘掉两枚不伤 extra_l3「natural-time-parsing」的落点。
+                    # ③两枚各自的消费者见 B08.send-queue（moment_parsing＝出站闸 TTL 腿）与
+                    #   B02.route-table（temporal_words＝`runtime/time_window.py` 的词面单源）。
+                    ),
+
                 config_prefixes=("bot_reminder_",),
                 extra_l3=(
                     ("natural-time-parsing", "时间点解析词表"),
@@ -837,7 +943,10 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 label="巡检与同步漂移",
                 slug="ops-inspection",
                 summary="源-副本漂移检测、告警投递与重启前体检。",
-                impl_paths=("plugins/bot_unified_runtime/domains/ops/sync_drift", "scripts/pre_restart_check.py"),
+                impl_paths=("plugins/bot_unified_runtime/domains/ops/sync_drift", "scripts/pre_restart_check.py",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕网络巡检（双路探活＋状态差分＋带外告警素材），
+                    # 与同步漂移巡检同属 B07 的自检巡检面。
+                    "plugins/bot_unified_runtime/domains/ops/network_patrol.py"),
                 config_prefixes=("bot_sync_drift_",),
             ),
         ),
@@ -902,10 +1011,27 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                     "plugins/bot_unified_runtime/domains/transport/sender/file_gateway.py",
                     "plugins/bot_unified_runtime/domains/transport/sender/gateway.py",
                     "plugins/bot_unified_runtime/domains/transport/sender/outbound_gate.py",
+                    # 〔复核改归 席 OWNER-PLACE3 2026-10-12〕ISO-8601 **时刻字面量**解析中央件：本波两席
+                    # 各记一枚（B07.reminders「时间点解析词表」＋B02.policy-gate「安静时间同族」），
+                    # 叠成**双认领**＝硬零类（`test_g_p1_hard_zero_classes_stay_zero` 现算当场红，
+                    # 一枚路径两行），两枚判据都不成立：①`domains/schedule` 对它零 import（提醒链的时间点
+                    # 真身＝上一条腿同目录的 `store/reminders.py::parse_time_target`）；②`quiet_hours` 与
+                    # 本件是 G5 锁里**并列的两座源**（锁原文逐字：HH:MM 静默窗→quiet_hours.py、
+                    # ISO-8601 时刻→moment_parsing.py），`quiet_hours.py` 自身对它零 import。
+                    # 按 import 面与消费者归本 fid：唯一点名它的生产消费者就是**本 fid 的上一条腿**
+                    # `outbound_gate.py`——本件 docstring 自陈病根＝该闸 TTL 腿要解 `enabled_until`，
+                    # 锁 `tests/test_outbound_gate.py::test_gate_reuses_quiet_hours_single_source`
+                    # 还判 `parse_gate_ttl` 内必须**真调用**（死导入即红），判据表亦把
+                    # `_format_moment` 的反查坐标钉在 `outbound_gate.py:320`；次位消费者
+                    # `core/safety_exec/consent.py` 复用同一枚解析读同名 `enabled_until`，不另立第二座源。
+                    "plugins/bot_unified_runtime/domains/core/moment_parsing.py",
                     "plugins/bot_unified_runtime/domains/transport/sender/queue.py",
                     "plugins/bot_unified_runtime/domains/transport/sender/receipts.py",
                     "plugins/bot_unified_runtime/domains/transport/sender/timeout.py",
                     "plugins/bot_unified_runtime/domains/transport/sender/worker.py",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕消息编辑/撤回能力：把 outbound_registry 的
+                    # EDIT/DELETE 坐标接成有人调用的出站腿，归发送队列这一条出口。
+                    "plugins/bot_unified_runtime/domains/transport/message_mutation.py",
                 ),
                 config_prefixes=("bot_send_queue_",),
                 extra_l3=(
@@ -964,7 +1090,16 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 label="控制面 API 与工作区",
                 slug="control-plane-api",
                 summary="loopback + Bearer 的 /api/v1 端点群、工作区沙箱与动作执行。",
-                impl_paths=("plugins/bot_unified_runtime/control_plane",),
+                impl_paths=("plugins/bot_unified_runtime/control_plane",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕工作区沙箱的 Windows 强隔离编排层：
+                    # Job Objects/AppContainer/ACL/IPC/沙箱实现族（domains/core/supervisor/**，
+                    # 与 extra_l3「workspaces」同源）。
+                    "plugins/bot_unified_runtime/domains/core/supervisor/acl_windows.py",
+                    "plugins/bot_unified_runtime/domains/core/supervisor/appcontainer_windows.py",
+                    "plugins/bot_unified_runtime/domains/core/supervisor/ipc.py",
+                    "plugins/bot_unified_runtime/domains/core/supervisor/job_objects.py",
+                    "plugins/bot_unified_runtime/domains/core/supervisor/sandbox_windows.py",
+                    "plugins/bot_unified_runtime/domains/core/supervisor/windows_sandbox.py",),
                 config_prefixes=("bot_control_plane_",),
                 extra_l3=(
                     ("api-envelope", "统一响应与错误码"),
@@ -986,6 +1121,19 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                     "plugins/bot_unified_runtime/domains/core/config",
                     "plugins/bot_unified_runtime/domains/chat_reply/runtime/settings.py",
                     "docs/config-catalog-full.md",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕「咽喉的四档裁决住 safety_exec」整族落地：
+                    # 策略裁决点 PDP、书面同意账＋一键回退、配置风险/攻击面/动作目录/信任/路径/设置门
+                    # 与包门面（domains/core/safety_exec/**），外加 /bot consent 命令面 ops/capabilities/consent_admin.py。
+                    "plugins/bot_unified_runtime/domains/ops/capabilities/consent_admin.py",
+                    "plugins/bot_unified_runtime/domains/core/safety_exec/__init__.py",
+                    "plugins/bot_unified_runtime/domains/core/safety_exec/action_catalog.py",
+                    "plugins/bot_unified_runtime/domains/core/safety_exec/attack_surface.py",
+                    "plugins/bot_unified_runtime/domains/core/safety_exec/config_risk.py",
+                    "plugins/bot_unified_runtime/domains/core/safety_exec/consent.py",
+                    "plugins/bot_unified_runtime/domains/core/safety_exec/paths.py",
+                    "plugins/bot_unified_runtime/domains/core/safety_exec/policy.py",
+                    "plugins/bot_unified_runtime/domains/core/safety_exec/settings_gate.py",
+                    "plugins/bot_unified_runtime/domains/core/safety_exec/trust.py",
                 ),
                 extra_l3=(
                     ("config-declaration", "字段声明与校验器"),
@@ -1028,6 +1176,15 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                     # 文件链路波（席19 2026-10-03 登记）：宿主快照分区注记口
                     # （采样只复用 host_metrics 在册采集器，注入面在 B03.persona-context）。
                     "plugins/bot_unified_runtime/domains/ops/host_snapshot.py",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕可观测面续批：宿主机读数真身 host_metrics 与
+                    # bot.host_state 命令入口（ops/capabilities/**）、写路径留痕 write_trace、
+                    # 线上报错台账与预留位缺位跨进程账本（ops/monitor/** 补两枚）。
+                    "plugins/bot_unified_runtime/domains/ops/host_metrics.py",
+                    "plugins/bot_unified_runtime/domains/ops/capabilities/__init__.py",
+                    "plugins/bot_unified_runtime/domains/ops/capabilities/host_state.py",
+                    "plugins/bot_unified_runtime/domains/core/write_trace.py",
+                    "plugins/bot_unified_runtime/domains/ops/monitor/error_ledger.py",
+                    "plugins/bot_unified_runtime/domains/ops/monitor/reserved_gap_ledger.py",
                 ),
                 config_prefixes=("bot_alerts_", "bot_metrics_"),
                 # 退群/管理员变动只记事件不发言（公开点名是减分项）——纯可观测面，归本 fid。
@@ -1049,7 +1206,10 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 slug="model-control",
                 summary="provider/channel/model 三级、failover、上下文钳制与计费账本。",
                 help_topics=("模型", "供应商"),
-                impl_paths=("plugins/bot_unified_runtime/llm", "plugins/bot_unified_runtime/domains/chat_reply/llm_engine"),
+                impl_paths=("plugins/bot_unified_runtime/llm", "plugins/bot_unified_runtime/domains/chat_reply/llm_engine",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕渠道能力标签（native-*）唯一真身：
+                    # provider/channel/model 三级控制的能力面声明，归模型路由这一族。
+                    "plugins/bot_unified_runtime/domains/core/channel_capability_tags.py",),
                 config_prefixes=("bot_model_", "bot_llm_", "bot_chat_failover_"),
                 extra_l3=(
                     ("model-router", "优先级组与失败转移"),
@@ -1063,7 +1223,11 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 label="管理命令面",
                 slug="admin-commands",
                 summary="管理员与超管专属命令、诊断与恢复动作。",
-                impl_paths=("plugins/bot_unified_runtime/domains/ops/admin", "plugins/bot_unified_runtime/domains/ops/incident"),
+                impl_paths=("plugins/bot_unified_runtime/domains/ops/admin", "plugins/bot_unified_runtime/domains/ops/incident",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕自愈与回滚腿（extra_l3「recovery」真身）：
+                    # 统一运行自愈服务与自修复编排服务（ops/recovery、ops/repair 的 service 载体）。
+                    "plugins/bot_unified_runtime/domains/ops/recovery/service.py",
+                    "plugins/bot_unified_runtime/domains/ops/repair/service.py",),
                 extra_l3=(
                     ("diagnostics", "诊断与快照"),
                     ("recovery", "自愈与回滚"),
@@ -1088,7 +1252,15 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 label="任务入口与门禁",
                 slug="task-entry",
                 summary="lint / typecheck / runtime-layout / test 四门禁与退出码语义。",
-                impl_paths=("scripts/dev.ps1", "scripts/runtime_layout_smoke.py"),
+                impl_paths=("scripts/dev.ps1", "scripts/runtime_layout_smoke.py",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕验收与烟测的盘上载体：AcceptanceRunner 引擎
+                    # 与离线示例场景库（ops/acceptance/**）、控制台聊天/诊断/路由演示/烟测（ops/smoke/**）。
+                    "plugins/bot_unified_runtime/domains/ops/acceptance/runner.py",
+                    "plugins/bot_unified_runtime/domains/ops/acceptance/scenarios.py",
+                    "plugins/bot_unified_runtime/domains/ops/smoke/console_chat.py",
+                    "plugins/bot_unified_runtime/domains/ops/smoke/diagnostics.py",
+                    "plugins/bot_unified_runtime/domains/ops/smoke/route_demo.py",
+                    "plugins/bot_unified_runtime/domains/ops/smoke/smoke.py",),
             ),
             FeatureNode(
                 fid="B10.generated-artifacts",
@@ -1163,7 +1335,11 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 label="路径重映射与树卫生",
                 slug="workspace-hygiene",
                 summary="运行数据根重映射、零缓存铁律与归档规程。",
-                impl_paths=("scripts/runtime_paths.py", "docs/workspace-archive-policy.md"),
+                impl_paths=("scripts/runtime_paths.py", "docs/workspace-archive-policy.md",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕树卫生的运行面两枚：磁盘缓存配额与保鲜期策略
+                    # （下载/卡片/表情共用的防挤占件）、SQLite 在线备份腿（运行数据保命件）。
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/cache_policy.py",
+                    "plugins/bot_unified_runtime/domains/ops/db_backup.py",),
                 extra_l3=(
                     ("runtime-paths", "相对路径到 Runtime 的映射"),
                     ("archive-procedure", "压缩→验证→移出"),
@@ -1178,6 +1354,13 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                     "docs/README.md",
                     "docs/HANDBOOK.md",
                     "docs/CODE-MAP.md",
+                    # 〔无主归账 席 OWNER-PLACE 2026-10-11〕板块树与治理声明源的真身落点（extra_l3
+                    # 「board-tree」）：板块树本体 board_taxonomy、垫片待退役账 board_shim_ledger、
+                    # 文档归属声明册 board_doc_ownership、文件写权互斥册 ownership_map。
+                    "plugins/bot_unified_runtime/domains/core/board_taxonomy.py",
+                    "plugins/bot_unified_runtime/domains/core/board_shim_ledger.py",
+                    "plugins/bot_unified_runtime/domains/core/board_doc_ownership.py",
+                    "plugins/bot_unified_runtime/domains/core/ownership_map.py",
                 ),
                 extra_l3=(
                     ("board-tree", "一/二/三级板块树本体"),

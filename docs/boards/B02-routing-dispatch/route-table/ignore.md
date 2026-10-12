@@ -9,7 +9,7 @@
 - 路由席位：`IGNORE`（matcher `ignore`，command=False）
 - 判定优先级：999
 - 能力 id：`bot.ignore`
-- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/base_router.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/base_router.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/aliases.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/natural_language.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/time_window.py`、`plugins/bot_unified_runtime/domains/core/temporal_words.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

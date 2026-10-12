@@ -6,7 +6,7 @@
 ## B01.qq-snowluma · 入站摄取与段归一
 
 - 层级：一级 B01 → 二级 qq-snowluma → 三级 `incoming-ingest`
-- 实现落点：`plugins/bot_unified_runtime/domains/transport/sender/onebot.py`、`plugins/bot_unified_runtime/domains/transport/sender/nonebot.py`、`plugins/bot_unified_runtime/message_context.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/transport/sender/onebot.py`、`plugins/bot_unified_runtime/domains/transport/sender/nonebot.py`、`plugins/bot_unified_runtime/message_context.py`、`plugins/bot_unified_runtime/domains/chat_reply/capabilities/group_info.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/group_cache.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/participant_memory.py`、`plugins/bot_unified_runtime/domains/ops/integrations/gscore_bridge.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

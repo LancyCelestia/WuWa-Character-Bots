@@ -8,7 +8,7 @@
 > 好感度多因素步长与心情双轴，驱动语气与主动行为。
 
 - 归属板块：[B03](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/character/affinity.py`、`plugins/bot_unified_runtime/domains/chat_reply/character/mood.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/character/affinity.py`、`plugins/bot_unified_runtime/domains/chat_reply/character/mood.py`、`plugins/bot_unified_runtime/domains/chat_reply/capabilities/affinity.py`、`plugins/bot_unified_runtime/domains/chat_reply/affinity_replay.py`
 - 路由席位：`AFFINITY`
 - 能力 id：`bot.affinity`
 - 帮助主题：好感度

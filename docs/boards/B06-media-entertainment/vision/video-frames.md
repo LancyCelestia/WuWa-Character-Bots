@@ -6,7 +6,7 @@
 ## B06.vision · 抽帧与字幕链路
 
 - 层级：一级 B06 → 二级 vision → 三级 `video-frames`
-- 实现落点：`plugins/bot_unified_runtime/domains/media`
+- 实现落点：`plugins/bot_unified_runtime/domains/media`、`plugins/bot_unified_runtime/domains/vision/__init__.py`、`plugins/bot_unified_runtime/domains/vision/capabilities/__init__.py`、`plugins/bot_unified_runtime/domains/vision/capabilities/modality_preprocessing.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

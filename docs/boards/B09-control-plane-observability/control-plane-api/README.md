@@ -8,7 +8,7 @@
 > loopback + Bearer 的 /api/v1 端点群、工作区沙箱与动作执行。
 
 - 归属板块：[B09](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/control_plane`
+- 实现落点：`plugins/bot_unified_runtime/control_plane`、`plugins/bot_unified_runtime/domains/core/supervisor/acl_windows.py`、`plugins/bot_unified_runtime/domains/core/supervisor/appcontainer_windows.py`、`plugins/bot_unified_runtime/domains/core/supervisor/ipc.py`、`plugins/bot_unified_runtime/domains/core/supervisor/job_objects.py`、`plugins/bot_unified_runtime/domains/core/supervisor/sandbox_windows.py`、`plugins/bot_unified_runtime/domains/core/supervisor/windows_sandbox.py`
 - 配置键前缀：`bot_control_plane_`（逐键以目录册为准）
 
 ### 三级入口

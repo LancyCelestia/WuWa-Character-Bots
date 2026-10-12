@@ -8,7 +8,7 @@
 > 识图、搜图、视频抽帧与字幕；失败三分类诚实上报。
 
 - 归属板块：[B06](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/media`
+- 实现落点：`plugins/bot_unified_runtime/domains/media`、`plugins/bot_unified_runtime/domains/vision/__init__.py`、`plugins/bot_unified_runtime/domains/vision/capabilities/__init__.py`、`plugins/bot_unified_runtime/domains/vision/capabilities/modality_preprocessing.py`
 - 帮助主题：搜图, 视频理解
 - 配置键前缀：`bot_vision_`, `bot_image_search_`（逐键以目录册为准）
 

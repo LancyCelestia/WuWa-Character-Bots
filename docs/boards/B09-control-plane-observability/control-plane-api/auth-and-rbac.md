@@ -6,7 +6,7 @@
 ## B09.control-plane-api · 鉴权与角色边界
 
 - 层级：一级 B09 → 二级 control-plane-api → 三级 `auth-and-rbac`
-- 实现落点：`plugins/bot_unified_runtime/control_plane`
+- 实现落点：`plugins/bot_unified_runtime/control_plane`、`plugins/bot_unified_runtime/domains/core/supervisor/acl_windows.py`、`plugins/bot_unified_runtime/domains/core/supervisor/appcontainer_windows.py`、`plugins/bot_unified_runtime/domains/core/supervisor/ipc.py`、`plugins/bot_unified_runtime/domains/core/supervisor/job_objects.py`、`plugins/bot_unified_runtime/domains/core/supervisor/sandbox_windows.py`、`plugins/bot_unified_runtime/domains/core/supervisor/windows_sandbox.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

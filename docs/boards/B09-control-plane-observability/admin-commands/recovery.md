@@ -6,7 +6,7 @@
 ## B09.admin-commands · 自愈与回滚
 
 - 层级：一级 B09 → 二级 admin-commands → 三级 `recovery`
-- 实现落点：`plugins/bot_unified_runtime/domains/ops/admin`、`plugins/bot_unified_runtime/domains/ops/incident`
+- 实现落点：`plugins/bot_unified_runtime/domains/ops/admin`、`plugins/bot_unified_runtime/domains/ops/incident`、`plugins/bot_unified_runtime/domains/ops/recovery/service.py`、`plugins/bot_unified_runtime/domains/ops/repair/service.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

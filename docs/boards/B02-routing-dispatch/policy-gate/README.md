@@ -8,7 +8,7 @@
 > 角色/黑白名单/安静时间/限流/幂等，全能力共用的准入面。
 
 - 归属板块：[B02](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/policy`、`plugins/bot_unified_runtime/domains/chat_reply/policy`
+- 实现落点：`plugins/bot_unified_runtime/policy`、`plugins/bot_unified_runtime/domains/chat_reply/policy`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/event_idempotency.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/mentions.py`
 - 路由席位：`ADMIN`
 - 能力 id：`bot.status`
 - 帮助主题：角色, 群策略, 限流, 暂停, 为什么

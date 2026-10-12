@@ -6,7 +6,7 @@
 ## B02.policy-gate · 安静时间与主动搭话门
 
 - 层级：一级 B02 → 二级 policy-gate → 三级 `quiet-hours`
-- 实现落点：`plugins/bot_unified_runtime/policy`、`plugins/bot_unified_runtime/domains/chat_reply/policy`
+- 实现落点：`plugins/bot_unified_runtime/policy`、`plugins/bot_unified_runtime/domains/chat_reply/policy`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/event_idempotency.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/mentions.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

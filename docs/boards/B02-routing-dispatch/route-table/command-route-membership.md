@@ -6,7 +6,7 @@
 ## B02.route-table · 命令路由成员资格
 
 - 层级：一级 B02 → 二级 route-table → 三级 `command-route-membership`
-- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/base_router.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/base_router.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/aliases.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/natural_language.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/time_window.py`、`plugins/bot_unified_runtime/domains/core/temporal_words.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

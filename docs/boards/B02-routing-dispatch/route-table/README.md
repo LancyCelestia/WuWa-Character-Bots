@@ -8,7 +8,7 @@
 > base_router 的 RouteKind 枚举、RouteRule 注册表与优先级判定序。
 
 - 归属板块：[B02](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/base_router.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/base_router.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/aliases.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/natural_language.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/time_window.py`、`plugins/bot_unified_runtime/domains/core/temporal_words.py`
 - 路由席位：`ALIAS`, `NATURAL_COMMAND`, `IGNORE`
 - 能力 id：`bot.alias`, `bot.natural_command`, `bot.ignore`
 - 帮助主题：路由, 昵称, 自然语言, 忽略

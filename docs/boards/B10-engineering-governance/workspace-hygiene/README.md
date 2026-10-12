@@ -8,7 +8,7 @@
 > 运行数据根重映射、零缓存铁律与归档规程。
 
 - 归属板块：[B10](../README.md)
-- 实现落点：`scripts/runtime_paths.py`、`docs/workspace-archive-policy.md`
+- 实现落点：`scripts/runtime_paths.py`、`docs/workspace-archive-policy.md`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/cache_policy.py`、`plugins/bot_unified_runtime/domains/ops/db_backup.py`
 
 ### 三级入口
 

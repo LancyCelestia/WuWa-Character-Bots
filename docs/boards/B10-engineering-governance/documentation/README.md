@@ -8,7 +8,7 @@
 > 十板块文档树、统一骨架、单一事实源与自动化同步契约。
 
 - 归属板块：[B10](../README.md)
-- 实现落点：`docs/README.md`、`docs/HANDBOOK.md`、`docs/CODE-MAP.md`
+- 实现落点：`docs/README.md`、`docs/HANDBOOK.md`、`docs/CODE-MAP.md`、`plugins/bot_unified_runtime/domains/core/board_taxonomy.py`、`plugins/bot_unified_runtime/domains/core/board_shim_ledger.py`、`plugins/bot_unified_runtime/domains/core/board_doc_ownership.py`、`plugins/bot_unified_runtime/domains/core/ownership_map.py`
 
 ### 三级入口
 

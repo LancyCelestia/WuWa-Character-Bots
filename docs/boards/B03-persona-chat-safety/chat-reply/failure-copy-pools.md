@@ -6,7 +6,7 @@
 ## B03.chat-reply · 失败与降级话术池
 
 - 层级：一级 B03 → 二级 chat-reply → 三级 `failure-copy-pools`
-- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/capabilities/chat.py`、`plugins/bot_unified_runtime/domains/chat_reply/capabilities/poke.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/capabilities/chat.py`、`plugins/bot_unified_runtime/domains/chat_reply/capabilities/poke.py`、`plugins/bot_unified_runtime/domains/chat_reply/capabilities/poke_routing.py`、`plugins/bot_unified_runtime/domains/chat_reply/capabilities/user_copy.py`、`plugins/bot_unified_runtime/domains/chat_reply/pipeline/backend_unit.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/pipeline.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/deadline.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/parrot.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/progress_ack.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/message_coalescing.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/message_merge.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

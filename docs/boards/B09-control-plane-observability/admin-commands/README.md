@@ -8,7 +8,7 @@
 > 管理员与超管专属命令、诊断与恢复动作。
 
 - 归属板块：[B09](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/ops/admin`、`plugins/bot_unified_runtime/domains/ops/incident`
+- 实现落点：`plugins/bot_unified_runtime/domains/ops/admin`、`plugins/bot_unified_runtime/domains/ops/incident`、`plugins/bot_unified_runtime/domains/ops/recovery/service.py`、`plugins/bot_unified_runtime/domains/ops/repair/service.py`
 
 ### 三级入口
 

@@ -9,7 +9,7 @@
 - 路由席位：`GROUP_INFO`（matcher `group_info`，command=True）
 - 判定优先级：41
 - 能力 id：`bot.group_info`
-- 实现落点：`plugins/bot_unified_runtime/domains/transport/sender/onebot.py`、`plugins/bot_unified_runtime/domains/transport/sender/nonebot.py`、`plugins/bot_unified_runtime/message_context.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/transport/sender/onebot.py`、`plugins/bot_unified_runtime/domains/transport/sender/nonebot.py`、`plugins/bot_unified_runtime/message_context.py`、`plugins/bot_unified_runtime/domains/chat_reply/capabilities/group_info.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/group_cache.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/participant_memory.py`、`plugins/bot_unified_runtime/domains/ops/integrations/gscore_bridge.py`
 - 帮助主题：群信息
 <!-- BOARD-AUTO:END -->
 

@@ -8,7 +8,7 @@
 > provider/channel/model 三级、failover、上下文钳制与计费账本。
 
 - 归属板块：[B09](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/llm`、`plugins/bot_unified_runtime/domains/chat_reply/llm_engine`
+- 实现落点：`plugins/bot_unified_runtime/llm`、`plugins/bot_unified_runtime/domains/chat_reply/llm_engine`、`plugins/bot_unified_runtime/domains/core/channel_capability_tags.py`
 - 帮助主题：模型, 供应商
 - 配置键前缀：`bot_model_`, `bot_llm_`, `bot_chat_failover_`（逐键以目录册为准）
 
