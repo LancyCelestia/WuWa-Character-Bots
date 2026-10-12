@@ -5358,7 +5358,9 @@ def _register_nonebot_handlers() -> None:
             register_subscription_runtime_v2,
         )
 
-        async def _deliver_v2_event(event: Any) -> bool:
+        async def _deliver_v2_event(
+            event: Any, *, only_destination_keys: list[str] | None = None
+        ) -> bool:
             store = subscription_ctx.get("store")
             target = store.get_target(event.target_id) if store is not None else None
             destinations = (
@@ -5412,11 +5414,24 @@ def _register_nonebot_handlers() -> None:
             # 的 10001 没有台账，整事件 retry 后每轮再推一遍（最多 5 遍双发）。
             # 键＝目的地行 id，与 scheduler 的 `_enabled_destination_keys`／查重口
             # 同一把尺，不另立第二套。
+            #
+            # SUB-1 终段（SUBDELIVERY-1 根腿）：调度器给下「尚无成功台账」的子集时，
+            # 已记账目的地本轮直接跳过、绝不二次经手；每枚真 SENT 的目的地当场落
+            # 目的地级台账（store 门面，INSERT OR IGNORE 幂等，与调度器全成时补写
+            # 全体键不冲突）。契约仍是 Awaitable[bool]——`test_bool_return_contract.py`
+            # 锁 `-> bool` 标注在位且禁 `return <列表名>`，本形与该锁共存。
+            pending = (
+                None
+                if only_destination_keys is None
+                else {str(key) for key in only_destination_keys}
+            )
             outcomes: list[tuple[str, bool]] = []
             for destination in destinations:
                 # 目的地级暂停（pause 只作用于本目的地行）：跳过不投递，
                 # 也不计入失败（审计重发现 P2：此前 pause/resume 是 target 级）。
                 if not getattr(destination, "enabled", True):
+                    continue
+                if pending is not None and str(destination.id) not in pending:
                     continue
                 scope = str(destination.scope or "private").lower()
                 session_type = SessionType.GROUP if scope == "group" else SessionType.PRIVATE
@@ -5453,6 +5468,20 @@ def _register_nonebot_handlers() -> None:
                     )
                     if receipt.state is ReceiptState.SENT:
                         outcomes.append((str(destination.id), True))
+                        try:
+                            await store.record_outbox_deliveries_async(
+                                event.event_id, [str(destination.id)]
+                            )
+                        except Exception:
+                            # 台账写失败＝本轮退化为 at-least-once（下一轮可能重投），
+                            # 不回滚已成功的投递——与调度器「台账失败不阻断」同口径。
+                            from nonebot.log import logger
+
+                            logger.warning(
+                                "subscription per-destination ledger write failed for %s",
+                                destination.id,
+                                exc_info=True,
+                            )
                     else:
                         outcomes.append((str(destination.id), False))
                 except (OSError, RuntimeError, TypeError, ValueError):

@@ -92,16 +92,45 @@ def _posix_path(path: Path) -> str:
     return text
 
 
-def _locate_gnu_find() -> str:
-    """定位**真正的 GNU findutils**（Windows 自带 FIND.EXE 是同名不同物，绝不误用）。"""
-    candidates: list[str | None] = [shutil.which("find")]
+def _gnu_find_candidates() -> list[str]:
+    """GNU findutils 候选路径（**从现网 git 安装派生**，不写死 `C:\\Program Files\\Git`）。
+
+    2026-10-13 实况：本机 git 在 `C:\\Software\\Git\\cmd\\git.exe`，GNU find 在其
+    `usr/bin/find.exe`；而 PATH 里的 `find` 命中的是 Windows 自带 `FIND.EXE`（同名不同物）。
+    旧实现只探 `C:\\Program Files\\Git\\...` 两条固定路径 ⇒ 本机恒判「未找到 GNU findutils」，
+    脚本永不出快照。修法：以 `git` 可执行文件为锚，派生它的安装根再拼 `usr/bin`／`bin`／
+    `mingw64/bin`（不引入新依赖、不猜盘符）；固定路径仍作兜底。宁缺不造的口径一字未动——
+    探不到 findutils 仍显式报错、仍不写快照。
+    """
+    candidates: list[str] = []
+    which_find = shutil.which("find")
+    if which_find:
+        candidates.append(which_find)
+    git_exe = shutil.which("git")
+    if git_exe:
+        git_root = Path(git_exe).resolve().parent.parent
+        for leaf in ("usr/bin/find.exe", "bin/find.exe", "mingw64/bin/find.exe"):
+            candidates.append(str(git_root / leaf))
     for fixed in (
         r"C:\Program Files\Git\usr\bin\find.exe",
         r"C:\Program Files\Git\bin\find.exe",
+        r"C:\Program Files (x86)\Git\usr\bin\find.exe",
     ):
-        candidates.append(fixed if os.path.exists(fixed) else None)
+        candidates.append(fixed)
+    # 去重保序（同一枚可能由多路命中）
+    seen: set[str] = set()
+    unique: list[str] = []
     for candidate in candidates:
-        if not candidate:
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            unique.append(candidate)
+    return unique
+
+
+def _locate_gnu_find() -> str:
+    """定位**真正的 GNU findutils**（Windows 自带 FIND.EXE 是同名不同物，绝不误用）。"""
+    for candidate in _gnu_find_candidates():
+        if not os.path.exists(candidate):
             continue
         try:
             probe = subprocess.run(

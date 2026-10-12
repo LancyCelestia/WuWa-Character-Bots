@@ -122,7 +122,13 @@ def test_pending_subset_passed_to_pending_aware_delivery(tmp_path: Path) -> None
     assert calls[1] == [failing_key], (
         f"已成功目的地在第二轮再次被全体投递经手（双发旁路）：{calls}"
     )
-    assert store.outbox_state(event_id) == "sent"
+    # 本腿的场景是「第二目的地**恒失败**」（docstring 原话），故第二轮之后事件
+    # 仍应停在 retry、未覆盖集合恰剩那一枚——与姊妹锁
+    # `test_subscription_per_destination_ledger_sub2.py::test_partial_success_writes_ledger_only_for_delivered`
+    # 同一语义（永久失败 ⇒ retry）。旧断言写 `== "sent"` 与该场景自相矛盾：
+    # 恒失败的目的地永不可能被记为 sent（见本席报告实跑取证）。
+    assert store.outbox_state(event_id) == "retry"
+    assert store.outbox_undelivered_destinations(event_id, keys) == [failing_key]
 
 
 def test_legacy_bool_delivery_keeps_single_arg_call(tmp_path: Path) -> None:

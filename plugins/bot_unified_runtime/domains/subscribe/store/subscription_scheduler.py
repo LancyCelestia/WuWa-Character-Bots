@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import logging
 import random
 import time
@@ -73,7 +74,7 @@ class SubscriptionScheduler:
         retry_base_seconds: int = 60,
         retry_cap_seconds: int = 1800,
         throttle: PlatformThrottle | None = None,
-        delivery_fn: Callable[[SubscriptionOutboxEvent], Awaitable[bool]] | None = None,
+        delivery_fn: Callable[..., Awaitable[Any]] | None = None,
         context_factory: Callable[[str], dict[str, Any]] | None = None,
         # 审查 J-02：per-platform 开关（platform → bool）。None=全开放
         # （现状零变化）；装配层传 subscription_platform_enabled 偏函数。
@@ -253,6 +254,27 @@ class SubscriptionScheduler:
         destinations = await self.store.list_destinations_async(target_id)
         return [d.id for d in destinations if d.enabled and str(d.id)]
 
+    async def _invoke_delivery(
+        self,
+        event: SubscriptionOutboxEvent,
+        pending_keys: list[str] | None,
+    ) -> Any:
+        """调用 delivery_fn；声明过 `only_destination_keys` 形参的实现才传待投子集。
+
+        SUB-1 根腿契约（SUBDELIVERY-1）：台账已覆盖的目的地不再交给投递腿经手，
+        从根上堵「整事件重试 ⇒ 已成功群每轮再收一遍」。签名探测失败（可调用对象
+        非函数等）按旧单参形调用——向后兼容优先，绝不让查重故障升级成投递故障。
+        """
+        fn = self._delivery_fn
+        assert fn is not None  # 调用方已判 None 早退
+        try:
+            parameters = inspect.signature(fn).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if "only_destination_keys" in parameters:
+            return await fn(event, only_destination_keys=pending_keys)
+        return await fn(event)
+
     async def deliver_outbox_once(self, *, limit: int = 20) -> int:
         if self.store is None:
             return 0
@@ -276,11 +298,10 @@ class SubscriptionScheduler:
                     destination_keys = await self._enabled_destination_keys(
                         event.target_id
                     )
-                    fully_covered = bool(destination_keys) and not (
-                        await self.store.outbox_undelivered_destinations_async(
-                            event.event_id, destination_keys
-                        )
+                    undelivered = await self.store.outbox_undelivered_destinations_async(
+                        event.event_id, destination_keys
                     )
+                    fully_covered = bool(destination_keys) and not undelivered
                 except Exception:
                     # 查重链路故障按未覆盖处理（fail-open）：宁可在极端情况
                     # 下退化为旧行为的重复，不可静默丢推送。
@@ -290,6 +311,7 @@ class SubscriptionScheduler:
                         exc_info=True,
                     )
                     destination_keys = []
+                    undelivered = []
                     fully_covered = False
                 if fully_covered:
                     _LOGGER.debug(
@@ -303,7 +325,9 @@ class SubscriptionScheduler:
                     settled.add(event.event_id)
                     continue
                 try:
-                    outcome = await self._delivery_fn(event)
+                    outcome = await self._invoke_delivery(
+                        event, list(undelivered) if destination_keys else None
+                    )
                 except Exception:  # noqa: BLE001 - 单事件投递失败转重试，不弃队。
                     outcome = False
                 # SUB-2（S-ATK-SUBSCRIBE ATK-SUB-1）：投递面可以交回两种形状。

@@ -1393,6 +1393,7 @@ LIBRARY_TAXONOMY: tuple[ReleaseLibNode, ...] = (
             'plugins/bot_unified_runtime/domains/core/contracts/finance.py',
             'plugins/bot_unified_runtime/domains/core/contracts/media.py',
             'plugins/bot_unified_runtime/domains/core/contracts/music.py',
+            'plugins/bot_unified_runtime/domains/core/contracts/official_sources.py',
             'plugins/bot_unified_runtime/domains/core/contracts/request.py',
             'plugins/bot_unified_runtime/domains/core/contracts/runtime.py',
             'plugins/bot_unified_runtime/domains/core/contracts/subscription.py',
