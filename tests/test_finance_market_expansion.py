@@ -651,6 +651,39 @@ class TestOfficialSourceGate:
         assert "还差" in text
 
 
+class TestFailureAttributionCensus:
+    """红的归属判定量具（把「这条红是不是我弄的」机械化）。"""
+
+    def _census(self):
+        from scripts import failure_attribution_census as fac
+
+        return fac
+
+    def test_same_file_and_module_names_hit(self) -> None:
+        fac = self._census()
+        fails = [
+            "tests/test_market_card.py::test_x",
+            "tests/test_other.py::test_calls_market_crosscheck",
+            "tests/test_unrelated.py::test_y",
+        ]
+        surface = ["tests/test_market_card.py", "plugins/x/market_crosscheck.py"]
+        suspect, clean = fac.attribute(fails, surface)
+        hit = [n for n, _ in suspect]
+        assert "tests/test_market_card.py::test_x" in hit
+        assert "tests/test_other.py::test_calls_market_crosscheck" in hit
+        assert clean == ["tests/test_unrelated.py::test_y"]
+
+    def test_parses_pytest_rf_output(self) -> None:
+        fac = self._census()
+        text = "FAILED a/b.py::t1\nFAILED a/b.py::t2\nFAILED a/b.py::t1\nnoise\n"
+        assert fac.failed_nodes(text) == ["a/b.py::t1", "a/b.py::t2"]
+
+    def test_no_failures_yields_empty_suspect(self) -> None:
+        fac = self._census()
+        suspect, clean = fac.attribute([], ["anything.py"])
+        assert suspect == [] and clean == []
+
+
 # ---------------------------------------------------------------------------
 # 表情拒因计数（2026-10-13 用户裁定「复用统一账」）
 # ---------------------------------------------------------------------------
