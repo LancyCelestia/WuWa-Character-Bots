@@ -34,6 +34,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
+# 与 `tests/test_config_hotchange_consistency_gate.py` 同一支 import 形态（`scripts.` 前缀），
+# 保证两张热改名册的取数口在本进程里只有**一个模块实例**——扁平名再 import 一次会造出
+# 第二份 `config_catalog_generator_pilot`（异常类与缓存都不认对方），属本文件 `_bds()` 记过的同一族坑。
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import command_catalog as cc  # 只 stdlib + 同目录 `doc_sync`，不碰被别席定制装载的件
 import doc_sync as ds  # 塌陷锁与册维的唯一取数口
@@ -60,6 +65,8 @@ def _bds():  # 延迟导入的理由见本函数 docstring
 BASE_ROUTER_PY = ROOT / "plugins" / "bot_unified_runtime" / "domains" / "chat_reply" / "runtime" / "base_router.py"
 INIT_PY = ROOT / "plugins" / "bot_unified_runtime" / "__init__.py"
 CONFIG_PY = ROOT / "plugins" / "bot_unified_runtime" / "config.py"
+# 可改性两枚名册的真身（门禁 2d/2e 的唯一取数口；合并层那本住根 `__init__.py`）
+SETTINGS_PY = ROOT / "plugins" / "bot_unified_runtime" / "domains" / "chat_reply" / "runtime" / "settings.py"
 ROUTE_MATRIX_MD = ROOT / "docs" / "route-matrix.md"
 CONFIG_CATALOG_MD = ROOT / "docs" / "config-catalog-full.md"
 
@@ -528,11 +535,13 @@ def _catalog_env_token_to_field(token: str) -> str | None:
     return None
 
 
-def _iter_catalog_registration_rows(text: str, need_default_col: bool):
+def _iter_catalog_registration_rows(text: str, need_default_col: bool, need_hot_col: bool = False):
     """扫 markdown 表格，yield 每张「键名/键/字段」注册表的行（跳过 F 节自审、C 节转换规则、A25 非 Config）。
 
     返回 dict：line（1 起）、key_tokens（反引号内原文）、keys（归一后 bot_xxx）、
-    default_cell（若 need_default_col=True 且表有「默认值/缺省」列）、row_text、is_compound。
+    default_cell（若 need_default_col=True 且表有「默认值/缺省」列）、
+    hot_cell（若 need_hot_col=True 且表有「热更」列；无该列的表整表被跳过）、
+    row_text、is_compound。
     """
     lines = text.splitlines()
     i = 0
@@ -555,11 +564,16 @@ def _iter_catalog_registration_rows(text: str, need_default_col: bool):
             continue
         key_col = _find_catalog_col(header, ("键名", "键", "字段"), skip_first=False)
         def_col = _find_catalog_col(header, ("默认值", "缺省", "默认"), skip_first=True)
+        hot_col = _find_catalog_col(header, ("热更",), skip_first=True)
         if key_col is None:
             while i < n and lines[i].startswith("|"):
                 i += 1
             continue
         if need_default_col and def_col is None:
+            while i < n and lines[i].startswith("|"):
+                i += 1
+            continue
+        if need_hot_col and hot_col is None:
             while i < n and lines[i].startswith("|"):
                 i += 1
             continue
@@ -578,6 +592,9 @@ def _iter_catalog_registration_rows(text: str, need_default_col: bool):
                 "key_tokens": key_tokens,
                 "keys": keys,
                 "default_cell": body[def_col] if def_col is not None and def_col < len(body) else None,
+                "hot_cell": body[hot_col] if hot_col is not None and hot_col < len(body) else None,
+                # 注毒要落进**同一把尺量出的那一列**（下标由读表器自己给，见 `_poison_hot_cell`）
+                "hot_col_index": hot_col,
                 "row_text": " | ".join(body),
                 "is_compound": len(keys) > 1,
             }
@@ -761,6 +778,228 @@ def test_config_catalog_registered_keys_are_live_or_marked_retired() -> None:
             fake_hit = True
             break
     assert fake_hit, "注毒自证失败：伪键未落入'不在 Config + 未标退役'桶 ⇒ 判据空转"
+
+
+# --------------------------------------------------------------------------
+# 门禁 2d/2e（M2-30R 续席 2026-10-13「可改性两面」）：
+#   2d 凡在 `SETTABLE_KEYS` 的键 ⇒ 有「热更」列的行**不得空白**（欠标＝她照册改 `.env` 再重启，
+#      而 `/bot runtime set` 本可当场改完——白改一次配置）；
+#   2e 凡在 `RESTART_REQUIRED_KEYS` 的键 ⇒ 热更列**不得写 ❌**（假标＝册子说"这键根本没有热改面"，
+#      代码里 `set_override` 却明确拒绝并指路「改 .env + 重启」；两档给她的动作不同）。
+#
+# **与 `tests/test_config_hotchange_consistency_gate.py`（B1/B2/B3）是两把不同的尺**，不合成一把：
+#   那边按**键**把全册多表档位取并集，且 B3 只判「恰好只标了 ❌ 一档」那一型，空白面**明写只报告
+#   不判红**（`test_hot_change_label_coverage_is_reported`：全册九成行无标注，一上来要求全表标注
+#   ＝永久红＝没人修）；这边按**行**判、且只判「名册已点名表过态」的那一小撮键 ⇒ 行级空白与
+#   「同键他表标对、这张表仍标 ❌」两型那边看不见、这边看得见。反向亦然：那边管的「标 ✅ 却不在
+#   白名单」（假宣传）这边不管，所以撤掉那边任何一条都不是本两腿的替代通路。
+#
+# 三档词表**仍只有一份真身**：本两腿不复制 `✅热更/🟡需重启/❌无热改面` 原文——2d 只判「单元格
+#   为空」，2e 只判「单元格以 ❌ 起头」这一**形状**（册内 `❌同上`/`❌重启` 这类异形简写那边按
+#   「未标注」放过、这边要抓），emoji 是形状尺不是词表。
+#
+# 派生式（AGENTS 规则 10）：判据只吃「名册现算集合 ∩ 册内有热更列的行」，**不写死枚数**——
+#   注册表一长，写死"应 N 枚"就恒假红。反空转前置＝`_assert_hot_rosters_readable`：三本名册
+#   任一取空、或册内可判行为零 ⇒ 当场红（"取不到样本即放行"正是这一族病）。
+# --------------------------------------------------------------------------
+
+#: 合并层那本名册（住根 `__init__.py`、形如 `(ENV, field)` 嵌套 tuple）：**没有**现成取数口，
+#: 才由本文件 `_module_container_string_keys` 现算。两张 settings.py 主名册**不在这里**
+#: ——它们走 pilot 的 `load_hot_tiers`（复用理由见 `_hot_modification_rosters`）。
+_MERGE_ROSTER: tuple[Path, str] = (INIT_PY, "_RUNTIME_HOT_OVERRIDE_FIELDS")
+
+
+def _module_container_string_keys(path: Path, var_name: str) -> set[str]:
+    """AST 现算：模块级赋值（`Assign` 与 `AnnAssign` 两形都认）里容器字面量的**字符串成员**。
+
+    认三种形状：dict 的键、set 的元素、嵌套 tuple/list 的**首元**——本文件只用它读
+    `_RUNTIME_HOT_OVERRIDE_FIELDS` 那一本（`(ENV, field)` 对取 ENV）。
+    取不到该赋值 ⇒ 交空集，由 `_assert_hot_rosters_readable` 当场点名（本函数不静默抛，
+    是为了让「哪一本空了」在报告里逐本分开红，而不是被一个异常糊成一条）。
+    """
+    for node in _parse(path).body:
+        value = node.value if isinstance(node, (ast.Assign, ast.AnnAssign)) else None
+        if value is None:
+            continue
+        targets = [t for t in (node.targets if isinstance(node, ast.Assign) else [node.target])]
+        if not any(isinstance(t, ast.Name) and t.id == var_name for t in targets):
+            continue
+        out: set[str] = set()
+        for sub in ast.walk(value):
+            if isinstance(sub, ast.Dict):
+                out |= {k.value for k in sub.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+        if out:
+            return out
+        container = value if isinstance(value, (ast.Tuple, ast.List, ast.Set)) else None
+        if container is None:
+            return set()
+        for elt in container.elts:
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                out.add(elt.value)
+            elif isinstance(elt, (ast.Tuple, ast.List)) and elt.elts:
+                first = elt.elts[0]
+                if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                    out.add(first.value)
+        return out
+    return set()
+
+
+def _hot_modification_rosters() -> tuple[set[str], set[str], set[str]]:
+    """`(SETTABLE, RESTART, 合并层)` 三本名册，键名统一归一成 `bot_xxx`（与册内写法同尺）。
+
+    🔴 **两张主名册复用既有唯一取数口**＝`scripts/config_catalog_generator_pilot.load_hot_tiers`
+    （读 settings.py 全文；它同时执法「两表同现一键 ⇒ 档位无唯一真值」并 fail-closed 点名）。
+    `tests/test_config_hotchange_consistency_gate.py` 的 B1/B2/B3 用的就是这一把尺
+    （`_hot_lists`），本文件再造一支 AST 名册尺＝第二真身：真身哪天改成 set 字面量、
+    或有人把同键登进两表，两支尺会各读各的、两族门互相打脸。
+    合并层那本没有现成取数口（嵌套 tuple 形态），才由 `_module_container_string_keys` 现算。
+    归一走既有的 `_catalog_env_token_to_field`（`BOT_X`/`bot_x`/`_x` 三形一物），
+    不另造第二把归一尺；未登记的形状（非标识符）直接丢，由反空转前置兜住"整本空"。
+    """
+    from scripts.config_catalog_generator_pilot import (
+        load_hot_tiers,  # 延迟导入：理由见文件头 sys.path 注释
+    )
+
+    tiers = load_hot_tiers(SETTINGS_PY.read_text(encoding="utf-8"))
+    settable = {k for k, tier in tiers.items() if tier == "settable"}
+    restart = {k for k, tier in tiers.items() if tier == "restart"}
+    raw_merge = _module_container_string_keys(*_MERGE_ROSTER)
+    merge = {k for k in (_catalog_env_token_to_field(t) for t in raw_merge) if k}
+    return settable, restart, merge
+
+
+def _assert_hot_rosters_readable(settable: set[str], restart: set[str], merge: set[str],
+                                 judged_rows: int) -> None:
+    """反空转前置：取不到样本即红，绝不"空集 ⇒ 恒绿"（四本账分开点名，便于定位哪一头瞎了）。"""
+    for name, roster in (("SETTABLE_KEYS", settable), ("RESTART_REQUIRED_KEYS", restart),
+                         ("_RUNTIME_HOT_OVERRIDE_FIELDS", merge)):
+        assert roster, f"名册 `{name}` 现算取到 0 枚 ⇒ 本族两腿没有判据可吃，拒绝据此放行"
+    assert judged_rows, (
+        "docs/config-catalog-full.md 里**没有一行**带「热更」列 ⇒ 2d/2e 无物可判（表头写法变了？）。"
+        "拒绝把「看不见」读成「都对了」"
+    )
+
+
+def _catalog_hot_rows(text: str) -> list[dict]:
+    """册内「有热更列的注册表行」全集（唯一取数口＝`_iter_catalog_registration_rows`）。"""
+    return list(_iter_catalog_registration_rows(text, need_default_col=False, need_hot_col=True))
+
+
+def _hot_cell_blank(cell: str | None) -> bool:
+    return cell is None or not cell.strip()
+
+
+def _hot_cell_says_no_surface(cell: str | None) -> bool:
+    """形状尺：单元格以 ❌（U+274C）起头＝该行在说"无热改面"（含 `❌同上`/`❌重启` 异形简写）。"""
+    bare = (cell or "").strip().lstrip("*").strip()
+    return bare.startswith("\u274c")
+
+
+def catalog_settable_blank_hot_rows(text: str, settable: set[str]) -> list[dict]:
+    """2d 判据：整行键**都在** `SETTABLE_KEYS` 而热更列空白 ⇒ 欠标。
+
+    「整行都在」是硬边界：复合行（一行列多枚兄弟键）里若只有一枚进白名单，
+    把该行标成 ✅ 会给另外几枚做假证——那种行交回名册自己判，本尺不猜。
+    """
+    out: list[dict] = []
+    for r in _catalog_hot_rows(text):
+        if not r["keys"] or not set(r["keys"]) <= settable:
+            continue
+        if _hot_cell_blank(r["hot_cell"]):
+            out.append(r)
+    return out
+
+
+def catalog_restart_cross_marked_hot_rows(text: str, restart: set[str]) -> list[dict]:
+    """2e 判据：整行键**都在** `RESTART_REQUIRED_KEYS` 而热更列写 ❌ ⇒ 假标（档位讲反）。"""
+    out: list[dict] = []
+    for r in _catalog_hot_rows(text):
+        if not r["keys"] or not set(r["keys"]) <= restart:
+            continue
+        if _hot_cell_says_no_surface(r["hot_cell"]):
+            out.append(r)
+    return out
+
+
+def _format_hot_row(r: dict) -> str:
+    return (f"键 {' / '.join('`' + t + '`' for t in r['key_tokens'])}"
+            f"｜热更列＝{r['hot_cell']!r}")
+
+
+def _poison_hot_cell(text: str, row: dict, new_cell: str) -> str:
+    """把**内存副本**里某一行的「热更」格换成 `new_cell`（绝不解盘写回）。
+
+    🔴 列下标**只用读表器给的那一枚**（`row["hot_col_index"]`，取自表头判定），不再自己
+    往上扫「哪一行含'热更'两个字」——旧写法会把**正文里提到「热更」的数据行**当表头：
+    本册 A8 表里 `BOT_REPLY_DETAIL` 那行的「合法值」格写着「热更接受中文别名 详细/精简/默认」，
+    往上扫的尺在那儿量出下标 3（＝「合法值」列），注毒于是打在**别的列**上、判据看不见毒、
+    而 `assert probe in hit` 会把它当"注毒失败"报出来（假牙就是这么来的：毒没打到要害处）。
+    """
+    lines = text.splitlines()
+    cells = _split_catalog_row(lines[row["line"] - 1])
+    hot_index = row["hot_col_index"]
+    assert hot_index is not None and hot_index < len(cells), (
+        f"注毒锚点失效：第 {row['line']} 行的热更列下标取不到（列数 {len(cells)}、下标 {hot_index}）")
+    assert cells[hot_index] == (row["hot_cell"] or "").strip(), (
+        f"注毒锚点失效：第 {row['line']} 行按读表器下标 {hot_index} 读到的格"
+        f"（{cells[hot_index]!r}）与判据当初看到的（{row['hot_cell']!r}）不是同一枚 ⇒ 两把尺已分家")
+    cells[hot_index] = new_cell
+    lines[row["line"] - 1] = "|" + "|".join(cells) + "|"
+    return "\n".join(lines)
+
+
+def test_catalog_hot_column_marks_every_settable_key() -> None:
+    """2d：在 `SETTABLE_KEYS` 的键，主表「热更」列不得留空白（派生式，名册一长自动跟随）。"""
+    text = CONFIG_CATALOG_MD.read_text(encoding="utf-8")
+    settable, restart, merge = _hot_modification_rosters()
+    rows = _catalog_hot_rows(text)
+    _assert_hot_rosters_readable(settable, restart, merge, len(rows))
+
+    blanks = catalog_settable_blank_hot_rows(text, settable)
+    assert not blanks, (
+        "docs/config-catalog-full.md 的「热更」列对 `SETTABLE_KEYS` 在册键留了空白（欠标：她照册"
+        "以为只能改 .env + 重启，而 `/bot runtime set` 写了即生效）。按名册补 `✅热更`，"
+        "同在读侧有装配期快照臂的按 0 节规则 4 把两臂写清（M2-30R 续席执法腿 2d）：\n- "
+        + "\n- ".join(_format_hot_row(r) for r in blanks)
+    )
+
+    # 注毒自证（零盘上改动）：把一枚真在册热更键的列清空 ⇒ 判据必须点名它。
+    judged = [r for r in rows if r["keys"] and set(r["keys"]) <= settable
+              and not _hot_cell_blank(r["hot_cell"])]
+    assert judged, "注毒锚点缺失：没有任何「键全在 SETTABLE_KEYS 且热更列非空」的行 ⇒ 本腿正在空跑"
+    probe_row = judged[0]
+    probe = probe_row["keys"][0]
+    poisoned = _poison_hot_cell(text, probe_row, "")
+    hit = {k for r in catalog_settable_blank_hot_rows(poisoned, settable) for k in r["keys"]}
+    assert probe in hit, (
+        f"注毒自证失败：把 `{probe}` 的热更列清空后本腿没点名它 ⇒ 判据空转"
+    )
+
+
+def test_catalog_hot_column_never_marks_listed_restart_key_as_no_surface() -> None:
+    """2e：在 `RESTART_REQUIRED_KEYS` 的键，热更列不得写 ❌（派生式，档位按名册现算）。"""
+    text = CONFIG_CATALOG_MD.read_text(encoding="utf-8")
+    settable, restart, merge = _hot_modification_rosters()
+    rows = _catalog_hot_rows(text)
+    _assert_hot_rosters_readable(settable, restart, merge, len(rows))
+
+    crossed = catalog_restart_cross_marked_hot_rows(text, restart)
+    assert not crossed, (
+        "docs/config-catalog-full.md 把 `RESTART_REQUIRED_KEYS` 在册键写成 ❌（假标：册子说"
+        "「无热改面」，代码却会明确拒写并提示「改 .env + 重启」——该档是 🟡需重启）。"
+        "改档位并保留名册给的理由原文（M2-30R 续席执法腿 2e）：\n- "
+        + "\n- ".join(_format_hot_row(r) for r in crossed)
+    )
+
+    # 注毒自证（零盘上改动）：把一枚在册重启键的列改成 ❌ 形态 ⇒ 判据必须点名它。
+    judged = [r for r in rows if r["keys"] and set(r["keys"]) <= restart
+              and not _hot_cell_says_no_surface(r["hot_cell"])]
+    assert judged, "注毒锚点缺失：没有任何「键全在 RESTART_REQUIRED_KEYS 且热更列非 ❌」的行 ⇒ 本腿正在空跑"
+    probe_row = judged[0]
+    probe = probe_row["keys"][0]
+    poisoned = _poison_hot_cell(text, probe_row, "\u274c")
+    hit = {k for r in catalog_restart_cross_marked_hot_rows(poisoned, restart) for k in r["keys"]}
+    assert probe in hit, f"注毒自证失败：把 `{probe}` 的热更列改成 ❌ 后本腿没点名它 ⇒ 判据空转"
 
 
 # ==========================================================================
