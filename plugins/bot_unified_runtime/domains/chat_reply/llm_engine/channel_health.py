@@ -59,9 +59,57 @@ _PROBE_THREADS_MIN = 1
 _PROBE_THREADS_MAX = 16
 _PROBE_JITTER_MAX = 5.0
 
+# ---- 可用性判据：SQL 两条 + 判定一枚（唯一真身，两条腿共用） ----
+# 单候选腿：PK 直查，一趟取回判定要的三列（旧形状是 8 列 _row 之后再补一条
+# SELECT last_probe_at ＋每次现开连接，实测 498µs/候选，其中开连 142µs）。
+_AVAILABILITY_ONE_SQL = (
+    "SELECT model_id, state, last_probe_at FROM channel_health WHERE model_id = ?"
+)
+# 批查询腿：一枚参数都不绑（候选数不进气泡串 ⇒ 无 SQLITE_MAX_VARIABLE_NUMBER 风险，
+# 也不用给 state 另建索引；现库 83 行一趟扫，实测低于 40 候选参数的 IN 串一档）。
+_UNAVAILABLE_ROWS_SQL = (
+    "SELECT model_id, last_probe_at FROM channel_health WHERE state = ?"
+)
+
+
+def _decide_available(now: datetime, state: Any, last_probe_at: Any) -> bool:
+    """「这一路现在能不能走」的**唯一判据真身**（单候选腿与批查询腿同读）。
+
+    逐字段照抄改前 ``is_available`` 的判定顺序，一个字节都没改语义：
+    ① 行缺席（state=None）或 state 不是 temporarily_unavailable ⇒ 放行；
+    ② last_probe_at 为 NULL/空 ⇒ 放行；
+    ③ ``fromisoformat`` 抛 ``ValueError`` ⇒ 放行；
+    ④ 否则 age ≥ ``_RETRY_INTERVAL_SECONDS`` 才放行（到点重探放一次）。
+    ⚠ 时间戳是 naive 形态时 ``now - last`` 抛的是 ``TypeError``，改前同样不接
+    （只 ``except ValueError``）⇒ 这里**故意不补兜底**：它由路由侧
+    ``_health_filter_candidates`` 的 ``except Exception`` 收敛成「原列表放行」，
+    接住它会改开一条第二判据。锁＝
+    ``tests/test_channel_health_v2.py::test_naive_probe_timestamp_raises_on_both_legs``。
+    """
+    if state != _UNAVAILABLE:
+        return True
+    if not last_probe_at:
+        return True
+    try:
+        last = datetime.fromisoformat(str(last_probe_at))
+        age = (now - last).total_seconds()
+    except ValueError:
+        return True
+    return age >= _RETRY_INTERVAL_SECONDS
+
 
 class ChannelHealthStore:
-    """按 model_id（注册条目 id）记录渠道健康状态。"""
+    """按 model_id（注册条目 id）记录渠道健康状态。
+
+    连接形状（延迟无用功删除波 2026-10-12，账见台账 #80 同族）：进程内**一条常驻
+    连接** + 一把锁串行化，照 ``domains/transport/sender/queue.py::
+    SQLiteSendQueue._shared_connection`` 的既有形状做（🔴 本仓不得有第二套连接
+    管理真身）。旧形状是「每个方法每次调用现开一条连接、用完 close」——实测单候选
+    ``is_available`` 498µs 里 142µs 是开连、40 枚候选 22.3ms、全库 83 枚 40.5ms，
+    全是本机往返、与网络无关。
+    ``_connect()`` 保留为**唯一**建连原语（只被 ``_shared_connection`` 调），
+    ``timeout=10`` 一字未动——那是天花板不是无用功。
+    """
 
     def __init__(self, db_path: str | Any) -> None:
         self.db_path = str(db_path)
@@ -70,15 +118,69 @@ class ChannelHealthStore:
         # 累计计数（内存态、不落库——重启清零即「进程生命周期」语义；SQLite
         # 侧只存冷却截止时刻，由路由侧达到阈值后经 record_failure 落地）。
         self._config_missing_counts: dict[str, int] = {}
+        # 常驻连接（queue 同形状）：check_same_thread=False ＋ 独立 RLock，
+        # 与 self._lock 分工——_lock 串行化业务操作（语义不变），_connection_lock
+        # 只管连接句柄的取用与丢弃，两者不成环（_discard 只在持 _lock 的体内调）。
+        self._connection: sqlite3.Connection | None = None
+        self._connection_lock = threading.RLock()
+        # 建表 DDL 每实例只跑一次（旧形状里每次现连都要重跑一遍 PRAGMA 对照）。
+        self._schema_ready = False
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        con = sqlite3.connect(self.db_path, timeout=10)
-        return con
+        """本模块**唯一**的建连原语（只被 ``_shared_connection`` 调，形状锁钉这条）。
+
+        ``timeout=10`` 一字未动——那是天花板、不是无用功（天花板锁＝
+        ``tests/test_chat_timeout_floor.py::
+        test_channel_health_refactor_kept_every_timeout_ceiling``）。
+        ``check_same_thread=False``：连接跨线程复用（路由跑在线程池上），
+        与 ``SQLiteSendQueue._shared_connection`` 同形状；串行化仍由 self._lock 负责。
+        """
+        return sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
+
+    def _shared_connection(self) -> sqlite3.Connection:
+        """惰性取用进程内长连接（queue 同形状；调用方须已持 self._lock）。"""
+        with self._connection_lock:
+            if self._connection is None:
+                self._connection = self._connect()
+            return self._connection
+
+    def _discard_connection(self) -> None:
+        """库级损坏/断连时句柄不可复用（queue 同形状）：丢掉，下次调用再惰性重建。"""
+        with self._connection_lock:
+            if self._connection is not None:
+                try:
+                    self._connection.close()
+                except sqlite3.Error:
+                    pass
+                self._connection = None
+
+    def close(self) -> None:
+        """显式收尾口（queue 同形状）：释放常驻连接句柄。
+
+        Windows 上打开的 sqlite 文件不可 unlink——供「实例随临时目录销毁」的调用方
+        在清理前收尾。生产走进程级单例，无人调用＝语义零改动。
+        """
+        self._discard_connection()
+
+    def _fetch_all(self, sql: str, params: tuple[Any, ...] = ()) -> list[Any]:
+        """读侧唯一通路：常驻连接 + 业务锁；sqlite3.Error 丢句柄后**原样上抛**。
+
+        上抛而不是吞：旧形状里读失败会一路冒到调用方（路由侧有
+        ``except Exception`` 兜底放行），吞掉就改判据了。
+        """
+        with self._lock:
+            try:
+                return self._shared_connection().execute(sql, params).fetchall()
+            except sqlite3.Error:
+                self._discard_connection()
+                raise
 
     def _init_schema(self) -> None:
         with self._lock:
-            con = self._connect()
+            if self._schema_ready:
+                return
+            con = self._shared_connection()
             try:
                 con.execute(
                     """
@@ -113,8 +215,10 @@ class ChannelHealthStore:
                         "ALTER TABLE channel_health ADD COLUMN cooldown_until TEXT DEFAULT ''"
                     )
                 con.commit()
-            finally:
-                con.close()
+                self._schema_ready = True
+            except sqlite3.Error:
+                self._discard_connection()
+                raise
 
     def _row(self, cur: sqlite3.Cursor, model_id: str) -> dict[str, Any] | None:
         row = cur.execute(
@@ -138,45 +242,61 @@ class ChannelHealthStore:
 
     def snapshot(self, model_id: str) -> dict[str, Any] | None:
         with self._lock:
-            con = self._connect()
             try:
-                return self._row(con.cursor(), model_id)
-            finally:
-                con.close()
+                return self._row(self._shared_connection().cursor(), model_id)
+            except sqlite3.Error:
+                self._discard_connection()
+                raise
 
     def is_available(self, model_id: str) -> bool:
-        """故障转移队列过滤：unavailable 且未到重探时间 → False。
+        """故障转移队列判据的**单候选腿**：unavailable 且未到重探时间 → False。
 
         到达重探间隔（30 分钟）放行一次：下一次真实调用/巡检若成功会自动
         恢复 ok 状态；仍失败则继续不可用并刷新探针时间。
+
+        无用功删除波（2026-10-12）：
+        ① 旧形状是「一条 8 列 ``_row`` SELECT ＋ 再补一条 ``SELECT last_probe_at``」
+        ＋每次现开连接——本腿收敂成**一条窄 SELECT**（model_id/state/last_probe_at）
+        打常驻连接，判据逐字段不变（判据真身只剩 ``_decide_available`` 一处）。
+        ② 候选队列不再逐枚调本函数——``filter_healthy_candidates`` 走
+        ``availability_map`` 的一条批查询；本函数保留给单渠道查询面
+        （控制面/管理员侧按枚问「这一路能不能走」）。
         """
-        with self._lock:
-            con = self._connect()
-            try:
-                cur = con.cursor()
-                row = self._row(cur, model_id)
-                raw = cur.execute(
-                    "SELECT last_probe_at FROM channel_health WHERE model_id = ?",
-                    (model_id,),
-                ).fetchone()
-            finally:
-                con.close()
-        if row is None or row["state"] != _UNAVAILABLE:
-            return True
-        if not raw or not raw[0]:
-            return True
-        try:
-            last = datetime.fromisoformat(str(raw[0]))
-            age = (datetime.now(timezone.utc) - last).total_seconds()
-        except ValueError:
-            return True
-        return age >= _RETRY_INTERVAL_SECONDS
+        rows = self._fetch_all(_AVAILABILITY_ONE_SQL, (model_id,))
+        row = rows[0] if rows else None
+        # 缺席行 ⇒ state=None ⇒ _decide_available 放行（与旧形状 row is None 同值）。
+        return _decide_available(
+            datetime.now(timezone.utc),
+            row[1] if row else None,
+            row[2] if row else None,
+        )
+
+    def availability_map(self, model_ids: list[str]) -> dict[str, bool]:
+        """批查询腿（无用功删除波主修项）：一条查询定全部候选的可用性。
+
+        判据与 ``is_available`` **逐字段同值**——两条腿共用 ``_decide_available``
+        这一枚真身、读同一组列（state / last_probe_at）；差别只在取行方式
+        （一条 vs 每候选一条）。实测：40 候选现连形状 P50 22.3ms → 本腿一条查询
+        P50 数十微秒。表里查不到的 model_id 一律判可用（与旧形状
+        ``row is None → True`` 同值）。
+        """
+        # 只捞 unavailable 行：不在结果里 ⇒ 要么缺席、要么 state!='unavailable'
+        # ⇒ 两条腿都判放行，无需第二趟查询。
+        blocked = {r[0]: r[1] for r in self._fetch_all(_UNAVAILABLE_ROWS_SQL, (_UNAVAILABLE,))}
+        now = datetime.now(timezone.utc)
+        result: dict[str, bool] = {}
+        for model_id in dict.fromkeys(model_ids):  # 去重保序：同 id 只判一次
+            if model_id not in blocked:
+                result[model_id] = True
+            else:
+                result[model_id] = _decide_available(now, _UNAVAILABLE, blocked[model_id])
+        return result
 
     def record_success(self, model_id: str, latency_ms: int) -> None:
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         with self._lock:
-            con = self._connect()
             try:
+                con = self._shared_connection()
                 cur = con.cursor()
                 # EWMA 平滑（v2 动态测量）：无历史平滑值时首测直取，之后
                 # ema = 0.3*最近一次 + 0.7*上次平滑；samples 只增不减。
@@ -204,8 +324,9 @@ class ChannelHealthStore:
                     (model_id, _OK, latency_ms, ema, samples + 1, now, now, now),
                 )
                 con.commit()
-            finally:
-                con.close()
+            except sqlite3.Error:
+                self._discard_connection()
+                raise
 
     def record_failure(
         self, model_id: str, error_summary: str, cooldown_seconds: float = 0.0
@@ -239,8 +360,8 @@ class ChannelHealthStore:
             cooldown_until = (now_dt + timedelta(seconds=float(cooldown_seconds))).isoformat()
         flipped = False
         with self._lock:
-            con = self._connect()
             try:
+                con = self._shared_connection()
                 cur = con.cursor()
                 row = self._row(cur, model_id)
                 fails = (row or {}).get("consecutive_fails", 0) + 1
@@ -274,23 +395,23 @@ class ChannelHealthStore:
                     ),
                 )
                 con.commit()
-            finally:
-                con.close()
+            except sqlite3.Error:
+                self._discard_connection()
+                raise
         return flipped
 
     def cooling_ids(self) -> set[str]:
-        """近期失败冷却中的渠道 id 集（cooldown_until > now）；解析失败按不在冷却。"""
+        """近期失败冷却中的渠道 id 集（cooldown_until > now）；解析失败按不在冷却。
+
+        无用功删除波（2026-10-12）：判据一字未动，只把「每次现开连接」换成常驻
+        连接上的一条查询（实测 427µs → 49µs）。
+        """
         now_dt = datetime.now(timezone.utc)
         cooling: set[str] = set()
-        with self._lock:
-            con = self._connect()
-            try:
-                rows = con.execute(
-                    "SELECT model_id, cooldown_until FROM channel_health"
-                    " WHERE cooldown_until IS NOT NULL AND cooldown_until != ''"
-                ).fetchall()
-            finally:
-                con.close()
+        rows = self._fetch_all(
+            "SELECT model_id, cooldown_until FROM channel_health"
+            " WHERE cooldown_until IS NOT NULL AND cooldown_until != ''"
+        )
         for model_id, raw in rows:
             try:
                 until = datetime.fromisoformat(str(raw))
@@ -319,15 +440,13 @@ class ChannelHealthStore:
             return count
 
     def unavailable_ids(self) -> set[str]:
-        with self._lock:
-            con = self._connect()
-            try:
-                rows = con.execute(
-                    "SELECT model_id, state FROM channel_health WHERE state = ?",
-                    (_UNAVAILABLE,),
-                ).fetchall()
-            finally:
-                con.close()
+        """state=temporarily_unavailable 的 id 集（巡检摘要用；不看重探时间）。
+
+        与批查询腿同一条 SQL 真身（``_UNAVAILABLE_ROWS_SQL``）：改前取
+        ``(model_id, state)``、改后取 ``(model_id, last_probe_at)``，WHERE 逐字未动
+        ⇒ 返回集合同一（第二列不再被本函数消费）。
+        """
+        rows = self._fetch_all(_UNAVAILABLE_ROWS_SQL, (_UNAVAILABLE,))
         return {r[0] for r in rows}
 
     def latencies(self) -> dict[str, int]:
@@ -335,16 +454,11 @@ class ChannelHealthStore:
 
         供同名模型渠道聚合时的延迟择优（prefer_fastest_channels / ModelRouter）。
         """
-        with self._lock:
-            con = self._connect()
-            try:
-                rows = con.execute(
-                    "SELECT model_id, latency_ms FROM channel_health"
-                    " WHERE state = ? AND latency_ms IS NOT NULL",
-                    (_OK,),
-                ).fetchall()
-            finally:
-                con.close()
+        rows = self._fetch_all(
+            "SELECT model_id, latency_ms FROM channel_health"
+            " WHERE state = ? AND latency_ms IS NOT NULL",
+            (_OK,),
+        )
         return {r[0]: int(r[1]) for r in rows}
 
     def ema_latencies(self) -> dict[str, int]:
@@ -353,29 +467,19 @@ class ChannelHealthStore:
         供同名模型渠道聚合的延迟择优（ModelRouter.channels_for_model）；
         比最近一次实测更抗抖动，探针与真实调用都在持续更新它。
         """
-        with self._lock:
-            con = self._connect()
-            try:
-                rows = con.execute(
-                    "SELECT model_id, ema_ms FROM channel_health"
-                    " WHERE state = ? AND ema_ms IS NOT NULL",
-                    (_OK,),
-                ).fetchall()
-            finally:
-                con.close()
+        rows = self._fetch_all(
+            "SELECT model_id, ema_ms FROM channel_health"
+            " WHERE state = ? AND ema_ms IS NOT NULL",
+            (_OK,),
+        )
         return {r[0]: int(r[1]) for r in rows}
 
     def report(self) -> list[dict[str, Any]]:
-        with self._lock:
-            con = self._connect()
-            try:
-                rows = con.execute(
-                    "SELECT model_id, state, consecutive_fails, latency_ms,"
-                    " ema_ms, samples, last_error, last_ok_at FROM channel_health"
-                    " ORDER BY state DESC, model_id"
-                ).fetchall()
-            finally:
-                con.close()
+        rows = self._fetch_all(
+            "SELECT model_id, state, consecutive_fails, latency_ms,"
+            " ema_ms, samples, last_error, last_ok_at FROM channel_health"
+            " ORDER BY state DESC, model_id"
+        )
         return [
             {
                 "model_id": r[0],
@@ -392,12 +496,13 @@ class ChannelHealthStore:
 
     def clear(self, model_id: str) -> None:
         with self._lock:
-            con = self._connect()
             try:
+                con = self._shared_connection()
                 con.execute("DELETE FROM channel_health WHERE model_id = ?", (model_id,))
                 con.commit()
-            finally:
-                con.close()
+            except sqlite3.Error:
+                self._discard_connection()
+                raise
 
 
 _GLOBAL_STORE: ChannelHealthStore | None = None
@@ -477,24 +582,49 @@ def get_channel_health_store(db_path: str = "") -> ChannelHealthStore:
     """
     global _GLOBAL_STORE
     with _GLOBAL_LOCK:
-        resolved = str(db_path) if db_path else resolve_default_db_path()
-        if _GLOBAL_STORE is None:
-            _GLOBAL_STORE = ChannelHealthStore(resolved)
-        elif _GLOBAL_STORE.db_path != resolved:
-            logger.warning(
-                "channel health store already opened at %s; "
-                "ignoring different db path %s",
-                _GLOBAL_STORE.db_path,
-                resolved,
+        store = _GLOBAL_STORE
+        if store is None:
+            _GLOBAL_STORE = ChannelHealthStore(
+                str(db_path) if db_path else resolve_default_db_path()
             )
-        return _GLOBAL_STORE
+            return _GLOBAL_STORE
+        if db_path:
+            if store.db_path != str(db_path):
+                logger.warning(
+                    "channel health store already opened at %s; "
+                    "ignoring different db path %s",
+                    store.db_path,
+                    str(db_path),
+                )
+            return store
+        # 空参 ＋ 单例已在 ⇒ 不再重算路径（无用功删除波 2026-10-12）。
+        # 依据是本函数自己的既有契约「首次调用固定库位置」：默认库位置在第一次
+        # 调用时就已钉死，此后 resolve_default_db_path() 的返回值要么被丢弃、
+        # 要么只用来打一行 warning——而 warning 的在册触发条件是「**传入**不同
+        # db_path」（见上一段 docstring 与锁
+        # tests/test_auditfix_llm_route.py::test_get_store_singleton_ignores_mismatched_path），
+        # 空参从来不在契约里。旧实现每消息 ≥4 次走进这一支、每次全重算一遍
+        # runtime_paths 落点（实测 P50 1.58ms/次、成分 runtime_data_dir() 0.91ms
+        # + Path.resolve() 0.16ms），换来的是一句永远不会打的 warning。
+        return store
 
 
 def filter_healthy_candidates(model_ids: list[str], store: ChannelHealthStore | None) -> list[str]:
-    """从故障转移候选中剔除暂不可用渠道；全被剔除时放行原列表（防全瘫）。"""
+    """从故障转移候选中剔除暂不可用渠道；全被剔除时放行原列表（防全瘫）。
+
+    无用功删除波（2026-10-12）：改前形状是「每候选调一次 ``store.is_available``
+    ⇒ 每候选现开一条 sqlite 连接」——实测 40 候选 P50 22.3ms、全库 83 候选 40.5ms，
+    全是本机往返、与网络无关。现收成 ``availability_map`` 的**一条批查询**；
+    判据真身仍只有一枚（``_decide_available``），返回列表逐元素同值
+    （锁＝``tests/test_channel_health_v2.py::test_batch_leg_equals_per_candidate_leg_field_by_field``
+    ＋同件里的连接计数形状锁）。
+    """
     if store is None or not model_ids:
         return model_ids
-    healthy = [mid for mid in model_ids if store.is_available(mid)]
+    avail = store.availability_map(model_ids)
+    # 查不到的 id 按放行（与旧形状 row is None → True 同值，也与本模块
+    # 「健康层自己出问题绝不阻塞路由」的 fail-open 哲学同调）。
+    healthy = [mid for mid in model_ids if avail.get(mid, True)]
     return healthy or model_ids
 
 
