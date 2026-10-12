@@ -458,6 +458,148 @@ def build_market_commodities() -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# 统计面板三版（2026-10-13 用户指定：A 全量 / B 精简日报 / C 去繁琐）
+# ---------------------------------------------------------------------------
+# 设计纪律（用户裁定「三个版本同意」）：
+# - **同一取数口、只换渲染层**：三版共用 _stats_rows() 逐节取数，绝不做三套算法；
+# - 三版差异只在「哪些节进卡」——A 全出、B 只留决策项、C 砍掉高噪声/低价值项；
+# - 数据一律来自官方源登记册与既有账（不出数就显式标注缺口，不编）。
+# ⚠ 本处仅为**样张视图**（固定夹具，用于版式验收）；生产取数接 metrics 侧。
+
+# 三版共享的节定义：key -> (节名, 行构造)
+def _stats_section_specs() -> list[tuple[str, str, list[dict[str, Any]]]]:
+    """节清单（顺序即优先级）；三版按 key 取子集，行内容同源。"""
+    return [
+        (
+            "traffic",
+            "会话与消息（24h）",
+            [
+                {"label": "消息总量", "value": "1,284", "delta": "+8.4%", "cls": "up",
+                 "sub": "较前一日同时段"},
+                {"label": "DAU / WAU", "value": "37 / 121", "delta": "", "cls": "flat",
+                 "sub": "去重发送者数"},
+                {"label": "群 / 私聊占比", "value": "72% / 28%", "delta": "", "cls": "flat",
+                 "sub": "按会话类型"},
+            ],
+        ),
+        (
+            "llm",
+            "LLM 用量与成本（24h）",
+            [
+                {"label": "调用 / 失败", "value": "412 / 9", "delta": "97.8% 成功", "cls": "up",
+                 "sub": "按 llm_call_records"},
+                {"label": "Token 合计", "value": "1.92M", "delta": "", "cls": "flat",
+                 "sub": "输入 1.41M / 输出 0.51M"},
+                {"label": "缓存命中", "value": "0.63M", "delta": "命中 44.7%", "cls": "up",
+                 "sub": "cache_read 计"},
+                {"label": "成本", "value": "¥ 6.84", "delta": "", "cls": "flat",
+                 "sub": "微元原语聚合取整"},
+            ],
+        ),
+        (
+            "latency",
+            "延迟与健康",
+            [
+                {"label": "端到端 P50 / P95", "value": "2.1s / 6.8s", "delta": "", "cls": "flat",
+                 "sub": "总时长（TTFT 本地不可测）"},
+                {"label": "渠道健康", "value": "3 条降级", "delta": "", "cls": "down",
+                 "sub": "aiprc-astra 连续失败 86"},
+                {"label": "发送队列", "value": "0 积压", "delta": "", "cls": "flat",
+                 "sub": "7 态分组"},
+            ],
+        ),
+        (
+            "host",
+            "主机（本机）",
+            [
+                {"label": "CPU / 内存", "value": "23% / 41%", "delta": "", "cls": "flat",
+                 "sub": "采样间隔 60s"},
+                {"label": "磁盘剩余", "value": "182 GB", "delta": "预计 96 天", "cls": "flat",
+                 "sub": "按近 7 日均速线性外推"},
+                {"label": "进程运行", "value": "2h 14m", "delta": "", "cls": "flat",
+                 "sub": "重启 0 次"},
+            ],
+        ),
+        (
+            "quality",
+            "质量与拒答",
+            [
+                {"label": "门禁拦截", "value": "58", "delta": "", "cls": "flat",
+                 "sub": "限流 21 / 安静时间 9 / 黑名单 4 …"},
+                {"label": "表情拒因 Top", "value": "gate_probability 37", "delta": "", "cls": "flat",
+                 "sub": "见「表情回应拒因」读数"},
+                {"label": "空回复 / 拒答", "value": "3 / 1", "delta": "", "cls": "flat",
+                 "sub": "error_kind 分类"},
+            ],
+        ),
+        (
+            "noise",
+            "长尾细分（低价值，默认折叠）",
+            [
+                {"label": "复访间隔分布", "value": "P50 41min", "delta": "", "cls": "flat", "sub": ""},
+                {"label": "会话存活期", "value": "P50 12min", "delta": "", "cls": "flat", "sub": ""},
+                {"label": "每模型×每用户矩阵", "value": "已折叠", "delta": "", "cls": "flat", "sub": ""},
+                {"label": "GC 暂停 / 电池", "value": "已折叠", "delta": "", "cls": "flat", "sub": ""},
+            ],
+        ),
+    ]
+
+
+# 三版各自的节选择（差异**只在这三行**）
+_STATS_VARIANTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
+    # key: (标题, 副标题, 含哪些节)
+    "stats_full": ("统计面板 · 全量", "A 版：清单里能抓到的元素全出", ("traffic", "llm", "latency", "host", "quality", "noise")),
+    "stats_daily": ("统计面板 · 精简日报", "B 版：只留一眼决策项", ("traffic", "llm", "latency")),
+    "stats_lean": ("统计面板 · 去繁琐", "C 版：砍掉高噪声与低价值项", ("traffic", "llm", "latency", "host")),
+}
+
+
+def _build_stats_card(variant_key: str) -> dict[str, Any]:
+    """三版共用装配（取数同源，只换节子集）。"""
+    title, subtitle, sections_wanted = _STATS_VARIANTS[variant_key]
+    all_specs = {key: (name, rows) for key, name, rows in _stats_section_specs()}
+    html_text = bridge.render_finance_card_html(
+        {
+            "title": title,
+            "subtitle": subtitle,
+            "badge": "只读统计",
+            "sections": [
+                {"name": all_specs[key][0], "rows": all_specs[key][1]}
+                for key in sections_wanted
+                if key in all_specs
+            ],
+            "delayed_note": (
+                "口径：成本走微元、取整只在聚合（台账 #54）；"
+                "TTFT 本地不可测（非流式），仅网关归因可回填；"
+                "缺口值显式标注，不编数。"
+            ),
+            **_COMMON_FOOTER,
+        }
+    )
+    return {
+        "html": html_text,
+        "viewport": {"width": 1160, "height": 1600},
+        "device_scale_factor": 2,
+        "wait_ms": 0,
+    }
+
+
+def build_stats_full() -> dict[str, Any]:
+    """A 版：全量（含长尾细分节）。"""
+    return _build_stats_card("stats_full")
+
+
+def build_stats_daily() -> dict[str, Any]:
+    """B 版：精简日报（会话/LLM/延迟三节）。"""
+    return _build_stats_card("stats_daily")
+
+
+def build_stats_lean() -> dict[str, Any]:
+    """C 版：去繁琐（砍掉长尾细分节）。"""
+    return _build_stats_card("stats_lean")
+
+
 def build_market_bond() -> dict[str, Any]:
     """国债收益率卡（finance 壳 · 国债形态）。"""
     html_text = bridge.render_finance_card_html(
@@ -1119,6 +1261,9 @@ CARDS: tuple[SampleCard, ...] = (
     SampleCard("universal_default_search", "universal · 未知默认 搜图", build_universal_default_search),
     SampleCard("universal_netease_music", "universal · netease 音乐", build_universal_netease_music),
     SampleCard("market_index", "market · 股指卡", build_market_index),
+    SampleCard("stats_full", "stats · 统计面板 A（全量）", build_stats_full),
+    SampleCard("stats_daily", "stats · 统计面板 B（精简日报）", build_stats_daily),
+    SampleCard("stats_lean", "stats · 统计面板 C（去繁琐）", build_stats_lean),
     SampleCard("market_commodities", "market · 大宗商品", build_market_commodities),
     SampleCard("market_bond", "market · 国债收益率", build_market_bond),
     SampleCard("market_northbound", "market · 北向资金", build_market_northbound),
