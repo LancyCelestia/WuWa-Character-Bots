@@ -2537,12 +2537,9 @@ def fetch_headlines(
     now = time.monotonic()
     with _CACHE_LOCK:
         cached = _CACHE.get(key)
-        cached_at, cached_snapshot_items = (
-            (cached[0], cached[1]) if cached is not None else (None, None)
-        )
-    if cached_at is not None and now - cached_at <= ttl:
+    if cached is not None and now - cached[0] <= ttl:
         _republish_cached_fold_account(key)
-        return list(cached_snapshot_items)[: max(1, int(max_items))]
+        return list(cached[1])[: max(1, int(max_items))]
 
     feeds = _feeds_for(key)
     if not feeds:
@@ -2571,7 +2568,8 @@ def fetch_headlines(
     pending = [future for _row, future in blocking_futures]
     collected: dict[int, list[NewsItem]] = {}
     while pending:
-        done, pending = wait(pending, timeout=_POLL_WAIT_SECONDS)
+        done, remaining = wait(pending, timeout=_POLL_WAIT_SECONDS)
+        pending = list(remaining)
         for future in done:
             payload = _outcome_or_none(future)
             if payload is None:
@@ -2583,20 +2581,22 @@ def fetch_headlines(
             break
 
     per_feed_lists: list[list[NewsItem]] = []
+
+    def _late_cb(late: Future) -> None:
+        """迟到件收口（两条腿共用同一枚具名闭包，语义与原默认参 lambda 一致：
+        ``key/generation/interleave`` 在建立时绑定、本就不是循环变量）。"""
+        _on_late_result(key, generation, interleave, late)
+
     for _row, future in blocking_futures:
-        items = collected.get(id(future))
-        if items is None:
+        got = collected.get(id(future))
+        if got is None:
             # 起跑没赶上预算 / 还没被取消就得收：交回调折回同代次，投递不丢。
-            future.add_done_callback(
-                lambda late, k=key, g=generation, il=interleave: _on_late_result(k, g, il, late)
-            )
+            future.add_done_callback(_late_cb)
             per_feed_lists.append([])
             continue
-        per_feed_lists.append(items)
+        per_feed_lists.append(got)
     for _row, future in detached_futures:
-        future.add_done_callback(
-            lambda late, k=key, g=generation, il=interleave: _on_late_result(k, g, il, late)
-        )
+        future.add_done_callback(_late_cb)
 
     merged = _merge_dedup(
         per_feed_lists, interleave=interleave, cap=_MIX_MERGE_CAP, account_out=fold_sink
