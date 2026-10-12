@@ -652,13 +652,32 @@ def test_production_surface_has_no_poison_artifact() -> None:
 
 
 def test_scanner_covers_untracked_production_files() -> None:
-    """扫描面必须含未跟踪新件——00:39 那枚飞行注毒正落在未跟踪的 config_risk.py 上。"""
-    untracked = _git_untracked_py()
-    assert len(untracked) >= 10, untracked[:5]
-    scanned = {rel_of(p) for p in production_files()}
-    missing = [p for p in untracked if p not in scanned]
-    assert not missing, f"未跟踪生产件未被扫描：{missing[:5]}"
-    assert "plugins/bot_unified_runtime/domains/core/safety_exec/config_risk.py" in scanned
+    """扫描面必须含未跟踪新件——00:39 那枚飞行注毒正落在未跟踪的 config_risk.py 上。
+
+    2026-10-13 修（既存债，非本波引入）：原判据 ``assert len(untracked) >= 10``
+    依赖「树里恰好有 ≥10 个未跟踪生产 .py」。`ed802d39`（2026-09-26「代码面收编让
+    HEAD 等于已测工作树」，678 文件 +159k 行）把未跟踪件全部收进提交后，该守卫在
+    干净树上**永不可能成立** ⇒ 门恒红，且会掩盖真回归（本波新脚本未跟踪时正是它
+    先报的）。仓库禁「折成跳过/绿」，故改为**自带夹具**：现造一个未跟踪探针 →
+    验 git 看得见、扫描面覆盖它 → 当场清掉。判据从此与树状态无关。
+    """
+    probe = REPO_ROOT / "scripts" / "_untracked_probe_poison_gate.py"
+    probe.write_text("# 本门自造未跟踪探针（用后即删）\n", encoding="utf-8")
+    try:
+        rel = probe.relative_to(REPO_ROOT).as_posix()
+        untracked = _git_untracked_py()
+        assert rel in untracked, f"自造探针未被 git 视为未跟踪：{rel}（git 判定异常）"
+        scanned = {rel_of(p) for p in production_files()}
+        missing = [p for p in untracked if p not in scanned]
+        assert not missing, f"未跟踪生产件未被扫描：{missing[:5]}"
+        assert rel in scanned, "自造未跟踪探针未被扫描面覆盖（覆盖判据失效）"
+    finally:
+        probe.unlink(missing_ok=True)
+    scanned_after = {rel_of(p) for p in production_files()}
+    assert (
+        "plugins/bot_unified_runtime/domains/core/safety_exec/config_risk.py"
+        in scanned_after
+    )
 
 
 def _git_untracked_py(root: Path = REPO_ROOT) -> list[str]:
