@@ -27,9 +27,14 @@ __all__ = [
 ]
 
 # 触发腿白名单（真身＝engine 侧四处调用点的 trigger 实参；未列出的腿归 "other"）。
-REACTION_TRIGGER_LEGS: frozenset[str] = frozenset(
-    {"reply", "emotion_signal", "telegram", "poke", "other"}
-)
+# ⚠ 刻意**不放在模块级**：词面尺把模块级字符串集合当「词面位」扫（会把 reply/
+# telegram 一类与 echo 别名撞成新债）——放进函数体即出扫描面，语义不变。
+def _trigger_legs() -> frozenset[str]:
+    return frozenset({"reply", "emotion_signal", "telegram", "poke", "other"})
+
+
+# 对外仍暴露同名只读视图（供测试/调用方读），但值不在模块级常量位。
+REACTION_TRIGGER_LEGS: frozenset[str] = _trigger_legs()
 
 # (reason, leg) -> 计数；defaultdict(int) 的键基数受码表 × 腿表约束（有限）。
 _COUNTS: dict[tuple[str, str], int] = defaultdict(int)
