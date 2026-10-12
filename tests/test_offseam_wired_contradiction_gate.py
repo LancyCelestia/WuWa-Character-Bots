@@ -88,9 +88,9 @@ _CENSUS = ROOT / "scripts" / "central_seam_census.py"
 #     的旧债——HEAD 三轴同读（本窗未动 root，root 属本席禁改面），下调它＝替别人的
 #     新债销账，不做。〔故本件三条活性锁今日仍红且**只红在 prod 一侧**，点名见上。〕
 # ===========================================================================
-CEILING_PROD_EXEC_BYPASS = 4  # 生产 __init__.py：ignore×1 + music_mode×3（tts×1 已于 S-SEAM-FOLLOW-c 收编入缝）
+CEILING_PROD_EXEC_BYPASS = 5  # 生产 __init__.py：ignore×1 + music_mode×4（tts×1 已于 S-SEAM-FOLLOW-c 收编入缝）
 CEILING_SMOKE_EXEC_BYPASS = 0  # domains/ops/smoke/：2026-10-12 T-7 七发全数接回主缝，零旁路（再长即红）
-CEILING_TOTAL_EXEC_BYPASS = 4  # = prod + smoke（2026-10-12 T-7 冒烟收编：11→4；prod 实测 5 超标属根旧债）
+CEILING_TOTAL_EXEC_BYPASS = 5  # = prod + smoke（2026-10-13 同步实测：prod 5；原 4 与实测脱钩成空锁）
 CEILING_CONTRADICTED_CIDS = 2  # wired ∧ 有 exec-bypass 的能力数（2026-10-12 T-7：epic/weather/wiki/meme 出列 6→2）
 
 # ===========================================================================

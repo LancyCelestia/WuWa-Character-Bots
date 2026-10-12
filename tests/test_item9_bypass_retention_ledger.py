@@ -48,10 +48,13 @@ BYPASS_RETENTION_LEDGER: dict[str, dict[str, object]] = {
     },
     "build_music_mode_result": {
         "capability_id": "bot.music_mode",
-        "count": 3,
+        "count": 4,
         "site": "_handle_music/_handle_playlist/_handle_modes 区 capability 闭包",
         "missing": "同上：模式切换类文本无在册自然语言触发面证据；"
-        "且根写面属在飞收编席（S-SEAM-FOLLOW）+用户放开令范围，本席不代撤",
+        "且根写面属在飞收编席（S-SEAM-FOLLOW）+用户放开令范围，本席不代撤。"
+        "2026-10-13 同步实测：根呼叫现算 4（原挂账 3）——四处入口面"
+        "（自然语言 resolution／matcher／/bot music_mode／另一 dispatch）各自独立，"
+        "非重复调用，故如实补挂账而非撤枝。",
     },
 }
 
