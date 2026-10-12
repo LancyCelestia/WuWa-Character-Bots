@@ -57,6 +57,11 @@ BYPASS_RETENTION_LEDGER: dict[str, dict[str, object]] = {
 
 # 非旁路申明（如实挂账，不进撤除门）：ops/smoke 控制台与烟测脚本的直呼是
 # 开发工具对真身的离线探针，不是用户可达的能力入口——不在第 9 项旁路条款射程。
+# 2026-10-12 T-7 常令②b 席更新（现算 `central_seam_census --json`：smoke 侧 exec-bypass 7→0）：
+# 这两处的成品已改交 `orchestrated_command(capability_id, 成品, config)` 喂层 2 主缝，
+# 尺记 seam-feed ⇒ 连"旁路"都不再成立（直呼 builder 仍在，但成品当场交出中央件，
+# 与根 tts 臂 `__init__.py::_poke_voice_pair` 同形）。本常数留作**历史点名**：
+# 谁把它们改回裸直呼，`test_offseam_wired_contradiction_gate` 的冒烟上限 0 当场拦。
 HARNESS_DIRECT_CALLS_OUT_OF_SCOPE = (
     "domains/ops/smoke/console_chat.py::_route_for_message",
     "domains/ops/smoke/route_demo.py::_capability_smoke",

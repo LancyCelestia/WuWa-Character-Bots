@@ -137,6 +137,9 @@ from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
     build_weather_capability,
     is_weather_command,
 )
+from plugins.bot_unified_runtime.runtime.capability_protocols import (
+    orchestrated_command,
+)
 
 _BANNER = """\
 ============================================================
@@ -459,25 +462,55 @@ def _route_for_message(
     chat_capability: Any,
     stores: dict[str, Any],
 ) -> tuple[Any, str]:
-    """按消息内容选择能力：点歌 → bot.music；带链接 → bot.content；否则聊天。"""
+    """按消息内容选择能力：点歌 → bot.music；带链接 → bot.content；否则聊天。
+
+    T-7 中央调度收编（2026-10-12）：装配好的成品一律交层 1→层 2 主缝
+    ``orchestrated_command(capability_id, 成品, config)`` 再交给 ``pipeline.handle``——
+    与生产根汇缝（``_run_capability_through_pipeline`` / ``_run_simple_capability`` 体内
+    同一枚中央出口）同口径，控制台不再另开一条"未经层 2 治理"的免检路。
+    在册 command/prepared 形 ⇒ 真走中央 invoker（权限/健康/降级/审计）；未在册或形态
+    不在 ``_KNOWN_ADAPTERS`` ⇒ 中央件原样透传执行体，行为逐字现状。执行体本身不重建
+    （prepared 形只登记信封、命令形优先用调用方交来的成品），故装配期注入不丢。
+    """
     if config.bot_music_enabled and is_music_command(text):
-        return build_music_capability(config), "bot.music"
+        return (
+            orchestrated_command("bot.music", build_music_capability(config), config),
+            "bot.music",
+        )
     if getattr(config, "bot_today_history_enabled", True) and is_today_history_command(text):
-        return build_today_history_capability(config), "bot.today_history"
+        return (
+            orchestrated_command(
+                "bot.today_history", build_today_history_capability(config), config
+            ),
+            "bot.today_history",
+        )
     if getattr(config, "bot_wiki_enabled", True) and is_wiki_command(text):
-        return build_wiki_capability(config), "bot.wiki"
+        return (
+            orchestrated_command("bot.wiki", build_wiki_capability(config), config),
+            "bot.wiki",
+        )
     if getattr(config, "bot_epic_enabled", True) and is_epic_command(text):
-        return build_epic_capability(config), "bot.epic"
+        return (
+            orchestrated_command("bot.epic", build_epic_capability(config), config),
+            "bot.epic",
+        )
     if getattr(config, "bot_weather_query_enabled", True) and is_weather_command(text):
-        return build_weather_capability(config), "bot.weather"
+        return (
+            orchestrated_command("bot.weather", build_weather_capability(config), config),
+            "bot.weather",
+        )
     if config.bot_content_parse_enabled and extract_http_urls(text):
         return (
-            build_content_capability(
+            orchestrated_command(
+                "bot.content",
+                build_content_capability(
+                    config,
+                    parse_history_store=stores.get("parse_history"),
+                    downloader=stores.get("downloader"),
+                    render_backend=stores.get("render_backend"),
+                    card_dir=config.bot_card_render_dir,
+                ),
                 config,
-                parse_history_store=stores.get("parse_history"),
-                downloader=stores.get("downloader"),
-                render_backend=stores.get("render_backend"),
-                card_dir=config.bot_card_render_dir,
             ),
             "bot.content",
         )

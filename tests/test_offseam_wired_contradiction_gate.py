@@ -5,10 +5,11 @@
 则这条能力不得被叙述为「完全收编进中央调度层」。**
 
 S92 的核心发现（`.superpowers/sdd/2026-09-24-central-dispatch/SEAT-S92.md`）：
-普查 ``scripts/central_seam_census.py --json`` 的 ``counts.offseam_sites``（数**调用点**，今值 25）
-与 ``counts.states.offseam``（数**能力 id**，因 ``_state()`` 让 wired/generic 前置短路，结构性=0）
-**不矛盾**——单位不同且判据不同。真正该执法的是 ``violations_second_route``（数「wired ∧ exec-bypass」
-的直呼点，今值 11）：这条形**已被尺计算、尺也备了 ``--fail-on-violations``（退出码 3），
+普查 ``scripts/central_seam_census.py --json`` 的 ``counts.offseam_sites``（数**调用点**，落账日
+值 25，现算以尺为准）与 ``counts.states.offseam``（数**能力 id**，因 ``_state()`` 让
+wired/generic 前置短路，结构性=0）**不矛盾**——单位不同且判据不同。真正该执法的是
+``violations_second_route``（数「wired ∧ exec-bypass」的直呼点，落账日值 11，现算以尺为准）：
+这条形**已被尺计算、尺也备了 ``--fail-on-violations``（退出码 3），
 但没有任何测试消费它**＝在册未执法（AGENTS 反复点名的最易误报成「已通电」的一形）。
 
 本件把它升成常驻执法，三把尺各管一段、可单独归因（照 ``test_five_entry_seam_lock`` /
@@ -72,11 +73,25 @@ _CENSUS = ROOT / "scripts" / "central_seam_census.py"
 #   `_poke_voice_pair` 的 `build_tts_capability(cfg)` 直呼改交 `orchestrated_command("bot.tts", …)`
 #   喂层 2 主缝（尺 SEAM_FUNCS 认 pos-0 字面量＝缝站点；builder 调用在缝喂父链下＝seam-feed 豁免，
 #   非旁路非第二通路），其余 4 发（ignore×1 + music_mode×3）原样。smoke 7 发与 bot.tts 无关不动。
+# 2026-10-12 T-7 常令②b 席（HEAD fae4a1c，中央调度收编·冒烟旁腿接回主缝）：现算实测
+#   prod/smoke/total/cids = **5 / 0 / 5 / 2**（`scripts/central_seam_census.py --json`，尺 v0.3.1-beta1，
+#   两独立取数口 roster/violations 各算一遍同为 5/0，互证一致；生成物三件
+#   `docs/auto-facts.md`/`docs/command-catalog.md`/`tests/render_hashes.json` 本窗前后同读＝未脏）。
+#   smoke 侧 7 发全部消失＝`domains/ops/smoke/console_chat.py::_route_for_message` 与
+#   `domains/ops/smoke/route_demo.py::_capability_smoke` 的直呼成品改交
+#   `orchestrated_command(capability_id, 成品, config)` 喂层 2 主缝（尺记 seam-feed，
+#   全树 seam-feed 点 1→8；原桶 `counts.offseam_sites` 一字不减 27→27，旁路账
+#   `offseam_bypass_sites` 26→19，正证据 `seam_sites` 62→74，`states` 零位移）。
+#   ⇒ 本席按家规**只下调上限**：smoke 7→0（此后再长一发冒烟直呼当场红＝替代锁），
+#     total 11→4、承载 cid 6→2。**prod 上限一字不动（仍 4）**：真树现算 5＞4 是根
+#     `__init__.py` 那第四发 `build_music_mode_result`（:8531/:8685/:9732/:11307 + ignore :11023）
+#     的旧债——HEAD 三轴同读（本窗未动 root，root 属本席禁改面），下调它＝替别人的
+#     新债销账，不做。〔故本件三条活性锁今日仍红且**只红在 prod 一侧**，点名见上。〕
 # ===========================================================================
 CEILING_PROD_EXEC_BYPASS = 4  # 生产 __init__.py：ignore×1 + music_mode×3（tts×1 已于 S-SEAM-FOLLOW-c 收编入缝）
-CEILING_SMOKE_EXEC_BYPASS = 7  # domains/ops/smoke/：epic2 weather2 wiki2 meme1
-CEILING_TOTAL_EXEC_BYPASS = 11  # = prod + smoke（2026-09-27 S-SEAM-FOLLOW-c 收编：12→11）
-CEILING_CONTRADICTED_CIDS = 6  # wired ∧ 有 exec-bypass 的能力数（2026-09-27 S-SEAM-FOLLOW-c：bot.tts 出列 7→6）
+CEILING_SMOKE_EXEC_BYPASS = 0  # domains/ops/smoke/：2026-10-12 T-7 七发全数接回主缝，零旁路（再长即红）
+CEILING_TOTAL_EXEC_BYPASS = 4  # = prod + smoke（2026-10-12 T-7 冒烟收编：11→4；prod 实测 5 超标属根旧债）
+CEILING_CONTRADICTED_CIDS = 2  # wired ∧ 有 exec-bypass 的能力数（2026-10-12 T-7：epic/weather/wiki/meme 出列 6→2）
 
 # ===========================================================================
 # 反缩面地板（现算值留足下浮余量；只有扫描面塌了才可能触底，正常债务收编不会）。

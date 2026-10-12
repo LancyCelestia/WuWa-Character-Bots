@@ -53,6 +53,9 @@ from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
     build_weather_capability,
 )
 from plugins.bot_unified_runtime.runtime import RuntimePipeline
+from plugins.bot_unified_runtime.runtime.capability_protocols import (
+    orchestrated_command,
+)
 
 # (分组, 问法)
 DEMO_MATRIX: list[tuple[str, str]] = [
@@ -179,12 +182,46 @@ def _capability_smoke(config: Config) -> int:
     queue = InMemorySendQueue(audit_logger=audit)
     pipeline = RuntimePipeline(send_queue=queue, audit_logger=audit)
 
-    cases: list[tuple[str, str, Any]] = [
-        ("天气", "/天气 杭州", build_weather_capability(config)),
-        ("维基", "/wiki 鸣潮", build_wiki_capability(config)),
-        ("Epic", "/epic", build_epic_capability(config)),
-        ("历史上的今天", "/历史上的今天", build_today_history_capability(config)),
-        ("点歌", "/点歌 晴天", build_music_capability(config, default_mode="card")),
+    # T-7 中央调度收编（2026-10-12）：六条演示链的成品一律交层 1→层 2 主缝
+    # ``orchestrated_command(capability_id, 成品, config)``，并把**在册 id**交给层 1
+    # （旧写法传 ``f"bot.{label}"``＝用中文标签拼出的在册表外 id，门禁/幂等/审计按
+    # 一枚不存在的键记账，与生产根汇缝不同口径）。未在册形态由中央件原样透传，
+    # 行为现状；在册 command/prepared 形自此与生产一样经权限/健康/降级/审计。
+    cases: list[tuple[str, str, str, Any]] = [
+        (
+            "天气",
+            "bot.weather",
+            "/天气 杭州",
+            orchestrated_command("bot.weather", build_weather_capability(config), config),
+        ),
+        (
+            "维基",
+            "bot.wiki",
+            "/wiki 鸣潮",
+            orchestrated_command("bot.wiki", build_wiki_capability(config), config),
+        ),
+        (
+            "Epic",
+            "bot.epic",
+            "/epic",
+            orchestrated_command("bot.epic", build_epic_capability(config), config),
+        ),
+        (
+            "历史上的今天",
+            "bot.today_history",
+            "/历史上的今天",
+            orchestrated_command(
+                "bot.today_history", build_today_history_capability(config), config
+            ),
+        ),
+        (
+            "点歌",
+            "bot.music",
+            "/点歌 晴天",
+            orchestrated_command(
+                "bot.music", build_music_capability(config, default_mode="card"), config
+            ),
+        ),
     ]
     # 表情包走本地 meme-generator-rs；未启用时按配置执行。
     # model_copy 不重跑校验器 ⇒ 名册在册的 "data/memes" 会按 CWD（＝仓库根）在源码树里
@@ -195,10 +232,17 @@ def _capability_smoke(config: Config) -> int:
             update={"bot_meme_api_enabled": True, "bot_meme_api_output_dir": "data/memes"}
         )
     )
-    cases.append(("表情包", "/表情 nokia 无内鬼继续交易", build_meme_capability(meme_config)))
+    cases.append(
+        (
+            "表情包",
+            "bot.meme",
+            "/表情 nokia 无内鬼继续交易",
+            orchestrated_command("bot.meme", build_meme_capability(meme_config), meme_config),
+        )
+    )
 
     failures = 0
-    for label, text, capability in cases:
+    for label, capability_id, text, capability in cases:
         message = IncomingMessage(
             platform="qq",
             adapter="onebot.v11",
@@ -210,7 +254,7 @@ def _capability_smoke(config: Config) -> int:
             raw_segments=[{"type": "text", "data": {"text": text}}],
             mentions_bot=True,
         )
-        receipt = pipeline.handle(message, capability, capability_id=f"bot.{label}")
+        receipt = pipeline.handle(message, capability, capability_id=capability_id)
         preview = "".join(receipt.public_message.splitlines()[:2])[:70]
         if queue.sent_requests:
             content = queue.sent_requests[-1].content.text_fallback

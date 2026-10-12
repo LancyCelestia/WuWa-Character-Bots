@@ -428,18 +428,41 @@ def _offseam_only_row_payload(*, with_central_twin: bool = True) -> dict[str, An
 
 
 def test_poison_export_reverts_to_raw_bucket_is_red() -> None:
-    """注毒 P1（导出改回未过滤原桶）：判债桶 == 原桶 ⇒ 与尺自己的「非缝外」语义打架 ⇒ 〔①〕必红。"""
+    """注毒 P1（导出改回未过滤原桶）：判债桶 == 原桶 ⇒ 与尺自己的「非缝外」语义打架 ⇒ 〔①〕必红。
+
+    ⚠ 毒形修于 2026-10-12 T-7 席（HEAD fae4a1c）：原写法只翻**一行**、却把
+    ``counts.offseam_bypass_sites`` 整体对齐到 ``counts.offseam_sites``——那只有在
+    "全树恰 1 枚喂缝点、且承载它的那一行 raw 恰 1 枚"时才让〔④〕两桶计数自证恰好沉默
+    （和＝26+1=27 的算术巧合）。真树喂缝点升到 8 枚/4 行后巧合破功：毒被〔①〕〔④〕
+    同时抓 ⇒ 「归因唯一」两条断言反红，而尺与源码一个字节都没错。
+    改判 faithful 形＝**整批**把导出腿改回原桶（正是「量具把 offseam_sites 改成过滤桶
+    的反面」那一形，见尺 docstring v0.3.1），此时〔④〕天然一致、只有〔①〕该响。
+    杀伤力只增不减：喂缝点从 1 枚涨到任意多枚都照样被抓，不再靠巧合。
+    """
     real = _real()
     cid = _victim_feed_cid(real)
-    raw = copy.deepcopy(real["roster"][cid]["offseam_sites"])
+    feed_cids = sorted(
+        row_cid
+        for row_cid, row in real["roster"].items()
+        if any(
+            str(site.get("tag") or "") == SEAM_FEED_TAG
+            for site in (row.get("offseam_sites") or [])
+        )
+    )
+    assert feed_cids, "真树里没有 seam-feed 行＝注毒失去落点，先查扫描面活性再动判据，别删本腿"
     poisoned = copy.deepcopy(real)
-    poisoned["roster"][cid]["offseam_bypass_sites"] = raw  # 未过滤原桶
+    for row in poisoned["roster"].values():
+        row["offseam_bypass_sites"] = copy.deepcopy(row.get("offseam_sites") or [])  # 未过滤原桶
     poisoned["counts"]["offseam_bypass_sites"] = poisoned["counts"]["offseam_sites"]
 
     problems = _problems(poisoned)
     assert any("[导出与语义打架]" in p and cid in p for p in problems), (
         f"导出改回未过滤原桶竟没被抓＝本锁空转：{problems}"
     )
+    # 每一枚带喂缝点的行都该被点名（只抓第一枚＝毒形还挂在"巧合"上）
+    assert all(
+        any("[导出与语义打架]" in p and fed in p for p in problems) for fed in feed_cids
+    ), f"部分带 seam-feed 的行没被〔①〕点名＝导出腿的锁有盲区：{feed_cids} → {problems}"
     # 归因唯一：本毒只该动导出侧，三态腿与两桶计数自证都不该顺手响。
     assert not any("[三态说谎]" in p for p in problems), problems
     assert not any("[内部自洽]" in p for p in problems), problems
