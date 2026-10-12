@@ -82,10 +82,15 @@ T4 渠道能力标签保险 / T5 PX-1 MCP 模块保险 / S141 ANN 代际可用�
                    kb_dir（``kb_paths``）、相减、出格脱敏
                    （``plain_text.redact_local_secrets``）全走真身，本文件零集合运算；
                    尺按文件路径直载（插件根 ``__init__.py`` 是重件，第 11 项同一纪律），
-                   临时登记的 sys.modules 条目在 finally 逐枚摘除。状态口径照第 7 项
-                   napcat＝**报警不是阻断**（本项不产 FAIL、exit code 恒不变）：
-                   无缺口=PASS；有缺口=SKIP 并逐域点名；库根未配置／尺装不上／
-                   语料读不到主题=SKIP（读不到＝没有证据，绝不据此宣称没有缺口）。
+                   临时登记的 sys.modules 条目在 finally 逐枚摘除。装载走**唯一那枚**
+                   中央出口 ``_plugin_module_by_path``，一枚一枚装、逐枚记失败（🔴 禁第二
+                   装载真身；``scripts/knowledge_progress.py`` 复用的也是同一枚）。状态口径
+                   照第 7 项 napcat＝**报警不是阻断**（本项不产 FAIL、exit code 恒不变）：
+                   无缺口=PASS；有缺口=SKIP 并逐域点名；库根未配置／语料读不到主题=SKIP
+                   （环境里本来就没有＝没有可查对象）；🔴 **尺装不上／被装载的那枚符号
+                   不见了 = UNDECIDABLE(RULER_ABSENT:枚名)**——「我量不了」绝不许写成 SKIP
+                   蒙进「全绿，可以重启」（2026-10-12 实证：``plain_text`` 在没预导插件根的
+                   进程里必 ImportError，本格曾因此把「没有尺」报成「没有缺口」）。
                    接线由 ``tests/test_kb_domain_anchor_central_wiring.py`` 拿 AST
                    调用图锁住（含注毒自证：摘掉调用即红）。
   15. entry_chain 入口 import 链（重启到底「起不起得来」，SDD M2-44 的落地腿）：调
@@ -173,7 +178,7 @@ T4 渠道能力标签保险 / T5 PX-1 MCP 模块保险 / S141 ANN 代际可用�
   venv python scripts/pre_restart_check.py --project-root <path>   # 供测试注入
   venv python scripts/pre_restart_check.py --only entry_chain      # 单格判定（restart-check 门）
 
-.exit code：0 = 无 FAIL（PASS/SKIP 均放行）；1 = 有 FAIL；2 = 命令行本身不合法
+.exit code：0 = 无 FAIL（PASS/SKIP/UNDECIDABLE 均放行，报警不阻断）；1 = 有 FAIL；2 = 命令行本身不合法
 （``--only`` 给了不在册的 id——静默少跑一项比红更糟）。
 ``--only`` 交出的表格/JSON 与退出码**只由被点名的在册项决定**：旁格红（ruff、文档账）
 不该把「起得来」这条路一起堵死，反之亦然；全部项仍会跑一遍（注册面那几行的形状由
@@ -208,6 +213,12 @@ NAPCAT_PORT = 3001  # 仅回落值：现行端点集合由 ONEBOT_WS_URLS 决定
 PASS = "PASS"
 SKIP = "SKIP"
 FAIL = "FAIL"
+#: 第三态（GREEN／RED／UNDECIDABLE(码) 里那一枚）在**格级**的形态：尺量不了＝没有证据，
+#: 既不许折成 PASS，也不许和「环境里本来就没有」的 SKIP 混在同一个读数里（2026-10-12
+#: 第 14 项假无缺口根修新增；执法＝``tests/test_pre_restart_check.py`` 的三态两腿）。
+#: 🔴 只给「量不了」用：报警仍不阻断（exit 码只看 FAIL，照第 7 项 napcat 口径），
+#: 但 ``render_table`` 汇总必须单独点名它、有它在场时不许说「全绿」。
+UNDECIDABLE = "UNDECIDABLE"
 
 DEFAULT_MEDIA_DB = "data/media_archive.sqlite3"
 DEFAULT_KB_DB = "data/knowledge_embeddings.sqlite3"
@@ -239,7 +250,11 @@ TTS_ENABLED_TRUTHY = {"true", "1", "yes", "on"}
 
 @dataclass(frozen=True)
 class CheckResult:
-    """单项检查结果：PASS/SKIP/FAIL + 一句话 + FAIL 时的修复指引."""
+    """单项检查结果：PASS/SKIP/FAIL/UNDECIDABLE + 一句话 + FAIL 时的修复指引.
+
+    UNDECIDABLE 只给「尺量不了」那一形（读数必须带 ``码``，如 ``RULER_ABSENT:枚名``）；
+    它不改变退出码，但汇总必须单独点名它——见 ``render_table`` 与第 14 项根修注释。
+    """
 
     id: str
     name: str
@@ -1760,10 +1775,30 @@ KB_CORPUS_SCAN_LIMIT: int | None = None
 
 @dataclass(frozen=True)
 class KbDomainAnchorRuler:
-    """缺口尺的取用面（全只读）：``modules`` 为 None 时 ``unavailable`` 说明为什么。"""
+    """缺口尺的取用面（全只读）：``modules`` 为 None 时 ``unavailable`` 说明为什么.
+
+    ``failed``＝2026-10-12「假无缺口」根修新增的**逐枚失败名册** ``(枚名, 原因)``：旧形态
+    一枚装不上就整只作废，且只报最后撞上的那一枚，读数里看不见全貌。原因只留异常类型名与
+    枚名——异常原文常带绝对路径，而这条分支手上没有脱敏件可用（沿原纪律，一字不放宽）。
+    """
 
     modules: dict[str, Any] | None
     unavailable: str
+    #: 逐枚装载失败 ``(枚名, 原因)``，按 ``_RULER_MODULES`` 在册序；空＝全装齐。
+    failed: tuple[tuple[str, str], ...] = ()
+
+
+#: 装载失败归因面：🔴 与旧版**同一条闭集**（一枚不加一枚不减）。集外的异常一律向上抛，
+#: 把真事故折成「量不了」的读数＝换了个方向的假绿。
+_RULER_LOAD_ERRORS: tuple[type[BaseException], ...] = (
+    ImportError, OSError, ValueError, TypeError, AttributeError, RuntimeError,
+)
+#: 「装上了」不止「文件 exec 成功」：本项真消费的符号必须在场。任一枚被摘掉＝装载失败
+#: 走 UNDECIDABLE，绝不让 AttributeError 冒到体检面上（run_all 不兜异常，一冒＝整份预检炸）。
+_RULER_REQUIRED_ATTRS: dict[str, tuple[str, ...]] = {
+    "kb_wiki": ("kb_paths", "iter_corpus_topic_names", "topics_without_local_domain_anchor"),
+    "plain_text": ("redact_local_secrets",),
+}
 
 
 def _plugin_module_by_path(rel_dotted: str, code_root: Path, registered: list[str]) -> Any:
@@ -1810,27 +1845,46 @@ def _pad_vector_knowledge(registered: list[str]) -> None:
 
 @contextmanager
 def kb_domain_anchor_ruler(code_root: Path) -> Iterator[KbDomainAnchorRuler]:
-    """直载本项的四枚真身；装不上给 ``modules=None`` ＋原因（调用方 SKIP，本项永不 FAIL）.
+    """逐枚走**同一枚中央装载口**直载在册四枚；任一枚装不上给 ``modules=None``＋逐枚账.
+
+    装载口真身只有 ``_plugin_module_by_path``／``_pad_vector_knowledge`` 这两枚（本文件内
+    定义、``scripts/knowledge_progress.py`` 复用的也是它们）——本函数一字未改它们，只是把
+    「一次 ImportError 就整只作废且只报最后撞上的那枚」改成「逐枚试装、逐枚留账」。
+
+    2026-10-12「假无缺口」根修：``plain_text`` 在没预导插件根的进程里必 ImportError
+    （它模块级那句绝对 import 会拉起插件根 ``__init__``，根又反向 import campus，campus
+    回头要它——循环吃了半只的它自己），旧读数于是退化成 SKIP；调用方现在按 ``failed``
+    落 **UNDECIDABLE(RULER_ABSENT:枚名)**，「我量不了」不再冒充「没有缺口」。
 
     退出时按「本席登记过的名字」逐枚摘除 sys.modules 条目。已交出去的模块对象仍被
     调用方引用着（摘登记只是不让别的 import 路径事后拿到这一枚隔离孪生）。
     """
     registered: list[str] = []
-    ruler: dict[str, Any] | None = None
-    unavailable = ""
-    alias = _RULER_STUB_MODULE  # 装载还没开跑就出事时，指认到哑模块那一格
+    modules: dict[str, Any] = {}
+    failed: list[tuple[str, str]] = []
     try:
-        if f"{_PLUGIN_PKG}.{_RULER_KB_WIKI_REL}" not in sys.modules:
-            _pad_vector_knowledge(registered)
-        modules: dict[str, Any] = {}
-        for alias, rel_dotted in _RULER_MODULES:
-            modules[alias] = _plugin_module_by_path(rel_dotted, code_root, registered)
-        ruler = modules
-    except (ImportError, OSError, ValueError, TypeError, AttributeError, RuntimeError) as exc:
-        # 只报异常类型与名册末段名：异常原文常带绝对路径，而这条分支手里没有脱敏件
-        unavailable = f"{type(exc).__name__}：{alias} 这一枚装不上"
-    try:
-        yield KbDomainAnchorRuler(ruler, unavailable)
+        try:
+            if f"{_PLUGIN_PKG}.{_RULER_KB_WIKI_REL}" not in sys.modules:
+                _pad_vector_knowledge(registered)
+        except _RULER_LOAD_ERRORS as exc:  # 哑模块垫不上＝整面尺无从架起，点名到哑模块那一格
+            failed.append((_RULER_STUB_MODULE.rsplit(".", 1)[-1], type(exc).__name__))
+        if not failed:
+            for alias, rel_dotted in _RULER_MODULES:
+                try:
+                    module = _plugin_module_by_path(rel_dotted, code_root, registered)
+                except _RULER_LOAD_ERRORS as exc:
+                    # 只报异常类型与名册末段名：异常原文常带绝对路径，这条分支手里没有脱敏件
+                    failed.append((alias, type(exc).__name__))
+                    continue
+                absent = tuple(
+                    attr for attr in _RULER_REQUIRED_ATTRS.get(alias, ()) if not hasattr(module, attr)
+                )
+                if absent:
+                    failed.append((alias, "SymbolAbsent:" + "|".join(absent)))
+                    continue
+                modules[alias] = module
+        unavailable = "；".join(f"{name} 这一枚装不上（{reason}）" for name, reason in failed)
+        yield KbDomainAnchorRuler(modules if not failed else None, unavailable, tuple(failed))
     finally:
         for dotted in reversed(registered):
             sys.modules.pop(dotted, None)
@@ -1844,9 +1898,11 @@ def check_kb_domain_anchor(env: dict[str, str], project_root: Path) -> CheckResu
         ``kb_paths`` 现算（本处不复制 ``crawl_output/knowledge_base`` 那段相对路径）；
       · 缺口＝真身 ``topics_without_local_domain_anchor(topics)``，锚点侧默认取
         ``question_intent.DOMAIN_TERMS`` 本体；
-      · 状态＝无缺口 PASS ／ 有缺口 SKIP 逐域点名 ／ 无从判定 SKIP（库根未配置、
-        尺装不上、语料一行主题都读不到——真身 docstring 口径「读不到＝没有证据」，
-        不许据此宣称没有缺口）。**本项不产 FAIL**（第 7 项「提示不阻断」形态）。
+      · 状态＝无缺口 PASS ／ 有缺口 SKIP 逐域点名 ／ 环境里没有可查对象（库根未配置、
+        语料一行主题都读不到）SKIP ／ 🔴 **尺装不上＝UNDECIDABLE(RULER_ABSENT:枚名)**。
+        后两形都是「没有证据」，但**不是一个读数**：SKIP 说的是「这里本来没东西可查」，
+        UNDECIDABLE 说的是「我这把尺没架起来」——把后者折进前者＝体检面把「我量不了」
+        报成「没问题」（2026-10-12 实证的假无缺口）。**本项不产 FAIL**（第 7 项「提示不阻断」形态）。
     尺是**代码**不是部署数据：``--project-root`` 只换数据侧，源码根在假项目根里
     找不到尺文件时回落到本脚本所在仓库根（与第 11 项 declaration_root 同一处置）。
     读数出格前整句过真身 ``redact_local_secrets``，不漏盘符路径。
@@ -1865,11 +1921,20 @@ def check_kb_domain_anchor(env: dict[str, str], project_root: Path) -> CheckResu
     ).is_file() else PROJECT_ROOT
     with kb_domain_anchor_ruler(code_root) as access:
         if access.modules is None:
+            alias, reason = access.failed[0] if access.failed else ("kb_wiki", "未点名")
             return CheckResult(
-                cid, name, SKIP,
-                f"缺口尺装载不出来（{access.unavailable}）——本项无从判定，诚实跳过不假绿；"
-                "判据真身见 plugins/bot_unified_runtime/domains/location/knowledge/"
-                "kb_wiki.py::topics_without_local_domain_anchor",
+                cid, name, UNDECIDABLE,
+                f"UNDECIDABLE(RULER_ABSENT:{alias})：缺口尺这一枚 {alias} 在本进程里"
+                f"装不出来（{reason}；逐枚账 {dict(access.failed)}）——没有尺＝没有证据：本项既不"
+                "判缺口，**更不据此宣称「没有缺口／全绿」**。判据真身见 plugins/bot_unified_runtime"
+                "/domains/location/knowledge/kb_wiki.py::topics_without_local_domain_anchor",
+                "这条读数不是「过」：本格照第 7 项 napcat 口径不阻断重启（exit 码只看 FAIL），"
+                "所以它必须被读。装不上多半是这一枚在**没预导插件根**的进程里直跑——plain_text "
+                "与插件根 __init__ 互为循环 import（根 import campus、campus 回头 import 它），"
+                "全量体检／pytest 两侧都有预导态即装得上；装载口只准用中央那枚 "
+                "_plugin_module_by_path（禁在这里造第二真身）。",
+                {"verdict": UNDECIDABLE, "code": f"RULER_ABSENT:{alias}",
+                 "failed": [[name_, reason_] for name_, reason_ in access.failed], "gaps": None},
             )
         kb_wiki = access.modules["kb_wiki"]
         # 绑定名与真身函数同名：接线锁按调用节点的末段名认这条腿（别名会让它隐身）
@@ -3328,10 +3393,26 @@ def render_table(results: list[CheckResult]) -> str:
             lines.append(f"  [{r.id}] {r.fix_hint}")
     n_fail = len(fails)
     n_skip = sum(1 for r in results if r.status == SKIP)
-    n_pass = len(results) - n_fail - n_skip
+    undecidable_rows = [r for r in results if r.status == UNDECIDABLE]
+    n_undecidable = len(undecidable_rows)
+    n_pass = len(results) - n_fail - n_skip - n_undecidable
     lines.append("")
-    verdict = "全绿，可以重启（先 SnowLuma 后 bot.py）" if n_fail == 0 else "存在 FAIL 项，先修再重启"
-    lines.append(f"汇总: PASS {n_pass} / SKIP {n_skip} / FAIL {n_fail} → {verdict}")
+    if n_undecidable:
+        # 🔴 「量不了」绝不并进「全绿」：旧汇总在 n_fail==0 时一律说「全绿，可以重启」，
+        # 一把装不出来的尺就这么蒙过了那一行（第 14 项假无缺口的读数面形态）。
+        named = "、".join(f"{r.id}" for r in undecidable_rows)
+        verdict = (
+            f"UNDECIDABLE x{n_undecidable}（点名：{named}）＝这些格**这一轮量不了**，"
+            "不是「没问题」，更不代表其余面绿——逐格看码再决定"
+        )
+    elif n_fail == 0:
+        verdict = "全绿，可以重启（先 SnowLuma 后 bot.py）"
+    else:
+        verdict = "存在 FAIL 项，先修再重启"
+    lines.append(
+        f"汇总: PASS {n_pass} / SKIP {n_skip} / UNDECIDABLE {n_undecidable} / FAIL {n_fail}"
+        f" → {verdict}"
+    )
     return "\n".join(lines)
 
 

@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import sqlite3
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -363,7 +365,17 @@ def test_main_exit_code_and_json_structure(monkeypatch: pytest.MonkeyPatch, tmp_
     # 字面量清单，每长一项就要来跟一次账；改为 declared_item_ids()（= docstring
     # 编号清单派生）后，正确加项零跟随成本，文档与代码漂移则当场红。
     assert [r["id"] for r in payload["results"]] == prc.declared_item_ids()
-    assert all(r["status"] in (PASS, SKIP, FAIL) for r in payload["results"])
+    # 状态词汇表 2026-10-12 由三值扩到四值（第四态 UNDECIDABLE＝「尺量不了」）。放宽这条腿
+    # 同批配的替代锁在下面三行：第四态只准带码出场、只准点名在册格、且这一轮唯一的产出者
+    # 还是第 14 项——它不许变成「说不清就往里扔」的新筐（第 14 项假无缺口根修）。
+    assert all(r["status"] in (PASS, SKIP, FAIL, prc.UNDECIDABLE) for r in payload["results"])
+    declared_ids = set(prc.declared_item_ids())
+    for row in payload["results"]:
+        if row["status"] == prc.UNDECIDABLE:
+            assert row["message"].startswith("UNDECIDABLE(") and ":" in row["message"], row
+            assert row["details"].get("verdict") == prc.UNDECIDABLE, row
+            assert row["id"] == "kb_domain_anchor", f"第四态扩面未经登记：{row['id']}"
+            assert row["id"] in declared_ids, row
 
     # 注入一个 FAIL（ruff 挂）→ exit 1，且 JSON 里能定位到 FAIL 项与修复指引
     def ruff_fail(args, cwd, timeout=600):
@@ -1770,4 +1782,112 @@ def test_enforcement_port_lock_is_not_evergreen(tmp_path: Path, monkeypatch: pyt
     assert "RULER_PARAM_MISSING" in line, line
     assert details["flag_declared"] is False and details["ruler_rc"] == 2, details
     assert source_path.read_bytes() == before, "注毒过程中尺的真身被改动——立即停手排查"
+
+
+# ---------------------------------------------------------------------------
+# 14. kb_domain_anchor：尺装不上＝UNDECIDABLE(码)，绝不许冒充「没有缺口」（2026-10-12 根修）
+# ---------------------------------------------------------------------------
+# 复现的缺陷：中央出口一次直载在册四枚，``plain_text`` 在**没预导插件根**的进程里必
+# ImportError（它模块级的绝对 import 拉起插件根 ``__init__``，根再 import campus，campus
+# 回头 from plain_text import redact_local_secrets——循环吃到半只的自己）。旧读数把这一形
+# 折成 SKIP，而汇总在 n_fail==0 时一律说「全绿，可以重启」＝体检面把「我量不了」报成
+# 「没问题」。下面三腿分别钉：装载失败→第四态、被装载的符号被摘→同样第四态（且不许抛
+# AttributeError 炸掉整份预检）、汇总行→第四态单独点名且不许说全绿。
+# 🔴 两腿都**不换装载口**：一腿让真身 ``_plugin_module_by_path`` 对着一个真缺文件的根去装，
+# 一腿只摘它装回来的那枚符号——换掉装载口的注毒证不出「中央出口自己怎么读数」。
+
+DRIVE_PATH_RE = re.compile(r"[A-Za-z]:[\\/]")
+
+
+def _ruler_dotted(alias: str) -> str:
+    """在册枚名 → 它在 sys.modules 上的绝对名（名册与包名都从真身现推，本件不写死路径）."""
+    rel = dict(prc._RULER_MODULES)[alias]
+    return f"{prc._PLUGIN_PKG}.{rel}"
+
+
+def _bare_project(tmp_path: Path) -> Path:
+    """假项目根（make_project 已备好 .env 的 BOT_KB_WIKI_ROOT），且只在册 kb_wiki 那一枚文件.
+
+    ``check_kb_domain_anchor`` 选源码根的判据就是「kb_wiki 那枚在不在被测根上」，摆上它
+    ⇒ 装载口真的对着这个根去找其余各枚（其余各枚在这里就是不在）。
+    """
+    root = make_project(tmp_path)
+    victim = root.joinpath("plugins", "bot_unified_runtime", *prc._RULER_KB_WIKI_REL.split(".")).with_suffix(".py")
+    victim.parent.mkdir(parents=True, exist_ok=True)
+    victim.write_text("# 假根占位件：只让它**在场**（本腿不消费它的任何符号）\n", encoding="utf-8")
+    return root
+
+
+def _ask_the_grid(root: Path) -> prc.CheckResult:
+    """问一次读数；异常冒头＝本件 FAILED（不是 ERROR）——run_all 不兜异常，一冒整份预检炸."""
+    try:
+        return prc.check_kb_domain_anchor(prc.load_env(root), root)
+    # 判据要的就是「任何异常都不许逃出体检格」：冒头即判本件红（FAILED），不许退化成 ERROR。
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(
+            f"装载失败被折成异常抛给体检面（{type(exc).__name__}: {exc}）——"
+            "本项要求三态读数 UNDECIDABLE(码)，读数不许靠崩掉来表态"
+        )
+
+
+def test_ruler_load_failure_reports_undecidable_not_skip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _bare_project(tmp_path)
+    # 模拟「独立直跑」的进程形态：这一枚今天就是没被预导过（真身装载口于是走文件路径去装，
+    # 而假根上没有那文件 ⇒ 真装不上）。用 delitem 而不是换装载口，判据面全程是真的。
+    monkeypatch.delitem(sys.modules, _ruler_dotted("plain_text"), raising=False)
+
+    result = _ask_the_grid(root)
+    assert result.status == prc.UNDECIDABLE, (
+        f"尺装不上却报 {result.status}＝「我量不了」又被写成读数：{result.message}"
+    )
+    assert result.status not in (PASS, SKIP, FAIL)
+    assert result.message.startswith("UNDECIDABLE(RULER_ABSENT:"), result.message
+    assert result.details.get("verdict") == prc.UNDECIDABLE, result.details
+    assert str(result.details.get("code", "")).startswith("RULER_ABSENT:"), result.details
+    failed_aliases = {name for name, _ in result.details.get("failed", ())}
+    assert "plain_text" in failed_aliases, f"逐枚失败名册没点到真装不上的那枚：{failed_aliases}"
+    assert "全部有本地域锚点" not in result.message, "装不上却在宣称无缺口＝假无缺口复发"
+    assert result.status != FAIL, "本项口径＝报警不阻断，第四态不许顺手变成阻断"
+    # 这条分支手上没有脱敏件（plain_text 正是装不上那一枚）⇒ 读数必须**天生**不含盘符路径
+    for field_name in ("message", "fix_hint"):
+        text = getattr(result, field_name)
+        assert not DRIVE_PATH_RE.search(text), f"{field_name} 漏出盘符路径（无脱敏件的分支不许带路径）：{text}"
+
+
+def test_removed_symbol_of_loaded_module_reports_undecidable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """摘掉**被装载回来的那枚符号**（redact_local_secrets）⇒ 同一形第四态，绝不 AttributeError."""
+    root = make_project(tmp_path)  # 假根没有 kb_wiki 文件 ⇒ 源码根回落真仓库，其余各枚装得上
+    real_loader = prc._plugin_module_by_path
+    plain_text_rel = dict(prc._RULER_MODULES)["plain_text"]
+
+    def hollowed(rel_dotted: str, code_root: Path, registered: list[str]) -> types.ModuleType:
+        if rel_dotted == plain_text_rel:
+            return types.ModuleType("hollowed_by_test")  # 装上了，但它没有那枚符号
+        return real_loader(rel_dotted, code_root, registered)
+
+    monkeypatch.setattr(prc, "_plugin_module_by_path", hollowed)
+    result = _ask_the_grid(root)
+    assert result.status == prc.UNDECIDABLE, (
+        f"符号被摘却报 {result.status}＝「装上了个空壳」被当成量到了：{result.message}"
+    )
+    assert result.details.get("code") == "RULER_ABSENT:plain_text", result.details
+    assert any(
+        "SymbolAbsent:redact_local_secrets" in reason for _name, reason in result.details.get("failed", ())
+    ), result.details
+
+
+def test_summary_names_undecidable_and_never_calls_it_green() -> None:
+    """汇总行本身：第四态单独计数、单独点名，且它在场时那句「全绿，可以重启」必须闭嘴."""
+    rows = [
+        prc.CheckResult("alpha", "甲格", PASS, "真验到了"),
+        prc.CheckResult("bravo", "乙格", SKIP, "环境里本来就没有"),
+        prc.CheckResult("kb_domain_anchor", "丙格", prc.UNDECIDABLE, "UNDECIDABLE(RULER_ABSENT:plain_text）"),
+    ]
+    tail = prc.render_table(rows).splitlines()[-1]
+    assert "PASS 1 / SKIP 1 / UNDECIDABLE 1 / FAIL 0" in tail, tail
+    assert "kb_domain_anchor" in tail, f"量不了的格没被点名：{tail}"
+    assert "全绿" not in tail, f"有格量不了却仍在说全绿＝假无缺口的读数面：{tail}"
+    # 反空转：四值之外的状态不许被折进 PASS 计数（旧算式 len-n_fail-n_skip 正会这么干）
+    only_undecidable = prc.render_table([rows[2]]).splitlines()[-1]
+    assert "PASS 0" in only_undecidable, only_undecidable
 
