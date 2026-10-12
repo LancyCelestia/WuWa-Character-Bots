@@ -578,7 +578,10 @@ def test_default_transport_passes_every_url_through_the_ssrf_guard(
 
     def fake_http_get_json(url: str, **kwargs: Any) -> Any:
         seen.append(url)
-        assert kwargs.get("verify_ssl") is False  # nmc.cn 证书链不完整（nmc_weather.py:119 同口径）
+        # S-FIX-WXSSL M1（2026-09-27）：nmc.cn「证书链不完整」旧说法经 runtime venv
+        # 实测证伪并撤销，缺省链路必须走证书验证（与 nmc_weather.py:128-132 同口径，
+        # 行为锁见 tests/test_emergency_nmc_tls_verification.py）。
+        assert kwargs.get("verify_ssl", True) is True
         return payload
 
     guard = GuardSpy()

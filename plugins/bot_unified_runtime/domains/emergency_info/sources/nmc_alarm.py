@@ -429,7 +429,10 @@ def fetch_nmc_station_alarm(
         url = build_nmc_rest_weather_url(stationid, timestamp_ms=timestamp_ms)
     except UnsafeIdentifier as exc:
         return failed_outcome(SOURCE_ID, f"unsafe_stationid:{exc}")
-    doc = resolve_document(url, fetch=fetch, timeout=timeout, proxy=proxy, verify_ssl=False, retry=retry)
+    # S-FIX-WXSSL M1（2026-09-27）同口径：nmc.cn「证书链不完整」旧说法经 runtime
+    # venv 实测证伪并撤销 ⇒ 缺省走证书验证，绝不传 verify_ssl=False（裸 TLS 可被
+    # MITM 伪造预警正文原样进群聊）。锁：tests/test_emergency_nmc_tls_verification.py。
+    doc = resolve_document(url, fetch=fetch, timeout=timeout, proxy=proxy, retry=retry)
     if not doc.ok:
         return failed_outcome(SOURCE_ID, doc.failure, attempts=doc.attempts)
     return parse_nmc_station_alarm(doc.payload, stationid=stationid)
