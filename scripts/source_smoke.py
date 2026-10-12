@@ -45,7 +45,9 @@ _UA = {
 
 
 def _load_registry():
-    from plugins.bot_unified_runtime.domains.core.contracts import official_sources as src
+    from plugins.bot_unified_runtime.domains.core.contracts import (
+        official_sources as src,
+    )
 
     return src
 
