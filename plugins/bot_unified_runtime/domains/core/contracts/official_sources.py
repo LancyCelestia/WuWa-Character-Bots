@@ -107,13 +107,19 @@ OFFICIAL_SOURCES: tuple[SourceSpec, ...] = (
         value="指数全成分股涨跌幅分布",
         tolerance="横截面同日口径；成分表变动按 10 分钟缓存",
         legs=(
-            _e("东方财富", "datacenter-web…/RPT_INDEX_COMPONENT＋quoteColumns=f2,f3", True),
-            _e("中证指数", "csindex.com.cn/csindex-home/indexInfo/index-basic-info/{code}", False,
-               note="首页口载荷 0 字节；XLS 镜像 403，需另寻官方口"),
-            _e("上海证券交易所", "query.sse.com.cn/commonQuery.do（须 Referer）", True,
-               note="已实测 200，但覆盖为沪市统计口径，非成分表"),
+            _e("东方财富", "datacenter-web…/RPT_INDEX_COMPONENT＋quoteColumns=f2,f3", True,
+               note="唯一可直接出数的腿（分页 500/页）"),
+            _e("中证指数", "oss-ch.csindex.com.cn/…/autofile/cons/{code}cons.xls", False,
+               note="2026-10-13 实测 200／67KB，**真成分表**（含「成份券代码」表头＋中兴通讯/TCL科技等真名）；"
+                    "但为 OLE2 二进制 XLS，venv 无 xlrd、openpyxl 按后缀拒收 ⇒ **可下载不可轻解析**，"
+                    "引依赖或自写 BIFF 解析器代价过大（ponytail）；补此腿须先裁决是否引 xlrd"),
+            _e("上海证券交易所", "query.sse.com.cn/commonQuery.do?sqlId=…GPLB_GP_…", False,
+               note="2026-10-13 实测 200／58KB JSON（A_STOCK_CODE 可抽），但 total=2520 ⇒ **全市场股票列表，非成分表**，"
+                    "口径不符，不构成该值独立腿"),
+            _e("新浪财经", "vip.stock.finance.sina.com.cn/corp/go.php/vII_NewestComponent/indexid/000300.phtml", False,
+               note="2026-10-13 实测 200／32KB（GBK），但**分页仅 40 条**，远不足 300 成分 ⇒ 不构成完整腿"),
         ),
-        note="⚠ 现仅东财一腿可出成分涨跌；上交所腿是统计口径（不能直接当成分源）",
+        note="⚠ 现仅东财一腿可出数 ⇒ 按三源硬门**该值不得出卡**；三条候选腿的实测结论已写明，勿重复试同批端点",
     ),
     SourceSpec(
         value="汇率中间价",
@@ -130,18 +136,23 @@ OFFICIAL_SOURCES: tuple[SourceSpec, ...] = (
         tolerance="只比成交额口径；⚠ 净买入 2024-08 起停披露",
         legs=(
             _e("东方财富", "datacenter-web…/RPT_MUTUAL_DEAL_HISTORY", True),
-            _e("香港交易所", "hkex.com.hk（官网）", False, note="实测 403，需凭据"),
+            _e("香港交易所", "hkex.com.hk/Mutual-Market/Stock-Connect（sc_lang=zh-HK）", False,
+               note="2026-10-13 实测：**页面 200／400KB 可达**（真「滬港通及深港通」页），"
+                    "但为 HTML 呈现页、无稳定机读口（JSON 口 getequityquote 403）⇒ "
+                    "须做页面解析或改走官方月报；未接解析 ⇒ 尚不计为可用腿"),
         ),
-        note="净买入结构性停披 ⇒ 该维结构性受限",
+        note="净买入结构性停披 ⇒ 该维结构性受限；成交额口径仍差 1 条腿",
+        structurally_capped=True,
     ),
     SourceSpec(
         value="宏观 CPI / PMI",
         tolerance="同比口径；季度/月度对齐发布期",
         legs=(
             _e("东方财富", "datacenter-web…/RPT_ECONOMY_CPI / RPT_ECONOMY_PMI", True),
-            _e("国家统计局", "data.stats.gov.cn/easyquery.htm（须 Referer）", False,
-               note="实测 403"),
-            _e("世界银行", "api.worldbank.org/v2/…", True, note="年度口径"),
+            _e("国家统计局", "data.stats.gov.cn/easyquery.htm（须 Referer/会话）", False,
+               note="2026-10-13 实测：主页 200，但 easyquery 数据口带 Referer 仍 **403** "
+                    "⇒ 官方第二腿需另寻入口（如 stat 年报/公报页）"),
+            _e("世界银行", "api.worldbank.org/v2/…", True, note="年度口径，非月频"),
         ),
     ),
     SourceSpec(
