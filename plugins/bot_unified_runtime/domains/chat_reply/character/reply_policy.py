@@ -1357,8 +1357,21 @@ def build_reply_policy_preset_result(
     # 现在两枚中央常量都写（叠加在不在都不放错人），判定仍只吃 `resolve_roles` 的产物，
     # 不在本处新建第二套角色判据。
     if ROLE_ADMIN not in roles and ROLE_SUPER_ADMIN not in roles:
+        # Q-02 文案统一（tests/test_user_copy_unification_gate.py 主门）：管理员门禁话术
+        # **只从池里出**。旧硬编句「只有管理员才能替别人设定回复策略。」是 Q-02 在册禁形
+        # （`__init__.py` 那一族属禁碰域豁免，本处不是）；池真身＝
+        # `capabilities/user_copy.py::ADMIN_GATE_TEMPLATES`（纯常量模块、零依赖，惰性 import
+        # 与 `_preset_result` 里那枚 `contracts` 同形，不改本件模块级 import 图）。
+        import random
+
+        from plugins.bot_unified_runtime.domains.chat_reply.capabilities.user_copy import (
+            ADMIN_GATE_TEMPLATES,
+        )
+
         return _preset_result(
-            request_id, "只有管理员才能替别人设定回复策略。", tags=("denied",)
+            request_id,
+            random.choice(ADMIN_GATE_TEMPLATES).format(action="替别人设定回复策略"),
+            tags=("denied",),
         )
     if len(parts) < 2:
         return _preset_result(request_id, PRESET_USAGE_TEXT, tags=("no_target",))

@@ -1392,7 +1392,7 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测全部渠道；参�
 - 配置变量：BOT_MUSIC_MODE；BOT_MUSIC_CANDIDATES_ENABLED；BOT_MUSIC_CANDIDATES_LIMIT；BOT_MUSIC_CANDIDATES_TTL_SECONDS
 - 可复制示例：点歌 晴天｜点歌 2｜点歌模式 卡片+语音
 - 关联回归测试：tests/test_music_capability_analytics_v2.py；tests/test_music_candidates_card.py；tests/test_music_charts_real_sources_v2.py
-- 总览：【点歌】搜索并发送歌曲：/bot music <歌名>｜/bot music <编号>｜/bot music_mode <部件组合>｜中文同义：/bot 点歌｜/bot 点歌模式
+- 总览：【点歌】搜索并发送歌曲：点歌 <歌名>｜点歌 <编号>｜点歌模式 <部件组合>｜中文同义：/bot 点歌｜/bot 点歌模式
 - 标题：【点歌】搜索并发送歌曲
 
 ### 教程
@@ -1521,7 +1521,7 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测全部渠道；参�
 - 网络依赖：需要联网
 - 可复制示例：天气 上海｜天气 河北-大城｜支持区县 浙江
 - 关联回归测试：tests/test_weather_alerts_b10.py；tests/test_weather_nmc_retry_nmcflix.py
-- 总览：【天气】查询城市/区县天气：/bot weather <城市>｜/bot districts <省>｜中文同义：/bot 天气｜/bot 支持区县
+- 总览：【天气】查询城市/区县天气：天气 <城市>｜支持区县 <省>｜中文同义：/bot 天气｜/bot 支持区县
 - 标题：【天气】查询城市与区县天气
 
 ### 教程
@@ -1854,7 +1854,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 - 失败兜底：区分「独立页缺失/列表缺失/网络失败」的文本提示
 - 配置变量：BOT_WIKI_LANG；BOT_WIKI_ENTRY_PAGES
 - 可复制示例：维基 量子力学｜维基 鸣潮守岸人
-- 总览：【维基】查通用百科（MediaWiki）：/bot wiki <词条>｜中文同义：/bot 维基｜/bot 百科
+- 总览：【维基】查通用百科（MediaWiki）：维基 <词条>｜中文同义：/bot 维基｜/bot 百科
 - 标题：【维基】查询百科词条
 
 ### 教程

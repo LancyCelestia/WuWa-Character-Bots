@@ -296,24 +296,26 @@ def chain_branches() -> list[dict]:
 
 
 def help_entry_aliases() -> dict[str, tuple[str, ...]]:
-    """``echo._HELP_ENTRIES`` 的 topic→aliases（用户实际打得出那串词）。"""
+    """``echo._HELP_ENTRIES`` 的 topic→aliases（用户实际打得出那串词）。
+
+    取数口＝生成物同一条**静态求值**面（``scripts/command_catalog`` 只读 AST，不 import
+    插件包）：F-13 乙案批 3 把 9 个 topic 的 ``aliases`` 列收成在册纯投影
+    （``nickname_verbs_for`` / ``host_state_trigger_words`` / ``media_archive_trigger_words``），
+    本件原先自走的 AST 走查求不出 Call 节点 ⇒ 那 9 个 topic 恒取空、被误判成「主题与条目
+    脱钩」。本件不另写一份求值逻辑（那就是第二事实源），只吃生成器已审的那一份。
+    """
+    from scripts.command_catalog import ECHO_SOURCE, _entries
+
+    assert ECHO_SOURCE == ECHO_FILE, "取数口与生成物指向的真身不是同一枚 echo.py"
+
     out: dict[str, tuple[str, ...]] = {}
-    for node in ast.walk(_parse(ECHO_FILE)):
-        if not isinstance(node, ast.Dict):
+    for entry in _entries():
+        topic = str(entry.get("topic") or "")
+        if not topic:
             continue
-        keys = [_string(k) for k in node.keys]
-        if "topic" not in keys or "admin_only" not in keys:
-            continue
-        values = dict(zip(keys, node.values))
-        topic = _string(values["topic"])
-        alias_node = values.get("aliases")
-        aliases = tuple(
-            _string(element)
-            for element in (alias_node.elts if isinstance(alias_node, (ast.Tuple, ast.List)) else ())
-            if _string(element)
+        out[topic] = tuple(
+            str(alias) for alias in (entry.get("aliases") or ()) if str(alias)
         )
-        if topic:
-            out[topic] = aliases
     return out
 
 

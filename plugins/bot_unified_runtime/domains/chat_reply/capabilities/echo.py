@@ -432,9 +432,9 @@ def _help_index_body(*, page: int, is_admin: bool) -> str:
     def _index_line(entry: HelpEntry) -> str:
         index = str(entry["index"])
         topic = str(entry["topic"])
-        if "help " in index or "bot " in index and "/" in index:
-            # 指令型条目已带完整用法，不重复堆叠引导。
-            return index
+        face = index.split("｜", 1)[0]  # 判据只看命令面：别形尾巴自带 /bot 与斜杠
+        if "help " in face or "bot " in face and "/" in face:
+            return index  # 指令型条目已带完整用法，不重复堆叠引导
         return f"{index}｜详情：/bot help {topic}"
 
     for category, category_entries in _help_grouped(entries):
@@ -1519,7 +1519,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "admin_only": False,
             # 點唱/点唱（tra3 波入 music._COMMAND_RE）help 同步入册。
             "aliases": ('点歌', 'music', '點歌', '点唱', '點唱', 'song', 'diange', 'dg', 'diangemoshi', 'dgms', '點歌模式'),
-            "index": '【点歌】搜索并发送歌曲：/bot music <歌名>｜/bot music <编号>｜/bot music_mode <部件组合>｜中文同义：/bot 点歌｜/bot 点歌模式',
+            "index": '【点歌】搜索并发送歌曲：点歌 <歌名>｜点歌 <编号>｜点歌模式 <部件组合>｜中文同义：/bot 点歌｜/bot 点歌模式',
             "title_line": '【点歌】搜索并发送歌曲',
             "lines": [
                 '/bot music <歌名>：作用=按平台顺序搜索并发送；参数=歌名或关键词（必填，中英文均可；#歌名=强制按歌名搜索的转义写法）；内容=平台音乐卡片（无卡则封面图）等部件；意义=群内点播。中文同义：/bot 点歌 <歌名>。',
@@ -1610,7 +1610,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             # 天氣/查天氣/天氣預報均在 weather._WEATHER_RE（天氣預報=tra3 修活），
             # 与 META triggers_nickname 已登记词形对齐，help 解析同步。
             "aliases": ('天气', 'weather', '天气预报', '查詢天氣', '查询天气', '查天气', '天氣', '查天氣', '天氣預報', 'tianqi', 'tq', 'chatianqi', 'ctq'),
-            "index": '【天气】查询城市/区县天气：/bot weather <城市>｜/bot districts <省>｜中文同义：/bot 天气｜/bot 支持区县',
+            "index": '【天气】查询城市/区县天气：天气 <城市>｜支持区县 <省>｜中文同义：/bot 天气｜/bot 支持区县',
             "title_line": '【天气】查询城市与区县天气',
             "lines": [
                 '/bot weather <城市>：作用=查天气；参数=城市名（必填，≤20 字且要像地名；同名城市用 省-市 区分，如 浙江-杭州）；内容=当前天气＋预报卡（中国气象局 NMC 免 key，Open-Meteo 兜底）；意义=出行参考。中文同义：/bot 天气 <城市>。',
@@ -1837,7 +1837,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '维基',
             "admin_only": False,
             "aliases": ('维基', '维基百科', '維基', '維基百科', 'wiki', '百科', 'weiji', 'wjbk'),
-            "index": '【维基】查通用百科（MediaWiki）：/bot wiki <词条>｜中文同义：/bot 维基｜/bot 百科',
+            "index": '【维基】查通用百科（MediaWiki）：维基 <词条>｜中文同义：/bot 维基｜/bot 百科',
             "title_line": '【维基】查询百科词条',
             "lines": [
                 '/bot wiki <词条>：作用=查 MediaWiki 百科；参数=词条名（必填，省略回用法）；内容=词条摘要（游戏类词条自动精简）；意义=快速百科查询。中文同义：/bot 维基 <词条>｜/bot 百科 <词条>。',
