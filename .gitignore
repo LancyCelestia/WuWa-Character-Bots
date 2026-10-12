@@ -128,3 +128,8 @@ SEAT-S*.md
 # 仓库内 pytest basetemp 残留与调试 dump（规则 6；09-30 体检发现 cb-w9chk 未被罩住）
 /cb-w9chk/
 /run.txt
+
+# GraphFlow（本机知识图谱 MCP 工具）的工作缓存与输出：由工具自身随时重建，
+# 删了数秒内即复活（2026-10-13 实测）⇒ 用 ignore 收口，别再当未跟踪件反复清。
+/.graphflow-cache/
+/graphflow-out/
