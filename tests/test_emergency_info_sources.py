@@ -1028,6 +1028,7 @@ def test_items_can_only_be_built_through_the_domain_factory() -> None:
     reason=(
         "接缝锁·前提未落地：三个源件 DTO 的 `to_payload()` 全仓 0 命中（规格 §8.1 强制路径"
         "第 2 格）。装配适配器席落地后删本标记转正。"
+        "〔expiry=2026-12-24 owner=SEAT-P8-MISC〕"
     ),
 )
 def test_source_dtos_expose_the_payload_the_domain_factory_consumes() -> None:

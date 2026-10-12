@@ -126,7 +126,15 @@ class _CountingProvider:
 
     def search(self, query: str, *, max_results: int = 3) -> list[WebSearchHit]:
         self.calls.append(f"{query}:{max_results}")
-        return [WebSearchHit(title="t", snippet="s", url="https://example.com")]
+        # 命中必须过链级相关性闸门（`gate_chain_hits`）：正文带上查询实体，
+        # 否则整批被判无关 ⇒ 空手不进 600s 缓存、第二次仍会外呼（判据本身不变）。
+        return [
+            WebSearchHit(
+                title=f"{query} · 结果",
+                snippet=f"{query}：这是一条包含查询实体的示例摘要，用于通过相关性地板。",
+                url="https://example.com",
+            )
+        ]
 
 
 def test_chained_search_cache():
@@ -141,8 +149,8 @@ def test_chained_search_cache():
     chain.search("洛天依 新歌", max_results=3)
     assert fake.calls == ["洛天依 新歌:5", "洛天依 新歌:3"]
 
-    assert chain.search("别的查询") != []
-    assert fake.calls[-1] == "别的查询:3"
+    assert chain.search("另一个查询") != []
+    assert fake.calls[-1] == "另一个查询:3"
 
 
 # ---------------------------------------------------------------- P1-5 事件日志句柄

@@ -545,7 +545,7 @@ def test_r8_group_failure_keeps_text_and_skips_a19(
 
 @pytest.mark.xfail(
     strict=True,
-    reason="退役两步走的第二步（摘旧包装）等真机浸泡窗；落地时本门转绿并移除标记（G-4 可收编）",
+    reason="退役两步走的第二步（摘旧包装）等真机浸泡窗；落地时本门转绿并移除标记（G-4 可收编）〔expiry=2026-12-24 owner=SEAT-P8-MISC〕",
 )
 def test_r9_root_init_retires_legacy_wrapper_symbols() -> None:
     tree = ast.parse(_ROOT_INIT.read_text(encoding="utf-8"))

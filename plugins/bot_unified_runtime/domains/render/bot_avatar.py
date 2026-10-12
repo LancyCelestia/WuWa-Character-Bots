@@ -102,6 +102,53 @@ def avatar_dir(data_dir: str | Path) -> Path:
     return Path(data_dir) / "avatar"
 
 
+def _persona_avatar_uri(data_dir: str | Path) -> str:
+    """连接腿回源 qlogo **之前**的在册本地头像（S-FIX-PERSONA-R2 F-F）。
+
+    重启语义：`persona_override` 指向的人格在册头像文件在场时，连接钩子不得用
+    qlogo 结果覆盖卡片头像（否则切完人格、重启一次就被 qlogo 顶掉）。
+
+    取法全部走既有真身（本模块零新建读法）：
+    - 持久 override＝`InstanceSettingsManager`（`data/settings/runtime_settings_*.json`，
+      与 `/bot runtime persona switch` 同一落点）；
+    - 人格册＝`persona_profile.get_shared_registry()` 的 `resolved_avatar`。
+
+    多实例覆盖**不一致**（≥2 个不同的非空 override）⇒ 不表态：维持今天的 qlogo
+    腿，绝不在「哪个实例说了算」未定时乱钉一枚图。无覆盖 / 无人格 / 文件不在 ⇒
+    同回空串（调用方回落 qlogo）。绝不读 `get_login_info`（台账 #60★）。
+    """
+    settings_dir = Path(data_dir) / "settings"
+    if not settings_dir.is_dir():
+        return ""
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.character import (
+            persona_profile,
+        )
+        from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+            InstanceSettingsManager,
+        )
+
+        manager = InstanceSettingsManager(settings_dir)
+        overrides = {
+            str(manager.get(instance).get_persona_override() or "").strip()
+            for instance in manager.list_instances()
+        }
+        overrides.discard("")
+        if len(overrides) != 1:
+            return ""
+        record = persona_profile.get_shared_registry().get(overrides.pop())
+        if record is None:
+            return ""
+        candidate = record.resolved_avatar
+        if candidate and Path(candidate).is_file():
+            return Path(candidate).as_uri()
+    except Exception:
+        # 观感件：取不到就当没有，绝不抛进连接钩子（本处 catch-all 是刻意的 fail-open）。
+        logger.debug("persona avatar precheck failed", exc_info=True)
+        return ""
+    return ""
+
+
 def refresh_from_qq(bot_id: str, data_dir: str | Path, *, timeout: float = 8.0) -> str:
     """从 qlogo 下载 bot 头像落本地并激活；返回 file URI（失败返回 ""）。
 
@@ -110,12 +157,21 @@ def refresh_from_qq(bot_id: str, data_dir: str | Path, *, timeout: float = 8.0) 
     （``__init__._log_bot_connect`` → ``_refresh_local_bot_avatar``）取的是副作用
     （文件落盘 + 内存槽位激活），本就丢弃该返回值。
 
+    F-F（S-FIX-PERSONA-R2）：回源 qlogo **之前**先看在册本地头像（见
+    ``_persona_avatar_uri``）——命中即登记并返回，不回源、不覆盖。
+
     任意失败都不抛——头像缺失只影响观感，绝不能影响卡片渲染链路。
     """
     global _LOCAL_AVATAR_URI
     qq = str(bot_id or "").strip()
     if not qq.isdecimal():
         return ""
+    # F-F：切好的人格头像文件在场时，连接腿不得用 qlogo 结果顶掉它。
+    persona_uri = _persona_avatar_uri(data_dir)
+    if persona_uri:
+        with _LOCK:
+            _LOCAL_AVATAR_URI = persona_uri
+        return _LOCAL_AVATAR_URI
     target_dir = avatar_dir(data_dir)
     try:
         target_dir.mkdir(parents=True, exist_ok=True)

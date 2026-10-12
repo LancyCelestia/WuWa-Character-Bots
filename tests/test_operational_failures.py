@@ -1407,9 +1407,14 @@ def test_inline_text_timeout_keeps_legacy_retryable(tmp_path) -> None:
 async def test_inline_mixed_timeout_then_worker_round_never_redispatches(
     tmp_path,
 ) -> None:
-    # 事故复现（端到端）：inline 超时记账后，worker 到期轮**零再投**、行停在
-    # PARTIAL。现状 dispatched==["req-mixed-inline"]（重投成功=第二遍语音）
-    # ⇒ 本例即双发的直接 RED 判据。
+    # 事故复现（端到端）：inline 超时记账后，worker 到期轮**零再投**——这是双发
+    # 的直接 RED 判据（旧形态 dispatched==["req-mixed-inline"]＝重投成功＝用户
+    # 听第二遍语音）。
+    #
+    # 行终态（2026-09-27 QPARK 收口后）：到期轮零进展（UNKNOWN 且 confirmer
+    # 缺席 ⇒ 无可推进 PENDING part）时，`mark_partial(resumable=False)` 的休眠
+    # 终态口直接写 FAILED_FINAL（Q-G7 INV-A，见 test_queue_dormant_partial_final），
+    # 不再停在 PARTIAL；part 明细账原样保留（诚实回执）。核心判据＝**零再投**。
     audit = InMemoryAuditLogger()
     queue = SQLiteSendRequestQueue(tmp_path / "send.sqlite3", audit)
     request = _mixed_voice_request()
@@ -1432,10 +1437,13 @@ async def test_inline_mixed_timeout_then_worker_round_never_redispatches(
     now = datetime.now(timezone.utc) + timedelta(seconds=120)
     await drain_send_queue_once(queue, transport, now=now, audit_logger=audit)
 
-    assert dispatched == []
-    assert [
-        entry.send_request.request_id for entry in queue.list_partial_requests()
-    ] == [request.request_id]
+    assert dispatched == [], "到期轮绝不再投（重投＝第二遍语音）"
+    # 休眠终态口收口：行离开 PARTIAL 视图、置 FAILED_FINAL；part 明细账保留。
+    assert queue.list_partial_requests() == []
+    assert queue.safe_summary()[ReceiptState.FAILED_FINAL.value] == 1
+    progress = queue.part_progress(request.request_id)
+    assert progress is not None
+    assert sorted(progress.unknown_indexes()) == [0, 1]
 
 
 def test_llm_alert_summary_keeps_last_hop_when_hop_string_is_long() -> None:

@@ -1121,6 +1121,7 @@ def test_contradict_count_actually_lowers_the_score(tmp_path: Path) -> None:
         "又是常见人名用字 ⇒ 「我的名字是小明」落不进 attr:name 槽（identity_attribute"
         " 实测返回 ('','')），同属性改口于是永不置替。判据放宽会动生产写侧行为，"
         "归写腿席/主代理裁定，本席只把缺口钉成可见的 XPASS 而不是假装它不存在。"
+        "〔expiry=2026-12-24 owner=SEAT-P8-MISC〕"
     ),
 )
 def test_common_given_names_still_get_an_identity_slot(tmp_path: Path) -> None:

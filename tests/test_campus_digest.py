@@ -450,6 +450,10 @@ def _campus_handler_env(tmp_path: Path, **overrides):
         "build_campus_forward_capability": build_campus_forward_capability,
         # U17-FIX：handler 消费回执 BLOCK 态（is 比较）每次执行都会求值该名。
         "ReceiptState": ReceiptState,
+        # U17-FIX 追加：BLOCK 告警腿经既有台账口（`error_issue_ledger.record`）
+        # 落中央告警台账；handler 由 AST 摘取、不 import 真身，此处注入同形桩
+        # （no-op 记账；本件断言只看投递，不看台账）。
+        "error_issue_ledger": SimpleNamespace(record=lambda *a, **k: None),
     }
     env.update(overrides)
     return env

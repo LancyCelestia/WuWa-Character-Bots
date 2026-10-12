@@ -161,6 +161,7 @@ def test_search_scored_channels_are_leg_attributable(
         ">=3 门槛、也不在 CJK 滑窗内，游戏限定词又切不出版本页——真库实测"
         "「鸣潮2.0版本更新时间」top4 全是别的游戏的 2.0 页（跨游戏张冠李戴）。"
         "理想行为=回空或至少不误供他游页；修法见 S-KB-QUALITY 报告 §6 票 KQ-2。"
+        "〔expiry=2026-12-24 owner=SEAT-P8-MISC 摘牌=KQ-2 修法落地后删本标记〕"
     ),
 )
 def test_version_query_does_not_cross_games(store: SqliteVectorKnowledgeStore) -> None:

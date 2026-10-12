@@ -127,8 +127,14 @@ def test_help_to_route_gap_decreasing_ratchet() -> None:
 
 
 def test_ratchet_allows_monotonic_decrease() -> None:
-    """棘轮语义自证：存量项减少（修好一条）→ 绿；台账不动、只降不升。"""
-    shrink = set(ROUTE_TO_HELP_CEILING) - {("bot.weather", "天气预报")}
+    """棘轮语义自证：存量项减少（修好一条）→ 绿；台账不动、只降不升。
+
+    存量元素取台账自身（`next(iter(sorted(...)))`）而不是手写一枚 (cap, word)：
+    手写的那一枚一旦被修好而离开台账，本自证会静默退化成"什么都没减"（count_delta=0）
+    的假绿。判据方向（存量递减必须放行）一字未变。
+    """
+    assert ROUTE_TO_HELP_CEILING, "空台账＝本自证失去前提"
+    shrink = set(ROUTE_TO_HELP_CEILING) - {next(iter(sorted(ROUTE_TO_HELP_CEILING)))}
     new_items, count_delta = _ratchet_report(shrink, ROUTE_TO_HELP_CEILING)
     assert not new_items and count_delta < 0, "棘轮应放行存量递减（修复不被惩罚）"
 

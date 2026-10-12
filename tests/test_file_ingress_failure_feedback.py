@@ -183,11 +183,17 @@ def test_sentence_table_is_exactly_the_two_states() -> None:
     ``parser_unavailable``（那等于谎称环境缺件）。本锁的原意——"两态合并成一态
     必红"——在扩表后同样成立，故判据从"两态互不相等"升为"全表逐对不相等 +
     每态都真有一句话"，比旧写更严。
+
+    追加第四态 ``archive_expansion_limited``（S-FILESAFE / 需求 17：
+    归档容器解压前体检没过＝我方限额挡下的形态）。它既不是文件损坏（容器可能
+    完好），也不是环境缺件；单列一态，同上不许并进任何一态。全表逐对不相等 +
+    每态非空的判据对四态同样成立，故只扩集合、判据方向不动。
     """
     assert set(PARSE_STATUS_SENTENCES) == {
         "parse_failed",
         "parser_unavailable",
         "internal_parse_error",
+        "archive_expansion_limited",
     }
     sentences = list(PARSE_STATUS_SENTENCES.values())
     assert len(set(sentences)) == len(sentences), "两态共用一句＝归因被洗掉了"

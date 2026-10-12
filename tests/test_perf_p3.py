@@ -133,11 +133,19 @@ def _fake_store():
         def exists(self, md5: str) -> bool:
             return md5 in self.existing
 
-        def add(self, *, md5: str, path: str, ext: str, group_id: str | None) -> None:
+        def add(
+            self,
+            *,
+            md5: str,
+            path: str,
+            ext: str,
+            group_id: str | None,
+            **kwargs: object,
+        ) -> None:
             self.add_thread = threading.get_ident()
             self.added.append(md5)
 
-        def cleanup(self, *, max_files: int, max_age_days: int) -> None:
+        def cleanup(self, *, max_files: int, max_age_days: int, **kwargs: object) -> None:
             self.cleaned = True
 
     return FakeStore()

@@ -117,6 +117,7 @@ def test_quote_chain_markers_escaped_on_quote_path() -> None:
         "本枚继续以 strict xfail 钉『检测面今天认不下这三枚裸标记』的现状；"
         "伪造引用族标记的**消毒**侧已由 INTERNAL_MARKER_PATTERN 单源收口"
         "（S-MARKER-UNIFY-b），提前闭合边界另有摄取层 _neutralize_markers 兜底。"
+        "〔expiry=2026-12-24 owner=SEAT-P8-MISC 摘牌=检测面上移到装饰之前落地后删本标记〕"
     ),
 )
 def test_quote_chain_marker_alone_should_not_pass_unescaped() -> None:

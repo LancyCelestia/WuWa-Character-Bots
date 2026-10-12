@@ -162,8 +162,31 @@ def test_root_installs_sink_and_echo_flushes() -> None:
     ]
     assert len(installed) == 1, f"root 装配点应恰一处，现={len(installed)}"
     # 共用语音那个 sink（同一个中央告警口），不许另造第二条路。
+    # 允许两种形态：①直接装 `_push_probe_issue`；②装一枚**薄委派**包装
+    # （如 `_push_creation_patrol_issue`，只换 source_bot/capability_id 归因），
+    # 其函数体必须调用 `_push_probe_issue`——归因可变，中央告警口只有一枚。
     arg = installed[0].args[0]
-    assert isinstance(arg, ast.Name) and arg.id == "_push_probe_issue"
+    assert isinstance(arg, ast.Name)
+    sink_name = arg.id
+    if sink_name != "_push_probe_issue":
+        wrapper = next(
+            (
+                node
+                for node in ast.walk(root_tree)
+                if isinstance(node, ast.FunctionDef) and node.name == sink_name
+            ),
+            None,
+        )
+        assert wrapper is not None, f"root 未定义 sink {sink_name!r}"
+        assert any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_push_probe_issue"
+            for node in ast.walk(wrapper)
+        ), (
+            f"root 装的 sink {sink_name!r} 既不是 `_push_probe_issue`，"
+            "也未委派到它＝另造了第二条告警投递路（本仓唯一中央告警口）"
+        )
 
     echo_src = (_PLUGIN_ROOT / "domains/chat_reply/capabilities/echo.py").read_text(
         encoding="utf-8"

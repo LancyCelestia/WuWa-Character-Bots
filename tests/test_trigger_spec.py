@@ -218,7 +218,8 @@ def test_verified_trigger_hits_owner_capability(cap: str, word: str, probe: str,
         pytest.xfail(
             "现状红点（跨能力撞词台账 KNOWN_CONFLICT_WORDS 已登记这一枚 (cap, word)）。"
             "〔摘牌=这一枚 (cap, word) 从 KNOWN_CONFLICT_WORDS 逐条删掉、"
-            "上面那支 pytest.fail「红点已修复」转正之后，删掉本 pytest.xfail 分支〕 "
+            "上面那支 pytest.fail「红点已修复」转正之后，删掉本 pytest.xfail 分支〕"
+            "〔expiry=2026-12-24 owner=SEAT-P8-MISC〕 "
             f"{word!r} 同时命中 {hits}"
         )
     assert hits == [cap], f"新增跨能力冲突（未登记台账）：{word!r} 探针 {probe!r} 命中 {hits}"
@@ -246,6 +247,7 @@ def test_ascii_trigger_word_boundary(
             "现状红点（词边界台账 KNOWN_BOUNDARY_KEYS 已登记这一枚 (cap, word, side) 三元键）。"
             "〔摘牌=该三元键从 KNOWN_BOUNDARY_KEYS 删掉、对应 is_* 检测器补上"
             "_alias_hit 式词边界判定之后，删掉本 pytest.xfail 分支〕"
+            "〔expiry=2026-12-24 owner=SEAT-P8-MISC〕"
             f"{detector_name} 对胶合探针 {glued!r} 仍裸子串命中"
         )
     assert not violated, (
@@ -560,12 +562,13 @@ def test_poison_attribution_hole_is_red() -> None:
         "七格口径未定，断言无法按规格写死。"
         "〔摘牌=七格矩阵的确认口径落进规格册、本用例断言能照那口径写死之日，"
         "删掉本 skip 标记让用例真跑〕"
+        "〔expiry=2026-12-24 owner=SEAT-P8-MISC〕"
     )
 )
 def test_seven_grid_spec_coverage() -> None:
     raise AssertionError("placeholder")
 
 
-@pytest.mark.skip(reason="待 T-Spec 终确认且 PYN 拼音表落地后启用：全拼/缩写格覆盖断言")
+@pytest.mark.skip(reason="待 T-Spec 终确认且 PYN 拼音表落地后启用：全拼/缩写格覆盖断言〔expiry=2026-12-24 owner=SEAT-P8-MISC〕")
 def test_pinyin_abbreviation_grid_coverage() -> None:
     raise AssertionError("placeholder")

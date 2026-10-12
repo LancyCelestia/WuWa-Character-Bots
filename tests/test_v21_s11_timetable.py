@@ -111,7 +111,7 @@ class TestRecognize:
         provider = FakeVision(_OCR_JSON)
         draft = recognize_timetable(
             provider,
-            ["x"],
+            ["data:image/png;base64,xxx"],
             semester_start="2026-09-01",
             period_table={1: ["08:30", "09:15"], 2: ["09:25", "10:10"]},
         )

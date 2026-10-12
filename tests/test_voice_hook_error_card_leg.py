@@ -354,7 +354,7 @@ def test_leg_egress_is_issue_only_card_hook_and_bubble_stay_zero(
     )
     monkeypatch.setattr(ve, "default_invoker", lambda: invoker)
     _never_synthesize(monkeypatch)
-    pipeline = _make_pipeline(ve.build_voice_enricher(_hook_config(tmp_path)))
+    pipeline, _ = _make_pipeline(ve.build_voice_enricher(_hook_config(tmp_path)))
 
     receipt = asyncio.run(
         pipeline.handle_async(_message(), _static_capability(_chat_result()), "bot.chat")
@@ -388,7 +388,7 @@ def test_gap_hook_structural_no_card_raise_would_kill_reply(
     def raising_enricher(message: Any, decision: Any, result: Any) -> Any:
         raise boom  # 「与 image provider 同法」的字面版：把载荷交回层 1
 
-    pipeline = _make_pipeline(raising_enricher)
+    pipeline, _ = _make_pipeline(raising_enricher)
     receipt = asyncio.run(
         pipeline.handle_async(_message(), _static_capability(_chat_result()), "bot.chat")
     )

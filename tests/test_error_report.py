@@ -559,6 +559,10 @@ def test_pipeline_group_failure_receipt_silent_and_card_sent(
     pipeline = RuntimePipeline(
         send_queue=InMemorySendQueue(audit_logger=_NullAuditLogger()),
         audit_logger=_NullAuditLogger(),
+        # 群态命令门（E05 缺口一）：命令态群须在册，否则 `evaluate_policy` 直接
+        # BLOCKED（transport=policy）——本锁测的是能力失败后的回执/出卡语义，
+        # 故把 g1 显式列入白名单1，让命令照常抵达能力层。
+        group_white1=frozenset({"g1"}),
     )
 
     def failing_capability(message: IncomingMessage, decision: Any) -> Any:

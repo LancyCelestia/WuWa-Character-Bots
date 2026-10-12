@@ -286,6 +286,7 @@ def _tsv_table_texts(tsv_path: Path) -> dict[str, str]:
         "（虚至此报/力隙），未回写 .env 权威的 2 处订正。修复=收口波把 tsv 订正"
         "对齐 .env 权威（绝不可反向改 .env）；修复后本测试转 XPASS（strict 当场"
         "报错），届时移除本标记。"
+        "〔expiry=2026-12-24 owner=SEAT-P8-MISC〕"
     ),
 )
 def test_tsv_table_matches_env_authority() -> None:
@@ -314,6 +315,7 @@ def test_tsv_table_matches_env_authority() -> None:
         "9 条（混入已退役杂散件 shorekeeper_ref_01.wav）且文本为校对前旧文。"
         "修复=收口波重写粘贴块对齐权威（8 条 flac+订正后文本）；修复后转 "
         "XPASS，届时移除本标记。"
+        "〔expiry=2026-12-24 owner=SEAT-P8-MISC〕"
     ),
 )
 def test_tsv_pasteable_block_matches_env_authority() -> None:
@@ -346,6 +348,7 @@ def test_tsv_pasteable_block_matches_env_authority() -> None:
         "M-28 现状病（第二源）：refs/honami_lines_asr.tsv 同含 ASR 错词"
         "（虚至此报/虚制磁报/力隙 同词三写法）。honami 语料权威订正文不在 "
         ".env（其参考池未被 bot 消费），收口波订正 tsv 后转 XPASS，届时移除标记。"
+        "〔expiry=2026-12-24 owner=SEAT-P8-MISC〕"
     ),
 )
 def test_honami_tsv_free_of_asr_mishearings() -> None:

@@ -55,6 +55,7 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
+from plugins.bot_unified_runtime.domains.core import shared_pool as shared_pool_module
 from plugins.bot_unified_runtime.domains.ops.monitor import error_report
 from plugins.bot_unified_runtime.domains.transport.mail import mail_adapter
 from plugins.bot_unified_runtime.domains.transport.mail.mail_adapter import (
@@ -467,6 +468,19 @@ async def test_p2_onebot_retry_sleep_interruptible_by_shutdown() -> None:
 # ============================================================================
 
 
+def _drain_shared_pool() -> None:
+    """测试期收口进程级共享池（`domains/core/shared_pool`）并复位惰性单例。
+
+    产品侧刻意**不提供 shutdown**（进程存活期常驻）；这里只在测试期直接
+    ``shutdown(wait=True)`` 掉已建好的池，再把模块级单例置空，让下一次
+    ``get_shared_pool()`` 重新起新池——与上面两个收口钩子同一纪律（幂等、可重复）。
+    """
+    pool = shared_pool_module._SHARED_POOL
+    if pool is not None:
+        pool.shutdown(wait=True)
+        shared_pool_module._SHARED_POOL = None
+
+
 @pytest.fixture(autouse=True)
 def _isolate_module_pools() -> Iterator[None]:
     """测试期收口两个模块级常驻线程池。
@@ -489,11 +503,20 @@ def _isolate_module_pools() -> Iterator[None]:
     产品侧实现是正确的（atexit 收口 + ``wait=True`` 且不取消排队任务，符合
     L-12 审查口径），缺的是测试期 teardown：前置清一次挡前序文件的残留，
     后置清一次不让本文件的残留漏给下一个文件。两个收口钩子都幂等，可重复调用。
+
+    2026-10-13 补第三枚污染源：``domains/core/shared_pool``（``shared-pool_N``）
+    同为惰性单例、非 daemon worker、**刻意不提供 shutdown 语义**（进程存活期常驻），
+    由 ``search_service`` / ``news_feeds`` / ``video_understanding`` 等腿拉起；同批
+    跑过它们后本文件的 reaper 会看到 ``shared-pool_0`` ⇒ 同一「顺序飘」病复发。
+    产品侧仍正确（常驻池 + 停机宽限后强制收尾＝设计），这里只在测试期显式收口并
+    复位单例，让下一次 ``get_shared_pool()`` 重新起新池。
     """
 
+    _drain_shared_pool()
     error_report._shutdown_render_pool()
     capability_protocols._shutdown_capability_executor()
     yield
+    _drain_shared_pool()
     error_report._shutdown_render_pool()
     capability_protocols._shutdown_capability_executor()
 
