@@ -135,10 +135,16 @@ def test_finance_stocks_unlisted_redline_and_trend_svg() -> None:
 
 
 def test_affinity_private_and_group_contents() -> None:
+    """Q-05 政策（样张不点名真名）：断言**泛称身份**，不要求真名在场。
+
+    2026-10-13 修（既存债，非本波引入）：原断言要 ``"澜汐" in private`` /
+    ``"霞月" in group``，但同批 ``ed802d39`` 已按审查 Q-05 把真名从样张拿掉、
+    改角色身份泛称 ⇒ 断言与政策互斥、门恒红（A/B 已证 HEAD 轴同样红）。
+    """
     private = rcs.build_affinity_private()["html"]
-    assert "澜汐" in private and "亲近" in private
+    assert "守岸人" in private and "亲近" in private
     group = rcs.build_affinity_group()["html"]
-    assert "澜汐" in group and "霞月" in group
+    assert "守岸人" in group
 
 
 def test_affinity_dirty_normalized_no_none_leak() -> None:
