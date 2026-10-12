@@ -194,8 +194,12 @@ def _candidates(cell: str, base: str | None) -> list[tuple[str, bool]]:
                     add(built, True)
                     if base and not built.startswith(base + "/"):
                         add(f"{base}/{built}", True)
-        add(item, False)  # 规则①：token 已是全相对路径时直接采信（exists 把关）
-        add(item + ".md", False)
+        if not item.startswith("…/"):
+            # 规则①：token 已是全相对路径时直接采信（exists 把关）。
+            # ⚠ `…/` 前缀是**分类表里的简写**，不是真路径 ⇒ 不在此采信；
+            #   只有规则④（下方，须有 base）才把它展开成真前缀。
+            add(item, False)
+            add(item + ".md", False)
         if base:  # 规则⑤：裸文件名 → 节基目录补全（基目录只来自 _SECTION_BASES 表）
             bare = item if item.endswith(".md") else item + ".md"
             add(bare, True)
@@ -292,7 +296,12 @@ def load_entries(repo: Path) -> tuple[list[Entry], list[Entry], list[str], list[
         if not survivors:
             clean = head_cell.replace("`", "").strip()
             tail = disposition[:40] if disposition else basis[:40]
-            archive.append(Entry(clean.split(" ")[0], board, fid, currency, f"历史行路径不可解析（处置:{tail}）"))
+            # 归档行的路径同样要展开 `…/` 简写（分类表里的省略写法，不是真路径）；
+            # 否则生成物里留下不可解析的 `…/xxx/`（2026-10-13 AI 审查点名）。
+            arch_path = clean.split(" ")[0]
+            if arch_path.startswith("…/") and base:
+                arch_path = f"{base}/{arch_path[2:]}"
+            archive.append(Entry(arch_path, board, fid, currency, f"历史行路径不可解析（处置:{tail}）"))
             skipped.append(head_cell[:60])
             continue
         backs, plains = _row_tokens(head_cell)

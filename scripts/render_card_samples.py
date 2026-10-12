@@ -528,7 +528,7 @@ def _stats_section_specs() -> list[tuple[str, str, list[dict[str, Any]]]]:
                 {"label": "门禁拦截", "value": "58", "delta": "", "cls": "flat",
                  "sub": "限流 21 / 安静时间 9 / 黑名单 4 …"},
                 {"label": "表情拒因 Top", "value": "gate_probability 37", "delta": "", "cls": "flat",
-                 "sub": "见「表情回应拒因」读数"},
+                 "sub": "拒因码分布（本进程内计数）"},
                 {"label": "空回复 / 拒答", "value": "3 / 1", "delta": "", "cls": "flat",
                  "sub": "error_kind 分类"},
             ],

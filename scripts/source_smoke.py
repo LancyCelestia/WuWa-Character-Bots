@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re as _re
 import sys
 import time
 import urllib.error
@@ -93,7 +94,9 @@ def smoke_leg(
                 record["status"] = resp.status
                 record["bytes"] = len(body)
                 text = body.decode("utf-8", "replace")
-                hit = next((m for m in empty_markers if m in text), "")
+                # 去空格后比对：标记一律写去空格形，否则 `"data": null` 会漏判（假绿）。
+                compact = _re.sub(r"\s+", "", text)
+                hit = next((m for m in empty_markers if m in compact), "")
                 if hit:
                     # 200 但命中空响应标记 ⇒ 判「空响应」，不算绿（2026-10-13 实测教训）。
                     record["ok"] = False

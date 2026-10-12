@@ -886,11 +886,25 @@ def build_market_capability(
         trends = _fetch_trends(shown, timeout, budget)
         # 全成分分布（中国区五枚）：与走势同挂本命令预算，不可得即整块缺席；
         # 无渲染后端（纯文本模式）不必取数。
-        member_box = (
-            _fetch_member_box(shown, timeout, budget)
-            if getattr(render_backend, "available", False)
-            else {}
-        )
+        #
+        # 三源硬门（AGENTS 规则 12，2026-10-13）：本值维在册**仅 1 条可用腿**（东财；
+        # 中证只给成分名单、上交所是全市场列表、新浪分页仅 40 条）⇒ `ready=False`
+        # ⇒ **不得出数**。此前登记册落成却零生产消费者（在册未执法），卡面照出——
+        # 这里接上唯一执法点：未达标即整块缺席，并在 subtitle 显式标注缺口。
+        member_box: dict[str, Any] = {}
+        member_box_gap = ""
+        if getattr(render_backend, "available", False):
+            from plugins.bot_unified_runtime.domains.core.contracts import (
+                official_sources as _src_gate,
+            )
+
+            _spec = _src_gate.check_value("指数全成分股涨跌幅分布")
+            if _spec is None or not _spec.ready:
+                member_box_gap = "全成分分布未达三源硬门（仅东财 1 源）⇒ 不出图"
+            else:
+                member_box = _fetch_member_box(shown, timeout, budget)
+        if member_box_gap:
+            subtitle = f"{subtitle} · {member_box_gap}"
         # 多源交叉查验（腾讯）：best-effort，通道不可用为空串=不声明；
         # 同挂本命令预算（FIN-R1），预算尽即核验保持沉默、不声明、不造差异文案。
         from plugins.bot_unified_runtime.domains.finance.data.market_crosscheck import (

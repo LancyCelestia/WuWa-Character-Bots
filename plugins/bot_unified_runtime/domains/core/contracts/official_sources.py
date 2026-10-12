@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 __all__ = [
     "LEG_PROBES",
     "LEG_PROBE_EMPTY_MARKERS",
+    "LEG_PROBE_EMPTY_MARKERS_BY_LEG",
     "LEG_PROBE_HEADERS",
     "MIN_INDEPENDENT_SOURCES",
     "OFFICIAL_SOURCES",
@@ -130,19 +131,27 @@ OFFICIAL_SOURCES: tuple[SourceSpec, ...] = (
     ),
     SourceSpec(
         value="汇率中间价",
-        tolerance="中间价口径：同一发布时点比对，差 >0.01 即标注",
+        tolerance=(
+            "⚠ **口径分列**（2026-10-13 AI 审查后订正）：**中间价定盘只有 CFETS 一源**；"
+            "东财（USDCNH/USDCNY）与新浪（fx_susdcny）是**同日即期/离岸报价**，与定盘不是同一个量 "
+            "⇒ 只可用于「同日即期一致性核对」，**不得**拿来把中间价凑成 3 源。"
+            "卡面若报中间价，须显式标注「单源（CFETS）」；同量比对容差 >0.01 即标注"
+        ),
         legs=(
             _e("中国外汇交易中心", "chinamoney.com.cn/ags/ms/cm-u-bk-ccpr/CcprHisNew", True,
                note="2026-10-13 smoke 200/725B（真中间价历史）"),
-            _e("东方财富", "push2.eastmoney.com/api/qt/ulist.np/get（secids=133.USDCNH,119.USDCNY）", True,
-               note="2026-10-13 smoke 200/169B **有数**（该端点会瞬时断连，重试即通——smoke 已带重试）"),
-            _e("新浪财经", "hq.sinajs.cn/list=fx_susdcny（须 Referer）", True,
-               note="2026-10-13 smoke 200/222B（人民币中间价行情串）——独立于 CFETS/东财的第三腿"),
+            _e("东方财富", "push2.eastmoney.com/api/qt/ulist.np/get（secids=133.USDCNH,119.USDCNY）", False,
+               note="2026-10-13 smoke 200/169B **有数**（该端点会瞬时断连，重试即通）。"
+                    "⚠ **即期/离岸口径**，非中间价定盘 ⇒ **不计入本值维源数**（可用于同日一致性核对）"),
+            _e("新浪财经", "hq.sinajs.cn/list=fx_susdcny（须 Referer）", False,
+               note="2026-10-13 smoke 200/222B（人民币即期行情串）。"
+                    "⚠ **即期口径**，非中间价定盘 ⇒ **不计入本值维源数**（可用于同日一致性核对）"),
             _e("腾讯", "qt.gtimg.cn（外汇口：**未找到可用符号**）", False,
                note="2026-10-13 实测：`q=USDCNY` 返 `v_pv_none_match=\"1\"`＝**空响应**（HTTP 200 但零数据）"
                     "⇒ 如实降为未验。此例暴露 smoke 曾把「200 + 非空字节」误判为绿，已加空响应哨兵"),
         ),
-        note="三腿齐（CFETS 官方 / 东财 / 新浪），CFETS 为第一腿；腾讯外汇口暂无机器可调符号",
+        note="⚠ **口径诚实**：中间价定盘仅 CFETS 一源 ⇒ 该值维**未达三源硬门**（另有两条同日即期腿，"
+             "只可用于一致性核对）。卡面报中间价须标注单源；报即期则三腿齐",
     ),
     SourceSpec(
         value="互联互通成交额",
@@ -322,6 +331,12 @@ def probe_url_for(value: str, org: str) -> str:
 # 为什么要它（2026-10-13 实测教训）：smoke 原本只判「HTTP 200 且字节数 > 0」，
 # 但**端点可以 200 却零数据**——腾讯外汇口 `q=USDCNY` 返 `v_pv_none_match="1";`（21B）
 # 就被误判成绿。下列标记一旦命中，即便 200 也判「空响应」＝不算腿。
+#
+# ⚠ 两条口径（2026-10-13 AI 审查后收紧）：
+#  1) 标记一律写**去空格**形；smoke 比对前先 `re.sub(r"\s+", "", body)` —— 否则
+#     `"data": null`（带空格）会漏判成假绿。
+#  2) **不设 `<html`／`actionErrors` 一类标记**：港交所/统计局的腿本来就是 HTML
+#     页面、上交所正常响应也带 `actionErrors: []`，加进去会误伤合法腿。
 LEG_PROBE_EMPTY_MARKERS: tuple[str, ...] = (
     "v_pv_none_match",          # 腾讯：无此代码/无数据
     '"data":null',              # 东财/上交所：secid 或 sqlId 无效（上交所空壳的可靠标记）
@@ -329,10 +344,19 @@ LEG_PROBE_EMPTY_MARKERS: tuple[str, ...] = (
     "报表配置不存在",              # 东财：reportName 写错
 )
 
+#: 按腿覆写：值为该腿专属标记（缺省回落到 LEG_PROBE_EMPTY_MARKERS）。
+#: HTML 腿（港交所/统计局/中国天气网）天然含 JSON 片段与脚本，故**只挂它自己的**
+#: 空页标记，不套 JSON 标记。
+LEG_PROBE_EMPTY_MARKERS_BY_LEG: dict[tuple[str, str], tuple[str, ...]] = {
+    ("互联互通成交额", "香港交易所"): (),          # HTML 呈现页：无可判空标记，只判可达
+    ("宏观 CPI / PMI", "国家统计局"): (),          # HTML 发布页：同上
+    ("天气实况/预报/预警", "中国天气网"): (),        # 小 HTML 片段：同上
+}
+
 
 def probe_empty_markers(value: str, org: str) -> tuple[str, ...]:
-    """取该腿的空响应标记（缺省用全局表）。"""
-    return LEG_PROBE_EMPTY_MARKERS
+    """取该腿的空响应标记（按腿覆写优先，缺省全局表）。"""
+    return LEG_PROBE_EMPTY_MARKERS_BY_LEG.get((value, org), LEG_PROBE_EMPTY_MARKERS)
 
 
 def probe_headers_for(value: str, org: str) -> dict[str, str]:
