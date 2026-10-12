@@ -559,6 +559,23 @@ def _build_stats_card(variant_key: str) -> dict[str, Any]:
     """三版共用装配（取数同源，只换节子集）。"""
     title, subtitle, sections_wanted = _STATS_VARIANTS[variant_key]
     all_specs = {key: (name, rows) for key, name, rows in _stats_section_specs()}
+    # 三源硬门：缺口直接进卡脚注（**现算登记册**，不手写死值）——
+    # 卡面说的「哪些值不能出数」必须与 official_sources 真身一致。
+    gate_note = ""
+    try:
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+        from plugins.bot_unified_runtime.domains.core.contracts import (
+            official_sources as _src,
+        )
+
+        short = _src.shortfall_values()
+        if short:
+            gate_note = "三源硬门未达标（不得出数）：" + "、".join(short)
+    except Exception:  # noqa: BLE001 - 样张腿，登记册读不到就不标，绝不崩。
+        gate_note = ""
     html_text = bridge.render_finance_card_html(
         {
             "title": title,
@@ -573,6 +590,7 @@ def _build_stats_card(variant_key: str) -> dict[str, Any]:
                 "口径：成本走微元、取整只在聚合（台账 #54）；"
                 "TTFT 本地不可测（非流式），仅网关归因可回填；"
                 "缺口值显式标注，不编数。"
+                + (f" ｜ {gate_note}" if gate_note else "")
             ),
             **_COMMON_FOOTER,
         }
