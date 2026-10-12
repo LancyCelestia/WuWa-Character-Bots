@@ -18,11 +18,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 __all__ = [
+    "LEG_PROBES",
+    "LEG_PROBE_HEADERS",
+    "MIN_INDEPENDENT_SOURCES",
     "OFFICIAL_SOURCES",
     "Leg",
     "SourceSpec",
     "check_value",
     "describe_blockers",
+    "probe_headers_for",
+    "probe_url_for",
     "ready_values",
     "shortfall_values",
 ]
@@ -137,11 +142,11 @@ OFFICIAL_SOURCES: tuple[SourceSpec, ...] = (
         legs=(
             _e("东方财富", "datacenter-web…/RPT_MUTUAL_DEAL_HISTORY", True),
             _e("香港交易所", "hkex.com.hk/Mutual-Market/Stock-Connect（sc_lang=zh-HK）", False,
-               note="2026-10-13 实测：**页面 200／400KB 可达**（真「滬港通及深港通」页），"
-                    "但为 HTML 呈现页、无稳定机读口（JSON 口 getequityquote 403）⇒ "
-                    "须做页面解析或改走官方月报；未接解析 ⇒ 尚不计为可用腿"),
+               note="2026-10-13 smoke **200/400KB**（真「滬港通及深港通」页）；HTML 呈现页、无稳定机读口 ⇒ 须页面解析"),
+            _e("上海证券交易所", "query.sse.com.cn/commonQuery.do?sqlId=COMMON_SSE_SJ_HGT_ZJLX", True,
+               note="2026-10-13 smoke **200/492B JSON**（沪港通资金流口径）——独立于东财/港交所的官方第三腿"),
         ),
-        note="净买入结构性停披 ⇒ 该维结构性受限；成交额口径仍差 1 条腿",
+        note="净买入结构性停披 ⇒ 该维结构性受限；成交额口径现有 3 条独立官方腿（东财/港交所/上交所）",
         structurally_capped=True,
     ),
     SourceSpec(
@@ -149,11 +154,12 @@ OFFICIAL_SOURCES: tuple[SourceSpec, ...] = (
         tolerance="同比口径；季度/月度对齐发布期",
         legs=(
             _e("东方财富", "datacenter-web…/RPT_ECONOMY_CPI / RPT_ECONOMY_PMI", True),
-            _e("国家统计局", "data.stats.gov.cn/easyquery.htm（须 Referer/会话）", False,
-               note="2026-10-13 实测：主页 200，但 easyquery 数据口带 Referer 仍 **403** "
-                    "⇒ 官方第二腿需另寻入口（如 stat 年报/公报页）"),
+            _e("国家统计局", "stats.gov.cn/sj/zxfb/（官网发布页；easyquery API 恒 403）", True,
+               note="2026-10-13 smoke：**官网发布页 200/73KB 可达**；API 口带 Referer 仍 403 ⇒ 走页面解析。"
+                    "第三腿成立（独立于东财/世界银行）"),
             _e("世界银行", "api.worldbank.org/v2/…", True, note="年度口径，非月频"),
         ),
+        note="三腿齐：东财（月频）/ 国家统计局（官方发布页）/ 世界银行（年度口径）——口径差异须在卡面标注",
     ),
     SourceSpec(
         value="美债收益率曲线",
@@ -178,6 +184,119 @@ OFFICIAL_SOURCES: tuple[SourceSpec, ...] = (
         note="数值预报另有 GFS/IFS/ICON/GEM 四家（见源矩阵研究件）",
     ),
 )
+
+
+# ==================== 可实调探针（smoke 用） ====================
+# 登记册只答「谁提供这个值」；本表答「怎么实调它」——smoke 脚本按此发真请求。
+# 键＝(值维, 机构)，与 OFFICIAL_SOURCES 的腿一一对应；值＝可直接 GET 的完整 URL。
+# 空串/缺键 ⇒ 该腿暂无机器可调入口（如仅人工页面），smoke 会如实记为「无探针」。
+# ⚠ 探针只用于**可达性 smoke**（HTTP 码/延迟/字节数），不解析业务字段；
+#   业务解析在各能力自己的取数层，两者不混。
+LEG_PROBES: dict[tuple[str, str], str] = {
+    # —— 全球股指 ——
+    ("全球股指点位/涨跌幅", "东方财富"): (
+        "https://push2.eastmoney.com/api/qt/ulist.np/get"
+        "?secids=1.000001,100.DJIA&fields=f12,f14,f2,f3&fltt=2&invt=2"
+    ),
+    ("全球股指点位/涨跌幅", "腾讯"): "https://qt.gtimg.cn/q=sh000001,usDJI",
+    ("全球股指点位/涨跌幅", "新浪"): "https://hq.sinajs.cn/list=s_sh000001",
+    ("全球股指点位/涨跌幅", "MOEX ISS"): (
+        "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX"
+        "/securities/IMOEX.json?iss.meta=off"
+    ),
+    # —— 指数全成分 ——
+    ("指数全成分股涨跌幅分布", "东方财富"): (
+        "https://datacenter-web.eastmoney.com/api/data/v1/get"
+        "?reportName=RPT_INDEX_COMPONENT&columns=SECURITY_CODE&quoteColumns=f2,f3"
+        "&filter=(INDEX_CODE%3D%22000300%22)&pageNumber=1&pageSize=500"
+        "&source=WEB&client=WEB"
+    ),
+    ("指数全成分股涨跌幅分布", "中证指数"): (
+        "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file"
+        "/autofile/cons/000300cons.xls"
+    ),
+    ("指数全成分股涨跌幅分布", "上海证券交易所"): (
+        "https://query.sse.com.cn/commonQuery.do"
+        "?sqlId=COMMON_SSE_CP_GPJCTPZ_GPLB_GP_L&isPagination=true"
+        "&pageHelp.pageSize=5&pageHelp.pageNo=1"
+    ),
+    ("指数全成分股涨跌幅分布", "新浪财经"): (
+        "https://vip.stock.finance.sina.com.cn/corp/go.php/vII_NewestComponent"
+        "/indexid/000300.phtml"
+    ),
+    # —— 汇率中间价 ——
+    ("汇率中间价", "中国外汇交易中心"): (
+        "https://www.chinamoney.com.cn/ags/ms/cm-u-bk-ccpr/CcprHisNew"
+        "?startDate=2026-10-01&endDate=2026-10-13&currency=USD/CNY&pageSize=5"
+    ),
+    ("汇率中间价", "东方财富"): (
+        "https://push2.eastmoney.com/api/qt/ulist.np/get"
+        "?secids=133.USDCNH,119.USDCNY&fields=f12,f14,f2,f3&fltt=2&invt=2"
+    ),
+    ("汇率中间价", "腾讯"): "https://qt.gtimg.cn/q=USDCNY",
+    # —— 互联互通 ——
+    ("互联互通成交额", "东方财富"): (
+        "https://datacenter-web.eastmoney.com/api/data/v1/get"
+        "?reportName=RPT_MUTUAL_DEAL_HISTORY&columns=ALL"
+        "&pageNumber=1&pageSize=2&source=WEB&client=WEB"
+    ),
+    ("互联互通成交额", "香港交易所"): (
+        "https://www.hkex.com.hk/Mutual-Market/Stock-Connect?sc_lang=zh-HK"
+    ),
+    ("互联互通成交额", "上海证券交易所"): (
+        "https://query.sse.com.cn/commonQuery.do?sqlId=COMMON_SSE_SJ_HGT_ZJLX"
+        "&isPagination=true&pageHelp.pageSize=5&pageHelp.pageNo=1"
+    ),
+    # —— 宏观 ——
+    ("宏观 CPI / PMI", "东方财富"): (
+        "https://datacenter-web.eastmoney.com/api/data/v1/get"
+        "?reportName=RPT_ECONOMY_CPI&columns=ALL&pageNumber=1&pageSize=2"
+        "&source=WEB&client=WEB"
+    ),
+    ("宏观 CPI / PMI", "国家统计局"): "https://www.stats.gov.cn/sj/zxfb/",
+    ("宏观 CPI / PMI", "世界银行"): (
+        "https://api.worldbank.org/v2/country/CN/indicator/NY.GDP.MKTP.CD"
+        "?format=json&per_page=2"
+    ),
+    # —— 美债 ——
+    ("美债收益率曲线", "美国财政部"): (
+        "https://home.treasury.gov/resource-center/data-chart-center/interest-rates"
+        "/pages/xml?data=daily_treasury_yield_curve&field_tdr_date_value_month=202610"
+    ),
+    ("美债收益率曲线", "FRED"): "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10",
+    ("美债收益率曲线", "美联储"): "https://www.federalreserve.gov/releases/h15/",
+    # —— 天气 ——
+    ("天气实况/预报/预警", "中央气象台"): "http://www.nmc.cn/rest/province/all",
+    ("天气实况/预报/预警", "中国天气网"): "http://www.weather.com.cn/data/sk/101010100.html",
+    ("天气实况/预报/预警", "香港天文台"): (
+        "https://data.weather.gov.hk/weatherAPI/opendata/weather.php"
+        "?dataType=rhrread&lang=en"
+    ),
+    ("天气实况/预报/预警", "NWS"): "https://api.weather.gov/alerts/active?area=MD",
+    ("天气实况/预报/预警", "DWD"): (
+        "https://opendata.dwd.de/weather/local_forecasts/mos/MOSMIX_L"
+        "/single_stations/54511/kml/MOSMIX_L_LATEST_54511.kmz"
+    ),
+}
+
+# 需要额外请求头才能实调的腿（如新浪必须带 Referer，否则 403）。
+LEG_PROBE_HEADERS: dict[tuple[str, str], dict[str, str]] = {
+    ("全球股指点位/涨跌幅", "新浪"): {"Referer": "https://finance.sina.com.cn"},
+    ("指数全成分股涨跌幅分布", "上海证券交易所"): {"Referer": "https://www.sse.com.cn/"},
+    ("指数全成分股涨跌幅分布", "中证指数"): {"Referer": "https://www.csindex.com.cn/"},
+    ("互联互通成交额", "上海证券交易所"): {"Referer": "https://www.sse.com.cn/"},
+    ("宏观 CPI / PMI", "国家统计局"): {"Referer": "https://www.stats.gov.cn/"},
+}
+
+
+def probe_url_for(value: str, org: str) -> str:
+    """取该腿的实调探针 URL；无探针返回空串（smoke 如实记「无探针」）。"""
+    return LEG_PROBES.get((value, org), "")
+
+
+def probe_headers_for(value: str, org: str) -> dict[str, str]:
+    """取该腿实调所需的额外请求头（缺省空 dict）。"""
+    return dict(LEG_PROBE_HEADERS.get((value, org), {}))
 
 
 def check_value(value: str) -> SourceSpec | None:
