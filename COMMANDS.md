@@ -151,11 +151,11 @@
 
 ### 运行开关类（.env 键，改后重启）
 
-- 限流：`BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR/_PER_MINUTE`（≥0，0=该帽不生效）、`BOT_RATE_LIMIT_EMOTION_EXEMPT`（默认 true）、`BOT_GROUP_CHAT_AUTO_REPLY_ENABLED`（默认 false）+`…_PROBABILITY`（0..1 默认 0.004，2026-09-12 实弹调低防自我触发限流）、安静时间键族 `BOT_QUIET_HOURS_*`——以上均可 `/bot runtime set` 热改。
-- 点名回复节流：`BOT_RATE_LIMIT_CHAT_SENDER_MIN_INTERVAL_SECONDS`（默认 45，同一人点名回复最小间隔秒数，0=关闭）——可 `/bot runtime set` 热改。
+- 限流：`BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR/_PER_MINUTE`（≥0，0=该帽不生效）、`BOT_RATE_LIMIT_EMOTION_EXEMPT`（默认 true）、`BOT_GROUP_CHAT_AUTO_REPLY_ENABLED`（默认 false）+`…_PROBABILITY`（0..1 默认 0.004，2026-09-12 实弹调低防自我触发限流）、安静时间键族 `BOT_QUIET_HOURS_*`——🔴 **本行不是「全部可热改」**：`BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR`/`_PER_MINUTE`、`BOT_RATE_LIMIT_EMOTION_EXEMPT`、`BOT_QUIET_HOURS_*` 确在 `SETTABLE_KEYS`＝可 `/bot runtime set`；而 `BOT_GROUP_CHAT_AUTO_REPLY_ENABLED` 与其 `…_PROBABILITY` 在 `RESTART_REQUIRED_KEYS`＝🟡需重启，且后者同时躺合并层 `_RUNTIME_HOT_OVERRIDE_FIELDS`＝读侧另有快照臂，别把它当「本轮明示」用（钉 600 只实收 60–189 那一族的成因）。
+- 点名回复节流：`BOT_RATE_LIMIT_CHAT_SENDER_MIN_INTERVAL_SECONDS`（默认 45，同一人点名回复最小间隔秒数，0=关闭）——🔴 该键**不在热改名册**（`SETTABLE_KEYS` 与 `RESTART_REQUIRED_KEYS` 两表均无此枚），`/bot runtime set` 写了不生效；改 `.env` 后重启。（本句 2026-09-12 曾从 HANDBOOK §20.3-2 删过一次，属复发）
 - 合并转发：`BOT_RENDER_FORWARD_MIN_NODES`（默认 4）/`_MIN_CHARS`（1500）/`_MAX_NODES`（0=不限）/`_NODE_CHARS`（≥200，默认 900），热改；消费在装配期，需重启。
 - 群摘要：`BOT_SHARED_GROUP_CONTEXT_ENABLED`（默认 false）、`BOT_GROUP_DIGEST_LIST_MODE`（whitelist|blacklist|off|all）、`BOT_GROUP_DIGEST_WHITELIST/BLACKLIST`——热改；每日通讯总结推送 `BOT_GROUP_DIGEST_PUSH_ENABLED`（默认 true）+`BOT_GROUP_DIGEST_PUSH_TIME`（HH:MM，默认 21:30，仅白名单群、非 whitelist 零推送）——.env 键，重启生效。
-- 视频理解：`BOT_VISION_ENABLED`（默认 false）、`BOT_VISION_MODE`（relay|direct）、`BOT_VISION_REPLY_PROBABILITY`（0..1 默认 1.0）、`BOT_VIDEO_UNDERSTANDING_ENABLED`（默认 false）等——热改。
+- 视频理解：`BOT_VISION_ENABLED`（默认 false）、`BOT_VISION_MODE`（relay|direct）、`BOT_VIDEO_UNDERSTANDING_ENABLED`（默认 false）——这三枚确在 `SETTABLE_KEYS`＝真热改；`BOT_VISION_REPLY_PROBABILITY` 代码真缺省＝**0.004**（取自 `GROUP_PROACTIVE_REPLY_PROBABILITY`，册上旧写 1.0 属假账）且 2026-09-24 裁定**已退役为判定输入**＝写它不改变行为，两表皆无、无热改面。
 - 运行开关：`BOT_SEND_QUEUE_ENABLED`、`BOT_SEND_QUEUE_WORKER_ENABLED`、`BOT_AUDIT_ENABLED`、`BOT_RECEIPTS_ENABLED`、`BOT_DIAGNOSTICS_ENABLED`——均默认 false，.env 键，重启生效。
 
 ## 子功能（无需 /bot 前缀，自然语言/短命令触发）
