@@ -1,4 +1,4 @@
-"""mermaid.min.js 本地供给：fetch 工具 + render_backends 传输层拦截离线单测。
+"""渲染素材本地供给（mermaid + echarts）：fetch 工具 + render_backends 传输层拦截离线单测。
 
 覆盖（素材本地化 F1）：
 - fetch 工具：落盘+sidecar、幂等跳过、--force 重拉、拒收（截断/HTML 错误页）
@@ -21,7 +21,7 @@ from types import SimpleNamespace
 import pytest
 
 from plugins.bot_unified_runtime.domains.render import render_backends as rb
-from scripts import fetch_mermaid_js
+from scripts import fetch_echarts_js, fetch_mermaid_js
 
 MERMAID_HTML = (
     "<html><head><script src="
@@ -252,3 +252,96 @@ def test_main_check_and_exit_codes(
     assert fetch_mermaid_js.main(["--check"]) == 1  # 未就绪
     fetch_mermaid_js.fetch("u", asset_dir, checker=lambda url: _fake_min_js())
     assert fetch_mermaid_js.main(["--check"]) == 0
+
+
+# ==================== echarts 本地供给（2026-10-12，与 mermaid 同模） ====================
+ECHARTS_HTML = (
+    "<html><head><script src="
+    "'https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js'>"
+    "</script></head><body><div class='card'>x</div></body></html>"
+)
+
+
+def _fake_echarts_js() -> bytes:
+    """合格假身：过三道闸（>300KB、非 < 开头、前部含 echarts 标记）。"""
+    return b"/*! echarts v5.6.0 */\n" + b"echarts" * (60 * 1024)
+
+
+@pytest.fixture()
+def echarts_asset_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """把 echarts 素材目录钉到 tmp_path（渲染侧与工具侧双向隔离）。"""
+    d = tmp_path / "assets" / "echarts"
+    monkeypatch.setattr(rb, "echarts_asset_dir", lambda: d)
+    monkeypatch.setattr(fetch_echarts_js, "echarts_asset_dir", lambda: d)
+    return d
+
+
+def test_echarts_validate_accepts_and_rejects() -> None:
+    assert rb.validate_echarts_asset_bytes(_fake_echarts_js()) == _fake_echarts_js()
+    assert rb.validate_echarts_asset_bytes(b"") is None
+    assert rb.validate_echarts_asset_bytes(b"<html>gateway timeout</html>") is None
+    assert rb.validate_echarts_asset_bytes(b"short") is None
+    assert rb.validate_echarts_asset_bytes(b"x" * (400 * 1024)) is None  # 无标记
+
+
+def test_echarts_route_registered_and_fulfills_local_bytes(
+    echarts_asset_dir: Path,
+) -> None:
+    echarts_asset_dir.mkdir(parents=True)
+    payload = _fake_echarts_js()
+    (echarts_asset_dir / "echarts.min.js").write_bytes(payload)
+    backend = _make_backend()
+    page = _FakePage()
+    assert _render(backend, page, ECHARTS_HTML) == b"png-bytes"
+    assert [pattern for pattern, _ in page.routes] == ["**/*", rb._ECHARTS_CDN_URL]
+    handler = page.routes[1][1]
+    fake_route = _FakeRoute()
+    handler(fake_route)
+    assert fake_route.fulfilled is not None
+    assert fake_route.fulfilled["body"] == payload
+    assert fake_route.fulfilled["content_type"] == "text/javascript"
+    assert fake_route.fulfilled["status"] == 200
+
+
+def test_echarts_route_not_registered_when_asset_missing(
+    echarts_asset_dir: Path,
+) -> None:
+    backend = _make_backend()
+    page = _FakePage()
+    assert _render(backend, page, ECHARTS_HTML) == b"png-bytes"  # 优雅降级照常出图
+    # 本地素材缺失 ⇒ 只关 echarts 换血这一条；远程资源闸照旧在场。
+    assert [pattern for pattern, _ in page.routes] == ["**/*"]
+
+
+def test_echarts_fetch_downloads_and_is_idempotent(
+    echarts_asset_dir: Path,
+) -> None:
+    payload = _fake_echarts_js()
+    calls: list[str] = []
+
+    def checker(url: str) -> bytes:
+        calls.append(url)
+        return payload
+
+    target, digest, skipped = fetch_echarts_js.fetch(
+        "u", echarts_asset_dir, checker=checker
+    )
+    assert skipped is False
+    assert target == echarts_asset_dir / "echarts.min.js"
+    assert target.read_bytes() == payload
+    assert digest == hashlib.sha256(payload).hexdigest()
+    sidecar = echarts_asset_dir / "echarts.min.js.sha256"
+    assert sidecar.read_text("ascii").split()[0] == digest
+    again = fetch_echarts_js.fetch("u", echarts_asset_dir, checker=checker)
+    assert again[2] is True  # skipped，幂等零网络
+    assert len(calls) == 1
+
+
+def test_echarts_fetch_rejects_and_writes_nothing(echarts_asset_dir: Path) -> None:
+    for bad in (b"short", b"<html>rate limited</html>"):
+        result = fetch_echarts_js.fetch(
+            "u", echarts_asset_dir, checker=lambda url, _b=bad: _b
+        )
+        assert result == (None, None, False)
+    assert not (echarts_asset_dir / "echarts.min.js").exists()
+    assert not (echarts_asset_dir / "echarts.min.js.sha256").exists()

@@ -230,6 +230,51 @@ def _mermaid_asset_bytes() -> bytes | None:
         return None
 
 
+# ---- echarts.min.js 本地供给（素材本地化的第二枚，2026-10-12）----
+# 与 mermaid 支同模：模板 script src 保持 CDN URL 不变，渲染期 page.route()
+# 在传输层换血（命中即 fulfill 本地字节）；缺失/损坏不注册、放行走网络。
+# 落盘由 scripts/fetch_echarts_js.py 一次性完成。
+_ECHARTS_CDN_URL = "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"
+# 真身 ~1MB（5.6.0 实测）；低于阈值按截断/错误页拒收。
+_ECHARTS_MIN_BYTES = 300 * 1024
+
+
+def echarts_asset_dir() -> Path:
+    """echarts 素材目录（与 mermaid 同区 card_render_assets/echarts/）。"""
+    configured = os.getenv("BOT_CARD_ASSET_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser() / "echarts"
+    for ancestor in Path(__file__).resolve().parents:
+        asset_root = ancestor / "ChatBot_Runtime" / "card_render_assets"
+        if asset_root.is_dir():
+            return asset_root / "echarts"
+    return Path(__file__).resolve().parent / "card_render" / "assets" / "echarts"
+
+
+def resolve_echarts_asset_path() -> Path:
+    """echarts.min.js 本地素材路径（不保证存在，缺失=拦截不启用）。"""
+    return echarts_asset_dir() / "echarts.min.js"
+
+
+def validate_echarts_asset_bytes(data: bytes) -> bytes | None:
+    """本地/下载字节的收货校验；不合格返回 None（与 mermaid 三道闸同型）。"""
+    if len(data) < _ECHARTS_MIN_BYTES:
+        return None
+    if data[:4096].lstrip().startswith(b"<"):
+        return None
+    if b"echarts" not in data[:65536].lower():
+        return None
+    return data
+
+
+def _echarts_asset_bytes() -> bytes | None:
+    """读取并校验本地 echarts.min.js；缺失/损坏返回 None（放行网络）。"""
+    try:
+        return validate_echarts_asset_bytes(resolve_echarts_asset_path().read_bytes())
+    except OSError:
+        return None
+
+
 # ---- 渲染等待策略（render-pipeline-optimization-spec §2.1b，Phase-1 框架）----
 # 预算等待的就绪信号（依次等待、齐即截；仅 ``wait_budget_ms`` 模式启用）：
 # ① document.fonts.ready——晚到字体 swap 是截图换字形的直接来源；
@@ -759,6 +804,20 @@ class PlaywrightRenderBackend:
                                 )
 
                             register_route(_MERMAID_CDN_URL, _mermaid_route)
+                    # echarts 本地供给（2026-10-12，与 mermaid 支同模同判据）：
+                    # 命中 CDN URL 且本地素材合格才注册换血，否则放行网络。
+                    if _ECHARTS_CDN_URL in html:
+                        echarts_js = _echarts_asset_bytes()
+                        if echarts_js is not None and callable(register_route):
+
+                            def _echarts_route(route: Any) -> None:
+                                route.fulfill(
+                                    status=200,
+                                    body=echarts_js,
+                                    content_type="text/javascript",
+                                )
+
+                            register_route(_ECHARTS_CDN_URL, _echarts_route)
                     # 显式加载超时：Playwright 默认 30s 会长时间持锁阻塞其他
                     # 渲染。用页面级默认超时覆盖 set_content/wait_for_*（页面
                     # 级失败只关页面，浏览器不受影响）。
