@@ -25,6 +25,23 @@
 - **规则 B（字面量副本）**：任何非真身位置（tests/**、scripts/**、plugins 函数体内、
   plugins 模块级但名字不命中的表）出现的字面量词集，若**整集 ⊆ 某枚真身词集** → 记一笔债。
   重合但互不包含的表不算副本（那是撞词，归触发冲突体检 ``test_trigger_spec.py`` 管）。
+- **债的定义（2026-10-12 用户裁定 12 乙，上限 42 **一字不上调**）**：规则 B 的「⊆ 真身」口
+  把「中央表扩表」也读成了债——同一个词只要被中央表某条目整集覆盖，老夹具就被**追认**成第二处手抄。
+  现按裁定改判据：**写进中央表的条目不算抄写债**（词只有一处真身，别处出现才是债）。
+  中央表＝``runtime/aliases.py::DEFAULT_VERB_MAP`` ＋ ``echo.py`` 帮助册 ``_HELP_ENTRIES`` /
+  ``_HELP_ENTRY_META`` 的 ``aliases``/``triggers``/``triggers_nl``/``triggers_nickname`` 四列，
+  按「一条命令面＝一条条目」**AST 现算**（取数口＝``scripts/extract_trigger_words.py::extract_central_trigger_table``，
+  零插件导入；派生引用如 ``nickname_verbs_for(...)`` 体内零字面量 ⇒ 天然不是条目）。
+  于是免记只给：**整集 ⊆ 某一条条目** 且 位置在**消费面**（``tests/``·``scripts/``＝夹具与验收入参，
+  使用≠声明）。三条件任一不成立——跨条目重列、含中央表外的词、落在 ``plugins/**`` 生产件里——
+  都还是债（生产侧那 11 枚一枚没放过）。三把替代锁：`test_central_waiver_is_projection_only_never_a_production_copy`
+  （生产位永不吃这条豁免，且它必须真的挡着东西）、`test_central_table_is_live_structural_and_floor_bound`
+  （条目只来自那两片登记面＋两把地板＋每条都得真在挡债）、`test_two_calibers_equal_their_own_derived_formulas`
+  （两把口径各自等于自己的派生式＋守恒式）；牙＝注毒⑩（条目复制进生产件 ⇒ 计账 +1）、⑪（跨条目重列 ⇒ +1）、
+  ⑫（**删掉中央表那一行 ⇒ 靠它免记的枚按依赖数全部回账**，并验证取数口吃的是源码不是手抄名单）。
+- **两把口径（报数必须带口径名，「479 vs 617」是假二选一）**：口径甲「raw／现算全集」＝扫描面里
+  每一枚 ⊆ 任一真身的字面容器记 1 笔 ＋ 每个同词集多真身簇记 (成员数−1) 笔，不看名册、不看中央表；
+  口径乙「accounted／计账」＝甲 − 逐枚点名名册命中 − 中央表登记面免记枚；上限只与**乙**对账。
 - **不计账名册（S131 落码，2026-09-24）**：ruleB 的「整集 ⊆ 真身」子集口会把**以词为键的结构数据**
   （色→序位表 / 库名→路径表 / 契约字段名信封 / 署名表 / 让路守卫 / ``help_topics=`` 外键字段）
   和**词面本身即验收标的的探针字面量**一并记成债。这两类不是副本，摘除它们**只准逐枚点名＋各写判据**
@@ -89,6 +106,79 @@ SCAN_ROOTS: Final[tuple[str, ...]] = ("plugins", "scripts", "tests")
 #: 中央边界件整文件豁免（它持有字符集与判定件，不持词表——见模块 docstring）。
 TEXT_BOUNDARY_REL: Final[str] = "plugins/bot_unified_runtime/domains/core/text_boundary.py"
 
+# ---------------------------------------------------------------------------
+# 中央触发词表（2026-10-12 用户裁定 12 乙：「写进中央表的条目不算抄写债」）
+# ---------------------------------------------------------------------------
+#: 「消费面」前缀：只有这两片是把词面**用**出来（夹具/验收入参），不是第二处声明位。
+#: 元素含「/」⇒ 本门词形过滤天然不收（自扫零贡献锁常驻执法）。
+CENTRAL_CONSUMER_PREFIXES: Final[tuple[str, ...]] = ("tests/", "scripts/")
+#: 中央表取数口（真身＝scripts/extract_trigger_words.py；本门只借它的 AST 口，零插件导入）。
+CENTRAL_EXTRACTOR_REL: Final[str] = "scripts/extract_trigger_words.py"
+#: 中央表塌陷地板：条目数/词面数低于此＝取数口被改瞎或中央表被搬空，不是「大家干净了」。
+MIN_CENTRAL_ENTRIES: Final[int] = 60
+MIN_CENTRAL_WORDS: Final[int] = 300
+
+
+def _load_central_extractor():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_s33_central_extractor", REPO_ROOT / CENTRAL_EXTRACTOR_REL
+    )
+    assert spec is not None and spec.loader is not None, f"中央表取数口不存在：{CENTRAL_EXTRACTOR_REL}"
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@lru_cache(maxsize=1)
+def _central_extractor():
+    return _load_central_extractor()
+
+
+def central_trigger_table(
+    sources: tuple[tuple[str, str], ...] | None = None,
+) -> dict[str, frozenset[str]]:
+    """中央表现算：条目键 → 词面集（词形过滤走本门同一把 `_word_shape_ok`）。
+
+    `sources` 缺省＝现树扫描面（`iter_tree_sources()`）；注毒时传「同一份现算源＋虚拟源」，
+    于是**改一处源文件＝同时改债与改中央表**，两侧永不分叉（口径纪律）。
+    """
+    if sources is None:
+        return _central_table_default()
+    return _normalize_central_entries(_central_extractor().extract_central_trigger_table(sources))
+
+
+def _normalize_central_entries(raw: dict[str, tuple[str, ...]]) -> dict[str, frozenset[str]]:
+    table: dict[str, frozenset[str]] = {}
+    for key, words in raw.items():
+        kept = frozenset(w for w in words if w.strip() and _word_shape_ok(w.strip()))
+        if kept:
+            table[key] = kept
+    return table
+
+
+@lru_cache(maxsize=1)
+def _central_table_default() -> dict[str, frozenset[str]]:
+    ok, bad = iter_tree_sources()
+    assert not bad, f"中央表取数前扫描面有洞：{bad[:3]}"
+    return _normalize_central_entries(_central_extractor().extract_central_trigger_table(ok))
+
+
+@lru_cache(maxsize=1)
+def _tree_sources() -> tuple[tuple[str, str], ...]:
+    ok, bad = iter_tree_sources()
+    assert not bad, f"扫描面有洞（注毒前置）：{bad[:3]}"
+    return ok
+
+
+def central_covering_entries(
+    words: frozenset[str], table: dict[str, frozenset[str]]
+) -> list[str]:
+    """整集 ⊆ **单一条**中央表条目的那些条目键（跨条目重列＝一条都不命中，照计）。"""
+    return sorted(key for key, entry in table.items() if words <= entry)
+
+
 #: 真身绑定名形态（命中才可能是 home；tests/scripts 里同样的名字也只是副本候选）。
 HOME_NAME_PAT: Final[re.Pattern[str]] = re.compile(r"(?i)trigger|verb|_words|触发|词表")
 #: 帮助/别名册的字段名：plugins 内出现即真身形态（_HELP_ENTRIES 等嵌套 dict 全靠它收）。
@@ -134,7 +224,18 @@ MIN_HOME_TABLES: Final[int] = 120
 # **词义冲突**，按尺 B 自己的「归属写死」摘出本账、逐枚登记进 ``HOME_CROSS_CAPABILITY_NOT_DEBT``，
 # 同一枚在 ``test_trigger_spec.py::KNOWN_CROSS_CAPABILITY_CLASHES`` 立等价判据接住
 # （两本账由该门一侧的 `test_handoff_from_copy_ratchet_is_registered_there` 互锁 ⇒ 只删不接＝两边同时红）。
-TRIGGER_COPY_CEILING: Final[int] = 42
+# 2026-10-12 S-DEBT2（用户裁定 12 **乙**：**上限不上调**，改「债的定义」）42 → 25。
+# 现算 raw **一字未缩**（仍 96＝ruleB 副本 ＋ ruleA 重复真身超额；扫描面·两个地板·锚点全未动）；
+# 改的是判据：词面只要**整集落在中央表的某一条条目里**、且出现位置在**消费面**（tests/·scripts/），
+# 它就是那条中央表条目的登记面投影 ⇒ 不算抄写债（用户原话「写进中央表的条目不算抄写债；词只有
+# 一处真身，别处出现才是债」）。三轴同级扩表（大小写／简繁／拼音）把中央表条目撑大后，老夹具被
+# 「追认」成第二处手抄＝这 15 枚假债的来源。**上限反而从 42 降到 25**（零余量照旧）⇒ 门净变严：
+# 生产件里绕过中央表的第二处字面（现存 11 枚）与跨条目/含中央表外词的夹具（13 枚）一枚都没放过，
+# 另加三把替代锁（`test_central_waiver_is_projection_only_never_a_production_copy`／
+# `test_two_calibers_equal_their_own_derived_formulas`／注毒⑩⑪⑫），删中央表一行 ⇒ 账当场回涨。
+# 同批按「名册随生产同批迁」摘掉 2 条**已虚设**的 ruleA 镜像豁免（帮助册那两列的词集被三轴波改到
+# 不再全等 ⇒ 名册占格挡零枚债＝活性锁当场点名）：history/历史/清理历史 对、书面同意三员簇。
+TRIGGER_COPY_CEILING: Final[int] = 25
 
 #: 逐次核账记录（日期, 当时债数），**必须单调不升**，且末项＝当前上限（零余量锁）。
 AUDIT_HISTORY: Final[tuple[tuple[str, int], ...]] = (
@@ -142,6 +243,9 @@ AUDIT_HISTORY: Final[tuple[tuple[str, int], ...]] = (
     ("2026-09-24", 43),
     # S137（裁定 9 之 A8）：跨能力撞词 1 簇摘出副本账、移交 test_trigger_spec 等价判据 ⇒ 43→42。
     ("2026-09-24", 42),
+    # 裁定 12 乙（S-DEBT2 2026-10-12）：改债的定义＝中央表条目不算抄写债；扫描面与 raw 一字未动，
+    # 上限随真实降账下调（只降不升），同批配三把替代锁 + 中央表塌陷地板。
+    ("2026-10-12", 25),
 )
 
 #: 锚点真身（文件, 标签, 代表词）：这些必须始终被识别为 home——识别器瞎了本条先红。
@@ -240,6 +344,13 @@ class NotDebtHandoff(NamedTuple):
 #: **ruleB 不计账名册（枚数＝本册现长，逐枚点名＋各写判据；新增/删除都必须带理由，禁止写成条款。
 #:  2026-09-26 S-TRIG-ROSTER 随 K-3 乙通道入一枚在飞件探针（末条带⚠注：该件词集再编辑即虚设转红，由件 owner 重登记））**。
 #: 判据出处＝S106 五态表（只读席）＋本席 AST 值侧探针复算；`--ledger` 里这些枚仍逐条打印。
+#: ⚠ 裁定 12 乙同批（2026-10-12 S-DEBT2）摘 11 行＝36→25：那 11 枚都在 ``tests/`` 消费面、
+#:   词集整集覆盖自**某一条**中央表条目 ⇒ 新判据下由「中央表登记面」那层免记，名册条目
+#:   挡零枚＝装饰件（「逐枚干活」锁当场点名）。按「名册随生产同批迁」摘除，**不是把债搬没**：
+#:   `--ledger` 仍逐条打印它们，标 ``不计账·中央表登记面`` 并点名所覆盖的条目键；中央表那行一删
+#:   就回账（注毒⑫）。留下的一条 ``test_traditional_triggers_2.py`` 繁體动词族**没被摘**——
+#:   它那三枚词跨了中央表两条条目（暫停/繼續→bot.control、狀態→bot.status），覆盖判据不成立，
+#:   仍是逐枚点名的债（这正是「不许写成通配」的证据）。
 COPY_NOT_DEBT: Final[tuple[NotDebtCopy, ...]] = (
     NotDebtCopy(
         file="plugins/bot_unified_runtime/control_plane/features.py",
@@ -312,13 +423,6 @@ COPY_NOT_DEBT: Final[tuple[NotDebtCopy, ...]] = (
         reason="同上契约字段名夹具：值形＝两个 SimpleNamespace() 调用（AST 实证），非字符串常量⇒ 语义是对象袋不是词表",
     ),  # 现算位 153｜真身 aliases.py:77｜值侧形态见 reason
     NotDebtCopy(
-        file="tests/test_help_meta_search_and_tra49_aliases.py",
-        label="coll",
-        words_text="tianqi、tq、weather、天氣、天氣預報、查天氣",
-        kind="探针字面量",
-        reason="WEATHER_SEARCH_SAMPLES（拼音+繁體可搜索样例）：行上注释自陈「防看得见搜不到的代表性样例」＝字面量即样例本体",
-    ),  # 现算位 47｜真身 echo.py:1465｜值侧形态见 reason
-    NotDebtCopy(
         file="tests/test_orchestration_callsite_wave3_b.py",
         label="dictkeys",
         words_text="config、decision",
@@ -370,83 +474,10 @@ COPY_NOT_DEBT: Final[tuple[NotDebtCopy, ...]] = (
     NotDebtCopy(
         file="tests/test_traditional_triggers_2.py",
         label="coll",
-        words_text="偷圖、表情抽籤、表情隨機、隨機表情、隨機表情包",
-        kind="探针字面量",
-        reason="繁體触发路由样例（隨機表情族）：parametrize 的入参文本就是被测对象，派生化会让「繁體形是否仍触发」退化成用真身验真身",
-    ),  # 现算位 84｜真身 echo.py:1423｜值侧形态见 reason
-    NotDebtCopy(
-        file="tests/test_traditional_triggers_2.py",
-        label="coll",
-        words_text="steam免費、免費遊戲、遊戲免費",
-        kind="探针字面量",
-        reason="繁體触发路由样例（steam 免費族）：同上，入参即验收标的",
-    ),  # 现算位 106｜真身 echo.py:1929｜值侧形态见 reason
-    NotDebtCopy(
-        file="tests/test_traditional_triggers_2.py",
-        label="coll",
-        words_text="今日塔羅、命盤、塔羅、塔羅三張、排盤、搖卦",
-        kind="探针字面量",
-        reason="繁體占卜族（塔羅/搖卦…）：断言 is_divination_command(text) is True ⇒ 词面被钉死才有防回退价值",
-    ),  # 现算位 162｜真身 echo.py:1629｜值侧形态见 reason
-    NotDebtCopy(
-        file="tests/test_traditional_triggers_2.py",
-        label="coll",
         words_text="暫停、狀態、繼續",
         kind="在册镜像",
         reason="繁體动词族（狀態/暫停/繼續）直接断言 verb in DEFAULT_VERB_MAP：件内已引真身，词面是繁體形对照位（真身只有简体），删词面即删掉「繁體不丢」这一条断言",
     ),  # 现算位 286｜真身 aliases.py:77｜值侧形态见 reason
-    NotDebtCopy(
-        file="tests/test_traditional_triggers_2.py",
-        label="regexstr",
-        words_text="搜图、搜圖",
-        kind="探针字面量",
-        reason="源码文本断言：在根 __init__.py 正文里搜「搜图＋竖线＋搜圖」这个字面针——字面量本身就是被搜的对象，派生即让断言失去可搜形态",
-    ),  # 现算位 350｜真身 echo.py:1444｜值侧形态见 reason
-    NotDebtCopy(
-        file="tests/test_trigger_english.py",
-        label="coll",
-        words_text="music、song",
-        kind="在册镜像",
-        reason="_TOPIC_ALIAS_FLOOR（防英文别名脱册地板表）的第 2 格 tuple 值：该表的存在理由就是**独立于 echo 册**钉住每 topic 必须有英文别名，派生自 echo 即自我循环",
-    ),  # 现算位 300｜真身 echo.py:1374｜值侧形态见 reason
-    NotDebtCopy(
-        file="tests/test_trigger_english.py",
-        label="coll",
-        words_text="stock、stocks",
-        kind="在册镜像",
-        reason="同表 stocks 格 tuple 值：同上口径，另一枚独立声明单元",
-    ),  # 现算位 308｜真身 echo.py:1506｜值侧形态见 reason
-    NotDebtCopy(
-        file="tests/test_trigger_english.py",
-        label="coll",
-        words_text="bazi、divination、iching、tarot",
-        kind="在册镜像",
-        reason="同表 占卜 格 tuple 值（4 个英文词）：同上——地板表若从 echo 派生，脱册检查即恒真",
-    ),  # 现算位 310｜真身 echo.py:1629｜值侧形态见 reason
-    NotDebtCopy(
-        file="tests/test_trigger_english.py",
-        label="coll",
-        words_text="eat、food、recipe",
-        kind="在册镜像",
-        reason="同表 吃什么 格 tuple 值：同上，独立声明单元第 4 格",
-    ),  # 现算位 312｜真身 echo.py:1835｜值侧形态见 reason
-    NotDebtCopy(
-        file="tests/test_trigger_english.py",
-        label="coll",
-        words_text="today、today in history",
-        kind="在册镜像",
-        reason="同表 历史上的今天 格 tuple 值：同上，独立声明单元第 5 格",
-    ),  # 现算位 313｜真身 echo.py:1725｜值侧形态见 reason
-    NotDebtCopy(
-        file="tests/test_group_info_meta_parity.py",
-        label="coll",
-        words_text="群主是谁、群人数、群信息、群公告",
-        kind="探针字面量",
-        reason="邮件侧 QQ 式群问句的负锁入参（「不得编造群名/群主/人数行」逐条喂这四词，词面即验收标的，"
-        "派生自真身会让负样本退化成用真身验真身）——照 ``test_traditional_triggers_2`` 探针族同判。"
-        "⚠ 该文件为 2026-09-26 在飞未入库件（mtime 18:02，T-META 摄取波）：若其词集再编辑，本条即虚设转红，"
-        "由该件 owner 按四把牙重登记，S-TRIG-ROSTER 不替在飞件预设未来形态",
-    ),  # 现算位 322｜真身 echo.py:1962
     NotDebtCopy(
         file="plugins/bot_unified_runtime/domains/schedule/capabilities/schedule_board.py",
         label="coll",
@@ -528,15 +559,10 @@ COPY_NOT_DEBT: Final[tuple[NotDebtCopy, ...]] = (
 #:   （六枚 echo 内部 aliases≡triggers_nickname 镜像对＝记忆/为什么/配置/就绪/角色/人格，
 #:   加「媒体归档」aliases↔media_archive.DEFAULT_TRIGGER_WORDS、「宿主机状态」三员簇），
 #:   镜像对从此不存在 ⇒ 那八行成了虚设豁免（活性锁会当场点它），按「名册随生产同批迁」摘掉。
-#:   本尺 raw 随之下掉同样的量、豁免同数下掉 ⇒ **计账 42 一字未动**（不是把债搬走，是债本身没了）。
-#:   未摘：history/随机图/群信息/书面同意四行——前两条列的词集与真身不同序或不同集（投影会改
-#:   交付物字节），后两条的宿主件此刻有别席在飞半件，本批按共享树纪律让路。
+#: ⚠ 裁定 12 乙同批（2026-10-12 S-DEBT2）再摘 2 行、同一条理由：三轴同级波把帮助册两列与
+#:   consent_admin 词表改到**不再全等** ⇒ 盘上已无该簇 ⇒ 这两行是虚设豁免（现算 stale_mirror
+#:   点名）。**未摘**：随机图、群信息两行——此刻仍在盘上逐枚干活。
 HOME_MIRROR_NOT_DEBT: Final[tuple[NotDebtMirror, ...]] = (
-    NotDebtMirror(
-        words_text="history、历史、清理历史",
-        sites=(("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:aliases"), ("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:triggers_nickname")),
-        reason="history/历史/清理历史：同一帮助条目 aliases 位（:775）≡ triggers_nickname 位（:2377）双位镜像",
-    ),  # 现算位 775×2377
     NotDebtMirror(
         words_text="laizhangtu、lzt、randpic、sjt、suijitu、來張圖、来张图、随机图、隨機圖",
         sites=(("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:aliases"), ("plugins/bot_unified_runtime/domains/meme/capabilities/randpic.py", "DEFAULT_TRIGGER_WORDS")),
@@ -550,19 +576,6 @@ HOME_MIRROR_NOT_DEBT: Final[tuple[NotDebtMirror, ...]] = (
         "再扩 9 词（群里都有谁/群参与者/谁说过话/跟谁聊过 一族，真身 group_info._INTENT_WHO_WORDS），"
         "词表不能改派生成跨模块引用——command_catalog.py::_eval_literal 只认同模块简单常量。",
     ),  # 现算位 1880×2820
-    NotDebtMirror(
-        words_text="同意卡、书面同意、同意單、書面同意、consentcard、yijika、shumiantongyi",
-        sites=(
-            ("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:aliases"),
-            ("plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py", "dict:triggers_nickname"),
-            ("plugins/bot_unified_runtime/domains/ops/capabilities/consent_admin.py", "DEFAULT_TRIGGER_WORDS"),
-        ),
-        reason="书面同意族 7 词（18 项收尾波同意门，2026-09-26 入库）：consent_admin.py:55 注释与 "
-        "echo.py『书面同意』条目 2018 行注释互为对侧自陈「词表必须逐词一致，由触发词双向门执法」；"
-        "帮助侧两枚字面量位是 command_catalog::_eval_literal 只认同模块常量所要求，"
-        "能力侧 DEFAULT_TRIGGER_WORDS 是路由真身——与上一枚宿主机状态簇同型三员镜像，超额 2 笔不计账"
-        "（S-TRIG-ROSTER 按 K-3 乙裁定逐枚登记，2026-09-26）。",
-    ),  # 现算位 echo 2019×3069 × consent_admin 57
 )
 
 #: **ruleA 跨能力撞词移交名册（1 簇，RULINGS-20260924 第 9 项裁定 A／S137 落码 2026-09-24）**：
@@ -827,6 +840,9 @@ class Accounting(NamedTuple):
     stale_copy_entries: tuple[NotDebtCopy, ...]
     stale_mirror_entries: tuple[NotDebtMirror, ...]
     stale_handoff_entries: tuple[NotDebtHandoff, ...]
+    #: **裁定 12 乙新增层**：字面整集覆盖自「单一条中央表条目」且落在消费面（tests/·scripts/）
+    #: 的枚——词面已在中央表登记，这一份是登记面的投影，不是「绕过中央表的第二处手抄」。
+    waived_copies: tuple[DebtCopy, ...] = ()
 
     @property
     def exempt_count(self) -> int:
@@ -834,6 +850,7 @@ class Accounting(NamedTuple):
             len(self.exempt_copies)
             + sum(len(c.members) - 1 for c, _e in self.exempt_clusters)
             + sum(len(c.members) - 1 for c, _e in self.exempt_handoffs)
+            + len(self.waived_copies)
         )
 
 
@@ -844,8 +861,9 @@ def account(
     copy_entries: tuple[NotDebtCopy, ...] = COPY_NOT_DEBT,
     mirror_entries: tuple[NotDebtMirror, ...] = HOME_MIRROR_NOT_DEBT,
     handoff_entries: tuple[NotDebtHandoff, ...] = HOME_CROSS_CAPABILITY_NOT_DEBT,
+    central_table: dict[str, frozenset[str]] | None = None,
 ) -> Accounting:
-    """按**逐枚点名**的名册把现算债分成「记账／不计账」两堆。
+    """按**逐枚点名**的名册把现算债分成「记账／不计账」两堆，再叠一层**中央表登记面**。
 
     匹配键刻意不含行号（行号会随任何一次编辑漂移），但**必须词集全等**：
     换一批词、换一个文件、给镜像簇多加一员 ⇒ 都不再命中 ⇒ 立刻恢复记账。
@@ -873,6 +891,22 @@ def account(
             kept_copies.append(item)
         else:
             exempt_copies.append((item, spare_copies.pop(hit)))
+
+    #: **债的定义（2026-10-12 用户裁定 12 乙）**：词面只要整集落在中央表的**某一条**条目里，
+    #: 且这一处出现在消费面（tests/·scripts/ 的夹具与验收入参），它就是那条中央表条目的
+    #: 登记面投影 ⇒ 不是抄写债。跨过两条条目、含一个中央表里没有的词、或落在生产件里
+    #: ⇒ 「绕过中央表的第二处字面」⇒ 照记。本层排在名册**之后**：名册的活性锁与「逐枚
+    #: 干活」锁仍按现算债逐枚过秤，两层互不吞账（豁免通道一条都不减）。
+    if central_table is None:
+        central_table = central_trigger_table()
+    waived_copies = [
+        item
+        for item in kept_copies
+        if item.copy.file.startswith(CENTRAL_CONSUMER_PREFIXES)
+        and central_covering_entries(item.copy.words, central_table)
+    ]
+    waived_ids = {id(item) for item in waived_copies}
+    kept_copies = [item for item in kept_copies if id(item) not in waived_ids]
 
     spare_mirrors = list(mirror_entries)
     spare_handoffs = list(handoff_entries)
@@ -916,6 +950,7 @@ def account(
         stale_copy_entries=tuple(spare_copies),
         stale_mirror_entries=tuple(spare_mirrors),
         stale_handoff_entries=tuple(spare_handoffs),
+        waived_copies=tuple(waived_copies),
     )
 
 
@@ -965,10 +1000,12 @@ def test_copy_debt_within_ceiling() -> None:
     acct = accounted_debt()
     anchor_files = sorted({d.home.file for d in acct.kept_copies})[:5]
     assert acct.accounted_total <= TRIGGER_COPY_CEILING, (
-        f"触发词字面量债 {acct.accounted_total} > 上限 {TRIGGER_COPY_CEILING}＝又长了新副本"
-        f"（现算 raw {acct.raw_total}，其中逐枚点名豁免 {acct.exempt_count}）。"
-        f"修法：副本位置改为引用真身/登记指针（记账侧 ruleB {len(acct.kept_copies)} 条、"
-        f"ruleA {len(acct.kept_clusters)} 簇；锚点真身大户：{anchor_files}）；明细跑 --ledger"
+        f"触发词字面量债【口径乙／计账】{acct.accounted_total} > 上限 {TRIGGER_COPY_CEILING}＝又长了新副本"
+        f"（【口径甲／现算全集】raw {acct.raw_total}，其中逐枚点名豁免 "
+        f"{acct.exempt_count - len(acct.waived_copies)} 枚 ＋ 中央表登记面免记 {len(acct.waived_copies)} 枚）。"
+        f"修法：①该处改为引用真身/登记指针（记账侧 ruleB {len(acct.kept_copies)} 条、"
+        f"ruleA {len(acct.kept_clusters)} 簇；锚点真身大户：{anchor_files}）；②词面本就该登记在中央表——"
+        f"往中央表加条目（加完中央表覆盖它，债自消；上限不上调）；明细跑 --ledger"
     )
 
 
@@ -1116,12 +1153,23 @@ def _debt_with_virtual(rel: str, src: str) -> int:
     return debt_total(rule_b, rule_a)
 
 
+def _sources_with_virtual(rel: str, src: str) -> tuple[tuple[str, str], ...]:
+    """现树扫描面＋一枚虚拟源（同 rel 以虚拟源为准）——债与中央表**同读一份源**。"""
+    return tuple((r, s) for r, s in _tree_sources() if r != rel) + ((rel, src),)
+
+
 def _accounting_with_virtual(rel: str, src: str) -> Accounting:
-    """同一取数口吃虚拟源 ⇒ 同时给 raw 与 accounted 两层读数（豁免不许被虚拟源骗到）。"""
+    """同一取数口吃虚拟源 ⇒ 同时给 raw 与 accounted 两层读数（豁免不许被虚拟源骗到）。
+
+    虚拟源同时喂**债的扫描**与**中央表现算**：改一行生产源＝同时改两侧，永不分叉。
+    """
+    sources = _sources_with_virtual(rel, src)
     _files, homes, copies = scan_tree()
     extra_homes, extra_copies = scan_source(rel, src)
-    rule_b, rule_a = analyze(list(homes) + extra_homes, list(copies) + extra_copies)
-    return account(rule_b, rule_a)
+    kept_homes = [h for h in homes if h.file != rel] + list(extra_homes)
+    kept_copies_occ = [c for c in copies if c.file != rel] + list(extra_copies)
+    rule_b, rule_a = analyze(kept_homes, kept_copies_occ)
+    return account(rule_b, rule_a, central_table=central_trigger_table(sources))
 
 
 def _synth_dict_src(name: str, words: set[str] | frozenset[str], value_src: str) -> str:
@@ -1392,16 +1440,252 @@ def test_own_test_file_contributes_no_literals() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 裁定 12 乙（2026-10-12）：债的定义改成「中央表条目不算抄写债」，同批三把替代锁
+# ---------------------------------------------------------------------------
+
+
+def _waived_dependents(entry_key: str, table: dict[str, frozenset[str]], acct: Accounting) -> list[DebtCopy]:
+    """靠这条中央表条目免记的枚（覆盖它的条目**只有**这一条 ⇒ 删这行它们就回账）。"""
+    return [
+        item
+        for item in acct.waived_copies
+        if central_covering_entries(item.copy.words, table) == [entry_key]
+    ]
+
+
+def test_two_calibers_equal_their_own_derived_formulas() -> None:
+    """口径锁（简报第 1 项）：同一份输入，两把口径各自必须等于**自己的派生式**，不许漂。
+
+    「现算 479／尺自报 617」那种二选一本身就是假问题——它们是**同一棵树的两个口径**：
+    甲＝扫描面全集（每一枚 ⊆ 真身的字面容器 ＋ 每簇超额），乙＝甲 − 名册 − 中央表登记面。
+    两把口径都从同一次 `scan_tree()` 派生，等式不成立＝有人把账搬家或把名册当橡皮。
+    """
+    _files, homes, copies = scan_tree()
+    rule_b, rule_a = analyze(list(homes), list(copies))
+    acct = account(rule_b, rule_a)
+    cal = caliber_readings(acct, rule_b, rule_a)
+    assert cal["raw"] == acct.raw_total == len(rule_b) + sum(len(c.members) - 1 for c in rule_a), (
+        f"口径甲不等于自己的派生式（账目 {acct.raw_total}／派生 {cal['raw']}／ruleB {len(rule_b)}）"
+    )
+    assert cal["accounted"] == acct.accounted_total == len(acct.kept_copies) + sum(
+        len(c.members) - 1 for c in acct.kept_clusters
+    ), "口径乙不等于自己的派生式"
+    assert cal["raw"] == cal["accounted"] + cal["roster_exempt"] + cal["central_waived"], (
+        f"账不守恒：甲 {cal['raw']} ≠ 乙 {cal['accounted']} ＋ 名册 {cal['roster_exempt']} "
+        f"＋ 中央表登记面 {cal['central_waived']}"
+    )
+    assert cal["central_waived"] == len(acct.waived_copies) >= 1, (
+        "中央表登记面一层挡零枚＝这层判据是装饰件（或中央表已被搬空）"
+    )
+
+
+def test_central_table_is_live_structural_and_floor_bound() -> None:
+    """中央表塌陷锁：条目只能来自那两片登记面、词面量级达标、且真的在挡债。
+
+    放宽一条腿必配一把牙——这条就是「不许有人把中央表撑成通配」（例如让取数口返回
+    「一个吞下所有词的条目」）的那把牙：条目数与词面数都有地板，且每一条被免记的枚
+    都必须点名得出**具体条目键**（`--ledger` 逐条打印）。
+    """
+    table = central_trigger_table()
+    assert len(table) >= MIN_CENTRAL_ENTRIES, (
+        f"中央表只现算到 {len(table)} 条（地板 {MIN_CENTRAL_ENTRIES}）＝取数口被改瞎或登记面被搬空"
+    )
+    words = {w for v in table.values() for w in v}
+    assert len(words) >= MIN_CENTRAL_WORDS, (
+        f"中央表词面现算 {len(words)} 枚（地板 {MIN_CENTRAL_WORDS}）＝条目被并成通配前的塌陷"
+    )
+    for key in table:
+        origin = key.split("#")[0]
+        assert origin in _central_extractor().CENTRAL_TABLE_RELS, f"条目键不来自登记面：{key}"
+        assert "#" in key, f"条目键没有条目身份（文件#表#条目）＝条款化：{key}"
+    acct = accounted_debt()
+    assert all(central_covering_entries(item.copy.words, table) for item in acct.waived_copies), (
+        "有枚被免记却找不到覆盖它的中央表条目＝免记无据"
+    )
+    assert any(
+        len(_waived_dependents(key, table, acct)) >= 1 for key in table
+    ), "中央表每一条都挡零枚＝这层判据整体是装饰件"
+
+
+def test_central_waiver_is_projection_only_never_a_production_copy() -> None:
+    """替代锁（简报第 3 项）：**生产声明位永不吃这条豁免**。
+
+    「词只有一处真身，别处出现才是债」里的「别处」首先就是 `plugins/**`——生产件里再写一遍
+    中央表的词，就是绕过中央表的手抄（现算 11 枚，一枚都没放过、也一枚没免记）。
+    有人将来把豁免口子扩到生产侧，这条先红；再把整层写成 blanket 条款，注毒⑩⑪⑫同时红。
+    """
+    acct = accounted_debt()
+    assert all(
+        item.copy.file.startswith(CENTRAL_CONSUMER_PREFIXES) for item in acct.waived_copies
+    ), f"有生产件位置被中央表免记＝豁免越界：{[i.copy.file for i in acct.waived_copies if not i.copy.file.startswith(CENTRAL_CONSUMER_PREFIXES)][:5]}"
+    production_central_covered = [
+        item
+        for item in acct.kept_copies
+        if not item.copy.file.startswith(CENTRAL_CONSUMER_PREFIXES)
+        and central_covering_entries(item.copy.words, central_trigger_table())
+    ]
+    assert production_central_covered, (
+        "生产侧『抄中央表』的枚今天归零了？先查是不是有人把免记扩到了 plugins/（本锁要求现算非空，"
+        "因为盘上确实还有这类真债；若真归零，请连同上限与本锁一起改判，不许静默放行）"
+    )
+    for item in production_central_covered:
+        assert item in acct.kept_copies, f"生产侧抄中央表却没进计账：{item.copy.file}"
+
+
+def _verb_map_rel() -> str:
+    """动词总表所在文件（路径取自取数口的登记面清单，本门不另抄一份常量）。"""
+    rels = [r for r in _central_extractor().CENTRAL_TABLE_RELS if r.endswith("runtime/aliases.py")]
+    assert rels, "取数口没登记动词总表所在文件＝中央表定义被搬走了"
+    return rels[0]
+
+
+def _is_plain_capability(label: str) -> bool:
+    return bool(re.fullmatch(r"[a-z][a-z0-9_.]*", label))
+
+
+def _synth_verb_map_src(entries: dict[str, frozenset[str]]) -> str:
+    """把「条目键 → 词面」还原成一份 DEFAULT_VERB_MAP 源码（注毒⑫用；词面全部现算取，零手抄）。"""
+    rows: list[str] = []
+    for key, words in sorted(entries.items()):
+        capability = key.split("#", 2)[-1]
+        rows.extend(f'    "{word}": "{capability}",' for word in sorted(words))
+    return "DEFAULT_VERB_MAP: dict[str, str] = {\n" + "\n".join(rows) + "\n}\n"
+
+
+def test_poison_central_entry_copied_into_production_is_counted() -> None:
+    """注毒⑩（简报第 4 项发 1 的常驻自证）：把某条中央表条目整条复制进一枚**生产件** ⇒ 必进计账。"""
+    base = accounted_debt()
+    _files, homes, _copies = scan_tree()
+    table = central_trigger_table()
+    victim_words = next(
+        (
+            words
+            for words in table.values()
+            if len(words) >= 2 and any(home.words == words for home in homes)
+        ),
+        None,
+    )
+    assert victim_words is not None, "中央表里找不到一枚同时被认作真身的条目＝两层口径已分叉"
+    rel = "plugins/bot_unified_runtime/domains/ops/_s33_central_poison_virtual.py"
+    # 绑定名刻意不命中 HOME_NAME_PAT：这一发量的是「生产件里再手抄一遍登记面」（副本位）；
+    # 「第二枚真身」形态由注毒③与在册镜像名册另判，两形各管一条腿。
+    acct = _accounting_with_virtual(
+        rel, _synth_table_src("S33_CENTRAL_POISON_SAMPLES", victim_words)
+    )
+    assert acct.accounted_total == base.accounted_total + 1, (
+        f"生产件抄中央表条目没进计账（{base.accounted_total}→{acct.accounted_total}）"
+        "＝「别处出现才是债」这条腿没牙"
+    )
+    fresh = [item for item in acct.kept_copies if item.copy.file == rel]
+    assert fresh and fresh[0].copy.words == frozenset(victim_words), f"这枚没落进计账堆：{fresh}"
+    assert all(item.copy.file != rel for item in acct.waived_copies), "生产侧被中央表免记＝豁免越界"
+
+
+def test_poison_consumer_set_spanning_two_central_entries_is_counted() -> None:
+    """注毒⑪：消费面重列**跨两条**中央表条目的词 ⇒ 不是那一条登记面的投影 ⇒ 照记。"""
+    base = accounted_debt()
+    _files, homes, _copies = scan_tree()
+    table = central_trigger_table()
+    pair: frozenset[str] | None = None
+    for home in homes:
+        ordered = sorted(home.words)
+        singles = [w for w in ordered if central_covering_entries(frozenset({w}), table)]
+        for i in range(len(singles)):
+            for j in range(i + 1, len(singles)):
+                combo = frozenset({singles[i], singles[j]})
+                if not central_covering_entries(combo, table):
+                    pair = combo
+                    break
+            if pair:
+                break
+        if pair:
+            break
+    assert pair is not None, "注毒前置：找不到「两词各自在册、合起来跨条目」的形状"
+    rel = "tests/_s33_central_poison_span_two.py"
+    acct = _accounting_with_virtual(rel, _synth_table_src("S33_CENTRAL_POISON_SPAN", pair))
+    assert acct.accounted_total == base.accounted_total + 1, (
+        "跨条目重列被当成登记面放行＝「整集 ⊆ 单一条目」这条判据被写成了通配"
+    )
+    assert all(item.copy.file != rel for item in acct.waived_copies), (
+        f"跨条目那枚 {sorted(pair)} 竟被免记＝条目桶坏"
+    )
+
+
+def test_poison_deleting_central_row_revives_waived_debt() -> None:
+    """注毒⑫（简报第 4 项发 2 的常驻自证）：**删掉中央表那一行** ⇒ 靠它免记的枚全部回账。
+
+    这一发就是「派生式取数不许退回手抄」的牙：词面平时只住在中央表、别处那份是登记面的投影；
+    表里那行一旦没了，投影立刻现出原形＝第二处手抄。附带验证取数口是**源驱动**的——
+    把删了那行的源码喂进取数口，现算表真的少一条（不是本文件里手抄的名单在动）。
+    """
+    _files, homes, copies = scan_tree()
+    rule_b, rule_a = analyze(list(homes), list(copies))
+    table = central_trigger_table()
+    base = account(rule_b, rule_a, central_table=table)
+    verb_keys = sorted(
+        k for k in table if "#DEFAULT_VERB_MAP#" in k and _is_plain_capability(k.split("#", 2)[-1])
+    )
+    assert verb_keys, "中央表动词总表现算不到任何条目＝取数口坏"
+    victim = max(verb_keys, key=lambda k: (len(_waived_dependents(k, table, base)), k))
+    moved = _waived_dependents(victim, table, base)
+    assert moved, f"注毒前置：条目 {victim} 今天没挡任何枚（挑一枚真在挡债的）"
+    trimmed = {k: v for k, v in table.items() if k != victim}
+    fewer = account(rule_b, rule_a, central_table=trimmed)
+    assert fewer.accounted_total == base.accounted_total + len(moved), (
+        f"删了中央表一行而计账没按依赖枚数回涨（{base.accounted_total}→{fewer.accounted_total}，"
+        f"应 +{len(moved)}）＝「派生不许退手抄」无牙"
+    )
+    assert len(fewer.waived_copies) == len(base.waived_copies) - len(moved), (
+        "免记堆没随之缩小＝两层口径分叉"
+    )
+    moved_keys = {(i.copy.file, i.copy.label, i.copy.words) for i in moved}
+    assert moved_keys <= {(i.copy.file, i.copy.label, i.copy.words) for i in fewer.kept_copies}, (
+        "回潮的枚没落进计账堆＝账搬家"
+    )
+    rel = _verb_map_rel()
+    synth = _synth_verb_map_src({k: v for k, v in trimmed.items() if k in verb_keys})
+    derived = {
+        k: v
+        for k, v in central_trigger_table(_sources_with_virtual(rel, synth)).items()
+        if k.startswith(rel + "#DEFAULT_VERB_MAP#")
+    }
+    assert victim not in derived, "删了源里那行而现算表还认它＝取数口没吃源码、在吃手抄名单"
+    assert set(derived) == {k for k in verb_keys if k != victim}, (
+        f"现算表与派生表分叉：{sorted(set(derived) ^ {k for k in verb_keys if k != victim})[:3]}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # CLI：--ledger 逐条明细（人读）／ --bless 打建议上限与历史行（归一后刷账用）
 # ---------------------------------------------------------------------------
+
+
+def caliber_readings(acct: Accounting, rule_b: list[DebtCopy], rule_a: list[DebtHomeDup]) -> dict[str, int]:
+    """两把口径的**派生式**（报数必须带口径名；等值断言＝`test_two_calibers_equal_their_own_derived_formulas`）。
+
+    口径甲「raw／现算全集」＝扫描面里每一枚「整集 ⊆ 任一真身」的字面容器记 1 笔，
+      加上每个「同词集 ≥2 枚真身」簇记 (成员数−1) 笔；不看任何名册、不看中央表。
+    口径乙「accounted／计账」＝口径甲 − 逐枚点名名册命中的债 − 中央表登记面免记的枚；
+      上限只与口径乙对账（raw 永不缩，是视野；乙 是账）。
+    """
+    return {
+        "raw": len(rule_b) + sum(len(cluster.members) - 1 for cluster in rule_a),
+        "accounted": len(acct.kept_copies) + sum(len(c.members) - 1 for c in acct.kept_clusters),
+        "roster_exempt": len(acct.exempt_copies)
+        + sum(len(c.members) - 1 for c, _e in acct.exempt_clusters)
+        + sum(len(c.members) - 1 for c, _e in acct.exempt_handoffs),
+        "central_waived": len(acct.waived_copies),
+    }
 
 
 def render_ledger() -> list[str]:
     _raw, rule_b, rule_a = current_debt()
     acct = account(rule_b, rule_a)
+    cal = caliber_readings(acct, rule_b, rule_a)
     copy_marks: dict[tuple[str, int], NotDebtCopy] = {
         (item.copy.file, item.copy.line): entry for item, entry in acct.exempt_copies
     }
+    waived_marks = {(item.copy.file, item.copy.line): item for item in acct.waived_copies}
     cluster_marks: dict[frozenset[tuple[str, int]], NotDebtMirror] = {
         frozenset((m.file, m.line) for m in cluster.members): entry for cluster, entry in acct.exempt_clusters
     }
@@ -1411,11 +1695,11 @@ def render_ledger() -> list[str]:
     }
     lines = [
         (
-            f"触发词字面量债：现算 raw {acct.raw_total}（ruleB 副本 {len(rule_b)} ＋ ruleA 重复真身超额 "
-            f"{sum(len(c.members) - 1 for c in rule_a)}）｜计账 {acct.accounted_total}"
-            f"（逐枚点名豁免 {acct.exempt_count}：ruleB {len(acct.exempt_copies)} 枚 ＋ ruleA 簇超额 "
-            f"{sum(len(c.members) - 1 for c, _e in acct.exempt_clusters)} ＋ 移交他门簇超额 "
-            f"{sum(len(c.members) - 1 for c, _e in acct.exempt_handoffs)}）｜上限 {TRIGGER_COPY_CEILING}"
+            f"触发词字面量债｜口径甲（raw／现算全集）{cal['raw']}（ruleB 副本 {len(rule_b)} ＋ ruleA 重复真身超额 "
+            f"{sum(len(c.members) - 1 for c in rule_a)}）"
+            f"｜口径乙（accounted／计账）{cal['accounted']}"
+            f"（甲 − 逐枚点名名册 {cal['roster_exempt']} − 中央表登记面 {cal['central_waived']}）"
+            f"｜上限 {TRIGGER_COPY_CEILING}（只与口径乙对账）"
         )
     ]
     for cluster in rule_a:
@@ -1438,7 +1722,14 @@ def render_ledger() -> list[str]:
             lines.append("    理由：" + handoff_entry.reason)
     for item in rule_b:
         copy_entry = copy_marks.get((item.copy.file, item.copy.line))
-        mark = "不计账" if copy_entry is not None else "记账"
+        waived = (item.copy.file, item.copy.line) in waived_marks
+        mark = (
+            "不计账·逐枚名册"
+            if copy_entry is not None
+            else "不计账·中央表登记面"
+            if waived
+            else "记账"
+        )
         lines.append(
             f"[{mark}] ruleB 副本：{item.copy.file}:{item.copy.line}:{item.copy.label}"
             f" ⊆ 真身 {item.home.file}:{item.home.line}:{item.home.label}"
@@ -1446,6 +1737,18 @@ def render_ledger() -> list[str]:
         lines.append("    词：" + "、".join(sorted(item.copy.words)))
         if copy_entry is not None:
             lines.append(f"    判据（{copy_entry.kind}）：" + copy_entry.reason)
+        elif waived:
+            lines.append(
+                "    判据（裁定 12 乙）：整集覆盖自中央表条目 "
+                + " ｜ ".join(
+                    central_covering_entries(item.copy.words, central_trigger_table())
+                )
+            )
+    lines.append(
+        f"中央表现算：条目 {len(central_trigger_table())} 条、词面 "
+        f"{len({w for v in central_trigger_table().values() for w in v})} 枚"
+        f"（地板 {MIN_CENTRAL_ENTRIES}/{MIN_CENTRAL_WORDS}，塌陷即红）"
+    )
     return lines
 
 
@@ -1456,16 +1759,23 @@ def main(argv: list[str]) -> int:
         return 0
     acct = accounted_debt()
     if "--bless" in argv:
-        print(f"现算 raw = {acct.raw_total}；计账 = {acct.accounted_total}（豁免 {acct.exempt_count}）")
+        print(
+            f"口径甲（raw／现算全集）= {acct.raw_total}；口径乙（accounted／计账）= "
+            f"{acct.accounted_total}（豁免合计 {acct.exempt_count}＝逐枚名册 "
+            f"{acct.exempt_count - len(acct.waived_copies)} ＋ 中央表登记面 {len(acct.waived_copies)}）"
+        )
         print(
             f'建议：TRIGGER_COPY_CEILING = {acct.accounted_total} 且 AUDIT_HISTORY 追加 '
             f'("<今日YYYY-MM-DD>", {acct.accounted_total}),'
         )
         print("⚠ 刷账前先看 --ledger：豁免数变了就是有枚债被换了形态或换了位置，逐枚改判据、别改条款。")
+        print("⚠ 中央表登记面那层是**裁定 12 乙的判据**，不是豁免名册：它涨落要跟中央表的增删同批看，"
+              "动它之前先跑注毒⑩⑪⑫三发确认牙还在。")
         return 0
     print(
-        f"计账债数 = {acct.accounted_total}（现算 raw {acct.raw_total}，豁免 {acct.exempt_count}；"
-        f"上限 {TRIGGER_COPY_CEILING}）；--ledger 看明细，--bless 看刷账建议"
+        f"口径乙（accounted／计账）= {acct.accounted_total}（口径甲 raw 现算 {acct.raw_total}；"
+        f"豁免 {acct.exempt_count}，其中中央表登记面 {len(acct.waived_copies)}；上限 {TRIGGER_COPY_CEILING}）"
+        "；--ledger 看明细，--bless 看刷账建议"
     )
     return 0
 

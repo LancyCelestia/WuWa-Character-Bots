@@ -44,6 +44,7 @@ import json
 import re
 import sys
 import textwrap
+from collections.abc import Iterable
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -680,6 +681,117 @@ def gate_help_to_route(
                 continue
             violations.append({"topic": topic, "word": word, "caps": sorted(reachable)})
     return violations
+
+
+# ---------------------------------------------------------------------------
+# 5) 中央触发词表（词面唯一真身登记处）——纯 AST、零插件导入
+# ---------------------------------------------------------------------------
+# 2026-10-12 用户裁定 12 乙：词面抄写债的上限**不上调**，改的是**债的定义**——
+# 「写进中央表的条目不算抄写债」（词只有一处真身，别处出现才是债）。这条裁定要能
+# 判，先得有个**只认中央表**的取数口：本函数就是那把尺的「中央表」定义真身。
+# 中央表两枚（都是既有在册件，禁新建第三处）：
+#   ``runtime/aliases.py::DEFAULT_VERB_MAP``——昵称动词总表，按 capability 值分组成条目；
+#   ``capabilities/echo.py`` 的 ``_HELP_ENTRIES`` / ``_HELP_ENTRY_META``——帮助册，按
+#   ``topic`` 分组成条目，条目字段＝``aliases``/``triggers``/``triggers_nl``/
+#   ``triggers_nickname``。
+# 只收**字面量**元素：``nickname_verbs_for(...)`` 这类派生引用零字面量、天然不进条目集
+# （它已经把词面交给 ``DEFAULT_VERB_MAP``，这正是「派生式取数」的形态）。
+
+CENTRAL_VERB_MAP_REL = "plugins/bot_unified_runtime/domains/chat_reply/runtime/aliases.py"
+CENTRAL_HELP_BOOK_REL = "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py"
+CENTRAL_TABLE_RELS = (CENTRAL_VERB_MAP_REL, CENTRAL_HELP_BOOK_REL)
+_CENTRAL_ENTRY_FIELDS = ("aliases", "alias", "triggers", "triggers_nl", "triggers_nickname")
+
+
+def _central_literal_strs(node: ast.expr) -> list[str]:
+    """字面量 str 容器 → 元素原形；派生调用（``tuple(某函数(...))``）返回空。"""
+    base = node
+    if (
+        isinstance(base, ast.Call)
+        and isinstance(base.func, ast.Name)
+        and base.func.id in {"frozenset", "set", "tuple", "list"}
+        and len(base.args) == 1
+    ):
+        base = base.args[0]
+    if not isinstance(base, (ast.Tuple, ast.List, ast.Set)):
+        return []
+    return [e.value for e in base.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+
+
+def _central_field_words(node: ast.expr) -> list[str]:
+    """一个条目 dict 里所有登记字段（aliases/triggers*）的字面词面。"""
+    if not isinstance(node, ast.Dict):
+        return []
+    words: list[str] = []
+    for key, value in zip(node.keys, node.values):
+        if isinstance(key, ast.Constant) and key.value in _CENTRAL_ENTRY_FIELDS:
+            words.extend(_central_literal_strs(value))
+    return words
+
+
+def _central_topic(node: ast.expr) -> str:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value.strip()
+    return ""
+
+
+def extract_central_trigger_table(
+    sources: Iterable[tuple[str, str]]
+) -> dict[str, tuple[str, ...]]:
+    """现算「中央表条目 → 词面」映射（输入＝``(rel, src)`` 源码对，可喂虚拟源）。
+
+    条目键形如 ``<rel>#DEFAULT_VERB_MAP#bot.history`` / ``<rel>#help#<topic>``；
+    同 topic 的 ``_HELP_ENTRIES`` 与 ``_HELP_ENTRY_META`` 两列并成一条（它们本就是
+    同一条帮助条目）。排序保证确定性。
+    """
+    grouped: dict[str, set[str]] = {}
+    for rel, src in sources:
+        if rel not in CENTRAL_TABLE_RELS:
+            continue
+        tree = ast.parse(src, filename=rel)
+        for st in tree.body:
+            if isinstance(st, ast.Assign):
+                names = [t.id for t in st.targets if isinstance(t, ast.Name)]
+                value = st.value
+            elif isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name):
+                names, value = [st.target.id], st.value
+            else:
+                continue
+            if value is None:
+                continue
+            for name in names:
+                if name == "DEFAULT_VERB_MAP":
+                    for sub in ast.walk(value):
+                        if not isinstance(sub, ast.Dict):
+                            continue
+                        for key, cap in zip(sub.keys, sub.values):
+                            if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                                continue
+                            bucket = f"{rel}#DEFAULT_VERB_MAP#{_central_topic(cap) or ast.unparse(cap)}"
+                            grouped.setdefault(bucket, set()).add(key.value)
+                elif name == "_HELP_ENTRIES":
+                    nodes = value.elts if isinstance(value, (ast.List, ast.Tuple)) else []
+                    for item in nodes:
+                        if not isinstance(item, ast.Dict):
+                            continue
+                        topic = ""
+                        for key, val in zip(item.keys, item.values):
+                            if isinstance(key, ast.Constant) and key.value == "topic":
+                                topic = _central_topic(val)
+                        words = _central_field_words(item)
+                        if topic and words:
+                            grouped.setdefault(f"{rel}#help#{topic}", set()).update(words)
+                elif name == "_HELP_ENTRY_META":
+                    # 侧表以 topic 为**外层键**（条目体内没有 topic 字段）：不取外层键就会把
+                    # 整张侧表并成一桶——那是一句 blanket 条款，不是「一条中央表条目」。
+                    if not isinstance(value, ast.Dict):
+                        continue
+                    for key, item in zip(value.keys, value.values):
+                        topic = _central_topic(key)
+                        words = _central_field_words(item)
+                        if topic and words:
+                            grouped.setdefault(f"{rel}#help#{topic}", set()).update(words)
+    return {key: tuple(sorted(values)) for key, values in sorted(grouped.items())}
 
 
 # ---------------------------------------------------------------------------
