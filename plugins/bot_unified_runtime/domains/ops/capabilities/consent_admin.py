@@ -59,6 +59,7 @@ CAPABILITY_ID = "bot.consent"
 #: `tests/test_trigger_bidirectional_gate.py` 按词级双向 diff 执法，写一头必红。
 DEFAULT_TRIGGER_WORDS: tuple[str, ...] = (
     "同意卡",
+    "同意单",
     "书面同意",
     "同意單",
     "書面同意",

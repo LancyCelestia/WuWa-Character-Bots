@@ -88,11 +88,12 @@ LEDGER_ROUTE_TO_HELP: frozenset[tuple[str, str]] = frozenset({
     ('bot.divination', 'hexagrams'),
     ('bot.divination', 'tarots'),
     # bot.eat（B：菜譜/怎麼做；C：如何做/吃）
+    # 〔席 CMD-TRILINGUAL 2026-10-11 清账〕'菜譜'/'怎麼做' 两枚繁體形已从台账删掉：路由侧
+    # `is_recipe_command` 一直认它们，是帮助册 `吃什么.aliases` 只写了简体形——册上同族形已在、
+    # 路由却只有简体那枚＝「三轴不同级」那一格，修法＝把繁体形补成在册触发词（echo.py 同批）。
     ('bot.eat', 'recipes'),
     ('bot.eat', '吃'),
     ('bot.eat', '如何做'),
-    ('bot.eat', '怎麼做'),
-    ('bot.eat', '菜譜'),
     # bot.fx（B：兌換/換匯；A：duihuan/hh/huanhui；C：换汇/兑换）
     ('bot.fx', 'duihuan'),
     ('bot.fx', 'hh'),
@@ -109,21 +110,22 @@ LEDGER_ROUTE_TO_HELP: frozenset[tuple[str, str]] = frozenset({
 # 都有谁说过话/我都跟谁聊过/跟谁聊过）已补进 ``_HELP_ENTRIES['群信息'].aliases`` 与
 # ``_HELP_ENTRY_META['群信息'].triggers_nickname``，本门「台账红点被修复 ⇒ 强制提醒清账」
 # 那一把当场打红提醒后删掉；其余九枚（本群人数/本群公告/群主…）**仍是缺口**，继续挂账。
-    ('bot.group_info', '本群人数'),
+# 〔席 cb-hs3 2026-10-12 清账〕'本群人数'/'本群精华'/'本群资料' 三枚已补进
+# ``_HELP_ENTRIES['群信息'].aliases``：它们的繁體孪生（本群人數/本群精華/本群資料）是本轮
+# 册侧补齐时入册的，入册后简体形按三轴同级腿②反过来被点名＝册上少一轴，故一并补登简体正形，
+# 三行随之 stale 删账；其余六枚（本群公告/本群多大/群主…）**仍是缺口**，继续挂账。
     ('bot.group_info', '本群公告'),
     ('bot.group_info', '本群多大'),
     ('bot.group_info', '本群多少人'),
-    ('bot.group_info', '本群精华'),
-    ('bot.group_info', '本群资料'),
     ('bot.group_info', '群主'),
     ('bot.group_info', '群多大'),
     ('bot.group_info', '群多大了'),
     # bot.help（B：幫助——动词表有 /bot 幫助，help 页搜不到）
-    ('bot.help', '幫助'),
+    # 〔席 CMD-TRILINGUAL 2026-10-11 清账〕'幫助' 已补进 `帮助.aliases`，本行按 stale 腿删掉。
     # bot.market（B：大盤；A：quanqiugushi/markets）
+    # 〔同上〕'大盤' 已补进 `行情.aliases`。
     ('bot.market', 'markets'),
     ('bot.market', 'quanqiugushi'),
-    ('bot.market', '大盤'),
     # bot.meme（A：bqbc 等缩写族）
     ('bot.meme', 'biaoqingbaochansheng'),
     ('bot.meme', 'biaoqingbaoshengcheng'),
@@ -153,14 +155,17 @@ LEDGER_ROUTE_TO_HELP: frozenset[tuple[str, str]] = frozenset({
     ('bot.meme_library', 'suijibiaoqingbao'),
     ('bot.meme_library', 'toutu'),
     ('bot.meme_library', 'tt'),
-    ('bot.meme_library', '表情库'),
-    ('bot.meme_library', '表情抽签'),
-    ('bot.meme_library', '表情随机'),
-    ('bot.meme_library', '随机表情包'),
+    # 〔席 cb-hs3 2026-10-12 清账〕'表情库' 已补进 `_HELP_ENTRY_META['表情册'].triggers_nl`
+    # （走 META 不走 aliases＝检索落点仍归先建键的「表情收库」，本主题只多一条可搜键），
+    # 其繁體孪生 '表情庫' 同批进 `偷表情.aliases`，两轴齐 ⇒ 本行 stale 删账。
+    # 〔席 CMD-TRILINGUAL 2026-10-11 清账〕'表情抽签'/'表情随机'/'随机表情包' 三枚**简体**形
+    # 删账：`is_meme_library_command` 本就认它们，而帮助册 `偷表情.aliases` 只抄了繁體那三枚
+    # （表情抽籤/表情隨機/隨機表情包）＝同一族里册只写一轴、路由认两轴，已按「不统一的全改过来」
+    # 把简体形补进册。'表情抽签' 那类「随机表情」册上有繁體而路由不认的形**没动**（不在本轮判域）。
     # bot.music_mode（B：點歌模式；A：musicmode/songmode）
+    # 〔同上〕'點歌模式' 已补进 `点歌.aliases`。
     ('bot.music_mode', 'musicmode'),
     ('bot.music_mode', 'songmode'),
-    ('bot.music_mode', '點歌模式'),
     # bot.news（A：akb/cjxw/wb 等缩写与全拼族）
     ('bot.news', 'aikuaibao'),
     ('bot.news', 'aixinwen'),
@@ -182,31 +187,35 @@ LEDGER_ROUTE_TO_HELP: frozenset[tuple[str, str]] = frozenset({
     # bot.reminder（C：做完/没做完族；A：reminders）
     ('bot.reminder', 'reminders'),
     ('bot.reminder', '做完'),
-    ('bot.reminder', '办完'),
+    # 〔席 cb-hs3 2026-10-12 清账〕'办完' 与它的繁體孪生 '辦完' 双形同批补进
+    # ``_HELP_ENTRY_META['笔记'].triggers_nl``（notes._NOTES_DONE_RE 是 reminder 路由腿真身，
+    # 一处补形两侧跟随）⇒ 本行 stale 删账。'做完'/'完成'/'没做完' 那几枚仍挂账不动。
     ('bot.reminder', '完成'),
-    ('bot.reminder', '我的提醒'),
-    ('bot.reminder', '有哪些提醒'),
     ('bot.reminder', '沒做完'),
     ('bot.reminder', '没做完'),
-    ('bot.reminder', '看看提醒'),
     ('bot.reminder', '还没做完'),
     ('bot.reminder', '还没弄完'),
     ('bot.reminder', '還沒做完'),
     ('bot.reminder', '還沒弄完'),
+    # 〔席 CMD-TRILINGUAL 2026-10-11 清账〕'我的提醒'/'看看提醒'/'有哪些提醒' 三枚删账：提醒册
+    # aliases 原先只登记它们各自的**拼音形**（wodetixing/wdtx、kankantixing/kktx、younaxietixing/
+    # ynxt），**中文正形一枚都没登记**＝拼音与中文两轴在册侧不同级（`is_reminder_command` 三枚
+    # 中文形本来就认）。修法＝把中文正形补进册（echo.py 同批），不是把拼音摘掉。
     # bot.stocks（A：gegu/gupiaojiage；C：股票）
+    # 〔同上〕'股票' 已补进 `个股行情.aliases`（册上原有同族拼音形 gupiao，缺中文正形）。
     ('bot.stocks', 'gegu'),
     ('bot.stocks', 'gupiaojiage'),
-    ('bot.stocks', '股票'),
     # bot.today_history（B：歷史上的今天；A：全拼）
+    # 〔同上〕'歷史上的今天' 已补进 `历史上的今天.aliases`（册上繁體形此前一枚都没有）。
     ('bot.today_history', 'lishishangdejintian'),
-    ('bot.today_history', '歷史上的今天'),
     # bot.weather（动词表词无 help 落点：/bot help 天气预报 坠兜底）
-    ('bot.weather', '天气预报'),
-    ('bot.weather', '查询天气'),
+    # 〔席 CMD-TRILINGUAL 2026-10-11 清账〕'天气预报'/'查询天气' 两枚删账：天气册只抄了繁體
+    # '天氣預報'/'查天氣'，简体正形没抄＝简繁两轴在册侧单形；两枚简体形 `weather._COMMAND_RE`
+    # 与 DEFAULT_VERB_MAP 都认，已补进册。
     # bot.wiki（B：維基/維基百科；A：全拼）
+    # 〔同上〕'維基'/'維基百科' 已补进 `维基.aliases`（册上原只有简体 '维基'，繁體一枚没有）。
+    # 'weijibaike' 仍挂账＝拼音全拼形册上无、路由侧 verified 有，不属三轴同级（无同族在册形）。
     ('bot.wiki', 'weijibaike'),
-    ('bot.wiki', '維基'),
-    ('bot.wiki', '維基百科'),
 })
 
 LEDGER_HELP_TO_ROUTE: frozenset[tuple[str, str]] = frozenset({
@@ -216,7 +225,9 @@ LEDGER_HELP_TO_ROUTE: frozenset[tuple[str, str]] = frozenset({
     ('下载', 'download'),
     ('下载', '下载'),
     # 个股行情（个股行情/市值须带公司名才可路由，单词不可达）
-    ('个股行情', '个股行情'),
+    # 〔席 cb-hs3 2026-10-12 清账〕'个股行情' 一枚已修：stocks._STOCK_HINT_RE 现认裸形，
+    # 且本轮把反向缺形 '个股'／'股票價格' 补进 `个股行情.aliases` 后该 topic 的可达能力面
+    # 覆盖了它 ⇒ stale 腿点名，删账。'市值' 仍须公司名才可路由，继续挂账。
     ('个股行情', '市值'),
     # 偷表情（NL 文档句式变体）
     ('偷表情', '偷张表情包'),
@@ -337,7 +348,10 @@ LEDGER_HELP_TO_ROUTE: frozenset[tuple[str, str]] = frozenset({
     # 行情（A：stockmarket）
     ('行情', 'stockmarket'),
     # 表情（表情包产生：路由词是 bqbz/表情包生成 族）
-    ('表情', '表情包产生'),
+    # 〔席 CMD-TRILINGUAL 2026-10-11 清账·本轮唯一的「路由只认单一形态」实装反例〕'表情包产生'
+    # 删账：帮助册 `表情.aliases` 写着简体 '表情包产生'，`meme._COMMAND_RE` 那一族手抄了
+    # '表情产生'(简)／'表情產生'／'表情包產生'(繁) 三枚、**独漏 '表情包产生'**——同族繁體认、
+    # 简体不认，用户照册敲就被拒。修法＝把这枚简体形补进路由正则（同批 meme.py），不是删册上的词。
     # 解析/设置/路由/身份/队列（admin 子命令 topic 无昵称动词）
     ('解析', 'parse'),
     ('解析', '解析'),
@@ -1147,3 +1161,384 @@ def test_claim_tokenizer_keeps_every_enum_item_on_the_ruler() -> None:
         "帮助册命令行宣称 /bot zzzheadless（topic＝注毒）在 root 链上找不到落点"
     ], f"注毒点名不精确（合并串会把 `status` 或整串一起咬进来）：{problems}"
 
+
+# ===========================================================================
+# G-5 腿（席 CMD-TRILINGUAL，2026-10-11）：命令面「三轴同级」在**路由/派发面**的逐族一致
+# ===========================================================================
+# 主人的裁定（三轴同级）：①英文大小写相等 ②简体／繁体相等 ③拼音＝全拼 + 首字母 + 大小写三
+# 种形态相等。这套等价在**帮助页展示面**早有投影件锁着，在派发面此前只有
+# `tests/test_narration_alias_dispatch.py` 一段守 `/bot <词头>`（`MODULE_ALIASES` 一张表）；
+# 「帮助册/命令目录登记的触发词 ↔ 路由认的词」这两面**从没按族比过**——上面那两本账是
+# **词级**的（这枚词在不在对面），按构造看不见「同族两枚字面里路由只认一枚」：
+# `normalize_trigger_key` 两侧都 casefold ⇒ 大小写轴在词级 diff 里被压平；繁简两枚是**不同**
+# 字面，只会被当成两条独立缺口**分别记账**（＝台账 #72 那型「收编即藏问题」）。本腿按族判。
+#
+# 判域与判据（全部现算，本文件不写一份词面清单——AGENTS 规则 10）：
+# * 族关系只在**已登记的字面之间**配对，绝不给「册上没写的形」发判定（v1 探针给每枚中文词
+#   现造拼音形，现算 212 枚全是造词，作废）。折形真身＝`zhconv`、读音真身＝
+#   `scripts/gen_trigger_pinyin.py`（全拼/首字母/`ABBR_MAX_LEN` 口径一字未动）——与
+#   `runtime/aliases.py`、`test_narration_alias_dispatch.py` 同一根，本腿**不另起**第二套
+#   lower/繁转简/拼音逻辑（那正是本波在治的病）。
+# * 路由判定复用门自己那三张面（`_route_face_hit`＝动词映射 ∪ 行为检测器 ∪ 自然语言归一）
+#   与既算好的 `VIOLATIONS_HELP_TO_ROUTE`/`GAPS_ROUTE_TO_HELP`，不新开一把路由尺。
+# * 大小写轴本腿**明写看不见**（判据过 `normalize_trigger_key` 就被压平），那一轴由
+#   `test_narration_alias_dispatch.py` 的 `case_fold_problems` 在词头面守；本腿只咬简繁轴与
+#   拼音↔中文轴在册侧/路由侧的成对缺形。
+#
+# 本波现算清账 18 条（`LEDGER_ROUTE_TO_HELP` 17 + `LEDGER_HELP_TO_ROUTE` 1，逐条批注写在两本
+# 账里），此后任何新增「同族只认一枚」当场红。两本例外册（`LEDGER_AXIS_PROBE_BLIND` /
+# `LEDGER_AXIS_ROUTE_WITHHELD`）各带 stale 反查：条目被修好却不删 ⇒ 一样红。
+
+TOPICS = classify_help_topics(INV["help_topics"])
+
+_TRADITIONAL_LOCALE = "zh-tw"
+_SIMPLIFIED_LOCALE = "zh-cn"
+
+#: 例外册①（**路由只认单形·本席文件域之外**）：`axis_verb_script_problems` 现算出的缺形里，
+#: 住在各能力自家触发正则里的那些。本波把中央动词表 `DEFAULT_VERB_MAP` 那 21 枚缺繁體对形的
+#: 全补进那一张表（一個出口、零第二套折形逻辑）；剩下的 46 枚散在 bond/consent/divination/
+#: emergency_info/group_info/host_state/media_archive/meme_library/reminder/stocks 十张能力正则里
+#: ＝本席文件域之外（四席并发，按规则 7 互斥切分）＋`词面级独立声明债` 那把门在 HEAD 已红
+#: （436>430，台账 #77★「加键账册没跟」），此时再往 10 个文件里塞 46 枚孪生字面＝替别的席
+#: 加债。**登记不是放行**：反查腿 `test_axis_script_register_is_neither_stale_nor_growing`
+#: 判「现算集合 == 本册」——新增一枚当场红、修好一枚不删也红，只准缩不许长。
+#: 逐枚给的是（能力, 路由认的那枚, 路由不认的同族形），判据尺在函数体里现问 `zhconv`。
+LEDGER_AXIS_SCRIPT_ROUTE_OPEN: frozenset[tuple[str, str, str]] = frozenset({
+})
+
+#: 例外册②（刻意只认单轴）：路由认的中文形、册上按族该登记却没登记的形。**本波现算为空**——
+#: 主人裁的是「不统一的全改过来」，所以这里默认不许有货；真出现「刻意不登记」那一格，
+#: 须逐枚写理由并同批补反查，不许悄悄往里塞。
+LEDGER_AXIS_ROUTE_WITHHELD: frozenset[tuple[str, str]] = frozenset()
+
+from zhconv import (
+    convert as _zhconvert,  # 真身：pyproject 在册运行时依赖（折形唯一出口）
+)
+
+
+def _has_cjk(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
+def axis_family_variants(word: str) -> dict[str, set[str]]:
+    """一枚字面的三轴同族形（按轴分组；**只用于配对**，不构成新触发词）。
+
+    简繁只收**可逆对**（折过去再折回来相等才算同族）——单向折形会把无关词拉进同一族＝尺变松；
+    拼音走真身的全拼与首字母（含 `ABBR_MAX_LEN` 截断口径），并铺开大小写三形态。
+    """
+    out: dict[str, set[str]] = {"case": set(), "script": set(), "pinyin": set()}
+    text = str(word or "")
+    if not text:
+        return out
+    if not _has_cjk(text):
+        out["case"] = {text.lower(), text.upper(), text.capitalize(), text.title()} - {text}
+        return out
+    from zhconv import convert as _zhconvert  # 真身：pyproject 在册运行时依赖
+
+    simplified = _zhconvert(text, _SIMPLIFIED_LOCALE)
+    for folded in (_zhconvert(text, _TRADITIONAL_LOCALE), simplified):
+        if folded != text and _zhconvert(folded, _SIMPLIFIED_LOCALE) == simplified:
+            out["script"].add(folded)
+    from scripts import gen_trigger_pinyin as _gp  # 真身：读音表＋多音字覆写＋缩写口径
+
+    for base in (_gp.word_full_pinyin(text), _gp.word_abbr(text)[: _gp.ABBR_MAX_LEN]):
+        if base and not _has_cjk(base):
+            out["pinyin"] |= {base, base.lower(), base.upper(), base.capitalize()}
+    return out
+
+
+def registered_surface_forms(
+    topic: str, topics: dict[str, dict[str, Any]] | None = None
+) -> set[str]:
+    """某 topic 在帮助册登记的**原拼写**字面（不归一——注毒要能在注册表层被看见）。"""
+    source = INV["help_topics"] if topics is None else topics
+    info = source.get(topic) or {}
+    return {
+        str(word)
+        for field in ("aliases", "triggers_nl", "triggers_nickname")
+        for word in info.get(field) or ()
+    }
+
+
+def _axis_variants(word: str) -> set[str]:
+    return {v for bucket in axis_family_variants(word).values() for v in bucket}
+
+
+def axis_relations(forms: set[str]) -> dict[str, set[str]]:
+    """字面集内部的同族关系（**对称**）。
+
+    🔴 必须对称：`axis_family_variants('菜譜')` 给得出 `菜谱`，反过来
+    `axis_family_variants('jrls')` 只给得出大小写三形、**给不出**它的中文源形 `今日历史`
+    ——拼音轴是「中文→拉丁」的单向派生。非对称写法会让拼音↔中文那一格在 ASCII 侧整面失明
+    （本腿第一轮犯过这个错：例外册反查报「同族再无可达形」＝尺瞎，不是问题已修）。
+    判同族＝`b ∈ variants(a)` 或 `a ∈ variants(b)`；折形与读音全部现问真身。
+    """
+    variants = {form: _axis_variants(form) for form in forms}
+    related: dict[str, set[str]] = {form: set() for form in forms}
+    for left in sorted(forms):
+        for right in sorted(forms):
+            if left == right:
+                continue
+            if right in variants[left] or left in variants[right]:
+                related[left].add(right)
+    return related
+
+
+def _axis_label(word: str, siblings: set[str]) -> str:
+    """给报出来的同族形标是哪一轴（只影响文案，不参与判定）。"""
+    buckets = axis_family_variants(word)
+    reverse = {s for s in siblings if word in _axis_variants(s)}
+    if siblings & buckets["script"] or any(buckets["script"] & _axis_variants(s) for s in reverse):
+        return "script"
+    if siblings & buckets["pinyin"] or any(buckets["pinyin"] & _axis_variants(s) for s in reverse):
+        return "pinyin"
+    return "case"
+
+
+def _registered_keys(source: dict[str, dict[str, Any]], topic: str) -> set[str]:
+    """某 topic 在册触发词形的归一键集（与 `classify_help_topics` 同一把尺）。"""
+    return {
+        key
+        for field in ("aliases", "triggers_nl", "triggers_nickname")
+        for word in (source.get(topic) or {}).get(field) or ()
+        if (key := normalize_trigger_key(word))
+    }
+
+
+def axis_help_side_problems(
+    blind: frozenset[tuple[str, str]] = frozenset(),
+    topics: dict[str, dict[str, Any]] | None = None,
+) -> list[str]:
+    """腿①（写了不认）：在册却不可达的**中文形**，若它的同族形在同一 topic 可达 ⇒ 报红。
+
+    判域只收中文形（`_has_cjk`）：册上「写了拉丁形而路由不认」的那一族属**覆盖面**问题
+    （词级台账 `LEDGER_HELP_TO_ROUTE` 那本，逐枚有「斜杠门槛/文档式写法」凭据），
+    不属「同一枚命令的三种写法互相等价」这一问——把两问混成一把尺会既咬不动真缺口、
+    又把 44 枚已裁过的有意缺席重新拖红（本席第一轮就犯过）。
+    本波实证＝`表情包产生`：册上写着简体形，`meme._COMMAND_RE` 只手抄了
+    `表情產生`／`表情包產生` 兩枚繁體，同族繁體认、简体不认。
+    """
+    source = INV["help_topics"] if topics is None else topics
+    parsed_topics = classify_help_topics(source)
+    # 默认走门已经算好的那本 `VIOLATIONS_HELP_TO_ROUTE`（全量实跑，省一遍探针）；
+    # 一旦注入改了过的注册表（注毒腿），**必须对那份副本重跑生产判据**——读缓存的注毒
+    # 等于把毒注在不会被执行的路径上（台账 #50 那型假绿）。
+    items = (
+        VIOLATIONS_HELP_TO_ROUTE
+        if topics is None
+        else gate_help_to_route(source, VERB_MAP_FLAT, DETECTORS)
+    )
+    unreachable: dict[str, set[str]] = {}
+    for item in items:
+        unreachable.setdefault(str(item["topic"]), set()).add(str(item["word"]))
+    problems: list[str] = []
+    for topic in sorted(parsed_topics):
+        parsed = parsed_topics[topic]
+        if parsed["doc_only"]:
+            continue
+        registered = _registered_keys(source, topic)
+        missing = unreachable.get(topic, set()) & registered
+        reachable = registered - missing
+        relations = axis_relations(registered)
+        for word in sorted(missing):
+            if not _has_cjk(word) or (topic, word) in blind:
+                continue
+            landed = relations[word] & reachable
+            if not landed:
+                continue
+            problems.append(
+                f"{topic}/{word}（轴={_axis_label(word, landed)}）：同族形 {sorted(landed)} "
+                f"路由认、它不认＝册上写了却不认（三轴不同级）"
+            )
+    return sorted(set(problems))
+
+
+def axis_route_side_problems(
+    withheld: frozenset[tuple[str, str]] = LEDGER_AXIS_ROUTE_WITHHELD,
+    topics: dict[str, dict[str, Any]] | None = None,
+) -> list[str]:
+    """腿②（认得不登记）：路由认的**中文形**不在册、而同族另一枚在册 ⇒ 报红。
+
+    同样只收中文形：`haogan`/`akb` 这类「路由有拼音、册上只有中文」的拉丁形属既有
+    `LEDGER_ROUTE_TO_HELP` 的 A 类覆盖面账（本波现算 46 枚，其中还有 `bz`/`sz`/`sm` 这种
+    在册规格里「永不启用／不建议」的刻意缺形），与本问不同判域。
+    这一腿专咬「新增一枚只认单轴的路由词、顺手进词级台账就绿」那一格。本波清账 17 条全属
+    这一型：`菜譜`/`怎麼做`/`幫助`/`大盤`/`點歌模式`/`歷史上的今天`/`維基`/`維基百科`
+    （简繁轴：册上只抄简体）·`表情抽签`/`表情随机`/`随机表情包`（册上只抄繁體）·
+    `我的提醒`/`看看提醒`/`有哪些提醒`/`股票`（册上只抄拼音、中文正形一枚没有）·
+    `天气预报`/`查询天气`。
+    """
+    parsed_topics = classify_help_topics(INV["help_topics"] if topics is None else topics)
+    problems: list[str] = []
+    for capability_id, words in sorted(ROUTE_SIDE.items()):
+        help_words: set[str] = set()
+        for parsed in parsed_topics.values():
+            if capability_id in (parsed["caps"] | parsed["admin_caps"]):
+                help_words |= parsed["words"]
+        for word in sorted(words - help_words):
+            if not _has_cjk(word) or (capability_id, word) in withheld:
+                continue
+            landed = sorted(axis_relations(words | help_words)[word] & help_words)
+            if landed:
+                problems.append(
+                    f"{capability_id}/{word}：路由认它、帮助册/命令目录只登记了同族 {landed}"
+                    f"＝册上少一轴（三轴不同级）"
+                )
+    return sorted(set(problems))
+
+
+def axis_verb_script_problems(
+    with_held: frozenset[tuple[str, str, str]] = LEDGER_AXIS_SCRIPT_ROUTE_OPEN,
+) -> list[str]:
+    """腿③（路由只认单形）：路由认的中文触发字面，其简繁孪生两侧都不认 ⇒ 报红。
+
+    判域＝路由侧全部在册字面（`verified_triggers` ∪ `DEFAULT_VERB_MAP`）里的中文形；
+    孪生折形现问 `zhconv`（只收可逆对）。这一问此前**没有任何尺在管**：词级双向台账比的是
+    「这枚词在不在对面」，而这里两枚形其中一枚根本不存在于任何一侧，词级 diff 看不见。
+    本波把 `DEFAULT_VERB_MAP` 那 21 枚缺繁體对形的补齐（`為什麼`/`記憶`/`查詢`/`吃什麼`…
+    一张中央表，`CommandAliasResolver` 的 `re.IGNORECASE` 只折大小写、**不折简繁**）；
+    剩下的 44 枚住在各能力自家的触发正则里（bond/divination/emergency_info/group_info/
+    host_state/media_archive/meme_library/reminder/stocks），本席文件域之外、四席并发，
+    故逐枚登进 `LEDGER_AXIS_SCRIPT_ROUTE_OPEN` 只准缩不许长。
+    """
+    problems: list[str] = []
+    for capability_id, words in sorted(ROUTE_SIDE.items()):
+        pool = set(words) | HELP_SIDE.get(capability_id, set())
+        for word in sorted(words):
+            if not _has_cjk(word):
+                continue
+            simplified = _zhconvert(word, _SIMPLIFIED_LOCALE)
+            for twin in (_zhconvert(word, _TRADITIONAL_LOCALE), simplified):
+                if twin == word or not twin or _zhconvert(twin, _SIMPLIFIED_LOCALE) != simplified:
+                    continue  # 简繁同形，或单向折形（不可逆＝不算同族）
+                if twin in pool:
+                    continue
+                if (capability_id, word, twin) in with_held:
+                    continue
+                problems.append(
+                    f"{capability_id}/{word}：路由认简体形却不认同族繁體 {twin}＝只认单一形态"
+                )
+    return sorted(set(problems))
+
+
+def test_three_axis_help_side_forms_route_alike() -> None:
+    """主门①：帮助册/命令目录登记的中文形，其同族形路由认了它也必须认。"""
+    assert {"菜谱", "菜譜", "怎麼做"} <= registered_surface_forms("吃什么"), (
+        "尺读空＝在册字面取数塌了"
+    )
+    problems = axis_help_side_problems()
+    assert not problems, "命令面三轴不同级（写了不认）：" + "；".join(problems)
+
+
+def test_three_axis_route_side_forms_registered_alike() -> None:
+    """主门②：路由认的中文形，同族既已在册登记，它自己也须登记（例外册须保持空）。"""
+    assert not LEDGER_AXIS_ROUTE_WITHHELD, (
+        f"例外册被塞了货 {sorted(LEDGER_AXIS_ROUTE_WITHHELD)}——「不统一的全改过来」，"
+        "要留单轴形须在报告里逐枚点名并补反查"
+    )
+    problems = axis_route_side_problems()
+    assert not problems, "命令面三轴不同级（认得不登记）：" + "；".join(problems)
+
+
+def test_three_axis_verb_table_has_traditional_twins() -> None:
+    """主门③：中央动词表的中文动词必须簡繁成对（本波把 21 枚缺形补进那张表）。
+
+    执法面只判 `DEFAULT_VERB_MAP`（一张表、一个出口）；各能力正则那 44 枚走例外册。
+    """
+    verbs = {verb for group in INV["verb_map_groups"].values() for verb in group}
+    assert verbs, "尺读空＝动词表取数塌了"
+    problems: list[str] = []
+    for verb in sorted(verbs):
+        if not _has_cjk(verb):
+            continue
+        simplified = _zhconvert(verb, _SIMPLIFIED_LOCALE)
+        for twin in (_zhconvert(verb, _TRADITIONAL_LOCALE), simplified):
+            if twin == verb or not twin:
+                continue
+            if _zhconvert(twin, _SIMPLIFIED_LOCALE) != simplified:
+                continue
+            if twin not in verbs:
+                problems.append(f"动词表缺繁體/简体对形：{verb} → {twin}")
+    assert not problems, "；".join(problems)
+
+
+def test_three_axis_route_leg_catches_dropped_catalog_twin() -> None:
+    """注毒②：从帮助册摘掉一枚繁體同族形（`菜譜`）⇒ 腿②必须点名 `bot.eat/菜譜`。
+
+    毒注在**注册表副本**上（`INV["help_topics"]` 的一份拷贝），经
+    `classify_help_topics → axis_route_side_problems` 真走一遍，不是改预先算好的词集
+    （台账 #50 那型「注在不会被执行的路径上＝假绿」）。
+    """
+    forms = registered_surface_forms("吃什么")
+    assert {"菜谱", "菜譜"} <= forms, f"注毒前提失效：简繁两枚本不都在册：{sorted(forms)}"
+    mutated = {topic: dict(info) for topic, info in INV["help_topics"].items()}
+    entry = dict(mutated["吃什么"])
+    entry["aliases"] = tuple(word for word in entry["aliases"] if word != "菜譜")
+    assert "菜譜" not in entry["aliases"], "注毒没摘掉那枚"
+    mutated["吃什么"] = entry
+    problems = axis_route_side_problems(topics=mutated)
+    assert any("bot.eat/菜譜" in problem for problem in problems), (
+        "注毒未奏效：册上少一枚繁體同族形，腿②照样绿＝本腿已退化成摆设"
+    )
+    assert not any("bot.eat/菜譜" in p for p in axis_route_side_problems()), (
+        "未注毒那遍不该点名——两遍读的是同一份缓存"
+    )
+
+
+def test_three_axis_help_leg_catches_unroutable_registered_twin() -> None:
+    """注毒①：往帮助册登记一枚路由根本不认的繁體形（`主人在幹嘛`）⇒ 腿①必须点名。
+
+    这枚不是编的：`日程.aliases` 在册且可路由的是简体 `主人在干嘛`（NL 面 `question_intent`
+    只手抄简体那一枚），繁體同族 `主人在幹嘛` 三个路由面都坠不住——注进副本即当场浮出。
+
+    锚点换代留账（席 cb-hs3，2026-10-12 三轴同级册侧收口）：本腿原注 `占卜/佔一卦`，
+    那枚在**第二层**（13 枚能力自家正则补孪生形）落地后已变成可路由形——`divination.
+    _DIVINATION_COMMAND_RE` 现认 `佔一卦` ⇒ 注入它不再是「写了不认」，腿必然看不见毒；
+    而第三层（册侧）又按主人裁「认得不登记」把 `佔一卦` 登记进 `占卜.aliases`，与本腿前置
+    `assert "佔一卦" not in forms` **直接互斥**。两层都按裁定落过地，失效的是锚点而非判据，
+    故只换锚、不放宽尺：换到「册上确实未登记＋三面确实不认＋同族形在册且可认」的真实一对
+    （现算候选＝`axis_help_side_problems` 注毒前置同款折形判据，全树 23 对，本腿取其中一枚）。
+    🔴 反证同批锁死：`axis_help_side_problems()` 未注毒那遍必须**不**点名任何一枚——若哪天
+    有人把 NL 面简繁补齐、这对缺口消失，前置 `assert` 当场红催换锚，不会静默退化成摆设。
+    """
+    forms = registered_surface_forms("日程")
+    assert "主人在干嘛" in forms and "主人在幹嘛" not in forms, f"注毒前提失效：{sorted(forms)}"
+    mutated = {topic: dict(info) for topic, info in INV["help_topics"].items()}
+    entry = dict(mutated["日程"])
+    entry["aliases"] = tuple(entry["aliases"]) + ("主人在幹嘛",)
+    mutated["日程"] = entry
+    problems = axis_help_side_problems(topics=mutated)
+    assert any("日程/主人在幹嘛" in problem for problem in problems), (
+        f"注毒未奏效：册上多一枚路由不认的繁體形，腿①照样绿：{problems}"
+    )
+    assert not any("主人在幹嘛" in p for p in axis_help_side_problems()), "未注毒那遍不该点名"
+    # 锚点换代不可反悔：`佔一卦` 如今在册又可路由（第二层＋第三层都落过地），
+    # 谁把它从册上摘掉＝腿②（认得不登记）当场点名。
+    assert "佔一卦" in registered_surface_forms("占卜"), (
+        "锚点旧毒 `佔一卦` 已从 `占卜.aliases` 消失＝册侧三轴同级账被摘"
+    )
+
+
+def test_axis_script_register_is_neither_stale_nor_growing() -> None:
+    """例外册反查：每枚登记缺形须**仍然**缺（同族孪生两侧都不认）；被修好却不删 ⇒ 红。
+
+    登记 ≠ 实物（台账 #68★：落地件必过三道闸）。将来谁把 `佔卜` 补进 divination 正则，
+    这一腿当场红催清账——不留「台账收编了但问题已消失」的空头许可。
+    """
+    stale: list[str] = []
+    for capability_id, word, twin in sorted(LEDGER_AXIS_SCRIPT_ROUTE_OPEN):
+        pool = set(ROUTE_SIDE.get(capability_id, set())) | HELP_SIDE.get(capability_id, set())
+        if word not in ROUTE_SIDE.get(capability_id, set()):
+            stale.append(f"{capability_id}/{word}：路由侧已无这枚字面，登记对象已不在")
+        elif twin in pool:
+            stale.append(
+                f"{capability_id}/{word}→{twin}：孪生形已被认，例外册该清账"
+            )
+    assert not stale, "；".join(stale)
+    current = set(axis_verb_script_problems(with_held=frozenset()))
+    registered = {f"{c}/{w}：路由认简体形却不认同族繁體 {t}＝只认单一形态" for c, w, t in
+                  LEDGER_AXIS_SCRIPT_ROUTE_OPEN}
+    assert current == registered, (
+        f"例外册与现算缺形不等：新增={sorted(current - registered)[:6]} "
+        f"已修={sorted(registered - current)[:6]}"
+    )

@@ -6,7 +6,7 @@
 > `/bot help`、`/bot help <模块>` 与本目录共享同一数据源。
 
 - 模块数：83
-- 别名数：575
+- 别名数：631
 - 普通用户可用模块：39；仅管理员模块：44
 - 路由规则数：36；其中登记为内部能力：5
 
@@ -136,7 +136,7 @@
 ## 记忆
 
 - 权限：普通用户可用
-- 触发别名：记忆；memory
+- 触发别名：记忆；memory；記憶
 - 能力入口：bot.memory
 - 群聊/私聊差异：私聊=全部个人记忆；群聊=仅 public/group 两级，防止个人私事被围观
 - 网络依赖：纯本地
@@ -171,7 +171,7 @@
 ## 为什么
 
 - 权限：仅管理员
-- 触发别名：为什么；为啥；why
+- 触发别名：为什么；为啥；why；為什麼；為啥
 - 能力入口：bot.why
 - 可复制示例：/bot why｜/bot why help_8f2a1b3c
 - 总览：【为什么】解释最近决策：/bot why [id]
@@ -410,7 +410,7 @@
 ## 就绪
 
 - 权限：仅管理员
-- 触发别名：就绪；readiness
+- 触发别名：就绪；readiness；就緒
 - 能力入口：bot.readiness
 - 网络依赖：纯本地
 - 输出形式：文本
@@ -521,7 +521,7 @@
 ## 历史
 
 - 权限：仅管理员
-- 触发别名：历史；history；清理历史
+- 触发别名：历史；歷史；history；清理历史；清理歷史
 - 能力入口：bot.history
 - 网络依赖：纯本地
 - 输出形式：文本
@@ -1381,7 +1381,7 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测全部渠道；参�
 ## 点歌
 
 - 权限：普通用户可用
-- 触发别名：点歌；music；點歌；点唱；點唱；song；diange；dg；diangemoshi；dgms
+- 触发别名：点歌；music；點歌；点唱；點唱；song；diange；dg；diangemoshi；dgms；點歌模式
 - 能力入口：bot.music / bot.music_mode
 - 自然语言触发：点歌 <歌名>；来一首；来首；放一首；播放 <歌名>；唱一首歌
 - 群聊/私聊差异：群聊/私聊行为一致（会话仅用作统计 scope/候选键）
@@ -1454,7 +1454,7 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测全部渠道；参�
 ## 偷表情
 
 - 权限：普通用户可用
-- 触发别名：偷表情；偷表情包；偷圖；偷图；表情隨機；隨機表情；隨機表情包；表情抽籤；steal；toubiaoqing；tbq；toubiaoqingbao；tbqb
+- 触发别名：偷表情；偷表情包；偷圖；偷图；表情隨機；隨機表情；隨機表情包；表情抽籤；表情抽签；表情随机；随机表情包；表情庫；表情庫統計；表情統計；steal；toubiaoqing；tbq；toubiaoqingbao；tbqb
 - 能力入口：bot.meme_library
 - 自然语言触发：偷表情；偷张表情包；随机来张表情
 - 群聊/私聊差异：写「私聊/私聊我」等同不填关键词，但改为私聊发送
@@ -1514,7 +1514,7 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测全部渠道；参�
 ## 天气
 
 - 权限：普通用户可用
-- 触发别名：天气；weather；天氣；查天氣；天氣預報；tianqi；tq；chatianqi；ctq
+- 触发别名：天气；weather；天气预报；查詢天氣；查询天气；查天气；天氣；查天氣；天氣預報；tianqi；tq；chatianqi；ctq
 - 能力入口：bot.weather
 - 自然语言触发：天气 <城市>；帮我查<城市>天气；<城市>天气怎么样
 - 群聊/私聊差异：查不到城市：群聊静默不回，私聊回明确报错文本（weather.py 会话分支）
@@ -1545,7 +1545,7 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测全部渠道；参�
 ## 行情
 
 - 权限：普通用户可用
-- 触发别名：行情；market；stock market；股指；股市；大盘；美股行情；港股行情；A股行情；B股行情；莫斯科股指；莫斯科行情；hangqing；hq；gushi；gs；dapan；dp；guzhi
+- 触发别名：行情；market；stock market；股指；股市；大盘；大盤；美股行情；港股行情；A股行情；B股行情；莫斯科股指；莫斯科行情；hangqing；hq；gushi；gs；dapan；dp；guzhi
 - 能力入口：bot.market
 - 自然语言触发：行情；A股行情；B股行情；莫斯科股指；莫斯科行情；全球股市；股市；大盘；market；stock market
 - 群聊/私聊差异：群聊/私聊行为一致（无会话分支）
@@ -1578,7 +1578,7 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测全部渠道；参�
 ## 个股行情
 
 - 权限：普通用户可用
-- 触发别名：个股行情；股价；股票价格；市值；股價；個股；英伟达股价；AMD 股价；英特尔股价；美股股价；stocks；stock；gujia；gj；gupiao
+- 触发别名：个股行情；股价；股票；股票价格；市值；股價；個股；个股；股票價格；英伟达股价；AMD 股价；英特尔股价；美股股价；stocks；stock；gujia；gj；gupiao
 - 能力入口：bot.stocks
 - 自然语言触发：英伟达股价；AMD 股价；英特尔股价；股价；市值；股價；個股；美股股价；stocks；stock
 - 群聊/私聊差异：群聊/私聊行为一致（无会话分支）
@@ -1658,7 +1658,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 ## 国债收益率
 
 - 权限：普通用户可用
-- 触发别名：国债收益率；国债；债券收益率；期限利差；收益率曲线；中美国债；國債；債券收益率；guozhai；xianqilicha
+- 触发别名：国债收益率；国债；债券收益率；期限利差；收益率曲线；中美国债；國債；債券收益率；國債收益率；收益率曲線；中美國債；guozhai；xianqilicha
 - 能力入口：bot.bond
 - 自然语言触发：国债；国债收益率；期限利差；收益率曲线；中美国债；國債；債券收益率
 - 群聊/私聊差异：群聊/私聊行为一致（无会话分支）
@@ -1771,7 +1771,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 ## 占卜
 
 - 权限：普通用户可用
-- 触发别名：占卜；塔罗；八字；算命；算卦；起卦；塔羅；排盤；排盘；命盤；命盘；四柱；搖卦；摇卦；今日塔羅；今日塔罗；今天塔羅；今天塔罗；塔羅三張；塔罗三张；divination；tarot；bazi；iching；zhanbu；taluo；tl；suanming；suangua；sg；qigua；qg；求籤；求签；六十四卦；金錢卦；金钱卦；生辰八字；算一卦；起一卦；摇一卦；搖一卦；掷一卦；擲一卦；占一卦；一卦；每日一签；每日一簽；每日一抽；paipan；sizhu；mingpan；pp；mp；yaogua；yg；liushisigua；lssg；jinqiangua；hexagram
+- 触发别名：占卜；佔卜；塔罗；八字；算命；算卦；起卦；塔羅；排盤；排盘；命盤；命盘；四柱；搖卦；摇卦；今日塔羅；今日塔罗；今天塔羅；今天塔罗；塔羅三張；塔罗三张；divination；tarot；bazi；iching；zhanbu；taluo；tl；suanming；suangua；sg；qigua；qg；求籤；求签；六十四卦；金錢卦；金钱卦；生辰八字；算一卦；起一卦；摇一卦；搖一卦；掷一卦；擲一卦；占一卦；佔一卦；一卦；每日一签；每日一簽；每日一籤；每日一抽；paipan；sizhu；mingpan；pp；mp；yaogua；yg；liushisigua；lssg；jinqiangua；hexagram
 - 能力入口：bot.divination
 - 自然语言触发：占卜；塔罗；塔羅；八字；算命；起卦；排盘；排盤；命盘；命盤；四柱；摇卦；搖卦；求签；求籤；今日塔罗；今日塔羅；今天塔罗；今天塔羅；塔罗三张；塔羅三張；tarot；bazi；iching；divination
 - 群聊/私聊差异：群聊/私聊行为一致（无会话分支）
@@ -1809,7 +1809,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 ## 快报
 
 - 权限：普通用户可用
-- 触发别名：快报；快報；今日快报；早报；早報；晚报；晚報；今日热点；今日熱點；科技新闻；科技新聞；AI新闻；AI新聞；AI快報；财经快报；財經快報；财经新闻；財經新聞；国际新闻；國際新聞；news；kuaibao；kb；jinrikuaibao；jrkb
+- 触发别名：快报；快報；今日快报；今日快報；早报；早報；晚报；晚報；今日热点；今日熱點；科技新闻；科技新聞；AI新闻；AI新聞；AI快報；财经快报；財經快報；财经新闻；財經新聞；国际新闻；國際新聞；news；kuaibao；kb；jinrikuaibao；jrkb
 - 能力入口：bot.news
 - 自然语言触发：快报；快報；今日热点；今日熱點；科技新闻；科技新聞；AI新闻；AI新聞；财经快报；財經快報；国际新闻；國際新聞
 - 群聊/私聊差异：群聊/私聊行为一致（无会话分支）
@@ -1845,7 +1845,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 ## 维基
 
 - 权限：普通用户可用
-- 触发别名：维基；wiki；百科；weiji；wjbk
+- 触发别名：维基；维基百科；維基；維基百科；wiki；百科；weiji；wjbk
 - 能力入口：bot.wiki
 - 自然语言触发：维基 <词条>；wiki <词条>
 - 群聊/私聊差异：群聊/私聊行为一致（无会话分支）
@@ -1912,7 +1912,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 ## 历史上的今天
 
 - 权限：普通用户可用
-- 触发别名：历史上的今天；today；today in history；今日；lssd；jinrilishi；jrls
+- 触发别名：历史上的今天；歷史上的今天；今日历史；今日歷史；today；today in history；今日；lssd；jinrilishi；jrls
 - 能力入口：bot.today_history
 - 群聊/私聊差异：设置每日推送时间：群内需管理员（影响全群），私聊自助
 - 网络依赖：需要联网
@@ -2069,7 +2069,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 ## 吃什么
 
 - 权限：普通用户可用
-- 触发别名：吃什么；吃啥；菜谱；eat；food；recipe；chishenme；csm；caipu；cp；zenmezuo；zmz
+- 触发别名：吃什么；吃什麼；今天吃什么；今天吃什麼；吃啥；菜谱；菜譜；怎麼做；eat；food；recipe；chishenme；csm；caipu；cp；zenmezuo；zmz
 - 能力入口：bot.eat
 - 自然语言触发：吃什么；吃啥；菜谱 <菜名>；怎么做
 - 群聊/私聊差异：群聊/私聊行为一致（会话仅用作去重缓存键）
@@ -2101,7 +2101,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 ## 媒体归档
 
 - 权限：仅管理员
-- 触发别名：收藏；归档；存图；收图；存聊天记录；存记录；archive；shoucang；guidang
+- 触发别名：收藏；归档；存图；收图；存聊天记录；存记录；歸檔；存圖；收圖；存聊天記錄；存記錄；archive；shoucang；guidang
 - 能力入口：bot.media_archive
 - 自然语言触发：收藏；归档；存图；存聊天记录；archive
 - 群聊/私聊差异：私聊/群聊行为一致（回复媒体或媒体+指令同条触发）
@@ -2135,6 +2135,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 - 权限：普通用户可用
 - 触发别名：群信息；本群信息；群资料；群主是谁；谁是群主；群人数；群公告；群精华；精华消息；本群多大了；群相册；本群相册；群相册列表；群待办；本群待办；群待办列表；群里都有谁；本群都有谁；群里谁说过话；本群谁说过话；群参与者；本群参与者；都有谁说过话；我都跟谁聊过；跟谁聊过
 - 能力入口：bot.group_info
+- 自然语言触发：群資料；本群資料；群主是誰；誰是群主；群人數；本群人數；群精華；本群精華；精華消息；群相冊；本群相冊；群相冊列表；群待辦；本群待辦；群待辦列表；群裡都有誰；本群都有誰；群裡誰說過話；本群誰說過話；群參與者；本群參與者；都有誰說過話；我都跟誰聊過；跟誰聊過；本群资料；本群人数；本群精华
 - 群聊/私聊差异：仅群聊生效（私聊回守岸人提示）；群资料/人数/相册/待办/参与者全员，公告与精华仅管理员；成员名单不整列（隐私+防刷屏），参与者族读记忆里的说话人而非协议名单
 - 网络依赖：需要联网
 - 输出形式：文本
@@ -2174,7 +2175,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 ## 宿主机状态
 
 - 权限：仅管理员
-- 触发别名：宿主机状态；机器状态；机器配置；宿主状态；宿主機狀態；機器狀態；hoststate；jiqizhuangtai；jizhuangtai；jiqipeizhi
+- 触发别名：宿主机状态；机器状态；机器配置；宿主状态；宿主機狀態；機器狀態；機器配置；宿主狀態；hoststate；jiqizhuangtai；jizhuangtai；jiqipeizhi
 - 能力入口：bot.host_state
 - 群聊/私聊差异：仅超级管理员（其余角色得到一句温和拒绝）；群聊与私聊同面可问；读数本机现算、逐行打码，只读不改任何设置
 - 网络依赖：纯本地
@@ -2209,7 +2210,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 ## 书面同意
 
 - 权限：仅管理员
-- 触发别名：同意卡；书面同意；同意單；書面同意；consentcard；yijika；shumiantongyi
+- 触发别名：同意卡；同意单；书面同意；同意單；書面同意；consentcard；yijika；shumiantongyi
 - 能力入口：bot.consent
 - 群聊/私聊差异：仅管理员及其以上；看单不分群聊私聊，批一张具体的卡按同意账的阶梯判（R2=超管私聊亲批）；发起人不批自己发起的卡；只回显账上事实，本命令面自己绝不改参数
 - 网络依赖：纯本地
@@ -2286,7 +2287,7 @@ OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有�
 ## Epic
 
 - 权限：普通用户可用
-- 触发别名：epic；epic free；epic 免费；免费游戏；免費遊戲；遊戲免費；steam免費；steam 免費；游戏免费；steam免费；steam 免费
+- 触发别名：epic；epic free；epic 免费；epic免費；epic 免費；游戏免费；遊戲免費；steam免费；steam 免费；steam免費；steam 免費；免费游戏；免費遊戲
 - 能力入口：bot.epic
 - 自然语言触发：epic；免费游戏；免費遊戲
 - 群聊/私聊差异：群聊/私聊行为一致（无会话分支）
@@ -2358,7 +2359,7 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 ## 提醒
 
 - 权限：普通用户可用
-- 触发别名：提醒；reminder；叫我；记得叫；記得叫；定时提醒；tixingliebiao；txlb；wodetixing；wdtx；kankantixing；kktx；younaxietixing；ynxt
+- 触发别名：提醒；reminder；叫我；记得叫；記得叫；定时提醒；我的提醒；看看提醒；有哪些提醒；tixingliebiao；txlb；wodetixing；wdtx；kankantixing；kktx；younaxietixing；ynxt
 - 能力入口：bot.reminder
 - 自然语言触发：<时间>提醒我…；<时间>叫我…；记得叫；記得叫；提醒列表；取消提醒 <id>
 - 群聊/私聊差异：投递目标：群聊=原群，私聊=本人（target_scope=会话类型）
@@ -2393,7 +2394,7 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 - 权限：普通用户可用
 - 触发别名：笔记；筆記；biji；note；笔记列表；bijiliebiao；bjlb
 - 能力入口：bot.reminder
-- 自然语言触发：笔记 记 <内容>；笔记列表；笔记 看 N；看笔记 N；做完 N；完成 N；办完 N；删笔记 N；<事项>做完了
+- 自然语言触发：笔记 记 <内容>；笔记列表；笔记 看 N；看笔记 N；做完 N；完成 N；办完 N；办完；辦完；删笔记 N；<事项>做完了
 - 群聊/私聊差异：笔记按会话隔离（A 群看不到 B 群）；配图落 data/notes_images
 - 网络依赖：纯本地
 - 输出形式：文本；图片（回看补发）
@@ -2543,7 +2544,7 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 ## 帮助
 
 - 权限：普通用户可用
-- 触发别名：帮助；help；菜单
+- 触发别名：帮助；幫助；help；菜单
 - 能力入口：bot.help
 - 群聊/私聊差异：普通用户只见公开模块；查管理员模块回「没有找到」
 - 网络依赖：纯本地
@@ -2678,9 +2679,9 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 ## 表情册
 
 - 权限：仅管理员
-- 触发别名：表情册；表情相冊；biaoqingce
+- 触发别名：表情册；表情冊；表情相册；表情相冊；biaoqingce
 - 能力入口：bot.meme_library
-- 自然语言触发：审批；待审
+- 自然语言触发：审批；待审；審批；待審；表情库
 - 网络依赖：纯本地
 - 输出形式：文本（册账 / 待选清单 / 落地回执）
 - 配置变量：BOT_MEME_LIBRARY_ENABLED；BOT_MEME_LIBRARY_DIR；BOT_MEME_LIBRARY_DB_PATH
@@ -2810,7 +2811,7 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 ## 紧急信息
 
 - 权限：仅管理员
-- 触发别名：紧急信息；预警；地震；震情；待审；emergency；緊急信息；預警
+- 触发别名：紧急信息；预警；地震；震情；待审；emergency；緊急信息；預警；待審
 - 能力入口：bot.emergency_info
 - 自然语言触发：紧急信息；预警；地震；震情；待审；emergency
 - 群聊/私聊差异：查询与审核=管理员；设/退订阅=超级管理员·管理员·本群群主（仅 QQ 侧）；群聊只读已批准条目

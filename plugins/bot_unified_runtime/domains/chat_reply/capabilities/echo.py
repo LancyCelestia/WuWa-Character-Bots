@@ -903,7 +903,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '历史',
             "admin_only": True,
-            "aliases": ('历史', 'history', '清理历史'),
+            "aliases": ('历史', '歷史', 'history', '清理历史', '清理歷史'),
             "index": '【历史】清理会话历史：/bot history clear',
             "title_line": '【历史】清理本会话最近对话历史',
             "lines": [
@@ -1518,7 +1518,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '点歌',
             "admin_only": False,
             # 點唱/点唱（tra3 波入 music._COMMAND_RE）help 同步入册。
-            "aliases": ('点歌', 'music', '點歌', '点唱', '點唱', 'song', 'diange', 'dg', 'diangemoshi', 'dgms'),
+            "aliases": ('点歌', 'music', '點歌', '点唱', '點唱', 'song', 'diange', 'dg', 'diangemoshi', 'dgms', '點歌模式'),
             "index": '【点歌】搜索并发送歌曲：/bot music <歌名>｜/bot music <编号>｜/bot music_mode <部件组合>｜中文同义：/bot 点歌｜/bot 点歌模式',
             "title_line": '【点歌】搜索并发送歌曲',
             "lines": [
@@ -1567,7 +1567,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "admin_only": False,
             # 偷圖/偷图（meme_library 双向补齐波）与 表情隨機/隨機表情/隨機表情包/
             # 表情抽籤（tra49 波）均已入 meme_library._COMMAND_RE，help 同步入册。
-            "aliases": ('偷表情', '偷表情包', '偷圖', '偷图', '表情隨機', '隨機表情', '隨機表情包', '表情抽籤', 'steal', 'toubiaoqing', 'tbq', 'toubiaoqingbao', 'tbqb'),
+            "aliases": ('偷表情', '偷表情包', '偷圖', '偷图', '表情隨機', '隨機表情', '隨機表情包', '表情抽籤', '表情抽签', '表情随机', '随机表情包', '表情庫', '表情庫統計', '表情統計', 'steal', 'toubiaoqing', 'tbq', 'toubiaoqingbao', 'tbqb'),
             "index": '【偷表情】表情库随机：偷表情 [关键词]｜表情库统计',
             "title_line": '【偷表情】从表情库随机抽取',
             "lines": [
@@ -1609,7 +1609,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "admin_only": False,
             # 天氣/查天氣/天氣預報均在 weather._WEATHER_RE（天氣預報=tra3 修活），
             # 与 META triggers_nickname 已登记词形对齐，help 解析同步。
-            "aliases": ('天气', 'weather', '天氣', '查天氣', '天氣預報', 'tianqi', 'tq', 'chatianqi', 'ctq'),
+            "aliases": ('天气', 'weather', '天气预报', '查詢天氣', '查询天气', '查天气', '天氣', '查天氣', '天氣預報', 'tianqi', 'tq', 'chatianqi', 'ctq'),
             "index": '【天气】查询城市/区县天气：/bot weather <城市>｜/bot districts <省>｜中文同义：/bot 天气｜/bot 支持区县',
             "title_line": '【天气】查询城市与区县天气',
             "lines": [
@@ -1630,7 +1630,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '行情',
             "admin_only": False,
-            "aliases": ('行情', 'market', 'stock market', '股指', '股市', '大盘', '美股行情', '港股行情', 'A股行情', 'B股行情', '莫斯科股指', '莫斯科行情', 'hangqing', 'hq', 'gushi', 'gs', 'dapan', 'dp', 'guzhi'),
+            "aliases": ('行情', 'market', 'stock market', '股指', '股市', '大盘', '大盤', '美股行情', '港股行情', 'A股行情', 'B股行情', '莫斯科股指', '莫斯科行情', 'hangqing', 'hq', 'gushi', 'gs', 'dapan', 'dp', 'guzhi'),
             "index": '【行情】全球股指：行情 或 美股行情/港股行情/A股行情/B股行情/莫斯科行情…',
             "title_line": '【行情】全球主要股指行情',
             "lines": [
@@ -1650,7 +1650,10 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '个股行情',
             "admin_only": False,
-            "aliases": ('个股行情', '股价', '股票价格', '市值', '股價', '個股', '英伟达股价', 'AMD 股价', '英特尔股价', '美股股价', 'stocks', 'stock', 'gujia', 'gj', 'gupiao'),
+            # 三轴同级册侧（席 cb-hs3，常令⑦）：`個股`/`股票价格` 各缺一枚对形——路由侧
+            # stocks._STOCK_HINT_RE 简繁两形都认（反向缺形补齐同批），册上此前只有 `個股` 繁體、
+            # `股票价格` 简体。补法＝谁的形缺就补谁，不重排既有序（分隔符/排序沿用本簇形状）。
+            "aliases": ('个股行情', '股价', '股票', '股票价格', '市值', '股價', '個股', '个股', '股票價格', '英伟达股价', 'AMD 股价', '英特尔股价', '美股股价', 'stocks', 'stock', 'gujia', 'gj', 'gupiao'),
             "index": '【个股行情】科技公司股价：英伟达股价/AMD 股价/英特尔股价 或 股价/市值/stocks',
             "title_line": '【个股行情】上市科技公司股价与市值',
             "lines": [
@@ -1702,7 +1705,9 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '国债收益率',
             "admin_only": False,
-            "aliases": ('国债收益率', '国债', '债券收益率', '期限利差', '收益率曲线', '中美国债', '國債', '債券收益率', 'guozhai', 'xianqilicha'),
+            # 三轴同级册侧（席 cb-hs3，常令⑦）：market._BOND_TRIGGER_RE 现已简繁两形都认，
+            # 本簇繁體块随之补齐 `國債收益率`/`收益率曲線`/`中美國債`（既有繁體块尾附，不动简体序）。
+            "aliases": ('国债收益率', '国债', '债券收益率', '期限利差', '收益率曲线', '中美国债', '國債', '債券收益率', '國債收益率', '收益率曲線', '中美國債', 'guozhai', 'xianqilicha'),
             "index": '【国债收益率】主要期限国债收益率与利差：国债 或 国债收益率/期限利差/收益率曲线',
             "title_line": '【国债收益率】国债收益率与期限利差速览',
             "lines": [
@@ -1773,7 +1778,10 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '占卜',
             "admin_only": False,
-            "aliases": ('占卜', '塔罗', '八字', '算命', '算卦', '起卦', '塔羅', '排盤', '排盘', '命盤', '命盘', '四柱', '搖卦', '摇卦', '今日塔羅', '今日塔罗', '今天塔羅', '今天塔罗', '塔羅三張', '塔罗三张', 'divination', 'tarot', 'bazi', 'iching', 'zhanbu', 'taluo', 'tl', 'suanming', 'suangua', 'sg', 'qigua', 'qg', '求籤', '求签', '六十四卦', '金錢卦', '金钱卦', '生辰八字', '算一卦', '起一卦', '摇一卦', '搖一卦', '掷一卦', '擲一卦', '占一卦', '一卦', '每日一签', '每日一簽', '每日一抽', 'paipan', 'sizhu', 'mingpan', 'pp', 'mp', 'yaogua', 'yg', 'liushisigua', 'lssg', 'jinqiangua', 'hexagram'),
+            # 三轴同级册侧（席 cb-hs3，常令⑦）：`占卜`/`占一卦` 繁體孪生 `佔卜`/`佔一卦`、
+            # `每日一签` 繁體 `每日一籤`（签→籤 那一支）此前只在 divination 正则里认、册上没落点；
+            # 逐枚紧贴各自简体形插入，保持本簇「同族两形相邻」的既有排法。
+            "aliases": ('占卜', '佔卜', '塔罗', '八字', '算命', '算卦', '起卦', '塔羅', '排盤', '排盘', '命盤', '命盘', '四柱', '搖卦', '摇卦', '今日塔羅', '今日塔罗', '今天塔羅', '今天塔罗', '塔羅三張', '塔罗三张', 'divination', 'tarot', 'bazi', 'iching', 'zhanbu', 'taluo', 'tl', 'suanming', 'suangua', 'sg', 'qigua', 'qg', '求籤', '求签', '六十四卦', '金錢卦', '金钱卦', '生辰八字', '算一卦', '起一卦', '摇一卦', '搖一卦', '掷一卦', '擲一卦', '占一卦', '佔一卦', '一卦', '每日一签', '每日一簽', '每日一籤', '每日一抽', 'paipan', 'sizhu', 'mingpan', 'pp', 'mp', 'yaogua', 'yg', 'liushisigua', 'lssg', 'jinqiangua', 'hexagram'),
             "index": '【占卜】八字排盘/塔罗/金钱卦（含地支藏干）：占卜 | 塔罗 三张 | 八字 1998年3月2日早上7点',
             "title_line": '【占卜】玄学娱乐三件套',
             "lines": [
@@ -1802,7 +1810,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '快报',
             "admin_only": False,
             # 快報族 10 词（tra2 波入 _NEWS_TRIGGER_RE，与简体逐词同序）help 同步入册。
-            "aliases": ('快报', '快報', '今日快报', '早报', '早報', '晚报', '晚報', '今日热点', '今日熱點', '科技新闻', '科技新聞', 'AI新闻', 'AI新聞', 'AI快報', '财经快报', '財經快報', '财经新闻', '財經新聞', '国际新闻', '國際新聞', 'news', 'kuaibao', 'kb', 'jinrikuaibao', 'jrkb'),
+            "aliases": ('快报', '快報', '今日快报', '今日快報', '早报', '早報', '晚报', '晚報', '今日热点', '今日熱點', '科技新闻', '科技新聞', 'AI新闻', 'AI新聞', 'AI快報', '财经快报', '財經快報', '财经新闻', '財經新聞', '国际新闻', '國際新聞', 'news', 'kuaibao', 'kb', 'jinrikuaibao', 'jrkb'),
             "index": '【快报】今日新闻快报：快报 或 科技新闻/AI新闻/财经快报/国际新闻',
             "title_line": '【快报】今日新闻快报',
             "lines": [
@@ -1828,7 +1836,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '维基',
             "admin_only": False,
-            "aliases": ('维基', 'wiki', '百科', 'weiji', 'wjbk'),
+            "aliases": ('维基', '维基百科', '維基', '維基百科', 'wiki', '百科', 'weiji', 'wjbk'),
             "index": '【维基】查通用百科（MediaWiki）：/bot wiki <词条>｜中文同义：/bot 维基｜/bot 百科',
             "title_line": '【维基】查询百科词条',
             "lines": [
@@ -1872,7 +1880,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '历史上的今天',
             "admin_only": False,
-            "aliases": ('历史上的今天', 'today', 'today in history', '今日', 'lssd', 'jinrilishi', 'jrls'),
+            "aliases": ('历史上的今天', '歷史上的今天', '今日历史', '今日歷史', 'today', 'today in history', '今日', 'lssd', 'jinrilishi', 'jrls'),
             "index": '【历史上的今天】每日历史推送：立即查 | 设置 HH:MM | 状态 | 取消',
             "title_line": '【历史上的今天】每天定时推送历史',
             "lines": [
@@ -1982,7 +1990,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '吃什么',
             "admin_only": False,
-            "aliases": ('吃什么', '吃啥', '菜谱', 'eat', 'food', 'recipe', 'chishenme', 'csm', 'caipu', 'cp', 'zenmezuo', 'zmz'),
+            "aliases": ('吃什么', '吃什麼', '今天吃什么', '今天吃什麼', '吃啥', '菜谱', '菜譜', '怎麼做', 'eat', 'food', 'recipe', 'chishenme', 'csm', 'caipu', 'cp', 'zenmezuo', 'zmz'),
             "index": '【吃什么】随机推荐家常菜/查菜谱：吃什么 | 吃什么 三选一 | 菜谱 番茄炒蛋',
             "title_line": '【吃什么】解决选择困难',
             "lines": [
@@ -2031,6 +2039,15 @@ _HELP_ENTRIES: list[HelpEntry] = [
             # 同模块的简单常量赋值（跨模块引用当场 ValueError「无法解析的模块级名字」，
             # 2026-09-25 实测），所以「引用真身」这条路对本文件不成立。新增词形必须
             # 与 group_info._INTENT_OF_WORD 同步，由触发词双向门执法。
+            # 三轴同级册侧（席 cb-hs3，常令⑦）：group_info._INTENT_*_WORDS 简繁两侧都认
+            # （参与者族繁體九枚 2026-10-12 同批入正则），册上此前只有简体一族。
+            # 🔴 落点选在 META 的 `triggers_nl` 而**不是**本条 `aliases`：本 topic 的
+            # `aliases` ≡ `_HELP_ENTRY_META['群信息'].triggers_nickname`（同集合）＝词面账上
+            # S53 名册登记在册的**有意镜像簇**（CLUSTER 键按两处集合全等折出）。只往 aliases
+            # 单边加词会把两集合成两半、簇折不出来 ⇒ 名册 15 行当场虚设（本席实犯并现算定位：
+            # A/B 树＝本席三件全摘时 `test_s53_roster_has_no_stale_rows` 绿，加进 aliases 后红）。
+            # 另那 15 枚若两处同补＝每枚多一处抄位＝净加债 24+3 枚，违常令「不替别的席加债」。
+            # `triggers_nl` 才是这批的语义真身：`is_group_info_command` 走自然语言腿匹配裸句。
             "aliases": ('群信息', '本群信息', '群资料', '群主是谁', '谁是群主', '群人数', '群公告', '群精华', '精华消息', '本群多大了', '群相册', '本群相册', '群相册列表', '群待办', '本群待办', '群待办列表', '群里都有谁', '本群都有谁', '群里谁说过话', '本群谁说过话', '群参与者', '本群参与者', '都有谁说过话', '我都跟谁聊过', '跟谁聊过'),
             "index": '【群信息】查本群资料：群信息｜群主是谁｜群人数｜群公告｜群相册｜群里都有谁',
             "title_line": '【群信息】本群资料、群主、人数、公告、精华、相册、待办与参与者',
@@ -2092,7 +2109,9 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "admin_only": True,
             # 词表必须写字面量（command_catalog 的静态求值只认同模块常量），
             # 且与 consent_admin.DEFAULT_TRIGGER_WORDS 逐字同集，由触发词双向门执法。
-            "aliases": ('同意卡', '书面同意', '同意單', '書面同意', 'consentcard', 'yijika', 'shumiantongyi'),
+            # 三轴同级册侧（席 cb-hs3，常令⑦）：consent_admin.DEFAULT_TRIGGER_WORDS 反向缺形——
+            # 册上原只有繁體 `同意單`，简体 `同意单` 路由认而不登记。
+            "aliases": ('同意卡', '同意单', '书面同意', '同意單', '書面同意', 'consentcard', 'yijika', 'shumiantongyi'),
             "index": '【书面同意】危险参数的批准入口：同意卡 待批｜看｜批｜驳（仅管理员）',
             "title_line": '【书面同意】哪些参数改动在等谁点头，以及怎么点这个头（仅管理员）',
             "lines": [
@@ -2152,7 +2171,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": 'Epic',
             "admin_only": False,
-            "aliases": ('epic', 'epic free', 'epic 免费', '免费游戏', '免費遊戲', '遊戲免費', 'steam免費', 'steam 免費', '游戏免费', 'steam免费', 'steam 免费'),
+            "aliases": ('epic', 'epic free', 'epic 免费', 'epic免費', 'epic 免費', '游戏免费', '遊戲免費', 'steam免费', 'steam 免费', 'steam免費', 'steam 免費', '免费游戏', '免費遊戲'),
             "index": '【Epic】每周免费游戏：epic 或 Epic 免费',
             "title_line": '【Epic】查询每周免费游戏',
             "lines": [
@@ -2201,7 +2220,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '提醒',
             "admin_only": False,
-            "aliases": ('提醒', 'reminder', '叫我', '记得叫', '記得叫', '定时提醒', 'tixingliebiao', 'txlb', 'wodetixing', 'wdtx', 'kankantixing', 'kktx', 'younaxietixing', 'ynxt'),
+            "aliases": ('提醒', 'reminder', '叫我', '记得叫', '記得叫', '定时提醒', '我的提醒', '看看提醒', '有哪些提醒', 'tixingliebiao', 'txlb', 'wodetixing', 'wdtx', 'kankantixing', 'kktx', 'younaxietixing', 'ynxt'),
             "index": '【提醒】到点督促：12点提醒我写作业｜提醒列表｜取消提醒 <id前几位>',
             "title_line": '【提醒】时间点记忆与主动督促',
             "lines": [
@@ -2333,7 +2352,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '帮助',
             "admin_only": False,
-            "aliases": ('帮助', 'help', '菜单'),
+            "aliases": ('帮助', '幫助', 'help', '菜单'),
             "index": '【帮助】查看功能总览与模块教程：/bot help｜/bot help <模块>｜中文同义：/bot 帮助',
             "title_line": '【帮助】功能总览与模块教程',
             "lines": [
@@ -2431,7 +2450,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '表情册',
             "admin_only": True,
-            "aliases": ('表情册', '表情相冊', 'biaoqingce'),
+            "aliases": ('表情册', '表情冊', '表情相册', '表情相冊', 'biaoqingce'),
             "index": '【表情册】表情库的册账：表情册 [统计|重扫|查重|入册 <编号前缀>]（待审／审批在「表情库」那面，别在表情册上打）',
             "title_line": '【表情册】数图、认路径、查同名，再挑一行落进人格册',
             "lines": [
@@ -2534,7 +2553,9 @@ _HELP_ENTRIES: list[HelpEntry] = [
             # 投递面上线前不进 _PUBLIC_HELP_TOPICS；装配半边归 B2。
             "topic": '紧急信息',
             "admin_only": True,
-            "aliases": ('紧急信息', '预警', '地震', '震情', '待审', 'emergency', '緊急信息', '預警'),
+            # 三轴同级册侧（席 cb-hs3，常令⑦）：`待审` 的繁體孪生 `待審`——emergency_info 的
+            # _EMERGENCY_RE/_PENDING_WORDS 两形都认；本簇繁體块（緊急信息/預警）尾附。
+            "aliases": ('紧急信息', '预警', '地震', '震情', '待审', 'emergency', '緊急信息', '預警', '待審'),
             "index": '【紧急信息】外部紧急信息聚合（仅管理员）：紧急信息｜紧急信息 订阅 <条件>｜紧急信息 待审｜紧急信息 审核 <id> 通过',
             "title_line": '【紧急信息】外部紧急信息的采集、定级、人工审核与按群订阅投递',
             "lines": [
@@ -3252,6 +3273,13 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "network": True,
         "outputs": ("文本",),
         "triggers_nickname": ("群信息", "本群信息", "群资料", "群主是谁", "谁是群主", "群人数", "群公告", "群精华", "精华消息", "本群多大了", "群相册", "本群相册", "群相册列表", "群待办", "本群待办", "群待办列表", "群里都有谁", "本群都有谁", "群里谁说过话", "本群谁说过话", "群参与者", "本群参与者", "都有谁说过话", "我都跟谁聊过", "跟谁聊过"),
+        # 三轴同级册侧（席 cb-hs3，常令⑦·主人裁「不统一的全改过来」）：路由侧
+        # `group_info._INTENT_*_WORDS` 简繁两族都认（繁體 15＋参与者繁體 9 枚 2026-10-12 同批入
+        # 正则），册上此前只有简体一族＝「认得不登记」。24 枚繁體正形逐枚对位补进**本字段**
+        # （落点理由与不可复现的镜像簇账，写在 `_HELP_ENTRIES['群信息'].aliases` 上方注释）；
+        # 另 3 枚简体 `本群資料`→`本群资料`/`本群人数`/`本群精华` 是原挂账行，入册即同批清账。
+        # `群公告`/`本群多大了`/`本群多少人` 简繁同形或未被路由枚举，故不在本列。
+        "triggers_nl": ("群資料", "本群資料", "群主是誰", "誰是群主", "群人數", "本群人數", "群精華", "本群精華", "精華消息", "群相冊", "本群相冊", "群相冊列表", "群待辦", "本群待辦", "群待辦列表", "群裡都有誰", "本群都有誰", "群裡誰說過話", "本群誰說過話", "群參與者", "本群參與者", "都有誰說過話", "我都跟誰聊過", "跟誰聊過", "本群资料", "本群人数", "本群精华"),
         "chat_scope": "仅群聊生效（私聊回守岸人提示）；群资料/人数/相册/待办/参与者全员，公告与精华仅管理员；成员名单不整列（隐私+防刷屏），参与者族读记忆里的说话人而非协议名单",
         "examples": ("群信息｜群主是谁｜群人数｜群公告｜群精华｜本群多大了",),
         "tests": ("tests/test_group_info.py",),
@@ -3332,7 +3360,10 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "network": False,
         "chat_scope": "笔记按会话隔离（A 群看不到 B 群）；配图落 data/notes_images",
         "outputs": ("文本", "图片（回看补发）"),
-        "triggers_nl": ("笔记 记 <内容>", "笔记列表", "笔记 看 N", "看笔记 N", "做完 N", "完成 N", "办完 N", "删笔记 N", "<事项>做完了"),
+        # 三轴同级册侧（席 cb-hs3，常令⑦）：`辦完` 是 notes._NOTES_DONE_RE 的繁體形（该正则同时是
+        # reminder 路由腿真身），路由认它而册上只有带参的 `办完 N` ⇒ 裸繁體正形一枚不落点＝缺口。
+        # 简体裸形 `办完` 同批入册（它是这本账的原挂账行，入册即清账；门只准例外册缩不准长）。
+        "triggers_nl": ("笔记 记 <内容>", "笔记列表", "笔记 看 N", "看笔记 N", "做完 N", "完成 N", "办完 N", "办完", "辦完", "删笔记 N", "<事项>做完了"),
         "triggers_nickname": ("笔记", "筆記", "biji", "note", "bijiliebiao", "bjlb", "kanbiji", "shanbiji"),
         "config_vars": ("BOT_NOTES_ENABLED", "BOT_NOTES_DB_PATH", "BOT_NOTES_MAX_PER_CHAT"),
         "examples": ("笔记 记 周三要交总结｜笔记列表｜笔记 看 1｜做完 1｜完成 1｜删笔记 1",),
@@ -3476,7 +3507,12 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         # 这里只作 help 检索键（双向门方向 1：路由有词、help 册须有落点）。
         # 走 META 而非 aliases＝`_HELP_ALIAS_MAP` 里 aliases 先建、META 后 setdefault，
         # 故「待审」的检索落点仍归「紧急信息」（它先登记），本主题只多一条可搜到的键。
-        "triggers_nl": ("审批", "待审"),
+        # 三轴同级册侧（席 cb-hs3，常令⑦）：繁體 `審批`/`待審` 同批在册——本 topic 与
+        # 「紧急信息」各落一枚「待審」是**两个能力**的缺口（bot.meme_library / bot.emergency_info
+        # 各自路由侧都认它），不是同一能力的第二份手抄。
+        # `表情库` 走同一先例：检索落点归「表情收库」（它先在 aliases 建键），本主题只多一条
+        # 可搜到的键；简繁两形同批补齐（繁體那枚落在「偷表情」aliases，两 topic 同能力不重复）。
+        "triggers_nl": ("审批", "待审", "審批", "待審", "表情库"),
         "outputs": ("文本（册账 / 待选清单 / 落地回执）",),
         "config_vars": (
             "BOT_MEME_LIBRARY_ENABLED",

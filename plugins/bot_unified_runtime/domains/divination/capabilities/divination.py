@@ -114,7 +114,7 @@ _TAROT_RE = re.compile(
     r"塔罗|塔羅|(?<![a-z0-9])tarots?(?![a-z0-9])|(?<![a-z0-9])(?:taluo|tl)(?![a-z0-9])"
 )
 _TAROT_DAILY_RE = re.compile(
-    r"每日一抽|每日一簽|每日一签|今日塔罗|今日塔羅|今天塔罗|daily tarot|tarot daily"
+    r"每日一抽|每日一簽|每日一籤|每日一签|今日塔罗|今日塔羅|今天塔罗|daily tarot|tarot daily"
 )
 _TAROT_THREE_RE = re.compile(
     r"三张|三張|过去现在未来|過去現在未來|牌阵|牌陣|three cards|tarot three"
@@ -128,7 +128,7 @@ _TAROT_THREE_RE = re.compile(
 # 待后续席位与 help/路由词表一次收口（届时同步收录即可，意图侧已就绪）。
 _FORTUNE_RE = re.compile(r"今日运势|今日運勢|今天运势|今天運勢|运势|運勢")
 _ICHING_RE = re.compile(
-    r"占卜|起卦|算卦|搖卦|摇卦|六十四卦|金錢卦|金钱卦|掷卦|擲卦|一卦|求籤|求签"
+    r"占卜|佔卜|起卦|算卦|搖卦|摇卦|六十四卦|金錢卦|金钱卦|掷卦|擲卦|一卦|求籤|求签"
     r"|(?<![a-z0-9])(?:i-?ching|hexagrams?)(?![a-z0-9])"
     r"|(?<![a-z0-9])(?:zhanbu|qigua|suangua|yaogua|liushisigua|jinqiangua"
     r"|qg|sg|yg|lssg)(?![a-z0-9])"
@@ -305,9 +305,9 @@ _URL_HINT_RE = re.compile(r"https?://", re.IGNORECASE)
 _MAX_TRIGGER_LEN = 32
 _DIVINATION_IDIOM_RE = re.compile("八字还没一撇|八字没一撇|八字還沒一撇|八字沒一撇")
 _DIVINATION_COMMAND_RE = re.compile(
-    rf"(?<![{_CJK_CHAR}])(?:八字|排盘|排盤|四柱|命盘|命盤|算命|生辰八字|塔罗|塔羅|占卜|起卦|算卦|摇卦|搖卦"
-    rf"|六十四卦|金钱卦|金錢卦|今日塔罗|今天塔罗|今日塔羅|今天塔羅|塔罗三张|塔羅三張|每日一抽|每日一签|每日一簽"
-    rf"|一卦|算一卦|起一卦|摇一卦|搖一卦|掷一卦|擲一卦|占一卦|求籤|求签)"
+    rf"(?<![{_CJK_CHAR}])(?:八字|排盘|排盤|四柱|命盘|命盤|算命|生辰八字|塔罗|塔羅|占卜|佔卜|起卦|算卦|摇卦|搖卦"
+    rf"|六十四卦|金钱卦|金錢卦|今日塔罗|今天塔罗|今日塔羅|今天塔羅|塔罗三张|塔羅三張|每日一抽|每日一签|每日一簽|每日一籤"
+    rf"|一卦|算一卦|起一卦|摇一卦|搖一卦|掷一卦|擲一卦|占一卦|佔一卦|求籤|求签)"
     rf"(?![{_CJK_CHAR}])"
     r"|(?<![a-z0-9])(?:divination|tarots?|bazi|i-?ching|hexagrams?)(?![a-z0-9])"
     # 全拼/缩写（T-Spec T1.5/T1.6 第三批）：与上方意图正则逐词同步（命中必承接）。

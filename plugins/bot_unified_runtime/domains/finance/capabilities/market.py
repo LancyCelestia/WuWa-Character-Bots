@@ -174,6 +174,9 @@ _COMMODITY_TRIGGER_RE = re.compile(
 )
 _BOND_TRIGGER_RE = re.compile(
     r"(国债收益率|国债|债券收益率|期限利差|收益率曲线|中美国债|國債|債券收益率"
+    # 简繁对形同批补齐（席 AXIS-CAPREGEX，常令⑦三轴同级）：上面每枚简体形的繁體孪生
+    # 一枚不缺——國債收益率／收益率曲線／中美國債。判定口径、边界与拼音分支一字未动。
+    r"|國債收益率|收益率曲線|中美國債"
     # 全拼路由（T-Spec T1.5 对齐）：guozhai/xianqilicha 双侧全字母数字边界
     # （本正则无 IGNORECASE，沿用 market 拼音分支 [A-Za-z0-9] 先例，
     # hguozhai/guozhai123 类胶合拒）。xianqilicha 为 A72 echo 勘误后的正形

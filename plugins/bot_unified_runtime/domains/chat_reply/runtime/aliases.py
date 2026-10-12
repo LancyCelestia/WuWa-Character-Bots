@@ -319,6 +319,61 @@ DEFAULT_VERB_MAP: dict[str, str] = {
     # 管理昵称沿用 /bot 引导；执行能力与 feature 命令保持一致。
     "功能管理": "bot.runtime",
     "feature": "bot.runtime",
+    # ── 命令面「三轴同级」中央表补齐（席 cb-seat-axis，2026-10-12；主人裁＝英文大小写／
+    # 简体繁体／拼音（全拼＋首字母＋大小写）三轴一律相等，"不统一的全改过来"）────────────
+    # 为什么补在这张表：`CommandAliasResolver` 只带 `re.IGNORECASE`（只折大小写、**不折简繁**）、
+    # `normalize_command_text` 与 `detect_natural_command` 也只 lower——简繁孪生形此前**只能逐枚
+    # 在册**，没有第二条路（路由侧接 `security/content_safety.fold_traditional_to_simplified`
+    # 属改匹配语义的大动作，归主人裁，本波不走）。
+    # 缺形清单**不手写**：由 `tests/test_trigger_bidirectional_gate.py::test_three_axis_verb_table_
+    # has_traditional_twins` 拿本表键 + `zhconv` 现算派生（只收可逆对），漏一枚当场红。
+    # 册侧自动跟随：帮助册 `_HELP_ENTRY_META[*].triggers_nickname` 经 `nickname_verbs_for()` 投影，
+    # 补表即跟补；手抄元组那几格（決策/日誌/查詢日誌/查詢訂閱）由同批 `echo.py` 补册守住
+    # （尺＝同一文件的 `test_route_to_help_gate_matches_ledger` 与词级台账）。
+    # 反向那四枚（表里只有繁體、缺简体）＝ 随机图／来张图／亲密度／表情相册——简体形折形救不动，
+    # 只能入表。
+    # bot.news（快报族）
+    "AI快報": "bot.news",
+    "AI新聞": "bot.news",
+    "今日快報": "bot.news",
+    "今日熱點": "bot.news",
+    "科技新聞": "bot.news",
+    "財經快報": "bot.news",
+    # bot.eat / bot.today_history / bot.history / bot.weather / bot.epic
+    "今天吃什麼": "bot.eat",
+    "吃什麼": "bot.eat",
+    "怎麼做": "bot.eat",
+    "菜譜": "bot.eat",
+    "今日歷史": "bot.today_history",
+    "歷史上的今天": "bot.today_history",
+    "歷史": "bot.history",
+    "清理歷史": "bot.history",
+    "查詢天氣": "bot.weather",
+    "epic免費": "bot.epic",
+    # 管理/运维面（册侧手抄那四枚同批进 echo.py）
+    "決策": "bot.decision",
+    "日誌": "bot.logs",
+    "查詢日誌": "bot.logs",
+    "查詢訂閱": "bot.subscribe",
+    # 投影自动跟那几簇（why / dialogue / readiness / status / memory）
+    "為什麼": "bot.why",
+    "為啥": "bot.why",
+    "對話驗收": "bot.dialogue",
+    "就緒": "bot.readiness",
+    "查詢": "bot.status",
+    "記憶": "bot.memory",
+    # bot.wiki / bot.music_mode / bot.meme_library
+    "維基": "bot.wiki",
+    "維基百科": "bot.wiki",
+    "點歌模式": "bot.music_mode",
+    "表情冊": "bot.meme_library",
+    "表情庫統計": "bot.meme_library",
+    "表情統計": "bot.meme_library",
+    # 反方向：表里只有繁體，补简体
+    "表情相册": "bot.meme_library",
+    "随机图": "bot.randpic",
+    "来张图": "bot.randpic",
+    "亲密度": "bot.affinity",
 }
 
 

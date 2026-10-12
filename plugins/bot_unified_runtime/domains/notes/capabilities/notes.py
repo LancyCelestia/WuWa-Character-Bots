@@ -76,7 +76,9 @@ _NOTES_VIEW_RE = re.compile(
     re.IGNORECASE,
 )
 # 完成：做完 N / 完成 N / 办完 N（显式编号勾选；自然语言勾选走 reminder 侧）。
-_NOTES_DONE_RE = re.compile(r"^(?:做完|完成|办完)\s*(\d+)\s*$")
+# 简繁对形同批（席 AXIS-CAPREGEX，常令⑦三轴同级）：辦完＝办完 的繁體形，本枚正则同时是
+# reminder 路由腿（`is_reminder_command` 直接引用）与下方解析腿的真身，一处补形两侧跟随。
+_NOTES_DONE_RE = re.compile(r"^(?:做完|完成|办完|辦完)\s*(\d+)\s*$")
 # 撤销勾选（审查 A-14，mark_item_done 的对称逆操作）：
 # - 显式形态：「取消勾选 X」「撤销勾选/勾掉 X」（含繁體）——用户明确在
 #   谈勾选，一律承接；

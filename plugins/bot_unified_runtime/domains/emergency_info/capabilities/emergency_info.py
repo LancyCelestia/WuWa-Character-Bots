@@ -75,11 +75,13 @@ CAPABILITY_ID = "bot.emergency_info"
 # 语义上它也只是「可选的词边界」——右边界这件事已由 `(?![A-Za-z0-9])` 承担，
 # 故落地形态去掉 `\b?`，判定结果与文档意图逐例一致。
 _EMERGENCY_RE = re.compile(
-    r"^(紧急信息|緊急信息|预警|預警|地震|震情|待审|emergency)(?![A-Za-z0-9])"
+    r"^(紧急信息|緊急信息|预警|預警|地震|震情|待审|待審|emergency)(?![A-Za-z0-9])"
 )
 
 # 待审队列的意图词（触发词本身就是 `待审`，这里只补显式后缀形态）。
-_PENDING_WORDS = frozenset({"待审", "待審核", "待审列表", "審核", "pending", "review"})
+# 简繁对形同批（席 AXIS-CAPREGEX，常令⑦三轴同级）：`_EMERGENCY_RE` 认了 `待審`，
+# 本表就必须同时在场，否则裸 `待審` 走不进审核读侧那一腿。
+_PENDING_WORDS = frozenset({"待审", "待審", "待審核", "待审列表", "審核", "pending", "review"})
 # 余下文本为空/这些词 ⇒ 列表语义；否则按条目 id 走详情。
 _LIST_WORDS = frozenset(
     {"", "列表", "清單", "list", "all", "latest", "recent", "最近", "最新", "全部"}
@@ -691,8 +693,9 @@ def build_emergency_info_capability(
             return _answer(body, "subscription", action)
 
         # 待审队列＝审核读侧：非审核人（含审核名单空的缺省态）一律读不到内容。
+        # 头部比对改查表（同族简繁两形都在 `_PENDING_WORDS`，这里不再手打第二份词面）。
         if (
-            match.group(1) == "待审"
+            match.group(1) in _PENDING_WORDS
             or lowered in _PENDING_WORDS
             or lowered.split(" ")[0] in _PENDING_WORDS
         ):

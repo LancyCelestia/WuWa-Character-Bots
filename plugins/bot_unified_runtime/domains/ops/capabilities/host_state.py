@@ -61,6 +61,8 @@ DEFAULT_TRIGGER_WORDS: tuple[str, ...] = (
     "宿主状态",
     "宿主機狀態",
     "機器狀態",
+    "機器配置",
+    "宿主狀態",
     "hoststate",
     "jiqizhuangtai",
     "jizhuangtai",

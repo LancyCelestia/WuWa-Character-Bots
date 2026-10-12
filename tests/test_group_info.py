@@ -1508,9 +1508,13 @@ def test_participant_words_do_not_hijack_ordinary_chat(text: str) -> None:
 
 
 def test_who_family_words_are_registered_in_the_home_tuple() -> None:
-    """词表只在真身一处字面声明（本断言引用常量本身，不复制词集＝不给副本账添债）。"""
+    """词表只在真身一处字面声明（本断言引用常量本身，不复制词集＝不给副本账添债）。
+
+    席 AXIS-CAPREGEX（常令⑦三轴同级）把这一族 9 枚简体形的繁體孪生同批补进真身，
+    故按现算复录为 18＝9 简 + 9 繁。
+    """
     who_words = [
         word for word, intent in _INTENT_OF_WORD.items() if intent == "who"
     ]
-    assert len(who_words) == 9
+    assert len(who_words) == 18
     assert set(who_words).issubset(set(GROUP_INFO_TRIGGER_WORDS))

@@ -71,7 +71,7 @@ _STATS_RE = re.compile(
     # bot.meme 侧 meme/memes 双裸词均带 (?! (?:random|stats)\b) 负向前瞻，
     # 本变体不被表情生成抢匹配。
     r"^[/!！]?(?:表情库统计|biaoqingtongji(?![a-z0-9])|bqtj(?![a-z0-9])"
-    r"|表情统计|表情库|biaoqingku(?![a-z0-9])|bqk(?![a-z0-9])"
+    r"|表情统计|表情库|表情庫|biaoqingku(?![a-z0-9])|bqk(?![a-z0-9])"
     r"|memes? stats(?![a-z0-9]))\s*$",
     re.IGNORECASE,
 )
@@ -81,8 +81,8 @@ _REVIEW_RE = re.compile(
     # 命令前缀可省（裸「待审」也认）——管理员在群里打全字的成本不该换不来一条读数。
     # 串必须**开头**就是 待审/审批（前缀之后），所以「偷表情 待审」这类带关键词的
     # 抽取仍走 pick 腿，不被本形抢匹配（test_meme_conflict_fix 的唯一性锁靠这条）。
-    r"^[/!！]?(?:表情库统计|表情统计|表情库|biaoqingtongji(?![a-z0-9])|bqtj(?![a-z0-9])"
-    r"|biaoqingku(?![a-z0-9])|bqk(?![a-z0-9]))?\s*(?:待审|审批)\s*(?P<arg>.*)$",
+    r"^[/!！]?(?:表情库统计|表情统计|表情库|表情庫|biaoqingtongji(?![a-z0-9])|bqtj(?![a-z0-9])"
+    r"|biaoqingku(?![a-z0-9])|bqk(?![a-z0-9]))?\s*(?:待审|待審|审批|審批)\s*(?P<arg>.*)$",
     re.IGNORECASE,
 )
 _ALBUM_RE = re.compile(
