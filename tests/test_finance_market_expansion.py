@@ -575,6 +575,83 @@ def test_us_registry_entries_unchanged() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 表情拒因计数（2026-10-13 用户裁定「复用统一账」）
+# ---------------------------------------------------------------------------
+
+
+class TestReactionReasonCounters:
+    """「为什么没贴这张表情」必须可聚合——计数走唯一灌入口，且恒不抛。"""
+
+    def _rc(self):
+        from plugins.bot_unified_runtime.domains.meme.reactions import (
+            reason_counters as rc,
+        )
+
+        return rc
+
+    def test_counts_aggregate_by_reason_and_leg(self) -> None:
+        rc = self._rc()
+        rc.reset_reaction_reason_counters()
+        rc.record_reaction_skip("gate_probability", "reply")
+        rc.record_reaction_skip("gate_probability", "reply")
+        rc.record_reaction_skip("gate_cooldown", "emotion_signal")
+        snap = rc.snapshot()
+        assert snap["total"] == 3
+        assert snap["by_reason"] == {"gate_probability": 2, "gate_cooldown": 1}
+        assert snap["by_leg"]["reply"] == 2
+        assert snap["detail"]["gate_probability|reply"] == 2
+        rc.reset_reaction_reason_counters()
+
+    def test_unknown_leg_folds_to_other_and_empty_reason_to_unknown(self) -> None:
+        rc = self._rc()
+        rc.reset_reaction_reason_counters()
+        rc.record_reaction_skip("gate_probability", "完全没登记的腿")
+        rc.record_reaction_skip("", "")
+        rc.record_reaction_skip(None, None)
+        snap = rc.snapshot()
+        assert snap["by_leg"] == {"other": 3}
+        assert snap["by_reason"]["unknown"] == 2
+        rc.reset_reaction_reason_counters()
+
+    def test_empty_ledger_says_so_instead_of_claiming_all_passed(self) -> None:
+        """空账 ≠ 全部通过：文案必须明说「尚无记录」，且把「不等于通过」写出来。"""
+        rc = self._rc()
+        rc.reset_reaction_reason_counters()
+        text = rc.snapshot_text()
+        assert "尚无记录" in text
+        assert "不等于" in text and "通过" in text
+        assert not text.startswith("表情拒因计")  # 不得报成「计 0 次」这种像有数的样子
+
+    def test_skip_log_choke_feeds_the_ledger(self, monkeypatch) -> None:
+        """唯一发射喉（_log_reaction_skip）必须真的把码灌进计数器。"""
+        from plugins.bot_unified_runtime.domains.meme.reactions import engine
+        from plugins.bot_unified_runtime.domains.meme.reactions import (
+            reason_counters as rc,
+        )
+
+        rc.reset_reaction_reason_counters()
+        engine._log_reaction_skip("gate_hourly_cap", "sess", "mid", "emotion_signal")
+        snap = rc.snapshot()
+        assert snap["total"] == 1
+        assert snap["by_reason"] == {"gate_hourly_cap": 1}
+        assert snap["by_leg"] == {"emotion_signal": 1}
+        rc.reset_reaction_reason_counters()
+
+    def test_counter_failure_never_breaks_the_log_choke(self, monkeypatch) -> None:
+        """观测腿反噬测试：计数器炸了，唯一喉仍必须正常返回不抛。"""
+        from plugins.bot_unified_runtime.domains.meme.reactions import engine
+        from plugins.bot_unified_runtime.domains.meme.reactions import (
+            reason_counters as rc,
+        )
+
+        def _boom(*_a, **_k):
+            raise RuntimeError("counter exploded")
+
+        monkeypatch.setattr(rc, "record_reaction_skip", _boom)
+        engine._log_reaction_skip("gate_cooldown", "sess", "mid", "reply")  # 不抛
+
+
+# ---------------------------------------------------------------------------
 # 成分分布数据面（2026-10-12 用户裁定：股指箱型＝全成分股分布）
 # ---------------------------------------------------------------------------
 

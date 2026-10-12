@@ -912,11 +912,25 @@ def _log_reaction_skip(reason: str, session_key: str, mid: str, trigger: str) ->
     受控码留痕（REACTION_SKIP_REASONS）。QQ/Telegram 两侧编排共用此喉——
     ``reaction skip: reason=%s`` 字面量全文件只许出现一次
     （``tests/test_reactions_silence_reason_lock.py::test_skip_log_is_single_greppable_choke``
-    执法），任何新增派发路径都不得再写第二份格式串。"""
+    执法），任何新增派发路径都不得再写第二份格式串。
+
+    2026-10-13（用户裁定「复用统一账」）：本喉同时把该码**灌进进程级计数器**
+    ——「为什么没贴表情」从此可聚合，不必 grep 日志。计数走
+    ``domains.core.shared_pool`` 同级的轻量单例、进程内、恒不抛异常；
+    落账失败绝不影响贴纸判定（观测腿不得反噬业务腿）。
+    """
     logger.info(
         "reaction skip: reason=%s session=%s mid=%s trigger=%s",
         reason, session_key, mid, trigger,
     )
+    try:
+        from plugins.bot_unified_runtime.domains.meme.reactions.reason_counters import (
+            record_reaction_skip,
+        )
+
+        record_reaction_skip(reason, trigger)
+    except Exception:  # noqa: BLE001, S110 - 观测腿失败绝不影响判定语义。
+        pass
 
 
 async def _resolve_reply_sentiment(
