@@ -296,10 +296,63 @@ class TestMarketCrossCheck:
                 "100.DJIA": (52573.29, 0.98),
             },
         )
+        monkeypatch.setattr(
+            mc,
+            "_fetch_sina_snapshot",
+            lambda codes, timeout_seconds: {
+                "1.000001": (3888.11, -1.18),
+                "100.DJIA": (52573.29, 0.98),
+            },
+        )
         result = mc.crosscheck_quotes(self._quotes())
         assert result.checked == 2 and result.matched == 2 and result.ok
         note = mc.format_crosscheck_note(result)
-        assert "已与腾讯行情交叉核验 ✓ 2/2" in note
+        # 用户 2026-10-12 硬门槛：≥3 渠道 ⇒ 文案必须点明三源与参检腿名。
+        assert "三源" in note and "东财/腾讯/新浪" in note and "✓ 2/2" in note
+
+    def test_two_legs_never_claims_three(self, monkeypatch):
+        """第三条腿不可用时如实降级为「双源」，绝不把两源说成三源。"""
+        from plugins.bot_unified_runtime.domains.finance.data import (
+            market_crosscheck as mc,
+        )
+
+        mc.reset_crosscheck_cache()
+        monkeypatch.setattr(
+            mc,
+            "_fetch_tencent_snapshot",
+            lambda codes, timeout_seconds: {"1.000001": (3888.11, -1.18)},
+        )
+
+        def _boom(codes, timeout_seconds):
+            raise OSError("sina down")
+
+        monkeypatch.setattr(mc, "_fetch_sina_snapshot", _boom)
+        result = mc.crosscheck_quotes(self._quotes())
+        assert result.ok and result.checked == 1
+        note = mc.format_crosscheck_note(result)
+        assert "双源" in note and "三源" not in note
+
+    def test_third_leg_mismatch_is_reported(self, monkeypatch):
+        """第三条腿分歧必须逐条点名（两源一致也照样报），不许被多数掩盖。"""
+        from plugins.bot_unified_runtime.domains.finance.data import (
+            market_crosscheck as mc,
+        )
+
+        mc.reset_crosscheck_cache()
+        monkeypatch.setattr(
+            mc,
+            "_fetch_tencent_snapshot",
+            lambda codes, timeout_seconds: {"1.000001": (3888.11, -1.18)},
+        )
+        monkeypatch.setattr(
+            mc,
+            "_fetch_sina_snapshot",
+            lambda codes, timeout_seconds: {"1.000001": (3950.0, 1.0)},
+        )
+        result = mc.crosscheck_quotes(self._quotes())
+        assert not result.ok
+        note = mc.format_crosscheck_note(result)
+        assert "新浪" in note and "3950.00" in note
 
     def test_mismatch_declares_divergence(self, monkeypatch):
         from plugins.bot_unified_runtime.domains.finance.data import (
@@ -358,6 +411,14 @@ class TestMarketCrossCheck:
                 "100.DJIA": (52573.29, 0.98),
             },
         )
+        monkeypatch.setattr(
+            mc,
+            "_fetch_sina_snapshot",
+            lambda codes, timeout_seconds: {
+                "1.000001": (3888.11, -1.18),
+                "100.DJIA": (52573.29, 0.98),
+            },
+        )
         captured: dict = {}
 
         class _Backend:
@@ -373,8 +434,8 @@ class TestMarketCrossCheck:
         result = capability(_make_message("行情"), _make_decision())
         assert result.kind == "mixed"
         html_text = captured["html"]
-        assert "已与腾讯行情交叉核验 ✓ 2/2" in html_text
-        assert "已与腾讯行情交叉核验" in result.body
+        assert "三源" in html_text and "东财/腾讯/新浪" in html_text
+        assert "交叉核验" in result.body
 
     def test_traditional_variant_triggers(self):
         assert is_market_command("大盤")

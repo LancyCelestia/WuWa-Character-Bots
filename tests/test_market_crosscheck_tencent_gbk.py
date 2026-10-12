@@ -139,6 +139,9 @@ def test_crosscheck_quotes_end_to_end_with_gbk_fixture(
     assert result.checked == 2
     assert result.matched == 2
     assert result.ok
-    assert "已与腾讯行情交叉核验 ✓ 2/2" in market_crosscheck.format_crosscheck_note(result)
+    note = market_crosscheck.format_crosscheck_note(result)
+    # 用户 2026-10-12 硬门槛：≥3 渠道。本夹具只装腾讯腿 ⇒ 必须如实写「双源」，
+    # 绝不把两源说成三源（第三条腿的实装语义锁在 test_market_card）。
+    assert "双源" in note and "三源" not in note and "✓ 2/2" in note
     assert calls and calls[0][0].startswith("https://qt.gtimg.cn/q=")
     market_crosscheck.reset_crosscheck_cache()

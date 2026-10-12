@@ -41,8 +41,27 @@ _CROSS_CODES: dict[str, tuple[str, str]] = {
     "100.DJIA": ("usDJI", "full"),
     "100.SPX": ("usINX", "full"),
 }
-_CROSS_SOURCE = "qt.gtimg.cn"
+_CROSS_SOURCE = "qt.gtimg.cn＋hq.sinajs.cn"
 _CROSS_URL = "https://qt.gtimg.cn/q={codes}"
+
+# ==================== 第三条腿：新浪（2026-10-12 实测，须 Referer） ==========
+# 2026-10-12 实测：不带 Referer 一律 403，带头即 200（GB18030 载荷）。
+# 用户 2026-10-12 硬门槛：一切对外数值须 ≥3 官方/权威渠道佐证 ⇒ 主源（东财）
+# ＋腾讯＋新浪＝三腿；三腿全一致才在卡上声明，任一腿分歧即逐条点名分歧数值。
+_SINA_URL = "https://hq.sinajs.cn/list={codes}"
+_SINA_REFERER = "https://finance.sina.com.cn"
+# 新浪映射表（仅列 2026-10-12 实测可得者；未列出的指数不参与第三腿）。
+_SINA_CODES: dict[str, str] = {
+    "1.000001": "s_sh000001",
+    "0.399001": "s_sz399001",
+    "0.399006": "s_sz399006",
+    "100.HSI": "rt_hkHSI",
+    "100.DJIA": "gb_$dji",
+    "100.SPX": "gb_$inx",
+}
+_SINA_TAG_MAP: dict[str, str] = {"s_sh000001": "sh000001", "s_sz399001": "sz399001", "s_sz399006": "sz399006"}
+# 第三腿缓存（与腾讯腿同 TTL，各自独立：任一腿挂掉不拖垮另一腿）。
+_SINA_CACHE: tuple[float, dict[str, tuple[float, float]]] | None = None
 
 # 一致性判据：价格相对差 ≤0.5% 且 涨跌幅差 ≤0.2 个百分点（两源快照有时差）。
 _PRICE_TOLERANCE_RATIO = 0.005
@@ -68,9 +87,63 @@ class CrossCheckResult:
 
 
 def reset_crosscheck_cache() -> None:
-    """清空腾讯侧快照缓存（测试与运维用）。"""
-    global _CACHE
+    """清空两腿快照缓存（测试与运维用）。"""
+    global _CACHE, _SINA_CACHE
     _CACHE = None
+    _SINA_CACHE = None
+
+
+def _parse_sina_payload(text: str) -> dict[str, tuple[float, float]]:
+    """新浪 hq 载荷 → {code: (price, change_pct)}；脏行逐条跳过，绝不抛异常。
+
+    短格式：``var hq_str_s_sh000001="上证指数,3934.40,-17.11,-0.43,..."``
+    （名称, 点位, 涨跌额, 涨跌幅%）⇒ 取第 2、4 位。港股 ``rt_hk`` 与美股
+    ``gb_`` 形态不同，本轮未验证 ⇒ 不映射、不声明（宁缺不编）。
+    """
+    out: dict[str, tuple[float, float]] = {}
+    for line in str(text or "").splitlines():
+        line = line.strip()
+        if not line.startswith("var hq_str_") or "=" not in line:
+            continue
+        tag, _, raw = line.partition("=")
+        tag = tag.replace("var hq_str_", "").strip()
+        payload = raw.strip().strip(";").strip('"')
+        parts = payload.split(",")
+        if len(parts) < 4:
+            continue
+        code = _SINA_TAG_MAP.get(tag)
+        if code is None:
+            continue
+        try:
+            price = float(parts[1])
+            pct = float(parts[3])
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(price) and math.isfinite(pct) and price > 0:
+            out[code] = (price, pct)
+    return out
+
+
+def _fetch_sina_snapshot(
+    codes: tuple[str, ...], timeout_seconds: float
+) -> dict[str, tuple[float, float]]:
+    """第三腿单点网络出口（测试 monkeypatch 本函数即可拦截外呼）。
+
+    必须带 ``Referer``（2026-10-12 实测无头 403）；载荷 GB18030
+    ⇒ 走 ``http_get_text(encoding="gb18030")``（既有签名，不新造解码腿）。
+    """
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+        http_get_text,
+    )
+
+    url = _SINA_URL.format(codes=",".join(codes))
+    text = http_get_text(
+        url,
+        timeout=max(1.0, float(timeout_seconds)),
+        referer=_SINA_REFERER,
+        encoding="gb18030",
+    )
+    return _parse_sina_payload(text)
 
 
 def _fetch_tencent_snapshot(
@@ -125,12 +198,16 @@ def crosscheck_quotes(
     cache_seconds: float = _CACHE_TTL_SECONDS,
     budget: Any | None = None,
 ) -> CrossCheckResult:
-    """对可映射指数做两源核验；通道不可用返回 checked=0，绝不抛异常。
+    """对可映射指数做三源核验；缺腿时如实降级，绝不伪造「已核验」。
+
+    用户 2026-10-12 硬门槛：≥3 官方/权威渠道。三腿＝主源（东财）＋腾讯＋
+    新浪；第二条腿（新浪）不可用时**不假装三源**，结果里 source 字段如实
+    记下实际参检腿，供文案层区分「三源已核验」与「双源已核验」。
 
     FIN-R1：不传 budget 时自造 per-call 端到端网络预算；预算耗尽即放弃外呼
     （核验通道按设计「不可用则保持沉默」，语义零扩张、不伪造核验结论）。
     """
-    global _CACHE
+    global _CACHE, _SINA_CACHE
     wanted = [
         (quote.code, quote.name, quote.price, quote.change_pct)
         for quote in quotes
@@ -140,67 +217,101 @@ def crosscheck_quotes(
         return CrossCheckResult(0, 0, ())
     budget = _budget_or_new(budget)
     now = time.monotonic()
-    cached = _CACHE
-    if cached is not None and now - cached[0] <= max(1.0, float(cache_seconds)):
-        snapshot = cached[1]
-    elif budget_expired(budget):
-        snapshot = {}  # 旁路核验：预算已尽，保持沉默（失败/缺席都不缓存）。
-    else:
+
+    def _cached_or_fetch(cache, codes, fetcher):
+        cached = cache
+        if cached is not None and now - cached[0] <= max(1.0, float(cache_seconds)):
+            return cached[1]
+        if budget_expired(budget):
+            return {}  # 旁路核验：预算已尽，保持沉默（失败/缺席都不缓存）。
         try:
-            snapshot = _fetch_tencent_snapshot(
-                tuple(_CROSS_CODES[code][0] for code, _n, _p, _c in wanted),
-                timeout_seconds,
-            )
+            snapshot = fetcher(codes, timeout_seconds)
         except Exception:  # noqa: BLE001 - 核验通道失败保持沉默。
             snapshot = {}
-        if snapshot:
-            # 只缓存成功结果（仓库纪律：失败不缓存，便于立即重试）。
-            _CACHE = (now, snapshot)
+        return snapshot
 
-    if not snapshot:
+    tencent_codes = tuple(_CROSS_CODES[code][0] for code, _n, _p, _c in wanted)
+    snapshot = _cached_or_fetch(_CACHE, tencent_codes, _fetch_tencent_snapshot)
+    if snapshot:
+        _CACHE = (now, snapshot)
+
+    # 第三腿：只对两表都有映射的指数取数（未映射者不参与，宁缺不编）。
+    sina_pairs = [
+        (code, _SINA_CODES[code]) for code, _n, _p, _c in wanted if code in _SINA_CODES
+    ]
+    sina_snapshot: dict[str, tuple[float, float]] = {}
+    if sina_pairs:
+        sina_snapshot = _cached_or_fetch(
+            _SINA_CACHE,
+            tuple(tag for _code, tag in sina_pairs),
+            _fetch_sina_snapshot,
+        )
+        if sina_snapshot:
+            _SINA_CACHE = (now, sina_snapshot)
+
+    if not snapshot and not sina_snapshot:
         return CrossCheckResult(0, 0, ())
+
     matched = 0
     mismatches: list[str] = []
     checked = 0
+    checked_three = 0
     for code, name, price, change_pct in wanted:
         remote = snapshot.get(code)
-        if remote is None:
+        sina = sina_snapshot.get(code)
+        if remote is None and sina is None:
             continue
         checked += 1
-        remote_price, remote_pct = remote
+        if remote is not None and sina is not None:
+            checked_three += 1
         # 主源价缺失/为 0 无法核验，按差异处理（评审 P2-1：0 价不该判「一致」）。
         if price is None or price <= 0:
-            mismatches.append(f"{name}（东财价格缺失 · 腾讯 {remote_price:.2f}）")
+            other = remote or sina
+            mismatches.append(f"{name}（东财价格缺失 · 他源 {other[0]:.2f}）")
             continue
-        price_diff_ok = (
-            abs(remote_price - price) / max(abs(price), 1e-9)
-            <= _PRICE_TOLERANCE_RATIO
-        )
-        pct_diff_ok = (
-            change_pct is not None
-            and abs(remote_pct - change_pct) <= _PCT_TOLERANCE_PP
-        )
-        if price_diff_ok and pct_diff_ok:
+        ok_all = True
+        for label, leg in (("腾讯", remote), ("新浪", sina)):
+            if leg is None:
+                continue
+            leg_price, leg_pct = leg
+            price_ok = (
+                abs(leg_price - price) / max(abs(price), 1e-9)
+                <= _PRICE_TOLERANCE_RATIO
+            )
+            pct_ok = (
+                change_pct is not None
+                and abs(leg_pct - change_pct) <= _PCT_TOLERANCE_PP
+            )
+            if not (price_ok and pct_ok):
+                ok_all = False
+                local_pct = (
+                    f"{change_pct:+.2f}%" if change_pct is not None else "未知"
+                )
+                mismatches.append(
+                    f"{name}（东财 {price:.2f}/{local_pct} · "
+                    f"{label} {leg_price:.2f}/{leg_pct:+.2f}%）"
+                )
+        if ok_all:
             matched += 1
-        else:
-            local_pct = (
-                f"{change_pct:+.2f}%" if change_pct is not None else "未知"
-            )
-            mismatches.append(
-                f"{name}（东财 {price:.2f}/{local_pct} · "
-                f"腾讯 {remote_price:.2f}/{remote_pct:+.2f}%）"
-            )
-    return CrossCheckResult(checked, matched, tuple(mismatches))
+    source = _CROSS_SOURCE if checked_three else "qt.gtimg.cn（两源）"
+    return CrossCheckResult(checked, matched, tuple(mismatches), source=source)
 
 
 def format_crosscheck_note(result: CrossCheckResult) -> str:
-    """卡/文本用的核验声明；未核验（通道不可用或无映射）返回空串。"""
+    """卡/文本用的核验声明；未核验（通道不可用或无映射）返回空串。
+
+    用户 2026-10-12 硬门槛：≥3 官方/权威渠道。参检三腿时写「三源」，
+    只有两条腿可用时如实写「双源」——绝不把两源说成三源。
+    """
     if result.checked <= 0:
         return ""
+    legs = "三源" if "sinajs" in result.source else "双源"
+    peers = "东财/腾讯/新浪" if legs == "三源" else "东财/腾讯"
     if result.ok:
-        return f"已与腾讯行情交叉核验 ✓ {result.matched}/{result.checked}"
+        return f"已与{legs}（{peers}）交叉核验 ✓ {result.matched}/{result.checked}"
     head = "、".join(result.mismatches[:2])
     more = f" 等 {len(result.mismatches)} 项" if len(result.mismatches) > 2 else ""
     return (
-        f"⚠ 交叉核验 {result.matched}/{result.checked} 一致，差异：{head}{more}"
+        f"⚠ {legs}交叉核验 {result.matched}/{result.checked} 一致，"
+        f"差异：{head}{more}"
     )
