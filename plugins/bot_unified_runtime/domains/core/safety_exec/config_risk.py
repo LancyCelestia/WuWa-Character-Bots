@@ -202,6 +202,58 @@ EXPLICIT_R2_KEYS = frozenset(
         # （test_tier_coverage_ratchet_only_goes_down 的地板因此回落 498→496）。
         "BOT_SCHEDULE_STATUS_REPLY_ENABLED",
         "BOT_SCHEDULE_NATURAL_CAPTURE_ENABLED",
+        # 2026-10-13 修红席 P3-config-safety-ledgers 补登记：2026-09-26 基线（HEAD 收编笔
+        # `ed802d39`）之后落进 `config.py`、却没人在这张分级表里点名的 43 枚字段。
+        # 逐枚现算＝以 `ed802d39:plugins/bot_unified_runtime/config.py` 的字段集为基线取差集，
+        # 再筛出「今日仍走缺省档」的那一批（复跑见修红席报告；差集脚本零落盘）。
+        # 🔴 口径：这些键**今日一律已解到缺省 R2**（fail-closed），本批把它们点名落 R2
+        #   ⇒ **有效档位零变化**，只闭覆盖账（`test_tier_coverage_ratchet_only_goes_down`
+        #   的枚数因此回落）；不是把任何一枚键放宽——落 R2 是这张表里除 R3 外最严的一档。
+        # 为什么不是别的档：这批里没有一枚是「可以不问就改」的自由面（R0）——它们全是
+        #   行为开关/隐私路由/路径/缓存与数值旋钮，按缺省档收在 R2 即可，故不做逐枚降档。
+        "BOT_AFFINITY_DAILY_MOVE_CAP_V8_Z",
+        "BOT_AFFINITY_GOODWILL_BAND_MAX",
+        "BOT_AFFINITY_GOODWILL_BAND_MIN",
+        "BOT_AFFINITY_GOODWILL_BAND_SATURATE_DAYS",
+        "BOT_AFFINITY_V8_AMBIENT_CENTERING",
+        "BOT_AFFINITY_V8_AMBIENT_HALFLIFE_DAYS",
+        "BOT_AFFINITY_V8_ENABLED",
+        "BOT_AFFINITY_V8_IMPULSE_CAP_Z",
+        "BOT_AFFINITY_V8_IMPULSE_WEIGHTS",
+        "BOT_AFFINITY_V8_TIER_BLEND_BAND",
+        "BOT_CHAT_NATIVE_TOOLS_ENABLED",
+        "BOT_DB_BACKUP_ENABLED",
+        "BOT_DB_BACKUP_KEEP_LAST",
+        "BOT_DB_BACKUP_MAX_FOOTPRINT_BYTES",
+        "BOT_DB_BACKUP_MIN_FREE_BYTES",
+        "BOT_DB_BACKUP_SIZE_CEILING_BYTES",
+        "BOT_DB_BACKUP_STALE_AFTER_HOURS",
+        "BOT_EMERGENCY_INFO_QUIET_BREACH_LEVELS",
+        "BOT_FILES_INCOMING_TTL_DAYS",
+        "BOT_GATE_COMMAND_REQUIRES_LISTED_GROUP",
+        "BOT_MEME_LIBRARY_MIN_FILE_KB",
+        "BOT_MEME_LIBRARY_MIN_SIDE",
+        "BOT_MESSAGE_MUTATION_ENABLED",
+        "BOT_MESSAGE_MUTATION_WINDOW_SECONDS",
+        "BOT_NETWORK_PATROL_DOMAINS",
+        "BOT_NETWORK_PATROL_ENABLED",
+        "BOT_PERSON_PROFILE_ENABLED",
+        "BOT_PERSON_PROFILE_MAX_CHARS",
+        "BOT_PERSON_PROFILE_MAX_ITEMS",
+        "BOT_RANDPIC_MIN_FILE_KB",
+        "BOT_RANDPIC_MIN_SIDE",
+        "BOT_REACTIONS_SENTIMENT_CACHE_TTL_SECONDS",
+        "BOT_REACTIONS_SENTIMENT_ENABLED",
+        "BOT_REPLY_DEFAULT_DIRECTIVES",
+        "BOT_REPLY_POLICY_ENABLED",
+        "BOT_REPLY_POLICY_PERSON_ALIASES",
+        "BOT_REVIEW_MOVE_PRIVATE_ENABLED",
+        "BOT_STICKER_ENABLED",
+        "BOT_STICKER_NO_REPEAT_WINDOW_SECONDS",
+        "BOT_STICKER_PRIVATE_SUBDIR",
+        "BOT_STICKER_RECURSIVE",
+        "BOT_VISION_CAPTION_CACHE_DB",
+        "BOT_VISION_CAPTION_CACHE_TTL_SECONDS",
     }
 )
 

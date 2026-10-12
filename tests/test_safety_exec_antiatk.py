@@ -448,15 +448,30 @@ def test_reminder_store_leg_disinfects_before_persisting() -> None:
 ANTATK_UNENFORCED_IN_PRODUCTION: tuple[dict[str, Any], ...] = (
     {
         "id": "trust-derive_trust_level",
-        "claim": "trust 的可信级派生在生产零消费者（在册未执法）",
+        # 2026-10-13 修红席 P3：这一枚**换尺**（不是改声明）——旧尺量的是**模块**的
+        # import 边，trust 被生产 import（为 label_external_content / trust_from_message）
+        # 之后它就恒报 enforced，于是「derive_trust_level 自身零生产消费者」这条真事实
+        # 被模块别的消费者顶红。现尺只认这枚符号自己的 AST 名字，量到的仍是 unenforced。
+        "claim": (
+            "trust 的可信级派生（derive_trust_level）自身在生产零消费者（在册未执法；"
+            "生产可达的 label_external_content 直读 _ORIGIN_LEVEL、不经它，"
+            "只有包内 assert_text_cannot_change_level 与测试调它）"
+        ),
         "declared": "unenforced",
-        "measure": "production_importers_of:domains.core.safety_exec.trust",
+        "measure": "production_symbol_sites:derive_trust_level",
     },
     {
         "id": "trust-label_external_content",
-        "claim": "外部内容打标在生产零消费者（登记表里被探针点名，无人调用）",
-        "declared": "unenforced",
-        "measure": "production_importers_of:domains.core.safety_exec.trust",
+        # 2026-10-13 修红席 P3：这一枚**改声明**（不是补执法）——外部内容打标已有真消费者：
+        # chat.py 的文件修改意图腿逐次真调 `label_external_content(...)`。旧账「零消费者」
+        # 已不成立，照实翻 enforced（旧尺 `production_importers_of` 之所以也报 enforced，
+        # 是因为模块被 import；现在换成量这枚符号自己的名字，读数与声明仍然等值）。
+        "claim": (
+            "外部内容打标已被生产消费"
+            "（chat.py 的文件修改意图腿逐次调 label_external_content）"
+        ),
+        "declared": "enforced",
+        "measure": "production_symbol_sites:label_external_content",
     },
     {
         "id": "policy-decide",
@@ -556,6 +571,47 @@ def _imports_safety_exec_member(member: str) -> list[str]:
     return offenders
 
 
+def _production_files_naming_symbol(symbol: str) -> list[str]:
+    """生产面里以 **AST 名字形态**碰到这枚符号的文件（`import` 名 / 属性名 / 裸名）。
+
+    与 `_imports_safety_exec_member` 的分工（2026-10-13 修红席 P3 补）：那枚量的是
+    **模块**的 import 边（`domains.core.safety_exec.trust` 被谁 import），所以只要模块
+    多一个别的符号的消费者，它就翻 enforced —— 拿它量「某一枚函数有没有生产消费者」
+    是**量错了对象**：`trust-derive_trust_level` 正是这么被顶红的（模块被 chat.py /
+    file_reader / mail_ingress 为 `label_external_content` / `trust_from_message` 而
+    import，而 `derive_trust_level` 自身在生产零调用点）。本尺只认这枚符号**自己**的名字。
+
+    ⚠ 只认 AST 名字节点（`ast.Attribute.attr` / `ast.Name.id` / `ast.ImportFrom.names[]`
+    / `ast.Import` 尾段）——**字符串常量不算消费者**，否则 `attack_surface.py` 那张
+    「未接线清单」里的字面量会把账判成已接线（假绿）。
+    包内自引用（`safety_exec/` 内部）不算生产消费者，与上面那枚同口径。
+    """
+    package_dir = "plugins/bot_unified_runtime/domains/core/safety_exec/"
+    offenders: list[str] = []
+    for path in _production_files():
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        if rel.startswith(package_dir):
+            continue  # 包内互引不算「被生产消费」
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        for node in ast.walk(tree):
+            hit = False
+            if isinstance(node, ast.Attribute):
+                hit = node.attr == symbol
+            elif isinstance(node, ast.Name):
+                hit = node.id == symbol
+            elif isinstance(node, ast.ImportFrom):
+                hit = any(alias.name == symbol for alias in node.names)
+            elif isinstance(node, ast.Import):
+                hit = any(alias.name.rsplit(".", 1)[-1] == symbol for alias in node.names)
+            if hit:
+                offenders.append(rel)
+                break
+    return offenders
+
+
 def _throat_is_attached(tmp_path: Path) -> bool:
     """走真装配口 `build_instance_settings_manager`：门在不在，不看 .env 怎么写。
 
@@ -602,6 +658,9 @@ def _measure(spec: str, tmp_path: Path) -> str:
     kind, _, arg = spec.partition(":")
     if kind == "production_importers_of":
         return "unenforced" if not _imports_safety_exec_member(arg.split(".")[-1]) else "enforced"
+    if kind == "production_symbol_sites":
+        # 符号级消费者尺（2026-10-13 修红席 P3 加）：arg 就是那枚函数/常量的名字。
+        return "unenforced" if not _production_files_naming_symbol(arg) else "enforced"
     if kind == "throat_attached_via_assembly_entry":
         return "enforced" if _throat_is_attached(tmp_path) else "unenforced"
     if kind == "throat_survives_render_of_secret":
@@ -639,6 +698,12 @@ def test_unenforced_ledger_probe_itself_distinguishes_two_states(
     assert _measure(
         "production_importers_of:domains.core.safety_exec.definitely_absent", tmp_path
     ) == "unenforced"
+    # 符号级消费者尺（2026-10-13 修红席 P3）也必须两头都能报：少了这条，上面那两条
+    # 声明可能只是「尺子恒报同一个值」而全绿。
+    assert _measure("production_symbol_sites:label_external_content", tmp_path) == "enforced", (
+        "label_external_content 在 chat.py 有真调用点；尺子看不见它＝尺子瞎了"
+    )
+    assert _measure("production_symbol_sites:definitely_absent_symbol", tmp_path) == "unenforced"
 
 
 # ==================== 二手内容守卫的**消费点**锁（主代理 2026-09-26 补） ====================

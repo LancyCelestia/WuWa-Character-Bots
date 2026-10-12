@@ -62,6 +62,18 @@ SETTINGS_PY = (
 )
 SUPER_ROLES = [ROLE_USER, ROLE_ADMIN, ROLE_SUPER_ADMIN]
 
+#: 发起这次改动的人（写方，各用例里写作 `actor="qq:3865067623"`）与亲手批它的超管
+#: （批准人）**必须是两个不同的人**。
+#: 「书面同意」的第二步判据就是防自批（`consent.is_same_principal`，在册不变量
+#: 规格 §0.2）：一个人既申请又批准＝没有第二双眼睛看过卡面，`redeem_from_message`
+#: 会当场给 `SELF_CONSENT`。那条判据另有专门执法件
+#: （`tests/test_consent_command_surface.py::test_state_5_requester_cannot_approve_own_ticket`
+#: 与 `::test_self_consent_identity_rule_is_exact`）。
+#: ⚠ 本件夹具此前把批准人也写成发起人那个 QQ（`3865067623`）⇒ 三处 approve 全撞
+#: `SELF_CONSENT`。那是**夹具口径过期**（不是咽喉接线回归）：修法是让批准人换一个
+#: 超管号，绝不改 `is_same_principal` 去放行自批。
+APPROVER_ID = "2000000001"
+
 #: R2 真字段（`^BOT_(KB_WIKI|MEMORY)_(.*_)?(ENABLED|TOPICS)$`）且在 SETTABLE 白名单里：
 #: 只有「既过分级、又过白名单」的键才能测到咽喉门的完整裁决路径。
 R2_SETTABLE_KEY = "BOT_MEMORY_EXTRACT_ENABLED"
@@ -88,13 +100,18 @@ def _wired_store(tmp_path: Path, *, enabled: bool) -> settings_mod.RuntimeSettin
 
 
 def _super_admin_message(text: str) -> IncomingMessage:
+    """一条**超管本人**的入站私聊消息（批准人的身份只从结构化字段来）。
+
+    发起人恒是 `qq:3865067623`（见各用例的 `actor=`），故这里用 `APPROVER_ID`
+    ——同一个人不能自己批自己（`SELF_CONSENT`）。
+    """
     return IncomingMessage(
         platform="qq",
         adapter="onebot",
         bot_id="10000",
-        session_id="private_3865067623",
+        session_id=f"private_{APPROVER_ID}",
         session_type=SessionType.PRIVATE,
-        sender_id="3865067623",
+        sender_id=APPROVER_ID,
         sender_roles=list(SUPER_ROLES),
         plain_text=text,
     )
