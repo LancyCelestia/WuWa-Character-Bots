@@ -575,6 +575,83 @@ def test_us_registry_entries_unchanged() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 三源硬门（AGENTS 规则 12；用户 2026-10-13 立规）
+# ---------------------------------------------------------------------------
+
+
+class TestOfficialSourceGate:
+    """任何对外 web 数值须 ≥3 **独立机构**实测源，否则禁出数。"""
+
+    def _src(self):
+        from plugins.bot_unified_runtime.domains.core.contracts import (
+            official_sources as src,
+        )
+
+        return src
+
+    def test_same_org_many_endpoints_counts_once(self) -> None:
+        """同机构多入口只算一源——不许靠并列同源入口充数。"""
+        src = self._src()
+        spec = src.SourceSpec(
+            value="t",
+            legs=(
+                src.Leg("A", "u1", True),
+                src.Leg("A", "u2", True),
+                src.Leg("B", "u3", True),
+            ),
+        )
+        assert spec.source_count == 2
+        assert spec.ready is False  # 2 源 < 3 ⇒ 不得出数
+
+    def test_unverified_leg_does_not_count(self) -> None:
+        """没实测过的腿不算数——宁缺不编。"""
+        src = self._src()
+        spec = src.SourceSpec(
+            value="t",
+            legs=(
+                src.Leg("A", "u", True),
+                src.Leg("B", "u", True),
+                src.Leg("C", "u", False),  # 未实测
+            ),
+        )
+        assert spec.verified_orgs == ("A", "B")
+        assert spec.ready is False
+
+    def test_three_verified_orgs_pass(self) -> None:
+        src = self._src()
+        spec = src.SourceSpec(
+            value="t",
+            legs=(src.Leg("A", "u", True), src.Leg("B", "u", True), src.Leg("C", "u", True)),
+        )
+        assert spec.ready is True
+
+    def test_unknown_value_is_refused_not_silently_allowed(self) -> None:
+        """未登记的值必须被拒，而不是静默放行。"""
+        src = self._src()
+        assert src.check_value("没登记的值维") is None
+        text = src.describe_blockers("没登记的值维")
+        assert text and "不得出数" in text
+
+    def test_registry_covers_every_value_and_states_its_tolerance(self) -> None:
+        """登记册自洽：每项有腿、有口径，且 ready/shortfall 恰好划分全集。"""
+        src = self._src()
+        assert src.OFFICIAL_SOURCES
+        assert all(s.legs for s in src.OFFICIAL_SOURCES)
+        assert all(s.tolerance for s in src.OFFICIAL_SOURCES), "口径不许留空"
+        assert (
+            set(src.ready_values()) | set(src.shortfall_values())
+            == {s.value for s in src.OFFICIAL_SOURCES}
+        )
+
+    def test_shortfall_text_names_the_missing_legs(self) -> None:
+        """缺口文案要说清「差几条、差在哪」，不许只报一个数。"""
+        src = self._src()
+        text = src.describe_blockers("互联互通成交额")
+        assert "未达三源硬门" in text
+        assert "还差" in text
+
+
+# ---------------------------------------------------------------------------
 # 表情拒因计数（2026-10-13 用户裁定「复用统一账」）
 # ---------------------------------------------------------------------------
 
