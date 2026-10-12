@@ -530,6 +530,11 @@ def test_market_card_member_box_rejects_non_svg() -> None:
 
 
 def test_market_capability_card_carries_member_box(monkeypatch, tmp_path) -> None:
+    import plugins.bot_unified_runtime.domains.core.contracts.official_sources as _src
+
+    # 三源硬门（2026-10-13）：本值维现算 ready=False ⇒ 卡面整块缺席。
+    # 本腿测的是**箱形渲染通路**，故把门判为 ready（门本身另由下面那条腿测）。
+    monkeypatch.setattr(_src, "check_value", lambda value: type("S", (), {"ready": True})())
     quotes = [
         IndexQuote("上证指数", "1.000001", 3934.4, -0.43, -17.11),
         IndexQuote("深证成指", "0.399001", 12818.6, -0.9, -116.2),
@@ -562,3 +567,33 @@ def test_market_capability_card_carries_member_box(monkeypatch, tmp_path) -> Non
     assert "全成分股当日涨跌幅分布" in html_text
     assert '<div class="box-wrap">' in html_text
     assert "n＝上证指数 6、深证成指 6 家" in html_text
+
+
+def test_market_card_omits_member_box_when_three_source_gate_short(monkeypatch, tmp_path) -> None:
+    """三源硬门（AGENTS 规则 12）接线腿：本值维未达 ≥3 独立源 ⇒ 整块缺席＋显式标注缺口。
+
+    背景：登记册把「指数全成分股涨跌幅分布」标 ready=False（仅东财 1 条可用腿），
+    而卡面此前照出——2026-10-13 AI 审查点名「登记册落成但未执法」后接上唯一执法点。
+    """
+    quotes = [
+        IndexQuote("上证指数", "1.000001", 3934.4, -0.43, -17.11),
+        IndexQuote("深证成指", "0.399001", 12818.6, -0.9, -116.2),
+    ]
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
+        lambda timeout_seconds, cache_seconds, budget=None: list(quotes),
+    )
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_trend",
+        lambda secid, timeout_seconds=6.0: (3900.0, 3934.4),
+    )
+    backend = _FakeBackend()
+    config = type("Config", (), {"bot_card_render_dir": str(tmp_path)})()
+    capability = build_market_capability(config, render_backend=backend)
+    result = capability(_make_message("大盘"), _make_decision())
+    assert result.kind == "mixed"
+    html_text = backend.captured["html"]
+    # 未达硬门 ⇒ 不出图（箱形块缺席）
+    assert '<div class="box-wrap">' not in html_text
+    # 且必须**显式标注缺口**（不得静默消失）
+    assert "未达三源硬门" in html_text
