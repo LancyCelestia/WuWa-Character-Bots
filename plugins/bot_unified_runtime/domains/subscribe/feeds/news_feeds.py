@@ -1402,9 +1402,9 @@ def is_banned_news_url(url: str) -> bool:
 #: ``tests/test_news_source_whitelist.py`` 的门上，注毒两发：塞第四枚必红、
 #: 写成按 host 放行必红）。认人按 mid，昵称只作展示（昵称可改，不当判据）。
 NAMED_CREATOR_NEWS_EXCEPTIONS: dict[str, str] = {
-    "space.bilibili.com/285286947": "主人 2026-10-08 点名（橘鸦）：可作 AI 域快报源",
-    "space.bilibili.com/3706929260006322": "主人 2026-10-08 点名（黑鸦）：可作 AI 域快报源",
-    "space.bilibili.com/39030790": "主人 2026-10-08 点名（本轮新增；主体名她未给）：可作 AI 域快报源",
+    "space.bilibili.com/285286947": "用户 2026-10-08 点名（橘鸦）：可作 AI 域快报源",
+    "space.bilibili.com/3706929260006322": "用户 2026-10-08 点名（黑鸦）：可作 AI 域快报源",
+    "space.bilibili.com/39030790": "用户 2026-10-08 点名（本轮新增；主体名她未给）：可作 AI 域快报源",
 }
 
 

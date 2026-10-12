@@ -60,6 +60,7 @@ def smoke_leg(
     *,
     timeout: float = 20.0,
     retries: int = 2,
+    empty_markers: tuple[str, ...] = (),
 ) -> dict:
     """单腿真调（带受控重试）；返回结果字典（恒不抛）。
 
@@ -91,8 +92,15 @@ def smoke_leg(
                 body = resp.read(400000)
                 record["status"] = resp.status
                 record["bytes"] = len(body)
-                record["ok"] = resp.status == 200 and len(body) > 0
-                last_error = "" if record["ok"] else f"HTTP {resp.status}"
+                text = body.decode("utf-8", "replace")
+                hit = next((m for m in empty_markers if m in text), "")
+                if hit:
+                    # 200 但命中空响应标记 ⇒ 判「空响应」，不算绿（2026-10-13 实测教训）。
+                    record["ok"] = False
+                    last_error = f"空响应（命中标记 {hit!r}；{len(body)}B）"
+                else:
+                    record["ok"] = resp.status == 200 and len(body) > 0
+                    last_error = "" if record["ok"] else f"HTTP {resp.status}"
                 if record["ok"]:
                     break
         except urllib.error.HTTPError as exc:
@@ -127,6 +135,7 @@ def run_smoke(
                     src.probe_headers_for(spec.value, leg.org),
                     timeout=timeout,
                     retries=retries,
+                    empty_markers=src.probe_empty_markers(spec.value, leg.org),
                 )
             )
     return results

@@ -274,10 +274,23 @@ def _tier_text(score: float) -> str:
     return tier_name_for_affinity(score / 100.0)
 
 
+def _text_signature(bot_name: str) -> str:
+    """正文署名：与卡面腿**同一个回落源**（空串 ⇒ ``BRAND_THEME.display_name``）。
+
+    正文腿与卡面腿曾分家：卡面由 ``bridge`` 回落品牌名，正文直用空串 ⇒ 同一条
+    查询「文字说『对你』、图片说『守岸人对你』」两说（锁
+    ``test_affinity_query::test_private_result_shows_both_directions``）。
+    回落值只取单一来源 ``BRAND_THEME.display_name``——本层**不许**再手抄
+    「守岸人」字面量（P-G3 / 台账 #60：自称要随人格切换一起变）。
+    """
+    return str(bot_name or "").strip() or BRAND_THEME.display_name
+
+
 def _format_private_text(bot_name: str, bot_score: float, user_score: float) -> str:
+    name = _text_signature(bot_name)
     return (
-        f"{bot_name}对你：{bot_score:.1f}（{_tier_text(bot_score)}）\n"
-        f"你对{bot_name}：{user_score:.1f}\n"
+        f"{name}对你：{bot_score:.1f}（{_tier_text(bot_score)}）\n"
+        f"你对{name}：{user_score:.1f}\n"
         f"{_algorithm_one_liner()}"
     )
 
@@ -303,8 +316,9 @@ def _format_group_text(
         lines.append(f"{index}. {name}{mark}　{float(row.get('score') or 0.0):.1f}")
     if me_id and not any(str(row.get("sender_id")) == me_id for row in rows):
         lines.append(f"……你还没在本群留下印象，先聊聊天吧（当前 {me_bot_score:.1f}）")
+    name = _text_signature(bot_name)
     lines.append(
-        f"{bot_name}对你 {me_bot_score:.1f}｜你对{bot_name} {me_user_score:.1f}｜{_algorithm_one_liner()}"
+        f"{name}对你 {me_bot_score:.1f}｜你对{name} {me_user_score:.1f}｜{_algorithm_one_liner()}"
     )
     return "\n".join(lines)
 
@@ -435,7 +449,7 @@ def build_affinity_capability(
                 me_id=me_id,
                 subtitle=(
                     f"有印象 {len(rows)} 人 · 分数="
-                    f"{bot_name or BRAND_THEME.display_name}的印象好感（-100~+100）"
+                    f"{_text_signature(bot_name)}的印象好感（-100~+100）"
                 ),
                 accent_color=accent,
             )

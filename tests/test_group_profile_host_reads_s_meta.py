@@ -245,12 +245,69 @@ def _py_sources() -> list[Path]:
     ]
 
 
-def _literal_read_tokens(tree: ast.Module) -> set[str]:
-    """收集**代码里真拿去取值**的字符串常量与属性名，剔除文档串。
+#: 「声明缺席」的调用名（`_absent(ctx, "lucky_symbol", "幸运符号", _LUCKY_REASON)` 那一族）。
+#: 这些实参给的是**格位 id 与核证理由**，不是取值面。二批画像层
+#: （``domains/chat_reply/runtime/conversation_profile.py``，2026-09-29 S-META 二批）
+#: 把这三格升成结构化缺席事实，格位 id（``lucky_symbol``/``group_lucky_symbol``/
+#: ``network_type``）与理由常量（``_LUCKY_REASON``）必然带上 ``lucky``/``network_type``
+#: 这些标记 ⇒ 第一版判据「任何非文档串的字面量都算读点」在这里假阳性（真树当场红）。
+_ABSENT_DECLARATION_CALLS: frozenset[str] = frozenset({"_absent", "absent"})
 
-    为什么不能直接 grep 全文：本文件的在册理由本身就写着 ``lucky``/「幸运」，
-    逐行扫会把「声明它不存在」的那行注释当成读点，锁就永远红在自述上（假阳性）。
-    判据换成 AST：只认属性名与非文档串的字面量——那才是「有人拿这个键去取值」。
+
+def _declaration_node_ids(tree: ast.Module) -> set[int]:
+    """声明缺席的字面量节点：``_absent(...)`` 的字符串实参 + 它引用到的模块级理由常量。
+
+    只豁免**这一族调用的实参**（及其理由常量），不豁免整个模块：同一模块里真去取值
+    （``payload.get("lucky")`` / ``_field(ctx, "lucky", …)``）的字面量仍会被下面那条腿
+    抓出来——见 ``test_absence_declaration_is_spared_but_a_real_read_still_bites``。
+    """
+    names: set[str] = set()
+    ids: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            call_name = func.attr
+        elif isinstance(func, ast.Name):
+            call_name = func.id
+        else:
+            call_name = ""
+        if call_name not in _ABSENT_DECLARATION_CALLS:
+            continue
+        for arg in [*node.args, *(kw.value for kw in node.keywords)]:
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                ids.add(id(arg))
+            elif isinstance(arg, ast.Name):
+                names.add(arg.id)
+    if not names:
+        return ids
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets: list[ast.expr] = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        if not any(isinstance(t, ast.Name) and t.id in names for t in targets):
+            continue
+        if node.value is None:
+            continue
+        for inner in ast.walk(node.value):
+            if isinstance(inner, ast.Constant) and isinstance(inner.value, str):
+                ids.add(id(inner))
+    return ids
+
+
+def _literal_read_tokens(tree: ast.Module) -> set[str]:
+    """收集**代码里真拿去取值**的字符串常量与属性名，剔除文档串与缺席声明。
+
+    为什么不能直接 grep 全文：在册理由本身就写着 ``lucky``/「幸运」，逐行扫会把
+    「声明它不存在」的那行注释当成读点，锁就永远红在自述上（假阳性）。
+    判据换成 AST 之后还要再剔一层：二批画像层把同一批缺席格**升成结构化事实**
+    （格位 id ＋理由散文，见 ``_ABSENT_DECLARATION_CALLS``）——那些字面量是**声明**，
+    不是取值面，第一版判据把它们一起算了进去（真树假阳性）。
+    剔除面只到 ``_declaration_node_ids`` 那一族，别处的字面量照旧一律算读点。
     """
     doc_nodes: set[int] = set()
     for node in ast.walk(tree):
@@ -258,12 +315,13 @@ def _literal_read_tokens(tree: ast.Module) -> set[str]:
             body = getattr(node, "body", None)
             if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
                 doc_nodes.add(id(body[0].value))
+    declaration_nodes = _declaration_node_ids(tree)
     tokens: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute):
             tokens.add(node.attr.lower())
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if id(node) in doc_nodes:
+            if id(node) in doc_nodes or id(node) in declaration_nodes:
                 continue
             tokens.add(node.value.lower())
     return tokens
@@ -304,6 +362,34 @@ def test_structurally_absent_cells_stay_absent_and_stay_explained(
     assert any(word in segment for word in reason_keywords), (
         f"{cell}：理由段找不到核证关键词 {reason_keywords}，等于只留了结论没留依据"
     )
+
+
+def test_absence_declaration_is_spared_but_a_real_read_still_bites() -> None:
+    """上面那把尺的两侧可红性：缺席声明不算取值面；真取值仍必被抓。
+
+    二批画像层（``domains/chat_reply/runtime/conversation_profile.py``）把这三格升成
+    结构化缺席事实，格位 id 与理由常量必然带 ``lucky``/``network_type`` 标记；
+    第一版判据「任何非文档串的字面量都算读点」在那里假阳性（真树当场红）。
+    收窄面**只到** ``_absent(...)`` 那一族调用的实参（及其理由常量），
+    所以本条同时钉住两侧——少任一侧都说明这把尺要么瞎了、要么还在假阳性。
+    """
+    declaration = (
+        '_REASON = "动作册结构性没有：全册 ``lucky``/「幸运」零命中"\n'
+        'def f(ctx):\n'
+        '    return _absent(ctx, "lucky_symbol", "幸运符号", _REASON)\n'
+    )
+    spared = _literal_read_tokens(ast.parse(declaration))
+    assert not any("lucky" in value for value in spared), spared
+
+    # 反向：同一模块里真去取值（下标 / 取值口 / 属性名 / 建格）⇒ 一律仍要被抓。
+    for real_read in (
+        'def g(payload):\n    return payload.get("lucky")\n',
+        'def g(payload):\n    return payload["network_type"]\n',
+        'def g(row):\n    return row.lucky\n',
+        'def g(ctx):\n    return _field(ctx, "lucky", "幸运符号")\n',
+    ):
+        tokens = _literal_read_tokens(ast.parse(declaration + real_read))
+        assert any("lucky" in value or "network_type" in value for value in tokens), real_read
 
 
 def test_battery_is_no_longer_claimed_structurally_absent() -> None:

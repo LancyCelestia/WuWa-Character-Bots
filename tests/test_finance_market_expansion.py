@@ -650,6 +650,69 @@ class TestOfficialSourceGate:
         assert "未达三源硬门" in text
         assert "还差" in text
 
+    def test_gap_values_are_honestly_short_not_padded(self) -> None:
+        """缺口如实：互联互通成交额只有 2 条可用腿，不许凑数充绿。
+
+        上交所 5 个 sqlId 实测全 `pageHelp.data=null`（空壳 200）⇒ 已降为未验，
+        该值维因此回到「不足 3 源」，卡面必须标注缺口而不是照出。
+        """
+        src = self._src()
+        spec = src.check_value("互联互通成交额")
+        assert spec is not None
+        assert spec.ready is False, "2 源不得判 ready"
+        assert spec.structurally_capped is True
+
+    def test_empty_response_sentinel_catches_200_but_no_data(self) -> None:
+        """200 但零数据不算腿——腾讯外汇口 `v_pv_none_match` 曾把空响应误判成绿。"""
+        import importlib.util
+        import pathlib
+        import urllib.request
+
+        src = self._src()
+        assert "v_pv_none_match" in src.LEG_PROBE_EMPTY_MARKERS
+
+        path = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "source_smoke.py"
+        spec = importlib.util.spec_from_file_location("_smoke_probe_under_test", path)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        class _Resp:
+            status = 200
+            headers = {"Content-Type": "text/plain"}
+
+            def __init__(self, body: bytes) -> None:
+                self._body = body
+
+            def read(self, _n: int = -1) -> bytes:
+                return self._body
+
+            def __enter__(self) -> "_Resp":
+                return self
+
+            def __exit__(self, *_a: object) -> bool:
+                return False
+
+        def _fake(body: bytes):
+            return lambda *_a, **_k: _Resp(body)
+
+        markers = src.probe_empty_markers("汇率中间价", "腾讯")
+        original = urllib.request.urlopen
+        try:
+            urllib.request.urlopen = _fake(b'v_pv_none_match="1";')  # type: ignore[assignment]
+            empty = mod.smoke_leg(
+                "汇率中间价", "腾讯", "https://example.invalid", {}, retries=1, empty_markers=markers
+            )
+            urllib.request.urlopen = _fake(b'{"rc":0,"data":{"f2":6.69}}')  # type: ignore[assignment]
+            good = mod.smoke_leg(
+                "汇率中间价", "腾讯", "https://example.invalid", {}, retries=1, empty_markers=markers
+            )
+        finally:
+            urllib.request.urlopen = original
+
+        assert empty["ok"] is False and "空响应" in empty["error"]
+        assert good["ok"] is True
+
 
 class TestFailureAttributionCensus:
     """红的归属判定量具（把「这条红是不是我弄的」机械化）。"""

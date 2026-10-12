@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 
 __all__ = [
     "LEG_PROBES",
+    "LEG_PROBE_EMPTY_MARKERS",
     "LEG_PROBE_HEADERS",
     "MIN_INDEPENDENT_SOURCES",
     "OFFICIAL_SOURCES",
@@ -26,6 +27,7 @@ __all__ = [
     "SourceSpec",
     "check_value",
     "describe_blockers",
+    "probe_empty_markers",
     "probe_headers_for",
     "probe_url_for",
     "ready_values",
@@ -130,11 +132,17 @@ OFFICIAL_SOURCES: tuple[SourceSpec, ...] = (
         value="汇率中间价",
         tolerance="中间价口径：同一发布时点比对，差 >0.01 即标注",
         legs=(
-            _e("中国外汇交易中心", "chinamoney.com.cn/ags/ms/cm-u-bk-ccpr/CcprHisNew", True),
-            _e("东方财富", "push2…（既有 fx 链路）", True),
-            _e("腾讯", "qt.gtimg.cn（外汇口）", True),
+            _e("中国外汇交易中心", "chinamoney.com.cn/ags/ms/cm-u-bk-ccpr/CcprHisNew", True,
+               note="2026-10-13 smoke 200/725B（真中间价历史）"),
+            _e("东方财富", "push2.eastmoney.com/api/qt/ulist.np/get（secids=133.USDCNH,119.USDCNY）", True,
+               note="2026-10-13 smoke 200/169B **有数**（该端点会瞬时断连，重试即通——smoke 已带重试）"),
+            _e("新浪财经", "hq.sinajs.cn/list=fx_susdcny（须 Referer）", True,
+               note="2026-10-13 smoke 200/222B（人民币中间价行情串）——独立于 CFETS/东财的第三腿"),
+            _e("腾讯", "qt.gtimg.cn（外汇口：**未找到可用符号**）", False,
+               note="2026-10-13 实测：`q=USDCNY` 返 `v_pv_none_match=\"1\"`＝**空响应**（HTTP 200 但零数据）"
+                    "⇒ 如实降为未验。此例暴露 smoke 曾把「200 + 非空字节」误判为绿，已加空响应哨兵"),
         ),
-        note="拟由 CFETS 官方口升为第一腿",
+        note="三腿齐（CFETS 官方 / 东财 / 新浪），CFETS 为第一腿；腾讯外汇口暂无机器可调符号",
     ),
     SourceSpec(
         value="互联互通成交额",
@@ -143,10 +151,13 @@ OFFICIAL_SOURCES: tuple[SourceSpec, ...] = (
             _e("东方财富", "datacenter-web…/RPT_MUTUAL_DEAL_HISTORY", True),
             _e("香港交易所", "hkex.com.hk/Mutual-Market/Stock-Connect（sc_lang=zh-HK）", False,
                note="2026-10-13 smoke **200/400KB**（真「滬港通及深港通」页）；HTML 呈现页、无稳定机读口 ⇒ 须页面解析"),
-            _e("上海证券交易所", "query.sse.com.cn/commonQuery.do?sqlId=COMMON_SSE_SJ_HGT_ZJLX", True,
-               note="2026-10-13 smoke **200/492B JSON**（沪港通资金流口径）——独立于东财/港交所的官方第三腿"),
+            _e("上海证券交易所", "query.sse.com.cn/commonQuery.do?sqlId=COMMON_SSE_SJ_HGT_ZJLX", False,
+               note="2026-10-13 实测：试 5 个 sqlId（HGT_ZJLX/JYMX、GGT_ZJLX、HGTZJ、HKEX_ZJLX）**全部** "
+                    "`pageHelp.data=null`（HTTP 200 空壳）⇒ 该腿对本值维**无数据**，降为未验。"
+                    "教训：空壳 200 曾被误判为绿，已加空响应哨兵"),
         ),
-        note="净买入结构性停披 ⇒ 该维结构性受限；成交额口径现有 3 条独立官方腿（东财/港交所/上交所）",
+        note="净买入结构性停披 ⇒ 该维结构性受限；成交额口径**仅 2 条可用腿**"
+             "（东财机读 / 港交所页面须解析）⇒ 未达 3 源硬门，**不得出数，须显式标注缺口**",
         structurally_capped=True,
     ),
     SourceSpec(
@@ -165,11 +176,17 @@ OFFICIAL_SOURCES: tuple[SourceSpec, ...] = (
         value="美债收益率曲线",
         tolerance="同一交易日收盘口径",
         legs=(
-            _e("美国财政部", "home.treasury.gov/…/interest-rates/pages/xml", True),
-            _e("FRED", "fred.stlouisfed.org/graph/fredgraph.csv", True),
-            _e("美联储", "federalreserve.gov/releases/h15/", True),
+            _e("美国财政部", "home.treasury.gov/…/interest-rates（XML 或 CSV）", True,
+               note="2026-10-13 smoke：CSV 200/15905B（逐期限、日频，含 10 Yr）"),
+            _e("美联储", "federalreserve.gov/releases/h15/", True,
+               note="2026-10-13 smoke 200/60KB"),
+            _e("国际清算银行", "stats.bis.org/api/v2/…/BIS/WS_LONG_CPI（US 长端利率）", True,
+               note="2026-10-13 smoke 200/51KB CSV——独立第三腿；⚠ **月频**口径，与日频腿比对须标注频率差"),
+            _e("FRED", "fred.stlouisfed.org/graph/fredgraph.csv", False,
+               note="2026-10-13 实测：直连与代理**均 3×20s 超时**（本机不可达）；且 FRED 属圣路易斯联储，"
+                    "与「美联储」同机构族 ⇒ 即便可达也不宜充作独立源"),
         ),
-        note="国际腿直连可达（2026-10-12 复核纠正过「须经代理」的旧结论）",
+        note="三腿齐（美国财政部日频 / 美联储 H15 / BIS 月频）；FRED 本机不可达且同族，不计独立源",
     ),
     SourceSpec(
         value="天气实况/预报/预警",
@@ -233,7 +250,8 @@ LEG_PROBES: dict[tuple[str, str], str] = {
         "https://push2.eastmoney.com/api/qt/ulist.np/get"
         "?secids=133.USDCNH,119.USDCNY&fields=f12,f14,f2,f3&fltt=2&invt=2"
     ),
-    ("汇率中间价", "腾讯"): "https://qt.gtimg.cn/q=USDCNY",
+    ("汇率中间价", "新浪财经"): "https://hq.sinajs.cn/list=fx_susdcny",
+    # 腾讯外汇口无可用符号（实测返 v_pv_none_match）⇒ 不给探针，smoke 如实记「无探针」。
     # —— 互联互通 ——
     ("互联互通成交额", "东方财富"): (
         "https://datacenter-web.eastmoney.com/api/data/v1/get"
@@ -261,7 +279,11 @@ LEG_PROBES: dict[tuple[str, str], str] = {
     # —— 美债 ——
     ("美债收益率曲线", "美国财政部"): (
         "https://home.treasury.gov/resource-center/data-chart-center/interest-rates"
-        "/pages/xml?data=daily_treasury_yield_curve&field_tdr_date_value_month=202610"
+        "/daily-treasury-rates.csv/2026/all?type=daily_treasury_yield_curve"
+        "&field_tdr_date_value=2026&page&_format=csv"
+    ),
+    ("美债收益率曲线", "国际清算银行"): (
+        "https://stats.bis.org/api/v2/data/dataflow/BIS/WS_LONG_CPI/1.0/M.US.771?format=csv"
     ),
     ("美债收益率曲线", "FRED"): "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10",
     ("美债收益率曲线", "美联储"): "https://www.federalreserve.gov/releases/h15/",
@@ -284,6 +306,8 @@ LEG_PROBE_HEADERS: dict[tuple[str, str], dict[str, str]] = {
     ("全球股指点位/涨跌幅", "新浪"): {"Referer": "https://finance.sina.com.cn"},
     ("指数全成分股涨跌幅分布", "上海证券交易所"): {"Referer": "https://www.sse.com.cn/"},
     ("指数全成分股涨跌幅分布", "中证指数"): {"Referer": "https://www.csindex.com.cn/"},
+    ("汇率中间价", "新浪财经"): {"Referer": "https://finance.sina.com.cn"},
+    ("指数全成分股涨跌幅分布", "新浪财经"): {"Referer": "https://finance.sina.com.cn"},
     ("互联互通成交额", "上海证券交易所"): {"Referer": "https://www.sse.com.cn/"},
     ("宏观 CPI / PMI", "国家统计局"): {"Referer": "https://www.stats.gov.cn/"},
 }
@@ -292,6 +316,23 @@ LEG_PROBE_HEADERS: dict[tuple[str, str], dict[str, str]] = {
 def probe_url_for(value: str, org: str) -> str:
     """取该腿的实调探针 URL；无探针返回空串（smoke 如实记「无探针」）。"""
     return LEG_PROBES.get((value, org), "")
+
+
+# ==================== 空响应哨兵（smoke 判绿的追加条件） ====================
+# 为什么要它（2026-10-13 实测教训）：smoke 原本只判「HTTP 200 且字节数 > 0」，
+# 但**端点可以 200 却零数据**——腾讯外汇口 `q=USDCNY` 返 `v_pv_none_match="1";`（21B）
+# 就被误判成绿。下列标记一旦命中，即便 200 也判「空响应」＝不算腿。
+LEG_PROBE_EMPTY_MARKERS: tuple[str, ...] = (
+    "v_pv_none_match",          # 腾讯：无此代码/无数据
+    '"data":null',              # 东财/上交所：secid 或 sqlId 无效（上交所空壳的可靠标记）
+    '"result":null',            # 东财：报表/查询无结果
+    "报表配置不存在",              # 东财：reportName 写错
+)
+
+
+def probe_empty_markers(value: str, org: str) -> tuple[str, ...]:
+    """取该腿的空响应标记（缺省用全局表）。"""
+    return LEG_PROBE_EMPTY_MARKERS
 
 
 def probe_headers_for(value: str, org: str) -> dict[str, str]:

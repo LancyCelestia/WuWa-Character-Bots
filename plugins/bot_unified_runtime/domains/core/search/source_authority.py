@@ -31,6 +31,10 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
 
+from plugins.bot_unified_runtime.domains.core.moment_parsing import (
+    MomentParseError,
+    parse_moment,
+)
 from plugins.bot_unified_runtime.domains.core.search.search_intent import (
     detect_acg_intent,
 )
@@ -524,13 +528,21 @@ def p0_attribution_holds(row: AccountRow | None, *, subject_admitted: Callable[[
 
 
 def _iso_date(value: str) -> date | None:
-    """绑定行生效期的唯一解析口：认不了＝判不出＝按过期处理（fail-closed）。"""
+    """绑定行生效期的唯一解析口：认不了＝判不出＝按过期处理（fail-closed）。
+
+    解析走 ``domains/core/`` 的 ISO 解析唯一真身
+    :func:`moment_parsing.parse_moment`（``tests/test_moment_parsing_central.py``
+    的 ``test_no_second_iso_parser_in_core`` 执法：core 子树里不许再有第二个
+    ``fromisoformat`` 直调点）。本口只要**日期**那一截，故先取前 10 字符再取
+    ``.date()``——与旧写法 ``date.fromisoformat(text[:10])`` 逐值同结果
+    （截到日期段后两者等价），且不做任何时区折算（日期串本来就没有偏移量）。
+    """
     text = str(value or "").strip()
     if not text:
         return None
     try:
-        return date.fromisoformat(text[:10])
-    except ValueError:
+        return parse_moment(text[:10], field="source_authority.binding_valid").date()
+    except MomentParseError:
         return None
 
 

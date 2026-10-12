@@ -1320,7 +1320,11 @@ def _warn_if_personal_root(root: Path) -> None:
     except OSError:
         return
     suspicious = target == home
-    if not suspicious and target.is_relative_to(home):
+    if not suspicious and path_gate.is_within_registered(target, [home]):
+        # 子段枚举只在**容器判据**（唯一真身 ``path_gate``）判定「在 home 之下」之后做：
+        # 本件不持第二把包含尺（锁 ``tests/test_media_path_gate.py``
+        # ``test_single_containment_judgement_site``：文件里不许再出现自造的
+        # 路径前缀比较，一律转调唯一真身）。
         suspicious = any(
             part.lower() in _PERSONAL_DIR_NAMES
             for part in target.relative_to(home).parts
