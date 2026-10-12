@@ -40,8 +40,14 @@ BATCH2: tuple[tuple[str, str], ...] = (
 CIDS = tuple(cid for cid, _ in BATCH2)
 #: (cid → builder 符号) 查表，供 (d) 断言 detail 点名。
 _BUILDER = dict(BATCH2)
-#: 拒登三枚的现状锁对象（判据与复跑见文件末 (e) 节；解除前先读那里的两把尺子）。
-REFUSED = ("bot.ignore", "bot.meme_library", "bot.group_info")
+#: 拒登两枚的现状锁对象（判据与复跑见文件末 (e) 节；解除前先读那里的两把尺子）。
+#: 修红席 P2-capability-ledgers 2026-10-13：**bot.ignore 已核销摘牌**——P8 批（S-PREP-B3，
+#: 2026-09-22）后它真长出执行面（adapter='prepared'），且 (e) 节两把摘牌尺子**都已成立**：
+#:   ① 根出现 `await _run_simple_capability(..., "bot.ignore", ...)` 站点（根 :8570）；
+#:   ② 壳侧描述符标题不再依赖空 label（主会话一行修 `title=decl.label or decl.value`）。
+#: 该枚已同批移入 `test_descriptor_wiredness_ledger.py` 的 WIRED（见其 P8 批注记）
+#: ⇒ 本锁保留原两枚未核销者（判据不是遗留）。
+REFUSED = ("bot.meme_library", "bot.group_info")
 # 建请求走这个引用：下面有条用例会把 cp.CapabilityRequest 换成假构造器（模拟装配现场没交
 # 成品），若本件自己也按模块属性取类，就会套娃调用自己（canary 同型教训）。
 _REAL_REQUEST = cp.CapabilityRequest
@@ -230,13 +236,16 @@ def test_seam_without_capability_makes_no_direct_call(cid: str, monkeypatch: pyt
 
 # ------------------------------------------------------------------ (e) 拒登现状锁
 def test_refused_rows_still_declare_no_execution() -> None:
-    """本批**实测拒登**的三枚必须仍然没有执行面——这是判据，不是遗留。
+    """本批**实测拒登**的两枚必须仍然没有执行面——这是判据，不是遗留。
 
-    为什么值得钉：``seam_registered_cids()`` 只读登记行就把 cid 记成 WIRED，而这三枚的
+    为什么值得钉：``seam_registered_cids()`` 只读登记行就把 cid 记成 WIRED，而这两枚的
     生产路径**不经过** ``orchestrated_command``（根唯一 import 点在
     ``_run_simple_capability`` 体内）。谁在没改根之前先给它们填 execution，账面就会翻成
-    WIRED 而生产零变化——正是本门最该拦的假绿。``bot.ignore`` 另有一把 title 判据在拦
-    （兜底席 ``label=""`` ⇒ 派生描述符标题为空 ⇒ ``validate_registry`` 红）。
+    WIRED 而生产零变化——正是本门最该拦的假绿。
+    （原第三枚 ``bot.ignore`` 已于 P8 批 S-PREP-B3 核销摘牌：两把尺子都成立——根 :8570 有
+    ``await _run_simple_capability(..., "bot.ignore", ...)`` 站点、且主会话一行修
+    ``title=decl.label or decl.value`` 解除空 label 拦路判据，见上方 ``REFUSED`` 注；
+    本条自此只钉这两枚。）
     摘牌指引（两把尺子任一不成立即须重测，别照抄本行删除）：
       ① 该 cid 出现 ``await _run_simple_capability(..., "<cid>", ...)`` 站点，或根里
          该能力改由 ``orchestrated_command`` 包裹；

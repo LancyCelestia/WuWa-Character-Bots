@@ -137,7 +137,13 @@ from plugins.bot_unified_runtime.runtime.capability_protocols import (
 #: 系误判——两枚 09-29 已在 64 内（本次 HEAD 副本同尺复跑在册125/空exec64，且两枚在 HEAD 空 exec
 #: 清单内逐枚查实）；真身＝两清单逐枚作差（64→66 增量仅上述两枚），与 UNCOVERED_CEILING 105→107
 #: 同根同批（在册 127＝floor 同批顶高的另一格）。
-EXECUTION_SURFACE_BASELINE = 66
+#: 修红席 P2-capability-ledgers 合法增长（现算 2026-10-13）：66→**67**，+1 逐枚点名＝
+#: **`bot.decision`**——G-2（乙）2026-10-08 斜杠面 CB-CMDUNIFY 把 `/bot decision` 接进
+#: `_handle_status` 分发链，同日按 F3「使用即登记」补登
+#: `capability_registry.CONTROLLED_INTERNAL_CAPABILITIES`（受门在册③桶无 handler_ref ⇒ 进本账）；
+#: `git archive HEAD` 抽仓库外同尺复跑＝128/67/108 ⇒ 属已入库件，非他席在飞件。⚠ 这不是把门
+#: 放宽：上限只跟随现算（零余量锁逼基线==现算），涨的这一格要由 owner 席补执行体后**降回来**。
+EXECUTION_SURFACE_BASELINE = 67
 
 #: 已申报、普查看得见、现算 state≠wired 的枚数。**上限，只准降（接真一枚降一枚）。**
 #: 三次核账（同一把尺 `measure_declared_unwired`，并发窗内名册被 S67 在途批推着动过两回）：
@@ -208,7 +214,11 @@ PLACEHOLDER_BASELINE = 0
 #: +2 逐枚点名＝`bot.network_patrol`／`bot.outbound_gate`（C5 能力注册接线波「使用即登记」补登
 #: CONTROLLED_INTERNAL_CAPABILITIES，capability_registry.py；HEAD 副本复算亦 125 ⇒ 他席在飞件，
 #: **照实计入真值不摘**）。零余量锁逼地板==现算，同批跟随；同根账见上方 EXECUTION_SURFACE 注。
-REGISTERED_FLOOR = 127
+#: 修红席 P2-capability-ledgers 合法增长（现算 2026-10-13）：127→**128**，+1 逐枚点名＝
+#: **`bot.decision`**（G-2 乙 2026-10-08 斜杠面 CB-CMDUNIFY 补登 CONTROLLED_INTERNAL_CAPABILITIES，
+#: 与 EXECUTION_SURFACE 66→67、UNCOVERED_CEILING 107→108 同根同批三格）；HEAD 副本复算亦 128
+#: ⇒ 已入库件。地板只准升，涨由名册合法增长驱动。
+REGISTERED_FLOOR = 128
 
 #: 腿③b「已申报」侧的扫描面分母（＝本册申报枚数，由循环体自己数）。**地板，只准升。**
 #: 现算 13（2026-09-24T00:19:08Z 首届）。防"把待扫集合缩成手挑子集 ⇒ 未接真数看着变少"这一手。

@@ -72,7 +72,6 @@ FAMILY_MEMBERS: dict[str, tuple[str, ...]] = {
 #: ＋ `config.py` 的 `bot_vision_* / bot_video_* / bot_asr_* / bot_tts_*` 段，逐枚抄录不臆造。
 FAMILY_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "visual": (
-        "bot_request_budget_seconds",
         "bot_vision_enabled",
         "bot_vision_mode",
         "bot_vision_model_registry",
@@ -101,9 +100,15 @@ FAMILY_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
         # ⚠ `bot_media_registry_path` / `_ttl_days` **不在任何一族的专属清单里**：
         # 媒体资产库是跨族共用的一枚 SQLite（media_registry.py:410 唯一读点），
         # 把它算作某一族专属＝虚假声明。它在下方 SHARED_RESOURCES 里作为共享存储登记。
+        # ⚠ 同理 `bot_request_budget_seconds`（请求级 DeadlineBudget 上限）**不在任何一族的专属
+        # 清单里**：两族的相位（vision/video_brief/vision_video 与 asr）记到**同一枚**预算对象上
+        # （chat.py:build_chat_capability），把它算作某一族专属同样是虚假声明 ⇒ 它只在下方
+        # SHARED_RESOURCES 的「chat 请求级 DeadlineBudget」一行登记（effect=veto，consumers=两族）。
+        # 修红席 P2-capability-ledgers 2026-10-13：本键此前被同时抄进两族专属清单 ⇒ 腿①当场红
+        # （两族共键＝那条键就是互压通道）。它本就不该出现在**专属**清单里，故从两族一并摘除，
+        # 真身仍在 SHARED_RESOURCES；两族专属枚数回到 25/31（＝两枚地板），未缩面、未放宽。
     ),
     "audio": (
-        "bot_request_budget_seconds",
         "bot_tts_enabled",
         "bot_tts_api_url",
         "bot_tts_gptsovits_dir",

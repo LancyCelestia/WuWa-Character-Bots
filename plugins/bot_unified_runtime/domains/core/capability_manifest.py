@@ -746,7 +746,14 @@ EVIDENCE: MappingProxyType[tuple[str, CapabilityTag], TagEvidence] = MappingProx
 #   ⚠ 断代更正：A6 简报把本枚 +2 归给 files.artifact.generate 系误判——该枚 HEAD 已注册、早已
 #   在 105 旧账未申报清单内，非本次增量；真身＝`git archive HEAD` 抽仓库外同尺复跑逐枚作差
 #   （在册 125/未申报 105→127/107，增量仅上述两枚）。与腿⑤ EXECUTION_SURFACE 64→66 同根同批。
-UNCOVERED_CEILING: Final[int] = 107
+# 修红席 P2-capability-ledgers（2026-10-13 复算）107→**108**：+1 逐枚点名＝**bot.decision**
+#   ——G-2（乙）2026-10-08 斜杠面 CB-CMDUNIFY 把 `/bot decision` 接进 `_handle_status` 分发链
+#   （capability_registry.py CONTROLLED_INTERNAL_CAPABILITIES 同批补登，注在该行上方），
+#   「使用即登记」先例同型（同批三格：本格 +1、G-CM 腿⑤ EXECUTION_SURFACE 66→67、
+#   REGISTERED_FLOOR 127→128）；`git archive HEAD` 抽仓外同尺复跑＝128/67/108 逐枚相等
+#   ⇒ 属**已入库件**，非他席在飞件。零余量锁（腿⑤/方向锁）逼账==现算，故本格跟随现算；
+#   bot.decision 补执行体（handler_ref）后由 owner 席降回。⚠ 这不是把门放宽：只跟随现算。
+UNCOVERED_CEILING: Final[int] = 108
 
 
 def declared_ids() -> frozenset[str]:

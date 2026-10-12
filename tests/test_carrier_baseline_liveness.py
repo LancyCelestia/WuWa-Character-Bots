@@ -12,10 +12,20 @@
 
 1. **单一取数口**＝直接调既有门的 `collect_carrier_findings()`，本席零逻辑副本、零第二本账；
 2. **方向锁**＝「实测条数只准 ≤ 在册常数」（任务书 ① 原文照做，两枚同理）；
-3. **诚实账**＝carrier-truth 现算 34 > 在册常数 5 ⇒ 本门
-   `test_carrier_truth_count_is_within_inbook_baseline` **今日必红**（任务书 ②）。
-   本席不为让它变绿而放宽判据（§0 六禁），只把「谁该处置／三条可选路径／推荐」写进
-   `.superpowers/sdd/2026-09-22-taxonomy/SEAT-S118.md` 交 doc_link 门 owner 裁决；
+   ⚠ **2026-10-13 修红席 P2-capability-ledgers 改形（判据本身改形，随判据一起改并写明理由）**：
+   `_BASELINE_CARRIER_DEAD` 的真身语义是 HARD 零容忍（源件 `test_doc_link_integrity.py` 的
+   `test_agents_carrier_paths_no_dead_entries` 断言 `assert not rows`）⇒ **上限**方向正确，原样保留；
+   但 `_BASELINE_CARRIER_TRUTH` 在**源件**里被明确标为 **FLOOR**（源件行内注释「# FLOOR（真身实测
+   底线…）」，且源件 `test_agents_carrier_truth_floor` 断言 `n >= _BASELINE_CARRIER_TRUTH`）——
+   本门当年「两枚同理」把它也当上限执法，属**方向建模错**（口径冲突原委见
+   `.superpowers/sdd/2026-09-22-taxonomy/SEAT-S118.md` §5，处置归 doc_link 门 owner；S118 建议族
+   ＝「按源件 FLOOR 语义收口」）。修法＝给 TRUTH 另立**地板判据**（`_violation_floor` /
+   `_assert_at_least_floor`，方向只准 ≥），常量值一字未动（源件 5 不动、本门 `_MIN_CARRIER_ROWS`
+   不动、扫描面不缩）；**不是**「抬上限换绿」。
+3. **诚实账**＝carrier-truth 现算 **38**（2026-10-13 复算；S118 立门时 34）**远高于**源件地板 5
+   ⇒ 按 FLOOR 语义本门应当**绿**（"载体列字面命中真身至少 5 条"已远超）。原先按上限执法 ⇒ 必红，
+   那条红是**方向建模错**、不是数据坏；改形后本门绿，而真·塌陷（命中数跌破地板）仍当场红。
+   处置与三条可选路径原委见 `.superpowers/sdd/2026-09-22-taxonomy/SEAT-S118.md`。
 4. **门瞎自证**＝`test_judgment_is_threshold_sensitive_at_boundary` +
    `test_truth_leg_verdict_tracks_data`：判据必须随数据翻面，超限而不抛即本席自证腿当场红；
 5. **反向自测三发**全部走内存/`monkeypatch`（不往源码树写一个字）；
@@ -65,11 +75,16 @@ _MIN_CARRIER_ROWS = 30
 _INBOOK_CONSTANTS = ("_BASELINE_CARRIER_DEAD", "_BASELINE_CARRIER_TRUTH")
 
 #: 判据函数名——活性锁只认「值真的流进判决」的调用形态。
-_VERDICT_HELPERS = ("_assert_within_ceiling", "_violation")
+_VERDICT_HELPERS = (
+    "_assert_within_ceiling",
+    "_violation",
+    "_assert_at_least_floor",
+    "_violation_floor",
+)
 
 
 def _violation(face: str, rows: list[str], ceiling: int, constant: str) -> str | None:
-    """方向锁：实测条数只准 ≤ 在册常数；返回 `None` 即放行，否则给人话判决。"""
+    """上限方向锁：实测条数只准 ≤ 在册常数；返回 `None` 即放行，否则给人话判决。"""
     if len(rows) <= ceiling:
         return None
     return (
@@ -85,6 +100,30 @@ def _assert_within_ceiling(
     face: str, rows: list[str], ceiling: int, constant: str
 ) -> None:
     verdict = _violation(face, rows, ceiling, constant)
+    assert verdict is None, verdict
+
+
+def _violation_floor(face: str, rows: list[str], floor: int, constant: str) -> str | None:
+    """地板方向锁（2026-10-13 修红席补，专供源件语义为 FLOOR 的 `_BASELINE_CARRIER_TRUTH`）：
+
+    实测条数只准 ≥ 在册地板；返回 `None` 即放行，否则给人话判决。
+    与 `_violation` 同形不同向——两枚常数的**真身语义不同**（DEAD=HARD 零容忍上限、
+    TRUTH=源件明确标注的 FLOOR），故各用各的方向，不再「两枚同理」。
+    """
+    if len(rows) >= floor:
+        return None
+    return (
+        f"{face}：实测 {len(rows)} 条 < 在册地板 {constant} = {floor}"
+        f"（方向锁：只准 ≥）⇒ 载体列扫描面塌陷，或该常数被凭空抬高。"
+        f"源件语义＝FLOOR（test_doc_link_integrity.py 的 `n >= _BASELINE_CARRIER_TRUTH`）。"
+        f"前 5 条：\n" + "\n".join(rows[:5])
+    )
+
+
+def _assert_at_least_floor(
+    face: str, rows: list[str], floor: int, constant: str
+) -> None:
+    verdict = _violation_floor(face, rows, floor, constant)
     assert verdict is None, verdict
 
 
@@ -105,11 +144,13 @@ def test_carrier_dead_count_is_within_inbook_baseline() -> None:
 
 
 def test_carrier_truth_count_is_within_inbook_baseline() -> None:
-    """`_BASELINE_CARRIER_TRUTH` 执法：实测 34 > 在册常数 5 ⇒ **本门今日必红**（任务书 ②）。
+    """`_BASELINE_CARRIER_TRUTH` 执法（**地板方向**，2026-10-13 修红席改形）。
 
-    不放宽、不豁免、不改那枚数值——红着才是「在册未执法」被治好的证据。
+    源件（`test_doc_link_integrity.py`）把该常数明确标为 **FLOOR** 并以 `n >= 该值` 断言；
+    本门原按上限执法 ⇒ 现算 38 > 5 必红（方向建模错）。改形后按 FLOOR 语义判：实测 38 ≥ 5 ⇒ 绿，
+    而真·塌陷（命中数跌破 5）仍当场红。常量值一字未动、扫描面不缩。
     """
-    _assert_within_ceiling(
+    _assert_at_least_floor(
         "carrier-truth（载体列字面命中真身的条数）",
         _findings()["literal"],
         dl._BASELINE_CARRIER_TRUTH,
@@ -147,21 +188,24 @@ def test_positive_sample_literal_bucket_is_populated() -> None:
 # 门瞎自证（任务书 ②「同时给『若不红则说明门瞎』的自证」）
 # ---------------------------------------------------------------------------
 def test_judgment_is_threshold_sensitive_at_boundary() -> None:
-    """同一判据在临界两侧必须翻面：超限必抛、等于上限必放行。"""
+    """同一判据在临界两侧必须翻面：超限必抛、等于上限必放行；地板侧同理（低必抛、等于必放行）。"""
     assert _violation("探针", ["行"] * 6, 5, "_PROBE_") is not None, "超限却没判出来＝判据恒绿"
     assert _violation("探针", ["行"] * 5, 5, "_PROBE_") is None, "恰在上限被判红＝方向锁写歪"
     assert _violation("探针", ["行"] * 1, 0, "_PROBE_") is not None, "零容忍档没牙"
+    # 地板侧（2026-10-13 修红席补）：跌破地板必抛、等于地板必放行
+    assert _violation_floor("探针", ["行"] * 4, 5, "_PROBE_") is not None, "跌破地板却没判出来＝地板腿恒绿"
+    assert _violation_floor("探针", ["行"] * 5, 5, "_PROBE_") is None, "恰在地板被判红＝地板方向写歪"
 
 
 def test_truth_leg_verdict_tracks_data() -> None:
-    """真数据＋真常数复算判决：超限而不抛 ⇒ 本自证腿红（证「主腿不红」只可能是门瞎）。"""
+    """真数据＋真常数复算判决：跌破地板而不抛 ⇒ 本自证腿红（证「主腿不红」只可能是门瞎）。"""
     rows = _findings()["literal"]
-    ceiling = int(dl._BASELINE_CARRIER_TRUTH)
-    if len(rows) > ceiling:
+    floor = int(dl._BASELINE_CARRIER_TRUTH)
+    if len(rows) < floor:
         with pytest.raises(AssertionError):
-            _assert_within_ceiling("carrier-truth", rows, ceiling, "_BASELINE_CARRIER_TRUTH")
+            _assert_at_least_floor("carrier-truth", rows, floor, "_BASELINE_CARRIER_TRUTH")
     else:
-        _assert_within_ceiling("carrier-truth", rows, ceiling, "_BASELINE_CARRIER_TRUTH")
+        _assert_at_least_floor("carrier-truth", rows, floor, "_BASELINE_CARRIER_TRUTH")
 
 
 # ---------------------------------------------------------------------------
@@ -183,10 +227,15 @@ def test_poison_a_new_dead_carrier_is_caught(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_within_ceiling_poison_is_released(monkeypatch: pytest.MonkeyPatch) -> None:
-    """b) 把实测压进上限内 ⇒ 同一判据放行（证它不是恒红的样子货）。"""
-    fake = {"literal": ["合格行"] * 3, "shim": [], "moved": [], "dead": []}
+    """b) 把实测压进上限内（TRUTH 侧＝抬到地板之上）⇒ 同一判据放行（证它不是恒红的样子货）。"""
+    fake = {
+        "literal": ["合格行"] * (int(dl._BASELINE_CARRIER_TRUTH) + 1),
+        "shim": [],
+        "moved": [],
+        "dead": [],
+    }
     monkeypatch.setattr(sys.modules[__name__], "_findings", lambda: fake)
-    _assert_within_ceiling(
+    _assert_at_least_floor(
         "carrier-truth", _findings()["literal"], dl._BASELINE_CARRIER_TRUTH, "_BASELINE_CARRIER_TRUTH"
     )
     _assert_within_ceiling(

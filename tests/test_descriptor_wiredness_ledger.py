@@ -259,7 +259,8 @@ NOT_WIRED: frozenset[str] = frozenset(
         # ⚠ 2026-09-27 S-SEAM-FOLLOW-b（P0-A 后账跟随）：bot.mail.control / bot.auto_send.preview
         # 两枚已非「零调用点」——根落出字面汇缝站点（:6895/:8245），随上方 WIRED 迁移注记移入 WIRED。
         "bot.alert", "bot.audit", "bot.config", "bot.context", "bot.control",
-        "bot.cookie_expiry_notice", "bot.cookie_login", "bot.credential_check", "bot.dialogue",
+        "bot.cookie_expiry_notice", "bot.cookie_login", "bot.credential_check", "bot.decision",
+        "bot.dialogue",
         "bot.download", "bot.emergency_info_push", "bot.file", "bot.group_digest_push", "bot.group_policy",
         "bot.group_welcome", "bot.help", "bot.history", "bot.identity", "bot.llm", "bot.logs",
         "bot.mail.notify", "bot.memory",
@@ -268,6 +269,9 @@ NOT_WIRED: frozenset[str] = frozenset(
         # 告警归因（网络巡检调度器 AuditRecord capability_id、出站闸 issue_sink
         # source_bot="outbound-gate"），非 invoke/泛型执行器 ⇒ 真树判据归零调用点，如实挂本桶
         # （后台 job/管理链，无会话侧能力入口）；GAP_CEILING 同批 85→87 故意上调留痕。
+        # 修红席 P2（2026-10-13）：**bot.decision** 同型入桶——G-2 乙 2026-10-08 斜杠面
+        # CB-CMDUNIFY 把 `/bot decision` 接进 `_handle_status` 分发链并补登受门在册，
+        # 根内仅命令分发、无 invoke/泛型站点 ⇒ 归零调用点；GAP_CEILING 同批 87→88。
         "bot.network_patrol", "bot.outbound_gate", "bot.parse", "bot.persona", "bot.poke",
         "bot.queue", "bot.quirk", "bot.readiness", "bot.receipt", "bot.recent", "bot.reply", "bot.roles",
         "bot.route", "bot.routes", "bot.runtime", "bot.search", "bot.send_queue_worker", "bot.setup.llm",
@@ -337,7 +341,14 @@ NOT_WIRED: frozenset[str] = frozenset(
 #:   同型）——C5 能力注册接线波补登 bot.network_patrol / bot.outbound_gate 两枚入 NOT_WIRED
 #:   （controlled_no_callsite：根内仅审计/告警归因、无 invoke 点）+2 ⇒ 现算缺口
 #:   len(GENERIC)(2)+len(NOT_WIRED)(85)=87，85→87。
-GAP_CEILING: int = 87
+#: 修红席 P2-capability-ledgers（2026-10-13，**新增欠债方向的故意上调留痕**，S-R2-LEDGER 先例
+#:   同型）：**bot.decision** 一枚入 NOT_WIRED（controlled_no_callsite——G-2 乙 2026-10-08
+#:   斜杠面 CB-CMDUNIFY 把 `/bot decision` 接进 `_handle_status` 分发链并按「使用即登记」补登
+#:   CONTROLLED_INTERNAL_CAPABILITIES，根内仅命令分发、无 invoke/泛型执行器站点 ⇒ 真树判据
+#:   归零调用点）+1 ⇒ 现算缺口 len(GENERIC)(2)+len(NOT_WIRED)(86)=88，87→88。
+#:   与 G-CM 门 EXECUTION_SURFACE 66→67、REGISTERED_FLOOR 127→128、UNCOVERED_CEILING 107→108
+#:   同根同批；HEAD 副本（`git archive HEAD`）复算亦同 ⇒ 已入库件。
+GAP_CEILING: int = 88
 
 
 # ===========================================================================

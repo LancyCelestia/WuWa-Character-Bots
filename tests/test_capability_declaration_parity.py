@@ -184,6 +184,35 @@ DUP_ID_AUTHOR_EXCEPTIONS: dict[str, tuple[str, frozenset[str]]] = {
         "解析能力 + 解析历史支持件（parse_history）共享 id；设计语义（同一能力的历史视图出口）。",
         frozenset({"__init__.py", "domains/link_parse/support/parse_history.py"}),
     ),
+    # ---- 修红席 P2-capability-ledgers 2026-10-13 补登（「一 id 多入口」定性，非放宽）----
+    "bot.chat": (
+        (
+            "宿主人格对话面：chat.py＝执行体本体、__init__.py＝根装配/呈现回执、"
+            "intimate_control.py＝命令子面回执（`/bot intimate on|l1|deep|off|show` 与 `/bot narration`）。"
+            "三作者是**同一能力面**的声明事实——capability_registry.HELP_TOPIC_DECLARATIONS 的 bot.chat 主题"
+            "正文已把命令子面写进同一 capability（「＋命令面 /bot intimate … ＋描写档 /bot narration」），"
+            "故非第二真身；intimate_control 为 2026-10-03 e26c3709 新落件。"
+            "⚠ 建议 owner 收敛：命令子面回执宜复用 chat.py 的单一装配口（清单只减不增）。"
+        ),
+        frozenset({
+            "__init__.py",
+            "domains/chat_reply/capabilities/chat.py",
+            "domains/chat_reply/runtime/intimate_control.py",
+        }),
+    ),
+    "bot.alert": (
+        (
+            "运维告警面共用单一 id：alerts.py＝管理员预警投递卡（build_alert_capability_result，"
+            "runtime 侧 pipeline.handle 同步腿）、runtime_admin.py＝报修回执（_report_result／"
+            "build_alert_report_result，`/bot 报修` 命令面）。"
+            "两作者都是「告警/报修」这一受控内部能力面的回执构造点，非同 id 两真身。"
+            "⚠ 建议 owner 定性/拆分：报修回执若确属独立能力面，另立 `bot.issue_report` 并从本清单移除。"
+        ),
+        frozenset({
+            "domains/ops/admin/runtime_admin.py",
+            "domains/ops/monitor/alerts.py",
+        }),
+    ),
 }
 
 
@@ -240,12 +269,33 @@ ACTIVITY_DENY_IDS = frozenset({
     "bot.why",
 })
 STRUCTURAL_IDS = frozenset({"bot.emergency_info"})
-GAP_IDS = frozenset()  # 2026-09-22 S-WHY：bot.why 执行面角色门已执法，移出缺口清单。
+# 2026-09-22 S-WHY：bot.why 执行面角色门已执法，移出缺口清单。
+# 修红席 P2-capability-ledgers 2026-10-13 补登三枚新面（#63/#64/#72 波各留一枚 admin_only 帮助主题，
+# 执行面已有 admin 门但**本门尚未建 activity/structural 探针**）——按门自述「须加 activity/structural/
+# gap」三选一，如实挂缺口（点名＝诚实，不是把没执法写成已执法；补探针后摘牌）。
+GAP_IDS = frozenset({"bot.consent", "bot.host_state", "bot.meme_library"})
 COVERED_IDS = ACTIVITY_DENY_IDS | STRUCTURAL_IDS | GAP_IDS
 
 ADMIN_GAP_REASONS: dict[str, str] = {
     # bot.why 缺口已于 2026-09-22 关闭（build_why_result 补中央 roles_satisfy 门，
     # 转 ACTIVITY_DENY_IDS 活性覆盖；专属锁 tests/test_why_role_gate.py）。
+    "bot.consent": (
+        "书面同意命令面（HELP 主题「书面同意」admin_only=True，台账 #63 同意卡门换代落的新面）："
+        "路由腿 base_router.consent_match → RouteKind.CONSENT，执行面在根装配；"
+        "本门未为其建 activity（需真 builder + 角色门首行）或 structural（源码形）探针 ⇒ 如实挂缺口，"
+        "补探针后从本册摘牌。"
+    ),
+    "bot.host_state": (
+        "宿主机状态面（HELP 主题「宿主机状态」admin_only=True，台账 #64 休眠清扫+人话落的新面）："
+        "路由腿 base_router.host_state_match → RouteKind.HOST_STATE，执行面在根装配；"
+        "本门未建探针 ⇒ 如实挂缺口，补探针后摘牌。"
+    ),
+    "bot.meme_library": (
+        "人格表情册面（HELP 主题「表情册」admin_only=True，台账 #72 人格表情包体系波落的新面）："
+        "执行面**已有真门**——domains/meme/capabilities/meme_library.py:669/:1064 两处 "
+        "`if not bool(is_admin_message(config, message)): return _review_result(...)`（非管理员 denied）；"
+        "本门尚未把它钉成 structural 探针 ⇒ 如实挂缺口，补探针后转 STRUCTURAL_IDS 摘牌。"
+    ),
 }
 
 
