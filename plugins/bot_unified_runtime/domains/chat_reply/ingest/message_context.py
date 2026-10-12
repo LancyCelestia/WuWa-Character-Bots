@@ -1018,14 +1018,15 @@ def format_reply_chain(
     *,
     total_chars: int = REPLY_CHAIN_TOTAL_CHARS,
 ) -> str:
-    """把引用链渲染成逐层闭合的提示词块（预算在本函数，消毒在采集处）。
+    """把引用链渲染成逐层闭合的提示词块（预算在本函数，消毒在采集处与渲染点）。
 
     准确口径（INJ-G1 修正，旧 docstring 写「已消毒」曾为半真）：正文与发送者
     名都已在 ``collect_reply_chain`` / ``collect_reply_chain_async`` 存入
-    ``ReplyChainItem`` 前过 ``_neutralize_markers``，本函数才敢把名字原样拼进
-    块头 ``[引用回复 层级N 名字]``；本函数自身不做任何消毒，只做逐层闭合渲染
-    与整链总预算。多层逐层输出，便于模型区分"当前这话"与"被引用的旧话"，
-    并在信息不足时显式给出层级达上限的提示。
+    ``ReplyChainItem`` 前过 ``_neutralize_markers``；``ReplyChainItem`` 却是
+    **公开 frozen dataclass**——绕过采集入口手工构造的链、测试回放、未来新构造方
+    都从本渲染点这一个咽喉出去 ⇒ P2E（S-PATCH-ATK-P1C，2026-09-28）在**块头名字格**
+    再补一道 ``_neutralize_markers``（幂等，与采集腿构成双过零扰动）。本函数只做
+    逐层闭合渲染与整链总预算，消毒判据零副本（同一枚 ``_neutralize_markers``）。
     """
     items = list(chain or [])
     if not items:
@@ -1034,7 +1035,7 @@ def format_reply_chain(
     for item in items:
         body = item.text.strip()
         extra = (" " + " ".join(item.media_labels)) if item.media_labels else ""
-        who = f" {item.sender_name}" if item.sender_name else ""
+        who = f" {_neutralize_markers(item.sender_name)}" if item.sender_name else ""
         if not body and not extra:
             continue
         blocks.append(

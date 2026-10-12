@@ -484,7 +484,14 @@ def test_every_defended_or_partial_face_has_a_production_live_probe() -> None:
 
 def test_liveness_gate_has_teeth_replays_the_dead_pin_incident() -> None:
     """注毒自证（纯内存，不落盘）：复刻本次事故——一枚 DEFENDED 面只钉
-    trust 两枚死符号。旧门（存在性）对它全绿，新尺（活性）必须当场点名。"""
+    trust 两枚**判死**符号。旧门（存在性）对它全绿，新尺（活性）必须当场点名。
+
+    重锚（2026-10-13 现算）：本腿原先钉的 `label_external_content` 已由
+    `capabilities/chat.py` 真消费（P3 那格「在册未执法」翻正）⇒ 它不再是死探针，
+    注毒样本失去意义（活性尺照实放行）。现换成同件**仍判死**的两枚
+    （`derive_trust_level` / `label_web_content`，包外零调用点且不被同文件活符号
+    传递调用，逐枚可复跑）——判据形状一字未动，只把样本换回「真死」。
+    """
     poison = attack_surface.SurfaceEntry(
         surface_id="AS-G6POISON-DEADPIN",
         title="注毒：探针全为在册死码（复刻 G-6 钉死事故）",
@@ -496,11 +503,11 @@ def test_liveness_gate_has_teeth_replays_the_dead_pin_incident() -> None:
         probes=(
             attack_surface.DefenceProbe(
                 "plugins.bot_unified_runtime.domains.core.safety_exec.trust",
-                "label_external_content",
+                "derive_trust_level",
             ),
             attack_surface.DefenceProbe(
                 "plugins.bot_unified_runtime.domains.core.safety_exec.trust",
-                "derive_trust_level",
+                "label_web_content",
             ),
         ),
     )

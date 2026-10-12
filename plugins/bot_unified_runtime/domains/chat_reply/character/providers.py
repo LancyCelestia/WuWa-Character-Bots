@@ -1692,7 +1692,15 @@ def _render_memory_results_with_kind_labels(
             continue
         text = str(fact.get("text") or fact.get("summary") or "")
         label = _memory_kind_label(fact.get("kind")) if text else ""
-        labeled_text = f"【{label}】{text}" if label else text
+        # P1-c（S-PATCH-ATK-P1C，2026-09-28）读侧出点消毒：开闸前沉淀的**存量裸条目**
+        # 仍躺在记忆库里（写侧 `pre_write_sanitize`/总线 absorb 闸只管「今后」），
+        # 本函数是记忆条目进 prompt 的唯一渲染出点 ⇒ 在此对**渲染后正文**（含标签）
+        # 全角化内部边界标记。口径零副本、零新正则：真身＝`security/injection`
+        # 那一把尺（`neutralize_internal_markers`）；只换形不删内容、幂等（与写侧
+        # 消毒构成双过零副作用），且**不动库行**（库里原文是她让我记住的事证）。
+        labeled_text = neutralize_internal_markers(
+            f"【{label}】{text}" if label else text
+        )
         cost = len(labeled_text) + 1  # +1 = 行间换行，预算按实际注入形态计
         if used + cost > max_chars:
             dropped += 1

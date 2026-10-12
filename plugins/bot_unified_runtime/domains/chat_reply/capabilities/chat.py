@@ -109,6 +109,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety impo
 )
 from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
     guard_secondhand_text,
+    neutralize_internal_markers,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
     has_injection_shape as _has_injection_shape,
@@ -171,6 +172,12 @@ from plugins.bot_unified_runtime.domains.render.plain_text import (
 # 审查 F-13：内部标记消毒正则全项目唯一一份，统一从 message_context 导入。
 # 本模块禁止再 re.compile 第二份同用途正则——三处各自维护曾导致 chat 侧
 # 漏收引用族标记（[引用回复]/[引用内容]/[转发/聊天记录] 及其变体）。
+# INJ-G3（2026-10-13）：本模块**不再自带替换实现**（旧 `_replace_internal_marker`
+# + 本地 `.sub` 已删），读侧消毒一律调中央咽喉
+# `security.injection.neutralize_internal_markers`（唯一真身，内部即用本正则）。
+# 这枚常量仍按在册单源复用锁 `tests/test_internal_marker_regex.py` 的要求留在本
+# 模块命名域，供 `_sanitize_untrusted_context_text` 的快速判定与「chat 侧复用的
+# 就是统一那枚对象」读取；不得据此在本模块另写 `.sub` 替换（INJ-G3 结构锁当场红）。
 from plugins.bot_unified_runtime.message_context import INTERNAL_MARKER_PATTERN
 from plugins.bot_unified_runtime.output.roleplay import (
     format_roleplay_paragraphs,
@@ -1048,11 +1055,23 @@ def _bullet_lines(values: list[str], max_chars: int | None = None) -> str:
 
 
 def _sanitize_untrusted_context_text(value: object) -> str:
-    sanitized = str(value)
-    # 审查 F-13：统一正则（message_context.INTERNAL_MARKER_PATTERN）。
-    # group(1)=可选闭合斜杠、group(2)=标记名，与 _replace_internal_marker
-    # 的分组约定一致，替换函数无需改动。
-    return INTERNAL_MARKER_PATTERN.sub(_replace_internal_marker, sanitized)
+    """记忆/检索/画像等**读侧文本**进 prompt 前的唯一消毒口。
+
+    INJ-G3（2026-10-13，SEAT-R3-INJG3 的读侧格）：本口不再自带替换实现，
+    改调中央咽喉 ``security/injection.neutralize_internal_markers``——替换语义
+    全项目只剩一处（旧本地 ``_replace_internal_marker`` 与中央件**逐字节同形**，
+    中央尺一改读侧就静默漏；名册另案①在册未并）。行为逐字节不变：中央件的
+    ``_replace_internal_marker`` 与本口旧实现同分组约定（group(1)=可选闭合斜杠、
+    group(2)=标记名）同产物（``［斜杠标记名大写］``）。
+
+    本口仍**复用**统一常量 ``INTERNAL_MARKER_PATTERN`` 作快速判定（绝大多数行
+    没有标记，省一次替换）；替换语义一律交中央咽喉，本模块不另写 ``.sub`` 实现
+    （INJ-G3 结构锁执法）。
+    """
+    text = str(value)
+    if INTERNAL_MARKER_PATTERN.search(text) is None:
+        return text
+    return neutralize_internal_markers(text)
 
 
 def _wrap_untrusted_context_block(body: str) -> str:
@@ -1060,12 +1079,6 @@ def _wrap_untrusted_context_block(body: str) -> str:
     return (
         f"{_UNTRUSTED_CONTEXT_PREFIX}\n{body}\n{_UNTRUSTED_CONTEXT_SUFFIX}"
     )
-
-
-def _replace_internal_marker(match: re.Match[str]) -> str:
-    slash = match.group(1)
-    marker = match.group(2).upper()
-    return f"［{slash}{marker}］"
 
 
 def _memory_lines(context: ContextBundle, max_chars: int | None = None) -> str:

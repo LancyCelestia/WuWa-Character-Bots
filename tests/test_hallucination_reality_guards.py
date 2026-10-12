@@ -219,8 +219,10 @@ def test_anti_fabrication_clause_is_in_rendered_system_prompt() -> None:
     assert ANTI_FABRICATION_CLAUSE in rp._RUNTIME_ANSWER_RULES
     assert ANTI_FABRICATION_CLAUSE in _system_prompt(_context())
     # 「不得改动同区其他条目」的可复核形态：既有条目一字不少。
+    # 措辞随 056185ea（幻觉根治波）改为「对面／不要跑题」，断言跟真身现文
+    # （同款改法见 c91e1206 对 tests/test_detail_and_priority.py 的修订）。
     for kept in (
-        "先直接回应用户最后一条消息的核心意图",
+        "先直接回应对面最后说的那件事",
         "不复述检索原文，不编造未被资料支持的内容；资料不足时明确指出缺口。",
     ):
         assert kept in rp._RUNTIME_ANSWER_RULES

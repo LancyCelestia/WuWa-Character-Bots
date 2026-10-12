@@ -319,8 +319,40 @@ def test_grounding_block_reaches_prompt_through_guard() -> None:
         kb_grounding_label="本地知识库·予愿安洁莉娜·萌娘百科",
     )
     result = cap(msg, _decision())
-    assert len(llm.calls) == 1, "只许一次生成（无第二通路）"
-    user_prompt = _user_content(llm.calls[0])
+    # 「只许一次生成（无第二通路）」＝接地块只准进**既有那条回复生成腿**，
+    # moegirl 侧不得另起一条。计数按「携带接地块的 **user 轮上下文**」去重：
+    #   * 同一轮可能因长度档地板再发一次**同一批 messages**（补写重试）——那不是
+    #     第二通路，user 轮内容逐字节相同，去重后仍算一条；
+    #   * 同一条 provider 也承载检索域二判（`question_intent.llm_timely_domain_hint`）
+    #     ——它不是回复生成腿，且**不携带**接地块（下面反向一条把这点钉住）；
+    #   * 真起第二条通路（另拼一份带接地的 prompt）⇒ 去重后必然是 2。
+    grounded_contexts = {
+        str(m.get("content"))
+        for call in llm.calls
+        for m in call
+        if m.get("role") == "user" and "百科资料" in str(m.get("content"))
+    }
+    assert len(grounded_contexts) == 1, (
+        f"接地块只许进既有的一次生成（无第二通路），实得 {len(grounded_contexts)} 条上下文"
+    )
+    for call in llm.calls:
+        if any(
+            m.get("role") == "user" and "百科资料" in str(m.get("content")) for m in call
+        ):
+            continue
+        assert all(
+            "百科资料" not in str(m.get("content")) for m in call
+        ), "接地块泄漏进了非回复腿（二判不得读二手材料）"
+    user_prompt = _user_content(
+        next(
+            call
+            for call in llm.calls
+            if any(
+                m.get("role") == "user" and "百科资料" in str(m.get("content"))
+                for m in call
+            )
+        )
+    )
     assert "登场角色" in user_prompt, "接地块必须进 prompt"
     # 中央件 guard_secondhand_text 的成对边界与定性引导必须在。
     assert "[UNTRUSTED_USER_TEXT]" in user_prompt
