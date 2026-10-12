@@ -52,7 +52,7 @@ def test_set_override_rejects_with_restart_hint(tmp_path, key: str) -> None:
 
 def test_set_override_still_hot_for_normal_key(tmp_path) -> None:
     # 白名单键的热改通路不受 C-09 治理影响（回归护栏）。
-    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json")
+    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json", allow_no_gate=True)
     converted = store.set_override("BOT_CHAT_FAST_MODE", "true")
     assert converted is True
     assert store.list_overrides() == {"BOT_CHAT_FAST_MODE": True}

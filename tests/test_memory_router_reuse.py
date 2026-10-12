@@ -56,7 +56,8 @@ def test_memory_uses_runtime_selection_and_multiple_keys_without_mutating_chat(m
         bot_api_key_aiprc="valid-dynamic",
         bot_model_registry={"main": {"model": "main", "base_url": "https://main.test/v1",
             "api_key": "main-key", "priority": 1}})
-    settings = RuntimeSettingsStore()
+    # 夹具写非 R0 档键 ⇒ 按 settings.py 自述的夹具豁免通道声明。
+    settings = RuntimeSettingsStore(allow_no_gate=True)
     settings.set_model_entry("selected", {"model": "vision-free-text", "base_url": "https://selected.test/v1",
         "api_key": ["invalid-key", "env:BOT_API_KEY_AIPRC"], "priority": 1})
     settings.set_override("BOT_CHAT_MODEL", "selected")

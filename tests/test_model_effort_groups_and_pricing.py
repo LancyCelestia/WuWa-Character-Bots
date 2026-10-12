@@ -244,7 +244,8 @@ def _temp_dir() -> Path:
 
 
 def test_model_command_effort_and_price_roundtrip() -> None:
-    store = RuntimeSettingsStore(_temp_dir() / "settings.json")
+    # 夹具写非 R0 档键（effort/price）⇒ 按 settings.py 自述的夹具豁免通道声明。
+    store = RuntimeSettingsStore(_temp_dir() / "settings.json", allow_no_gate=True)
     config = _fake_config()
 
     set_result = _handle_model_command(store, config, ["effort", "ds", "high"])
@@ -271,7 +272,8 @@ def test_model_command_effort_and_price_roundtrip() -> None:
 
 
 def test_model_usage_renders_cost_from_event_aggregate() -> None:
-    store = RuntimeSettingsStore(_temp_dir() / "settings.json")
+    # 夹具写非 R0 档键（effort/price）⇒ 按 settings.py 自述的夹具豁免通道声明。
+    store = RuntimeSettingsStore(_temp_dir() / "settings.json", allow_no_gate=True)
     config = _fake_config()
     usage_store = SimpleNamespace(
         aggregate_llm_usage_range=lambda start, end: {
@@ -343,7 +345,8 @@ def test_usage_monitor_thresholds_and_state() -> None:
 
 def test_model_usage_merges_family_variants_with_representative_name() -> None:
     """同一模型三种写法合并一行：token/费用求和、代表名=最常见原始名。"""
-    store = RuntimeSettingsStore(_temp_dir() / "settings.json")
+    # 夹具写非 R0 档键（effort/price）⇒ 按 settings.py 自述的夹具豁免通道声明。
+    store = RuntimeSettingsStore(_temp_dir() / "settings.json", allow_no_gate=True)
     config = _fake_config()
     # 价格表按家族规范名配置（input=4/output=16 元每百万）。
     assert "已设置" in _handle_model_command(
@@ -398,7 +401,8 @@ def test_model_usage_merges_family_variants_with_representative_name() -> None:
 
 
 def test_model_usage_annotates_unpriced_instead_of_silent_zero() -> None:
-    store = RuntimeSettingsStore(_temp_dir() / "settings.json")
+    # 夹具写非 R0 档键（effort/price）⇒ 按 settings.py 自述的夹具豁免通道声明。
+    store = RuntimeSettingsStore(_temp_dir() / "settings.json", allow_no_gate=True)
     config = _fake_config()
     usage_store = SimpleNamespace(
         aggregate_llm_usage_range=lambda start, end: {

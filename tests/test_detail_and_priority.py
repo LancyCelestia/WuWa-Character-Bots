@@ -90,8 +90,9 @@ def test_detail_policy_requires_expanded_relationship_answer():
     )
 
     # 回复相关性：先回应最后一条消息的核心意图，不得脱离当前话题。
-    assert "先直接回应用户最后一条消息的核心意图" in _RUNTIME_ANSWER_RULES
-    assert "不要脱离当前话题" in _RUNTIME_ANSWER_RULES
+    # 措辞随 056185ea（幻觉根治波）改为「对面／不要跑题」，断言跟真身现文。
+    assert "先直接回应对面最后说的那件事" in _RUNTIME_ANSWER_RULES
+    assert "不要跑题" in _RUNTIME_ANSWER_RULES
     assert "身份" in _RUNTIME_ANSWER_RULES
     assert "关系" in _RUNTIME_ANSWER_RULES
     assert "一两句定性" not in _RUNTIME_ANSWER_RULES
@@ -135,7 +136,8 @@ def test_chat_respects_detail_default_and_runtime_override(monkeypatch):
         captured.append(kwargs["context"].reply_detail)
         return CapabilityResult(request_id=kwargs["message"].request_id, kind="text", body="ok")
     monkeypatch.setattr(chat, "build_chat_result", result)
-    settings = RuntimeSettingsStore()
+    # 夹具写 BOT_REPLY_DETAIL（非 R0 档）⇒ 按 settings.py 自述的夹具豁免通道声明。
+    settings = RuntimeSettingsStore(allow_no_gate=True)
     capability = chat.build_chat_capability(NullCharacterContextProvider(), StaticLLMProvider(),
         reply_detail="detail", runtime_settings=settings)
     msg = IncomingMessage(platform="qq", adapter="nonebot", bot_id="b", session_id="private:u",

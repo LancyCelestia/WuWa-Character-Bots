@@ -77,7 +77,7 @@ def test_failed_delete_is_not_counted_toward_quota(tmp_path: Path, monkeypatch: 
 
 def test_persist_failure_is_logged_and_not_silent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog) -> None:
     path = tmp_path / "runtime_settings.json"
-    store = settings_mod.RuntimeSettingsStore(path)
+    store = settings_mod.RuntimeSettingsStore(path, allow_no_gate=True)
 
     def boom(*_args: object, **_kwargs: object) -> None:
         raise OSError("disk full")
@@ -96,7 +96,7 @@ def test_persist_failure_is_logged_and_not_silent(tmp_path: Path, monkeypatch: p
 
 def test_successful_save_still_leaves_no_error_log(tmp_path: Path, caplog) -> None:
     path = tmp_path / "runtime_settings.json"
-    store = settings_mod.RuntimeSettingsStore(path)
+    store = settings_mod.RuntimeSettingsStore(path, allow_no_gate=True)
     with caplog.at_level("ERROR"):
         store.set_override("BOT_VISION_MODE", "direct")
     assert not [r for r in caplog.records if r.levelname == "ERROR"], "正常落盘不得误报"
@@ -116,7 +116,7 @@ def test_non_object_settings_file_is_quarantined(
     path.write_text(json.dumps(payload), encoding="utf-8")
 
     with caplog.at_level("WARNING"):
-        store = settings_mod.RuntimeSettingsStore(path)
+        store = settings_mod.RuntimeSettingsStore(path, allow_no_gate=True)
 
     assert store.list_overrides() == {}
     assert not path.exists(), "非对象设置文件必须被移走（*.corrupt 保全），不得原地静默读空"

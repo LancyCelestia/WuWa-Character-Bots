@@ -131,7 +131,9 @@ def test_b8_corrupt_file_preserved_and_clean_state_saved(tmp_path: Path) -> None
     bad_payload = '{"overrides": {"BOT_CHAT_MODEL": "luna"}, "interac'
     path.write_text(bad_payload, encoding="utf-8")
 
-    store = RuntimeSettingsStore(path)
+    # F-2（2026-09-28/10-01）后裸构造 store 写非 R0 档会被拒（fail-closed）。
+    # 本件是夹具、要写 R2 档键 ⇒ 按 settings.py 自述的**唯一豁免通道**显式声明。
+    store = RuntimeSettingsStore(path, allow_no_gate=True)
 
     corrupt_files = list(tmp_path.glob("runtime_settings.json.corrupt-*"))
     assert len(corrupt_files) == 1, "损坏文件应改名为 .corrupt-<ts> 保留"
