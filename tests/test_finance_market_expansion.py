@@ -572,3 +572,84 @@ def test_us_registry_entries_unchanged() -> None:
     assert tickers == {
         "NVDA", "AMD", "INTC", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSM",
     }
+
+
+# ---------------------------------------------------------------------------
+# 成分分布数据面（2026-10-12 用户裁定：股指箱型＝全成分股分布）
+# ---------------------------------------------------------------------------
+
+
+class TestMemberChanges:
+    def _reset(self) -> None:
+        market_data.reset_member_cache()
+
+    def test_paginates_full_members_and_caches(self, monkeypatch) -> None:
+        self._reset()
+        calls: list[tuple[str, int]] = []
+
+        def _fake_page(index_code: str, page: int, timeout_seconds: float):
+            calls.append((index_code, page))
+            if page == 1:
+                return {
+                    "success": True,
+                    "result": {
+                        "data": [
+                            {"SECURITY_CODE": f"{i:06d}", "f3": 1.5}
+                            for i in range(500)
+                        ]
+                    },
+                }
+            return {
+                "success": True,
+                "result": {"data": [{"SECURITY_CODE": "999999", "f3": -2.5}]},
+            }
+
+        monkeypatch.setattr(market_data, "_fetch_member_page", _fake_page)
+        values = market_data.fetch_index_member_changes("0.399001")
+        assert len(values) == 501
+        assert values[0] == 1.5 and values[-1] == -2.5
+        assert calls == [("399001", 1), ("399001", 2)]
+        # 缓存命中：零新增外呼。
+        assert market_data.fetch_index_member_changes("0.399001") == values
+        assert len(calls) == 2
+
+    def test_failure_returns_empty_and_never_cached(self, monkeypatch) -> None:
+        self._reset()
+        calls: list[int] = []
+
+        def _boom(index_code: str, page: int, timeout_seconds: float):
+            calls.append(page)
+            raise ConnectionError("network down")
+
+        monkeypatch.setattr(market_data, "_fetch_member_page", _boom)
+        assert market_data.fetch_index_member_changes("1.000001") == ()
+        assert market_data.fetch_index_member_changes("1.000001") == ()
+        assert len(calls) == 2  # 失败不缓存 ⇒ 下次立即重试（各 1 次）
+
+    def test_non_member_market_is_structurally_absent(self, monkeypatch) -> None:
+        self._reset()
+        calls: list[object] = []
+        monkeypatch.setattr(
+            market_data, "_fetch_member_page", lambda *a, **k: calls.append(a)
+        )
+        assert market_data.fetch_index_member_changes("100.HSI") == ()
+        assert market_data.fetch_index_member_changes("100.NDX") == ()
+        assert calls == []  # 非成分源市场零外呼
+
+    def test_dirty_or_missing_change_values_are_dropped(self, monkeypatch) -> None:
+        self._reset()
+        monkeypatch.setattr(
+            market_data,
+            "_fetch_member_page",
+            lambda index_code, page, timeout_seconds: {
+                "success": True,
+                "result": {
+                    "data": [
+                        {"SECURITY_CODE": "a", "f3": "-"},  # 停牌/缺数
+                        {"SECURITY_CODE": "b", "f3": 3.3},
+                        "not-a-row",
+                    ]
+                },
+            },
+        )
+        assert market_data.fetch_index_member_changes("0.399006") == (3.3,)

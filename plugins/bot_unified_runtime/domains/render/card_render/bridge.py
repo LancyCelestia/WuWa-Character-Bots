@@ -1764,6 +1764,13 @@ def render_market_card_html(payload_dict: dict[str, Any] | None = None) -> str:
     # 功能名单一来源（CAPFIX-B 修 I-4）：只认调用方传入（能力侧自带语义），
     # 缺省整段省略——桥内「全球股指」回落字面量是第二处真相，退役。
     feature_label = _as_str(data.get("feature_label"))
+    # 全成分分布箱形（2026-10-12）：只放行内部 finance_chart 生成的整段
+    # <svg>…</svg>（与 finance_card 的 trend_svg 同一形状闸，见
+    # _FINANCE_TREND_SVG_RE）；其余形态一律丢弃，模板侧区块整块隐藏。
+    member_box_payload = data.get("member_box")
+    member_box = member_box_payload if isinstance(member_box_payload, dict) else {}
+    raw_box_svg = _as_str(member_box.get("svg")).strip()
+    box_svg = raw_box_svg if _FINANCE_TREND_SVG_RE.match(raw_box_svg) else ""
     return _MARKET_CARD_TEMPLATE.render(
         platform_color=color,
         platform_color_dark=_rgb_to_hex(_darken(rgb)),
@@ -1774,6 +1781,10 @@ def render_market_card_html(payload_dict: dict[str, Any] | None = None) -> str:
         delayed_note=_as_str(data.get("delayed_note")),
         # 多源交叉查验声明（腾讯；通道不可用为空串=区块隐藏）。
         crosscheck_note=_as_str(data.get("crosscheck_note")),
+        # 全成分分布箱形区块（空串=区块隐藏）。
+        box_svg=box_svg,
+        box_label=_as_str(member_box.get("label")),
+        box_note=_as_str(member_box.get("note")),
         bot_name=bot_name,
         bot_avatar_url=bot_avatar_url,
         feature_label=feature_label,

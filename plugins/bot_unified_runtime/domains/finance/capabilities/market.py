@@ -674,12 +674,73 @@ def build_market_capability(
         )
         return {code: (raw.get(code) or ()) for code in codes}
 
+    def _fetch_member_box(
+        quotes: list[IndexQuote], timeout: float, budget: Any
+    ) -> dict[str, Any]:
+        """中国区指数全成分股当日涨跌幅分布 → 箱形区块（不可得静默缺席）。
+
+        取数面＝东财成分表（每指数分页 × 实时行情注入，见 market_data 头注）；
+        仅中国区五枚有成分源，其余市场不参与。样本 <5 家的列跳过；全部跳过
+        则整块缺席（卡面照旧）。箱形输入语义＝横截面涨跌幅分布，非单日 OHLC。
+        """
+        from plugins.bot_unified_runtime.domains.finance.data.market_data import (
+            fetch_index_member_changes,
+            member_index_code,
+        )
+
+        codes = [quote.code for quote in quotes if member_index_code(quote.code)]
+        if not codes:
+            return {}
+        raw = gather_within_budget(
+            lambda code: fetch_index_member_changes(
+                code, timeout_seconds=timeout, budget=budget
+            ),
+            codes,
+            budget=budget,
+            max_workers=6,
+        )
+        names = {quote.code: quote.name for quote in quotes}
+        pairs = [
+            (code, tuple(raw.get(code) or ()))
+            for code in codes
+            if len(raw.get(code) or ()) >= 5
+        ]
+        if not pairs:
+            return {}
+        try:
+            from plugins.bot_unified_runtime.domains.finance.data.finance_chart import (
+                box_plot_svg,
+            )
+
+            chart = box_plot_svg(
+                [series for _code, series in pairs],
+                labels=[names.get(code, code) for code, _series in pairs],
+                width=1000,
+                height=240,
+            )
+        except Exception:  # noqa: BLE001 - 绘图失败静默缺席，正文照旧。
+            return {}
+        if chart.status != "ok" or not chart.svg:
+            return {}
+        sample_text = "、".join(
+            f"{names.get(code, code)} {len(series)}" for code, series in pairs
+        )
+        return {
+            "svg": chart.svg,
+            "label": "中国区指数 · 全成分股当日涨跌幅分布",
+            "note": (
+                f"n＝{sample_text} 家；箱＝Q1–Q3，线＝中位，须＝1.5×IQR，"
+                "点＝离群（当日涨跌幅 %，横截面口径）"
+            ),
+        }
+
     def _render_card(
         quotes: list[IndexQuote],
         trends: dict[str, tuple[float, ...]],
         card_dir: str,
         subtitle: str,
         crosscheck_note: str = "",
+        member_box: dict[str, Any] | None = None,
     ) -> str:
         """釉瑚股指卡 PNG（分组网格+折线）；后端缺失/失败返回空串回退文本。"""
         if render_backend is None or not getattr(render_backend, "available", False):
@@ -702,6 +763,8 @@ def build_market_capability(
 
             payload = {
                 "subtitle": subtitle,
+                # 全成分分布箱形区块（空 dict = 模板整块隐藏）。
+                "member_box": member_box or {},
                 "groups": [
                     {
                         "name": group_name,
@@ -821,6 +884,13 @@ def build_market_capability(
             shown = quotes
         subtitle = "红涨绿跌 · 折线为近 30 个交易日收盘"
         trends = _fetch_trends(shown, timeout, budget)
+        # 全成分分布（中国区五枚）：与走势同挂本命令预算，不可得即整块缺席；
+        # 无渲染后端（纯文本模式）不必取数。
+        member_box = (
+            _fetch_member_box(shown, timeout, budget)
+            if getattr(render_backend, "available", False)
+            else {}
+        )
         # 多源交叉查验（腾讯）：best-effort，通道不可用为空串=不声明；
         # 同挂本命令预算（FIN-R1），预算尽即核验保持沉默、不声明、不造差异文案。
         from plugins.bot_unified_runtime.domains.finance.data.market_crosscheck import (
@@ -837,6 +907,7 @@ def build_market_capability(
             str(getattr(config, "bot_card_render_dir", "data/cards") or "data/cards"),
             subtitle,
             cross_note,
+            member_box,
         )
         body = format_market_brief(shown)
         if cross_note:

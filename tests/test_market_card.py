@@ -207,6 +207,10 @@ def test_market_capability_card_payload_carries_change_and_gap_note(
             (3900.0, 3920.5, 3934.4) if secid == "1.000001" else ()
         ),
     )
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.domains.finance.data.market_data.fetch_index_member_changes",
+        lambda secid, timeout_seconds=6.0, budget=None: (),
+    )
     backend = _FakeBackend()
     config = type("Config", (), {"bot_card_render_dir": str(tmp_path)})()
     capability = build_market_capability(config, render_backend=backend)
@@ -229,6 +233,10 @@ def test_market_capability_backend_failure_falls_back_to_text(
     monkeypatch.setattr(
         "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
         lambda timeout_seconds, cache_seconds, budget=None: list(_QUOTES),
+    )
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.domains.finance.data.market_data.fetch_index_member_changes",
+        lambda secid, timeout_seconds=6.0, budget=None: (),
     )
 
     class _BrokenBackend:
@@ -334,6 +342,10 @@ class TestMarketCrossCheck:
             "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_trend",
             lambda secid, timeout_seconds=6.0: (3900.0, 3888.11),
         )
+        monkeypatch.setattr(
+            "plugins.bot_unified_runtime.domains.finance.data.market_data.fetch_index_member_changes",
+            lambda secid, timeout_seconds=6.0, budget=None: (),
+        )
         from plugins.bot_unified_runtime.domains.finance.data import (
             market_crosscheck as mc,
         )
@@ -414,3 +426,78 @@ def test_trend_empty_result_not_cached(monkeypatch):
     # 空响应受控重试（bot_market_retry_on_empty）：每次 fetch = 首呼 + 1 次重试，
     # 两次 fetch 共 4 次；仍不写缓存（第二次未被缓存拦下）。
     assert len(calls) == 4
+
+
+# ---------------------------------------------------------------------------
+# 全成分分布箱形区块（2026-10-12 用户裁定：股指箱型＝全成分股分布）
+# ---------------------------------------------------------------------------
+
+
+def test_market_card_member_box_rendered() -> None:
+    payload = dict(_PAYLOAD)
+    payload["member_box"] = {
+        "svg": (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
+            '<g fill="none" stroke="#4a90d9">'
+            '<rect x="1" y="1" width="2" height="2"/></g></svg>'
+        ),
+        "label": "中国区指数 · 全成分股当日涨跌幅分布",
+        "note": "n＝上证指数 2232 家",
+    }
+    html_text = render_market_card_html(payload)
+    assert "全成分股当日涨跌幅分布" in html_text
+    assert '<div class="box-wrap">' in html_text
+    assert "<rect" in html_text  # 内部 finance_chart 生成的整段 SVG 直通
+    assert "n＝上证指数 2232 家" in html_text
+
+
+def test_market_card_member_box_absent_hidden() -> None:
+    html_text = render_market_card_html(_PAYLOAD)
+    assert '<div class="box-wrap">' not in html_text
+
+
+def test_market_card_member_box_rejects_non_svg() -> None:
+    """形状闸：非 <svg…</svg> 整段形态一律丢弃（与 finance_card 同判据）。"""
+    payload = dict(_PAYLOAD)
+    payload["member_box"] = {
+        "svg": "<script>alert(1)</script><svg></svg>",
+        "label": "x",
+    }
+    html_text = render_market_card_html(payload)
+    assert '<div class="box-wrap">' not in html_text
+    assert "alert(1)" not in html_text
+
+
+def test_market_capability_card_carries_member_box(monkeypatch, tmp_path) -> None:
+    quotes = [
+        IndexQuote("上证指数", "1.000001", 3934.4, -0.43, -17.11),
+        IndexQuote("深证成指", "0.399001", 12818.6, -0.9, -116.2),
+    ]
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
+        lambda timeout_seconds, cache_seconds, budget=None: list(quotes),
+    )
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_trend",
+        lambda secid, timeout_seconds=6.0: (3900.0, 3934.4),
+    )
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.domains.finance.data.market_data.fetch_index_member_changes",
+        lambda secid, timeout_seconds=6.0, budget=None: (
+            1.0,
+            -2.0,
+            3.5,
+            -0.5,
+            2.0,
+            0.0,
+        ),
+    )
+    backend = _FakeBackend()
+    config = type("Config", (), {"bot_card_render_dir": str(tmp_path)})()
+    capability = build_market_capability(config, render_backend=backend)
+    result = capability(_make_message("行情"), _make_decision())
+    assert result.kind == "mixed"
+    html_text = backend.captured["html"]
+    assert "全成分股当日涨跌幅分布" in html_text
+    assert '<div class="box-wrap">' in html_text
+    assert "n＝上证指数 6、深证成指 6 家" in html_text

@@ -540,6 +540,114 @@ def format_market_brief(quotes: Sequence[IndexQuote]) -> str:
     return "\n".join(lines)
 
 
+# ==================== 指数全成分分布（箱形图数据面，2026-10-12） ====================
+# 用户裁定「股指箱型＝全成分股分布」。取数口＝东财数据中心成分表 + 实时行情注入
+# （quoteColumns=f2,f3，与 data.eastmoney.com/other/index/ 现网页面同款单调用口；
+# 2026-10-12 本机实测：000300 与 000001 均按页返回成员 × f2/f3）。每指数分页取
+# 全成员，逐成员取 f3（当日涨跌幅 %）构成横截面分布。
+# 诚实铁律：任一页失败/超页上限 ⇒ 整指数返回空（缺席），绝不用半截样本画箱；
+# 也绝不用「单日 OHLC 四价位」冒充分布（finance_chart 口径红线调用方一侧）。
+_MEMBER_REPORT_URL = (
+    "https://datacenter-web.eastmoney.com/api/data/v1/get"
+    "?reportName=RPT_INDEX_COMPONENT"
+    "&columns=SECURITY_CODE"
+    "&quoteColumns=f2,f3"
+    "&filter=(INDEX_CODE%3D%22{index_code}%22)"
+    "&pageNumber={page}"
+    "&pageSize=500"
+    "&source=WEB&client=WEB"
+)
+_MEMBER_TTL_SECONDS = 600.0
+_MEMBER_MAX_PAGES = 12  # 500/页 ⇒ 最多 6000 成员；翻满仍有整页即判异常走缺席。
+_MEMBER_CACHE: dict[str, tuple[float, tuple[float, ...]]] = {}
+
+# secid 面：仅中国区五枚有成分源（其余市场结构性缺席，不假装有）。
+_MEMBER_SECIDS: tuple[str, ...] = (
+    "1.000001",  # 上证指数
+    "0.399001",  # 深证成指
+    "0.399006",  # 创业板指
+    "1.000003",  # 上证B股
+    "0.399003",  # 深证B股
+)
+
+
+def reset_member_cache() -> None:
+    """清空成分分布缓存（测试与运维手动刷新用）。"""
+    _MEMBER_CACHE.clear()
+
+
+def member_index_code(secid: str) -> str | None:
+    """secid → 成分表 INDEX_CODE；不在成分源面的市场返回 None。"""
+    if secid not in _MEMBER_SECIDS:
+        return None
+    return secid.split(".", 1)[1]
+
+
+def _fetch_member_page(index_code: str, page: int, timeout_seconds: float) -> Any:
+    """单点网络出口：测试 monkeypatch 本函数即可拦截全部外呼。"""
+    return http_get_json(
+        _MEMBER_REPORT_URL.format(index_code=index_code, page=page),
+        timeout=timeout_seconds,
+        max_bytes=_MAX_PAYLOAD_BYTES,
+    )
+
+
+def fetch_index_member_changes(
+    secid: str,
+    *,
+    timeout_seconds: float = 6.0,
+    cache_seconds: float = _MEMBER_TTL_SECONDS,
+    budget: Any | None = None,
+) -> tuple[float, ...]:
+    """全成分股当日涨跌幅 % 横截面（f3）；不可得返回 ()，绝不抛异常。
+
+    分页拉全成员（500/页）；任一页失败/超页上限 ⇒ () 且不缓存（「失败不
+    缓存、下次立即可重试」与行情主链同纪律）。成功结果带进程内 TTL 缓存
+    （缺省 10 分钟：成分表低频变动，行情注入随请求实时）。
+    """
+    index_code = member_index_code(secid)
+    if index_code is None:
+        return ()
+    now = time.monotonic()
+    cached = _MEMBER_CACHE.get(secid)
+    if cached is not None and now - cached[0] <= max(0.0, float(cache_seconds)):
+        return cached[1]
+    values: list[float] = []
+    for page in range(1, _MEMBER_MAX_PAGES + 1):
+        if budget_expired(budget):
+            return ()  # FIN-R1：预算尽不发起新网络调用，失败不缓存。
+        try:
+            payload = _fetch_member_page(
+                index_code, page, max(1.0, float(timeout_seconds))
+            )
+        except Exception:  # noqa: BLE001 - 取数层不向会话链路抛。
+            return ()
+        if not isinstance(payload, dict) or payload.get("success") is not True:
+            return ()
+        result = payload.get("result")
+        rows = result.get("data") if isinstance(result, dict) else None
+        if not isinstance(rows, list):
+            return ()
+        if not rows:
+            if page == 1:
+                return ()
+            break  # 末页空=正常收尾。
+        for row in rows:
+            if isinstance(row, dict):
+                change = _as_float(row.get("f3"))
+                if change is not None:
+                    values.append(change)
+        if len(rows) < 500:
+            break
+    else:
+        return ()  # 翻满上限仍有整页 ⇒ 判异常，不拿截断样本画箱。
+    if not values:
+        return ()
+    snapshot = tuple(values)
+    _MEMBER_CACHE[secid] = (now, snapshot)
+    return snapshot
+
+
 # ==================== F19 指数走势（30 日收盘，折线卡用） ====================
 # end=20500101：2026-09-13 实测该接口缺 end 参数时返回空 klines（疑似上游
 # 行为变更，当日真实渲染验收抓到），显式带上远期上界拿「最近 N 根」。

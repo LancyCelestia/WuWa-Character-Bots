@@ -88,6 +88,10 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
 .index .pct.flat { color: var(--text-sub); background: color-mix(in srgb, var(--accent) 10%, #fff); }
 .index svg.spark { width: 128px; height: 40px; flex-shrink: 0; }
 .index .trend-note { font-size: 12px; color: var(--text-sub); flex-shrink: 0; align-self: center; }
+/* 全成分分布箱形区块（2026-10-12）：SVG 等宽自适应，脚注次级灰。 */
+.box-wrap { margin-top: 10px; }
+.box-wrap svg { width: 100%; height: auto; display: block; }
+.box-note { margin-top: 6px; font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .data-foot { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-sub); font-variant-numeric: tabular-nums; }
 /* CAP1 品牌胶囊（头像+中文名+英文名+功能名）：组件 CSS/DOM 由 mica_shell
    单一产出、bridge 注入（辉光背景层+玻璃页脚档+pill 圆角全部 var() 消费
@@ -129,6 +133,13 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
         </div>
     </div>
     {% endfor %}
+    {% if box_svg %}
+    <div class="group">
+        <div class="group-title">{{ box_label }}</div>
+        <div class="box-wrap">{{ box_svg | safe }}</div>
+        {% if box_note %}<div class="box-note">{{ box_note }}</div>{% endif %}
+    </div>
+    {% endif %}
     {% if source_note or updated_at or delayed_note or crosscheck_note %}<div class="data-foot">
         {% if source_note %}<span>{{ source_note }}</span>{% endif %}
         {% if updated_at %}<span>{{ card_text.static_fin_28 }} {{ updated_at }}</span>{% endif %}
