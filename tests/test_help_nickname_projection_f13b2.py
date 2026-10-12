@@ -47,15 +47,25 @@ PRE_BATCH_CEILING: Final[int] = 472
 #: 四枚扫描面地板的批 1 现值（降地板＝把尺改瞎，不算修债）。
 PRE_BATCH_FLOORS: Final[tuple[int, int, int, int]] = (1100, 700, 140, 100)
 
-#: (topic, capability, 批前手抄词面单串)。凭据＝提交 ``064535d`` 的 echo.py 字面量。
+#: (topic, capability, 该能力昵称动词列词面单串)。
+#: **批前手抄原值凭据＝提交 ``064535d`` 的 echo.py 字面量**（下表逐枚保留，别当它不在了）。
+#: 现值＝2026-10-12 现算复录（UTC 16:5x，尺＝本件 `_in_order`/`exactly` 那两枚自己）。复录出处＝
+#: 中央动词表 `DEFAULT_VERB_MAP` 按主人第 ⑦ 条常令「三轴同级」扩表（现算 108 键＝`git show
+#: HEAD:.../runtime/aliases.py` vs 盘上 144 键＝工作树未提交半件，席 `cb-seat-axis`）——
+#: 投影口 `nickname_verbs_for` 逐字转述真身表，表补简繁孪生形 ⇒ 册侧**自动跟补**，字面集合法变大。
+#: 相对批前值的增量（逐枚点名，摘掉任一枚本锁即红）：状态 +查詢／日志 +日誌 +查詢日誌／
+#: 订阅 +查詢訂閱／对话 +對話驗收／维基 +維基 +維基百科／随机图 +随机图 +来张图；暂停集一字未动。
+#: 反查腿没钝＝同批三把：`test_help_search_landing_is_unchanged`（每枚新形 `/bot help <词>` 落点）、
+#: `test_nickname_route_resolution_is_unchanged`（每枚新形「守岸人<词>」解析目标）、
+#: `test_runtime_and_static_extraction_agree`（运行时 import 路 ≡ 生成器静态 AST 路）。
 PROJECTED_TOPICS: Final[tuple[tuple[str, str, str], ...]] = (
-    ("状态", "bot.status", "状态、狀態、status、查询"),
-    ("暂停", "bot.control", "暂停、暫停、pause、继续、繼續、resume"),
-    ("日志", "bot.logs", "日志、logs、查询日志"),
-    ("订阅", "bot.subscribe", "订阅、訂閱、subscribe、查询订阅"),
-    ("对话", "bot.dialogue", "对话验收、dialogue"),
-    ("维基", "bot.wiki", "wiki、维基、维基百科、wikipedia"),
-    ("随机图", "bot.randpic", "隨機圖、來張圖"),
+    ("状态", "bot.status", "状态、status、查询、狀態、查詢"),
+    ("暂停", "bot.control", "暂停、pause、继续、resume、暫停、繼續"),
+    ("日志", "bot.logs", "查询日志、日志、logs、日誌、查詢日誌"),
+    ("订阅", "bot.subscribe", "查询订阅、订阅、訂閱、subscribe、查詢訂閱"),
+    ("对话", "bot.dialogue", "对话验收、dialogue、對話驗收"),
+    ("维基", "bot.wiki", "wiki、维基、维基百科、wikipedia、維基、維基百科"),
+    ("随机图", "bot.randpic", "隨機圖、來張圖、随机图、来张图"),
 )
 
 #: 投影口必须住在这个**既有**文件里（用户明令：禁新建生产 .py；真身只准放进同职责旧件）。
@@ -172,20 +182,33 @@ def test_projection_function_carries_no_word_literal() -> None:
     assert not stray, f"{PROJECTION_FUNC} 体内出现字符串字面量 {stray}＝投影口自藏词面"
 
 
+#: 批 2 的收编范围**只**转 `_HELP_ENTRY_META[*]["triggers_nickname"]` 一列；「随机图」的
+#: `triggers_nl` 列此刻仍与 `nickname_verbs_for("bot.randpic")` 全等（现算 4 枚）＝本腿唯一
+#: 例外。**为什么留这一枚**：`echo.py` 归帮助册 owner（哈希门 `tests/verify_hashes.py` 与三把
+#: 在册门都盯着它，本席动它＝把别格从绿弄回红），且 S53 首部已把「随机图 aliases」列为
+#: 未收编三处之一（`aliases` 顺序＝`docs/command-catalog.md` 可见内容）。
+#: 🔴 例外＝**逐枚点名的闭集**（不是「凡 triggers_nl 都免检」）：多一枚新 offender 即红、
+#: 这一枚被真收编也即红（那时把本集合清空）。
+ECHO_LITERAL_RESIDUAL: Final[frozenset[tuple[str, str]]] = frozenset({("bot.randpic", "alias:triggers_nl")})
+
+
 def test_ledger_sees_no_echo_home_for_the_projected_clusters(s53: Any) -> None:
-    """S53 取数口现算：echo 侧真身位里这七簇词集一枚都不许再在场。"""
+    """S53 取数口现算：echo 侧真身位里这七簇词集一枚都不许再在场（例外＝上面那枚闭集）。"""
     _raw, sites, _inline = s53.current_debt()
     from plugins.bot_unified_runtime.domains.chat_reply.runtime.aliases import (
         nickname_verbs_for,
     )
 
-    projected = {frozenset(nickname_verbs_for(cap)) for _t, cap, _s in PROJECTED_TOPICS}
-    offenders = [
-        f"{site.line}:{site.label}"
+    projected = {frozenset(nickname_verbs_for(cap)): cap for _t, cap, _s in PROJECTED_TOPICS}
+    offenders = {
+        (projected[site.words], site.label)
         for site in sites
         if site.file.endswith("capabilities/echo.py") and site.words in projected
-    ]
-    assert not offenders, f"echo 仍自带整簇投影词面：{offenders}"
+    }
+    assert offenders == set(ECHO_LITERAL_RESIDUAL), (
+        f"echo 侧整簇投影词面的在场清单与本腿点名的例外闭集不符：现算={sorted(offenders)} "
+        f"在册例外={sorted(ECHO_LITERAL_RESIDUAL)}＝要么又长了一枚手抄，要么那枚已被真收编（清账）"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -216,8 +239,13 @@ def test_audit_history_prefix_is_untouched(s53: Any) -> None:
         ("2026-10-06", 472),
     )
     assert s53.AUDIT_HISTORY[: len(prefix)] == prefix, "核账历史前缀被改写＝对账凭据作废"
-    assert s53.AUDIT_HISTORY[-1] == ("2026-10-07", s53.WORD_SITE_CEILING), (
-        f"尾项没钉上批 2 的现算值：{s53.AUDIT_HISTORY[-1]}"
+    #: 2026-10-12 裁定 12 乙落到词面尺后重切：批 2 那枚现算值（``("2026-10-07", 430)``）必须
+    #: **仍在历史里**（凭据不许被抹），而尾项改为钉**当前**上限——乙案是同文件既有纪律「归一后
+    #: 降账＝改小上限＋追加一行」的第二次执行（第一次＝``036d666`` 对抄写债棘轮 42→25）；
+    #: 尾项等式照旧咬「不许留余量」，只是不再把日期焊死在 2026-10-07（那会让下一次真降账必红）。
+    assert ("2026-10-07", 430) in s53.AUDIT_HISTORY, "批 2 的核账凭据被抹掉＝对账链断了"
+    assert s53.AUDIT_HISTORY[-1][1] == s53.WORD_SITE_CEILING, (
+        f"尾项没钉上本批现算值：{s53.AUDIT_HISTORY[-1]} vs 上限 {s53.WORD_SITE_CEILING}"
     )
 
 

@@ -115,16 +115,9 @@ def _probe_hits_all(probe: str) -> list[str]:
 # 词表层双命中让路对登记于此（与 music_mode/music 让路对同形态）。
 KNOWN_CONFLICT_WORDS: frozenset[tuple[str, str]] = frozenset(
     {
-        ("bot.group_info", "群主是谁"),
-        # 2026-10-01 T25 现算：「待审」是**两能力各自独立的只读队列头**——
-        # emergency_info._PENDING_WORDS（人工报料待审）与 meme_library 审批正则
-        # （表情库待审档，S-MEME2-REVIEW 有意「命令前缀可省，裸词也认」）。
-        # 运行时由路由优先级兜底：meme_library 22 < emergency_info 44 ⇒ 裸「待审」
-        # 稳定先由表情库这一面接（该腿另有管理判定门）；BOT_MEME_LIBRARY_ENABLED=false
-        # 时 meme_library_match 早退，这一句落到紧急信息。两侧词面都要收敛须改命令面
-        # 词表＝行为变更（重启验收），本波不动，故按既有让路对形态登记两枚。
-        ("bot.emergency_info", "待审"),
-        ("bot.meme_library", "待审"),
+        # 2026-10-12 N3乙 消歧落地（用户裁定）：meme_library 裸「待审/待審」收进
+        # 「表情库」前缀形、moegirl 句腿加群务词守卫 ⇒ 「待审/待審」与
+        # 「群主是谁/群主是誰」两族不再双命中，原三枚登记已清账删除。
     }
 )
 
@@ -475,18 +468,27 @@ def _virtual_home_src(rel: str, words: frozenset[str]) -> tuple[str, str]:
 
 
 def test_poison_unregistered_cross_capability_clash_is_red() -> None:
-    """注毒①（新撞词必浮出）：把媒体归档族的词整表抄进随机图能力的命令面 ⇒ 本门必红。
+    """注毒①（新撞词必浮出）：把随机图族的词整表抄进媒体归档能力的命令面 ⇒ 本门必红。
 
-    两枚真身分属 bot.media_archive 与 bot.randpic、词集全等、无门要求相等 ⇒ 这是一枚
+    两枚真身分属 bot.randpic 与 bot.media_archive、词集全等、无门要求相等 ⇒ 这是一枚
     **新的**跨能力撞词，台账里没有 ⇒ `_clash_ledger_violations` 必须点名"新增"。
+
+    ⚠ 2026-10-12 裁定 12 乙的**牵动件补账**（本席复算确认属本口径欠账）：本发原靶＝
+    ``HOME_MIRROR_NOT_DEBT`` 里那枚「媒体归档」镜像行，而 ``036d666`` 落乙案时按「已虚设」
+    把它摘了牌（盘上 media_archive 表与 echo 两列词集不再全等 ⇒ ruleA 簇不存在 ⇒ 该行占不到
+    债）——名册迁了、消费这枚名册的本发没同批迁 ⇒ ``next(...)`` 直接 StopIteration。
+    那是**只删不接**，不是撞词判据坏了。现按同一形状换用仍在册的随机图镜像行
+    （echo ``dict:aliases`` × randpic ``DEFAULT_TRIGGER_WORDS``，9 枚词面），方向反过来抄进
+    媒体归档的命令面；再摘掉这条名册行 ⇒ 本发立刻红（活性由 ``test_trigger_word_copy_ratchet``
+    的逐枚活性锁与本子件互锁）。
     """
-    archive = next(
+    randpic_mirror = next(
         entry
         for entry in HOME_MIRROR_NOT_DEBT
-        if any("media_archive" in site_file for site_file, _label in entry.sites)
+        if any("randpic" in site_file for site_file, _label in entry.sites)
     )
     rel, src = _virtual_home_src(
-        "plugins/bot_unified_runtime/domains/meme/capabilities/randpic.py", archive.words
+        "plugins/bot_unified_runtime/domains/media/capabilities/media_archive.py", randpic_mirror.words
     )
     extra_homes, _extra_copies = scan_source(rel, src)
     assert extra_homes, "注毒前提：虚拟真身没被认成 home（tier-1 命名口失效）"

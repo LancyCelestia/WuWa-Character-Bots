@@ -60,35 +60,46 @@ VERB_PROJECTION: Final[str] = "nickname_verbs_for"
 HOST_PROJECTION: Final[str] = "host_state_trigger_words"
 MEDIA_PROJECTION: Final[str] = "media_archive_trigger_words"
 
-#: 甲族：(topic, capability, 批前手抄词面单串)——在册镜像簇，两列逐枚同串。
+#: 甲族：(topic, capability, 该列词面单串)——在册镜像簇，两列逐枚同串。
+#: **批前手抄原值凭据＝改动前现算存证（批 3，2026-10-07；批前值 记忆 2／为什么 3／配置 2／
+#: 就绪 2／角色 2／人格 2 枚，逐枚见下）**。现值＝2026-10-12 现算复录，出处与三枚反查腿见
+#: `tests/test_help_nickname_projection_f13b2.py` 的 `PROJECTED_TOPICS` 注释块（同一枚真身表
+#: `DEFAULT_VERB_MAP`、同一批「三轴同级」扩表 108→144 键，两本件同批对账）。
+#: 相对批前值的增量（摘掉任一枚本锁即红）：记忆 +記憶／为什么 +為什麼 +為啥／就绪 +就緒；
+#: 配置·角色·人格一字未动（那三簇简繁同形，无孪生可补）。
 MIRROR_TOPICS: Final[tuple[tuple[str, str, str], ...]] = (
-    ("记忆", "bot.memory", "记忆、memory"),
-    ("为什么", "bot.why", "为什么、为啥、why"),
+    ("记忆", "bot.memory", "记忆、memory、記憶"),
+    ("为什么", "bot.why", "为什么、为啥、why、為什麼、為啥"),
     ("配置", "bot.config", "配置、config"),
-    ("就绪", "bot.readiness", "就绪、readiness"),
+    ("就绪", "bot.readiness", "就绪、readiness、就緒"),
     ("角色", "bot.roles", "角色、roles"),
     ("人格", "bot.persona", "人格、persona"),
 )
-#: 逐列收编清单 (topic, 字段, 投影口, 参数, 批前手抄词面单串)——凭据＝改动前现算逐枚存证。
+#: 逐列收编清单 (topic, 字段, 投影口, 参数, 词面单串)——凭据＝改动前现算逐枚存证（批 3）。
 #: 功能管理只有 aliases 列（META 无昵称列）；决策只有昵称列（aliases 多一枚「决策引擎」，
 #: 与动词表不同集，故本批不折它）；媒体归档只有 aliases 列（昵称列是 6 词子集，投影不出来）。
+#: 2026-10-12 现算复录增量（出处同 `MIRROR_TOPICS` 上方注释块）：决策 +決策；
+#: 宿主机状态 10→12（+機器配置 +宿主狀態）；媒体归档 9→14（+歸檔 +存圖 +收圖 +存聊天記錄 +存記錄）。乙族那两簇的真身
+#: ＝`host_state.DEFAULT_TRIGGER_WORDS`／`media_archive.DEFAULT_TRIGGER_WORDS`，**此刻仍有别席在飞**
+#: （盘上读数＝本次复录时刻现算；两张表再补形 ⇒ 本锁照旧点名，属预期红，由对面席同批对账）。
+#: 🔴 顺序一字不许改：`aliases` 进 `docs/command-catalog.md`，顺序＝可见内容。
 CONVERTED_COLUMNS: Final[tuple[tuple[str, str, str, str, str], ...]] = (
     ("功能管理", "aliases", VERB_PROJECTION, "bot.runtime", "功能管理、feature"),
     *[(t, "aliases", VERB_PROJECTION, c, s) for t, c, s in MIRROR_TOPICS],
     *[(t, "triggers_nickname", VERB_PROJECTION, c, s) for t, c, s in MIRROR_TOPICS],
-    ("决策", "triggers_nickname", VERB_PROJECTION, "bot.decision", "决策、decision"),
+    ("决策", "triggers_nickname", VERB_PROJECTION, "bot.decision", "决策、decision、決策"),
     ("宿主机状态", "aliases", HOST_PROJECTION, "",
-     "宿主机状态、机器状态、机器配置、宿主状态、宿主機狀態、機器狀態、hoststate、jiqizhuangtai、jizhuangtai、jiqipeizhi"),
+     "宿主机状态、机器状态、机器配置、宿主状态、宿主機狀態、機器狀態、機器配置、宿主狀態、hoststate、jiqizhuangtai、jizhuangtai、jiqipeizhi"),
     ("宿主机状态", "triggers_nickname", HOST_PROJECTION, "",
-     "宿主机状态、机器状态、机器配置、宿主状态、宿主機狀態、機器狀態、hoststate、jiqizhuangtai、jizhuangtai、jiqipeizhi"),
+     "宿主机状态、机器状态、机器配置、宿主状态、宿主機狀態、機器狀態、機器配置、宿主狀態、hoststate、jiqizhuangtai、jizhuangtai、jiqipeizhi"),
     ("媒体归档", "aliases", MEDIA_PROJECTION, "",
-     "收藏、归档、存图、收图、存聊天记录、存记录、archive、shoucang、guidang"),
+     "收藏、归档、存图、收图、存聊天记录、存记录、歸檔、存圖、收圖、存聊天記錄、存記錄、archive、shoucang、guidang"),
 )
 #: 乙族（能力侧真身）——昵称列/别名列都转述同一枚 `DEFAULT_TRIGGER_WORDS`。
 CAPABILITY_TOPICS: Final[tuple[tuple[str, str, str], ...]] = (
     ("宿主机状态", HOST_PROJECTION,
-     "宿主机状态、机器状态、机器配置、宿主状态、宿主機狀態、機器狀態、hoststate、jiqizhuangtai、jizhuangtai、jiqipeizhi"),
-    ("媒体归档", MEDIA_PROJECTION, "收藏、归档、存图、收图、存聊天记录、存记录、archive、shoucang、guidang"),
+     "宿主机状态、机器状态、机器配置、宿主状态、宿主機狀態、機器狀態、機器配置、宿主狀態、hoststate、jiqizhuangtai、jizhuangtai、jiqipeizhi"),
+    ("媒体归档", MEDIA_PROJECTION, "收藏、归档、存图、收图、存聊天记录、存记录、歸檔、存圖、收圖、存聊天記錄、存記錄、archive、shoucang、guidang"),
 )
 #: 「守岸人<词>」的改动前解析读数（现算存证）：动词表能力→该 id；能力自带触发词→None（不走动词册）。
 VERB_MAP_CAPABILITIES: Final[frozenset[str]] = frozenset(

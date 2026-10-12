@@ -85,6 +85,11 @@ _PRONOUN_ENTITIES = frozenset(
 )
 _PRONOUN_PREFIXES = ("你", "我", "您", "咱")
 
+# 群务词守卫（N3乙 消歧，2026-10-12 用户裁定）：这批词的主场是「群信息」能力
+# （group_info 的 _INTENT_OWNER_WORDS），实体问句腿一律让路——「群主是誰」不得
+# 被本腿当成萌百实体吞掉（跨能力撞词唯一化）。
+_GROUP_META_ENTITIES = frozenset({"群主", "群管理", "群人数", "群人數"})
+
 _ENTITY_MIN_LEN = 2
 _ENTITY_MAX_LEN = 30
 _CANDIDATE_SNIPPET_CHARS = 60
@@ -135,6 +140,8 @@ def normalize_entity_question(text: str) -> str | None:
     if not (_ENTITY_MIN_LEN <= len(value) <= _ENTITY_MAX_LEN):
         return None
     if value in _PRONOUN_ENTITIES or value.startswith(_PRONOUN_PREFIXES):
+        return None
+    if value in _GROUP_META_ENTITIES:
         return None
     if "http" in value.lower() or "/" in value:
         return None

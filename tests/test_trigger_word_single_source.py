@@ -14,7 +14,12 @@ tests/scripts 侧副本根本不进本尺扫描面）。
     （S33 只记全等与整集子集，部分重合两边都不记——这是两本账的真正差额主体）；
   B 别名字段的被遮蔽位：同一帮助条目 dict 里排在 ``triggers_nl``/``triggers_nickname``
     之前的 ``aliases`` 会吞掉 S33 的逐 dict 单字段扫描（实测 S33 收 116 个字段位、
-    漏 9 个，本尺把每字段各记一位，补的是那 9 枚与全部部分重合账）；
+    漏 9 个，本尺把每字段各收一位，补的是那 9 枚与全部部分重合账）；
+    **2026-10-12 裁定 12 乙改判据**：收得到 ≠ 记债——同一条中央表条目（同 topic 的
+    ``_HELP_ENTRIES.aliases`` ≡ ``_HELP_ENTRY_META.triggers_nickname`` ≡ ``triggers_nl``，
+    取数口早把同 topic 两本表并成**一条**条目）折成一枚声明单元 ``HELPENTRY|<条目键>``；
+    条目外的第二处真身（能力自带表、内联字面量、跨条目重列）照记，一条不放过
+    （牙＝``test_central_entry_waiver_covers_only_central_table_columns`` 三条腿）。
   C 调度/matcher 内联字面量：``command_text == "…"`` / ``text.startswith((…))`` /
     ``removeprefix(…)`` / 规则工厂单串实参 / 混合容器字面量元素——S33 只读 ≥2 元素
     全字面量容器与含竖线正则串，比较运算与单串参数形态在它两桶里都不存在；
@@ -167,14 +172,34 @@ _TEXT_RECEIVER: Final[re.Pattern[str]] = re.compile(
 #     …suijitu, laizhangtu, sjt, lzt 不同：`aliases` 进 `docs/command-catalog.md`，顺序＝可见内容
 #     ⇒ 投影会改交付物字节。**书面同意**——宿主件 `consent_admin.py` 有在飞半件（21/12），共享树让路。
 #   判据、扫描面、四枚地板（1100/700/140/100）一字未动；AUTHORIZED_RAISES 不签（放宽方向）。
-#   牙口＝`tests/test_help_alias_projection_f13b3.py`（含注毒：任一枚退回手抄 ⇒ 计账必超 430）。
-WORD_SITE_CEILING: Final[int] = 430
+#   牙口＝`tests/test_help_alias_projection_f13b3.py`（含注毒：任一枚退回手抄 ⇒ 计账必超上限）。
+# 2026-10-12 S53A（用户裁定 12 **乙**落到**词面尺**）430 → 320。这是**降账**、不是抬账：
+#   乙的原话＝「写进中央表的条目不算抄写债；词只有一处真身，别处出现才是债」，同句裁定已由
+#   ``036d666`` 落到抄写债棘轮（42→25，同一手法）。本尺的落点＝**同一条中央表条目的多个登记列
+#   折成一枚声明单元**（帮助册 ``_HELP_ENTRIES[topic].aliases`` ≡ ``_HELP_ENTRY_META[topic].
+#   triggers_nickname`` ≡ ``triggers_nl``——取数口 ``extract_central_trigger_table`` 早就把同
+#   topic 的两本表并成**一条**条目，本尺原先却按列各记一枚＝同一条目被数成三处真身）。
+#   现算（口径名＝「乙／同条目折叠」，尺＝本件，HEAD 轴＝``fae4a1c``）：raw 582 → **385**、
+#   名册抵销 73 → **65**、计账 509 → **320**；名册同批逐枚迁账＝摘 7 枚归一后无债可抵的虚设牌
+#   （steam 免費／kebiao／rclb／richeng／richengliebiao／日程／日程板）＋ schedule 两枚并一枚
+#   ＋4 枚换条目键（待审／表情册／表情相冊／schedule）＝73→65 条，摘掉任一条现役登记计账必 +1。
+#   🔴 一条都不放过的真债照记：条目豁免只给中央表本体的登记列（``test_central_entry_waiver_
+#   covers_only_central_table_columns`` 三条腿验：非中央文件不给键／**整集抄一条条目进生产件仍
+#   恰 +len(词数)**／通道必须真的咬到东西），跨条目重列（同词⊆两条以上条目）拿不到唯一条目键、
+#   照记；重复真身仍由 S33 ruleA 那本按号记账（两本账互斥、不双计）。
+#   为什么 430 这枚字面保不住（算式，非选择）：三把零余量锁（本件注毒⑦、``test_help_nickname_
+#   projection_f13b2`` ②、``test_help_alias_projection_f13b3`` ②）都断言 ``计账 == 上限``，
+#   而 f13b3 ② 另断言 ``raw < 批 2 现算 522``（该枚不许上调＝方向锁）⇒ 乙口径下 raw 真降到 385
+#   时，「上限停在 430」与「计账==上限」两式无解。按本文件既有纪律「归一后降账＝改小上限＋追加
+#   一行」办，与 ``036d666`` 对抄写债棘轮 42→25 同法。扫描面、四枚地板、判据形态、AUTHORIZED_RAISES
+#   一字未动（本批是收口方向，不需要签字）。
+WORD_SITE_CEILING: Final[int] = 320
 #: 逐次核账记录（日期, 当时债数），必须单调不升；**要抬必须在 `AUTHORIZED_RAISES` 里留一条
 #: 同日期同数值的签字凭据**（2026-10-05 用户裁 F-13「抬上限」时同批立的替代锁——
 #: 放宽一条腿必配一条牙），且末项＝当前上限（零余量锁）。
 AUDIT_HISTORY: Final[tuple[tuple[str, int], ...]] = (
     ("2026-09-24", 469), ("2026-09-27", 467), ("2026-09-27", 467), ("2026-10-05", 477),
-    ("2026-10-06", 472), ("2026-10-07", 447), ("2026-10-07", 430),
+    ("2026-10-06", 472), ("2026-10-07", 447), ("2026-10-07", 430), ("2026-10-12", 320),
 )
 
 #: 授权上调凭据（日期, 该次核账值, 授权出处摘要）。写不出"谁在哪一天裁的"就抬不了上限。
@@ -219,6 +244,44 @@ def _load_s33():
 
 
 _S33 = _load_s33()
+
+# ---------------------------------------------------------------------------
+# 中央表条目（2026-10-12 用户裁定 12 乙在本尺的落点）
+# ---------------------------------------------------------------------------
+#: 中央表两枚真身的注册处＝S33 那本已入库的取数口（真身 `scripts/extract_trigger_words.py`::
+#: ``extract_central_trigger_table``）。本尺**不造第二把尺**：条目怎么切、哪一列算登记面，
+#: 全由那一句裁定已经钉死的定义给。
+CENTRAL_TABLE_RELS: Final[frozenset[str]] = frozenset(_S33._central_extractor().CENTRAL_TABLE_RELS)
+#: 中央表条目的**登记列**形态：帮助册 ``aliases`` / ``triggers`` / ``triggers_nl`` /
+#: ``triggers_nickname``（真身位 ``t1:dict:*`` 与字段位 ``alias:*`` 两式）。能力自带的
+#: ``DEFAULT_TRIGGER_WORDS`` 一类**不在此列**——那是「绕过中央表的第二处字面」，照记。
+_CENTRAL_COLUMN_SUFFIXES: Final[tuple[str, ...]] = tuple(
+    f"{shape}:{field}"
+    for shape in ("dict", "alias")
+    for field in ("aliases", "alias", "triggers", "triggers_nl", "triggers_nickname")
+)
+#: 折叠后的单元键前缀（一条中央表条目＝一枚声明单元）。
+HELPENTRY_PREFIX: Final[str] = "HELPENTRY|"
+
+
+@lru_cache(maxsize=1)
+def central_table() -> dict[str, frozenset[str]]:
+    """「中央表条目 → 词面」现算（借 S33 的取数口，零插件导入）。"""
+    return _S33.central_trigger_table()
+
+
+def central_entry_of_site(site: "Site") -> str:
+    """一枚真身位属于**哪一条**中央表条目；不属于唯一一条就返回空串（不参与折叠）。
+
+    三条都成立才算「那条条目的登记面」：①文件是中央表本体 ②标签是条目的登记列 ③整集
+    落在**唯一一条**条目里。⊆ 两条条目（词面被跨条目重列）或列形态不认识 ⇒ 空串＝照记。
+    """
+    if site.file not in CENTRAL_TABLE_RELS or not site.words:
+        return ""
+    if not any(site.label.endswith(suffix) for suffix in _CENTRAL_COLUMN_SUFFIXES):
+        return ""
+    hits = {key for key, entry in central_table().items() if site.words <= entry}
+    return hits.pop() if len(hits) == 1 else ""
 
 
 class Site(NamedTuple):
@@ -384,6 +447,7 @@ def _home_sites(extra: tuple[tuple[str, str], ...]) -> tuple[list[Site], dict[st
     return sites, parsed
 
 
+@lru_cache(maxsize=1)
 def _rule_a_cluster_keys() -> frozenset[tuple[str, int, str]]:
     _b, rule_a = _S33.analyze(list(_S33.scan_tree()[1]), [])
     return frozenset((m.file, m.line, m.label) for c in rule_a for m in c.members)
@@ -424,23 +488,12 @@ def compute_debt(
         for rel, (tree, claimed) in extra_parsed.items():
             for w in _scan_plugin_inline(rel, tree, claimed, vocab):
                 inline_files[w].add(rel)
-    cluster_keys = _rule_a_cluster_keys()
+    #: 单一算账口：债＝Σ(max(0, 声明单元数 − 1))，单元数与名册键共用 ``_fold_unit_keys``
+    #: （原先这里另写了一遍折叠式，与 ``_units_of`` 有两处微差＝三口径打架的隐患，现收一孔）。
     vocab = frozenset().union(*(s.words for s in sites)) if sites else frozenset()
-    by_words: dict[frozenset[str], list[Site]] = defaultdict(list)
-    for s in sites:
-        by_words[s.words].append(s)
-    debt = 0
-    for w in sorted(vocab):
-        n_units = 0
-        for ws, members in by_words.items():
-            if w not in ws:
-                continue
-            cluster_n = sum(1 for m in members if (m.file, m.line, m.label.replace("t1:", "", 1)) in cluster_keys)
-            n_units += 1 + max(0, len(members) - max(cluster_n, 1)) if cluster_n >= 2 else len(members)
-        n_units += len(inline_files.get(w, ()))
-        if n_units >= 2:
-            debt += n_units - 1
-    return debt, tuple(sites), {w: frozenset(fs) for w, fs in inline_files.items()}
+    inline_view = {w: frozenset(fs) for w, fs in inline_files.items()}
+    debt = sum(max(0, len(_fold_unit_keys(w, sites, inline_view)) - 1) for w in sorted(vocab))
+    return debt, tuple(sites), inline_view
 
 
 def current_debt() -> tuple[int, tuple[Site, ...], dict[str, frozenset[str]]]:
@@ -466,11 +519,23 @@ class DeclaredUnit(NamedTuple):
     reason: str
 
 
-#: 「帮助册 aliases ≡ triggers_nickname」这对在册镜像簇的声明位键（群信息族共用）。
-_ECHO_MIRROR_CLUSTER: Final[str] = (
-    "CLUSTER|plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#t1:dict:aliases"
-    "|plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#t1:dict:triggers_nickname"
+#: 帮助册本体（中央表两枚之一）——名册键用它拼条目键，不另立形态。
+_ECHO_HELP_REL: Final[str] = (
+    "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py"
 )
+
+
+def _help_entry(topic: str) -> str:
+    """一条中央表条目 ＝ 一枚声明单元（裁定 12 乙在本尺的键形）。"""
+    return HELPENTRY_PREFIX + f"{_ECHO_HELP_REL}#help#{topic}"
+
+
+#: 群信息族共用的声明位键。**2026-10-12 裁定 12 乙迁账**：原键是「帮助册 aliases ≡
+#: triggers_nickname」这对全等镜像簇（``CLUSTER|…``），而取数口早把同 topic 的
+#: ``_HELP_ENTRIES`` 与 ``_HELP_ENTRY_META`` 并成**一条**条目 ⇒ 三列（aliases／
+#: triggers_nickname／triggers_nl）同属一条条目＝词的一处真身 ⇒ 簇键被条目键接管。
+#: 摘掉这条条目（或把它改成跨条目形态）⇒ 本枚键不再出现在现算清单里 ⇒ 活性锁当场点名。
+_ECHO_MIRROR_CLUSTER: Final[str] = _help_entry("群信息")
 _CONSENT_ADMIN: Final[str] = "plugins/bot_unified_runtime/domains/ops/capabilities/consent_admin.py"
 _WS: Final[str] = "plugins/bot_unified_runtime/domains/core/search/web_search.py"
 _MERGE_HEADS: Final[str] = (
@@ -570,50 +635,16 @@ INTENTIONAL_UNITS: Final[tuple[DeclaredUnit, ...]] = (
                  "可读根登记标签「runtime」（readable.append 元组字面）撞 /bot runtime 命令词面：路径域标识，非触发面"),
     DeclaredUnit("邮件", "inline:plugins/bot_unified_runtime/domains/ops/monitor/alerts.py", "domains/ops/monitor",
                  "告警人话映射表（SessionType.EMAIL→邮件，2026-09-25 澜汐硬约束件）：展示标签撞帮助主题词面"),
-    # ── steam 免費帮助位：该 topic 的 aliases 与 triggers_nickname 两列词集互不相等（故不折叠成簇），
-    #    昵称位一枚为本波新增词面的第二声明位（双向门要求帮助册两列各自闭合）。
-    DeclaredUnit("steam 免費",
-                 "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#t1:dict:triggers_nickname",
-                 "bot.subscribe",
-                 "steam 资讯订阅帮助条目：aliases 列与昵称触发列词集不等（「免费」两形分居两列），帮助闭合门要求两列同时在场，本条登记昵称位"),
-    # ── 第二批次 8 枚（R8 甲·S-R8-TRIGGER-c，2026-09-27 逐枚归因）：日程板在飞波（未跟踪新件
-    #    domains/schedule/capabilities/schedule_board.py ＋ echo.py 工作树 diff「日程」帮助条目）。
-    #    三态现算（HEAD(b0172ee) 树 → 现树，同判据）证得 raw 509→517 的 +8 全部来自本波新增词面
-    #    （kebiao/rclb/richeng/richengliebiao/日程/日程板/schedule），逐枚点名如下；路由真身在
-    #    schedule_board 能力侧，帮助册两列为别名闭合/双向覆盖门要求的镜像位（照首届 steam 免費、
-    #    群信息簇同判例）。⚠ 在飞件词集若再编辑，本批按四把牙由件 owner 重登记。
-    DeclaredUnit("kebiao",
-                 "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#alias:triggers_nickname",
-                 "bot.schedule",
-                 "「日程」帮助条目双列镜像：课表罗马音 kebiao 在 aliases 列与触发昵称列各一枚（词集不全等故不折叠成簇），帮助闭合门要求两列同面在场，真身位记在 aliases 列"),
-    DeclaredUnit("rclb",
-                 "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#alias:triggers_nickname",
-                 "bot.schedule",
-                 "同条目双列镜像第二枚：日程列表缩写 rclb 之昵称列位，与 kebiao 枚同波同判例（R8 甲三态现算归因）"),
-    DeclaredUnit("richeng",
-                 "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#alias:triggers_nickname",
-                 "bot.schedule",
-                 "同条目双列镜像第三枚：日程罗马音 richeng 之昵称列位，路由消费面在 schedule_board 能力件，本列仅帮助册镜像"),
-    DeclaredUnit("richengliebiao",
-                 "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#alias:triggers_nickname",
-                 "bot.schedule",
-                 "同条目双列镜像第四枚：日程列表罗马音 richengliebiao 之昵称列位，与上三枚同一未跟踪新件波次"),
-    DeclaredUnit("schedule",
-                 "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#t1:dict:aliases",
-                 "bot.schedule",
-                 "schedule 英文帮助词：本位为帮助册 aliases 列镜像位，命令面真身＝schedule_board.py 内联判据（该 inline 位保留在册），双列+能力面三单元中登记本镜像一枚"),
-    DeclaredUnit("schedule",
-                 "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#alias:triggers_nickname",
-                 "bot.schedule",
-                 "schedule 之昵称列第二镜像位：与上一条同词双列点名，抵尽后本词只剩能力侧真身一格（每词兜底留一枚声明位由 accounted_debt 强制）"),
-    DeclaredUnit("日程",
-                 "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#alias:triggers_nickname",
-                 "bot.schedule",
-                 "中文主题词「日程」双列镜像之昵称位：帮助册两列词集不等不折叠成簇，主题词双列在场系别名闭合门形态（归因凭据见本批批注）"),
-    DeclaredUnit("日程板",
-                 "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#alias:triggers_nickname",
-                 "bot.schedule",
-                 "「日程板」之昵称列镜像位：本批逐词点名第八枚，判据同「日程」枚；未跟踪件 schedule_board 波落地后此两列形态即定"),
+    # ── steam 免費帮助位：**2026-10-12 裁定 12 乙迁账＝摘牌**。该 topic 的 aliases 列与
+    #    昵称列原先互不相等（故不折簇、算两枚声明单元），本尺按「同一条中央表条目＝一枚单元」
+    #    折叠后该词面只剩**一条** HELPENTRY 单元 ⇒ 无债可抵 ⇒ 照活性锁与「逐枚干活」锁摘牌。
+    #    ── 第二批次 8 枚（R8 甲·S-R8-TRIGGER-c，2026-09-27 逐枚归因）：**2026-10-12 乙案**
+    #    其中 kebiao／rclb／richeng／richengliebiao／日程／日程板 六枚随「日程」条目折叠归一
+    #    （词面只剩 HELPENTRY 一枚单元＝无债）⇒ 摘牌；schedule 两枚并成一枚（同一条目键不许
+    #    登记两次，唯一锁执法），重指向条目键；余下归因凭据（HEAD(b0172ee)→现树三态现算 +8）
+    #    照旧留在本批批注。路由真身在 schedule_board 能力侧，帮助册列位不再单独记债。
+    DeclaredUnit("schedule", _help_entry("日程"), "bot.schedule",
+                 "schedule 英文帮助词：帮助册三列（aliases／triggers_nickname／triggers_nl）现算同属「日程」这一条中央表条目＝一枚声明单元，命令面真身＝schedule_board.py 内联判据另占一枚，本条登记条目位"),
     # ── 第三批次 10 枚（ROSTER-467-b，2026-09-27 逐枚归因）：第 9 项三条睡前定稿在飞波——未跟踪
     #    判据件 domains/chat_reply/runtime/message_merge.py 的 DUAL_TRIGGER_COMMAND_HEADS 新表 +
     #    根 __init__.py 108 行纯追加装配（审计凭据 .superpowers/sdd/2026-09-27-fullload/logs/
@@ -667,8 +698,8 @@ INTENTIONAL_UNITS: Final[tuple[DeclaredUnit, ...]] = (
     #    一处声明（len(keys)<2 不记债），按「逐枚干活锁」不进本册。
     #    ⚠ 失效约定同前三批：表情册 triggers_nl 摘掉这枚词面、或紧急信息那两位收敛成
     #    引用真身形态 ⇒ 本条虚设转红，由件 owner 按四把牙复登记/摘牌，不自动续期。
-    DeclaredUnit("待审", "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#t1:dict:triggers_nl", "bot.meme_library",
-                 "表情册审批面的帮助册镜像位（双向门方向 1 的落点），真身是 meme_library 审批正则；紧急信息侧 aliases 与 alias:triggers_nl 两处属另一能力词表，不作同源抵销"),
+    DeclaredUnit("待审", _help_entry("表情册"), "bot.meme_library",
+                 "表情册审批面的帮助册条目位（2026-10-12 乙案迁账：原登记 META 单列键，三列折成一条条目后换条目键）；真身是 meme_library 审批正则，紧急信息那条条目是**另一条**条目＝跨条目重列另占一枚、不并入本条抵销"),
     # ── 第五批（S-ALBUM 表情册波，2026-10-02；凭据＝docs/HANDBOOK.md §58.9–58.16 与本件同族的
     #    表情册四动作锁）：本波新增的声明位逐枚点名，只登记本波这一格，别家能力的账分毫不动。
     #    真改引用在本波不可行——帮助册的字面投影由帮助闭合门与双向触发门两头同时要求，
@@ -695,10 +726,10 @@ INTENTIONAL_UNITS: Final[tuple[DeclaredUnit, ...]] = (
                  "审批子命令的分支返回值与审计串里的 review 字面（return \"review\", ...）：路由判据是 _REVIEW_RE 正则而非这枚字面，真身留 emergency_info 待审词表那一格"),
     DeclaredUnit("list", "inline:plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py", "bot.meme_library",
                  "待审队列回执审计标签里的 list 字面（跨能力通用子命令动词，emergency/meme/consent 三家在先）：本枚只抵 meme_library 内联这一格，其余三家各自的账分毫不动"),
-    DeclaredUnit("表情册", "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#t1:dict:aliases", "bot.meme_library",
-                 "「表情册」帮助条目 aliases 列镜像位：别名→能力的路由真身为 runtime/aliases.py 的 DEFAULT_VERB_MAP（S-ALBUM 同批补的两键，缺则「守岸人 表情册」坠 help 兜底），帮助闭合门要求帮助册同面在场，故登记帮助侧"),
-    DeclaredUnit("表情相冊", "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py#t1:dict:aliases", "bot.meme_library",
-                 "同条目繁体形的帮助侧镜像位：简繁成对口径同 隨機/随机 判例，消费点在别名册而非帮助册，本批逐词点名第二枚，摘掉即恢复记账"),
+    DeclaredUnit("表情册", _help_entry("表情册"), "bot.meme_library",
+                 "「表情册」的帮助册条目位（乙案迁账：aliases／triggers_nickname／triggers_nl 三列同属这一条条目＝词的一处真身）：别名→能力的路由真身为 runtime/aliases.py 的 DEFAULT_VERB_MAP 另占一枚，故本条只抵帮助侧这一格"),
+    DeclaredUnit("表情相冊", _help_entry("表情册"), "bot.meme_library",
+                 "同一条目繁体形的帮助侧位：简繁成对口径同 隨機/随机 判例，消费点在别名册（DEFAULT_VERB_MAP）而非帮助册，本批逐词点名第二枚，摘掉条目里这一枚词面即恢复记账"),
     # ── 席 S6（2026-10-08 `/bot intimate` 命令面接线波）第五批：**只登记本席新增的这一枚**。
     #    现算读数＝raw 551→552、抵销 74→75、计账 477 一字不动；同波另有人登记的 10 枚超载
     #    （477 与上限 467 的差额）系他席在飞件，与本席无涉，本条既不承担也不顺抵。
@@ -713,21 +744,42 @@ def _fold_unit_keys(
     sites: tuple[Site, ...] | list[Site],
     inline: dict[str, frozenset[str]],
 ) -> list[str]:
-    """把 ``_units_of`` 的折叠口径展开成**声明位键清单**（长度必等于单元数；两口分叉由锁执法）。"""
+    """**单一口径**：词面 ``w`` 的独立声明单元清单（清单长度＝单元数，名册键即这里的键）。
+
+    三层折叠，全按已入库的裁定 12 乙定义，本尺不自造第二把尺：
+      ① S33 ruleA 全等重复真身簇 ⇒ 折成一枚 ``CLUSTER|…``（与 S33 按构造互斥、不双计）；
+      ② **同一条中央表条目**的多个登记列（帮助册 ``aliases``／``triggers_nickname``／
+         ``triggers_nl``）⇒ 折成一枚 ``HELPENTRY|<条目键>``——一条条目＝词的一处真身，
+         同一条目里把词再写一遍不是「别处出现」（取数口早把同 topic 的两本表并成一条）；
+      ③ 其余每枚真身位各计一个单元，``inline:<文件>`` 每文件一个单元。
+    生产位（能力自带 ``DEFAULT_TRIGGER_WORDS``、内联字面量）永不吃 ②：``central_entry_of_site``
+    只认中央表本体的登记列。跨条目重列（整集同时 ⊆ 两条以上条目）拿不到唯一条目键 ⇒ 照记。
+    """
     cluster_keys = _rule_a_cluster_keys()
     groups: dict[frozenset[str], list[Site]] = defaultdict(list)
     for s in sites:
         if w in s.words:
             groups[s.words].append(s)
-    out: list[str] = []
+    chunks: list[list[Site]] = []
     for members in groups.values():
         clustered = [m for m in members if (m.file, m.line, m.label.replace("t1:", "", 1)) in cluster_keys]
         plain = [m for m in members if m not in clustered]
         if len(clustered) >= 2:
-            out.append("CLUSTER|" + "|".join(sorted(f"{m.file}#{m.label}" for m in clustered)))
-            out.extend(f"{m.file}#{m.label}" for m in plain)
+            chunks.append(clustered)
+            chunks.extend([[m] for m in plain])
         else:
-            out.extend(f"{m.file}#{m.label}" for m in members)
+            chunks.extend([[m] for m in members])
+    out: list[str] = []
+    merged: dict[str, list[str]] = defaultdict(list)
+    for chunk in chunks:
+        if len(chunk) >= 2:
+            key = "CLUSTER|" + "|".join(sorted(f"{m.file}#{m.label}" for m in chunk))
+        else:
+            key = f"{chunk[0].file}#{chunk[0].label}"
+        entries = {central_entry_of_site(m) for m in chunk}
+        entry = entries.pop() if len(entries) == 1 and "" not in entries else ""
+        (merged[entry] if entry else out).append(key)
+    out.extend(HELPENTRY_PREFIX + entry for entry in sorted(merged))
     out.extend(f"inline:{f}" for f in sorted(inline.get(w, ())))
     return out
 
@@ -923,16 +975,8 @@ def test_scan_surface_did_not_collapse() -> None:
 
 
 def _units_of(w: str, sites: tuple[Site, ...] | list[Site], inline: dict[str, frozenset[str]]) -> int:
-    cluster_keys = _rule_a_cluster_keys()
-    groups: dict[frozenset[str], list[Site]] = defaultdict(list)
-    for s in sites:
-        if w in s.words:
-            groups[s.words].append(s)
-    n = 0
-    for members in groups.values():
-        cluster_n = sum(1 for m in members if (m.file, m.line, m.label.replace("t1:", "", 1)) in cluster_keys)
-        n += 1 + max(0, len(members) - cluster_n) if cluster_n >= 2 else len(members)
-    return n + len(inline.get(w, ()))
+    """单元数＝``_fold_unit_keys`` 清单长度（两口同一次取数，分叉无处可生；锁见 ``test_fold_agrees_with_units_of``）。"""
+    return len(_fold_unit_keys(w, sites, inline))
 
 
 # ---------------------------------------------------------------------------
@@ -1096,6 +1140,64 @@ def test_fold_agrees_with_units_of() -> None:
         )
 
 
+def test_central_entry_waiver_covers_only_central_table_columns() -> None:
+    """替代锁（裁定 12 乙这条放宽通道自己的牙，2026-10-12）：条目豁免**只**给中央表登记列。
+
+    三条各验一件事，缺一即红：
+      ① 结构不变式：现算树上拿到条目键的真身位，文件必在中央表两枚之内、标签必是登记列形态
+         ——能力自带的 ``DEFAULT_TRIGGER_WORDS``、内联字面量永远拿不到条目键；
+      ② **整集抄一条中央表条目进生产件仍然是债**：挑一条真实条目、把它的词面原样抄进一枚
+         虚拟生产件 ⇒ 折叠不许把它认成「那条条目的登记面」，raw 必恰 +len(条目词数)；
+      ③ 通道是活的：今日现算里必须有词面真的吃到条目键（有人把折叠改瞎＝当场点名）。
+    """
+    _raw, sites, inline = compute_debt()
+    for s in sites:
+        if central_entry_of_site(s):
+            assert s.file in CENTRAL_TABLE_RELS, f"非中央表文件吃到条目豁免：{s.file}#{s.label}"
+            assert any(s.label.endswith(x) for x in _CENTRAL_COLUMN_SUFFIXES), (
+                f"非登记列形态吃到条目豁免：{s.file}#{s.label}"
+            )
+    vocab = frozenset().union(*(s.words for s in sites)) if sites else frozenset()
+    waived = [
+        w for w in sorted(vocab)
+        if any(k.startswith(HELPENTRY_PREFIX) for k in _fold_unit_keys(w, sites, inline))
+    ]
+    assert waived, "条目折叠一枚都没咬到＝判据被改瞎（豁免通道不许挂着当装饰）"
+    base, _s, _i = current_debt()
+    entry_words = max(central_table().values(), key=len)
+    rel = "plugins/bot_unified_runtime/domains/ops/_s53_central_poison.py"
+    got, _ss, _ii = compute_debt(extra=((rel, _synth_literal_table("S53_CENTRAL_POISON_WORDS", entry_words)),))
+    assert got == base + len(entry_words), (
+        f"整集抄一条中央表条目进生产件后 raw {base}→{got}（应 {base + len(entry_words)}）"
+        "＝条目豁免越过了「生产侧绕过中央表的手抄才是债」这条线"
+    )
+
+
+def test_central_entry_channel_is_floor_bound_and_keys_are_real_entries() -> None:
+    """条目面地板＋键真伪：地板沿用 S33 那本已入库的两枚（禁第二份数值），键必须整条在表里。
+
+    「凡 HELPENTRY 前缀都算豁免」就是被禁的 blanket 条款：键只有现算对上一条**真实条目**才作数，
+    摘掉那条条目 ⇒ 该键从现算清单里消失 ⇒ 名册活性锁与本轮计数同时红。
+    """
+    table = central_table()
+    assert len(table) >= _S33.MIN_CENTRAL_ENTRIES, (
+        f"中央表条目数 {len(table)} < 地板 {_S33.MIN_CENTRAL_ENTRIES}＝取数口被改窄（条目面塌陷）"
+    )
+    words = {w for entry in table.values() for w in entry}
+    assert len(words) >= _S33.MIN_CENTRAL_WORDS, (
+        f"中央表词面数 {len(words)} < 地板 {_S33.MIN_CENTRAL_WORDS}＝条目面被掏空"
+    )
+    _raw, sites, inline = compute_debt()
+    for s in sites:
+        entry = central_entry_of_site(s)
+        assert entry == "" or entry in table, f"条目键不在现算中央表里（自造豁免面）：{entry}"
+    vocab = frozenset().union(*(s.words for s in sites)) if sites else frozenset()
+    for w in sorted(vocab):
+        for key in _fold_unit_keys(w, sites, inline):
+            if key.startswith(HELPENTRY_PREFIX):
+                assert key.removeprefix(HELPENTRY_PREFIX) in table, f"声明单元键指向不存在的条目：{key}"
+
+
 def test_intentional_units_register_is_live_and_unique() -> None:
     """活性锁：每条登记必须命中本日现算里一枚真实声明位；虚设（已被归一/换了位置）即红。
 
@@ -1141,6 +1243,15 @@ def test_intentional_units_are_not_blanket_clauses() -> None:
             members = entry.site.removeprefix("CLUSTER|").split("|")
             assert len(members) >= 2, f"簇键成员不足两枚：{entry.site}"
             rels = [m.partition("#")[0] for m in members]
+        elif entry.site.startswith(HELPENTRY_PREFIX):
+            #: 一条中央表条目＝一枚声明单元。条目键必须**整条出现在现算中央表里**（不是自造
+            #: 前缀、不是「凡 HELPENTRY 都算」的条款），文件必须在盘——摘掉那条条目 ⇒ 本行
+            #: 当场虚设（活性锁点名），这是这条豁免通道唯一的入口。
+            entry_key = entry.site.removeprefix(HELPENTRY_PREFIX)
+            assert entry_key in central_table(), (
+                f"HELPENTRY 键不在现算中央表条目里（自造豁免面）：{entry.site}"
+            )
+            rels = [entry_key.partition("#")[0]]
         elif entry.site.startswith("inline:"):
             rels = [entry.site.removeprefix("inline:")]
         elif "#" in entry.site:
