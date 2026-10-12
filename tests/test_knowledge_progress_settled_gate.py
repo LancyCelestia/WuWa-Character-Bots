@@ -7,6 +7,11 @@
 第三条失明＝**索引实数腿缺牙**（2026-10-08 补）：判据只比 `ann_expected_vector_count`
 与库内列、从不开 ``.index``，短装的索引照样打出一排 ``[ok]``——本件下半部的
 「短装／取不到／接地／结构」四组锁钉的就是这一条（用例清单看本文件自身，不在此抄数）。
+第四条失明＝**从没问过语料名册**（2026-10-12 补）：上面几条比的全是「库内几本账自不自洽」，
+连摘要里的 `documents_after` 也是同步侧自己盖的**戳**——戳只会自证。于是"货到了没进索引"
+（名册比仓侧台账多出一截）在旧判据下静默通过、照样打「这一轮已投完收工」。下半部
+「名册对榫腿」那一组钉这条：恒等式 `回读计数 == 名册声称计数`（差值非零逐字点名、零容差）、
+取不到一律 UNDECIDABLE 不许折成 ok、回读只准 SQL 实读不许拿戳顶替、整层只读。
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ import json
 import sqlite3
 import struct
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -74,24 +80,36 @@ def _make_store(
     ann_expected: int,
     ann_ntotal: object | None = None,
     attestation: dict | None = None,
+    docs_rows: int = 12,
+    declared_documents: int | None = None,
+    roster_sidecar: bool = True,
 ) -> None:
-    """造一枚最小 wiki 库：40 条块行、12 篇台账、一枚收工摘要，外加盘上那枚 ``.index``。
+    """造一枚最小 wiki 库：40 条块行、`docs_rows` 篇台账、一枚收工摘要，外加盘上那枚 ``.index``。
 
     ``ann_ntotal`` 控制索引实数腿的夹具形态：``None``＝与应嵌数齐平（装下）、
     整数＝短装/多装到那个数、``_NO_INDEX``＝**根本不写 ``.index``**（取不到形态）。
     ``attestation`` 给一行 ``ann_pair_attestation``（第②级退路的读数来源）。
+
+    名册那一层（2026-10-12 补）：``declared_documents``＝语料清单**声称**的篇数（缺省与
+    ``docs_rows`` 齐平＝正常路径），并在 ``root/corpus_manifest.json`` 落一份**与声称数自洽**
+    的 sidecar（``entries`` 真给满 ``declared_documents`` 条、id/ hash 覆盖住台账里那
+    ``docs_rows`` 行）。``_run`` 把 ``kp._corpus_manifest`` 指到这份 sidecar 上——**本件因此
+    永不读生产库根**（真跑那一份凭据在席报里，不在此）。``roster_sidecar=False`` 造"名册取不到"
+    那一形（腿必须 UNDECIDABLE，不许折成 ok）。
     """
     data = root / "data"
     data.mkdir(parents=True, exist_ok=True)
+    declared = docs_rows if declared_documents is None else int(declared_documents)
     con = sqlite3.connect(data / "kb_wiki_embeddings.sqlite3")
     with con:
-        con.execute("CREATE TABLE knowledge_docs (doc_id TEXT PRIMARY KEY)")
+        con.execute("CREATE TABLE knowledge_docs (doc_id TEXT PRIMARY KEY, hash TEXT)")
         con.execute(
             "CREATE TABLE knowledge_chunks (chunk_id TEXT PRIMARY KEY, vector_json TEXT)"
         )
         con.execute("CREATE TABLE knowledge_meta (key TEXT PRIMARY KEY, value TEXT)")
         con.executemany(
-            "INSERT INTO knowledge_docs VALUES (?)", [(f"d{i}",) for i in range(12)]
+            "INSERT INTO knowledge_docs VALUES (?, ?)",
+            [(f"d{i}", f"h{i}") for i in range(docs_rows)],
         )
         con.executemany(
             "INSERT INTO knowledge_chunks VALUES (?, ?)",
@@ -111,6 +129,17 @@ def _make_store(
                 (json.dumps(attestation, ensure_ascii=False),),
             )
     con.close()
+    if roster_sidecar:
+        (root / "corpus_manifest.json").write_text(
+            json.dumps(
+                {
+                    "documents": declared,
+                    "entries": {f"d{i}": f"h{i}" for i in range(declared)},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
     if ann_ntotal is not _NO_INDEX:
         _write_index_header(
             data / "kb_wiki_faiss.index",
@@ -120,10 +149,58 @@ def _make_store(
     (data / "knowledge_embeddings.sqlite3").touch()
 
 
-def _run(monkeypatch, root: Path, capsys, argv: tuple[str, ...] = ()) -> str:
+def _fixture_manifest(root: Path) -> tuple[dict | None, int | None, str]:
+    """把 sidecar 当名册读回来（与真身 `_corpus_manifest` 同签名，测试里替掉线上取数口）。"""
+    path = root / "corpus_manifest.json"
+    if not path.is_file():
+        return None, None, "manifest_absent"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return raw, int(raw["documents"]), ""
+
+
+#: 名册腿在 pytest 里绝不碰线上装载口：真身 ``_corpus_config`` 会去读 .env、拉插件链，
+#: 既不是本件要锁的东西，也会把**生产库根**混进 tmp 夹具。缺了装载口 ⇒ 集合那一层必须
+#: 明写「未做、只判到计数那一层」——这正是本件要钉的诚实形态（不假装做到了）。
+_ISOLATED_CORPUS_CONFIG: tuple[None, str] = (
+    None,
+    f"{kp.CALIBER_ENV_FORBIDDEN}:pytest_isolation",
+)
+
+
+def _run(
+    monkeypatch,
+    root: Path,
+    capsys,
+    argv: tuple[str, ...] = (),
+    *,
+    corpus_config: tuple[object | None, str] = _ISOLATED_CORPUS_CONFIG,
+) -> str:
     monkeypatch.setattr(kp, "runtime_path", lambda rel: root / rel)
+    monkeypatch.setattr(kp, "_corpus_manifest", lambda: _fixture_manifest(root))
+    monkeypatch.setattr(kp, "_corpus_config", lambda: corpus_config)
     kp.main(list(argv))
     return capsys.readouterr().out
+
+
+def _read_docs_count(root: Path) -> int:
+    """现读夹具台账实数（派生式判据用：测试里的"应有值"一律从夹具本身算，不抄字面）。"""
+    con = sqlite3.connect(root / "data" / "kb_wiki_embeddings.sqlite3")
+    try:
+        return int(con.execute("SELECT COUNT(*) FROM knowledge_docs").fetchone()[0])
+    finally:
+        con.close()
+
+
+def _declared_of(root: Path) -> int:
+    """现读名册声称数（同上：派生，不写死）。"""
+    return int(
+        json.loads((root / "corpus_manifest.json").read_text(encoding="utf-8"))["documents"]
+    )
+
+
+def _roster_lines(out: str) -> list[str]:
+    """取名册对榫那一行（不含下方 `↳` 修法提示行）。"""
+    return [line.strip() for line in out.splitlines() if kp.ROSTER_LEG_MARK in line]
 
 
 def test_finished_round_is_settled_even_though_embed_pending_is_nonzero(monkeypatch, tmp_path, capsys):
@@ -376,3 +453,178 @@ def test_leg_never_loads_the_whole_index() -> None:
     assert not [name for name in imported if "faiss" in name], imported
     assert "read_index" not in called, "索引实数腿不许走整本载入的取数口"
     assert "read(ANN_HEADER_BYTES)" in source, "读盘面必须钉死在头部字节数"
+
+
+# ---------------------------------------------------------------------------
+# 名册对榫腿（第四条失明的补牙）：恒等式 `回读计数 == 名册声称计数`，差值非零当场点名
+#
+# 判据一律**派生**：应有值从夹具本身现算（``_read_docs_count`` 走 SQL、``_declared_of``
+# 读 sidecar），测试里不出现任何写死的篇数；每条腿都带**反空转前置**（两侧读数都 > 0
+# 且差值确实由夹具决定），否则"相等"与"不等"都能被空夹具蒙过去。
+# ---------------------------------------------------------------------------
+
+
+def test_roster_leg_settles_only_when_readback_equals_declared(monkeypatch, tmp_path, capsys):
+    """两本账逐字相等 ⇒ 这一行才是收工证据的一部分（并且必须真的在盘上报出来）。"""
+    _make_store(tmp_path, embedded_rows=40, summary=SUMMARY_COMPLETE, ann_expected=40)
+    readback, declared = _read_docs_count(tmp_path), _declared_of(tmp_path)
+    assert readback > 0 and declared > 0 and readback == declared, "夹具空转：两侧读数没构成判据"
+    out = _run(monkeypatch, tmp_path, capsys)
+    leg = _roster_lines(out)
+    assert len(leg) == 1, leg
+    assert f"（{kp.ROSTER_SOURCE_READBACK}={readback}）" in leg[0], leg
+    assert f"（{kp.ROSTER_SOURCE_MANIFEST}={declared}）" in leg[0], leg
+    assert "差(名册-实读)=+0" in leg[0], leg
+    assert "[!!]" not in out and "这一轮已投完收工" in out, out
+
+
+def test_roster_shortfall_names_both_counts_and_blocks_settlement(monkeypatch, tmp_path, capsys):
+    """货到了没进索引（名册 > 实读）⇒ 逐字点名两个计数与带符号差，收工话一律不许出现。"""
+    _make_store(
+        tmp_path,
+        embedded_rows=40,
+        summary=SUMMARY_COMPLETE,
+        ann_expected=40,
+        docs_rows=7,
+        declared_documents=10,
+    )
+    readback, declared = _read_docs_count(tmp_path), _declared_of(tmp_path)
+    gap = declared - readback
+    assert gap > 0, "夹具空转：这一形造不出'到货未投'的差"
+    out = _run(monkeypatch, tmp_path, capsys)
+    leg = _roster_lines(out)
+    assert len(leg) == 1, leg
+    assert f"={readback}）" in leg[0] and f"={declared}）" in leg[0], leg
+    assert f"差(名册-实读)={gap:+d}" in leg[0], leg
+    assert "集合那一层未做" in leg[0] and "只判到计数那一层" in leg[0], leg
+    assert "这一轮已投完收工" not in out and "未收工" in out, out
+    assert "↳ 名册对榫腿" in out, out
+
+
+def test_roster_surplus_blocks_too_because_the_identity_has_no_tolerance(
+    monkeypatch, tmp_path, capsys
+):
+    """反向差（台账比名册多）同样不成立：恒等式零容差，不许"多出来就不管"。"""
+    _make_store(
+        tmp_path,
+        embedded_rows=40,
+        summary=SUMMARY_COMPLETE,
+        ann_expected=40,
+        docs_rows=9,
+        declared_documents=5,
+    )
+    readback, declared = _read_docs_count(tmp_path), _declared_of(tmp_path)
+    gap = declared - readback
+    assert gap < 0, "夹具空转：这一形造不出反向差"
+    out = _run(monkeypatch, tmp_path, capsys)
+    leg = _roster_lines(out)
+    assert f"差(名册-实读)={gap:+d}" in leg[0], leg
+    assert "这一轮已投完收工" not in out and "未收工" in out, out
+
+
+def test_roster_leg_reads_the_sql_count_never_the_summary_stamp(monkeypatch, tmp_path, capsys):
+    """伪装形态锁：摘要戳 ``documents_after`` 与名册声称数**齐平**、台账实读却少一截——
+    拿戳代答的写法会当场自证通过并打"已投完收工"，只有 SQL 实读才报得出差。"""
+    declared = 11
+    _make_store(
+        tmp_path,
+        embedded_rows=40,
+        summary=dict(SUMMARY_COMPLETE, documents_after=declared),
+        ann_expected=40,
+        docs_rows=4,
+        declared_documents=declared,
+    )
+    readback = _read_docs_count(tmp_path)
+    assert readback < declared and readback > 0, "夹具空转：戳与实读没拉开距离"
+    out = _run(monkeypatch, tmp_path, capsys)
+    leg = _roster_lines(out)
+    assert f"（{kp.ROSTER_SOURCE_READBACK}={readback}）" in leg[0], leg
+    assert f"={readback}）" in leg[0] and f"={declared}）" in leg[0], leg
+    assert "documents_after=11" in out, out  # 戳照样上屏，但它不是判据
+    assert "这一轮已投完收工" not in out, out
+
+
+def test_absent_roster_is_undecidable_and_never_folded_into_ok(monkeypatch, tmp_path, capsys):
+    """名册取不到 ⇒ 明写 UNDECIDABLE＋本行不构成收工证据；不许折成 ok、也不许折成 0。"""
+    _make_store(
+        tmp_path, embedded_rows=40, summary=SUMMARY_COMPLETE, ann_expected=40, roster_sidecar=False
+    )
+    readback = _read_docs_count(tmp_path)
+    assert readback > 0, "夹具空转：回读侧都没数"
+    out = _run(monkeypatch, tmp_path, capsys)
+    leg = _roster_lines(out)
+    assert len(leg) == 1, leg
+    assert f"{kp.UNDECIDABLE_PREFIX}manifest_absent" in leg[0], leg
+    assert f"（{kp.ROSTER_SOURCE_READBACK}={readback}）" in leg[0], leg
+    assert "不构成收工证据" in leg[0], leg
+    assert "这一轮已投完收工" not in out and "未收工" in out, out
+
+
+def test_roster_set_layer_names_the_set_when_the_ruler_answers(monkeypatch, tmp_path, capsys):
+    """装载口与真身都在位时再 dig 一层：缺的是哪几篇（判据留在真身 ``reconcile_with_manifest``）。"""
+    from plugins.bot_unified_runtime.domains.location.knowledge import (
+        kb_wiki as real_kb_wiki,
+    )
+
+    declared = 10
+    _make_store(
+        tmp_path,
+        embedded_rows=40,
+        summary=SUMMARY_COMPLETE,
+        ann_expected=40,
+        docs_rows=7,
+        declared_documents=declared,
+    )
+    readback = _read_docs_count(tmp_path)
+    monkeypatch.setattr(kp, "_kb_wiki_module", lambda: (real_kb_wiki, ""))
+    out = _run(
+        monkeypatch,
+        tmp_path,
+        capsys,
+        corpus_config=(types.SimpleNamespace(bot_kb_wiki_topics=""), ""),
+    )
+    leg = _roster_lines(out)
+    assert "集合对榫＝真身 reconcile_with_manifest" in leg[0], leg
+    assert f"待补 {declared - readback}" in leg[0], leg
+    assert "待删 0" in leg[0] and "挂起 0" in leg[0], leg
+    assert "集合那一层未做" not in leg[0], leg
+
+
+def test_readback_count_leg_is_wired_to_the_sql_count_not_the_stamp() -> None:
+    """AST 结构锁：``_roster_leg_line`` 的第一枚入参必须是那条 ``SELECT COUNT(*)`` 的绑定名，
+    摘要戳（``documents_after``）一律不许进这条腿的入参——散文说"只准实读"没有用。"""
+    source = (REPO_ROOT / "scripts" / "knowledge_progress.py").read_text(encoding="utf-8")
+    fn = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef) and node.name == "_report_wiki_settled"
+    )
+    calls = [
+        node
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "_roster_leg_line"
+    ]
+    assert len(calls) == 1, "名册腿在收工判据里必须只挂一处（第二处＝第二本进度台账）"
+    rendered_call = ast.unparse(calls[0])
+    first = calls[0].args[0]
+    assert isinstance(first, ast.Name) and first.id == "docs", rendered_call
+    assert "documents_after" not in rendered_call, rendered_call
+    binding = next(
+        node
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "docs" for t in node.targets)
+    )
+    assert "SELECT COUNT(*) FROM knowledge_docs" in ast.unparse(binding.value), ast.unparse(binding)
+
+
+def test_roster_layer_never_touches_the_write_side() -> None:
+    """整条名册腿只准读：库里只 ``mode=ro``（禁 ``immutable=1``——WAL 下它造得出假缺席），
+    台账适配器只 SELECT，判据真身 ``reconcile_with_manifest`` 由本仓的只读视图喂数。"""
+    source = (REPO_ROOT / "scripts" / "knowledge_progress.py").read_text(encoding="utf-8")
+    assert "immutable" not in source, "SQLite 只读口只认 mode=ro，immutable 在 WAL 下会假缺席"
+    assert "mode=ro" in source, "开库必须走只读 URI"
+    leg_src = source.split("class _ReadOnlyLedger", 1)[1].split("def _roster_set_layer", 1)[0]
+    assert not any(
+        word in leg_src.upper() for word in ("INSERT ", "UPDATE ", "DELETE ", "COMMIT", "EXECUTEMANY")
+    ), f"只读台账适配器里出现了写语句：{leg_src}"

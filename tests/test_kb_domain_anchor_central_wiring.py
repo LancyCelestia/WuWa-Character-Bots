@@ -22,6 +22,24 @@
 ④ **实跑行为**：有缺口→SKIP 且逐域点名；无缺口→PASS；库根未配置/读不到语料→SKIP
    （读不到＝没有证据，不许说得像"没有缺口"）；读数不漏盘符路径（另配一发"摘掉脱敏
    必泄漏"的注毒腿自证这条锁有牙）；直载登记过的 sys.modules 条目用完必须摘干净。
+
+⑤ **派生腿（2026-10-12 补锚波）**：缺口既然被中央出口点名了，就得有人真的被它拦住——
+   本腿拿**库侧名册现算**判「在册语料域必须有本地域锚点」，域名一律来自取数口
+   （``iter_corpus_topic_names``），锚点一律由唯一一把尺相减得出。🔴 这里**不写死
+   「共 N 域／缺 M 枚」**（规则 10：名册一长就恒假红），只写集合关系。
+   域可以按**主人在册裁定**点名豁免（``_LOCAL_ANCHOR_RULE_EXEMPTIONS``），但豁免不是
+   一句注释就完事：①豁免名必须今天真在名册里、②必须真是尺报出的缺口（不许拿豁免
+   掩盖"已经补好了却忘了删豁免"）、③每一枚豁免都要**现读出处文件里的判据原文还在**
+   ——裁定一旦被撤，豁免自动过期、本腿立即红，逼人来真裁一道。
+   为什么"有货"不能靠名字判：给一个空域打锚＝把本地门打开却永远检索不到，比缺锚更坏
+   （本仓两种实锤形态＝「空分区不渲染⇒把没查到讲成不存在」与「开关 True 但那条路
+   永远走不到」）。取数口读到空集合由 ``test_corpus_roster_fetch_port_is_not_vacuous``
+   当场判红——「没有样本」不等于「通过」。
+
+⑥ **禁词腿**：强档（命中即定罪的那一档，也是 ``DOMAIN_TERMS`` 的外部域唯一派生口）
+   不得收通用词。判据按一份**点名禁词表**（``GENERIC_TERMS_BANNED_IN_STRONG``）判——
+   禁词表写死是合法的，它不是会随代码漂的计数。同一腿自带反空转：强档整档为空
+   ＝本腿无从判起，直接红。
 """
 from __future__ import annotations
 
@@ -30,6 +48,7 @@ import hashlib
 import json
 import re
 import sys
+import types
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -40,6 +59,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from scripts import load_runtime_config as lrc
 from scripts import pre_restart_check as prc
 
 PRC_FILE = PROJECT_ROOT / "scripts" / "pre_restart_check.py"
@@ -363,3 +383,137 @@ def test_loader_leaves_no_sys_modules_residue(tmp_path: Path) -> None:
     added = sorted(set(sys.modules) - before)
     assert not added, f"直载往 sys.modules 留下了未摘除的条目：{added}"
     assert result.status == prc.SKIP and GAP_TOPIC in result.message
+
+
+# ---------------------------------------------------------------------------
+# ⑤ 派生腿：库侧在册语料域必须有本地域锚点（名册现算，绝不写死「共 N 域缺 M 枚」）
+# ---------------------------------------------------------------------------
+
+#: 按主人在册裁定点名豁免的域 → 该裁定的**出处**（文件 + 必须仍在册的判据原文片段）。
+#: 豁免只按字面域名点名（不是通配、不是整域放行），且每枚都要能被现读复核：
+#: 出处判据一旦被撤行，本表这行立即失去效力、派生腿转红，逼着人来真裁一道。
+#:
+#: 🔴 **下面这一枚不是「库里无货」那一型**（别记错成同一条纪律）：2026-10-12 现算两本名册
+#: 都读得到它——语料导出侧（``documents.jsonl`` 逐行现算，取数口＝尺入参那本库侧 topic 名册）
+#: 与仓侧接货台账侧（``knowledge_docs`` 按 topic 实读 GROUP BY）都点名该域成批在库、正文非空，
+#: 逐域读数走 ``python scripts/knowledge_progress.py``（名册对榫腿）与体检格第 14 项现算，
+#: 本件不抄数（规则 10）。它缺锚**纯粹因为主人点名排除**（「明日方舟·终末地」不随「明日方舟」
+#: 扩面进本地域，出处即下面三条仍在册的判据原文），而这三条判据是**用户裁定的执法腿**、
+#: 不在任何补锚席的写面里 ⇒ 补锚＝同批撤用户的裁定，只能由用户裁一道，不许席位借道静吃。
+#: 因此本表把它按名点名、并把缺口继续如实挂在屏幕上；哪天裁定撤了，这三段原文一消失本腿即转红。
+_LOCAL_ANCHOR_RULE_EXEMPTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    (
+        "明日方舟：终末地",
+        (
+            ("tests/test_question_intent.py", "def test_endminland_is_still_not_a_local_domain_term"),
+            ('tests/test_question_intent.py', 'not any("终末地" in term for term in _qi.DOMAIN_TERMS)'),
+            ("tests/test_sdd9_n3re.py", 'not any("终末地" in term for term in DOMAIN_TERMS)'),
+        ),
+    ),
+)
+
+#: 强档点名禁词表（写死合法：它是一份裁定口径，不是会随代码漂的计数）。
+#: 收的是「命中即分流、会把别的域一起劫走」的通用汉语词——本仓的分档纪律把它们判在
+#: medium/weak（见 ``search_intent`` 词表段注释「弱档永不单独成判」），因此它们出现在
+#: 强档那一刻就是越权。`二游`/`二次元游戏` 这类**总称**不在此表：它们不劫走某一具体域的
+#: 语料、且是已在册转正的条目，本表不去改已裁过的档。
+GENERIC_TERMS_BANNED_IN_STRONG: frozenset[str] = frozenset(
+    {
+        "角色", "剧情", "更新", "攻略", "活动", "版本", "武器", "装备", "强度",
+        "排名", "阵容", "攻略组", "声优", "抽卡", "卡池", "保底", "复刻", "前瞻",
+        "深渊", "日常", "周本", "月卡", "公测", "开服", "怎么玩", "好玩", "好看",
+        "什么时候", "厉害", "值得吗", "是谁",
+    }
+)
+
+
+def _kb_wiki_root() -> str:
+    """库根＝生产同构装载口现读（唯一被认可的取线上值的通道；本件不碰 .env 文本）。"""
+    cfg = lrc.load_runtime_config(required=False)
+    return str(getattr(cfg, "bot_kb_wiki_root", "") or "").strip()
+
+
+def _corpus_roster_and_gaps() -> tuple[list[str], list[str]]:
+    """现算「库侧在册语料域」与「其中缺锚的那几枚」——两侧都只从真身取。
+
+    取数口＝尺本体（``iter_corpus_topic_names`` + ``topics_without_local_domain_anchor``），
+    口径＝中央出口在册的 ``KB_CORPUS_SCAN_LIMIT``（None＝全量；有界窗口会少报缺口＝假绿，
+    已由 ``test_corpus_roster_is_the_full_scan_not_a_bounded_window`` 钉住）。
+    """
+    wiki_root = _kb_wiki_root()
+    if not wiki_root:
+        pytest.fail(
+            "线上库根取不到值（装载口回空）——本腿的派生判据没有名册可算，"
+            "「没有样本」不等于「通过」，按反空转前置当场判红。"
+        )
+    with prc.kb_domain_anchor_ruler(prc.PROJECT_ROOT) as access:
+        assert access.modules is not None, f"尺装不上：{access.unavailable}"
+        kb_wiki = access.modules["kb_wiki"]
+        kb_dir = kb_wiki.kb_paths(types.SimpleNamespace(bot_kb_wiki_root=wiki_root))[1]
+        if not (kb_dir / "documents.jsonl").is_file():
+            pytest.fail(
+                f"取数口指不到语料（{kb_dir} 下没有 documents.jsonl）——本腿无从判起，"
+                "判红而不是判过（台账 #51★「没检索禁写它没有」的同一条纪律用在门上）。"
+            )
+        roster = list(kb_wiki.iter_corpus_topic_names(kb_dir, scan_limit=prc.KB_CORPUS_SCAN_LIMIT))
+        gaps = list(kb_wiki.topics_without_local_domain_anchor(roster))
+    return roster, gaps
+
+
+def test_corpus_roster_fetch_port_is_not_vacuous() -> None:
+    """反空转前置：取数口读到空名册＝当场红（派生腿没有样本时最容易伪装成通过）。"""
+    roster, _ = _corpus_roster_and_gaps()
+    assert roster, "库侧在册语料域读出空集合：本件 ⑤ 的每一条派生判据都会退化成恒真"
+
+
+def test_in_library_corpus_domains_carry_a_local_anchor() -> None:
+    """库里确有货的域必须有本地域锚点——判据是集合关系，不含任何写死的总数。"""
+    roster, gaps = _corpus_roster_and_gaps()
+    assert roster, "取数口读出空名册＝本腿退化成恒真（反空转前置，与上一条腿同一纪律）"
+    exempt = {name for name, _ in _LOCAL_ANCHOR_RULE_EXEMPTIONS}
+    unexcused = [topic for topic in gaps if topic not in exempt]
+    assert not unexcused, (
+        f"{unexcused} 在库里躺着、本地域词表却认不出它 ⇒ 这些域的题既不判 LOCAL_KNOWLEDGE、"
+        "也走不到「本地优先、低置信才补网」（资料明明躺着却被推去联网）。"
+        "补锚只准进真身一处：外部域＝search_intent.ACG_DOMAIN_TERMS['game'][strong]"
+        "（DOMAIN_TERMS 由它现取），自有设定＝question_intent._SHOREKEEPER_DOMAIN_TERMS。"
+    )
+
+
+def test_exemptions_are_ruled_not_convenient() -> None:
+    """豁免册三查：今天在库里／今天真是缺口／出处判据原文仍在册——一条不满足即红。"""
+    roster, gaps = _corpus_roster_and_gaps()
+    for topic, citations in _LOCAL_ANCHOR_RULE_EXEMPTIONS:
+        assert topic in roster, (
+            f"豁免册里的 {topic} 今天不在库侧名册上：这条豁免已无主，请删（留着＝藏污处）"
+        )
+        assert topic in gaps, (
+            f"豁免册里的 {topic} 已经有锚点却还挂在豁免上：豁免过期，请删（否则它会在"
+            "锚点被摘掉的那一刻重新变成'合法缺口'）"
+        )
+        assert citations, f"{topic} 的豁免一条出处都没有＝拿豁免盖真缺口"
+        for rel_path, needle in citations:
+            path = PROJECT_ROOT / rel_path
+            assert path.is_file(), f"{topic} 的豁免出处文件不见了：{rel_path}"
+            assert needle in path.read_text(encoding="utf-8"), (
+                f"{topic} 的豁免出处判据在 {rel_path} 里已查不到原文："
+                "裁定一旦被撤，豁免就失去效力——要么补锚、要么重新落一道裁定，不许静默延续"
+            )
+
+
+def test_strong_tier_terms_are_not_generic_words() -> None:
+    """强档词条不得含通用词（命中即分流会把别的域一起劫走）；禁词表点名、写死合法。"""
+    with prc.kb_domain_anchor_ruler(prc.PROJECT_ROOT) as access:
+        assert access.modules is not None, f"词表装不上：{access.unavailable}"
+        registry = access.modules["search_intent"].ACG_DOMAIN_TERMS
+        strong = {
+            term
+            for tiers in registry.values()
+            for term in tiers[access.modules["search_intent"].ACG_TIER_STRONG]
+        }
+    assert strong, "强档整档为空＝本腿无从判起（反空转：档被搬空不是'通过'）"
+    offenders = sorted(strong & GENERIC_TERMS_BANNED_IN_STRONG)
+    assert not offenders, (
+        f"通用词 {offenders} 进了强档：强档＝命中即定罪，且 game 强档还是 DOMAIN_TERMS 的"
+        "外部域唯一派生口，通用词进这里会把「谁是最强的角色」这类题连别的域一起劫进本地门。"
+    )

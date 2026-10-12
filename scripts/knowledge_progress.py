@@ -21,6 +21,16 @@ bot 常驻数 GiB，``faiss.read_index`` 一发就能把她压死；体积现算
 即放行＝当场瞎掉）。文件缺席时**不**走第②级——拿戳去替一枚不在盘的索引，正是 ann_pair 在册
 点名过的"证明自洽而磁盘没东西"假绿形。语义锁在宿主件
 ``tests/test_knowledge_progress_settled_gate.py``（含真 faiss 序列化接地的头部锁 + 两发注毒）。
+🔴 **名册对榫腿**（2026-10-12 补）：上面四勾比的是**库内几本账自不自洽**（摘要／ANN 应嵌／
+库内行数／索引实数），**从没有一问比过"语料名册说该有多少篇、仓侧台账实读真有多少篇"**——
+23:40 那轮接货腿没跑完时，四勾照样全绿并打出「这一轮已投完收工」（那是**旧一轮的自洽**，读不得）。
+本腿因此在同一轮里多做一枚只读口：**回读 ``knowledge_docs`` 实数**（``SELECT COUNT(*)``，
+🔴 不许拿摘要里的 ``documents_after`` 那种**戳**顶替实读——戳是同步自己写的，它只会自证）
+与**名册声称数**（语料导出 ``manifest.json`` 的 ``documents``）逐字相减，差值非零当场点名、
+``settled`` 不成立；差值非零时再 dig 一层**集合对榫**（判据留在真身
+``kb_wiki.reconcile_with_manifest``，本文件只喂一枚只读台账适配器，绝不另立第二把对账尺、
+绝不写库）。名册侧取不到 ⇒ 与索引实数腿同一条纪律：明写 ``UNDECIDABLE:<原因>``、判 ``[!!]``、
+**不折成 ok 也不折成 0**。做到哪一层（计数／集合）一律上屏，不写"大概齐"。
 """
 
 import json
@@ -53,6 +63,19 @@ ANN_HNSW_FOURCC: tuple[bytes, ...] = (b"IHNs", b"IHNf")
 NTOTAL_SOURCE_HEADER = "索引头实读"
 NTOTAL_SOURCE_ATTESTED = "代际证明戳·发布时点(未实读盘上件)"
 UNDECIDABLE_PREFIX = "UNDECIDABLE:"
+
+#: 名册对榫腿的判据面（人读那一行的锚点，宿主件按它筛行）。
+ROSTER_LEG_MARK = "回读入库计数"
+#: 回读侧＝仓内台账 SQL 实读；名册侧＝语料导出清单声称值。两侧来源必须分标——
+#: 把"声称"当"实读"是本腿唯一要防的伪装形态。
+ROSTER_SOURCE_READBACK = "台账实读(knowledge_docs COUNT)"
+ROSTER_SOURCE_MANIFEST = "语料名册 manifest.documents"
+#: 集合那一层的样例条数（doc_id 是 ``域/来源/标题__序`` 形态、不含路径，可上屏）。
+ROSTER_SAMPLES_SHOWN = 5
+#: 装载口的线上取数通道失败前缀（与 AGENTS 口径一致：取不到就标出来，绝不按代码缺省值判）。
+CALIBER_ENV_FORBIDDEN = "CALIBER_ENV_FORBIDDEN"
+#: 真身 ``reconcile_with_manifest`` 弃对账时给的那个状态（清单自相矛盾／entries 为空）。
+ROSTER_RECONCILE_SKIPPED = "skipped_manifest_incomplete"
 SUMMARY_FIELDS = (
     "started_at",
     "finished_at",
@@ -228,6 +251,188 @@ def _index_leg_line(
     return measured, signed_gap <= _completeness_max_missing()
 
 
+def _corpus_config() -> tuple[Any | None, str]:
+    """库根＝生产同构装载口现读（唯一被认可的线上取数通道；本文件不解析 env 文本）。
+
+    取不到 ⇒ ``(None, 原因)``，原因带 ``CALIBER_ENV_FORBIDDEN`` 前缀上屏——**绝不**退回
+    ``kb_wiki.kb_paths`` 里那枚代码缺省库根去判红判绿（缺省≠生效，台账在册的老坑）。
+    """
+    try:
+        from load_runtime_config import load_runtime_config
+    except ImportError:
+        return None, f"{CALIBER_ENV_FORBIDDEN}:loader_unimportable"
+    try:
+        cfg = load_runtime_config(required=False)
+    except (
+        ImportError,
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+        AttributeError,
+    ) as exc:
+        return None, f"{CALIBER_ENV_FORBIDDEN}:load_failed({type(exc).__name__})"
+    if not str(getattr(cfg, "bot_kb_wiki_root", "") or "").strip():
+        return None, f"{CALIBER_ENV_FORBIDDEN}:kb_wiki_root_unset"
+    return cfg, ""
+
+
+def _kb_wiki_module() -> tuple[Any | None, str]:
+    """按文件路径直载 ``kb_wiki`` 真身；拿不到 ⇒ ``(None, 原因)``（原因上屏，不吞）。
+
+    为什么**不**整只复用中央出口的 ``kb_domain_anchor_ruler``（2026-10-12 实撞根修）：那只
+    装载口一次直载四枚（search_intent／question_intent／kb_wiki／plain_text），而
+    ``plain_text`` 模块级那句绝对 import 会去拉插件根 ``__init__``——在**没预导过插件**的进程里
+    （本脚本独立直跑正是这个形态，实跑读数＝``ImportError：plain_text 这一枚装不上``）整只
+    装载口返回 ``modules=None``，名册腿于是退化成一枚**永远** ``UNDECIDABLE`` 的假牙＝开了口
+    却哪头都不生效。名册这一层要的只有 ``kb_wiki`` 一枚（它模块级唯一的插件侧依赖
+    ``vector_knowledge`` 由中央出口自己的哑模块垫住），故这里**复用中央出口的两枚原语**
+    （``_pad_vector_knowledge`` ＋ ``_plugin_module_by_path``）只装那一枚：相对段仍取它在册常量
+    ``_RULER_KB_WIKI_REL``，本文件零路径字面、零第二把尺。装载纪律照抄它——凡本席登记过的名字
+    ``finally`` 逐枚摘掉（台账 #72★「缺席哨兵」同型事故），已交出去的模块对象仍可用。
+    """
+    ruler = _ann_pair_ruler()
+    if ruler is None:
+        return None, "ruler_script_unavailable"
+    rel = getattr(ruler, "_RULER_KB_WIKI_REL", "")
+    pad = getattr(ruler, "_pad_vector_knowledge", None)
+    load = getattr(ruler, "_plugin_module_by_path", None)
+    code_root = getattr(ruler, "PROJECT_ROOT", None)
+    if not rel or pad is None or load is None or code_root is None:
+        return None, "ruler_primitives_absent"
+    registered: list[str] = []
+    try:
+        pad(registered)
+        return load(rel, Path(str(code_root)), registered), ""
+    except (
+        ImportError,
+        OSError,
+        ValueError,
+        TypeError,
+        AttributeError,
+        RuntimeError,
+    ) as exc:
+        return None, f"load_failed({type(exc).__name__})"
+    finally:
+        for dotted in reversed(registered):
+            sys.modules.pop(dotted, None)
+
+
+def _corpus_manifest() -> tuple[dict[str, Any] | None, int | None, str]:
+    """名册侧只读现算：``(清单, 声称文档数, 取不到的原因)``。
+
+    取不到一律 ``(None, None, 原因)``——**不折成 0**（0 是合法测得值）、**不折成"没问题"**，
+    与索引实数腿 ``_resolve_index_ntotal`` 同一条纪律。
+    """
+    kb_wiki, kb_reason = _kb_wiki_module()
+    if kb_wiki is None:
+        return None, None, kb_reason
+    cfg, cfg_reason = _corpus_config()
+    if cfg is None:
+        return None, None, cfg_reason
+    try:
+        kb_dir = kb_wiki.kb_paths(cfg)[1]
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None, None, "kb_paths_failed"
+    path = kb_dir / "manifest.json"
+    if not path.is_file():
+        return None, None, "manifest_absent"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        return None, None, f"manifest_unreadable({type(exc).__name__})"
+    if not isinstance(raw, dict):
+        return None, None, "manifest_not_an_object"
+    declared = raw.get("documents")
+    if declared is None:
+        return None, None, "manifest_documents_absent"
+    try:
+        return raw, int(declared), ""
+    except (TypeError, ValueError):
+        return None, None, "manifest_documents_unparseable"
+
+
+class _ReadOnlyLedger:
+    """喂给真身对账尺的**只读**台账视图：只有 SELECT，零写入、零事务、不抢写锁。
+
+    ``kb_wiki.reconcile_with_manifest`` 对 store 的唯一要求是 ``document_ledger() ->
+    {doc_id: hash}``；这条 SQL 与现役 ``vector_knowledge.SqliteVectorKnowledgeStore.
+    document_ledger`` 逐字同形。本类存在的意义就是**不另立第二把对账尺**——判据留在真身，
+    这里只换取数的连接形态（生产连接本来就是 ``mode=ro``）。
+    """
+
+    def __init__(self, con: sqlite3.Connection) -> None:
+        self._con = con
+
+    def document_ledger(self) -> dict[str, str]:
+        return {
+            str(row[0]): str(row[1] or "")
+            for row in self._con.execute("SELECT doc_id, hash FROM knowledge_docs")
+        }
+
+
+def _roster_set_layer(manifest: dict[str, Any], con: sqlite3.Connection) -> str:
+    """计数不等时再 dig 一层：哪几篇没进台账——判据走真身，做不到就明写只做到哪一层。"""
+    kb_wiki, kb_reason = _kb_wiki_module()
+    cfg, cfg_reason = _corpus_config()
+    if kb_wiki is None or cfg is None:
+        return (
+            f"集合那一层未做（{cfg_reason or f'kb_wiki_unavailable:{kb_reason}'}）"
+            "⇒ 今天只判到计数那一层"
+        )
+    try:
+        reconcile = kb_wiki.reconcile_with_manifest(
+            _ReadOnlyLedger(con), manifest, kb_wiki.parse_topics(cfg)
+        )
+    except sqlite3.Error as exc:
+        return (
+            f"集合那一层未做（台账读不出 hash：{type(exc).__name__}）"
+            "⇒ 今天只判到计数那一层"
+        )
+    except (OSError, ValueError, TypeError, AttributeError):
+        return "集合那一层未做（真身对账尺调不起）⇒ 今天只判到计数那一层"
+    stats, missing, extra = reconcile
+    status = str(stats.get("reconcile_status") or "")
+    if status == ROSTER_RECONCILE_SKIPPED:
+        return (
+            f"集合那一层：真身判清单不可用于对账（状态 {status}，见 manifest.documents ↔ entries）"
+            "⇒ 只报计数，不猜缺的是哪几篇"
+        )
+    held = int(stats.get("reconcile_held") or 0)
+    samples = "、".join(sorted(missing)[:ROSTER_SAMPLES_SHOWN]) or "（无）"
+    return (
+        f"集合对榫＝真身 reconcile_with_manifest：待补 {len(missing)}／待删 {len(extra)}／"
+        f"挂起 {held}／状态 {status or '未知'}；样例 doc_id：{samples}"
+    )
+
+
+def _roster_leg_line(
+    readback: int, declared: int | None, reason: str, detail: str
+) -> tuple[str, bool]:
+    """人读那一行：回读实数／名册声称／带符号差（正数＝货到了没进索引）＋（有差时）集合那一层。
+
+    恒等式＝``回读计数 == 名册声称计数``，**差值非零一律不成立**（不设容差：这一格要的就是
+    逐字对榫；集合那一层是加分项，做不到时上面那行已经明写了"只判到计数那一层"）。
+    """
+    if declared is None:
+        return (
+            (
+                f"{ROSTER_LEG_MARK}（{ROSTER_SOURCE_READBACK}={readback}）↔ 名册声称"
+                f"（{ROSTER_SOURCE_MANIFEST} {UNDECIDABLE_PREFIX}{reason}）"
+                "⇒ 两本账无从对榫，本行不构成收工证据"
+            ),
+            False,
+        )
+    diff = declared - readback
+    line = (
+        f"{ROSTER_LEG_MARK}（{ROSTER_SOURCE_READBACK}={readback}）↔ 名册声称"
+        f"（{ROSTER_SOURCE_MANIFEST}={declared}）／差(名册-实读)={diff:+d}，正数＝货到了没进索引"
+    )
+    if detail:
+        line += f"｜{detail}"
+    return line, diff == 0
+
+
 def _report(label: str, rel_path: str, since: str = "") -> None:
     con = _open_readonly(rel_path)
     if con is None:
@@ -319,6 +524,17 @@ def _report_wiki_settled(
         ann_expected, embedded_after_text, ntotal, ntotal_source, leg_reason
     )
     checks.append((leg_line, leg_passed))
+    # 名册对榫腿（2026-10-12 补）：上面四勾比的是库内几本账自不自洽，比不到"货到了没进索引"。
+    # 回读计数＝本函数开头那条 `SELECT COUNT(*) FROM knowledge_docs` 的**实读** `docs`——
+    # 🔴 不是摘要里的 `documents_after`（那是同步自己盖的戳，它只会自证，正是本轮要防的伪装）。
+    manifest, roster_declared, roster_reason = _corpus_manifest()
+    roster_detail = ""
+    if roster_declared is not None and roster_declared != docs:
+        roster_detail = _roster_set_layer(manifest or {}, con)
+    roster_line, roster_passed = _roster_leg_line(
+        docs, roster_declared, roster_reason, roster_detail
+    )
+    checks.append((roster_line, roster_passed))
     for name, passed in checks:
         print(f"  {'[ok]' if passed else '[!!]'} {name}")
     if not leg_passed:
@@ -326,6 +542,12 @@ def _report_wiki_settled(
             "  ↳ 索引实数腿短装/取不到 ⇒ 载入路径拒用 ANN、每条消息回落暴力扫描；"
             "重建走 scripts/rebuild_ann_index.py（内存门按 vector_knowledge."
             "_ann_build_demand_bytes 现算，本脚本只看不建）"
+        )
+    if not roster_passed:
+        print(
+            "  ↳ 名册对榫腿不等/取不到 ⇒ 语料侧声称的篇数与仓侧台账实读不等（或无从判起）："
+            "本轮未收工。下一轮 kb-sync 的对账兜底按 manifest.entries 补投（缺项补、"
+            "多项挂起），本脚本只看不投、绝不跑 --execute。"
         )
     settled = all(passed for _, passed in checks)
     print(f"=> {'这一轮已投完收工' if settled else '未收工（在途，或上一轮没投完）'}")
