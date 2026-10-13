@@ -5405,9 +5405,17 @@ def _register_nonebot_handlers() -> None:
                     text += "\n图：" + guard_secondhand_text(
                         described, source_label="订阅条目图像描述"
                     )
+            # F-1 收编：`sub_push` 族的键段唯一洗法（台账 #46★，段内禁 `:`）。
+            # 事件段就地洗一次，与闸的读侧 `is_legal_segment` 同一把尺；f3e2972 前的
+            # 存量冒号形 event_id 也在此洗成合法段（否则开闸态建键抛 ValueError 拖死整轮）。
+            from .domains.emergency_info.service.dedupe import (
+                active_push_key_segment,
+            )
             from .domains.link_parse.capabilities.content_parser import (
                 build_subscription_push_capability,
             )
+
+            event_seg = active_push_key_segment(event.event_id)
 
             # SUB-2 根腿（ATK-SUB-1）：逐目的地记账，不再把整事件压成一个 bool——
             # 旧形态（`return sent_any and all_success`）下 10002 一失败，已成功收到
@@ -5452,10 +5460,34 @@ def _register_nonebot_handlers() -> None:
                         message,
                         offload_capability(build_subscription_push_capability(text)),
                         capability_id="bot.subscribe",
+                        # F-1 收编：本请求的出站幂等键在根按 `sub_push` 族**就地**建好
+                        # （三段＝族名 + 事件段 + 目的地段），交管线只落库这一个键。
+                        # 三段全过 `active_push_key_segment`（台账 #46★：段内禁 `:`），
+                        # 于是中央出口的 `wash_active_push_key` 对它是恒等映射 ⇒ 两边
+                        # 逐字节同键，队列 `ON CONFLICT(dedupe_key)` 认得出是同一行，
+                        # 绝不落第二行（那正是「管线一行 + 中央出口一行＝双发」的病根）。
+                        dedupe_key=(
+                            f"sub_push:{event_seg}:"
+                            f"{active_push_key_segment(destination_id)}"
+                        ),
                     )
                     request = _find_sent_request(send_queue, message.request_id)
                     bot = _select_queue_bot(_all_online_bots, request) if request else None
                     if request is None or bot is None:
+                        outcomes.append((str(destination.id), False))
+                        continue
+                    # F-1 收编：投递前过中央唯一出口（BYPASS_SUSPECT 翻正）。同键二次
+                    # `submit` 被队列 `ON CONFLICT` 吸收（不落第二行）——闸关闭态是
+                    # 与裸 submit 逐字节同形的 passthrough（现网默认），开闸态才吃
+                    # 静默/限流/键形三门；返回 False＝本轮不顺投，该目的地记未送达
+                    # （不销 outbox 台账，留给下一轮查重闭环），**绝不**「闸拦了还销账」。
+                    if not _push_via_central_exit_now(
+                        send_queue,
+                        request,
+                        outbound_gate,
+                        dedupe_family="once",
+                        dedupe_namespace="sub_push",
+                    ):
                         outcomes.append((str(destination.id), False))
                         continue
                     receipt = await _deliver_transport_send_request(

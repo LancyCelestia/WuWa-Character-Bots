@@ -1364,6 +1364,8 @@ class RuntimePipeline:
         self,
         prepared: _PreparedRuntime,
         result: CapabilityResult,
+        *,
+        dedupe_key: str | None = None,
     ) -> DeliveryReceipt:
         message = prepared.message
         decision = prepared.decision
@@ -1542,11 +1544,20 @@ class RuntimePipeline:
             priority="normal",
             max_messages=decision.max_messages,
             dedupe_key=(
-                f"{decision.capability_id}:{message.session_id}:"
-                f"{message.message_id or message.request_id}"
-                # 摘要层 S4（T123）：内容维度 d 段；缺 digest 退化=旧三元组
-                # 逐字节不变（兼容硬锁，规约见 _content_dedupe_suffix）。
-                + _content_dedupe_suffix(rendered)
+                # 调用方显式交来的键优先、逐字节采用（如订阅推送的 sub_push 族：
+                # 键由根在 `handle_async(dedupe_key=...)` 处按族建好，本管线只是落库，
+                # 同一键再由根过中央出口——两边同键 ⇒ 队列 ON CONFLICT 不落第二行，
+                # 杜绝「管线一行 + 中央出口一行 = 双发」）。缺省 None ⇒ 走下方既有
+                # 三元组 + 内容 d 段，逐字节不变（兼容硬锁）。
+                dedupe_key
+                if dedupe_key
+                else (
+                    f"{decision.capability_id}:{message.session_id}:"
+                    f"{message.message_id or message.request_id}"
+                    # 摘要层 S4（T123）：内容维度 d 段；缺 digest 退化=旧三元组
+                    # 逐字节不变（兼容硬锁，规约见 _content_dedupe_suffix）。
+                    + _content_dedupe_suffix(rendered)
+                )
             ),
             cooldown_key=prepared.policy.cooldown_key,
             expires_at=None,
@@ -2205,7 +2216,13 @@ class RuntimePipeline:
         message: IncomingMessage,
         capability: AsyncCapabilityCallable,
         capability_id: str = "bot.status",
+        *,
+        dedupe_key: str | None = None,
     ) -> DeliveryReceipt:
+        # `dedupe_key` 是**可选**的出站幂等键覆盖：调用方（如订阅推送根腿）按族把键
+        # 建好交来，本管线落库即用该键，缺省 None＝既有键形逐字节不变。它的存在只为
+        # 「同一请求既要经管线落库、又要经中央出口复核」的场景——两边同键，队列
+        # `ON CONFLICT(dedupe_key)` 才认得出是同一行，不落第二行（双发根因）。
         # X4：下放面在这里收口——同步正文一律进线程池，协程正文原样留在循环上。
         # 必须排在 `_prepare` 之前：`redrive_capability` 存的就是这个 callable，
         # 限流补回腿（`_redrive_after` 复用 handle_async）也必须是下放形态；
@@ -2228,12 +2245,14 @@ class RuntimePipeline:
                 return self._internal_error(message, capability_id, exc)
             try:
                 if self.outbound_voice_enricher is None:
-                    return self._complete(prepared, result)
+                    return self._complete(prepared, result, dedupe_key=dedupe_key)
                 # G-3：hook 在 _complete 内同步做阻塞 HTTP 合成（最坏 3×60s），
                 # 而本协程跑在事件循环上——enricher 已接时整段完成路径放线程池
                 # 执行，绝不阻塞循环（与旧配音包装的 asyncio.to_thread 同语义；
                 # 键关部署仍走上面的原路，逐字节现状）。
-                return await asyncio.to_thread(self._complete, prepared, result)
+                return await asyncio.to_thread(
+                    self._complete, prepared, result, dedupe_key=dedupe_key
+                )
             except Exception as exc:  # noqa: BLE001 - 出站阶段异常同样回滚额度。
                 # 2026-09-18：与同步 handle 同语义（出站失败=未投递=不该占配额）。
                 self._rollback_rate_limit(prepared)
