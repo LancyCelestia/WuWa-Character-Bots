@@ -160,7 +160,7 @@ def test_capability_body_uses_bound_display(tmp_path) -> None:
     _set_counts(store, positive=1, insult=8)
     capability = build_affinity_capability(affinity_store=store)
     result = capability(_message(), SimpleNamespace())
-    assert "你对：96.0" in result.body
+    assert "你对守岸人：96.0" in result.body
     assert "5.9" not in result.body  # 裸值不出口。
 
 
@@ -173,4 +173,4 @@ def test_capability_with_stub_store_keeps_legacy_behavior() -> None:
     )
     capability = build_affinity_capability(affinity_store=stub)
     result = capability(_message(), SimpleNamespace())
-    assert "你对：50.0" in result.body
+    assert "你对守岸人：50.0" in result.body

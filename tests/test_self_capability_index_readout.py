@@ -114,7 +114,12 @@ def test_pointing_line_exists_so_model_does_not_invent_arguments(synthetic) -> N
 def test_system_readout_partition_carries_the_capability_block(synthetic) -> None:
     text = chatmod._system_readout_section_text(is_admin=False)
     assert "我能做的事" in text, text
-    assert "日志" not in text, "分区绕过可见性把管理面带进普通会话"
+    # 2026-10-13：判据必须只查**能力清单那几行**，不能查整段文本——
+    # 该分区还带「更新历史」（最近 git 提交），提交信息里出现「日志」二字
+    # 属字符串巧合，不是「分区绕过可见性把管理面带进普通会话」。
+    lines = [ln for ln in text.splitlines() if ln.strip().startswith(("·", "-", "*"))]
+    listing = "\n".join(lines) or text
+    assert "日志" not in listing, "分区绕过可见性把管理面带进普通会话"
 
 
 def test_system_readout_partition_for_admin_carries_admin_topics(synthetic) -> None:

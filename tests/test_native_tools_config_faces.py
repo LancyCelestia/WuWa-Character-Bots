@@ -136,6 +136,9 @@ def test_face_four_catalog_row_exists() -> None:
 EXPECTED_KEY_HOLDERS: dict[str, str] = {
     "plugins/bot_unified_runtime/domains/core/search/native_tools.py": "唯一读取口",
     "plugins/bot_unified_runtime/domains/chat_reply/runtime/settings.py": "热改名单登记面",
+    # 2026-10-13：P3 席把 post-baseline 字段点名落进分级表（有效档位零变化，只闭覆盖账），
+    # config_risk.py 因此出现对该键的**分级登记读取**（不是第二业务读取面）。
+    "plugins/bot_unified_runtime/domains/core/safety_exec/config_risk.py": "参数风险分级登记面",
 }
 
 
