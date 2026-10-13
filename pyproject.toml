@@ -55,6 +55,12 @@ include = ["plugins*"]
 [dependency-groups]
 dev = [
     "pytest>=9.1.0",
+    # 全量回归并行口（用户 2026-10-13 授权引入）：本机 32 逻辑核，全量串行约 20 分钟。
+    # ⚠ 用法约束（实测）：必须配 `--dist loadfile`（同文件不跨 worker）且 `-n ≤ 4`；
+    # 更高并发会撞本仓既存的跨文件状态污染（表现为 worker 收集不一致 / 假红一片）。
+    # 另有 tests/test_word_boundary_fix.py 与 tests/test_ratchet_fix.py 的 parametrize
+    # 用函数对象作 id（str(fn) 含内存地址）⇒ 跨 worker 收集指纹不一致，并行时须 --ignore。
+    "pytest-xdist>=3.8.0",
 ]
 
 [tool.pytest.ini_options]
