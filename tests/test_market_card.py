@@ -531,9 +531,12 @@ def test_market_card_member_box_rejects_non_svg() -> None:
 
 def test_market_capability_card_carries_member_box(monkeypatch, tmp_path) -> None:
     import plugins.bot_unified_runtime.domains.core.contracts.official_sources as _src
+    from plugins.bot_unified_runtime.domains.finance.data.market_data import (
+        MemberCrossCheck,
+    )
 
-    # 三源硬门（2026-10-13）：本值维现算 ready=False ⇒ 卡面整块缺席。
-    # 本腿测的是**箱形渲染通路**，故把门判为 ready（门本身另由下面那条腿测）。
+    # 三源硬门（2026-10-13）：本值维补腿后现算 ready=True（东财/腾讯/新浪）。
+    # 本腿测的是**箱形渲染通路**，仍显式把门判为 ready（不随登记册漂移）。
     monkeypatch.setattr(_src, "check_value", lambda value: type("S", (), {"ready": True})())
     quotes = [
         IndexQuote("上证指数", "1.000001", 3934.4, -0.43, -17.11),
@@ -558,6 +561,14 @@ def test_market_capability_card_carries_member_box(monkeypatch, tmp_path) -> Non
             0.0,
         ),
     )
+    # 同量三源核验腿：离线打桩（真腿另由 TestMemberQuoteLegs 覆盖），
+    # 断言核验结论进 note、箱形通路不受影响。
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.domains.finance.data.market_data.crosscheck_member_distribution",
+        lambda secid, timeout_seconds=6.0, budget=None: MemberCrossCheck(
+            ("东方财富", "腾讯", "新浪"), True, "同批 6 只一致"
+        ),
+    )
     backend = _FakeBackend()
     config = type("Config", (), {"bot_card_render_dir": str(tmp_path)})()
     capability = build_market_capability(config, render_backend=backend)
@@ -567,14 +578,23 @@ def test_market_capability_card_carries_member_box(monkeypatch, tmp_path) -> Non
     assert "全成分股当日涨跌幅分布" in html_text
     assert '<div class="box-wrap">' in html_text
     assert "n＝上证指数 6、深证成指 6 家" in html_text
+    assert "三源核验一致（东财/腾讯/新浪）" in html_text
 
 
 def test_market_card_omits_member_box_when_three_source_gate_short(monkeypatch, tmp_path) -> None:
-    """三源硬门（AGENTS 规则 12）接线腿：本值维未达 ≥3 独立源 ⇒ 整块缺席＋显式标注缺口。
+    """三源硬门（AGENTS 规则 12）接线腿：值维未达 ≥3 独立源 ⇒ 整块缺席＋显式标注缺口。
 
-    背景：登记册把「指数全成分股涨跌幅分布」标 ready=False（仅东财 1 条可用腿），
-    而卡面此前照出——2026-10-13 AI 审查点名「登记册落成但未执法」后接上唯一执法点。
+    本腿把门**显式判为未达标**（不依赖登记册现算状态——登记册可随实测补腿转 ready），
+    只锁「未达门即不出图＋显式标注」这条接线；登记册现算状态另由
+    test_finance_market_expansion 的 TestOfficialSourceGate 锁。
     """
+    import plugins.bot_unified_runtime.domains.core.contracts.official_sources as _src
+
+    monkeypatch.setattr(_src, "check_value", lambda value: type("S", (), {"ready": False})())
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.domains.finance.data.market_data.fetch_index_member_changes",
+        lambda secid, timeout_seconds=6.0, budget=None: (),
+    )
     quotes = [
         IndexQuote("上证指数", "1.000001", 3934.4, -0.43, -17.11),
         IndexQuote("深证成指", "0.399001", 12818.6, -0.9, -116.2),

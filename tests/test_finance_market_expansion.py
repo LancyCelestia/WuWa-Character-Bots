@@ -713,6 +713,33 @@ class TestOfficialSourceGate:
         assert empty["ok"] is False and "空响应" in empty["error"]
         assert good["ok"] is True
 
+    def test_member_distribution_reaches_three_verified_orgs(self) -> None:
+        """指数全成分分布补腿后达三源硬门：东财/腾讯/新浪三机构各自实测。
+
+        背景（2026-10-13）：该值维此前仅东财一腿 ⇒ ready=False、卡面被硬门拦；
+        本轮把腾讯/新浪的批量报价口实测补齐（见 market_data 的批量腿与同量核验）。
+        """
+        src = self._src()
+        spec = src.check_value("指数全成分股涨跌幅分布")
+        assert spec is not None
+        assert spec.ready is True
+        assert spec.verified_orgs == ("东方财富", "腾讯", "新浪")
+        # 同机构多入口只算一源：新浪不得靠 vip.stock 成分页与 hq 批量口并列充数。
+        assert spec.independent_orgs.count("新浪") == 1
+
+    def test_member_batch_legs_have_probes_and_sina_referer(self) -> None:
+        """补的两条腿必须机器可调：腾讯/新浪探针在册，新浪须带 Referer。"""
+        src = self._src()
+        assert src.probe_url_for("指数全成分股涨跌幅分布", "腾讯").startswith(
+            "https://qt.gtimg.cn/q="
+        )
+        assert src.probe_url_for("指数全成分股涨跌幅分布", "新浪").startswith(
+            "https://hq.sinajs.cn/list="
+        )
+        assert src.probe_headers_for("指数全成分股涨跌幅分布", "新浪") == {
+            "Referer": "https://finance.sina.com.cn"
+        }
+
 
 class TestFailureAttributionCensus:
     """红的归属判定量具（把「这条红是不是我弄的」机械化）。"""
@@ -903,3 +930,213 @@ class TestMemberChanges:
             },
         )
         assert market_data.fetch_index_member_changes("0.399006") == (3.3,)
+
+    def test_last_page_empty_success_false_is_normal_end(self, monkeypatch) -> None:
+        """越界空页返 success=false 视为正常收尾，不丢整条（深证成指＝500 整数倍）。
+
+        2026-10-13 实测：东财对越界空页返 ``{"result": null, "success": false,
+        "message": "返回数据为空", "code": 9201}``（是「没数据」不是错误）。旧逻辑
+        先判 success ⇒ 成员数恰为 500 整数倍的指数（深证成指 399001）整条丢空。
+        """
+        self._reset()
+
+        def _fake_page(index_code: str, page: int, timeout_seconds: float):
+            if page == 1:
+                return {
+                    "success": True,
+                    "result": {
+                        "data": [
+                            {"SECURITY_CODE": f"{i:06d}", "f3": 1.0}
+                            for i in range(500)
+                        ]
+                    },
+                }
+            return {
+                "success": False,
+                "result": None,
+                "message": "返回数据为空",
+                "code": 9201,
+            }
+
+        monkeypatch.setattr(market_data, "_fetch_member_page", _fake_page)
+        values = market_data.fetch_index_member_changes("0.399001")
+        assert len(values) == 500
+
+
+class TestMemberQuoteLegs:
+    """成分股批量报价腿（腾讯/新浪）与同量三源一致性核验（2026-10-13 三源硬门）。
+
+    全部离线：网络出口（http_get / http_get_text / _fetch_member_page / 机构取数器）
+    逐点 monkeypatch，不发起真请求。
+    """
+
+    def _reset(self) -> None:
+        market_data.reset_member_cache()
+        market_data.reset_member_quote_cache()
+
+    def test_prefix_rules(self) -> None:
+        """A 股代码 → 交易所前缀（沪 sh / 深 sz / 北 bj）；非 A 股返回 None。"""
+        assert market_data.member_quote_prefix("600000") == "sh"
+        assert market_data.member_quote_prefix("900901") == "sh"  # 沪B
+        assert market_data.member_quote_prefix("000001") == "sz"
+        assert market_data.member_quote_prefix("200011") == "sz"  # 深B
+        assert market_data.member_quote_prefix("300750") == "sz"
+        assert market_data.member_quote_prefix("830799") == "bj"
+        assert market_data.member_quote_prefix("12345") is None
+        assert market_data.member_quote_prefix("ABC123") is None
+
+    def test_tencent_parse_reads_field_32(self, monkeypatch) -> None:
+        """腾讯全格式行取字段 32（涨跌幅），GBK 解码；空行静默跳过。"""
+        fields = ["51", "平安银行", "000001"] + ["0"] * 27 + [
+            "20261013161500", "-0.16", "-1.36", "11.77",
+        ]
+        body = (
+            'v_sz000001="' + "~".join(fields) + '";\nv_sz000002="";\n'
+        ).encode("gbk")
+
+        monkeypatch.setattr(market_data, "http_get", lambda url, **_kw: (url, body))
+        out = market_data._fetch_member_quotes_tencent(("sz000001", "sz000002"), 3.0)
+        assert out == {"000001": -1.36}
+
+    def test_sina_parse_computes_pct_from_prev_close(self, monkeypatch) -> None:
+        """新浪股票行不给涨跌幅 ⇒ (现价[3]−昨收[2])/昨收[2]×100；GB18030 解码。"""
+        parts = ["平安银行", "11.730", "11.730", "11.570", "11.770", "11.550"]
+        line = 'var hq_str_sz000001="' + ",".join(parts) + '";\n'
+
+        monkeypatch.setattr(
+            market_data, "http_get_text", lambda url, **_kw: (url, line)
+        )
+        out = market_data._fetch_member_quotes_sina(("sz000001",), 3.0)
+        assert out["000001"] == pytest.approx((11.570 - 11.730) / 11.730 * 100.0)
+
+    def test_batching_splits_over_limit(self, monkeypatch) -> None:
+        """超单请求上限即切批；合并结果按裸代码键。"""
+        self._reset()
+        monkeypatch.setattr(market_data, "_MEMBER_QUOTE_BATCH_SIZE", 2)
+        batches: list[tuple[str, ...]] = []
+
+        def _fake_fetch(tagged, timeout_seconds):
+            batches.append(tuple(tagged))
+            return {code[2:]: 1.0 for code in tagged}
+
+        monkeypatch.setitem(market_data._MEMBER_QUOTE_FETCHERS, "腾讯", _fake_fetch)
+        out = market_data.fetch_member_quotes(["600000", "600004", "000001"], "腾讯")
+        assert batches == [("sh600000", "sh600004"), ("sz000001",)]
+        assert out == {"600000": 1.0, "600004": 1.0, "000001": 1.0}
+
+    def test_failure_returns_empty_and_never_cached(self, monkeypatch) -> None:
+        """整腿失败 ⇒ {} 且不缓存（下次立即重试）。"""
+        self._reset()
+        calls: list[int] = []
+
+        def _boom(tagged, timeout_seconds):
+            calls.append(1)
+            raise ConnectionError("network down")
+
+        monkeypatch.setitem(market_data._MEMBER_QUOTE_FETCHERS, "腾讯", _boom)
+        assert market_data.fetch_member_quotes(["600000"], "腾讯") == {}
+        assert market_data.fetch_member_quotes(["600000"], "腾讯") == {}
+        assert len(calls) == 2
+
+    def test_success_is_cached(self, monkeypatch) -> None:
+        """成功结果进 TTL 缓存：同批二次调用零新增外呼。"""
+        self._reset()
+        calls: list[int] = []
+
+        def _fake_fetch(tagged, timeout_seconds):
+            calls.append(1)
+            return {code[2:]: 1.0 for code in tagged}
+
+        monkeypatch.setitem(market_data._MEMBER_QUOTE_FETCHERS, "新浪", _fake_fetch)
+        first = market_data.fetch_member_quotes(["600000"], "新浪")
+        second = market_data.fetch_member_quotes(["600000"], "新浪")
+        assert first == second == {"600000": 1.0}
+        assert len(calls) == 1
+
+    def test_non_a_share_codes_are_dropped(self, monkeypatch) -> None:
+        """非 A 股代码剔除，零外呼（宁缺不编）。"""
+        self._reset()
+        calls: list[int] = []
+
+        def _fake_fetch(tagged, timeout_seconds):
+            calls.append(1)
+            return {}
+
+        monkeypatch.setitem(market_data._MEMBER_QUOTE_FETCHERS, "腾讯", _fake_fetch)
+        assert market_data.fetch_member_quotes(["ABCDEF", "12"], "腾讯") == {}
+        assert calls == []
+
+    def _em_rows(self, count: int = 10):
+        return [
+            {"SECURITY_CODE": f"{600000 + i:06d}", "f3": float((i % 7) - 3)}
+            for i in range(count)
+        ]
+
+    def test_crosscheck_consistent_when_three_sources_agree(self, monkeypatch) -> None:
+        self._reset()
+        rows = self._em_rows()
+        monkeypatch.setattr(
+            market_data,
+            "_fetch_member_page",
+            lambda index_code, page, timeout_seconds: {
+                "success": True,
+                "result": {"data": rows},
+            },
+        )
+        em = {r["SECURITY_CODE"]: r["f3"] for r in rows}
+        monkeypatch.setattr(
+            market_data,
+            "fetch_member_quotes",
+            lambda codes, org, **_kw: (
+                dict(em) if org == "腾讯" else {c: v + 0.01 for c, v in em.items()}
+            ),
+        )
+        result = market_data.crosscheck_member_distribution("1.000001")
+        assert result.consistent is True
+        assert result.orgs == ("东方财富", "腾讯", "新浪")
+
+    def test_crosscheck_flags_divergence_without_averaging(self, monkeypatch) -> None:
+        """超容差即点名分歧（新浪均值偏 5pp），绝不取平均掩盖。"""
+        self._reset()
+        rows = self._em_rows()
+        monkeypatch.setattr(
+            market_data,
+            "_fetch_member_page",
+            lambda index_code, page, timeout_seconds: {
+                "success": True,
+                "result": {"data": rows},
+            },
+        )
+        em = {r["SECURITY_CODE"]: r["f3"] for r in rows}
+        monkeypatch.setattr(
+            market_data,
+            "fetch_member_quotes",
+            lambda codes, org, **_kw: (
+                dict(em) if org == "腾讯" else {c: v + 5.0 for c, v in em.items()}
+            ),
+        )
+        result = market_data.crosscheck_member_distribution("1.000001")
+        assert result.consistent is False
+        assert "新浪" in result.detail and "均值差" in result.detail
+
+    def test_crosscheck_flags_missing_leg(self, monkeypatch) -> None:
+        """任一腿缺席 ⇒ 不一致且点名缺哪条（不假装三源）。"""
+        self._reset()
+        rows = self._em_rows()
+        monkeypatch.setattr(
+            market_data,
+            "_fetch_member_page",
+            lambda index_code, page, timeout_seconds: {
+                "success": True,
+                "result": {"data": rows},
+            },
+        )
+        em = {r["SECURITY_CODE"]: r["f3"] for r in rows}
+        monkeypatch.setattr(
+            market_data,
+            "fetch_member_quotes",
+            lambda codes, org, **_kw: dict(em) if org == "腾讯" else {},
+        )
+        result = market_data.crosscheck_member_distribution("1.000001")
+        assert result.consistent is False
+        assert "缺腿" in result.detail and "新浪" in result.detail

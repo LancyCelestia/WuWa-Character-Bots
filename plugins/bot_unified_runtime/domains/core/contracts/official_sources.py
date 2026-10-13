@@ -113,21 +113,27 @@ OFFICIAL_SOURCES: tuple[SourceSpec, ...] = (
     ),
     SourceSpec(
         value="指数全成分股涨跌幅分布",
-        tolerance="横截面同日口径；成分表变动按 10 分钟缓存",
+        tolerance="横截面同日口径；成分表变动按 10 分钟缓存；同批分布 n/均值/中位差 ≤0.05pp",
         legs=(
             _e("东方财富", "datacenter-web…/RPT_INDEX_COMPONENT＋quoteColumns=f2,f3", True,
-               note="唯一可直接出数的腿（分页 500/页）"),
+               note="成分表＋每只涨跌幅一次拿齐（分页 500/页）；2026-10-13 实测 200／14.5KB"),
+            _e("腾讯", "qt.gtimg.cn/q=（对东财成分代码批量取涨跌幅）", True,
+               note="2026-10-13 实测 200／GBK，~0.2s；同批 50/200/500/800 只**全回无截断**；"
+                    "涨跌幅＝全格式行字段 32；与东财逐只一致、同批 n/均值/中位一致"
+                    "（见 market_data.crosscheck_member_distribution）"),
+            _e("新浪", "hq.sinajs.cn/list=（须 Referer；对东财成分代码批量取涨跌幅）", True,
+               note="2026-10-13 实测 200／GB18030，~0.2s；同批全回；涨跌幅＝(现价−昨收)/昨收；"
+                    "同批分布与东财一致（中位差 ≤0.01pp）。⚠ 同机构 vip.stock 成分页分页仅 40 条"
+                    "（已弃，不构成完整腿），本腿走 hq 批量口"),
             _e("中证指数", "oss-ch.csindex.com.cn/…/autofile/cons/{code}cons.xls", False,
-               note="2026-10-13 实测 200／67KB，**真成分表**（含「成份券代码」表头＋中兴通讯/TCL科技等真名）；"
-                    "但为 OLE2 二进制 XLS，venv 无 xlrd、openpyxl 按后缀拒收 ⇒ **可下载不可轻解析**，"
-                    "引依赖或自写 BIFF 解析器代价过大（ponytail）；补此腿须先裁决是否引 xlrd"),
+               note="2026-10-13 实测 200／67KB，**只提供成分名单（无涨跌幅）** ⇒ 不构成「涨跌幅"
+                    "分布」的独立取值腿（名单可由指数编制方佐证，但不计入本值维源数）"),
             _e("上海证券交易所", "query.sse.com.cn/commonQuery.do?sqlId=…GPLB_GP_…", False,
                note="2026-10-13 实测 200／58KB JSON（A_STOCK_CODE 可抽），但 total=2520 ⇒ **全市场股票列表，非成分表**，"
                     "口径不符，不构成该值独立腿"),
-            _e("新浪财经", "vip.stock.finance.sina.com.cn/corp/go.php/vII_NewestComponent/indexid/000300.phtml", False,
-               note="2026-10-13 实测 200／32KB（GBK），但**分页仅 40 条**，远不足 300 成分 ⇒ 不构成完整腿"),
         ),
-        note="⚠ 现仅东财一腿可出数 ⇒ 按三源硬门**该值不得出卡**；三条候选腿的实测结论已写明，勿重复试同批端点",
+        note="三腿齐：东财（成分表＋涨跌幅一次拿齐）／腾讯／新浪（对同一批成分各自批量取涨跌幅，"
+             "同量分布一致性核验）；中证只给名单、上交所是全市场列表，均不计入源数",
     ),
     SourceSpec(
         value="汇率中间价",
@@ -246,9 +252,11 @@ LEG_PROBES: dict[tuple[str, str], str] = {
         "?sqlId=COMMON_SSE_CP_GPJCTPZ_GPLB_GP_L&isPagination=true"
         "&pageHelp.pageSize=5&pageHelp.pageNo=1"
     ),
-    ("指数全成分股涨跌幅分布", "新浪财经"): (
-        "https://vip.stock.finance.sina.com.cn/corp/go.php/vII_NewestComponent"
-        "/indexid/000300.phtml"
+    ("指数全成分股涨跌幅分布", "腾讯"): (
+        "https://qt.gtimg.cn/q=sh600000,sz000001,sh601318"
+    ),
+    ("指数全成分股涨跌幅分布", "新浪"): (
+        "https://hq.sinajs.cn/list=sh600000,sz000001,sh601318"
     ),
     # —— 汇率中间价 ——
     ("汇率中间价", "中国外汇交易中心"): (
@@ -316,7 +324,7 @@ LEG_PROBE_HEADERS: dict[tuple[str, str], dict[str, str]] = {
     ("指数全成分股涨跌幅分布", "上海证券交易所"): {"Referer": "https://www.sse.com.cn/"},
     ("指数全成分股涨跌幅分布", "中证指数"): {"Referer": "https://www.csindex.com.cn/"},
     ("汇率中间价", "新浪财经"): {"Referer": "https://finance.sina.com.cn"},
-    ("指数全成分股涨跌幅分布", "新浪财经"): {"Referer": "https://finance.sina.com.cn"},
+    ("指数全成分股涨跌幅分布", "新浪"): {"Referer": "https://finance.sina.com.cn"},
     ("互联互通成交额", "上海证券交易所"): {"Referer": "https://www.sse.com.cn/"},
     ("宏观 CPI / PMI", "国家统计局"): {"Referer": "https://www.stats.gov.cn/"},
 }
@@ -392,7 +400,7 @@ def describe_blockers(value: str) -> str:
         return f"「{value}」未在官方源登记册登记，按三源硬门不得出数"
     if spec.ready:
         return (
-            f"「{value}」已达标：实测独立源 {spec.source_count} 家"
+            f"「{value}」已达标：实测独立源 {len(spec.verified_orgs)} 家"
             f"（{'/'.join(spec.verified_orgs)}）"
         )
     need = MIN_INDEPENDENT_SOURCES - len(spec.verified_orgs)

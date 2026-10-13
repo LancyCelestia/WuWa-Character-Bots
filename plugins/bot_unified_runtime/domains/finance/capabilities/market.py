@@ -682,8 +682,12 @@ def build_market_capability(
         取数面＝东财成分表（每指数分页 × 实时行情注入，见 market_data 头注）；
         仅中国区五枚有成分源，其余市场不参与。样本 <5 家的列跳过；全部跳过
         则整块缺席（卡面照旧）。箱形输入语义＝横截面涨跌幅分布，非单日 OHLC。
+        三源硬门（AGENTS 规则 12）：同一批成分另向腾讯/新浪批量取涨跌幅做
+        **同量一致性核验**（``crosscheck_member_distribution``），结果进 note；
+        缺腿/分歧如实点名，绝不取平均掩盖。
         """
         from plugins.bot_unified_runtime.domains.finance.data.market_data import (
+            crosscheck_member_distribution,
             fetch_index_member_changes,
             member_index_code,
         )
@@ -722,6 +726,16 @@ def build_market_capability(
             return {}
         if chart.status != "ok" or not chart.svg:
             return {}
+        # 同量三源核验（best-effort）：只核验已入箱的指数；腿缺/超时保持沉默。
+        checks = gather_within_budget(
+            lambda code: crosscheck_member_distribution(
+                code, timeout_seconds=timeout, budget=budget
+            ),
+            [code for code, _series in pairs],
+            budget=budget,
+            max_workers=6,
+        )
+        cross_note = _member_crosscheck_note(checks, names)
         sample_text = "、".join(
             f"{names.get(code, code)} {len(series)}" for code, series in pairs
         )
@@ -730,9 +744,32 @@ def build_market_capability(
             "label": "中国区指数 · 全成分股当日涨跌幅分布",
             "note": (
                 f"n＝{sample_text} 家；箱＝Q1–Q3，线＝中位，须＝1.5×IQR，"
-                "点＝离群（当日涨跌幅 %，横截面口径）"
+                "点＝离群（当日涨跌幅 %，横截面口径）" + cross_note
             ),
         }
+
+    def _member_crosscheck_note(
+        checks: dict[str, Any], names: dict[str, str]
+    ) -> str:
+        """三源同量核验结果 → 卡面 note 后缀；缺腿/全缺席返回空串（不声明）。"""
+        verified: list[str] = []
+        divergent: list[str] = []
+        total = 0
+        for code, result in checks.items():
+            if result is None:
+                continue
+            total += 1
+            if result.consistent:
+                verified.append(code)
+            elif len(result.orgs) >= 3:
+                divergent.append(f"{names.get(code, code)} {result.detail}")
+        if divergent:
+            return "；⚠ 三源核验分歧：" + "；".join(divergent)
+        if total and len(verified) == total:
+            return "；三源核验一致（东财/腾讯/新浪）"
+        if verified:
+            return f"；三源核验 {len(verified)}/{total} 一致"
+        return ""
 
     def _render_card(
         quotes: list[IndexQuote],

@@ -30,6 +30,7 @@ import math
 import os
 import random
 import re
+import statistics
 import time
 import urllib.parse
 from collections.abc import Sequence
@@ -41,7 +42,9 @@ from typing import Any
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
     ParseHttpError,
+    http_get,
     http_get_json,
+    http_get_text,
 )
 
 _EASTMONEY_URL = (
@@ -559,7 +562,8 @@ _MEMBER_REPORT_URL = (
 )
 _MEMBER_TTL_SECONDS = 600.0
 _MEMBER_MAX_PAGES = 12  # 500/页 ⇒ 最多 6000 成员；翻满仍有整页即判异常走缺席。
-_MEMBER_CACHE: dict[str, tuple[float, tuple[float, ...]]] = {}
+# secid → (monotonic 时间戳, ((代码, 当日涨跌幅%), …))
+_MEMBER_CACHE: dict[str, tuple[float, tuple[tuple[str, float], ...]]] = {}
 
 # secid 面：仅中国区五枚有成分源（其余市场结构性缺席，不假装有）。
 _MEMBER_SECIDS: tuple[str, ...] = (
@@ -592,27 +596,11 @@ def _fetch_member_page(index_code: str, page: int, timeout_seconds: float) -> An
     )
 
 
-def fetch_index_member_changes(
-    secid: str,
-    *,
-    timeout_seconds: float = 6.0,
-    cache_seconds: float = _MEMBER_TTL_SECONDS,
-    budget: Any | None = None,
-) -> tuple[float, ...]:
-    """全成分股当日涨跌幅 % 横截面（f3）；不可得返回 ()，绝不抛异常。
-
-    分页拉全成员（500/页）；任一页失败/超页上限 ⇒ () 且不缓存（「失败不
-    缓存、下次立即可重试」与行情主链同纪律）。成功结果带进程内 TTL 缓存
-    （缺省 10 分钟：成分表低频变动，行情注入随请求实时）。
-    """
-    index_code = member_index_code(secid)
-    if index_code is None:
-        return ()
-    now = time.monotonic()
-    cached = _MEMBER_CACHE.get(secid)
-    if cached is not None and now - cached[0] <= max(0.0, float(cache_seconds)):
-        return cached[1]
-    values: list[float] = []
+def _fetch_member_rows(
+    index_code: str, *, timeout_seconds: float, budget: Any | None
+) -> tuple[tuple[str, float], ...]:
+    """分页拉全成员 (代码, 当日涨跌幅%)；任一页失败/超页上限 ⇒ () 且不缓存。"""
+    pairs: list[tuple[str, float]] = []
     for page in range(1, _MEMBER_MAX_PAGES + 1):
         if budget_expired(budget):
             return ()  # FIN-R1：预算尽不发起新网络调用，失败不缓存。
@@ -622,30 +610,355 @@ def fetch_index_member_changes(
             )
         except Exception:  # noqa: BLE001 - 取数层不向会话链路抛。
             return ()
-        if not isinstance(payload, dict) or payload.get("success") is not True:
-            return ()
-        result = payload.get("result")
+        result = payload.get("result") if isinstance(payload, dict) else None
         rows = result.get("data") if isinstance(result, dict) else None
-        if not isinstance(rows, list):
-            return ()
-        if not rows:
+        # 末页收尾：东财对**越界空页**返 success=false／result=null／code=9201
+        # （message「返回数据为空」，是「没数据」而非错误）⇒ 先看 data：空页
+        # （page>1）即正常收尾。旧逻辑先判 success，会把「成员数恰为 500 整数倍」
+        # 的指数（如深证成指 399001＝500 只，第 2 页即空）整条丢空（2026-10-13 实测）。
+        if not isinstance(rows, list) or not rows:
             if page == 1:
                 return ()
             break  # 末页空=正常收尾。
+        if payload.get("success") is not True:
+            return ()
         for row in rows:
             if isinstance(row, dict):
                 change = _as_float(row.get("f3"))
-                if change is not None:
-                    values.append(change)
+                code = str(row.get("SECURITY_CODE") or "").strip()
+                if change is not None and code:
+                    pairs.append((code, change))
         if len(rows) < 500:
             break
     else:
         return ()  # 翻满上限仍有整页 ⇒ 判异常，不拿截断样本画箱。
-    if not values:
+    return tuple(pairs)
+
+
+def fetch_index_member_pairs(
+    secid: str,
+    *,
+    timeout_seconds: float = 6.0,
+    cache_seconds: float = _MEMBER_TTL_SECONDS,
+    budget: Any | None = None,
+) -> tuple[tuple[str, float], ...]:
+    """全成分股 (代码, 当日涨跌幅 %) 横截面；不可得返回 ()，绝不抛异常。
+
+    分页拉全成员（500/页）；任一页失败/超页上限 ⇒ () 且不缓存（「失败不缓存、
+    下次立即可重试」与行情主链同纪律）。成功结果带进程内 TTL 缓存（缺省 10 分钟：
+    成分表低频变动，行情注入随请求实时）。代码面供三源批量报价腿复用
+    （``crosscheck_member_distribution`` 以同一批代码向腾讯/新浪取独立涨跌幅）。
+    """
+    index_code = member_index_code(secid)
+    if index_code is None:
         return ()
-    snapshot = tuple(values)
-    _MEMBER_CACHE[secid] = (now, snapshot)
-    return snapshot
+    now = time.monotonic()
+    cached = _MEMBER_CACHE.get(secid)
+    if cached is not None and now - cached[0] <= max(0.0, float(cache_seconds)):
+        return cached[1]
+    pairs = _fetch_member_rows(
+        index_code, timeout_seconds=timeout_seconds, budget=budget
+    )
+    if not pairs:
+        return ()
+    _MEMBER_CACHE[secid] = (now, pairs)
+    return pairs
+
+
+def fetch_index_member_changes(
+    secid: str,
+    *,
+    timeout_seconds: float = 6.0,
+    cache_seconds: float = _MEMBER_TTL_SECONDS,
+    budget: Any | None = None,
+) -> tuple[float, ...]:
+    """全成分股当日涨跌幅 % 横截面（f3）；不可得返回 ()，绝不抛异常。
+
+    旧签名保留（卡面箱形图只消费涨跌幅序列）；代码面见
+    ``fetch_index_member_pairs``。分页/缓存纪律逐字不变。
+    """
+    return tuple(
+        change
+        for _code, change in fetch_index_member_pairs(
+            secid,
+            timeout_seconds=timeout_seconds,
+            cache_seconds=cache_seconds,
+            budget=budget,
+        )
+    )
+
+
+# ==================== 成分股批量报价腿（腾讯 / 新浪，2026-10-13 三源硬门） ======
+# 三源硬门（AGENTS 规则 12）：东财 ``RPT_INDEX_COMPONENT`` 是唯一「成分表＋涨跌幅」
+# 一次拿齐的腿；腾讯 ``qt.gtimg.cn`` 与新浪 ``hq.sinajs.cn`` 的**批量报价口**对
+# 同一批成分代码各自取到涨跌幅，构成第二/第三腿。2026-10-13 本机实测：
+# - 腾讯 ``q=sh600000,sz000001,…`` 50/200/500/800 只全回无截断（GBK，~0.2s）；
+# - 新浪 ``list=…`` 须 Referer，同上全回（GB18030，~0.2s）；
+# - 三源同批分布（n/均值/中位）一致（见 ``crosscheck_member_distribution``）。
+# 口径诚实：成分名单由指数编制方定义，三条报价腿共用东财报表给出的名单
+# （名单非市场数值，涨跌幅才是被佐证的量）；独立性落在「涨跌幅由不同机构各自发布」。
+_MEMBER_QUOTE_TENCENT_URL = "https://qt.gtimg.cn/q={codes}"
+_MEMBER_QUOTE_SINA_URL = "https://hq.sinajs.cn/list={codes}"
+_MEMBER_QUOTE_SINA_REFERER = "https://finance.sina.com.cn"
+_MEMBER_QUOTE_BATCH_SIZE = 400  # 单请求代码上限（实测 800 仍全回，留一倍余量）。
+_MEMBER_QUOTE_TTL_SECONDS = 120.0
+# (机构, 带前缀代码元组) → (monotonic 时间戳, {裸代码: 涨跌幅%})
+_MEMBER_QUOTE_CACHE: dict[
+    tuple[str, tuple[str, ...]], tuple[float, dict[str, float]]
+] = {}
+
+# 同量一致性容差（crosscheck_member_distribution 用）：
+# 样本数相对差 ≤ 2%；均值/中位数差 ≤ 0.05 个百分点。分歧超容差即点名，绝不取平均掩盖。
+_MEMBER_DIST_COUNT_TOLERANCE_RATIO = 0.02
+_MEMBER_DIST_STAT_TOLERANCE_PP = 0.05
+
+
+def member_quote_prefix(code: str) -> str | None:
+    """A 股 6 位代码 → 交易所前缀（沪 ``sh`` / 深 ``sz`` / 北 ``bj``）；非 A 股返回 None。"""
+    text = str(code or "").strip()
+    if len(text) != 6 or not text.isdigit():
+        return None
+    head = text[0]
+    if head in "69":  # 600/601/603/605/688 沪A；900 沪B
+        return "sh"
+    if head in "023":  # 000/001/002/003 深A；200 深B；300/301 创业板
+        return "sz"
+    if head in "48":  # 4xx/8xx 北交所
+        return "bj"
+    return None
+
+
+def _tagged_member_codes(codes: Sequence[str]) -> tuple[str, ...]:
+    """裸代码 → 带交易所前缀的报价代码；非 A 股代码剔除（宁缺不编）。"""
+    tagged: list[str] = []
+    for code in codes:
+        prefix = member_quote_prefix(code)
+        if prefix is not None:
+            tagged.append(prefix + str(code).strip())
+    return tuple(tagged)
+
+
+def _member_quote_batches(tagged: Sequence[str]) -> list[tuple[str, ...]]:
+    """按单请求上限切批（实测 800 只一次全回，400 留一倍余量）。"""
+    size = max(1, int(_MEMBER_QUOTE_BATCH_SIZE))
+    return [tuple(tagged[i : i + size]) for i in range(0, len(tagged), size)]
+
+
+def _fetch_member_quotes_tencent(
+    tagged: Sequence[str], timeout_seconds: float
+) -> dict[str, float]:
+    """腾讯批量报价单点出口（测试 monkeypatch 本函数即可拦截外呼）。
+
+    全格式行 ``v_sz000001="…~涨跌幅(字段 32)~…"``（GBK）；脏行/缺行静默跳过。
+    返回 {裸代码: 涨跌幅%}。仅用于股票全格式行，指数短格式（``s_sh…``）不走本口。
+    """
+    if not tagged:
+        return {}
+    url = _MEMBER_QUOTE_TENCENT_URL.format(codes=",".join(tagged))
+    _final, body = http_get(
+        url, timeout=max(1.0, float(timeout_seconds)), max_bytes=_MAX_PAYLOAD_BYTES
+    )
+    text = body.decode("gbk", errors="replace")
+    out: dict[str, float] = {}
+    for tagged_code in tagged:
+        marker = f'v_{tagged_code}="'
+        start = text.find(marker)
+        if start < 0:
+            continue
+        record = text[start + len(marker) : text.find('"', start + len(marker))]
+        fields = record.split("~")
+        try:
+            pct = float(fields[32])
+        except (IndexError, ValueError):
+            continue
+        # FIN-N1：数据边界统一有限性闸，非有限值如实跳过。
+        if math.isfinite(pct):
+            out[tagged_code[2:]] = pct
+    return out
+
+
+def _fetch_member_quotes_sina(
+    tagged: Sequence[str], timeout_seconds: float
+) -> dict[str, float]:
+    """新浪批量报价单点出口（测试 monkeypatch 本函数即可拦截外呼）。
+
+    须带 ``Referer``（2026-10-13 实测无头 403）；载荷 GB18030。新浪股票行不给
+    涨跌幅字段 ⇒ 由 ``(现价[3] − 昨收[2]) / 昨收[2] × 100`` 现算。返回 {裸代码: 涨跌幅%}。
+    """
+    if not tagged:
+        return {}
+    url = _MEMBER_QUOTE_SINA_URL.format(codes=",".join(tagged))
+    _final, text = http_get_text(
+        url,
+        timeout=max(1.0, float(timeout_seconds)),
+        referer=_MEMBER_QUOTE_SINA_REFERER,
+        encoding="gb18030",
+        max_bytes=_MAX_PAYLOAD_BYTES,
+    )
+    out: dict[str, float] = {}
+    for tagged_code in tagged:
+        marker = f'var hq_str_{tagged_code}="'
+        start = text.find(marker)
+        if start < 0:
+            continue
+        record = text[start + len(marker) : text.find('"', start + len(marker))]
+        parts = record.split(",")
+        try:
+            prev_close = float(parts[2])
+            price = float(parts[3])
+        except (IndexError, ValueError):
+            continue
+        if prev_close > 0 and math.isfinite(price):
+            pct = (price - prev_close) / prev_close * 100.0
+            if math.isfinite(pct):
+                out[tagged_code[2:]] = pct
+    return out
+
+
+_MEMBER_QUOTE_FETCHERS = {
+    "腾讯": _fetch_member_quotes_tencent,
+    "新浪": _fetch_member_quotes_sina,
+}
+
+
+def reset_member_quote_cache() -> None:
+    """清空成分股批量报价缓存（测试与运维用）。"""
+    _MEMBER_QUOTE_CACHE.clear()
+
+
+def fetch_member_quotes(
+    codes: Sequence[str],
+    org: str,
+    *,
+    timeout_seconds: float = 6.0,
+    cache_seconds: float = _MEMBER_QUOTE_TTL_SECONDS,
+    budget: Any | None = None,
+) -> dict[str, float]:
+    """对同一批成分代码向指定机构取当日涨跌幅 %；不可得返回 {}，绝不抛异常。
+
+    批量口（腾讯/新浪）；按 ``_MEMBER_QUOTE_BATCH_SIZE`` 切批、逐批失败即整腿
+    缺席（不拿半截样本）。成功结果带进程内 TTL 缓存；失败不缓存（下次立即重试）。
+    """
+    fetcher = _MEMBER_QUOTE_FETCHERS.get(org)
+    tagged = _tagged_member_codes(codes)
+    if fetcher is None or not tagged:
+        return {}
+    key = (org, tagged)
+    now = time.monotonic()
+    cached = _MEMBER_QUOTE_CACHE.get(key)
+    if cached is not None and now - cached[0] <= max(0.0, float(cache_seconds)):
+        return dict(cached[1])
+    merged: dict[str, float] = {}
+    for batch in _member_quote_batches(tagged):
+        if budget_expired(budget):
+            return {}  # FIN-R1：预算尽不发起新网络调用，失败不缓存。
+        try:
+            merged.update(fetcher(batch, max(1.0, float(timeout_seconds))))
+        except Exception:  # noqa: BLE001 - 取数层不向会话链路抛。
+            return {}
+    if not merged:
+        return {}
+    _MEMBER_QUOTE_CACHE[key] = (now, dict(merged))
+    return merged
+
+
+@dataclass(frozen=True)
+class MemberDistribution:
+    """一组涨跌幅的横截面分布摘要（同量比对用）。"""
+
+    n: int
+    mean: float | None
+    median: float | None
+
+
+@dataclass(frozen=True)
+class MemberCrossCheck:
+    """东财/腾讯/新浪同批成分涨跌幅分布一致性核对结果。"""
+
+    orgs: tuple[str, ...]  # 参检机构（东财恒在）
+    consistent: bool  # 三源 n/均值/中位均在容差内
+    detail: str = ""  # 不一致/缺腿时点名说明
+    distributions: tuple[tuple[str, MemberDistribution], ...] = ()
+
+
+def _distribution(values: Sequence[float]) -> MemberDistribution:
+    cleaned: list[float] = []
+    for value in values:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(number):
+            cleaned.append(number)
+    if not cleaned:
+        return MemberDistribution(0, None, None)
+    return MemberDistribution(
+        len(cleaned), statistics.fmean(cleaned), statistics.median(cleaned)
+    )
+
+
+def crosscheck_member_distribution(
+    secid: str,
+    *,
+    timeout_seconds: float = 6.0,
+    cache_seconds: float = _MEMBER_QUOTE_TTL_SECONDS,
+    budget: Any | None = None,
+) -> MemberCrossCheck:
+    """东财/腾讯/新浪同批成分涨跌幅分布一致性核对（三源硬门佐证腿）。
+
+    东财腿＝成分表＋涨跌幅（``fetch_index_member_pairs``）；腾讯/新浪腿＝对东财
+    给出的成分代码各自批量取涨跌幅。在三腿都拿到的**公共样本**上比较样本数、
+    均值、中位数：样本数相对差 ≤2% 且 均值/中位数差 ≤0.05 个百分点 ⇒ 一致。
+    任一腿缺席或超容差 ⇒ ``consistent=False`` 且 ``detail`` 点名差在哪
+    （绝不取平均掩盖分歧）。
+    """
+    pairs = fetch_index_member_pairs(
+        secid,
+        timeout_seconds=timeout_seconds,
+        cache_seconds=_MEMBER_TTL_SECONDS,
+        budget=budget,
+    )
+    if not pairs:
+        return MemberCrossCheck((), False, "东财成分腿不可得")
+    codes = [code for code, _change in pairs]
+    em_map = {code: change for code, change in pairs}
+    tencent = fetch_member_quotes(
+        codes, "腾讯", timeout_seconds=timeout_seconds,
+        cache_seconds=cache_seconds, budget=budget,
+    )
+    sina = fetch_member_quotes(
+        codes, "新浪", timeout_seconds=timeout_seconds,
+        cache_seconds=cache_seconds, budget=budget,
+    )
+    orgs = ("东方财富",) + (("腾讯",) if tencent else ()) + (("新浪",) if sina else ())
+    missing = [name for name, leg in (("腾讯", tencent), ("新浪", sina)) if not leg]
+    if missing:
+        return MemberCrossCheck(orgs, False, f"缺腿：{'、'.join(missing)}")
+    common = [code for code in codes if code in em_map and code in tencent and code in sina]
+    if not common:
+        return MemberCrossCheck(orgs, False, "三源无公共样本")
+    dists = (
+        ("东方财富", _distribution([em_map[code] for code in common])),
+        ("腾讯", _distribution([tencent[code] for code in common])),
+        ("新浪", _distribution([sina[code] for code in common])),
+    )
+    base = dists[0][1]
+    problems: list[str] = []
+    for name, dist in dists[1:]:
+        if dist.mean is None or dist.median is None or base.mean is None or base.median is None:
+            problems.append(f"{name} 无有效分布")
+            continue
+        if abs(dist.mean - base.mean) > _MEMBER_DIST_STAT_TOLERANCE_PP:
+            problems.append(f"{name} 均值差 {abs(dist.mean - base.mean):.3f}pp")
+        if abs(dist.median - base.median) > _MEMBER_DIST_STAT_TOLERANCE_PP:
+            problems.append(f"{name} 中位差 {abs(dist.median - base.median):.3f}pp")
+    count_slack = max(1, round(len(em_map) * _MEMBER_DIST_COUNT_TOLERANCE_RATIO))
+    for name, leg in (("腾讯", tencent), ("新浪", sina)):
+        if abs(len(leg) - len(em_map)) > count_slack:
+            problems.append(f"{name} 样本数 {len(leg)}≠东财 {len(em_map)}")
+    if problems:
+        return MemberCrossCheck(orgs, False, "；".join(problems), dists)
+    return MemberCrossCheck(orgs, True, f"同批 {len(common)} 只一致", dists)
 
 
 # ==================== F19 指数走势（30 日收盘，折线卡用） ====================
