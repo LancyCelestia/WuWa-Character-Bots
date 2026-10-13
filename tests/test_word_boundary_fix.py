@@ -63,13 +63,24 @@ _REAL_CASES = [
 ]
 
 
-@pytest.mark.parametrize("detector,glued", _GLUED_CASES, ids=lambda x: str(x))
+def _stable_id(value: object) -> str:
+    """稳定 id：函数取 ``__name__``。
+
+    ``ids=lambda x: str(x)`` 对**函数对象**取 str 会带内存地址
+    （``<function is_wiki_command at 0x000001C6...>``）⇒ 各 worker 收集指纹
+    不一致，pytest-xdist 当场判 ``Different tests were collected between gw0
+    and gw1``（本仓 2026-10-13 实测）。
+    """
+    return getattr(value, "__name__", None) or str(value)
+
+
+@pytest.mark.parametrize("detector,glued", _GLUED_CASES, ids=_stable_id)
 def test_right_glued_ascii_probe_not_hit(detector, glued: str) -> None:
     """ASCII 右侧胶合（字母延续）不得命中自身触发判定。"""
     assert not detector(glued), f"{detector.__name__} 对胶合探针 {glued!r} 仍命中"
 
 
-@pytest.mark.parametrize("detector,text", _REAL_CASES, ids=lambda x: str(x))
+@pytest.mark.parametrize("detector,text", _REAL_CASES, ids=_stable_id)
 def test_real_words_still_hit(detector, text: str) -> None:
     """真词与既有触发形态照常命中——修复不得引入触发回归。"""
     assert detector(text), f"{detector.__name__} 丢失既有触发 {text!r}"

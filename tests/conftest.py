@@ -410,6 +410,44 @@ def _autosync_session_gate():
     yield
 
 
+# ---------------------------------------------------------------------------
+# 运行时路径环境的**跨文件隔离**（2026-10-13 立）
+#
+# 背景（实测）：全量/并行跑时出现一批「单跑全绿、同批红」的假红，真因是
+# 某些测试 monkeypatch 了运行时路径类环境变量后**未干净还原**，把默认值泄漏
+# 给后续测试——典型受害者是 `test_datafix_runtime_paths.py::test_guard_is_inert_
+# for_non_test_processes`（它断言 `runtime_data_dir()` **等于** `.env` 的默认根，
+# 属「依赖生产 .env 未被污染」的哨兵）。
+#
+# 这里按**环境变量层**做通用复位：每个测试**前后**都把这几枚键恢复成测试会话
+# 起始时的快照。monkeypatch 正常工作时它与 monkeypatch 互为兜底；monkeypatch
+# 漏还原时由它接住。**不改任何测试正文、不动任何生产代码。**
+_RUNTIME_ENV_KEYS: tuple[str, ...] = (
+    "BOT_RUNTIME_DATA_DIR",
+    "BOT_RUNTIME_ROOT",
+    "BOT_DATA_DIR",
+)
+_RUNTIME_ENV_SNAPSHOT: dict[str, str | None] = {
+    k: os.environ.get(k) for k in _RUNTIME_ENV_KEYS
+}
+
+
+def _restore_runtime_env() -> None:
+    for key, value in _RUNTIME_ENV_SNAPSHOT.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
+@pytest.fixture(autouse=True)
+def _isolate_runtime_path_env():
+    """每个测试前后复位运行时路径环境（治跨文件泄漏；见上方长注）。"""
+    _restore_runtime_env()
+    yield
+    _restore_runtime_env()
+
+
 def pytest_terminal_summary(terminalreporter) -> None:
     if _hash_baseline_changed:
         terminalreporter.write_line(

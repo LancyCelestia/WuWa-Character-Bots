@@ -33,6 +33,12 @@ from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
     is_weather_command,
 )
 
+
+def _stable_id(value: object) -> str:
+    """稳定 id：函数取 ``__name__``（``str(func)`` 含内存地址 ⇒ pytest-xdist
+    会判「Different tests were collected between gw0 and gw1」；本仓 2026-10-13 实测）。"""
+    return getattr(value, "__name__", None) or str(value)
+
 # ---------------------------------------------------------------------------
 # 跨能力冲突 ×4：mode 词族裸词唯一归 bot.music_mode
 # ---------------------------------------------------------------------------
@@ -74,7 +80,7 @@ def test_mode_phrase_with_payload_dual_hit_unchanged(probe: str) -> None:
         ("bot.music", is_music_command, "songqq"),
         ("bot.weather", is_weather_command, "weatherqq"),
     ],
-    ids=lambda x: str(x),
+    ids=_stable_id,
 )
 def test_ascii_right_glue_does_not_fire(
     capability: str, detector: Callable[[str], bool], glued: str
@@ -110,7 +116,7 @@ def test_ascii_right_glue_does_not_fire(
         ("bot.weather", is_weather_command, "weather Tokyo"),
         ("bot.weather", is_weather_command, "天气 上海"),
     ],
-    ids=lambda x: str(x),
+    ids=_stable_id,
 )
 def test_real_commands_still_fire(
     capability: str, detector: Callable[[str], bool], sample: str
