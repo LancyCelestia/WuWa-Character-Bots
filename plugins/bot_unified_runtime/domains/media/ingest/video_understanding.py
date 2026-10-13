@@ -50,10 +50,11 @@ _VIDEO_BRIEF_SYSTEM_PROMPT = (
 _MAX_TEXT_CONTEXT_CHARS = 1500
 # 超大音频上传徒增超时风险；与 transcribe 的预算一致。
 _MAX_AUDIO_BYTES = 20_000_000
-# 攻击者复查收口的**焊死开关**（2026-09-27 S-ATKFIX-SSRF2 立、同日裁定「先登记不堵」）：
-# 置 True 才会把 http 源交给中央 ``check_download_url`` 预检。今天整条预检腿焊死关闭，
-# 下面那段判据代码保持在场、一旦裁定放行只需把这个常量翻成 True（禁删这段）。
-_SSRF_PRECHECK_WELDED_OFF = False
+# 攻击者复查收口的**预检开关**（2026-09-27 S-ATKFIX-SSRF2 立、同日裁定「先登记不堵」；
+# **2026-10-13 用户授权翻为 True** —— 裁定由「先登记不堵」改为「放行堵住」）。
+# 置 True ⇒ 把 http 源交给中央 ``check_download_url`` 预检，内网/协议异常源在下发
+# ffmpeg 之前即被拒（预检腿见下方判据，禁删那段）。
+_SSRF_PRECHECK_WELDED_OFF = True
 _VIDEO_SUFFIX_MIME = {
     ".mp4": "video/mp4",
     ".m4v": "video/x-m4v",

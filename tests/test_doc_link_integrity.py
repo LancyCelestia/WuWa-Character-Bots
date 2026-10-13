@@ -96,7 +96,7 @@ _BASELINE_ENUM_COPIES = 0  # CEILING；实测：已跟踪件里协议成员清�
 _BASELINE_CARRIER_DEAD = 0  # HARD 零档参照值（实际执法在 test_agents_carrier_paths_no_dead_entries 用 `assert not rows`，本常量当前不被任何断言引用；实测 dead=0）
 _BASELINE_COORD_UNRESOLVED = 112  # CEILING；2026-09-22 实测：已跟踪件的死坐标
 _BASELINE_CARRIER_MISLEADING = 21  # CEILING；2026-09-22 实测：垫片 13 + 字面不存在的旧路径 8
-_BASELINE_CARRIER_TRUTH = 5  # FLOOR；开工实测地板（当前实测 34，远高于此⇒门仍绿；调大才算收紧，但「只降不升」是常令⇒本席不动，交门 owner 裁决）
+_BASELINE_CARRIER_TRUTH = 38  # FLOOR；2026-10-13 用户授权「真实收紧」：从 5 抬到开工实测 —— 原值 5 远低于实测（当时 34、今日 38）⇒ 门等于空转（test_carrier_baseline_liveness 立门即为此暴露该空转）。零余量钉死：此后每掉一条即红。
 _BASELINE_ALL_FACE_TOTAL = 113  # CEILING；2026-09-22 实测全量面（含在飞草稿）：死坐标 112 + 越界 0 + 垫片 1 + 死链 0 + 枚举 0 = 113
 
 
