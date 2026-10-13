@@ -1140,3 +1140,144 @@ def test_song_card_zebra_bands_are_two_rows_wide() -> None:
     )
     phases = re.findall(r"--surface-([ab])\) padding-box", html)
     assert phases == ["a", "a", "b", "b", "a", "a"], f"斑马纹相序不对：{phases}"
+
+
+# ---------------------------------------------------------------------------
+# VisualSpec（声明式元素契约，2026-10-13 立 · 用户需求）
+# 「任何能力都能把数据抽成元素 → 组成 HTML → 渲成图 → 发出」
+# 契约真身：domains/render/visual_spec.py ＋ visual_spec_render.py
+# ---------------------------------------------------------------------------
+
+
+class TestVisualSpecContract:
+    """元素契约：白名单 kind ＋ 一切内容转义 ＋ 可序列化。"""
+
+    def _render(self, payload: dict[str, Any]) -> str:
+        from plugins.bot_unified_runtime.domains.render import visual_spec_render as vsr
+
+        return vsr.render_visual_card_html(payload)
+
+    def test_all_allowed_kinds_render(self) -> None:
+        """在册 kind 逐个都要真渲出东西（空 spec 不算通过）。"""
+        from plugins.bot_unified_runtime.domains.render import visual_spec as vs
+
+        samples: dict[str, dict[str, Any]] = {
+            "kv": {"label": "温度", "value": "23°C"},
+            "stat": {"label": "概率", "value": "12", "unit": "%"},
+            "table": {"columns": ["a"], "rows": [["1"]]},
+            "list": {"items": ["x"]},
+            "text": {"text": "hi"},
+            "badge": {"text": "预警", "tone": "warn"},
+            "image": {"src": "https://example.invalid/a.png"},
+            "images": {"srcs": ["https://example.invalid/a.png"]},
+            "chart.line": {"series": [[1.0, 2.0, 3.0]]},
+            "chart.box": {"series": [[1.0, 2.0, 3.0, 4.0]]},
+            "chart.bar": {"series": [[1.0, 2.0]]},
+            "divider": {},
+            "progress": {"label": "湿度", "value": 62, "max": 100},
+        }
+        missing = sorted(set(samples) - vs.ALLOWED_KINDS)
+        assert not missing, f"样例未覆盖在册 kind：{missing}"
+        for kind, data in samples.items():
+            html = self._render({"title": "T", "elements": [{"kind": kind, "data": data}]})
+            assert len(html) > 400, f"{kind} 没渲出内容"
+            assert "vs-body" in html, f"{kind} 缺元素容器"
+
+    def test_unknown_kind_is_dropped_not_rendered(self) -> None:
+        """🔴 白名单铁律：未知 kind 一律丢弃并留痕，绝不放过。"""
+        from plugins.bot_unified_runtime.domains.render import visual_spec as vs
+
+        spec = vs.normalize_visual_spec(
+            {
+                "elements": [
+                    {"kind": "evil", "data": {"x": 1}},
+                    {"kind": "text", "data": {"text": "ok"}},
+                ]
+            }
+        )
+        assert len(spec.elements) == 1 and spec.elements[0].kind == "text"
+        assert any("evil" in d for d in spec.dropped), spec.dropped
+        html = self._render({"elements": [{"kind": "evil", "data": {"x": 1}}]})
+        assert "evil" not in html
+
+    def test_every_user_text_is_escaped(self) -> None:
+        """🔴 注入面：用户可控文本一律转义（模板注入铁律）。"""
+        html = self._render(
+            {
+                "title": "<script>alert(1)</script>",
+                "elements": [
+                    {"kind": "text", "data": {"text": "<img src=x onerror=alert(1)>"}},
+                    {"kind": "kv", "data": {"label": "<b>L</b>", "value": "<i>V</i>"}},
+                    {"kind": "table", "data": {"columns": ["<th>"], "rows": [["<td>"]]}},
+                ],
+            }
+        )
+        assert "<script>alert" not in html
+        assert "<img src=x onerror" not in html
+        assert "<b>L</b>" not in html
+        assert "&lt;script&gt;" in html
+
+    def test_dangerous_url_schemes_are_rejected(self) -> None:
+        """🔴 `javascript:`／`data:text/html` 一律拒收（只放行 http/https/data:image）。"""
+        html = self._render(
+            {
+                "elements": [
+                    {"kind": "image", "data": {"src": "javascript:alert(1)"}},
+                    {"kind": "image", "data": {"src": "data:text/html,<script>x</script>"}},
+                    {"kind": "image", "data": {"src": "https://ok.invalid/a.png"}},
+                ]
+            }
+        )
+        assert "javascript:alert" not in html
+        assert "data:text/html" not in html
+        assert "https://ok.invalid/a.png" in html
+
+    def test_out_of_bounds_fields_and_badge_tone_fall_back(self) -> None:
+        """越界字段丢弃；badge tone 只认在册档位（用户不能直填任意 CSS 值）。"""
+        html = self._render(
+            {
+                "elements": [
+                    {"kind": "text", "data": {"text": "ok", "bogus_field": "NOPE"}},
+                    {"kind": "badge", "data": {"text": "x", "tone": "javascript:alert(1)"}},
+                ]
+            }
+        )
+        assert "bogus_field" not in html and "NOPE" not in html
+        assert "javascript" not in html
+        assert "vs-badge-info" in html  # 回落缺省档
+
+    def test_spec_roundtrips_through_dict(self) -> None:
+        """可序列化是 WebUI 编辑器（勾选/拖动/改）的前提：to_dict → from_dict 等价。"""
+        from plugins.bot_unified_runtime.domains.render import visual_spec as vs
+
+        payload = {
+            "title": "上海天气",
+            "subtitle": "20:00",
+            "layout": "double",
+            "footer": "中央气象台",
+            "elements": [{"kind": "kv", "data": {"label": "温度", "value": "23°C"}}],
+        }
+        first = vs.normalize_visual_spec(payload)
+        again = vs.normalize_visual_spec(first.to_dict())
+        assert again.to_dict() == first.to_dict()
+
+    def test_layout_whitelist_and_caps(self) -> None:
+        """排版白名单（未知回落 single）＋ 元素数上限（防无界膨胀）。"""
+        from plugins.bot_unified_runtime.domains.render import visual_spec as vs
+
+        bad = vs.normalize_visual_spec({"layout": "absolute-position:0"})
+        assert bad.layout == "single" and bad.dropped
+
+        many = vs.normalize_visual_spec(
+            {"elements": [{"kind": "divider"} for _ in range(vs.MAX_ELEMENTS + 5)]}
+        )
+        assert len(many.elements) == vs.MAX_ELEMENTS
+        assert any("上限" in d for d in many.dropped)
+
+    def test_rendered_card_follows_ui_iron_rules(self) -> None:
+        """UI 铁律（AGENTS 第三部分）：无 viewport meta、body 透明、字重 ≤700。"""
+        html = self._render({"title": "T", "elements": [{"kind": "text", "data": {"text": "x"}}]})
+        assert "viewport" not in html.lower()
+        assert "background: transparent" in html or "background:transparent" in html
+        weights = [int(m) for m in re.findall(r"font-weight:\s*(\d+)", html)]
+        assert all(w <= 700 for w in weights), f"字重超限：{[w for w in weights if w > 700]}"
