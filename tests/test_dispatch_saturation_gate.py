@@ -1,23 +1,34 @@
-"""G-C1 —— 调度饱和门（dispatch saturation gate）。席位 S11。
+"""G-C1 —— 调度饱和门（dispatch saturation gate）。席位 S11；P-59/P-99「A 案」改造（2026-10-13）。
 
 本门把 G-C1 从「只活在任务书里」变成一道真门。执法面 = 「并行满载」这条用户裁定的
 可机检形态：**有空位 + 仍有待办切片 + 主会话在等**（SEAT-MAIN.md §12.5 自伤记 #1 的原话）。
 
-五条腿（对 `BRIEFS.md`《S11 GATE-GC1》逐条实现）
-- 腿 1 `test_backfill_log_dispatch_is_saturated`：解析真实补派日志表，任一行
-  「当时在飞数 < CEILING 且仍有待办切片」⇒ 红。
+七条腿（对 `BRIEFS.md`《S11 GATE-GC1》逐条实现；腿 7 为 2026-10-13 P-59 A 案新增）
+- 腿 1 `test_backfill_log_dispatch_is_saturated`：解析真实补派日志表，**按每行自己的「当时上限」**
+  判（第 6 列，见 `_underdispatch_violations`）；任一行「当时在飞数 < 该行当时上限 且仍有待办切片」⇒ 红。
 - 腿 2 `test_snapshot_*`：机器可验第二腿——读外部 `find` 现算后写入的
   `DISPATCH-SNAPSHOT.json`（门**绝不自起进程去猜**，只读快照），校验其形状/来源与活跃席数。
-- 腿 3 `test_synthetic_*`：反向自测——内存注「在飞数=6 且仍有待办」⇒必红，注「=CEILING」⇒放行。
+- 腿 3 `test_synthetic_*`：反向自测——内存注「在飞数=6 且仍有待办」⇒必红，注「=当时上限」⇒放行。
 - 腿 4 `test_scan_surface_floor`：日志表行数地板（防「空表蒙绿」）。
-- 腿 5 `test_baseline_literals_are_handwritten`：基线必须是手写字面量，且本自锁对
-  `Assign` 与 `AnnAssign` 双形态都认（防「改个写法就躲开自锁」/防派生式基线）。
+- 腿 5 `test_baseline_literals_are_handwritten`：基线（含 `CEILING_EPOCHS`）必须是手写字面量，
+  且本自锁对 `Assign` 与 `AnnAssign` 双形态都认（防「改个写法就躲开自锁」/防派生式基线）。
+- 腿 6 `test_snapshot_freshness_*`：快照新鲜度锁（陈旧快照不得充当「当前顶满」证据）。
+- 腿 7 `test_epoch_registry_*`：① 结构锁——§12.5 窗口内数据行**列数必须 ∈ {5,6}**、第 4 列必须取到
+  整数，异形行**点名报错而非静默跳过**（治「账具形状错 ⇒ 门瞎」）；② 反洗锁——每行「当时上限」
+  声明必须等于按行时间戳从 `CEILING_EPOCHS` 派生的值（防「被审计者自己把尺填小」洗掉真账）。
 
-设计取舍（如实记，见 SEAT-S11.md）：腿 1 用**均匀阈值 CEILING**（原判据字面 10；用户 2026-09-22T16:32Z
-「断电续跑 + 并发条款改版」第一条把它**一次性改判为 15**，方向为变严，属 §7 禁写面的一次性例外，
-原阈值行逐字抄录与「为何是收紧不是放宽」见 SEAT-MAIN.md §贰零）。
-它会把「旧 5 席纪律期」里其实已满（在飞 5 = 当时上限 5）的历史行也判红——那是本门已知
-的过度执法，按「不为了让门绿去改表」的纪律照实报红，并在报告里逐行分类。
+设计取舍（如实记，见 SEAT-S11.md / P59-A-PLAN.md / SEAT-MAIN.md §贰零）：
+- 原设计用**单一均匀阈值 CEILING**（原判据字面 10；用户 2026-09-22T16:32Z「断电续跑 + 并发条款改版」
+  第一条把它**一次性改判为 15**，方向＝变严，属 §7 禁写面的一次性例外）。均匀尺**回溯判历史**
+  会把「旧 5 席／10 席纪律期」里其实已顶满当时上限的行也判红——那是**已知的过度执法**（P-59/P-14）。
+- P-59 A 案（用户 2026-10-13 授权「判据结构加上去，采取最好的方法」）＝补派表加第 6 列「当时上限」、
+  门按行阈值判（**缺列回退当前 `CEILING`**，故新行仍按 15 咬）。
+- **本改造不会让腿 1 变绿，也不该变绿**：它把红从 23 条缩到 **6 条真账**
+  （`04:27Z`×2 / `04:45Z` / `05:28Z` / `05:41Z` / `2026-09-23T16:30Z`），这 6 条是主会话自己记在
+  §12.5「本席自伤记」与 §12.5b 里的**真实少派**，按纪律**必须留红**——消红只有两条路：
+  伪造历史（禁）或缩小扫描面（禁）。P-59 A 案消掉 18 条「均匀尺过度执法」的假红
+  （各行其实已顶满自己的当时上限：5/5、5/5、10×16）；
+  另有 1 条（`16:30Z` 在飞 17 < 当时上限 20）此前被均匀尺（15）放过，本改造把它**捞回执法面**。
 """
 
 from __future__ import annotations
@@ -39,7 +50,25 @@ DISPATCH_LOG_MIN_ROWS: int = 11
 #: 调度饱和上限 = 用户 2026-09-22 改判的并发席位数：05:51Z 起十席同条消息派齐，
 #: 16:32Z「断电续跑 + 并发条款改版」第一条把它**一次性提到 15**（方向＝变严，见本文件头注）。
 #: 「有空位」＝在飞数 < 此值。腿 3 的反向自测即钉死这个阈值的语义。
+#: **本值只作两用**：① 第 6 列「当时上限」缺列的**回退值**（新行仍按它咬）；② 快照腿（腿 2）的现役上限。
 CEILING: int = 15
+
+#: 纪元登记表（P-59 A 案 · 反洗锁，腿 7②）：`(生效起点 UTC, 该期满载上限)`，按行时间戳派生。
+#: **手写字面量，禁派生**（与 `CEILING` 同受腿 5 自锁）——它把「当时上限」的真值钉在**门文件**里，
+#: 而不是留在被审计者能改的补派表里，故补派表的第 6 列**不能自己把尺填小**来洗掉真账。
+#: 证据（逐条可复跑，见 P59-A-PLAN.md §2 与 SEAT-MAIN.md 对应行）：
+#:   5  —— §12.5 `03:37Z`/`03:41Z` 表内自注「（5 席，旧纪律上限 5）」「5（旧纪律 5 满）」
+#:   10 —— §12.5 `04:45Z` 行内「M4-R3 ＋（**并发改判 10 席**）S1/S2/S3 三席」（切点乙，S260 推荐）
+#:   15 —— §贰零 用户 2026-09-22T16:32Z 一次性授权（原阈值行逐字抄录在同节）
+#:   10 —— §12.5a 第 50 批（`06:09:20Z`）「满载档由 15 降到 10＝用户改令，非本席少派」
+#:   20 —— §12.5a 第 58 批（`11:48:49Z`）「本批起满载档 10→**20**＝用户 20 席令」
+CEILING_EPOCHS: tuple[tuple[str, int], ...] = (
+    ("2026-09-22T00:00:00Z", 5),
+    ("2026-09-22T04:45:00Z", 10),
+    ("2026-09-22T16:32:00Z", 15),
+    ("2026-09-23T06:09:20Z", 10),
+    ("2026-09-23T11:48:49Z", 20),
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _TAXONOMY_DIR = _REPO_ROOT / ".superpowers" / "sdd" / "2026-09-22-taxonomy"
@@ -47,6 +76,8 @@ _SEAT_MAIN = _TAXONOMY_DIR / "SEAT-MAIN.md"
 _SNAPSHOT = _TAXONOMY_DIR / "DISPATCH-SNAPSHOT.json"
 
 _CELL_SPLIT = re.compile(r"\s*\|\s*")
+#: 行首时间戳（``2026-09-22T03:37Z`` / ``2026-09-23T02:12:50Z`` 两形态）；秒缺省按 00 归一。
+_TIMESTAMP_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?Z")
 
 
 # ---------------------------------------------------------------------------
@@ -65,8 +96,32 @@ def _has_pending(text: str) -> bool:
     return text.strip().startswith("是")
 
 
+def _normalize_timestamp(text: str) -> str | None:
+    """``…T03:37Z`` / ``…T02:12:50Z`` → ``YYYY-MM-DDTHH:MM:SSZ``（秒缺省补 00）；取不到即 ``None``。"""
+    match = _TIMESTAMP_RE.search(text)
+    if not match:
+        return None
+    year, month, day, hh, mm, ss = match.groups()
+    return f"{year}-{month}-{day}T{hh}:{mm}:{ss or '00'}Z"
+
+
+def _epoch_ceiling(timestamp: str) -> int | None:
+    """按行时间戳从 `CEILING_EPOCHS` 派生「当时上限」（反洗锁腿 7② 的唯一标尺）。"""
+    key = _normalize_timestamp(timestamp)
+    if key is None:
+        return None
+    value: int | None = None
+    for cut, ceiling in CEILING_EPOCHS:
+        if cut <= key:
+            value = ceiling
+    return value
+
+
 def _parse_backfill_rows(markdown_text: str) -> list[dict[str, object]]:
-    """解析 SEAT-MAIN.md §12.5 的补派日志表（五列）。表外内容一律忽略。"""
+    """解析 SEAT-MAIN.md §12.5 的补派日志表（**五或六列**）。表外内容一律忽略。
+
+    第 6 列「当时上限」存在时入 ``row["ceiling"]``；缺列 ⇒ ``None``（判据回退当前 `CEILING`）。
+    """
     try:
         after = markdown_text.split("### 12.5", 1)[1]
     except IndexError as exc:  # pragma: no cover - 结构缺失属事故，必须显式暴露
@@ -80,7 +135,7 @@ def _parse_backfill_rows(markdown_text: str) -> list[dict[str, object]]:
             continue
         cells = _CELL_SPLIT.split(line.strip("|").strip())
         cells = [c.strip() for c in cells]
-        if len(cells) != 5:
+        if len(cells) not in (5, 6):
             continue
         first = cells[0]
         if first.startswith("时间戳"):  # 表头
@@ -96,21 +151,27 @@ def _parse_backfill_rows(markdown_text: str) -> list[dict[str, object]]:
                 "dispatched": cells[2],
                 "in_flight": _leading_int(cells[3]),
                 "pending": _has_pending(cells[4]),
+                "ceiling": _leading_int(cells[5]) if len(cells) == 6 else None,
             }
         )
     return rows
 
 
 def _underdispatch_violations(rows: list[dict[str, object]], *, ceiling: int = CEILING) -> list[str]:
-    """腿 1/2/3 共用的判据：返回「有空位且仍有待办」的行（即该派没派）。"""
+    """腿 1/2/3 共用的判据：返回「有空位且仍有待办」的行（即该派没派）。
+
+    **按行判**（P-59 A 案）：`row["ceiling"]` 存在则用它当该行的「当时上限」，缺列回退 `ceiling`
+    实参（真实表里即当前 `CEILING`，故新行仍按 15 咬；合成行不传 `ceiling` 键亦同）。
+    """
     violations: list[str] = []
     for row in rows:
         in_flight = row["in_flight"]
         if in_flight is None:  # pragma: no cover - 解析器已过滤，防御性双保险
             continue
-        if bool(row["pending"]) and int(in_flight) < ceiling:
+        row_ceiling = row.get("ceiling") or ceiling
+        if bool(row["pending"]) and int(in_flight) < int(row_ceiling):
             violations.append(
-                f"{row['timestamp']} 在飞数={in_flight}（<{ceiling}）且仍有待办切片"
+                f"{row['timestamp']} 在飞数={in_flight}（<{row_ceiling}＝当时上限）且仍有待办切片"
             )
     return violations
 
@@ -181,19 +242,38 @@ def test_synthetic_no_pending_passes() -> None:
     assert _underdispatch_violations(ok, ceiling=CEILING) == []
 
 
+def test_synthetic_per_row_ceiling_is_honoured() -> None:
+    """反向自测（P-59 A 案核心）：同一枚在飞数，按**行内**上限判 ⇒ 满员放行、缺一即红。
+
+    ``in_flight=10, ceiling=10`` ⇒ 绿；``in_flight=9, ceiling=10`` ⇒ 红。
+    这钉的是「判据读的是行内上限、不是全局 `CEILING`」——若判据仍用全局 `CEILING=15`，
+    两枚都会判红，本用例即失败。
+    """
+    saturated = [
+        {"timestamp": "SYNTH", "closed": "x", "dispatched": "y", "in_flight": 10, "pending": True, "ceiling": 10}
+    ]
+    assert _underdispatch_violations(saturated, ceiling=CEILING) == []
+    short = [
+        {"timestamp": "SYNTH", "closed": "x", "dispatched": "y", "in_flight": 9, "pending": True, "ceiling": 10}
+    ]
+    assert len(_underdispatch_violations(short, ceiling=CEILING)) == 1
+
+
 def test_parser_extracts_in_flight_from_annotated_cells() -> None:
-    """解析器自证：'5（旧纪律 5 满）'→5、'**10**'→10、'0'→0；表头/分隔行不算数据行。"""
+    """解析器自证：'5（旧纪律 5 满）'→5、'**10**'→10、'0'→0；表头/分隔行不算数据行；
+    第 6 列「当时上限」存在 ⇒ 入 ``ceiling``，缺列 ⇒ ``None``（判据回退当前 `CEILING`）。"""
     sample = (
         "### 12.5 补派日志表\n"
-        "| 时间戳(UTC) | 交卷/阵亡席位 | 补进去的席位 | 当时在飞数 | 仍有待办切片 |\n"
-        "|---|---|---|---|---|\n"
-        "| 2026-01-01T00:00Z | a | b | 5（旧纪律 5 满） | 是 |\n"
-        "| 2026-01-01T00:01Z | a | b | **10** | 是 |\n"
+        "| 时间戳(UTC) | 交卷/阵亡席位 | 补进去的席位 | 当时在飞数 | 仍有待办切片 | 当时上限 |\n"
+        "|---|---|---|---|---|---|\n"
+        "| 2026-01-01T00:00Z | a | b | 5（旧纪律 5 满） | 是 | 5 |\n"
+        "| 2026-01-01T00:01Z | a | b | **10** | 是 | 10 |\n"
         "| 2026-01-01T00:02Z | a | b | 0 | 是 |\n"
         "### 12.6 next\n"
     )
     rows = _parse_backfill_rows(sample)
     assert [r["in_flight"] for r in rows] == [5, 10, 0]
+    assert [r["ceiling"] for r in rows] == [5, 10, None]
     assert all(r["pending"] for r in rows)
 
 
@@ -246,19 +326,106 @@ def test_snapshot_active_seats_meet_ceiling() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 腿 7（P-59 A 案 · 2026-10-13 用户授权「判据结构加上去」）—— 结构锁 + 反洗锁
+#
+# 为什么这两条是 A 案的**必需件**、不是锦上添花（施工图 `P59-A-PLAN.md` §5.1）：
+#   ① 加第 6 列时，旧解析器的 `if len(cells) != 5: continue` 会把**整表静默丢行**
+#      （实跑：`rows_parsed` 16→0，地板腿才抓得住「全塌」、抓不住「塌一半」）。改造前盘上已有一行
+#      （§12.5 的 `17:29Z` 行，列数畸形）因此**从未被解析**——本波已把它修回执法面（`rows_parsed` 65→66）。
+#   ② 只加列不加反洗锁 ⇒ 判据变成「被审计者自己填的尺」：把某行的「当时上限」写成 ≤ 在飞数
+#      即可把真账洗绿，而 `rows_parsed` 与地板腿**完全看不见**（`P59-A-PLAN.md` §5.1 命令③实证）。
+# ---------------------------------------------------------------------------
+
+
+def _malformed_data_lines(markdown_text: str) -> list[str]:
+    """§12.5 窗口内「以 | 开头 + 首格像时间戳」的行里，列数 ∉ {5,6} 或第 4 列取不到整数的行。
+
+    表头/分隔行（首格非时间戳形态）不在此列。
+    """
+    try:
+        after = markdown_text.split("### 12.5", 1)[1]
+    except IndexError as exc:  # pragma: no cover - 结构缺失属事故
+        raise AssertionError("SEAT-MAIN.md 缺 §12.5 补派日志表标题，取数面塌了") from exc
+    section = after.split("### 12.6", 1)[0]
+    bad: list[str] = []
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [c.strip() for c in _CELL_SPLIT.split(stripped.strip("|").strip())]
+        if not cells or not _TIMESTAMP_RE.match(cells[0]):
+            continue
+        if len(cells) not in (5, 6) or _leading_int(cells[3]) is None:
+            bad.append(stripped[:80])
+    return bad
+
+
+def test_backfill_rows_have_no_malformed_shape() -> None:
+    """结构锁（腿 7①）：补派表数据行**不许有畸形列数**——畸形行要「点名报错」而非被静默跳过。
+
+    红 = 账具形状错（如缺一枚 ASCII 竖线把两格粘成一格）。这不是「测试坏了」，是设计意图：
+    被静默丢掉的整行等于**从执法面上消失**，而地板腿只看总行数，看不见「塌一行」。
+    """
+    bad = _malformed_data_lines(_SEAT_MAIN.read_text(encoding="utf-8"))
+    assert not bad, (
+        "G-C1 结构锁（腿 7①）：补派表存在列数畸形、会被静默丢行的数据行（应点名修复账具）：\n  "
+        + "\n  ".join(bad)
+    )
+
+
+def test_declared_ceiling_matches_epoch_registry() -> None:
+    """反洗锁（腿 7②）：每行「当时上限」声明必须等于按行时间戳从 `CEILING_EPOCHS` 派生的值。
+
+    缺列的行走回退值 `CEILING`（＝新行仍按现役尺咬）。声明 ≠ 派生即点名——这是防「把尺填小
+    洗掉真账」的唯一一道锁（地板腿与行数完全看不见这种洗法）。
+    """
+    rows = _read_backfill_rows()
+    mismatches: list[str] = []
+    for row in rows:
+        declared = row.get("ceiling") or CEILING
+        derived = _epoch_ceiling(str(row["timestamp"]))
+        if declared != derived:
+            mismatches.append(f"{row['timestamp']} 声明={declared} 登记表派生={derived}")
+    assert not mismatches, (
+        "G-C1 反洗锁（腿 7②）：补派表「当时上限」声明与纪元登记表不一致（疑似洗账或填错）：\n  "
+        + "\n  ".join(mismatches)
+    )
+
+
+def test_malformed_row_is_caught_synthetic() -> None:
+    """反向自测：注一枚 4 列数据行 ⇒ 结构锁必须点名（否则结构锁形同虚设）。"""
+    sample = "### 12.5 x\n| 2026-01-01T00:00Z | a | b | 是 |\n### 12.6 next\n"
+    assert _malformed_data_lines(sample), "4 列数据行必须被结构锁点名"
+
+
+def test_ceiling_registry_derivation_synthetic() -> None:
+    """反向自测：纪元派生在五个切点上正确（5→10→15→10→20 的阶跃），非时间戳 ⇒ None。"""
+    assert _epoch_ceiling("2026-09-22T03:37Z") == 5
+    assert _epoch_ceiling("2026-09-22T04:44:59Z") == 5
+    assert _epoch_ceiling("2026-09-22T04:45Z") == 10
+    assert _epoch_ceiling("2026-09-22T16:32Z") == 15
+    assert _epoch_ceiling("2026-09-23T06:09:20Z") == 10
+    assert _epoch_ceiling("2026-09-23T11:48:49Z") == 20
+    assert _epoch_ceiling("not-a-timestamp") is None
+
+
+# ---------------------------------------------------------------------------
 # 腿 5 —— 基线自锁（手写字面量 + Assign/AnnAssign 双形态）
 # ---------------------------------------------------------------------------
 
 
 def test_baseline_literals_are_handwritten() -> None:
-    """DISPATCH_LOG_MIN_ROWS / CEILING 必须是**手写的整数字面量**，且本自锁认全两种赋值形态。
+    """DISPATCH_LOG_MIN_ROWS / CEILING 必须是**手写的整数字面量**、`CEILING_EPOCHS` 必须是
+    **手写的 (字符串, 整数) 元组**，且本自锁认全两种赋值形态。
 
-    防两类假绿：① 派生式基线（``= len(rows)`` ⇒ 门永远绿）；
-    ② 换一种写法躲自锁（只认 ``Assign`` 就会漏掉 ``AnnAssign``，反之亦然）。
+    防三类假绿：① 派生式基线（``= len(rows)`` ⇒ 门永远绿）；
+    ② 换一种写法躲自锁（只认 ``Assign`` 就会漏掉 ``AnnAssign``，反之亦然）；
+    ③ 把纪元登记表算出来（``= tuple(...)``）⇒ 反洗锁的「真值」跟着被审计者走，锁即失效。
     """
     tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
     baselines = {"DISPATCH_LOG_MIN_ROWS", "CEILING"}
     found: dict[str, str] = {}
+    epochs_found = False
     for node in tree.body:  # 仅看模块顶层赋值
         targets: list[ast.expr] = []
         if isinstance(node, ast.Assign):
@@ -266,14 +433,30 @@ def test_baseline_literals_are_handwritten() -> None:
         elif isinstance(node, ast.AnnAssign) and isinstance(node.value, ast.expr):
             targets = [node.target]
         for target in targets:
-            if isinstance(target, ast.Name) and target.id in baselines:
-                value = node.value  # type: ignore[attr-defined]
-                kind = type(node).__name__
+            if not isinstance(target, ast.Name):
+                continue
+            value = node.value  # type: ignore[attr-defined]
+            kind = type(node).__name__
+            if target.id in baselines:
                 assert isinstance(value, ast.Constant) and isinstance(
                     value.value, int
                 ), f"{target.id} 不是手写字面量（是 {ast.dump(value)}）——基线不许派生"
                 found[target.id] = kind
+            elif target.id == "CEILING_EPOCHS":
+                assert isinstance(value, ast.Tuple), (
+                    f"CEILING_EPOCHS 必须是手写元组字面量（是 {ast.dump(value)}）——登记表不许派生"
+                )
+                assert value.elts, "CEILING_EPOCHS 不许为空"
+                for elt in value.elts:
+                    assert isinstance(elt, ast.Tuple) and len(elt.elts) == 2, (
+                        f"CEILING_EPOCHS 每项须是 (起算时刻, 上限) 二元组：{ast.dump(elt)}"
+                    )
+                    cut, ceiling = elt.elts
+                    assert isinstance(cut, ast.Constant) and isinstance(cut.value, str)
+                    assert isinstance(ceiling, ast.Constant) and isinstance(ceiling.value, int)
+                epochs_found = True
     assert set(found) == baselines, f"基线自锁：只见到 {set(found)}，应含 {baselines}"
+    assert epochs_found, "基线自锁：未见到手写字面量 CEILING_EPOCHS"
 
 
 # ---------------------------------------------------------------------------
