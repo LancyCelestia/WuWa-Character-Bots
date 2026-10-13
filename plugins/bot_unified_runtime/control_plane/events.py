@@ -42,7 +42,7 @@ EVENT_CATEGORIES = (
 EVENT_SOURCES = (
     "bot",
     "nonebot",
-    "napcat",
+    "snowluma",
     "telegram",
     "mail",
     "control_plane",

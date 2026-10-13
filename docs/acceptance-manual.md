@@ -55,8 +55,7 @@ chat-smoke 输出 llm_status=ok 且
 
 ## 2. SnowLuma 接入 QQ（对话通过后再做）
 
-详细步骤见 docs/snowluma-setup.md（旧协议端 NapCat 的说明已降级为回滚路径，见
-docs/napcat-setup.md，新接入不要再照它操作），要点：
+详细步骤见 docs/snowluma-setup.md（NapCat 回滚路径已于 2026-10-13 拆除），要点：
 
 1. 启动协议端：双击 `$DEV_ROOT\SnowLuma\launcher.bat`（内部 `node ./index.mjs`，自带 node.exe），
    WebUI 起在 http://127.0.0.1:5099 ，用普通快捷方式启动 QQ 小号并登录。

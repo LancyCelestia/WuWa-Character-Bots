@@ -7,7 +7,7 @@
   （/api/v1/media/analyze 不再恒 503 media_config_unavailable）；
 - SendQueue 注入缺口：工厂增 ``send_queue`` 形参，注入后 queue.* 动作有
   真实作用对象（未注入如实 degraded）；
-- runtime_attached 冻结谎报：napcat.status 只信 ``runtime_state_probe``
+- runtime_attached 冻结谎报：snowluma.status 只信 ``runtime_state_probe``
   实时探针现查；装配期标量不再冒充连接声明。
 """
 
@@ -136,7 +136,7 @@ def test_risk4_queue_actions_degrade_honestly_without_injection(
 
 
 # ---------------------------------------------------------------------------
-# V21-risk-4 · napcat.status 实时探针（原冻结标量 RED 改钉 handler 语义）
+# V21-risk-4 · snowluma.status 实时探针（原冻结标量 RED 改钉 handler 语义）
 # ---------------------------------------------------------------------------
 
 
@@ -152,7 +152,7 @@ def test_risk4_napcat_status_no_probe_reports_disconnected_despite_attached(
         ),
         runtime_attached=True,
     )
-    handler = _default_action_handler(app, "napcat.status")
+    handler = _default_action_handler(app, "snowluma.status")
     result = asyncio.run(handler({}))
     assert result == {
         "status": "ok",
@@ -170,7 +170,7 @@ def test_risk4_napcat_status_probe_reports_live_connection(tmp_path: Path) -> No
         runtime_attached=True,
         runtime_state_probe=lambda: True,
     )
-    handler = _default_action_handler(app, "napcat.status")
+    handler = _default_action_handler(app, "snowluma.status")
     result = asyncio.run(handler({}))
     assert result == {
         "status": "ok",
@@ -180,7 +180,7 @@ def test_risk4_napcat_status_probe_reports_live_connection(tmp_path: Path) -> No
     app2 = _app_with(
         tmp_path, _config(tmp_path), runtime_state_probe=lambda: False
     )
-    result2 = asyncio.run(_default_action_handler(app2, "napcat.status")({}))
+    result2 = asyncio.run(_default_action_handler(app2, "snowluma.status")({}))
     assert result2["details"]["connected"] is False
 
 
@@ -196,7 +196,7 @@ def test_risk4_napcat_status_probe_failure_fails_open(tmp_path: Path) -> None:
         ),
         runtime_state_probe=_boom,
     )
-    handler = _default_action_handler(app, "napcat.status")
+    handler = _default_action_handler(app, "snowluma.status")
     result = asyncio.run(handler({}))
     assert result == {
         "status": "degraded",
@@ -308,12 +308,12 @@ def test_risk4_action_details_survive_to_client(tmp_path: Path) -> None:
     )
     with TestClient(app, base_url="http://127.0.0.1:8742") as client:
         preview = client.post(
-            "/api/v1/actions/napcat.status/preview",
+            "/api/v1/actions/snowluma.status/preview",
             headers=ROOT,
             json={"expected_version": 0},
         ).json()["data"]
         run = client.post(
-            "/api/v1/actions/napcat.status/execute",
+            "/api/v1/actions/snowluma.status/execute",
             headers=ROOT,
             json={
                 "expected_version": 0,

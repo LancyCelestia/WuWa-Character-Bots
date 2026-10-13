@@ -298,13 +298,13 @@ def test_napcat_probe_and_non_blocking(monkeypatch: pytest.MonkeyPatch, tmp_path
 
     monkeypatch.setattr(prc, "probe_tcp", lambda host, port, timeout=2.0: False)
     results = prc.run_all(root)
-    napcat = next(r for r in results if r.id == "napcat")
-    assert napcat.status == SKIP  # 不可达 → SKIP（提示不阻断）
+    snowluma = next(r for r in results if r.id == "snowluma")
+    assert snowluma.status == SKIP  # 不可达 → SKIP（提示不阻断）
     assert prc.main(["--json", "--project-root", str(root)]) == 0  # exit 仍为 0
 
     monkeypatch.setattr(prc, "probe_tcp", lambda host, port, timeout=2.0: True)
     results = prc.run_all(root)
-    assert next(r for r in results if r.id == "napcat").status == PASS
+    assert next(r for r in results if r.id == "snowluma").status == PASS
 
 
 def test_onebot_endpoints_come_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -318,16 +318,16 @@ def test_onebot_endpoints_come_from_env(monkeypatch: pytest.MonkeyPatch) -> None
 
     probed: list[tuple[str, int]] = []
     monkeypatch.setattr(prc, "probe_tcp", lambda host, port, timeout=2.0: probed.append((host, port)) or True)
-    result = prc.check_napcat(prc.onebot_endpoints(env))
+    result = prc.check_snowluma(prc.onebot_endpoints(env))
     assert probed == [("127.0.0.1", 3001), ("127.0.0.1", 3002)]
     assert result.status == PASS
     assert "SECRET_ABC" not in f"{result.name}{result.message}{result.fix_hint}"
 
 
 def test_onebot_endpoints_fallback_and_separators() -> None:
-    assert prc.onebot_endpoints({}) == [(prc.NAPCAT_HOST, prc.NAPCAT_PORT)]
-    assert prc.onebot_endpoints({"ONEBOT_WS_URLS": ""}) == [(prc.NAPCAT_HOST, prc.NAPCAT_PORT)]
-    assert prc.onebot_endpoints({"ONEBOT_WS_URLS": "bad json ["}) == [(prc.NAPCAT_HOST, 3001)]
+    assert prc.onebot_endpoints({}) == [(prc.SNOWLUMA_HOST, prc.SNOWLUMA_PORT)]
+    assert prc.onebot_endpoints({"ONEBOT_WS_URLS": ""}) == [(prc.SNOWLUMA_HOST, prc.SNOWLUMA_PORT)]
+    assert prc.onebot_endpoints({"ONEBOT_WS_URLS": "bad json ["}) == [(prc.SNOWLUMA_HOST, 3011)]
     # 分号裸串写法等效；重复端点去重；非 ws 协议与坏端口跳过
     assert prc.onebot_endpoints(
         {
@@ -341,7 +341,7 @@ def test_napcat_partial_down_reports_missing_port(monkeypatch: pytest.MonkeyPatc
     """学校号节点掉了必须点名，不能因为主号可达就全绿过去."""
     monkeypatch.setattr(prc, "probe_tcp", lambda host, port, timeout=2.0: port == 3001)
     env = {"ONEBOT_WS_URLS": '["ws://127.0.0.1:3001","ws://127.0.0.1:3002"]'}
-    result = prc.check_napcat(prc.onebot_endpoints(env))
+    result = prc.check_snowluma(prc.onebot_endpoints(env))
     assert result.status == SKIP  # 仍不阻断
     assert "127.0.0.1:3002" in result.message
     assert "127.0.0.1:3001" not in result.message  # 详情只点名掉线的那个

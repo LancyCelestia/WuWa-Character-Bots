@@ -1,7 +1,7 @@
 # SnowLuma + NoneBot 连接 QQ 配置指南
 
-> 现行协议端为 **SnowLuma**（2026-09-18 起）。NapCat 未卸载，保留作回滚路径，
-> 其配置与操作见 [napcat-setup.md](napcat-setup.md)。
+> 现行协议端为 **SnowLuma**（2026-09-18 起）。NapCat 已于 2026-10-13 完全退役
+> （回滚路径与旧协议端文档一并拆除），不再保留退路。
 > 本文件记录迁移后的真实配置面；改动前先读 §1 的差异表和 §2 的令牌规则。
 
 ---
@@ -186,16 +186,22 @@ ONEBOT_WS_URLS=["ws://127.0.0.1:3001/?access_token=<主号令牌>"]
 
 ---
 
-## 4. 回滚到 NapCat
+## 4. 协议端注入策略（2026-10-13 根因）
 
-NapCat 目录与配置**未被修改**，回滚只需三步：
+**`hookAutoLoad` 必须保持 `false`。** 这是 2026-10-13 事故的直接结论：
 
-1. 停 QQ（同 §3.2）；
-2. `.env.prod` 的 `access_token` 换回旧值，并用 `C:\Software\NapCat\launcher-win10-user.bat` 启动 NapCat，
-   确认「网络配置」里 3001 的 WebSocket 服务器仍在运行；
-3. 重新启动 bot。
+- 该开关在 Windows 上是**全有全无**的：`index.mjs` 的 `shouldAutoLoadPid()` 在非 linux
+  平台无条件 `return true`；`PipeWatcher.knownPids` 初值为空 ⇒ 首轮 tick 会把
+  **SnowLuma 启动前就在跑的** QQ 也一并报成 `process-discovered` 并注入。
+- 决策发生在注入**之前**，那时只有 PID、没有 UIN ⇒「按账号白名单自动加载」在
+  SnowLuma 内**表达不出来**。本机同时挂着日常号，故 2026-10-12/13 多次把
+  日常号 `3865067623` 注入（日志实证 `login detected: UIN=3865067623`）。
+- 现策略：`config\runtime.json` 的 `hookAutoLoad=false`，并由 `launcher.bat` 的
+  `SNOWLUMA_HOOK_AUTOLOAD=0` 兜底（该环境变量优先级高于配置文件，WebUI 改写也冲不掉）。
+- 账号靠 WebUI「进程」页手动点「加载」。
 
-> 若回滚后连不上，优先核对 `.env.prod` 的 token 与 NapCat `onebot11_<QQ号>.json` 里的 `token` 是否一致。
+> 允许被注入的账号：`3670290043` / `3828485060` / `3958874605` / `2300230562`。
+> 这四个号与端口：主号 3011、`3670290043` 3012、`3828485060` 3013、学校号 3014。
 
 ---
 
@@ -216,7 +222,7 @@ NapCat 目录与配置**未被修改**，回滚只需三步：
 症状链：SnowLuma 日志 `[Bridge] session closed: UIN=…` → `[Bridge.Action] Action ingress quiesced` →
 `[OneBot] session closed`，随后该 QQ 进程从 `tasklist` 消失；bot 侧表现为
 `ConnectionRefusedError [WinError 1225] 远程计算机拒绝网络连接`（因为节点随会话停止监听 3001）。
-**这与协议端选型无关**，NapCat 时期同样会遇到（见 [napcat-setup.md](napcat-setup.md) §1.1）。
+**这与协议端选型无关**，NapCat 时期同样会遇到（旧协议端文档已于 2026-10-13 随回滚路径一并拆除）。
 
 处理：
 
@@ -272,6 +278,5 @@ bot 侧语音出站（TTS 产物 wav → QQ 语音条）**零自有转码**：wa
 
 ## 7. 相关文档
 
-- [napcat-setup.md](napcat-setup.md) —— 旧协议端（回滚路径）
 - [acceptance-manual.md](acceptance-manual.md) —— 验收与接入手册
 - [external-runtime-access.md](external-runtime-access.md) —— 外部运行时与工作区边界

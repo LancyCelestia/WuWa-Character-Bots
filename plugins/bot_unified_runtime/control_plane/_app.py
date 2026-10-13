@@ -240,7 +240,7 @@ def create_control_plane_app(
     - ``send_queue``：宿主进程的发送队列实例，注入后 queue.pause/resume/drain
       才有真实作用对象（未注入如实 degraded）；
     - ``runtime_state_probe``：零参可调用，返回 SnowLuma/OneBot 实时连接态。
-      napcat.status 只信该探针的现查结果；``runtime_attached`` 仅是装配期
+      snowluma.status 只信该探针的现查结果；``runtime_attached`` 仅是装配期
       「app 位于 bot 宿主进程」事实，不再充当连接声明（探针缺省=如实未连接）。
     """
     settings: ControlPlaneSettings = control_plane_settings(config)
@@ -438,7 +438,7 @@ def create_control_plane_app(
                     "status": "degraded",
                     "details": {"execution": "send_queue_not_connected"},
                 }
-            if action_id == "napcat.status":
+            if action_id == "snowluma.status":
                 # V21-risk-4：连接态只信实时探针现查；runtime_attached 是装配期
                 # 标量，不得冒充连接声明。探针缺省=如实未连接（不装样子）。
                 if runtime_state_probe is None:
@@ -481,7 +481,7 @@ def create_control_plane_app(
             "runtime.reload",
             "runtime.safe_restart",
             "adapter.reconnect",
-            "napcat.status",
+            "snowluma.status",
             "queue.pause",
             "queue.resume",
             "queue.drain",

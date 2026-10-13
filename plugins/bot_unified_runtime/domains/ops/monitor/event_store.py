@@ -54,7 +54,7 @@ from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_s
 EVENT_SOURCES = (
     "bot",
     "nonebot",
-    "napcat",
+    "snowluma",
     "telegram",
     "mail",
     "control_plane",

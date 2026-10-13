@@ -152,8 +152,8 @@ def _tcp_probe(host: str, port: int, name: str, timeout: float = 2.0) -> None:
 
 
 def measure_napcat() -> None:
-    print("③ SnowLuma WS（127.0.0.1:3001 TCP 握手，非全协议）：")
-    _tcp_probe("127.0.0.1", 3001, "napcat-tcp")
+    print("③ SnowLuma WS（127.0.0.1:3011 TCP 握手，非全协议）：")
+    _tcp_probe("127.0.0.1", 3011, "snowluma-tcp")
 
 
 def measure_mail() -> None:
@@ -192,7 +192,7 @@ def main() -> None:
         measure_route()
     if only in ("all", "render"):
         measure_render()
-    if only in ("all", "napcat"):
+    if only in ("all", "snowluma", "napcat"):  # "napcat" 为旧别名，保留以兼容既有用法
         measure_napcat()
     if only in ("all", "mail"):
         measure_mail()

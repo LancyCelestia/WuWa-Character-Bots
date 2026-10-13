@@ -185,7 +185,7 @@ def build_v1_router(
         @router.get("/logs/sources")
         def log_sources(principal: Principal = Depends(read_dependency)) -> dict[str, Any]:
             del principal
-            return _ok({"items": ["bot", "nonebot", "napcat", "control_plane", "decision_engine", "pipeline", "sender", "llm", "database", "scheduler"]})
+            return _ok({"items": ["bot", "nonebot", "snowluma", "control_plane", "decision_engine", "pipeline", "sender", "llm", "database", "scheduler"]})
 
     from .actions import build_actions_router
     router.include_router(build_actions_router(service=action_service,

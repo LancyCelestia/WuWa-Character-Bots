@@ -35,12 +35,12 @@ class Bus:
 def test_seven_categories_and_untrusted_fields(collector_type, level, category):
     bus = Bus()
     collector = collector_type(bus)
-    assert collector.ingest(source="napcat", level=level, details={"request_id": "req_fixture", "body": "private-chat", "token": "sk-secret", "path": "C:/private/file"})
+    assert collector.ingest(source="snowluma", level=level, details={"request_id": "req_fixture", "body": "private-chat", "token": "sk-secret", "path": "C:/private/file"})
     payload = bus.events[0].to_dict()
-    assert payload["source"] == "napcat" and payload["category"] == category
+    assert payload["source"] == "snowluma" and payload["category"] == category
     assert payload["details"] == {"request_id": "req_fixture"}
     assert "private" not in repr(payload) and "secret" not in repr(payload)
-    assert collector.status()["napcat"] == "not_connected"  # ingest 是协议适配口，不伪装已连接进程
+    assert collector.status()["snowluma"] == "not_connected"  # ingest 是协议适配口，不伪装已连接进程
 
 
 def test_invalid_or_unrelated_log_is_ignored(collector_type):
@@ -135,7 +135,7 @@ def test_app_lifespan_advertises_real_collector_status(tmp_path, collector_type,
         assert client.get("/api/v1/logs/sources").status_code == 401
         response = client.get("/api/v1/logs/sources", headers=headers).json()["data"]
         assert response["collectors"]["stdlib"] == ("attached" if attached else "not_connected")
-        assert response["collectors"]["napcat"] == "not_connected"
+        assert response["collectors"]["snowluma"] == "not_connected"
         assert response["collectors"]["raw_content"] is False
         protocol = client.get("/api/v1/protocol", headers=headers).json()["data"]
         assert protocol["services"]["events"]["console_collectors"] == ("process_summaries" if attached else "not_connected")

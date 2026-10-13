@@ -34,7 +34,7 @@ CAS 版本）→ 受控异步运行（超时截断）→ 落回执与审计。�
 | `POST /api/v1/actions/runs/{run_id}/cancel` | 协作式取消（只 `task.cancel()`，不强杀线程/进程） |
 
 现役注册的动作 id（枚数以注册表现算为准）就是核心要求点名的那一组（`runtime.reload`、
-`runtime.safe_restart`、`adapter.reconnect`、`napcat.status`、`queue.pause`、
+`runtime.safe_restart`、`adapter.reconnect`、`snowluma.status`、`queue.pause`、
 `queue.resume`、`queue.drain`、`logging.level`、`resources.refresh`、
 `llm.routes.reload`、`knowledge.reindex`、`memory.maintenance`、
 `diagnostics.snapshot`），装配点在 `_app.py`（`action_ids` 常量 + `_default_action`）。
@@ -64,7 +64,7 @@ CAS 版本）→ 受控异步运行（超时截断）→ 落回执与审计。�
 在册动作**都注册了**（枚数以注册表现算为准），但执行适配器分三档，回执里如实标：
 
 - **真做**：`logging.level`（改 root logger 级别）、`resources.refresh`（现采一份快照）、
-  `diagnostics.snapshot`（自报 control_plane 运行态）、`napcat.status`（走装配注入的
+  `diagnostics.snapshot`（自报 control_plane 运行态）、`snowluma.status`（走装配注入的
   实时探针 `runtime_state_probe`；探针未配置时明确
   `{connected:false, source:"probe_not_configured"}`，**不拿装配期标量冒充连接声明**）。
 - **半做（依赖注入才生效）**：`queue.pause|resume|drain` 需要装配时传入 send_queue，

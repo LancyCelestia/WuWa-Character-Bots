@@ -9,7 +9,7 @@
 
 范围声明（不假绿）：音频时长/采样率/声道（T24 ①②）= 引擎侧产物体检闸与
 用户裁点（ffprobe/soundfile），端口存活（⑤）= 运维探针 / pre_restart_check
-napcat 项同型探测，均不在本工具范围——本工具只对「配置写没写对」负责。
+snowluma 项同型探测，均不在本工具范围——本工具只对「配置写没写对」负责。
 
 治 T24 五面假安心（对照表全文 = .superpowers/sdd/2026-09-19-unify-audit/
 report-T87.md）：

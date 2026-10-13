@@ -167,7 +167,7 @@ async def drain_until(agen: Any, predicate: Any, limit: int = 100) -> list[str]:
 
 def test_event_sources_and_categories_match_contract() -> None:
     assert EVENT_SOURCES == (
-        "bot", "nonebot", "napcat", "telegram", "mail", "control_plane",
+        "bot", "nonebot", "snowluma", "telegram", "mail", "control_plane",
         "decision_engine", "pipeline", "sender", "llm", "database", "scheduler",
     )
     assert EVENT_CATEGORIES == (

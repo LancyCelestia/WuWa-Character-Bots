@@ -22,7 +22,7 @@ T4 渠道能力标签保险 / T5 PX-1 MCP 模块保险 / S141 ANN 代际可用�
   5. kb_drift      知识库三漂移只读复核：ANN 行数 == chunks 行数
                    （sqlite 只读连接 + backup API 拷到 %TEMP% 查，不锁库）
   6. ruff          静态门：ruff check . 全绿
-  7. napcat        协议端 SnowLuma WS 可达性探测：端点集合取自 .env 的
+  7. snowluma      协议端 SnowLuma WS 可达性探测：端点集合取自 .env 的
                    ONEBOT_WS_URLS（多账号=多端口，逐个探；只取 host:port，
                    令牌不进输出），解析不出时回落 127.0.0.1:3001
                    （只提示不阻断）
@@ -85,7 +85,7 @@ T4 渠道能力标签保险 / T5 PX-1 MCP 模块保险 / S141 ANN 代际可用�
                    临时登记的 sys.modules 条目在 finally 逐枚摘除。装载走**唯一那枚**
                    中央出口 ``_plugin_module_by_path``，一枚一枚装、逐枚记失败（🔴 禁第二
                    装载真身；``scripts/knowledge_progress.py`` 复用的也是同一枚）。状态口径
-                   照第 7 项 napcat＝**报警不是阻断**（本项不产 FAIL、exit code 恒不变）：
+                   照第 7 项 snowluma＝**报警不是阻断**（本项不产 FAIL、exit code 恒不变）：
                    无缺口=PASS；有缺口=SKIP 并逐域点名；库根未配置／语料读不到主题=SKIP
                    （环境里本来就没有＝没有可查对象）；🔴 **尺装不上／被装载的那枚符号
                    不见了 = UNDECIDABLE(RULER_ABSENT:枚名)**——「我量不了」绝不许写成 SKIP
@@ -207,8 +207,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-NAPCAT_HOST = "127.0.0.1"
-NAPCAT_PORT = 3001  # 仅回落值：现行端点集合由 ONEBOT_WS_URLS 决定（多账号=多端口）
+SNOWLUMA_HOST = "127.0.0.1"
+SNOWLUMA_PORT = 3011  # 仅回落值：现行端点集合由 ONEBOT_WS_URLS 决定（多账号=多端口）
 
 PASS = "PASS"
 SKIP = "SKIP"
@@ -216,7 +216,7 @@ FAIL = "FAIL"
 #: 第三态（GREEN／RED／UNDECIDABLE(码) 里那一枚）在**格级**的形态：尺量不了＝没有证据，
 #: 既不许折成 PASS，也不许和「环境里本来就没有」的 SKIP 混在同一个读数里（2026-10-12
 #: 第 14 项假无缺口根修新增；执法＝``tests/test_pre_restart_check.py`` 的三态两腿）。
-#: 🔴 只给「量不了」用：报警仍不阻断（exit 码只看 FAIL，照第 7 项 napcat 口径），
+#: 🔴 只给「量不了」用：报警仍不阻断（exit 码只看 FAIL，照第 7 项 snowluma 口径），
 #: 但 ``render_table`` 汇总必须单独点名它、有它在场时不许说「全绿」。
 UNDECIDABLE = "UNDECIDABLE"
 
@@ -357,7 +357,7 @@ def onebot_endpoints(env: dict[str, str]) -> list[tuple[str, int]]:
         item = (parts.hostname, int(port))
         if item not in endpoints:
             endpoints.append(item)
-    return endpoints or [(NAPCAT_HOST, NAPCAT_PORT)]
+    return endpoints or [(SNOWLUMA_HOST, SNOWLUMA_PORT)]
 
 
 # ---------------------------------------------------------------------------
@@ -670,10 +670,12 @@ def check_ruff(project_root: Path) -> CheckResult:
     )
 
 
-def check_napcat(endpoints: list[tuple[str, int]] | None = None) -> CheckResult:
-    # 检查 id 仍叫 "napcat"（对外契约：文档/台账/前端按此 id 寻址），实体已是 SnowLuma。
-    points = list(endpoints) if endpoints else [(NAPCAT_HOST, NAPCAT_PORT)]
-    cid = "napcat"
+def check_snowluma(endpoints: list[tuple[str, int]] | None = None) -> CheckResult:
+    # 检查 id 2026-10-13 由 "napcat" 更名为 "snowluma"（用户在 SnowLuma 事故后裁定
+    # 「连回滚路径一起拆、契约标识符真改名」）。实体一直是 SnowLuma。改名前的 id
+    # 见 docs/design/ 历史波次日志原文，不改写。
+    points = list(endpoints) if endpoints else [(SNOWLUMA_HOST, SNOWLUMA_PORT)]
+    cid = "snowluma"
     all_text = "、".join(f"{h}:{p}" for h, p in points)
     name = f"协议端 SnowLuma WS {all_text} 可达性（提示不阻断）"
     down = [f"{h}:{p}" for h, p in points if not probe_tcp(h, p)]
@@ -687,7 +689,7 @@ def check_napcat(endpoints: list[tuple[str, int]] | None = None) -> CheckResult:
         "——若尚未启动 SnowLuma（或未在「进程注入」页点加载）属预期"
         "（bot 自带重连）；重启顺序：先 SnowLuma 后 bot.py",
         "装配指引见 docs/snowluma-setup.md（多账号每号一个 WS 端口，"
-        "端口冲突处理见同文；旧端回滚见 docs/napcat-setup.md）。",
+        "端口冲突处理见同文）。",
     )
 
 
@@ -1732,7 +1734,7 @@ def check_ann_generation_pair(env: dict[str, str], project_root: Path) -> CheckR
 # 今天**只有测试在读**（`tests/test_kb_list_domain_gate.py`），运行期零消费方 ⇒ 谁新补一个
 # KB 语料域、却没人往 `question_intent` 的本地域词表加锚点词，运行/发版前**不会有任何人
 # 点名**，缺口静默存在——正是本轮「现实知识面」（台账 #73）的复发机制。本项把这枚既有的尺
-# 接到中央出口，判据是**报警不是阻断**（照第 7 项 napcat 的 SKIP 形态，exit code 恒不变：
+# 接到中央出口，判据是**报警不是阻断**（照第 7 项 snowluma 的 SKIP 形态，exit code 恒不变：
 # 缺口不拦重启，拦的是「没人知道」）。
 #
 # 「尺只有一把」是本项的硬口径：库侧主题名单、kb_dir、两侧相减、出格脱敏全部走真身函数，
@@ -1928,7 +1930,7 @@ def check_kb_domain_anchor(env: dict[str, str], project_root: Path) -> CheckResu
                 f"装不出来（{reason}；逐枚账 {dict(access.failed)}）——没有尺＝没有证据：本项既不"
                 "判缺口，**更不据此宣称「没有缺口／全绿」**。判据真身见 plugins/bot_unified_runtime"
                 "/domains/location/knowledge/kb_wiki.py::topics_without_local_domain_anchor",
-                "这条读数不是「过」：本格照第 7 项 napcat 口径不阻断重启（exit 码只看 FAIL），"
+                "这条读数不是「过」：本格照第 7 项 snowluma 口径不阻断重启（exit 码只看 FAIL），"
                 "所以它必须被读。装不上多半是这一枚在**没预导插件根**的进程里直跑——plain_text "
                 "与插件根 __init__ 互为循环 import（根 import campus、campus 回头 import 它），"
                 "全量体检／pytest 两侧都有预导态即装得上；装载口只准用中央那枚 "
@@ -3331,7 +3333,7 @@ def run_all(project_root: Path, only: Sequence[str] = ()) -> list[CheckResult]:
         check_doc_sync(project_root),
         check_kb_drift(env, project_root),
         check_ruff(project_root),
-        check_napcat(onebot_endpoints(env)),
+        check_snowluma(onebot_endpoints(env)),
         check_webui(project_root),
         check_control_plane(env),
         check_tts_voice_identity(env, project_root),

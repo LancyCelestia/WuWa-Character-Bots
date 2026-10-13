@@ -71,7 +71,7 @@
 | 文档 | 说明 |
 |---|---|
 | [snowluma-setup.md](snowluma-setup.md) | **现行协议端**：NoneBot + SnowLuma 连接 QQ 配置指南（注入方式差异 / 令牌 zxcvbn 规则 / 迁移与回滚 / 排查 / §6 语音出站与 silk 转码——TTS 语音出站的单点依赖面） |
-| [napcat-setup.md](napcat-setup.md) | 旧协议端：NoneBot + NapCat 连接 QQ 配置指南（2026-09-18 起保留作回滚路径） |
+| [snowluma-setup.md](snowluma-setup.md) | 现役协议端：NoneBot + SnowLuma 连接 QQ 配置指南（含 2026-10-13 注入策略与端口表） |
 | [acceptance-manual.md](acceptance-manual.md) | 验收与接入手册（人格对话 → SnowLuma → GsCore）；§6.6 重启验收清单 + §6.6.1 触发形态 + §6.6.2 媒体归档 + §6.6.3 金融扩容/账单渠道（2026-09-13/14 批次） |
 | [external-runtime-access.md](external-runtime-access.md) | 外部运行时访问与工作区边界（AGENTS.md 按路径引用） |
 | [workspace-archive-policy.md](workspace-archive-policy.md) | 工作区与归档规范（AGENTS.md 按路径引用） |

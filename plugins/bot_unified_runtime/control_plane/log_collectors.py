@@ -60,7 +60,7 @@ def _source(name: Any) -> str | None:
 
 
 def disconnected_collectors() -> dict[str, Any]:
-    return {"stdlib": "not_connected", "nonebot": "not_connected", "napcat": "not_connected", "raw_content": False, "publish_failures": 0}
+    return {"stdlib": "not_connected", "nonebot": "not_connected", "snowluma": "not_connected", "raw_content": False, "publish_failures": 0}
 
 
 class _SummaryHandler(logging.Handler):

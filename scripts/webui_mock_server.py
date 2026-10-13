@@ -60,7 +60,7 @@ _SSE_SUMMARY_INTERVAL_SECONDS = 2.0
 _DEFAULT_HEARTBEAT_SECONDS = 15.0
 
 _EVENT_SOURCES = (
-    "bot", "nonebot", "napcat", "telegram", "mail", "control_plane",
+    "bot", "nonebot", "snowluma", "telegram", "mail", "control_plane",
     "decision_engine", "pipeline", "sender", "llm", "database", "scheduler",
     "capability", "renderer",
 )
@@ -1099,7 +1099,7 @@ _LOG_EVENTS_RAW = [
     (105, "2026-09-18T11:42:11.000+00:00", "database", "info", {"summary": "发送队列 pending=0，断点续发无残留"}),
     (106, "2026-09-18T11:45:29.000+00:00", "renderer", "debug", {"summary": "卡片渲染 warm 2222ms", "budget_ms": 1500}),
     (107, "2026-09-18T11:48:03.000+00:00", "sender", "warning", {"summary": "QQ 发送回执 UNKNOWN，等待确认对账", "part_id": "p-2077"}),
-    (108, "2026-09-18T11:50:47.000+00:00", "napcat", "error", {"summary": "NapCat 心跳超时 45s，触发重连"}),
+    (108, "2026-09-18T11:50:47.000+00:00", "snowluma", "error", {"summary": "SnowLuma 心跳超时 45s，触发重连"}),
     (109, "2026-09-18T11:53:12.000+00:00", "telegram", "success", {"summary": "TG getUpdates 韧性退避恢复"}),
     (110, "2026-09-18T11:55:38.000+00:00", "pipeline", "info", {"summary": "摄取段归一完成", "quote_depth": 3}),
     (111, "2026-09-18T11:57:24.000+00:00", "control_plane", "critical", {"summary": "审计库写入失败，已降级内存实现"}),
@@ -1181,7 +1181,7 @@ def logs_sources() -> dict:
         "collectors": {
             "stdlib": "not_connected",
             "nonebot": "not_connected",
-            "napcat": "not_connected",
+            "snowluma": "not_connected",
             "raw_content": False,
             "publish_failures": 0,
         },
