@@ -161,18 +161,28 @@ OFFICIAL_SOURCES: tuple[SourceSpec, ...] = (
     ),
     SourceSpec(
         value="互联互通成交额",
-        tolerance="只比成交额口径；⚠ 净买入 2024-08 起停披露",
+        tolerance="只比成交额口径；⚠ 净买入 2024-08 起停披露；单位统一换算亿元",
         legs=(
-            _e("东方财富", "datacenter-web…/RPT_MUTUAL_DEAL_HISTORY", True),
-            _e("香港交易所", "hkex.com.hk/Mutual-Market/Stock-Connect（sc_lang=zh-HK）", False,
-               note="2026-10-13 smoke **200/400KB**（真「滬港通及深港通」页）；HTML 呈现页、无稳定机读口 ⇒ 须页面解析"),
-            _e("上海证券交易所", "query.sse.com.cn/commonQuery.do?sqlId=COMMON_SSE_SJ_HGT_ZJLX", False,
-               note="2026-10-13 实测：试 5 个 sqlId（HGT_ZJLX/JYMX、GGT_ZJLX、HGTZJ、HKEX_ZJLX）**全部** "
-                    "`pageHelp.data=null`（HTTP 200 空壳）⇒ 该腿对本值维**无数据**，降为未验。"
-                    "教训：空壳 200 曾被误判为绿，已加空响应哨兵"),
+            _e("东方财富", "datacenter-web…/RPT_MUTUAL_DEAL_HISTORY", True,
+               note="2026-10-13 smoke 200/952B 有数（MUTUAL_TYPE 001/002/003/004 逐段；DEAL_AMT 单位百万元）"),
+            _e("香港交易所", "hkex.com.hk/chi/csm/DailyStat/data_tab_daily_YYYYMMDDc.js", True,
+               note="2026-10-13 复核实测 **200/9766B 纯 JSON**（`tabData = [ … ];` 去前后缀即 JSON）——"
+                    "四段全覆盖（SSE/SZSE × North/South）；北向 RMB mil、南向 HKD mil；**约 7 个月滚动**。"
+                    "真身＝统计页隐藏字段 hidCSMDailyStatJsonPathChi；此前误判为「HTML 页须解析」"),
+            _e("上海证券交易所", "query.sse.com.cn/commonSoaQuery.do?sqlId=FW_HGTZL_HGTSCSJ_HGTCJGK_MRTJ", True,
+               note="2026-10-13 复核实测 **200/687B 真数据**（`totalAmount` 亿元；沪股通）。"
+                    "🔴 **必带 `Referer: https://www.sse.com.cn/`**——不带则 97B "
+                    "`{\"success\":\"false\",\"errorType\":\"ExceptionInterceptor\"}`。"
+                    "此前判「空壳」的真因＝**用错 host（commonQuery→commonSoaQuery）＋少 Referer**。"
+                    "港股通(沪) 另有 `ggt/getQuatationInfo.do`（`TOTAL_AMOUNT`）"),
+            _e("深圳证券交易所", "szse.cn/api/report/ShowReport/data?CATALOGID=SGT_SGTJYRB", True,
+               note="2026-10-13 复核实测 200/1095B JSON（深股通「当日交易总额（亿元人民币）」）；"
+                    "港股通(深) 用 CATALOGID=SGT_GGTJYRB。真身＝深港通页隐藏字段 data-s-catalog-id"),
         ),
-        note="净买入结构性停披 ⇒ 该维结构性受限；成交额口径**仅 2 条可用腿**"
-             "（东财机读 / 港交所页面须解析）⇒ 未达 3 源硬门，**不得出数，须显式标注缺口**",
+        note="净买入结构性停披 ⇒ 该维结构性受限；成交额口径**四段均 ≥3 家独立机构**"
+             "（沪股通：东财/港交所/上交所；深股通：东财/港交所/深交所；港股通沪/深 同理）。"
+             "2026-10-13 三方逐日数值完全吻合（沪股通 1227.807 三方一致、深股通 1391.02、"
+             "港股通沪 442.46、港股通深 267.53）",
         structurally_capped=True,
     ),
     SourceSpec(
@@ -276,11 +286,15 @@ LEG_PROBES: dict[tuple[str, str], str] = {
         "&pageNumber=1&pageSize=2&source=WEB&client=WEB"
     ),
     ("互联互通成交额", "香港交易所"): (
-        "https://www.hkex.com.hk/Mutual-Market/Stock-Connect?sc_lang=zh-HK"
+        "https://www.hkex.com.hk/chi/csm/DailyStat/data_tab_daily_20261013c.js"
     ),
     ("互联互通成交额", "上海证券交易所"): (
-        "https://query.sse.com.cn/commonQuery.do?sqlId=COMMON_SSE_SJ_HGT_ZJLX"
-        "&isPagination=true&pageHelp.pageSize=5&pageHelp.pageNo=1"
+        "https://query.sse.com.cn/commonSoaQuery.do"
+        "?sqlId=FW_HGTZL_HGTSCSJ_HGTCJGK_MRTJ&tradeDate=20261013"
+    ),
+    ("互联互通成交额", "深圳证券交易所"): (
+        "https://www.szse.cn/api/report/ShowReport/data"
+        "?SHOWTYPE=JSON&CATALOGID=SGT_SGTJYRB&TABKEY=tab1&txtDate=2026-10-13"
     ),
     # —— 宏观 ——
     ("宏观 CPI / PMI", "东方财富"): (
@@ -356,9 +370,9 @@ LEG_PROBE_EMPTY_MARKERS: tuple[str, ...] = (
 #: HTML 腿（港交所/统计局/中国天气网）天然含 JSON 片段与脚本，故**只挂它自己的**
 #: 空页标记，不套 JSON 标记。
 LEG_PROBE_EMPTY_MARKERS_BY_LEG: dict[tuple[str, str], tuple[str, ...]] = {
-    ("互联互通成交额", "香港交易所"): (),          # HTML 呈现页：无可判空标记，只判可达
-    ("宏观 CPI / PMI", "国家统计局"): (),          # HTML 发布页：同上
+    ("宏观 CPI / PMI", "国家统计局"): (),          # HTML 发布页：无可判空标记，只判可达
     ("天气实况/预报/预警", "中国天气网"): (),        # 小 HTML 片段：同上
+    ("互联互通成交额", "上海证券交易所"): ("ExceptionInterceptor",),  # 缺 Referer 时的 97B 错误壳
 }
 
 

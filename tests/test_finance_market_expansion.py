@@ -644,22 +644,31 @@ class TestOfficialSourceGate:
         )
 
     def test_shortfall_text_names_the_missing_legs(self) -> None:
-        """缺口文案要说清「差几条、差在哪」，不许只报一个数。"""
+        """缺口文案要说清「差几条、差在哪」，不许只报一个数。
+
+        样例值维用「汇率中间价」——2026-10-13 起它是唯一仍不足 3 源的值维
+        （定盘只有 CFETS 一源；另两条是即期口径，不计入）。
+        """
         src = self._src()
-        text = src.describe_blockers("互联互通成交额")
+        text = src.describe_blockers("汇率中间价")
         assert "未达三源硬门" in text
         assert "还差" in text
 
-    def test_gap_values_are_honestly_short_not_padded(self) -> None:
-        """缺口如实：互联互通成交额只有 2 条可用腿，不许凑数充绿。
+    def test_interconnect_turnover_now_meets_the_gate(self) -> None:
+        """2026-10-13 复核：互联互通成交额四段均 ≥3 家独立机构。
 
-        上交所 5 个 sqlId 实测全 `pageHelp.data=null`（空壳 200）⇒ 已降为未验，
-        该值维因此回到「不足 3 源」，卡面必须标注缺口而不是照出。
+        此前判「上交所空壳」的真因是**用错 host（commonQuery→commonSoaQuery）＋少 Referer**；
+        港交所也早有机读 JSON（统计页隐藏字段）而非「HTML 页须解析」；深交所另有
+        `CATALOGID=SGT_SGTJYRB`。四段逐日数值三方完全吻合（差异仅四舍五入）。
+        本腿守的是「不许同机构并列充数」：ready 由**机构数**判，不是由腿数判。
         """
         src = self._src()
         spec = src.check_value("互联互通成交额")
         assert spec is not None
-        assert spec.ready is False, "2 源不得判 ready"
+        assert spec.ready is True, "四段均 ≥3 家独立机构 ⇒ 应判 ready"
+        assert len(spec.verified_orgs) >= 3
+        assert len(set(spec.verified_orgs)) == len(spec.verified_orgs), "同机构不得并列"
+        # 净买入仍结构性停披 ⇒ 结构性受限标记保留
         assert spec.structurally_capped is True
 
     def test_empty_response_sentinel_catches_200_but_no_data(self) -> None:
