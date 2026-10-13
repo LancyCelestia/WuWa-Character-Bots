@@ -643,16 +643,93 @@ class TestOfficialSourceGate:
             == {s.value for s in src.OFFICIAL_SOURCES}
         )
 
-    def test_shortfall_text_names_the_missing_legs(self) -> None:
+    def test_shortfall_text_names_the_missing_legs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """缺口文案要说清「差几条、差在哪」，不许只报一个数。
 
-        样例值维用「汇率中间价」——2026-10-13 起它是唯一仍不足 3 源的值维
-        （定盘只有 CFETS 一源；另两条是即期口径，不计入）。
+        2026-10-13 二轮补腿后登记册**全维达标**：中间价定盘补到央行/外汇局/CFETS
+        三个官方渠道，即期另立独立值维 ⇒ 不再有真实缺口样例。本腿改用**合成缺口
+        值维**（monkeypatch 进登记册）专测文案形状——不依赖登记册当前是否恰有缺口。
         """
         src = self._src()
-        text = src.describe_blockers("汇率中间价")
+        sample = src.SourceSpec(
+            value="样例缺口值维",
+            tolerance="t",
+            legs=(
+                src.Leg("甲", "u1", True),
+                src.Leg("乙", "u2", False),
+                src.Leg("丙", "u3", False),
+            ),
+        )
+        monkeypatch.setattr(src, "OFFICIAL_SOURCES", (*src.OFFICIAL_SOURCES, sample))
+        text = src.describe_blockers("样例缺口值维")
         assert "未达三源硬门" in text
         assert "还差" in text
+        assert "乙（未实测）" in text and "丙（未实测）" in text
+
+    def test_mid_price_now_meets_the_gate_via_three_official_channels(self) -> None:
+        """2026-10-13 二轮补腿：中间价定盘现由**同一发布的三个官方渠道**提供。
+
+        央行（受权公告）/ 国家外汇管理局（统计数据列）/ CFETS（发布方）三家各自官网
+        发布**同一个价** ⇒ 达三源硬门。⚠ 三家是同一发布的三个渠道、**不是三次独立
+        测量**——这一点必须写进登记册注文（口径诚实）；即期腿不得并入本维源数。
+        """
+        src = self._src()
+        spec = src.check_value("汇率中间价")
+        assert spec is not None
+        assert spec.ready is True
+        assert set(spec.verified_orgs) == {
+            "中国人民银行",
+            "国家外汇管理局",
+            "中国外汇交易中心",
+        }
+        # 口径诚实：注文必须点明「同一发布 / 非三次独立测量」。
+        assert "同一发布" in spec.note and "不是三次独立测量" in spec.note
+        # 即期腿不得混进中间价源数（上一轮刚修掉的口径混算不许回退）。
+        assert "东方财富" not in spec.independent_orgs
+        assert "新浪财经" not in spec.independent_orgs
+
+    def test_mid_price_official_legs_have_machine_probes(self) -> None:
+        """补的两条官方腿必须机器可调：央行列表页 / 外汇局 RMBQuery.do（带参）。"""
+        src = self._src()
+        assert src.probe_url_for("汇率中间价", "中国人民银行").startswith(
+            "http://www.pbc.gov.cn/"
+        )
+        assert src.probe_url_for("汇率中间价", "国家外汇管理局").startswith(
+            "https://www.safe.gov.cn/AppStructured/hlw/RMBQuery.do"
+        )
+
+    def test_spot_dim_is_split_out_and_meets_the_gate(self) -> None:
+        """即期拆成独立值维「人民币即期汇率」：CFETS 即期/东财/新浪三腿齐。
+
+        三腿是**可真独立比对**的同量（在岸询价/离岸/在岸），与「汇率中间价」定盘
+        分列——即期维的机构不得出现在中间价源数里（互不凑数，防口径混算回退）。
+        """
+        src = self._src()
+        spec = src.check_value("人民币即期汇率")
+        assert spec is not None
+        assert spec.ready is True
+        assert spec.verified_orgs == ("中国外汇交易中心", "东方财富", "新浪财经")
+        mid = src.check_value("汇率中间价")
+        assert mid is not None
+        # 两维仅共用 CFETS（它既发布定盘、也发布即期询价）；即期维的东财/新浪
+        # 不得出现在中间价源数里（互不凑数，防口径混算回退）。
+        shared = set(spec.verified_orgs) & set(mid.verified_orgs)
+        assert shared == {"中国外汇交易中心"}
+
+    def test_spot_legs_have_probes_and_sina_referer(self) -> None:
+        """即期三腿机器可调：CFETS 即期 JSON / 东财 ulist / 新浪（须 Referer）。"""
+        src = self._src()
+        assert src.probe_url_for("人民币即期汇率", "中国外汇交易中心").endswith(
+            "/data/fx/rfx-sp-quot.json"
+        )
+        assert src.probe_url_for("人民币即期汇率", "东方财富").startswith(
+            "https://push2.eastmoney.com/"
+        )
+        assert src.probe_headers_for("人民币即期汇率", "新浪财经") == {
+            "Referer": "https://finance.sina.com.cn"
+        }
 
     def test_interconnect_turnover_now_meets_the_gate(self) -> None:
         """2026-10-13 复核：互联互通成交额四段均 ≥3 家独立机构。

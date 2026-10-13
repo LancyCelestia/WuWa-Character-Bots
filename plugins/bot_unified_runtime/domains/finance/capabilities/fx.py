@@ -147,7 +147,13 @@ def build_fx_card_payload(
         "sections": [{"name": "主要货币（USD 基准面板）", "rows": rows}],
         "source_note": "数据源：东方财富（er-api 备选）",
         "updated_at": rates[0].timestamp if rates else "",
-        "delayed_note": "非实时报价，非可成交价",
+        # 三源硬门口径诚实（2026-10-13）：中间价＝央行受权 CFETS 公布的定盘价，央行/
+        # 外汇局/CFETS 三家官网是**同一发布的三个官方渠道**，不是三次独立测量；现货腿
+        # 才是即期口径。卡面据此标注，不许含糊成「三源独立测量」。
+        "delayed_note": (
+            "非实时报价，非可成交价；人民币中间价为央行/外汇局/CFETS 同一发布"
+            "（非三次独立测量），现货为即期口径"
+        ),
         "feature_label": "汇率",
     }
 

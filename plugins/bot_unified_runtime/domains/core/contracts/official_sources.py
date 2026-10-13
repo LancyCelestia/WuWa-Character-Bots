@@ -138,26 +138,55 @@ OFFICIAL_SOURCES: tuple[SourceSpec, ...] = (
     SourceSpec(
         value="汇率中间价",
         tolerance=(
-            "⚠ **口径分列**（2026-10-13 AI 审查后订正）：**中间价定盘只有 CFETS 一源**；"
-            "东财（USDCNH/USDCNY）与新浪（fx_susdcny）是**同日即期/离岸报价**，与定盘不是同一个量 "
-            "⇒ 只可用于「同日即期一致性核对」，**不得**拿来把中间价凑成 3 源。"
-            "卡面若报中间价，须显式标注「单源（CFETS）」；同量比对容差 >0.01 即标注"
+            "⚠ **口径分列**（2026-10-13 二轮实测后订正）：中间价＝**定盘价**，由中国人民银行"
+            "受权中国外汇交易中心于每个交易日约 9:15 公布**同一个价**；央行（受权发布公告）／"
+            "国家外汇管理局（统计数据列）／CFETS（发布方）三家各自官网发布的是**同一发布的三个"
+            "官方渠道，不是三次独立测量**——三家同日数值必须**逐位相等**，不相等即发布异常须标注。"
+            "**即期/离岸报价不是定盘**（另立值维「人民币即期汇率」），不得拿来把中间价凑源数"
         ),
         legs=(
             _e("中国外汇交易中心", "chinamoney.com.cn/ags/ms/cm-u-bk-ccpr/CcprHisNew", True,
-               note="2026-10-13 smoke 200/725B（真中间价历史）"),
-            _e("东方财富", "push2.eastmoney.com/api/qt/ulist.np/get（secids=133.USDCNH,119.USDCNY）", False,
-               note="2026-10-13 smoke 200/169B **有数**（该端点会瞬时断连，重试即通）。"
-                    "⚠ **即期/离岸口径**，非中间价定盘 ⇒ **不计入本值维源数**（可用于同日一致性核对）"),
-            _e("新浪财经", "hq.sinajs.cn/list=fx_susdcny（须 Referer）", False,
-               note="2026-10-13 smoke 200/222B（人民币即期行情串）。"
-                    "⚠ **即期口径**，非中间价定盘 ⇒ **不计入本值维源数**（可用于同日一致性核对）"),
+               note="2026-10-13 实测 200/767B：USD/CNY 定盘 6.7298（**发布方**）。"
+                    "⚠ 与央行/外汇局是**同一发布的三个渠道**，非三次独立测量"),
+            _e("中国人民银行", "pbc.gov.cn/zhengcehuobisi/125207/125217/125925/index.html", True,
+               note="2026-10-13 实测：公告列表页 200/43KB（**带 Referer**；真身＝列表里当日公告"
+                    "详情页 `/zhengcehuobisi/125207/125217/125925/{id}/index.html`）；当日公告正文"
+                    "200/28.6KB 含「1美元对人民币6.7298元」——与 CFETS 定盘**逐位相等**"),
+            _e("国家外汇管理局", "safe.gov.cn/AppStructured/hlw/RMBQuery.do", True,
+               note="2026-10-13 实测：列页 `safe/rmbhlzjj/index.html` 200/16KB 只是 **iframe 外壳**"
+                    "（无数据行）；真数据在 iframe 指向的 `AppStructured/hlw/RMBQuery.do`，"
+                    "GET/POST 带 `startDate/endDate/queryYN=true` → 结果表 200/14KB，美元列 **672.98**"
+                    "（=6.7298×100，与 CFETS **逐位相等**）⇒ **解析出真值，非只看 200**"),
             _e("腾讯", "qt.gtimg.cn（外汇口：**未找到可用符号**）", False,
                note="2026-10-13 实测：`q=USDCNY` 返 `v_pv_none_match=\"1\"`＝**空响应**（HTTP 200 但零数据）"
                     "⇒ 如实降为未验。此例暴露 smoke 曾把「200 + 非空字节」误判为绿，已加空响应哨兵"),
         ),
-        note="⚠ **口径诚实**：中间价定盘仅 CFETS 一源 ⇒ 该值维**未达三源硬门**（另有两条同日即期腿，"
-             "只可用于一致性核对）。卡面报中间价须标注单源；报即期则三腿齐",
+        note="⚠ **口径诚实**：中间价定盘现由**同一发布的三个官方渠道**（央行/外汇局/CFETS）提供"
+             "**同一个价** ⇒ 达三源硬门；但**不是三次独立测量**（三渠道同日数值必须相等，是同一价的"
+             "三处镜像）。即期/离岸报价另立值维「人民币即期汇率」，**不并入本维源数**",
+    ),
+    SourceSpec(
+        value="人民币即期汇率",
+        tolerance=(
+            "同一交易日同时刻**现货**口径；**在岸**（CFETS USD/CNY 询价、新浪 fx_susdcny）与"
+            "**离岸**（东财 USDCNH）并列，容差 |差| ≤ 0.02（离岸/在岸点差）——超容差即点名分歧，"
+            "**绝不取平均**。⚠ 即期 ≠ 中间价定盘（另立「汇率中间价」维），两维不得互相凑源数"
+        ),
+        legs=(
+            _e("中国外汇交易中心", "chinamoney.com.cn/r/cms/www/chinamoney/data/fx/rfx-sp-quot.json", True,
+               note="2026-10-13 实测 200/2374B：USD/CNY 买 6.6940／卖 6.6943（实时询价行情，"
+                    "约 5s 刷新）。真身＝外汇市场行情页 `chinese/mkdatapfx/` 片段 "
+                    "`r/cms/chinese/chinamoney/html/fx/rfx-sp-quot-cn.html` 里的 "
+                    "`DURL + 'fx/rfx-sp-quot.json'`（DURL=/r/cms/www/chinamoney/data/）"),
+            _e("东方财富", "push2.eastmoney.com/api/qt/ulist.np/get（secids=133.USDCNH,119.USDCNY）", True,
+               note="2026-10-13 实测 200/171B：USDCNH **6.6944**（离岸即期）。⚠ 本批只回 USDCNH 一行"
+                    "（119.USDCNY 未回）；该端点会瞬时断连，重试即通"),
+            _e("新浪财经", "hq.sinajs.cn/list=fx_susdcny（须 Referer）", True,
+               note="2026-10-13 实测 200/222B（**须 Referer**，否则 403）：USD/CNY **6.6940**（在岸即期）"),
+        ),
+        note="三腿齐：CFETS 即期（在岸询价）/ 东财 USDCNH（离岸）/ 新浪 fx_susdcny（在岸）——"
+             "同一交易日同量，可真独立比对（2026-10-13 三方 6.6940/6.6944/6.6940，差 ≤0.0004）；"
+             "⚠ 与「汇率中间价」定盘**不是同一个量**，两维分列、互不凑数",
     ),
     SourceSpec(
         value="互联互通成交额",
@@ -268,17 +297,28 @@ LEG_PROBES: dict[tuple[str, str], str] = {
     ("指数全成分股涨跌幅分布", "新浪"): (
         "https://hq.sinajs.cn/list=sh600000,sz000001,sh601318"
     ),
-    # —— 汇率中间价 ——
+    # —— 汇率中间价（定盘：同一发布的三个官方渠道）——
     ("汇率中间价", "中国外汇交易中心"): (
         "https://www.chinamoney.com.cn/ags/ms/cm-u-bk-ccpr/CcprHisNew"
         "?startDate=2026-10-01&endDate=2026-10-13&currency=USD/CNY&pageSize=5"
     ),
-    ("汇率中间价", "东方财富"): (
+    ("汇率中间价", "中国人民银行"): (
+        "http://www.pbc.gov.cn/zhengcehuobisi/125207/125217/125925/index.html"
+    ),
+    ("汇率中间价", "国家外汇管理局"): (
+        "https://www.safe.gov.cn/AppStructured/hlw/RMBQuery.do"
+        "?startDate=2026-10-13&endDate=2026-10-13&queryYN=true"
+    ),
+    # 腾讯外汇口无可用符号（实测返 v_pv_none_match）⇒ 不给探针，smoke 如实记「无探针」。
+    # —— 人民币即期汇率（现货：在岸/离岸同量三腿）——
+    ("人民币即期汇率", "中国外汇交易中心"): (
+        "https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/fx/rfx-sp-quot.json"
+    ),
+    ("人民币即期汇率", "东方财富"): (
         "https://push2.eastmoney.com/api/qt/ulist.np/get"
         "?secids=133.USDCNH,119.USDCNY&fields=f12,f14,f2,f3&fltt=2&invt=2"
     ),
-    ("汇率中间价", "新浪财经"): "https://hq.sinajs.cn/list=fx_susdcny",
-    # 腾讯外汇口无可用符号（实测返 v_pv_none_match）⇒ 不给探针，smoke 如实记「无探针」。
+    ("人民币即期汇率", "新浪财经"): "https://hq.sinajs.cn/list=fx_susdcny",
     # —— 互联互通 ——
     ("互联互通成交额", "东方财富"): (
         "https://datacenter-web.eastmoney.com/api/data/v1/get"
@@ -337,7 +377,11 @@ LEG_PROBE_HEADERS: dict[tuple[str, str], dict[str, str]] = {
     ("全球股指点位/涨跌幅", "新浪"): {"Referer": "https://finance.sina.com.cn"},
     ("指数全成分股涨跌幅分布", "上海证券交易所"): {"Referer": "https://www.sse.com.cn/"},
     ("指数全成分股涨跌幅分布", "中证指数"): {"Referer": "https://www.csindex.com.cn/"},
-    ("汇率中间价", "新浪财经"): {"Referer": "https://finance.sina.com.cn"},
+    ("汇率中间价", "中国人民银行"): {"Referer": "http://www.pbc.gov.cn/"},
+    ("汇率中间价", "国家外汇管理局"): {"Referer": "https://www.safe.gov.cn/"},
+    ("汇率中间价", "中国外汇交易中心"): {"Referer": "https://www.chinamoney.com.cn/"},
+    ("人民币即期汇率", "新浪财经"): {"Referer": "https://finance.sina.com.cn"},
+    ("人民币即期汇率", "中国外汇交易中心"): {"Referer": "https://www.chinamoney.com.cn/"},
     ("指数全成分股涨跌幅分布", "新浪"): {"Referer": "https://finance.sina.com.cn"},
     ("互联互通成交额", "上海证券交易所"): {"Referer": "https://www.sse.com.cn/"},
     ("宏观 CPI / PMI", "国家统计局"): {"Referer": "https://www.stats.gov.cn/"},
