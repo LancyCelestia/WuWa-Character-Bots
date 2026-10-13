@@ -120,7 +120,7 @@
 
 已按 `docs/workspace-archive-policy.md`（压缩→验证→移出）执行：**26 份过时文档 + 合并前的 MASTER/full 原件（共 28 份）**归档至 `ChatBot_Archive\2026-09-12\docs-archive-2026-09-12.zip`（内含 manifest.md 逐份缘由清单；zip 条目数与大小已验证）。git 历史同步可溯（`git log --follow -- docs/<文件名>`）。
 
-**docs/ 最终保留 14 份**：本文件、`README.md`（索引）+ 12 份活文档——affinity-design（代码注释指向其数值规范）、ai-setup-knowledge-pack、config-catalog-full（两者配套）、ai-kb-operations-manual（向量知识库投喂件）、napcat-setup、acceptance-manual、route-matrix、search-api-adapters-2026-09-06（COMMANDS.md 活引用）、standard-parse-card-acceptance（解析卡现行验收标准）、external-runtime-access 与 workspace-archive-policy（AGENTS.md 按路径引用，不可改名/合并）、control-plane-provider-and-usage-requirements-2026-09-05（B4/B5 未实现功能的需求源）。
+**docs/ 最终保留 13 份**：本文件、`README.md`（索引）+ 11 份活文档——affinity-design（代码注释指向其数值规范）、ai-setup-knowledge-pack、config-catalog-full（两者配套）、ai-kb-operations-manual（向量知识库投喂件）、acceptance-manual、route-matrix、search-api-adapters-2026-09-06（COMMANDS.md 活引用）、standard-parse-card-acceptance（解析卡现行验收标准）、external-runtime-access 与 workspace-archive-policy（AGENTS.md 按路径引用，不可改名/合并）、control-plane-provider-and-usage-requirements-2026-09-05（B4/B5 未实现功能的需求源）。
 
 **对原 §四 归档建议的两处从严偏离（就「不错删」原则）**：①search-api-adapters、standard-parse-card-acceptance 虽曾被列入期报归档组，但分别被 COMMANDS.md / ai-setup-knowledge-pack 活引用且承载现行配置与验收流程，改判保留；②code-reaudit-2026-09-11 与 comprehensive/roadmap 的未竟规格，先并入 §三 总账/B16 后再归档，不留悬空引用。
 
@@ -416,7 +416,7 @@ git write-tree && git commit-tree <tree> -p <parent> -m "msg"
 | 管线检视报告（13 条，file:line+修法） | 同目录 `pipeline-review-report.md` |
 | C组审计报告（36 项） | `docs/capability-audit-2026-09-10.md` |
 | 好感度设计文档（v3） | `docs/affinity-design.md` |
-| 用户手册层命令 | `COMMANDS.md`；验收手册 `docs/acceptance-manual.md`；SnowLuma `docs/snowluma-setup.md`（NapCat 回滚件操作归 `docs/napcat-setup.md`） |
+| 用户手册层命令 | `COMMANDS.md`；验收手册 `docs/acceptance-manual.md`；SnowLuma `docs/snowluma-setup.md`（NapCat 已于 2026-10-13 完全退役，回滚路径与旧协议端文档一并拆除） |
 | .env 备份（09-10 两次） | `$TEMP/bot_bgroup_backup/env.bak-20260910`、`env.bak2-20260910` |
 | 源码树 data/ 清理备份 | `$TEMP/bot_bgroup_backup/data_src_backup/`（497MB） |
 | 实测脚本（可复跑） | `$TEMP/bot_bgroup/`：`platform_matrix.py`、`probe_umi.py`、`test_subscribe_fetch.py`、`render_candidates_sample.py` |
@@ -1034,7 +1034,7 @@ bridge 对 `payload.text/summary/forward.text/repost.text` **预 html.escape**�
 |---|---|---|
 | 改动"没生效" | 进程启动时间 vs 最后提交时间（Get-Process python） | 重启 bot；确认无第二实例 |
 | SnowLuma 3001/3002 不监听/未接上 | `launcher.bat` 是否已启动；`Get-Process QQ \| Select Id,StartTime` 查多代际并存 | 进程注入页看不到 QQ 就确认 QQ 是否真在跑、权限是否与 SnowLuma 一致；QQ 多代际并存时提权清场只留主进程，再对主进程点「加载」至「已在线」；bot 自动重连 |
-| QQ 登录二维码不刷新/注入到不了「已在线」 | 查 `$DEV_ROOT\SnowLuma\logs\snowluma-YYYY-MM-DD.log`（按日期分文件） | QQ 构建号超出协议端支持表——上游问题；启动后 2 分钟内扫首码；旧 NapCat「偏移数据」报错仅适用回滚场景（`docs/napcat-setup.md`） |
+| QQ 登录二维码不刷新/注入到不了「已在线」 | 查 `$DEV_ROOT\SnowLuma\logs\snowluma-YYYY-MM-DD.log`（按日期分文件） | QQ 构建号超出协议端支持表——上游问题；启动后 2 分钟内扫首码；旧 NapCat「偏移数据」报错属已退役协议端，仅存史（其文档 2026-10-13 已随回滚路径拆除） |
 | 点歌没有候选卡 | 1) 配置开关 2) 裸歌名精确命中（设计如此）3) 渲染失败日志 | 带限定词查询必出；查 `music candidates card render failed` 日志 |
 | 点歌候选/歌曲卡全灰 | 图床 WAF/ORB | 见 §14.6.4；sinaimg 已兜，新图床照方抓药（直连+curl 极简头） |
 | 发布时间差 8 小时 | 该解析器是否产 naive 串 | 契约层已按 +08 解释（media.py _CN_TZ）；新解析器直接给 epoch 或带时区 ISO 最稳 |

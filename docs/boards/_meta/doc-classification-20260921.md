@@ -46,7 +46,7 @@ Status: STARTED
 | docs/HANDOVER-2026-09-15.md | 26090 | 已失效(顶部有 09-17 指针横幅取代) | B01 | B02 | 五层架构图 / LLM 子链收敛口径 | 归档到归档包（路径以归档规程真身为准） | 自述「当前交接见 HANDOFF-NEXT」, 后者又已失效 |
 | docs/README.md | 18091 | 现行权威(docs 索引, 09-21 由 T124 席补登) | B10 | NONE | 文档索引 / 分类目 | 保留原地, 新 boards 目录建好后必须在此登记 | 唯一 docs 索引, 且被链接完整性门覆盖 |
 | docs/THIRD_PARTY_NOTICES.md | 3996 | 现行权威(09-21 追加 zhconv) | B08 | B10 | 卡片渲染子包借鉴声明 / AxonHub / zhconv | 保留原地不动 | 自述「第三方出处唯一记录」, 许可证合规件 |
-| docs/acceptance-manual.md | 125814 | 现行权威(接入与验收手册, 09-21) | B10 | B01/B06/B05 | 依赖安装 / 控制台人格验收 / SnowLuma 接入 / GsCore | 拆并入 B01(接入) + B10(验收规程), 原地保留可执行手册 | 操作性手册, 与 snowluma-setup/napcat-setup 有重复 |
+| docs/acceptance-manual.md | 125814 | 现行权威(接入与验收手册, 09-21) | B10 | B01/B06/B05 | 依赖安装 / 控制台人格验收 / SnowLuma 接入 / GsCore | 拆并入 B01(接入) + B10(验收规程), 原地保留可执行手册 | 操作性手册, 与 snowluma-setup 有重复（napcat-setup 2026-10-13 已退役拆除） |
 | docs/affinity-design.md | 19192 | 部分失效(v4 数值表被 v7 取代; 档位/红线仍权威) | B03 | B04 | 好感度八档 / 行为因子表 / 时间减退 / providers 映射 | 并入 B03 好感度小节, 与 docs/design/affinity-v7-design.md 合并为一份 | 文件头自带权威链: 「§2/§3 步长数值已被 affinity-v7-design.md 取代」 |
 | docs/ai-kb-operations-manual.md | 22462 | 现行权威(知识库入库说明书, 09-09) | B09 | B03 | 七必配键 / 多供应商注册表与故障转移 / 热更 | 并入 B09 控制面正文; 注意它是 BOT_KNOWLEDGE_FILES 入库件 | 与 ai-setup-knowledge-pack 互为「说明书/全集」, 有内容重复 |
 | docs/ai-setup-knowledge-pack.md | 62618 | 现行权威(搭建知识全集, 09-07 首提交 09-21 更新) | B09 | B10 | 目录数据地图 / 权限体系 / LLM 引擎接入与路由 | 并入 B09; §6 已由 config-catalog-full 展开, 去重 | 自述「本文档是 ai-kb-operations-manual 的完整展开源」 |
@@ -62,15 +62,14 @@ Status: STARTED
 | docs/external-runtime-access.md | 10060 | 现行权威(09-20) | B10 | B04 | 外部运行时访问 / 工作区扫描边界 / AI 避扫 | 并入 B10 工作区边界章 | 与 workspace-archive-policy 主题重复, 需去重 |
 | docs/handover-c-20260913.md | 20685 | 历史证据(09-13 C 方向交接) | B05 | B08 | 金融数据层 / 图表库 / 菜谱图片 / 卡片补全 | 归档 | 波次交接, 内容已由 domains/finance 与 rendering-contract 覆盖 |
 | docs/issue-ledger-p2-p3.md | 33618 | 部分现役(P2/P3 台账, 09-14) | B10 | 全域 | 逐条可执行问题详情 / 根因 / 验收 | 保留原地作台账, 已闭项归档 | AGENTS.md 第六部分是索引, 本件是详情 |
-| docs/napcat-setup.md | 6899 | 已失效(09-18 起协议端改 SnowLuma, 留作回滚) | B01 | NONE | NapCat QQ 接入 / token / 重启 | 归档到 ChatBot_Archive 或原地保留标注回滚 | 文件头自述「新接入不要再按本文操作」 |
+| docs/snowluma-setup.md | 16026 | 现行权威(09-20, 现役协议端) | B01 | NONE | SnowLuma 接入 / token 规则 / 与 NapCat 差异 / 能力边界 | 并入 B01 接入章正文 | 自述现行协议端 |
 | docs/nightly-ops-report-20260915.md | 14366 | 历史证据(09-15 夜间工程总报告) | NONE | B10 | 阶段完成总账 / BUG 分级 | 归档 | 提交哈希基线 90274f5..4608235, 已被 HANDBOOK 吸收 |
 | docs/pending-decisions.md | 10113 | 历史(09-14 聚合, 多数已被 09-21 decisions 取代) | NONE | B09 | 待用户裁决四组清单 | 归档, 与 audit-20260921-decisions.md 去重 | 同源后继件为 audit-20260921-decisions.md |
 | docs/perf-optimization-plan.md | 5474 | 已失效(自述「历史测量档案, 不再更新」) | NONE | B02 | 五条延迟链路 / Phase 2 | 归档 | 顶部状态注记直接宣布非现行 |
 | docs/rendering-contract.md | 28795 | 生成/契约双身份(09-20) | B08 | B10 | 11 渲染面铁律 / 本命色 / PLATFORM_THEMES / Shell 常量 | 保留原地, 禁移树; B08 正文以它为契约 | 自述单一事实源 theme_tokens.py, 机器形态=tests/test_rendering_contract.py |
 | docs/route-matrix.md | 20004 | 现行权威(09-20/09-21) | B02 | B06 | 全问法路由矩阵 / base_router 链路 / 表情包入口 / 世界观判定 | 并入 B02 路由正文 | 与 command-catalog 生成物有重叠, 需以代码为准 |
 | docs/search-api-adapters-2026-09-06.md | 3657 | 现役偏旧(09-06, Tavily/You/LangSearch 链) | B05 | B09 | 搜索 API 适配与回退顺序 / 安全边界 | 并入 B05 检索小节, 与 config-catalog 去重 | 回退顺序等事实另有 config 键定义点 |
-| docs/snowluma-setup.md | 16026 | 现行权威(09-20, 现役协议端) | B01 | NONE | SnowLuma 接入 / token 规则 / 与 NapCat 差异 / 能力边界 | 并入 B01 接入章正文 | 自述现行协议端; napcat-setup 的回滚件 |
-| docs/standard-parse-card-acceptance.md | 11159 | 部分现役(09-01/09-07, 解析卡字段标准) | B05 | B08 | content 解析信息卡字段标准(博主/媒体/页面/跨平台) | 并入 B05 link_parse 小节 | 配套实现文档已换代, 字段标准仍需核对是否漂移 |
+| docs/snowluma-setup.md | 16026 | 现行权威(09-20, 现役协议端) | B01 | NONE | SnowLuma 接入 / token 规则 / 与 NapCat 差异 / 能力边界 | 并入 B01 接入章正文 | 自述现行协议端; NapCat 回滚件已于 2026-10-13 拆除 || docs/standard-parse-card-acceptance.md | 11159 | 部分现役(09-01/09-07, 解析卡字段标准) | B05 | B08 | content 解析信息卡字段标准(博主/媒体/页面/跨平台) | 并入 B05 link_parse 小节 | 配套实现文档已换代, 字段标准仍需核对是否漂移 |
 | docs/usage-cache-price-fix-2026-09-18.md | 8780 | 历史证据(09-18 一次性修复记录, untracked) | B09 | NONE | 缓存命中口径 / 价目写进模型注册表 | 归档 | 定点修复记录, 结论应在计费账本正文 |
 | docs/workspace-archive-policy.md | 4267 | 现役但被取代倾向(08-28 起) | B10 | NONE | 目录布局 / 扫描边界 / 归档规则 / 敏感信息 | 与 external-runtime-access.md 合并为一份「工作区与归档规程」并入 B10 | 与后者主题高度重叠 |
 | docs/核心要求.md | 21492 | 现行权威(用户 mandate 逐字, 09-20 untracked) | B10 | NONE | 用户核心要求全集 / 稳定契约标识符说明 | 保留原地, 是 boards 分类的裁定依据源 | 顶部指向 backend-v2-implementation-guide 为实施合同 |
@@ -250,7 +249,7 @@ Status: STARTED
 | 4 | 命令口径与帮助主题 | COMMANDS.md / docs/command-catalog.md(生成物) / `_HELP_ENTRIES`(真身) / docs/design/v21r2-command-spec.md + entries-1/2/3 + inventory / v21r4-command-format-review.md / docs/route-matrix.md | `capabilities/echo.py::_HELP_ENTRIES` → `scripts/command_catalog.py --write` | 手写的 spec-entries 三件与 inventory 冻结了旧计数(自述 77 topics)；review 件还在提议改名 ⇒ 三份"规范"并存 |
 | 5 | 配置键目录 | docs/config-catalog-full.md / .env.example / config.py / docs/ai-setup-knowledge-pack.md §6 / ai-kb-operations-manual.md | `config.py` 单一 Config | config-catalog 已被 AGENTS #27⑦/#44⑨ 两次点出「截断失实/需补录」⇒ 手写目录必漂移 |
 | 6 | 渲染 token 与铁律 | DESIGN-SPEC.md(根) / docs/rendering-contract.md / docs/boards 拟稿 / AGENTS 第三部分 / v21r3-render-closing-spec.md / .superpowers 09-18 unify-wave | `domains/render/card_render/theme_tokens.py` | 四份 md 全在 `verify_hashes` 哈希清单内 ⇒ 任一处「顺手改文案」即触发哈希门红，是最高频假红源 |
-| 7 | QQ 协议端口径 | docs/napcat-setup.md / docs/snowluma-setup.md / docs/acceptance-manual.md / 全树 ~30 份复制的「术语说明(NapCat 指 09-18 之前)」横幅 | docs/snowluma-setup.md | 同一「术语说明」横幅被逐字复制进数十份 md（`test_doc_link_integrity` 的行级史实豁免正依赖它），删任一条会让对应坐标重新判红 |
+| 7 | QQ 协议端口径 | docs/snowluma-setup.md / docs/acceptance-manual.md / 全树 ~30 份复制的「术语说明(NapCat 指 09-18 之前)」横幅 | docs/snowluma-setup.md | 同一「术语说明」横幅被逐字复制进数十份 md（`test_doc_link_integrity` 的行级史实豁免正依赖它），删任一条会让对应坐标重新判红。旧 `docs/napcat-setup.md` 已于 2026-10-13 随 NapCat 退役拆除 |
 | 8 | 紧急信息装配门 | docs/design/emergency-info-registration-runbook-20260920.md §5-钉死②(三重门) vs AGENTS #46 裁定 3.B(缩成两腿) vs emergency-info-enablement-20260920.md(仍按「没有名单则零行为变更」写) | 代码 `build_emergency_info_source` + AGENTS #46 | **现役互斥**：按 runbook 施工会重新加第三腿；enablement §七 用户面用法与 .env 旧注释互相矛盾 |
 | 9 | 待用户裁决清单 | docs/pending-decisions.md(09-14) / docs/audit-20260921-decisions.md / v21r4-L41/L60/L71/L74 / r18-taxonomy-20260920.md / .superpowers/sdd/2026-09-21-fix-wave/master-plan.md §8.6 P-1…P-5 / docs/design/backend-v2-* 开放问题 | 各自独立，无聚合件 | 六处待裁并存且部分已裁未回写(L41 已在 #42 记 not_wired 但 memo 仍呈「待裁」) |
 | 10 | 工作区边界与归档规则 | docs/workspace-archive-policy.md / docs/external-runtime-access.md / AGENTS 第一部分 1-2 条 / docs/README.md 导览 | AGENTS 第一部分 | 三件重复且其中两件对 Runtime 只读边界措辞不同，AI 避扫规则出现两个版本 |
