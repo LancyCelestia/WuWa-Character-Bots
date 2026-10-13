@@ -422,30 +422,56 @@ def _autosync_session_gate():
 # 这里按**环境变量层**做通用复位：每个测试**前后**都把这几枚键恢复成测试会话
 # 起始时的快照。monkeypatch 正常工作时它与 monkeypatch 互为兜底；monkeypatch
 # 漏还原时由它接住。**不改任何测试正文、不动任何生产代码。**
-_RUNTIME_ENV_KEYS: tuple[str, ...] = (
-    "BOT_RUNTIME_DATA_DIR",
-    "BOT_RUNTIME_ROOT",
-    "BOT_DATA_DIR",
-)
-_RUNTIME_ENV_SNAPSHOT: dict[str, str | None] = {
-    k: os.environ.get(k) for k in _RUNTIME_ENV_KEYS
-}
+#: 运行时路径类环境变量（从 runtime_paths 导入常量建表，单一来源不漂移）。
+def _runtime_env_keys() -> tuple[str, ...]:
+    try:
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import runtime_paths as _rp
+
+        return tuple(
+            dict.fromkeys(
+                [
+                    _rp.RUNTIME_DATA_DIR_ENV,
+                    _rp.TEST_FORBIDDEN_ROOTS_ENV,
+                    _rp.TEST_PROCESS_ENV,
+                    _rp.TEST_RUNTIME_DATA_DIR_ENV,
+                    _rp.TEST_RUNTIME_GUARD_MODE_ENV,
+                ]
+            )
+        )
+    except Exception:  # pragma: no cover - 骨架缺席时退化为字面表
+        return (
+            "BOT_RUNTIME_DATA_DIR",
+            "BOT_TEST_FORBIDDEN_RUNTIME_ROOTS",
+            "BOT_TEST_PROCESS",
+            "BOT_TEST_RUNTIME_DATA_DIR",
+            "BOT_TEST_RUNTIME_GUARD_MODE",
+        )
 
 
-def _restore_runtime_env() -> None:
-    for key, value in _RUNTIME_ENV_SNAPSHOT.items():
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
+_RUNTIME_ENV_KEYS: tuple[str, ...] = _runtime_env_keys()
 
 
 @pytest.fixture(autouse=True)
 def _isolate_runtime_path_env():
-    """每个测试前后复位运行时路径环境（治跨文件泄漏；见上方长注）。"""
-    _restore_runtime_env()
+    """回滚**本测试自己**对运行时路径环境的改动（治跨文件泄漏）。
+
+    🔴 语义要点（2026-10-13 实锤教训）：**只回滚本测试改过的键**，绝不复位成
+    会话起始快照——因为**更宽作用域的夹具会合法地设置这些键**
+    （如 `test_config_root_registration` 的 module 级 autouse 夹具设
+    `BOT_RUNTIME_DATA_DIR` 供重映射用）。初版按「会话快照」复位，把那个合法值
+    弹掉了 ⇒ 重映射失去根 ⇒ 该文件 58 个运行时路径字段全被判 `outside_allowed_roots`。
+    现语义与 `monkeypatch` 同构，只兜「没用 monkeypatch 而手改 os.environ 的测试」。
+    """
+    before = {k: os.environ.get(k) for k in _RUNTIME_ENV_KEYS}
     yield
-    _restore_runtime_env()
+    for key, value in before.items():
+        if os.environ.get(key) == value:
+            continue
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 def pytest_terminal_summary(terminalreporter) -> None:
