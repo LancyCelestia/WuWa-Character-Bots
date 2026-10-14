@@ -2,18 +2,26 @@
 
 - /api/v1/stats/*、/api/v1/affinity/board 走与既有 v1 相同的统一信封、
   Bearer 双令牌认证、未配置令牌 503 not_provisioned、参数非法 422；
-- /ui 静态壳：产物存在 200 text/html，缺失 404 诚实体（host 白名单等
-  既有中间件语义不变，静态壳不含数据，数据面全部经认证端点）。
+- /ui 入口：产物存在 → 307 跳 /ui/；缺失 → 404 诚实体 ui_not_built；
+- /ui/ 返回 index（text/html、no-store）；/ui/assets/* 由应用层挂载真实
+  服务 JS/CSS（正确 MIME、带哈希资源可缓存、未知资产 404 不回 index、
+  不暴露产物根其他文件、路径遍历不越根）；
+- UI 响应头边界（CSP script-src 'self' / frame-ancestors 'none' /
+  X-Frame-Options DENY / nosniff）只作用于 /ui 子树，/api 认证与 CORS 不变
+  （host 白名单等既有中间件语义不变，静态壳不含数据，数据面全部经认证端点）。
 """
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urljoin
 
+import pytest
 from fastapi.testclient import TestClient
 
 from plugins.bot_unified_runtime.control_plane import create_control_plane_app
@@ -105,6 +113,32 @@ READ_PATHS = (
     "/api/v1/affinity/board",
 )
 
+# 模拟 vite 多文件产物（base '/ui/'）：index 外链带哈希的 JS/CSS，另有
+# 无哈希资源与产物根散件（后者不得被服务）。
+_INDEX_HTML = (
+    "<!doctype html><html><head>"
+    '<link rel="stylesheet" href="/ui/assets/index-a1b2c3d4.css" />'
+    '</head><body><div id="root">shorekeeper-ui</div>'
+    '<script type="module" src="/ui/assets/index-a1b2c3d4.js"></script>'
+    "</body></html>"
+)
+_JS_BODY = "export const shorekeeper = 1;\n"
+_CSS_BODY = ".root { color: #fff; }\n"
+
+
+def _write_dist(tmp_path: Path) -> Path:
+    dist = tmp_path / "dist"
+    assets = dist / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    (dist / "index.html").write_text(_INDEX_HTML, encoding="utf-8")
+    # 资产按字节落盘：静态服务是字节级回放，避免 Windows 文本模式的 CRLF 转写
+    # 把断言变成换行符比对（测量假象，不是被测行为）。
+    (assets / "index-a1b2c3d4.js").write_bytes(_JS_BODY.encode("utf-8"))
+    (assets / "index-a1b2c3d4.css").write_bytes(_CSS_BODY.encode("utf-8"))
+    (assets / "logo.svg").write_bytes(b"<svg/>\n")
+    (dist / "secret.txt").write_text("do-not-serve\n", encoding="utf-8")
+    return dist
+
 
 def test_stats_endpoints_require_bearer_and_use_common_envelope(tmp_path: Path) -> None:
     app = _app(tmp_path)
@@ -168,23 +202,155 @@ def test_latency_and_tokens_degraded_sources_still_envelope_ok(tmp_path: Path) -
         assert tokens.json()["data"]["status"] == "source_unavailable"  # 账本库缺失=诚实降级
 
 
-def test_ui_serves_single_file_index_or_honest_404(tmp_path: Path) -> None:
+def test_ui_entry_redirects_to_ui_root_and_index_is_no_store(tmp_path: Path) -> None:
     app = _app(tmp_path)
     with TestClient(app, base_url="http://127.0.0.1:8742") as client:
-        missing = client.get("/ui")
+        missing = client.get("/ui", follow_redirects=False)
         assert missing.status_code == 404
         assert missing.json()["error"]["code"] == "ui_not_built"
 
-    index = tmp_path / "dist" / "index.html"
-    index.parent.mkdir(parents=True, exist_ok=True)
-    index.write_text("<html><body>shorekeeper-ui</body></html>", encoding="utf-8")
-
+    _write_dist(tmp_path)
     with TestClient(app, base_url="http://127.0.0.1:8742") as client:
-        served = client.get("/ui")
+        entry = client.get("/ui", follow_redirects=False)
+        assert entry.status_code == 307, entry.status_code
+        assert entry.headers["location"] == "/ui/"
+
+        served = client.get("/ui/")
         assert served.status_code == 200
         assert served.headers["content-type"].startswith("text/html")
-        assert "shorekeeper-ui" in served.text
         assert served.headers["cache-control"] == "no-store"
+        assert "shorekeeper-ui" in served.text
+
+
+def test_ui_assets_served_with_real_mime_cache_and_security_headers(
+    tmp_path: Path,
+) -> None:
+    _write_dist(tmp_path)
+    app = _app(tmp_path)
+    with TestClient(app, base_url="http://127.0.0.1:8742") as client:
+        index = client.get("/ui/")
+        refs = re.findall(r'(?:src|href)="([^"]+)"', index.text)
+        # 从 index 的 src/href 推导实际资产 URL（相对 /ui/ 解析）。
+        urls = [urljoin("/ui/", ref) for ref in refs]
+        js_url = next(url for url in urls if url.endswith(".js"))
+        css_url = next(url for url in urls if url.endswith(".css"))
+
+        js = client.get(js_url)
+        assert js.status_code == 200
+        assert "javascript" in js.headers["content-type"]
+        assert js.text == _JS_BODY
+        assert js.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+        css = client.get(css_url)
+        assert css.status_code == 200
+        assert "text/css" in css.headers["content-type"]
+        assert css.text == _CSS_BODY
+
+        # 无哈希资源（logo.svg）：如实不缓存，不与全局 no-store 冲突。
+        plain = client.get("/ui/assets/logo.svg")
+        assert plain.status_code == 200
+        assert plain.headers["cache-control"] == "no-store"
+
+        for response in (index, js, css, plain):
+            csp = response.headers["content-security-policy"]
+            assert "script-src 'self'" in csp
+            assert "style-src 'self' 'unsafe-inline'" in csp
+            assert "frame-ancestors 'none'" in csp
+            assert response.headers["x-frame-options"] == "DENY"
+            assert response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_ui_assets_unknown_and_root_files_are_not_served(tmp_path: Path) -> None:
+    _write_dist(tmp_path)
+    app = _app(tmp_path)
+    with TestClient(app, base_url="http://127.0.0.1:8742") as client:
+        known = client.get("/ui/assets/logo.svg")
+        assert known.status_code == 200
+
+        # 未知资产 404，绝不回 index；且 404 不得带一年缓存。
+        missing = client.get("/ui/assets/nope-12345678.js")
+        assert missing.status_code == 404
+        assert "shorekeeper-ui" not in missing.text
+        assert missing.headers["cache-control"] == "no-store"
+
+        # 产物根其他文件不因挂载而暴露。
+        for path in (
+            "/ui/secret.txt",
+            "/ui/assets/../secret.txt",
+            "/ui/assets/%2e%2e%2fsecret.txt",
+        ):
+            escaped = client.get(path)
+            assert escaped.status_code == 404, path
+            assert "do-not-serve" not in escaped.text, path
+
+
+def test_ui_security_headers_do_not_leak_onto_api_or_add_cors(tmp_path: Path) -> None:
+    _write_dist(tmp_path)
+    app = _app(tmp_path)
+    with TestClient(app, base_url="http://127.0.0.1:8742") as client:
+        ui = client.get("/ui/")
+        assert ui.headers.get("access-control-allow-origin") is None
+
+        api = client.get("/api/v1/stats/calls")
+        assert api.status_code == 401
+        assert api.headers.get("access-control-allow-origin") is None
+        assert api.headers.get("content-security-policy") is None
+        assert api.headers.get("x-frame-options") is None
+
+
+def test_ui_assets_missing_directory_is_404_without_leaking_path(tmp_path: Path) -> None:
+    """产物未构建（webui/dist/assets 不存在）时 /ui/assets/* 必须如实 404。
+
+    Starlette ``StaticFiles.__call__`` 首个请求仍会 ``check_config()``，目录缺失时
+    抛 RuntimeError（check_dir=False 只免构造期检查）⇒ 不修就会把「构建缺席」
+    升成 500，并把目录路径写进服务端日志。这里锁 404 + 不泄露路径 + no-store。
+    """
+    app = _app(tmp_path)  # 不写 dist：assets 目录整个不存在
+    with TestClient(app, base_url="http://127.0.0.1:8742") as client:
+        response = client.get("/ui/assets/missing.js")
+        assert response.status_code == 404
+        assert str(tmp_path) not in response.text
+        assert "assets" not in response.json()["error"]["message"]
+        assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("case", ["outside", "equal"])
+def test_ui_assets_root_not_a_strict_subdir_is_not_served(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    """资产根必须是产物根的**严格子目录**：越界（outside）与等值（assets→dist
+    本身，等于把产物根散件一起纳入服务面）都不得服务（404）。
+
+    StaticFiles 把 directory ``realpath`` 后当作合法根，故越界根只能由本层自查。
+    本机不保证能建 symlink/junction，故用**严格 Path.resolve 替身**只改
+    ``dist/assets`` 这一枚的解析结果（其余走真身）；不 skip、不写目录。
+    ⚠ 替身只改 ``Path.resolve``（不改 Starlette 内部用的 ``os.path.realpath``），
+    故本腿量的是**本层自查判据**：根越界/等值就一枚都不服务（请求的这枚在真
+    dist/assets 里是实存的，旧实现会 200 送出 ⇒ 该断言正是红点）。
+    """
+    dist = _write_dist(tmp_path)
+    assets_root = dist / "assets"
+    if case == "outside":
+        target_root = tmp_path / "outside-assets"
+        target_root.mkdir()
+        (target_root / "index-a1b2c3d4.js").write_text("EXTERNAL-LEAK", encoding="utf-8")
+    else:
+        target_root = dist
+    real_resolve = Path.resolve
+
+    def fake_resolve(self: Path, *args: object, **kwargs: object) -> Path:
+        if self == assets_root:
+            return real_resolve(target_root)
+        return real_resolve(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "resolve", fake_resolve)
+    app = _app(tmp_path)
+    with TestClient(app, base_url="http://127.0.0.1:8742") as client:
+        response = client.get("/ui/assets/index-a1b2c3d4.js")
+        assert response.status_code == 404
+        assert "EXTERNAL-LEAK" not in response.text
+        assert _JS_BODY not in response.text
+        assert response.headers["cache-control"] == "no-store"
 
 
 def test_ui_static_shell_served_even_when_tokens_unprovisioned(tmp_path: Path) -> None:
@@ -198,5 +364,5 @@ def test_ui_static_shell_served_even_when_tokens_unprovisioned(tmp_path: Path) -
     )
     with TestClient(app, base_url="http://127.0.0.1:8742") as client:
         # 静态壳无数据（healthz 同级）；数据端点此刻 503 not_provisioned。
-        assert client.get("/ui").status_code == 200
+        assert client.get("/ui/").status_code == 200
         assert client.get("/api/v1/stats/calls").status_code == 503

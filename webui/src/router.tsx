@@ -1,16 +1,16 @@
 import { useEffect } from 'react';
-import { createHashHistory, createRootRoute, createRoute, createRouter, Outlet, useRouterState } from '@tanstack/react-router';
+import { createHashHistory, createRootRoute, createRoute, createRouter, lazyRouteComponent, Outlet, useRouterState } from '@tanstack/react-router';
 import { AppShell } from '@/components/layout/app-shell';
 import { RootErrorComponent, RouteErrorBoundary } from '@/components/layout/error-boundary';
-import { DashboardPage } from '@/pages/dashboard';
-import { CallsPage } from '@/pages/calls';
-import { TokensPage } from '@/pages/tokens';
-import { LatencyPage } from '@/pages/latency';
-import { AffinityPage } from '@/pages/affinity';
-import { LogsPage } from '@/pages/logs';
-import { KnowledgePage } from '@/pages/knowledge';
-import { PluginsPage } from '@/pages/plugins';
-import { MemoryGraphPage } from '@/pages/memory-graph';
+const DashboardPage = lazyRouteComponent(() => import('@/pages/dashboard'), 'DashboardPage');
+const CallsPage = lazyRouteComponent(() => import('@/pages/calls'), 'CallsPage');
+const TokensPage = lazyRouteComponent(() => import('@/pages/tokens'), 'TokensPage');
+const LatencyPage = lazyRouteComponent(() => import('@/pages/latency'), 'LatencyPage');
+const AffinityPage = lazyRouteComponent(() => import('@/pages/affinity'), 'AffinityPage');
+const LogsPage = lazyRouteComponent(() => import('@/pages/logs'), 'LogsPage');
+const KnowledgePage = lazyRouteComponent(() => import('@/pages/knowledge'), 'KnowledgePage');
+const PluginsPage = lazyRouteComponent(() => import('@/pages/plugins'), 'PluginsPage');
+const MemoryGraphPage = lazyRouteComponent(() => import('@/pages/memory-graph'), 'MemoryGraphPage');
 import {
   asSearchInput,
   canonicalSearchStr,
@@ -20,7 +20,7 @@ import {
 } from '@/lib/search-params';
 
 // 路由骨架保留自 AxonHub（TanStack Router），改 code-based routeTree + hash history：
-// 单文件构建 file:// 直开与静态挂载免 SPA fallback；不用上游 router-plugin（无代码生成、无分包）。
+// /ui/ 静态挂载配 hash 路由免 SPA fallback；页面用原生动态 import 分包，不引入代码生成。
 
 // ============================================================================
 // 深链参数的单一口径**不住在这里**：纯类型 + 纯函数 + 参数表全部在 `@/lib/search-params`

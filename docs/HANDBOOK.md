@@ -6456,3 +6456,41 @@ AxonHub 自动降级重试＝登记后置；⑥ 巡检 JSONL 曲线视图后置�
 - **零行为自证**：把所有 str 常量替成哨兵后 `ast.unparse` 出的骨架摘要改前改后逐字节相等；改动全部落在 `_HELP_ENTRIES` 的 `index` 与 `lines` 两格，未动 `aliases`/`triggers_nl`/`triggers_nickname`/`capability` 与任何判定函数。
 - **生成物等窗**：`docs/command-catalog.md`、`docs/auto-facts.md` 此刻与文案面不一致属预期，由主会话在安静窗按 `command_catalog → doc_sync → board_doc_sync → verify_hashes` 顺序统一重录；本席未跑任何 `--write`。
 - **未做（留她逐枚点名）**：`/bot narration scene` 那行的 `意义=` 段仍超判据 7 的宽度上限（里面是裁定史，真要修得把它搬进 `_HELP_EXTRA_LINES`，属动数组形态，本席没动）；形态①②③④⑥ 的改名／合并／折叠、`--probe` 子串匹配改严解析、无支中文词头的去留——全属乙/丙档。词面级独立声明债与触发词副本棘轮两把门在改前改后读数一字相同（现算＝跑 `tests/test_trigger_word_single_source.py`、`tests/test_trigger_word_copy_ratchet.py` 自取，本文件不抄数），本席净新增 `0`——那几枚红属在飞件。
+
+## 本地控制面 Alpha
+
+### 交付边界
+
+此版以本地记录上游 `aca6aef5322c7de74ef986a290b272ab263bf7ba` 为基线，在 `webui-alpha-foundation` 分支独立适配 WebUI 基础补丁，不包含主工作树之后的未推提交或前席 WIP。它是**本地控制面基础 Alpha**，不是完整控制面或生产部署证明；推送和 bot 重启由用户执行。
+
+- `webui/vite.config.ts` 使用 `/ui/` 基路径和多文件构建；`webui/src/router.tsx` 保留原页面与搜索参数，懒加载页面组件。
+- `control_plane/api/webui.py` 与 `_app.py` 在应用层挂载资产：有产物时 `/ui` 跳转 `/ui/`，静态壳不含业务数据；API 仍要求既有认证。缺产物、未知资产与资产根越界如实拒绝，不以首页代替缺件。
+- 生产脚本 CSP 仅同源，样式保留组件所需 inline；开发刷新只在 Vite serve 的 HTML 转换中授权随机 nonce。CSP、防嵌套与 nosniff 不等于完整公网安全方案。
+- `scripts/webui_mock_server.py` 与 `scripts/webui_acceptance.py` 共用资产字节/MIME/包含性判定；第八项 `scripts/pre_restart_check.py::check_webui` 检查首页直接引用，拒绝外链、缺件、空件、越界及纯内联占位。
+
+### 使用与复跑
+
+已有依赖时，在 `webui/` 执行 `npm run build`，完整保留 `dist/index.html` 和 `dist/assets/`；不要只复制 HTML。安装依赖、改生产配置和启停服务不由本版自动执行。Node 要支持原生 TypeScript stripping；后端使用项目已有 venv。
+
+定向回归在**不含生产 `.env`、`.env.prod` 的独立检出**执行；原公共隔离夹具会读取当前检出配置，不要把测试命令直接复制到带生产配置的主树。示例（`$py` 为已有项目 venv 的绝对路径）：
+
+```powershell
+$env:BOT_AUTOSYNC='0'
+$env:PYTHONUTF8='1'
+$env:PYTHONIOENCODING='utf-8'
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:PYTHONPYCACHEPREFIX=Join-Path $env:LOCALAPPDATA 'Temp/opencode/webui-alpha-pyc'
+if ((Test-Path .env) -or (Test-Path .env.prod)) { throw '请在无生产配置的独立检出验证' }
+$base=Join-Path $env:LOCALAPPDATA ('Temp/opencode/webui-alpha-test-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $base | Out-Null
+& $py -B -m pytest tests/test_webui_http.py tests/test_pre_restart_check.py tests/test_webui_constitution.py -p no:cacheprovider "--basetemp=$base" -q
+```
+
+初次独立适配的实跑结果（**当时值**）：WebUI 预检先有 `13 failed, 9 passed`；适配后 HTTP 与预检 `86 passed`，邻域 `194 passed`，完整前端契约 `9 passed`（含 Node 纯测试、类型、版式与 dev CSP hook）；均退出码 0。仓外 Vite 构建退出码 0；离线 TestClient 对新构建逐文件验证，输出 `PASS entry=307 index=200 assets=17 bytes_mime_mock=equal missing=404 traversal=404 api=401 build_gate=PASS missing_asset_gate=FAIL`（资产数为当时值）。实际页面与测试数量以源码及复跑为准。
+
+### 限制与剩余风险
+
+- 仅限受信任本机；完整三级权限、跨进程审批、独立面板生命周期、加密凭据管理、卡片编辑器、公网 HTTPS/私网接入和费用同步仍属后续目标。现有浏览器令牌持久化未迁移，不输入生产秘密作演示，不直接暴露控制面公网端口。
+- 预检不解析所有 JS/CSS 传递依赖；本版没有唯一格式的 POISON 检测，不用泛子串扫描冒充安全门。
+- 离线 HTTP、hook 和构建验证不等于浏览器视觉/HMR 实测；未做全仓全量回归、完整运行数据布局门或内存/性能对比，不宣称整个 bot 无回归或生产已生效。
+- 原主树前一波曾因 pytest 公共夹具超授权读取生产 dotenv，事故记录留仓外执行账；本版只在无该配置的新检出验证，未通过放宽夹具掩盖风险。

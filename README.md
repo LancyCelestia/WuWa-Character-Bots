@@ -22,9 +22,14 @@
 命令全集见 [COMMANDS.md](COMMANDS.md)（与 `/bot help` 同口径）；逐问法路由见
 [docs/route-matrix.md](docs/route-matrix.md)；自动生成的逐参数教程见 [docs/command-catalog.md](docs/command-catalog.md)。
 
-管理后端 WebUI（**在制，未验收**）：AxonHub 设计系统衍生的单文件前端，挂控制面 127.0.0.1:8742 `/ui`（Bearer 认证）；
-Phase A=总览/调用统计/Token/延迟/好感度榜/日志尾流，知识库/插件/记忆图谱在二期规格。
-详见 [docs/design/webui-axonhub-adoption.md](docs/design/webui-axonhub-adoption.md)。
+管理后端 WebUI（**本地 Alpha，完整控制面仍在制**）：React 多文件前端，入口为已配置控制面的 `/ui/`，`/ui` 兼容跳转；API 保留既有 Bearer 认证，静态壳不包含业务数据。现有页面范围以 `webui/src/router.tsx` 为准，数据源未配置或不可达时明确降级。
+
+- 构建：已安装锁文件对应依赖时，在 `webui/` 执行 `npm run build`，得到 `dist/index.html` 与 `dist/assets/`；部署时必须作为同一份产物保留，不能只复制 HTML。开发入口为 `npm run dev` 的 `/ui/`；前端测试需要支持原生 TypeScript stripping 的 Node（版本要求见 `tests/test_webui_constitution.py`）。
+- 本版提供页面懒加载、真实资产服务、缺件 404、路径包含检查、生产同源脚本 CSP，以及开发刷新 nonce；直接资产检查不等于全部 JS/CSS 传递依赖检查。
+- **仅限受信任本机使用，不直接暴露公网**：现有令牌仍由浏览器持久化，完整三级权限、跨进程审批、独立生命周期、加密凭据管理和卡片编辑器尚未闭环。CSP 不能替代这些安全能力；切勿输入生产秘密用于演示。
+- 控制面默认关闭，本版不自动修改配置或启停 bot；代码生效仍需由用户安排重启。离线测试、构建与浏览器运行验证是不同验收层级，具体证据与限制见 [docs/HANDBOOK.md](docs/HANDBOOK.md) 的「本地控制面 Alpha」节。
+
+原设计参考：[docs/design/webui-axonhub-adoption.md](docs/design/webui-axonhub-adoption.md)；其中单文件产物叙述已由本版多文件机制取代。
 
 ## 快速上手
 

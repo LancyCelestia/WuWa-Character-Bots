@@ -565,7 +565,13 @@ def create_control_plane_app(
         )
     )
 
-    from .api.webui import build_ui_router, build_webui_stats_router
+    from .api.webui import (
+        apply_ui_response_headers,
+        build_ui_router,
+        build_webui_stats_router,
+        is_ui_path,
+        mount_webui_assets,
+    )
 
     app.include_router(
         build_webui_stats_router(
@@ -576,6 +582,9 @@ def create_control_plane_app(
         )
     )
     app.include_router(build_ui_router(dist_dir=webui_dist_dir))
+    # WebUI 静态资源（Task 0.1）：资产子树在**应用层**挂载——APIRouter.mount 不随
+    # include_router 传播，故不走 build_ui_router 返回的 router。
+    mount_webui_assets(app, dist_dir=webui_dist_dir)
     # WebUI Phase B：知识目录 / 插件目录 / 记忆图谱（只读，缺源=信封内
     # source_unavailable 如实降级，服务层均不写任何生产库）。
     from .api.webui_ext import (
@@ -683,6 +692,16 @@ def create_control_plane_app(
             type(exc).__name__,
         )
         return error_response(request, 500, "internal_error", "控制面内部错误。")
+
+    # WebUI 响应头边界（Task 0.6）：只给 /ui 子树补 CSP/XFO/nosniff 与资产缓存
+    # 策略；/api、webhook、Host 鉴权与 CORS 一律不动。**最先注册 = 最内层**，
+    # 因此只作用于真实路由响应，不会给中间件自身产生的拒绝体（如 Host 400）挂头。
+    @app.middleware("http")
+    async def _ui_security_headers_middleware(request: Request, call_next):
+        response = await call_next(request)
+        if is_ui_path(request.url.path):
+            apply_ui_response_headers(response, request.url.path)
+        return response
 
     # Host 白名单（§8.2 防DNS rebinding，审查 P-01）。Bearer 只防“无凭据”，
     # 防不了浏览器同源策略被绕过：恶意网页可驱动受害者浏览器向

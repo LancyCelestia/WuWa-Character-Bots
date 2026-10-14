@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """守岸人 WebUI 端到端目验脚本（playwright 无头，零第三方依赖除 playwright）。
 
-对 webui/dist 单文件构建逐页驱动：hash 路由切页 → 等待「数据在场」或「优雅降级态」
+对 webui/dist 多文件构建逐页驱动：hash 路由切页 → 等待「数据在场」或「优雅降级态」
 标志文案 → 断言非白屏 + 控制台无非白名单错误 → 全页截图。
 
 用法：
@@ -21,9 +21,9 @@
 
 API 基址注入：dist 的 api-client 从 localStorage `webui:baseUrl` 读覆盖值（见
 webui/src/lib/api-client.ts），脚本经 context.add_init_script 在页面脚本运行前写入
-（file:// 下 Chromium 允许 localStorage）；令牌同理写 `webui:bearer` / `webui:bearer:ro`。
-若 init 探测发现 localStorage 不可用，自动回退为本地极简静态包装页（stdlib http.server，
-向 dist HTML 头部注入同一段 localStorage 预置脚本后同端口伺服）。
+；令牌同理写 `webui:bearer` / `webui:bearer:ro`。
+多文件 ES 模块始终经本地极简静态包装服务器的 /ui/ 加载（stdlib http.server），
+原样服务 index 与实际资产，不注入 inline 脚本，不以 HTML 兜底未知路径。
 """
 
 from __future__ import annotations
@@ -39,6 +39,12 @@ import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
+
+try:
+    from scripts.webui_mock_server import dist_response
+except ModuleNotFoundError:  # 直接 python scripts/webui_acceptance.py 时 scripts 在 sys.path。
+    from webui_mock_server import dist_response
 
 os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 
@@ -118,32 +124,42 @@ STORAGE_PRELUDE = """
 
 
 class _WrapperHandler(BaseHTTPRequestHandler):
-    """极简静态包装页：同端口伺服注入了 localStorage 预置脚本的 dist HTML（仅回退用）。"""
+    """只服务真实 /ui/ index 和 /ui/assets；未知路径不回 HTML。"""
 
-    html = ""
     server: ThreadingHTTPServer
 
+    def do_HEAD(self) -> None:
+        self.do_GET()
+
     def do_GET(self) -> None:
-        body = self.html.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        status, body, mime, headers = dist_response(self.server.dist_root, self.path)
+        self.send_response(status)
+        for key, value in headers.items():
+            self.send_header(key, value)
+        self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def log_message(self, *args: object) -> None:  # 静默，产物零落盘
         return
 
 
-def start_wrapper_server(dist_html: str, storage_js: str) -> tuple[ThreadingHTTPServer, str]:
-    """把 dist/index.html 头部注入 localStorage 预置脚本后起本地伺服（127.0.0.1 随机端口）。"""
-    injected = re.sub(r"(<head[^>]*>)", rf"\1<script>{storage_js}</script>", dist_html, count=1)
-    if injected == dist_html:  # 无 <head>（理论不可达）：整体前置
-        injected = f"<script>{storage_js}</script>" + dist_html
-    _WrapperHandler.html = injected
+def start_wrapper_server(dist: Path | str, storage_js: str = "") -> tuple[ThreadingHTTPServer, str]:
+    """多文件产物需 HTTP 模块加载；存储预置仍由 context.add_init_script 完成。
+
+    dist 接受目录或 index.html 路径；不再接受 HTML 正文冒充完整产物。
+    storage_js 位置参数保留供旧调用方迁移，但不注入 HTML。
+    """
+    path = Path(dist).resolve()
+    root = path.parent if path.name == "index.html" else path
+    if not (root / "index.html").is_file():
+        raise SystemExit(f"[uiacc] dist index 不存在: {root / 'index.html'}")
     server = ThreadingHTTPServer(("127.0.0.1", 0), _WrapperHandler)
+    server.dist_root = root
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server, f"http://127.0.0.1:{server.server_address[1]}/"
+    return server, f"http://127.0.0.1:{server.server_address[1]}/ui/"
 
 
 def build_storage_js(api: str | None, token: str | None, ro_token: str | None) -> str:
@@ -190,8 +206,10 @@ def wait_any_dom(page: Page, css: str, timeout_s: float) -> str | None:
 
 def run(args: argparse.Namespace) -> tuple[list[dict], str]:
     dist = Path(args.dist).resolve()
-    if not dist.exists():
-        raise SystemExit(f"[uiacc] dist 不存在: {dist}")
+    if dist.is_dir():
+        dist = dist / "index.html"
+    if not dist.is_file():
+        raise SystemExit(f"[uiacc] dist index 不存在: {dist}")
     # 验收对象是**产物**：dist 落后于 src 时，一张绿单证明的是已经不存在的代码。
     src_root = dist.parent.parent / "src"
     if src_root.is_dir() and not args.allow_stale_dist:
@@ -209,10 +227,17 @@ def run(args: argparse.Namespace) -> tuple[list[dict], str]:
     specs = [s for s in PAGE_SPECS if s["name"] in names]
 
     storage_js = build_storage_js(args.api, args.token, args.ro_token)
-    results: list[dict] = []
-    wrapper: ThreadingHTTPServer | None = None
-    base_uri = dist.as_uri()
+    wrapper, base_uri = start_wrapper_server(dist)
 
+    try:
+        return _run_browser(args, dist, shot_dir, specs, storage_js, base_uri)
+    finally:
+        wrapper.shutdown()
+        wrapper.server_close()
+
+
+def _run_browser(args, dist, shot_dir, specs, storage_js, base_uri) -> tuple[list[dict], str]:
+    results: list[dict] = []
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(locale="zh-CN", viewport={"width": 1440, "height": 900})
@@ -232,15 +257,8 @@ def run(args: argparse.Namespace) -> tuple[list[dict], str]:
             ".filter(h => h.startsWith('#/'))"
         )
         nav_hrefs = probe.evaluate(nav_eval)
-        if not storage_ok and args.api:
-            # file:// localStorage 受限 → 回退静态包装页伺服（注入同一段预置脚本）。
-            wrapper, wrapper_url = start_wrapper_server(dist.read_text(encoding="utf-8"), storage_js)
-            base_uri = wrapper_url
-            note = f"file:// localStorage 不可用，回退包装页 {wrapper_url}"
-            print(f"[uiacc] {note}")
-            probe.goto(base_uri + "#/", wait_until="load")
-            wait_any_text(probe, [SHELL_MARKER], 15)
-            nav_hrefs = probe.evaluate(nav_eval)
+        if not storage_ok:
+            raise SystemExit("[uiacc] HTTP localStorage 预置失败，不能声称已应用 API/令牌覆盖")
         probe.close()
 
         for spec in specs:
@@ -252,14 +270,11 @@ def run(args: argparse.Namespace) -> tuple[list[dict], str]:
                     nav_hrefs,
                     shot_dir,
                     args.timeout,
-                    api_origin=(args.api or base_uri).rstrip("/"),
+                    api_origin=(args.api or f"{urlsplit(base_uri).scheme}://{urlsplit(base_uri).netloc}").rstrip("/"),
                     expect=args.expect,
                 )
             )
         browser.close()
-    if wrapper is not None:
-        wrapper.shutdown()
-
     summary = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "dist": str(dist),
@@ -404,7 +419,7 @@ def print_table(results: list[dict], allow_skip: bool = False) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="守岸人 WebUI 端到端目验（playwright 无头）")
-    parser.add_argument("--dist", default="webui/dist/index.html", help="dist 单文件路径")
+    parser.add_argument("--dist", default="webui/dist/index.html", help="dist 目录或 index.html 路径（兼容旧 CLI）")
     parser.add_argument("--api", default="http://127.0.0.1:8743",
                         help="控制面/mock API 基址（写入 localStorage webui:baseUrl；空串=同源）")
     parser.add_argument("--token", default=None, help="Bearer 主令牌（可选，写 webui:bearer）；"

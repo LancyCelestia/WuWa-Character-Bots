@@ -26,11 +26,28 @@ T4 渠道能力标签保险 / T5 PX-1 MCP 模块保险 / S141 ANN 代际可用�
                    ONEBOT_WS_URLS（多账号=多端口，逐个探；只取 host:port，
                    令牌不进输出），解析不出时回落 127.0.0.1:3001
                    （只提示不阻断）
-  8. webui         WebUI 单文件壳资产 webui/dist/index.html：存在、体积
-                   0<size<10MB、单文件特征（正文无外链 <script src= /
-                   <link rel=stylesheet href=> 到 http(s) 与绝对路径；
-                   W3C 命名空间等字符串不算）；缺失=SKIP（先在 webui/ 下
-                   npm run build）不算红
+  8. webui         WebUI 多文件壳资产（vite base '/ui/'）：`webui/dist/index.html`
+                   存在、体积 0<size<10MB；壳内每条本地资产引用
+                   （script[src] / link[rel 的**任一 token** 为
+                   stylesheet|modulepreload][href]，故 `rel="preload modulepreload"`
+                   这类多 token 合法形态不被吞）必须在 `webui/dist/assets` 内
+                   resolve 到**非空实存**文件。引用形态只认 base '/ui/'
+                   （`/ui/assets/...`）与相对（`./assets/...`）；只取 path 判——
+                   `?v=1#frag` 是合法引用、不算缺件，判据在 decode 前后各过一次。
+                   资产根先自证是产物根的**严格子目录**（`webui/dist/assets` 解析后
+                   与 `dist` 等值或 `relative_to(dist)` 失败即 FAIL，防外部目录/链接
+                   顶替，也防 assets 直指 dist 把产物根散件纳入服务面）。
+                   网络外链（http(s)／协议相对 host／非 http(s) 协议）、越出
+                   资产根、编码穿越（`%2e%2e`）一律 FAIL；纯内联占位（零本地
+                   资产引用）同样 FAIL——多文件产物不该没有外链引用。正文 URL
+                   字符串、data: URI、icon/prefetch/普通 preload 不进判定（旧
+                   语义保留）；缺失=SKIP（先在 webui/ 下 npm run build）不算红。
+                   🔴 欠账（诚实登记，两条）：① CSS @import 与 JS 动态 import /
+                   chunk 依赖图这类**传递依赖**不在本格校验面内——只逐条核 index
+                   直接引用的文件，不为它另造一套 manifest 解析；② 「POISON 熄火行」
+                   检测未做：全树字面 POISON 有数百枚普通夹具/文案命中（AGENTS 第 68
+                   行与 §76 明载「拿全树零命中说话是错尺」），本仓无唯一可判格式
+                   ⇒ 简单子串扫描＝误判，故不落半吊子尺，登记欠账。
   9. control_plane 控制面配置三键：BOT_CONTROL_PLANE_ENABLED /
                    BOT_CONTROL_PLANE_TOKEN_SHA256（读）/
                    BOT_CONTROL_PLANE_SUPER_ADMIN_TOKEN_SHA256（写），
@@ -192,6 +209,7 @@ import argparse
 import ast
 import hashlib
 import json
+import posixpath
 import re
 import socket
 import sqlite3
@@ -204,7 +222,7 @@ from contextlib import contextmanager, redirect_stdout
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse, urlsplit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 NAPCAT_HOST = "127.0.0.1"
@@ -225,7 +243,10 @@ DEFAULT_KB_DB = "data/knowledge_embeddings.sqlite3"
 QX_JSON_REL = "plugins/bot_unified_runtime/domains/weather/assets/qx.json"
 
 WEBUI_INDEX_REL = "webui/dist/index.html"
-WEBUI_MAX_BYTES = 10 * 1024 * 1024  # 单文件壳体积上限 10MB（现网实构建 ≈0.9MB）
+WEBUI_DIST_REL = "webui/dist"  # 产物根：vite base '/ui/' ⇒ /ui/ 映射到这里
+WEBUI_ASSETS_REL = "webui/dist/assets"  # 本地资产根：index 引用必须落在这里
+WEBUI_BASE_PREFIX = "/ui/"  # vite base：绝对引用只认 /ui/assets/... 这一形态
+WEBUI_MAX_BYTES = 10 * 1024 * 1024  # 壳（index.html）体积上限 10MB（多文件后 index 远小于此）
 
 # 控制面配置三键：第二列是人话标签；哈希键只查非空、绝不回显值
 CONTROL_PLANE_KEYS: tuple[tuple[str, str], ...] = (
@@ -234,13 +255,28 @@ CONTROL_PLANE_KEYS: tuple[tuple[str, str], ...] = (
     ("BOT_CONTROL_PLANE_SUPER_ADMIN_TOKEN_SHA256", "写(超管) token 哈希"),
 )
 
-# 单文件特征探测：只看 <script src=> 与 <link rel=stylesheet href=> 标签属性，
+# 资产引用探测：只看 <script src=> 与 <link rel=stylesheet|modulepreload href=> 标签属性，
 # 正文里的 W3C 命名空间（xmlns）/任意 URL 字符串天然不进判定（启发式，容忍 JS
 # 字符串里出现标签字面量的极小误报面）。
 _TAG_RE = re.compile(r"<(script|link)\b[^>]*>", re.IGNORECASE)
 _SRC_ATTR_RE = re.compile(r"""\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.IGNORECASE)
 _HREF_ATTR_RE = re.compile(r"""\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.IGNORECASE)
-_REL_STYLESHEET_RE = re.compile(r"""\brel\s*=\s*["']?[^"'>\s]*stylesheet[^"'>\s]*["']?""", re.IGNORECASE)
+# 进判定的 <link>：rel 的**任一 token** 是 stylesheet/modulepreload（icon/prefetch/普通
+# preload 不判）。按 token 判而非整串子串：`rel="preload modulepreload"` 这类合法多 token
+# 形态不得被吞（旧整串正则只认 keyword 落在首段）。
+_REL_ATTR_RE = re.compile(r"""\brel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.IGNORECASE)
+_JUDGED_LINK_REL_TOKENS = frozenset({"stylesheet", "modulepreload"})
+# 带协议的引用（http: https: file: javascript: …）。
+_URL_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.\-]*):")
+
+
+def _link_rel_tokens(tag: str) -> set[str]:
+    """``<link>`` 标签的 rel 值按空白切成 token 集合（小写）；无 rel/畸形＝空集."""
+    match = _REL_ATTR_RE.search(tag)
+    if match is None:
+        return set()
+    value = next((g for g in match.groups() if g is not None), "")
+    return {token.lower() for token in value.split()}
 
 # M-12 bot 侧音色守望：基线册=scripts/tts_voice_baseline.json（yaml sha256 字节锚
 # + 守岸人权重路径白名单，T60 对引擎只读取证录制）；引擎目录全程只读。
@@ -691,31 +727,76 @@ def check_napcat(endpoints: list[tuple[str, int]] | None = None) -> CheckResult:
     )
 
 
-def _external_asset_refs(html: str) -> list[str]:
-    """挑出单文件壳违规外链：script[src] 与 link[rel=stylesheet][href] 中
-    指向 http(s):// 或绝对路径（/ 开头）的引用；data: URI 与相对路径不算."""
-    violations: list[str] = []
+def _webui_asset_refs(html: str) -> list[tuple[str, str]]:
+    """挑出需判定的本地资产引用 ``(kind, url)``：script[src] 与
+    link[rel 含 stylesheet|modulepreload][href]。data: URI 与其余 <link> 不进判定."""
+    refs: list[tuple[str, str]] = []
     for match in _TAG_RE.finditer(html):
         tag = match.group(0)
         kind = match.group(1).lower()
-        attr_re = _SRC_ATTR_RE if kind == "script" else _HREF_ATTR_RE
-        attr = attr_re.search(tag)
+        if kind == "link":
+            if not (_link_rel_tokens(tag) & _JUDGED_LINK_REL_TOKENS):
+                continue  # icon/prefetch/普通 preload 等不判（旧语义）
+            attr = _HREF_ATTR_RE.search(tag)
+        else:
+            attr = _SRC_ATTR_RE.search(tag)
         if attr is None:
             continue
-        if kind == "link" and not _REL_STYLESHEET_RE.search(tag):
-            continue  # 只有 rel=stylesheet 的 <link> 判外链（icon/preload 等不判）
         url = next((g for g in attr.groups() if g is not None), "").strip().strip("\"'")
         if not url or url.lower().startswith("data:"):
             continue
-        lowered = url.lower()
-        if lowered.startswith(("http://", "https://")) or url.startswith("/"):
-            violations.append(f"<{kind} ...={url}>")
-    return violations
+        refs.append((kind, url))
+    return refs
+
+
+def _classify_webui_ref(url: str) -> tuple[str, str]:
+    """引用分类 → ``(verdict, payload)``.
+
+    verdict：``local``（payload=相对**产物根**的规范路径；vite base '/ui/' ⇒ /ui/ ↔
+    webui/dist）／``external``（http(s)）／``protocol``（file:/javascript:/其他协议）／
+    ``host``（协议相对 ``//host/...``）／``outside``（绝对路径但不在 base '/ui/' 下）／
+    ``escape``（上跳或编码穿越）。
+    """
+    match = _URL_SCHEME_RE.match(url)
+    if match:
+        scheme = match.group(1).lower()
+        return ("external", url) if scheme in {"http", "https"} else ("protocol", url)
+    if url.startswith("//"):
+        return "host", url
+    decoded = unquote(url)
+    if decoded.startswith("//") or _URL_SCHEME_RE.match(decoded):
+        return "host", url  # 编码后的 scheme/host（%2f%2f、%68ttp:）
+    # 只取 path：query/fragment 不是文件路径（`/ui/assets/x.js?v=1#frag` 是合法引用，
+    # 不该被当成缺件）；判据在 decode 前后各过一次（上面 decoded 已判 host/scheme）。
+    path = urlsplit(url).path
+    if path.startswith("/"):
+        if not path.startswith(WEBUI_BASE_PREFIX):
+            return "outside", url
+        rel = path[len(WEBUI_BASE_PREFIX):]
+    else:
+        rel = path
+    decoded_rel = unquote(rel).replace("\\", "/")
+    # 🔴 穿越判定必须在规范化**之前**：`assets/../x.js` 规范化后会「洗白」成 assets/x.js，
+    # 那样就把一条编码穿越当成普通缺件（量不出攻击面）。
+    if any(segment == ".." for segment in decoded_rel.split("/")):
+        return "escape", url
+    normalized = posixpath.normpath(decoded_rel)
+    if normalized in {"", "."}:
+        return "outside", url  # 空 path（如仅 `?v=1`）＝不可解析，不是缺件
+    if normalized.startswith(("..", "/")):
+        return "escape", url
+    return "local", normalized
 
 
 def check_webui(project_root: Path) -> CheckResult:
-    """第 8 项：WebUI 单文件壳资产（缺失=SKIP 不算红；坏资产才算 FAIL）."""
-    cid, name = "webui", "WebUI 单文件壳资产"
+    """第 8 项：WebUI 多文件壳资产（缺失=SKIP 不算红；坏资产才算 FAIL）.
+
+    判定面＝index 直接引用的本地资产：逐条在 ``webui/dist/assets`` 内 resolve 且
+    非空实存；网络外链／越出资产根／编码穿越／纯内联占位一律 FAIL。
+    🔴 欠账（诚实登记）：CSS @import 与 JS 动态 import / chunk 依赖图这类**传递依赖**
+    不在本格校验面内——只核 index 直接引用的文件，不为它另造一套 manifest 解析。
+    """
+    cid, name = "webui", "WebUI 多文件壳资产"
     index_path = project_root / WEBUI_INDEX_REL
     if not index_path.is_file():
         return CheckResult(
@@ -723,7 +804,7 @@ def check_webui(project_root: Path) -> CheckResult:
             name,
             SKIP,
             f"{WEBUI_INDEX_REL} 不存在——WebUI 控制台壳未构建（控制面 /ui 将 404，但不阻断重启）",
-            "先在 webui/ 下 npm run build（vite-plugin-singlefile 产出 webui/dist/index.html），"
+            "先在 webui/ 下 npm run build（多文件产物：index.html + assets/**），"
             "或确认本轮不需要 WebUI 控制台。",
         )
     size = index_path.stat().st_size
@@ -735,22 +816,71 @@ def check_webui(project_root: Path) -> CheckResult:
             name,
             FAIL,
             f"{index_path} 体积 {size / 1024 / 1024:.1f} MB ≥ 10MB 上限",
-            "单文件壳异常膨胀：检查是否误把大资源打进构建（正常 ≈0.9MB）；重新构建核产物。",
+            "壳异常膨胀：检查是否误把大资源打进 index（多文件产物 index 应远小于 10MB）；"
+            "重新构建核产物。",
         )
     try:
         html = index_path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         return CheckResult(cid, name, FAIL, f"index.html 不可读：{exc}", "检查文件权限/占用后重新构建。")
-    violations = _external_asset_refs(html)
+
+    refs = _webui_asset_refs(html)
+    if not refs:
+        return CheckResult(
+            cid,
+            name,
+            FAIL,
+            "壳内零本地资产引用（纯内联占位）——多文件产物应引用 /ui/assets/**",
+            "确认 vite 已去单文件内联插件且 base '/ui/'，webui/ 下 npm run build 重出 "
+            "index.html + assets/**。",
+        )
+
+    dist_dir = (project_root / WEBUI_DIST_REL).resolve()
+    assets_dir = (project_root / WEBUI_ASSETS_REL).resolve()
+    # 🔴 资产根必须是产物根的**严格子目录**：`webui/dist/assets` 若被换成指向产物根
+    # 之外的目录/链接（非空外部文件照样能被服务），或直接指到产物根本身（等值 ⇒
+    # `dist/secret.txt` 这类根散件也会被当资产服务），只查「文件实存」都会放行 ⇒ 先做这一问。
+    if assets_dir == dist_dir or not assets_dir.is_relative_to(dist_dir):
+        return CheckResult(
+            cid,
+            name,
+            FAIL,
+            f"资产根不是产物根的严格子目录：{WEBUI_ASSETS_REL} 解析后为 {assets_dir}，"
+            f"产物根 {dist_dir}",
+            "webui/dist/assets 被替换成指向产物根之外的链接/挂载，或直接指到产物根本身"
+            "（外部非空文件与产物根散件都会被服务）：恢复为构建产物内的真实 assets 目录后"
+            "重新 npm run build。",
+        )
+    violations: list[str] = []
+    resolved = 0
+    for kind, url in refs:
+        verdict, payload = _classify_webui_ref(url)
+        if verdict == "escape":
+            violations.append(f"路径穿越 <{kind} ...={url}>")
+            continue
+        if verdict != "local":
+            violations.append(f"外链/不可解析引用 <{kind} ...={url}>")
+            continue
+        # payload 相对产物根（/ui/ ↔ webui/dist）；再要求落进 assets 子树。
+        target = (dist_dir / payload).resolve()
+        if not target.is_relative_to(assets_dir):
+            violations.append(f"越出资产根 <{kind} ...={url}>")
+        elif not target.is_file():
+            violations.append(f"本地资产缺件 <{kind} ...={url}> -> 应有 {target}")
+        elif target.stat().st_size == 0:
+            violations.append(f"本地资产为空 <{kind} ...={url}>")
+        else:
+            resolved += 1
     if violations:
         shown = "; ".join(violations[:3]) + (f" 等 x{len(violations)}" if len(violations) > 3 else "")
         return CheckResult(
             cid,
             name,
             FAIL,
-            f"单文件壳含外链资产（http(s)/绝对路径）x{len(violations)}: {shown}",
-            "GET /ui 只回单文件壳，外链在离线/受限网会白屏：vite-plugin-singlefile 配置失效？"
-            "webui/ 下 npm run build 重新构建。",
+            f"壳资产不合格 x{len(violations)}: {shown}",
+            "index 的每个 script[src]/link[rel=stylesheet|modulepreload] 必须是 /ui/assets/** "
+            "或 ./assets/** 且文件实存非空；外链在离线/受限网会白屏——核 vite base 与构建产物后 "
+            "webui/ 下 npm run build。",
         )
     if size >= 1024 * 1024:
         human_size = f"{size / 1024 / 1024:.1f} MB"
@@ -758,7 +888,9 @@ def check_webui(project_root: Path) -> CheckResult:
         human_size = f"{size / 1024:.0f} KB"
     else:
         human_size = f"{size} 字节"
-    return CheckResult(cid, name, PASS, f"单文件壳 OK（{human_size}，内联无外链）")
+    return CheckResult(
+        cid, name, PASS, f"多文件壳 OK（index {human_size}，本地资产引用 x{resolved} 实存非空）"
+    )
 
 
 def check_control_plane(env: dict[str, str]) -> CheckResult:
