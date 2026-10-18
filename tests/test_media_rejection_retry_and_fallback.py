@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import tempfile
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -57,7 +58,12 @@ T0 = datetime(2026, 9, 15, 5, 0, 0, tzinfo=timezone.utc)
 # 假路径会被构段期摘掉、模拟不出平台拒绝——这里给一枚**在场的非空文件**
 # （%TEMP% 下，不进源码树，规则 6），拒绝由 RejectingBot 冒充 NapCat 时期
 # ``result:-1 rich media transfer failed`` 的退码形态，事故语义原样保留。
-_CARD_IMAGE_DIR = Path(tempfile.mkdtemp(prefix="chatbot-w1-rejection-"))
+# 落点用 os.mkdir 默认权限，**不用 tempfile.mkdtemp**：mkdtemp 固定建 0o700 目录，
+# 而 0o700 目录在受限沙箱（如 DSH workspace-write）下对后续写入不可用——连
+# ``chmod 777`` 都救不回（chmod 本身先被拒）。实测：mkdir 默认 / 0o777 可写，
+# mkdtemp / 0o700 必挂。语义不变：仍在 %TEMP% 下、仍不进源码树（规则 6）。
+_CARD_IMAGE_DIR = Path(tempfile.gettempdir()) / f"chatbot-w1-rejection-{uuid.uuid4().hex[:12]}"
+_CARD_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 _CARD_IMAGE = _CARD_IMAGE_DIR / "usage_report_x.png"
 _CARD_IMAGE.write_bytes(b"\x89PNG\r\n\x1a\n" + b"card-rendered-bytes")
 

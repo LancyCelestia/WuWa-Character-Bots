@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import sys
 from pathlib import Path
@@ -118,6 +119,7 @@ def healthy_entry() -> dict:
 # 键名从构造器自己的输出反解，不手写第二份清单（手写就是会过期的副本）。
 # ---------------------------------------------------------------------------
 
+@functools.lru_cache(maxsize=1)
 def _keys_the_fake_env_writes() -> tuple[str, ...]:
     """本文件假 `.env` 写了哪几枚键——现算取，唯一真身＝`make_project` 的产物.
 
@@ -125,26 +127,36 @@ def _keys_the_fake_env_writes() -> tuple[str, ...]:
     .env（漏了它，ambient 的 BOT_MODEL_REGISTRY 会整片盖掉路 ③ 那两条遮蔽腿——
     2026-09-29 本席拿一枚假 `BOT_MODEL_REGISTRY` 当注毒实测，正是这条先红）。
     """
+    import os
     import tempfile
+    import uuid
 
     variants = (
         {"registry": None},
         {"registry": None, "env_registry": "{}"},
     )
-    with tempfile.TemporaryDirectory() as td:
-        keys: set[str] = set()
-        for index, kwargs in enumerate(variants):
-            keys |= set(prc.load_env(make_project(Path(td) / f"probe{index}", **kwargs)))
+    # 落点用 ``os.mkdir`` 默认权限，**不用 TemporaryDirectory / mkdtemp**：两者都在
+    # 受限沙箱（如 DSH workspace-write）下走不通——mkdtemp 固定建 0o700 目录，之后
+    # 往里写必被拒；TemporaryDirectory 收尾的 ``rmtree`` 会先 ``chmod`` 再删，同样被拒
+    # 且会把异常抛进采集腿。实测：``os.mkdir`` 默认 / 0o777 可写，0o700 与 mkdtemp 必挂。
+    # 残留落在 %TEMP%，不进源码树（规则 6）；本函数 ``lru_cache`` 只算一次。
+    td = Path(tempfile.gettempdir()) / f"chatbot-tagpresence-{uuid.uuid4().hex[:12]}"
+    td.mkdir(parents=True, exist_ok=True)
+    keys: set[str] = set()
+    for index, kwargs in enumerate(variants):
+        keys |= set(prc.load_env(make_project(td / f"probe{index}", **kwargs)))
     return tuple(sorted(keys))
-
-
-_ENV_KEYS_TO_SCRUB = _keys_the_fake_env_writes()
 
 
 @pytest.fixture(autouse=True)
 def hermetic_fake_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """每例把假 `.env` 会写的那几枚键从 os.environ 摘掉（monkeypatch 自动还原）."""
-    for key in _ENV_KEYS_TO_SCRUB:
+    """每例把假 `.env` 会写的那几枚键从 os.environ 摘掉（monkeypatch 自动还原）.
+
+    键名现算推迟到**首例**（``lru_cache`` 只算一次）：模块 import 期不再建目录落盘。
+    原先 import 期就调 ``TemporaryDirectory()``，受限沙箱里清理腿被拒即把整份
+    采集打成 ERROR——而采集期的磁盘副作用本身也不该有。
+    """
+    for key in _keys_the_fake_env_writes():
         monkeypatch.delenv(key, raising=False)
 
 
