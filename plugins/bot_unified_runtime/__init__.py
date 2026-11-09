@@ -4745,6 +4745,22 @@ def _register_nonebot_handlers() -> None:
 
     from .control_plane.lifecycle import register_control_plane_lifecycle
 
+    def _runtime_state_probe() -> dict[str, Any]:
+        """W12 三腿探针：OneBot 连接如实报；SnowLuma 端口腿交控制面现探。
+
+        历史上这里返回一个 bool（＝有没有 online 的 OneBot bot），被控制台
+        当成「SnowLuma 好没好」——2026-10-19 学校号 3014 SYN_SENT 时整条
+        连接报异常，而主号 3011 其实好好的。端口腿按 Config/环境变量解析，
+        不在这里硬编码端口。
+        """
+        from .control_plane.connection_probe import probe_ports, resolve_snowluma_ports
+
+        ports = probe_ports(resolve_snowluma_ports(config))
+        return {
+            "onebot_connected": _select_credential_bot(_all_online_bots()) is not None,
+            "snowluma_ports": ports,
+        }
+
     def make_control_plane_app():
         from .control_plane import create_control_plane_app
         return create_control_plane_app(
@@ -4752,9 +4768,7 @@ def _register_nonebot_handlers() -> None:
             runtime_attached=True,
             # V21-risk-4：队列与实时连接态经参数注入（禁全局单例直连）。
             send_queue=send_queue,
-            runtime_state_probe=lambda: _select_credential_bot(
-                _all_online_bots()
-            ) is not None,
+            runtime_state_probe=_runtime_state_probe,
         )
 
     register_control_plane_lifecycle(get_driver(), config, make_control_plane_app)
@@ -5501,10 +5515,11 @@ def _register_nonebot_handlers() -> None:
                     if receipt.state is ReceiptState.SENT:
                         outcomes.append((str(destination.id), True))
                         try:
-                            await store.record_outbox_deliveries_async(
-                                event.event_id, [str(destination.id)]
-                            )
-                        except Exception:
+                            if store is not None:
+                                await store.record_outbox_deliveries_async(
+                                    event.event_id, [str(destination.id)]
+                                )
+                        except Exception:  # noqa: BLE001 - 台账写失败不阻断已成功的投递
                             # 台账写失败＝本轮退化为 at-least-once（下一轮可能重投），
                             # 不回滚已成功的投递——与调度器「台账失败不阻断」同口径。
                             from nonebot.log import logger
@@ -10738,7 +10753,6 @@ def _register_nonebot_handlers() -> None:
         )
         if _should_silently_skip_chat_receipt(message, receipt, audit_logger):
             return
-        await _notify_operational_receipt(message, receipt)
         if should_finish_nonebot_matcher(receipt):
             await chat.finish(receipt.public_message)
 

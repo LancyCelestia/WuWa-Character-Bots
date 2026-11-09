@@ -88,12 +88,22 @@ function PluginCard({ item }: { item: PluginItem }) {
   );
 }
 
+/**
+ * 加载态（W13-V2）：改前是 12 块裸 `<Skeleton className='h-32'/>` —— `bg-accent` 半透明、
+ * 无壳、无描边、无投影，整页看起来像「壁纸上飘着 12 块灰板」（V 席截图实测）。
+ * 现在骨架条留在壳里：一张整组面板（`surface`，与数据态的 `SectionCard` 同一批玻璃毯子），
+ * 组标题条 + 组内三张卡的骨架都在这块底上，所以加载→数据不会有材质跳变。
+ * （用 `surface` 不用 `surface-flat`：后者 70% 不透明度，12 块紫灰骨架仍会透出壁纸的立绘。）
+ */
 function GroupSkeleton() {
   return (
-    <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
-      {[0, 1, 2].map((index) => (
-        <Skeleton key={index} className='h-32' />
-      ))}
+    <div className='surface flex flex-col gap-4 rounded-lg p-4'>
+      <Skeleton className='h-8 w-48' />
+      <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
+        {[0, 1, 2].map((index) => (
+          <Skeleton key={index} className='h-32' />
+        ))}
+      </div>
     </div>
   );
 }
@@ -150,18 +160,13 @@ export function PluginsPage() {
       : null;
 
   return (
-    <div className='mx-auto flex w-full max-w-6xl flex-col gap-6'>
+    <div className='flex w-full flex-col gap-6'>
       <PageHeader title={t('plugins.title')} subtitle={t('plugins.subtitle')} />
 
       {query.state.phase === 'loading' ? (
-        <>
-          {[0, 1, 2, 3].map((index) => (
-            <div key={index} className='flex flex-col gap-4'>
-              <Skeleton className='h-8 w-48' />
-              <GroupSkeleton />
-            </div>
-          ))}
-        </>
+        // 每组的组名骨架已收进 GroupSkeleton 的壳里（见该函数注释）——
+        // 原来这里是「裸组名骨架 + 裸卡片骨架」，两段都直接压壁纸。
+        [0, 1, 2, 3].map((index) => <GroupSkeleton key={index} />)
       ) : query.state.phase === 'error' ? (
         isNotFound(query.state) ? (
           <SectionCard title={t('plugins.notDeployed')}>

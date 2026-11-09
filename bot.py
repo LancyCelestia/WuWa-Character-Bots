@@ -1,5 +1,6 @@
 import faulthandler
 import os
+import socket
 import sys
 import threading
 from pathlib import Path
@@ -171,6 +172,78 @@ if __name__ == "__main__" and _supervision_requested():
     # 端口/日志）；未启用守护时这里只是一次布尔短路，后面的模块级初始化
     # 与原先逐行一致。
     raise SystemExit(_run_supervised())
+
+
+# =========================================================================
+# 驱动监听端口（2026-10-17 崩溃熔断根修）
+# =========================================================================
+# 事故：supervisor 600s 内连续崩溃 5 次、退出码恒为 3（crash-loop 熔断）。
+# 根因链（逐段实测，别只读注释）：
+#   ① NoneBot fastapi 驱动的监听地址取**驱动自身 Config** 的 host/port
+#      （nonebot/drivers/fastapi.py:189-190），两者缺省 = 127.0.0.1:8080；
+#   ② 本机 8080 处于 Windows 保留态：无人监听却拒绝绑定，bind 报
+#      OSError errno=13 winerror=10013（同一时刻 8742/3014/8081 均可绑）；
+#   ③ uvicorn server.py:180-183 捕到该 OSError 后 sys.exit(STARTUP_FAILURE)，
+#      而 uvicorn/config.py:80 的 STARTUP_FAILURE **就是 3** ⇒ 整进程退 3；
+#   ④ supervisor 把非零退出当崩溃 → 退避重拉 → 熔断；QQ 连接随之断
+#      （runtime_events.log 每次 bot_connected 后约 3s 即 bot_disconnected）。
+# 修法（用户 2026-10-17 裁 A）：不再吃缺省 8080，启动前显式钉住端口。
+#
+# ponytail: 这里走**驱动层**环境变量 PORT/HOST（NoneBot 自身键），不是
+# config.py 的 bot_* 字段——因此不触发「一个配置键四处同生」（config.py ＋
+# .env.example ＋ config-catalog-full.md ＋ settings.py 登记）那套义务。
+# 上限与升级路径：不支持热改（改端口必重启）、不在控制面配置面可见。
+# 若日后要把它升成一等配置键，路径＝加 bot_webhook_port 字段并让
+# _webhook_endpoint 优先读 getattr(config, "bot_webhook_port", None)。
+_DEFAULT_WEBHOOK_PORT = 8099  # 8080 是本机保留态，改钉一个实测可绑的口
+_DEFAULT_WEBHOOK_HOST = "127.0.0.1"
+
+
+def _dotenv_declares_keys(text: str, keys: frozenset[str]) -> bool:
+    """纯解析：dotenv 文本里是否声明了这些键（键名大小写不敏感、认 ``export``）。"""
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key = line.split("=", 1)[0].strip()
+        if key[:7].lower() == "export ":
+            key = key[7:].strip()
+        if key.upper() in keys:
+            return True
+    return False
+
+
+def _dotenv_declares(*keys: str) -> bool:
+    """``.env``/``.env.prod`` 里是否显式声明了这些键。
+
+    为什么必须先看它：NoneBot 的取值优先级是「**进程环境 ＞ dotenv**」
+    （``nonebot/config.py:188-190``：``env_vars = {**env_file_vars, **env_vars}``）。
+    只要本进程把 PORT 写进环境，`.env` 里写的 PORT 就**永远读不到**——
+    而 `.env` 正是本仓配置的常规落点（AGENTS 规则 3）。所以 dotenv 声明了
+    就让位，否则才钉缺省。查 cwd 与 bot.py 同目录两处（NoneBot 按 cwd 找）。
+    """
+    wanted = frozenset(key.upper() for key in keys)
+    here = Path(__file__).resolve().parent
+    candidates = [Path.cwd() / name for name in (".env", ".env.prod")]
+    candidates += [here / name for name in (".env", ".env.prod")]
+    seen: set[Path] = set()
+    for path in candidates:
+        try:
+            resolved = path.resolve()
+            text = resolved.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if _dotenv_declares_keys(text, wanted):
+            return True
+    return False
+
+
+if not _dotenv_declares("PORT", "HOST"):
+    os.environ.setdefault("PORT", str(_DEFAULT_WEBHOOK_PORT))
+    os.environ.setdefault("HOST", _DEFAULT_WEBHOOK_HOST)
 
 
 def _install_crash_guards(runtime_data_dir: str | Path | None = None) -> None:
@@ -440,6 +513,63 @@ except Exception as _misfire_exc:  # noqa: BLE001 - 调度器不可用时维持�
     )
 
 
+def _webhook_endpoint(config: object | None = None) -> tuple[str, int]:
+    """驱动实际会监听的 (host, port)。
+
+    真身就是驱动 Config 的 ``host``/``port``（``nonebot/drivers/fastapi.py``
+    的 ``run()`` 直接取这两枚）；NoneBot 自身缺省是 ``127.0.0.1:8080``，本仓
+    已在模块顶部把 ``PORT``/``HOST`` 钉成 8099/127.0.0.1（8080 是本机保留态）。
+    本函数只做「解析成可读值」，不负责改端口。
+    """
+    source = config if config is not None else globals().get("_driver_config")
+    host = str(getattr(source, "host", None) or "127.0.0.1")
+    raw_port = getattr(source, "port", None)
+    try:
+        port = int(raw_port) if raw_port is not None else _DEFAULT_WEBHOOK_PORT
+    except (TypeError, ValueError):
+        port = _DEFAULT_WEBHOOK_PORT
+    return host, port
+
+
+def _webhook_bind_error(config: object | None = None) -> str | None:
+    """启动预检：监听端口绑不上时返回人话诊断，否则 ``None``。
+
+    为什么要有这一步：uvicorn 在 ``create_server`` 收到 OSError 后只
+    ``logger.error(exc)`` 就 ``sys.exit(3)``，日志里只剩一句 WinError——
+    现场表现为「进程退 3 + crash-loop」，看不出该改哪个键。这里在
+    ``nonebot.run()`` 之前先探一次，把「绑不上」翻译成可执行提示。
+    fail-open：预检自身出错绝不阻断启动（uvicorn 仍会在原地给出权威错误）。
+    """
+    host, port = _webhook_endpoint(config)
+    probe = None
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # SO_EXCLUSIVEADDRUSE 必须加，且**不加 SO_REUSEADDR**：
+        # Windows 上两个 socket 只要都没显式独占，就能绑同一 (addr, port)
+        # （实测：占着 8099 再绑一次照样成功）⇒ 不加独占的预检会漏报「口被占」。
+        # 非 Windows 没有这枚常量（本仓生产是 Windows），拿不到就跳过该选项。
+        exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+        if exclusive is not None:
+            probe.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        probe.bind((host, port))
+    except OSError as exc:
+        return (
+            f"驱动监听 {host}:{port} 绑定失败（{exc}）。uvicorn 遇此会以"
+            f" STARTUP_FAILURE=3 直接退出进程，supervisor 随即按崩溃重启并可能熔断。"
+            f" Windows 上 winerror 10013 = 该端口处于保留态或权限不足（不是"
+            f"「已被监听」）。改法：在 .env 里加一行 PORT=<可用端口> 后重启"
+            f"（未声明时本进程钉 {_DEFAULT_WEBHOOK_PORT}；8080 在本机实测为保留态）。"
+        )
+    except Exception as exc:  # noqa: BLE001 - 预检绝不影响启动，但**不许静默**。
+        # fail-open ≠ fail-silent：预检自身出错也要说出来，否则就成了「看着有牙、
+        # 其实恒通过」的空操作（2026-10-17 曾因 socket 未在模块级导入而踩过一次）。
+        return f"驱动端口预检自身出错（不阻断启动，uvicorn 仍会给出权威错误）：{exc!r}"
+    finally:
+        if probe is not None:
+            probe.close()
+    return None
+
+
 def _probe_onebot_endpoints() -> None:
     """启动预检：协议端未监听时给出人话告警（WinError 1225 高频现场）。
 
@@ -448,7 +578,6 @@ def _probe_onebot_endpoints() -> None:
     这里只是把「连接被拒绝 = 该地址没有进程在听」翻译成一句可执行的操作提示，
     代替让用户面对重连堆栈自行排障。
     """
-    import socket
     from urllib.parse import urlsplit
 
     urls = getattr(_driver_config, "onebot_ws_urls", None) or []
@@ -509,6 +638,11 @@ if getattr(_driver_config, "bot_memes_plugin_enabled", False):
         print(f"[bot] nonebot_plugin_memes 加载失败（功能降级不影响其他能力）: {_memes_exc}", file=_sys.stderr)
 
 if __name__ == "__main__":
+    _bind_error = _webhook_bind_error(_driver_config)
+    if _bind_error:
+        # 只告警不拦：真绑不上时 uvicorn 仍会以 3 退出，但此刻日志里已经有
+        # 「改哪个键」的人话，不再是裸 WinError + 退 3。
+        nonebot.logger.error(_bind_error)
     try:
         nonebot.run()
     except KeyboardInterrupt:

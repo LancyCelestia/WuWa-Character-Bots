@@ -118,7 +118,7 @@ wiki 百科知识库（第二通道）：由外部 Crawl Wiki 项目提供游戏
 
 在册重启口＝`ChatBot_Runtime/restart_bot.ps1`。ANN 整库重建＝`ChatBot_Runtime/rebuild_ann_kb_wiki.ps1`，六步：预检（向内存门要价、核对盘量与空闲）→ 停 bot → 保险目录 sha256 对账后**把现索引搬走**（是搬走不是删除，保险目录在仓外，结束时打印路径）→ 跑 kb-sync **多轮自动续跑**直到索引落地（轮数有上限）→ 验收探针 → 带 stdout/stderr 重定向起 bot，结束时弹 Windows 提示。每轮一份独立 UTF-8 日志（`ChatBot_Runtime/logs/rebuild_ann_kb_wiki_<UTC 时间戳>.log`）。只想看数字不动任何东西，加 `-CheckOnly` 只跑预检那一步。脚本本体在 ChatBot_Runtime 内、不入源码仓，正文只准 ASCII（PowerShell 5.1 读无 BOM 的 UTF-8 脚本会静默不执行）。
 
-**验收判据（现算，别抄文档数字）**：探针一次打出 `embed_generation`、代际证明里的盖章值、`expected_stamp`、`faiss_ntotal`、`fts_rows`、`chunks`、已嵌入数这一组读数。合格线＝`faiss_ntotal` 与计数戳、库侧条数、已嵌入数四值相等，且 `fts_rows` 同为该量级；起 bot 后判活以 netstat 为准＝8080 处于 LISTENING 且 3001 已连，两者同属新起的进程。若 `embed_generation` 仍为空（None）而盖章值是 0，说明换代守卫还在惰性在场状态，需要一次真补嵌才开口——这不算失败，但也不许叙述成已在执法。若探针报 `UNREADABLE`，索引文件本身坏了：旧那对仍在保险目录里，按脚本末行打印的路径取回。
+**验收判据（现算，别抄文档数字）**：探针一次打出 `embed_generation`、代际证明里的盖章值、`expected_stamp`、`faiss_ntotal`、`fts_rows`、`chunks`、已嵌入数这一组读数。合格线＝`faiss_ntotal` 与计数戳、库侧条数、已嵌入数四值相等，且 `fts_rows` 同为该量级；起 bot 后判活以 netstat 为准＝驱动监听口（`PORT`／`.env` 的 PORT，缺省 8099；2026-10-17 前为 8080）处于 LISTENING 且 3001 已连，两者同属新起的进程。若 `embed_generation` 仍为空（None）而盖章值是 0，说明换代守卫还在惰性在场状态，需要一次真补嵌才开口——这不算失败，但也不许叙述成已在执法。若探针报 `UNREADABLE`，索引文件本身坏了：旧那对仍在保险目录里，按脚本末行打印的路径取回。
 
 ## 十五、每天把上游百科的新内容并进知识库（日增量链）
 

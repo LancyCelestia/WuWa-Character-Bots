@@ -51,7 +51,7 @@ html_sha256 为主判据。2026-09-19 ANIM 钉帧席起 render_backends 截图�
   样张就明说「还没有产物」并给出该跑的命令，**绝不顺手替使用者渲一份**（那会把出图
   副作用与内存开销塞进一个预览入口）。
 - 只绑 127.0.0.1（无 --host 开关，0.0.0.0 在代码里根本没有通路），缺省端口 8750——
-  避开 5174（webui dev）/8080（bot webhook）/8090（网关）/8742（控制面）/8743（mock）。
+  避开 5174（webui dev）/8099（bot webhook，2026-10-17 前为 8080）/8090（网关）/8742（控制面）/8743（mock）。
 - 零第三方依赖（stdlib http.server，形状照 scripts/webui_mock_server.py）。
 - 泄露面：产物目录可能落在运行数据根下，**绝对路径本身就是泄露面**，而
   domains/render/plain_text.py 的 redact_local_secrets 只守 bot 文本出口、管不到
@@ -1533,8 +1533,8 @@ def print_report(results: list[SampleResult], out_dir: Path) -> bool:
 
 #: 铁律：--serve 只准绑回环。CLI 里没有 --host 开关，0.0.0.0 在代码中不存在通路。
 _SERVE_HOST = "127.0.0.1"
-#: 缺省端口：避开 5174（webui dev）/ 8080（bot webhook）/ 8090（网关）/
-#: 8742（控制面）/ 8743（webui_mock_server，其文档另举 8744）。
+#: 缺省端口：避开 5174（webui dev）/ 8099（bot webhook，2026-10-17 前为 8080）/
+#: 8090（网关）/ 8742（控制面）/ 8743（webui_mock_server，其文档另举 8744）。
 _SERVE_DEFAULT_PORT = 8750
 
 _ROOT_MARK_RUNTIME = "RUNTIME_ROOT"

@@ -35,6 +35,18 @@
 - 旧汇总文档退役依据：[boards/_meta/doc-classification-20260921.md](boards/_meta/doc-classification-20260921.md)（全量 md 分类账：现役性、归属板块、处置建议）
 - 代码质量缺陷台账：[boards/_meta/code-quality-findings-20260921.md](boards/_meta/code-quality-findings-20260921.md)（P0/P1/P2 分级与最小修法）
 
+## 技能套件工作区配置（agents/）
+
+Matt Pocock 技能套件按仓库读这三份，`AGENTS.md` 的 `## Agent skills` 块是它们的指针：
+
+| 文档 | 说明 |
+|---|---|
+| [agents/issue-tracker.md](agents/issue-tracker.md) | issue tracker ＝ GitHub Issues（`LancyCelestia/WuWa-Character-Bots`，走 `gh`），含 PR 作为请求面的开关与 wayfinder 的 map/子票/阻塞操作 |
+| [agents/triage-labels.md](agents/triage-labels.md) | 五个 triage 角色 → 本仓标签串的映射；wayfinder 五标签与它并列，不互相替代 |
+| [agents/domain.md](agents/domain.md) | 域文档布局结论＝multi-context（子项目各一份 `GLOSSARY.md`，根目录一份 `GLOSSARY-MAP.md`）；词条已建立（2026-10-19），索引见 [GLOSSARY-MAP.md](../GLOSSARY-MAP.md) |
+
+> 改这三份＝改技能行为，改完回读 `AGENTS.md` 的 `## Agent skills` 块保持一致。
+
 ## 交接与总账
 
 | 文档 | 说明 |

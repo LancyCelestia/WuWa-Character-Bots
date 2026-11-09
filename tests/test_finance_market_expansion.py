@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 from types import SimpleNamespace
+from typing import ClassVar, Self
 
 import pytest
 
@@ -765,7 +766,7 @@ class TestOfficialSourceGate:
 
         class _Resp:
             status = 200
-            headers = {"Content-Type": "text/plain"}
+            headers: ClassVar[dict[str, str]] = {"Content-Type": "text/plain"}
 
             def __init__(self, body: bytes) -> None:
                 self._body = body
@@ -773,7 +774,7 @@ class TestOfficialSourceGate:
             def read(self, _n: int = -1) -> bytes:
                 return self._body
 
-            def __enter__(self) -> "_Resp":
+            def __enter__(self) -> Self:
                 return self
 
             def __exit__(self, *_a: object) -> bool:

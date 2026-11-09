@@ -144,8 +144,15 @@ class ResourceMeasurement(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     value: int | float | None
     status: Literal["ok", "unknown"]
-    reason: Literal["warming_up", "counter_reset", "source_unavailable", "not_connected"] | None
-    unit: Literal["seconds", "percent_one_core", "bytes", "count"]
+    reason: Literal[
+        "warming_up",
+        "counter_reset",
+        "source_unavailable",
+        "not_connected",
+        "not_supported",
+        "no_provider",
+    ] | None
+    unit: Literal["seconds", "percent_one_core", "percent", "bytes", "count"]
 
 
 class ResourceSnapshot(BaseModel):
@@ -155,6 +162,7 @@ class ResourceSnapshot(BaseModel):
     captured_at: str
     sampling: Literal["on_demand"]
     minimum_interval_seconds: float
+    history_max_samples: int
     measurements: dict[str, ResourceMeasurement]
     cpu_time_seconds: float | None
     cpu_time_seconds_status: Literal["ok", "unknown"]
@@ -165,6 +173,14 @@ class ResourceSnapshot(BaseModel):
     memory_bytes: int | None
     memory_bytes_status: Literal["ok", "unknown"]
     memory_bytes_reason: str | None
+
+
+class ResourceHistory(BaseModel):
+    """有界采样环（最旧→最新）；history 端点由消费方另行接线。"""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    max_samples: int
+    samples: list[ResourceSnapshot]
 
 class ActionParametersPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")

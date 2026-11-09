@@ -15,12 +15,14 @@ import { memo, useEffect, useRef, useState, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CirclePause, CirclePlay, Eraser, Link2Off, RotateCcw, ArrowDownToLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Select } from '@/components/appearance/field';
 import { PageHeader, SectionCard, CategoryChip, type Tone } from '@/components/patterns/patterns';
 import { LogsStreamClient, type StreamStatus } from '@/lib/sse';
 import { controlApi, type LogEventRow, type LogsSourcesData } from '@/lib/api-client';
 import { createFlushController, LogsBuffer, type FlushController } from '@/lib/log-stream';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
 import { formatTime } from '@/lib/format';
+import { LogHistoryPanel } from '@/components/logs/history-panel';
 
 const CURSOR_KEY = 'webui:logsCursor';
 const HEARTBEAT_STALE_MS = 45_000;
@@ -273,7 +275,7 @@ export function LogsPage() {
   const categoryItems = sources.state.phase === 'ok' ? sources.state.data.categories : [];
 
   return (
-    <div className='mx-auto flex w-full max-w-6xl flex-col gap-4'>
+    <div className='flex w-full flex-col gap-4'>
       <PageHeader
         title={t('logs.title')}
         actions={
@@ -326,30 +328,26 @@ export function LogsPage() {
 
       <div className='flex flex-wrap items-center gap-2'>
         <span className='fs-caption text-muted-foreground'>{t('logs.filters')}</span>
-        <select
+        <Select
+          size='compact'
+          ariaLabel={t('logs.allSources')}
           value={sourceFilter}
-          onChange={(event) => setSourceFilter(event.target.value)}
-          className='h-8 rounded-md border bg-background px-2 fs-caption'
-        >
-          <option value=''>{t('logs.allSources')}</option>
-          {sourceItems.map((item) => (
-            <option key={item} value={item}>
-              {item}
-            </option>
-          ))}
-        </select>
-        <select
+          onChange={(next) => setSourceFilter(next)}
+          options={[
+            { value: '', label: t('logs.allSources') },
+            ...sourceItems.map((item) => ({ value: item, label: item })),
+          ]}
+        />
+        <Select
+          size='compact'
+          ariaLabel={t('logs.allCategories')}
           value={categoryFilter}
-          onChange={(event) => setCategoryFilter(event.target.value)}
-          className='h-8 rounded-md border bg-background px-2 fs-caption'
-        >
-          <option value=''>{t('logs.allCategories')}</option>
-          {categoryItems.map((item) => (
-            <option key={item} value={item}>
-              {item}
-            </option>
-          ))}
-        </select>
+          onChange={(next) => setCategoryFilter(next)}
+          options={[
+            { value: '', label: t('logs.allCategories') },
+            ...categoryItems.map((item) => ({ value: item, label: item })),
+          ]}
+        />
         <Button size='sm' variant='secondary' onClick={applyFilters}>
           {t('logs.applyFilters')}
         </Button>
@@ -371,6 +369,10 @@ export function LogsPage() {
             <div ref={listEndRef} />
           </div>
         )}
+      </SectionCard>
+
+      <SectionCard title={t('logs.historyTitle')} description={t('logs.historyHint')}>
+        <LogHistoryPanel key={`${sourceFilter}:${categoryFilter}`} source={sourceFilter} category={categoryFilter} />
       </SectionCard>
 
       <p className='fs-caption text-muted-foreground'>{t('logs.transportNote')}</p>

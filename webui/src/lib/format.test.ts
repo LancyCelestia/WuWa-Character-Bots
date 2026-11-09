@@ -56,12 +56,34 @@ async function loadFormat(tz: string): Promise<FormatModule> {
   return import(`${FORMAT_URL.href}?tz=${encodeURIComponent(tz)}`) as Promise<FormatModule>;
 }
 
-// ---- 旧口径参照（逐字抄录自 9f139b2 的 format.ts return 表达式） ----------------
+// ---- 参照系（W13-M 展示层统一后：年月日 + 时分秒；仍是「现场构造同 options」口径） ------
+// 等值命题没变：**模块级缓存 formatter 与现场构造必须逐枚同值**。变的是拼装方式——
+// 2026-10-19 前输出是 Intl 默认分隔符（2026/10/18 14:05:09），现改为中文单位全字段
+// （2026年10月18日 14时05分09秒，见 format.ts 头注④）。故参照侧也从 formatToParts
+// 取字段、用同一中文单位拼装——两侧若 options 漂了（漏 second / 换 hourCycle），
+// 等值立刻破，锁还是有牙的。
+const TIME_OPTIONS: Intl.DateTimeFormatOptions = {
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+};
+const DATE_TIME_OPTIONS: Intl.DateTimeFormatOptions = {
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+};
+/** 现场构造（**每次 new**）：这是「旧口径」侧，必须跟随 env 时区改动。 */
+function refParts(options: Intl.DateTimeFormatOptions, d: Date): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const p of new Intl.DateTimeFormat('zh-CN', options).formatToParts(d)) {
+    if (p.type !== 'literal') out[p.type] = p.value;
+  }
+  return out;
+}
 function refTime(d: Date): string {
-  return d.toLocaleTimeString('zh-CN', { hour12: false });
+  const p = refParts(TIME_OPTIONS, d);
+  return `${p.hour}:${p.minute}:${p.second}`;
 }
 function refDateTime(d: Date): string {
-  return d.toLocaleString('zh-CN', { hour12: false });
+  const p = refParts(DATE_TIME_OPTIONS, d);
+  return `${p.year}年${p.month}月${p.day}日 ${p.hour}时${p.minute}分${p.second}秒`;
 }
 
 // ---- 确定性样本生成 --------------------------------------------------------------
@@ -146,7 +168,8 @@ test('阴性对照：缺 second 的近似实现必须被同一比对器全量抓
   for (let t = START; t < START + 300 * BASE_STEP_MS; t += BASE_STEP_MS) {
     const d = new Date(t);
     total += 1;
-    const buggyCached = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }); // 故意缺 second
+    const p = refParts(TIME_OPTIONS, d);
+    const buggyCached = `${p.hour}:${p.minute}`; // 故意缺 second
     if (buggyCached !== mod.formatTime(d.toISOString())) caught += 1;
   }
   assert.equal(total, 300);
@@ -180,7 +203,7 @@ test('构造期绑定时区（M-3）：env 后改不跟随=缓存性质；现场
   assert.equal(before, '06:30:00', '前置：UTC 口径快照');
   process.env.TZ = 'Pacific/Chatham';
   const afterFlip = mod.formatTime(iso); // 同一模块实例（formatter 已在 UTC 下构造）
-  const freshConstruction = new Date(iso).toLocaleTimeString('zh-CN', { hour12: false }); // 现构造
+  const freshConstruction = refTime(new Date(iso)); // 现构造（同一批 options，中文单位拼装）
   assert.equal(afterFlip, before, '缓存 formatter 必须无视构造后的 env 时区改动（构造期绑定）');
   assert.notEqual(freshConstruction, before, '现场构造旧口径应随 env 改动改口——两性质同时成立才构成「构造期绑定」实证');
   assert.equal(freshConstruction, '20:15:00', 'Chatham(+13:45 夏令时)对时快照');

@@ -409,3 +409,12 @@ class AuditRecord(StrictBaseModel):
     public_message: str
     private_debug: str
     created_at: datetime = Field(default_factory=_utc_now)
+    # 身份四件套（WebUI「平台 / 群或频道 / 用户ID / 昵称」链的持久层）。
+    # 摄取层本来就有这四个事实（`IncomingMessage`），但此前只进 LLM 提示词的画像
+    # 分区、从不落库 —— 于是审计库只答得出 session_id 一个哈希/约定串，答不出
+    # "哪个群、谁发的"。全部 Optional：旧构造点（smoke/console/admin 等）一字不改，
+    # 语义是**未采集**（None），不是空串冒充。
+    platform: str | None = None
+    group_id: str | None = None
+    group_title: str | None = None
+    sender_nickname: str | None = None

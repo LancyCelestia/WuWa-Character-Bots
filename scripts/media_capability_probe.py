@@ -88,7 +88,11 @@ def seg(kind: str, **data) -> dict:
 # 第 0 段：真发前置闸门
 # =========================================================================
 def gate_listening_ports() -> tuple[bool, list[str]]:
-    """① 8080 与 3001 均在监听。用 socket 直连判活（避开 netstat 子进程页文件坑）。"""
+    """① 驱动监听口（`PORT`，缺省 8099）与 3001 均在监听。socket 直连判活。
+
+    2026-10-17 崩溃熔断根修前驱动缺省是 8080，而 8080 在本机属 Windows
+    保留态 ⇒ 拿 8080 判活会恒判「bot 没在跑」。
+    """
     import socket
 
     def probe(port: int) -> bool:
@@ -98,9 +102,33 @@ def gate_listening_ports() -> tuple[bool, list[str]]:
         except OSError:
             return False
 
-    p8080, p3001 = probe(8080), probe(3001)
-    ok = p8080 and p3001
-    notes = [f"socket connect 127.0.0.1:8080={p8080} 127.0.0.1:3001={p3001}"]
+    def _dotenv_port() -> int | None:
+        """`.env`/`.env.prod` 里声明的 PORT（bot.py 会为它让位，故判活也要认）。"""
+        for name in (".env", ".env.prod"):
+            try:
+                text = Path(name).read_text(encoding="utf-8")
+            except OSError:
+                continue
+            for raw_line in text.splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                if key.strip().removeprefix("export ").strip().upper() != "PORT":
+                    continue
+                try:
+                    return int(value.strip().strip("\"'"))
+                except ValueError:
+                    return None
+        return None
+
+    try:
+        webhook_port = int(os.environ.get("PORT") or _dotenv_port() or 8099)
+    except ValueError:
+        webhook_port = 8099
+    p_webhook, p3001 = probe(webhook_port), probe(3001)
+    ok = p_webhook and p3001
+    notes = [f"socket connect 127.0.0.1:{webhook_port}={p_webhook} 127.0.0.1:3001={p3001}"]
     # 补充取证：netstat 读数（若可用）证明二者 PID 互连（bot↔SnowLuma）。
     try:
         out = subprocess.run(["netstat", "-ano"], capture_output=True, text=True,
@@ -606,7 +634,7 @@ def plan_and_maybe_send(execute: bool, only: str | None = None,
     if g4:
         globals()["TG_CHAT_ID"] = chat_id
 
-    for name, ok, notes in [("① 端口8080/3001 LISTENING+互连", g1, n1),
+    for name, ok, notes in [("① 驱动监听口(PORT，缺省 8099)/3001 LISTENING+互连", g1, n1),
                             ("② 1722380002 白名单(超管)且不在BLACK", g2, n2),
                             ("③ 私聊号=>独立探针承接", g3, n3),
                             ("④ TG chat id 从 delivery_receipts 现读", g4, n4)]:

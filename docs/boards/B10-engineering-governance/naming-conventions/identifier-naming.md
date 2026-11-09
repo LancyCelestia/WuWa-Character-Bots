@@ -19,7 +19,7 @@
 
 不需要调用，需要遵守。三条最常撞的：
 
-- **动词前缀即语义**：`build_*` 构造装配、`get_*` 取值、`is_*` / `has_*` 谓词、`resolve_*` 归一、`load_*` / `save_*` 存储、`handle_*` 能力入口、`check_*` 门禁与体检、`normalize_*` / `sanitize_*` 文本整形。看到 `check_` 就该知道它可能把流程拦停；看到 `resolve_` 就知道它是归一点而非取值点。混用会让调用方猜错失败语义。
+- **动词前缀即语义（不是前缀强制）**：`build_*` 构造装配、`get_*` 取值、`is_*` / `has_*` 谓词、`resolve_*` 归一、`load_*` / `save_*` 存储、`handle_*` 能力入口、`check_*` 门禁与体检、`normalize_*` / `sanitize_*` 文本整形。看到 `check_` 就该知道它可能把流程拦停；看到 `resolve_` 就知道它是归一点而非取值点。混用会让调用方猜错失败语义。**本仓不要求公开函数一律以此开头**：2026-10-19 撤销了这条硬约束（现算大多数现有公开函数并不以这些动词开头，撤销依据与口径见 `docs/adr/0001-public-function-prefix-rule-revoked.md`）。要求的是**同一语义只用同一个动词**。
 - **布尔参数以 `enabled` / `_only` / `_once` 结尾；判定上下文用 `*for_session`**：因为「这个开关到底是全局的还是这个会话的」是本仓最常见的语义事故源（同一函数被路由门与注入门两处调用、判定口径必须同源，例：`explicit_allowed_for_session` 与 `resolve_intimate_context` 双门同源）。名字后缀就是给调用方看的口径声明。
 - **配置键三段式** `bot_<域>_<项>`，pydantic 字段 `bot_*`、`.env` 名 `BOT_*`，一一对应由 `translate_env_keys()` 幂等转写；路径类字段必须进 `path_fields` 参与重映射，否则会把库写到源码树。
 

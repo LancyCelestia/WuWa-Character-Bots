@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Search, TriangleAlert } from 'lucide-react';
 import { CategoryChip, DataGrid, DataGridCell, DataGridRow, PageHeader, SectionCard, StatCard } from '@/components/patterns/patterns';
+import { Select } from '@/components/appearance/field';
 import { MemoryCanvas } from '@/components/graph/memory-canvas';
 import { SemanticState } from '@/components/semantic/semantic-state';
 import { isNotFound } from '@/lib/semantics';
@@ -16,15 +17,23 @@ import {
 import { computeDegrees } from '@/lib/graph-layout';
 import { formatInt } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { autoQuality, shouldUse3D, type DeviceFacts, type Quality } from '@/components/three/quality';
 
 // 记忆图谱页（spec webui-pages2 §3 + §7 B 系增补）：六枚 StatCard + 工具行（时间窗 chip 组/
 // 五类型多选复色/label 本地过滤）+ d3-force 静态画布（300 tick 确定性布局）+ 图例 + 点击节点
 // 详情侧栏（含「数据范围」静态说明，§7 B10b）。max_nodes 取后端上限 200。
 // 全不选类型=自动回全选（不给空图死局）；truncated=画布顶部 info 条（如实带截断前总量 nodes_total）；
 // sources 部分降级=页面级 warn 条（F2-02：降级来源绝不与全健康同相）；连线只读（§7 B9 提示吸收进 canvasHint）。
+//
+// C 席（UI3 追加一「确实要真 3D」）：主体画布换成 three.js 力导向球，但
+//   · three 只在 3D 路径上 lazy import —— 内存图谱首屏 JS 里 grep 不到 three；
+//   · 窄屏（<768）或核数 ≤4 根本走进这段代码就回退 2D（下面 MemoryCanvas 原样保留）；
+//   · WebGL 建不起来（驱动黑名单/远程桌面）时由子组件抛 graph3d:unsupported，页面切回 2D。
+
+const Graph3D = lazy(() => import('@/components/three/graph-3d').then((mod) => ({ default: mod.Graph3D })));
 
 const WINDOWS: GraphWindow[] = ['24h', '7d', '30d', 'all'];
-const TYPES: MemoryGraphNodeType[] = ['person', 'group', 'conversation', 'memory', 'rule'];
+const TYPES: MemoryGraphNodeType[] = ['person', 'group', 'memory', 'conversation', 'rule'];
 const TYPE_DOT: Record<MemoryGraphNodeType, string> = {
   person: 'bg-chart-1',
   group: 'bg-chart-2',
@@ -32,6 +41,7 @@ const TYPE_DOT: Record<MemoryGraphNodeType, string> = {
   conversation: 'bg-chart-4',
   rule: 'bg-chart-5',
 };
+const QUALITIES: Quality[] = ['low', 'medium', 'high'];
 
 // 数据源名/态人话（真相源=webui_memory_graph：sources 键 history/memory/quirks/affinity，
 // 值 ok/missing/unreadable）。表外取值回退裸码原文——绝不编语义，也绝不静默隐藏降级。
@@ -46,12 +56,55 @@ function sourceState(t: (key: string) => string, state: string): string {
   return SOURCE_STATES.includes(state) ? t(`memoryGraph.sourceState.${state}`) : state;
 }
 
+/** 设备事实：进 3D 前的唯一定档依据（窄屏/低核回退 2D 也看这里）。 */
+function readFacts(): DeviceFacts {
+  return {
+    width: window.innerWidth,
+    hardwareConcurrency: navigator.hardwareConcurrency || 8,
+    devicePixelRatio: window.devicePixelRatio || 1,
+    reducedMotion: typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches,
+  };
+}
+
 export function MemoryGraphPage() {
   const { t } = useTranslation();
   const [window, setWindow] = useState<GraphWindow>('24h');
   const [typesHidden, setTypesHidden] = useState<ReadonlySet<MemoryGraphNodeType>>(new Set());
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 视口/核数挂载时取一次；resize 只在跨过 768 时改状态（拖动窗口不该每像素重渲整页）。
+  const [facts, setFacts] = useState<DeviceFacts>(() => readFacts());
+  const [manualQuality, setManualQuality] = useState<Quality | null>(null);
+  const [webglFailed, setWebglFailed] = useState(false);
+
+  useEffect(() => {
+    const onResize = () => {
+      const next = readFacts();
+      setFacts((prev) => (prev.width === next.width ? prev : next));
+    };
+    globalThis.addEventListener('resize', onResize);
+    return () => globalThis.removeEventListener('resize', onResize);
+  }, []);
+
+  const use3d = shouldUse3D(facts) && !webglFailed;
+  // 未手动选档时按设备能力自动定档（reduced-motion 一律低档：静态帧，无自转）。
+  const quality = manualQuality ?? autoQuality(facts);
+  // WebGL 建不起来时页面切回 2D：由 3D 子组件 dispatch 的 graph3d:unsupported 事件驱动。
+  const canvasAreaRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const host = canvasAreaRef.current;
+    if (!host) return;
+    const onUnsupported = () => setWebglFailed(true);
+    host.addEventListener('graph3d:unsupported', onUnsupported);
+    return () => host.removeEventListener('graph3d:unsupported', onUnsupported);
+  }, [use3d]);
+  const fallbackReason = webglFailed
+    ? t('memoryGraph.fallbackNoWebGL')
+    : facts.width < 768
+      ? t('memoryGraph.fallbackSmall')
+      : facts.hardwareConcurrency <= 4
+        ? t('memoryGraph.fallbackCores')
+        : null;
 
   const graph = useSemanticQuery<MemoryGraphData>(['memory-graph', window], () => controlApi.memoryGraph({ window }));
   const data = graph.state.phase === 'ok' ? graph.state.data : null;
@@ -99,7 +152,7 @@ export function MemoryGraphPage() {
     : [];
 
   return (
-    <div className='mx-auto flex w-full max-w-6xl flex-col gap-4'>
+    <div className='flex w-full flex-col gap-4'>
       <PageHeader title={t('memoryGraph.title')} subtitle={t('memoryGraph.subtitle')} />
 
       {/* 六枚统计卡（xl 6 列 / md 3 列 / 移动 2 列，顺序固定） */}
@@ -119,7 +172,7 @@ export function MemoryGraphPage() {
         )
       )}
 
-      {/* 工具行：时间窗 + 节点类型多选（复色）+ label 本地过滤 */}
+      {/* 工具行：时间窗 + 节点类型多选（复色）+ label 本地过滤 + 质量档（仅 3D 可用时出现） */}
       <div className='flex flex-wrap items-center gap-3'>
         <div className='flex flex-wrap items-center gap-2'>
           <span className='fs-caption text-muted-foreground'>{t('memoryGraph.windowLabel')}</span>
@@ -156,6 +209,22 @@ export function MemoryGraphPage() {
             spellCheck={false}
           />
         </div>
+        {use3d && (
+          <label className='flex items-center gap-2'>
+            <span className='fs-caption text-muted-foreground'>{t('memoryGraph.qualityLabel')}</span>
+            <Select
+              size='compact'
+              ariaLabel={t('memoryGraph.qualityLabel')}
+              title={t('memoryGraph.qualityAuto')}
+              value={quality}
+              onChange={(next) => setManualQuality(next as Quality)}
+              options={QUALITIES.map((item) => ({
+                value: item,
+                label: t(`memoryGraph.quality.${item}`),
+              }))}
+            />
+          </label>
+        )}
       </div>
 
       {/* F2-02 修复：ok 包内部分源缺失/不可读 = 页面级警示条（此前只藏在选中节点侧栏，
@@ -210,18 +279,36 @@ export function MemoryGraphPage() {
               contentClass='relative'
             >
               {/* 内联 style 白名单 #1：画布容器高度（规格 §5.2；侧栏宽度走 xl:w-80 类，未用内联） */}
-              <div className='relative' style={{ height: 480 }}>
-                <MemoryCanvas
-                  nodes={visibleNodes}
-                  edges={visibleEdges}
-                  query={query}
-                  selectedId={selectedId}
-                  onSelect={setSelectedId}
-                />
+              <div ref={canvasAreaRef} className='relative' style={{ height: 480 }}>
+                {/* 2D↔3D 隔离说明：3D 组件是 lazy 的，上面那段 lazy() 之外的模块图里没有 three。 */}
+                {use3d ? (
+                  <Suspense fallback={<Skeleton className='h-full w-full' />}>
+                    <Graph3D
+                      nodes={visibleNodes}
+                      edges={visibleEdges}
+                      selectedId={selectedId}
+                      onSelect={setSelectedId}
+                      quality={quality}
+                    />
+                  </Suspense>
+                ) : (
+                  <MemoryCanvas
+                    nodes={visibleNodes}
+                    edges={visibleEdges}
+                    query={query}
+                    selectedId={selectedId}
+                    onSelect={setSelectedId}
+                  />
+                )}
                 <div className='pointer-events-none absolute bottom-2 left-2 rounded-md border bg-card/80 px-2 py-1 fs-caption text-muted-foreground'>
-                  {t('memoryGraph.canvasHint')}
+                  {use3d ? t('memoryGraph.canvasHint3d') : t('memoryGraph.canvasHint')}
                 </div>
               </div>
+              {fallbackReason && (
+                <p className='mt-3 fs-caption text-muted-foreground'>
+                  {t('memoryGraph.fallbackReason', { reason: fallbackReason })}
+                </p>
+              )}
               <div className='mt-3 flex flex-wrap items-center gap-3'>
                 <span className='fs-caption text-muted-foreground'>{t('memoryGraph.legend')}</span>
                 {TYPES.map((type) => (

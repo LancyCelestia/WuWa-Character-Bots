@@ -14,9 +14,12 @@
 // 与页面「不得私藏调度」源码文本锁；外加 M-2 判重位再判时点锁。
 // ============================================================================
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
+import * as React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 import {
   createFlushController,
@@ -26,6 +29,45 @@ import {
   type CursorBearing,
   type FlushScheduler,
 } from './log-stream.ts';
+
+// Execute the real presentation component; network and React-query stay outside this boundary.
+async function historyMarkup(props: Record<string, unknown>): Promise<string> {
+  const target = new URL('../components/logs/history-page.tsx', import.meta.url);
+  assert.ok(existsSync(target), 'The retained event history has no presentation component');
+  const source = readFileSync(target, 'utf8').replace(/^import .* from .*;\r?\n/gm, '');
+  const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.React } });
+  const load = new Function('React', `${compiled.outputText.replace(/export /g, '')}; return LogHistoryView;`);
+  return renderToStaticMarkup(React.createElement(load(React), props));
+}
+
+test('history preserves cursor zero, disables unavailable paging, and escapes event details', async () => {
+  const markup = await historyMarkup({
+    labels: { empty: 'No history', loading: 'Loading', more: 'Next page', restart: 'Return to window', detail: 'Details', select: 'Inspect event' },
+    state: { phase: 'ok', data: { items: [{ event_id: 'event-a', cursor: 0, source: 'bot', category: 'info', message: '<img src=x onerror=alert(1)>', created_at: '2026-10-15T00:00:00Z' }], has_more: false, next_cursor: 0 } },
+    detailState: { phase: 'ok', data: { event_id: 'event-a', cursor: 0, details: { status: '<script>bad</script>' } } },
+    selectedId: 'event-a', onSelect() {}, onNext() {}, onRestart() {},
+  });
+  assert.match(markup, /event-a/);
+  assert.match(markup, /&lt;img/);
+  assert.match(markup, /&lt;script&gt;/);
+  assert.doesNotMatch(markup, /<img|<script/);
+  assert.match(markup, /disabled=""[^>]*>Next page/);
+  assert.match(markup, /aria-pressed="true"/);
+});
+
+test('history exposes expired cursor recovery and hides stale detail while selection reloads', async () => {
+  const labels = { empty: 'No history', loading: 'Loading', more: 'Next page', restart: 'Return to window', detail: 'Details', select: 'Inspect event' };
+  const markup = await historyMarkup({
+    labels, state: { phase: 'error', message: 'Cursor expired; choose a window', status: 410 },
+    detailState: { phase: 'loading' }, selectedId: 'new-event', onSelect() {}, onNext() {}, onRestart() {},
+  });
+  assert.match(markup, /Cursor expired/);
+  assert.match(markup, /Return to window/);
+  assert.match(markup, /aria-busy="true"/);
+  assert.doesNotMatch(markup, /old-event/);
+  const empty = await historyMarkup({ labels, state: { phase: 'ok', data: { items: [], has_more: false, next_cursor: null } }, selectedId: '', onSelect() {}, onNext() {}, onRestart() {} });
+  assert.match(empty, /No history/);
+});
 
 type Row = CursorBearing & { id: number };
 

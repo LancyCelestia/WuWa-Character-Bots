@@ -144,12 +144,12 @@ def test_calls_window_totals_sessions_users_capabilities(audit_db: Path) -> None
     caps = {row["capability"]: row["calls"] for row in data["by_capability"]}
     assert caps == {"bot.chat": 3, "bot.credential_check": 1}
 
-    # 趋势桶：UTC 小时桶，4 行 4 个不同小时（倒序）。
+    # 趋势桶：UTC 小时桶，4 行 4 个有调用的小时；窗口内空桶补 0、整体升序。
     assert data["trend"]["bucket"] == "hour"
     assert data["trend"]["timezone"] == "UTC"
     assert sum(item["calls"] for item in data["trend"]["items"]) == 4
     starts = [item["bucket_start"] for item in data["trend"]["items"]]
-    assert starts == sorted(starts, reverse=True)
+    assert starts == sorted(starts)
     assert all(stamp.endswith("Z") for stamp in starts)
 
 
@@ -396,6 +396,307 @@ def test_calls_empty_table_null_fields_not_failure(tmp_path: Path) -> None:
     assert data["last_message_at"] is None
     assert data["active_users"] == 0
     assert data["total_calls"] == 0
+
+
+# ---------------------------------------------------------------------------
+# stats/calls —— 趋势时间轴（连续波形 / 业务时区 / 人×时段交叉）
+#
+# 三个缺陷回归锁：
+#  ① `sorted(trend, reverse=True)[:limit]` 只取最新 N 个**有数据的**桶，中间空桶被
+#     抽掉 → 时间轴压缩 → 相隔多小时的相邻点被连成直线（看着像单调斜线）。
+#  ② `"timezone": "UTC"` 硬编码 → 同一屏两套时区（Bot 进程 Asia/Hong_Kong，轴却是 UTC）。
+#  ③ 只有 by_user（按人总量）与 trend（按时段总量）两个独立维度，没有 userId×bucket。
+# ---------------------------------------------------------------------------
+
+
+def _seed_gap_audit(path: Path, now: datetime) -> None:
+    """5 小时前与 1 小时前各一条（中间隔 3 个整点空桶）。"""
+    repo = SQLiteAuditRepository(path)
+    repo.append(
+        _audit_record(
+            session_id="private_20001",
+            capability_id="bot.chat",
+            created=now - timedelta(hours=5),
+        )
+    )
+    repo.append(
+        _audit_record(
+            session_id="private_20001",
+            capability_id="bot.chat",
+            created=now - timedelta(hours=1),
+        )
+    )
+
+
+def test_trend_fills_empty_buckets_instead_of_dropping_them(tmp_path: Path) -> None:
+    """空桶必须补成 calls=0，而不是从序列里消失（时间轴不许被压缩）。"""
+    path = tmp_path / "audit-gap.sqlite3"
+    _seed_gap_audit(path, datetime.now(timezone.utc))
+    data = AuditCallStatsService(path).calls(window="24h", bucket="hour")["data"]
+    items = data["trend"]["items"]
+    # 24h 窗口按小时铺满 → 24 或 25 个连续桶（滚窗起止可能跨一个边界）。
+    assert 24 <= len(items) <= 25, f"空桶被抽掉：只给了 {len(items)} 个桶"
+    non_zero = [i for i, item in enumerate(items) if item["calls"]]
+    assert len(non_zero) == 2, "两个有调用的桶必须都在，且各 1 次"
+    assert all(items[i]["calls"] == 1 for i in non_zero)
+    # 两个采样相隔正好 4 个整点桶；中间三个必须是 0（不是被删掉）。
+    assert non_zero[1] - non_zero[0] == 4, "相邻点的间隔必须等于真实小时差"
+    gap = items[non_zero[0] + 1 : non_zero[1]]
+    assert [item["calls"] for item in gap] == [0, 0, 0]
+
+
+def test_trend_items_are_time_ascending(tmp_path: Path) -> None:
+    """升序输出：前端不必再 reverse（倒序 + 前端 reverse 是最容易左右颠倒的组合）。"""
+    path = tmp_path / "audit-order.sqlite3"
+    _seed_gap_audit(path, datetime.now(timezone.utc))
+    starts = [
+        item["bucket_start"]
+        for item in AuditCallStatsService(path).calls(window="24h")["data"]["trend"]["items"]
+    ]
+    assert starts == sorted(starts), "趋势必须按时间升序"
+    assert len(starts) == len(set(starts)), "桶不许重复"
+
+
+def test_trend_timezone_is_business_zone_and_bucket_carries_its_offset(
+    tmp_path: Path,
+) -> None:
+    """时区取业务时区（bot_timezone），bucket_start 带该时区的真实偏移。"""
+    from zoneinfo import ZoneInfo
+
+    path = tmp_path / "audit-tz.sqlite3"
+    now = datetime.now(timezone.utc)
+    _seed_gap_audit(path, now)
+    service = AuditCallStatsService(path, timezone_name="Asia/Hong_Kong")
+    trend = service.calls(window="24h", bucket="hour")["data"]["trend"]
+    assert trend["timezone"] == "Asia/Hong_Kong"
+    assert trend["items"], "窗口内有调用就必须有桶"
+    assert all(item["bucket_start"].endswith("+08:00") for item in trend["items"])
+    # 1 小时前那条的桶 = 香港墙钟的整点，不是 UTC 整点。
+    expected = (
+        (now - timedelta(hours=1))
+        .astimezone(ZoneInfo("Asia/Hong_Kong"))
+        .replace(minute=0, second=0, microsecond=0)
+        .isoformat()
+    )
+    hits = [item for item in trend["items"] if item["calls"]]
+    assert len(hits) == 2
+    assert hits[-1]["bucket_start"] == expected
+
+
+def test_trend_unknown_timezone_falls_back_to_utc_honestly(tmp_path: Path) -> None:
+    path = tmp_path / "audit-tz-bad.sqlite3"
+    _seed_gap_audit(path, datetime.now(timezone.utc))
+    trend = AuditCallStatsService(path, timezone_name="Not/AZone").calls(window="24h")[
+        "data"
+    ]["trend"]
+    assert trend["timezone"] == "UTC", "认不出的时区必须如实回填 UTC，不许照抄配置"
+    assert all(item["bucket_start"].endswith("Z") for item in trend["items"])
+
+
+def test_trend_truncates_long_axis_and_reports_dropped_buckets(tmp_path: Path) -> None:
+    """30d×hour＝721 桶撑爆响应：按窗口裁到上限，并把被裁数量如实报出。"""
+    path = tmp_path / "audit-truncate.sqlite3"
+    _seed_gap_audit(path, datetime.now(timezone.utc))
+    trend = AuditCallStatsService(path).calls(window="30d", bucket="hour")["data"]["trend"]
+    assert len(trend["items"]) <= 200, "小时桶上限必须兜住 30 天×24"
+    assert trend["truncated_buckets"] > 0, "被裁了就必须说被裁了"
+    # 保留的是最新那一批（右侧对齐），最新桶永远是最后一个。
+    assert trend["items"][-1]["bucket_start"] == max(
+        item["bucket_start"] for item in trend["items"]
+    )
+    # 最新桶=当前小时（窗口里没有当前小时的调用，如实 0）；1 小时前那条在倒数第二格。
+    assert trend["items"][-1]["calls"] == 0
+    assert trend["items"][-2]["calls"] == 1, "1 小时前的调用必须在保留区里"
+
+
+def test_trend_by_user_crosses_user_and_bucket_with_other_bucket(
+    tmp_path: Path,
+) -> None:
+    """人 × 时段 × 次数：TopN 用户各自成列，其余归「其他」。"""
+    path = tmp_path / "audit-cross.sqlite3"
+    now = datetime.now(timezone.utc)
+    repo = SQLiteAuditRepository(path)
+    # 20001..20007：调用次数依次 8..2（20001 最多）。
+    for offset, uid in enumerate(range(20001, 20008)):
+        for n in range(8 - offset):
+            repo.append(
+                _audit_record(
+                    session_id=f"private_{uid}",
+                    capability_id="bot.chat",
+                    created=now - timedelta(hours=1, minutes=n),
+                )
+            )
+    data = AuditCallStatsService(path).calls(window="24h", bucket="hour")["data"]
+    cross = data["trend_by_user"]
+    assert cross["bucket"] == "hour"
+    assert cross["other_label"] == "其他"
+    assert [row["user"] for row in cross["top_users"]] == [
+        "20001",
+        "20002",
+        "20003",
+        "20004",
+        "20005",
+    ]
+    users_in_items = {row["user"] for row in cross["items"]}
+    assert users_in_items == {"20001", "20002", "20003", "20004", "20005", "其他"}
+    # TopN 各自的次数原样；「其他」＝20006(3)+20007(2)=5。
+    per_user: dict[str, int] = {}
+    for row in cross["items"]:
+        per_user[row["user"]] = per_user.get(row["user"], 0) + row["calls"]
+    assert per_user["20001"] == 8
+    assert per_user["其他"] == 5
+    # 交叉表不许改变既有语义。
+    assert data["total_calls"] == 8 + 7 + 6 + 5 + 4 + 3 + 2
+    assert sum(row["calls"] for row in cross["items"]) == data["total_calls"]
+
+
+def test_trend_by_user_excludes_unattributed_rows(tmp_path: Path) -> None:
+    """派生不出用户的系统行只进 unattributed_calls，绝不造一个用户。
+
+    100% 归因失败 ⇒ 交叉表退化为 null + 原因码（不是「一张空表」——空表会被
+    误读成「窗口内没有人调用」，而真相是「有调用但认不出是谁」）。
+    """
+    path = tmp_path / "audit-cross-sys.sqlite3"
+    now = datetime.now(timezone.utc)
+    repo = SQLiteAuditRepository(path)
+    repo.append(
+        _audit_record(
+            session_id="runtime", capability_id="bot.chat", created=now - timedelta(hours=1)
+        )
+    )
+    data = AuditCallStatsService(path).calls(window="24h")["data"]
+    assert data["unattributed_calls"] == 1
+    assert data["trend_by_user"] is None
+    assert data["trend_by_user_reason"] == "insufficient_attribution"
+
+
+def test_calls_budget_exceeded_returns_failure_not_exception(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """预算超时仍是结构化失败（端点不抛异常、不吐半截数据）。"""
+    path = tmp_path / "audit-budget.sqlite3"
+    _seed_gap_audit(path, datetime.now(timezone.utc))
+    ticks = {"n": 0}
+
+    def fake_monotonic() -> float:
+        ticks["n"] += 1
+        return 0.0 if ticks["n"] == 1 else 99.0
+
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.control_plane.webui_stats.time.monotonic",
+        fake_monotonic,
+    )
+    assert AuditCallStatsService(path).calls() == {
+        "status": "source_unavailable",
+        "reason": "query_budget_exceeded",
+        "data": None,
+    }
+
+
+def test_build_default_stats_service_passes_bot_timezone(tmp_path: Path) -> None:
+    """装配期必须把 bot_timezone 传下去——否则趋势轴仍是第二套时区。"""
+
+    class _Config:
+        bot_audit_db_path = str(tmp_path / "audit.sqlite3")
+        bot_affinity_db_path = str(tmp_path / "affinity.sqlite3")
+        bot_timezone = "Asia/Hong_Kong"
+
+    from plugins.bot_unified_runtime.control_plane.webui_stats import (
+        build_default_stats_service,
+    )
+
+    bundle = build_default_stats_service(_Config())
+    assert bundle.calls.timezone_name == "Asia/Hong_Kong"
+
+
+def test_trend_coverage_reports_data_availability(tmp_path: Path) -> None:
+    """数据可用性必须如实回传：轴多长、几个桶真有调用、真实数据跨度、被源截短没有。
+
+    生产实测（2026-10-19，1000 行 prune 上限）：24h 窗口只有 2 个桶有数据、跨度 48 分钟。
+    没有 coverage 块，前端只能把「25 个桶里 2 个非零」画成一条像样的趋势图——
+    这正是「不许美化」要挡住的那种表达。
+    """
+    path = tmp_path / "audit-coverage.sqlite3"
+    now = datetime.now(timezone.utc)
+    _seed_gap_audit(path, now)
+    data = AuditCallStatsService(path).calls(window="24h", bucket="hour")["data"]
+    items = data["trend"]["items"]
+    coverage = data["coverage"]
+    assert coverage["requested_buckets"] == len(items) == 25
+    assert coverage["first_bucket"] == items[0]["bucket_start"]
+    assert coverage["last_bucket"] == items[-1]["bucket_start"]
+    assert coverage["available_buckets"] == 2
+    assert coverage["truncated_by_source"] is True
+    # 两个真实数据点相隔 4 小时（夹具 5 小时前 / 1 小时前各一条）。
+    first_data = datetime.fromisoformat(coverage["first_data_at"])
+    last_data = datetime.fromisoformat(coverage["last_data_at"])
+    assert (last_data - first_data) == timedelta(hours=4)
+
+
+def test_trend_coverage_not_truncated_when_axis_is_full(tmp_path: Path) -> None:
+    """每个桶都有调用时按事实说「没被截」——不能永远报 True。"""
+    path = tmp_path / "audit-coverage-full.sqlite3"
+    now = datetime.now(timezone.utc)
+    repo = SQLiteAuditRepository(path)
+    # 7d×day：轴 = 8 个日桶（含窗口起点那半天）。起点桶用「窗口起点 +1h」这一行盖住，
+    # 其余 7 天各一行——不依赖「现在几点」，任何时刻都铺满。
+    for days_ago in range(7):
+        repo.append(
+            _audit_record(
+                session_id="private_20001",
+                capability_id="bot.chat",
+                created=now - timedelta(days=days_ago),
+            )
+        )
+    repo.append(
+        _audit_record(
+            session_id="private_20001",
+            capability_id="bot.chat",
+            created=now - timedelta(days=7) + timedelta(hours=1),
+        )
+    )
+    data = AuditCallStatsService(path).calls(window="7d", bucket="day")["data"]
+    coverage = data["coverage"]
+    assert coverage["requested_buckets"] == 8
+    assert coverage["available_buckets"] == 8
+    assert coverage["truncated_by_source"] is False
+    # 桶和 == total_calls：轴覆盖整个窗口，不丢行也不重复计。
+    assert sum(item["calls"] for item in data["trend"]["items"]) == data["total_calls"] == 8
+
+
+def test_trend_by_user_withheld_when_attribution_is_unreliable(
+    tmp_path: Path,
+) -> None:
+    """归因率低就不硬做交叉表：返回 null + 固定原因码，而不是给一张 6% 覆盖的表。
+
+    生产实测：1000 行里 937 行派生不出用户（email:* / runtime 等系统行），
+    此时交叉表只剩 63 行，任何「按人」结论都会以偏概全。
+    """
+    path = tmp_path / "audit-low-attribution.sqlite3"
+    now = datetime.now(timezone.utc)
+    repo = SQLiteAuditRepository(path)
+    repo.append(
+        _audit_record(
+            session_id="private_20001",
+            capability_id="bot.chat",
+            created=now - timedelta(hours=1),
+        )
+    )
+    for _ in range(9):
+        repo.append(
+            _audit_record(
+                session_id="email:noreply@example.com",
+                capability_id="bot.content",
+                created=now - timedelta(hours=1),
+            )
+        )
+    data = AuditCallStatsService(path).calls(window="24h", bucket="hour")["data"]
+    assert data["total_calls"] == 10
+    assert data["unattributed_calls"] == 9
+    assert data["trend_by_user"] is None
+    assert data["trend_by_user_reason"] == "insufficient_attribution"
+    # 主趋势轴不受影响（人×时段只是附加维度，缺席不改主图）。
+    assert data["trend"]["items"]
 
 
 # ---------------------------------------------------------------------------

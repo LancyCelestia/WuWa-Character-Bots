@@ -181,7 +181,7 @@ DRY-RUN 带旗也绝不真发／披露必打印／旗不放宽准入）＋`tests
 
 ## 6.5 重启前置与已知边界（读一遍再验收）
 
-- **改代码必须重启 bot 才生效**；旧进程管理员权限，需提权杀后由新实例接管（8080/webhook）。
+- **改代码必须重启 bot 才生效**；旧进程管理员权限，需提权杀后由新实例接管（8099/webhook；2026-10-17 前为 8080，该口在本机属 Windows 保留态、绑不上）。
 - cookie 已灌 18 平台（`ChatBot_Runtime\data\platform_cookies.txt`，备份 .bak-20260912）；失效用 `/bot cookie import <平台> <头>` 重灌。
 - 安静时间（默认 00:00–06:00，Asia/Hong_Kong）内 pipeline 拦截属预期；e2e 脚本回执可见。
 - NMC 主通道瞬时超时会自动重试一次；Open-Meteo 兜底仅海外/主通道失败时使用。

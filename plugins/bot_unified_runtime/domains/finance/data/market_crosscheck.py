@@ -61,14 +61,14 @@ _SINA_CODES: dict[str, str] = {
 }
 _SINA_TAG_MAP: dict[str, str] = {"s_sh000001": "sh000001", "s_sz399001": "sz399001", "s_sz399006": "sz399006"}
 # 第三腿缓存（与腾讯腿同 TTL，各自独立：任一腿挂掉不拖垮另一腿）。
-_SINA_CACHE: tuple[float, dict[str, tuple[float, float]]] | None = None
+_SINA_CACHE: tuple[float, tuple[str, ...], dict[str, tuple[float, float]]] | None = None
 
 # 一致性判据：价格相对差 ≤0.5% 且 涨跌幅差 ≤0.2 个百分点（两源快照有时差）。
 _PRICE_TOLERANCE_RATIO = 0.005
 _PCT_TOLERANCE_PP = 0.2
 
 _CACHE_TTL_SECONDS = 60.0
-_CACHE: tuple[float, dict[str, tuple[float, float]]] | None = None
+_CACHE: tuple[float, tuple[str, ...], dict[str, tuple[float, float]]] | None = None
 # 值含义：code → (price, change_pct)（腾讯侧快照）
 
 
@@ -137,7 +137,11 @@ def _fetch_sina_snapshot(
     )
 
     url = _SINA_URL.format(codes=",".join(codes))
-    text = http_get_text(
+    # `http_get_text` 返回 ``(final_url, text)``——**必须解包**。
+    # 曾写成 ``text = http_get_text(...)`` ⇒ text 是元组，`_parse_sina_payload`
+    # 内部 ``str(text or "")`` 把它变成 repr 串、匹配不到任何行 ⇒ **静默返回空**，
+    # 第三腿（新浪）实际从未工作，而测试在函数边界 monkeypatch 故从未暴露。
+    _final_url, text = http_get_text(
         url,
         timeout=max(1.0, float(timeout_seconds)),
         referer=_SINA_REFERER,
@@ -219,9 +223,17 @@ def crosscheck_quotes(
     now = time.monotonic()
 
     def _cached_or_fetch(cache, codes, fetcher):
+        # 🔴 缓存键**必须含请求的 codes**（2026-10-14 治本）：旧实现只比时间戳，
+        # 于是 60s 内**换了指数集仍读旧快照**——新集里那些没被旧快照覆盖的指数
+        # 会被静默当成「腿缺席」，三源**无声降级成双源**。
+        wanted_codes = tuple(codes)
         cached = cache
-        if cached is not None and now - cached[0] <= max(1.0, float(cache_seconds)):
-            return cached[1]
+        if (
+            cached is not None
+            and cached[1] == wanted_codes
+            and now - cached[0] <= max(1.0, float(cache_seconds))
+        ):
+            return cached[2]
         if budget_expired(budget):
             return {}  # 旁路核验：预算已尽，保持沉默（失败/缺席都不缓存）。
         try:
@@ -233,7 +245,7 @@ def crosscheck_quotes(
     tencent_codes = tuple(_CROSS_CODES[code][0] for code, _n, _p, _c in wanted)
     snapshot = _cached_or_fetch(_CACHE, tencent_codes, _fetch_tencent_snapshot)
     if snapshot:
-        _CACHE = (now, snapshot)
+        _CACHE = (now, tencent_codes, snapshot)
 
     # 第三腿：只对两表都有映射的指数取数（未映射者不参与，宁缺不编）。
     sina_pairs = [
@@ -241,13 +253,14 @@ def crosscheck_quotes(
     ]
     sina_snapshot: dict[str, tuple[float, float]] = {}
     if sina_pairs:
+        sina_tags = tuple(tag for _code, tag in sina_pairs)
         sina_snapshot = _cached_or_fetch(
             _SINA_CACHE,
-            tuple(tag for _code, tag in sina_pairs),
+            sina_tags,
             _fetch_sina_snapshot,
         )
         if sina_snapshot:
-            _SINA_CACHE = (now, sina_snapshot)
+            _SINA_CACHE = (now, sina_tags, sina_snapshot)
 
     if not snapshot and not sina_snapshot:
         return CrossCheckResult(0, 0, ())
@@ -266,7 +279,8 @@ def crosscheck_quotes(
             checked_three += 1
         # 主源价缺失/为 0 无法核验，按差异处理（评审 P2-1：0 价不该判「一致」）。
         if price is None or price <= 0:
-            other = remote or sina
+            other = remote if remote is not None else sina
+            assert other is not None  # 上面已排除「双 None」（L262 的 continue）
             mismatches.append(f"{name}（东财价格缺失 · 他源 {other[0]:.2f}）")
             continue
         ok_all = True

@@ -19,7 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { SemanticState } from '@/components/semantic/semantic-state';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
 import { controlApi, type TokenBlock, type TokenFamilyRow, type TokensData } from '@/lib/api-client';
-import { formatInt } from '@/lib/format';
+import { formatCount } from '@/lib/format';
 import { DEFAULT_WINDOW, STATS_WINDOWS, windowLabel, type StatsWindowCode } from '@/lib/labels';
 import { toStackRows, type TokenStackRow } from '@/lib/semantics';
 
@@ -66,7 +66,7 @@ function FamilyRow({ row }: { row: TokenFamilyRow }) {
         <span className='truncate font-mono fs-caption font-medium' title={row.family ?? t('tokens.noFamily')}>
           {row.family ?? t('tokens.noFamily')}
         </span>
-        <span className='shrink-0 fs-caption tabular-nums text-muted-foreground'>{t('tokens.calls', { count: row.calls })}</span>
+        <span className='shrink-0 fs-caption tabular-nums text-muted-foreground'>{t('tokens.calls', { count: formatCount(row.calls) })}</span>
       </div>
       <div className='grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4'>
         {TOKEN_KEYS.map((key) => {
@@ -74,7 +74,7 @@ function FamilyRow({ row }: { row: TokenFamilyRow }) {
           return (
             <div key={key} className='flex items-center gap-2 fs-caption'>
               <span className='text-muted-foreground'>{t(`tokens.${key}`)}</span>
-              <span className='tabular-nums'>{formatInt(block.value)}</span>
+              <span className='tabular-nums'>{formatCount(block.value)}</span>
               {qualityBadge(block)}
             </div>
           );
@@ -101,7 +101,7 @@ export function TokensPage() {
     : false;
 
   return (
-    <div className='mx-auto flex w-full max-w-6xl flex-col gap-4'>
+    <div className='flex w-full flex-col gap-4'>
       <div className='flex flex-wrap items-center justify-between gap-3'>
         <h1 className='fs-page'>{t('tokens.title')}</h1>
         <div className='flex gap-1 rounded-lg border p-1'>
@@ -159,7 +159,7 @@ function TokensBody({ data, anyUnknown }: { data: TokensData; anyUnknown: boolea
                     type='number'
                     tick={{ fill: 'var(--muted-foreground)' }}
                     stroke='var(--muted-foreground)'
-                    tickFormatter={(value: number) => formatInt(value)}
+                    tickFormatter={(value: number) => formatCount(value)}
                   />
                   <YAxis
                     type='category'
@@ -171,7 +171,7 @@ function TokensBody({ data, anyUnknown }: { data: TokensData; anyUnknown: boolea
                   />
                   <Tooltip
                     contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, }}
-                    formatter={(value, name) => [formatInt(typeof value === 'number' ? value : null), String(name)] as [string, string]}
+                    formatter={(value, name) => [formatCount(typeof value === 'number' ? value : null), String(name)] as [string, string]}
                   />
                   <Legend />
                   {STACK_KEYS.map((segment) => (
@@ -199,7 +199,7 @@ function TokensBody({ data, anyUnknown }: { data: TokensData; anyUnknown: boolea
           <div className='grid grid-cols-2 gap-3 sm:grid-cols-5'>
             <div>
               <div className='fs-caption text-muted-foreground'>{t('tokens.callsLabel')}</div>
-              <div className='fs-num'>{formatInt(totals.calls)}</div>
+              <div className='fs-num'>{formatCount(totals.calls)}</div>
             </div>
             {TOKEN_KEYS.map((key) => {
               const block = totals.tokens[key];
@@ -210,7 +210,7 @@ function TokensBody({ data, anyUnknown }: { data: TokensData; anyUnknown: boolea
                     {qualityBadge(block)}
                   </div>
                   <div className='fs-num'>
-                    {formatInt(block.value)}
+                    {formatCount(block.value)}
                   </div>
                 </div>
               );

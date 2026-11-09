@@ -15,7 +15,19 @@
     "plugins": "Plugins",
     "memoryGraph": "Memory Graph",
     "moreCollections": "More collections…",
-    "menu": "Pages"
+    "menu": "Pages",
+    "console": "Console",
+    "sessions": "Sessions",
+    "config": "Settings",
+    "resources": "Resources",
+    "models": "Models",
+    "visualEditor": "Layout Editor",
+    "appearance": "Appearance",
+    "credentials": "Credentials",
+    "operations": "Controlled Actions",
+    "groupObserve": "Observe",
+    "groupData": "Data",
+    "groupAdmin": "Admin"
   },
   "theme": {
     "toDark": "Switch to dark",
@@ -39,7 +51,9 @@
     "note": "The control plane has no login endpoint: paste the admin-issued token here; it is kept only in this browser's localStorage and sent exclusively via the Authorization header, never in URLs. Without a token, data endpoints answer 503 control_plane_not_provisioned.",
     "savedReloading": "Saved, reloading…",
     "cancel": "Cancel",
-    "save": "Save"
+    "save": "Save",
+    "superAdminToken": "Super-admin token",
+    "superAdminTokenHint": "Write operations (saving config, running actions, editing credentials) accept only this token; read-only pages do not need it."
   },
   "state": {
     "noData": "No data yet",
@@ -48,7 +62,9 @@
     "notProvisioned": "Control plane has no access token configured",
     "notProvisionedHint": "The server requires a Bearer token (anti-bare-metric protection). Paste the admin-issued token in Settings and retry.",
     "authFailed": "Token invalid or forbidden",
-    "authFailedHint": "Check that the token is correct and still valid, then update it in Settings."
+    "authFailedHint": "Check that the token is correct and still valid, then update it in Settings.",
+    "rateLimited": "Server is rate limiting requests",
+    "rateLimitedHint": "Nothing is broken — too many requests within 60 seconds, so the server is refusing for now. Wait {{seconds}} seconds and try again; retrying in the meantime pushes the lockout further out."
   },
   "reason": {
     "audit_source_not_configured": "Audit DB path not configured (bot_audit_db_path empty)",
@@ -202,7 +218,17 @@
     "playbackHint": "Connecting replays the current retention window, then follows live",
     "waiting": "Connected, waiting for events…",
     "idle": "Disconnected. Press “Connect” to start tailing (replays retention window).",
-    "transportNote": "Transport: streamed fetch (EventSource cannot send Authorization headers); exponential-backoff reconnects resume via Last-Event-ID; tokens travel in headers only, never in URLs."
+    "transportNote": "Transport: streamed fetch (EventSource cannot send Authorization headers); exponential-backoff reconnects resume via Last-Event-ID; tokens travel in headers only, never in URLs.",
+    "eventDetail": "Event detail",
+    "inspectEvent": "Inspect this event",
+    "historyTitle": "Event history",
+    "historyHint": "Page backwards through history by cursor; reading past the retention window reports the gap instead of truncating silently.",
+    "historyEmpty": "No more historical events",
+    "historyLoading": "Loading…",
+    "historyMore": "Load earlier",
+    "historyRestart": "Restart from newest",
+    "historyAuth": "Reading history needs a valid access token",
+    "historyUnavailable": "History source is unavailable"
   },
   "knowledge": {
     "title": "Knowledge",
@@ -309,6 +335,106 @@
     "notDeployed": "Memory graph not deployed",
     "notDeployedHint": "The running control-plane instance does not provide /api/v1/memory/graph (older process); available after the control plane restarts with the new routes.",
     "canvas": "Association graph",
-    "legend": "Legend"
+    "legend": "Legend",
+    "canvasHint3d": "Drag to rotate, scroll to zoom, click a node to inspect relations",
+    "qualityLabel": "Quality",
+    "qualityAuto": "Auto: picks a level from device capability and node count",
+    "fallbackReason": "Fell back to 2D: {{reason}}",
+    "fallbackNoWebGL": "WebGL is unavailable in this browser or GPU",
+    "fallbackSmall": "Viewport too narrow; the 2D view reads better",
+    "fallbackCores": "Not enough CPU cores to render the 3D view smoothly"
+  },
+  "console": {
+    "needToken": "The control plane needs an access token before it can return real readings. Open the gear menu and paste the admin-issued token.",
+    "ok": "OK",
+    "refresh": "Refresh",
+    "block": {
+      "health": "Subsystem health",
+      "throughput": "Throughput",
+      "errorRate": "Error rate",
+      "recentErrors": "Recent errors",
+      "queue": "Send queue",
+      "config": "Configuration",
+      "todos": "To-dos and risks"
+    },
+    "summary": {
+      "health": "{{ok}} of {{total}} healthy",
+      "throughput": "{{calls}} calls in window",
+      "errorRate": "{{percent}}% failed",
+      "errorRateUnknown": "No judgeable records in window",
+      "recentErrors": "{{count}} entries",
+      "queue": "Current: {{value}}",
+      "config": "{{total}} keys total, {{writable}} writable, {{restart}} need restart",
+      "todos": "{{total}} total, {{consent}} awaiting approval, {{failed}} failed"
+    },
+    "row": {
+      "probeAt": "Last probe",
+      "startedAt": "Started at",
+      "uptime": "Uptime",
+      "totalCalls": "Total calls",
+      "activeUsers": "Active users",
+      "lastMessage": "Last message",
+      "failingChannels": "Failing channels",
+      "unknownTimestamp": "Bad timestamps",
+      "recordedCalls": "Recorded calls",
+      "failedCalls": "Failed calls",
+      "unknownStatus": "Unknown status",
+      "taskCount": "Background tasks",
+      "llmConcurrency": "LLM concurrency",
+      "configTotal": "Total keys",
+      "configWritable": "Writable keys",
+      "configSensitive": "Sensitive keys",
+      "restartKeys": "Keys marked restart-required will not hot-reload",
+      "consent": "Awaiting approval",
+      "pending": "Pending",
+      "conflict": "Conflicts",
+      "failed": "Failed",
+      "running": "Running",
+      "degradedActions": "Degraded actions"
+    },
+    "footnote": {
+      "errorRate": "Only records with a definite verdict count in the denominator; missing status is not counted as success.",
+      "queue": "Queue readings come from runtime sampling; missing samples show as unknown rather than zero.",
+      "todos": "These counts reflect only what the control plane itself recorded; external systems may still be working."
+    },
+    "empty": {
+      "recentErrors": "No error records in window",
+      "allGood": "Nothing needs attention"
+    },
+    "toggle": {
+      "live": "Live refresh",
+      "expandAll": "Expand all",
+      "onlyIssues": "Only issues"
+    }
+  },
+  "appearance": {
+    "title": "Appearance",
+    "subtitle": "Changes here apply immediately and need no saving; export carries the current look to another machine.",
+    "search": "Search settings",
+    "searchEmpty": "No matching settings",
+    "live": {
+      "loading": "Loading current appearance…",
+      "saved": "Changes applied live"
+    },
+    "preset": {
+      "title": "Presets",
+      "hint": "A preset overwrites every setting below in one go; use Reset if you dislike the result.",
+      "applied": "Applied preset \"{{name}}\""
+    },
+    "action": {
+      "reset": "Reset",
+      "export": "Export",
+      "exported": "Appearance exported to a file",
+      "import": "Import",
+      "imported": "Appearance imported",
+      "importedRepaired": "Appearance imported; corrupted fields fell back to defaults",
+      "followDevice": "Follow device",
+      "forceFull": "Force full effects"
+    },
+    "banner": {
+      "restore": "Restore default appearance",
+      "open": "Open appearance settings",
+      "dismiss": "Dismiss"
+    }
   }
 }

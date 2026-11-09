@@ -109,7 +109,7 @@ ROOT_WHITELIST: dict[str, str] = {
                  "test_entry_docs_within_size_ceiling 就地读它，只能在仓根",
     "COMMANDS.md": "命令手册人读版（与生成物 docs/command-catalog.md 成对，AGENTS 第四部分点名它作触发词入口之一）",
     "README.md": "人类门面；分类册 docs/boards/_meta/doc-classification-20260921.md §1 判「保留原地（门面）」",
-    "bot.py": "NoneBot 启动入口 + 崩溃守卫（webhook 8080），AGENTS 第三部分消息主链路的顶层件",
+    "bot.py": "NoneBot 启动入口 + 崩溃守卫（webhook 8099），AGENTS 第三部分消息主链路的顶层件",
     "DESIGN-SPEC.md": "根部视觉/质量入口，自述被 tests/verify_hashes.py 的 SHA-256 清单钉住 ⇒ 分类册判「禁移树」",
     "pyproject.toml": "项目元数据与 ruff/mypy 配置真身；工具从 cwd 向上找它，移走＝lint/typecheck 两道门失明",
     # ---- 凭据与 dotenv 面（AGENTS 规则 3；本尺只看落点，一个字节都不读）----

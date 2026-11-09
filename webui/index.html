@@ -2,13 +2,32 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 视口（UI3 多浏览器/手机平板适配）：`viewport-fit=cover` 让布局吃到刘海屏的
+         safe-area-inset-*；**不禁用缩放**——没有 maximum-scale / user-scalable=no，
+         双指放大与系统字号放大都保留。Chrome 里字号偏小的反馈靠 html 字号档解决
+         （设置面板可切换），不靠锁死缩放。 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- 移动端浏览器地址栏着色：两档对应亮/暗主题，避免 iOS Safari 顶栏白块、
+         Android Chrome 侧边黑边。 -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f3f5f6" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1c2031" />
+    <meta name="color-scheme" content="light dark" />
     <!-- CSP（SECWEB Minor-1）：压缩 localStorage token 的 XSS 爆炸半径。
-         script-src 须带 'unsafe-inline'：dist 为 vite-plugin-singlefile 全内联单文件（'self' 只够 dev 外链）；
-         connect-src 放行本机回环任意端口：设置面板可改 baseURL 指向其他本机端口。 -->
+         多文件产物的 script-src 仅允许同源脚本，样式保留组件需要的 inline；
+         connect-src 放行本机回环任意端口：设置面板可改 baseURL 指向其他本机端口。
+
+         🔴 W12-A2：「无法导入使用动态壁纸」的真因就在这里。
+         外观页选本地文件后，`URL.createObjectURL(blob)` 得到的是 **blob: URL**，
+         而旧的 `media-src 'self'` 与 `img-src 'self' data:` 都不含 `blob:` ——
+         媒体/图片请求被 CSP 拦下，`video.error.code = 4`、
+         报 "Media load rejected by URL safety check"，用户看到的就是一块黑屏。
+         实测：把 CSP 关掉（CDP Page.setBypassCSP）后同一个 mp4 立刻 readyState=4、
+         1280×720、正常播放；带上本策略就必然失败。
+         因此这里必须放行 `blob:`：它只指向**本页自己创建**的内存对象，
+         不引入任何外部源，XSS 爆炸半径不变。 -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data:"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data: blob:; media-src 'self' blob:"
     />
     <link rel="icon" href="data:," />
     <title>守岸人控制台</title>

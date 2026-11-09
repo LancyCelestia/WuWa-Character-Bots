@@ -86,6 +86,48 @@ class ConfigControlService:
     def get(self, key: str) -> dict[str, Any]:
         return self._row(self._key(key), self._snapshot())
 
+    # ---- 主体过滤读面（HTTP `/api/v1/config*` 的真身）----
+    #
+    # 前端契约（``webui/src/lib/config-presentation/types.ts``）把
+    # ``GET /api/v1/config/catalog`` 当「当前值 / 版本 / can_write / 敏感标记」的唯一
+    # 真身，并点名 ``ConfigControlService.catalog`` 现算 ``can_write``。此前这三个
+    # 方法**根本不存在**：``api/v1.py`` 的 ``_filtered`` 回落时把 ``principal`` 塞给
+    # ``schema()``/``list()``/``changes()`` ⇒ TypeError ⇒ 四个读端点恒 500。
+    # 修法取「补齐服务方法」而非「改端点回落目标」：can_write 必须由后端按
+    # SETTABLE_KEYS + 冻结表 + 主体角色现算，前端不猜（也不能猜）。
+
+    def _row_for(self, key: str, snapshot: ConfigSnapshot, principal: Principal | None) -> dict[str, Any]:
+        row = self._row(key, snapshot)
+        roles = tuple(getattr(principal, "roles", ()) or ())
+        row["can_write"] = bool(
+            key in SETTABLE_KEYS
+            and key not in RESTART_REQUIRED_KEYS
+            and "super_admin" in roles
+        )
+        return row
+
+    def catalog(self, *, principal: Principal | None = None) -> builtins.list[dict[str, Any]]:
+        """全量键 + 现值 + 版本 + 现算 ``can_write``（读面唯一真身）。"""
+        snapshot = self._snapshot()
+        return [
+            self._row_for(key, snapshot, principal)
+            for key in sorted(set(SETTABLE_KEYS) | set(RESTART_REQUIRED_KEYS))
+        ]
+
+    def list_for_principal(self, *, principal: Principal | None = None) -> builtins.list[dict[str, Any]]:
+        """``/config`` 与 ``/config/schema`` 的主体视角；字段与 ``catalog`` 同形。"""
+        return self.catalog(principal=principal)
+
+    def changes_for_principal(self, *, principal: Principal | None = None,
+                              since_version: int = 0, limit: int = 100) -> builtins.list[dict[str, Any]]:
+        """``/config/changes`` 的主体视角。
+
+        ``ConfigSnapshot`` 的历史行在 ``config_store.changes`` 里已过
+        ``_public_audit_values`` / ``redact_public_data`` 脱敏，故这里不按 actor 再切一遍
+        ——重复的「第二套可见性判据」比看得见更危险（两处口径迟早不一致）。
+        """
+        return self.changes(since_version=since_version, limit=limit)
+
     def _authorize(self, principal: Principal, expected_version: int, request_id: str) -> None:
         if "super_admin" not in principal.roles:
             raise ControlServiceError("forbidden", "此操作需要 super_admin 权限。", 403)

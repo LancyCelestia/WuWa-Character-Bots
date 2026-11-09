@@ -48,14 +48,33 @@
 | 对象 | 规则 | 例 | 反例 |
 |---|---|---|---|
 | 模块文件 | `snake_case`，名词或动名词，不带 `helper`/`util`/`common`/`new`/`v2` 之外的后缀 | `deck_math.py` `memory_bus_v2.py` | 万能名（tools / utils / common / final_fix） |
-| 版本化真身 | 大版本换代的真身允许 `_vN` 尾（旧名保留为垫片） | `affinity.py`（v7 在内部）`memory_store_v21.py` | 同义改名（`affinity2.py`） |
-| 公开函数 | `build_*` 构造装配 / `get_*` 取值 / `is_*`、`has_*` 谓词 / `resolve_*` 归一 / `load_*`、`save_*` 存储 / `handle_*` 能力入口 / `check_*` 门禁与体检 / `normalize_*`、`sanitize_*` 文本整形 | `build_model_router` `check_tts_voice_identity` | `do_stuff` `process2` |
+| 版本化真身 | 大版本换代的真身允许 `_vN` 尾（旧名保留为垫片） | `affinity.py`（v7 在内部）`memory_store_v21.py` | 同义改名（同概念另起 `xxx_v2`） |
+| 公开函数 | **同一语义只准用同一个动词**（对照表见下）；不强制以动词开头 | `build_model_router` `check_tts_voice_identity` | 同一语义一半 `check_`、一半 `verify_`；`do_stuff` `process2` |
 | 私有函数 | 单下划线前缀，且只在同文件内使用 | `_enforce_context_caps` | 跨模块调 `_x` |
 | 参数 | 全 `snake_case`；布尔参数以 `enabled`/`_only`/`_once` 结尾；判定上下文用 `*for_session`；关键词-only 边界用 `*` | `allowed_levels=None` `session_type` | `flag` `tmp` `arg1` |
 | 常量表 | 全大写复数名词，`*_DECLARATIONS` / `*_REGISTRY` / `*_TABLE` | `ROUTE_CAPABILITY_DECLARATIONS` | `configList` |
 | 配置键 | `bot_<域>_<项>`，pydantic 字段 `bot_*`；`.env` 名 `BOT_*`；路径类必进 `path_fields` 重映射 | `bot_tts_ref_audios` | `BOT_ENABLE2` |
 | 稳定 id | 能力 `bot.<域概念>`；路由 `RouteKind.<UPPER>`；板块 `BNN`；功能 `BNN.<slug>`；帮助主题中文名 | `bot.emergency_info` | 用中文当 id |
 | 板块文档名 | 目录/文件名全 `kebab-case`，不带编号前缀（编号由板块目录承担） | `affinity-mood/` | `3.2好感度.md` |
+
+**动词-语义对照**（给「该用哪个动词」用，不是「必须以此开头」的清单）：
+
+| 语义 | 动词 | 判据 |
+|---|---|---|
+| 构造/装配出一个对象 | `build_*` | 返回新对象、无 I/O |
+| 读取一个已有值 | `get_*` | 幂等、不改状态 |
+| 判定真假 | `is_*` / `has_*` | 返回 bool |
+| 归一成规范形态 | `resolve_*` | 返回归一点，不是取值点 |
+| 落盘 / 读盘 | `load_*` / `save_*` | 有 I/O |
+| 能力入口 | `handle_*` | 一次调用的完整业务 |
+| 门禁与体检 | `check_*` | **可能把流程拦停** |
+| 文本整形 | `normalize_*` / `sanitize_*` | 返回整形后的文本 |
+
+> **撤销记录**：2026-09-21 版本把本行写成硬约束（公开函数必须以这 11 个动词开头）。
+> 2026-10-19 现算：`plugins/bot_unified_runtime/` 模块级公开函数中 **74.3%（1785 / 2401）**
+> 不以这些动词开头（AST 口径：跳过 `__init__` 与垫片）。一条大多数代码都违反的规范信息量是零，
+> 只会训练人无视规范。故撤销「必须以此开头」，「同一语义同一动词」与对照表保留。
+> 当时值若与再算值不同，以再算为准（口径写在 ADR 里，见 `docs/adr/0001-*.md`）。
 
 函数说明文档（docstring）统一骨架——公开函数必须有，私有函数非平凡逻辑必须有：
 

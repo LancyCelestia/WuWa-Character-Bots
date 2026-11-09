@@ -19,7 +19,7 @@ import functools
 import re
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -1157,31 +1157,68 @@ class TestVisualSpecContract:
 
         return vsr.render_visual_card_html(payload)
 
+    #: 每个在册 kind 的**渲染指纹**：渲不出这个标记 ＝ 该 kind 实际整块缺席。
+    #: 判据**不能**是 `len(html) > N`——mica 外壳本身就 ~8.7 KB，任何长度断言
+    #: 都会在元素缺席时假绿。
+    _KIND_MARKERS: ClassVar[dict[str, str]] = {
+        "kv": 'class="vs-kv"',
+        "stat": 'class="vs-stat"',
+        "table": 'class="vs-table"',
+        "list": 'class="vs-list"',
+        "text": 'class="vs-text"',
+        "badge": 'class="vs-badge',
+        "image": 'class="vs-img"',
+        "images": 'class="vs-imgs"',
+        "chart.line": "<svg",
+        "chart.box": "<svg",
+        "divider": 'class="vs-divider"',
+        "progress": 'class="vs-progress-fill"',
+    }
+
+    #: 每个在册 kind 的**最小可渲样例**（形状即契约）。
+    _KIND_SAMPLES: ClassVar[dict[str, dict[str, Any]]] = {
+        "kv": {"label": "温度", "value": "23°C"},
+        "stat": {"label": "概率", "value": "12", "unit": "%"},
+        "table": {"columns": ["a"], "rows": [["1"]]},
+        "list": {"items": ["x"]},
+        "text": {"text": "hi"},
+        "badge": {"text": "预警", "tone": "warn"},
+        "image": {"src": "https://example.invalid/a.png"},
+        "images": {"srcs": ["https://example.invalid/a.png"]},
+        "chart.line": {"series": [[1.0, 2.0, 3.0]]},
+        "chart.box": {"series": [[1.0, 2.0, 3.0, 4.0]]},
+        "divider": {},
+        "progress": {"label": "湿度", "value": 62, "max": 100},
+    }
+
     def test_all_allowed_kinds_render(self) -> None:
-        """在册 kind 逐个都要真渲出东西（空 spec 不算通过）。"""
+        """🔴 在册 kind 逐个都要**真渲出该 kind 自己的内容**。
+
+        判据必须是**该 kind 的渲染指纹**，不能是 ``len(html) > N``：mica 外壳
+        本身就有 ~8.7 KB，任何「长度」断言都会在元素整块缺席时**假绿**。
+        实测事故（2026-10-14）：``chart.line/box`` 因导入错名（``trend_svg`` 不存在）
+        整块渲成空串，而 ``len(html) > 400`` 照样通过 ⇒ 假完成。
+        """
         from plugins.bot_unified_runtime.domains.render import visual_spec as vs
 
-        samples: dict[str, dict[str, Any]] = {
-            "kv": {"label": "温度", "value": "23°C"},
-            "stat": {"label": "概率", "value": "12", "unit": "%"},
-            "table": {"columns": ["a"], "rows": [["1"]]},
-            "list": {"items": ["x"]},
-            "text": {"text": "hi"},
-            "badge": {"text": "预警", "tone": "warn"},
-            "image": {"src": "https://example.invalid/a.png"},
-            "images": {"srcs": ["https://example.invalid/a.png"]},
-            "chart.line": {"series": [[1.0, 2.0, 3.0]]},
-            "chart.box": {"series": [[1.0, 2.0, 3.0, 4.0]]},
-            "chart.bar": {"series": [[1.0, 2.0]]},
-            "divider": {},
-            "progress": {"label": "湿度", "value": 62, "max": 100},
-        }
-        missing = sorted(set(samples) - vs.ALLOWED_KINDS)
-        assert not missing, f"样例未覆盖在册 kind：{missing}"
-        for kind, data in samples.items():
+        # 双向对账：既不许「在册 kind 无样例」，也不许「样例里有不在册的 kind」。
+        allowed = set(vs.ALLOWED_KINDS)
+        assert set(self._KIND_MARKERS) == allowed, (
+            f"指纹表与在册 kind 不一致：缺={sorted(allowed - set(self._KIND_MARKERS))}，"
+            f"多={sorted(set(self._KIND_MARKERS) - allowed)}"
+        )
+        assert set(self._KIND_SAMPLES) == allowed, (
+            f"样例表与在册 kind 不一致：缺={sorted(allowed - set(self._KIND_SAMPLES))}，"
+            f"多={sorted(set(self._KIND_SAMPLES) - allowed)}"
+        )
+        for kind, data in self._KIND_SAMPLES.items():
             html = self._render({"title": "T", "elements": [{"kind": kind, "data": data}]})
-            assert len(html) > 400, f"{kind} 没渲出内容"
             assert "vs-body" in html, f"{kind} 缺元素容器"
+            marker = self._KIND_MARKERS[kind]
+            assert marker in html, (
+                f"{kind} 没渲出自己的内容（缺指纹 {marker!r}）；"
+                f"外壳长度 {len(html)} 不能作为判据"
+            )
 
     def test_unknown_kind_is_dropped_not_rendered(self) -> None:
         """🔴 白名单铁律：未知 kind 一律丢弃并留痕，绝不放过。"""

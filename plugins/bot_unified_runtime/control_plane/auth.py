@@ -8,7 +8,8 @@
 - 失败限速：同一来源 60 秒内 5 次失败 → 后续请求 429；来源按掩码粒度
   记录（IPv4 /32、IPv6 /128，即主机粒度——阶段 1 只绑环回，来源恒为本机）。
 - 未来可插拔（只留接口，不实现）：:class:`Authenticator` Protocol，Bearer
-  为第一个实现；角色固定 ``admin``。
+  为第一个实现；主体与角色由**服务端构造参数**指定（已知角色 user/admin/
+  super_admin），绝不从请求 query/header/body 读取身份或角色。
 """
 
 from __future__ import annotations
@@ -24,9 +25,12 @@ from typing import Any, Protocol
 FAILURE_WINDOW_SECONDS = 60.0
 FAILURE_MAX_COUNT = 5
 
+# 已知角色（阶段 1 骨架）：构造期校验，未知/空/裸字符串一律拒绝。
+KNOWN_ROLES = frozenset({"user", "admin", "super_admin"})
+
 
 class Principal:
-    """认证主体（阶段 1：token subject + 固定 admin 角色）。"""
+    """认证主体；主体及角色由服务端可信认证器提供。"""
 
     __slots__ = ("roles", "subject")
 
@@ -59,15 +63,29 @@ def mask_source(client_host: str) -> str:
 
 
 class BearerAuthenticator:
-    """Bearer token 校验 + 同源失败限速（线程安全）。"""
+    """Bearer token 校验 + 同源失败限速（线程安全）。
+
+    ``subject``/``roles`` 为服务端可信配置（已知角色：user/admin/super_admin），
+    认证结果直接携带；绝不从请求 query/header/body 读取身份或角色。
+    """
 
     def __init__(
         self,
         token_sha256: str,
         *,
+        subject: str = "bearer-admin",
+        roles: tuple[str, ...] = ("admin",),
         failure_window_seconds: float = FAILURE_WINDOW_SECONDS,
         failure_max_count: int = FAILURE_MAX_COUNT,
     ) -> None:
+        if not isinstance(subject, str) or not subject.strip():
+            raise ValueError("subject 必须是非空字符串")
+        if not isinstance(roles, tuple) or not roles:
+            raise ValueError("roles 必须是非空元组")
+        if any(not isinstance(role, str) or role not in KNOWN_ROLES for role in roles):
+            raise ValueError("roles 包含无效角色")
+        self.subject = subject
+        self.roles = roles
         self.expected_digest = str(token_sha256 or "").strip().lower()
         self._window = max(1.0, float(failure_window_seconds))
         self._max_failures = max(1, int(failure_max_count))
@@ -124,4 +142,4 @@ class BearerAuthenticator:
             digest, self.expected_digest
         ):
             return None
-        return Principal("bearer-admin")
+        return Principal(self.subject, self.roles)

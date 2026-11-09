@@ -334,7 +334,26 @@ function Test-DevCondition {
     switch ($Condition) {
         "toolAvailable" { return [bool](Get-ProjectCommand $Tool) }
         "botAlreadyRunning" {
-            $inUse = Get-NetTCPConnection -State Listen -LocalPort 8080 -ErrorAction SilentlyContinue
+            # 驱动监听口优先级＝进程环境 PORT ＞ .env 声明的 PORT ＞ bot.py 缺省。
+            # 为什么不能只看进程环境：bot.py 只在 dotenv 没声明时才钉缺省，
+            # 所以「.env 里写了 PORT」是生产上真实存在的一支（2026-10-17 复核 P1）。
+            # 8080 是根修前的旧缺省，在本机属 Windows 保留态、永远绑不上。
+            $port = 8099
+            $parsed = 0
+            if ($env:PORT -and [int]::TryParse($env:PORT, [ref]$parsed)) {
+                $port = $parsed
+            }
+            else {
+                foreach ($name in @(".env", ".env.prod")) {
+                    $path = Join-Path $Root $name
+                    if (-not (Test-Path -LiteralPath $path)) { continue }
+                    $hit = Select-String -LiteralPath $path -Pattern '^\s*(export\s+)?PORT\s*=' -ErrorAction SilentlyContinue | Select-Object -First 1
+                    if (-not $hit) { continue }
+                    $raw = ($hit.Line -split '=', 2)[1].Trim().Trim('"').Trim("'")
+                    if ([int]::TryParse($raw, [ref]$parsed)) { $port = $parsed; break }
+                }
+            }
+            $inUse = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue
             return [bool]$inUse
         }
         "testsDirExists" { return (Test-Path -LiteralPath (Join-Path $Root "tests")) }

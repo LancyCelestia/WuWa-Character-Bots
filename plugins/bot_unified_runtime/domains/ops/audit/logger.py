@@ -35,6 +35,17 @@ class AuditRepository(Protocol):
         raise NotImplementedError
 
 
+def _optional_text(row: sqlite3.Row, column: str) -> str | None:
+    """容缺读一列可选文本：列不存在/值为 NULL/空串 → None（未采集）。"""
+    keys = row.keys()
+    if column not in keys:
+        return None
+    value = row[column]
+    if value is None:
+        return None
+    return str(value).strip() or None
+
+
 def redact_private_debug(value: str) -> str:
     redacted = _KEY_VALUE_SECRET_RE.sub(
         lambda match: f"{match.group(1)}=[redacted]",
@@ -98,6 +109,19 @@ class SQLiteAuditRepository:
         # 每次 append 都重跑建表 DDL 是纯浪费：进程内建一次即可。
         self._schema_ready = False
 
+    #: 身份四件套列（WebUI「平台 / 群或频道 / 用户ID / 昵称」链的持久层）。
+    #: 存量生产库是 10 列版本，必须 ALTER 补齐。SQLite **没有**
+    #: ``ADD COLUMN IF NOT EXISTS``，所以判据是 PRAGMA 后按缺失补 —— 于是本迁移
+    #: 幂等、可重复执行（重复 ALTER 同列会报 duplicate column，绝不能盲加）。
+    #: 迁移只在写入侧 ``_ensure_schema`` 里跑一次；只读消费者（webui_stats）**不建、
+    #: 不改**库，故旧库在 bot 重启前仍如实报 ``available=false``。
+    IDENTITY_COLUMNS: tuple[str, ...] = (
+        "platform",
+        "group_id",
+        "group_title",
+        "sender_nickname",
+    )
+
     def _ensure_schema_once(self) -> None:
         if self._schema_ready:
             return
@@ -122,9 +146,13 @@ class SQLiteAuditRepository:
                     severity,
                     public_message,
                     private_debug,
-                    created_at
+                    created_at,
+                    platform,
+                    group_id,
+                    group_title,
+                    sender_nickname
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(audit_id) DO UPDATE SET
                     request_id=excluded.request_id,
                     session_id=excluded.session_id,
@@ -134,7 +162,11 @@ class SQLiteAuditRepository:
                     severity=excluded.severity,
                     public_message=excluded.public_message,
                     private_debug=excluded.private_debug,
-                    created_at=excluded.created_at
+                    created_at=excluded.created_at,
+                    platform=excluded.platform,
+                    group_id=excluded.group_id,
+                    group_title=excluded.group_title,
+                    sender_nickname=excluded.sender_nickname
                 """,
                 (
                     safe_record.audit_id,
@@ -147,6 +179,10 @@ class SQLiteAuditRepository:
                     safe_record.public_message,
                     safe_record.private_debug,
                     safe_record.created_at.isoformat(),
+                    safe_record.platform,
+                    safe_record.group_id,
+                    safe_record.group_title,
+                    safe_record.sender_nickname,
                 ),
             )
             self._prune(connection)
@@ -190,10 +226,27 @@ class SQLiteAuditRepository:
                     severity TEXT NOT NULL,
                     public_message TEXT NOT NULL,
                     private_debug TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    platform TEXT,
+                    group_id TEXT,
+                    group_title TEXT,
+                    sender_nickname TEXT
                 )
                 """
             )
+            # 存量库（10 列版本）走 ALTER 补齐；新建库上面已带列，这里什么也不做。
+            # 先 PRAGMA 再按缺失补 = 幂等，可重复执行（重复 ALTER 会 duplicate column）。
+            existing = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(audit_records)")
+            }
+            for column in self.IDENTITY_COLUMNS:
+                if column in existing:
+                    continue
+                # 列名只来自本类常量元组（不接受外部输入），故可拼进 DDL。
+                connection.execute(
+                    f"ALTER TABLE audit_records ADD COLUMN {column} TEXT"
+                )
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_audit_records_request_time
@@ -232,6 +285,12 @@ class SQLiteAuditRepository:
             public_message=str(row["public_message"]),
             private_debug=str(row["private_debug"]),
             created_at=datetime.fromisoformat(str(row["created_at"])),
+            # 容缺读：迁移未跑到（只读进程读到旧 10 列库）时行里没这些键 ——
+            # 归 None（未采集），绝不 DUMMY。空串也归 None，语义同写入侧。
+            platform=_optional_text(row, "platform"),
+            group_id=_optional_text(row, "group_id"),
+            group_title=_optional_text(row, "group_title"),
+            sender_nickname=_optional_text(row, "sender_nickname"),
         )
 
 

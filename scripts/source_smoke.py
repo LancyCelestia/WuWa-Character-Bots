@@ -153,7 +153,7 @@ def summarize(results: list[dict]) -> dict:
         if r["ok"]:
             slot["ok_orgs"].append(r["org"])
         slot["rows"].append(r)
-    for value, slot in by_value.items():
+    for slot in by_value.values():
         slot["ok_count"] = len(slot["ok_orgs"])
         slot["ready"] = slot["ok_count"] >= 3
     return by_value

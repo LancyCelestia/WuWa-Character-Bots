@@ -127,7 +127,6 @@ def _keys_the_fake_env_writes() -> tuple[str, ...]:
     .env（漏了它，ambient 的 BOT_MODEL_REGISTRY 会整片盖掉路 ③ 那两条遮蔽腿——
     2026-09-29 本席拿一枚假 `BOT_MODEL_REGISTRY` 当注毒实测，正是这条先红）。
     """
-    import os
     import tempfile
     import uuid
 

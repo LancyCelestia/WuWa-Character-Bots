@@ -16,7 +16,7 @@ import {
   type KnowledgeTerm,
   type KnowledgeTermsData,
 } from '@/lib/api-client';
-import { formatInt } from '@/lib/format';
+import { formatCount } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 // 知识库页（spec webui-pages2 §1 + §7 C 系增补）：collections chips 行（禁用集合按 reason 码
@@ -76,10 +76,10 @@ function TermCard({ item }: { item: KnowledgeTerm }) {
             {item.source}
           </Badge>
           {typeof item.chunk_count === 'number' && (
-            <span className='fs-caption text-muted-foreground'>{t('knowledge.chunkCount', { count: formatInt(item.chunk_count) })}</span>
+            <span className='fs-caption text-muted-foreground'>{t('knowledge.chunkCount', { count: formatCount(item.chunk_count) })}</span>
           )}
           {typeof item.count === 'number' && (
-            <span className='fs-caption text-muted-foreground'>{t('knowledge.memeCount', { count: formatInt(item.count) })}</span>
+            <span className='fs-caption text-muted-foreground'>{t('knowledge.memeCount', { count: formatCount(item.count) })}</span>
           )}
           {typeof item.enabled === 'boolean' &&
             (item.enabled ? (
@@ -145,7 +145,7 @@ export function KnowledgePage() {
   // ---- 集合目录层状态（页面级诚实态优先） ----
   if (collections.state.phase === 'loading') {
     return (
-      <div className='mx-auto flex w-full max-w-6xl flex-col gap-4'>
+      <div className='flex w-full flex-col gap-4'>
         <PageHeader title={t('knowledge.title')} subtitle={t('knowledge.subtitle')} />
         <div className='mx-auto flex w-full max-w-2xl items-center gap-3'>
           <Skeleton className='h-9 flex-1' />
@@ -166,7 +166,7 @@ export function KnowledgePage() {
 
   if (collections.state.phase === 'error') {
     return (
-      <div className='mx-auto flex w-full max-w-6xl flex-col gap-4'>
+      <div className='flex w-full flex-col gap-4'>
         <PageHeader title={t('knowledge.title')} subtitle={t('knowledge.subtitle')} />
         {isNotFound(collections.state) ? (
           <SectionCard title={t('knowledge.notDeployed')}>
@@ -179,9 +179,15 @@ export function KnowledgePage() {
     );
   }
 
-  if (collections.state.phase === 'unavailable' || collections.state.phase === 'not_provisioned' || collections.state.phase === 'auth') {
+  if (
+    collections.state.phase === 'unavailable' ||
+    collections.state.phase === 'not_provisioned' ||
+    collections.state.phase === 'auth' ||
+    // 查询被 `enabled: false` 关掉：永远不会有数据，按「没有」呈现，不画骨架。
+    collections.state.phase === 'disabled'
+  ) {
     return (
-      <div className='mx-auto flex w-full max-w-6xl flex-col gap-4'>
+      <div className='flex w-full flex-col gap-4'>
         <PageHeader title={t('knowledge.title')} subtitle={t('knowledge.subtitle')} />
         <SemanticState state={collections.state} onRetry={collections.refetch} />
       </div>
@@ -191,7 +197,7 @@ export function KnowledgePage() {
   // ---- 集合目录 ok：全部数据源未启用 → 页面级诚实态（说明启用方式一句话） ----
   if (available.length === 0) {
     return (
-      <div className='mx-auto flex w-full max-w-6xl flex-col gap-4'>
+      <div className='flex w-full flex-col gap-4'>
         <PageHeader title={t('knowledge.title')} subtitle={t('knowledge.subtitle')} />
         <SectionCard title={t('knowledge.allDisabled')} description={t('knowledge.allDisabledHint')}>
           <div className='flex flex-wrap gap-2'>
@@ -209,7 +215,7 @@ export function KnowledgePage() {
   const termsData = terms.state.phase === 'ok' ? terms.state.data : null;
 
   return (
-    <div className='mx-auto flex w-full max-w-6xl flex-col gap-4'>
+    <div className='flex w-full flex-col gap-4'>
       <PageHeader title={t('knowledge.title')} subtitle={t('knowledge.subtitle')} />
 
       {/* 搜索框：居中宽（spec §1.1），右侧 total 计数（§7 C2，terms 实有 total） */}
@@ -226,7 +232,7 @@ export function KnowledgePage() {
         </div>
         {termsData && (
           <span className='whitespace-nowrap fs-caption text-muted-foreground'>
-            {t('knowledge.total', { count: formatInt(termsData.total) })}
+            {t('knowledge.total', { count: formatCount(termsData.total) })}
           </span>
         )}
       </div>
@@ -301,7 +307,7 @@ export function KnowledgePage() {
               labels={{
                 prev: t('knowledge.prevPage'),
                 next: t('knowledge.nextPage'),
-                info: ([start, end], total) => t('knowledge.pageInfo', { start, end, total: formatInt(total) }),
+                info: ([start, end], total) => t('knowledge.pageInfo', { start, end, total: formatCount(total) }),
               }}
             />
           </>

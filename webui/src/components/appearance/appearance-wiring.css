@@ -1,0 +1,243 @@
+/* ══════════════════════════════════════════════════════════════════════════════
+ * appearance-wiring.css —— 外观配置的**消费端**（W13 执行席 L）
+ *
+ * 为什么单独一份文件、而不是改进 index.css：
+ *   本波 index.css 正被背景层席（Q3）独占编辑；设计席 P1 的 tokens 值册也要求
+ *   index.css 独占写面（并发两席改同一份 = 同名后写静默覆盖，产物不可复现）。
+ *   所以这里的定位是**转接层**：只把「apply.ts 写了但全树没人读」的变量接到真正
+ *   渲染的元素上，不复制任何材质配方、不改任何 token 的出厂值。
+ *
+ * 🔴 退役条件（本文件不是永久层）：
+ *   等 index.css 独占席把下列三类收编进值册后，本文件应整份删除——
+ *     ① 品牌六色 → 语义面 的别名（P1-TOKENS 的 --s-* 层天然要做这件事）；
+ *     ② --hairline / --inner-top 两条补缺定义（它们本该在 index.css 值册里）；
+ *     ③ 各 @utility 里写死的几个数值（84% 玻璃底 / 20px 辉光 / 18px 抬升）改成读变量。
+ *   在那之前，删掉本文件 = 外观页 27 枚滑块当场变回死的。
+ *
+ * 门禁纪律（scripts/layout-constitution.mjs ⑩ 定义侧扫描）：
+ *   本文件**不写**受管声明带 —— 没有 font-size / font-weight / border-radius /
+ *   padding / margin / gap。字号走 fs-* 五档、圆角走 rounded-md|lg|xl、间距走
+ *   4px 栅格类（都在 JSX 侧）。原因：⑩ 的 var 链归一只能在本文件内解析，
+ *   跨文件读 index.css 的 --fs-* / --r-* 会被判「不可自证」而红。
+ *
+ * 选择器前缀 `:root` / `html:root` 不是装饰：
+ *   index.css 里的同名规则是 (0,1,0)，本文件带 `:root` 即 (0,2,0)，**与加载顺序无关**
+ *   地稳压；同时不越过 `[data-cb=*]`（0,2,0 同级但后写）与 `.dark`（0,1,0）。
+ * ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── ① 品牌六色 → 语义面 ────────────────────────────────────────────────────
+ * 失效原状：「配色」面板六个色号写进 --ap-*，而 --primary / --ring / 光斑 / 釉瑚
+ * 全部派生自写死的 --brand-accent / --sk-purple / --sk-deep ⇒ 拖色号 100% 无反应。
+ * 这里把**源头**接上：--brand-accent 是 light 档 --primary/--ring 的基色，
+ * --sk-purple 是 --tone-purple 与釉瑚 b 段、--sk-deep 是阴影与釉瑚 c 段的基色。
+ * 出厂值三对全等（#318ce7 / #824dcb / #3950ac），所以默认外观零变化。 */
+html:root {
+  --brand-accent: var(--ap-brand);
+  --sk-purple: var(--ap-purple);
+  --sk-deep: var(--ap-deep);
+}
+
+/* 三枚 tone 只在「亮档且没开色盲友好」时接管：
+ *   · .dark 里 --tone-* 是专门提亮过的一档（深底可读性），不能被出厂亮值顶掉；
+ *   · [data-cb=*] 是色盲映射，优先级必须高于用户配色（:not 保证它一开就让路）。
+ * 出厂值同样全等（--semantic-danger/success/warning），默认外观零变化。 */
+html:root:not(.dark):not([data-cb]) {
+  --tone-good: var(--ap-success);
+  --tone-warn: var(--ap-warning);
+  --tone-bad: var(--ap-danger);
+}
+
+/* ── ② 两条零定义 token 的补缺（静默失效 1 / 2）─────────────────────────────
+ * --hairline：被 surface / surface-flat / window 三条玻璃毯子消费（3 处），
+ *   全树**零定义** ⇒ `border: 1px solid var(--hairline)` 整条声明在计算值阶段失效
+ *   ⇒ 三条毯子根本没有描边（不是「描边颜色不对」，是 border-style 回落 none）。
+ * --inner-top：被 mark-breathe 的两个关键帧消费，零定义 ⇒ 整条 box-shadow 列表
+ *   在关键帧里失效 ⇒ 侧栏品牌标的呼吸完全没有阴影。
+ * 两条都取「玻璃的受光/压暗」语义，与 --glass-top / --shell-rim 同源，不新造颜色。
+ *
+ * --glass-border（描边强度 0..1）挂在这里而不是另起一条规则：它本来就是
+ * 「发丝有多实」，乘 32% 后出厂 0.56 ⇒ 18%，落在 --foreground 上即一条刚好的折射边。 */
+html:root {
+  --hairline: color-mix(in srgb, var(--foreground) calc(var(--glass-border) * 32%), transparent);
+  --inner-top: inset 0 1px 0 color-mix(in srgb, oklch(1 0 0) 62%, transparent);
+}
+
+/* ── ③ 光斑（aurora）：自定义三色 / 开关 / 混合 / 速度 ───────────────────────
+ * 失效原状：屏幕上那三团光吃的是 --drift-a/b/c（由写死品牌 token 派生），
+ * 而「自定义光斑色」写的 --au-a/b/c **没有任何消费者**（唯一读者 ShaderWallpaper
+ * 全仓零挂载）⇒ 自己挑的颜色永远不生效。
+ * 两条路里选了「让 CSS 光斑改吃 --au-*」而不是「挂载 ShaderWallpaper」：
+ *   · 改动面 = 三条 background，不新增 canvas/RAF 循环（2C2T 性能预算）；
+ *   · 与 Q3 已落的 .bg-stage 层级天然兼容，不多一个负 z 层。
+ * 透明度结构照抄原配方（30%/26%/24% 的 drift 混色）：--au-* 是**不透明**色，
+ * 直接铺会把光斑从「雾里的光」变成「三块色斑」。 */
+:root .aurora-blob-a {
+  background: radial-gradient(circle, color-mix(in srgb, var(--au-a) 30%, transparent) 0%, transparent 68%);
+}
+:root .aurora-blob-b {
+  background: radial-gradient(circle, color-mix(in srgb, var(--au-b) 26%, transparent) 0%, transparent 66%);
+}
+:root .aurora-blob-c {
+  background: radial-gradient(circle, color-mix(in srgb, var(--au-c) 24%, transparent) 0%, transparent 70%);
+}
+
+/* 总开关：--au-display 由 aurora.enabled 映射为 block / none。
+ * 🔴 挂在 **.aurora-blob 自己**、不是挂 .ambient-glow：后者的 ::before 是洗色膜
+ *    （正文对比度 ≥ 4.5:1 靠它兜底），把父层 display:none 会连洗色膜一起关掉 ——
+ *    观感上就是「关掉光斑＝整个页面失去压暗膜」。 */
+:root .aurora-blob {
+  display: var(--au-display);
+}
+
+/* 混合模式：只在暗档生效。
+ * 出厂值 screen 是「亮的地方更亮」的滤色，在近白雾底上会把光斑洗成白色——
+ * 亮档套上它等于把光斑擦掉。暗底才是它想解决的场景，所以亮档保持 normal。 */
+html:root.dark .aurora-blob {
+  mix-blend-mode: var(--au-blend);
+}
+
+/* 速度：三团各有自己的基准周期（28/41/53s），倍率统一除。
+   出厂 --au-speed: 1 ⇒ 三条时长与原值逐字相等，默认零变化。 */
+:root .aurora-blob-a {
+  animation-duration: calc(28s / var(--au-speed));
+}
+:root .aurora-blob-b {
+  animation-duration: calc(41s / var(--au-speed));
+}
+:root .aurora-blob-c {
+  animation-duration: calc(53s / var(--au-speed));
+}
+
+/* ── ④ 虹彩：时长 / 线宽 / 透明度 ───────────────────────────────────────────
+ * 失效原状：--ir-dur / --ir-width / --ir-alpha 全零消费，两条虹彩的 14s / 9s /
+ * 1px / 全不透明都是写死的。这里只改这四个量，conic 的色相配方照抄不动。 */
+:root .iridescent-line::after {
+  height: var(--ir-width);
+  animation-duration: var(--ir-dur);
+  background: conic-gradient(
+    from var(--iris-angle, 0deg),
+    color-mix(in srgb, var(--brand-accent) calc(var(--ir-alpha) * 100%), transparent),
+    color-mix(in srgb, var(--sk-purple) calc(var(--ir-alpha) * 100%), transparent),
+    color-mix(in srgb, var(--sk-deep) calc(var(--ir-alpha) * 100%), transparent),
+    color-mix(in srgb, var(--brand-accent) calc(var(--ir-alpha) * 100%), transparent)
+  );
+}
+:root .iridescent-ring::after {
+  animation-duration: var(--ir-dur);
+}
+
+/* ── ⑤ 辉光：颜色 / 半径 / 强度 ─────────────────────────────────────────────
+ * 失效原状：--glow-color / --glow-r / --glow-alpha 零消费；glow-value 那族
+ * 「文字辉光」已按用户裁定整族撤除（不要复活它）。唯一还在场的非文字辉光消费者
+ * 是按钮的 hover 光晕（glow-on-hover，见 ui/button.tsx），辉光三枚接在这里。
+ * 出厂值（22px / 0.46 / --primary）与原写死的 20px / 30% / 品牌色基本同观感。 */
+:root .glow-on-hover:hover {
+  box-shadow:
+    var(--glass-top),
+    0 0 0 1px color-mix(in srgb, var(--glow-color) 30%, transparent),
+    0 0 var(--glow-r) color-mix(in srgb, var(--glow-color) calc(var(--glow-alpha) * 100%), transparent);
+  transform: translate3d(0, -1px, 0);
+}
+
+/* ── ⑥ 玻璃：不透明度 / 抬升 ────────────────────────────────────────────────
+ * 失效原状：surface 的底写死 84%、抬升走 --shell-glow 里写死的 18px/40px
+ * ⇒ 「玻璃不透明度」「玻璃抬升」两枚滑块永远没反应。
+ *
+ * ⚠️ 这两条是**唯一**的配方级覆盖，也是本文件最该被 index.css 独占席收编的两行：
+ *   · background 只在 surface/surface-flat 上被覆盖（这两条 utility 的 background
+ *     没有 hover 态，所以不存在「覆盖了常态、丢掉 hover」的层叠陷阱）；
+ *   · box-shadow 只挑 .glass-panel 覆盖 —— 它同样没有 hover 态。刻意**不动** .surface
+ *     的 box-shadow：.surface 有 `&:hover` 分支，无层化规则会连 hover 一起盖掉。
+ *   等 index.css 把 84% 和 18px/40px 换成变量，删掉这两条即可，其余声明无需动。
+ *   0.82 而不是 0.84 是配置出厂值（glass.opacity = 82）—— 旧 84% 从配置里根本够不到，
+ *   这个 2% 的差是「变量成为唯一真源」的代价，肉眼不可见。 */
+:root .surface {
+  background: color-mix(in srgb, var(--card) calc(var(--glass-alpha) * 100%), transparent);
+}
+:root .surface-flat {
+  background: color-mix(in srgb, var(--card) calc(var(--glass-alpha) * 83%), transparent);
+}
+:root .glass-panel {
+  box-shadow:
+    var(--glass-top),
+    var(--glass-bottom),
+    0 calc(var(--glass-elev) * 1.8) calc(var(--glass-elev) * 4)
+      color-mix(in srgb, var(--sk-deep) 12%, transparent),
+    0 4px 12px color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+/* ── ⑦ 字距 / 动效总闸 ─────────────────────────────────────────────────────
+ * --ty-track：字距滑块（em）。只影响继承来的正文，eyebrow 等自设字距的类照旧。
+ * --mo-play：动效总开关（running / paused）。原来只在一句注释里被提到，
+ *   真正的动画一条都没停。这里统一挂到全部长跑动画上——暂停而非删除，
+ *   所以「关掉再打开」不会把动画相位清零。 */
+body {
+  letter-spacing: var(--ty-track);
+}
+:root .aurora-blob,
+:root .iridescent-line::after,
+:root .iridescent-ring::after,
+:root .mark-breathe,
+:root .glaze-band {
+  animation-play-state: var(--mo-play);
+}
+
+/* ── ⑧ 发丝色：让 border-hairline / ring-hairline 真的存在 ────────────────────
+ * 失效原状：patterns.tsx 写 `ring-1 ring-hairline`、settings-dialog 写
+ * `border-hairline`，但 --color-hairline 从未注册 ⇒ 这两个类根本没被生成，
+ * 属性在产物里是空的（不报错、不回落，就是什么都没有）。
+ *
+ * 🔴 实测结论（本波 build 后 grep dist/assets/*.css）：**跨文件 @theme 不生成工具类**。
+ *   在 index.css 之外的文件里写 `@theme inline { --color-hairline: … }`，变量会进
+ *   :root（bundle 里搜得到 --color-hairline），但 `.ring-hairline` / `.border-hairline`
+ *   一条规则都没有 —— Tailwind 的工具类生成只认入口那一份的 theme。
+ *   所以真正的颜色注册得由 index.css 独占席做；在那之前这里**直接把两条类补上**，
+ *   调用方一行都不用改。
+ *   · ring 侧写 --tw-ring-color：Tailwind v4 的 `ring-1` 本体是
+ *     `... 0 0 0 calc(1px + …) var(--tw-ring-color, currentcolor)`（bundle 实证），
+ *     所以只给变量赋值 = 描边颜色变了，环宽/偏移仍归 ring-1 管，不与它抢 box-shadow。 */
+.border-hairline {
+  border-color: var(--hairline);
+}
+.ring-hairline {
+  --tw-ring-color: var(--hairline);
+}
+
+/* 变量侧同时注册（给 index.css 独占席留下正确的收编形态；这两行不生成工具类）。 */
+@theme inline {
+  --color-hairline: var(--hairline);
+}
+
+/* ── ⑨ 外观页右侧预览栏的三条小规则 ─────────────────────────────────────────
+ * 预览必须吃同一批变量，不能是画上去的假图；这里只放「没法用具名类表达」的三样：
+ * 壁纸滤镜（--wp-*）、色票底色（--ap-* 由内联转发进来）、预览框几何。
+ * 字号 / 圆角 / 间距一律用 JSX 侧的 fs-* / rounded-* / 栅格类。 */
+.ap-preview-wall {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(var(--wp-scale));
+  filter: blur(var(--wp-blur)) brightness(var(--wp-brightness)) contrast(var(--wp-contrast))
+    saturate(var(--wp-saturate));
+}
+.ap-preview-wall-missing {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(
+    140deg,
+    color-mix(in srgb, var(--ap-brand) 26%, transparent),
+    color-mix(in srgb, var(--ap-purple) 22%, transparent) 52%,
+    color-mix(in srgb, var(--ap-deep) 26%, transparent)
+  );
+}
+.ap-swatch {
+  background: var(--ap-swatch);
+}
+.ap-glow-sample {
+  box-shadow: 0 0 var(--glow-r) color-mix(in srgb, var(--glow-color) calc(var(--glow-alpha) * 100%), transparent);
+}

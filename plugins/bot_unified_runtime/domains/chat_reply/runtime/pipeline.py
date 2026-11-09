@@ -15,6 +15,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
@@ -483,7 +484,9 @@ def capability_hard_timeout_seconds() -> float:
     return resolved
 
 
-def _capability_timeout_error(capability_id: str, timeout_seconds: float) -> Exception:
+def _capability_timeout_error(
+    capability_id: str, timeout_seconds: float, *, diagnostic: dict[str, object] | None = None
+) -> Exception:
     """超时的异常身份：复用中央 invoker 那枚 `CapabilityTimeout`（禁第二族）。
 
     它的存在理由就写在自己的 docstring 里——让「能力挂死」与「能力抛异常」共用同
@@ -495,6 +498,27 @@ def _capability_timeout_error(capability_id: str, timeout_seconds: float) -> Exc
         f"{capability_id or 'unknown'} 超过管线硬超时 {timeout_seconds:g}s"
         "（工作线程仍在跑，结果弃用）"
     )
+    if diagnostic is not None:
+        state = diagnostic.get("execution_state")
+        if state not in {"queued", "started"}:
+            state = "unknown"
+        stage = diagnostic.get("in_flight_stage")
+        if stage not in {"context", "intent", "llm", "tools", "vision", "video_brief", "vision_video", "asr"}:
+            stage = "unknown"
+        elapsed = diagnostic.get("elapsed_ms")
+        if isinstance(elapsed, bool) or not isinstance(elapsed, (int, float)) or not 0 <= elapsed <= 10**12:
+            elapsed = "unknown"
+        else:
+            elapsed = round(elapsed)
+        in_flight = diagnostic.get("in_flight_ms")
+        if isinstance(in_flight, bool) or not isinstance(in_flight, (int, float)) or not 0 <= in_flight <= 10**12:
+            in_flight = "unknown"
+        else:
+            in_flight = round(in_flight)
+        detail += (
+            f" execution_state={state} in_flight_stage={stage}"
+            f" elapsed_ms={elapsed} in_flight_ms={in_flight}"
+        )
     try:
         from plugins.bot_unified_runtime.runtime.capability_protocols import (
             CapabilityTimeout,
@@ -671,7 +695,19 @@ def offload_capability(capability: CapabilityCallable) -> AsyncCapabilityCallabl
 
         try:
             loop = asyncio.get_running_loop()
-            task = loop.run_in_executor(pool, capability, message, decision)
+            diagnostic = None
+            if getattr(decision, "capability_id", "") == "bot.chat":
+                from plugins.bot_unified_runtime.domains.chat_reply.runtime.deadline import (
+                    TimeoutDiagnosticObserver,
+                    run_with_timeout_diagnostic,
+                )
+
+                diagnostic = TimeoutDiagnosticObserver()
+                task = loop.run_in_executor(
+                    pool, run_with_timeout_diagnostic, diagnostic, capability, message, decision
+                )
+            else:
+                task = loop.run_in_executor(pool, capability, message, decision)
         except BaseException:
             # 连提交都没成功（池已关闭等）：闸位当场归还，异常照旧向外走。
             _release()
@@ -688,7 +724,8 @@ def offload_capability(capability: CapabilityCallable) -> AsyncCapabilityCallabl
             # _maybe_send_error_card：挂死第一次有了可见面。
             _retire_offloaded_task(task, _release)
             raise _capability_timeout_error(
-                str(getattr(decision, "capability_id", "") or ""), timeout_seconds
+                str(getattr(decision, "capability_id", "") or ""), timeout_seconds,
+                diagnostic=diagnostic.snapshot() if diagnostic is not None else None,
             ) from exc
         except BaseException:
             # 取消/能力异常同口径：任务已真退出就立即还，没退出就等它退出再还。
@@ -963,6 +1000,57 @@ def _observe_decision_shadow(message: IncomingMessage, capability_id: str) -> No
         return
 
 
+# ---------------------------------------------------------------------------
+# 审计身份链（WebUI「平台 / 群或频道 / 用户ID / 昵称」）
+# ---------------------------------------------------------------------------
+# 摄取层本来就算出了这四个事实（``IncomingMessage`` 的 platform/group_id/
+# group_title/sender_nickname），但此前只进 LLM 提示词的画像分区、**从不落库**，
+# 于是审计库只答得出 session_id 一个约定串，答不出"哪个群、谁发的"。
+# 这里把它们带到 `AuditRecord`（再落 ``audit_records`` 的四列）。
+#
+# 为什么走 ContextVar 而不是给 14 个 `_append_audit_safely(...)` 调用点逐个加参数：
+# 构造点散在 `_prepare`/`_complete`/`_internal_error` 等 6 个方法里，逐个传参等于
+# 把"身份"这根线穿过半条管线；协程侧（`handle_async` 与并发请求）共用一个 pipeline
+# 实例，普通实例属性会在 await 之间串味。
+#
+# 防串味判据（关键）：ContextVar 里存的是 ``(request_id, identity)``，
+# **只有 record.request_id 与它相等才合并**。request_id 每请求唯一，因此
+# ① 同线程/同 context 里残留的上一条身份不会贴到别人的行上（宁可 None=未采集）；
+# ② 不需要 try/finally 复位（无复位也就无"漏复位"这种新失败模式）。
+_AUDIT_IDENTITY: ContextVar[tuple[str, dict[str, str | None]] | None] = ContextVar(
+    "audit_identity", default=None
+)
+
+
+def _clean(value: object) -> str | None:
+    """strip 后为空 → None（未采集）。空串绝不冒充满采集。"""
+    text = str(value or "").strip()
+    return text or None
+
+
+def audit_identity_from_message(message: IncomingMessage) -> dict[str, str | None]:
+    """入站消息 → 审计身份四件套（字段名与 ``audit_records`` 列一一对应）。"""
+    return {
+        "platform": _clean(getattr(message, "platform", "")),
+        "group_id": _clean(getattr(message, "group_id", "")),
+        "group_title": _clean(getattr(message, "group_title", "")),
+        "sender_nickname": _clean(getattr(message, "sender_nickname", "")),
+    }
+
+
+def remember_audit_identity(message: IncomingMessage) -> None:
+    """记下"本请求的身份"，供同一请求后续的审计写入认领（挂在调用方 context 上）。"""
+    _AUDIT_IDENTITY.set((message.request_id, audit_identity_from_message(message)))
+
+
+def audit_identity_for(request_id: str) -> dict[str, str | None] | None:
+    """取本请求的身份；request_id 不匹配（跨请求/跨 context 残留）→ None。"""
+    current = _AUDIT_IDENTITY.get()
+    if current is None or current[0] != request_id:
+        return None
+    return current[1]
+
+
 class RuntimePipeline:
     def __init__(
         self,
@@ -1101,6 +1189,17 @@ class RuntimePipeline:
         self._group_failure_notice_lock = threading.Lock()
 
     def _append_audit_safely(self, record: AuditRecord) -> None:
+        # 身份四件套在这里统一补齐（调用点不必逐个传参）：只认本请求记下的那份，
+        # 且只补**自己没填**的字段（调用点显式给了就不覆盖）。
+        identity = audit_identity_for(record.request_id)
+        if identity is not None:
+            missing = {
+                name: value
+                for name, value in identity.items()
+                if getattr(record, name, None) is None and value is not None
+            }
+            if missing:
+                record = record.model_copy(update=missing)
         try:
             self.audit_logger.append(record)
         except Exception:  # noqa: BLE001 - 审计写入失败时静默跳过，不阻断流水线。
@@ -1138,6 +1237,9 @@ class RuntimePipeline:
         capability_id: str,
         redrive_capability: AsyncCapabilityCallable | None = None,
     ) -> _PreparedRuntime | DeliveryReceipt:
+        # 身份链唯一记点：本请求的第一个审计行（能力门禁）就在下面不远处，
+        # 而 `_prepare` 在 `handle` / `handle_async` 两条入口都是第一站。
+        remember_audit_identity(message)
         if self.feature_gate is not None:
             try:
                 access = self.feature_gate(message, capability_id)

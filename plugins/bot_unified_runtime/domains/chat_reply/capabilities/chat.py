@@ -83,6 +83,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.deadline import (
     DeadlineExceeded,
     merge_phase_tags,
     phase_tags,
+    publish_timeout_budget,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.question_intent import (
     QuestionIntent,
@@ -4249,19 +4250,25 @@ def _generate_with_tool_loop(
                 )
                 if capped_timeout is not None:
                     options["timeout_seconds"] = capped_timeout
-        if model_router is not None:
-            options.pop("model", None)
-            last_reply = model_router.generate(
-                current_messages,
-                message_text=message_text,
-                override=override,
-                fast_mode=fast_mode,
-                fast_max_candidates=fast_max_candidates,
-                session_id=session_id,
-                **options,
-            )
-        else:
-            last_reply = llm_provider.generate(current_messages, **options)
+        if request_budget is not None:
+            request_budget.mark_in_flight("llm")
+        try:
+            if model_router is not None:
+                options.pop("model", None)
+                last_reply = model_router.generate(
+                    current_messages,
+                    message_text=message_text,
+                    override=override,
+                    fast_mode=fast_mode,
+                    fast_max_candidates=fast_max_candidates,
+                    session_id=session_id,
+                    **options,
+                )
+            else:
+                last_reply = llm_provider.generate(current_messages, **options)
+        finally:
+            if request_budget is not None:
+                request_budget.clear_in_flight("llm")
         _accumulate_usage(last_reply)
         tool_calls = getattr(last_reply, "tool_calls", None) or []
         if not tool_calls:
@@ -4358,19 +4365,25 @@ def _generate_with_tool_loop(
                         )
                         if capped_timeout is not None:
                             wrap_options["timeout_seconds"] = capped_timeout
-                if model_router is not None:
-                    wrap_options.pop("model", None)
-                    final_reply = model_router.generate(
-                        current_messages,
-                        message_text=message_text,
-                        override=override,
-                        fast_mode=fast_mode,
-                        fast_max_candidates=fast_max_candidates,
-                        session_id=session_id,
-                        **wrap_options,
-                    )
-                else:
-                    final_reply = llm_provider.generate(current_messages, **wrap_options)
+                if request_budget is not None:
+                    request_budget.mark_in_flight("llm")
+                try:
+                    if model_router is not None:
+                        wrap_options.pop("model", None)
+                        final_reply = model_router.generate(
+                            current_messages,
+                            message_text=message_text,
+                            override=override,
+                            fast_mode=fast_mode,
+                            fast_max_candidates=fast_max_candidates,
+                            session_id=session_id,
+                            **wrap_options,
+                        )
+                    else:
+                        final_reply = llm_provider.generate(current_messages, **wrap_options)
+                finally:
+                    if request_budget is not None:
+                        request_budget.clear_in_flight("llm")
                 _accumulate_usage(final_reply)
                 if str(final_reply.text or "").strip():
                     return _finalize(final_reply)
@@ -6209,6 +6222,7 @@ def build_chat_capability(
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
         request_started = time.perf_counter()
         request_budget = DeadlineBudget(request_budget_seconds)
+        publish_timeout_budget(request_budget)
         effective_options = dict(llm_options)
         router_override = ""
         effective_fast_mode = bool(fast_mode)
@@ -6811,10 +6825,15 @@ def build_chat_capability(
                 q, model_router=model_router, llm_provider=llm_provider
             )
         )
-        question_intent = classify_question_intent(
-            injection_check.sanitized_text,
-            domain_hint=_domain_hint_hook,
-        )
+        intent_started = time.monotonic()
+        request_budget.mark_in_flight("intent")
+        try:
+            question_intent = classify_question_intent(
+                injection_check.sanitized_text,
+                domain_hint=_domain_hint_hook,
+            )
+        finally:
+            request_budget.record_phase("intent", intent_started)
         legacy_category = ""
         if shadow_classifier_enabled:
             try:

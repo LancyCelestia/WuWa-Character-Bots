@@ -1035,3 +1035,112 @@ def test_size_gate_bites_on_oversized_and_spares_small(tmp_path: Path) -> None:
     assert not _entry_size_findings(tmp_path, ("COMMANDS.md",)), "达标件被误拦"
     assert not _entry_size_findings(tmp_path, ("不存在的件.md",)), "缺件应静默跳过而不是崩"
 
+
+# ---------------------------------------------------------------------------
+# 术语表指针门（issue #7，2026-10-19）
+# ---------------------------------------------------------------------------
+# 事故形状：词条文件建了、但没人指向它 ⇒ 下一个人仍然不知道它存在，
+# 等于建了个死件。本仓已有一份「词条文件尚未建立」的旧断言留在 docs/agents/domain.md，
+# 文件一建它就变成谎话——所以指针与「尚未建立」的失效句必须同一条锁一起管。
+
+_GLOSSARY_MAP = "GLOSSARY-MAP.md"
+_GLOSSARY_ENTRY_DOCS: tuple[str, ...] = (
+    "docs/agents/domain.md",
+    "docs/README.md",
+    "AGENTS.md",
+)
+#: 文件建好之后仍留在文档里的失效断言（任何一条残留 ⇒ 文档在说反话）。
+_GLOSSARY_STALE_CLAIMS: tuple[str, ...] = ("词条文件尚未建立", "词条文件尚无")
+#: markdown 行内相对链的目标（`[文本](目标)`）；外部协议与纯锚点在调用处跳过。
+_MD_REL_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)")
+
+
+def _map_link_resolution_findings(root: Path) -> list[str]:
+    """`GLOSSARY-MAP.md` 里的 markdown 相对链必须真能解析到文件。
+
+    为什么单独一条腿：链接门 `tests/test_doc_link_integrity.py::DOC_GLOBS` 只扫
+    `AGENTS.md` / `COMMANDS.md` / `docs/**`，**根目录的 GLOSSARY-MAP.md 不在其面内**——
+    这条链接烂了，所有门全绿，而索引等于废纸。
+    """
+    map_path = root / _GLOSSARY_MAP
+    if not map_path.is_file():
+        return [f"{_GLOSSARY_MAP} 缺失：无从校验其链接"]
+    findings: list[str] = []
+    for lineno, line in enumerate(map_path.read_text(encoding="utf-8").splitlines(), 1):
+        for mo in _MD_REL_LINK_RE.finditer(line):
+            target = mo.group(1).split("#", 1)[0].strip()
+            if not target or "://" in target or target.startswith("mailto:"):
+                continue
+            if not (root / target).exists():
+                findings.append(f"{_GLOSSARY_MAP}:{lineno} 链接解析不到：`{target}`")
+    return findings
+
+
+def _glossary_pointer_findings(root: Path) -> list[str]:
+    """术语表真身缺失、或任一入口文档不指向它、或残留「尚未建立」旧断言。"""
+    findings: list[str] = []
+    if not (root / _GLOSSARY_MAP).is_file():
+        findings.append(f"{_GLOSSARY_MAP} 缺失：术语表索引未落盘")
+    entry = root / "plugins" / "bot_unified_runtime" / "GLOSSARY.md"
+    if not entry.is_file():
+        findings.append("plugins/bot_unified_runtime/GLOSSARY.md 缺失：词条真身未落盘")
+    for rel in _GLOSSARY_ENTRY_DOCS:
+        path = root / rel
+        if not path.is_file():
+            findings.append(f"{rel} 缺失：入口文档不存在")
+            continue
+        text = path.read_text(encoding="utf-8")
+        if _GLOSSARY_MAP not in text:
+            findings.append(f"{rel} 未指向 {_GLOSSARY_MAP}")
+        for stale in _GLOSSARY_STALE_CLAIMS:
+            if stale in text:
+                findings.append(f"{rel} 残留失效断言「{stale}」（术语表已建立，这句话现在是反话）")
+    return findings
+
+
+def test_glossary_has_a_single_true_source_and_is_indexed() -> None:
+    """术语表存在但没人指向它＝死件；三处入口必须指同一份真身，且不许留「尚未建立」。"""
+    findings = _glossary_pointer_findings(ROOT) + _map_link_resolution_findings(ROOT)
+    assert not findings, "术语表指针不全：\n" + "\n".join(findings)
+
+
+def test_glossary_pointer_gate_bites_and_spares(tmp_path: Path) -> None:
+    """双向自证：缺件/不指向/残留旧断言/链接解析不到 必红；齐全时放行——否则这把锁是永假条件。"""
+    (tmp_path / _GLOSSARY_MAP).write_text(
+        "| 真身 | [GLOSSARY.md](plugins/bot_unified_runtime/GLOSSARY.md) |\n", encoding="utf-8"
+    )
+    entry = tmp_path / "plugins" / "bot_unified_runtime"
+    entry.mkdir(parents=True)
+    (entry / "GLOSSARY.md").write_text("# 词条\n", encoding="utf-8")
+    for rel in _GLOSSARY_ENTRY_DOCS:
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(f"见 {_GLOSSARY_MAP}\n", encoding="utf-8")
+    assert not _glossary_pointer_findings(tmp_path), "齐全件被误拦"
+    assert not _map_link_resolution_findings(tmp_path), "可解析链接被误拦"
+
+    # 链接腿必须有牙：把索引行指到不存在的路径，必须点名解析不到
+    (tmp_path / _GLOSSARY_MAP).write_text(
+        "| 真身 | [GLOSSARY.md](plugins/nope/GLOSSARY.md) |\n", encoding="utf-8"
+    )
+    assert any(
+        "解析不到" in f for f in _map_link_resolution_findings(tmp_path)
+    ), "死链未判红＝链接腿是永假条件"
+    # 外部链接与纯锚点不得误判
+    (tmp_path / _GLOSSARY_MAP).write_text(
+        "[外链](https://example.com/x.md) [锚](#顶部)\n", encoding="utf-8"
+    )
+    assert not _map_link_resolution_findings(tmp_path), "外链/纯锚点被误判"
+
+    (tmp_path / _GLOSSARY_MAP).write_text("# 索引\n", encoding="utf-8")
+    (tmp_path / _GLOSSARY_MAP).unlink()
+    assert any("缺失" in f for f in _glossary_pointer_findings(tmp_path)), "缺索引件未判红"
+
+    (tmp_path / _GLOSSARY_MAP).write_text("# 索引\n", encoding="utf-8")
+    target = tmp_path / "docs" / "README.md"
+    target.write_text(f"见 {_GLOSSARY_MAP}\n词条文件尚未建立\n", encoding="utf-8")
+    assert any("反话" in f for f in _glossary_pointer_findings(tmp_path)), "残留旧断言未判红"
+
+    target.write_text("没有指针\n", encoding="utf-8")
+    assert any("未指向" in f for f in _glossary_pointer_findings(tmp_path)), "缺指针未判红"
+

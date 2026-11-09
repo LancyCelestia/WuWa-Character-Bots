@@ -100,7 +100,7 @@ plugins/bot_unified_runtime/control_plane/
 ```text
 BOT_CONTROL_PLANE_ENABLED=false          # 总开关，默认关
 BOT_CONTROL_PLANE_HOST=127.0.0.1         # 只允许 127.0.0.1/::1；改公网绑定必须在配置目录放显式确认文件（见 §9.7）
-BOT_CONTROL_PLANE_PORT=8742              # 避开 8080（webhook）与 8765（BOT_GSCORE_PORT，.env.example:406）
+BOT_CONTROL_PLANE_PORT=8742              # 避开驱动监听口（2026-10-17 起缺省 8099，此前 8080）与 8765（BOT_GSCORE_PORT，.env.example:406）
 BOT_CONTROL_PLANE_TOKEN_SHA256=          # 见 §5.1；为空则 API 除 /healthz 外一律 503
 ```
 

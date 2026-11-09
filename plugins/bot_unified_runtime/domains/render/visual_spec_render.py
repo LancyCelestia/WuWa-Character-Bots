@@ -128,32 +128,36 @@ def _images(el: Element) -> str:
 
 
 def _chart(el: Element) -> str:
-    """图表：复用既有 SVG 生成器（`finance_chart`），失败即**整块缺席**（不造第二套）。"""
+    """图表：复用既有 SVG 生成器（`finance_chart`），失败即**整块缺席**（不造第二套）。
+
+    与既有卡（`stocks.py` / `market.py`）**同一调用范式**：生成器返回的是
+    ``ChartResult(svg, status, note)``，**必须**看 ``status == "ok"`` 并取 ``.svg``
+    ——它**不是**字符串。
+    """
     series = el.data.get("series") or []
     if not series:
         return ""
     try:
         from plugins.bot_unified_runtime.domains.finance.data.finance_chart import (
             box_plot_svg,
-            trend_svg,
+            line_chart_svg,
         )
     except Exception:  # noqa: BLE001 - 图表模块缺席时整块缺席（与既有卡同口径）
         return ""
     try:
         if el.kind == "chart.box":
-            svg = box_plot_svg(
+            chart = box_plot_svg(
                 series, labels=el.data.get("labels") or None, width=880, height=220
             )
         else:
-            # 折线与柱状共用 trend_svg（既有唯一折线生成器；柱状暂无独立实现）
-            svg = trend_svg(series[0], width=880, height=200)
+            chart = line_chart_svg(series[0], width=880, height=200)
     except Exception:  # noqa: BLE001 - 生成失败即缺席（与既有卡同口径）
         return ""
-    if not svg:
+    if chart.status != "ok" or not chart.svg:
         return ""
     caption = f'<div class="vs-caption">{el.data.get("caption", "")}</div>' \
         if el.data.get("caption") else ""
-    return f"<div>{svg}</div>{caption}"
+    return f"<div>{chart.svg}</div>{caption}"
 
 
 def _progress(el: Element) -> str:
@@ -182,7 +186,6 @@ _RENDERERS = {
     "images": _images,
     "chart.line": _chart,
     "chart.box": _chart,
-    "chart.bar": _chart,
     "divider": lambda _el: '<div class="vs-divider"></div>',
     "progress": _progress,
 }

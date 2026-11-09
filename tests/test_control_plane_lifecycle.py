@@ -97,8 +97,8 @@ async def settle():
         await asyncio.sleep(0)
 
 
-def register(module, *, config=None, server=None, app_factory=None, **kwargs):
-    driver = Driver()
+def register(module, *, config=None, server=None, app_factory=None, driver=None, **kwargs):
+    driver = Driver() if driver is None else driver
     server = Server() if server is None else server
     factory = Mock(return_value=server)
     app_factory = Mock(return_value=object()) if app_factory is None else app_factory
@@ -156,6 +156,48 @@ def test_webhook_port_is_rejected(lifecycle_module, port, webhook):
         config=SimpleNamespace(
             bot_control_plane_enabled=True, bot_control_plane_port=port, port=webhook
         ),
+    )
+    assert lifecycle.state == "failed"
+    assert lifecycle.failure_code == "port_not_allowed"
+    assert not driver.startups
+    factory.assert_not_called()
+    app.assert_not_called()
+
+
+def test_driver_default_listen_port_is_rejected(lifecycle_module):
+    """驱动缺省监听口 8099 恒定被拒——即使调用方没给任何端口线索。
+
+    bot.py 的 PORT/HOST 钉设对控制面不可见（那是 driver 层环境变量），故
+    lifecycle 侧必须自带这枚已知缺省（`_DEFAULT_WEBHOOK_PORT`），否则两处
+    撞口会静默成功、双双退 STARTUP_FAILURE=3。
+    """
+    lifecycle, driver, _, factory, app = register(
+        lifecycle_module,
+        config=SimpleNamespace(
+            bot_control_plane_enabled=True, bot_control_plane_port=8099
+        ),
+    )
+    assert lifecycle.state == "failed"
+    assert lifecycle.failure_code == "port_not_allowed"
+    assert not driver.startups
+    factory.assert_not_called()
+    app.assert_not_called()
+
+
+def test_configured_webhook_port_is_rejected(lifecycle_module):
+    """驱动口真来源＝``driver.config.port``；控制面被指到同一枚必须拒。
+
+    这里显式把驱动配置的 port 钉到 8123 再让控制面也走 8123——只有判据真的
+    读 ``driver.config.port``（而不是插件 Config，那个类没有 port 字段）才可能红。
+    """
+    driver = Driver()
+    driver.config = SimpleNamespace(port=8123)
+    lifecycle, _, _, factory, app = register(
+        lifecycle_module,
+        config=SimpleNamespace(
+            bot_control_plane_enabled=True, bot_control_plane_port=8123
+        ),
+        driver=driver,
     )
     assert lifecycle.state == "failed"
     assert lifecycle.failure_code == "port_not_allowed"

@@ -7,7 +7,7 @@ import inspect
 import logging
 import random
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypeVar
 
@@ -268,7 +268,7 @@ class SubscriptionScheduler:
         fn = self._delivery_fn
         assert fn is not None  # 调用方已判 None 早退
         try:
-            parameters = inspect.signature(fn).parameters
+            parameters: Mapping[str, Any] = inspect.signature(fn).parameters
         except (TypeError, ValueError):
             parameters = {}
         if "only_destination_keys" in parameters:

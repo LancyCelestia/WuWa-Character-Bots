@@ -60,7 +60,7 @@ Service 层改配置。
 
 - 总开关 `bot_control_plane_enabled` 缺省 **false**：关闭时不启动服务，包顶层不导入
   fastapi/uvicorn（惰性 `__getattr__`），零导入副作用。
-- 端口与地址：独立监听（缺省 `127.0.0.1:8742`），**不复用** NoneBot webhook 8080；
+- 端口与地址：独立监听（缺省 `127.0.0.1:8742`），**不复用** NoneBot webhook 口（2026-10-17 根修后缺省 8099；8080 为根修前旧缺省，在本机属 Windows 保留态）；
   绑非环回地址需要 Runtime 数据目录下的确认文件，`serve()` 与
   `register_control_plane_lifecycle()` 两处都会拒绝（返回码 2 / 状态 `failed`、
   失败码 `host_not_allowed`），且端口撞 8080 或撞 driver 端口同样拒。

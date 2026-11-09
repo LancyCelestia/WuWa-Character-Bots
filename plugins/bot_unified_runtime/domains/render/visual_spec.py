@@ -59,9 +59,10 @@ class ElementKind(str, Enum):
     BADGE = "badge"        # 标签/胶囊（预警、状态）
     IMAGE = "image"        # 单图
     IMAGES = "images"      # 多图
-    CHART_LINE = "chart.line"    # 折线（复用既有 trend_svg）
-    CHART_BOX = "chart.box"      # 箱形（复用既有 box_plot_svg）
-    CHART_BAR = "chart.bar"      # 柱状
+    CHART_LINE = "chart.line"    # 折线（复用既有 finance_chart.line_chart_svg）
+    CHART_BOX = "chart.box"      # 箱形（复用既有 finance_chart.box_plot_svg）
+    # 注：曾登记 `chart.bar`，但**仓库并无柱状渲染器**（旧实现是拿折线冒充柱状）
+    # ⇒ 2026-10-14 撤下：**契约只承诺真能渲出的东西**。补上真柱状渲染器后再登记。
     DIVIDER = "divider"          # 分隔
     PROGRESS = "progress"        # 进度条
 
@@ -80,7 +81,6 @@ _KIND_FIELDS: dict[str, frozenset[str]] = {
     "images": frozenset({"srcs", "caption"}),
     "chart.line": frozenset({"series", "labels", "caption", "note"}),
     "chart.box": frozenset({"series", "labels", "caption", "note"}),
-    "chart.bar": frozenset({"series", "labels", "caption", "note"}),
     "divider": frozenset(),
     "progress": frozenset({"label", "value", "max", "note"}),
 }
@@ -215,7 +215,7 @@ def _clean_data(kind: str, data: dict[str, Any]) -> dict[str, Any]:
         srcs = data.get("srcs")
         safe = [_safe_url(s) for s in srcs[:MAX_IMAGES]] if isinstance(srcs, list) else []
         return {"srcs": [s for s in safe if s], "caption": _s(data.get("caption"), 200)}
-    if kind in ("chart.line", "chart.box", "chart.bar"):
+    if kind in ("chart.line", "chart.box"):
         return {"series": _series(data.get("series")),
                 "labels": [_s(x, 40) for x in data.get("labels", [])][:64]
                 if isinstance(data.get("labels"), list) else [],

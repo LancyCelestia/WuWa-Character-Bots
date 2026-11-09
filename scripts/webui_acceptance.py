@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """守岸人 WebUI 端到端目验脚本（playwright 无头，零第三方依赖除 playwright）。
 
-对 webui/dist 单文件构建逐页驱动：hash 路由切页 → 等待「数据在场」或「优雅降级态」
+对 webui/dist 多文件构建逐页驱动：真路径切页（browser history）→ 等待「数据在场」或「优雅降级态」
 标志文案 → 断言非白屏 + 控制台无非白名单错误 → 全页截图。
 
 用法：
@@ -21,9 +21,9 @@
 
 API 基址注入：dist 的 api-client 从 localStorage `webui:baseUrl` 读覆盖值（见
 webui/src/lib/api-client.ts），脚本经 context.add_init_script 在页面脚本运行前写入
-（file:// 下 Chromium 允许 localStorage）；令牌同理写 `webui:bearer` / `webui:bearer:ro`。
-若 init 探测发现 localStorage 不可用，自动回退为本地极简静态包装页（stdlib http.server，
-向 dist HTML 头部注入同一段 localStorage 预置脚本后同端口伺服）。
+；令牌同理写 `webui:bearer` / `webui:bearer:ro`。
+多文件 ES 模块始终经本地极简静态包装服务器的 /ui/ 加载（stdlib http.server），
+原样服务 index 与实际资产，不注入 inline 脚本，不以 HTML 兜底未知路径。
 """
 
 from __future__ import annotations
@@ -39,15 +39,25 @@ import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
+
+try:
+    from scripts.webui_mock_server import dist_response
+except ModuleNotFoundError:  # 直接 python scripts/webui_acceptance.py 时 scripts 在 sys.path。
+    from webui_mock_server import dist_response
 
 os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 
 from playwright.sync_api import BrowserContext, Page, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
 
-# 每页注册表：route=hash 路由；ok=数据态标志文案（任一命中即 data 模式）；
-# graceful_extra=该页特有降级文案（通用四态文案所有页共享，见 COMMON_GRACEFUL）。
+# 每页注册表：route=**真路径**（browser history，UI3 起不再折 hash）；ok=数据态标志文案
+# （任一命中即 data 模式）；graceful_extra=该页特有降级文案（通用四态文案所有页共享，见 COMMON_GRACEFUL）。
 # ok 文案取自 webui/src/locales/zh-CN/common.json，均为「仅在数据 ok 分支渲染」的段落标题。
+#
+# 🔴 route 曾经是 hash 路由（`#/calls`）。UI3 换 `createBrowserHistory()` 后 hash 不再被认，
+#    驱动必须走 `/console<croute>` 真路径——否则 `#/calls` 只剩个无意义的 fragment，页面永远
+#    停在总览，验收要么假红（数据态标志缺席）要么假绿（总览恰好命中别页的 ok 文案）。
 PAGE_SPECS: list[dict] = [
     {"name": "dashboard", "route": "/", "ok": ["在线", "降级"], "graceful_extra": []},
     {"name": "calls", "route": "/calls", "ok": ["窗口内调用"], "graceful_extra": []},
@@ -85,7 +95,13 @@ PAGE_SPECS: list[dict] = [
         "ok_dom": "canvas",
         "graceful_extra": ["记忆图谱未部署", "该时间窗内无记忆关联数据"],
     },
+    # 外观工作室（UI3）：视觉层全部参数 + 四套预设。ok 标记取「仅正常渲染才出现」的两处——
+    # 页首「实时生效」状态字与「预设」卡片标题；两处都是 render 期恒在，不依赖 IndexedDB 有值。
+    {"name": "appearance", "route": "/appearance", "ok": ["实时生效", "预设"], "graceful_extra": []},
 ]
+
+# 产物挂载前缀（vite `base: '/console/'`）。驱动 URL 与包装器路径都据此拼，两处不得分头写。
+CONSOLE_PREFIX = "/console"
 
 # 通用优雅降级文案（SemanticState 四态 + logs 静息），见 webui/src/components/semantic/semantic-state.tsx。
 COMMON_GRACEFUL = ["加载失败", "暂无数据", "控制面未配置访问令牌", "令牌无效或无权限"]
@@ -118,32 +134,64 @@ STORAGE_PRELUDE = """
 
 
 class _WrapperHandler(BaseHTTPRequestHandler):
-    """极简静态包装页：同端口伺服注入了 localStorage 预置脚本的 dist HTML（仅回退用）。"""
+    """按产物的真实挂载前缀 `/console/` 服务 index 与 assets。
 
-    html = ""
+    UI3 换 browser history 后，驱动必须打真路径（`/console/calls`），产物里的资源引用
+    也是绝对的 `/console/assets/…`。所以这一层把 `/console/*` 映射到产物布局：
+      · `/console`、`/console/`、`/console/<未入册路径或已入册页>` → index.html
+        （与生产后端 `api/webui.py` 的 `/console/{sub_path:path}` 同语义：任意子路径同一份
+         index，路由由前端接管）；
+      · `/console/assets/*` → 真实资产文件，走 `dist_response` 的同一套目录包含校验。
+    只做路径映射，不复制 `dist_response` 的越权/穿越判据（那是唯一执法点）。
+    """
+
     server: ThreadingHTTPServer
 
+    def do_HEAD(self) -> None:
+        self.do_GET()
+
     def do_GET(self) -> None:
-        body = self.html.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        path = urlsplit(self.path).path
+        if path == CONSOLE_PREFIX:
+            status, body, mime, headers = 307, b"", "text/plain; charset=utf-8", {
+                "Location": f"{CONSOLE_PREFIX}/",
+                "Cache-Control": "no-store",
+            }
+        elif path.startswith(f"{CONSOLE_PREFIX}/assets/"):
+            rewritten = "/ui" + path[len(CONSOLE_PREFIX) :]
+            status, body, mime, headers = dist_response(self.server.dist_root, rewritten)
+        elif path == f"{CONSOLE_PREFIX}/" or path.startswith(f"{CONSOLE_PREFIX}/"):
+            # 任意子路径 → index（SPA 路由前端接管）；资源缺失仍按资产分支 404，不兜 HTML。
+            status, body, mime, headers = dist_response(self.server.dist_root, "/ui/")
+        else:
+            status, body, mime, headers = dist_response(self.server.dist_root, self.path)
+        self.send_response(status)
+        for key, value in headers.items():
+            self.send_header(key, value)
+        self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def log_message(self, *args: object) -> None:  # 静默，产物零落盘
         return
 
 
-def start_wrapper_server(dist_html: str, storage_js: str) -> tuple[ThreadingHTTPServer, str]:
-    """把 dist/index.html 头部注入 localStorage 预置脚本后起本地伺服（127.0.0.1 随机端口）。"""
-    injected = re.sub(r"(<head[^>]*>)", rf"\1<script>{storage_js}</script>", dist_html, count=1)
-    if injected == dist_html:  # 无 <head>（理论不可达）：整体前置
-        injected = f"<script>{storage_js}</script>" + dist_html
-    _WrapperHandler.html = injected
+def start_wrapper_server(dist: Path | str, storage_js: str = "") -> tuple[ThreadingHTTPServer, str]:
+    """多文件产物需 HTTP 模块加载；存储预置仍由 context.add_init_script 完成。
+
+    dist 接受目录或 index.html 路径；不再接受 HTML 正文冒充完整产物。
+    storage_js 位置参数保留供旧调用方迁移，但不注入 HTML。
+    """
+    path = Path(dist).resolve()
+    root = path.parent if path.name == "index.html" else path
+    if not (root / "index.html").is_file():
+        raise SystemExit(f"[uiacc] dist index 不存在: {root / 'index.html'}")
     server = ThreadingHTTPServer(("127.0.0.1", 0), _WrapperHandler)
+    server.dist_root = root
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server, f"http://127.0.0.1:{server.server_address[1]}/"
+    return server, f"http://127.0.0.1:{server.server_address[1]}{CONSOLE_PREFIX}/"
 
 
 def build_storage_js(api: str | None, token: str | None, ro_token: str | None) -> str:
@@ -190,8 +238,10 @@ def wait_any_dom(page: Page, css: str, timeout_s: float) -> str | None:
 
 def run(args: argparse.Namespace) -> tuple[list[dict], str]:
     dist = Path(args.dist).resolve()
-    if not dist.exists():
-        raise SystemExit(f"[uiacc] dist 不存在: {dist}")
+    if dist.is_dir():
+        dist = dist / "index.html"
+    if not dist.is_file():
+        raise SystemExit(f"[uiacc] dist index 不存在: {dist}")
     # 验收对象是**产物**：dist 落后于 src 时，一张绿单证明的是已经不存在的代码。
     src_root = dist.parent.parent / "src"
     if src_root.is_dir() and not args.allow_stale_dist:
@@ -209,38 +259,38 @@ def run(args: argparse.Namespace) -> tuple[list[dict], str]:
     specs = [s for s in PAGE_SPECS if s["name"] in names]
 
     storage_js = build_storage_js(args.api, args.token, args.ro_token)
-    results: list[dict] = []
-    wrapper: ThreadingHTTPServer | None = None
-    base_uri = dist.as_uri()
+    wrapper, base_uri = start_wrapper_server(dist)
 
+    try:
+        return _run_browser(args, dist, shot_dir, specs, storage_js, base_uri)
+    finally:
+        wrapper.shutdown()
+        wrapper.server_close()
+
+
+def _run_browser(args, dist, shot_dir, specs, storage_js, base_uri) -> tuple[list[dict], str]:
+    results: list[dict] = []
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(locale="zh-CN", viewport={"width": 1440, "height": 900})
         context.add_init_script(storage_js)
 
         probe = context.new_page()
-        probe.goto(base_uri + "#/", wait_until="load")
+        probe.goto(base_uri, wait_until="load")
         if not wait_any_text(probe, [SHELL_MARKER], 15):
             probe.screenshot(path=str(shot_dir / "_app-shell-dead.png"), full_page=True)
             raise SystemExit("[uiacc] 应用壳未挂载（守岸人控制台 标题未见），dist 或构建损坏；截图 _app-shell-dead.png")
         storage_ok = probe.evaluate("() => window.__uiaccStorageOk !== false")
-        # file:// 下 TanStack Link 会把 href 绝对化（/C:/...index.html#/calls），
-        # 故统一解析成 hash 分量再比对路由（http 下为 #/xxx，两态通吃）。
+        # 导航链接现在是**真路径**（`/console/calls`），不再折 hash（UI3 browser history）。
+        # 取 pathname 再剥掉挂载前缀，得到路由表里的路径（`/calls`），供逐页「路由是否已构建」判定。
         nav_eval = (
             "() => Array.from(document.querySelectorAll('a[href]'))"
-            ".map(a => { try { return new URL(a.getAttribute('href'), location.href).hash } catch { return '' } })"
-            ".filter(h => h.startsWith('#/'))"
+            ".map(a => { try { return new URL(a.getAttribute('href'), location.href).pathname } catch { return '' } })"
+            f".filter(p => p === '{CONSOLE_PREFIX}' || p.startsWith('{CONSOLE_PREFIX}/'))"
         )
         nav_hrefs = probe.evaluate(nav_eval)
-        if not storage_ok and args.api:
-            # file:// localStorage 受限 → 回退静态包装页伺服（注入同一段预置脚本）。
-            wrapper, wrapper_url = start_wrapper_server(dist.read_text(encoding="utf-8"), storage_js)
-            base_uri = wrapper_url
-            note = f"file:// localStorage 不可用，回退包装页 {wrapper_url}"
-            print(f"[uiacc] {note}")
-            probe.goto(base_uri + "#/", wait_until="load")
-            wait_any_text(probe, [SHELL_MARKER], 15)
-            nav_hrefs = probe.evaluate(nav_eval)
+        if not storage_ok:
+            raise SystemExit("[uiacc] HTTP localStorage 预置失败，不能声称已应用 API/令牌覆盖")
         probe.close()
 
         for spec in specs:
@@ -252,14 +302,11 @@ def run(args: argparse.Namespace) -> tuple[list[dict], str]:
                     nav_hrefs,
                     shot_dir,
                     args.timeout,
-                    api_origin=(args.api or base_uri).rstrip("/"),
+                    api_origin=(args.api or f"{urlsplit(base_uri).scheme}://{urlsplit(base_uri).netloc}").rstrip("/"),
                     expect=args.expect,
                 )
             )
         browser.close()
-    if wrapper is not None:
-        wrapper.shutdown()
-
     summary = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "dist": str(dist),
@@ -295,12 +342,14 @@ def check_page(
     page.on("response", lambda r: responses.append((r.status, r.url)))
 
     try:
-        page.goto(f"{base_uri}#{route}", wait_until="load")
+        page.goto(f"{base_uri}{route.lstrip('/')}", wait_until="load")
         if not wait_any_text(page, [SHELL_MARKER], timeout_s):
             result["reason"] = "应用壳未挂载"
             return result
 
-        if f"#{route}" not in nav_hrefs:
+        # 该页是否已在导航里登记（= 路由已构建）。比较**真路径**：`/console` + 路由。
+        expected_path = f"{CONSOLE_PREFIX}{route}" if route != "/" else f"{CONSOLE_PREFIX}/"
+        if expected_path not in nav_hrefs:
             # 路由未构建（二期在飞）：记录现场即 SKIP，不算失败也不挡退出码。
             result["status"] = "SKIP"
             result["reason"] = "路由未构建（导航无该链接，二期在飞）"
@@ -404,7 +453,7 @@ def print_table(results: list[dict], allow_skip: bool = False) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="守岸人 WebUI 端到端目验（playwright 无头）")
-    parser.add_argument("--dist", default="webui/dist/index.html", help="dist 单文件路径")
+    parser.add_argument("--dist", default="webui/dist/index.html", help="dist 目录或 index.html 路径（兼容旧 CLI）")
     parser.add_argument("--api", default="http://127.0.0.1:8743",
                         help="控制面/mock API 基址（写入 localStorage webui:baseUrl；空串=同源）")
     parser.add_argument("--token", default=None, help="Bearer 主令牌（可选，写 webui:bearer）；"

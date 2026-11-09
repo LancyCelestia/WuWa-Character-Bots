@@ -14,7 +14,7 @@
 | 已结案波次交接档 | `HANDOFF-UNIFY-20260922.md`、`HANDOFF-V21R6-TESTING.md`、`HANDOFF-FIXWAVE-20260921.md`、`HANDOFF-RESCUE-20260930.md` | #47 #49 #52 #70 |
 | 文档结构 / 命名 / 归类（十板块） | `docs/boards/_conventions.md`（板块树 `docs/boards/README.md`；交接档 `HANDOFF-BOARDS-20260921.md` 已被取代） | #48 |
 | 十八项 / 第 20 项（日程与隐私分级）续做 | `HANDOFF-GOAL18-20260926.md` | #56 #57 #58 #59 |
-| 人格热切换（切人格要带 QQ 外观一起跟切） | `docs/HANDBOOK.md` §49 | #60 |
+| 人格热切换（切人格连 QQ 外观一起切） | `docs/HANDBOOK.md` §49 | #60 |
 | 每个一级分类各建一个 git 库 | `HANDOFF-LIBS-20260926.md` | — |
 | 控制面 / 旧波次史 | `docs/design/control-plane-core-status.md`；v21r2-r4 见台账 #41 #42 | — |
 
@@ -22,10 +22,10 @@
 
 ## 〇、项目身份（30 秒版）
 
-- **产品**：QQ 聊天机器人「守岸人」（鸣潮角色人格、非 AI 设定），NoneBot2 + OneBot V11（SnowLuma，WS 3001；webhook 8080），另带 Telegram/Mail/Console。
+- **产品**：QQ 聊天机器人「守岸人」（鸣潮角色人格、非 AI 设定），NoneBot2 + OneBot V11（SnowLuma，WS 3001；webhook 缺省 8099），另带 Telegram/Mail/Console。
 - **主包**：`plugins/bot_unified_runtime/`；`config.py` 单一 `Config` 类全 pydantic；会漂移计数以机器册 `docs/auto-facts.md` 或实跑为准（规则 10）。
 - **铁律**：改代码必须重启 bot 才生效；生产进程常驻且管理员权限启动（杀它需提权）。
-- **运行数据根**：`ChatBot_Runtime/`（venv/SQLite/cookie/日志/缓存）；`data/` 相对路径经 `scripts/runtime_paths.py` 重映射到这里。
+- **运行数据根**：`ChatBot_Runtime/`（venv/SQLite/cookie/日志/缓存）；`data/` 经 `scripts/runtime_paths.py` 重映射到这里。
 
 ---
 
@@ -37,7 +37,7 @@
 4. **git 纪律**：禁 `git add -A`/`git add .`；逐文件显式 add；共享文件动前读最新态；提交后必 `git show --stat HEAD` 核对；push 用完整 refspec `refs/heads/<分支>:refs/heads/<分支>` 且**仅按用户明确指示**。
 5. **交接硬规矩**：写「已完成/已修复/测试通过」必须同时给出**提交哈希**或**可复跑命令+实跑输出**，否则一律按未完成记账。
 6. **源码树零缓存**：绕开 `scripts/dev.ps1` 直跑 python/pytest 必须带 `PYTHONDONTWRITEBYTECODE=1` + `-p no:cacheprovider` + `--basetemp=<仓库外>`；源码树不应出现 `__pycache__`/`*.pyc`/`.pytest_cache`/`.ruff_cache`/`.mypy_cache`/`data/`。**例外**：`plugins/bot_unified_runtime/domains/weather/assets/qx.json`（NMC 码表）清理波不得误删——2026-09-13 曾被误清致 NMC 整体塌向 open-meteo。
-7. **多代理并发（默认能用子代理就用子代理、时刻保持并行满载，限流为唯一上限；席毕立即补派）**：并发受当日累计用量动态约束（高消耗日 2-3 并发即触发 1302）；按文件域互斥切分；撞限流墙→先落盘断点、守住存量、取证阵亡者，退避后只补未完成，不盲目重做；大任务在简报中要求分阶段落检查点；**主会话不占前台**。**代理一律禁 git 写操作、禁再派代理、禁改配置、禁重启或杀进程（含自身与 bot）**＝席位最小执行面；禁执行面全表见规则 11。
+7. **多代理并发（默认能用子代理就用子代理、时刻保持并行满载，限流为唯一上限；席毕立即补派）**：并发受当日累计用量动态约束（高消耗日 2-3 并发即触发 1302）；按文件域互斥切分；撞限流墙→先落盘断点、守住存量、取证阵亡者，退避后只补未完成，不盲目重做；大任务在简报中要求分阶段落检查点；**主会话不占前台**。**代理禁 git 写操作、禁再派代理、禁改配置、禁重启或杀进程（含自身与 bot）**＝席位最小执行面；全表见规则 11。
 8. **人格资产**：`personas/` 与 Runtime 人格副本是项目灵魂，话术改动必须维持守岸人语气（去 AI 味）；好感度任何档位都**不攻击/不强硬**；R-18 边界按 2026-09-17 内容政策 + 09-20 六硬线（台账 #36/#43；红线写死进 affinity 态度文本与人格副本「亲密边界」节）。
 9. **归档规程**：压缩 → 验证（testzip + 副本）→ 移出，附 manifest（先例 `ChatBot_Archive/2026-09-12/`）。不要把 Runtime/Archive 设为工作区，不要重建废弃的嵌套 `_Archive` 路径。
 10. **叙述文档禁手写会过期的计数**：凡随代码漂移的总数（字段/topics/别名/模板/域/路由/库/交付物/用例数），一律写「以机器册 `docs/auto-facts.md` 为准」或指向真身定义处；确需保留旧数字则同行标「当时值」。由 `test_documentation_consistency.py::test_narrative_docs_defer_volatile_counts_to_machine_ledger` 执法。**AGENTS/HANDBOOK/CODE-MAP/catalog/HANDOFF 都不例外。**
@@ -53,7 +53,7 @@
 
 12. **复用死线（2026-10-12 用户立）**：功能实现前必先做 GitHub／API 复用侦察——能直调的权威 API 直接调、有适配的现成项目就搬；🔴 禁从头乱写。
     - **三源硬门（2026-10-12 用户重申，覆盖一切 web 网络信息）**：天气、股票、汇率、宏观等**任何对外数值**，落笔前必须有 **≥3 个官方渠道**佐证（机构官网／官方 API 优先；同一机构多入口只算一源）；**凑不满 3 源的值不得出卡/出数**，须显式标注缺口。
-    - 佐证须落**可取证的形态**：源名＋精确端点＋实测读数（延迟/码）＋容差口径（分歧超容差即显式标注，不许取平均掩盖）。
+    - 佐证形态：源名＋精确端点＋实测读数＋容差口径；分歧超容差即显式标注，不许取平均掩盖。
 
 ---
 
@@ -61,7 +61,7 @@
 
 ```
 ChatBot\ ← 本工作区（唯一代码区）
-├── bot.py ← NoneBot 启动 + 崩溃守卫（webhook 8080）
+├── bot.py ← NoneBot 启动 + 崩溃守卫（webhook 缺省 8099）
 ├── AGENTS.md / COMMANDS.md ← 本文件；命令手册人读版
 ├── docs\
 │   ├── HANDBOOK.md ← 单一活文档（权威链详见第七部分）
@@ -91,9 +91,9 @@ QQ/SnowLuma(WS 3001) ⇄ bot.py(forward-WS)
  → SendQueue(SQLite：part 级幂等+UNKNOWN 确认+PARTIAL 断点续发) → sender/onebot|nonebot|mail → QQ/TG/邮件
 ```
 
-**LLM 子链路**：`llm/model_router`→`providers.py`（OpenAI 兼容 POST）→`llm/ledger.py`（默认关，#54）。**模型优先组/渠道表真身＝运行时注册表（覆盖优先）＋`.env` 的 `BOT_MODEL_PRIORITY_GROUPS`，本文不抄清单**（规则 10；覆盖册赢 `.env`）。行为面（EWMA/影子并发/effort/fail-fast）见台账 #43 #50；失败面＝私聊五池游标轮换＋群聊降级池＋带轨迹告警。
+**LLM 子链路**：`llm/model_router`→`providers.py`（OpenAI 兼容 POST）→`llm/ledger.py`（默认关，#54）。**模型优先组/渠道表真身＝运行时注册表（覆盖优先）＋`.env` 的 `BOT_MODEL_PRIORITY_GROUPS`，本文不抄清单**（规则 10；覆盖册赢 `.env`）。行为/失败面见台账 #43 #50 #71。
 
-**渲染管线**：`domains/render/card_render/`（顶层 `output/card_render/` 是再导出垫片，非真身）。**token 单一事实来源＝`theme_tokens.py`**（清单以 `docs/rendering-contract.md` 与其机器门为准）；平台色只做 accent 不作底色；出图＝`domains/render/render_backends.py` 常驻 playwright 截 `.card`。**UI 铁律**：无 viewport meta、body 透明、字重≤700、动画写在 `.card` 内、光晕 alpha≥0.05、阴影只准 `none`/`var()` 引登记族、失败→纯文本兜底（契约门＝`test_rendering_contract`＋`test_mica_builders_contract`＋`test_template_visual_audit`，均在 tests/）。
+**渲染管线**：`domains/render/card_render/`（顶层 `output/card_render/` 是再导出垫片，非真身）。**token 单一事实来源＝`theme_tokens.py`**（清单以 `docs/rendering-contract.md` 与其机器门为准）；平台色只做 accent 不作底色；出图＝`domains/render/render_backends.py` 常驻 playwright 截 `.card`。**UI 铁律真身＝`docs/rendering-contract.md`**（十条，分有牙/半牙/纸面；门＝`tests/test_rendering_contract.py` 族）。
 
 ## 第四部分：功能 × 载体清单
 
@@ -130,14 +130,14 @@ QQ/SnowLuma(WS 3001) ⇄ bot.py(forward-WS)
 | 计费账本 | domains/chat_reply/llm_engine/ledger.py（M1 默认关） | 成本原语走微元、取整只在聚合（台账 #54★）；反查只在写线程做 |
 | 决策引擎 | domains/core/decision/（Phase-1 shadow） | 影子对照不接管；接管待阶段 2 |
 | 运维告警 | runtime/alerts + result_unknown | 抑制窗 + 台账 TTL；人话化与出卡见台账 #55 |
-| 统一错误报告卡 | runtime/error_report.py + card_render/templates/error_card.html + theme_tokens（ERROR_ACCENT/ERROR_THEME）+ pipeline `_internal_error` 旁路钩子 | 两段式异步（文本先行、卡图后补、fail-open）；中央超时抛 `CapabilityTimeout`（禁第二族）⇒ 出卡，锁 `tests/test_pipeline_hard_timeout.py`；空署名回落 `mica_shell.brand_capsule_html`（锁 `test_brand_capsule_contract`）→ §53.9 |
+| 统一错误报告卡 | runtime/error_report.py + card_render/templates/error_card.html + theme_tokens（ERROR_ACCENT/ERROR_THEME）+ pipeline `_internal_error` 旁路钩子 | 两段式异步（文本先行、卡图后补、fail-open）；`CapabilityTimeout`（禁第二族）⇒ 出卡（锁 `tests/test_pipeline_hard_timeout.py`）；空署名回落 `brand_capsule_html`（锁 `test_brand_capsule_contract`）→ §53.9 |
 | mermaid 素材本地化 | scripts/fetch_mermaid_js.py + ChatBot_Runtime/card_render_assets/mermaid/mermaid.min.js+sha256 旁车 + render_backends `page.route` 拦截 CDN 回源本地 | 真身本地落盘 + 拦 CDN 回源；治台账 #8 |
 | 表情贴纸回应 | domains/meme/reactions/engine.py + __init__.py 摄取识别归一 + character/providers.py 注入 + config 四键 bot_reactions_* | 五层防刷屏门；**主动贴表情只发群消息，私聊一律不派发**（QQ 无该通道，#35★） |
 | 校园自动转发 | capabilities/campus.py + sources/campus_store.py + __init__.py 被动 matcher（priority=8, block=False）+ config 六键 bot_campus_* | **纯监听绝不向学校群发**；三重来源门任一空＝整链关闭 |
 
 ## 第五部分：验证与门禁
 
-四道门一律走 `scripts/dev.ps1 -Task test|lint|typecheck|runtime-layout`（任务表 `scripts/chatbot-tasks.json`）；绕开直跑必带规则 6 卫生前缀。真机验收（bot 在线后）：`python scripts/e2e_acceptance.py --target-group <白名单群ID> --execute`（默认 DRY-RUN）。
+四门走 `scripts/dev.ps1 -Task test|lint|typecheck|runtime-layout`（任务表 `scripts/chatbot-tasks.json`）；绕开直跑必带规则 6 前缀。真机验收（bot 在线后）：`python scripts/e2e_acceptance.py --target-group <白名单群ID> --execute`（默认 DRY-RUN）。
 
 ## 第六部分：已知问题台账（纯索引，动手前先查）
 
@@ -216,11 +216,26 @@ QQ/SnowLuma(WS 3001) ⇄ bot.py(forward-WS)
 | 73 | **现实知识面＋幻觉根治波（他人经历·实体·媒体·多人格）**：穗波＝Runtime 活体副本把千咲/散华经历写成第一人称 **7 处 A 级**（源码树零命中）；「复现他人经历」⇒修法必落**人称归属判定**（删地名无效）；六层同批（文案／规范／恒渲染禁令／检索标注／**抽取腿拒自陈与 CoT 残片**／出口守门）。检索/记忆开关现算**全 True**、缺内容；补词表三档＋`entity_relations` 跳册（未核）；🔴 **trend 非死腿**（草案作废）。媒体＝12/10 sent；TG 拼格专辑与评论区**零消费者**；🔴 file 腿断点＝`transport/sender/worker.py` mixed 见 file 即早退⇒U/P/90s 无牙（A/B 净新增红 0）。多人格＝去 4 处硬编码＋检索按 `active_persona_id` 过滤＋同步门 `--persona` 化＋施工图（`capability-orchestration-adoption-spec` §9）；🔴 `persona_id` 列**启动期幂等自执行**（12 秒两库、无备份）；人格库短装 ⇒ `kb_drift` 红；`qoder-m2-02` 与生产**硬链接＝假备份** → §73 §73.1 |
 | 74 | **全量修复批**（18 项需求+统一规格/调度/归类）：折句/回执60s/TTS三闸/v8+展示限幅/画像分区/危险命令双层/审批账/TTL清扫/文件回填/修改意图/媒体缝让路等全链落码；ANN 签名对齐索引完备；冒烟四读数全绿 → §74；★生效需重启（铁律#10）；★贴纸池/生成端点待你动作 |
 | 75 | **科技话题闭嘴根治波（封概念禁令·情感腿一票否决·溯源门重铸）**：主因＝生产**活体副本首行**「你不知道"模型、程序、助手"这些概念」（全库 `git log -S` 零命中＝从未入库），拒答＝逐字复读该句；🔴 **顶层禁令压得过已注入检索事实**⇒光补检索判死；次因＝情感腿闸口含裸词「喜欢」且排在开搜闸口之前。修法＝降自指级＋柔性出口＋溯源三门＋让位尺 → §75；★生效两轴：副本每轮现取即生效／代码面必重启；★重锚必先改副本后 adopt；★溯源门改判"规范行＋整行 LCS"（同形比法只见 3/10）；挂账＝~~副本一条~~（已清偿：adopt+凭证重录，门 4 passed）·折句入口第二处死值谎报·联网无 feature id |
-| 76 | **亲密档五维＋叙述授予面波（三处生产阻断根修）**：旧门只看 `mode==intimate` ⇒ ML 自动档直吃展开描写（"ML 只说话"代码里从无）；授予面＝白名单三元 `grants_intimate_narration`，**不复用**成员恰同的换模型集／TTL 豁免集；五维补**外貌与语言**；「语言」不进成对锁 `_SCENE_DIMENSIONS`；🔴 真因三处＝①`BOT_PERSONA_ACTION_BRACKETS=false` 令 `strip_action_brackets` **不分档**删动作②档态 LRU 重启即空③**覆盖册那枚常驻 `BOT_REPLY_DETAIL` 被当"本轮明示"⇒ 全员永久策略整段静音**（钉 600+ 实收 60–189）→ §76.7；篇幅＝**第四档「铺写」仅授予腿可达**（矩阵无格指向⇒全局长度未动）；🔴 篇幅黑名单门只扫 `chat.py` 不扫人格 md⇒已扩锁＋重锚；群聊出站闸仅 GROUP 分支、命中＝逐段涂销（旧整条 BLOCK 形已撤）→ §76；★生效两轴同 #75；★**孤儿 pytest 会写生产库**；★`--basetemp` 不预建或不在仓外⇒整批 setup ERROR；★**落 Runtime 根下＝假红**（§76.4 撤账）；★**哈希门 HEAD 轴本就红**（只读看漂移清单是唯一判据）；⚠ 存档提交吞在飞半件 |
+| 76 | **亲密档五维＋叙述授予面波（三处生产阻断根修）**：旧门只看 `mode==intimate` ⇒ ML 自动档直吃展开描写；授予面＝白名单三元 `grants_intimate_narration`，**不复用**换模型集／TTL 豁免集；五维补**外貌与语言**，「语言」不进 `_SCENE_DIMENSIONS`；🔴 真因三处＝`BOT_PERSONA_ACTION_BRACKETS=false` 令 `strip_action_brackets` **不分档**删动作／档态 LRU 重启即空／**常驻 `BOT_REPLY_DETAIL` 被当"本轮明示"⇒ 全员策略整段静音**（钉 600+ 实收 60–189）→ §76.7；篇幅第四档「铺写」仅授予腿可达；篇幅黑名单门扩锁到人格 md；群聊出站闸仅 GROUP、命中逐段涂销 → §76；★生效两轴同 #75；★**孤儿 pytest 会写生产库**；★`--basetemp` 须预建且在仓外；★**落 Runtime 根下＝假红**（§76.4）；★**哈希门 HEAD 轴本就红**（只读看漂移清单） |
+| 76.1 | **同波余账**：篇幅矩阵无格指向 ⇒ 全局长度未动；存档提交吞在飞半件 |
 | 77 | **push 前体检+切笔+修红+主仓推送波**：三关（主题/敏感/临时件）全过，e2e 上游败＝非回归；切笔 12+1（`e8a02a8…9bdcfc7`）＋修红 6（env 六键转活行/COMMANDS needle/mypy 三错/F1 名册 32→33/smoke 代表码 500/`20c10a3` 哈希册重录）；主仓已上 GitHub（远端 ahead 0）；★增量红根因＝加键账册没跟；★transport 失败 dict 误自增 count 撞投递守卫＝消息丢失（已修）；★git 不读系统代理、单次 `-c` 挂 7890；★分库无全局 git 身份须 `-c` 注入；★GitHub 建仓限速退避；清偿：15 库全上线（私有）/queue close()/adapter 回播种③；挂账：二批瘦身/.superpowers 归档 → §77.6 |
 | 80 | **侧腿假超时烧穿主链→私聊无回复根修**：判域/贴纸腿取地板＋自封宽度；地板=`channel_health.PER_HOP_TIMEOUT_FLOOR_SECONDS`（含锚）；经网关本地腿出链、直连腿 manual 保 11434 → §80 |
 
 ## 第七部分：交接史与权威链
-- 权威链：`docs/HANDBOOK.md`＝单一活文档（现行事实与各波全账，逐节目录看该文件自身）；`docs/issue-ledger-p2-p3.md`＝P2/P3 逐条详情；`docs/design/`＝规格与施工图；`docs/boards/`＝板块生成页。
-- **维护规矩**：不新建带日期交接文档，增量直接更新 HANDBOOK；「已完成」按规则 5 带证据；归档按规则 9；例外件保留原样（`docs/handover-c-20260913.md`、SDD 内 `progress-agent-b.md`）；git 历史全量可溯。
-- 控制面唯一事实页＝`docs/design/control-plane-core-status.md`（页顶为现役）。硬口径：**不得把 features API 的 enabled 值变化宣称为生产插件已停用**（现状面另见第四部分控制面行）。
+- 权威链：`docs/HANDBOOK.md`＝单一活文档（现行事实与各波全账，目录看该文件自身）；`docs/issue-ledger-p2-p3.md`＝P2/P3 详情；`docs/design/`＝规格与施工图；`docs/boards/`＝板块生成页。
+- **维护规矩**：不新建带日期交接文档，增量进 HANDBOOK；「已完成」按规则 5 带证据；归档按规则 9；例外件留原样（`docs/handover-c-20260913.md`、SDD 内 `progress-agent-b.md`）；git 历史全量可溯。
+- 控制面唯一事实页＝`docs/design/control-plane-core-status.md`（页顶为现役）。**不得把 features API 的 enabled 变化宣称为生产插件已停用**（现状见第四部分控制面行）。
+
+## Agent skills
+
+### Issue tracker
+
+Issues 与 spec 走 GitHub Issues（repo `LancyCelestia/WuWa-Character-Bots`；用 `gh` CLI）。See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+角色沿用技能默认词表：`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`。See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+multi-context（子项目各一份 `GLOSSARY.md`，根目录一份 `GLOSSARY-MAP.md`）。See `docs/agents/domain.md`.

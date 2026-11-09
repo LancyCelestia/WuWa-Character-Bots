@@ -31,8 +31,10 @@ DOC_OWNERSHIP_DIRS: tuple[DocOwner, ...] = (
     DocOwner(path='.superpowers/sdd/2026-09-27-bughunt/', board='B10', fid='', currency='过程件（单件）', basis='S-BASE 目录级判定 2026-09-29', completed=False),
     DocOwner(path='.superpowers/sdd/2026-09-27-fullload/', board='B10', fid='', currency='过程件（满载波席 log；SEAT-R8-TRIGGER-c.md 等）', basis='S-BASE 目录级判定 2026-09-29', completed=False),
     DocOwner(path='.superpowers/sdd/2026-09-27-kb-grounding/', board='B10', fid='', currency='过程件（单件）', basis='S-BASE 目录级判定 2026-09-29', completed=False),
+    DocOwner(path='docs/adr/', board='B10', fid='', currency='现行权威(2026-10-19 新建)', basis='`docs/agents/domain.md` 在册「docs/adr/ = 系统级决定」; ADR-0001/0002 首两条', completed=False),
     DocOwner(path='.superpowers/sdd/2026-09-22-taxonomy/', board='B10', fid='', currency='过程件', basis='代码侧目录级过程/工程件：本轮规格统一波席报/基线/普查目录（同 §4 兄弟波次行：过程件→B10）', completed=False),
     DocOwner(path='docs/templates/', board='B10', fid='', currency='工程件', basis='代码侧目录级过程/工程件：文档模板体系工程件（唯一模板源，随 scripts/doc_templates.py 常驻；治理面归 B10）', completed=False),
+    DocOwner(path='docs/agents/', board='B10', fid='', currency='工程件', basis='代码侧目录级过程/工程件：技能套件工作区配置产物（issue-tracker / triage-labels / domain 三件；治理面归 B10）', completed=False),
 )
 
 #: 文件级条目（分类表逐行投影）。
@@ -40,6 +42,7 @@ DOC_OWNERSHIP: tuple[DocOwner, ...] = (
     DocOwner(path='AGENTS.md', board='B10', fid='', currency='现行权威(2026-09-20 入库, 顶部横幅 09-21 指向 FIXWAVE)', basis='顶部自带「接手必读」链, 是全局入口与规则源, 不是板块正文', completed=False),
     DocOwner(path='COMMANDS.md', board='B02', fid='', currency='现行权威(人读版命令手册, 09-20)', basis='自述「与 /bot help 同一口径」, 且指向 command-catalog 全量目录', completed=False),
     DocOwner(path='DESIGN-SPEC.md', board='B08', fid='', currency='现行权威(自述唯一根部视觉/质量入口, 被 verify_hashes 钉)', basis='文件头自证被 tests/verify_hashes.py SHA-256 清单纳入', completed=False),
+    DocOwner(path='GLOSSARY-MAP.md', board='B10', fid='', currency='现行权威(2026-10-19 新建)', basis='`docs/agents/domain.md` 在册布局＝multi-context；ADR-0002 裁定按布局落位', completed=False),
     DocOwner(path='HANDOFF-FIXWAVE-20260921.md', board='B10', fid='', currency='现行权威(09-21 冷启动第一入口, untracked)', basis='AGENTS.md 顶部横幅点名「优先于下方各条」', completed=False),
     DocOwner(path='HANDOFF-NEXT.md', board='B10', fid='', currency='已失效(AGENTS.md 明示「已被上条取代为历史」; 09-15 首提交)', basis='交接链已由 FIXWAVE/V21R6 接手, 顶部自带「下方属历史批次」声明', completed=False),
     DocOwner(path='HANDOFF-V21R6-TESTING.md', board='B10', fid='', currency='现行权威(测试验收 AI 入口, 09-21 untracked)', basis='AGENTS.md 顶部「测试验收 AI 入口」点名此文件', completed=False),

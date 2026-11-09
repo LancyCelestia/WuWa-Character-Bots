@@ -154,10 +154,11 @@ def test_risk4_napcat_status_no_probe_reports_disconnected_despite_attached(
     )
     handler = _default_action_handler(app, "snowluma.status")
     result = asyncio.run(handler({}))
-    assert result == {
-        "status": "ok",
-        "details": {"connected": False, "source": "probe_not_configured"},
-    }
+    # W12：details 扩成三腿（多出 onebot_connected/snowluma_process/ports），
+    # 本用例只钉「无探针＝如实未连接」这一条不变式，不做整字典相等。
+    assert result["status"] == "ok"
+    assert result["details"]["connected"] is False
+    assert result["details"]["source"] == "probe_not_configured"
 
 
 def test_risk4_napcat_status_probe_reports_live_connection(tmp_path: Path) -> None:
@@ -172,10 +173,11 @@ def test_risk4_napcat_status_probe_reports_live_connection(tmp_path: Path) -> No
     )
     handler = _default_action_handler(app, "snowluma.status")
     result = asyncio.run(handler({}))
-    assert result == {
-        "status": "ok",
-        "details": {"connected": True, "source": "runtime_probe"},
-    }
+    # W12：老 bool 签名仍可用（OneBot 腿如实），端口腿由 _app 现探。
+    assert result["status"] == "ok"
+    assert result["details"]["connected"] is True
+    assert result["details"]["onebot_connected"] is True
+    assert result["details"]["source"] == "runtime_probe"
 
     app2 = _app_with(
         tmp_path, _config(tmp_path), runtime_state_probe=lambda: False
@@ -198,10 +200,9 @@ def test_risk4_napcat_status_probe_failure_fails_open(tmp_path: Path) -> None:
     )
     handler = _default_action_handler(app, "snowluma.status")
     result = asyncio.run(handler({}))
-    assert result == {
-        "status": "degraded",
-        "details": {"connected": False, "source": "probe_error"},
-    }
+    assert result["status"] == "degraded"
+    assert result["details"]["connected"] is False
+    assert result["details"]["source"] == "probe_error"
 
 
 # ---------------------------------------------------------------------------

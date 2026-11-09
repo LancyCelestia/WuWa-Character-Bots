@@ -371,7 +371,7 @@ def _forbid_rendering(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_serve_shape_is_loopback_only_and_port_is_free() -> None:
     # 只绑回环是代码事实（无 --host 开关），端口避开既有服务占用的那几枚。
     assert rcs._SERVE_HOST == "127.0.0.1"
-    assert rcs._SERVE_DEFAULT_PORT not in {5174, 8080, 8090, 3001, 8742, 8743, 8744}
+    assert rcs._SERVE_DEFAULT_PORT not in {5174, 8080, 8099, 8090, 3001, 8742, 8743, 8744}
 
 
 def test_collect_samples_writes_nothing_and_returns_no_absolute_paths(

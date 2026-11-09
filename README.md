@@ -67,7 +67,7 @@ python scripts/e2e_acceptance.py --target-group <白名单群ID> --execute
 
 ```mermaid
 flowchart LR
-    QQ["SnowLuma（WS 3001）"] <-- forward-WS --> bot["bot.py（崩溃守卫，webhook 8080）"]
+    QQ["SnowLuma（WS 3001）"] <-- forward-WS --> bot["bot.py（崩溃守卫，webhook 8099）"]
     bot --> ingest["摄取：段归一/引用反查/语音预转码"]
     ingest --> route["路由 base_router ‖ decision 影子"]
     route --> gate["门禁：黑白名单/安静时间/限流/幂等"]

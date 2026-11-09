@@ -20,7 +20,7 @@ export class RouteErrorBoundary extends Component<{ children: ReactNode }, { err
   render(): ReactNode {
     if (this.state.error) {
       return (
-        <div className='mx-auto w-full max-w-6xl'>
+        <div className='mx-auto w-full'>
           <SemanticState state={{ phase: 'error', message: this.state.error.message }} onRetry={this.reset} />
         </div>
       );

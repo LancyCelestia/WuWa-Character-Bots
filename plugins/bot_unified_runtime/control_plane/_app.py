@@ -16,6 +16,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
+from starlette.middleware.gzip import GZipMiddleware
 
 from . import ControlPlaneSettings, control_plane_settings, is_loopback_host
 from .api import ControlPlaneError, error_body, new_debug_id
@@ -32,6 +33,44 @@ logger = logging.getLogger(__name__)
 _PUBLIC_CONFIRM_FILENAME = "control_plane_public.confirmed"
 
 _PLATFORM_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
+
+
+def _normalise_probe_legs(raw: object, config: object | None) -> dict[str, Any]:
+    """把探针返回归一成三条腿（W12）。
+
+    向后兼容两种签名：
+    - **老 bool**（``runtime_state_probe`` 历史契约）：只有 OneBot 一条腿，
+      端口腿由本函数现探（这正是老签名缺的那条）；
+    - **新 dict**：``{"onebot_connected": bool, "snowluma_ports": {port: bool}}``；
+      给了 ``snowluma_ports`` 就不再现探（避免一次动作两次探测打架）。
+    """
+    from .connection_probe import probe_ports, resolve_snowluma_ports
+
+    if isinstance(raw, Mapping):
+        onebot = bool(raw.get("onebot_connected", raw.get("connected", False)))
+        supplied = raw.get("snowluma_ports")
+    else:
+        onebot = bool(raw)
+        supplied = None
+
+    if isinstance(supplied, Mapping) and supplied:
+        ports = {int(port): bool(ok) for port, ok in supplied.items()}
+    else:
+        ports = probe_ports(resolve_snowluma_ports(config))
+
+    if ports:
+        process: bool | None = any(ports.values())
+    else:
+        process = None  # 没配端口＝不知道，不许用 all([])=True 装样子
+
+    return {
+        # 老字段保留不动：前端与既有回归读的是它，语义仍是 OneBot 连接。
+        "connected": onebot,
+        "onebot_connected": onebot,
+        "snowluma_process": process,
+        "snowluma_ports": {str(port): ok for port, ok in sorted(ports.items())},
+        "probed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
 
 
 def _apply_platform_log_level(level: str) -> bool:
@@ -209,6 +248,28 @@ def _super_admin_dependency(auth: BearerAuthenticator, provisioned: bool):
     return dependency
 
 
+#: WebUI 产物里出现、而 Python 3.12 在 Windows 上认不出的扩展名。
+#: 实测：`mimetypes.guess_type("x.woff2")` → ``None``（注册表里没有），
+#: StaticFiles 于是回 ``application/octet-stream``，导致
+#:   ① 浏览器不把字体当字体，推迟到 CSS 解析完才加载；
+#:   ② 该响应不在 Starlette 的 `font/woff2` 压缩排除名单里，被 gzip 白烧 CPU。
+_WEBUI_MIME_TYPES = (
+    ("font/woff2", ".woff2"),
+    ("font/woff", ".woff"),
+    ("font/ttf", ".ttf"),
+    ("image/avif", ".avif"),
+    ("video/webm", ".webm"),
+)
+
+
+def _register_webui_mimetypes() -> None:
+    """补齐 WebUI 产物用到的 MIME（幂等；重复调用只是覆盖同一键）。"""
+    import mimetypes
+
+    for media_type, suffix in _WEBUI_MIME_TYPES:
+        mimetypes.add_type(media_type, suffix, strict=False)
+
+
 def create_control_plane_app(
     config: object | None = None,
     *,
@@ -227,7 +288,12 @@ def create_control_plane_app(
     action_service: Any | None = None,
     workspace_service: Any | None = None,
     send_queue: Any | None = None,
-    runtime_state_probe: Callable[[], bool] | None = None,
+    runtime_state_probe: Callable[[], object] | None = None,
+    credential_service: Any | None = None,
+    visual_service: Any | None = None,
+    config_command_gateway: Any | None = None,
+    allow_direct_config_write: bool | None = None,
+    standalone: bool = False,
 ) -> FastAPI:
     """组装控制面 FastAPI app（M1：healthz + health + status 最小面）。
 
@@ -242,6 +308,9 @@ def create_control_plane_app(
     - ``runtime_state_probe``：零参可调用，返回 SnowLuma/OneBot 实时连接态。
       snowluma.status 只信该探针的现查结果；``runtime_attached`` 仅是装配期
       「app 位于 bot 宿主进程」事实，不再充当连接声明（探针缺省=如实未连接）。
+      W12 起接受两种返回（向后兼容）：**老 bool** 只表达 OneBot 连接，端口腿
+      由 _app 现探；**新 dict** ``{"onebot_connected": bool, "snowluma_ports":
+      {port: bool}}`` 三条腿各自如实。
     """
     settings: ControlPlaneSettings = control_plane_settings(config)
     if audit_store is None:
@@ -292,6 +361,23 @@ def create_control_plane_app(
         redoc_url=None,
         openapi_url=None,  # 不暴露 API 文档面（阶段 1 最小暴露）。
     )
+    # 静态资产压缩（W18 R3）：生产入口原来只挂 StaticFiles，实测响应头**没有**
+    # `content-encoding` —— 一次冷加载 731.9 KiB（`webui/scripts/byte-audit.mjs`），
+    # 在用户 20GiB/月 的硬约束下只剩 28,655 次余量；gzip 后约 250 KiB（≈83,900 次）。
+    #
+    # 为什么放在这里（最外层 = 最早注册）：
+    #   · 它是纯传输层变换，必须包住 StaticFiles 与 SPA 回壳，否则 JS/CSS 不被压；
+    #   · Starlette 的 GZip 只在客户端 `Accept-Encoding` 含 gzip 时才压，且自带
+    #     `DEFAULT_EXCLUDED_CONTENT_TYPES`（image/*、video/*、font/woff2、zip…），
+    #     已压缩的容器不会被二次压；
+    #   · `minimum_size=1024` 跳过小响应（1 KiB 以下压了反而更大，且多一次 CPU）。
+    # 🔴 不碰 `/api/v1` 的 `Cache-Control: no-store` 与 `X-Request-ID`：那两条由
+    #    `_request_context_middleware` 写，压缩只改 body 与 Content-Length。
+    # `compresslevel=6`：默认 9 在 2C2T 上性价比差（9 比 6 慢约 2 倍、只多压 2-4%），
+    # 而这台机器的 CPU 是比带宽更紧的资源。
+    _register_webui_mimetypes()
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
+
     app.state.settings = settings
     app.state.started_at = started_at
     app.state.authenticator = auth = BearerAuthenticator(settings.token_sha256)
@@ -306,6 +392,28 @@ def create_control_plane_app(
         super_auth = BearerAuthenticator("")
     app.state.super_admin_authenticator = super_auth
     provisioned = auth.provisioned
+    from .api.credentials import build_credentials_router
+
+    app.include_router(build_credentials_router(
+        service=credential_service,
+        dependency=_super_admin_dependency(super_auth, super_auth.provisioned),
+    ))
+    from .api.visual import build_visual_router
+
+    # 相对路径的库只允许 embedded trusted 宿主（``runtime_attached``）经 ``_path``
+    # 归一；独立面板若漏了绝对路径，宁可留 None（写腿 503 诚实拒），
+    # 也不许按 cwd 另建一本相对库。
+    raw_config_db = str(getattr(config, "bot_control_plane_config_db", "") or "").strip()
+    if visual_service is None and raw_config_db and runtime_attached:
+        from .visual_layouts import VisualLayoutService, VisualLayoutStore
+
+        visual_service = VisualLayoutService(VisualLayoutStore(_path(raw_config_db)))
+    app.state.visual_service = visual_service
+    app.include_router(build_visual_router(
+        service=visual_service,
+        read_dependency=_v1_read_dependency(auth, super_auth),
+        write_dependency=_super_admin_dependency(super_auth, super_auth.provisioned),
+    ))
 
     timezone_name = str(getattr(config, "bot_timezone", "") or "")
 
@@ -441,27 +549,35 @@ def create_control_plane_app(
             if action_id == "snowluma.status":
                 # V21-risk-4：连接态只信实时探针现查；runtime_attached 是装配期
                 # 标量，不得冒充连接声明。探针缺省=如实未连接（不装样子）。
+                # W12：一条 bool 曾把「OneBot 通不通」冒充成「SnowLuma 好没好」，
+                # 学校号 3014 掉线就把整条连接报成异常 ⇒ 三条腿分开报。
                 if runtime_state_probe is None:
                     return {
                         "status": "ok",
                         "details": {
                             "connected": False,
+                            "onebot_connected": False,
+                            "snowluma_process": None,
+                            "snowluma_ports": {},
                             "source": "probe_not_configured",
                         },
                     }
                 try:
-                    connected = bool(runtime_state_probe())
+                    legs = _normalise_probe_legs(runtime_state_probe(), config)
                 except Exception:  # noqa: BLE001 - 探测失败如实降级，不拖垮控制面。
                     return {
                         "status": "degraded",
-                        "details": {"connected": False, "source": "probe_error"},
+                        "details": {
+                            "connected": False,
+                            "onebot_connected": False,
+                            "snowluma_process": None,
+                            "snowluma_ports": {},
+                            "source": "probe_error",
+                        },
                     }
                 return {
                     "status": "ok",
-                    "details": {
-                        "connected": connected,
-                        "source": "runtime_probe",
-                    },
+                    "details": {"source": "runtime_probe", **legs},
                 }
             return {
                 "status": "degraded",
@@ -543,6 +659,17 @@ def create_control_plane_app(
             audit_store=audit_store,
         )
     )
+    # A5 根因（2026-11）：命令面此前**从未装配**——``build_v1_router`` 收
+    # ``config_command_gateway``，但本工厂既不收也不传（``standalone.py:129`` 一直在传，
+    # 于是独立面板默认工厂一调就 TypeError）。现在形参补齐并下传；嵌入宿主没有外部
+    # 网关时装配「宿主内直执行」网关：Bot 宿主自己就是执行方，写当场落库（不排队，
+    # 也没有第二个消费者会来取），``/config/commands`` 因此不再恒 503。
+    if config_command_gateway is None and runtime_attached and not standalone and config_service is not None:
+        from .config_commands import HostConfigCommandGateway
+
+        config_command_gateway = HostConfigCommandGateway(config_service)
+    app.state.config_command_gateway = config_command_gateway
+
     app.include_router(
         build_v1_router(
             feature_service=feature_service,
@@ -556,6 +683,8 @@ def create_control_plane_app(
             metrics_service=metrics_service,
             resource_service=resource_service,
             runtime_attached=runtime_attached,
+            config_command_gateway=config_command_gateway,
+            allow_direct_config_write=allow_direct_config_write,
             read_dependency=_v1_read_dependency(auth, super_auth),
             write_dependency=_super_admin_dependency(
                 super_auth, super_auth.provisioned
@@ -565,7 +694,13 @@ def create_control_plane_app(
         )
     )
 
-    from .api.webui import build_ui_router, build_webui_stats_router
+    from .api.webui import (
+        apply_ui_response_headers,
+        build_ui_router,
+        build_webui_stats_router,
+        is_ui_path,
+        mount_webui_assets,
+    )
 
     app.include_router(
         build_webui_stats_router(
@@ -575,6 +710,13 @@ def create_control_plane_app(
             read_dependency=_v1_read_dependency(auth, super_auth),
         )
     )
+    # WebUI 静态资源（Task 0.1）：资产子树在**应用层**挂载——APIRouter.mount 不随
+    # include_router 传播，故不走 build_ui_router 返回的 router。
+    # 🔴 **必须先于** `build_ui_router`：后者含一条通吃 `/console/{sub_path:path}`
+    # 的 SPA 回壳路由，而 App 级路由优先于 Mount。挂载排在前面，`/console/assets/*`
+    # 才由 StaticFiles 按真实 MIME（js/css）服务；排在后面就会被外壳吞成
+    # index.html（text/html）⇒ 浏览器严格 MIME 校验拒载、首屏白屏。
+    mount_webui_assets(app, dist_dir=webui_dist_dir)
     app.include_router(build_ui_router(dist_dir=webui_dist_dir))
     # WebUI Phase B：知识目录 / 插件目录 / 记忆图谱（只读，缺源=信封内
     # source_unavailable 如实降级，服务层均不写任何生产库）。
@@ -683,6 +825,16 @@ def create_control_plane_app(
             type(exc).__name__,
         )
         return error_response(request, 500, "internal_error", "控制面内部错误。")
+
+    # WebUI 响应头边界（Task 0.6）：只给 /ui 子树补 CSP/XFO/nosniff 与资产缓存
+    # 策略；/api、webhook、Host 鉴权与 CORS 一律不动。**最先注册 = 最内层**，
+    # 因此只作用于真实路由响应，不会给中间件自身产生的拒绝体（如 Host 400）挂头。
+    @app.middleware("http")
+    async def _ui_security_headers_middleware(request: Request, call_next):
+        response = await call_next(request)
+        if is_ui_path(request.url.path):
+            apply_ui_response_headers(response, request.url.path)
+        return response
 
     # Host 白名单（§8.2 防DNS rebinding，审查 P-01）。Bearer 只防“无凭据”，
     # 防不了浏览器同源策略被绕过：恶意网页可驱动受害者浏览器向

@@ -403,9 +403,10 @@ def test_main_exit_code_and_json_structure(monkeypatch: pytest.MonkeyPatch, tmp_
 
 
 # ---------------------------------------------------------------------------
-# 8. webui：单文件壳资产（缺失=SKIP / 空·超限·外链=FAIL / 合格=PASS）
+# 8. webui：多文件壳资产（缺失=SKIP / 空·超限·外链·穿越·缺件·纯内联=FAIL / 合格=PASS）
 # ---------------------------------------------------------------------------
 
+# 纯内联占位（零本地资产引用）：多文件产物不该是这个形态 ⇒ 现在属反例（FAIL）。
 SINGLE_FILE_HTML = (
     "<!doctype html><html><head>"
     '<meta charset="utf-8">'
@@ -420,6 +421,18 @@ SINGLE_FILE_HTML = (
     "</body></html>"
 )
 
+# 多文件壳（vite base '/ui/'）：stylesheet + module 脚本均指向本地 /ui/assets 资产。
+MULTI_FILE_HTML = (
+    "<!doctype html><html><head>"
+    '<meta charset="utf-8">'
+    '<link rel="stylesheet" href="/ui/assets/index-abc123.css">'
+    "</head><body>"
+    '<div id="app"></div>'
+    '<link rel="icon" href="data:image/svg+xml,%3Csvg%3E">'
+    '<script type="module" src="/ui/assets/index-abc123.js"></script>'
+    "</body></html>"
+)
+
 
 def write_webui(root: Path, content: bytes | str) -> Path:
     dist = root / "webui" / "dist"
@@ -427,6 +440,14 @@ def write_webui(root: Path, content: bytes | str) -> Path:
     index = dist / "index.html"
     index.write_bytes(content.encode("utf-8") if isinstance(content, str) else content)
     return index
+
+
+def write_webui_asset(root: Path, rel: str, content: bytes | str = b"/*asset*/") -> Path:
+    """在 webui/dist/<rel> 落一枚资产（缺省非空）；rel 例：assets/index-abc123.js。"""
+    target = root / "webui" / "dist" / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content.encode("utf-8") if isinstance(content, str) else content)
+    return target
 
 
 def test_webui_missing_is_skip_with_build_hint(tmp_path: Path) -> None:
@@ -437,13 +458,24 @@ def test_webui_missing_is_skip_with_build_hint(tmp_path: Path) -> None:
     assert "webui/dist/index.html" in result.message
 
 
-def test_webui_valid_single_file_pass(tmp_path: Path) -> None:
+def test_webui_valid_multi_file_pass(tmp_path: Path) -> None:
     root = make_project(tmp_path)
-    index = write_webui(root, SINGLE_FILE_HTML)
+    index = write_webui(root, MULTI_FILE_HTML)
+    write_webui_asset(root, "assets/index-abc123.js")
+    write_webui_asset(root, "assets/index-abc123.css")
     result = prc.check_webui(root)
     assert result.status == PASS
-    assert "单文件" in result.message
+    assert "多文件" in result.message
     assert str(index.stat().st_size) in result.message  # 体积信息可见
+
+
+def test_webui_inline_only_shell_fail(tmp_path: Path) -> None:
+    """纯内联占位（零本地资产引用）＝多文件产物不该有的形态 ⇒ FAIL."""
+    root = make_project(tmp_path)
+    write_webui(root, SINGLE_FILE_HTML)
+    result = prc.check_webui(root)
+    assert result.status == FAIL
+    assert "内联" in result.message
 
 
 def test_webui_empty_file_fail(tmp_path: Path) -> None:
@@ -479,17 +511,145 @@ def test_webui_external_ref_fail(tmp_path: Path, fragment: str) -> None:
     assert "外链" in result.message
 
 
-def test_webui_relative_src_not_flagged_per_spec(tmp_path: Path) -> None:
-    """规格只把 http(s) 与绝对路径算外链；相对路径 src 不误伤（PASS）."""
+def test_webui_relative_local_asset_is_ok(tmp_path: Path) -> None:
+    """相对路径（./assets/）不是外链；解析到实存非空资产 ⇒ PASS（旧「不误伤」语义保留）."""
     root = make_project(tmp_path)
     write_webui(root, '<html><head><script src="./assets/x.js"></script></head><body></body></html>')
+    write_webui_asset(root, "assets/x.js")
     assert prc.check_webui(root).status == PASS
 
 
 def test_webui_non_stylesheet_link_ignored(tmp_path: Path) -> None:
-    """只有 rel=stylesheet 的 <link> 计外链；icon/preload 等不判."""
+    """icon/prefetch/普通 preload 等非 stylesheet/modulepreload 的 <link> 不进判定.
+
+    本用例另配一枚合法本地引用以满足「非纯内联」新规；反向腿证明那枚网络 preload
+    本身不被当外链（只带它时红的原因是「零本地资产引用」，不是它）。
+    """
     root = make_project(tmp_path)
+    write_webui(
+        root,
+        '<html><head><link rel="preload" href="https://x/y">'
+        '<script src="/ui/assets/app-abc123.js"></script></head><body></body></html>',
+    )
+    write_webui_asset(root, "assets/app-abc123.js")
+    assert prc.check_webui(root).status == PASS
+
+    # 反向腿：只带这枚被忽略的 link ⇒ 红只能是「零本地资产引用」，不得报外链。
     write_webui(root, '<html><head><link rel="preload" href="https://x/y"></head><body></body></html>')
+    only = prc.check_webui(root)
+    assert only.status == FAIL
+    assert "外链" not in only.message
+
+
+def test_webui_local_asset_missing_fails(tmp_path: Path) -> None:
+    """index 引用的本地资产必须在 webui/dist/assets 内实存 ⇒ 缺件 FAIL（不许假绿）."""
+    root = make_project(tmp_path)
+    write_webui(root, '<html><head><script src="/ui/assets/index-abc123.js"></script></head><body></body></html>')
+    result = prc.check_webui(root)
+    assert result.status == FAIL
+    assert "缺件" in result.message
+
+
+def test_webui_local_asset_empty_fails(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    write_webui(root, '<html><head><script src="/ui/assets/index-abc123.js"></script></head><body></body></html>')
+    write_webui_asset(root, "assets/index-abc123.js", b"")
+    result = prc.check_webui(root)
+    assert result.status == FAIL
+    assert "空" in result.message
+
+
+@pytest.mark.parametrize(
+    ("fragment", "token"),
+    [
+        ('<script src="/ui/assets/%2e%2e%2fsecret.js"></script>', "穿越"),
+        ('<script src="../secret.js"></script>', "穿越"),
+        ('<script src="//evil.example.com/app.js"></script>', "外链"),
+        ('<link rel="stylesheet" href="file:///etc/passwd">', "外链"),
+        ('<script src="javascript:alert(1)"></script>', "外链"),
+    ],
+)
+def test_webui_traversal_host_and_protocol_refs_fail(
+    tmp_path: Path, fragment: str, token: str
+) -> None:
+    """编码穿越 / 上跳相对路径 / 协议相对 host / 非 http(s) 协议一律拒绝."""
+    root = make_project(tmp_path)
+    write_webui(root, "<html><head>" + fragment + "</head><body></body></html>")
+    result = prc.check_webui(root)
+    assert result.status == FAIL
+    assert token in result.message
+
+
+def test_webui_local_ref_with_query_and_fragment_is_ok(tmp_path: Path) -> None:
+    """带 query/fragment 的本地引用只取 path 解析（合法形态，不该被当缺件）."""
+    root = make_project(tmp_path)
+    write_webui(
+        root,
+        "<html><head>"
+        '<link rel="stylesheet" href="/ui/assets/index-abc123.css?v=1">'
+        "</head><body>"
+        '<script type="module" src="/ui/assets/index-abc123.js?v=1#frag"></script>'
+        "</body></html>",
+    )
+    write_webui_asset(root, "assets/index-abc123.js")
+    write_webui_asset(root, "assets/index-abc123.css")
+    assert prc.check_webui(root).status == PASS
+
+
+@pytest.mark.parametrize("case", ["outside", "equal"])
+def test_webui_asset_root_escaping_dist_is_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    """资产根必须是产物根的**严格子目录**：外部目录顶替（outside）与 `assets→dist`
+    本身（equal，等于把产物根散件一起纳入服务面）都 ⇒ FAIL.
+
+    本机不保证能建 symlink/junction，故用**限定 Path.resolve 替身**（只对
+    `webui/dist/assets` 这一枚改解析结果，其余走真身），不 skip、不伪造 git。
+    两腿都让「文件实存」成立 ⇒ 红只能出在根越界这一问上。
+    """
+    root = make_project(tmp_path)
+    write_webui(root, '<html><head><script src="/ui/assets/x.js"></script></head><body></body></html>')
+    write_webui_asset(root, "assets/x.js")
+    dist_assets = root / "webui" / "dist" / "assets"
+    if case == "outside":
+        target_root = tmp_path / "outside_assets"
+        target_root.mkdir(parents=True, exist_ok=True)
+        (target_root / "x.js").write_bytes(b"/*real but outside*/")
+    else:
+        target_root = root / "webui" / "dist"
+    real_resolve = Path.resolve
+
+    def fake_resolve(self: Path, *args: object, **kwargs: object) -> Path:
+        if self == dist_assets:
+            return real_resolve(target_root)
+        return real_resolve(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "resolve", fake_resolve)
+    result = prc.check_webui(root)
+    assert result.status == FAIL
+    assert "产物根" in result.message
+
+
+def test_webui_modulepreload_local_asset_validated(tmp_path: Path) -> None:
+    """modulepreload 是本地资产引用：按实际构建读取，缺件 FAIL、实存非空 PASS."""
+    root = make_project(tmp_path)
+    html = (
+        '<html><head><link rel="modulepreload" '
+        'href="/ui/assets/vendor-abc123.js"></head><body></body></html>'
+    )
+    write_webui(root, html)
+    assert prc.check_webui(root).status == FAIL  # 缺件
+    write_webui_asset(root, "assets/vendor-abc123.js")
+    assert prc.check_webui(root).status == PASS
+
+    # 多 token 的合法 rel（keyword 不在首段）不得被吞：rel 按 token 判。
+    write_webui(
+        root,
+        '<html><head><link rel="preload modulepreload" '
+        'href="/ui/assets/late-abc123.js"></head><body></body></html>',
+    )
+    assert prc.check_webui(root).status == FAIL  # 缺件（说明这一枚确实进了判定面）
+    write_webui_asset(root, "assets/late-abc123.js")
     assert prc.check_webui(root).status == PASS
 
 

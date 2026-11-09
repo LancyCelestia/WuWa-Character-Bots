@@ -538,6 +538,14 @@ const CSS_IMPORT = /@import\s+(?:url\(\s*)?['"]([^'"]+)['"]/gi;
 const CSS_APPLY = /@apply\s+([^;{}]+)/gi;
 const TIER_DEF_NAMES = new Set(['--radius-md', '--radius-lg', '--radius-xl', '--r-shell', '--r-panel', '--r-tile']);
 const CSS_LADDER_PX = [12, 13, 14, 18, 30]; // 五档阶梯 px 值册（@utility fs-* 同源快照，与 LADDER_PX 字符串册同值）
+// 字号受管名册（2026-10-19 用户裁定「字号自由化正式收编进门禁」）。
+// 背景：外观工作室把五档 fs-* 改成 `font-size: var(--fs-*)`，让运行时写任意 px
+// （用户要的是「字体大小全部自定义 px」）。此前 `--fs-*` 不在任何受管名册里 ⇒
+// 门禁看不见它 ⇒ 谁把 `--fs-body` 写成 3px 都没人拦。本名册把定义带锁死：
+//   · 名字必须在册（防止有人新造 --fs-giant 绕过五档）
+//   · 缺省值必须落在 CSS_LADDER_PX 五档内（防止一开箱就脱带）
+// 运行时值不在此判（门禁只扫源码字面量），自由化仍成立。
+const FS_DEF_NAMES = new Set(['--fs-page', '--fs-card', '--fs-body', '--fs-caption', '--fs-num']);
 const CSS_TIER_DECL = /^border(?:-[a-z-]+)?-radius$/i;
 const CSS_GRID_DECL = /^(?:padding|margin|gap|row-gap|column-gap)(?:-(?:inline|block|top|right|bottom|left|inline-start|inline-end|block-start|block-end))?$/i;
 const CSS_WEIGHT_NAMES_OK = new Set(['thin', 'extralight', 'light', 'normal', 'medium', 'semibold', 'bold']); // 具名 ≤700 集；extrabold/black 拒
@@ -639,6 +647,16 @@ function cssFileHits(rawText) {
       for (const t of cssResolveValue(value, defs)) {
         if (!cssBandWeight(t)) push(ln, 'css-weight', `${name}:${value}`, `字重 token 脱带（→${t}，许可数值 1–700 或具名 thin..bold）——@theme --font-weight-* 注册 font-* 具名类（font-heavy→900 编译实证 P3）`);
       }
+    }
+    if (FS_DEF_NAMES.has(name)) {
+      // 字号受管名册（用户 2026-10-19 裁定收编）：缺省值必须落在五档内。
+      // 运行时值不判——自由化仍成立；这两条只锁「谁把 --fs-* 的出厂值写歪」。
+      for (const t of cssResolveValue(value, defs)) {
+        if (!cssBandLadderFirst(t)) push(ln, 'css-ladder', `${name}:${value}`, `字号受管名册 ${name} 的缺省值脱五档阶梯（→${t}，许可 ${CSS_LADDER_PX.join('/')}px）——出厂值脱带＝外观面板的「字号」滑块被架空，锁名册与缺省带同批加`);
+      }
+    }
+    if (/^--fs-/.test(name) && !FS_DEF_NAMES.has(name)) {
+      push(ln, 'css-ladder', `${name}:${value}`, `未登记的字号变量 ${name}——字号命名空间只认 ${[...FS_DEF_NAMES].join('/')}（新造变量会绕开五档阶梯，须先补 FS_DEF_NAMES 与本行同批评审）`);
     }
     if (name === '--spacing') {
       for (const t of cssResolveValue(value, defs)) {

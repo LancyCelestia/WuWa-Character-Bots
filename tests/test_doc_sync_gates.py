@@ -466,7 +466,7 @@ def _fold_const(node: ast.AST, root: ast.Module) -> tuple[bool, Any]:
                 return True, l // r
             if isinstance(op, ast.Div):
                 return True, l / r
-        except Exception:
+        except Exception:  # noqa: BLE001 - AST 求值失败一律按「不成立」处理
             return False, None
         return False, None
     return False, None
@@ -502,10 +502,7 @@ def _config_field_defaults() -> dict[str, tuple[str, Any]]:
 
 def _split_catalog_row(line: str) -> list[str]:
     s = line.strip()
-    if s.startswith("|"):
-        s = s[1:]
-    if s.endswith("|"):
-        s = s[:-1]
+    s = s.removeprefix("|").removesuffix("|")
     return [c.strip() for c in s.split("|")]
 
 
@@ -635,18 +632,11 @@ def _doc_default_matches_code(cell: str, code_default: Any) -> bool:
         if isinstance(code_default, (list, tuple)):
             if stripped == "[]" and len(code_default) == 0:
                 return True
-            if stripped.startswith("["):
-                try:
-                    parsed = json.loads(stripped) if False else None  # 不引 json，走 ast
-                except Exception:
-                    parsed = None
-                if parsed is not None and list(parsed) == list(code_default):
-                    return True
             try:
                 parsed = ast.literal_eval(stripped)
                 if isinstance(parsed, list) and parsed == list(code_default):
                     return True
-            except Exception:
+            except (ValueError, SyntaxError):
                 pass
             continue
         if isinstance(code_default, dict):
@@ -656,7 +646,7 @@ def _doc_default_matches_code(cell: str, code_default: Any) -> bool:
                 parsed = ast.literal_eval(stripped)
                 if isinstance(parsed, dict) and parsed == code_default:
                     return True
-            except Exception:
+            except (ValueError, SyntaxError):
                 pass
             continue
     return False

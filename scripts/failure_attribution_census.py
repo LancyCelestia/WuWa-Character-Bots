@@ -31,12 +31,12 @@ import subprocess
 import sys
 
 _REPO = pathlib.Path(__file__).resolve().parents[1]
-_FAILED_RE = re.compile(r"^FAILED (\S+)", flags=re.M)
+_FAILED_RE = re.compile(r"^FAILED (\S+)", flags=re.MULTILINE)
 
 
 def _git(*args: str) -> str:
     result = subprocess.run(
-        ["git", *args], cwd=str(_REPO), capture_output=True, text=True
+        ["git", *args], cwd=str(_REPO), capture_output=True, text=True, check=False
     )
     return result.stdout if result.returncode == 0 else ""
 

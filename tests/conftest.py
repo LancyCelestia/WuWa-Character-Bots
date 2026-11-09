@@ -439,7 +439,7 @@ def _runtime_env_keys() -> tuple[str, ...]:
                 ]
             )
         )
-    except Exception:  # pragma: no cover - 骨架缺席时退化为字面表
+    except Exception:  # noqa: BLE001  # pragma: no cover - 骨架缺席时退化为字面表
         return (
             "BOT_RUNTIME_DATA_DIR",
             "BOT_TEST_FORBIDDEN_RUNTIME_ROOTS",
@@ -543,3 +543,23 @@ def _make_phase_guard(phase: str):
 pytest_runtest_setup = _make_phase_guard("setup")
 pytest_runtest_call = _make_phase_guard("call")
 pytest_runtest_teardown = _make_phase_guard("teardown")
+
+
+@pytest.fixture(autouse=True)
+def _reset_process_global_caches() -> None:
+    """每个用例前清掉**进程级模块缓存**（跨文件/跨用例状态污染的治本口）。
+
+    根因（2026-10-14 实测）：``market_crosscheck`` 的 ``_CACHE`` / ``_SINA_CACHE``
+    是**模块级全局**。用例只在自己内部 ``reset_crosscheck_cache()`` 是「谁记得谁清」，
+    漏一个就变成**顺序依赖伪红**——实测 ``tests/test_market_card.py`` 单跑
+    ``27 passed``、整文件跑 ``1 failed``（前一条用例走真网络把快照写进缓存，
+    后一条读到旧快照 ⇒ 三源腿被当成缺席）。
+
+    在这里统一于每个用例**开始前**清一次，任何用例都不必记得；这是「治本」而非
+    「再给某个用例补一次 reset」——后者漏掉下一个新用例就会复发。
+    """
+    try:
+        from plugins.bot_unified_runtime.domains.finance.data import market_crosscheck
+    except ImportError:  # 骨架缺席即跳过（测试树可独立于插件树运行）
+        return
+    market_crosscheck.reset_crosscheck_cache()

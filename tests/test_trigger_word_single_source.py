@@ -270,7 +270,7 @@ def central_table() -> dict[str, frozenset[str]]:
     return _S33.central_trigger_table()
 
 
-def central_entry_of_site(site: "Site") -> str:
+def central_entry_of_site(site: Site) -> str:
     """一枚真身位属于**哪一条**中央表条目；不属于唯一一条就返回空串（不参与折叠）。
 
     三条都成立才算「那条条目的登记面」：①文件是中央表本体 ②标签是条目的登记列 ③整集

@@ -111,12 +111,13 @@ def _gnu_find_candidates() -> list[str]:
         git_root = Path(git_exe).resolve().parent.parent
         for leaf in ("usr/bin/find.exe", "bin/find.exe", "mingw64/bin/find.exe"):
             candidates.append(str(git_root / leaf))
-    for fixed in (
-        r"C:\Program Files\Git\usr\bin\find.exe",
-        r"C:\Program Files\Git\bin\find.exe",
-        r"C:\Program Files (x86)\Git\usr\bin\find.exe",
-    ):
-        candidates.append(fixed)
+    candidates.extend(
+        (
+            r"C:\Program Files\Git\usr\bin\find.exe",
+            r"C:\Program Files\Git\bin\find.exe",
+            r"C:\Program Files (x86)\Git\usr\bin\find.exe",
+        )
+    )
     # 去重保序（同一枚可能由多路命中）
     seen: set[str] = set()
     unique: list[str] = []

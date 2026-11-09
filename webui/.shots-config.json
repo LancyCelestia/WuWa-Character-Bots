@@ -1,0 +1,13 @@
+{
+  "base": "http://127.0.0.1:8742",
+  "out": ".ui-shots",
+  "shots": [
+    { "name": "affinity-1440", "url": "/console/affinity", "width": 1440, "height": 1200, "wait": 4000 },
+    { "name": "affinity-1024", "url": "/console/affinity", "width": 1024, "height": 1200, "wait": 4000 },
+    { "name": "affinity-390", "url": "/console/affinity", "width": 390, "height": 1400, "wait": 4000 },
+    { "name": "latency-1440", "url": "/console/latency", "width": 1440, "height": 1200, "wait": 4000 },
+    { "name": "calls-1440", "url": "/console/calls", "width": 1440, "height": 1200, "wait": 4000 },
+    { "name": "operations-1440", "url": "/console/operations", "width": 1440, "height": 1000, "wait": 4000 },
+    { "name": "overview-1440", "url": "/console/overview", "width": 1440, "height": 1200, "wait": 4000 }
+  ]
+}

@@ -100,7 +100,7 @@
       "push": true,
       "pythonTool": true,
       "steps": [
-        { "type": "conditional", "condition": "botAlreadyRunning", "then": [ { "type": "abortWithMessage", "message": "[dev] NoneBot 已经在运行（8080 端口被占用）。不要重复启动；如需重启请先关闭原进程。" } ] },
+        { "type": "conditional", "condition": "botAlreadyRunning", "then": [ { "type": "abortWithMessage", "message": "[dev] NoneBot 已经在运行（驱动监听口被占用）。不要重复启动；如需重启请先关闭原进程。" } ] },
         { "type": "step", "message": "starting NoneBot (dev)" },
         { "type": "command", "runner": "external", "tool": "python", "pythonScript": "bot.py" }
       ]
@@ -109,7 +109,7 @@
       "push": true,
       "pythonTool": true,
       "steps": [
-        { "type": "conditional", "condition": "botAlreadyRunning", "then": [ { "type": "abortWithMessage", "message": "[dev] NoneBot 已经在运行（8080 端口被占用）。不要重复启动；如需重启请先关闭原进程。" } ] },
+        { "type": "conditional", "condition": "botAlreadyRunning", "then": [ { "type": "abortWithMessage", "message": "[dev] NoneBot 已经在运行（驱动监听口被占用）。不要重复启动；如需重启请先关闭原进程。" } ] },
         { "type": "subtask", "task": "restart-check" },
         { "type": "step", "message": "starting NoneBot (run)" },
         { "type": "command", "runner": "external", "tool": "python", "pythonScript": "bot.py" }
@@ -120,7 +120,7 @@
       "pythonTool": true,
       "steps": [
         { "type": "loop", "steps": [
-          { "type": "conditional", "condition": "botAlreadyRunning", "then": [ { "type": "abortWithMessage", "message": "[dev] NoneBot 已经在运行（8080 端口被占用）。不要重复启动；如需重启请先关闭原进程。" } ] },
+          { "type": "conditional", "condition": "botAlreadyRunning", "then": [ { "type": "abortWithMessage", "message": "[dev] NoneBot 已经在运行（驱动监听口被占用）。不要重复启动；如需重启请先关闭原进程。" } ] },
           { "type": "subtask", "task": "restart-check" },
           { "type": "step", "message": "starting NoneBot (run-watch, auto-restart on exit)" },
           { "type": "command", "runner": "loop-plain", "tool": "python", "pythonScript": "bot.py" },

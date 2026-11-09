@@ -20,6 +20,39 @@ LifecycleState = Literal["off", "stopped", "starting", "running", "failed"]
 ServerFactory = Callable[..., Any]
 _LOGGER = logging.getLogger(__name__)
 _DRIVER_ATTRIBUTE = "_bot_control_plane_lifecycle"
+# bot.py 钉的驱动监听口缺省（2026-10-17 崩溃熔断根修：原为 uvicorn 缺省 8080，
+# 而 8080 在本机是 Windows 保留态、绑不上）。仅作「环境变量也没了」的兜底。
+_DEFAULT_WEBHOOK_PORT = 8099
+
+
+def _forbidden_listen_ports(driver: Any, config: object | None) -> frozenset[int]:
+    """控制面禁止占用的端口集合＝驱动真身端口 + 入参声明的端口 + 历史遗留 8080。
+
+    驱动口**生产真值＝``driver.config.port``**：那正是
+    ``nonebot/drivers/fastapi.py`` 的 ``run()`` 取的那一枚
+    （``port or self.config.port``），且它已是「进程环境 PORT ＞ dotenv PORT
+    ＞ NoneBot 缺省」合并后的结果（``nonebot/config.py:188-190``）。
+
+    ``config.port`` 是**本函数第二个形参的既有契约**（既有单测按它写）：
+    生产调用点传的是插件 ``Config``，而那个类没有 ``port`` 字段、pydantic
+    缺省 ``extra='ignore'`` 会静默丢弃 ⇒ 生产里它恒 None、不贡献任何端口。
+    两处都读，是为了既不丢生产真值、也不改既有入参语义。
+
+    8080 无条件入册：它是 2026-10-17 根修**之前**的驱动缺省，本机为 Windows
+    保留态；控制面被指到那儿无论驱动听哪儿都是坏配置，直接拒。
+    """
+    ports = {8080, _DEFAULT_WEBHOOK_PORT}
+    for raw in (
+        getattr(getattr(driver, "config", None), "port", None),
+        getattr(config, "port", None),
+    ):
+        try:
+            value = int(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            value = None
+        if value is not None and 1 <= value <= 65535:
+            ports.add(value)
+    return frozenset(ports)
 
 
 def _uvicorn_server(app: Any, *, host: str, port: int) -> Any:
@@ -204,7 +237,8 @@ def register_control_plane_lifecycle(
     setattr(driver, _DRIVER_ATTRIBUTE, lifecycle)
     if not is_loopback_host(settings.host):
         _LOGGER.error(lifecycle._fail("host_not_allowed"))
-    elif settings.port == 8080 or settings.port == getattr(config, "port", None):
+    elif settings.port in _forbidden_listen_ports(driver, config):
+        # 8080 是 2026-10-17 根修前的驱动缺省；驱动真身口走 driver.config.port。
         _LOGGER.error(lifecycle._fail("port_not_allowed"))
     elif any(
         not math.isfinite(value) or value < 0

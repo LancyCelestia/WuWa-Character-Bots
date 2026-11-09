@@ -1,0 +1,616 @@
+{
+  "$schema": "https://design-tokens.github.io/community-group/format/",
+  "$description": "守岸人 WebUI 设计令牌（W18 阶段 1）。每一枚都是**当前 index.css 的真实值**，不是提案；复跑 `node webui/scripts/token-dump.mjs` 可整份重新生成并比对漂移。分三层：primitive（原始值，无人直接消费）→ semantic（界面消费的那一层）→ component（材质配方）。",
+  "meta": {
+    "generatedFrom": "webui/src/index.css",
+    "generator": "webui/scripts/token-dump.mjs",
+    "gates": [
+      "webui/scripts/layout-constitution.mjs（版式宪法 196/196）",
+      "webui/scripts/glass-budget.mjs（玻璃层数/blur/降级）",
+      "webui/scripts/contrast-audit.mjs（真实像素对比度）"
+    ],
+    "ratifiedAgainst": {
+      "ttlDesktopMs": 2000,
+      "ttlMobileMs": 3500,
+      "lighthousePerfDesktop": 85,
+      "lighthousePerfMobile": 70,
+      "lighthouseA11y": 90,
+      "clsMax": 0.1,
+      "longTasksIn5s": 3,
+      "bodyContrast": 4.5,
+      "largeTextContrast": 3,
+      "glassSurfacesPerViewportMax": 3,
+      "iridescentPeriodMinSeconds": 12,
+      "particleCountMax": 74,
+      "blurRadiusMaxPx": 40
+    }
+  },
+  "primitive": {
+    "radius": {
+      "$description": "三档圆角。版式宪法 `TIER_DEF_NAMES` 只认 {14,18,30} 三个值加 0 与百分比几何圆 —— 再加第四档会被门判红。",
+      "tile": {
+        "$value": "14px",
+        "$type": "dimension"
+      },
+      "panel": {
+        "$value": "18px",
+        "$type": "dimension"
+      },
+      "shell": {
+        "$value": "30px",
+        "$type": "dimension"
+      }
+    },
+    "space": {
+      "$description": "间距基数由 Tailwind v4 的 `--spacing` 提供（默认 0.25rem），版式宪法只允许它等于 0.25rem 或 4px 两种写法，全站 padding/margin/gap 必须落在它的整数倍。",
+      "$source": "tailwindcss@4 默认 theme（不在本仓 CSS 里）",
+      "unit": {
+        "$value": "0.25rem",
+        "$type": "dimension",
+        "$external": true,
+        "note": "Tailwind v4 的 `--spacing`（默认 0.25rem = 4px）。本仓从不声明它，改它等于换栅格 —— 版式宪法会当场红。"
+      }
+    },
+    "fontSize": {
+      "$description": "字号五档。所有 font-size 必须落在这五个值之一（含 rem 与 px 两种写法等价判定）。",
+      "page": {
+        "$value": "18px",
+        "$type": "dimension"
+      },
+      "card": {
+        "$value": "14px",
+        "$type": "dimension"
+      },
+      "body": {
+        "$value": "14px",
+        "$type": "dimension"
+      },
+      "caption": {
+        "$value": "12px",
+        "$type": "dimension"
+      },
+      "num": {
+        "$value": "30px",
+        "$type": "dimension"
+      }
+    },
+    "fontWeight": {
+      "$description": "字重上限 700。只允许 thin..bold 六档命名值，数字字面量判红。",
+      "max": {
+        "$value": 700,
+        "$type": "number"
+      }
+    },
+    "fontFamily": {
+      "$description": "系统字体栈，不自托管 woff2。理由：用户服务器 20GiB/月 与首屏 TTI 双约束下，一套 CJK 子集字体动辄 1.5-3 MiB，是单次加载占比最大的一项；而「有性格的字体」在中文场景下收益远低于带宽成本。⑩ 定义侧校验 `--font-sans` 只能落系统栈。",
+      "sans": {
+        "$value": "'Segoe UI', 'Microsoft YaHei', 'PingFang SC', -apple-system, BlinkMacSystemFont, Roboto, sans-serif",
+        "$type": "fontFamily"
+      },
+      "mono": {
+        "$value": "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+        "$type": "fontFamily"
+      }
+    },
+    "duration": {
+      "$description": "全站唯一的时长来源。每一枚都取自 index.css 实际写法；新增时长请先看这张表能不能复用，别再造一个 0.73s。",
+      "$source": "webui/src/index.css",
+      "micro": {
+        "$value": "55ms",
+        "$type": "duration",
+        "note": "按下反馈（scale/translate 的瞬时回弹）"
+      },
+      "hover": {
+        "$value": "220ms",
+        "$type": "duration",
+        "note": "hover 态过渡（描边、底色、位移）"
+      },
+      "quick": {
+        "$value": "260ms",
+        "$type": "duration",
+        "note": "面板抬起、shadows 过渡"
+      },
+      "reveal": {
+        "$value": "0.45s",
+        "$type": "duration",
+        "note": "自定义光标环的 hover 放大"
+      },
+      "settle": {
+        "$value": "0.6s",
+        "$type": "duration",
+        "note": "导航指示器位移（参考站 pill 同值）"
+      },
+      "panelIn": {
+        "$value": "0.9s",
+        "$type": "duration",
+        "note": "路由切换的面板入场"
+      },
+      "fold": {
+        "$value": "1.1s",
+        "$type": "duration",
+        "note": "首帧幕布离场"
+      },
+      "irisShift": {
+        "$value": "14s",
+        "$type": "duration",
+        "min": "12s",
+        "note": "虹彩流转周期；<12s 会被读成加载指示器"
+      },
+      "blobDriftA": {
+        "$value": "28s",
+        "$type": "duration",
+        "note": "光斑 A 漂移"
+      },
+      "blobDriftB": {
+        "$value": "41s",
+        "$type": "duration",
+        "note": "光斑 B 漂移"
+      },
+      "blobDriftC": {
+        "$value": "53s",
+        "$type": "duration",
+        "note": "光斑 C 漂移"
+      },
+      "brandRingSpin": {
+        "$value": "120s",
+        "$type": "duration",
+        "note": "品牌环慢转（参考站同值）"
+      }
+    },
+    "easing": {
+      "outQuint": {
+        "$value": "cubic-bezier(0.22, 1, 0.36, 1)",
+        "$type": "cubicBezier"
+      },
+      "spring": {
+        "$value": "cubic-bezier(0.32, 0.72, 0, 1)",
+        "$type": "cubicBezier"
+      }
+    }
+  },
+  "semantic": {
+    "$description": "界面真正消费的一层。浅色与深色分别给值；两边同名同义，只有值不同。",
+    "light": {
+      "background": {
+        "$value": "rgb(243 245 246)",
+        "$type": "color",
+        "alias": "--wash-mist"
+      },
+      "foreground": {
+        "$value": "oklch(0.291 0.0448 272.6)",
+        "$type": "color"
+      },
+      "card": {
+        "$value": "oklch(0.988 0.0017 247.8)",
+        "$type": "color"
+      },
+      "muted": {
+        "$value": "rgb(208 213 231)",
+        "$type": "color"
+      },
+      "mutedForeground": {
+        "$value": "oklch(0.46 0.0441 273.4)",
+        "$type": "color",
+        "note": "W18 阶段 1 由 0.497 压到 0.46。原值在 90% 云母面上 12px 正文只有 4.3:1，实测不足 4.5:1。"
+      },
+      "primary": {
+        "$value": "rgb(40 118 200)",
+        "$type": "color",
+        "alias": "--brand-accent"
+      },
+      "primaryForeground": {
+        "$value": "oklch(1 0 0)",
+        "$type": "color",
+        "note": "白字在新品牌蓝上 4.65:1（原 49 140 231 上是 3.48:1，不合 4.5:1）"
+      },
+      "secondary": {
+        "$value": "rgb(202 217 232)",
+        "$type": "color"
+      },
+      "accent": {
+        "$value": "rgb(215 206 228)",
+        "$type": "color"
+      },
+      "accentForeground": {
+        "$value": "oklch(0.464 0.1571 299.9)",
+        "$type": "color"
+      },
+      "destructive": {
+        "$value": "oklch(0.62 0.22 25.5)",
+        "$type": "color"
+      },
+      "success": {
+        "$value": "rgb(46 158 107)",
+        "$type": "color"
+      },
+      "warning": {
+        "$value": "rgb(176 125 26)",
+        "$type": "color"
+      },
+      "border": {
+        "$value": "oklch(0.889 0.0099 252.8)",
+        "$type": "color"
+      },
+      "ring": {
+        "$value": "rgb(40 118 200)",
+        "$type": "color"
+      },
+      "purple": {
+        "$value": "oklch(0.544 0.1875 299.5)",
+        "$type": "color"
+      },
+      "deep": {
+        "$value": "oklch(0.466 0.1494 269.3)",
+        "$type": "color"
+      }
+    },
+    "dark": {
+      "background": {
+        "$value": "oklch(0.248 0.0329 273.6)",
+        "$type": "color"
+      },
+      "foreground": {
+        "$value": "oklch(0.946 0.0017 247.8)",
+        "$type": "color"
+      },
+      "card": {
+        "$value": "oklch(0.286 0.0375 273)",
+        "$type": "color"
+      },
+      "muted": {
+        "$value": "oklch(0.308 0.0255 275.4)",
+        "$type": "color"
+      },
+      "mutedForeground": {
+        "$value": "oklch(0.778 0.0084 253.9)",
+        "$type": "color"
+      },
+      "primary": {
+        "$value": "oklch(0.669 0.1427 250.8)",
+        "$type": "color"
+      },
+      "primaryForeground": {
+        "$value": "oklch(0.254 0.0383 274.7)",
+        "$type": "color"
+      },
+      "secondary": {
+        "$value": "oklch(0.322 0.0343 275.1)",
+        "$type": "color"
+      },
+      "accent": {
+        "$value": "oklch(0.367 0.0389 303.2)",
+        "$type": "color"
+      },
+      "accentForeground": {
+        "$value": "oklch(0.946 0.0017 247.8)",
+        "$type": "color"
+      },
+      "destructive": {
+        "$value": "oklch(0.68 0.2 22.5)",
+        "$type": "color"
+      },
+      "success": {
+        "$value": "oklch(0.661 0.1123 159.1)",
+        "$type": "color"
+      },
+      "border": {
+        "$value": "oklch(0.4 0.0258 273.4)",
+        "$type": "color"
+      },
+      "ring": {
+        "$value": "oklch(0.669 0.1427 250.8)",
+        "$type": "color"
+      }
+    }
+  },
+  "component": {
+    "$description": "材质配方。recipe 是本仓「好看」的可验收形式：定值 + 上限 + 降级路径三件齐。",
+    "glass": {
+      "$description": "液态玻璃。每个视口最多 3 面（侧栏 window / 顶栏 mica-bar / 主内容 content-field），禁嵌套。",
+      "blur": {
+        "$value": "18px",
+        "$type": "dimension",
+        "max": "40px"
+      },
+      "saturate": {
+        "$value": "148%",
+        "$type": "percentage"
+      },
+      "borderStrength": {
+        "$value": 0.56,
+        "$type": "number",
+        "note": "消费方乘 70% 得 39% 墨色描边"
+      },
+      "top": {
+        "$value": "inset 0 1px 0 color-mix(in srgb, oklch(1 0 0) 62%, transparent)",
+        "$type": "shadow"
+      },
+      "bottom": {
+        "$value": "inset 0 -1px 0 color-mix(in srgb, var(--foreground) 8%, transparent)",
+        "$type": "shadow"
+      },
+      "rim": {
+        "$value": "0 0 0 1px color-mix(in srgb, var(--foreground) 7%, transparent)",
+        "$type": "shadow"
+      },
+      "glow": {
+        "$value": "0 18px 40px color-mix(in srgb, var(--sk-deep) 12%, transparent), 0 4px 12px color-mix(in srgb, var(--foreground) 6%, transparent)",
+        "$type": "shadow"
+      },
+      "fallback": {
+        "$value": "@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)))",
+        "$type": "string",
+        "note": "不支持时玻璃退成 94~96% 实面：保留层次、放弃通透。描边与投影不动，版式观感不变。"
+      }
+    },
+    "mica": {
+      "$description": "云母。Win11 Mica 的网页仿制：底材从缝里透，内容坐在填充层上。",
+      "panelOpacity": {
+        "$value": "90%",
+        "$type": "percentage",
+        "note": "W18 阶段 1 由 72% 提高。72% 时 muted 正文在面板上只有 3.6:1。"
+      },
+      "sidedOpacity": {
+        "$value": "90%",
+        "$type": "percentage"
+      },
+      "headerOpacity": {
+        "$value": "86%",
+        "$type": "percentage"
+      },
+      "blur": {
+        "$value": "blur(30px) saturate(1.4)",
+        "$type": "string"
+      },
+      "contentFieldOpacity": {
+        "$value": "74%",
+        "$type": "percentage",
+        "note": "主内容阅读面。正文不再直接压在动态背景上。"
+      },
+      "noise": {
+        "$value": "两层交叉 radial-gradient 网纹（0.6px / 0.5px 点阵）",
+        "$type": "string",
+        "note": "不用 feTurbulence data URI：⑩ 定义侧对 url( 一律判红，且那条规则在防背景图夹带远端资源。"
+      }
+    },
+    "iridescent": {
+      "$description": "油膜虹彩流光（原需求写「动态油壶渐变色」，按语音输入推断为油膜）。只用于 accents：当前选中导航项、页标题釉线、品牌环。",
+      "period": {
+        "$value": "14s",
+        "$type": "duration",
+        "min": "12s"
+      },
+      "angleProperty": {
+        "$value": "--iris-angle",
+        "$type": "string",
+        "syntax": "<angle>",
+        "inherits": false,
+        "initialValue": "0deg",
+        "note": "不注册则 CSS 无法插值自定义属性，虹彩只剩静止渐变"
+      },
+      "lineMask": {
+        "$value": "linear-gradient(to right, transparent, black 18%, black 82%, transparent)",
+        "$type": "string"
+      },
+      "ringMask": {
+        "$value": "linear-gradient(black, black) padding-box, linear-gradient(black, black)",
+        "$type": "string"
+      },
+      "ringComposite": {
+        "$value": "exclude",
+        "$type": "string"
+      },
+      "consumers": {
+        "$value": [
+          ".iridescent-line::after",
+          ".iridescent-ring::after",
+          ".brand-ring::after"
+        ],
+        "$type": "array"
+      },
+      "lightStroke": {
+        "$value": "--iris-stroke",
+        "$type": "alias",
+        "endpoints": [
+          "var(--brand-accent)",
+          "oklch(0.46 0.1875 299.5)",
+          "oklch(0.40 0.1494 269.3)"
+        ],
+        "note": "浅色档虹彩：两个非品牌端点压暗。实测虹彩数字 7.41:1（原 1.9:1）"
+      },
+      "darkStroke": {
+        "$value": "--iris-stroke",
+        "$type": "alias",
+        "endpoints": [
+          "oklch(0.66 0.1427 250.8)",
+          "oklch(0.66 0.1875 299.5)",
+          "oklch(0.66 0.1494 269.3)"
+        ],
+        "note": "深色档虹彩：三端点提亮到 L=0.66。实测 4.36:1（原 2.46:1）。⚠ 不能在 .dark 里改 --sk-purple/--sk-deep/--brand-accent —— appearance-wiring.css 的 html:root (0,1,1) 会压掉 .dark (0,1,0)"
+      }
+    },
+    "particles": {
+      "$description": "气泡场。单背景层、可整层关闭、WebGL2 与 canvas2d 双路。",
+      "min": {
+        "$value": 26,
+        "$type": "number"
+      },
+      "max": {
+        "$value": 74,
+        "$type": "number"
+      },
+      "formula": {
+        "$value": "viewportWidth / 20",
+        "$type": "string",
+        "$source": "webui/src/lib/effects/bubble-field.ts:88",
+        "clamp": [
+          26,
+          74
+        ]
+      },
+      "zIndex": {
+        "$value": -25,
+        "$type": "number"
+      },
+      "dprCap": {
+        "$value": 2,
+        "$type": "number"
+      },
+      "stopOn": {
+        "$value": [
+          "IntersectionObserver ≤1%",
+          "visibilitychange hidden",
+          "data-saver=1",
+          "motion tier = off"
+        ],
+        "$type": "array"
+      }
+    },
+    "scrollProgress": {
+      "height": {
+        "$value": "2px",
+        "$type": "dimension"
+      },
+      "alpha": {
+        "$value": 0.8,
+        "$type": "number"
+      },
+      "background": {
+        "$value": "var(--brand-grad)",
+        "$type": "string"
+      }
+    },
+    "bootCurtain": {
+      "holdMs": {
+        "$value": 520,
+        "$type": "duration",
+        "$source": "webui/src/components/effects/boot-curtain.tsx"
+      },
+      "lingerMs": {
+        "$value": 1100,
+        "$type": "duration",
+        "$source": "webui/src/components/effects/boot-curtain.tsx"
+      },
+      "safetyMs": {
+        "$value": 2600,
+        "$type": "duration",
+        "$source": "webui/src/components/effects/boot-curtain.tsx"
+      },
+      "sessionGated": {
+        "$value": true,
+        "$type": "boolean"
+      },
+      "storageKey": {
+        "$value": "webui:boot-curtain-seen",
+        "$type": "string",
+        "$source": "webui/src/components/effects/boot-curtain.tsx:14"
+      }
+    },
+    "reveal": {
+      "rootMargin": {
+        "$value": "0px 0px -12% 0px",
+        "$type": "string",
+        "$source": "webui/src/lib/effects/use-reveal.ts:24"
+      },
+      "threshold": {
+        "$value": 0.12,
+        "$type": "number"
+      },
+      "stepSeconds": {
+        "$value": 0.09,
+        "$type": "duration"
+      },
+      "maxSteps": {
+        "$value": 5,
+        "$type": "number"
+      },
+      "firstScreen": {
+        "$value": "已在视口内直接 in，不闪",
+        "$type": "string"
+      }
+    },
+    "customCursor": {
+      "dot": {
+        "$value": "4px",
+        "$type": "dimension"
+      },
+      "ring": {
+        "$value": "34px",
+        "$type": "dimension"
+      },
+      "hoverRing": {
+        "$value": "56px",
+        "$type": "dimension"
+      },
+      "lerp": {
+        "$value": 0.16,
+        "$type": "number"
+      },
+      "epsilon": {
+        "$value": 0.1,
+        "$type": "number"
+      },
+      "nativeCursor": {
+        "$value": "never hidden",
+        "$type": "string",
+        "$external": true,
+        "note": "原生光标从不隐藏。自定义光标是叠加层而非替代：JS 崩溃、组件未挂载、或动效档位为 off 时，系统光标照常可用。"
+      }
+    },
+    "focusIndicator": {
+      "$description": "焦点指示器。WCAG 1.4.11 要求对相邻色 >=3:1。",
+      "outline": "2px solid var(--brand-accent)",
+      "offset": "2px",
+      "activeStateColor": "var(--foreground)",
+      "darkColor": "color-mix(in srgb, var(--foreground) 88%, transparent)",
+      "note": "激活态元素（aria-current/aria-selected/data-state=on）上用 --foreground 而不是品牌色：品牌色底+品牌色环 = 1:1，等于没画"
+    },
+    "drawer": {
+      "$description": "移动导航抽屉。",
+      "position": "fixed",
+      "top": "5rem",
+      "maxHeight": "calc(100dvh - 7rem)",
+      "zIndex": 30,
+      "role": "dialog",
+      "ariaModal": "true",
+      "note": "原先是文档流里的 nav，在 3638px 长页中段点开落在视口外（y=-3638）。改成 fixed 后 y=80、高 732、18/18 链接可见"
+    }
+  },
+  "motionTiers": {
+    "$description": "三档动效。判据全部来自 Environment facts，不是随机或时间。",
+    "off": {
+      "$value": [
+        "prefers-reduced-motion: reduce",
+        "用户在外观页关掉动效"
+      ],
+      "$type": "array",
+      "result": "无动画、无粒子、无自定义光标；功能全保留"
+    },
+    "lite": {
+      "$value": [
+        "data saver 开",
+        "hardwareConcurrency ≤ 2",
+        "viewport ≤ 900px"
+      ],
+      "$type": "array",
+      "result": "粒子降为 canvas2d 且数量减半，光标与倾斜关闭"
+    },
+    "full": {
+      "$value": [
+        "以上都不成立"
+      ],
+      "$type": "array",
+      "result": "WebGL2 粒子（不可用时降 canvas2d）、自定义光标、reveal 全开"
+    }
+  },
+  "antiPatterns": {
+    "$description": "本仓明令禁止的写法，每条都有机器门在执法 —— 列在这里是为了让「不要做什么」也变成可验收项。",
+    "bareHex": "CSS 里不写裸 #rrggbb（版式宪法 ⑩）",
+    "urlInCss": "CSS 里不写 url()（防背景图夹带远端资源）",
+    "inlineCssVarWrite": "JS 里 setProperty('--x') / cssText 拼变量 / style['--x'] 一律判红；唯一合法通道是 lib/appearance/apply.ts 的动态名 setProperty",
+    "gradientText": "文字不使用 background-clip:text 虹彩（用户裁定：文本不需要辉光，虹彩只做描边）",
+    "nestedGlass": "玻璃面类不得在同一元素上叠两层（同一像素采样两次）",
+    "infiniteUnderMotionOff": "任何 infinite 动画必须同时进 data-motion=off 与 prefers-reduced-motion 两份 animation:none 名单",
+    "arbitraryTailwindValues": "Tailwind 方括号任意值默认拒绝，只放行 A2–A8 八个命名空间"
+  }
+}

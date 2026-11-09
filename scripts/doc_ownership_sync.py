@@ -72,6 +72,8 @@ _CODE_DIR_OWNERSHIP: tuple[tuple[str, str, str, str], ...] = (
      "本轮规格统一波席报/基线/普查目录（同 §4 兄弟波次行：过程件→B10）"),
     ("docs/templates/", "B10", "工程件",
      "文档模板体系工程件（唯一模板源，随 scripts/doc_templates.py 常驻；治理面归 B10）"),
+    ("docs/agents/", "B10", "工程件",
+     "技能套件工作区配置产物（issue-tracker / triage-labels / domain 三件；治理面归 B10）"),
 )
 _FID_RE = re.compile(r"\bB\d{2}\.[a-z][a-z0-9-]*")
 _BACKTICK_RE = re.compile(r"`([^`]+)`")

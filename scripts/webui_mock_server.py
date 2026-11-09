@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import mimetypes
 import re
 import sys
 import time
@@ -41,6 +42,7 @@ import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlparse
 
 # ---------------------------------------------------------------------------
@@ -1214,7 +1216,7 @@ def live_event(cursor: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# /ui 夹具壳（固定字节；真实端=webui/dist/index.html 单文件产物）
+# /ui 夹具壳（固定字节；--dist 显式指定时服务真实多文件产物）
 # ---------------------------------------------------------------------------
 
 _UI_HTML = """<!DOCTYPE html>
@@ -1247,14 +1249,61 @@ _UI_HTML = """<!DOCTYPE html>
 # ---------------------------------------------------------------------------
 
 
+def dist_response(dist_root: Path, request_path: str) -> tuple[int, bytes, str, dict[str, str]]:
+    """Resolve only /ui/ index and contained /ui/assets files; never SPA-fallback.
+
+    Shared by the mock and acceptance wrapper, so tests need no listening socket.
+    """
+    missing = (404, b"WebUI resource not found", "text/plain; charset=utf-8", {"Cache-Control": "no-store"})
+    path = unquote(urlparse(request_path).path)
+    if "\\" in path or "\x00" in path:
+        return missing
+    parts = path.split("/")
+    if any(part in (".", "..") or ":" in part for part in parts):
+        return missing
+    root = Path(dist_root).resolve()
+    if path == "/ui":
+        if not (root / "index.html").is_file():
+            return missing
+        return 307, b"", "text/plain; charset=utf-8", {"Location": "/ui/", "Cache-Control": "no-store"}
+    if path == "/ui/":
+        candidate = root / "index.html"
+        allowed_root = root
+    elif path.startswith("/ui/assets/"):
+        candidate = root / path[len("/ui/"):]
+        try:
+            allowed_root = (root / "assets").resolve()
+            allowed_root.relative_to(root)
+            if allowed_root == root:
+                return missing
+        except (OSError, ValueError):
+            return missing
+    else:
+        return missing
+    try:
+        candidate = candidate.resolve()
+        candidate.relative_to(allowed_root)
+        if not candidate.is_file():
+            return missing
+        body = candidate.read_bytes()
+    except (OSError, ValueError):
+        return missing
+    mime = {".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".html": "text/html"}.get(candidate.suffix.lower())
+    mime = mime or mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+    if mime.startswith("text/"):
+        mime += "; charset=utf-8"
+    return 200, body, mime, {"Cache-Control": "no-store"}
+
+
 class MockControlPlaneServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, handler, *, bearer_mode: bool, delay_ms: int) -> None:
+    def __init__(self, address, handler, *, bearer_mode: bool, delay_ms: int, dist_root: Path | None = None) -> None:
         super().__init__(address, handler)
         self.bearer_mode = bearer_mode
         self.delay_ms = delay_ms
+        self.dist_root = dist_root
 
 
 class MockHandler(BaseHTTPRequestHandler):
@@ -1371,8 +1420,14 @@ class MockHandler(BaseHTTPRequestHandler):
             request_id, _t, _d = _request_ids("GET", path, self._raw_query)
             self._send_json(200, {"status": "ok", "service": "webui-mock"}, request_id)
             return
-        if path == "/ui":
-            self._send_bytes(200, _UI_HTML.encode("utf-8"), "text/html; charset=utf-8", {"Cache-Control": "no-store"})
+        if path == "/ui" or path.startswith("/ui/"):
+            dist_root = getattr(self.server, "dist_root", None)
+            if dist_root is not None:
+                self._send_bytes(*dist_response(dist_root, self.path))
+            elif path in ("/ui", "/ui/"):
+                self._send_bytes(200, _UI_HTML.encode("utf-8"), "text/html; charset=utf-8", {"Cache-Control": "no-store"})
+            else:
+                self._send_error_cp(404, "not_found", "请求的资源或操作不可用。")
             return
         if path == "/favicon.ico":
             self._send_bytes(404, b"", "text/plain")
@@ -1640,6 +1695,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1", help="监听地址（默认 127.0.0.1，仅回环）")
     parser.add_argument("--port", type=int, default=8743, help="监听端口（默认 8743，避开真实控制面 8742）")
     parser.add_argument("--delay-ms", type=int, default=0, help="每个非流式响应前的模拟延迟（毫秒，默认 0）")
+    parser.add_argument("--dist", type=Path, default=None, help="真实 dist 目录（或 index.html）；缺省仍为明确标注的夹具壳")
     parser.add_argument(
         "--bearer",
         metavar="MODE",
@@ -1655,6 +1711,7 @@ def main(argv: list[str] | None = None) -> int:
     server = MockControlPlaneServer(
         (args.host, args.port), MockHandler,
         bearer_mode=bearer_mode, delay_ms=max(0, args.delay_ms),
+        dist_root=(args.dist.parent if args.dist.name == "index.html" else args.dist).resolve() if args.dist is not None else None,
     )
     print(
         f"webui_mock_server: http://{args.host}:{args.port}/ui"

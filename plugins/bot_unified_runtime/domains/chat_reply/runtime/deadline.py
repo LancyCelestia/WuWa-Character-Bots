@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import math
 import re
+import threading
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from contextvars import ContextVar
 
 
 class DeadlineExceeded(RuntimeError):
@@ -31,6 +33,8 @@ class DeadlineBudget:
             float(started_at) if started_at is not None else time.monotonic()
         )
         self.phases_ms: dict[str, float] = {}
+        self._diagnostic_lock = threading.Lock()
+        self._in_flight_started_at: float | None = None
         # 在飞相位名（供 deadline 回执回答"预算到期那一刻哪一段正跑到一半"）。
         # 只认 _safe_phase_name 通过的固定字面量；未标注恒为空串 ⇒ 视图诚实降级
         # 为「未记账」，绝不编数。record_phase 归账同一相位时自动清除。
@@ -79,16 +83,101 @@ class DeadlineBudget:
         """
         name = _safe_phase_name(stage)
         if name:
-            self.in_flight_stage = name
+            with self._diagnostic_lock:
+                self.in_flight_stage = name
+                self._in_flight_started_at = time.monotonic()
+
+    def clear_in_flight(self, stage: str) -> None:
+        with self._diagnostic_lock:
+            if self.in_flight_stage == stage:
+                self.in_flight_stage = ""
+                self._in_flight_started_at = None
 
     def record_phase(self, stage: str, started_at: float) -> None:
         """累计阶段耗时（毫秒）；stage 只允许固定阶段名，不含用户内容。"""
         elapsed_ms = max(0.0, (time.monotonic() - started_at) * 1000.0)
-        self.phases_ms[stage] = self.phases_ms.get(stage, 0.0) + elapsed_ms
-        # 该相位已归账 ⇒ 不再是「在飞」（避免成功路径上留下过期的在飞标注，
-        # 也避免它在后续 deadline 回执里被当成"到期那一刻正跑到一半"）。
-        if stage == self.in_flight_stage:
-            self.in_flight_stage = ""
+        with self._diagnostic_lock:
+            self.phases_ms[stage] = self.phases_ms.get(stage, 0.0) + elapsed_ms
+            if stage == self.in_flight_stage:
+                self.in_flight_stage = ""
+                self._in_flight_started_at = None
+
+    def diagnostic_snapshot(self) -> dict[str, object]:
+        with self._diagnostic_lock:
+            now = time.monotonic()
+            stage = self.in_flight_stage
+            if stage not in _DIAGNOSTIC_PHASES:
+                stage = "unknown"
+            in_flight_ms = (
+                max(0, round((now - self._in_flight_started_at) * 1000))
+                if stage != "unknown" and self._in_flight_started_at is not None
+                else None
+            )
+            return {
+                "in_flight_stage": stage,
+                "elapsed_ms": max(0, round((now - self.started_at) * 1000)),
+                "in_flight_ms": in_flight_ms,
+                "phases_ms": {
+                    key: round(value)
+                    for key, value in self.phases_ms.items()
+                    if key in _DIAGNOSTIC_PHASES
+                },
+            }
+
+
+_DIAGNOSTIC_PHASES = frozenset(
+    {"context", "intent", "llm", "tools", "vision", "video_brief", "vision_video", "asr"}
+)
+
+
+class TimeoutDiagnosticObserver:
+    """Per-submission reference to the budget created by its worker."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._started = False
+        self._budget: DeadlineBudget | None = None
+
+    def mark_started(self) -> None:
+        with self._lock:
+            self._started = True
+
+    def publish(self, budget: DeadlineBudget) -> None:
+        with self._lock:
+            self._budget = budget
+
+    def snapshot(self) -> dict[str, object]:
+        with self._lock:
+            started, budget = self._started, self._budget
+        result = (
+            budget.diagnostic_snapshot()
+            if budget is not None
+            else {"in_flight_stage": "unknown", "elapsed_ms": None, "in_flight_ms": None}
+        )
+        result["execution_state"] = "started" if started else "queued"
+        return result
+
+
+_timeout_diagnostic_observer: ContextVar[TimeoutDiagnosticObserver | None] = ContextVar(
+    "chat_timeout_diagnostic_observer", default=None
+)
+
+
+def publish_timeout_budget(budget: DeadlineBudget) -> None:
+    observer = _timeout_diagnostic_observer.get()
+    if observer is not None:
+        observer.publish(budget)
+
+
+def run_with_timeout_diagnostic(
+    observer: TimeoutDiagnosticObserver, function: Callable[..., object], *args: object
+) -> object:
+    token = _timeout_diagnostic_observer.set(observer)
+    try:
+        observer.mark_started()
+        return function(*args)
+    finally:
+        _timeout_diagnostic_observer.reset(token)
 
 _PHASE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 

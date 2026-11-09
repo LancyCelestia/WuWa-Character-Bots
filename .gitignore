@@ -37,6 +37,12 @@ data/
 *.log
 logs/
 
+# WebUI 背景视频（12.9 MB 壁纸工程素材，只在本机存在，不入库；见 UI2 简报）
+webui/public/*.mp4
+# WebUI 背景视频**母带**（UI3：12.9 MB 原片，只在转档时用；`public/` 里只放
+# 转好的 720p/1080p 两档，母带不进 dist 也不入库）。
+webui/.media-source/
+
 # Local planning / agent scratch
 .planning/
 .superpowers/
@@ -84,6 +90,8 @@ third_party/
 
 webui/node_modules/
 webui/dist/
+# 本项目用 npm（package-lock.json 是唯一锁）；pnpm-lock 是其它工具留下的重复锁，不入库
+/webui/pnpm-lock.yaml
 
 # ---- Wave G / G-0 基线入库补丁（T52 席，2026-09-19，配方=report-T31.md 表 F）----
 
@@ -133,3 +141,17 @@ SEAT-S*.md
 # 删了数秒内即复活（2026-10-13 实测）⇒ 用 ignore 收口，别再当未跟踪件反复清。
 /.graphflow-cache/
 /graphflow-out/
+
+# WebUI 构建产物与截图取证：都不是源码，都不该入库。
+# `dist/` 早被上面 `build/`+`dist/` 两条罩住，但下面这些**形状不在那些模式里**
+# （`dist.bak-lead` 不是目录名 `dist`、`.ui2-shots` 不在任何既有模式），
+# 2026-10-19 审计实测它们会以未跟踪件裸奔（8.1MB + 1.2MB），故显式收口。
+/webui/dist.bak-*/
+/webui/.ui2-shots/
+/webui/.shots/
+/webui/.ui-shots/
+# W18 视觉回归用的 Chromium 用户数据目录（每个 20–75MB，含缓存/DB，不是源码）
+/webui/.chrome-*/
+/webui/.chrome-v2/
+# Vite 的临时产物
+/webui/node_modules/.vite/
