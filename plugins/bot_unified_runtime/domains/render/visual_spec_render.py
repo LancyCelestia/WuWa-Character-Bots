@@ -10,6 +10,7 @@ UI 铁律（AGENTS 第三部分）：无 viewport meta、body 透明、字重 �
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from plugins.bot_unified_runtime.domains.render.card_render import mica_shell
@@ -25,6 +26,13 @@ __all__ = ["render_visual_card_html", "render_visual_spec_html"]
 #: 元素区 CSS（只用登记 token 引阴影；不写死颜色）。
 _ELEMENTS_CSS = """
 .vs-body { display: flex; flex-direction: column; gap: var(--vs-gap, 12px); }
+.vs-size-sm .vs-body { font-size: 13px; }
+.vs-size-lg .vs-body { font-size: 15px; }
+.vs-weight-normal .vs-body { font-weight: 400; }
+.vs-weight-semibold .vs-body { font-weight: 600; }
+.vs-weight-bold .vs-body { font-weight: 700; }
+.vs-color-accent .vs-body { color: var(--accent, inherit); }
+.vs-color-muted .vs-body { color: var(--fg-muted, rgba(0,0,0,.62)); }
 .vs-layout-double .vs-body { display: grid; grid-template-columns: 1fr 1fr; }
 .vs-layout-grid .vs-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
 .vs-title { font-size: 22px; font-weight: 700; margin: 0 0 2px; }
@@ -191,13 +199,23 @@ _RENDERERS = {
 }
 
 
-def render_elements_html(spec: VisualSpec) -> str:
-    """把元素数组渲成 body HTML（未知 kind 已在归一阶段丢弃）。"""
+def render_elements_html(
+    spec: VisualSpec, *, fragments: Mapping[str, str] | None = None
+) -> str:
+    """把元素数组渲成 body HTML（未知 kind 已在归一阶段丢弃）。
+
+    ``fragments`` 只允许覆盖标题/副标题/页脚三处纯文本（W12 R4）；值已在
+    ``normalize_fragments`` 收紧，这里再过一次 ``_s`` 转义，注入面双保险。
+    """
     parts: list[str] = []
-    if spec.title:
-        parts.append(f'<div class="vs-title">{spec.title}</div>')
-    if spec.subtitle:
-        parts.append(f'<div class="vs-subtitle">{spec.subtitle}</div>')
+    shown = fragments or {}
+    title = shown.get("title") or spec.title
+    subtitle = shown.get("subtitle") or spec.subtitle
+    footer = shown.get("footer") or spec.footer
+    if title:
+        parts.append(f'<div class="vs-title">{title}</div>')
+    if subtitle:
+        parts.append(f'<div class="vs-subtitle">{subtitle}</div>')
     for el in spec.elements:
         fn = _RENDERERS.get(el.kind)
         if fn is None:
@@ -205,12 +223,16 @@ def render_elements_html(spec: VisualSpec) -> str:
         chunk = fn(el)
         if chunk:
             parts.append(chunk)
-    if spec.footer:
-        parts.append(f'<div class="vs-footer">{spec.footer}</div>')
-    return f'<div class="vs-body">{"".join(parts)}</div>'
+    if footer:
+        parts.append(f'<div class="vs-footer">{footer}</div>')
+    gap = spec.style.get("spacing")
+    gap_attr = f' style="--vs-gap:{int(gap)}px"' if isinstance(gap, int) else ""
+    return f'<div class="vs-body"{gap_attr}>{"".join(parts)}</div>'
 
 
-def render_visual_spec_html(spec: VisualSpec) -> str:
+def render_visual_spec_html(
+    spec: VisualSpec, *, fragments: Mapping[str, str] | None = None
+) -> str:
     """`VisualSpec` → 完整 HTML 文档（走 mica 外壳，与既有卡同一套 token）。"""
     accent = spec.accent or _tt.BRAND_ACCENT
     tokens = mica_shell.render_root_tokens(
@@ -218,13 +240,20 @@ def render_visual_spec_html(spec: VisualSpec) -> str:
         accent_dark=_tt.UNKNOWN_PLATFORM_COLOR,
         wash=_tt.DEFAULT_WASH_TOKENS,
     )
-    body = render_elements_html(spec)
-    stage_class = {
-        "double": "vs-layout-double",
-        "grid": "vs-layout-grid",
-    }.get(spec.layout, "")
+    body = render_elements_html(spec, fragments=fragments)
+    stage_class = " ".join(
+        part
+        for part in (
+            {"double": "vs-layout-double", "grid": "vs-layout-grid"}.get(spec.layout, ""),
+            f"vs-size-{spec.style.get('size')}" if spec.style.get("size") else "",
+            f"vs-weight-{spec.style.get('weight')}" if spec.style.get("weight") else "",
+            f"vs-color-{spec.style.get('color')}" if spec.style.get("color") else "",
+        )
+        if part
+    )
+    document_title = (fragments or {}).get("title") or spec.title or "可视化"
     return mica_shell.render_shell(
-        title=spec.title or "可视化",
+        title=document_title,
         tokens=tokens,
         css=_ELEMENTS_CSS,
         body_html=body,

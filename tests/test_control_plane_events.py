@@ -56,6 +56,27 @@ def test_fixed_taxonomy_validation_and_unique_ids():
             event(**changes)
 
 
+def test_corrupt_row_is_skipped_instead_of_breaking_the_stream(service):
+    good = service.append(event())
+    bad = service.append(event(source="llm", category="info"))
+    with sqlite3.connect(service.db_path) as connection:
+        # 只改存储层，模拟真实损坏（写入面永远构造不出这种行）。
+        connection.execute(
+            "UPDATE runtime_log_events SET source=? WHERE cursor=?",
+            ("noneb\x7ft", bad.cursor),
+        )
+    page = service.query(limit=10)
+    assert [row["event_id"] for row in page["items"]] == [good.event_id]
+    assert page["invalid_rows"] == 1
+    assert page["has_more"] is False
+
+    narrow = service.query(limit=1)
+    assert [row["event_id"] for row in narrow["items"]] == [good.event_id]
+    assert narrow["has_more"] is True and narrow["next_cursor"] == good.cursor
+    tail = service.query(after=narrow["next_cursor"], limit=1)
+    assert tail["items"] == [] and tail["invalid_rows"] == 1
+
+
 def test_persistence_pagination_filters_idempotency_and_reopen(service):
     first = service.append(event())
     second = service.append(event(source="llm", category="error"))

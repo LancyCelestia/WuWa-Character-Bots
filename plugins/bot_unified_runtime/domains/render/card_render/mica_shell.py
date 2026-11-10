@@ -27,6 +27,7 @@ from collections.abc import Mapping
 from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
     BLOB_COUNT,
     BLOB_DURATIONS,
+    BRAND_ACCENT,
     BRAND_NAME_EN,
     BRAND_THEME,
     FONT_FAMILY_STACK,
@@ -44,6 +45,7 @@ from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import 
     SHADOW_PRIMARY,
     SHADOW_SECONDARY,
     TEXT_SECONDARY,
+    get_theme_overrides,
     # goal-7 二波（2026-09-28，需求 7「壳层釉瑚渐变按面不同」）：--mica-shell-wash
     # 与外壳 CSS 的壳层渐变改按 face 派生，单一真身住 theme_tokens.shell_wash_for_face。
     # SHELL_WASH_GRADIENT 不再在此直插（其仍是 face="" 时 shell_wash_for_face 回落的
@@ -452,10 +454,23 @@ def render_root_tokens(
     ``--accent`` 家族。此前 media 卡只认 ``--pc``、其余卡只认 ``--accent``，
     是两套渲染机制唯一的 token 分叉点；退役后不再存在别名双写。
     """
+    # W12 R4：全局视觉覆盖（面板里改的主色/圆角/字体）每张卡现取。
+    # 显式传入的非品牌 accent（平台卡）优先，不被全局覆盖抢走品牌基底。
+    overrides = get_theme_overrides()
+    effective_accent = accent
+    if accent == BRAND_ACCENT and overrides.get("brand_accent"):
+        effective_accent = str(overrides["brand_accent"])
+    radius_override = overrides.get("shell_radius")
+    shell_radius = int(radius_override) if isinstance(radius_override, int) else BRAND_THEME.shell_radius
+    font_family = (
+        MONO_FONT_STACK
+        if overrides.get("font_family") == "mono"
+        else FONT_FAMILY_STACK
+    )
     parts: list[str] = []
     if include_phase:
         parts.append(f"--phase:{phase}")
-    parts.append(f"--accent:{accent}")
+    parts.append(f"--accent:{effective_accent}")
     parts.append(f"--accent-dark:{accent_dark}")
     if include_wash:
         if not wash:
@@ -474,9 +489,9 @@ def render_root_tokens(
         "--text-sub": BRAND_THEME.text_sub,
         "--ink": "var(--text-main)",
         "--muted": "var(--text-sub)",
-        "--font-family": FONT_FAMILY_STACK,
+        "--font-family": font_family,
         "--font-mono": MONO_FONT_STACK,
-        "--r-shell": f"{BRAND_THEME.shell_radius}px",
+        "--r-shell": f"{shell_radius}px",
         "--r-panel": f"{BRAND_THEME.panel_radius}px",
         "--r-tile": f"{BRAND_THEME.tile_radius}px",
         **RADIUS_INNER_CSS_VARS,

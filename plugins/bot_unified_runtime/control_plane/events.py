@@ -359,14 +359,26 @@ class RuntimeEventService:
                 + " ORDER BY cursor LIMIT ?",
                 (*params, limit + 1),
             ).fetchall()
-            items = [self._event(row).to_dict() for row in rows[:limit]]
+            page_rows = rows[:limit]
             more = len(rows) > limit
+            # 单行损坏不能拖死整条诊断流（2026-11-10 现场：一行 source 夹了
+            # \x7f，__post_init__ 抛 ValueError，被 HTTP 层误报成 422
+            # invalid_cursor）。逐行隔离：坏行跳过并计数，其余照常返回；
+            # 游标推进仍按**原始行**算，否则坏行会让翻页原地打转。
+            items: list[dict[str, Any]] = []
+            invalid_rows = 0
+            for row in page_rows:
+                try:
+                    items.append(self._event(row).to_dict())
+                except (ValueError, TypeError):
+                    invalid_rows += 1
             # Once this snapshot is exhausted, advance past nonmatching rows too.
             return {
                 "items": items,
-                "next_cursor": items[-1]["cursor"] if more else high,
+                "next_cursor": page_rows[-1]["cursor"] if more and page_rows else high,
                 "has_more": more,
                 "high_cursor": high,
+                "invalid_rows": invalid_rows,
             }
 
     def get(self, event_id: str) -> dict[str, Any] | None:

@@ -408,6 +408,16 @@ def create_control_plane_app(
         from .visual_layouts import VisualLayoutService, VisualLayoutStore
 
         visual_service = VisualLayoutService(VisualLayoutStore(_path(raw_config_db)))
+    if visual_service is not None and raw_config_db:
+        # W12 R4：把库里那一版全局视觉覆盖回灌进本进程渲染态。
+        # 独立面板与 bot 是两个进程；不在这里读一次，面板里存的主色/圆角/字体
+        # 在 bot 侧永远不生效（W12-REVIEW P1-1）。fail-safe：读不到就当没有。
+        try:
+            from .visual_layouts import hydrate_theme_overrides_from_store
+
+            hydrate_theme_overrides_from_store(raw_config_db)
+        except Exception:  # 回灌失败绝不能拖垮启动
+            logger.debug("全局视觉覆盖回灌失败，按无覆盖启动", exc_info=True)
     app.state.visual_service = visual_service
     app.include_router(build_visual_router(
         service=visual_service,
@@ -643,6 +653,19 @@ def create_control_plane_app(
             # media_config_unavailable（哪怕 app 层有完整 config）。
             config=config,
             log_level_setter=_apply_platform_log_level,
+        )
+    )
+    # 人格切换：真实落点是 runtime settings 的 persona_override（不是配置键）。
+    # 写面与 config 写同门槛（super_admin）；下一轮现读即生效，无需重启。
+    from .api.persona import build_persona_router
+
+    app.include_router(
+        build_persona_router(
+            settings_store=settings_store,
+            config=config,
+            read_dependency=_v1_read_dependency(auth, super_auth),
+            write_dependency=_super_admin_dependency(super_auth, super_auth.provisioned),
+            prefix="/api/v1",
         )
     )
     # V2.1 S12：占卜/运势 REST 段（未配置持久化路径 = facade None = 503 诚实位，
@@ -960,7 +983,9 @@ def _public_confirmation_file() -> str:
         return f"data/{_PUBLIC_CONFIRM_FILENAME}"
 
 
-def serve(config: object | None = None) -> int:
+def serve(
+    config: object | None = None, app_factory: Callable[[], FastAPI] | None = None
+) -> int:
     """独立 uvicorn 入口（``python -m ...control_plane``）。
 
     - 总开关关闭（默认）→ 不启动，返回 0；
@@ -992,7 +1017,7 @@ def serve(config: object | None = None) -> int:
                 confirmation,
             )
             return 2
-    app = create_control_plane_app(config)
+    app = app_factory() if app_factory is not None else create_control_plane_app(config)
     import uvicorn
 
     logger.info(

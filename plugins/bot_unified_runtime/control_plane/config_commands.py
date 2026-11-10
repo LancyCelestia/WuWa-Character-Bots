@@ -584,9 +584,18 @@ class ConfigCommandGateway:
         idempotency_key: str,
         scope: str = "",
         ttl_seconds: int = DEFAULT_COMMAND_TTL_SECONDS,
+        owner_consent: bool = False,
     ) -> dict[str, Any]:
         if type(reset) is not bool:
             raise ControlServiceError("config_command_invalid", "reset 必须为布尔值。", 422)
+        if owner_consent:
+            # 排队命令由 Bot 侧消费者执行，批准人只能是真入站消息；
+            # 独立 owner secret 只能在本进程当场裁决的嵌入宿主里生效。
+            raise ControlServiceError(
+                "config_command_owner_consent_unsupported",
+                "该部署为排队命令面，所有者授权口令不适用；请由所有者在 bot 会话里批准。",
+                409,
+            )
         dto, replay = self.store.submit(
             action="reset" if reset else "set",
             key=key,
@@ -643,6 +652,7 @@ class HostConfigCommandGateway:
         idempotency_key: str,
         scope: str = "",
         ttl_seconds: int = DEFAULT_COMMAND_TTL_SECONDS,
+        owner_consent: bool = False,
     ) -> dict[str, Any]:
         if type(reset) is not bool:
             raise ControlServiceError("config_command_invalid", "reset 必须为布尔值。", 422)
@@ -654,6 +664,7 @@ class HostConfigCommandGateway:
             "expected_version": expected_version,
             "request_id": command_id,
             "session_key": str(scope or ""),
+            "owner_consent": bool(owner_consent),
         }
         if reset:
             outcome = self.service.reset(key, **common)

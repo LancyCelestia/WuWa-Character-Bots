@@ -90,7 +90,7 @@ def probe_ports(
     return result
 
 
-def _is_listening(host: str, port: object, timeout: float) -> bool:
+def _is_listening(host: str, port: int, timeout: float) -> bool:
     try:
         sock = socket.create_connection((host, int(port)), timeout=timeout)
     except (OSError, TypeError, ValueError):

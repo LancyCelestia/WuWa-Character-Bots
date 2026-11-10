@@ -149,7 +149,7 @@ class TimeoutDiagnosticObserver:
     def snapshot(self) -> dict[str, object]:
         with self._lock:
             started, budget = self._started, self._budget
-        result = (
+        result: dict[str, object] = (
             budget.diagnostic_snapshot()
             if budget is not None
             else {"in_flight_stage": "unknown", "elapsed_ms": None, "in_flight_ms": None}

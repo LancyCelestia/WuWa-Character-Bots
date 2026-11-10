@@ -20,6 +20,8 @@ OHLCV），见 contracts/finance.py 的 docstring。
 from __future__ import annotations
 
 import colorsys
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 
 # ==================== 品牌常量（守岸人本命） ====================
@@ -509,6 +511,76 @@ MONO_FONT_STACK = '"Cascadia Mono",Consolas,"JetBrains Mono","Courier New",monos
 # C1 半径：内径合法表（瓦片内小件）；pill/正圆作为登记特例。主族 30/18/14
 # （shell/panel/tile，ThemeTokens 三字段）不动。
 RADIUS_INNER_PX = frozenset({4, 6, 8, 12, 16})
+
+#: 全局视觉覆盖（W12 R4）可改面与登记值域。**只列真会被读的三键**：
+#: 编辑器目录从这里取，前端不手抄。
+THEME_OVERRIDE_KEYS: tuple[str, ...] = ("brand_accent", "shell_radius", "font_family")
+SHELL_RADIUS_CHOICES: frozenset[int] = frozenset({16, 20, 24, 30, 36})
+FONT_FAMILY_CHOICES: tuple[str, ...] = ("sans", "mono")
+
+#: 进程内全局视觉覆盖（W12 R4）。只活在当前进程；跨进程回灌见
+#: `control_plane.visual_layouts.hydrate_theme_overrides_from_store`。
+#: 渲染侧只从这里取三个已登记键，不把任意 CSS 透传出去。
+_THEME_OVERRIDES: dict[str, object] = {}
+
+_HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def normalize_theme_overrides(
+    raw: object, dropped: list[str] | None = None
+) -> dict[str, object]:
+    """把外部传入的全局视觉覆盖归一成登记值域；越界项逐个丢弃并记名。"""
+    out: dict[str, object] = {}
+    if not isinstance(raw, Mapping):
+        return out
+    bucket = dropped if dropped is not None else []
+
+    accent = raw.get("brand_accent")
+    if accent is not None:
+        text = str(accent).strip()
+        if _HEX_COLOR_RE.match(text):
+            out["brand_accent"] = text.lower()
+        else:
+            bucket.append("theme.brand_accent")
+
+    radius = raw.get("shell_radius")
+    if radius is not None:
+        try:
+            value = int(radius)
+        except (TypeError, ValueError):
+            bucket.append("theme.shell_radius")
+        else:
+            if value in SHELL_RADIUS_CHOICES:
+                out["shell_radius"] = value
+            else:
+                bucket.append("theme.shell_radius")
+
+    family = raw.get("font_family")
+    if family is not None:
+        text = str(family).strip().lower()
+        if text in FONT_FAMILY_CHOICES:
+            out["font_family"] = text
+        else:
+            bucket.append("theme.font_family")
+    return out
+
+
+def set_theme_overrides(overrides: object) -> dict[str, object]:
+    """整批替换进程内覆盖（空 dict＝回到默认）。返回生效值，便于调用方回显。"""
+    global _THEME_OVERRIDES
+    clean = normalize_theme_overrides(overrides)
+    _THEME_OVERRIDES = clean
+    return dict(_THEME_OVERRIDES)
+
+
+def get_theme_overrides() -> dict[str, object]:
+    """只读快照；渲染侧每次现取，改完下一张卡即生效（不需要重启）。"""
+    return dict(_THEME_OVERRIDES)
+
+
+def active_theme_overrides() -> dict[str, object]:
+    """`get_theme_overrides` 的别名（控制面读回口径沿用这个名字）。"""
+    return get_theme_overrides()
 RADIUS_INNER_SCALE_PX: dict[str, int] = {
     "xs": 4,
     "sm": 6,
@@ -750,6 +822,7 @@ __all__ = [
     "DIVIDER",
     "ERROR_ACCENT",
     "ERROR_THEME",
+    "FONT_FAMILY_CHOICES",
     "FONT_FAMILY_STACK",
     "FONT_WEIGHT_MAX",
     "FONT_WEIGHT_STEPS",
@@ -779,20 +852,26 @@ __all__ = [
     "SHADOW_LEVELS",
     "SHADOW_PRIMARY",
     "SHADOW_SECONDARY",
+    "SHELL_RADIUS_CHOICES",
     "SHELL_WASH_GRADIENT",
     "SURFACE_TINTS",
     "TEXT_SECONDARY",
     "THEME_ALIASES",
+    "THEME_OVERRIDE_KEYS",
     "TYPE_SCALE_PX",
     "UNKNOWN_PLATFORM_COLOR",
     "UNKNOWN_THEME_KEYS",
     "ThemeTokens",
+    "active_theme_overrides",
     "brand_display_name_for",
     "brand_name_en_for",
     "brand_theme_for",
     "derive_wash_tokens",
     "get_platform_theme",
+    "get_theme_overrides",
+    "normalize_theme_overrides",
     "platform_accent",
+    "set_theme_overrides",
     "shell_wash_for_face",
     "theme_to_css_vars",
 ]

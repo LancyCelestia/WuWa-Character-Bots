@@ -212,9 +212,35 @@ class ConfigControlService:
             store.attach_safety_gate(gate)  # 契约见 settings.py：传入即视为已装配
             return gate
 
+    def _owner_consent_message(self) -> Any:
+        """构造「所有者亲批」入站消息（owner_consent 通道专用）。
+
+        安全语义：这条消息只在调用方已用**独立的** owner secret 验身、
+        且部署显式打开 `bot_control_plane_allow_owner_consent` 时才被构造。
+        它不扩大门的判据集合——仍走 `SettingsWriteGate.approve` →
+        `redeem_from_message` 的短码、私聊、防自批、一次性、TTL 全链检查。
+        """
+        from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+
+        owner_ids = getattr(self.config, "bot_super_admin_user_ids", None) or []
+        owner_id = str(owner_ids[0]).strip() if owner_ids else "control-plane-owner"
+        return IncomingMessage(
+            platform="control-plane",
+            adapter="control-plane",
+            bot_id="control-plane",
+            session_id="control-plane-owner",
+            session_type=SessionType.PRIVATE,
+            sender_id=owner_id,
+            sender_display_name="所有者",
+            sender_roles=["super_admin"],
+            plain_text="同意",
+            mentions_bot=False,
+        )
+
     def _guarded_apply(self, *, target: str, value: Any, restore_default: bool,
                        principal: Principal, request_id: str,
                        session_key: str = "",
+                       owner_consent: bool = False,
                        apply: Callable[[], Any]) -> Any:
         """把一次实际落库动作交给门；门缺席或总闸关 ⇒ 直接 `apply()`，与接线前
         逐字节同形（`settings.py::_throat_guard` 的三态口径，本层不自创第四态）。
@@ -250,6 +276,28 @@ class ConfigControlService:
                 session_key=session_key, apply=apply,
             )
         except RuntimeChangeNeedsConsent as exc:
+            if owner_consent:
+                # 独立 owner secret 已验身：以「主人私聊亲批」的入站消息走
+                # gate.approve 的**全部**既有判据，然后同参重试一次。
+                # 不是旁路：短码/私聊/防自批/一次性/TTL 任何一条不过都不落库。
+                from plugins.bot_unified_runtime.domains.core.safety_exec.consent import (
+                    Refusal,
+                )
+
+                verdict = gate.approve(
+                    exc.consent_id,
+                    code=exc.short_code,
+                    message=self._owner_consent_message(),
+                )
+                if not isinstance(verdict, Refusal):
+                    try:
+                        return gate.guarded_write(
+                            key=target, value=value, restore_default=restore_default,
+                            actor=principal.subject, request_id=request_id,
+                            session_key=session_key, apply=apply,
+                        )
+                    except RuntimeChangeNeedsConsent as retry_exc:
+                        exc = retry_exc
             # 409 有 actions.py `confirmation_required` 的同状态码先例；原文直传。
             raise ControlServiceError("consent_required", exc.plain_text, 409) from None
         except RuntimeChangeRefused as exc:
@@ -263,7 +311,7 @@ class ConfigControlService:
 
     def _write(self, key: str, value: Any, *, reset: bool, principal: Principal,
                expected_version: int, request_id: str,
-               session_key: str = "") -> dict[str, Any]:
+               session_key: str = "", owner_consent: bool = False) -> dict[str, Any]:
         self._authorize(principal, expected_version, request_id)
         key = self._key(key, writable=True)
         converted = None if reset else self._convert(key, value)
@@ -278,6 +326,7 @@ class ConfigControlService:
             snapshot = self._guarded_apply(
                 target=key, value=converted, restore_default=reset,
                 principal=principal, request_id=request_id, session_key=session_key,
+                owner_consent=owner_consent,
                 apply=lambda: (
                     self.backend.reset_override(
                         key, expected_version=expected_version,
@@ -295,19 +344,21 @@ class ConfigControlService:
         return self._row(key, snapshot)
 
     def set(self, key: str, value: Any, *, principal: Principal, expected_version: int,
-            request_id: str = "", session_key: str = "") -> dict[str, Any]:
+            request_id: str = "", session_key: str = "",
+            owner_consent: bool = False) -> dict[str, Any]:
         """写一笔覆盖；`session_key` 是调用方对来源会话的申报（见 `_guarded_apply`），
         省缺空串＝不申报＝旧形态。"""
         return self._write(key, value, reset=False, principal=principal,
                            expected_version=expected_version, request_id=request_id,
-                           session_key=session_key)
+                           session_key=session_key, owner_consent=owner_consent)
 
     def reset(self, key: str, *, principal: Principal, expected_version: int,
-              request_id: str = "", session_key: str = "") -> dict[str, Any]:
+              request_id: str = "", session_key: str = "",
+              owner_consent: bool = False) -> dict[str, Any]:
         """撤一笔覆盖；会话申报口径同 `set`。"""
         return self._write(key, None, reset=True, principal=principal,
                            expected_version=expected_version, request_id=request_id,
-                           session_key=session_key)
+                           session_key=session_key, owner_consent=owner_consent)
 
     def reset_all(self, *, principal: Principal, expected_version: int,
                   request_id: str = "") -> dict[str, int]:

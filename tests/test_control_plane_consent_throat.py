@@ -206,6 +206,9 @@ def test_http_config_endpoint_returns_ticket_in_envelope(tmp_path: Path) -> None
     app = create_control_plane_app(
         config, audit_store=ControlPlaneAuditStore(str(tmp_path / "audit.sqlite3")),
         channel_health_store=object(),
+        # A5（2026-11）：独立控制面缺执行方/批准通路时**禁直写**，只有显式信任的
+        # 两条腿放行。本测试要验的是「HTTP 腿落到同一枚同意门」，故显式打开直写腿。
+        allow_direct_config_write=True,
     )
     with TestClient(app, base_url="http://127.0.0.1:8742") as client:
         refused = client.post(

@@ -38,11 +38,31 @@ from typing import Any
 
 __all__ = [
     "ALLOWED_KINDS",
+    "BINDING_PATHS",
+    "STYLE_COLORS",
+    "STYLE_SIZES",
+    "STYLE_SPACING",
+    "STYLE_WEIGHTS",
+    "VISUAL_SPEC_VERSION",
     "Element",
     "ElementKind",
     "VisualSpec",
+    "apply_binding_samples",
     "normalize_visual_spec",
 ]
+
+#: 契约版本（编辑器目录用；元素/字段**只增不改**）。
+VISUAL_SPEC_VERSION = 1
+
+#: 数据绑定路径登记面。当前元素契约**没有 binding 字段**，
+#: 因此这里如实返回空表：编辑器不展示「绑定了却不会生效」的路径。
+BINDING_PATHS: dict[str, str] = {}
+
+#: 元素区样式值域（渲染层真消费——见 `visual_spec_render`）。
+STYLE_SIZES: frozenset[str] = frozenset({"sm", "md", "lg"})
+STYLE_SPACING: frozenset[int] = frozenset({8, 12, 16, 20})
+STYLE_WEIGHTS: frozenset[str] = frozenset({"normal", "semibold", "bold"})
+STYLE_COLORS: frozenset[str] = frozenset({"accent", "muted"})
 
 
 class ElementKind(str, Enum):
@@ -125,6 +145,8 @@ class VisualSpec:
     #: 主题：留空则用品牌缺省；可填 `theme_tokens` 的 accent 十六进制
     accent: str = ""
     footer: str = ""
+    #: 元素区样式覆盖：size/spacing/weight/color，只收登记值域（见 STYLE_*）
+    style: dict[str, Any] = field(default_factory=dict)
     #: 丢弃记录（未知 kind / 越界字段），供调用方如实上报，不静默
     dropped: list[str] = field(default_factory=list)
 
@@ -136,6 +158,7 @@ class VisualSpec:
             "layout": self.layout,
             "accent": self.accent,
             "footer": self.footer,
+            "style": dict(self.style),
         }
 
     @classmethod
@@ -249,6 +272,48 @@ def _series(value: Any) -> list[list[float]]:
     return out
 
 
+def _clean_style(value: Any, dropped: list[str]) -> dict[str, Any]:
+    """样式四键归一：只收登记值域，越界丢弃并留痕（绝不透传任意 CSS）。"""
+    raw = value if isinstance(value, dict) else {}
+    style: dict[str, Any] = {}
+    size = str(raw.get("size") or "").strip().lower()
+    if size in STYLE_SIZES:
+        style["size"] = size
+    elif size:
+        dropped.append(f"style.size={size!r}")
+    weight = str(raw.get("weight") or "").strip().lower()
+    if weight in STYLE_WEIGHTS:
+        style["weight"] = weight
+    elif weight:
+        dropped.append(f"style.weight={weight!r}")
+    color = str(raw.get("color") or "").strip().lower()
+    if color in STYLE_COLORS:
+        style["color"] = color
+    elif color:
+        dropped.append(f"style.color={color!r}")
+    spacing = raw.get("spacing")
+    if spacing not in (None, ""):
+        try:
+            number = int(spacing)
+        except (TypeError, ValueError):
+            number = -1
+        if number in STYLE_SPACING:
+            style["spacing"] = number
+        else:
+            dropped.append(f"style.spacing={spacing!r}")
+    return style
+
+
+def apply_binding_samples(spec: Any, sample: Any = None) -> Any:
+    """把绑定样本套进**预览**（只影响返回值，不落库）。
+
+    当前元素契约没有 ``binding`` 字段、``BINDING_PATHS`` 也是空的，所以
+    样本没有登记落点——原样返回，绝不猜路径去改内容。等元素契约真的支持
+    绑定时，在这里按登记表逐路径覆盖即可（预览/生产仍共用同一个归一入口）。
+    """
+    return spec
+
+
 def normalize_visual_spec(raw: Any) -> VisualSpec:
     """把任意输入归成 `VisualSpec`（**唯一入口**；未知/越界一律丢弃并留痕）。"""
     data = raw if isinstance(raw, dict) else {}
@@ -286,5 +351,6 @@ def normalize_visual_spec(raw: Any) -> VisualSpec:
         layout=layout,
         accent=accent,
         footer=_s(data.get("footer"), 120),
+        style=_clean_style(data.get("style"), dropped),
         dropped=dropped,
     )

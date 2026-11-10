@@ -7,6 +7,7 @@ Runtime SQLite files, environment values, or internal Python objects.
 
 from __future__ import annotations
 
+import hmac
 from copy import deepcopy
 from typing import Any
 
@@ -208,7 +209,26 @@ def build_v1_router(
         # 命令面的幂等键走独立请求头：重试要复用同一串才叫幂等（request_id 每次不同）。
         return str(request.headers.get("idempotency-key", "") or "").strip()
 
-    def _submit_command(key: str, payload: Any, request: Request, principal: Principal, response: Any, *, reset: bool) -> dict[str, Any]:
+    def _owner_consent_granted(request: Request) -> bool:
+        """校验独立的「所有者授权口令」请求头。
+
+        与 Bearer API token 是**两把不同的钥匙**：API token 不能替自己批准写入，
+        只有部署显式打开 `bot_control_plane_allow_owner_consent` 且持独立 secret
+        的调用方才拿得到这条通道。缺省关闭时本函数恒 False（行为与旧版一致）。
+        """
+        if config is None:
+            return False
+        if not bool(getattr(config, "bot_control_plane_allow_owner_consent", False)):
+            return False
+        expected = str(getattr(config, "bot_control_plane_owner_secret", "") or "")
+        presented = str(request.headers.get("x-owner-consent", "") or "")
+        if not expected or not presented:
+            return False
+        if not hmac.compare_digest(presented, expected):
+            raise ControlPlaneError(403, "owner_consent_invalid", "所有者授权口令不正确。")
+        return True
+
+    def _submit_command(key: str, payload: Any, request: Request, principal: Principal, response: Any, *, reset: bool, owner_consent: bool = False) -> dict[str, Any]:
         idempotency_key = _idempotency_key(request)
         if not idempotency_key:
             raise ControlPlaneError(422, "config_command_idempotency_required", "命令面写操作必须带 Idempotency-Key 请求头。")
@@ -217,6 +237,7 @@ def build_v1_router(
             principal=principal, key=key, value=None if reset else payload.value,
             reset=reset, expected_version=payload.expected_version,
             idempotency_key=idempotency_key, scope=str(getattr(payload, "session_key", "") or ""),
+            owner_consent=owner_consent,
         )
         response.status_code = 202
         return _ok(dto)
@@ -234,17 +255,19 @@ def build_v1_router(
 
     @router.post("/config/{key}/set")
     def set_config(key: str, payload: ConfigWriteValuePayload, request: Request, response: Response, principal: Principal = Depends(write_dependency)) -> dict[str, Any]:
+        owner_consent = _owner_consent_granted(request)
         if config_command_gateway is not None:
-            return _submit_command(key, payload, request, principal, response, reset=False)
+            return _submit_command(key, payload, request, principal, response, reset=False, owner_consent=owner_consent)
         _require_legacy_write_allowed()
-        return _ok(require_config_service().set(key, payload.value, principal=principal, expected_version=payload.expected_version, request_id=request.state.cp_request_id, session_key=payload.session_key))
+        return _ok(require_config_service().set(key, payload.value, principal=principal, expected_version=payload.expected_version, request_id=request.state.cp_request_id, session_key=payload.session_key, owner_consent=owner_consent))
 
     @router.post("/config/{key}/reset")
     def reset_config(key: str, payload: ConfigWriteResetPayload, request: Request, response: Response, principal: Principal = Depends(write_dependency)) -> dict[str, Any]:
+        owner_consent = _owner_consent_granted(request)
         if config_command_gateway is not None:
-            return _submit_command(key, payload, request, principal, response, reset=True)
+            return _submit_command(key, payload, request, principal, response, reset=True, owner_consent=owner_consent)
         _require_legacy_write_allowed()
-        return _ok(require_config_service().reset(key, principal=principal, expected_version=payload.expected_version, request_id=request.state.cp_request_id, session_key=payload.session_key))
+        return _ok(require_config_service().reset(key, principal=principal, expected_version=payload.expected_version, request_id=request.state.cp_request_id, session_key=payload.session_key, owner_consent=owner_consent))
 
     if event_service is None:
         @router.get("/logs")

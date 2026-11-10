@@ -223,7 +223,7 @@ def _group_id_from_session(session: str) -> str | None:
 
 def _optional_cell(row: sqlite3.Row | None, column: str) -> str | None:
     """容缺读可选列：行里没这列 / NULL / 空串 → None（未采集，不是空串）。"""
-    if row is None or column not in row.keys():
+    if row is None or column not in row.keys():  # noqa: SIM118 - sqlite3.Row 的 in 查的是值不是列名
         return None
     value = row[column]
     if value is None:
