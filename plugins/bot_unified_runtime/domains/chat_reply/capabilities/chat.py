@@ -218,6 +218,7 @@ def build_direct_vision_messages(
     image_urls: list[str],
     max_images: int = 2,
     media_parts: list[dict[str, Any]] | None = None,
+    animation_hint: bool = False,
 ) -> list[dict[str, Any]]:
     """Attach de-duplicated image URLs (and native AV parts) to one multimodal user message.
 
@@ -241,6 +242,19 @@ def build_direct_vision_messages(
     if not urls and not media_parts:
         return list(messages)
     content: list[dict[str, Any]] = [{"type": "text", "text": query_text or "请查看图片。"}]
+    if animation_hint:
+        # 动图的拼条在视觉上就是一张并排静图；不给这句话，模型只能报"静止画面"
+        # （2026-11-10 实测：三帧 A/B/C 的动图被答成"这是一张静态图片"）。
+        # 只陈述载荷形态，不替模型编内容。
+        content.append(
+            {
+                "type": "text",
+                "text": (
+                    "（随附图片中含动图抽帧：这是同一段动图按时间顺序从左到右抽出的帧，"
+                    "应理解为动图/动画，而不是一张静态图片；这些帧不是彼此独立的图片。）"
+                ),
+            }
+        )
     content.extend({"type": "image_url", "image_url": {"url": url}} for url in urls)
     content.extend(dict(part) for part in media_parts or [])
     result = [dict(message) for message in messages]
@@ -3856,6 +3870,7 @@ def build_chat_prompt_with_diagnostics(
             for _tl_label, _tl_value in (
                 ("节气", getattr(temporal, "solar_term", "")),
                 ("节日", getattr(temporal, "holiday", "")),
+                ("季节", getattr(temporal, "season", "")),
             ):
                 _tl_value = str(_tl_value or "").strip()
                 if _tl_value and f"{_tl_label}：" not in _rendered_time:
@@ -4955,6 +4970,7 @@ def build_chat_result(
     generated_files_dir = str(llm_options.pop("generated_files_dir", "data/generated_files") or "data/generated_files")
     direct_image_urls = llm_options.pop("direct_image_urls", [])
     direct_media_parts = llm_options.pop("direct_media_parts", [])
+    direct_animation_hint = bool(llm_options.pop("direct_animation_hint", False))
     direct_query_text = str(llm_options.pop("direct_query_text", "") or context.current_message)
     context = _apply_decision_budget_to_context(context, decision)
     safety = assess_public_content(
@@ -5256,6 +5272,7 @@ def build_chat_result(
             media_parts=[dict(part) for part in direct_media_parts]
             if isinstance(direct_media_parts, list)
             else [],
+            animation_hint=direct_animation_hint,
         )
         llm_options["require_vision"] = True
     diagnostic_tags = _chat_diagnostic_tags(context, prompt_diagnostics)
@@ -6487,6 +6504,7 @@ def build_chat_capability(
                 query_text=injection_check.sanitized_text,
                 max_images=vision_max_images,
                 max_chars=vision_max_chars,
+                animation_hint=bool(animated_native_urls),
             )
             request_budget.record_phase("vision", vision_started)
             if vision_text:
@@ -7376,6 +7394,7 @@ def build_chat_capability(
             content_route_config=content_route_config,
             direct_image_urls=image_urls[:vision_max_images] if direct_vision else [],
             direct_media_parts=native_media_parts,
+            direct_animation_hint=bool(animated_native_urls),
             direct_query_text=injection_check.sanitized_text,
             media_budget_tags=media_budget_tags,
             **effective_options,
@@ -7391,6 +7410,7 @@ def build_chat_capability(
                 query_text=injection_check.sanitized_text,
                 max_images=vision_max_images,
                 max_chars=vision_max_chars,
+                animation_hint=bool(animated_native_urls),
             )
             if relay_text:
                 fallback_context = context.model_copy(

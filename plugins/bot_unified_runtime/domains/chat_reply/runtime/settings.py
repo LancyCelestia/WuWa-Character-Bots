@@ -1088,6 +1088,19 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
         "落盘点寿命清扫 TTL：sweep_ttl_days_from_config 装配期现算口（消费点唯一），"
         "合并层未登记 ⇒ 需重启；≤0＝清扫关闭"
     ),
+    # ---- 2026-11-10 多模态/控制面新增键（W-ALPHA）：三个新字段都还没有合并层实时读点 ----
+    "BOT_ASR_LOCAL_COMMAND": (
+        "本地 ASR 命令在 build_asr_provider 装配期读一次并包成 provider，"
+        "运行期没有重建通道 ⇒ 热改不换命令，改 .env + 重启"
+    ),
+    "BOT_CONTROL_PLANE_OWNER_SECRET": (
+        "控制面所有者授权口令在 create_control_plane_app 装配期进入 Config 快照，"
+        "请求侧只读该快照；改口令必须重启控制面，热改不生效"
+    ),
+    "BOT_CONTROL_PLANE_ALLOW_OWNER_CONSENT": (
+        "所有者授权总闸同属控制面装配期快照（_owner_consent_granted 现读 config），"
+        "热改不会打开或关闭授权通道 ⇒ 重启生效"
+    ),
 }
 
 

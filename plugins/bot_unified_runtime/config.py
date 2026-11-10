@@ -461,6 +461,11 @@ class Config(BaseModel):
     bot_control_plane_actions_db: str = "data/control_plane_actions.sqlite3"
     bot_control_plane_features_file: str = "data/control_plane_features.json"
     bot_control_plane_super_admin_token_sha256: str = ""
+    # WebUI 主人授权口令：**独立于** API token 的第二把钥匙。只有显式打开
+    # bot_control_plane_allow_owner_consent 才生效；用于让控制面以「主人本人
+    # 在私聊里批卡」的语义批准 R1/R2 设置写入，而不是让 API token 自己给自己批。
+    bot_control_plane_owner_secret: str = ""
+    bot_control_plane_allow_owner_consent: bool = False
     # F-1（SEAT-ATK-CP）：/api/v1/files/read 的读取根白名单（逗号分隔或列表，同
     # host_allowlist 形态）。缺省空 ⇒ 端点 503 诚实拒绝，绝不回落进程 cwd。
     # 消费点＝control_plane/api/platform.py 现读装配期快照经 file_access 网关执法；
@@ -1352,6 +1357,10 @@ class Config(BaseModel):
     bot_asr_enabled: bool = False
     bot_asr_timeout_seconds: float = 20.0
     bot_asr_max_chars: int = 300
+    # 本地命令转写（可选）：外部程序路径 + 参数，最后一个参数是临时音频文件路径。
+    # 适合把 faster-whisper/FunASR 装在本机另一个 Python 环境里，避免 bot venv
+    # 背模型依赖；stdout 最后一行或 JSON 的 text 字段作为转写文本。
+    bot_asr_local_command: str = ""
     # 视频理解（媒体档案库 + 抽帧/音轨/字幕 → 人格化追问）：
     # 总开关。关闭时完全走旧的 describe_video 抽帧摘要行为，零额外开销。
     bot_video_understanding_enabled: bool = False

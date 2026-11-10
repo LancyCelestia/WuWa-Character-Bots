@@ -1022,6 +1022,7 @@ def describe_images_with_status(
     query_text: str = "",
     max_images: int = _DEFAULT_MAX_IMAGES,
     max_chars: int = _DEFAULT_MAX_CHARS,
+    animation_hint: bool = False,
 ) -> tuple[str, str]:
     """识别图片并**如实报告这一趟属于哪一类结果**：`(文本, kind)`。
 
@@ -1061,6 +1062,17 @@ def describe_images_with_status(
             ),
         }
     ]
+    if animation_hint:
+        # 拼条是静态并排帧；不声明载荷形态，模型只能按"一张静图"作答。
+        content.append(
+            {
+                "type": "text",
+                "text": (
+                    "（这些图里含动图抽帧：这是同一段动图按时间顺序从左到右抽出的帧，"
+                    "应理解为动图/动画，而不是一张静态图片；这些帧不是彼此独立的图片。）"
+                ),
+            }
+        )
     for url in image_urls[:limit]:
         content.append({"type": "image_url", "image_url": {"url": url}})
     messages: list[dict[str, Any]] = [
@@ -1092,6 +1104,7 @@ def describe_images(
     query_text: str = "",
     max_images: int = _DEFAULT_MAX_IMAGES,
     max_chars: int = _DEFAULT_MAX_CHARS,
+    animation_hint: bool = False,
 ) -> str:
     """调用视觉模型输出紧凑识别结果；任何失败返回空串，绝不阻断主回复。
 
@@ -1104,6 +1117,7 @@ def describe_images(
         query_text=query_text,
         max_images=max_images,
         max_chars=max_chars,
+        animation_hint=animation_hint,
     )
     return text
 

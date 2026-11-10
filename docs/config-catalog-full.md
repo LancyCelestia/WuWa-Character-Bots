@@ -469,6 +469,7 @@
 | `BOT_ASR_ENABLED` | bool | `False` | | ✅热更 | 语音转写开关 | |
 | `BOT_ASR_TIMEOUT_SECONDS` | float | `20.0` | >0 | | 单次转写超时 | |
 | `BOT_ASR_MAX_CHARS` | int | `300` | ≥0 | | 转写文本注入上限 | |
+| `BOT_ASR_LOCAL_COMMAND` | str | 空 | 可执行命令（含参数）；运行时把音频文件路径追加为最后一个参数，读 stdout 末行 JSON/文本 | | 本地 ASR 命令（faster-whisper 等外部脚本）；装配期建 provider，改它需重启 | 输出约定见 `scripts/asr_local_whisper.py`；空值＝不启用 |
 
 **视频理解与媒体档案 bot.video**
 
@@ -907,6 +908,8 @@
 | `bot_control_plane_actions_db` | `data/control_plane_actions.sqlite3` | 控制面动作审计/待执行存储（并行控制面批次工作树键，按收敛流程补录；经 runtime_paths 重映射）。 |
 | `bot_control_plane_features_file` | `data/control_plane_features.json` | 旧功能状态 JSON 的单次导入源；SQLite 已有状态时不覆盖，原 JSON 保留。显式旧工具配置仍可使用 JSON 兼容存储。 |
 | `bot_control_plane_super_admin_token_sha256` | 空 | 独立超管 Bearer 的 SHA-256 摘要；空值禁用写操作；与只读摘要相同也禁用写操作。不通过配置 API 返回或修改。 |
+| `bot_control_plane_owner_secret` | 空 | 所有者授权口令（独立于 API token）；控制面写 R1/R2 配置时用它替代人工同意卡。空值＝该通道关闭；不通过配置 API 返回，改它需重启控制面。 |
+| `bot_control_plane_allow_owner_consent` | `false` | 所有者授权总闸；只有为 true 且 `owner_secret` 已配置时，`X-Owner-Consent` 才被接受。装配期快照读取，改它需重启。 |
 
 **非 Config 键（getattr 防御式读取，未入本表字段域）**：本条已清空。`BOT_LLM_BILLING_ENABLED` 此前属本形态（读点幽灵），2026-09-26 批已在 `config.py` 补上真字段 `bot_llm_billing_enabled`，登记见文末「欠账批次补录」X6 节。控制面监听键已进入上表 Config 字段域。
 

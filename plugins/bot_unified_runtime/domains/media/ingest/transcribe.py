@@ -19,7 +19,9 @@ ffmpeg 转成 16kHz 单声道 mp3（体积小、兼容面最广）；ffmpeg 失�
 from __future__ import annotations
 
 import base64
+import json
 import logging
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -177,6 +179,180 @@ def _flatten_asr_entries(
                 )
             flattened[entry_id] = entry
     return flattened
+
+
+class LocalCommandASRProvider:
+    """本地命令 ASR：把语音字节写进临时文件，交给外部转写命令。
+
+    存在的理由是"云端转写不可达时语音不能变成哑巴"：本机已有 faster-whisper /
+    FunASR 之类的转写器时，管理员用 BOT_ASR_LOCAL_COMMAND 指向它即可，
+    不必把模型依赖装进 bot 的 venv。命令只接一个参数：临时音频文件路径；
+    stdout 最后一行（或 JSON 里的 text）就是转写文本。
+    """
+
+    def __init__(self, command: str, *, timeout_seconds: float = 20.0) -> None:
+        self._command = str(command or "").strip()
+        self._config = _ASRConfig(timeout_seconds)
+        self.last_attempts: list[str] = []
+
+    def is_enabled(self) -> bool:
+        return bool(self._command)
+
+    def generate(
+        self,
+        audio_bytes: bytes,
+        filename: str,
+        *,
+        timeout_seconds: float,
+        deadline_monotonic: float | None = None,
+    ) -> str:
+        if not self._command:
+            raise LLMProviderError(
+                "local asr command is not configured",
+                error_kind="provider_not_configured",
+            )
+        try:
+            argv = shlex.split(self._command, posix=True)
+        except ValueError as exc:
+            raise LLMProviderError(
+                f"local asr command is invalid: {type(exc).__name__}",
+                error_kind="config_invalid",
+            ) from exc
+        if not argv:
+            raise LLMProviderError(
+                "local asr command is empty",
+                error_kind="provider_not_configured",
+            )
+        suffix = Path(filename).suffix or ".wav"
+        temp_path = ""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
+                handle.write(audio_bytes)
+                temp_path = handle.name
+            timeout = max(1.0, float(timeout_seconds or 20.0))
+            completed = subprocess.run(
+                [*argv, temp_path],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise LLMProviderError(
+                "local asr command timed out",
+                error_kind="timeout",
+            ) from exc
+        except OSError as exc:
+            raise LLMProviderError(
+                f"local asr command failed to start: {type(exc).__name__}",
+                error_kind="network",
+            ) from exc
+        finally:
+            if temp_path:
+                try:
+                    Path(temp_path).unlink(missing_ok=True)
+                except OSError:
+                    logger.debug("local asr temp cleanup failed", exc_info=True)
+        if completed.returncode != 0:
+            self.last_attempts.append("local:failed")
+            raise LLMProviderError(
+                f"local asr command exit {completed.returncode}",
+                error_kind="server",
+            )
+        text = _parse_local_asr_stdout(completed.stdout)
+        if not text:
+            self.last_attempts.append("local:empty")
+            raise LLMProviderError("local asr returned empty text", error_kind="empty")
+        self.last_attempts.append("local:success")
+        return text
+
+
+class CompositeASRProvider:
+    """按顺序尝试多个 ASR 提供器；本地优先，云端兜底。"""
+
+    def __init__(self, providers: list[Any], *, config: Any = None) -> None:
+        self._providers = [provider for provider in providers if provider is not None]
+        self._config = config or getattr(self._providers[0], "_config", None)
+        self.last_attempts: list[str] = []
+
+    def is_enabled(self) -> bool:
+        return any(bool(provider.is_enabled()) for provider in self._providers)
+
+    def generate(
+        self,
+        audio_bytes: bytes,
+        filename: str,
+        *,
+        timeout_seconds: float,
+        deadline_monotonic: float | None = None,
+    ) -> str:
+        self.last_attempts = []
+        last_error: LLMProviderError | None = None
+        for provider in self._providers:
+            if not bool(provider.is_enabled()):
+                continue
+            try:
+                text = provider.generate(
+                    audio_bytes,
+                    filename,
+                    timeout_seconds=timeout_seconds,
+                    deadline_monotonic=deadline_monotonic,
+                )
+            except LLMProviderError as exc:
+                last_error = exc
+                self.last_attempts.extend(
+                    getattr(provider, "last_attempts", []) or ["asr:failed"]
+                )
+                continue
+            except Exception as exc:  # noqa: BLE001 - 单个提供器崩溃要能落到下一个。
+                last_error = LLMProviderError(
+                    f"asr provider failed: {type(exc).__name__}",
+                    error_kind="unknown",
+                )
+                self.last_attempts.append(f"asr:{type(exc).__name__}")
+                continue
+            if text:
+                self.last_attempts.extend(
+                    getattr(provider, "last_attempts", []) or ["asr:success"]
+                )
+                return text
+        if last_error is not None:
+            raise last_error
+        raise LLMProviderError(
+            "no asr provider available",
+            error_kind="provider_not_configured",
+        )
+
+
+class _ASRConfig:
+    """给 LocalCommandASRProvider 一个读取超时的最小配置面。"""
+
+    def __init__(self, timeout_seconds: float) -> None:
+        self.bot_asr_timeout_seconds = float(timeout_seconds)
+
+
+def _parse_local_asr_stdout(stdout: str) -> str:
+    """外部命令输出 → 文本：优先 JSON 的 text，否则最后一行非空输出。"""
+    raw = str(stdout or "").strip()
+    if not raw:
+        return ""
+    for line in reversed(raw.splitlines()):
+        candidate = line.strip()
+        if not candidate:
+            continue
+        if candidate.startswith("{"):
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                text = str(parsed.get("text", "") or "").strip()
+                if text:
+                    return text
+        return candidate
+    return ""
 
 
 class DynamicASRProvider:
@@ -342,10 +518,12 @@ def build_asr_provider(
     *,
     dynamic_registry: Any = None,
     settings_store: Any = None,
-) -> DynamicASRProvider | None:
-    """组装动态 ASR provider；注册表完全为空时返回 None（零开销跳过）。
+) -> Any | None:
+    """组装 ASR provider；本地命令与云端注册表可以同时存在。
 
-    开关（BOT_ASR_ENABLED）在每次调用时读取，支持运行时热切换。
+    本地命令（BOT_ASR_LOCAL_COMMAND）优先：它不依赖外网，云端 ASR 不可达时
+    语音仍然能变成文字。注册表与本地命令都为空时返回 None（零开销跳过）。
+    开关（BOT_ASR_ENABLED）在调用点读取，支持运行时热切换。
     """
     has_env = bool(_flatten_asr_entries(
         getattr(config, "bot_asr_model_registry", None)
@@ -356,13 +534,30 @@ def build_asr_provider(
             has_dynamic = bool(_flatten_asr_entries(dynamic_registry() or {}))
         except Exception:  # noqa: BLE001 - 注册表读取失败按空处理。
             has_dynamic = False
-    if not has_env and not has_dynamic:
+    local_command = str(getattr(config, "bot_asr_local_command", "") or "").strip()
+    providers: list[Any] = []
+    if local_command:
+        providers.append(
+            LocalCommandASRProvider(
+                local_command,
+                timeout_seconds=float(
+                    getattr(config, "bot_asr_timeout_seconds", 20.0) or 20.0
+                ),
+            )
+        )
+    if has_env or has_dynamic:
+        providers.append(
+            DynamicASRProvider(
+                config,
+                dynamic_registry=dynamic_registry,
+                settings_store=settings_store,
+            )
+        )
+    if not providers:
         return None
-    return DynamicASRProvider(
-        config,
-        dynamic_registry=dynamic_registry,
-        settings_store=settings_store,
-    )
+    if len(providers) == 1:
+        return providers[0]
+    return CompositeASRProvider(providers, config=config)
 
 
 def _download_audio(source: str, dest: Path, timeout_seconds: float) -> Path | None:
