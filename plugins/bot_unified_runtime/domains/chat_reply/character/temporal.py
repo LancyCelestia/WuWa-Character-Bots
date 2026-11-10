@@ -1,9 +1,10 @@
 """当前环境信息层：本地时间、日期、节气、节日、天气。
 
 - 时间/日期：用 ``zoneinfo`` 按配置时区计算，属于可信信息。
-- 节气：用通用天文近似公式计算 24 节气日期（21 世纪系数表）。
-- 节日：内置 2026 年常用节日表（农历节日为近似换算、仅 2026 成立不跨年
-  复用，公历固定节日逐年复用；允许后续用 ``BOT_HOLIDAYS_FILE`` 覆盖）。
+- 节气/季节：唯一历法真身 = ``domains/divination/data/multi_calendar``
+  （北京时间的真天文交节算法），本件只调用，不维护第二套近似表。
+- 节日：农历节日按当年农历实算（春节/元宵/端午/中秋/重阳/除夕等），
+  公历固定节日逐年复用；允许用 ``BOT_HOLIDAYS_FILE`` 覆盖。
 - 天气：``WeatherProvider`` 接口 + 默认空实现；配置坐标后可用
   ``OpenMeteoWeatherProvider``（免费、无需 API key）按 TTL 缓存。
   天气属于外部事实，可能不可用或过期，prompt 会明确提示不要编造。
@@ -36,52 +37,36 @@ from plugins.bot_unified_runtime.domains.core.contracts.character import Tempora
 
 WEEKDAY_NAMES = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 
-# 21 世纪 24 节气近似公式系数（日 = int(y*0.2422 + C) - int((y-1)/4)）。
-_SOLAR_TERMS: tuple[tuple[str, int, float], ...] = (
-    ("小寒", 1, 5.4055),
-    ("大寒", 1, 20.12),
-    ("立春", 2, 3.87),
-    ("雨水", 2, 18.73),
-    ("惊蛰", 3, 5.63),
-    ("春分", 3, 20.646),
-    ("清明", 4, 4.81),
-    ("谷雨", 4, 20.1),
-    ("立夏", 5, 5.52),
-    ("小满", 5, 21.04),
-    ("芒种", 6, 5.678),
-    ("夏至", 6, 21.37),
-    ("小暑", 7, 7.108),
-    ("大暑", 7, 22.83),
-    ("立秋", 8, 7.5),
-    ("处暑", 8, 23.13),
-    ("白露", 9, 7.646),
-    ("秋分", 9, 23.042),
-    ("寒露", 10, 8.318),
-    ("霜降", 10, 23.438),
-    ("立冬", 11, 7.438),
-    ("小雪", 11, 22.36),
-    ("大雪", 12, 7.18),
-    ("冬至", 12, 21.94),
-)
-
-# 节日表年份维度（V2.1 风险 7 修复，2026-09-17）：节日分两类——
-# 公历固定节日逐年复用；农历节日（近似换算）只对表内年份（2026）成立，
-# 绝不跨年复用（2027 春节实为 02-06，套用 2026 表会把 2027-02-17 错报
-# 成春节）。``BOT_HOLIDAYS_FILE`` 覆盖表仍为 (MM-DD, 名称) 形态，按表
-# 原样匹配（年份语义由表作者负责）。
+# 公历固定节日逐日复用。清明节不在这里：它按太阳黄经交节，每年可能是
+# 04-04 或 04-05，必须由 multi_calendar.solar_term_on 现算；写死在表里
+# 会把非清明日误报成清明节。
 _GREGORIAN_HOLIDAYS: tuple[tuple[str, str], ...] = (
     ("01-01", "元旦"),
     ("02-14", "情人节"),
     ("03-08", "妇女节"),
-    ("04-05", "清明节"),
     ("05-01", "劳动节"),
     ("06-01", "儿童节"),
+    ("09-10", "教师节"),
     ("10-01", "国庆节"),
     ("12-24", "平安夜"),
     ("12-25", "圣诞节"),
 )
 
-# 农历节日（2026 年近似换算）：仅 2026 成立。
+# 农历节日按「月-日」登记（不是公历日期）；是否闰月由 lunar_from_gregorian 判定。
+_LUNAR_FESTIVALS: tuple[tuple[int, int, str], ...] = (
+    (1, 1, "春节"),
+    (1, 15, "元宵节"),
+    (2, 2, "龙抬头"),
+    (5, 5, "端午节"),
+    (7, 7, "七夕"),
+    (7, 15, "中元节"),
+    (8, 15, "中秋节"),
+    (9, 9, "重阳节"),
+    (12, 8, "腊八节"),
+)
+
+# 保留给公开导入面/旧调用方的 2026 快照表；运行时 holiday_of(day, None)
+# 走动态农历，不再依赖这张表。显式传 table 的调用方仍按表原样匹配。
 _LUNAR_HOLIDAYS_2026: tuple[tuple[str, str], ...] = (
     ("02-16", "除夕"),
     ("02-17", "春节"),
@@ -95,7 +80,6 @@ _LUNAR_HOLIDAYS_2026: tuple[tuple[str, str], ...] = (
 DEFAULT_HOLIDAYS_2026: tuple[tuple[str, str], ...] = (
     _LUNAR_HOLIDAYS_2026 + _GREGORIAN_HOLIDAYS
 )
-_DEFAULT_HOLIDAY_TABLE_YEAR = 2026
 
 _WEATHER_CODES: dict[int, str] = {
     0: "晴",
@@ -129,31 +113,107 @@ _WEATHER_CODES: dict[int, str] = {
 }
 
 
-def solar_term_of(day: datetime) -> str:
-    """返回 ``day`` 当天对应的节气名，无则返回空字符串。"""
-    year = day.year
-    for name, month, coefficient in _SOLAR_TERMS:
-        term_day = int(year * 0.2422 + coefficient) - int((year - 1) / 4)
-        if day.month == month and day.day == term_day:
-            return name
+def _day_date(day: datetime | date) -> date:
+    return day.date() if isinstance(day, datetime) else day
+
+
+def solar_term_of(day: datetime | date) -> str:
+    """返回 ``day`` 当天对应的节气名，无则返回空字符串。
+
+    只认 ``multi_calendar.solar_term_on``（真天文交节，北京时间）；
+    本件不再维护近似公式——旧公式在 2026 年有 29 天报错。
+    """
+    target = _day_date(day)
+    try:
+        from plugins.bot_unified_runtime.domains.divination.data.multi_calendar import (
+            solar_term_on,
+        )
+
+        return solar_term_on(target.year, target.month, target.day)
+    except Exception:  # noqa: BLE001 - 超出历表支持区间/历法件不可用 ⇒ 诚实空串
+        return ""
+
+
+def _lunar_festival_of(target: date) -> str:
+    """按农历实算当日传统节日；除夕用「次日为正月初一」判定。"""
+    try:
+        from plugins.bot_unified_runtime.domains.divination.data.multi_calendar import (
+            lunar_from_gregorian,
+        )
+
+        lunar = lunar_from_gregorian(target.year, target.month, target.day)
+    except Exception:  # noqa: BLE001 - 历表外/历法件故障 ⇒ 不猜节日
+        return ""
+    if not lunar.is_leap_month:
+        for month, day, name in _LUNAR_FESTIVALS:
+            if lunar.month == month and lunar.day == day:
+                return name
+    if lunar.month == 12:
+        try:
+            from datetime import timedelta
+
+            following = target + timedelta(days=1)
+            next_lunar = lunar_from_gregorian(
+                following.year, following.month, following.day
+            )
+            if next_lunar.month == 1 and next_lunar.day == 1:
+                return "除夕"
+        except Exception:  # 跨年边界算不出就不报除夕
+            logging.getLogger(__name__).debug("除夕边界推算失败", exc_info=True)
     return ""
 
 
-def holiday_of(day: datetime, table: tuple[tuple[str, str], ...] | None = None) -> str:
+def holiday_of(day: datetime | date, table: tuple[tuple[str, str], ...] | None = None) -> str:
     """返回 ``day`` 当天节日名，无则返回空字符串。
 
-    默认表带年份维度：农历节日（近似换算）只在表内年份（2026）成立，
-    其余年份仅复用公历固定节日——绝不把 2026 农历日期套到别的年份。
-    显式注入 ``table`` 时按表原样匹配（保持既有调用方语义）。
+    ``table is None``（默认）：农历节日按当年农历实算，公历节日固定复用，
+    清明按真节气现算；同一日多个节日用「、」连接。显式传入 ``table`` 时
+    仍按表原样匹配（``BOT_HOLIDAYS_FILE`` 覆盖语义不变，年份由表作者负责）。
     """
-    if table is None and day.year != _DEFAULT_HOLIDAY_TABLE_YEAR:
-        table = _GREGORIAN_HOLIDAYS
-    entries = table if table is not None else DEFAULT_HOLIDAYS_2026
-    month_day = f"{day.month:02d}-{day.day:02d}"
-    for date_key, name in entries:
+    target = _day_date(day)
+    month_day = f"{target.month:02d}-{target.day:02d}"
+    if table is not None:
+        for date_key, name in table:
+            if date_key == month_day:
+                return name
+        return ""
+
+    names: list[str] = []
+    if solar_term_of(target) == "清明":
+        names.append("清明节")
+    lunar_name = _lunar_festival_of(target)
+    if lunar_name:
+        names.append(lunar_name)
+    for date_key, name in _GREGORIAN_HOLIDAYS:
         if date_key == month_day:
-            return name
-    return ""
+            names.append(name)
+    return "、".join(dict.fromkeys(names))
+
+
+def season_of(day: datetime | date) -> str:
+    """按四立（立春/立夏/立秋/立冬）划分传统四季；历表外返回空串。
+
+    这是二十四节气体系里的季节，不是气象学（3-5 月为春）口径：
+    立春当日即入春，立冬当日即入冬。日期比较全部用真交节日。
+    """
+    target = _day_date(day)
+    try:
+        from plugins.bot_unified_runtime.domains.divination.data.multi_calendar import (
+            solar_terms_of_year,
+        )
+
+        terms = dict(solar_terms_of_year(target.year))
+    except Exception:  # noqa: BLE001 - 历表外 ⇒ 不猜季节
+        return ""
+    if target >= terms["立冬"]:
+        return "冬季"
+    if target >= terms["立秋"]:
+        return "秋季"
+    if target >= terms["立夏"]:
+        return "夏季"
+    if target >= terms["立春"]:
+        return "春季"
+    return "冬季"
 
 
 def load_holiday_table(path: str | Path | None) -> tuple[tuple[str, str], ...] | None:
@@ -385,6 +445,7 @@ class RuleBasedTemporalProvider:
             holiday=holiday_of(
                 now, None if self._holiday_table_is_default else self.holiday_table
             ),
+            season=season_of(now),
             weather_summary=weather_summary,
             weather_ok=bool(weather_summary),
             weather_source="open-meteo" if weather_summary else "",

@@ -157,6 +157,7 @@ class TemporalContext(StrictBaseModel):
     timezone: str = ""
     solar_term: str = ""
     holiday: str = ""
+    season: str = ""
     weather_summary: str = ""
     weather_ok: bool = False
     weather_source: str = ""

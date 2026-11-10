@@ -897,7 +897,17 @@ class FileCharacterContextProvider:
         )
         knowledge_chunks: list[KnowledgeChunk] = []
         retrieval_failed = False
-        if self.vector_retriever is not None:
+        # 时间/日期问句的答案已在 TemporalContext 里，跳过知识库检索（含静态
+        # 文件兜底）。实测这条腿单轮约 14.5s，是「现在几点」慢的主因。
+        try:
+            from plugins.bot_unified_runtime.domains.chat_reply.runtime.question_intent import (
+                is_local_temporal_query,
+            )
+
+            local_temporal = is_local_temporal_query(query_text)
+        except Exception:  # noqa: BLE001 - 判据故障不得阻断上下文构建。
+            local_temporal = False
+        if self.vector_retriever is not None and not local_temporal:
             try:
                 knowledge_chunks = list(self.vector_retriever(query_text) or [])
                 # T3（需求 3 断链）：块序每轮由跨源判据算一次，不再靠装配时手写的
@@ -925,7 +935,7 @@ class FileCharacterContextProvider:
                     "skipping static fallback: type=%s",
                     type(exc).__name__,
                 )
-        if not knowledge_chunks and not retrieval_failed:
+        if not local_temporal and not knowledge_chunks and not retrieval_failed:
             # 正常无命中：保留静态文件块兜底。服务故障（retrieval_failed）
             # 不再注入整文件前几块——静态注入既掩盖故障又污染 prompt。
             # 清单随人格现取（H-4甲）：切人格只换文本清单，向量检索腿不碰。

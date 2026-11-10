@@ -496,6 +496,37 @@ def _strip(text: str) -> str:
     return (text or "").strip()
 
 
+# 本地时间/日期问句：答案已由 TemporalContext 每轮注入（日期、星期、时刻、
+# 节气、节日），不需要知识库或联网检索。实测一句「现在几点」曾触发
+# vector_knowledge.retrieve（约 14.5s）与 web_search（约 12.2s），是简单
+# 对话被拖到 37s 的主因。判据只认「问的是本地日历事实」，不认新闻/天气/
+# 游戏更新等时效话题——那些仍要走检索。
+_LOCAL_TEMPORAL_BLOCK_RE = re.compile(
+    r"(新闻|消息|更新|版本|公告|维护|发布|前瞻|直播|卡池|活动|限定|复刻|"
+    r"加强|削弱|改动|实装|预告|解禁|发售|价格|多少钱|汇率|股票|股价|行情|"
+    r"房价|门票|时间地点|台风|空气质量|天气|气温|降雨)"
+)
+_LOCAL_TEMPORAL_RE = re.compile(
+    r"^(?:请问|问一下|告诉我|你知道|帮我看看)?\s*"
+    r"(?:"
+    r"(?:现在|目前|此刻|当前)(?:是)?(?:几点|什么时间|什么日期|几号|星期几|周几|哪一天|几月几号|农历)"
+    r"|(?:今天|今日|当天)(?:是)?(?:几号|几月几号|星期几|周几|哪一天|什么日子|什么节气|什么季节|什么节日|农历)"
+    r"|(?:现在|目前|当前|今天|今日)(?:是)?(?:什么|哪个)(?:节气|季节|节日)"
+    r"|(?:今年|本年)(?:是)?(?:哪一年|什么年|什么生肖|农历什么年)"
+    r"|(?:现在|当前|目前).{0,4}(?:时间|日期)"
+    r"|几点了|几号了|今天星期几|今天几号"
+    r")"
+)
+
+
+def is_local_temporal_query(text: str) -> bool:
+    """问句是否只问本地日历/时间事实，可由 TemporalContext 直接回答。"""
+    stripped = _strip(text)
+    if not stripped or _LOCAL_TEMPORAL_BLOCK_RE.search(stripped):
+        return False
+    return bool(_LOCAL_TEMPORAL_RE.match(stripped))
+
+
 def _is_question_like(text: str) -> bool:
     return bool(_QUESTION_LIKE_RE.search(text) or _QUESTION_WORD_RE.search(text))
 
@@ -667,6 +698,21 @@ def classify_question_intent(
         scores["technical_how_to"] = 0.6
     if question_like:
         scores["question_form"] = 0.35
+
+    # 本地日历/时间问句：TemporalContext 已含日期、星期、时刻、节气、节日，
+    # 直接本地作答。必须排在时效信号之前——否则「现在几点」会被 _CURRENT_RE
+    # 判成 PRIMARY，先烧 12s 联网再回答一个本来就在 system prompt 里的答案。
+    if is_local_temporal_query(stripped):
+        return _finish(
+            intent=QuestionIntent.NEUTRAL,
+            reason="local_temporal",
+            category="LOCAL_TEMPORAL",
+            decision=WebDecision.NEVER,
+            confidence=0.99,
+            reason_codes=["local_temporal"],
+            scores=scores,
+            allow_web_fallback=False,
+        )
 
     # 明确的“不要联网”优先于一般搜索信号；只保留本地回答。
     if no_web:

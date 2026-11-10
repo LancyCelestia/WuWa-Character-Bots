@@ -182,6 +182,12 @@ def test_tibetan_month_day_lopsang_are_declared_unsourced() -> None:
 def test_lunar_public_anchors() -> None:
     assert lunar_new_year(2026) == date(2026, 2, 17)  # 2026 春节（公开历书）
     assert lunar_new_year(2025) == date(2025, 1, 29)
+    # 2027 香港天文台公历农历对照表：2/5 = 腊月廿九（除夕）、2/6 = 正月初一。
+    # 这条锚钉住 Meeus 平朔多项式的 T² 项：旧实现用错系数（0.2158910），
+    # 把 2027 合朔推后约 20 分钟到 2/7 00:16，春节整整错一天。
+    assert lunar_new_year(2027) == date(2027, 2, 6)
+    lunar_new_year_eve = lunar_from_gregorian(2027, 2, 5)
+    assert (lunar_new_year_eve.month_name, lunar_new_year_eve.day_name) == ("腊月", "廿九")
     lunar_mid_autumn = lunar_from_gregorian(2026, 9, 25)
     # 2026 中秋=公历 9 月 25 日（八月十五），公开历书可核。
     assert (lunar_mid_autumn.month, lunar_mid_autumn.day) == (8, 15)
