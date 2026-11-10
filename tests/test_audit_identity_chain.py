@@ -22,7 +22,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from plugins.bot_unified_runtime.control_plane.webui_stats import AuditCallStatsService
-from plugins.bot_unified_runtime.domains.chat_reply.runtime import pipeline as pipeline_module
+from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+    pipeline as pipeline_module,
+)
 from plugins.bot_unified_runtime.domains.core.contracts import (
     AuditRecord,
     IncomingMessage,
@@ -64,19 +66,19 @@ def _record(*, request_id: str = "req-1", session_id: str = "group_777_10001", c
 
 
 def _message(**overrides) -> IncomingMessage:
-    base = dict(
-        request_id="req-1",
-        platform="qq",
-        adapter="onebot.v11",
-        bot_id="10000",
-        session_id="group_777_10001",
-        session_type=SessionType.GROUP,
-        sender_id="10001",
-        sender_nickname="阿岚",
-        sender_display_name="阿岚",
-        group_id="777",
-        group_title="守岸人测试群",
-    )
+    base = {
+        "request_id": "req-1",
+        "platform": "qq",
+        "adapter": "onebot.v11",
+        "bot_id": "10000",
+        "session_id": "group_777_10001",
+        "session_type": SessionType.GROUP,
+        "sender_id": "10001",
+        "sender_nickname": "阿岚",
+        "sender_display_name": "阿岚",
+        "group_id": "777",
+        "group_title": "守岸人测试群",
+    }
     base.update(overrides)
     return IncomingMessage(**base)
 

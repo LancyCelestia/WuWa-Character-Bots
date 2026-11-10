@@ -53,7 +53,7 @@ def _extracted(name: str, namespace: dict, *, tail: bool = False):
         assert len(starts) == 1
         fn.body = fn.body[starts[0]:]
     module = ast.fix_missing_locations(ast.Module(body=[fn], type_ignores=[]))
-    exec(compile(module, str(ROOT), "exec"), namespace)
+    exec(compile(module, str(ROOT), "exec"), namespace)  # noqa: S102
     return namespace[name]
 
 

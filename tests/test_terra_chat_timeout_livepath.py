@@ -16,7 +16,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
-
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "plugins" / "bot_unified_runtime"
 CHAT = PACKAGE / "domains" / "chat_reply"
@@ -41,13 +40,13 @@ def _selected(path: Path, names: set[str], namespace: dict) -> None:
         ],
         type_ignores=[],
     )
-    exec(compile(ast.fix_missing_locations(module), str(path), "exec"), namespace)
+    exec(compile(ast.fix_missing_locations(module), str(path), "exec"), namespace)  # noqa: S102
 
 
 def _deadline() -> dict:
     path = CHAT / "runtime" / "deadline.py"
     namespace = {"__name__": "terra_live_deadline", "__file__": str(path)}
-    exec(compile(_tree(path), str(path), "exec"), namespace)
+    exec(compile(_tree(path), str(path), "exec"), namespace)  # noqa: S102
     return namespace
 
 
@@ -59,9 +58,10 @@ def _acg_constants() -> SimpleNamespace:
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             if node.target.id in names:
                 nodes.append(node)
-        elif isinstance(node, ast.Assign):
-            if any(isinstance(target, ast.Name) and target.id in names for target in node.targets):
-                nodes.append(node)
+        elif isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id in names for target in node.targets
+        ):
+            nodes.append(node)
     assert len(nodes) == len(names)
     module = ast.Module(
         body=[
@@ -71,7 +71,7 @@ def _acg_constants() -> SimpleNamespace:
         type_ignores=[],
     )
     namespace = {"__name__": "terra_acg_constants"}
-    exec(compile(ast.fix_missing_locations(module), str(path), "exec"), namespace)
+    exec(compile(ast.fix_missing_locations(module), str(path), "exec"), namespace)  # noqa: S102
     return SimpleNamespace(
         ACG_DOMAIN_TERMS=namespace["ACG_DOMAIN_TERMS"],
         ACG_TIER_STRONG=namespace["ACG_TIER_STRONG"],
@@ -109,7 +109,7 @@ def _question_module(imports: dict) -> types.ModuleType:
     module.__dict__["__builtins__"] = imports
     sys.modules[module.__name__] = module
     try:
-        exec(compile(_tree(path), str(path), "exec"), module.__dict__)
+        exec(compile(_tree(path), str(path), "exec"), module.__dict__)  # noqa: S102
     except BaseException:
         sys.modules.pop(module.__name__, None)
         raise

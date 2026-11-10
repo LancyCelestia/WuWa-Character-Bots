@@ -125,13 +125,13 @@ def _covered(host: str, listed: set[str]) -> bool:
         base = host.rsplit("-", 1)[0]
         if base in listed:
             return True
-    if host.endswith("::before") or host.endswith("::after"):
+    if host.endswith(("::before", "::after")):
         base = host.rsplit("::", 1)[0]
         if base in listed:
             return True
-    if "a.active" in host and any("a.active" in item or ".active" in item for item in listed):
-        return True
-    return False
+    return "a.active" in host and any(
+        "a.active" in item or ".active" in item for item in listed
+    )
 
 
 def test_every_infinite_animation_host_is_in_the_motion_off_list() -> None:

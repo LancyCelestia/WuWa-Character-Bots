@@ -17,7 +17,6 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-
 ROOT = Path(__file__).resolve().parents[1]
 CHAT_ROOT = ROOT / "plugins" / "bot_unified_runtime" / "domains" / "chat_reply"
 
@@ -26,7 +25,7 @@ def _deadline_namespace() -> dict:
     path = CHAT_ROOT / "runtime" / "deadline.py"
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     namespace = {"__name__": "terra_deadline_test", "__file__": str(path)}
-    exec(compile(tree, str(path), "exec"), namespace)
+    exec(compile(tree, str(path), "exec"), namespace)  # noqa: S102
     return namespace
 
 
@@ -54,7 +53,7 @@ def _tool_loop() -> object:
         "time": time,
         "_execute_mcp_tool_call": lambda _name, _arguments: "{}",
     }
-    exec(compile(ast.fix_missing_locations(module), str(path), "exec"), namespace)
+    exec(compile(ast.fix_missing_locations(module), str(path), "exec"), namespace)  # noqa: S102
     return namespace["_generate_with_tool_loop"]
 
 
@@ -107,7 +106,7 @@ def _chatpool(deadline: dict, executor: concurrent.futures.ThreadPoolExecutor) -
         "inflight_scope_of": lambda _capability_id: "",
         "capability_hard_timeout_seconds": lambda: 0.5,
     }
-    exec(compile(ast.fix_missing_locations(module), str(path), "exec"), namespace)
+    exec(compile(ast.fix_missing_locations(module), str(path), "exec"), namespace)  # noqa: S102
     gate = namespace["_BoundedSubmissionGate"](4)
     namespace["_get_chat_pool"] = lambda: (executor, gate)
     return namespace["offload_capability"], gate, SyntheticCapabilityTimeout
@@ -148,7 +147,7 @@ def _timeout_error_factory() -> object:
         "logger": SimpleNamespace(debug=lambda *args, **kwargs: None),
     }
     assert original_import is not None
-    exec(compile(ast.fix_missing_locations(module), str(path), "exec"), namespace)
+    exec(compile(ast.fix_missing_locations(module), str(path), "exec"), namespace)  # noqa: S102
     return namespace["_capability_timeout_error"]
 
 
@@ -203,7 +202,7 @@ def test_snapshot_is_consistent_during_concurrent_phase_updates() -> None:
                 began = time.monotonic()
                 budget.mark_in_flight("context")
                 budget.record_phase("context", began)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             failures.append(exc)
 
     worker = threading.Thread(target=update, daemon=True)
@@ -570,7 +569,7 @@ def test_abandoned_worker_keeps_gate_until_late_completion() -> None:
         "__name__": "terra_retire_test",
         "logger": SimpleNamespace(debug=lambda *args, **kwargs: None),
     }
-    exec(compile(ast.fix_missing_locations(module), str(path), "exec"), namespace)
+    exec(compile(ast.fix_missing_locations(module), str(path), "exec"), namespace)  # noqa: S102
 
     class Task:
         callback = None
