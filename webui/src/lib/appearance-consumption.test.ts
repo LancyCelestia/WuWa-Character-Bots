@@ -20,7 +20,6 @@ import { test } from 'node:test';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, '..');
-const WEBUI = join(SRC, '..');
 
 const APPLY = join(SRC, 'lib', 'appearance', 'apply.ts');
 const WIRING_CSS = join(SRC, 'components', 'appearance', 'appearance-wiring.css');

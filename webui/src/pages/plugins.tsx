@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader, SectionCard } from '@/components/patterns/patterns';
 import { SemanticState } from '@/components/semantic/semantic-state';
+import { UnderConstruction } from '@/components/semantic/under-construction';
 import { describeReason, isNotFound } from '@/lib/semantics';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
 import { controlApi, type PluginGroup, type PluginItem, type PluginsCatalogData } from '@/lib/api-client';
@@ -120,10 +121,9 @@ function GroupBlock({ group }: { group: PluginGroup }) {
   if (!group.enabled) {
     return (
       <SectionCard title={group.name} description={group.description}>
-        <p className='py-4 text-center fs-body text-muted-foreground'>
-          {t('plugins.unavailable')}
-          {reasonSuffix(group.reason)}
-        </p>
+        <div className='py-2'>
+          <UnderConstruction detail={`${t('plugins.unavailable')}${reasonSuffix(group.reason)}`} />
+        </div>
       </SectionCard>
     );
   }

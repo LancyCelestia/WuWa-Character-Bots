@@ -28,6 +28,8 @@ const MemoryGraphPage = lazyRouteComponent(() => import('@/pages/memory-graph'),
 // 参数页（合并席）：`/config` 指向新的全量参数页（807 键 + 三拍写入），
 // 旧的控制台内嵌版仍留在 `pages/control-center`，但不再占这条路由。
 const ConfigPage = lazyRouteComponent(() => import('@/pages/config'), 'ConfigPage');
+// 人格页：runtime persona_override 的读写面（不是配置键；下一轮生效，不重启）。
+const PersonaPage = lazyRouteComponent(() => import('@/pages/persona'), 'PersonaPage');
 const ResourcesPage = lazyRouteComponent(() => import('@/pages/control-center'), 'ResourcesPage');
 const ModelsPage = lazyRouteComponent(() => import('@/pages/control-center'), 'ModelsPage');
 const VisualEditorPage = lazyRouteComponent(() => import('@/pages/visual-editor'), 'VisualEditorPage');
@@ -197,6 +199,7 @@ const memoryGraphRoute = createRoute({
 const sessionsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/sessions', component: SessionsPage });
 
 const configRoute = createRoute({ getParentRoute: () => rootRoute, path: '/config', component: ConfigPage });
+const personaRoute = createRoute({ getParentRoute: () => rootRoute, path: '/persona', component: PersonaPage });
 const resourcesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/resources', component: ResourcesPage });
 const modelsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/models', component: ModelsPage });
 
@@ -226,6 +229,7 @@ const routeTree = rootRoute.addChildren([
   pluginsRoute,
   memoryGraphRoute,
   configRoute,
+  personaRoute,
   resourcesRoute,
   modelsRoute,
   visualRoute,

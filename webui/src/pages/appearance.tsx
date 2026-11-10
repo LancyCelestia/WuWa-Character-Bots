@@ -19,7 +19,6 @@ import { cloneAppearance, DEFAULT_APPEARANCE } from '@/lib/appearance/defaults';
 import { deserializeAppearance, PRESETS, serializeAppearance } from '@/lib/appearance/presets';
 import { APPEARANCE_FIELDS } from '@/lib/appearance/schema-fields';
 import {
-  DEFAULT_OPEN_LIMIT,
   initialOpenGroups,
   openGroup,
   reconcileOpenGroups,

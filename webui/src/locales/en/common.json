@@ -19,6 +19,7 @@
     "console": "Console",
     "sessions": "Sessions",
     "config": "Settings",
+    "persona": "Persona",
     "resources": "Resources",
     "models": "Models",
     "visualEditor": "Layout Editor",
@@ -64,7 +65,8 @@
     "authFailed": "Token invalid or forbidden",
     "authFailedHint": "Check that the token is correct and still valid, then update it in Settings.",
     "rateLimited": "Server is rate limiting requests",
-    "rateLimitedHint": "Nothing is broken — too many requests within 60 seconds, so the server is refusing for now. Wait {{seconds}} seconds and try again; retrying in the meantime pushes the lockout further out."
+    "rateLimitedHint": "Nothing is broken — too many requests within 60 seconds, so the server is refusing for now. Wait {{seconds}} seconds and try again; retrying in the meantime pushes the lockout further out.",
+    "underConstruction": "Temporarily under construction — not available yet"
   },
   "reason": {
     "audit_source_not_configured": "Audit DB path not configured (bot_audit_db_path empty)",
@@ -228,7 +230,8 @@
     "historyMore": "Load earlier",
     "historyRestart": "Restart from newest",
     "historyAuth": "Reading history needs a valid access token",
-    "historyUnavailable": "History source is unavailable"
+    "historyUnavailable": "History source is unavailable",
+    "collectorHistoryOnly": "Log collector is not wired: retained events still replay, but no new live rows will appear."
   },
   "knowledge": {
     "title": "Knowledge",
@@ -260,6 +263,7 @@
     "aliases": "Aliases: {{list}}",
     "allDisabled": "No knowledge source enabled",
     "allDisabledHint": "Enable any knowledge source in the bot configuration (glossary / vector KB / meme library / ACG search) and restart; collections will appear here.",
+    "noDedicatedStoreDetail": "These collections have no dedicated store in this project yet: {{names}}.",
     "disabledReason": {
       "noDedicatedStore": "no dedicated store",
       "sourceUnavailable": "source unavailable",
@@ -436,5 +440,25 @@
       "open": "Open appearance settings",
       "dismiss": "Dismiss"
     }
+  },
+  "persona": {
+    "title": "Persona",
+    "subtitle": "Switch the active persona. The visual theme does not follow it.",
+    "effective": "Effective now",
+    "main": "Main",
+    "active": "Active",
+    "overrideOn": "Switched",
+    "followMain": "Following main",
+    "switch": "Switch",
+    "confirm": "Confirm switch",
+    "switching": "Switching…",
+    "cancel": "Cancel",
+    "switched": "Switched; applies from the next message.",
+    "mainHint": "The registry entry marked as main; used when no override is set.",
+    "itemHint": "Switching changes persona content and voice only, not the UI theme.",
+    "hotHint": "Hot switch: read on the next turn; no bot restart needed.",
+    "visualUnchanged": "Persona only. Colors, wallpaper and motion stay on the Appearance page and are not changed here.",
+    "empty": "No persona is registered yet.",
+    "followMainAction": "Back to main"
   }
 }

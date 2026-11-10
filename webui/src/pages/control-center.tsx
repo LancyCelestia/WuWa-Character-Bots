@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { PageHeader, SectionCard } from '@/components/patterns/patterns';
 import { SemanticState } from '@/components/semantic/semantic-state';
+import { UnderConstructionBadge } from '@/components/semantic/under-construction';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
 import { centerApi, safeText, type LLMProvidersData, type LLMChannelsData, type LLMHealthData, type LLMRoutesData } from '@/lib/control-center';
 import { formatCount, UNKNOWN_VALUE } from '@/lib/format';
@@ -12,7 +13,7 @@ export function ResourcesPage() {
   const snapshot = query.state.phase === 'ok' ? query.state.data as Awaited<ReturnType<typeof centerApi.resources>> : null;
   return <div className='flex flex-col gap-6'><PageHeader title='实时资源' subtitle='当前采样每五秒刷新；未知、预热与未连接保持独立，不填成零。' actions={<Button variant='outline' onClick={query.refetch}>刷新</Button>} />
     <SemanticState state={query.state} onRetry={query.refetch}><SectionCard title={snapshot ? `${snapshot.process_role} · PID ${snapshot.pid}` : '进程采样'} description={snapshot?.captured_at}>
-      <div className='overflow-x-auto'><table className='w-full fs-body'><thead><tr className='border-b text-left'><th className='p-3'>指标</th><th className='p-3'>读数</th><th className='p-3'>状态</th></tr></thead><tbody>{Object.entries(snapshot?.measurements ?? {}).map(([key, measurement]) => <tr key={key} className='border-b last:border-0'><td className='p-3'>{fieldLabel(key)}</td><td className='p-3 tabular-nums'>{measurement.value === null ? UNKNOWN_VALUE : formatCount(measurement.value)} <span className='text-muted-foreground'>{measurement.unit}</span></td><td className='p-3'>{measurement.status === 'ok' ? '可用' : humanizeEnum(measurement.reason ?? 'unknown')}</td></tr>)}</tbody></table></div>
+      <div className='overflow-x-auto'><table className='w-full fs-body'><thead><tr className='border-b text-left'><th className='p-3'>指标</th><th className='p-3'>读数</th><th className='p-3'>状态</th></tr></thead><tbody>{Object.entries(snapshot?.measurements ?? {}).map(([key, measurement]) => <tr key={key} className='border-b last:border-0'><td className='p-3'>{fieldLabel(key)}</td><td className='p-3 tabular-nums'>{measurement.value === null ? UNKNOWN_VALUE : formatCount(measurement.value)} <span className='text-muted-foreground'>{measurement.unit}</span></td><td className='p-3'>{measurement.status === 'ok' ? '可用' : (measurement.reason === 'not_supported' || measurement.reason === 'not_connected') ? <UnderConstructionBadge detail={humanizeEnum(measurement.reason)} /> : humanizeEnum(measurement.reason ?? 'unknown')}</td></tr>)}</tbody></table></div>
     </SectionCard></SemanticState><p className='fs-caption text-muted-foreground'>此页仅显示已装配进程。没有 Bot／渲染器／网关来源时不会伪造它们的占用。</p>
   </div>;
 }

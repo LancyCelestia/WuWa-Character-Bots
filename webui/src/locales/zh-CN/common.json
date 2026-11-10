@@ -19,6 +19,7 @@
     "console": "总台",
     "sessions": "会话",
     "config": "参数",
+    "persona": "人格",
     "resources": "资源",
     "models": "模型",
     "visualEditor": "布局编辑",
@@ -64,7 +65,8 @@
     "authFailed": "令牌无效或无权限",
     "authFailedHint": "请核对令牌是否正确、是否仍在有效期，然后到设置中更新。",
     "rateLimited": "服务端正在限速",
-    "rateLimitedHint": "这不是故障——60 秒内连续请求过多，服务端在限速，暂时拒收。请等 {{seconds}} 秒后再试；期间反复重试会把锁定时间往后推。"
+    "rateLimitedHint": "这不是故障——60 秒内连续请求过多，服务端在限速，暂时拒收。请等 {{seconds}} 秒后再试；期间反复重试会把锁定时间往后推。",
+    "underConstruction": "暂时在施工中无法使用"
   },
   "reason": {
     "audit_source_not_configured": "审计库路径未配置（bot_audit_db_path 为空）",
@@ -228,7 +230,8 @@
     "historyMore": "加载更早",
     "historyRestart": "从头开始",
     "historyAuth": "读取历史需要有效的访问令牌",
-    "historyUnavailable": "历史来源当前不可用"
+    "historyUnavailable": "历史来源当前不可用",
+    "collectorHistoryOnly": "日志采集器未接线：可回放已入库的历史事件，但不会有新的实时日志产生。"
   },
   "knowledge": {
     "title": "知识库",
@@ -260,6 +263,7 @@
     "aliases": "别名：{{list}}",
     "allDisabled": "知识库数据源均未启用",
     "allDisabledHint": "在 bot 配置中启用任一知识源（术语表 / 向量库 / 表情库 / ACG 检索）并重启后，这里会出现对应集合。",
+    "noDedicatedStoreDetail": "以下集合在项目内暂无独立存储：{{names}}。",
     "disabledReason": {
       "noDedicatedStore": "无独立存储",
       "sourceUnavailable": "数据源不可用",
@@ -436,5 +440,25 @@
       "open": "打开外观设置",
       "dismiss": "关闭提示"
     }
+  },
+  "persona": {
+    "title": "人格",
+    "subtitle": "切换守岸人的人格档；外观主题不随人格改变。",
+    "effective": "当前生效",
+    "main": "主人格",
+    "active": "生效中",
+    "overrideOn": "已切换",
+    "followMain": "跟随主人格",
+    "switch": "切换",
+    "confirm": "确认切换",
+    "switching": "切换中…",
+    "cancel": "取消",
+    "switched": "已切换；下一条消息起生效。",
+    "mainHint": "人格册里登记为主人格的那一格；没有切换态时默认使用。",
+    "itemHint": "切换只改人设内容与话术，不改界面视觉。",
+    "hotHint": "热切换：下一轮现读即生效，不需要重启 Bot。",
+    "visualUnchanged": "这里只动人设；配色、壁纸与动效仍在外观页，切换人格不会改变它们。",
+    "empty": "人格册里还没有登记任何人格。",
+    "followMainAction": "回到主人格"
   }
 }

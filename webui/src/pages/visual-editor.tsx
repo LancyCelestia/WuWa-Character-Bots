@@ -225,11 +225,11 @@ export function VisualEditorPage() {
                 <Select
                   block
                   ariaLabel={fieldLabel(key)}
-                  value={spec.style?.[key] ?? ''}
+                  value={String(spec.style?.[key] ?? '')}
                   onChange={next => change(updateStyle(spec, key, next))}
                   options={[
                     { value: '', label: '主题默认' },
-                    ...((key === 'color' ? data?.style.colors : key === 'size' ? data?.style.sizes : key === 'weight' ? data?.style.weights : data?.style.spacing) ?? []).map(value => ({ value, label: humanizeEnum(value) })),
+                    ...((key === 'color' ? data?.style.colors : key === 'size' ? data?.style.sizes : key === 'weight' ? data?.style.weights : data?.style.spacing) ?? []).map(value => ({ value: String(value), label: humanizeEnum(String(value)) })),
                   ]}
                 />
               </label>
@@ -381,7 +381,7 @@ export function VisualEditorPage() {
               <Select
                 block
                 ariaLabel='卡片外壳圆角'
-                value={overrides.shell_radius ?? ''}
+                value={String(overrides.shell_radius ?? '')}
                 onChange={next => setOverrides(current => ({ ...current, shell_radius: numberOrClear(next) }))}
                 options={[
                   { value: '', label: '默认 30px' },

@@ -30,6 +30,7 @@ import {
   type WallpaperTier,
 } from '@/components/settings/interface-prefs';
 import { useAppearance } from '@/lib/appearance/context';
+import { getOwnerConsentSecret, setOwnerConsentSecret } from '@/lib/owner-consent';
 import { wallpaperOwner } from '@/lib/wallpaper-owner';
 
 function tokenField({
@@ -57,6 +58,10 @@ export function SettingsDialog() {
   const [adminToken, setAdminToken] = useState('');
   const [roToken, setRoToken] = useState('');
   const [superAdminToken, setSuperAdminToken] = useState('');
+  // 主人授权口令（可选）：仅用于让控制面代主人批准 R1/R2 写入。
+  // 留空＝清除；不填时一切写操作仍按原安全流程（出同意卡，等主人在 bot 里批）。
+  const [ownerSecret, setOwnerSecret] = useState('');
+  const [hasOwnerSecret, setHasOwnerSecret] = useState(false);
   const [showTokens, setShowTokens] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const [baseUrlError, setBaseUrlError] = useState<string | null>(null);
@@ -77,6 +82,8 @@ export function SettingsDialog() {
       setAdminToken('');
       setRoToken('');
       setSuperAdminToken('');
+      setOwnerSecret('');
+      setHasOwnerSecret(Boolean(getOwnerConsentSecret()));
       setBaseUrlError(null);
       setHasStored({
         admin: Boolean(getApiToken('admin')),
@@ -107,6 +114,8 @@ export function SettingsDialog() {
     if (adminToken.trim()) setApiToken(adminToken.trim(), 'admin');
     if (roToken.trim()) setApiToken(roToken.trim(), 'ro');
     if (superAdminToken.trim()) setApiToken(superAdminToken.trim(), 'superAdmin');
+    // 授权口令与 token 分开存：留空＝保持原值，清除走显式按钮（同令牌口径）。
+    if (ownerSecret.trim()) setOwnerConsentSecret(ownerSecret.trim());
     setAdminToken('');
     setRoToken('');
     setSuperAdminToken('');
@@ -115,6 +124,8 @@ export function SettingsDialog() {
       ro: Boolean(getApiToken('ro')),
       superAdmin: Boolean(getApiToken('superAdmin')),
     });
+    setOwnerSecret('');
+    setHasOwnerSecret(Boolean(getOwnerConsentSecret()));
     setSavedFlash(true);
     window.dispatchEvent(new Event('webui:credentials-changed'));
   };
@@ -122,6 +133,12 @@ export function SettingsDialog() {
   // 保存时留空=保持原值（防静默清空凭据）；清除走显式按钮——两者不能混在一条路径上。
   // 清除必须同时抹掉 localStorage 与内存：setApiToken(null) 内部两处一起清（见 api-client），
   // 所以这里不用、也不许再单独摸一次 localStorage——两份真相迟早不一样。
+  const clearOwnerSecret = () => {
+    setOwnerConsentSecret(null);
+    setOwnerSecret('');
+    setHasOwnerSecret(false);
+  };
+
   const clearStoredToken = (kind: TokenKind) => {
     setApiToken(null, kind);
     setHasStored((current) => ({ ...current, [kind]: false }));
@@ -338,6 +355,33 @@ export function SettingsDialog() {
               <p className='fs-caption text-muted-foreground'>{field.savedHint}</p>
             </div>
           ))}
+
+          <div className='flex flex-col gap-2'>
+            <label htmlFor='webui-owner-secret' className='font-medium'>
+              主人授权口令（可选）
+            </label>
+            <div className='flex gap-2'>
+              <input
+                id='webui-owner-secret'
+                type={showTokens ? 'text' : 'password'}
+                value={ownerSecret}
+                onChange={(event) => setOwnerSecret(event.target.value)}
+                placeholder={hasOwnerSecret ? '已保存（留空保持不变）' : '未配置'}
+                className='h-9 flex-1 rounded-md border bg-transparent px-3 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]'
+                spellCheck={false}
+                autoComplete='off'
+              />
+              {hasOwnerSecret && (
+                <Button variant='outline' size='icon' onClick={clearOwnerSecret} aria-label='清除授权口令'>
+                  <Trash2 className='size-4' />
+                </Button>
+              )}
+            </div>
+            <p className='fs-caption text-muted-foreground'>
+              与 API token 分开的第二把钥匙：填了它，配置页写 R1/R2 设置时由控制面代主人批准；
+              不填则照旧出同意卡，等主人在 bot 会话里批。仅在本浏览器保存。
+            </p>
+          </div>
 
           <p className='rounded-md border bg-muted/40 p-3 fs-caption text-muted-foreground'>
             {t('settings.note')}

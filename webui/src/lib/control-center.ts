@@ -1,4 +1,5 @@
 import { apiRequest, qs } from './api-client';
+import { ownerConsentHeaders } from './owner-consent';
 
 /**
  * 配置目录／单键行。真身＝`control_plane/config_service.py` 的 `catalog()` / `_row()` /
@@ -196,12 +197,24 @@ export function pendingReceipt(receipt: RunReceipt): string {
   return RECEIPT_LABELS[state] ?? `执行状态：${state}`;
 }
 
+export interface PersonaItem { profile_id: string; display_name: string; is_main: boolean }
+export interface PersonaState {
+  active_override: string; effective: string; main: string;
+  items: PersonaItem[]; apply: string; restart_required: boolean;
+}
+
 export const centerApi = {
+  persona: () => apiRequest<PersonaState>('/api/v1/persona'),
+  setPersona: (profileId: string, expectedCurrent: string) =>
+    apiRequest<PersonaState>('/api/v1/persona/active', {
+      method: 'POST',
+      body: { profile_id: profileId, expected_current: expectedCurrent },
+    }),
   catalog: () => apiRequest<{ items: ConfigRow[] }>('/api/v1/config/catalog'),
   config: () => apiRequest<{ items: ConfigRow[] }>('/api/v1/config'),
   preview: (key: string, value: unknown, version: number) => apiRequest<ConfigRow>(`/api/v1/config/${encodeURIComponent(key)}/preview`, { method: 'POST', body: { value, expected_version: version } }),
-  set: (key: string, value: unknown, version: number) => apiRequest<RunReceipt>(`/api/v1/config/${encodeURIComponent(key)}/set`, { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: { value, expected_version: version } }),
-  reset: (key: string, version: number) => apiRequest<RunReceipt>(`/api/v1/config/${encodeURIComponent(key)}/reset`, { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: { expected_version: version } }),
+  set: (key: string, value: unknown, version: number) => apiRequest<RunReceipt>(`/api/v1/config/${encodeURIComponent(key)}/set`, { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID(), ...ownerConsentHeaders() }, body: { value, expected_version: version } }),
+  reset: (key: string, version: number) => apiRequest<RunReceipt>(`/api/v1/config/${encodeURIComponent(key)}/reset`, { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID(), ...ownerConsentHeaders() }, body: { expected_version: version } }),
   resources: () => apiRequest<Resources>('/api/v1/metrics/resources'),
   models: () => apiRequest<ModelRows>('/api/v1/llm/models'),
   metrics: () => apiRequest<unknown>('/api/v1/metrics/models'),

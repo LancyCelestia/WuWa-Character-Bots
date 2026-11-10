@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Select } from '@/components/appearance/field';
 import { PageHeader } from '@/components/patterns/patterns';
 import { SemanticState } from '@/components/semantic/semantic-state';
+import { UnderConstruction } from '@/components/semantic/under-construction';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
 import { apiRequest } from '@/lib/api-client';
 
@@ -20,6 +21,9 @@ export function CredentialsPage() {
   const [pending, setPending] = useState<{ change: Change; token: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const rows = query.state.phase === 'ok' ? query.state.data.items : [];
+  // 只有后端真回 credentials_unavailable 时才标施工中；装配完成后标注自动消失。
+  const unavailable = query.state.phase === 'error'
+    && (query.state.code === 'credentials_unavailable' || query.state.message.includes('尚未装配'));
   const current = rows.find(item => item.ref_id === ref);
   const field = 'w-full rounded-md border bg-background px-3 py-2 fs-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
   async function preview(action: 'replace' | 'delete') {
@@ -43,6 +47,7 @@ export function CredentialsPage() {
   }
   return <div className='flex flex-col gap-6'>
     <PageHeader title='加密凭据' subtitle='仅超管可管理。已有秘密永不回显；这里只列引用和版本，不列密钥前缀。' />
+    {unavailable && <UnderConstruction detail='后端凭据库尚未装配；此页表单不会假装保存秘密。' />}
     <SemanticState state={query.state} onRetry={query.refetch}>
       <fieldset disabled={busy} className='grid min-w-0 gap-4 lg:grid-cols-2'>
         <legend className='sr-only'>凭据引用与本次变更</legend>

@@ -62,7 +62,8 @@ PAGE_SPECS: list[dict] = [
     {"name": "dashboard", "route": "/", "ok": ["在线", "降级"], "graceful_extra": []},
     {"name": "calls", "route": "/calls", "ok": ["窗口内调用"], "graceful_extra": []},
     {"name": "tokens", "route": "/tokens", "ok": ["窗口总量"], "graceful_extra": []},
-    {"name": "latency", "route": "/latency", "ok": ["渠道（"], "graceful_extra": []},
+    # 页面当前把渠道区叫「通道健康（N）」；旧标记「渠道（」是改名前的文案，早就不渲染了。
+    {"name": "latency", "route": "/latency", "ok": ["通道健康（", "端到端延迟 P50"], "graceful_extra": []},
     {"name": "affinity", "route": "/affinity", "ok": ["好感度排行"], "graceful_extra": []},
     {
         "name": "logs",
@@ -78,8 +79,18 @@ PAGE_SPECS: list[dict] = [
     {
         "name": "knowledge",
         "route": "/knowledge",
-        "ok": ["别名：", "个文本块", "条表情", "启用中"],
+        # 现行词条列表只渲染「第 1-20 条 / 共 38 条」这类分页计数；别名/文本块/表情
+        # 徽章是旧卡片式布局的文案，已随页面改版消失。
+        "ok": ["条 / 共", "通用词条", "别名：", "个文本块", "条表情", "启用中"],
         "graceful_extra": ["知识库目录未部署", "知识库数据源均未启用", "该集合暂无词条", "没有匹配"],
+    },
+    {
+        "name": "persona",
+        "route": "/persona",
+        # 人格页：切态与人格册都来自 GET /api/v1/persona（真数据），
+        # 「当前生效」只在 ok 分支渲染；空册才出「还没有登记」。
+        "ok": ["当前生效", "守岸人"],
+        "graceful_extra": ["人格册里还没有登记任何人格"],
     },
     {
         "name": "plugins",
@@ -97,7 +108,9 @@ PAGE_SPECS: list[dict] = [
     },
     # 外观工作室（UI3）：视觉层全部参数 + 四套预设。ok 标记取「仅正常渲染才出现」的两处——
     # 页首「实时生效」状态字与「预设」卡片标题；两处都是 render 期恒在，不依赖 IndexedDB 有值。
-    {"name": "appearance", "route": "/appearance", "ok": ["实时生效", "预设"], "graceful_extra": []},
+    # 本地页：视觉参数与预设全在 IndexedDB，渲染不依赖任何 /api/ 请求；
+    # 因此不能套用「数据态必须出过网」的判据（否则每轮都假红）。
+    {"name": "appearance", "route": "/appearance", "ok": ["实时生效", "预设"], "graceful_extra": [], "local": True},
 ]
 
 # 产物挂载前缀（vite `base: '/console/'`）。驱动 URL 与包装器路径都据此拼，两处不得分头写。
@@ -194,14 +207,20 @@ def start_wrapper_server(dist: Path | str, storage_js: str = "") -> tuple[Thread
     return server, f"http://127.0.0.1:{server.server_address[1]}{CONSOLE_PREFIX}/"
 
 
-def build_storage_js(api: str | None, token: str | None, ro_token: str | None) -> str:
+def build_storage_js(api: str | None, token: str | None, ro_token: str | None,
+                     super_token: str | None = None) -> str:
+    # 令牌槽与 webui/src/lib/api-client.ts 的 TOKEN_KEYS 必须逐字一致；
+    # 2026-10-20 之前这里写的是 webui:bearer / webui:bearer:ro，UI 重构后已作废，
+    # 旧键写进去页面读不到，验收会静默退化成「未配置令牌」的假绿。
     sets = []
     if api:
         sets.append(f"localStorage.setItem('webui:baseUrl', {json.dumps(api.rstrip('/'))});")
     if token:
-        sets.append(f"localStorage.setItem('webui:bearer', {json.dumps(token)});")
+        sets.append(f"localStorage.setItem('webui:token:admin', {json.dumps(token)});")
     if ro_token:
-        sets.append(f"localStorage.setItem('webui:bearer:ro', {json.dumps(ro_token)});")
+        sets.append(f"localStorage.setItem('webui:token:ro', {json.dumps(ro_token)});")
+    if super_token:
+        sets.append(f"localStorage.setItem('webui:token:super-admin', {json.dumps(super_token)});")
     return STORAGE_PRELUDE.format(sets="".join(sets))
 
 
@@ -258,20 +277,27 @@ def run(args: argparse.Namespace) -> tuple[list[dict], str]:
     names = parse_pages(args.pages)
     specs = [s for s in PAGE_SPECS if s["name"] in names]
 
-    storage_js = build_storage_js(args.api, args.token, args.ro_token)
-    wrapper, base_uri = start_wrapper_server(dist)
+    storage_js = build_storage_js(args.api, args.token, args.ro_token, args.super_token)
+    wrapper = None
+    if args.base_url:
+        # 已部署的控制面（同源 /console/*）：不再起本地静态壳，避免跨源 CORS
+        # 把 SSE / REST 误判成产品故障。--base-url 必须带 /console/ 尾斜杠。
+        base_uri = args.base_url
+    else:
+        wrapper, base_uri = start_wrapper_server(dist)
 
     try:
         return _run_browser(args, dist, shot_dir, specs, storage_js, base_uri)
     finally:
-        wrapper.shutdown()
-        wrapper.server_close()
+        if wrapper is not None:
+            wrapper.shutdown()
+            wrapper.server_close()
 
 
 def _run_browser(args, dist, shot_dir, specs, storage_js, base_uri) -> tuple[list[dict], str]:
     results: list[dict] = []
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=True, channel=getattr(args, "channel", None) or None)
         context = browser.new_context(locale="zh-CN", viewport={"width": 1440, "height": 900})
         context.add_init_script(storage_js)
 
@@ -393,7 +419,7 @@ def check_page(
         elif violations:
             # 结构合法但语义不可能（NaN/undefined/[object Object] 直接印在页上）——两种模式都查。
             result["reason"] = f"值域探针违例 {len(violations)} 条：{violations[:5]}"
-        elif ok_marker and not real_api:
+        elif ok_marker and not real_api and not spec.get("local"):
             result["reason"] = (
                 f"mode=data 但窗口内零真实 /api/ 200 响应（api={api_origin}，捕获响应 {len(responses)} 条）"
                 "——夹具/降级/页内垫片冒充数据态"
@@ -407,7 +433,11 @@ def check_page(
         else:
             result["status"] = "PASS"
             detail = "数据态标志在场" if ok_marker else f"优雅降级态在场（{graceful_marker}）非白屏"
-            evidence = f"/api/ 真响应 {result['real_responses']} 条" if ok_marker else "未取数据"
+            evidence = (
+                "本地页（不依赖 /api/）"
+                if ok_marker and spec.get("local")
+                else (f"/api/ 真响应 {result['real_responses']} 条" if ok_marker else "未取数据")
+            )
             result["reason"] = f"{detail}；{evidence}；白名单网络噪声 {result['noise_console']} 条"
     except PlaywrightError as exc:  # playwright 异常（页崩溃等）→ FAIL 带因
         result["reason"] = f"驱动异常: {exc}"
@@ -462,6 +492,12 @@ def main() -> int:
     parser.add_argument("--token-env", default=None,
                         help="从指定环境变量读取主令牌（如 UACC），明文不进 argv/历史/聊天记录")
     parser.add_argument("--ro-token-env", default=None, help="同上，读只读令牌")
+    parser.add_argument("--super-token", default=None,
+                        help="Bearer 超管令牌（写 webui:token:super-admin；写腿验收用）")
+    parser.add_argument("--super-token-env", default=None, help="同上，读超管令牌环境变量")
+    parser.add_argument("--base-url", default=None,
+                        help="已部署控制面 UI 基址（如 http://127.0.0.1:8742/console/）；"
+                             "给了就不再起本地静态壳，按同源真服务验收")
     parser.add_argument("--pages", default="all",
                         help="all 或逗号列表: dashboard,calls,tokens,latency,affinity,logs,knowledge,plugins,memory-graph")
     parser.add_argument("--shot-dir", default=os.path.join(tempfile.gettempdir(), "webui-acceptance"),
@@ -475,6 +511,8 @@ def main() -> int:
     parser.add_argument("--allow-stale-dist", action="store_true",
                         help="放行 dist 落后 src（默认拒跑：绿单会证明已不存在的代码）")
     parser.add_argument("--json", action="store_true", help="额外输出 JSON 摘要到 stdout")
+    parser.add_argument("--channel", default=None,
+                        help="Playwright 浏览器通道（如 chrome）；未装 playwright chromium 时用本机 Chrome")
     args = parser.parse_args()
     if args.token_env:
         args.token = os.environ.get(args.token_env) or None
@@ -484,6 +522,10 @@ def main() -> int:
         args.ro_token = os.environ.get(args.ro_token_env) or None
         if not args.ro_token:
             raise SystemExit(f"[uiacc] --ro-token-env={args.ro_token_env} 已指定，但该环境变量为空")
+    if args.super_token_env:
+        args.super_token = os.environ.get(args.super_token_env) or None
+        if not args.super_token:
+            raise SystemExit(f"[uiacc] --super-token-env={args.super_token_env} 已指定，但该环境变量为空")
 
     if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
         sys.stdout.reconfigure(encoding="utf-8")  # Windows 控制台中文表

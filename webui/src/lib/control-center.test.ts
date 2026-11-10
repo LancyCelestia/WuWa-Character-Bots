@@ -18,8 +18,15 @@ const clientCompiled = ts.transpileModule(clientSource, {
 const clientUrl = `data:text/javascript;base64,${Buffer.from(clientCompiled.outputText).toString('base64')}`;
 const { resolveSemantic, setApiToken, getApiToken } = await import(clientUrl);
 
+const ownerSource = readFileSync(new URL('./owner-consent.ts', import.meta.url), 'utf8');
+const ownerCompiled = ts.transpileModule(ownerSource, {
+  compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },
+});
+const ownerUrl = `data:text/javascript;base64,${Buffer.from(ownerCompiled.outputText).toString('base64')}`;
+
 const source = readFileSync(new URL('./control-center.ts', import.meta.url), 'utf8')
-  .replace("'./api-client'", JSON.stringify(clientUrl));
+  .replace("'./api-client'", JSON.stringify(clientUrl))
+  .replace("'./owner-consent'", JSON.stringify(ownerUrl));
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext } });
 const { configValue, pendingReceipt, centerApi } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputText).toString('base64')}`);
 

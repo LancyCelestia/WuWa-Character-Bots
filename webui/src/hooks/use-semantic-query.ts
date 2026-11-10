@@ -7,7 +7,7 @@
 import { useEffect } from 'react';
 import { useQuery, type UseQueryOptions } from '@tanstack/react-query';
 import { ApiError, resolveSemantic } from '@/lib/api-client';
-import { beforeAuthRequest, noteAuthFailure } from '@/lib/auth-budget-store';
+import { acquireAuthSlot, noteAuthFailure, noteAuthSuccess } from '@/lib/auth-budget-store';
 import { shouldRetryQuery } from '@/lib/data-state';
 import { retryAfterSeconds } from '@/lib/rate-limit';
 
@@ -50,17 +50,22 @@ export function useSemanticQuery<T>(
     // 所以第一发 401 之后整页停发，后面 6 发直接拿本地 429（带 Retry-After 秒数），
     // 不再逐个端点撞墙，也不让用户在冷却期反复试对的令牌。
     queryFn: async () => {
-      const gate = beforeAuthRequest();
+      // 首屏并发不直接判 429：未证明的凭据只放一发探针，其余在这里排队等结果。
+      const gate = await acquireAuthSlot();
       if (!gate.allowed) {
+        const waitSeconds = Math.max(1, Math.ceil(gate.waitMs / 1000));
         throw new ApiError(
-          `认证失败次数过多，请等待 ${Math.ceil(gate.waitMs / 1000)} 秒后重试`,
+          `认证失败次数过多，请等待 ${waitSeconds} 秒后重试`,
           429,
           { error: { code: 'rate_limited' } },
-          String(Math.ceil(gate.waitMs / 1000))
+          String(waitSeconds)
         );
       }
       try {
-        return await fetcher();
+        const result = await fetcher();
+        // 2xx 是单飞探针的出口：证明凭据可用、放开后续并发、把额度还回来。
+        noteAuthSuccess();
+        return result;
       } catch (error) {
         if (error instanceof ApiError) {
           const kind =

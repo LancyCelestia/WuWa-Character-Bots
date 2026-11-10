@@ -55,6 +55,7 @@ export const CONSOLE_PAGES: readonly ConsolePageRow[] = [
   { legacy: '/plugins', console: '/console/plugins', title: '插件' },
   { legacy: '/memory-graph', console: '/console/memory-graph', title: '记忆图谱' },
   { legacy: '/config', console: '/console/config', title: '参数' },
+  { legacy: '/persona', console: '/console/persona', title: '人格' },
   { legacy: '/resources', console: '/console/resources', title: '资源' },
   { legacy: '/models', console: '/console/models', title: '模型' },
   { legacy: '/visual-editor', console: '/console/visual-editor', title: '布局编辑' },

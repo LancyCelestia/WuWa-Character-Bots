@@ -91,7 +91,7 @@ export function moveActive(
 }
 
 export function activeEdge(
-  state: DropdownState,
+  _state: DropdownState,
   edge: 'first' | 'last',
   options: readonly DropdownOption[],
 ): DropdownState {

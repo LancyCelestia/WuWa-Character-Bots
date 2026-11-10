@@ -18,6 +18,7 @@ import {
   Wrench,
   Palette,
   Users,
+  UserRoundCheck,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -175,6 +176,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     { to: '/plugins', icon: <Blocks className='size-4' />, label: t('nav.plugins'), group: 'data' },
     { to: '/memory-graph', icon: <Network className='size-4' />, label: t('nav.memoryGraph'), group: 'data' },
     { to: '/config', icon: <Settings className='size-4' />, label: t('nav.config'), group: 'admin' },
+    { to: '/persona', icon: <UserRoundCheck className='size-4' />, label: t('nav.persona'), group: 'admin' },
     { to: '/resources', icon: <Activity className='size-4' />, label: t('nav.resources'), group: 'admin' },
     { to: '/models', icon: <Sparkles className='size-4' />, label: t('nav.models'), group: 'admin' },
     { to: '/visual-editor', icon: <LayoutDashboard className='size-4' />, label: t('nav.visualEditor'), group: 'admin' },

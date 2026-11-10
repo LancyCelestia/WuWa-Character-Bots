@@ -23,6 +23,7 @@ import { createFlushController, LogsBuffer, type FlushController } from '@/lib/l
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
 import { formatTime } from '@/lib/format';
 import { LogHistoryPanel } from '@/components/logs/history-panel';
+import { UnderConstruction } from '@/components/semantic/under-construction';
 
 const CURSOR_KEY = 'webui:logsCursor';
 const HEARTBEAT_STALE_MS = 45_000;
@@ -271,6 +272,9 @@ export function LogsPage() {
     startStream(null);
   };
 
+  const collectorDown = sources.state.phase === 'ok'
+    && sources.state.data.collector_status !== 'ok'
+    && sources.state.data.collector_status !== 'connected';
   const sourceItems = sources.state.phase === 'ok' ? sources.state.data.items : [];
   const categoryItems = sources.state.phase === 'ok' ? sources.state.data.categories : [];
 
@@ -307,6 +311,14 @@ export function LogsPage() {
           </>
         }
       />
+
+      {collectorDown && (connected ? (
+        <div className='flex flex-wrap items-center gap-3 rounded-lg border border-tone-warn tone-face-warn px-4 py-3'>
+          <span className='min-w-0 flex-1 fs-body'>{t('logs.collectorHistoryOnly')}</span>
+        </div>
+      ) : (
+        <UnderConstruction detail='控制面日志采集器未接线，且尾流尚未连上；当前无法读取任何日志。' />
+      ))}
 
       {gapMessage && (
         <div className='flex flex-wrap items-center gap-3 rounded-lg border border-tone-warn tone-face-warn px-4 py-3'>

@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { CategoryChip, PageHeader, Pager, SectionCard } from '@/components/patterns/patterns';
 import { SemanticState } from '@/components/semantic/semantic-state';
+import { UnderConstruction } from '@/components/semantic/under-construction';
 import { isNotFound } from '@/lib/semantics';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
 import {
@@ -194,6 +195,12 @@ export function KnowledgePage() {
     );
   }
 
+  // 无独立存储的集合是**真不可用**（不是配置没开）：按任务口径显式标注，
+  // 有存储后后端会把 enabled 翻真，这条横幅随之消失。
+  const missingStoreNames = (collections.state.phase === 'ok' ? collections.state.data.items : [])
+    .filter((item: KnowledgeCollection) => item.reason === 'no_dedicated_store')
+    .map((item: KnowledgeCollection) => item.name);
+
   // ---- 集合目录 ok：全部数据源未启用 → 页面级诚实态（说明启用方式一句话） ----
   if (available.length === 0) {
     return (
@@ -201,7 +208,7 @@ export function KnowledgePage() {
         <PageHeader title={t('knowledge.title')} subtitle={t('knowledge.subtitle')} />
         <SectionCard title={t('knowledge.allDisabled')} description={t('knowledge.allDisabledHint')}>
           <div className='flex flex-wrap gap-2'>
-            {collections.state.data.items.map((item: KnowledgeCollection) => (
+            {(collections.state.phase === 'ok' ? collections.state.data.items : []).map((item: KnowledgeCollection) => (
               <span key={item.id} className='inline-flex'>
                 <CategoryChip label={`${item.name} · ${disabledSuffix(item)}`} tone='flat' className='opacity-60' />
               </span>
@@ -217,6 +224,12 @@ export function KnowledgePage() {
   return (
     <div className='flex w-full flex-col gap-4'>
       <PageHeader title={t('knowledge.title')} subtitle={t('knowledge.subtitle')} />
+
+      {missingStoreNames.length > 0 && (
+        <UnderConstruction
+          detail={t('knowledge.noDedicatedStoreDetail', { names: missingStoreNames.join('、') })}
+        />
+      )}
 
       {/* 搜索框：居中宽（spec §1.1），右侧 total 计数（§7 C2，terms 实有 total） */}
       <div className='mx-auto flex w-full max-w-2xl items-center gap-3'>
@@ -239,7 +252,7 @@ export function KnowledgePage() {
 
       {/* 集合 chips 行：可用=可点（选中=品牌色），not_available=灰态 disabled（附「未启用」标） */}
       <div className='flex flex-wrap items-center gap-2'>
-        {collections.state.data.items.map((item) => (
+        {(collections.state.phase === 'ok' ? collections.state.data.items : []).map((item: KnowledgeCollection) => (
           <button
             key={item.id}
             type='button'
